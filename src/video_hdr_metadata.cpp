@@ -38,7 +38,7 @@ namespace video::hdr_metadata {
     }
 
     const auto frame_metadata = hdr10plus_from_luminance(
-      stats.percentile_95, stats.avg_maxrgb, max_display_luminance);
+      stats.percentile_95, stats.avg_maxrgb, max_display_luminance, stats.distribution_maxrgb);
     if (!frame_metadata.valid) {
       return 0;
     }
@@ -66,7 +66,15 @@ namespace video::hdr_metadata {
     params.maxscl[2] = maxscl;
     params.average_maxrgb = av_make_q(
       frame_metadata.average_maxrgb, hdr10plus_normalized_scale);
-    params.num_distribution_maxrgb_percentiles = 0;
+    // Deployment profiles always carry these nine percentiles. A zero count parses
+    // back cleanly through FFmpeg but is not what any shipping HDR10+ stream sends.
+    params.num_distribution_maxrgb_percentiles =
+      static_cast<uint8_t>(hdr10plus_percentages.size());
+    for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
+      params.distribution_maxrgb[i].percentage = hdr10plus_percentages[i];
+      params.distribution_maxrgb[i].percentile = av_make_q(
+        frame_metadata.distribution_maxrgb[i], hdr10plus_normalized_scale);
+    }
     params.fraction_bright_pixels = av_make_q(0, 1);
     params.tone_mapping_flag = 0;
     params.color_saturation_mapping_flag = 0;
@@ -85,7 +93,7 @@ namespace video::hdr_metadata {
     std::copy_n(body, body_size, payload.begin() + hdr10plus_t35_prefix.size());
 
     AVDynamicHDRPlus decoded {};
-    const bool valid_round_trip =
+    bool valid_round_trip =
       av_dynamic_hdr_plus_from_t35(&decoded, body, body_size) >= 0 &&
       decoded.application_version == metadata.application_version &&
       decoded.num_windows == metadata.num_windows &&
@@ -94,7 +102,19 @@ namespace video::hdr_metadata {
       rational_equals(decoded.params[0].maxscl[0], params.maxscl[0]) &&
       rational_equals(decoded.params[0].maxscl[1], params.maxscl[1]) &&
       rational_equals(decoded.params[0].maxscl[2], params.maxscl[2]) &&
-      rational_equals(decoded.params[0].average_maxrgb, params.average_maxrgb);
+      rational_equals(decoded.params[0].average_maxrgb, params.average_maxrgb) &&
+      decoded.params[0].num_distribution_maxrgb_percentiles ==
+        params.num_distribution_maxrgb_percentiles;
+
+    // Checking the distribution too: leaving it out is what let a non-conformant
+    // empty percentile list ship while the round trip still reported success.
+    for (size_t i = 0; valid_round_trip && i < hdr10plus_percentages.size(); ++i) {
+      valid_round_trip =
+        decoded.params[0].distribution_maxrgb[i].percentage ==
+          params.distribution_maxrgb[i].percentage &&
+        rational_equals(decoded.params[0].distribution_maxrgb[i].percentile,
+          params.distribution_maxrgb[i].percentile);
+    }
 
     if (!valid_round_trip) {
       return 0;

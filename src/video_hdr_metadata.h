@@ -37,9 +37,25 @@ namespace video::hdr_metadata {
   // without exposing FFmpeg headers to this shared, unit-testable header.
   constexpr size_t hdr10plus_t35_max_payload_size = 1024;
 
+  /**
+   * The maxRGB percentages ST 2094-40 deployment profiles carry.
+   *
+   * The syntax element num_distribution_maxrgb_percentiles is u(4), so a zero count
+   * is representable, but shipping HDR10+ always sends these nine. FFmpeg neither
+   * enforces nor round-trips the count, so an empty distribution serializes and
+   * parses back cleanly while still being non-conformant on the wire.
+   */
+  inline constexpr std::array<uint8_t, 9> hdr10plus_percentages { 1, 5, 10, 25, 50, 75, 90, 95, 99 };
+
+  static_assert(
+    hdr10plus_percentages.size() == platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES,
+    "analyzer distribution_maxrgb[] must match the HDR10+ percentage table");
+
   struct hdr10plus_frame_metadata_t {
     int maxscl = 0;
     int average_maxrgb = 0;
+    /// Normalized maxRGB at each entry of hdr10plus_percentages.
+    std::array<int, hdr10plus_percentages.size()> distribution_maxrgb {};
     uint16_t targeted_system_display_maximum_luminance = 1000;
     bool valid = false;
   };
@@ -47,10 +63,14 @@ namespace video::hdr_metadata {
   /**
    * Convert analyzer luminance values into the normalized ST 2094-40 fields
    * shared by the AVCodec side-data and native NVENC paths.
+   *
+   * distribution carries maxRGB in nits at each hdr10plus_percentages entry. A null
+   * pointer, or any non-finite or negative entry, leaves the distribution at zero —
+   * callers must then omit it rather than send a partially filled one.
    */
   inline hdr10plus_frame_metadata_t
   hdr10plus_from_luminance(float percentile_95, float average_maxrgb,
-    uint16_t max_display_luminance) {
+    uint16_t max_display_luminance, const float *distribution = nullptr) {
     if (!std::isfinite(percentile_95) || !std::isfinite(average_maxrgb) ||
         percentile_95 < 0.0f || average_maxrgb < 0.0f) {
       return {};
@@ -65,12 +85,24 @@ namespace video::hdr_metadata {
       return static_cast<int>(std::lround(normalized * hdr10plus_normalized_scale));
     };
 
-    return {
+    hdr10plus_frame_metadata_t result {
       .maxscl = normalize(percentile_95),
       .average_maxrgb = normalize(average_maxrgb),
       .targeted_system_display_maximum_luminance = target_nits,
       .valid = true,
     };
+
+    if (distribution) {
+      for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
+        if (!std::isfinite(distribution[i]) || distribution[i] < 0.0f) {
+          result.distribution_maxrgb = {};
+          return result;
+        }
+        result.distribution_maxrgb[i] = normalize(distribution[i]);
+      }
+    }
+
+    return result;
   }
 
   /**

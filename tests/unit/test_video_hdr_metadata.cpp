@@ -140,6 +140,65 @@ TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
   EXPECT_EQ(decoded.params[0].color_saturation_mapping_flag, 0);
 }
 
+TEST(HdrDynamicMetadata, CarriesTheNineHdr10PlusPercentiles) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.percentile_95 = 900.0f;
+  stats.avg_maxrgb = 300.0f;
+  const float nits[] = { 10, 50, 100, 200, 300, 500, 800, 900, 1000 };
+  std::copy(std::begin(nits), std::end(nits), std::begin(stats.distribution_maxrgb));
+  stats.valid = true;
+
+  std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> payload {};
+  const size_t payload_size = video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, payload);
+  ASSERT_GT(payload_size, video::hdr_metadata::hdr10plus_t35_prefix_size);
+
+  AVDynamicHDRPlus decoded {};
+  ASSERT_GE(av_dynamic_hdr_plus_from_t35(
+              &decoded,
+              payload.data() + video::hdr_metadata::hdr10plus_t35_prefix_size,
+              payload_size - video::hdr_metadata::hdr10plus_t35_prefix_size),
+    0);
+
+  // A zero count parses back cleanly but is not what shipping HDR10+ sends, which is
+  // how the empty distribution survived the round-trip check before.
+  ASSERT_EQ(decoded.params[0].num_distribution_maxrgb_percentiles,
+    video::hdr_metadata::hdr10plus_percentages.size());
+  for (size_t i = 0; i < video::hdr_metadata::hdr10plus_percentages.size(); ++i) {
+    EXPECT_EQ(decoded.params[0].distribution_maxrgb[i].percentage,
+      video::hdr_metadata::hdr10plus_percentages[i]);
+  }
+  // 10 nits and 1000 nits against a 1000 nit target, in units of 1/100000.
+  EXPECT_EQ(av_cmp_q(decoded.params[0].distribution_maxrgb[0].percentile,
+              av_make_q(1000, 100000)),
+    0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].distribution_maxrgb[8].percentile,
+              av_make_q(100000, 100000)),
+    0);
+  // The distribution must not decrease across percentiles.
+  for (size_t i = 1; i < video::hdr_metadata::hdr10plus_percentages.size(); ++i) {
+    EXPECT_LE(av_cmp_q(decoded.params[0].distribution_maxrgb[i - 1].percentile,
+                decoded.params[0].distribution_maxrgb[i].percentile),
+      0);
+  }
+}
+
+TEST(HdrDynamicMetadata, ZeroesTheWholeDistributionOnOneBadEntry) {
+  using video::hdr_metadata::hdr10plus_from_luminance;
+
+  float bad[] = { 10, 50, 100, std::numeric_limits<float>::quiet_NaN(), 300, 500, 800, 900, 1000 };
+  const auto from_nan = hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad);
+  EXPECT_TRUE(from_nan.valid);
+  for (const auto value : from_nan.distribution_maxrgb) {
+    EXPECT_EQ(value, 0);
+  }
+
+  float negative[] = { 10, 50, 100, 200, -1.0f, 500, 800, 900, 1000 };
+  const auto from_negative = hdr10plus_from_luminance(900.0f, 300.0f, 1000, negative);
+  for (const auto value : from_negative.distribution_maxrgb) {
+    EXPECT_EQ(value, 0);
+  }
+}
+
 TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
   platf::hdr_frame_luminance_stats_t stats {};
   stats.percentile_95 = 400.0f;

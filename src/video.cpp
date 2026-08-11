@@ -5,6 +5,7 @@
 // standard includes
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <atomic>
 #include <bitset>
 #include <functional>
@@ -538,6 +539,8 @@ namespace video {
     float avg_maxrgb = 0.0f;
     float percentile_95 = 0.0f;
     float percentile_99 = 0.0f;
+    /// Smoothed maxRGB (nits) at each hdr_metadata::hdr10plus_percentages entry.
+    float distribution_maxrgb[platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES] = {};
     bool initialized = false;
 
     /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
@@ -562,6 +565,8 @@ namespace video {
         avg_maxrgb = raw.avg_maxrgb;
         percentile_95 = raw.percentile_95;
         percentile_99 = raw.percentile_99;
+        std::copy(std::begin(raw.distribution_maxrgb), std::end(raw.distribution_maxrgb),
+          std::begin(distribution_maxrgb));
         initialized = true;
         return;
       }
@@ -577,6 +582,10 @@ namespace video {
       avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
       percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
       percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
+      for (size_t i = 0; i < std::size(distribution_maxrgb); ++i) {
+        distribution_maxrgb[i] =
+          alpha * raw.distribution_maxrgb[i] + (1.0f - alpha) * distribution_maxrgb[i];
+      }
     }
   };
 
@@ -2109,7 +2118,7 @@ namespace video {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
         const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
-          ema.percentile_95, ema.avg_maxrgb, max_display_luminance);
+          ema.percentile_95, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
         if (frame_metadata.valid) {
           auto &params = hdr10plus->params[0];
           const auto maxscl = av_make_q(
@@ -2121,6 +2130,13 @@ namespace video {
             frame_metadata.average_maxrgb, hdr_metadata::hdr10plus_normalized_scale);
           hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
             frame_metadata.targeted_system_display_maximum_luminance, 1);
+          params.num_distribution_maxrgb_percentiles =
+            static_cast<uint8_t>(hdr_metadata::hdr10plus_percentages.size());
+          for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
+            params.distribution_maxrgb[i].percentage = hdr_metadata::hdr10plus_percentages[i];
+            params.distribution_maxrgb[i].percentile = av_make_q(
+              frame_metadata.distribution_maxrgb[i], hdr_metadata::hdr10plus_normalized_scale);
+          }
         }
       }
     }
