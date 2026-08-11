@@ -4223,7 +4223,13 @@ namespace video {
                                             std::vector<std::string> {} :
                                             platf::display_names(encoder_list.front()->platform_formats->dev_type);
       probe_display_name = select_encoder_probe_display(configured_display_name, capture_ready_displays);
-      if (!configured_display_name.empty() && probe_display_name.empty()) {
+      if (!config::video.output_name.empty() && configured_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << config::video.output_name
+                           << "] could not be resolved for temporary capture backend ["sv
+                           << *probe_capture_override
+                           << "]; encoder probing will use backend display auto-selection"sv;
+      }
+      else if (!configured_display_name.empty() && probe_display_name.empty()) {
         BOOST_LOG(warning) << "Configured output ["sv << configured_display_name
                            << "] is unavailable to temporary capture backend ["sv
                            << *probe_capture_override
