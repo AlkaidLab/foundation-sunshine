@@ -27,6 +27,12 @@ namespace {
     return video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays, {}) == R"(\\.\DISPLAY7)";
   }
 
+  bool
+  empty_capture_ready_list_returns_no_display() {
+    const std::array<std::string, 0> displays {};
+    return video::select_encoder_probe_display(R"(\\.\DISPLAY18)", displays, {}).empty();
+  }
+
 }  // namespace
 
 int
@@ -41,6 +47,10 @@ main() {
   }
   if (!unfiltered_probe_uses_first_capture_ready_display()) {
     std::cerr << "unfiltered display fallback test failed\n";
+    return 1;
+  }
+  if (!empty_capture_ready_list_returns_no_display()) {
+    std::cerr << "empty display fallback test failed\n";
     return 1;
   }
   return 0;
