@@ -847,6 +847,16 @@ namespace confighttp {
           input_edit_node.erase("detached");
         }
 
+        auto gamepad = input_edit_node.get_optional<std::string>("gamepad");
+        if (gamepad && gamepad->empty()) {
+          input_edit_node.erase("gamepad");
+        }
+        else if (gamepad && *gamepad != "auto"sv && *gamepad != "x360"sv && *gamepad != "ds4"sv) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid per-app gamepad type");
+          return;
+        }
+
         int index = input_edit_node.get<int>("index");
         input_edit_node.erase("index");
 
