@@ -217,6 +217,24 @@
 
                 <FormField
                   v-if="isWindows"
+                  id="gamepadMode"
+                  :label="t('apps.gamepad_mode')"
+                  :hint="t('apps.gamepad_mode_desc')"
+                >
+                  <select
+                    id="gamepadMode"
+                    class="form-select form-control-enhanced"
+                    v-model="formData.gamepad"
+                  >
+                    <option value="">{{ t('apps.gamepad_mode_inherit') }}</option>
+                    <option value="auto">{{ t('apps.gamepad_mode_auto') }}</option>
+                    <option value="x360">{{ t('apps.gamepad_mode_x360') }}</option>
+                    <option value="ds4">{{ t('apps.gamepad_mode_ds4') }}</option>
+                  </select>
+                </FormField>
+
+                <FormField
+                  v-if="isWindows"
                   id="mouseMode"
                   :label="t('apps.mouse_mode')"
                   :hint="t('apps.mouse_mode_desc')"
@@ -322,6 +340,7 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'wait-all': true,
   'exit-timeout': 5,
   'mouse-mode': 0,
+  gamepad: '',
   'prep-cmd': [],
   'menu-cmd': [],
   detached: [],
@@ -435,6 +454,9 @@ const ensureDefaultValues = () => {
   }
   if (isWindows.value && formData.value['mouse-mode'] === undefined) {
     formData.value['mouse-mode'] = 0
+  }
+  if (isWindows.value && formData.value.gamepad === undefined) {
+    formData.value.gamepad = ''
   }
 }
 

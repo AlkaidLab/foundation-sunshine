@@ -207,6 +207,7 @@ export class AppService {
       elevated: Boolean(app.elevated),
       'auto-detach': Boolean(app['auto-detach']),
       'wait-all': Boolean(app['wait-all']),
+      gamepad: ['auto', 'x360', 'ds4'].includes(app.gamepad) ? app.gamepad : '',
       'exit-timeout': parseInt(app['exit-timeout']) || 5,
       'prep-cmd': filteredPrepCmd,
       'menu-cmd': Array.isArray(app['menu-cmd']) ? app['menu-cmd'] : [],

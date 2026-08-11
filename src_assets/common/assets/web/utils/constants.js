@@ -26,6 +26,7 @@ export const APP_CONSTANTS = {
     elevated: false,
     "auto-detach": true,
     "wait-all": true,
+    gamepad: "",
     "exit-timeout": 5,
     "prep-cmd": [],
     "menu-cmd": [],

@@ -995,6 +995,12 @@ namespace platf {
   move_mouse(input_t &input, int deltaX, int deltaY);
   void
   set_mouse_mode(int mode);
+  /**
+   * @brief Select the gamepad emulation policy for the currently running app.
+   * @param mode 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4.
+   */
+  void
+  set_gamepad_mode(int mode);
   void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void

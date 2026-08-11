@@ -477,11 +477,34 @@ namespace platf {
 
   // Per-app mouse mode: 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
   static std::atomic<int> current_mouse_mode { 0 };
+  // Per-app gamepad mode: 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
+  static std::atomic<int> current_gamepad_mode { 0 };
 
   void
   set_mouse_mode(int mode) {
     current_mouse_mode.store(mode, std::memory_order_relaxed);
     BOOST_LOG(info) << "Mouse mode set to: "sv << (mode == 0 ? "auto" : mode == 1 ? "virtual mouse" : "SendInput");
+  }
+
+  void
+  set_gamepad_mode(int mode) {
+    if (mode < 0 || mode > 3) {
+      mode = 0;
+    }
+    current_gamepad_mode.store(mode, std::memory_order_relaxed);
+    constexpr std::array<std::string_view, 4> names { "global", "auto", "Xbox 360", "DualShock 4" };
+    BOOST_LOG(info) << "Gamepad mode set to: "sv << names[mode];
+  }
+
+  static int
+  effective_gamepad_mode() {
+    const auto app_mode = current_gamepad_mode.load(std::memory_order_relaxed);
+    if (app_mode != 0) {
+      return app_mode;
+    }
+    if (config::input.gamepad == "x360"sv) return 2;
+    if (config::input.gamepad == "ds4"sv) return 3;
+    return 1;
   }
 
   struct input_raw_t {
@@ -1887,12 +1910,15 @@ namespace platf {
 
     VIGEM_TARGET_TYPE selectedGamepadType;
 
-    if (config::input.gamepad == "x360"sv) {
-      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller (manual selection)"sv;
+    const auto gamepad_mode = effective_gamepad_mode();
+    const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
+
+    if (gamepad_mode == 2) {
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
       selectedGamepadType = Xbox360Wired;
     }
-    else if (config::input.gamepad == "ds4"sv) {
-      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller (manual selection)"sv;
+    else if (gamepad_mode == 3) {
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
       selectedGamepadType = DualShock4Wired;
     }
     else if (metadata.type == LI_CTYPE_PS) {
@@ -2076,7 +2102,7 @@ namespace platf {
     if (gamepad_state.buttonFlags & (TOUCHPAD_BUTTON | MISC_BUTTON)) buttons |= DS4_SPECIAL_BUTTON_TOUCHPAD;
 
     // Manual DS4 emulation: check if BACK button should also trigger DS4 touchpad click
-    if (config::input.gamepad == "ds4"sv && config::input.ds4_back_as_touchpad_click && (gamepad_state.buttonFlags & BACK)) buttons |= DS4_SPECIAL_BUTTON_TOUCHPAD;
+    if (effective_gamepad_mode() == 3 && config::input.ds4_back_as_touchpad_click && (gamepad_state.buttonFlags & BACK)) buttons |= DS4_SPECIAL_BUTTON_TOUCHPAD;
 
     return (DS4_SPECIAL_BUTTONS) buttons;
   }
@@ -2485,7 +2511,7 @@ namespace platf {
     platform_caps::caps_t caps = 0;
 
     // We support controller touchpad input as long as we're not emulating X360
-    if (config::input.gamepad != "x360"sv) {
+    if (effective_gamepad_mode() != 2) {
       caps |= platform_caps::controller_touch;
     }
 
