@@ -4007,7 +4007,18 @@ namespace video {
     }
 
     // If the encoder isn't supported at all (not even H.264), bail early
-    const auto output_display_name { display_device::get_display_name(config::video.output_name) };
+    // A temporary capture backend must select a display that it can enumerate.
+    // In particular, a VDD output can have a valid DisplayConfig/GDI name while
+    // being intentionally absent from DXGI. Passing that name to a DDX-backed
+    // encoder probe makes the probe target a display the temporary backend
+    // cannot open. Select from the temporary backend's capture-ready outputs.
+    auto output_display_name = display_device::get_display_name(config::video.output_name);
+    if (probe_capture_override) {
+      const auto probe_display_names = platf::display_names(encoder.platform_formats->dev_type);
+      if (std::find(probe_display_names.begin(), probe_display_names.end(), output_display_name) == probe_display_names.end()) {
+        output_display_name = probe_display_names.empty() ? std::string {} : probe_display_names.front();
+      }
+    }
     reset_display(disp, encoder.platform_formats->dev_type, output_display_name, config_autoselect);
     if (!disp) {
       return false;
