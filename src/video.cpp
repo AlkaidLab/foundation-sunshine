@@ -39,6 +39,7 @@ extern "C" {
 #include "sync.h"
 #include "video.h"
 #include "video_hdr_metadata.h"
+#include "video_probe.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -4015,9 +4016,10 @@ namespace video {
     auto output_display_name = display_device::get_display_name(config::video.output_name);
     if (probe_capture_override) {
       const auto probe_display_names = platf::display_names(encoder.platform_formats->dev_type);
-      if (std::find(probe_display_names.begin(), probe_display_names.end(), output_display_name) == probe_display_names.end()) {
-        output_display_name = probe_display_names.empty() ? std::string {} : probe_display_names.front();
-      }
+      output_display_name = select_encoder_probe_display(
+        output_display_name,
+        probe_display_names,
+        config::video.adapter_name);
     }
     reset_display(disp, encoder.platform_formats->dev_type, output_display_name, config_autoselect);
     if (!disp) {

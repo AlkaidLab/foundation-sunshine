@@ -44,6 +44,15 @@ endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
 
 if (WIN32)
+    add_executable(video_probe_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp)
+    target_include_directories(video_probe_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_options(video_probe_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(video_probe_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
+
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
     target_include_directories(vdd_prerequisite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -98,6 +107,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp)
 
 set(SUNSHINE_SOURCES
         ${SUNSHINE_TARGET_FILES})
