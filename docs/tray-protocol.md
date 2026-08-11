@@ -67,9 +67,18 @@ The GUI keeps its tray while Core is unavailable. It switches to a distinct
 disconnected presentation, disables Core-dependent commands, and keeps local
 recovery and diagnostic commands available. On Windows, the disconnected menu
 can restart the Sunshine service. Recovery remains pending until the GUI
-receives an actual Core state response; it times out after 30 seconds so the
-user can retry. The background GUI agent reconnects and restores the live state
-when the local Core becomes available again.
+receives a new accepted Core state response from its monitor. On Windows this
+is a local packaged-GUI command, not a Core `/api/tray/action`: the Tauri backend
+uses the existing elevated PowerShell service-restart path. Its command result
+only confirms that the restart was dispatched; it does not declare Core ready
+and is not exposed to remote tray providers.
+
+The 30-second recovery timeout starts after that restart command returns. Only
+an accepted `GET /api/tray/state` snapshot or SSE `tray-state` event received
+after the attempt began completes recovery. SSE keepalives, connection setup,
+error responses, cached state, and tray-action responses do not. Timeout clears
+the active attempt and re-enables manual retry; it does not cancel an OS restart
+already in progress or stop background Core monitoring.
 
 ## Actions and operations
 

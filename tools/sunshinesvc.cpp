@@ -135,6 +135,12 @@ struct GuiAgentProcess {
   ULONGLONG acquired_at_ms = 0;
 };
 
+struct GuiAgentLookup {
+  HANDLE handle = NULL;
+  DWORD process_id = 0;
+  DWORD error = ERROR_SUCCESS;
+};
+
 void
 CloseGuiAgentHandle(GuiAgentProcess &process) {
   if (process.handle != NULL) {
@@ -179,48 +185,64 @@ ResolveGuiAgentPath(std::wstring &gui_directory, std::wstring &gui_path) {
   return ERROR_SUCCESS;
 }
 
-HANDLE
-OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path, DWORD &process_id) {
+GuiAgentLookup
+OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path) {
+  GuiAgentLookup result;
   const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snapshot == INVALID_HANDLE_VALUE) {
-    return NULL;
+    result.error = GetLastError();
+    if (result.error == ERROR_SUCCESS) {
+      result.error = ERROR_GEN_FAILURE;
+    }
+    return result;
   }
 
   PROCESSENTRY32W entry = {};
   entry.dwSize = sizeof(entry);
-  auto found_process = (HANDLE) NULL;
-  if (Process32FirstW(snapshot, &entry)) {
-    do {
-      if (_wcsicmp(entry.szExeFile, L"sunshine-gui.exe") != 0) {
-        continue;
-      }
+  if (!Process32FirstW(snapshot, &entry)) {
+    result.error = GetLastError();
+    if (result.error == ERROR_NO_MORE_FILES) {
+      result.error = ERROR_SUCCESS;
+    }
+    else if (result.error == ERROR_SUCCESS) {
+      result.error = ERROR_GEN_FAILURE;
+    }
+    CloseHandle(snapshot);
+    return result;
+  }
 
+  while (true) {
+    if (_wcsicmp(entry.szExeFile, L"sunshine-gui.exe") == 0) {
       DWORD session_id = 0;
-      if (!ProcessIdToSessionId(entry.th32ProcessID, &session_id) || session_id != console_session_id) {
-        continue;
-      }
-
-      const auto candidate = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
-      if (candidate == NULL) {
-        continue;
-      }
-
-      std::wstring candidate_path(32768, L'\0');
-      DWORD candidate_path_length = static_cast<DWORD>(candidate_path.size());
-      if (QueryFullProcessImageNameW(candidate, 0, candidate_path.data(), &candidate_path_length)) {
-        candidate_path.resize(candidate_path_length);
-        if (_wcsicmp(candidate_path.c_str(), gui_path.c_str()) == 0) {
-          found_process = candidate;
-          process_id = entry.th32ProcessID;
-          break;
+      if (ProcessIdToSessionId(entry.th32ProcessID, &session_id) && session_id == console_session_id) {
+        const auto candidate = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+        if (candidate != NULL) {
+          std::wstring candidate_path(32768, L'\0');
+          DWORD candidate_path_length = static_cast<DWORD>(candidate_path.size());
+          if (QueryFullProcessImageNameW(candidate, 0, candidate_path.data(), &candidate_path_length)) {
+            candidate_path.resize(candidate_path_length);
+            if (_wcsicmp(candidate_path.c_str(), gui_path.c_str()) == 0) {
+              result.handle = candidate;
+              result.process_id = entry.th32ProcessID;
+              break;
+            }
+          }
+          CloseHandle(candidate);
         }
       }
-      CloseHandle(candidate);
-    } while (Process32NextW(snapshot, &entry));
+    }
+
+    if (!Process32NextW(snapshot, &entry)) {
+      const auto error = GetLastError();
+      if (error != ERROR_NO_MORE_FILES) {
+        result.error = error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error;
+      }
+      break;
+    }
   }
 
   CloseHandle(snapshot);
-  return found_process;
+  return result;
 }
 
 DWORD
@@ -232,11 +254,13 @@ AcquireGuiAgent(DWORD console_session_id, GuiAgentProcess &agent, bool &attached
     return path_error;
   }
 
-  DWORD existing_process_id = 0;
-  const auto existing_process = OpenExistingGuiAgent(console_session_id, gui_path, existing_process_id);
-  if (existing_process != NULL) {
-    agent.handle = existing_process;
-    agent.process_id = existing_process_id;
+  const auto existing_process = OpenExistingGuiAgent(console_session_id, gui_path);
+  if (existing_process.error != ERROR_SUCCESS) {
+    return existing_process.error;
+  }
+  if (existing_process.handle != NULL) {
+    agent.handle = existing_process.handle;
+    agent.process_id = existing_process.process_id;
     agent.acquired_at_ms = GetTickCount64();
     attached_to_existing = true;
     return ERROR_SUCCESS;

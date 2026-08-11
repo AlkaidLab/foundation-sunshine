@@ -25,6 +25,7 @@ namespace {
 
     return backoff.next_delay() == 1000U &&
            backoff.next_delay() == 2000U &&
+           backoff.next_delay(sunshinesvc::GUI_RESTART_STABLE_RUNTIME_MS - 1) == 4000U &&
            backoff.next_delay(sunshinesvc::GUI_RESTART_STABLE_RUNTIME_MS) == 1000U &&
            backoff.next_delay() == 2000U;
   }
