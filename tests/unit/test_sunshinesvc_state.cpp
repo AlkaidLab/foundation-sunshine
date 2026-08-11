@@ -36,29 +36,32 @@ TEST(GuiRestartBackoff, ExplicitResetStartsAtInitialDelay) {
   EXPECT_EQ(backoff.next_delay(), 1000U);
 }
 
-TEST(GuiAgentRestartPolicy, CleanExitIsSuppressedUntilNextCoreLifecycle) {
+TEST(GuiAgentRestartPolicy, CleanExitSuppressesLaunchUntilSupervisionResumes) {
   sunshinesvc::GuiAgentRestartPolicy policy;
 
-  EXPECT_TRUE(policy.restart_allowed());
-  policy.suppress_until_core_restart();
-  EXPECT_FALSE(policy.restart_allowed());
-  policy.begin_core_lifecycle();
-  EXPECT_TRUE(policy.restart_allowed());
+  EXPECT_TRUE(policy.launch_allowed());
+  policy.suppress_launch();
+  EXPECT_FALSE(policy.launch_allowed());
+  policy.resume_supervision();
+  EXPECT_TRUE(policy.launch_allowed());
 }
 
-TEST(GuiAgentCrashLogLimiter, LogsOnlyCrashLoopStateChanges) {
+TEST(GuiAgentCrashLogLimiter, LogsStateChangesAndPeriodicReminders) {
   sunshinesvc::GuiAgentCrashLogLimiter limiter;
 
   EXPECT_TRUE(limiter.should_log_acquisition(false));
   EXPECT_FALSE(limiter.should_log_acquisition(false));
 
-  EXPECT_TRUE(limiter.should_log_exit(1, 1000));
+  EXPECT_TRUE(limiter.should_log_exit(1, 1000, 0));
   EXPECT_TRUE(limiter.should_log_acquisition(false));
-  EXPECT_FALSE(limiter.should_log_exit(1, 1000));
+  EXPECT_FALSE(limiter.should_log_exit(1, 1000, sunshinesvc::GUI_CRASH_LOG_REMINDER_MS - 1));
   EXPECT_FALSE(limiter.should_log_acquisition(false));
+  EXPECT_TRUE(limiter.should_log_exit(1, 1000, sunshinesvc::GUI_CRASH_LOG_REMINDER_MS));
+  EXPECT_TRUE(limiter.should_log_acquisition(false));
 
-  EXPECT_TRUE(limiter.should_log_exit(1, 2000));
-  EXPECT_TRUE(limiter.should_log_exit(2, 2000));
+  EXPECT_TRUE(limiter.should_log_exit(1, 2000, sunshinesvc::GUI_CRASH_LOG_REMINDER_MS + 1));
+  EXPECT_TRUE(limiter.should_log_exit(2, 2000, sunshinesvc::GUI_CRASH_LOG_REMINDER_MS + 2));
+  EXPECT_TRUE(limiter.should_log_acquisition(false));
   EXPECT_TRUE(limiter.should_log_acquisition(true));
 
   limiter.reset();

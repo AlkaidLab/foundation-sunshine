@@ -12,6 +12,8 @@ namespace sunshinesvc {
   constexpr std::uint32_t GUI_RESTART_INITIAL_DELAY_MS = 1000;
   constexpr std::uint32_t GUI_RESTART_MAX_DELAY_MS = 30000;
   constexpr std::uint64_t GUI_RESTART_STABLE_RUNTIME_MS = 60000;
+  constexpr std::uint32_t GUI_REATTACH_POLL_MS = 3000;
+  constexpr std::uint64_t GUI_CRASH_LOG_REMINDER_MS = 300000;
 
   class GuiRestartBackoff {
   public:
@@ -41,36 +43,42 @@ namespace sunshinesvc {
   class GuiAgentRestartPolicy {
   public:
     void
-    suppress_until_core_restart() {
-      restart_suppressed_ = true;
+    suppress_launch() {
+      launch_suppressed_ = true;
     }
 
     void
-    begin_core_lifecycle() {
-      restart_suppressed_ = false;
+    resume_supervision() {
+      launch_suppressed_ = false;
     }
 
     bool
-    restart_allowed() const {
-      return !restart_suppressed_;
+    launch_allowed() const {
+      return !launch_suppressed_;
     }
 
   private:
-    bool restart_suppressed_ = false;
+    bool launch_suppressed_ = false;
   };
 
   class GuiAgentCrashLogLimiter {
   public:
     bool
-    should_log_exit(std::uint32_t exit_code, std::uint32_t retry_delay_ms) {
+    should_log_exit(std::uint32_t exit_code, std::uint32_t retry_delay_ms, std::uint64_t now_ms) {
       const bool changed = !has_last_exit_ ||
                            exit_code != last_exit_code_ ||
                            retry_delay_ms != last_retry_delay_ms_;
+      const bool reminder_due = has_last_exit_ &&
+                                now_ms - last_exit_log_at_ms_ >= GUI_CRASH_LOG_REMINDER_MS;
+      const bool should_log = changed || reminder_due;
       has_last_exit_ = true;
       last_exit_code_ = exit_code;
       last_retry_delay_ms_ = retry_delay_ms;
-      acquisition_log_pending_ = changed;
-      return changed;
+      if (should_log) {
+        last_exit_log_at_ms_ = now_ms;
+      }
+      acquisition_log_pending_ = should_log;
+      return should_log;
     }
 
     bool
@@ -85,6 +93,7 @@ namespace sunshinesvc {
       has_last_exit_ = false;
       last_exit_code_ = 0;
       last_retry_delay_ms_ = 0;
+      last_exit_log_at_ms_ = 0;
       acquisition_log_pending_ = true;
     }
 
@@ -93,6 +102,7 @@ namespace sunshinesvc {
     bool acquisition_log_pending_ = true;
     std::uint32_t last_exit_code_ = 0;
     std::uint32_t last_retry_delay_ms_ = 0;
+    std::uint64_t last_exit_log_at_ms_ = 0;
   };
 
 }  // namespace sunshinesvc

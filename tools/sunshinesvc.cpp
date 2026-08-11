@@ -245,16 +245,21 @@ OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path) {
   return result;
 }
 
+GuiAgentLookup
+FindExistingGuiAgent(DWORD console_session_id, std::wstring &gui_directory, std::wstring &gui_path) {
+  GuiAgentLookup result;
+  result.error = ResolveGuiAgentPath(gui_directory, gui_path);
+  if (result.error != ERROR_SUCCESS) {
+    return result;
+  }
+  return OpenExistingGuiAgent(console_session_id, gui_path);
+}
+
 DWORD
 AcquireGuiAgent(DWORD console_session_id, GuiAgentProcess &agent, bool &attached_to_existing) {
   std::wstring gui_directory;
   std::wstring gui_path;
-  const auto path_error = ResolveGuiAgentPath(gui_directory, gui_path);
-  if (path_error != ERROR_SUCCESS) {
-    return path_error;
-  }
-
-  const auto existing_process = OpenExistingGuiAgent(console_session_id, gui_path);
+  const auto existing_process = FindExistingGuiAgent(console_session_id, gui_directory, gui_path);
   if (existing_process.error != ERROR_SUCCESS) {
     return existing_process.error;
   }
@@ -517,6 +522,41 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     gui_agent_last_error = error;
   };
 
+  const auto reattach_gui_agent = [&]() {
+    std::wstring gui_directory;
+    std::wstring gui_path;
+    auto existing_process = FindExistingGuiAgent(gui_agent_session_id, gui_directory, gui_path);
+    gui_agent_retry_at_ms = GetTickCount64() + sunshinesvc::GUI_REATTACH_POLL_MS;
+
+    if (existing_process.error != ERROR_SUCCESS) {
+      if (existing_process.error != gui_agent_last_error) {
+        WriteServiceLog(log_file_handle,
+          "GUI agent reattach probe failed for session " + std::to_string(gui_agent_session_id) +
+            " (Win32 error " + std::to_string(existing_process.error) + "); retrying in " +
+            std::to_string(sunshinesvc::GUI_REATTACH_POLL_MS) + " ms");
+      }
+      gui_agent_last_error = existing_process.error;
+      return;
+    }
+
+    if (existing_process.handle == NULL) {
+      gui_agent_last_error = ERROR_SUCCESS;
+      return;
+    }
+
+    gui_agent.handle = existing_process.handle;
+    gui_agent.process_id = existing_process.process_id;
+    gui_agent.acquired_at_ms = GetTickCount64();
+    gui_agent_restart_policy.resume_supervision();
+    gui_agent_last_error = ERROR_SUCCESS;
+    gui_agent_retry_at_ms = 0;
+    gui_agent_backoff.reset();
+    gui_agent_log_limiter.reset();
+    WriteServiceLog(log_file_handle,
+      "GUI agent reattached for session " + std::to_string(gui_agent_session_id) +
+        " (PID " + std::to_string(gui_agent.process_id) + ", existing process)");
+  };
+
   // Loop every 3 seconds until the stop event is set or Sunshine.exe is running
   while (WaitForSingleObject(stop_event, 3000) != WAIT_OBJECT_0) {
     auto console_session_id = WTSGetActiveConsoleSessionId();
@@ -531,7 +571,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_retry_at_ms = 0;
       gui_agent_backoff.reset();
-      gui_agent_restart_policy.begin_core_lifecycle();
+      gui_agent_restart_policy.resume_supervision();
       gui_agent_log_limiter.reset();
     }
 
@@ -573,8 +613,8 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
-    if (!gui_agent_restart_policy.restart_allowed()) {
-      gui_agent_restart_policy.begin_core_lifecycle();
+    if (!gui_agent_restart_policy.launch_allowed()) {
+      gui_agent_restart_policy.resume_supervision();
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_retry_at_ms = 0;
       gui_agent_backoff.reset();
@@ -585,20 +625,19 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     // single-instance ownership remain scoped to that user. Preserve the
     // handle across Core restarts in the same session.
     if (gui_agent.handle == NULL &&
-        gui_agent_restart_policy.restart_allowed() &&
+        gui_agent_restart_policy.launch_allowed() &&
         RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
       acquire_gui_agent();
     }
 
     bool still_running;
     do {
-      // Wait for service/Core/session events and supervise the exact GUI agent
-      // process rather than polling by executable name.
+      // Wait on the exact GUI process while it is managed. After a clean exit,
+      // only a low-frequency lookup runs so externally launched replacements
+      // can be reattached without allowing the service to revive the GUI.
       const HANDLE wait_objects[] = { stop_event, process_info.hProcess, session_change_event, gui_agent.handle };
       const DWORD wait_object_count = gui_agent.handle == NULL ? 3 : 4;
-      const DWORD wait_timeout = gui_agent.handle == NULL && gui_agent_restart_policy.restart_allowed() ?
-                                   RetryWaitTimeout(gui_agent_retry_at_ms) :
-                                   INFINITE;
+      const DWORD wait_timeout = gui_agent.handle == NULL ? RetryWaitTimeout(gui_agent_retry_at_ms) : INFINITE;
       const auto wait_result = WaitForMultipleObjects(wait_object_count, wait_objects, FALSE, wait_timeout);
       switch (wait_result) {
         case WAIT_TIMEOUT:
@@ -610,7 +649,12 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             still_running = true;
             break;
           }
-          acquire_gui_agent();
+          if (gui_agent_restart_policy.launch_allowed()) {
+            acquire_gui_agent();
+          }
+          else {
+            reattach_gui_agent();
+          }
           still_running = true;
           break;
 
@@ -648,27 +692,28 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         case WAIT_OBJECT_0 + 3: {
           DWORD exit_code = ERROR_PROCESS_ABORTED;
           GetExitCodeProcess(gui_agent.handle, &exit_code);
-          const auto runtime_ms = GetTickCount64() - gui_agent.acquired_at_ms;
+          const auto exit_at_ms = GetTickCount64();
+          const auto runtime_ms = exit_at_ms - gui_agent.acquired_at_ms;
           const auto exited_process_id = gui_agent.process_id;
           CloseGuiAgentHandle(gui_agent);
 
           if (exit_code == ERROR_SUCCESS) {
-            gui_agent_restart_policy.suppress_until_core_restart();
-            gui_agent_retry_at_ms = 0;
+            gui_agent_restart_policy.suppress_launch();
+            gui_agent_retry_at_ms = exit_at_ms + sunshinesvc::GUI_REATTACH_POLL_MS;
             gui_agent_last_error = ERROR_SUCCESS;
             gui_agent_backoff.reset();
             WriteServiceLog(log_file_handle,
               "GUI agent exited cleanly in session " + std::to_string(console_session_id) +
                 " (PID " + std::to_string(exited_process_id) +
-                "); restart suppressed until the next Core lifecycle");
+                "); automatic launch suppressed while existing-process reattach remains active");
             still_running = true;
             break;
           }
 
           const auto retry_delay_ms = gui_agent_backoff.next_delay(runtime_ms);
-          gui_agent_retry_at_ms = GetTickCount64() + retry_delay_ms;
+          gui_agent_retry_at_ms = exit_at_ms + retry_delay_ms;
           gui_agent_last_error = ERROR_SUCCESS;
-          if (gui_agent_log_limiter.should_log_exit(exit_code, retry_delay_ms)) {
+          if (gui_agent_log_limiter.should_log_exit(exit_code, retry_delay_ms, exit_at_ms)) {
             WriteServiceLog(log_file_handle,
               "GUI agent exited in session " + std::to_string(console_session_id) +
                 " (PID " + std::to_string(exited_process_id) + ", exit code " +

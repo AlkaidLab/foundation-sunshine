@@ -61,7 +61,13 @@ second polling loop.
 On Windows, the service wrapper starts the packaged GUI agent in the active
 signed-in user's session after Core starts. Failed launches are retried while
 Core remains alive, and the GUI's single-instance guard absorbs duplicate
-logon and service-start attempts.
+logon and service-start attempts. A zero GUI process exit code suppresses
+service-initiated launches for the current Core lifecycle. The wrapper still
+performs a low-frequency lookup for an instance started outside the service,
+such as an elevated or updater-launched replacement, and resumes normal process
+supervision after attaching to it. A new Core lifecycle or active console
+session also restores service-initiated launches. Nonzero exits remain crashes
+and are restarted with bounded backoff.
 
 The GUI keeps its tray while Core is unavailable. It switches to a distinct
 disconnected presentation, disables Core-dependent commands, and keeps local
