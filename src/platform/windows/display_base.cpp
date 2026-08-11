@@ -613,6 +613,14 @@ namespace platf::dxgi {
     auto adapter_name = from_utf8(config::video.adapter_name);
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
+    const bool direct_vdd_capture = config::video.capture == "vdd";
+    std::wstring vdd_output_name;
+    if (direct_vdd_capture) {
+      const auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      if (!vdd_device_id.empty()) {
+        vdd_output_name = from_utf8(display_device::get_display_name(vdd_device_id));
+      }
+    }
 
     if (is_rdp_session) {
       BOOST_LOG(info) << "[Display Init] RDP session detected - using first available RDP virtual display";
@@ -661,11 +669,27 @@ namespace platf::dxgi {
           if (!is_rdp_session && !output_name.empty() && desc.DeviceName != output_name) {
             continue;
           }
+          if (direct_vdd_capture &&
+              output_name.empty() &&
+              !vdd_output_name.empty() &&
+              desc.DeviceName != vdd_output_name) {
+            continue;
+          }
 
+          const bool is_selected_vdd_output =
+            direct_vdd_capture &&
+            !vdd_output_name.empty() &&
+            desc.DeviceName == vdd_output_name;
           const bool output_accepted = is_rdp_session ||
-                                       (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false));
+                                       (desc.AttachedToDesktop &&
+                                        (is_selected_vdd_output ||
+                                         test_dxgi_duplication(adapter_tmp, output_tmp, false)));
 
           if (output_accepted) {
+            if (is_selected_vdd_output) {
+              BOOST_LOG(info) << "[vdd] Selected ZakoVDD output without requiring DXGI Desktop Duplication: "
+                              << to_utf8(desc.DeviceName);
+            }
             BOOST_LOG(is_rdp_session ? info : debug) << "[Display Init] Selected display: " << to_utf8(desc.DeviceName);
 
             output = std::move(output_tmp);
@@ -1169,7 +1193,7 @@ namespace platf {
     // Build list of capture methods to try
     std::vector<std::string> try_types;
 
-    const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
+    const auto &capture_backend = config::video.capture;
 
     if (capture_backend.empty()) {
       if (is_running_as_system_user) {
@@ -1242,6 +1266,14 @@ namespace platf {
   std::vector<std::string>
   display_names(mem_type_e) {
     std::vector<std::string> display_names;
+    const bool direct_vdd_capture = config::video.capture == "vdd";
+    std::string vdd_output_name;
+    if (direct_vdd_capture) {
+      const auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      if (!vdd_device_id.empty()) {
+        vdd_output_name = display_device::get_display_name(vdd_device_id);
+      }
+    }
 
     HRESULT status;
 
@@ -1300,7 +1332,22 @@ namespace platf {
 
         bool can_capture = false;
 
-        if (is_rdp) {
+        const bool is_selected_vdd_output =
+          direct_vdd_capture &&
+          !vdd_output_name.empty() &&
+          device_name == vdd_output_name;
+
+        if (is_selected_vdd_output && desc.AttachedToDesktop) {
+          can_capture = true;
+          BOOST_LOG(debug) << "[Display] Accepting ZakoVDD output without a DXGI Desktop Duplication test: "
+                           << device_name;
+        }
+        else if (direct_vdd_capture && !vdd_output_name.empty()) {
+          BOOST_LOG(debug) << "[Display] Skipping non-ZakoVDD output while direct VDD capture is configured: "
+                           << device_name;
+          continue;
+        }
+        else if (is_rdp) {
           // In RDP, accept any enumerated output regardless of AttachedToDesktop status
           // Virtual displays may not report this correctly
           can_capture = true;
