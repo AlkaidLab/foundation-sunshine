@@ -522,6 +522,17 @@ namespace video {
 
   extern probe_result_t last_encoder_probe_result;
 
+  enum class probe_target_policy_e {
+    backend_autoselect,
+    exact,
+    vdd_compatible
+  };
+
+  struct probe_target_t {
+    std::string output_name; /**< Device selector in the same domain as config::video.output_name. */
+    probe_target_policy_e policy { probe_target_policy_e::backend_autoselect };
+  };
+
   /**
    * @brief Return the encoder selected by the latest successful probe.
    * @return Encoder identifier, or an empty string when no encoder is active.
@@ -552,5 +563,5 @@ namespace video {
    * @warning This is only safe to call when there is no client actively streaming.
    */
   int
-  probe_encoders();
+  probe_encoders(std::optional<probe_target_t> target = std::nullopt);
 }  // namespace video
