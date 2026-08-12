@@ -132,10 +132,12 @@ TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
   EXPECT_EQ(decoded.application_version, video::hdr_metadata::hdr10plus_application_version);
   EXPECT_EQ(decoded.num_windows, 1);
   EXPECT_EQ(av_cmp_q(decoded.targeted_system_display_maximum_luminance, av_make_q(1000, 1)), 0);
-  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[0], av_make_q(50000, 100000)), 0);
-  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[1], av_make_q(50000, 100000)), 0);
-  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[2], av_make_q(50000, 100000)), 0);
-  EXPECT_EQ(av_cmp_q(decoded.params[0].average_maxrgb, av_make_q(10000, 100000)), 0);
+  // 500 nits and 100 nits against the ST 2084 10000-nit reference peak. The
+  // targeted display above is reported separately and must not scale these.
+  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[0], av_make_q(5000, 100000)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[1], av_make_q(5000, 100000)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].maxscl[2], av_make_q(5000, 100000)), 0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].average_maxrgb, av_make_q(1000, 100000)), 0);
   EXPECT_EQ(decoded.params[0].tone_mapping_flag, 0);
   EXPECT_EQ(decoded.params[0].color_saturation_mapping_flag, 0);
 }
@@ -167,36 +169,115 @@ TEST(HdrDynamicMetadata, CarriesTheNineHdr10PlusPercentiles) {
     EXPECT_EQ(decoded.params[0].distribution_maxrgb[i].percentage,
       video::hdr_metadata::hdr10plus_percentages[i]);
   }
-  // 10 nits and 1000 nits against a 1000 nit target, in units of 1/100000.
+  // 10 nits and 1000 nits against the 10000-nit reference peak, in units of 1/100000.
   EXPECT_EQ(av_cmp_q(decoded.params[0].distribution_maxrgb[0].percentile,
-              av_make_q(1000, 100000)),
+              av_make_q(100, 100000)),
     0);
   EXPECT_EQ(av_cmp_q(decoded.params[0].distribution_maxrgb[8].percentile,
-              av_make_q(100000, 100000)),
+              av_make_q(10000, 100000)),
     0);
-  // The distribution must not decrease across percentiles.
-  for (size_t i = 1; i < video::hdr_metadata::hdr10plus_percentages.size(); ++i) {
-    EXPECT_LE(av_cmp_q(decoded.params[0].distribution_maxrgb[i - 1].percentile,
-                decoded.params[0].distribution_maxrgb[i].percentile),
+
+  // ST 2094-40 8.5.4: the 5% and 10% slots are reserved in application_version 1
+  // and carry fixed values rather than analyzer percentiles.
+  EXPECT_EQ(av_cmp_q(decoded.params[0].distribution_maxrgb[1].percentile,
+              av_make_q(0, 100000)),
+    0);
+  EXPECT_EQ(av_cmp_q(decoded.params[0].distribution_maxrgb[2].percentile,
+              av_make_q(255, 100000)),
+    0);
+
+  // The CDF must not decrease across the slots that are actually part of it.
+  const size_t cdf_indices[] = { 0, 3, 4, 5, 6, 7, 8 };
+  for (size_t i = 1; i < std::size(cdf_indices); ++i) {
+    EXPECT_LE(av_cmp_q(decoded.params[0].distribution_maxrgb[cdf_indices[i - 1]].percentile,
+                decoded.params[0].distribution_maxrgb[cdf_indices[i]].percentile),
       0);
   }
 }
 
+TEST(HdrDynamicMetadata, NormalizesHdr10PlusAgainstTheReferencePeakNotTheDisplay) {
+  // The regression: normalizing content statistics against the target display
+  // scaled every value by 10000/peak, so a client reading maxSCL back as
+  // 10000 x the rational saw a picture up to ten times brighter than it was.
+  // Only targeted_system_display_maximum_luminance may vary with the display.
+  const auto at = [](uint16_t display_nits) {
+    return video::hdr_metadata::hdr10plus_from_luminance(500.0f, 100.0f, display_nits);
+  };
+
+  for (const uint16_t display_nits : { uint16_t { 400 }, uint16_t { 1000 }, uint16_t { 4000 } }) {
+    const auto metadata = at(display_nits);
+    ASSERT_TRUE(metadata.valid);
+    EXPECT_EQ(metadata.maxscl, 5000) << "display peak " << display_nits;
+    EXPECT_EQ(metadata.average_maxrgb, 1000) << "display peak " << display_nits;
+    EXPECT_EQ(metadata.targeted_system_display_maximum_luminance, display_nits);
+  }
+
+  // Content brighter than the display is content, not a clipped signal: it must
+  // survive normalization instead of saturating at the display peak.
+  const auto bright = video::hdr_metadata::hdr10plus_from_luminance(4000.0f, 100.0f, 400);
+  ASSERT_TRUE(bright.valid);
+  EXPECT_EQ(bright.maxscl, 40000);
+}
+
+TEST(HdrDynamicMetadata, ReservesTheHdr10PlusV1AndV2DistributionSlots) {
+  // libplacebo reads a nonzero slot 1 as ST 2094-50 V1, the 99.99% scene
+  // luminance, and prefers the CIE-Y values derived from it over maxSCL. Leaking
+  // the 5th percentile there reports the frame's darkest region as its peak.
+  const float nits[] = { 10, 50, 100, 200, 300, 500, 800, 900, 1000 };
+  const auto metadata =
+    video::hdr_metadata::hdr10plus_from_luminance(900.0f, 300.0f, 1000, nits);
+  ASSERT_TRUE(metadata.valid);
+
+  EXPECT_EQ(metadata.distribution_maxrgb[video::hdr_metadata::hdr10plus_reserved_v1_index],
+    video::hdr_metadata::hdr10plus_reserved_v1);
+  EXPECT_EQ(metadata.distribution_maxrgb[video::hdr_metadata::hdr10plus_reserved_v2_index],
+    video::hdr_metadata::hdr10plus_reserved_v2);
+
+  // Every other slot still carries the analyzer value.
+  EXPECT_EQ(metadata.distribution_maxrgb[0], 100);
+  EXPECT_EQ(metadata.distribution_maxrgb[3], 2000);
+  EXPECT_EQ(metadata.distribution_maxrgb[8], 10000);
+}
+
 TEST(HdrDynamicMetadata, ZeroesTheWholeDistributionOnOneBadEntry) {
-  using video::hdr_metadata::hdr10plus_from_luminance;
+  using namespace video::hdr_metadata;
+
+  // One unusable entry discards the whole CDF rather than shipping a partially
+  // filled one. maxSCL and average_maxrgb survive, and V1 = 0 is what tells a
+  // consumer to use them, so the frame is still worth sending.
+  const auto check = [](const hdr10plus_frame_metadata_t &metadata) {
+    EXPECT_TRUE(metadata.valid);
+    EXPECT_GT(metadata.maxscl, 0);
+    EXPECT_GT(metadata.average_maxrgb, 0);
+
+    for (size_t i = 0; i < metadata.distribution_maxrgb.size(); ++i) {
+      if (i == hdr10plus_reserved_v1_index || i == hdr10plus_reserved_v2_index) {
+        continue;
+      }
+      EXPECT_EQ(metadata.distribution_maxrgb[i], 0) << "CDF slot " << i;
+    }
+
+    // 8.5.4 fixes these two in application_version 1 whether or not the analysis
+    // was usable, so the rejection path must not zero V2 either.
+    EXPECT_EQ(metadata.distribution_maxrgb[hdr10plus_reserved_v1_index], hdr10plus_reserved_v1);
+    EXPECT_EQ(metadata.distribution_maxrgb[hdr10plus_reserved_v2_index], hdr10plus_reserved_v2);
+  };
 
   float bad[] = { 10, 50, 100, std::numeric_limits<float>::quiet_NaN(), 300, 500, 800, 900, 1000 };
-  const auto from_nan = hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad);
-  EXPECT_TRUE(from_nan.valid);
-  for (const auto value : from_nan.distribution_maxrgb) {
-    EXPECT_EQ(value, 0);
-  }
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad));
 
   float negative[] = { 10, 50, 100, 200, -1.0f, 500, 800, 900, 1000 };
-  const auto from_negative = hdr10plus_from_luminance(900.0f, 300.0f, 1000, negative);
-  for (const auto value : from_negative.distribution_maxrgb) {
-    EXPECT_EQ(value, 0);
-  }
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000, negative));
+
+  // A bad entry in a reserved slot is still a bad analysis: the CDF goes away
+  // even though that slot's value would have been overwritten anyway.
+  float bad_reserved[] = { 10, -1.0f, 100, 200, 300, 500, 800, 900, 1000 };
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad_reserved));
+
+  // Same story with no distribution at all. The serializer emits all nine
+  // percentiles unconditionally, so the reserved slots have to be right even when
+  // the caller never offered a CDF.
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000));
 }
 
 TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
@@ -254,13 +335,91 @@ TEST(HdrDynamicMetadata, AppliesHdr10PlusTargetLuminanceFallbackAndClamp) {
 TEST(HdrDynamicMetadata, SharesHdr10PlusNormalizationAcrossEncoderPaths) {
   const auto metadata = video::hdr_metadata::hdr10plus_from_luminance(500.0f, 100.0f, 1000);
   ASSERT_TRUE(metadata.valid);
-  EXPECT_EQ(metadata.maxscl, 50000);
-  EXPECT_EQ(metadata.average_maxrgb, 10000);
+  EXPECT_EQ(metadata.maxscl, 5000);
+  EXPECT_EQ(metadata.average_maxrgb, 1000);
   EXPECT_EQ(metadata.targeted_system_display_maximum_luminance, 1000);
 
   const auto fallback = video::hdr_metadata::hdr10plus_from_luminance(400.0f, 80.0f, 0);
   ASSERT_TRUE(fallback.valid);
   EXPECT_EQ(fallback.targeted_system_display_maximum_luminance, 1000);
+}
+
+TEST(HdrDynamicMetadata, SmoothsHdr10PlusLuminanceAcrossFrames) {
+  // The regression: the native NVENC path serialized raw analyzer output, so its
+  // HDR10+ stepped at every GPU readback while the Vivid metadata built from the
+  // same stats was already averaged by vivid_temporal_filter_t.
+  const auto flat = [](float nits) {
+    platf::hdr_frame_luminance_stats_t stats {};
+    stats.min_maxrgb = nits;
+    stats.max_maxrgb = nits;
+    stats.avg_maxrgb = nits;
+    stats.percentile_95 = nits;
+    stats.percentile_99 = nits;
+    for (auto &entry : stats.distribution_maxrgb) {
+      entry = nits;
+    }
+    stats.valid = true;
+    return stats;
+  };
+
+  video::hdr_metadata::hdr_luminance_ema_t ema;
+  EXPECT_FALSE(ema.initialized);
+
+  // First sample snaps: there is nothing to blend against yet.
+  ema.update(flat(100.0f));
+  EXPECT_TRUE(ema.initialized);
+  EXPECT_FLOAT_EQ(ema.percentile_95, 100.0f);
+
+  // A 2x change stays under SCENE_CUT_THRESHOLD, so it blends at ALPHA.
+  ema.update(flat(200.0f));
+  EXPECT_FLOAT_EQ(ema.percentile_95, 115.0f);
+  EXPECT_FLOAT_EQ(ema.avg_maxrgb, 115.0f);
+  EXPECT_FLOAT_EQ(ema.distribution_maxrgb[0], 115.0f);
+
+  // A scene cut past the threshold snaps instead of dragging the old scene along.
+  ema.update(flat(2000.0f));
+  EXPECT_FLOAT_EQ(ema.percentile_95, 2000.0f);
+
+  ema.reset();
+  EXPECT_FALSE(ema.initialized);
+  EXPECT_FLOAT_EQ(ema.percentile_95, 0.0f);
+}
+
+TEST(HdrDynamicMetadata, SmoothedStatsSubstituteOnlyTheFilteredFields) {
+  platf::hdr_frame_luminance_stats_t raw {};
+  raw.avg_maxrgb = 100.0f;
+  raw.max_maxrgb = 100.0f;
+  raw.percentile_95 = 100.0f;
+  raw.percentile_10_pq = 0.25f;
+  raw.percentile_90_pq = 0.75f;
+  raw.analysis_max_nits = 10000.0f;
+  raw.sample_sequence = 42;
+  raw.valid = true;
+
+  video::hdr_metadata::hdr_luminance_ema_t ema;
+
+  // Before the first sample there is nothing to substitute, so raw passes through.
+  const auto passthrough = ema.smoothed(raw);
+  EXPECT_FLOAT_EQ(passthrough.percentile_95, 100.0f);
+
+  ema.update(raw);
+  auto next = raw;
+  next.avg_maxrgb = 200.0f;
+  next.max_maxrgb = 200.0f;
+  next.percentile_95 = 200.0f;
+  ema.update(next);
+
+  const auto smoothed = ema.smoothed(next);
+  EXPECT_FLOAT_EQ(smoothed.percentile_95, 115.0f);
+  EXPECT_FLOAT_EQ(smoothed.avg_maxrgb, 115.0f);
+
+  // Fields this filter does not own must survive untouched: the PQ-domain
+  // percentiles belong to HDR Vivid, which does its own averaging.
+  EXPECT_FLOAT_EQ(smoothed.percentile_10_pq, 0.25f);
+  EXPECT_FLOAT_EQ(smoothed.percentile_90_pq, 0.75f);
+  EXPECT_FLOAT_EQ(smoothed.analysis_max_nits, 10000.0f);
+  EXPECT_EQ(smoothed.sample_sequence, 42U);
+  EXPECT_TRUE(smoothed.valid);
 }
 
 TEST(HdrDynamicMetadata, GeneratesVividFieldsInPqContentDomain) {
