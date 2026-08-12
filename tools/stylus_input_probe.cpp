@@ -33,7 +33,7 @@
 
 namespace {
   constexpr wchar_t window_class_name[] = L"SunshineStylusInputProbe";
-  constexpr wchar_t window_title[] = L"Sunshine 手写笔输入检测";
+  constexpr wchar_t window_title[] = L"AlkaidLab - 手写笔输入检测";
 
   constexpr UINT_PTR report_timer_id = 1;
   constexpr UINT_PTR repaint_timer_id = 2;
@@ -1874,7 +1874,7 @@ namespace {
 
     const auto margin = scale_for_dpi(16, state.dpi);
     RECT title_rect {margin, scale_for_dpi(10, state.dpi), client.right - margin, scale_for_dpi(34, state.dpi)};
-    DrawTextW(memory_context, L"Sunshine 手写笔输入检测", -1, &title_rect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(memory_context, window_title, -1, &title_rect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
     RECT instruction_rect {margin, scale_for_dpi(36, state.dpi), client.right - margin, scale_for_dpi(60, state.dpi)};
     const auto instruction = state.recording ?
                                L"正在录制画布内的手写笔数据；完成后点击“停止录制”。蓝线线宽表示压感。" :
