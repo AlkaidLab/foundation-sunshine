@@ -67,6 +67,23 @@ target_compile_options(test_args PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 # 注意：不会在 cmake/packaging/windows.cmake 中安装，所以不会被打包
 
 if(WIN32)
+    add_executable(stylus-input-probe WIN32
+            stylus_input_probe.cpp)
+    set_target_properties(stylus-input-probe PROPERTIES
+            CXX_STANDARD 23
+            CXX_STANDARD_REQUIRED ON)
+    target_compile_definitions(stylus-input-probe PRIVATE UNICODE _UNICODE)
+    target_link_libraries(stylus-input-probe
+            user32
+            gdi32
+            comdlg32
+            shell32
+            ${PLATFORM_LIBRARIES})
+    target_compile_options(stylus-input-probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+    if(MINGW)
+        target_link_options(stylus-input-probe PRIVATE -municode)
+    endif()
+
     add_executable(vdd-frame-channel-probe vdd_frame_channel_probe.cpp)
     set_target_properties(vdd-frame-channel-probe PROPERTIES
             CXX_STANDARD 23
