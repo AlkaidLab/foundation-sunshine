@@ -107,8 +107,10 @@ namespace video::hdr_metadata {
    * shared by the AVCodec side-data and native NVENC paths.
    *
    * distribution carries maxRGB in nits at each hdr10plus_percentages entry. A null
-   * pointer, or any non-finite or negative entry, leaves the distribution at zero —
-   * callers must then omit it rather than send a partially filled one.
+   * pointer leaves the distribution at zero. Any non-finite or negative entry
+   * discards the whole distribution the same way. Either way the reserved slots keep
+   * their fixed 8.5.4 values: V1 = 0 tells a consumer to fall back to maxSCL, which
+   * stays valid, so the frame is still worth sending.
    */
   inline hdr10plus_frame_metadata_t
   hdr10plus_from_luminance(float percentile_95, float average_maxrgb,
@@ -141,19 +143,22 @@ namespace video::hdr_metadata {
       for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
         if (!std::isfinite(distribution[i]) || distribution[i] < 0.0f) {
           result.distribution_maxrgb = {};
-          return result;
+          break;
         }
         result.distribution_maxrgb[i] = normalize(distribution[i]);
       }
+    }
 
-      // Overwrite the two reserved slots last, so an analyzer percentile can never
-      // reach the wire there. An all-zero distribution from the rejection path
-      // above is left alone: V1 = 0 is the sentinel that makes a consumer fall
-      // back to maxSCL, which is what we want when the analysis is unusable.
-      if constexpr (hdr10plus_application_version == 1) {
-        result.distribution_maxrgb[hdr10plus_reserved_v1_index] = hdr10plus_reserved_v1;
-        result.distribution_maxrgb[hdr10plus_reserved_v2_index] = hdr10plus_reserved_v2;
-      }
+    // Overwrite the two reserved slots last, so an analyzer percentile can never
+    // reach the wire there. 8.5.4 fixes V1 and V2 unconditionally in
+    // application_version 1, so this has to run on every path out of here, not just
+    // the one that filled a distribution in: the serializer always emits all nine
+    // percentiles, so a caller that passes no distribution at all would otherwise
+    // ship V2 = 0. V1 stays 0 either way, which is the sentinel that makes a
+    // consumer fall back to maxSCL — what we want when there is no usable analysis.
+    if constexpr (hdr10plus_application_version == 1) {
+      result.distribution_maxrgb[hdr10plus_reserved_v1_index] = hdr10plus_reserved_v1;
+      result.distribution_maxrgb[hdr10plus_reserved_v2_index] = hdr10plus_reserved_v2;
     }
 
     return result;

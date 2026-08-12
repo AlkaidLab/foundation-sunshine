@@ -240,20 +240,44 @@ TEST(HdrDynamicMetadata, ReservesTheHdr10PlusV1AndV2DistributionSlots) {
 }
 
 TEST(HdrDynamicMetadata, ZeroesTheWholeDistributionOnOneBadEntry) {
-  using video::hdr_metadata::hdr10plus_from_luminance;
+  using namespace video::hdr_metadata;
+
+  // One unusable entry discards the whole CDF rather than shipping a partially
+  // filled one. maxSCL and average_maxrgb survive, and V1 = 0 is what tells a
+  // consumer to use them, so the frame is still worth sending.
+  const auto check = [](const hdr10plus_frame_metadata_t &metadata) {
+    EXPECT_TRUE(metadata.valid);
+    EXPECT_GT(metadata.maxscl, 0);
+    EXPECT_GT(metadata.average_maxrgb, 0);
+
+    for (size_t i = 0; i < metadata.distribution_maxrgb.size(); ++i) {
+      if (i == hdr10plus_reserved_v1_index || i == hdr10plus_reserved_v2_index) {
+        continue;
+      }
+      EXPECT_EQ(metadata.distribution_maxrgb[i], 0) << "CDF slot " << i;
+    }
+
+    // 8.5.4 fixes these two in application_version 1 whether or not the analysis
+    // was usable, so the rejection path must not zero V2 either.
+    EXPECT_EQ(metadata.distribution_maxrgb[hdr10plus_reserved_v1_index], hdr10plus_reserved_v1);
+    EXPECT_EQ(metadata.distribution_maxrgb[hdr10plus_reserved_v2_index], hdr10plus_reserved_v2);
+  };
 
   float bad[] = { 10, 50, 100, std::numeric_limits<float>::quiet_NaN(), 300, 500, 800, 900, 1000 };
-  const auto from_nan = hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad);
-  EXPECT_TRUE(from_nan.valid);
-  for (const auto value : from_nan.distribution_maxrgb) {
-    EXPECT_EQ(value, 0);
-  }
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad));
 
   float negative[] = { 10, 50, 100, 200, -1.0f, 500, 800, 900, 1000 };
-  const auto from_negative = hdr10plus_from_luminance(900.0f, 300.0f, 1000, negative);
-  for (const auto value : from_negative.distribution_maxrgb) {
-    EXPECT_EQ(value, 0);
-  }
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000, negative));
+
+  // A bad entry in a reserved slot is still a bad analysis: the CDF goes away
+  // even though that slot's value would have been overwritten anyway.
+  float bad_reserved[] = { 10, -1.0f, 100, 200, 300, 500, 800, 900, 1000 };
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000, bad_reserved));
+
+  // Same story with no distribution at all. The serializer emits all nine
+  // percentiles unconditionally, so the reserved slots have to be right even when
+  // the caller never offered a CDF.
+  check(hdr10plus_from_luminance(900.0f, 300.0f, 1000));
 }
 
 TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
