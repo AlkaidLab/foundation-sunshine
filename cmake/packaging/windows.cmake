@@ -11,11 +11,11 @@ install(FILES "${ZLIB}" DESTINATION "." COMPONENT application)
 # Adding tools
 install(TARGETS dxgi-info RUNTIME DESTINATION "tools" COMPONENT dxgi)
 install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
-install(TARGETS stylus-input-probe RUNTIME DESTINATION "tools" COMPONENT tools)
 
 # Mandatory tools
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
+install(TARGETS stylus-input-probe RUNTIME DESTINATION "tools" COMPONENT application)
 
 # Shared tool: nefconw.exe (used by VDD and vmouse install scripts)
 install(FILES "${NEFCON_DRIVER_DIR}/nefconw.exe"

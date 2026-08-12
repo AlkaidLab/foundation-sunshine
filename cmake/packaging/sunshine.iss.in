@@ -85,7 +85,7 @@ english.ComponentAutostart=Launch on system startup
 english.ComponentFirewall=Add firewall exclusions
 english.ComponentGamepad=Virtual Gamepad (ViGEmBus)
 english.ComponentVmouse=Virtual Mouse Driver (UMDF)
-english.ComponentTools=Diagnostic tools (dxgi-info, audio-info, stylus-input-probe)
+english.ComponentTools=Diagnostic tools (dxgi-info, audio-info)
 english.TypeRecommended=Recommended (virtual display + firewall + autostart)
 english.TypeFull=Full installation (all components)
 english.TypeCompact=Compact installation (core only)
@@ -95,7 +95,7 @@ english.ComponentFirewallDesc=Allows Moonlight clients to discover and connect t
 english.ComponentAutostartDesc=Sunshine will start automatically when Windows boots. Recommended for always-on streaming.
 english.ComponentGamepadDesc=Emulates Xbox controller for games. Install only if you need gamepad input from the client.
 english.ComponentVmouseDesc=Provides smooth absolute mouse positioning. Install if cursor feels laggy.
-english.ComponentToolsDesc=Tools for troubleshooting display, audio, and stylus input issues.
+english.ComponentToolsDesc=dxgi-info, audio-info for troubleshooting display and audio issues.
 english.StatusResetPermissions=Resetting file permissions...
 english.StatusUpdatePath=Updating system PATH...
 english.StatusMigrateConfig=Migrating configuration files...
@@ -127,7 +127,7 @@ chinesesimplified.ComponentAutostart=开机自动启动
 chinesesimplified.ComponentFirewall=添加防火墙规则
 chinesesimplified.ComponentGamepad=虚拟手柄（ViGEmBus）
 chinesesimplified.ComponentVmouse=虚拟鼠标驱动（UMDF）
-chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info、stylus-input-probe）
+chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info）
 chinesesimplified.TypeRecommended=推荐安装（虚拟显示器 + 防火墙 + 开机自启）
 chinesesimplified.TypeFull=完全安装（所有组件）
 chinesesimplified.TypeCompact=简洁安装（仅核心）
@@ -137,7 +137,7 @@ chinesesimplified.ComponentFirewallDesc=允许 Moonlight 客户端通过网络�
 chinesesimplified.ComponentAutostartDesc=Windows 启动时自动运行 Sunshine。推荐常驻串流使用。
 chinesesimplified.ComponentGamepadDesc=模拟 Xbox 手柄。仅需要从客户端传入手柄输入时安装。
 chinesesimplified.ComponentVmouseDesc=提供平滑的绝对定位鼠标。如鼠标延迟可尝试安装。
-chinesesimplified.ComponentToolsDesc=用于排查显示、音频和手写笔输入问题。
+chinesesimplified.ComponentToolsDesc=dxgi-info、audio-info 等，用于排查显示和音频问题。
 chinesesimplified.StatusResetPermissions=正在重置文件权限...
 chinesesimplified.StatusUpdatePath=正在更新系统 PATH...
 chinesesimplified.StatusMigrateConfig=正在迁移配置文件...
@@ -193,6 +193,7 @@ Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Comp
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\stylus-input-probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
 ; Portable scripts (will be deleted during install, but needed for layout)
 Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -262,7 +263,6 @@ Source: "{#MySourceDir}\scripts\uninstall-vsink.bat"; DestDir: "{app}\scripts"; 
 ; Optional diagnostic tools
 Source: "{#MySourceDir}\tools\dxgi-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
 Source: "{#MySourceDir}\tools\audio-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
-Source: "{#MySourceDir}\tools\stylus-input-probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
 
 [Icons]
 ; Start Menu shortcuts
