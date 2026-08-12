@@ -298,19 +298,26 @@ namespace display_device {
 
   }  // namespace
 
-  device_info_map_t
-  enum_available_devices() {
+  boost::optional<device_info_map_t>
+  enum_available_devices_checked() {
     auto display_data { w_utils::query_display_config(w_utils::ALL_DEVICES) };
     if (!display_data) {
       // Error already logged
-      return {};
+      return boost::none;
+    }
+
+    if (display_data->paths.empty()) {
+      // A successful CCD query with no paths is a valid headless result.
+      return device_info_map_t {};
     }
 
     device_info_map_t available_devices;
     const auto topology_data { make_device_path_data(display_data->paths) };
     if (topology_data.empty()) {
-      // Error already logged
-      return {};
+      // Non-empty CCD data that cannot produce any valid device is an
+      // enumeration failure, not proof that a requested display is absent.
+      BOOST_LOG(warning) << "Display paths were returned, but no valid display devices could be enumerated.";
+      return boost::none;
     }
 
     for (const auto &[device_id, data] : topology_data) {
@@ -337,6 +344,12 @@ namespace display_device {
     }
 
     return available_devices;
+  }
+
+  device_info_map_t
+  enum_available_devices() {
+    const auto devices = enum_available_devices_checked();
+    return devices ? *devices : device_info_map_t {};
   }
 
   std::string

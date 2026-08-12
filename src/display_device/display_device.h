@@ -128,6 +128,15 @@ namespace display_device {
   device_info_map_t
   enum_available_devices();
 
+#ifdef _WIN32
+  /**
+   * @brief Enumerate available devices without collapsing a CCD query failure
+   *        into a valid empty (headless) result.
+   */
+  boost::optional<device_info_map_t>
+  enum_available_devices_checked();
+#endif
+
   std::string
   find_one_of_the_available_devices(const std::string &device_id);
 
