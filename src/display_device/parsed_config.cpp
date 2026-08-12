@@ -6,6 +6,7 @@
 
 // local includes
 #include "display_device.h"
+#include "display_intent_policy.h"
 #include "parsed_config.h"
 #include "src/config.h"
 #include "src/globals.h"
@@ -554,13 +555,46 @@ namespace display_device {
       resolve_device_prep(config, session)
     };
 
-    if (session.use_vdd || get_display_friendly_name(intent.device_id) == ZAKO_NAME) {
+    // An explicit VDD request does not depend on CCD being available.
+    bool explicit_vdd = session.use_vdd;
+    std::string vdd_friendly_name;
+#ifdef _WIN32
+    // VDD_NAME is the stable alias exposed by the Windows host configuration UI.
+    explicit_vdd = explicit_vdd || intent.device_id == VDD_NAME;
+    vdd_friendly_name = ZAKO_NAME;
+#endif
+    if (explicit_vdd) {
       intent.target = display_intent_t::target_e::vdd;
       return intent;
     }
 
-    if (!intent.device_id.empty() && find_one_of_the_available_devices(intent.device_id).empty()) {
-      if (client_named_it) {
+    if (intent.device_id.empty()) {
+      return intent;
+    }
+
+    const auto enumeration = enum_available_devices_with_status();
+    const auto resolution = classify_requested_display(
+      enumeration,
+      intent.device_id,
+      client_named_it,
+      explicit_vdd,
+      vdd_friendly_name);
+    if (enumeration.status == device_enumeration_result_t::status_e::failed) {
+      // A locked desktop and other transient CCD failures do not prove that a
+      // selected display was disconnected. Keep the intent so configure_display
+      // can take its normal deferred-retry path.
+      BOOST_LOG(warning) << "Could not verify the selected display; preserving the requested display intent: "sv << intent.device_id;
+      return intent;
+    }
+
+    if (resolution == requested_display_resolution_e::vdd) {
+      intent.target = display_intent_t::target_e::vdd;
+      return intent;
+    }
+
+    if (resolution == requested_display_resolution_e::unavailable ||
+        resolution == requested_display_resolution_e::fallback_primary) {
+      if (resolution == requested_display_resolution_e::unavailable) {
         // The client picked this display for this stream, so quietly streaming a
         // different one is worse than telling it the display is gone.
         BOOST_LOG(error) << "客户端指定的物理显示器不存在，拒绝回退到其他显示器: "sv << intent.device_id;

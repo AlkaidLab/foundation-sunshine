@@ -61,6 +61,7 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/nanors/rs.c"
         "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/display_device.h"
+        "${CMAKE_SOURCE_DIR}/src/display_device/display_intent_policy.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp"
         "${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/session.cpp"

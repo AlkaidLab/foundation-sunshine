@@ -9,6 +9,12 @@ namespace display_device {
     return {};
   }
 
+  device_enumeration_result_t
+  enum_available_devices_with_status() {
+    // This platform stub cannot prove that an empty map means a headless host.
+    return { device_enumeration_result_t::status_e::failed, enum_available_devices() };
+  }
+
   std::string
   get_display_name(const std::string &value) {
     // Not implemented, but just passthrough the value
