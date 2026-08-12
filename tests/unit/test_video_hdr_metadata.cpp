@@ -691,6 +691,12 @@ TEST(HdrDynamicMetadata, DynamicMetadataBuilderFollowsTheFormatGates) {
   EXPECT_TRUE(vivid_only.hdr10plus.empty());
   EXPECT_FALSE(vivid_only.vivid.empty());
 
+  // AV1 has no Vivid carriage, so PQ over AV1 is HDR10+ only (see #930).
+  builder.configure(video::hdr_metadata::formats_for(PQ, AV1));
+  const auto hdr10plus_only = builder.build(stats, 1000);
+  EXPECT_FALSE(hdr10plus_only.hdr10plus.empty());
+  EXPECT_TRUE(hdr10plus_only.vivid.empty());
+
   // Invalid analyzer output emits nothing rather than a frame of zeros.
   auto invalid = stats;
   invalid.valid = false;
