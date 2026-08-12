@@ -7,7 +7,6 @@
 
 // local includes
 #include "parsed_config.h"
-#include "display_intent_policy.h"
 #include "session.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
@@ -437,24 +436,6 @@ namespace display_device {
           missing ?
             "Open Sunshine settings, install the virtual display driver, then try again." :
             "Open Sunshine settings, repair the virtual display driver or restart Windows if requested, then try again."
-        };
-      }
-    }
-
-    if (should_prepare_vdd) {
-      // VDD discovery and creation both need a trustworthy CCD snapshot. A
-      // locked/unavailable desktop cannot tell "no VDD" from "enumeration
-      // failed", so fail closed before issuing any monitor lifecycle command.
-      // A successful empty result is different: it proves the host is headless
-      // and may safely create its first display.
-      const auto discovery = enum_available_devices_with_status();
-      if (!display_enumeration_is_reliable(discovery)) {
-        cancel_pending_display_retry();
-        BOOST_LOG(warning) << "VDD preparation is waiting for reliable display enumeration";
-        return {
-          configure_result_t::result_e::vdd_prepare_deferred,
-          "Virtual display preparation is waiting for Windows display enumeration.",
-          "Unlock the desktop or wait for Windows display services to become available, then try again."
         };
       }
     }

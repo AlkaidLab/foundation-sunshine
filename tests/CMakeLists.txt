@@ -65,18 +65,6 @@ if (WIN32)
 endif ()
 add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 
-add_executable(display_start_policy_unit_tests
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_display_intent_policy.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_display_start_policy.cpp)
-target_include_directories(display_start_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(display_start_policy_unit_tests gtest_main)
-target_compile_options(display_start_policy_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(display_start_policy_unit_tests PROPERTIES CXX_STANDARD 23)
-if (WIN32)
-    set_target_properties(display_start_policy_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
-endif ()
-add_test(NAME display_start_policy_unit_tests COMMAND display_start_policy_unit_tests)
-
 if (WIN32)
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)

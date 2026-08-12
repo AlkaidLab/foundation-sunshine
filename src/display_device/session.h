@@ -70,7 +70,6 @@ namespace display_device {
     struct configure_result_t {
       enum class result_e {
         success,
-        vdd_prepare_deferred,
         deferred_retry,
         vdd_not_installed,
         vdd_unavailable,

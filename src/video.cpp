@@ -4188,16 +4188,9 @@ namespace video {
       const auto capture_ready_displays = encoder_list.empty() ?
                                             std::vector<std::string> {} :
                                             platf::display_names(encoder_list.front()->platform_formats->dev_type);
-      const auto display_policy = !target || target->policy == probe_target_policy_e::backend_autoselect ?
-                                    probe_display_policy_e::backend_autoselect :
-                                    target->policy == probe_target_policy_e::vdd_compatible ?
-                                      probe_display_policy_e::vdd_compatible :
-                                      probe_display_policy_e::exact;
-      const auto selection = select_encoder_probe_display(
-        configured_display_name,
-        capture_ready_displays,
-        display_policy);
-      if (selection.selection == probe_display_selection_e::unavailable) {
+      const bool exact_target_unavailable = target_requires_exact_resolution &&
+                                            std::ranges::find(capture_ready_displays, configured_display_name) == capture_ready_displays.end();
+      if (exact_target_unavailable) {
         last_encoder_probe_result = {
           probe_error_e::no_active_display,
           "The requested display is not available to the encoder probe capture backend.",
@@ -4208,15 +4201,15 @@ namespace video {
                          << *probe_capture_override << "]"sv;
         return -1;
       }
-      probe_display_name = selection.display_name;
-      if (display_policy != probe_display_policy_e::backend_autoselect &&
+      probe_display_name = select_encoder_probe_display(configured_display_name, capture_ready_displays);
+      if (target && target->policy != probe_target_policy_e::backend_autoselect &&
           !configured_output_name.empty() && configured_display_name.empty()) {
         BOOST_LOG(warning) << "Configured output ["sv << configured_output_name
                            << "] could not be resolved for temporary capture backend ["sv
                            << *probe_capture_override
                            << "]; encoder probing will use backend display auto-selection"sv;
       }
-      else if (display_policy != probe_display_policy_e::backend_autoselect &&
+      else if (target && target->policy != probe_target_policy_e::backend_autoselect &&
                !configured_display_name.empty() && probe_display_name.empty()) {
         BOOST_LOG(warning) << "Configured output ["sv << configured_display_name
                            << "] is unavailable to temporary capture backend ["sv

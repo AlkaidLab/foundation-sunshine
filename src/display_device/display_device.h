@@ -58,23 +58,6 @@ namespace display_device {
   using device_info_map_t = std::map<std::string, device_info_t>;
 
   /**
-   * @brief Result of enumerating the displays known to the operating system.
-   *
-   * An empty device map is a valid successful result for a headless system.
-   * Callers that need to distinguish that case from an OS query failure must
-   * inspect @ref status instead of inspecting the map alone.
-   */
-  struct device_enumeration_result_t {
-    enum class status_e {
-      success,
-      failed
-    };
-
-    status_e status { status_e::failed };
-    device_info_map_t devices;
-  };
-
-  /**
    * @brief Display's resolution.
    */
   struct resolution_t {
@@ -145,13 +128,14 @@ namespace display_device {
   device_info_map_t
   enum_available_devices();
 
+#ifdef _WIN32
   /**
-   * @brief Enumerate available devices while preserving query success/failure.
-   * @returns Enumeration status and the devices. A successful result may have
-   *          an empty map when the system is genuinely headless.
+   * @brief Enumerate available devices without collapsing a CCD query failure
+   *        into a valid empty (headless) result.
    */
-  device_enumeration_result_t
-  enum_available_devices_with_status();
+  boost::optional<device_info_map_t>
+  enum_available_devices_checked();
+#endif
 
   std::string
   find_one_of_the_available_devices(const std::string &device_id);

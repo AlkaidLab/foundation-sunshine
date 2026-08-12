@@ -529,7 +529,7 @@ namespace video {
   };
 
   struct probe_target_t {
-    std::string output_name; /**< Device selector in the same domain as config::video.output_name; empty means primary/automatic. */
+    std::string output_name; /**< Device selector in the same domain as config::video.output_name. */
     probe_target_policy_e policy { probe_target_policy_e::backend_autoselect };
   };
 

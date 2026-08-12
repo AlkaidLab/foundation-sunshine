@@ -167,7 +167,7 @@ namespace display_device {
   };
 
   /**
-   * @brief What a launch is actually aiming at, resolved once against the displays that exist.
+   * @brief What a launch is actually aiming at.
    *
    * Both the display configuration and the stream startup recovery need to know
    * the same three things - is this a virtual display, did the user pick the

@@ -7,7 +7,6 @@
 #include <codecvt>
 #include <icm.h>
 #include <iostream>
-#include <utility>
 #include <windows.h>
 
 // local includes
@@ -299,17 +298,17 @@ namespace display_device {
 
   }  // namespace
 
-  device_enumeration_result_t
-  enum_available_devices_with_status() {
+  boost::optional<device_info_map_t>
+  enum_available_devices_checked() {
     auto display_data { w_utils::query_display_config(w_utils::ALL_DEVICES) };
     if (!display_data) {
       // Error already logged
-      return { device_enumeration_result_t::status_e::failed, {} };
+      return boost::none;
     }
 
     if (display_data->paths.empty()) {
       // A successful CCD query with no paths is a valid headless result.
-      return { device_enumeration_result_t::status_e::success, {} };
+      return device_info_map_t {};
     }
 
     device_info_map_t available_devices;
@@ -318,7 +317,7 @@ namespace display_device {
       // Non-empty CCD data that cannot produce any valid device is an
       // enumeration failure, not proof that a requested display is absent.
       BOOST_LOG(warning) << "Display paths were returned, but no valid display devices could be enumerated.";
-      return { device_enumeration_result_t::status_e::failed, {} };
+      return boost::none;
     }
 
     for (const auto &[device_id, data] : topology_data) {
@@ -344,12 +343,13 @@ namespace display_device {
       }
     }
 
-    return { device_enumeration_result_t::status_e::success, std::move(available_devices) };
+    return available_devices;
   }
 
   device_info_map_t
   enum_available_devices() {
-    return enum_available_devices_with_status().devices;
+    const auto devices = enum_available_devices_checked();
+    return devices ? *devices : device_info_map_t {};
   }
 
   std::string
