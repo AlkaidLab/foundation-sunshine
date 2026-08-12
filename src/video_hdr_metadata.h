@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <span>
 #include <vector>
 
@@ -310,6 +311,106 @@ namespace video::hdr_metadata {
     result.valid = true;
     return result;
   }
+
+  /**
+   * @brief Temporal EMA (Exponential Moving Average) state for HDR luminance stats.
+   * Prevents frame-to-frame brightness jitter/flicker in tone mapping by smoothing
+   * the raw per-frame GPU statistics over time.
+   *
+   * This state is owned by the encode session. It must not be shared across sessions:
+   * carrying a previous stream's converged luminance into a new one biases the first
+   * frames of dynamic metadata until the EMA re-converges.
+   *
+   * Lives here rather than next to one encoder because both the avcodec and the
+   * native NVENC path feed HDR10+ from it. NVENC used to serialize raw analyzer
+   * output, so its HDR10+ stepped at every GPU readback while the Vivid metadata
+   * beside it was already smoothed by vivid_temporal_filter_t.
+   */
+  struct hdr_luminance_ema_t {
+    float min_maxrgb = 0.0f;
+    float max_maxrgb = 0.0f;
+    float avg_maxrgb = 0.0f;
+    float percentile_95 = 0.0f;
+    float percentile_99 = 0.0f;
+    /// Smoothed maxRGB (nits) at each hdr10plus_percentages entry.
+    float distribution_maxrgb[platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES] = {};
+    bool initialized = false;
+
+    /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
+    /// Lower α = more smoothing (less flicker, slower adaptation).
+    /// Scene cuts are handled by fast-tracking when the change exceeds a threshold.
+    static constexpr float ALPHA = 0.15f;
+    static constexpr float SCENE_CUT_THRESHOLD = 3.0f;  // Ratio threshold for scene cut detection
+
+    /**
+     * @brief Apply EMA smoothing to raw per-frame stats.
+     * On first frame or scene cuts (>3x luminance change), snaps to current value.
+     * Otherwise applies exponential smoothing: smoothed = α·current + (1-α)·previous.
+     */
+    void
+    update(const platf::hdr_frame_luminance_stats_t &raw) {
+      if (!raw.valid) return;
+
+      if (!initialized) {
+        // First frame: snap to current values
+        min_maxrgb = raw.min_maxrgb;
+        max_maxrgb = raw.max_maxrgb;
+        avg_maxrgb = raw.avg_maxrgb;
+        percentile_95 = raw.percentile_95;
+        percentile_99 = raw.percentile_99;
+        std::copy(std::begin(raw.distribution_maxrgb), std::end(raw.distribution_maxrgb),
+          std::begin(distribution_maxrgb));
+        initialized = true;
+        return;
+      }
+
+      // Scene cut detection: if peak luminance changes dramatically, snap immediately
+      float ratio = (max_maxrgb > 1.0f) ? raw.max_maxrgb / max_maxrgb : SCENE_CUT_THRESHOLD + 1.0f;
+      float alpha = (ratio > SCENE_CUT_THRESHOLD || ratio < 1.0f / SCENE_CUT_THRESHOLD)
+                    ? 1.0f  // Scene cut: snap to new values
+                    : ALPHA; // Normal: smooth transition
+
+      min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
+      max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
+      avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
+      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
+      percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
+      for (size_t i = 0; i < std::size(distribution_maxrgb); ++i) {
+        distribution_maxrgb[i] =
+          alpha * raw.distribution_maxrgb[i] + (1.0f - alpha) * distribution_maxrgb[i];
+      }
+    }
+
+    void
+    reset() {
+      *this = {};
+    }
+
+    /**
+     * @brief raw with the smoothed fields substituted.
+     *
+     * For callers that hand a whole stats struct to a serializer instead of
+     * reading the individual EMA fields. Members this filter does not smooth —
+     * analysis_max_nits, sample_sequence, and the PQ-domain percentiles Vivid
+     * uses — pass through untouched.
+     */
+    platf::hdr_frame_luminance_stats_t
+    smoothed(const platf::hdr_frame_luminance_stats_t &raw) const {
+      if (!initialized) {
+        return raw;
+      }
+
+      platf::hdr_frame_luminance_stats_t result = raw;
+      result.min_maxrgb = min_maxrgb;
+      result.max_maxrgb = max_maxrgb;
+      result.avg_maxrgb = avg_maxrgb;
+      result.percentile_95 = percentile_95;
+      result.percentile_99 = percentile_99;
+      std::copy(std::begin(distribution_maxrgb), std::end(distribution_maxrgb),
+        std::begin(result.distribution_maxrgb));
+      return result;
+    }
+  };
 
   /**
    * GB/T 46269.1-2025 Annex A.9 recommends a 32-frame arithmetic mean over

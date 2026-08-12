@@ -763,6 +763,7 @@ namespace nvenc {
     dynamic_hdr_formats = {};
     luminance_stats = {};
     vivid_filter.reset();
+    hdr10plus_ema.reset();
   }
 
   nvenc_encoded_frame
@@ -852,12 +853,13 @@ namespace nvenc {
     if (luminance_stats.valid && hdr_metadata && (video_format == 1 || video_format == 2)) {
       uint16_t max_lum = hdr_metadata->maxDisplayLuminance;
       const auto vivid_metadata = vivid_filter.update(luminance_stats);
+      hdr10plus_ema.update(luminance_stats);
 
       // HDR10+ (PQ only — HDR10+ requires absolute luminance)
       size_t hdr10plus_payload_size = 0;
       if (dynamic_hdr_formats.hdr10plus) {
         hdr10plus_payload_size = video::hdr_metadata::serialize_hdr10plus_t35(
-          luminance_stats, max_lum, hdr10plus_payload);
+          hdr10plus_ema.smoothed(luminance_stats), max_lum, hdr10plus_payload);
       }
       if (hdr10plus_payload_size > 0) {
         dynamic_payloads[dynamic_payload_count].payloadSize =

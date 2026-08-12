@@ -320,6 +320,84 @@ TEST(HdrDynamicMetadata, SharesHdr10PlusNormalizationAcrossEncoderPaths) {
   EXPECT_EQ(fallback.targeted_system_display_maximum_luminance, 1000);
 }
 
+TEST(HdrDynamicMetadata, SmoothsHdr10PlusLuminanceAcrossFrames) {
+  // The regression: the native NVENC path serialized raw analyzer output, so its
+  // HDR10+ stepped at every GPU readback while the Vivid metadata built from the
+  // same stats was already averaged by vivid_temporal_filter_t.
+  const auto flat = [](float nits) {
+    platf::hdr_frame_luminance_stats_t stats {};
+    stats.min_maxrgb = nits;
+    stats.max_maxrgb = nits;
+    stats.avg_maxrgb = nits;
+    stats.percentile_95 = nits;
+    stats.percentile_99 = nits;
+    for (auto &entry : stats.distribution_maxrgb) {
+      entry = nits;
+    }
+    stats.valid = true;
+    return stats;
+  };
+
+  video::hdr_metadata::hdr_luminance_ema_t ema;
+  EXPECT_FALSE(ema.initialized);
+
+  // First sample snaps: there is nothing to blend against yet.
+  ema.update(flat(100.0f));
+  EXPECT_TRUE(ema.initialized);
+  EXPECT_FLOAT_EQ(ema.percentile_95, 100.0f);
+
+  // A 2x change stays under SCENE_CUT_THRESHOLD, so it blends at ALPHA.
+  ema.update(flat(200.0f));
+  EXPECT_FLOAT_EQ(ema.percentile_95, 115.0f);
+  EXPECT_FLOAT_EQ(ema.avg_maxrgb, 115.0f);
+  EXPECT_FLOAT_EQ(ema.distribution_maxrgb[0], 115.0f);
+
+  // A scene cut past the threshold snaps instead of dragging the old scene along.
+  ema.update(flat(2000.0f));
+  EXPECT_FLOAT_EQ(ema.percentile_95, 2000.0f);
+
+  ema.reset();
+  EXPECT_FALSE(ema.initialized);
+  EXPECT_FLOAT_EQ(ema.percentile_95, 0.0f);
+}
+
+TEST(HdrDynamicMetadata, SmoothedStatsSubstituteOnlyTheFilteredFields) {
+  platf::hdr_frame_luminance_stats_t raw {};
+  raw.avg_maxrgb = 100.0f;
+  raw.max_maxrgb = 100.0f;
+  raw.percentile_95 = 100.0f;
+  raw.percentile_10_pq = 0.25f;
+  raw.percentile_90_pq = 0.75f;
+  raw.analysis_max_nits = 10000.0f;
+  raw.sample_sequence = 42;
+  raw.valid = true;
+
+  video::hdr_metadata::hdr_luminance_ema_t ema;
+
+  // Before the first sample there is nothing to substitute, so raw passes through.
+  const auto passthrough = ema.smoothed(raw);
+  EXPECT_FLOAT_EQ(passthrough.percentile_95, 100.0f);
+
+  ema.update(raw);
+  auto next = raw;
+  next.avg_maxrgb = 200.0f;
+  next.max_maxrgb = 200.0f;
+  next.percentile_95 = 200.0f;
+  ema.update(next);
+
+  const auto smoothed = ema.smoothed(next);
+  EXPECT_FLOAT_EQ(smoothed.percentile_95, 115.0f);
+  EXPECT_FLOAT_EQ(smoothed.avg_maxrgb, 115.0f);
+
+  // Fields this filter does not own must survive untouched: the PQ-domain
+  // percentiles belong to HDR Vivid, which does its own averaging.
+  EXPECT_FLOAT_EQ(smoothed.percentile_10_pq, 0.25f);
+  EXPECT_FLOAT_EQ(smoothed.percentile_90_pq, 0.75f);
+  EXPECT_FLOAT_EQ(smoothed.analysis_max_nits, 10000.0f);
+  EXPECT_EQ(smoothed.sample_sequence, 42U);
+  EXPECT_TRUE(smoothed.valid);
+}
+
 TEST(HdrDynamicMetadata, GeneratesVividFieldsInPqContentDomain) {
   platf::hdr_frame_luminance_stats_t stats;
   stats.min_maxrgb = 0.0f;
