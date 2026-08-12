@@ -3,6 +3,7 @@
  * @brief Definitions for handling video ram.
  */
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -1956,8 +1957,17 @@ namespace platf::dxgi {
         hdr_luminance_stats_out.avg_maxrgb = result->sumMaxRGB / static_cast<float>(result->pixelCount);
 
         // HDR Vivid defines variance as P90-P10 in normalized PQ signal space.
-        // Retain P95/P99 in nits for the independent HDR10+ path.
+        // Retain P95/P99 in nits for the independent HDR10+ path, and fill the nine
+        // percentiles ST 2094-40 deployment profiles carry from the same walk.
         const uint32_t total = result->pixelCount;
+        const auto &percentages = ::video::hdr_metadata::hdr10plus_percentages;
+        constexpr size_t kDistCount = percentages.size();
+
+        std::array<uint32_t, kDistCount> dist_targets {};
+        std::array<bool, kDistCount> dist_found {};
+        for (size_t p = 0; p < kDistCount; ++p) {
+          dist_targets[p] = static_cast<uint32_t>(std::ceil(total * (percentages[p] / 100.0f)));
+        }
         const uint32_t target_10 = static_cast<uint32_t>(std::ceil(total * 0.10f));
         const uint32_t target_90 = static_cast<uint32_t>(std::ceil(total * 0.90f));
         const uint32_t target_95 = static_cast<uint32_t>(std::ceil(total * 0.95f));
@@ -1971,6 +1981,13 @@ namespace platf::dxgi {
         for (uint32_t i = 0; i < HISTOGRAM_BINS; i++) {
           cumulative += result->histogram[i];
           const float pq_bin_center = (static_cast<float>(i) + 0.5f) / HISTOGRAM_BINS;
+          for (size_t p = 0; p < kDistCount; ++p) {
+            if (!dist_found[p] && cumulative >= dist_targets[p]) {
+              hdr_luminance_stats_out.distribution_maxrgb[p] =
+                ::video::hdr_metadata::pq_to_nits(pq_bin_center);
+              dist_found[p] = true;
+            }
+          }
           if (!found_10 && cumulative >= target_10) {
             hdr_luminance_stats_out.percentile_10_pq = pq_bin_center;
             found_10 = true;
@@ -1988,6 +2005,10 @@ namespace platf::dxgi {
             hdr_luminance_stats_out.percentile_99 =
               ::video::hdr_metadata::pq_to_nits(pq_bin_center);
             found_99 = true;
+          }
+          // The 99th percentile is the last of every target set, so the walk can stop
+          // once both it and the distribution are filled.
+          if (found_99 && dist_found[kDistCount - 1]) {
             break;
           }
         }

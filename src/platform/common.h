@@ -481,6 +481,10 @@ namespace platf {
    * scRGB 1.0 = 80 nits.
    */
   struct hdr_frame_luminance_stats_t {
+    /// Number of maxRGB percentiles HDR10+ deployment profiles carry.
+    /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
+    static constexpr size_t HDR10PLUS_PERCENTILES = 9;
+
     float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
     float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
     float avg_maxrgb = 0.0f;    ///< Average of max(R,G,B) across all pixels (nits)
@@ -488,6 +492,8 @@ namespace platf {
     float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
     float percentile_95 = 0.0f;     ///< 95th percentile of maxRGB (nits), for HDR10+
     float percentile_99 = 0.0f;     ///< 99th percentile of maxRGB (nits), for HDR10+
+    /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
+    float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
     float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
     uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
     bool valid = false;         ///< Whether stats are available (false on first frame)

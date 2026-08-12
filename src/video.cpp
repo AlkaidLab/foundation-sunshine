@@ -5,6 +5,7 @@
 // standard includes
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <atomic>
 #include <bitset>
 #include <functional>
@@ -539,6 +540,8 @@ namespace video {
     float avg_maxrgb = 0.0f;
     float percentile_95 = 0.0f;
     float percentile_99 = 0.0f;
+    /// Smoothed maxRGB (nits) at each hdr_metadata::hdr10plus_percentages entry.
+    float distribution_maxrgb[platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES] = {};
     bool initialized = false;
 
     /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
@@ -563,6 +566,8 @@ namespace video {
         avg_maxrgb = raw.avg_maxrgb;
         percentile_95 = raw.percentile_95;
         percentile_99 = raw.percentile_99;
+        std::copy(std::begin(raw.distribution_maxrgb), std::end(raw.distribution_maxrgb),
+          std::begin(distribution_maxrgb));
         initialized = true;
         return;
       }
@@ -578,6 +583,10 @@ namespace video {
       avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
       percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
       percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
+      for (size_t i = 0; i < std::size(distribution_maxrgb); ++i) {
+        distribution_maxrgb[i] =
+          alpha * raw.distribution_maxrgb[i] + (1.0f - alpha) * distribution_maxrgb[i];
+      }
     }
   };
 
@@ -736,16 +745,17 @@ namespace video {
 
   class nvenc_encode_session_t: public encode_session_t {
   public:
-    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device):
+    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, int video_format):
         device(std::move(encode_device)) {
       const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
       if (use_hlg) {
         const bool analysis_available =
           config::video.hdr_luminance_analysis != "off" &&
           device->hdr_luminance_analysis_available;
-        vivid_metadata_mode = analysis_available ?
-                                vivid_metadata_mode_e::preroll :
-                                vivid_metadata_mode_e::disabled;
+        vivid_metadata_mode =
+          hdr_metadata::needs_vivid_startup_preroll(device->colorspace, video_format, analysis_available) ?
+            vivid_metadata_mode_e::preroll :
+            vivid_metadata_mode_e::disabled;
       }
       if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
         BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
@@ -2109,7 +2119,7 @@ namespace video {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
         const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
-          ema.percentile_95, ema.avg_maxrgb, max_display_luminance);
+          ema.percentile_95, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
         if (frame_metadata.valid) {
           auto &params = hdr10plus->params[0];
           const auto maxscl = av_make_q(
@@ -2121,6 +2131,13 @@ namespace video {
             frame_metadata.average_maxrgb, hdr_metadata::hdr10plus_normalized_scale);
           hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
             frame_metadata.targeted_system_display_maximum_luminance, 1);
+          params.num_distribution_maxrgb_percentiles =
+            static_cast<uint8_t>(hdr_metadata::hdr10plus_percentages.size());
+          for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
+            params.distribution_maxrgb[i].percentage = hdr_metadata::hdr10plus_percentages[i];
+            params.distribution_maxrgb[i].percentile = av_make_q(
+              frame_metadata.distribution_maxrgb[i], hdr_metadata::hdr10plus_normalized_scale);
+          }
         }
       }
     }
@@ -2681,11 +2698,13 @@ namespace video {
     // Both PQ (ST 2084) and HLG (ARIB STD-B67) can carry HDR metadata.
     // PQ uses absolute luminance and requires static metadata (MDCV, CLL).
     // HLG uses scene-referred relative luminance but benefits from HDR Vivid (CUVA)
-    // dynamic metadata for enhanced tone mapping on capable displays.
+    // dynamic metadata for enhanced tone mapping on capable displays, where the
+    // codec defines a carriage for it.
     if (colorspace_is_hdr(colorspace)) {
-      // Single source of truth for which dynamic formats this transfer function allows,
-      // shared with the native NVENC path so the two cannot drift apart.
-      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace);
+      // Single source of truth for which dynamic formats this transfer function allows
+      // and this codec can actually carry, shared with the native NVENC path so the two
+      // cannot drift apart.
+      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace, config.videoFormat);
 
       SS_HDR_METADATA hdr_metadata;
       bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
@@ -2885,7 +2904,7 @@ namespace video {
       }
     }
 
-    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
+    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
   }
 
   std::unique_ptr<amf_encode_session_t>

@@ -37,9 +37,25 @@ namespace video::hdr_metadata {
   // without exposing FFmpeg headers to this shared, unit-testable header.
   constexpr size_t hdr10plus_t35_max_payload_size = 1024;
 
+  /**
+   * The maxRGB percentages ST 2094-40 deployment profiles carry.
+   *
+   * The syntax element num_distribution_maxrgb_percentiles is u(4), so a zero count
+   * is representable, but shipping HDR10+ always sends these nine. FFmpeg neither
+   * enforces nor round-trips the count, so an empty distribution serializes and
+   * parses back cleanly while still being non-conformant on the wire.
+   */
+  inline constexpr std::array<uint8_t, 9> hdr10plus_percentages { 1, 5, 10, 25, 50, 75, 90, 95, 99 };
+
+  static_assert(
+    hdr10plus_percentages.size() == platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES,
+    "analyzer distribution_maxrgb[] must match the HDR10+ percentage table");
+
   struct hdr10plus_frame_metadata_t {
     int maxscl = 0;
     int average_maxrgb = 0;
+    /// Normalized maxRGB at each entry of hdr10plus_percentages.
+    std::array<int, hdr10plus_percentages.size()> distribution_maxrgb {};
     uint16_t targeted_system_display_maximum_luminance = 1000;
     bool valid = false;
   };
@@ -47,10 +63,14 @@ namespace video::hdr_metadata {
   /**
    * Convert analyzer luminance values into the normalized ST 2094-40 fields
    * shared by the AVCodec side-data and native NVENC paths.
+   *
+   * distribution carries maxRGB in nits at each hdr10plus_percentages entry. A null
+   * pointer, or any non-finite or negative entry, leaves the distribution at zero —
+   * callers must then omit it rather than send a partially filled one.
    */
   inline hdr10plus_frame_metadata_t
   hdr10plus_from_luminance(float percentile_95, float average_maxrgb,
-    uint16_t max_display_luminance) {
+    uint16_t max_display_luminance, const float *distribution = nullptr) {
     if (!std::isfinite(percentile_95) || !std::isfinite(average_maxrgb) ||
         percentile_95 < 0.0f || average_maxrgb < 0.0f) {
       return {};
@@ -65,12 +85,24 @@ namespace video::hdr_metadata {
       return static_cast<int>(std::lround(normalized * hdr10plus_normalized_scale));
     };
 
-    return {
+    hdr10plus_frame_metadata_t result {
       .maxscl = normalize(percentile_95),
       .average_maxrgb = normalize(average_maxrgb),
       .targeted_system_display_maximum_luminance = target_nits,
       .valid = true,
     };
+
+    if (distribution) {
+      for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
+        if (!std::isfinite(distribution[i]) || distribution[i] < 0.0f) {
+          result.distribution_maxrgb = {};
+          return result;
+        }
+        result.distribution_maxrgb[i] = normalize(distribution[i]);
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -85,20 +117,50 @@ namespace video::hdr_metadata {
     std::span<uint8_t> payload);
 
   /**
-   * HDR10+ is defined for PQ content. HDR Vivid can accompany either PQ or HLG.
+   * Which dynamic metadata formats may be emitted for this stream.
+   *
+   * Two independent gates. The transfer function decides what may describe the
+   * content: HDR10+ carries absolute luminance so it is PQ-only, while HDR Vivid
+   * covers both PQ and HLG (T/UWA 005.1-2024 clause 7).
+   *
+   * The codec decides what may be written. HDR Vivid defines a carriage only for
+   * AVS2 (clause 8) and HEVC/VVC (annex B) — the standard never mentions AV1 or
+   * OBUs, so emitting it there invents a mapping no decoder is obliged to accept.
+   * HDR10+ does have one, from AOMedia's HDR10+ AV1 Metadata Handling
+   * Specification, so it is not codec-gated here.
+   *
+   * video_format follows the config_t::videoFormat convention: 0 H.264, 1 HEVC, 2 AV1.
    */
   inline formats_t
-  formats_for(const sunshine_colorspace_t &colorspace) {
+  formats_for(const sunshine_colorspace_t &colorspace, int video_format) {
+    const bool vivid_carriable = (video_format == 1);
     switch (colorspace.colorspace) {
       case colorspace_e::bt2020:
-        return { .hdr10plus = true, .vivid = true };
+        return { .hdr10plus = true, .vivid = vivid_carriable };
       case colorspace_e::bt2020hlg:
-        return { .hdr10plus = false, .vivid = true };
+        return { .hdr10plus = false, .vivid = vivid_carriable };
       default:
         return {};
     }
   }
 
+  /**
+   * Whether stream startup should hold frames back until the HDR Vivid startup
+   * guard reports stable analyzer output.
+   *
+   * Only HLG needs it: a plain-HLG IDR followed by a mid-stream switch into Vivid
+   * is visible to the client. The wait is pointless when Vivid is never emitted
+   * for this codec, and would only delay the first frame.
+   */
+  inline bool
+  needs_vivid_startup_preroll(
+    const sunshine_colorspace_t &colorspace,
+    int video_format,
+    bool analysis_available) {
+    return analysis_available &&
+           colorspace.colorspace == colorspace_e::bt2020hlg &&
+           formats_for(colorspace, video_format).vivid;
+  }
   /**
    * Convert absolute display luminance to the normalized SMPTE ST 2084 signal
    * used by GB/T 46269.1-2025 (equivalent to T/UWA 005.1-2024).
