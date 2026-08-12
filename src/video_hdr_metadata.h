@@ -33,6 +33,20 @@ namespace video::hdr_metadata {
   constexpr int hdr10plus_normalized_scale = 100000;
   constexpr uint8_t hdr10plus_application_version = 1;
   constexpr size_t hdr10plus_t35_prefix_size = 6;
+
+  /**
+   * The SMPTE ST 2084 reference peak that every ST 2094-40 luminance field is
+   * normalized against.
+   *
+   * maxSCL, average_maxrgb and the maxRGB distribution describe absolute content
+   * luminance as a fraction of this peak, never a fraction of the target display.
+   * A consumer recovers nits by multiplying straight back out — libplacebo does
+   * `scene_max[i] = 10000 * av_q2d(maxscl[i])` in pl_map_hdr_metadata — so
+   * normalizing against anything else scales the whole picture by the ratio.
+   * The target display belongs in targeted_system_display_maximum_luminance,
+   * which is a separate, non-normalized field carried in nits.
+   */
+  constexpr float hdr10plus_pq_reference_nits = 10000.0f;
   // Large enough for FFmpeg's maximum ST 2094-40 body plus the T.35 prefix,
   // without exposing FFmpeg headers to this shared, unit-testable header.
   constexpr size_t hdr10plus_t35_max_payload_size = 1024;
@@ -46,6 +60,33 @@ namespace video::hdr_metadata {
    * parses back cleanly while still being non-conformant on the wire.
    */
   inline constexpr std::array<uint8_t, 9> hdr10plus_percentages { 1, 5, 10, 25, 50, 75, 90, 95, 99 };
+
+  /**
+   * ST 2094-40 8.5.4 excludes the 5% and 10% slots from the CDF in
+   * application_version 1 and reserves them at the fixed values V1 = 0.00000 and
+   * V2 = 0.00255. ST 2094-50 redefines the same two slots as V1 = scene luminance
+   * at 99.99% of the frame and V2 = percentage of pixels at or below 100 nits, so
+   * a consumer that finds a nonzero V1 reads it as the frame peak.
+   *
+   * libplacebo does exactly that: pl_map_hdr_metadata derives max_pq_y from slot 1
+   * whenever application_version is 1 with the nine standard percentages, then
+   * pl_color_space_nominal_luma_ex prefers those CIE-Y values over maxSCL. Writing
+   * a real 5th percentile there reports the darkest part of the frame as its peak,
+   * which is why the V1 = 0 sentinel exists — it is how a conformant stream tells
+   * the consumer to fall back to maxSCL.
+   *
+   * The analyzer's 5% and 10% percentiles are therefore computed but not carried.
+   * The slots stay in the table so the array keeps lining up with
+   * hdr10plus_percentages and with the analyzer's distribution_maxrgb[].
+   */
+  constexpr size_t hdr10plus_reserved_v1_index = 1;
+  constexpr size_t hdr10plus_reserved_v2_index = 2;
+  constexpr int hdr10plus_reserved_v1 = 0;  // 0.00000
+  constexpr int hdr10plus_reserved_v2 = 255;  // 0.00255 x hdr10plus_normalized_scale
+
+  static_assert(hdr10plus_percentages[hdr10plus_reserved_v1_index] == 5 &&
+                  hdr10plus_percentages[hdr10plus_reserved_v2_index] == 10,
+    "the reserved ST 2094-40 slots are the 5% and 10% percentages");
 
   static_assert(
     hdr10plus_percentages.size() == platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES,
@@ -80,8 +121,11 @@ namespace video::hdr_metadata {
       max_display_luminance > 0 ? max_display_luminance : 1000,
       1,
       10000);
-    const auto normalize = [target_nits](float nits) {
-      const float normalized = std::clamp(nits / target_nits, 0.0f, 1.0f);
+    // Absolute, display-independent: see hdr10plus_pq_reference_nits. target_nits
+    // deliberately plays no part here — it is only reported as the targeted system
+    // display maximum luminance below.
+    const auto normalize = [](float nits) {
+      const float normalized = std::clamp(nits / hdr10plus_pq_reference_nits, 0.0f, 1.0f);
       return static_cast<int>(std::lround(normalized * hdr10plus_normalized_scale));
     };
 
@@ -99,6 +143,15 @@ namespace video::hdr_metadata {
           return result;
         }
         result.distribution_maxrgb[i] = normalize(distribution[i]);
+      }
+
+      // Overwrite the two reserved slots last, so an analyzer percentile can never
+      // reach the wire there. An all-zero distribution from the rejection path
+      // above is left alone: V1 = 0 is the sentinel that makes a consumer fall
+      // back to maxSCL, which is what we want when the analysis is unusable.
+      if constexpr (hdr10plus_application_version == 1) {
+        result.distribution_maxrgb[hdr10plus_reserved_v1_index] = hdr10plus_reserved_v1;
+        result.distribution_maxrgb[hdr10plus_reserved_v2_index] = hdr10plus_reserved_v2;
       }
     }
 
