@@ -106,7 +106,8 @@ namespace nvenc {
 
     if (encoder) destroy_encoder();
     auto fail_guard = util::fail_guard([this] { destroy_encoder(); });
-    dynamic_hdr_formats = video::hdr_metadata::formats_for(sunshine_colorspace, client_config.videoFormat);
+    dynamic_metadata.configure(
+      video::hdr_metadata::formats_for(sunshine_colorspace, client_config.videoFormat));
 
     auto colorspace = nvenc_colorspace_from_sunshine_colorspace(sunshine_colorspace);
     auto buffer_format = nvenc_format_from_sunshine_format(sunshine_buffer_format);
@@ -760,10 +761,9 @@ namespace nvenc {
 
     encoder_state = {};
     encoder_params = {};
-    dynamic_hdr_formats = {};
     luminance_stats = {};
-    vivid_filter.reset();
-    hdr10plus_ema.reset();
+    dynamic_metadata.configure({});
+    dynamic_metadata.reset();
   }
 
   nvenc_encoded_frame
@@ -845,36 +845,20 @@ namespace nvenc {
 #endif
 
     // Inject HDR10+ and/or Vivid dynamic metadata as custom SEI/OBU payloads
-    std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> hdr10plus_payload {};
-    std::vector<uint8_t> vivid_payload;
     NV_ENC_SEI_PAYLOAD dynamic_payloads[2] = {};
     uint32_t dynamic_payload_count = 0;
 
     if (luminance_stats.valid && hdr_metadata && (video_format == 1 || video_format == 2)) {
-      uint16_t max_lum = hdr_metadata->maxDisplayLuminance;
-      const auto vivid_metadata = vivid_filter.update(luminance_stats);
-      hdr10plus_ema.update(luminance_stats);
-
-      // HDR10+ (PQ only — HDR10+ requires absolute luminance)
-      size_t hdr10plus_payload_size = 0;
-      if (dynamic_hdr_formats.hdr10plus) {
-        hdr10plus_payload_size = video::hdr_metadata::serialize_hdr10plus_t35(
-          hdr10plus_ema.smoothed(luminance_stats), max_lum, hdr10plus_payload);
-      }
-      if (hdr10plus_payload_size > 0) {
-        dynamic_payloads[dynamic_payload_count].payloadSize =
-          static_cast<uint32_t>(hdr10plus_payload_size);
+      // The payloads live in dynamic_metadata until the next frame, which outlasts
+      // the nvEncEncodePicture() call below.
+      const auto payloads = dynamic_metadata.build(luminance_stats, hdr_metadata->maxDisplayLuminance);
+      for (auto payload : { payloads.hdr10plus, payloads.vivid }) {
+        if (payload.empty()) {
+          continue;
+        }
+        dynamic_payloads[dynamic_payload_count].payloadSize = static_cast<uint32_t>(payload.size());
         dynamic_payloads[dynamic_payload_count].payloadType = 4;  // registered ITU-T T.35
-        dynamic_payloads[dynamic_payload_count].payload = hdr10plus_payload.data();
-        dynamic_payload_count++;
-      }
-
-      // HDR Vivid (both PQ and HLG)
-      if (dynamic_hdr_formats.vivid &&
-          video::hdr_metadata::serialize_vivid_t35(vivid_metadata, vivid_payload) > 0) {
-        dynamic_payloads[dynamic_payload_count].payloadSize = static_cast<uint32_t>(vivid_payload.size());
-        dynamic_payloads[dynamic_payload_count].payloadType = 4;  // registered ITU-T T.35
-        dynamic_payloads[dynamic_payload_count].payload = vivid_payload.data();
+        dynamic_payloads[dynamic_payload_count].payload = const_cast<uint8_t *>(payload.data());
         dynamic_payload_count++;
       }
 

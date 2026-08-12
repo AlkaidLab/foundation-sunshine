@@ -7,6 +7,9 @@
 #include "amf_avcodec_compat.h"
 #include "amf_encoder.h"
 
+#include "src/video_hdr_bitstream.h"
+#include "src/video_hdr_metadata.h"
+
 #include <d3d11.h>
 #include <deque>
 #include <memory>
@@ -49,6 +52,9 @@ namespace amf {
     void
     set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) override;
 
+    void
+    set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) override;
+
     void *
     get_input_texture() override;
 
@@ -73,6 +79,18 @@ namespace amf {
     template<typename T>
     void
     set_codec_property(const wchar_t *h264_name, const wchar_t *hevc_name, const wchar_t *av1_name, T value);
+
+    /**
+     * Serialize the current luminance stats into codec-specific bitstream units and
+     * remember them for this frame index, so the units can be spliced into the
+     * matching output however many frames later AMF produces it.
+     */
+    void
+    stage_dynamic_metadata(uint64_t frame_index);
+
+    /// Drop everything remembered for a frame that was dropped or has been emitted.
+    void
+    forget_frame(uint64_t frame_index);
 
     ID3D11Device *device = nullptr;
     ::amf::AMFFactory *factory = nullptr;
@@ -111,6 +129,21 @@ namespace amf {
     // Pending outputs stashed during SubmitInput retry or proactive backpressure drain
     std::deque<::amf::AMFDataPtr> pending_outputs;
     std::unordered_map<uint64_t, bool> frame_rfi_flags;
+
+    // Dynamic HDR metadata (HDR10+ / HDR Vivid). AMF exposes only static
+    // AMFHDRMetadata, so the payloads are written as an HEVC prefix SEI or an AV1
+    // metadata OBU and spliced into the encoder's output.
+    //
+    // The units are built when the frame is submitted, where the analyzer output
+    // still belongs to that frame, and keyed by frame index because AMF may return
+    // the encoded frame several submissions later. Trimmed like frame_rfi_flags so a
+    // stream that keeps dropping frames cannot grow the map without bound.
+    std::optional<video::hdr_bitstream::codec_e> dynamic_metadata_codec;
+    video::hdr_metadata::dynamic_metadata_builder_t dynamic_metadata;
+    platf::hdr_frame_luminance_stats_t luminance_stats {};
+    uint16_t max_display_luminance = 0;
+    std::unordered_map<uint64_t, std::vector<uint8_t>> staged_metadata_units;
+    static constexpr size_t MAX_TRACKED_FRAMES = 256;
 
     // FFmpeg-style proactive backpressure: track in-flight surfaces (submitted
     // but not yet retrieved via QueryOutput) so we can drain output BEFORE

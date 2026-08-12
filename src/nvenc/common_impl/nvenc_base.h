@@ -140,11 +140,7 @@ namespace nvenc {
 
     // Per-frame HDR luminance stats for dynamic metadata
     platf::hdr_frame_luminance_stats_t luminance_stats;
-    video::hdr_metadata::formats_t dynamic_hdr_formats;
-    video::hdr_metadata::vivid_temporal_filter_t vivid_filter;
-    // HDR10+ needs its own smoothing: vivid_filter averages in the PQ code-value
-    // domain, while the ST 2094-40 fields are built from luminance in nits.
-    video::hdr_metadata::hdr_luminance_ema_t hdr10plus_ema;
+    video::hdr_metadata::dynamic_metadata_builder_t dynamic_metadata;
 
   };
 }

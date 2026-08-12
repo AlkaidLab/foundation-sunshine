@@ -575,6 +575,7 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     amf::amf_encoder *amf = nullptr;
+    bool hdr_luminance_analysis_available = false;
   };
 
   enum class capture_e : int {

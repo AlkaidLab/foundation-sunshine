@@ -587,6 +587,116 @@ TEST(HdrDynamicMetadata, VividStartupGuardRejectsInvalidAndTransitionSamples) {
   EXPECT_TRUE(guard.observe(stable_hlg_stats(8, 500.0f, 930.0f)));
 }
 
+namespace {
+
+  using gate_t = video::hdr_metadata::vivid_startup_gate_t;
+
+  constexpr video::sunshine_colorspace_t HLG { video::colorspace_e::bt2020hlg, false, 10 };
+  constexpr video::sunshine_colorspace_t PQ { video::colorspace_e::bt2020, false, 10 };
+
+}  // namespace
+
+TEST(HdrDynamicMetadata, VividStartupGateEmitsImmediatelyForPq) {
+  // PQ has no plain-HDR10 fallback problem, so there is nothing to wait for.
+  gate_t gate { PQ, HEVC, true };
+  EXPECT_FALSE(gate.prerolling());
+
+  const auto now = std::chrono::steady_clock::now();
+  const auto first = gate.observe(stable_hlg_stats(1), now);
+  EXPECT_EQ(first.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(first.transition, gate_t::transition_e::none);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGateHoldsHlgUntilTheGuardConverges) {
+  gate_t gate { HLG, HEVC, true };
+  EXPECT_TRUE(gate.prerolling());
+
+  const auto start = std::chrono::steady_clock::now();
+  for (uint64_t sequence = 1; sequence <= 2; ++sequence) {
+    const auto held = gate.observe(stable_hlg_stats(sequence), start);
+    EXPECT_EQ(held.decision, gate_t::decision_e::hold) << "sequence=" << sequence;
+    EXPECT_EQ(held.transition, gate_t::transition_e::none) << "sequence=" << sequence;
+  }
+
+  // The third independent sample flips the gate and asks the caller for an IDR.
+  const auto ready = gate.observe(stable_hlg_stats(3), start);
+  EXPECT_EQ(ready.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(ready.transition, gate_t::transition_e::ready);
+  EXPECT_EQ(gate.consecutive_samples(), video::hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES);
+  EXPECT_FALSE(gate.prerolling());
+
+  // Once open the gate stays open, and reports the transition only once. The
+  // timeout no longer applies.
+  const auto later = gate.observe(stable_hlg_stats(4), start + gate_t::PREROLL_TIMEOUT * 4);
+  EXPECT_EQ(later.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(later.transition, gate_t::transition_e::none);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGateGivesUpAfterTheTimeout) {
+  gate_t gate { HLG, HEVC, true };
+
+  const auto start = std::chrono::steady_clock::now();
+  auto invalid = stable_hlg_stats(1);
+  invalid.valid = false;
+  EXPECT_EQ(gate.observe(invalid, start).decision, gate_t::decision_e::hold);
+  // One millisecond short of the budget is still a hold.
+  EXPECT_EQ(gate.observe(invalid, start + gate_t::PREROLL_TIMEOUT - std::chrono::milliseconds { 1 }).decision,
+    gate_t::decision_e::hold);
+
+  const auto expired = gate.observe(invalid, start + gate_t::PREROLL_TIMEOUT);
+  EXPECT_EQ(expired.decision, gate_t::decision_e::disabled);
+  EXPECT_EQ(expired.transition, gate_t::transition_e::timed_out);
+
+  // Stays disabled, and does not report the transition again: a stream that starts
+  // as plain HLG must not switch into Vivid later.
+  const auto after = gate.observe(stable_hlg_stats(2), start + gate_t::PREROLL_TIMEOUT * 2);
+  EXPECT_EQ(after.decision, gate_t::decision_e::disabled);
+  EXPECT_EQ(after.transition, gate_t::transition_e::none);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGateDisablesHlgWithNothingToWaitFor) {
+  const auto now = std::chrono::steady_clock::now();
+
+  // No analyzer: HLG can never carry Vivid, so holding frames would only delay
+  // the first frame by the full timeout.
+  gate_t without_analysis { HLG, HEVC, false };
+  EXPECT_FALSE(without_analysis.prerolling());
+  EXPECT_EQ(without_analysis.observe(stable_hlg_stats(1), now).decision, gate_t::decision_e::disabled);
+
+  // AV1 has no HDR Vivid carriage at all.
+  gate_t av1 { HLG, AV1, true };
+  EXPECT_FALSE(av1.prerolling());
+  EXPECT_EQ(av1.observe(stable_hlg_stats(1), now).decision, gate_t::decision_e::disabled);
+}
+
+TEST(HdrDynamicMetadata, DynamicMetadataBuilderFollowsTheFormatGates) {
+  const auto stats = stable_hlg_stats(1);
+
+  // Unconfigured: nothing is emitted, even from valid stats.
+  video::hdr_metadata::dynamic_metadata_builder_t builder;
+  EXPECT_TRUE(builder.build(stats, 1000).empty());
+
+  // PQ over HEVC carries both formats.
+  builder.configure(video::hdr_metadata::formats_for(PQ, HEVC));
+  const auto both = builder.build(stats, 1000);
+  EXPECT_FALSE(both.hdr10plus.empty());
+  EXPECT_FALSE(both.vivid.empty());
+  // Both are registered T.35 payloads, distinguished by their country code.
+  EXPECT_EQ(both.hdr10plus.front(), 0xB5);  // United States (SMPTE ST 2094-40)
+  EXPECT_EQ(both.vivid.front(), 0x26);  // China (CUVA)
+
+  // HLG carries Vivid only: HDR10+ describes absolute luminance.
+  builder.configure(video::hdr_metadata::formats_for(HLG, HEVC));
+  const auto vivid_only = builder.build(stats, 1000);
+  EXPECT_TRUE(vivid_only.hdr10plus.empty());
+  EXPECT_FALSE(vivid_only.vivid.empty());
+
+  // Invalid analyzer output emits nothing rather than a frame of zeros.
+  auto invalid = stats;
+  invalid.valid = false;
+  EXPECT_TRUE(builder.build(invalid, 1000).empty());
+}
+
 // Regression guard for the representation of
 // AVHDRVividColorToneMappingParams::targeted_system_display_maximum_luminance.
 //

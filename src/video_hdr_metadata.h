@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -581,6 +583,115 @@ namespace video::hdr_metadata {
     bool ready_ = false;
   };
 
+  /**
+   * The stream-startup policy wrapped around vivid_startup_guard_t.
+   *
+   * The guard decides whether analyzer output is trustworthy; this decides what a
+   * session does about it — hold frames back, give up after a wall-clock budget, or
+   * emit from the first frame. Both native encoder paths need the identical answer,
+   * so the state machine lives here rather than being written twice: NVENC and AMF
+   * disagreeing about when HLG starts carrying Vivid would be a bug nobody notices
+   * until it is reported as "HDR looks different on my AMD box".
+   *
+   * The caller owns logging and force-IDR, which is why a transition is reported
+   * rather than acted on. A session must feed every capture frame through
+   * observe(); skipping frames while holding is what starves the guard of the
+   * independent samples it is waiting for.
+   */
+  class vivid_startup_gate_t {
+  public:
+    enum class decision_e {
+      emit,  ///< Hand this frame's stats to the encoder.
+      hold,  ///< Encode nothing yet; keep converting so the analyzer can converge.
+      disabled,  ///< This session never emits dynamic metadata.
+    };
+
+    enum class transition_e {
+      none,
+      ready,  ///< The guard just converged; the next encoded frame should be an IDR.
+      timed_out,  ///< The preroll budget just expired; start as plain HLG.
+    };
+
+    struct result_t {
+      decision_e decision = decision_e::emit;
+      transition_e transition = transition_e::none;
+    };
+
+    /**
+     * How long a session waits for stable analyzer output before starting without
+     * dynamic metadata. Long enough for three independent GPU readbacks at any
+     * supported analysis cadence, short enough that a client waiting on the first
+     * frame reads it as startup rather than a hang.
+     */
+    static constexpr auto PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
+
+    vivid_startup_gate_t(
+      const sunshine_colorspace_t &colorspace,
+      int video_format,
+      bool analysis_available) {
+      if (!colorspace_is_hlg(colorspace)) {
+        // PQ carries no plain-HDR10 fallback problem: a mid-stream switch into
+        // HDR10+ or Vivid is not visible the way an HLG one is, so there is
+        // nothing to wait for.
+        state_ = state_e::enabled;
+      }
+      else if (needs_vivid_startup_preroll(colorspace, video_format, analysis_available)) {
+        state_ = state_e::preroll;
+      }
+      else {
+        state_ = state_e::disabled;
+      }
+    }
+
+    result_t
+    observe(
+      const platf::hdr_frame_luminance_stats_t &stats,
+      std::chrono::steady_clock::time_point now) {
+      if (state_ == state_e::disabled) {
+        return { decision_e::disabled, transition_e::none };
+      }
+      if (state_ == state_e::enabled) {
+        return { decision_e::emit, transition_e::none };
+      }
+
+      if (!preroll_started_) {
+        preroll_started_ = now;
+      }
+
+      if (guard_.observe(stats)) {
+        state_ = state_e::enabled;
+        return { decision_e::emit, transition_e::ready };
+      }
+      if (now - *preroll_started_ >= PREROLL_TIMEOUT) {
+        state_ = state_e::disabled;
+        return { decision_e::disabled, transition_e::timed_out };
+      }
+      return { decision_e::hold, transition_e::none };
+    }
+
+    /// Whether this session starts by holding frames back, for a startup log line.
+    bool
+    prerolling() const {
+      return state_ == state_e::preroll;
+    }
+
+    uint32_t
+    consecutive_samples() const {
+      return guard_.consecutive_samples();
+    }
+
+  private:
+    enum class state_e {
+      enabled,
+      preroll,
+      disabled,
+    };
+
+    vivid_startup_guard_t guard_;
+    std::optional<std::chrono::steady_clock::time_point> preroll_started_;
+    state_e state_ = state_e::enabled;
+  };
+
   namespace detail {
 
     class bit_writer_t {
@@ -656,5 +767,91 @@ namespace video::hdr_metadata {
 
     return payload.size();
   }
+
+  /**
+   * Produces this frame's dynamic metadata payloads, owning the temporal state
+   * that makes them stable.
+   *
+   * Both native encoder paths need the same three things done in the same order —
+   * update the EMA and the Vivid temporal filter from the raw stats, then
+   * serialize whichever formats this stream may carry — and they differ only in
+   * how the finished payloads reach the bitstream. Keeping the sequence here means
+   * a change to smoothing or to format gating cannot land on one encoder and miss
+   * the other.
+   *
+   * The returned spans point into this object and stay valid until the next
+   * build() or reset() call. That is enough for both callers: NVENC hands the
+   * pointers straight to nvEncEncodePicture(), and AMF copies them into a spliced
+   * bitstream unit, both within the same frame.
+   */
+  class dynamic_metadata_builder_t {
+  public:
+    struct payloads_t {
+      /// Complete registered T.35 payloads, empty when that format is not emitted.
+      std::span<const uint8_t> hdr10plus;
+      std::span<const uint8_t> vivid;
+
+      bool
+      empty() const {
+        return hdr10plus.empty() && vivid.empty();
+      }
+    };
+
+    /// Which formats this stream may carry, from formats_for().
+    void
+    configure(formats_t formats) {
+      formats_ = formats;
+    }
+
+    const formats_t &
+    formats() const {
+      return formats_;
+    }
+
+    /**
+     * Update the temporal state from one frame of analyzer output and serialize.
+     *
+     * The filters are updated even for a format this stream does not emit, so a
+     * stream that only carries one of the two still keeps the other's state warm
+     * and comparable frame to frame.
+     */
+    payloads_t
+    build(const platf::hdr_frame_luminance_stats_t &stats, uint16_t max_display_luminance) {
+      payloads_t payloads;
+      if (!stats.valid) {
+        return payloads;
+      }
+
+      const auto vivid = vivid_filter_.update(stats);
+      hdr10plus_ema_.update(stats);
+
+      if (formats_.hdr10plus) {
+        const auto size = serialize_hdr10plus_t35(
+          hdr10plus_ema_.smoothed(stats), max_display_luminance, hdr10plus_storage_);
+        if (size > 0) {
+          payloads.hdr10plus = std::span(hdr10plus_storage_).first(size);
+        }
+      }
+      if (formats_.vivid && serialize_vivid_t35(vivid, vivid_storage_) > 0) {
+        payloads.vivid = vivid_storage_;
+      }
+      return payloads;
+    }
+
+    /// Drop temporal history, e.g. when an encoder is recreated mid-session.
+    void
+    reset() {
+      hdr10plus_ema_.reset();
+      vivid_filter_.reset();
+      vivid_storage_.clear();
+    }
+
+  private:
+    formats_t formats_ {};
+    hdr_luminance_ema_t hdr10plus_ema_;
+    vivid_temporal_filter_t vivid_filter_;
+    std::array<uint8_t, hdr10plus_t35_max_payload_size> hdr10plus_storage_ {};
+    std::vector<uint8_t> vivid_storage_;
+  };
 
 }  // namespace video::hdr_metadata
