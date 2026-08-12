@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <span>
 #include <vector>
 
@@ -33,13 +34,70 @@ namespace video::hdr_metadata {
   constexpr int hdr10plus_normalized_scale = 100000;
   constexpr uint8_t hdr10plus_application_version = 1;
   constexpr size_t hdr10plus_t35_prefix_size = 6;
+
+  /**
+   * The SMPTE ST 2084 reference peak that every ST 2094-40 luminance field is
+   * normalized against.
+   *
+   * maxSCL, average_maxrgb and the maxRGB distribution describe absolute content
+   * luminance as a fraction of this peak, never a fraction of the target display.
+   * A consumer recovers nits by multiplying straight back out — libplacebo does
+   * `scene_max[i] = 10000 * av_q2d(maxscl[i])` in pl_map_hdr_metadata — so
+   * normalizing against anything else scales the whole picture by the ratio.
+   * The target display belongs in targeted_system_display_maximum_luminance,
+   * which is a separate, non-normalized field carried in nits.
+   */
+  constexpr float hdr10plus_pq_reference_nits = 10000.0f;
   // Large enough for FFmpeg's maximum ST 2094-40 body plus the T.35 prefix,
   // without exposing FFmpeg headers to this shared, unit-testable header.
   constexpr size_t hdr10plus_t35_max_payload_size = 1024;
 
+  /**
+   * The maxRGB percentages ST 2094-40 deployment profiles carry.
+   *
+   * The syntax element num_distribution_maxrgb_percentiles is u(4), so a zero count
+   * is representable, but shipping HDR10+ always sends these nine. FFmpeg neither
+   * enforces nor round-trips the count, so an empty distribution serializes and
+   * parses back cleanly while still being non-conformant on the wire.
+   */
+  inline constexpr std::array<uint8_t, 9> hdr10plus_percentages { 1, 5, 10, 25, 50, 75, 90, 95, 99 };
+
+  /**
+   * ST 2094-40 8.5.4 excludes the 5% and 10% slots from the CDF in
+   * application_version 1 and reserves them at the fixed values V1 = 0.00000 and
+   * V2 = 0.00255. ST 2094-50 redefines the same two slots as V1 = scene luminance
+   * at 99.99% of the frame and V2 = percentage of pixels at or below 100 nits, so
+   * a consumer that finds a nonzero V1 reads it as the frame peak.
+   *
+   * libplacebo does exactly that: pl_map_hdr_metadata derives max_pq_y from slot 1
+   * whenever application_version is 1 with the nine standard percentages, then
+   * pl_color_space_nominal_luma_ex prefers those CIE-Y values over maxSCL. Writing
+   * a real 5th percentile there reports the darkest part of the frame as its peak,
+   * which is why the V1 = 0 sentinel exists — it is how a conformant stream tells
+   * the consumer to fall back to maxSCL.
+   *
+   * The analyzer's 5% and 10% percentiles are therefore computed but not carried.
+   * The slots stay in the table so the array keeps lining up with
+   * hdr10plus_percentages and with the analyzer's distribution_maxrgb[].
+   */
+  constexpr size_t hdr10plus_reserved_v1_index = 1;
+  constexpr size_t hdr10plus_reserved_v2_index = 2;
+  constexpr int hdr10plus_reserved_v1 = 0;  // 0.00000
+  constexpr int hdr10plus_reserved_v2 = 255;  // 0.00255 x hdr10plus_normalized_scale
+
+  static_assert(hdr10plus_percentages[hdr10plus_reserved_v1_index] == 5 &&
+                  hdr10plus_percentages[hdr10plus_reserved_v2_index] == 10,
+    "the reserved ST 2094-40 slots are the 5% and 10% percentages");
+
+  static_assert(
+    hdr10plus_percentages.size() == platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES,
+    "analyzer distribution_maxrgb[] must match the HDR10+ percentage table");
+
   struct hdr10plus_frame_metadata_t {
     int maxscl = 0;
     int average_maxrgb = 0;
+    /// Normalized maxRGB at each entry of hdr10plus_percentages.
+    std::array<int, hdr10plus_percentages.size()> distribution_maxrgb {};
     uint16_t targeted_system_display_maximum_luminance = 1000;
     bool valid = false;
   };
@@ -47,10 +105,16 @@ namespace video::hdr_metadata {
   /**
    * Convert analyzer luminance values into the normalized ST 2094-40 fields
    * shared by the AVCodec side-data and native NVENC paths.
+   *
+   * distribution carries maxRGB in nits at each hdr10plus_percentages entry. A null
+   * pointer leaves the distribution at zero. Any non-finite or negative entry
+   * discards the whole distribution the same way. Either way the reserved slots keep
+   * their fixed 8.5.4 values: V1 = 0 tells a consumer to fall back to maxSCL, which
+   * stays valid, so the frame is still worth sending.
    */
   inline hdr10plus_frame_metadata_t
   hdr10plus_from_luminance(float percentile_95, float average_maxrgb,
-    uint16_t max_display_luminance) {
+    uint16_t max_display_luminance, const float *distribution = nullptr) {
     if (!std::isfinite(percentile_95) || !std::isfinite(average_maxrgb) ||
         percentile_95 < 0.0f || average_maxrgb < 0.0f) {
       return {};
@@ -60,17 +124,44 @@ namespace video::hdr_metadata {
       max_display_luminance > 0 ? max_display_luminance : 1000,
       1,
       10000);
-    const auto normalize = [target_nits](float nits) {
-      const float normalized = std::clamp(nits / target_nits, 0.0f, 1.0f);
+    // Absolute, display-independent: see hdr10plus_pq_reference_nits. target_nits
+    // deliberately plays no part here — it is only reported as the targeted system
+    // display maximum luminance below.
+    const auto normalize = [](float nits) {
+      const float normalized = std::clamp(nits / hdr10plus_pq_reference_nits, 0.0f, 1.0f);
       return static_cast<int>(std::lround(normalized * hdr10plus_normalized_scale));
     };
 
-    return {
+    hdr10plus_frame_metadata_t result {
       .maxscl = normalize(percentile_95),
       .average_maxrgb = normalize(average_maxrgb),
       .targeted_system_display_maximum_luminance = target_nits,
       .valid = true,
     };
+
+    if (distribution) {
+      for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
+        if (!std::isfinite(distribution[i]) || distribution[i] < 0.0f) {
+          result.distribution_maxrgb = {};
+          break;
+        }
+        result.distribution_maxrgb[i] = normalize(distribution[i]);
+      }
+    }
+
+    // Overwrite the two reserved slots last, so an analyzer percentile can never
+    // reach the wire there. 8.5.4 fixes V1 and V2 unconditionally in
+    // application_version 1, so this has to run on every path out of here, not just
+    // the one that filled a distribution in: the serializer always emits all nine
+    // percentiles, so a caller that passes no distribution at all would otherwise
+    // ship V2 = 0. V1 stays 0 either way, which is the sentinel that makes a
+    // consumer fall back to maxSCL — what we want when there is no usable analysis.
+    if constexpr (hdr10plus_application_version == 1) {
+      result.distribution_maxrgb[hdr10plus_reserved_v1_index] = hdr10plus_reserved_v1;
+      result.distribution_maxrgb[hdr10plus_reserved_v2_index] = hdr10plus_reserved_v2;
+    }
+
+    return result;
   }
 
   /**
@@ -85,20 +176,50 @@ namespace video::hdr_metadata {
     std::span<uint8_t> payload);
 
   /**
-   * HDR10+ is defined for PQ content. HDR Vivid can accompany either PQ or HLG.
+   * Which dynamic metadata formats may be emitted for this stream.
+   *
+   * Two independent gates. The transfer function decides what may describe the
+   * content: HDR10+ carries absolute luminance so it is PQ-only, while HDR Vivid
+   * covers both PQ and HLG (T/UWA 005.1-2024 clause 7).
+   *
+   * The codec decides what may be written. HDR Vivid defines a carriage only for
+   * AVS2 (clause 8) and HEVC/VVC (annex B) — the standard never mentions AV1 or
+   * OBUs, so emitting it there invents a mapping no decoder is obliged to accept.
+   * HDR10+ does have one, from AOMedia's HDR10+ AV1 Metadata Handling
+   * Specification, so it is not codec-gated here.
+   *
+   * video_format follows the config_t::videoFormat convention: 0 H.264, 1 HEVC, 2 AV1.
    */
   inline formats_t
-  formats_for(const sunshine_colorspace_t &colorspace) {
+  formats_for(const sunshine_colorspace_t &colorspace, int video_format) {
+    const bool vivid_carriable = (video_format == 1);
     switch (colorspace.colorspace) {
       case colorspace_e::bt2020:
-        return { .hdr10plus = true, .vivid = true };
+        return { .hdr10plus = true, .vivid = vivid_carriable };
       case colorspace_e::bt2020hlg:
-        return { .hdr10plus = false, .vivid = true };
+        return { .hdr10plus = false, .vivid = vivid_carriable };
       default:
         return {};
     }
   }
 
+  /**
+   * Whether stream startup should hold frames back until the HDR Vivid startup
+   * guard reports stable analyzer output.
+   *
+   * Only HLG needs it: a plain-HLG IDR followed by a mid-stream switch into Vivid
+   * is visible to the client. The wait is pointless when Vivid is never emitted
+   * for this codec, and would only delay the first frame.
+   */
+  inline bool
+  needs_vivid_startup_preroll(
+    const sunshine_colorspace_t &colorspace,
+    int video_format,
+    bool analysis_available) {
+    return analysis_available &&
+           colorspace.colorspace == colorspace_e::bt2020hlg &&
+           formats_for(colorspace, video_format).vivid;
+  }
   /**
    * Convert absolute display luminance to the normalized SMPTE ST 2084 signal
    * used by GB/T 46269.1-2025 (equivalent to T/UWA 005.1-2024).
@@ -195,6 +316,106 @@ namespace video::hdr_metadata {
     result.valid = true;
     return result;
   }
+
+  /**
+   * @brief Temporal EMA (Exponential Moving Average) state for HDR luminance stats.
+   * Prevents frame-to-frame brightness jitter/flicker in tone mapping by smoothing
+   * the raw per-frame GPU statistics over time.
+   *
+   * This state is owned by the encode session. It must not be shared across sessions:
+   * carrying a previous stream's converged luminance into a new one biases the first
+   * frames of dynamic metadata until the EMA re-converges.
+   *
+   * Lives here rather than next to one encoder because both the avcodec and the
+   * native NVENC path feed HDR10+ from it. NVENC used to serialize raw analyzer
+   * output, so its HDR10+ stepped at every GPU readback while the Vivid metadata
+   * beside it was already smoothed by vivid_temporal_filter_t.
+   */
+  struct hdr_luminance_ema_t {
+    float min_maxrgb = 0.0f;
+    float max_maxrgb = 0.0f;
+    float avg_maxrgb = 0.0f;
+    float percentile_95 = 0.0f;
+    float percentile_99 = 0.0f;
+    /// Smoothed maxRGB (nits) at each hdr10plus_percentages entry.
+    float distribution_maxrgb[platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES] = {};
+    bool initialized = false;
+
+    /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
+    /// Lower α = more smoothing (less flicker, slower adaptation).
+    /// Scene cuts are handled by fast-tracking when the change exceeds a threshold.
+    static constexpr float ALPHA = 0.15f;
+    static constexpr float SCENE_CUT_THRESHOLD = 3.0f;  // Ratio threshold for scene cut detection
+
+    /**
+     * @brief Apply EMA smoothing to raw per-frame stats.
+     * On first frame or scene cuts (>3x luminance change), snaps to current value.
+     * Otherwise applies exponential smoothing: smoothed = α·current + (1-α)·previous.
+     */
+    void
+    update(const platf::hdr_frame_luminance_stats_t &raw) {
+      if (!raw.valid) return;
+
+      if (!initialized) {
+        // First frame: snap to current values
+        min_maxrgb = raw.min_maxrgb;
+        max_maxrgb = raw.max_maxrgb;
+        avg_maxrgb = raw.avg_maxrgb;
+        percentile_95 = raw.percentile_95;
+        percentile_99 = raw.percentile_99;
+        std::copy(std::begin(raw.distribution_maxrgb), std::end(raw.distribution_maxrgb),
+          std::begin(distribution_maxrgb));
+        initialized = true;
+        return;
+      }
+
+      // Scene cut detection: if peak luminance changes dramatically, snap immediately
+      float ratio = (max_maxrgb > 1.0f) ? raw.max_maxrgb / max_maxrgb : SCENE_CUT_THRESHOLD + 1.0f;
+      float alpha = (ratio > SCENE_CUT_THRESHOLD || ratio < 1.0f / SCENE_CUT_THRESHOLD)
+                    ? 1.0f  // Scene cut: snap to new values
+                    : ALPHA; // Normal: smooth transition
+
+      min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
+      max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
+      avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
+      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
+      percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
+      for (size_t i = 0; i < std::size(distribution_maxrgb); ++i) {
+        distribution_maxrgb[i] =
+          alpha * raw.distribution_maxrgb[i] + (1.0f - alpha) * distribution_maxrgb[i];
+      }
+    }
+
+    void
+    reset() {
+      *this = {};
+    }
+
+    /**
+     * @brief raw with the smoothed fields substituted.
+     *
+     * For callers that hand a whole stats struct to a serializer instead of
+     * reading the individual EMA fields. Members this filter does not smooth —
+     * analysis_max_nits, sample_sequence, and the PQ-domain percentiles Vivid
+     * uses — pass through untouched.
+     */
+    platf::hdr_frame_luminance_stats_t
+    smoothed(const platf::hdr_frame_luminance_stats_t &raw) const {
+      if (!initialized) {
+        return raw;
+      }
+
+      platf::hdr_frame_luminance_stats_t result = raw;
+      result.min_maxrgb = min_maxrgb;
+      result.max_maxrgb = max_maxrgb;
+      result.avg_maxrgb = avg_maxrgb;
+      result.percentile_95 = percentile_95;
+      result.percentile_99 = percentile_99;
+      std::copy(std::begin(distribution_maxrgb), std::end(distribution_maxrgb),
+        std::begin(result.distribution_maxrgb));
+      return result;
+    }
+  };
 
   /**
    * GB/T 46269.1-2025 Annex A.9 recommends a 32-frame arithmetic mean over

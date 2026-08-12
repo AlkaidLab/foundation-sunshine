@@ -5,6 +5,7 @@
 // standard includes
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <atomic>
 #include <bitset>
 #include <functional>
@@ -39,6 +40,7 @@ extern "C" {
 #include "sync.h"
 #include "video.h"
 #include "video_hdr_metadata.h"
+#include "video_probe.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -523,63 +525,6 @@ namespace video {
     std::array<entry_t, 256> entries {};
   };
 
-  /**
-   * @brief Temporal EMA (Exponential Moving Average) state for HDR luminance stats.
-   * Prevents frame-to-frame brightness jitter/flicker in tone mapping by smoothing
-   * the raw per-frame GPU statistics over time.
-   *
-   * This state is owned by the encode session. It must not be shared across sessions:
-   * carrying a previous stream's converged luminance into a new one biases the first
-   * frames of dynamic metadata until the EMA re-converges.
-   */
-  struct hdr_luminance_ema_t {
-    float min_maxrgb = 0.0f;
-    float max_maxrgb = 0.0f;
-    float avg_maxrgb = 0.0f;
-    float percentile_95 = 0.0f;
-    float percentile_99 = 0.0f;
-    bool initialized = false;
-
-    /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
-    /// Lower α = more smoothing (less flicker, slower adaptation).
-    /// Scene cuts are handled by fast-tracking when the change exceeds a threshold.
-    static constexpr float ALPHA = 0.15f;
-    static constexpr float SCENE_CUT_THRESHOLD = 3.0f;  // Ratio threshold for scene cut detection
-
-    /**
-     * @brief Apply EMA smoothing to raw per-frame stats.
-     * On first frame or scene cuts (>3x luminance change), snaps to current value.
-     * Otherwise applies exponential smoothing: smoothed = α·current + (1-α)·previous.
-     */
-    void
-    update(const platf::hdr_frame_luminance_stats_t &raw) {
-      if (!raw.valid) return;
-
-      if (!initialized) {
-        // First frame: snap to current values
-        min_maxrgb = raw.min_maxrgb;
-        max_maxrgb = raw.max_maxrgb;
-        avg_maxrgb = raw.avg_maxrgb;
-        percentile_95 = raw.percentile_95;
-        percentile_99 = raw.percentile_99;
-        initialized = true;
-        return;
-      }
-
-      // Scene cut detection: if peak luminance changes dramatically, snap immediately
-      float ratio = (max_maxrgb > 1.0f) ? raw.max_maxrgb / max_maxrgb : SCENE_CUT_THRESHOLD + 1.0f;
-      float alpha = (ratio > SCENE_CUT_THRESHOLD || ratio < 1.0f / SCENE_CUT_THRESHOLD)
-                    ? 1.0f  // Scene cut: snap to new values
-                    : ALPHA; // Normal: smooth transition
-
-      min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
-      max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
-      avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
-      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
-      percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
-    }
-  };
-
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
@@ -723,7 +668,7 @@ namespace video {
 
     // Temporal filters are session-local so a new stream cannot inherit metadata
     // history from the previous stream.
-    hdr_luminance_ema_t hdr_ema;
+    hdr_metadata::hdr_luminance_ema_t hdr_ema;
     hdr_metadata::vivid_temporal_filter_t vivid_filter;
 
     cbs::nal_t sps;
@@ -735,16 +680,17 @@ namespace video {
 
   class nvenc_encode_session_t: public encode_session_t {
   public:
-    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device):
+    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, int video_format):
         device(std::move(encode_device)) {
       const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
       if (use_hlg) {
         const bool analysis_available =
           config::video.hdr_luminance_analysis != "off" &&
           device->hdr_luminance_analysis_available;
-        vivid_metadata_mode = analysis_available ?
-                                vivid_metadata_mode_e::preroll :
-                                vivid_metadata_mode_e::disabled;
+        vivid_metadata_mode =
+          hdr_metadata::needs_vivid_startup_preroll(device->colorspace, video_format, analysis_available) ?
+            vivid_metadata_mode_e::preroll :
+            vivid_metadata_mode_e::disabled;
       }
       if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
         BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
@@ -2076,7 +2022,7 @@ namespace video {
   void
   update_hdr_dynamic_metadata(
     AVFrame *frame,
-    const hdr_luminance_ema_t &ema,
+    const hdr_metadata::hdr_luminance_ema_t &ema,
     const hdr_metadata::vivid_metadata_t &vivid_metadata,
     uint16_t max_display_luminance) {
     if (!frame) return;
@@ -2108,7 +2054,7 @@ namespace video {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
         const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
-          ema.percentile_95, ema.avg_maxrgb, max_display_luminance);
+          ema.percentile_95, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
         if (frame_metadata.valid) {
           auto &params = hdr10plus->params[0];
           const auto maxscl = av_make_q(
@@ -2120,6 +2066,13 @@ namespace video {
             frame_metadata.average_maxrgb, hdr_metadata::hdr10plus_normalized_scale);
           hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
             frame_metadata.targeted_system_display_maximum_luminance, 1);
+          params.num_distribution_maxrgb_percentiles =
+            static_cast<uint8_t>(hdr_metadata::hdr10plus_percentages.size());
+          for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
+            params.distribution_maxrgb[i].percentage = hdr_metadata::hdr10plus_percentages[i];
+            params.distribution_maxrgb[i].percentile = av_make_q(
+              frame_metadata.distribution_maxrgb[i], hdr_metadata::hdr10plus_normalized_scale);
+          }
         }
       }
     }
@@ -2680,11 +2633,13 @@ namespace video {
     // Both PQ (ST 2084) and HLG (ARIB STD-B67) can carry HDR metadata.
     // PQ uses absolute luminance and requires static metadata (MDCV, CLL).
     // HLG uses scene-referred relative luminance but benefits from HDR Vivid (CUVA)
-    // dynamic metadata for enhanced tone mapping on capable displays.
+    // dynamic metadata for enhanced tone mapping on capable displays, where the
+    // codec defines a carriage for it.
     if (colorspace_is_hdr(colorspace)) {
-      // Single source of truth for which dynamic formats this transfer function allows,
-      // shared with the native NVENC path so the two cannot drift apart.
-      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace);
+      // Single source of truth for which dynamic formats this transfer function allows
+      // and this codec can actually carry, shared with the native NVENC path so the two
+      // cannot drift apart.
+      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace, config.videoFormat);
 
       SS_HDR_METADATA hdr_metadata;
       bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
@@ -2884,7 +2839,7 @@ namespace video {
       }
     }
 
-    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
+    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
   }
 
   std::unique_ptr<amf_encode_session_t>
@@ -3962,10 +3917,13 @@ namespace video {
   }
 
   bool
-  validate_encoder(encoder_t &encoder, bool expect_failure) {
+  validate_encoder(
+    encoder_t &encoder,
+    bool expect_failure,
+    const std::optional<std::string> &probe_capture_override,
+    const std::string &probe_display_name) {
     std::shared_ptr<platf::display_t> disp;
     const auto configured_capture_backend = config::video.capture;
-    auto probe_capture_override = capture_override_for_encoder_probe();
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
@@ -4007,8 +3965,7 @@ namespace video {
     }
 
     // If the encoder isn't supported at all (not even H.264), bail early
-    const auto output_display_name { display_device::get_display_name(config::video.output_name) };
-    reset_display(disp, encoder.platform_formats->dev_type, output_display_name, config_autoselect);
+    reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, config_autoselect);
     if (!disp) {
       return false;
     }
@@ -4135,7 +4092,7 @@ namespace video {
         }
 
         // Reset the display since we're switching from SDR to HDR
-        reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
+        reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, generic_hdr_config);
         if (!disp) {
           return false;
         }
@@ -4210,6 +4167,30 @@ namespace video {
       return 0;
     }
 
+    const auto probe_capture_override = capture_override_for_encoder_probe();
+    const auto configured_display_name = display_device::get_display_name(config::video.output_name);
+    auto probe_display_name = configured_display_name;
+    if (probe_capture_override) {
+      // The Windows implementation enumerates all DXGI capture-ready outputs
+      // regardless of memory type, so one pass serves every encoder candidate.
+      const auto capture_ready_displays = encoder_list.empty() ?
+                                            std::vector<std::string> {} :
+                                            platf::display_names(encoder_list.front()->platform_formats->dev_type);
+      probe_display_name = select_encoder_probe_display(configured_display_name, capture_ready_displays);
+      if (!config::video.output_name.empty() && configured_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << config::video.output_name
+                           << "] could not be resolved for temporary capture backend ["sv
+                           << *probe_capture_override
+                           << "]; encoder probing will use backend display auto-selection"sv;
+      }
+      else if (!configured_display_name.empty() && probe_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << configured_display_name
+                           << "] is unavailable to temporary capture backend ["sv
+                           << *probe_capture_override
+                           << "]; encoder probing will use backend display auto-selection"sv;
+      }
+    }
+
     // Restart encoder selection
     auto previous_encoder = chosen_encoder;
     chosen_encoder = nullptr;
@@ -4246,7 +4227,11 @@ namespace video {
 
         if (encoder->name == config::video.encoder) {
           // Remove the encoder from the list entirely if it fails validation
-          if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+          if (!validate_encoder(
+                *encoder,
+                previous_encoder && previous_encoder != encoder,
+                probe_capture_override,
+                probe_display_name)) {
             pos = encoder_list.erase(pos);
             break;
           }
@@ -4274,7 +4259,11 @@ namespace video {
         auto encoder = *pos;
 
         // Remove the encoder from the list entirely if it fails validation
-        if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+        if (!validate_encoder(
+              *encoder,
+              previous_encoder && previous_encoder != encoder,
+              probe_capture_override,
+              probe_display_name)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4311,7 +4300,11 @@ namespace video {
         // If we've used a previous encoder and it's not this one, we expect this encoder to
         // fail to validate. It will use a slightly different order of checks to more quickly
         // eliminate failing encoders.
-        if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+        if (!validate_encoder(
+              *encoder,
+              previous_encoder && previous_encoder != encoder,
+              probe_capture_override,
+              probe_display_name)) {
           pos = encoder_list.erase(pos);
           continue;
         }

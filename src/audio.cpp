@@ -726,7 +726,7 @@ namespace audio {
     ref->control->release_mic_redirect_device();
   }
 
-  int write_mic_data(const std::uint8_t *data, size_t size, uint16_t seq) {
+  int write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) {
     // 单步原子获取：避免对已经释放的音频上下文做 check-then-act。
     auto ref = try_get_audio_ctx_ref();
     if (!ref) {
@@ -740,6 +740,6 @@ namespace audio {
       return -1;
     }
 
-    return ref->control->write_mic_data(reinterpret_cast<const char*>(data), size, seq);
+    return ref->control->write_mic_pcm(samples, frame_count);
   }
 }  // namespace audio

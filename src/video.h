@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -536,7 +537,11 @@ namespace video {
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt);
 
   bool
-  validate_encoder(encoder_t &encoder, bool expect_failure);
+  validate_encoder(
+    encoder_t &encoder,
+    bool expect_failure,
+    const std::optional<std::string> &probe_capture_override,
+    const std::string &probe_display_name);
 
   /**
    * @brief Probe encoders and select the preferred encoder.

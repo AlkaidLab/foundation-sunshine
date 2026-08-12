@@ -4,6 +4,9 @@
  */
 #include <src/video.h>
 
+#include <src/config.h>
+#include <src/display_device/display_device.h>
+
 #include "../tests_common.h"
 
 #include <algorithm>
@@ -172,7 +175,8 @@ struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encode
   void
   SetUp() override {
     auto &encoder = *GetParam();
-    if (!video::validate_encoder(encoder, false)) {
+    const auto probe_display_name = display_device::get_display_name(config::video.output_name);
+    if (!video::validate_encoder(encoder, false, std::nullopt, probe_display_name)) {
       // Encoder failed validation,
       // if it's software - fail, otherwise skip
       if (encoder.name == "software") {

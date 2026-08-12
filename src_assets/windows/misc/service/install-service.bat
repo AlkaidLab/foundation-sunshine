@@ -2,6 +2,11 @@
 set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 setlocal enabledelayedexpansion
 
+set "SKIP_START="
+for %%A in (%*) do (
+    if /I "%%~A"=="--no-start" set "SKIP_START=1"
+)
+
 rem Get sunshine root directory
 for %%I in ("%~dp0\..") do set "ROOT_DIR=%%~fI"
 
@@ -87,6 +92,11 @@ if /I "!SERVICE_START_TYPE!"=="delayed-auto" (
 rem Description is metadata only; AV / SCM contention may transiently
 rem block it. Never abort install over a missing description string.
 sc description %SERVICE_NAME% "Sunshine is a self-hosted game stream host for Moonlight." >nul 2>&1
+
+if defined SKIP_START (
+    echo %SERVICE_NAME% installed without starting; a pending driver operation must finish first.
+    exit /b 0
+)
 
 if /I "!SERVICE_START_TYPE!"=="disabled" (
     echo %SERVICE_NAME% installed with disabled start type; not starting.

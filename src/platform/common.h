@@ -8,6 +8,7 @@
 #include <array>
 #include <bitset>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -480,6 +481,10 @@ namespace platf {
    * scRGB 1.0 = 80 nits.
    */
   struct hdr_frame_luminance_stats_t {
+    /// Number of maxRGB percentiles HDR10+ deployment profiles carry.
+    /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
+    static constexpr size_t HDR10PLUS_PERCENTILES = 9;
+
     float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
     float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
     float avg_maxrgb = 0.0f;    ///< Average of max(R,G,B) across all pixels (nits)
@@ -487,6 +492,8 @@ namespace platf {
     float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
     float percentile_95 = 0.0f;     ///< 95th percentile of maxRGB (nits), for HDR10+
     float percentile_99 = 0.0f;     ///< 99th percentile of maxRGB (nits), for HDR10+
+    /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
+    float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
     float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
     uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
     bool valid = false;         ///< Whether stats are available (false on first frame)
@@ -702,14 +709,13 @@ namespace platf {
     sink_info() = 0;
 
     /**
-     * @brief Write microphone data to the virtual audio device.
-     * @param data Pointer to the audio data.
-     * @param size Size of the audio data in bytes.
-     * @param seq Sequence number for FEC recovery (0 = unknown)
-     * @returns Number of bytes written, or -1 on error.
+     * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
+     * @param samples Pointer to the PCM samples.
+     * @param frame_count Number of mono frames to write.
+     * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
      */
     virtual int
-    write_mic_data(const char *data, size_t size, uint16_t seq = 0) = 0;
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) = 0;
 
     /**
      * @brief Initialize the microphone redirect device.
@@ -745,6 +751,13 @@ namespace platf {
 
   std::unique_ptr<audio_control_t>
   audio_control();
+
+  /**
+   * @brief Initialize platform audio services required by the calling thread.
+   * @return A lifetime guard, or nullptr when thread initialization fails.
+   */
+  [[nodiscard]] std::unique_ptr<deinit_t>
+  init_audio_thread();
 
   /**
    * @brief Get the display_t instance for the given hwdevice_type.
@@ -988,6 +1001,12 @@ namespace platf {
   move_mouse(input_t &input, int deltaX, int deltaY);
   void
   set_mouse_mode(int mode);
+  /**
+   * @brief Select the gamepad emulation policy for the currently running app.
+   * @param mode 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4.
+   */
+  void
+  set_gamepad_mode(int mode);
   void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void

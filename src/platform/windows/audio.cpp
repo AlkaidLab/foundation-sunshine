@@ -253,13 +253,30 @@ namespace platf::audio {
 
   class co_init_t: public deinit_t {
   public:
-    co_init_t() {
-      CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY);
+    co_init_t():
+        status {CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY)} {
     }
 
     ~co_init_t() override {
-      CoUninitialize();
+      if (SUCCEEDED(status)) {
+        CoUninitialize();
+      }
     }
+
+    [[nodiscard]] bool
+    initialized() const noexcept {
+      // RPC_E_CHANGED_MODE 表示当前线程已经属于另一种 COM 单元模型。
+      // 此时 COM 仍可使用，但当前守卫不能负责反初始化已有单元。
+      return SUCCEEDED(status) || status == RPC_E_CHANGED_MODE;
+    }
+
+    [[nodiscard]] HRESULT
+    result() const noexcept {
+      return status;
+    }
+
+  private:
+    HRESULT status;
   };
 
   class prop_var_t {
@@ -734,6 +751,7 @@ namespace platf::audio {
     HANDLE mmcss_task_handle = NULL;
   };
 
+  // 初始化、写入和释放操作都由麦克风接收线程串行执行。
   std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
 
   class audio_control_t: public ::platf::audio_control_t {
@@ -1245,10 +1263,7 @@ namespace platf::audio {
     std::mutex last_virtual_sink_notification_mutex;
 
     int
-    init_mic_redirect_device() {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
+    init_mic_redirect_device() override {
       if (!mic_redirect_device) {
         mic_redirect_device = std::make_unique<mic_write_wasapi_t>();
       }
@@ -1265,26 +1280,21 @@ namespace platf::audio {
     }
 
     void
-    release_mic_redirect_device() {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
+    release_mic_redirect_device() override {
       if (mic_redirect_device) {
         mic_redirect_device->restore_audio_devices();
+        mic_redirect_device.reset();
       }
     }
 
     int
-    write_mic_data(const char *data, size_t len, uint16_t seq = 0) {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
       if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {
         BOOST_LOG(warning) << "Mic redirect device not available or cleaning up";
         return -1;
       }
 
-      return mic_redirect_device->write_data(data, len, seq);
+      return mic_redirect_device->write_pcm(samples, frame_count);
     }
   };
 }  // namespace platf::audio
@@ -1313,6 +1323,18 @@ namespace platf {
     }
 
     return control;
+  }
+
+  std::unique_ptr<deinit_t>
+  init_audio_thread() {
+    auto guard = std::make_unique<audio::co_init_t>();
+    if (!guard->initialized()) {
+      BOOST_LOG(error) << "Failed to initialize COM for the audio thread: [0x"sv
+                       << util::hex(guard->result()).to_string_view() << ']';
+      return nullptr;
+    }
+
+    return guard;
   }
 
   std::unique_ptr<deinit_t>

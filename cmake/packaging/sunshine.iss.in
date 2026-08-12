@@ -62,8 +62,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; 重启管理器
 CloseApplications=yes
 RestartApplications=yes
-; Driver/helper installers may return a reboot-required exit code. Do not show
-; Inno's final reboot prompt; users can reboot later if a driver needs it.
+; Driver installation is executed from [Code], where its exit status is
+; validated. NeedRestart() requests the reboot only after a staged VDD reports
+; that its device/control interface cannot become ready in the current boot.
 RestartIfNeededByRun=no
 ; Always write %TEMP%\Setup Log*.txt. Support reports for "service did not
 ; install" / "files disappeared" are unanswerable without the per-file and
@@ -111,6 +112,7 @@ english.MsgOldNSISFailed=The previous installation could not be fully removed.%n
 english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
 english.StatusStoppingService=Stopping Sunshine service...
@@ -152,6 +154,7 @@ chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动�
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgVDDInstallFailed=无法安装或验证虚拟显示驱动。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
@@ -285,12 +288,10 @@ Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunsh
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
-; Upgrade older VDDs, but never silently replace a healthy newer/custom driver.
-Filename: "{app}\scripts\install-vdd.bat"; Parameters: "--preserve-healthy-existing"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
 Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
-Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart
 
 ; Finish page actions - user selectable
 Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
@@ -364,6 +365,66 @@ var
   // callers still see a failure — the GUI updater runs us with /VERYSILENT
   // and treats exit code 0 as "update installed successfully".
   ServiceVerifyFailed: Boolean;
+  // 0 = ready/not selected, 101 = failed, 3010 = reboot required.
+  VDDResultCode: Integer;
+
+function VDDComponentSelected(): Boolean;
+begin
+  Result := WizardIsComponentSelected('vdd');
+end;
+
+function GetServiceInstallParameters(Param: String): String;
+begin
+  if VDDResultCode = 0 then
+    Result := ''
+  else
+    Result := '--no-start';
+end;
+
+function ShouldConfigureServiceAutostart(): Boolean;
+begin
+  Result := VDDResultCode <> 101;
+end;
+
+procedure InstallAndVerifyVDD();
+var
+  ResultCode: Integer;
+  Params, Detail: String;
+begin
+  if not VDDComponentSelected() then
+    Exit;
+
+  WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
+  Params := '--preserve-healthy-existing';
+  ResultCode := -1;
+  if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
+              SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    VDDResultCode := 101;
+    Log('Could not launch the VDD installer helper.');
+  end
+  else if ResultCode = 0 then
+  begin
+    Log('VDD installation and control-interface verification succeeded.');
+  end
+  else if ResultCode = 3010 then
+  begin
+    VDDResultCode := 3010;
+    Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
+  end
+  else
+  begin
+    VDDResultCode := 101;
+    Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
+  end;
+
+  if (VDDResultCode = 101) and (not WizardSilent) then
+  begin
+    Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
+              'Exit code: ' + IntToStr(ResultCode);
+    MsgBox(Detail, mbError, MB_OK);
+  end;
+end;
 
 procedure InitializeWizard();
 var
@@ -756,11 +817,14 @@ end;
 // Report a nonzero exit code when the service could not be verified. Inno
 // returns 0 on a completed install, and callers such as the GUI's auto-updater
 // (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`, success := code = 0) would
-// otherwise report a broken install as a successful update. 100 is outside the
-// range Inno itself uses (1-8).
+// otherwise report a broken install as successful. Codes 100/101 are outside
+// Inno's own range (1-8), while 3010 is the standard Windows reboot-required
+// result consumed by unattended updaters.
 function GetCustomSetupExitCode(): Integer;
 begin
-  if ServiceVerifyFailed then
+  if VDDResultCode <> 0 then
+    Result := VDDResultCode
+  else if ServiceVerifyFailed then
     Result := 100
   else
     Result := 0;
@@ -879,10 +943,19 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    // Upgrade older VDDs and make driver readiness a hard gate before the
+    // Sunshine service is allowed to start. A bound-but-not-ready device is
+    // kept for Windows to finish during the requested reboot.
+    InstallAndVerifyVDD();
     // Delete portable scripts in installed version
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
   end;
+end;
+
+function NeedRestart(): Boolean;
+begin
+  Result := VDDResultCode = 3010;
 end;
 
 // Custom uninstall: ask about gamepad and data removal

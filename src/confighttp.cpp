@@ -822,6 +822,26 @@ namespace confighttp {
       auto &input_apps_node = inputTree.get_child("apps"s);
       auto &input_edit_node = inputTree.get_child("editApp"s);
 
+      const auto normalize_gamepad = [&](pt::ptree &app_node) {
+        auto gamepad = app_node.get_optional<std::string>("gamepad");
+        if (gamepad && gamepad->empty()) {
+          app_node.erase("gamepad");
+        }
+        else if (gamepad && *gamepad != "auto"sv && *gamepad != "x360"sv && *gamepad != "ds4"sv) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid per-app gamepad type");
+          return false;
+        }
+
+        return true;
+      };
+
+      for (auto &[_, app_node] : input_apps_node) {
+        if (!normalize_gamepad(app_node)) {
+          return;
+        }
+      }
+
       // Validate app name when editing a specific app
       if (!input_edit_node.empty()) {
         auto app_name = input_edit_node.get<std::string>("name", "");
@@ -845,6 +865,10 @@ namespace confighttp {
         auto detached = input_edit_node.get_child_optional("detached");
         if (detached && detached->empty()) {
           input_edit_node.erase("detached");
+        }
+
+        if (!normalize_gamepad(input_edit_node)) {
+          return;
         }
 
         int index = input_edit_node.get<int>("index");

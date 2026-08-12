@@ -42,6 +42,11 @@ namespace platf {
   }
 
   void
+  set_gamepad_mode(int mode) {
+    // This MVP only overrides the Windows ViGEm backend.
+  }
+
+  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     platf::mouse::move(raw, deltaX, deltaY);

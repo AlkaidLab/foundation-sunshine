@@ -278,7 +278,11 @@
               <button class="btn-close" @click="clientToDelete = null"></button>
             </div>
             <div class="delete-client-body">
-              <p v-html="$t('pin.delete_confirm_message', { name: clientToDelete.name || $t('pin.unknown_client') })"></p>
+              <i18n-t keypath="pin.delete_confirm_message" tag="p">
+                <template #name>
+                  <strong>{{ clientToDelete.name || $t('pin.unknown_client') }}</strong>
+                </template>
+              </i18n-t>
               <p class="text-muted small mb-0">{{ $t('pin.delete_warning') }}</p>
             </div>
             <div class="delete-client-footer">

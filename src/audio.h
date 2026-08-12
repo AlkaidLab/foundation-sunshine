@@ -150,6 +150,7 @@ namespace audio {
 
   /**
    * @brief Start the microphone redirect device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    * @returns 0 on success, -1 on error.
    */
   int
@@ -157,17 +158,18 @@ namespace audio {
 
   /**
    * @brief Release the microphone redirect device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    */
   void
   release_mic_redirect_device();
 
   /**
-   * @brief Write microphone data to the virtual audio device.
-   * @param data Pointer to the audio data.
-   * @param size Size of the audio data in bytes.
-   * @param seq Sequence number for FEC recovery (0 = unknown)
-   * @returns Number of bytes written, or -1 on error.
+   * @brief Write mixed mono 48 kHz signed 16-bit PCM to the virtual microphone device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
+   * @param samples Pointer to the PCM samples.
+   * @param frame_count Number of mono frames to write.
+   * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
    */
   int
-  write_mic_data(const std::uint8_t *data, size_t size, uint16_t seq = 0);
+  write_mic_pcm(const std::int16_t *samples, std::size_t frame_count);
 }  // namespace audio

@@ -175,6 +175,9 @@ namespace proc {
 
     // Apply per-app mouse mode
     platf::set_mouse_mode(_app.mouse_mode);
+    // Apply the app override before the input session creates virtual pads.
+    // The global Sunshine setting remains unchanged.
+    platf::set_gamepad_mode(_app.gamepad_mode);
 
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
@@ -416,6 +419,8 @@ namespace proc {
 
     // Reset mouse mode to auto when app terminates
     platf::set_mouse_mode(0);
+    // Return to the global gamepad setting for the next application.
+    platf::set_gamepad_mode(0);
   }
 
   const std::vector<ctx_t> &
@@ -825,6 +830,7 @@ namespace proc {
         auto wait_all = app_node.get_optional<bool>("wait-all"s);
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
+        auto gamepad = app_node.get_optional<std::string>("gamepad"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -906,6 +912,22 @@ namespace proc {
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
+        if (!gamepad || gamepad->empty()) {
+          ctx.gamepad_mode = 0;
+        }
+        else if (*gamepad == "auto"sv) {
+          ctx.gamepad_mode = 1;
+        }
+        else if (*gamepad == "x360"sv) {
+          ctx.gamepad_mode = 2;
+        }
+        else if (*gamepad == "ds4"sv) {
+          ctx.gamepad_mode = 3;
+        }
+        else {
+          BOOST_LOG(warning) << "Ignoring invalid per-app gamepad setting ["sv << *gamepad << "] for app ["sv << name << ']';
+          ctx.gamepad_mode = 0;
+        }
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
