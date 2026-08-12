@@ -323,16 +323,15 @@ namespace input {
   void
   print(PSS_TOUCH_PACKET packet) {
     BOOST_LOG(debug)
-      << "--begin touch packet--"sv << std::endl
-      << "eventType ["sv << util::hex(packet->eventType).to_string_view() << ']' << std::endl
-      << "pointerId ["sv << util::hex(packet->pointerId).to_string_view() << ']' << std::endl
-      << "x ["sv << from_netfloat(packet->x) << ']' << std::endl
-      << "y ["sv << from_netfloat(packet->y) << ']' << std::endl
-      << "pressureOrDistance ["sv << from_netfloat(packet->pressureOrDistance) << ']' << std::endl
-      << "contactAreaMajor ["sv << from_netfloat(packet->contactAreaMajor) << ']' << std::endl
-      << "contactAreaMinor ["sv << from_netfloat(packet->contactAreaMinor) << ']' << std::endl
-      << "rotation ["sv << (uint32_t) packet->rotation << ']' << std::endl
-      << "--end touch packet--"sv;
+      << "Touch packet: "sv
+      << "eventType ["sv << util::hex(packet->eventType).to_string_view() << "], "sv
+      << "pointerId ["sv << util::hex(packet->pointerId).to_string_view() << "], "sv
+      << "x ["sv << from_netfloat(packet->x) << "], "sv
+      << "y ["sv << from_netfloat(packet->y) << "], "sv
+      << "pressureOrDistance ["sv << from_netfloat(packet->pressureOrDistance) << "], "sv
+      << "contactAreaMajor ["sv << from_netfloat(packet->contactAreaMajor) << "], "sv
+      << "contactAreaMinor ["sv << from_netfloat(packet->contactAreaMinor) << "], "sv
+      << "rotation ["sv << (uint32_t) packet->rotation << ']';
   }
 
   /**
@@ -405,18 +404,17 @@ namespace input {
   void
   print(PSS_PEN_PACKET packet) {
     BOOST_LOG(debug)
-      << "--begin pen packet--"sv << std::endl
-      << "eventType ["sv << util::hex(packet->eventType).to_string_view() << ']' << std::endl
-      << "toolType ["sv << util::hex(packet->toolType).to_string_view() << ']' << std::endl
-      << "penButtons ["sv << util::hex(packet->penButtons).to_string_view() << ']' << std::endl
-      << "x ["sv << from_netfloat(packet->x) << ']' << std::endl
-      << "y ["sv << from_netfloat(packet->y) << ']' << std::endl
-      << "pressureOrDistance ["sv << from_netfloat(packet->pressureOrDistance) << ']' << std::endl
-      << "contactAreaMajor ["sv << from_netfloat(packet->contactAreaMajor) << ']' << std::endl
-      << "contactAreaMinor ["sv << from_netfloat(packet->contactAreaMinor) << ']' << std::endl
-      << "rotation ["sv << (uint32_t) packet->rotation << ']' << std::endl
-      << "tilt ["sv << (uint32_t) packet->tilt << ']' << std::endl
-      << "--end pen packet--"sv;
+      << "Pen packet: "sv
+      << "eventType ["sv << util::hex(packet->eventType).to_string_view() << "], "sv
+      << "toolType ["sv << util::hex(packet->toolType).to_string_view() << "], "sv
+      << "penButtons ["sv << util::hex(packet->penButtons).to_string_view() << "], "sv
+      << "x ["sv << from_netfloat(packet->x) << "], "sv
+      << "y ["sv << from_netfloat(packet->y) << "], "sv
+      << "pressureOrDistance ["sv << from_netfloat(packet->pressureOrDistance) << "], "sv
+      << "contactAreaMajor ["sv << from_netfloat(packet->contactAreaMajor) << "], "sv
+      << "contactAreaMinor ["sv << from_netfloat(packet->contactAreaMinor) << "], "sv
+      << "rotation ["sv << (uint32_t) packet->rotation << "], "sv
+      << "tilt ["sv << (uint32_t) packet->tilt << ']';
   }
 
   /**
@@ -1657,9 +1655,8 @@ namespace input {
    */
   batch_result_e
   batch(PSS_PEN_PACKET dest, PSS_PEN_PACKET src) {
-    // Only batch hover or move events
-    if (dest->eventType != LI_TOUCH_EVENT_MOVE &&
-        dest->eventType != LI_TOUCH_EVENT_HOVER) {
+    // 保留所有落笔采样，仅以新的悬停位置替换队列中已过时的悬停位置。
+    if (dest->eventType != LI_TOUCH_EVENT_HOVER) {
       return batch_result_e::terminate_batch;
     }
 
