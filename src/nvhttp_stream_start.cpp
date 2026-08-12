@@ -14,6 +14,7 @@
 #include "nvhttp_stream_start.h"
 
 #include "config.h"
+#include "display_start_policy.h"
 #include "display_device/parsed_config.h"
 #include "display_device/session.h"
 #include "display_device/vdd_capability.h"
@@ -32,6 +33,35 @@ namespace nvhttp::stream_start {
       std::string action;
       std::string detail;
     };
+
+    video::probe_target_t
+    make_probe_target(const display_device::display_intent_t &intent) {
+      if (intent.target == display_device::display_intent_t::target_e::physical &&
+          intent.device_id.empty()) {
+        return { {}, video::probe_target_policy_e::backend_autoselect };
+      }
+
+      return {
+        intent.device_id,
+        intent.target == display_device::display_intent_t::target_e::vdd ?
+          video::probe_target_policy_e::vdd_compatible :
+          video::probe_target_policy_e::exact
+      };
+    }
+
+    video::probe_target_t
+    make_vdd_probe_target() {
+      return { config::video.output_name, video::probe_target_policy_e::vdd_compatible };
+    }
+
+    video::probe_target_t
+    make_configured_probe_target(
+      const display_device::display_intent_t &intent,
+      const video::probe_target_t &original_target) {
+      return intent.target == display_device::display_intent_t::target_e::vdd ?
+               make_vdd_probe_target() :
+               original_target;
+    }
 
     class temporary_video_config_t {
     public:
@@ -110,6 +140,8 @@ namespace nvhttp::stream_start {
           return "DISPLAY_REVERT_FAILED";
         case result_e::deferred_retry:
           return "DISPLAY_CONFIG_DEFERRED";
+        case result_e::vdd_prepare_deferred:
+          return "VDD_PREPARATION_DEFERRED";
         case result_e::success:
         default:
           return "DISPLAY_CONFIG_FAILED";
@@ -164,8 +196,11 @@ namespace nvhttp::stream_start {
       const rtsp_stream::launch_session_t &launch_session,
       bool is_reconfigure,
       display_device::session_t::configure_result_t &display_result,
-      auto_recovery_result_t &recovery_result) {
-      if (display_result.result != display_device::session_t::configure_result_t::result_e::deferred_retry) {
+      auto_recovery_result_t &recovery_result,
+      const video::probe_target_t &probe_target,
+      bool &probe_matches_display_state,
+      bool refresh_vdd_probe_target = false) {
+      if (!policy::display_retry_is_pending(display_result.result)) {
         return false;
       }
 
@@ -184,60 +219,39 @@ namespace nvhttp::stream_start {
 
       for (const auto delay : retry_delays) {
         std::this_thread::sleep_for(delay);
+        probe_matches_display_state = false;
         display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
-        if (!video::probe_encoders()) {
+
+        switch (policy::deferred_retry_action(display_result.result)) {
+          case policy::deferred_retry_action_e::retry_without_probe:
+            continue;
+          case policy::deferred_retry_action_e::stop_without_probe:
+            recovery_result.detail = "Display configuration failed during a deferred retry.";
+            return false;
+          case policy::deferred_retry_action_e::probe:
+            break;
+        }
+
+        const auto target = refresh_vdd_probe_target ? make_vdd_probe_target() : probe_target;
+        const auto probe_result = video::probe_encoders(target);
+        probe_matches_display_state = true;
+        if (!probe_result) {
           recovery_result.succeeded = true;
           recovery_result.detail = "Display configuration became available after a short retry.";
           BOOST_LOG(info) << "Recovered stream startup after deferred display configuration retry";
           return true;
         }
+
+        recovery_result.detail = "Display configuration became available, but encoder probing still failed.";
+        return false;
       }
 
       recovery_result.detail = "Display configuration was still unavailable after short retries.";
       return false;
     }
 
-    /**
-     * @brief What a display configuration attempt leaves behind for the rest of the launch.
-     *
-     * configure_result_t has one value per failing step, but stream startup only
-     * needs to know how much of the display stack is still usable.
-     */
-    enum class configure_outcome_e {
-      ok, /**< The requested configuration is live. */
-      retry_later, /**< Not applied yet; the session keeps retrying on its own. */
-      mode_refused, /**< The display rejected the requested resolution/refresh rate/HDR state. */
-      topology_refused, /**< The requested topology or primary display change failed and was reverted. */
-      current_only, /**< The current displays may still be usable, but changing targets cannot fix the failure. */
-      fatal /**< Nothing usable came out of it. */
-    };
-
-    configure_outcome_e
-    classify_configure_result(display_device::session_t::configure_result_t::result_e result) {
-      using result_e = display_device::session_t::configure_result_t::result_e;
-
-      switch (result) {
-        case result_e::success:
-          return configure_outcome_e::ok;
-        case result_e::deferred_retry:
-          return configure_outcome_e::retry_later;
-        case result_e::modes_fail:
-        case result_e::hdr_states_fail:
-          return configure_outcome_e::mode_refused;
-        case result_e::topology_fail:
-        case result_e::primary_display_fail:
-          return configure_outcome_e::topology_refused;
-        case result_e::file_save_fail:
-          return configure_outcome_e::current_only;
-        case result_e::revert_fail:
-        case result_e::parse_fail:
-        case result_e::vdd_not_installed:
-        case result_e::vdd_unavailable:
-        case result_e::vdd_create_failed:
-        default:
-          return configure_outcome_e::fatal;
-      }
-    }
+    using policy::configure_outcome_e;
+    using policy::classify_configure_result;
 
     /**
      * @brief Whether a virtual display may be brought in for something the user did not ask for.
@@ -386,7 +400,8 @@ namespace nvhttp::stream_start {
     bool
     try_current_display(
       const display_device::session_t::configure_result_t &display_result,
-      auto_recovery_result_t &recovery_result) {
+      auto_recovery_result_t &recovery_result,
+      const video::probe_target_t &probe_target) {
       recovery_result = {
         true,
         false,
@@ -395,7 +410,7 @@ namespace nvhttp::stream_start {
       };
 
       BOOST_LOG(warning) << "Display configuration failed; continuing with current display settings if encoder probing succeeds";
-      if (!video::probe_encoders()) {
+      if (!video::probe_encoders(probe_target)) {
         recovery_result.succeeded = true;
         recovery_result.detail = "Encoder probing succeeded with the current display settings.";
         return true;
@@ -427,10 +442,41 @@ namespace nvhttp::stream_start {
       };
 
       const auto original_display_result = display_result;
+      const auto original_probe_result = video::last_encoder_probe_result;
       rtsp_stream::launch_session_t recovery_session {};
       fill_vdd_recovery_session(recovery_session, launch_session);
 
       display_result = display_device::session_t::get().configure_display(config::video, recovery_session, is_reconfigure);
+      if (policy::display_retry_is_pending(display_result.result)) {
+        auto deferred_recovery_result = auto_recovery_result_t {};
+        bool probe_matches_display_state = false;
+        if (retry_deferred_display_config(
+              recovery_session,
+              is_reconfigure,
+              display_result,
+              deferred_recovery_result,
+              make_vdd_probe_target(),
+              probe_matches_display_state,
+              true)) {
+          commit_vdd_recovery_to_launch_session(launch_session);
+          recovery_result.succeeded = true;
+          recovery_result.detail = "A VDD-backed display became available after a short retry and encoder probing succeeded.";
+          BOOST_LOG(info) << "Recovered stream startup by preparing a VDD-backed display after a deferred retry";
+          return true;
+        }
+
+        // A settings-deferred automatic attempt owns a retry timer and may have
+        // created a VDD. A pre-prepare deferral is side-effect free. Only the
+        // former needs rollback before trying physical-display recovery.
+        if (display_result.result != display_device::session_t::configure_result_t::result_e::vdd_prepare_deferred) {
+          display_device::session_t::get().restore_state();
+        }
+        display_result = original_display_result;
+        video::last_encoder_probe_result = original_probe_result;
+        recovery_result.detail = "VDD-backed display recovery remained deferred and was rolled back.";
+        return false;
+      }
+
       if (display_result.result != display_device::session_t::configure_result_t::result_e::success) {
         // configure_display reverts its own partial work except for mode/HDR
         // failures, which it hands to the caller. This attempt was ours, so there
@@ -442,11 +488,12 @@ namespace nvhttp::stream_start {
         // Keep the failure the caller has to report: the VDD attempt was ours, not
         // the user's, so its error code would hide why the launch actually failed.
         display_result = original_display_result;
+        video::last_encoder_probe_result = original_probe_result;
         recovery_result.detail = "VDD-backed display recovery was attempted, but the VDD display configuration failed.";
         return false;
       }
 
-      if (!video::probe_encoders()) {
+      if (!video::probe_encoders(make_vdd_probe_target())) {
         commit_vdd_recovery_to_launch_session(launch_session);
         recovery_result.succeeded = true;
         recovery_result.detail = "A VDD-backed display became available and encoder probing succeeded.";
@@ -458,6 +505,7 @@ namespace nvhttp::stream_start {
       // The VDD is live at this point but useless, and a later fallback may still
       // want the physical display, so undo the switch we made.
       display_device::session_t::get().restore_state();
+      video::last_encoder_probe_result = original_probe_result;
       recovery_result.detail = "VDD-backed display recovery was attempted, but encoder probing still failed.";
       return false;
     }
@@ -473,13 +521,21 @@ namespace nvhttp::stream_start {
       rtsp_stream::launch_session_t &launch_session,
       bool is_reconfigure,
       display_device::session_t::configure_result_t &display_result,
-      auto_recovery_result_t &recovery_result) {
+      auto_recovery_result_t &recovery_result,
+      bool &display_recovery_attempted) {
       const auto try_current = [&] {
-        return try_current_display(display_result, recovery_result);
+        display_recovery_attempted = true;
+        return try_current_display(
+          display_result,
+          recovery_result,
+          make_configured_probe_target(intent, make_probe_target(intent)));
       };
       const auto try_vdd = [&] {
-        return vdd_fallback_allowed(intent) &&
-               try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result);
+        if (!vdd_fallback_allowed(intent)) {
+          return false;
+        }
+        display_recovery_attempted = true;
+        return try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result);
       };
 
       if (no_display_to_capture) {
@@ -505,7 +561,9 @@ namespace nvhttp::stream_start {
     }
 
     bool
-    recover_with_temporary_encoder_config(auto_recovery_result_t &recovery_result) {
+    recover_with_temporary_encoder_config(
+      auto_recovery_result_t &recovery_result,
+      const video::probe_target_t &probe_target) {
       const auto probe_error = video::last_encoder_probe_result.error;
       if (probe_error != video::probe_error_e::configured_encoder_unavailable &&
           probe_error != video::probe_error_e::codec_requirements_unmet) {
@@ -536,7 +594,7 @@ namespace nvhttp::stream_start {
 
       {
         temporary_video_config_t temporary_config { std::move(fallback_config) };
-        if (!video::probe_encoders()) {
+        if (!video::probe_encoders(probe_target)) {
           recovery_result.succeeded = true;
           recovery_result.detail = "Temporary encoder fallback succeeded without changing the saved configuration.";
           BOOST_LOG(info) << "Recovered stream startup using " << recovery_result.action;
@@ -593,6 +651,34 @@ namespace nvhttp::stream_start {
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
     auto outcome = classify_configure_result(display_result.result);
     auto_recovery_result_t recovery_result;
+    const auto probe_target = make_probe_target(intent);
+    bool probe_matches_display_state = false;
+    bool preprepare_retry_completed = false;
+
+    if (display_result.result == display_device::session_t::configure_result_t::result_e::vdd_prepare_deferred) {
+      // The VDD target does not exist yet, so probing here could only validate
+      // another display. Retry configuration first and fail closed if Windows
+      // never makes monitor discovery available.
+      if (retry_deferred_display_config(
+            launch_session,
+            is_reconfigure,
+            display_result,
+            recovery_result,
+            probe_target,
+            probe_matches_display_state,
+            intent.target == display_device::display_intent_t::target_e::vdd)) {
+        set_auto_recovery_status(tree, recovery_result);
+        return true;
+      }
+
+      preprepare_retry_completed = true;
+      outcome = classify_configure_result(display_result.result);
+      if (outcome == configure_outcome_e::fatal || outcome == configure_outcome_e::retry_later) {
+        set_auto_recovery_status(tree, recovery_result);
+        set_display_config_error(tree, display_result);
+        return false;
+      }
+    }
 
     if (outcome == configure_outcome_e::fatal) {
       set_display_config_error(tree, display_result);
@@ -601,14 +687,24 @@ namespace nvhttp::stream_start {
 
     // Track whether the configured display was actually passed to the encoder
     // probe. Deferred configurations are reclassified after their final retry.
-    const bool encoders_were_probed =
+    const bool initial_state_can_be_probed =
       outcome == configure_outcome_e::ok || outcome == configure_outcome_e::retry_later;
-    if (encoders_were_probed) {
-      if (!video::probe_encoders()) {
+    if (!preprepare_retry_completed && initial_state_can_be_probed) {
+      const auto configured_probe_target = make_configured_probe_target(intent, probe_target);
+      const auto probe_result = video::probe_encoders(configured_probe_target);
+      probe_matches_display_state = true;
+      if (!probe_result) {
         return true;
       }
 
-      if (retry_deferred_display_config(launch_session, is_reconfigure, display_result, recovery_result)) {
+      if (retry_deferred_display_config(
+            launch_session,
+            is_reconfigure,
+            display_result,
+            recovery_result,
+            probe_target,
+            probe_matches_display_state,
+            intent.target == display_device::display_intent_t::target_e::vdd)) {
         set_auto_recovery_status(tree, recovery_result);
         return true;
       }
@@ -625,7 +721,9 @@ namespace nvhttp::stream_start {
     }
 
     const bool no_display_to_capture =
-      encoders_were_probed && video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
+      probe_matches_display_state &&
+      video::last_encoder_probe_result.error == video::probe_error_e::no_active_display;
+    bool display_recovery_attempted = false;
 
     if (recover_display(
           intent,
@@ -634,17 +732,21 @@ namespace nvhttp::stream_start {
           launch_session,
           is_reconfigure,
           display_result,
-          recovery_result)) {
+          recovery_result,
+          display_recovery_attempted)) {
       set_auto_recovery_status(tree, recovery_result);
       return true;
     }
 
     auto_recovery_result_t encoder_recovery_result;
-    if (recover_with_temporary_encoder_config(encoder_recovery_result)) {
+    if (!display_recovery_attempted && probe_matches_display_state &&
+        recover_with_temporary_encoder_config(
+          encoder_recovery_result,
+          make_configured_probe_target(intent, probe_target))) {
       set_auto_recovery_status(tree, encoder_recovery_result);
       return true;
     }
-    if (!recovery_result.attempted && encoder_recovery_result.attempted) {
+    if (!display_recovery_attempted && encoder_recovery_result.attempted) {
       recovery_result = std::move(encoder_recovery_result);
     }
 
@@ -654,7 +756,7 @@ namespace nvhttp::stream_start {
       outcome == configure_outcome_e::mode_refused ||
       outcome == configure_outcome_e::topology_refused ||
       outcome == configure_outcome_e::current_only ||
-      (outcome == configure_outcome_e::retry_later && no_display_to_capture);
+      outcome == configure_outcome_e::retry_later;
 
     if (display_is_the_cause) {
       set_display_config_error(tree, display_result);

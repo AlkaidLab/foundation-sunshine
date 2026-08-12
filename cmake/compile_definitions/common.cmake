@@ -163,6 +163,7 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/nvhttp/url_utils.h"
         "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.cpp"
         "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.h"
+        "${CMAKE_SOURCE_DIR}/src/display_start_policy.h"
         "${CMAKE_SOURCE_DIR}/src/abr.cpp"
         "${CMAKE_SOURCE_DIR}/src/abr.h"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.cpp"

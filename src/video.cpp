@@ -4146,7 +4146,7 @@ namespace video {
   }
 
   int
-  probe_encoders() {
+  probe_encoders(std::optional<probe_target_t> target) {
     last_encoder_probe_result = {
       probe_error_e::none,
       "Encoder probe succeeded.",
@@ -4161,14 +4161,26 @@ namespace video {
     auto encoder_list = encoders;
 
     // If we already have a good encoder, check to see if another probe is required
-    if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
+    if (!target && chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
       BOOST_LOG(info) << "Using cached encoder validation results";
       active_encoder_for_status.store(chosen_encoder, std::memory_order_release);
       return 0;
     }
 
     const auto probe_capture_override = capture_override_for_encoder_probe();
-    const auto configured_display_name = display_device::get_display_name(config::video.output_name);
+    const auto configured_output_name = target ? target->output_name : config::video.output_name;
+    const bool target_requires_exact_resolution = target && target->policy == probe_target_policy_e::exact;
+    const auto configured_display_name = display_device::get_display_name(configured_output_name);
+    if (target_requires_exact_resolution && configured_display_name.empty()) {
+      last_encoder_probe_result = {
+        probe_error_e::no_active_display,
+        "The requested display is not connected or active for encoder probing.",
+        "Connect or enable the selected display, then try again."
+      };
+      BOOST_LOG(error) << "Requested output ["sv << configured_output_name
+                       << "] could not be resolved for encoder probing"sv;
+      return -1;
+    }
     auto probe_display_name = configured_display_name;
     if (probe_capture_override) {
       // The Windows implementation enumerates all DXGI capture-ready outputs
@@ -4176,19 +4188,51 @@ namespace video {
       const auto capture_ready_displays = encoder_list.empty() ?
                                             std::vector<std::string> {} :
                                             platf::display_names(encoder_list.front()->platform_formats->dev_type);
-      probe_display_name = select_encoder_probe_display(configured_display_name, capture_ready_displays);
-      if (!config::video.output_name.empty() && configured_display_name.empty()) {
-        BOOST_LOG(warning) << "Configured output ["sv << config::video.output_name
+      const auto display_policy = !target || target->policy == probe_target_policy_e::backend_autoselect ?
+                                    probe_display_policy_e::backend_autoselect :
+                                    target->policy == probe_target_policy_e::vdd_compatible ?
+                                      probe_display_policy_e::vdd_compatible :
+                                      probe_display_policy_e::exact;
+      const auto selection = select_encoder_probe_display(
+        configured_display_name,
+        capture_ready_displays,
+        display_policy);
+      if (selection.selection == probe_display_selection_e::unavailable) {
+        last_encoder_probe_result = {
+          probe_error_e::no_active_display,
+          "The requested display is not available to the encoder probe capture backend.",
+          "Connect or enable the selected display, then try again."
+        };
+        BOOST_LOG(error) << "Requested output ["sv << configured_output_name
+                         << "] is unavailable to temporary capture backend ["sv
+                         << *probe_capture_override << "]"sv;
+        return -1;
+      }
+      probe_display_name = selection.display_name;
+      if (display_policy != probe_display_policy_e::backend_autoselect &&
+          !configured_output_name.empty() && configured_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << configured_output_name
                            << "] could not be resolved for temporary capture backend ["sv
                            << *probe_capture_override
                            << "]; encoder probing will use backend display auto-selection"sv;
       }
-      else if (!configured_display_name.empty() && probe_display_name.empty()) {
+      else if (display_policy != probe_display_policy_e::backend_autoselect &&
+               !configured_display_name.empty() && probe_display_name.empty()) {
         BOOST_LOG(warning) << "Configured output ["sv << configured_display_name
                            << "] is unavailable to temporary capture backend ["sv
                            << *probe_capture_override
                            << "]; encoder probing will use backend display auto-selection"sv;
       }
+    }
+    else if (target && target->policy == probe_target_policy_e::vdd_compatible && configured_display_name.empty()) {
+      last_encoder_probe_result = {
+        probe_error_e::no_active_display,
+        "The requested display is not connected or active for encoder probing.",
+        "Connect or enable the selected display, then try again."
+      };
+      BOOST_LOG(error) << "Requested output ["sv << configured_output_name
+                       << "] could not be resolved for encoder probing"sv;
+      return -1;
     }
 
     // Restart encoder selection
@@ -4318,7 +4362,7 @@ namespace video {
     }
 
     if (chosen_encoder == nullptr) {
-      const auto output_display_name { display_device::get_display_name(config::video.output_name) };
+      const auto output_display_name { display_device::get_display_name(configured_output_name) };
       BOOST_LOG(error) << "Unable to find display or encoder during startup."sv;
       if (!config::video.encoder.empty()) {
         last_encoder_probe_result = {
