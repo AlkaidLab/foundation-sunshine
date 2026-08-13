@@ -141,6 +141,11 @@ function getEnglishOnlyKeys() {
     "scan_result_type_url", // URL
     "scan_result_filter_url_title", // URL
     "adapter_name_placeholder_windows", // Radeon RX 580 Series
+    "gamepad_mode_x360", // Xbox 360 product name
+    "gamepad_mode_ds4", // DualShock 4 product name
+    "crown_edition_desc", // Publisher/platform attribution
+    "moonlight_ohos", // Project name
+    "moonlight_pc_title", // Project name
   ]
 }
 
@@ -167,10 +172,12 @@ function shouldSkipTranslationCheck(key, value) {
                           /[A-Z]/.test(value)
   
   // Check if value contains only product names or technical abbreviations
-  const isProductName = /^(DS4|DS5|X360|Nintendo|Steam|BlackHole|TCP|UDP|URL|IPv4|IPv6|Webhook URL)/i.test(value.trim())
+  const isProductName = /^(?:DS4(?: \(PS4\))?|DS5(?: \(PS5\))?|X360(?: \(Xbox 360\))?|XOne(?: \(Xbox One\))?|Xbox 360|DualShock 4|Nintendo Pro \(Switch\)|Steam Streaming Speakers|BlackHole 2ch|Foundation Sunshine|Sunshine|AlkaidLab|Moonlight(?: PC)?|ZakoHDR|ZakoVDD|ViGEmBus|TCP|UDP|URL|IPv4\+IPv6|Webhook URL)$/i.test(value.trim())
   
   // Check if value ends with common technical terms that can stay in English
-  const hasTechnicalSuffix = /\b(URL|TCP|UDP|IPv4|IPv6|UI|API|HTTP|HTTPS|DS4|DS5|X360)\b/i.test(value)
+  const hasTechnicalSuffix = value.length <= 40 &&
+                             !/[.!?]/.test(value) &&
+                             /\b(URL|TCP|UDP|IPv4|IPv6|UI|API|HTTP|HTTPS|DS4|DS5|X360)\b/i.test(value)
   
   return isTechnicalTerm || isProductName || hasTechnicalSuffix
 }
@@ -201,6 +208,31 @@ function findUntranslatedKeys(baseContent, localeContent, localeFile) {
   }
   
   return untranslated
+}
+
+/**
+ * Find translations that changed runtime interpolation tokens or inline HTML.
+ * Missing placeholders break messages at runtime, while lost tags can change
+ * the rendering contract of v-html call sites.
+ */
+function findTokenMismatches(baseContent, localeContent, tokenPattern) {
+  const mismatches = []
+
+  for (const key of getAllKeys(baseContent)) {
+    const baseValue = getValue(baseContent, key)
+    const localeValue = getValue(localeContent, key)
+    if (typeof baseValue !== 'string' || typeof localeValue !== 'string') {
+      continue
+    }
+
+    const baseTokens = (baseValue.match(tokenPattern) || []).sort()
+    const localeTokens = (localeValue.match(tokenPattern) || []).sort()
+    if (JSON.stringify(baseTokens) !== JSON.stringify(localeTokens)) {
+      mismatches.push({ key, baseTokens, localeTokens })
+    }
+  }
+
+  return mismatches
 }
 
 /**
@@ -245,12 +277,33 @@ function validateLocales() {
     const missingKeys = baseKeys.filter(key => !localeKeys.includes(key))
     const extraKeys = localeKeys.filter(key => !baseKeys.includes(key))
     const untranslatedKeys = findUntranslatedKeys(baseContent, content, localeFile)
+    const placeholderMismatches = findTokenMismatches(baseContent, content, /\{[^{}]+\}/g)
+    const htmlMismatches = findTokenMismatches(baseContent, content, /<\/?[A-Za-z][^>]*>/g)
     
-    const hasIssues = missingKeys.length > 0 || extraKeys.length > 0 || untranslatedKeys.length > 0
+    // Matching English text is only a heuristic: product names, technical terms,
+    // loanwords, and short labels can legitimately be identical across locales.
+    // Keep reporting these entries for translator review, but only structural
+    // key drift should fail the validation command.
+    const hasIssues = missingKeys.length > 0 ||
+                      extraKeys.length > 0 ||
+                      placeholderMismatches.length > 0 ||
+                      htmlMismatches.length > 0
     
     if (!hasIssues) {
-      console.log(`✅ ${localeFile}: All keys present and translated (${localeKeys.length} keys)`)
-      results.push({ file: localeFile, status: 'ok', missing: 0, extra: 0, untranslated: 0 })
+      if (untranslatedKeys.length > 0) {
+        console.log(`⚠️  ${localeFile}: All keys present; ${untranslatedKeys.length} values match English and need review (${localeKeys.length} keys)`)
+      } else {
+        console.log(`✅ ${localeFile}: All keys present and translated (${localeKeys.length} keys)`)
+      }
+      results.push({
+        file: localeFile,
+        status: 'ok',
+        missing: 0,
+        extra: 0,
+        placeholderMismatches: 0,
+        htmlMismatches: 0,
+        untranslated: untranslatedKeys.length
+      })
       
       // Still overwrite English-only keys even if no other issues
       if (syncMode) {
@@ -321,6 +374,26 @@ function validateLocales() {
           console.log(`     ... and ${extraKeys.length - 5} more`)
         }
       }
+
+      if (placeholderMismatches.length > 0) {
+        console.log(`   Placeholder mismatches in ${placeholderMismatches.length} keys:`)
+        placeholderMismatches.slice(0, 5).forEach(({ key, baseTokens, localeTokens }) => {
+          console.log(`     - ${key}: expected [${baseTokens.join(', ')}], found [${localeTokens.join(', ')}]`)
+        })
+        if (placeholderMismatches.length > 5) {
+          console.log(`     ... and ${placeholderMismatches.length - 5} more`)
+        }
+      }
+
+      if (htmlMismatches.length > 0) {
+        console.log(`   Inline HTML mismatches in ${htmlMismatches.length} keys:`)
+        htmlMismatches.slice(0, 5).forEach(({ key, baseTokens, localeTokens }) => {
+          console.log(`     - ${key}: expected [${baseTokens.join(', ')}], found [${localeTokens.join(', ')}]`)
+        })
+        if (htmlMismatches.length > 5) {
+          console.log(`     ... and ${htmlMismatches.length - 5} more`)
+        }
+      }
       
       if (untranslatedKeys.length > 0) {
         console.log(`   ⚠️  ${untranslatedKeys.length} untranslated keys (same as English):`)
@@ -339,6 +412,8 @@ function validateLocales() {
         status: 'error', 
         missing: missingKeys.length, 
         extra: extraKeys.length,
+        placeholderMismatches: placeholderMismatches.length,
+        htmlMismatches: htmlMismatches.length,
         untranslated: untranslatedKeys.length,
         missingKeys,
         untranslatedKeys,
@@ -409,7 +484,7 @@ function validateLocales() {
   
   const totalUntranslated = results.reduce((sum, r) => sum + (r.untranslated || 0), 0)
   if (totalUntranslated > 0) {
-    console.log(`   ⚠️  Total untranslated keys: ${totalUntranslated}`)
+    console.log(`   ℹ️  Values matching English (review only): ${totalUntranslated}`)
   }
   
   if (syncMode) {
