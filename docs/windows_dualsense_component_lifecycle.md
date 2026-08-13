@@ -413,16 +413,14 @@ Core 维护引用计数，按 session ID 管理多客户端。第一阶段可以
 ### 7.3 安装目录
 
 ```text
-%LOCALAPPDATA%\Sunshine\components\hidmaestro\
-  versions\<version>\
-  staging\<operation-id>\
-  downloads\
-  active.json
-  operation.json
-  component.log
+<Sunshine install>\tools\sunshine-ds5-component\
+  active\
+  previous\
+  staging-<operation-id>\
+  staging-<operation-id>.partial
 ```
 
-系统驱动保持其标准 Driver Store/服务位置，不复制进上述目录。
+下载与 SHA-256 校验由 Control Panel 完成，但只有以管理员身份重启后才能写入上述受保护目录或执行自检。不得从 `%LOCALAPPDATA%`/`%TEMP%` 等用户可写路径提权执行 sidecar 或 wrapper，避免 TOCTOU 替换。系统驱动保持其标准 Driver Store/服务位置，不复制进上述目录。
 
 ## 8. 安装、更新、回滚与卸载
 
