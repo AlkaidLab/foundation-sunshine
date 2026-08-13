@@ -1348,10 +1348,16 @@ namespace amf {
 
   void
   amf_d3d11::set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) {
-    // Remembered even when the encoder is not ready yet: ST 2094-40 normalizes its
-    // luminance fields against the mastering display peak, so the dynamic metadata
-    // builder needs the same value the static metadata was built from.
-    max_display_luminance = metadata ? metadata->maxDisplayLuminance : 0;
+    // Remembered even when the encoder is not ready yet: ST 2094-40 reports the
+    // mastering display peak, so the dynamic metadata builder needs the same value
+    // the static metadata was built from. Held as an optional rather than a plain
+    // peak because a display may legitimately report zero (display_base.cpp copies
+    // DXGI's MaxLuminance verbatim, and the VDD path clamps to a 0 floor); what
+    // gates dynamic metadata is whether HDR was configured at all, mirroring the
+    // `hdr_metadata &&` check on the NVENC side.
+    hdr_display_luminance = metadata ?
+                              std::optional<uint16_t> { metadata->maxDisplayLuminance } :
+                              std::nullopt;
 
     if (!encoder || !context) return;
 
@@ -1408,13 +1414,15 @@ namespace amf {
 
   void
   amf_d3d11::stage_dynamic_metadata(uint64_t frame_index) {
-    // No carriage for this codec, no mastering peak to normalize against, or nothing
-    // this stream may emit: the frame goes out as the encoder produced it.
-    if (!dynamic_metadata_codec || max_display_luminance == 0 || !luminance_stats.valid) {
+    // No carriage for this codec, HDR never configured, or nothing this stream may
+    // emit: the frame goes out as the encoder produced it. A zero display peak is
+    // not a reason to skip — hdr10plus_from_luminance() falls back to 1000 nits for
+    // the targeted system display, and HDR Vivid never reads the value.
+    if (!dynamic_metadata_codec || !hdr_display_luminance || !luminance_stats.valid) {
       return;
     }
 
-    const auto payloads = dynamic_metadata.build(luminance_stats, max_display_luminance);
+    const auto payloads = dynamic_metadata.build(luminance_stats, *hdr_display_luminance);
     if (payloads.empty()) {
       return;
     }

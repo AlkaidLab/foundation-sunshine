@@ -697,6 +697,14 @@ TEST(HdrDynamicMetadata, DynamicMetadataBuilderFollowsTheFormatGates) {
   EXPECT_FALSE(hdr10plus_only.hdr10plus.empty());
   EXPECT_TRUE(hdr10plus_only.vivid.empty());
 
+  // A display peak of zero is a real reading (DXGI reports MaxLuminance verbatim
+  // and the VDD path clamps to a 0 floor), not a reason to stop emitting: HDR10+
+  // falls back to a 1000-nit targeted system display and Vivid never reads it.
+  builder.configure(video::hdr_metadata::formats_for(PQ, HEVC));
+  const auto zero_peak = builder.build(stats, 0);
+  EXPECT_FALSE(zero_peak.hdr10plus.empty());
+  EXPECT_FALSE(zero_peak.vivid.empty());
+
   // Invalid analyzer output emits nothing rather than a frame of zeros.
   auto invalid = stats;
   invalid.valid = false;
