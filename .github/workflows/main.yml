@@ -184,6 +184,7 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
