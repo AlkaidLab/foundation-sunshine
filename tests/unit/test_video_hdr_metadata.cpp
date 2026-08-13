@@ -87,6 +87,61 @@ TEST(HdrDynamicMetadata, WithholdsVividFromCodecsWithoutACarriage) {
   EXPECT_TRUE(formats_for(hlg, HEVC).vivid);
 }
 
+TEST(HdrDynamicMetadata, ReportsWhenNoFormatCanBeCarried) {
+  using video::colorspace_e;
+  using video::hdr_metadata::formats_for;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+  const sunshine_colorspace_t sdr { colorspace_e::rec709, false, 8 };
+
+  // What the capture path gates per-frame luminance analysis on. HLG over AV1 is
+  // HDR, so a colorspace check alone would keep analyzing for metadata that can
+  // never be written.
+  EXPECT_FALSE(formats_for(hlg, AV1).any());
+  EXPECT_FALSE(formats_for(sdr, HEVC).any());
+  EXPECT_FALSE(formats_for(sdr, AV1).any());
+
+  EXPECT_TRUE(formats_for(pq, AV1).any());
+  EXPECT_TRUE(formats_for(pq, HEVC).any());
+  EXPECT_TRUE(formats_for(hlg, HEVC).any());
+}
+
+TEST(HdrDynamicMetadata, IntersectsStreamFormatsWithEncoderCapability) {
+  using video::colorspace_e;
+  using video::hdr_metadata::formats_for;
+  using video::hdr_metadata::formats_t;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+
+  // What each encode device can write, independent of the stream. FFmpeg has no
+  // encoder-side serializer for AV_FRAME_DATA_DYNAMIC_HDR_VIVID, so anything driven
+  // through avcodec attaches that side data and drops it. The native NVENC and AMF
+  // paths hand-write both T.35 payloads.
+  constexpr formats_t avcodec { .hdr10plus = true, .vivid = false };
+  constexpr formats_t native { .hdr10plus = true, .vivid = true };
+
+  // HLG leaves avcodec nothing even on HEVC: HDR10+ cannot describe HLG, and the
+  // one format that could is never written. Analysis there is pure overhead.
+  EXPECT_FALSE(formats_for(hlg, HEVC).intersect(avcodec).any());
+
+  // The same stream keeps HDR Vivid on the two native paths.
+  EXPECT_TRUE(formats_for(hlg, HEVC).intersect(native).vivid);
+  EXPECT_TRUE(formats_for(hlg, HEVC).intersect(native).any());
+
+  // PQ still reaches avcodec as HDR10+, so its analysis is not gated off.
+  EXPECT_TRUE(formats_for(pq, HEVC).intersect(avcodec).hdr10plus);
+  EXPECT_FALSE(formats_for(pq, HEVC).intersect(avcodec).vivid);
+  EXPECT_TRUE(formats_for(pq, AV1).intersect(avcodec).any());
+
+  // Neither gate can add a format the other refused.
+  EXPECT_FALSE(formats_for(hlg, AV1).intersect(native).any());
+  EXPECT_FALSE(formats_for(pq, HEVC).intersect(formats_t {}).any());
+}
+
 TEST(HdrDynamicMetadata, SkipsVividPrerollWhenCodecCannotCarryIt) {
   using video::colorspace_e;
   using video::hdr_metadata::needs_vivid_startup_preroll;

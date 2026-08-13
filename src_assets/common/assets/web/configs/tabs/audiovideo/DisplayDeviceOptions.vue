@@ -60,8 +60,13 @@ const hdrRuntimeViewState = computed(() => {
     return { statusKey: 'config.hdr_runtime_status_sdr', tone: 'muted' }
   }
   if (pipeline.analysis_failure_reason) {
+    // In auto mode these two are the pipeline working as designed, not a problem to
+    // report: the encoder cannot carry dynamic metadata, or the transfer function
+    // and codec in use have no format between them (HLG over AV1).
     const expectedFallback =
-      pipeline.analysis_mode === 'auto' && pipeline.analysis_failure_reason === 'encoder_unsupported'
+      pipeline.analysis_mode === 'auto' &&
+      (pipeline.analysis_failure_reason === 'encoder_unsupported' ||
+        pipeline.analysis_failure_reason === 'format_unsupported')
     return {
       statusKey: 'config.hdr_runtime_status_fallback',
       tone: expectedFallback ? 'muted' : 'warning',

@@ -516,6 +516,18 @@ namespace platf {
     video::sunshine_colorspace_t colorspace;
 
     /**
+     * @brief The codec this device encodes for, in config_t::videoFormat terms
+     *        (0 H.264, 1 HEVC, 2 AV1).
+     *
+     * Set alongside `colorspace` when the device is created, because the codec
+     * decides which dynamic HDR metadata formats can be carried at all and the
+     * platform backends reach that decision from places where the client's
+     * config is no longer in scope. -1 means nobody filled it in, which
+     * video::hdr_metadata::formats_for() reads as "no codec-gated format".
+     */
+    int video_format = -1;
+
+    /**
      * @brief Per-frame HDR luminance statistics from GPU analysis.
      * Updated during convert() with 1-frame delay (async GPU readback).
      * Used by video.cpp to generate per-frame HDR dynamic metadata.
