@@ -87,6 +87,27 @@ TEST(HdrDynamicMetadata, WithholdsVividFromCodecsWithoutACarriage) {
   EXPECT_TRUE(formats_for(hlg, HEVC).vivid);
 }
 
+TEST(HdrDynamicMetadata, ReportsWhenNoFormatCanBeCarried) {
+  using video::colorspace_e;
+  using video::hdr_metadata::formats_for;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+  const sunshine_colorspace_t sdr { colorspace_e::rec709, false, 8 };
+
+  // What the capture path gates per-frame luminance analysis on. HLG over AV1 is
+  // HDR, so a colorspace check alone would keep analyzing for metadata that can
+  // never be written.
+  EXPECT_FALSE(formats_for(hlg, AV1).any());
+  EXPECT_FALSE(formats_for(sdr, HEVC).any());
+  EXPECT_FALSE(formats_for(sdr, AV1).any());
+
+  EXPECT_TRUE(formats_for(pq, AV1).any());
+  EXPECT_TRUE(formats_for(pq, HEVC).any());
+  EXPECT_TRUE(formats_for(hlg, HEVC).any());
+}
+
 TEST(HdrDynamicMetadata, SkipsVividPrerollWhenCodecCannotCarryIt) {
   using video::colorspace_e;
   using video::hdr_metadata::needs_vivid_startup_preroll;

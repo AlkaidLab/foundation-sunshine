@@ -31,6 +31,19 @@ namespace video::hdr_metadata {
   struct formats_t {
     bool hdr10plus = false;
     bool vivid = false;
+
+    /**
+     * Whether the stream can carry any dynamic metadata at all.
+     *
+     * A false here is what tells the capture path to skip per-frame luminance
+     * analysis: nothing downstream could use the result. HLG over AV1 is the
+     * combination that lands here — HDR10+ is PQ-only and HDR Vivid has no AV1
+     * carriage — even though the stream is genuinely HDR.
+     */
+    constexpr bool
+    any() const {
+      return hdr10plus || vivid;
+    }
   };
 
   constexpr int hdr10plus_normalized_scale = 100000;

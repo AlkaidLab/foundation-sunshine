@@ -2830,6 +2830,7 @@ namespace video {
         return nullptr;
       }
       software_encode_device->colorspace = colorspace;
+      software_encode_device->video_format = config.videoFormat;
 
       encode_device_final = std::move(software_encode_device);
     }
@@ -3345,6 +3346,7 @@ namespace video {
 
     if (result) {
       result->colorspace = colorspace;
+      result->video_format = config.videoFormat;
     }
 
     return result;

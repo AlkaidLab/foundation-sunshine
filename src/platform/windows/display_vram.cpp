@@ -680,13 +680,33 @@ namespace platf::dxgi {
     }
 
     int
-    init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) {
+    init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, int video_format, bool is_probe = false) {
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
       runtime_status_id = 0;
       hdr_luminance_stats_out = {};
       hdr_analysis_pending = false;
       hdr_analysis_frame_index = 0;
       hdr_analysis_sample_sequence = 0;
+
+      // init() builds the analyzer from the pixel format alone, because the
+      // client's colorspace and codec are not known yet at device creation. Both
+      // decide whether any dynamic metadata format can actually be carried, so
+      // that verdict has to be reached here, before init_compute_path() picks a
+      // conversion path based on whether analysis is running.
+      //
+      // HLG over AV1 is the case that motivated this: HDR10+ is PQ-only and HDR
+      // Vivid has no AV1 carriage, so every analysis dispatch was thrown away.
+      // (H.264 never reaches this at all — encoder.h264[DYNAMIC_RANGE] is false
+      // unconditionally, so an HDR colorspace is impossible there.)
+      hdr_metadata_formats = ::video::hdr_metadata::formats_for(colorspace, video_format);
+      const bool any_format_carriable = hdr_metadata_formats.any();
+      hdr_analysis_enabled = hdr_analysis_ready && any_format_carriable;
+      if (hdr_analysis_ready && !any_format_carriable) {
+        hdr_analysis_failure_reason = "format_unsupported";
+        BOOST_LOG(is_probe ? debug : info)
+          << "HDR luminance analysis disabled: no dynamic metadata format can be carried by this "
+             "transfer function and codec combination";
+      }
 
       // The underlying frame pool owns the texture, so we must reference it for ourselves
       frame_texture->AddRef();
@@ -1481,10 +1501,15 @@ namespace platf::dxgi {
       runtime_status.scene_metadata_active = false;
       runtime_status.metadata_formats.clear();
       if (runtime_status.analysis_active) {
-        if (use_pq) {
+        // Report what the stream can actually carry rather than inferring it from
+        // the transfer function: HDR Vivid has no AV1 carriage, so advertising it
+        // there described metadata the encoder had already stopped emitting.
+        if (hdr_metadata_formats.hdr10plus) {
           runtime_status.metadata_formats.emplace_back("hdr10_plus");
         }
-        runtime_status.metadata_formats.emplace_back("hdr_vivid");
+        if (hdr_metadata_formats.vivid) {
+          runtime_status.metadata_formats.emplace_back("hdr_vivid");
+        }
       }
 
       runtime_status.conversion_path =
@@ -1587,7 +1612,9 @@ namespace platf::dxgi {
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
-    bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
+    bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
+    bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
+    ::video::hdr_metadata::formats_t hdr_metadata_formats;  // Dynamic metadata formats this stream may carry
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
     float hdr_analysis_max_nits = 10000.0f; // Clamp metadata to the encoded transfer-function range
     std::string hdr_analysis_failure_reason;
@@ -1868,7 +1895,9 @@ namespace platf::dxgi {
         return -1;
       }
 
-      hdr_analysis_enabled = true;
+      // Resources exist; whether they get used is init_output()'s call, once the
+      // colorspace and codec are known.
+      hdr_analysis_ready = true;
       BOOST_LOG(info) << "HDR luminance analyzer initialized (two-pass): " << width << "x" << height
                       << ", analysis " << hdr_analysis_width << "x" << hdr_analysis_height
                       << ", " << hdr_num_groups << " groups (" << groups_x << "x" << groups_y << ")"
@@ -2646,7 +2675,9 @@ namespace platf::dxgi {
         frame_texture = (ID3D11Texture2D *) frame->data[0];
       }
 
-      return base.init_output(frame_texture, frame->width, frame->height, colorspace);
+      // No client config in scope this deep in the frame-pool setup, so the codec
+      // comes from the member video.cpp filled in when this device was created.
+      return base.init_output(frame_texture, frame->width, frame->height, colorspace, video_format);
     }
 
   private:
@@ -2686,7 +2717,7 @@ namespace platf::dxgi {
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
-      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe)) {
+      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe)) {
         return false;
       }
 
@@ -2802,7 +2833,7 @@ namespace platf::dxgi {
 
       base.apply_colorspace(colorspace);
       hdr_luminance_analysis_available = false;
-      if (base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, is_probe) != 0) {
+      if (base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe) != 0) {
         return false;
       }
 
