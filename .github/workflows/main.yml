@@ -91,7 +91,9 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: ucrt64
-          update: true
+          # No `update: true` here: the next step runs `pacman -Syu` itself with
+          # the full dependency list, so asking setup-msys2 to upgrade first
+          # means paying for the same system upgrade twice.
           install: >-
             wget
             curl
@@ -188,9 +190,9 @@ jobs:
           # straight out of the environment even under the msys2 shell.
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
-          # msys2 is set to `update: true`, so the toolchain can move underneath
-          # us between runs. Hashing the compiler binary instead of its mtime
-          # keeps the cache valid across runs that did not actually change gcc.
+          # `pacman -Syu` can move the toolchain underneath us between runs.
+          # Hashing the compiler binary instead of its mtime keeps the cache
+          # valid across runs that did not actually change gcc.
           CCACHE_COMPILERCHECK: content
           # Fork PRs cannot access org-scoped secrets, so private-repo driver
           # downloads (vmouse) may fail. Downgrade missing drivers from
@@ -272,19 +274,6 @@ jobs:
         run: |
           # Generate SHA256 checksums.
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
-
-      - name: Package Windows Debug Info
-        working-directory: build
-        run: |
-          # use .dbg file extension for binaries to avoid confusion with real packages
-          Get-ChildItem -File -Recurse | `
-            % { Rename-Item -Path $_.PSPath -NewName $_.Name.Replace(".exe",".dbg") }
-
-          # save the binaries with debug info
-          7z -r `
-            "-xr!CMakeFiles" `
-            "-xr!cpack_artifacts" `
-            a "../artifacts/sunshine-win32-debuginfo.7z" "*.dbg"
 
       - name: Rename release assets
         shell: msys2 {0}
