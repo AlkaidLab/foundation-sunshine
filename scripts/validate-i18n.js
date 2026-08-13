@@ -146,7 +146,31 @@ function getEnglishOnlyKeys() {
     "crown_edition_desc", // Publisher/platform attribution
     "moonlight_ohos", // Project name
     "moonlight_pc_title", // Project name
+    "notifications.webhook.test_payload.event_type_label",
+    "notifications.webhook.test_payload.heading",
+    "notifications.webhook.test_payload.hostname_label",
+    "notifications.webhook.test_payload.result",
+    "notifications.webhook.test_payload.result_label",
+    "notifications.webhook.test_payload.sample_application",
+    "notifications.webhook.test_payload.sample_application_label",
+    "notifications.webhook.test_payload.sample_client",
+    "notifications.webhook.test_payload.sample_client_label",
+    "notifications.webhook.test_payload.sample_stream",
+    "notifications.webhook.test_payload.sample_stream_label",
+    "notifications.webhook.test_payload.time_label",
+    "notifications.webhook.test_payload.title",
   ]
+}
+
+function isEnglishOnlyKey(key, englishOnlyKeys = getEnglishOnlyKeys()) {
+  return englishOnlyKeys.includes(key) || englishOnlyKeys.includes(key.split('.').pop())
+}
+
+function shouldForceEnglish(key, localeFile, englishOnlyKeys = getEnglishOnlyKeys()) {
+  const usesChineseWebhookPayload =
+    (localeFile === 'zh.json' || localeFile === 'zh_TW.json') &&
+    key.startsWith('notifications.webhook.test_payload.')
+  return !usesChineseWebhookPayload && isEnglishOnlyKey(key, englishOnlyKeys)
 }
 
 /**
@@ -161,7 +185,7 @@ function shouldSkipTranslationCheck(key, value) {
   const englishOnlyKeys = getEnglishOnlyKeys()
   
   // Check if key is in skip list
-  if (englishOnlyKeys.includes(key.split('.').pop())) {
+  if (isEnglishOnlyKey(key, englishOnlyKeys)) {
     return true
   }
   
@@ -311,8 +335,7 @@ function validateLocales() {
         const englishOnlyKeys = getEnglishOnlyKeys()
         let overwrittenCount = 0
         for (const key of baseKeys) {
-          const keyName = key.split('.').pop()
-          if (englishOnlyKeys.includes(keyName)) {
+          if (shouldForceEnglish(key, localeFile, englishOnlyKeys)) {
             const baseValue = getValue(baseContent, key)
             const currentValue = getValue(content, key)
             if (currentValue !== baseValue) {
@@ -497,8 +520,15 @@ function validateLocales() {
   
   console.log('━'.repeat(60))
   
-  if (hasErrors && !syncMode) {
-    console.log('\n💡 Tip: Run with --sync flag to automatically add missing keys')
+  const hasManualErrors = results.some(r =>
+    (r.placeholderMismatches || 0) > 0 || (r.htmlMismatches || 0) > 0
+  )
+  if (hasManualErrors || (hasErrors && !syncMode)) {
+    if (!syncMode) {
+      console.log('\n💡 Tip: Run with --sync flag to automatically add missing keys')
+    } else {
+      console.log('\n💡 Placeholder and inline HTML mismatches require manual translation fixes')
+    }
     console.error('\n❌ Validation failed')
     process.exit(1)
   }
