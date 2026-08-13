@@ -837,6 +837,21 @@ namespace amf {
     consecutive_submit_failures = 0;
     consecutive_empty_outputs = 0;
 
+    // Reset dynamic HDR metadata state so a recreated encoder cannot inherit the
+    // previous stream's temporal history or stale per-frame units.
+    dynamic_metadata_codec = video::hdr_bitstream::codec_for(video_format);
+    dynamic_metadata.configure(video::hdr_metadata::formats_for(colorspace, video_format));
+    dynamic_metadata.reset();
+    luminance_stats = {};
+    staged_metadata_units.clear();
+    if (dynamic_metadata_codec && (dynamic_metadata.formats().hdr10plus || dynamic_metadata.formats().vivid)) {
+      BOOST_LOG(info) << "AMF: dynamic HDR metadata enabled ("
+                      << (dynamic_metadata.formats().hdr10plus ? "HDR10+" : "")
+                      << (dynamic_metadata.formats().hdr10plus && dynamic_metadata.formats().vivid ? " + " : "")
+                      << (dynamic_metadata.formats().vivid ? "HDR Vivid" : "")
+                      << "), spliced into the encoded bitstream";
+    }
+
     auto codec_name = (video_format == 0) ? "H.264" :
                       (video_format == 1) ? "HEVC" :
                       (video_format == 2) ? "AV1" : "Unknown";
@@ -851,6 +866,9 @@ namespace amf {
   amf_d3d11::destroy_encoder() {
     pending_outputs.clear();
     frame_rfi_flags.clear();
+    staged_metadata_units.clear();
+    dynamic_metadata.reset();
+    luminance_stats = {};
     hwsurfaces_in_queue = 0;
     avcodec_scheduler.reset();
     if (encoder) {
@@ -984,6 +1002,7 @@ namespace amf {
     }
 
     frame_rfi_flags[frame_index] = frame_after_ref_frame_invalidation;
+    stage_dynamic_metadata(frame_index);
 
     ::amf::AMFDataPtr output_data;
     if (avcodec_compat_profile) {
@@ -995,7 +1014,7 @@ namespace amf {
                            << (res == AMF_INPUT_FULL ? "AMF_INPUT_FULL" : "AMF_DECODER_NO_FREE_SURFACES")
                            << " after retries, dropping frame " << frame_index
                            << " (in_flight=" << avcodec_scheduler.in_flight() << ")";
-        frame_rfi_flags.erase(frame_index);
+        forget_frame(frame_index);
         if (++consecutive_submit_failures >= max_consecutive_failures) {
           BOOST_LOG(error) << "AMF: " << consecutive_submit_failures
                            << " consecutive frames with AVCodec scheduler input exhaustion, signaling reinit";
@@ -1011,7 +1030,7 @@ namespace amf {
 
       if (res != AMF_OK) {
         BOOST_LOG(error) << "AMF: AVCodec scheduler SubmitInput failed, error: " << res;
-        frame_rfi_flags.erase(frame_index);
+        forget_frame(frame_index);
         if (device) {
           auto removed_reason = device->GetDeviceRemovedReason();
           if (removed_reason != S_OK) {
@@ -1086,7 +1105,7 @@ namespace amf {
         BOOST_LOG(warning) << "AMF: SubmitInput still " << (res == AMF_INPUT_FULL ? "AMF_INPUT_FULL" : "AMF_DECODER_NO_FREE_SURFACES")
                            << " after retries, dropping frame " << frame_index
                            << " (in_flight=" << hwsurfaces_in_queue << ")";
-        frame_rfi_flags.erase(frame_index);
+        forget_frame(frame_index);
         // Treat sustained INPUT_FULL exhaustion as a submit failure for the
         // watchdog: if the pipeline stays jammed for ~1s of frames the upper
         // layer will reinit instead of silently producing no output forever.
@@ -1109,7 +1128,7 @@ namespace amf {
     }
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: SubmitInput failed, error: " << res;
-      frame_rfi_flags.erase(frame_index);
+      forget_frame(frame_index);
       // Check if the D3D11 device is lost (TDR, driver crash, etc.)
       if (device) {
         auto removed_reason = device->GetDeviceRemovedReason();
@@ -1170,7 +1189,7 @@ namespace amf {
       result.after_ref_frame_invalidation = rfi_flag->second;
       frame_rfi_flags.erase(rfi_flag);
     }
-    while (frame_rfi_flags.size() > 256) {
+    while (frame_rfi_flags.size() > MAX_TRACKED_FRAMES) {
       frame_rfi_flags.erase(frame_rfi_flags.begin());
     }
 
@@ -1184,6 +1203,23 @@ namespace amf {
     auto data_ptr = static_cast<uint8_t *>(buffer->GetNative());
     auto data_size = buffer->GetSize();
     result.data.assign(data_ptr, data_ptr + data_size);
+
+    // Splice this frame's dynamic HDR metadata into the finished bitstream. A frame
+    // whose units cannot be placed (a header-only access unit, or an AV1 temporal
+    // unit that cannot be walked) is sent unchanged rather than dropped: losing a
+    // frame is worse than a frame without dynamic metadata.
+    auto staged = staged_metadata_units.find(result.frame_index);
+    if (staged != staged_metadata_units.end()) {
+      if (dynamic_metadata_codec &&
+          !video::hdr_bitstream::insert(*dynamic_metadata_codec, staged->second, result.data)) {
+        BOOST_LOG(debug) << "AMF: no insertion point for dynamic HDR metadata in frame "
+                         << result.frame_index << ", sending it without";
+      }
+      staged_metadata_units.erase(staged);
+    }
+    while (staged_metadata_units.size() > MAX_TRACKED_FRAMES) {
+      staged_metadata_units.erase(staged_metadata_units.begin());
+    }
 
     // Check if output frame is IDR
     amf_int64 output_type = 0;
@@ -1312,6 +1348,17 @@ namespace amf {
 
   void
   amf_d3d11::set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) {
+    // Remembered even when the encoder is not ready yet: ST 2094-40 reports the
+    // mastering display peak, so the dynamic metadata builder needs the same value
+    // the static metadata was built from. Held as an optional rather than a plain
+    // peak because a display may legitimately report zero (display_base.cpp copies
+    // DXGI's MaxLuminance verbatim, and the VDD path clamps to a 0 floor); what
+    // gates dynamic metadata is whether HDR was configured at all, mirroring the
+    // `hdr_metadata &&` check on the NVENC side.
+    hdr_display_luminance = metadata ?
+                              std::optional<uint16_t> { metadata->maxDisplayLuminance } :
+                              std::nullopt;
+
     if (!encoder || !context) return;
 
     if (metadata && video_format >= 0) {
@@ -1358,6 +1405,43 @@ namespace amf {
   void *
   amf_d3d11::get_input_texture() {
     return input_texture;
+  }
+
+  void
+  amf_d3d11::set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) {
+    luminance_stats = stats;
+  }
+
+  void
+  amf_d3d11::stage_dynamic_metadata(uint64_t frame_index) {
+    // No carriage for this codec, HDR never configured, or nothing this stream may
+    // emit: the frame goes out as the encoder produced it. A zero display peak is
+    // not a reason to skip — hdr10plus_from_luminance() falls back to 1000 nits for
+    // the targeted system display, and HDR Vivid never reads the value.
+    if (!dynamic_metadata_codec || !hdr_display_luminance || !luminance_stats.valid) {
+      return;
+    }
+
+    const auto payloads = dynamic_metadata.build(luminance_stats, *hdr_display_luminance);
+    if (payloads.empty()) {
+      return;
+    }
+
+    std::vector<uint8_t> units;
+    for (auto payload : { payloads.hdr10plus, payloads.vivid }) {
+      if (!payload.empty()) {
+        video::hdr_bitstream::append_t35_unit(*dynamic_metadata_codec, payload, units);
+      }
+    }
+    if (!units.empty()) {
+      staged_metadata_units[frame_index] = std::move(units);
+    }
+  }
+
+  void
+  amf_d3d11::forget_frame(uint64_t frame_index) {
+    frame_rfi_flags.erase(frame_index);
+    staged_metadata_units.erase(frame_index);
   }
 
   std::unique_ptr<amf_d3d11>

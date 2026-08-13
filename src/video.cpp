@@ -678,22 +678,62 @@ namespace video {
     int inject;
   };
 
+  /**
+   * Whether the HDR luminance analyzer can be trusted to produce samples for this
+   * encode device: the user has not turned it off and the capture backend actually
+   * implements it.
+   */
+  inline bool
+  hdr_luminance_analysis_usable(bool device_supports_analysis) {
+    return config::video.hdr_luminance_analysis != "off" && device_supports_analysis;
+  }
+
+  /**
+   * Report a vivid_startup_gate_t transition. Shared so the two native encoder
+   * paths cannot drift into describing the same decision differently in the log.
+   */
+  void
+  log_vivid_gate_transition(
+    const char *encoder_name,
+    hdr_metadata::vivid_startup_gate_t::transition_e transition,
+    const hdr_metadata::vivid_startup_gate_t &gate,
+    const platf::hdr_frame_luminance_stats_t &stats) {
+    using transition_e = hdr_metadata::vivid_startup_gate_t::transition_e;
+
+    switch (transition) {
+      case transition_e::ready:
+        BOOST_LOG(info) << encoder_name << ": HDR Vivid startup guard ready after "
+                        << gate.consecutive_samples()
+                        << " independent samples; first encoded HLG frame will be IDR with Vivid"
+                        << " (avg=" << stats.avg_maxrgb
+                        << " nits, max=" << stats.max_maxrgb
+                        << " nits, P10=" << stats.percentile_10_pq
+                        << ", P90=" << stats.percentile_90_pq << ')';
+        break;
+      case transition_e::timed_out:
+        BOOST_LOG(warning) << encoder_name << ": HDR Vivid startup guard timed out after "
+                           << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
+                           << " ms; starting this session as pure HLG without dynamic metadata";
+        break;
+      case transition_e::none:
+        break;
+    }
+  }
+
   class nvenc_encode_session_t: public encode_session_t {
   public:
     nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, int video_format):
-        device(std::move(encode_device)) {
-      const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
-      if (use_hlg) {
-        const bool analysis_available =
-          config::video.hdr_luminance_analysis != "off" &&
-          device->hdr_luminance_analysis_available;
-        vivid_metadata_mode =
-          hdr_metadata::needs_vivid_startup_preroll(device->colorspace, video_format, analysis_available) ?
-            vivid_metadata_mode_e::preroll :
-            vivid_metadata_mode_e::disabled;
-      }
-      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
-        BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
+        device(std::move(encode_device)),
+        vivid_gate(
+          device ? device->colorspace : sunshine_colorspace_t {},
+          video_format,
+          device && hdr_luminance_analysis_usable(device->hdr_luminance_analysis_available)) {
+      if (vivid_gate.prerolling()) {
+        BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata ("
+                        << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                        << " independent samples, "
+                        << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
+                        << " ms timeout)";
       }
     }
 
@@ -790,40 +830,23 @@ namespace video {
     encode_frame(uint64_t frame_index) {
       if (!device || !device->nvenc) return {};
 
-      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!vivid_preroll_started) {
-          vivid_preroll_started = now;
-        }
-
-        if (vivid_startup_guard.observe(device->hdr_luminance_stats)) {
-          vivid_metadata_mode = vivid_metadata_mode_e::enabled;
-          force_idr = true;
-          const auto &stats = device->hdr_luminance_stats;
-          BOOST_LOG(info) << "NVENC: HDR Vivid startup guard ready after "
-                          << vivid_startup_guard.consecutive_samples()
-                          << " independent samples; first encoded HLG frame will be IDR with Vivid"
-                          << " (avg=" << stats.avg_maxrgb
-                          << " nits, max=" << stats.max_maxrgb
-                          << " nits, P10=" << stats.percentile_10_pq
-                          << ", P90=" << stats.percentile_90_pq << ')';
-        }
-        else if (now - *vivid_preroll_started >= VIVID_PREROLL_TIMEOUT) {
-          vivid_metadata_mode = vivid_metadata_mode_e::disabled;
-          force_idr = true;
-          BOOST_LOG(warning) << "NVENC: HDR Vivid startup guard timed out after 500 ms; "
-                                "starting this session as pure HLG without dynamic metadata";
-        }
-        else {
-          // Keep converting capture frames so the asynchronous GPU analyzer can
-          // produce independent samples, but do not let the client see a plain-HLG
-          // IDR followed by a mid-stream transition into HDR Vivid.
-          return { {}, frame_index, false, false };
-        }
+      using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
+      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, std::chrono::steady_clock::now());
+      if (gated.transition != hdr_metadata::vivid_startup_gate_t::transition_e::none) {
+        // The stream's metadata content changes here, so the client needs a fresh
+        // IDR rather than a P frame that references pre-transition pictures.
+        force_idr = true;
+        log_vivid_gate_transition("NVENC", gated.transition, vivid_gate, device->hdr_luminance_stats);
+      }
+      if (gated.decision == decision_e::hold) {
+        // Keep converting capture frames so the asynchronous GPU analyzer can
+        // produce independent samples, but do not let the client see a plain-HLG
+        // IDR followed by a mid-stream transition into HDR Vivid.
+        return { {}, frame_index, false, false };
       }
 
       // Pass per-frame HDR luminance stats to NVENC for dynamic metadata injection
-      if (vivid_metadata_mode != vivid_metadata_mode_e::disabled && device->hdr_luminance_stats.valid) {
+      if (gated.decision == decision_e::emit && device->hdr_luminance_stats.valid) {
         device->nvenc->set_luminance_stats(device->hdr_luminance_stats);
       }
 
@@ -851,26 +874,27 @@ namespace video {
     }
 
   private:
-    static constexpr auto VIVID_PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
-
-    enum class vivid_metadata_mode_e {
-      enabled,
-      preroll,
-      disabled,
-    };
-
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     frame_timestamp_ring_t frame_timestamps;
-    hdr_metadata::vivid_startup_guard_t vivid_startup_guard;
-    std::optional<std::chrono::steady_clock::time_point> vivid_preroll_started;
-    vivid_metadata_mode_e vivid_metadata_mode = vivid_metadata_mode_e::enabled;
+    hdr_metadata::vivid_startup_gate_t vivid_gate;
     bool force_idr = false;
   };
 
   class amf_encode_session_t: public encode_session_t {
   public:
-    amf_encode_session_t(std::unique_ptr<platf::amf_encode_device_t> encode_device):
-        device(std::move(encode_device)) {
+    amf_encode_session_t(std::unique_ptr<platf::amf_encode_device_t> encode_device, int video_format):
+        device(std::move(encode_device)),
+        vivid_gate(
+          device ? device->colorspace : sunshine_colorspace_t {},
+          video_format,
+          device && hdr_luminance_analysis_usable(device->hdr_luminance_analysis_available)) {
+      if (vivid_gate.prerolling()) {
+        BOOST_LOG(info) << "AMF: holding HLG startup for stable HDR Vivid metadata ("
+                        << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                        << " independent samples, "
+                        << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
+                        << " ms timeout)";
+      }
     }
 
     int
@@ -931,6 +955,24 @@ namespace video {
     encode_frame(uint64_t frame_index) {
       if (!device || !device->amf) return {};
 
+      using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
+      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, std::chrono::steady_clock::now());
+      if (gated.transition != hdr_metadata::vivid_startup_gate_t::transition_e::none) {
+        force_idr = true;
+        log_vivid_gate_transition("AMF", gated.transition, vivid_gate, device->hdr_luminance_stats);
+      }
+      if (gated.decision == decision_e::hold) {
+        // Same reasoning as NVENC: keep converting so the analyzer converges, but
+        // do not let the client see plain HLG before the switch into Vivid.
+        amf::amf_encoded_frame held;
+        held.frame_index = frame_index;
+        return held;
+      }
+
+      if (gated.decision == decision_e::emit && device->hdr_luminance_stats.valid) {
+        device->amf->set_luminance_stats(device->hdr_luminance_stats);
+      }
+
       auto result = device->amf->encode_frame(frame_index, force_idr);
       force_idr = false;
       return result;
@@ -957,6 +999,7 @@ namespace video {
   private:
     std::unique_ptr<platf::amf_encode_device_t> device;
     frame_timestamp_ring_t frame_timestamps;
+    hdr_metadata::vivid_startup_gate_t vivid_gate;
     bool force_idr = false;
   };
 
@@ -2869,7 +2912,7 @@ namespace video {
       }
     }
 
-    return std::make_unique<amf_encode_session_t>(std::move(encode_device));
+    return std::make_unique<amf_encode_session_t>(std::move(encode_device), client_config.videoFormat);
   }
 
   std::unique_ptr<encode_session_t>

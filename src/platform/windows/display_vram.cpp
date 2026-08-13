@@ -2745,7 +2745,13 @@ namespace platf::dxgi {
       if (!amf_d3d->create_encoder(amf_cfg, effective_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
-      return base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, is_probe) == 0;
+      hdr_luminance_analysis_available = false;
+      if (base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, is_probe) != 0) {
+        return false;
+      }
+
+      hdr_luminance_analysis_available = base.hdr_luminance_analysis_available();
+      return true;
     }
 
     int

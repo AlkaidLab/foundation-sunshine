@@ -188,6 +188,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/video.h"
         "${CMAKE_SOURCE_DIR}/src/video_hdr_metadata.cpp"
         "${CMAKE_SOURCE_DIR}/src/video_hdr_metadata.h"
+        "${CMAKE_SOURCE_DIR}/src/video_hdr_bitstream.cpp"
+        "${CMAKE_SOURCE_DIR}/src/video_hdr_bitstream.h"
         "${CMAKE_SOURCE_DIR}/src/video_colorspace.cpp"
         "${CMAKE_SOURCE_DIR}/src/video_colorspace.h"
         "${CMAKE_SOURCE_DIR}/src/input.cpp"
