@@ -2096,8 +2096,9 @@ namespace video {
     if (hdr10plus_sd && ema.initialized) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
+        // The 99th percentile is what maxSCL reports; see hdr10plus_from_luminance().
         const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
-          ema.percentile_95, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
+          ema.percentile_99, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
         if (frame_metadata.valid) {
           auto &params = hdr10plus->params[0];
           const auto maxscl = av_make_q(

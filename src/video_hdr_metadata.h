@@ -108,6 +108,15 @@ namespace video::hdr_metadata {
    * Convert analyzer luminance values into the normalized ST 2094-40 fields
    * shared by the AVCodec side-data and native NVENC paths.
    *
+   * peak_maxrgb is reported as maxSCL. ST 2094-40 defines that field as the window's
+   * maximum component, but the analyzer's true maximum is not the right thing to send
+   * here: the source is a Windows compositor scRGB surface whose specular overshoot is
+   * unbounded, and the PQ analysis path only clamps it at the 10000-nit ST 2084 peak,
+   * so a handful of pixels can pin maxSCL at 1.0 and make every consumer tone-map the
+   * whole scene against a 10000-nit peak. Callers pass the 99th percentile, which is
+   * also the largest value this message's own CDF carries — maxSCL must not sit below
+   * a percentile transmitted beside it, which is what the 95th percentile produced.
+   *
    * distribution carries maxRGB in nits at each hdr10plus_percentages entry. A null
    * pointer leaves the distribution at zero. Any non-finite or negative entry
    * discards the whole distribution the same way. Either way the reserved slots keep
@@ -115,10 +124,10 @@ namespace video::hdr_metadata {
    * stays valid, so the frame is still worth sending.
    */
   inline hdr10plus_frame_metadata_t
-  hdr10plus_from_luminance(float percentile_95, float average_maxrgb,
+  hdr10plus_from_luminance(float peak_maxrgb, float average_maxrgb,
     uint16_t max_display_luminance, const float *distribution = nullptr) {
-    if (!std::isfinite(percentile_95) || !std::isfinite(average_maxrgb) ||
-        percentile_95 < 0.0f || average_maxrgb < 0.0f) {
+    if (!std::isfinite(peak_maxrgb) || !std::isfinite(average_maxrgb) ||
+        peak_maxrgb < 0.0f || average_maxrgb < 0.0f) {
       return {};
     }
 
@@ -135,7 +144,7 @@ namespace video::hdr_metadata {
     };
 
     hdr10plus_frame_metadata_t result {
-      .maxscl = normalize(percentile_95),
+      .maxscl = normalize(peak_maxrgb),
       .average_maxrgb = normalize(average_maxrgb),
       .targeted_system_display_maximum_luminance = target_nits,
       .valid = true,
@@ -145,9 +154,17 @@ namespace video::hdr_metadata {
       for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
         if (!std::isfinite(distribution[i]) || distribution[i] < 0.0f) {
           result.distribution_maxrgb = {};
+          result.maxscl = normalize(peak_maxrgb);
           break;
         }
         result.distribution_maxrgb[i] = normalize(distribution[i]);
+        // Structural, not incidental: whatever a caller reports as the peak, maxSCL
+        // ends up at or above every percentile this message carries. The reserved
+        // slots below are fixed sentinels rather than measurements, so they are the
+        // one thing that must not raise it.
+        if (i != hdr10plus_reserved_v1_index && i != hdr10plus_reserved_v2_index) {
+          result.maxscl = std::max(result.maxscl, result.distribution_maxrgb[i]);
+        }
       }
     }
 
@@ -302,16 +319,34 @@ namespace video::hdr_metadata {
    * The fields describe the content in the PQ signal domain. Target display
    * luminance is intentionally not an input: it belongs to display adaptation
    * and optional curve parameters, not to these content statistics.
+   *
+   * All four are PQ-domain statistics, which is why the average comes from
+   * stats.avg_maxrgb_pq rather than the linear-light mean beside it: min and max
+   * commute with the monotonic PQ transfer function, and the variance is already
+   * defined as a difference of PQ percentiles, but the mean does not commute. PQ is
+   * concave, so PQ(mean(nits)) >= mean(PQ(nits)), and on a dark frame with small
+   * highlights the gap is most of the range — 99% of pixels at 1 nit with 1% at
+   * 1000 nits is 0.157 in PQ but PQ(10.99 nits) = 0.303, which would tell a display
+   * to anchor its curve twice as high as the picture warrants.
+   *
+   * A zero avg_maxrgb_pq next to a nonzero linear mean is the signature of an analyzer
+   * that never filled the field — the two cannot disagree about whether the frame has
+   * any light in it — so that combination yields no metadata rather than a black
+   * average. A genuinely black frame reports zero in both and is passed through.
    */
   inline vivid_metadata_t
   vivid_from_stats(const platf::hdr_frame_luminance_stats_t &stats) {
-    if (!stats.valid) {
+    if (!stats.valid || !std::isfinite(stats.avg_maxrgb_pq) ||
+        stats.avg_maxrgb_pq < 0.0f || stats.avg_maxrgb_pq > 1.0f) {
+      return {};
+    }
+    if (stats.avg_maxrgb_pq == 0.0f && !(std::isfinite(stats.avg_maxrgb) && stats.avg_maxrgb <= 0.0f)) {
       return {};
     }
 
     vivid_metadata_t result;
     result.minimum_maxrgb_pq = pq_to_u12(nits_to_pq(stats.min_maxrgb));
-    result.average_maxrgb_pq = pq_to_u12(nits_to_pq(stats.avg_maxrgb));
+    result.average_maxrgb_pq = pq_to_u12(stats.avg_maxrgb_pq);
     result.variance_maxrgb_pq = pq_to_u12(
       std::max(stats.percentile_90_pq - stats.percentile_10_pq, 0.0f));
     result.maximum_maxrgb_pq = pq_to_u12(nits_to_pq(stats.max_maxrgb));
@@ -337,7 +372,6 @@ namespace video::hdr_metadata {
     float min_maxrgb = 0.0f;
     float max_maxrgb = 0.0f;
     float avg_maxrgb = 0.0f;
-    float percentile_95 = 0.0f;
     float percentile_99 = 0.0f;
     /// Smoothed maxRGB (nits) at each hdr10plus_percentages entry.
     float distribution_maxrgb[platf::hdr_frame_luminance_stats_t::HDR10PLUS_PERCENTILES] = {};
@@ -363,7 +397,6 @@ namespace video::hdr_metadata {
         min_maxrgb = raw.min_maxrgb;
         max_maxrgb = raw.max_maxrgb;
         avg_maxrgb = raw.avg_maxrgb;
-        percentile_95 = raw.percentile_95;
         percentile_99 = raw.percentile_99;
         std::copy(std::begin(raw.distribution_maxrgb), std::end(raw.distribution_maxrgb),
           std::begin(distribution_maxrgb));
@@ -380,7 +413,6 @@ namespace video::hdr_metadata {
       min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
       max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
       avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
-      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
       percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
       for (size_t i = 0; i < std::size(distribution_maxrgb); ++i) {
         distribution_maxrgb[i] =
@@ -398,8 +430,8 @@ namespace video::hdr_metadata {
      *
      * For callers that hand a whole stats struct to a serializer instead of
      * reading the individual EMA fields. Members this filter does not smooth —
-     * analysis_max_nits, sample_sequence, and the PQ-domain percentiles Vivid
-     * uses — pass through untouched.
+     * analysis_max_nits, sample_sequence, and the PQ-domain statistics HDR Vivid
+     * uses, which vivid_temporal_filter_t smooths instead — pass through untouched.
      */
     platf::hdr_frame_luminance_stats_t
     smoothed(const platf::hdr_frame_luminance_stats_t &raw) const {
@@ -411,7 +443,6 @@ namespace video::hdr_metadata {
       result.min_maxrgb = min_maxrgb;
       result.max_maxrgb = max_maxrgb;
       result.avg_maxrgb = avg_maxrgb;
-      result.percentile_95 = percentile_95;
       result.percentile_99 = percentile_99;
       std::copy(std::begin(distribution_maxrgb), std::end(distribution_maxrgb),
         std::begin(result.distribution_maxrgb));
@@ -543,6 +574,7 @@ namespace video::hdr_metadata {
         std::isfinite(stats.min_maxrgb) &&
         std::isfinite(stats.avg_maxrgb) &&
         std::isfinite(stats.max_maxrgb) &&
+        std::isfinite(stats.avg_maxrgb_pq) &&
         std::isfinite(stats.percentile_10_pq) &&
         std::isfinite(stats.percentile_90_pq) &&
         std::isfinite(stats.analysis_max_nits);
@@ -556,6 +588,10 @@ namespace video::hdr_metadata {
              stats.avg_maxrgb + luminance_slack >= stats.min_maxrgb &&
              stats.max_maxrgb + luminance_slack >= stats.avg_maxrgb &&
              stats.max_maxrgb <= stats.analysis_max_nits + luminance_slack &&
+             // Vivid's average comes from here, so an analyzer that never filled it
+             // must not count as a stable sample the stream can start on.
+             stats.avg_maxrgb_pq > 0.0f &&
+             stats.avg_maxrgb_pq <= 1.0f &&
              stats.percentile_10_pq >= 0.0f &&
              stats.percentile_90_pq <= 1.0f &&
              stats.percentile_10_pq <= stats.percentile_90_pq;
@@ -573,6 +609,10 @@ namespace video::hdr_metadata {
       const platf::hdr_frame_luminance_stats_t &current) {
       return scalar_is_stable(previous.avg_maxrgb, current.avg_maxrgb, 20.0f) &&
              scalar_is_stable(previous.max_maxrgb, current.max_maxrgb, 50.0f) &&
+             // The field Vivid's average is actually built from. A linear-light mean
+             // that moves less than 50% can still swing this by a lot down in the dark
+             // end, where PQ spends most of its code space.
+             std::abs(previous.avg_maxrgb_pq - current.avg_maxrgb_pq) <= 0.15f &&
              std::abs(previous.percentile_10_pq - current.percentile_10_pq) <= 0.15f &&
              std::abs(previous.percentile_90_pq - current.percentile_90_pq) <= 0.15f;
     }

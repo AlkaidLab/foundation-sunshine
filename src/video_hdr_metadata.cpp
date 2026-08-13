@@ -37,8 +37,9 @@ namespace video::hdr_metadata {
       return 0;
     }
 
+    // The 99th percentile is what maxSCL reports; see hdr10plus_from_luminance().
     const auto frame_metadata = hdr10plus_from_luminance(
-      stats.percentile_95, stats.avg_maxrgb, max_display_luminance, stats.distribution_maxrgb);
+      stats.percentile_99, stats.avg_maxrgb, max_display_luminance, stats.distribution_maxrgb);
     if (!frame_metadata.valid) {
       return 0;
     }
