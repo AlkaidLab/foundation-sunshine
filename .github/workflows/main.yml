@@ -113,6 +113,7 @@ jobs:
           # Let pacman install the full toolchain at the current upstream version.
           dependencies=(
             "git"
+            "mingw-w64-ucrt-x86_64-ccache"
             "mingw-w64-ucrt-x86_64-cmake"
             "mingw-w64-ucrt-x86_64-ninja"
             "mingw-w64-ucrt-x86_64-cppwinrt"
@@ -165,6 +166,17 @@ jobs:
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
           npm run build
 
+      - name: Cache compiler objects
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.ccache
+          # The key must be unique per run for the cache to be written at all,
+          # so the prefix restore-key is what actually produces the hits: every
+          # run seeds itself from the most recent previous one.
+          key: ccache-windows-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-
+
       - name: Build Windows
         shell: msys2 {0}
         env:
@@ -172,6 +184,14 @@ jobs:
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
           GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
+          # ccache.exe is a native binary, so it reads the Windows-style path
+          # straight out of the environment even under the msys2 shell.
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          # msys2 is set to `update: true`, so the toolchain can move underneath
+          # us between runs. Hashing the compiler binary instead of its mtime
+          # keeps the cache valid across runs that did not actually change gcc.
+          CCACHE_COMPILERCHECK: content
           # Fork PRs cannot access org-scoped secrets, so private-repo driver
           # downloads (vmouse) may fail. Downgrade missing drivers from
           # FATAL_ERROR to WARNING so the build/configure still succeeds; the
@@ -179,6 +199,7 @@ jobs:
           DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
           mkdir -p build
+          ccache --zero-stats
           cmake \
             -B build \
             -G Ninja \
@@ -187,12 +208,18 @@ jobs:
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
           ninja -C build
+
+          # Printed so a run that suddenly gets slow can be diagnosed as a cache
+          # miss rather than guessed at.
+          ccache --show-stats
 
       - name: Run native tests
         shell: msys2 {0}
