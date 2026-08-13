@@ -150,7 +150,13 @@ target_link_options(${PROJECT_NAME} PRIVATE)
 # assertion globbed into it was dead weight. The timeout is a guard, not a
 # target: nothing in here has ever run on a headless runner, so a test that
 # waits on a display or a socket should fail the job rather than hang it.
-add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})
+#
+# DownloadFileTests fetches from httpbin.org, so as a gate it reports on a third
+# party's uptime rather than on this repository. It stays in the binary — run it
+# deliberately with --gtest_filter when changing http::download_file — but it
+# does not get a vote on whether a pull request is mergeable.
+add_test(NAME ${PROJECT_NAME}
+        COMMAND ${PROJECT_NAME} --gtest_filter=-DownloadFileTests/*)
 set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
