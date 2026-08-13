@@ -31,6 +31,8 @@ namespace display_device::vdd_utils {
     float max_nits = 1000.0f;
     float min_nits = 0.001f;
     float max_full_nits = 1000.0f;
+
+    bool operator==(const hdr_brightness_t &) const = default;
   };
 
   // 物理尺寸结构（厘米）

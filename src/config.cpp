@@ -605,12 +605,39 @@ namespace config {
     return space_tab(ch) || endline(ch);
   }
 
+  template <class It>
+  It
+  find_comment(It begin, It end) {
+    bool quoted = false;
+    bool escaped = false;
+    for (auto pos = begin; pos != end; ++pos) {
+      if (quoted) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (*pos == '\\') {
+          escaped = true;
+        }
+        else if (*pos == '"') {
+          quoted = false;
+        }
+      }
+      else if (*pos == '"') {
+        quoted = true;
+      }
+      else if (*pos == '#') {
+        return pos;
+      }
+    }
+    return end;
+  }
+
   std::string
   to_string(const char *begin, const char *end) {
     std::string result;
 
     KITTY_WHILE_LOOP(auto pos = begin, pos != end, {
-      auto comment = std::find(pos, end, '#');
+      auto comment = find_comment(pos, end);
       auto endl = std::find_if(comment, end, endline);
 
       result.append(pos, comment);
@@ -625,11 +652,34 @@ namespace config {
   It
   skip_list(It skipper, It end) {
     int stack = 1;
+    bool quoted = false;
+    bool escaped = false;
+    bool comment = false;
     while (skipper != end && stack) {
-      if (*skipper == '[') {
+      if (comment) {
+        comment = !endline(*skipper);
+      }
+      else if (quoted) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (*skipper == '\\') {
+          escaped = true;
+        }
+        else if (*skipper == '"') {
+          quoted = false;
+        }
+      }
+      else if (*skipper == '"') {
+        quoted = true;
+      }
+      else if (*skipper == '#') {
+        comment = true;
+      }
+      else if (*skipper == '[') {
         ++stack;
       }
-      if (*skipper == ']') {
+      else if (*skipper == ']') {
         --stack;
       }
 
@@ -645,7 +695,7 @@ namespace config {
   parse_option(std::string_view::const_iterator begin, std::string_view::const_iterator end) {
     begin = std::find_if_not(begin, end, whitespace);
     auto endl = std::find_if(begin, end, endline);
-    auto endc = std::find(begin, endl, '#');
+    auto endc = find_comment(begin, endl);
     endc = std::find_if(std::make_reverse_iterator(endc), std::make_reverse_iterator(begin), std::not_fn(whitespace)).base();
 
     auto eq = std::find(begin, endc, '=');
@@ -1833,7 +1883,10 @@ namespace config {
         }
       }
 
-      file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+      if (file_handler::write_file(sunshine.config_file.c_str(), configStream.str()) != 0) {
+        BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
+        return false;
+      }
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -1911,17 +1964,62 @@ namespace config {
         for (const auto &[key, value] : resultMap) {
           configStream << key << " = " << value << std::endl;
         }
-        file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+        if (file_handler::write_file(sunshine.config_file.c_str(), configStream.str()) != 0) {
+          BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
+          return false;
+        }
         BOOST_LOG(info) << "Config saved successfully";
-        return true;
       }
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
-        return false;
       }
+
+      return true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save config: " << e.what();
+      return false;
+    }
+  }
+
+  std::string
+  get_clients_config() {
+    std::lock_guard lock { config_file_mutex };
+    return nvhttp.clients;
+  }
+
+  bool
+  save_clients_config(const std::string &clients) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto normalized_clients = nlohmann::json::parse(clients).dump();
+      std::map<std::string, std::string> config_map;
+      const auto file_content = file_handler::read_file(sunshine.config_file.c_str());
+      const auto existing_config = parse_config(file_content);
+      config_map.insert(existing_config.begin(), existing_config.end());
+
+      const auto existing = config_map.find("clients");
+      if (existing == config_map.end() || existing->second != normalized_clients) {
+        config_map["clients"] = normalized_clients;
+
+        std::stringstream config_stream;
+        for (const auto &[key, value] : config_map) {
+          if (!value.empty() && value != "null") {
+            config_stream << key << " = " << value << std::endl;
+          }
+        }
+
+        if (file_handler::write_file(sunshine.config_file.c_str(), config_stream.str()) != 0) {
+          BOOST_LOG(warning) << "Failed to write client settings to config file: " << sunshine.config_file;
+          return false;
+        }
+      }
+
+      nvhttp.clients = normalized_clients;
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
       return false;
     }
   }

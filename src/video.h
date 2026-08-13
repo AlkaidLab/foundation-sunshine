@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+
+#include "hdr/client_display_capabilities.h"
 #include <vector>
 
 extern "C" {
@@ -126,6 +128,10 @@ namespace video {
     // This is intentionally scoped to a single platf::display() call so encoder
     // probing can avoid mutating the global config::video.capture string.
     std::string capture_backend_override;
+
+    // Remote display target. This adjusts only metadata sent to the client;
+    // it must never mutate a physical host display's EDID, HDR state, or ICC.
+    hdr::client_display_capabilities_t hdr_capabilities;
 
     // Helper to get effective framerate as double
     double get_effective_framerate() const {

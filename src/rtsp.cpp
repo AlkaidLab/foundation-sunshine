@@ -45,6 +45,24 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace rtsp_stream {
+  void
+  launch_session_t::set_hdr_target(
+    const hdr::client_display_capabilities_t &capabilities,
+    hdr::target_source_e source) {
+    hdr_capabilities = capabilities;
+    hdr_target_source = source;
+    sync_hdr_environment();
+  }
+
+  void
+  launch_session_t::sync_hdr_environment() {
+    env["SUNSHINE_CLIENT_HDR_BRIGHTNESS_REPORTED"] = reported_hdr_capabilities.reported ? "true" : "false";
+    env["SUNSHINE_CLIENT_HDR_BRIGHTNESS_SOURCE"] = std::string { hdr::to_string(hdr_target_source) };
+    env["SUNSHINE_CLIENT_HDR_MAX_NITS"] = std::to_string(hdr_capabilities.max_nits);
+    env["SUNSHINE_CLIENT_HDR_MIN_NITS"] = std::to_string(hdr_capabilities.min_nits);
+    env["SUNSHINE_CLIENT_HDR_MAX_FULL_FRAME_NITS"] = std::to_string(hdr_capabilities.max_full_frame_nits);
+  }
+
   namespace {
     bool
     parse_legacy_surround_params(std::string_view params, int requested_channels, audio::stream_params_t &result) {
@@ -1485,6 +1503,7 @@ namespace rtsp_stream {
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
+      monitor.hdr_capabilities = session.hdr_capabilities;
 
       int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
 
