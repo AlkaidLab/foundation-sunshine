@@ -712,7 +712,7 @@
     "vdd_driver_state_unhealthy": "驱动已安装，但 Windows 报告了异常。",
     "vdd_driver_state_unknown": "Sunshine 无法确认驱动状态。",
     "vdd_driver_state_unsupported": "仅 Windows 支持 VDD 驱动管理。",
-    "vdd_reuse_desc_windows": "启用后，所有客户端将共享同一个 VDD（虚拟显示设备）。禁用时（默认），每个客户端将获得独立的 VDD。启用此选项可加快客户端切换速度，但所有客户端将共享相同的显示设置。",
+    "vdd_reuse_desc_windows": "不建议启用。为确保能够记忆屏幕缩放，请保持禁用；启用此选项虽可加快客户端切换速度，但将无法记忆屏幕缩放。",
     "vdd_reuse_windows": "所有客户端复用同一基地显示器",
     "vdd_vulkan_hdr_bridge_desc_windows": "帮助 Vulkan 游戏在 Zako 虚拟显示器上识别 HDR。仅在 HDR 串流期间启用，验证失败也不会中断串流。",
     "vdd_vulkan_hdr_bridge_status_disabled_windows": "已关闭",
