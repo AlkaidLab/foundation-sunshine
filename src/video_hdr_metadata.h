@@ -44,6 +44,18 @@ namespace video::hdr_metadata {
     any() const {
       return hdr10plus || vivid;
     }
+
+    /**
+     * The formats left when two independent verdicts are combined: what the stream
+     * allows, and what the encoder can actually write. Both have to say yes.
+     */
+    constexpr formats_t
+    intersect(const formats_t &other) const {
+      return {
+        .hdr10plus = hdr10plus && other.hdr10plus,
+        .vivid = vivid && other.vivid,
+      };
+    }
   };
 
   constexpr int hdr10plus_normalized_scale = 100000;

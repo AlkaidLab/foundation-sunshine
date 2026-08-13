@@ -694,18 +694,24 @@ namespace platf::dxgi {
       // that verdict has to be reached here, before init_compute_path() picks a
       // conversion path based on whether analysis is running.
       //
-      // HLG over AV1 is the case that motivated this: HDR10+ is PQ-only and HDR
-      // Vivid has no AV1 carriage, so every analysis dispatch was thrown away.
+      // Two independent gates, and analysis is worth running only where they
+      // overlap. The stream decides what may describe the content: HLG over AV1
+      // allows nothing, because HDR10+ is PQ-only and HDR Vivid has no AV1
+      // carriage. The encoder decides what can be written: encoders driven through
+      // avcodec never emit HDR Vivid (see the AV_FRAME_DATA_DYNAMIC_HDR_VIVID
+      // comment in video.cpp), so HLG leaves them nothing either, even on HEVC.
       // (H.264 never reaches this at all — encoder.h264[DYNAMIC_RANGE] is false
       // unconditionally, so an HDR colorspace is impossible there.)
-      hdr_metadata_formats = ::video::hdr_metadata::formats_for(colorspace, video_format);
-      const bool any_format_carriable = hdr_metadata_formats.any();
-      hdr_analysis_enabled = hdr_analysis_ready && any_format_carriable;
-      if (hdr_analysis_ready && !any_format_carriable) {
-        hdr_analysis_failure_reason = "format_unsupported";
+      const auto stream_formats = ::video::hdr_metadata::formats_for(colorspace, video_format);
+      hdr_metadata_formats = stream_formats.intersect(encoder_metadata_formats);
+      hdr_analysis_enabled = hdr_analysis_ready && hdr_metadata_formats.any();
+      if (hdr_analysis_ready && !hdr_metadata_formats.any()) {
+        // Which side vetoed it, so the Web UI can tell "this codec cannot carry it"
+        // apart from "this encoder cannot write it".
+        hdr_analysis_failure_reason = stream_formats.any() ? "encoder_unsupported" : "format_unsupported";
         BOOST_LOG(is_probe ? debug : info)
-          << "HDR luminance analysis disabled: no dynamic metadata format can be carried by this "
-             "transfer function and codec combination";
+          << "HDR luminance analysis disabled: no dynamic metadata format is both allowed by this "
+             "transfer function and codec, and writable by this encoder";
       }
 
       // The underlying frame pool owns the texture, so we must reference it for ourselves
@@ -1040,8 +1046,8 @@ namespace platf::dxgi {
       std::shared_ptr<platf::display_t> display,
       adapter_t::pointer adapter_p,
       pix_fmt_e pix_fmt,
-      bool supports_dynamic_metadata) {
-      dynamic_metadata_supported = supports_dynamic_metadata;
+      ::video::hdr_metadata::formats_t supported_formats) {
+      encoder_metadata_formats = supported_formats;
       switch (pix_fmt) {
         case pix_fmt_e::nv12:
           format = DXGI_FORMAT_NV12;
@@ -1165,7 +1171,7 @@ namespace platf::dxgi {
       const bool hdr_format =
         format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
       if (hdr_format && config::video.hdr_luminance_analysis != "off") {
-        if (!dynamic_metadata_supported) {
+        if (!encoder_metadata_formats.any()) {
           hdr_analysis_failure_reason = "encoder_unsupported";
           // Without this the analyzer simply never appears in the log, which reads
           // exactly like a working setup that produces no metadata.
@@ -1648,7 +1654,10 @@ namespace platf::dxgi {
 
     std::uint64_t runtime_status_id = 0;
     ::video::hdr_pipeline_status_t runtime_status;
-    bool dynamic_metadata_supported = true;
+    // What this encode device can actually write into the bitstream, independent
+    // of what the stream would allow. Set at init(); intersected with the stream's
+    // own verdict in init_output().
+    ::video::hdr_metadata::formats_t encoder_metadata_formats { .hdr10plus = true, .vivid = true };
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 256;
@@ -2587,7 +2596,10 @@ namespace platf::dxgi {
   public:
     int
     init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      int result = base.init(display, adapter_p, pix_fmt, true);
+      // Encoders reached through avcodec never emit HDR Vivid: FFmpeg has no
+      // encoder-side serializer for AV_FRAME_DATA_DYNAMIC_HDR_VIVID, so the side
+      // data is attached and dropped. HDR10+ does get written out, so it stays.
+      int result = base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = false });
       data = base.device.get();
       return result;
     }
@@ -2689,7 +2701,8 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt, true)) return false;
+      // The native NVENC path hand-writes both T.35 payloads (nvenc_base.cpp).
+      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true })) return false;
 
       auto factory = nvenc::nvenc_dynamic_factory::get();
       if (!factory) return false;
@@ -2743,11 +2756,11 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      // The AMF path splices HDR10+ / HDR Vivid into the bitstream itself, so the
-      // luminance analyzer that feeds it has to be switched on here — the same as the
-      // avcodec and NVENC devices. This was false while AMF could only carry static
-      // metadata, and running the analyzer then would have burned GPU time for nothing.
-      if (base.init(display, adapter_p, pix_fmt, true)) return false;
+      // The AMF path splices HDR10+ / HDR Vivid into the bitstream itself (#939), so
+      // the luminance analyzer that feeds it has to be switched on here. This was off
+      // while AMF could only carry static metadata, and running the analyzer then
+      // would have burned GPU time for nothing.
+      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true })) return false;
 
       amf_d3d = ::amf::create_amf_d3d11(base.device.get());
       if (!amf_d3d) return false;
