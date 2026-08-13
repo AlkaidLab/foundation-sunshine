@@ -91,9 +91,13 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: ucrt64
-          # No `update: true` here: the next step runs `pacman -Syu` itself with
-          # the full dependency list, so asking setup-msys2 to upgrade first
-          # means paying for the same system upgrade twice.
+          # Required, not redundant with the `pacman -Syu` below. When
+          # msys2-runtime itself needs upgrading, pacman closes every MSYS2
+          # process to finish the job, which kills the workflow shell and fails
+          # the step with exit 1. setup-msys2 performs that upgrade with the
+          # restart it needs; by the time our own step runs, the runtime is
+          # already current and only the dependency list is left to install.
+          update: true
           install: >-
             wget
             curl
