@@ -112,6 +112,9 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         float min_maxrgb_nits = 10000.0;
         float max_maxrgb_nits = 0.0;
         float sum_maxrgb_nits = 0.0;
+        // Accumulated here rather than derived from the linear average: PQ is concave,
+        // so mean(PQ(nits)) is not PQ(mean(nits)). HDR Vivid needs the former.
+        float sum_maxrgb_pq = 0.0;
         uint pixel_count = 0;
 
         for (uint y = cell_begin.y; y < cell_end.y; ++y) {
@@ -125,6 +128,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
                 min_maxrgb_nits = min(min_maxrgb_nits, maxrgb_nits);
                 max_maxrgb_nits = max(max_maxrgb_nits, maxrgb_nits);
                 sum_maxrgb_nits += maxrgb_nits;
+                sum_maxrgb_pq += NitsToPQ(maxrgb_nits.xxx).x;
                 ++pixel_count;
             }
         }
@@ -134,6 +138,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             min_maxrgb_nits,
             max_maxrgb_nits,
             sum_maxrgb_nits,
+            sum_maxrgb_pq,
             pixel_count,
             HdrAnalysisMaxRgbNits(src_rgb)
         );

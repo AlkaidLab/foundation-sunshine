@@ -487,11 +487,19 @@ namespace platf {
 
     float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
     float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
-    float avg_maxrgb = 0.0f;    ///< Average of max(R,G,B) across all pixels (nits)
+    float avg_maxrgb = 0.0f;    ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
+    /// Arithmetic mean of the PQ-coded max(R,G,B), in normalized PQ signal space, for
+    /// HDR Vivid. Accumulated per pixel by the analyzer, like avg_maxrgb, and
+    /// deliberately derived from neither its result nor the histogram: PQ is concave,
+    /// so PQ(mean(nits)) sits far above mean(PQ(nits)) on a dark frame with highlights,
+    /// and the histogram is point-sampled per analysis cell. Zero alongside a nonzero
+    /// avg_maxrgb means the analyzer did not produce one, which HDR Vivid rejects.
+    float avg_maxrgb_pq = 0.0f;
     float percentile_10_pq = 0.0f;  ///< 10th percentile in normalized PQ signal space
     float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
-    float percentile_95 = 0.0f;     ///< 95th percentile of maxRGB (nits), for HDR10+
-    float percentile_99 = 0.0f;     ///< 99th percentile of maxRGB (nits), for HDR10+
+    /// 99th percentile of maxRGB (nits). Reported as the HDR10+ maxSCL; see
+    /// video::hdr_metadata::hdr10plus_from_luminance() for why it is not max_maxrgb.
+    float percentile_99 = 0.0f;
     /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
     float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
     float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
