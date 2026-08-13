@@ -1919,7 +1919,12 @@ namespace platf {
         BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
         return -1;
       }
-      return raw->ds5_sidecar->alloc(id, std::move(feedback_queue), config::input.ds5_audio_haptics);
+      const auto result = raw->ds5_sidecar->alloc(id, feedback_queue, config::input.ds5_audio_haptics);
+      if (result == 0) {
+        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
+        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+      }
+      return result;
     }
 
     if (!raw->vigem) {
@@ -2527,17 +2532,10 @@ namespace platf {
     auto switch_reason = switch_enabled ? "" : "gamepads.motion-server-not-available";
 
     // ds4 == ps4
-    static std::vector gps {
-      supported_gamepad_t { "auto", true, reason },
-      supported_gamepad_t { "x360", enabled, reason },
-      supported_gamepad_t { "ds4", enabled, reason },
-      supported_gamepad_t { "ds5", ds5_enabled, ds5_enabled ? "" : "gamepads.ds5-sidecar-not-available" },
-      supported_gamepad_t { "switch", switch_enabled, switch_reason }
-    };
-
     // This function is queried after runtime configuration changes too. Keep
-    // the stable backing vector (the API returns a reference), but refresh its
-    // values instead of freezing the first observed driver/component state.
+    // per-thread stable backing storage (the API returns a reference), while
+    // avoiding cross-thread writes when HTTP/UI callers query concurrently.
+    thread_local std::vector<supported_gamepad_t> gps(5);
     gps[0] = { "auto", true, reason };
     gps[1] = { "x360", enabled, reason };
     gps[2] = { "ds4", enabled, reason };

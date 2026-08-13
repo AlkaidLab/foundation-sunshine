@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - 状态：实施设计稿
-- 目标平台：Windows 10/11 x64
+- 目标平台：Windows 10/11 x64（实验性）；首期本机验证基线为 Windows 11 24H2 build 26100
 - GUI：Sunshine Control Panel（Tauri + Vue + Element Plus）
 - 运行时：Sunshine Core + 独立 DualSense Sidecar
 - 初期外部组件：HIDMaestro 运行时；普通 HID 使用其 UMDF2 后端，四声道复合设备按需使用其 USB/IP 后端
@@ -43,7 +43,7 @@
 
 复合 profile 的音频输出固定为 48 kHz、16-bit、4 声道，角色依次为 `speakerLeft`、`speakerRight`、`hapticLeft`、`hapticRight`。HIDMaestro 公共 API 可以直接交付游戏写入该端点的 PCM 帧，Sidecar 不需要从混合后的桌面音频重新猜测第 3/4 声道。
 
-官方发布物当前未做 Authenticode 签名，并携带运行时、usbip-win2 安装器及 WDK 工具。第一阶段只从上游固定版本 URL 下载、校验固定 SHA-256，不随 Sunshine 安装包或自有 CDN 再分发。正式集成前还要验证上游声明的 Windows 10/11 支持与程序集标注的 Windows build 26100+ 之间的兼容范围。
+官方发布物当前未做 Authenticode 签名，并携带运行时、usbip-win2 安装器及 WDK 工具。第一阶段只从上游固定版本 URL 下载、校验固定 SHA-256，不随 Sunshine 安装包或自有 CDN 再分发。目前只把 Windows 11 24H2 build 26100 记为“已验证”；Windows 10 与其他 Windows 11 build 仍属于实验范围，GUI 不宣称已受支持。这里不把程序集的 `windows10.0.26100.0` API target 误当作已证明的最低 OS 版本；正式分发前必须完成真实 OS build 矩阵并据此决定拒绝安装还是显示实验性警告。
 
 ### 3.2 三层生命周期
 
@@ -53,7 +53,7 @@
 | 系统级驱动/传输 | UMDF2 虚拟 HID；完整模式另含 usbip-win2 驱动/服务 | Windows Driver Store/SCM/PnP；GUI 仅发起管理 | 检查、提权安装、单独卸载 |
 | 串流运行时 | Sidecar 进程、USB attach、虚拟 HID/Audio 设备 | Sunshine Core | 查看状态；仅在未占用时运行测试 |
 
-GUI 退出不得结束由 Core 持有的串流运行时。Core 退出时必须通过 Job Object、控制通道关闭或 Sidecar watchdog 完成清理。
+GUI 退出不得结束由 Core 持有的串流运行时。Core 退出时由带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object 终止 owned Sidecar；owner Named Pipe 的 EOF、`ERROR_BROKEN_PIPE`/`ERROR_NO_DATA`、半开连接最终断开或 owner 进程丢失都会进入 `finally` 清理并销毁该连接创建的所有设备。Sidecar 不作为可脱离 owner 存活的服务。
 
 ### 3.3 不复制 Web 串流进程管理细节
 
@@ -103,6 +103,8 @@ HIDMaestro hapticLeft/hapticRight authored PCM
 ```
 
 源优先级为 `authored DS5 PCM > 普通音频合成 IR > 传统 rumble`。同一手柄、同一时刻只能有一个 owner；检测到 authored PCM 活跃后必须停止普通音频合成，避免重复触觉和相位不相关的叠加。短暂断流采用带滞回的切换策略，不能按单个空音频包来回抖动。
+
+未来引入 fallback 时，客户端按以下状态机仲裁：`fallback` 收到首个有效 authored PCM `STREAM_START` 或非空包后立即静音并切到 `native_pcm`；空 PCM 包只维持序列/时钟，不触发回退；断序先清空 native jitter buffer，但仍保持 native owner；只有收到 `STREAM_END`，或连续 100 ms 未收到任何 native 包，才进入 50 ms 静默保护期，随后恢复 fallback。保护期内重新收到 native 包会取消回退。每次切换都先把旧 renderer 输出归零，同一手柄禁止两个 renderer 同时输出。第一阶段尚未启用 SDK fallback，因此客户端始终只运行 `native_pcm` 或现有 rumble，不存在双重播放。
 
 第一阶段不需要修改 `moonlight-audio-haptics`：它只服务于不具备 DS5 原始音频播放能力的客户端或没有 authored haptics 的游戏。后续若希望把已创作的左右触觉 PCM 映射到双执行器设备，应新增明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。
 
@@ -180,7 +182,7 @@ HIDMaestro hapticLeft/hapticRight authored PCM
 1. 启动或连接 Sidecar。
 2. attach 一个测试设备。
 3. 等待 HID 接口，建议超时 8 秒。
-4. 等待四声道音频端点，建议超时 12 秒。
+4. `dualsense-composite` 等待四声道音频端点（建议超时 12 秒）并允许 PCM 验证；`dualsense` 跳过该等待并明确报告“此 profile 不支持四声道音频”。
 5. 显示手柄输入和反馈状态。
 6. 可执行一次短促、低强度的左右通道触觉测试；执行前给出明确按钮，不自动播放。
 7. 用户结束、关闭页面或超时后 detach 测试设备。
@@ -317,12 +319,12 @@ ds5_open_install_path() -> ()
 ### 6.2 GUI 事件
 
 ```text
-ds5-status-changed       完整状态快照或带 revision 的增量
+ds5-status-changed       带 revision 的完整 Ds5StatusSnapshot
 ds5-operation-progress   operation_id、stage、progress、message_key
 ds5-test-feedback        test_session_id、HID/Audio/Haptics 测试结果
 ```
 
-事件是主要更新机制；页面每 10 秒执行一次 `ds5_get_status` 对账。页面重新打开时通过 operation snapshot 恢复进度，不依赖 Vue 组件一直存活。
+v1 事件只发送完整快照，不定义增量合并或字段清除语义。事件是主要更新机制；页面每 10 秒执行一次 `ds5_get_status` 对账。渲染器记录最近 `revision`，丢弃 revision 不大于当前值的事件和轮询响应，避免较慢的轮询覆盖较新的事件。页面重新打开时通过 operation snapshot 恢复进度，不依赖 Vue 组件一直存活。
 
 ### 6.3 Core/Sidecar 协议
 
@@ -335,7 +337,7 @@ ds5-test-feedback        test_session_id、HID/Audio/Haptics 测试结果
 最小消息集：
 
 ```text
-hello(protocol_version, process_identity)
+hello(protocol_version, diagnostic_process_identity)
 probe()
 attach(session_id, device_index, feature_flags)
 update_input(session_id, report)
@@ -350,8 +352,9 @@ shutdown(owner_token)
 - 长度前缀和最大消息尺寸。
 - 协议版本协商。
 - 每个 attach 使用不可预测 session ID。
-- Core 持有 owner token；GUI 测试使用独立、低权限 test token。
-- Sidecar 拒绝非所有者 detach 和 shutdown。
+- OS Named Pipe 客户端身份在连接建立时绑定为 owner；不信任 `diagnostic_process_identity` 等客户端提交字段做授权。
+- `attach`、`update_input`、`subscribe_output` 和 `get_status` 只接受当前连接 owner；Core 持有 owner token，GUI 测试使用独立、低权限 test token。
+- Sidecar 拒绝非所有者 detach 和 shutdown；连接断开会清理该 owner 创建的全部设备。
 - 输出报告和音频数据使用有界队列；控制消息不得被高频数据饿死。
 
 高频四声道音频数据不应经 Tauri 或 JSON 传输。后续实现使用共享内存环形缓冲区或专用本地数据通道；Named Pipe 只负责控制和状态。
@@ -639,7 +642,7 @@ UX 验收：
 
 ## 17. 首期落地决策与验证记录
 
-截至 2026-08-14，首期实现已经冻结以下决策：
+截至 2026-08-14（Asia/Hong_Kong），首期实现已经冻结以下决策：
 
 1. Sidecar 调用 HIDMaestro v1.6.1 的公共 `HIDMaestro.Core.dll` API，不复制其实现，也不调用 HIDMaestroTest UI。
 2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.1.zip`，固定下载地址和 SHA-256 `00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34`。发布物大小为 118,879,222 bytes。

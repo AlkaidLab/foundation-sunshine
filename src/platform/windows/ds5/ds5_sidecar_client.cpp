@@ -334,11 +334,13 @@ namespace platf::ds5 {
       online = false;
       if (pipe != INVALID_HANDLE_VALUE) {
         CancelIoEx(pipe, nullptr);
-        CloseHandle(pipe);
-        pipe = INVALID_HANDLE_VALUE;
       }
       if (reader.joinable()) {
         reader.join();
+      }
+      if (pipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(pipe);
+        pipe = INVALID_HANDLE_VALUE;
       }
       if (process) {
         if (WaitForSingleObject(process, 5000) == WAIT_TIMEOUT) {

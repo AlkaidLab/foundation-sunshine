@@ -1551,7 +1551,15 @@ namespace config {
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "ds5_enabled", input.ds5_enabled);
     bool_f(vars, "ds5_audio_haptics", input.ds5_audio_haptics);
-    string_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
+    if (const auto path = vars.find("ds5_sidecar_path");
+        path != vars.end() && !path->second.empty()) {
+      path_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
+    }
+    else {
+      // path_f resolves an empty path to appdata. Preserve an explicit empty
+      // value so the optional component cannot become configured by default.
+      string_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
+    }
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
     
     int temp_port = static_cast<int>(input.dsu_server_port);

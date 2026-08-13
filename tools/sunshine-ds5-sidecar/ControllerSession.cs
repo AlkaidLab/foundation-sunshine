@@ -36,7 +36,7 @@ internal sealed class ControllerSession : IDisposable
     private HMGamepadState _state;
     private readonly Dictionary<uint, int> _touchSlots = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
-    private uint _hapticsSequence;
+    private int _hapticsSequence = -1;
     private int _hapticsStreaming;
     private int _hapticsNeedsStart;
     private int _disposed;
@@ -129,7 +129,7 @@ internal sealed class ControllerSession : IDisposable
             {
                 SetTouch(slot, false, pointerId, x, y);
             }
-            else if (eventType is not (2 or 4 or 6))
+            else if (eventType is not (2 or 4 or 5 or 6))
             {
                 throw new InvalidDataException("Unsupported touch event type");
             }
@@ -165,7 +165,7 @@ internal sealed class ControllerSession : IDisposable
             {
                 throw new InvalidDataException("Unsupported motion type");
             }
-            _state.SensorTimestamp = unchecked((uint)(_clock.ElapsedTicks * 1_000_000 / Stopwatch.Frequency));
+            _state.SensorTimestamp = unchecked((uint)ElapsedMicroseconds());
             _controller.SubmitState(in _state);
         }
     }
@@ -271,12 +271,20 @@ internal sealed class ControllerSession : IDisposable
         payload[3] = HapticsOutputChannels;
         BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(4, 2), frameCount);
         payload[6] = 16;
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(8, 4), _hapticsSequence++);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(8, 4),
+            unchecked((uint)Interlocked.Increment(ref _hapticsSequence)));
         BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(12, 8),
-            (ulong)(_clock.ElapsedTicks * 1_000_000 / Stopwatch.Frequency));
+            (ulong)ElapsedMicroseconds());
         BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(20, 4), 48000);
         pcm.CopyTo(payload.AsSpan(24));
         _emit(new Protocol.Message(Protocol.MessageType.HapticsPcm, 0, payload));
+    }
+
+    private long ElapsedMicroseconds()
+    {
+        var ticks = _clock.ElapsedTicks;
+        return ticks / Stopwatch.Frequency * 1_000_000 +
+               ticks % Stopwatch.Frequency * 1_000_000 / Stopwatch.Frequency;
     }
 
     private void UpdateAxes(float lx, float ly, float rx, float ry, float lt, float rt)

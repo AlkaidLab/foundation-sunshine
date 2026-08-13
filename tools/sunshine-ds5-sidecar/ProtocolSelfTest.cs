@@ -53,6 +53,8 @@ internal static class ProtocolSelfTest
         await SendAsync(client, new Protocol.Message(Protocol.MessageType.Touch, 0, touch), stopping.Token);
         touch[1] = 2;
         await SendAsync(client, new Protocol.Message(Protocol.MessageType.Touch, 0, touch), stopping.Token);
+        touch[1] = 5; // LI_TOUCH_EVENT_BUTTON_ONLY must not mutate contact state or fail.
+        await SendAsync(client, new Protocol.Message(Protocol.MessageType.Touch, 0, touch), stopping.Token);
 
         var motion = new byte[16];
         motion[0] = 0;
@@ -102,6 +104,14 @@ internal static class ProtocolSelfTest
         var detach = await ReceiveUntilAsync(client, Protocol.MessageType.DetachReply, 3, stopping.Token);
         Require(detach.Payload.Length == 1 && detach.Payload[0] == 0, "detach reply");
 
+        // Reattach and intentionally drop the owner pipe without DETACH. Completion
+        // of serverTask proves the EOF path disposed the still-attached controller.
+        await SendAsync(client, new Protocol.Message(
+            Protocol.MessageType.Attach, 4, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
+        var ownerCleanupAttach = await ReceiveUntilAsync(
+            client, Protocol.MessageType.AttachReply, 4, stopping.Token);
+        Require(ownerCleanupAttach.Payload.Length == 8, "owner cleanup attach reply");
+
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -119,6 +129,7 @@ internal static class ProtocolSelfTest
             haptics_pcm = capturedHapticsBytes != 0,
             haptics_bytes = capturedHapticsBytes,
             detached = true,
+            owner_disconnect_cleanup = true,
             cleanup = true,
         });
         Console.WriteLine(result);

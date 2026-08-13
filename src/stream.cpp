@@ -2200,6 +2200,7 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
+      bool has_ds5_haptics_session = false;
 
       {
         auto lg = server->_sessions.lock();
@@ -2245,6 +2246,7 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            has_ds5_haptics_session |= (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -2355,7 +2357,8 @@ namespace stream {
       // Cursor shapes are low-frequency, but pointer role transitions should
       // still feel immediate. Poll the latest-value bridge once per frame while
       // local cursor mode is active without adding another control thread.
-      server->iterate(cursor_channel::local_mode_active() ? 16ms : 150ms);
+      server->iterate(has_ds5_haptics_session ? 5ms :
+                      cursor_channel::local_mode_active() ? 16ms : 150ms);
     }
 
     // Let all remaining connections know the server is shutting down

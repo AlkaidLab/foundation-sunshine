@@ -40,7 +40,8 @@ internal sealed class SidecarServer : IAsyncDisposable
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.WriteThrough,
+            PipeOptions.Asynchronous | PipeOptions.WriteThrough |
+            PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance,
             64 * 1024,
             64 * 1024);
         _pipe = pipe;
@@ -56,6 +57,11 @@ internal sealed class SidecarServer : IAsyncDisposable
         {
             // The owning Sunshine process disconnected. The sidecar exits after
             // destroying every device instead of becoming an orphan service.
+        }
+        catch (IOException) when (!pipe.IsConnected)
+        {
+            // Windows may surface a broken owner pipe as ERROR_BROKEN_PIPE or
+            // ERROR_NO_DATA instead of a zero-byte read. Treat both as EOF.
         }
         finally
         {
@@ -203,9 +209,9 @@ internal sealed class SidecarServer : IAsyncDisposable
 
     private void Emit(Protocol.Message message)
     {
-        var written = message.RequestId != 0 || message.Type is Protocol.MessageType.Error
-            ? _controlOutgoing.Writer.TryWrite(message)
-            : _realtimeOutgoing.Writer.TryWrite(message);
+        var written = message.Type is Protocol.MessageType.HapticsPcm
+            ? _realtimeOutgoing.Writer.TryWrite(message)
+            : _controlOutgoing.Writer.TryWrite(message);
         if (written)
         {
             try { _outgoingSignal.Release(); }
