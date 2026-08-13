@@ -82,6 +82,7 @@ extern "C" {
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
 #define IDX_CURSOR 21  // Local cursor mode/update (Sunshine protocol extension)
+#define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -106,6 +107,7 @@ static const short packetTypes[] = {
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
   0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
   0x5509,  // Local cursor mode/update (Sunshine protocol extension)
+  0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -450,6 +452,16 @@ namespace stream {
         return -1;
       }
 
+      return 0;
+    }
+
+    int
+    send_unreliable(const std::string_view &payload, net::peer_t peer) {
+      auto packet = enet_packet_create(payload.data(), payload.size(), 0);
+      if (enet_peer_send(peer, 0, packet)) {
+        enet_packet_destroy(packet);
+        return -1;
+      }
       return 0;
     }
 
@@ -1293,6 +1305,7 @@ namespace stream {
     }
 
     std::string payload;
+    bool unreliable = false;
     if (msg.type == platf::gamepad_feedback_e::rumble) {
       control_rumble_t plaintext;
       plaintext.header.type = packetTypes[IDX_RUMBLE_DATA];
@@ -1384,12 +1397,65 @@ namespace stream {
 
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
+    else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
+      if (!(session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM)) {
+        return 0;
+      }
+
+      const auto &data = msg.data.ds5_haptics;
+      const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
+      constexpr std::size_t wire_header_size = 28;
+      std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire_header_size + pcm_size);
+      auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
+        p[0] = static_cast<std::uint8_t>(v);
+        p[1] = static_cast<std::uint8_t>(v >> 8);
+      };
+      auto write_u32 = [](std::uint8_t *p, std::uint32_t v) {
+        p[0] = static_cast<std::uint8_t>(v);
+        p[1] = static_cast<std::uint8_t>(v >> 8);
+        p[2] = static_cast<std::uint8_t>(v >> 16);
+        p[3] = static_cast<std::uint8_t>(v >> 24);
+      };
+      auto write_u64 = [&write_u32](std::uint8_t *p, std::uint64_t v) {
+        write_u32(p, static_cast<std::uint32_t>(v));
+        write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
+      };
+
+      auto *control = plaintext.data();
+      write_u16(control, packetTypes[IDX_DS5_HAPTICS_PCM]);
+      write_u16(control + 2, static_cast<std::uint16_t>(wire_header_size + pcm_size));
+      auto *wire = control + sizeof(control_header_v2);
+      wire[0] = 1;
+      wire[1] = data.flags;
+      write_u16(wire + 2, wire_header_size);
+      write_u16(wire + 4, msg.id);
+      write_u16(wire + 6, data.frame_count);
+      write_u32(wire + 8, data.sequence);
+      write_u64(wire + 12, data.presentation_time_us);
+      write_u32(wire + 20, 48000);
+      wire[24] = 2;
+      wire[25] = 16;
+      wire[26] = wire[27] = 0;
+      std::copy_n(data.pcm.begin(), pcm_size, wire + wire_header_size);
+
+      std::array<std::uint8_t,
+        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
+          sizeof(control_header_v2) + wire_header_size + 240 * 4) + crypto::cipher::tag_size>
+        encrypted_payload;
+      payload = encode_control(session,
+                               std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()),
+                               encrypted_payload);
+      unreliable = true;
+    }
     else {
       BOOST_LOG(error) << "Unknown gamepad feedback message type"sv;
       return -1;
     }
 
-    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+    const auto send_result = unreliable
+      ? session->broadcast_ref->control_server.send_unreliable(payload, session->control.peer)
+      : session->broadcast_ref->control_server.send(payload, session->control.peer);
+    if (send_result) {
       TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
       BOOST_LOG(warning) << "Couldn't send gamepad feedback to ["sv << addr << ':' << port << ']';
 

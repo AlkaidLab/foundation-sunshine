@@ -166,6 +166,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"

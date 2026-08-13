@@ -553,6 +553,9 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
+    false,  // ds5_enabled
+    true,  // ds5_audio_haptics (native authored Channel 3/4 passthrough)
+    {},  // ds5_sidecar_path
     false, // enable_dsu_server - disabled by default
     26760, // dsu_server_port - default DSU server port
 
@@ -1546,6 +1549,9 @@ namespace config {
     bool_f(vars, "ds4_back_as_touchpad_click", input.ds4_back_as_touchpad_click);
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
+    bool_f(vars, "ds5_enabled", input.ds5_enabled);
+    bool_f(vars, "ds5_audio_haptics", input.ds5_audio_haptics);
+    string_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
     
     int temp_port = static_cast<int>(input.dsu_server_port);
