@@ -146,6 +146,13 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 target_link_options(${PROJECT_NAME} PRIVATE)
 
+# The aggregate suite had an executable but no ctest registration, so every
+# assertion globbed into it was dead weight. The timeout is a guard, not a
+# target: nothing in here has ever run on a headless runner, so a test that
+# waits on a display or a socket should fail the job rather than hang it.
+add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})
+set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
+
 add_executable(abr_unit_tests
         ${CMAKE_SOURCE_DIR}/src/abr.cpp
         ${ABR_TEST_STUB_SOURCE})
