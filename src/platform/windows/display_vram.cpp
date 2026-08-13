@@ -1147,6 +1147,10 @@ namespace platf::dxgi {
       if (hdr_format && config::video.hdr_luminance_analysis != "off") {
         if (!dynamic_metadata_supported) {
           hdr_analysis_failure_reason = "encoder_unsupported";
+          // Without this the analyzer simply never appears in the log, which reads
+          // exactly like a working setup that produces no metadata.
+          BOOST_LOG(info) << "HDR luminance analysis requested but this encode device does not "
+                             "carry dynamic metadata; static metadata only";
         }
         else if (init_hdr_luminance_analyzer() != 0) {
           hdr_analysis_failure_reason = "analysis_setup_failed";
@@ -2708,7 +2712,11 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt, false)) return false;
+      // The AMF path splices HDR10+ / HDR Vivid into the bitstream itself, so the
+      // luminance analyzer that feeds it has to be switched on here — the same as the
+      // avcodec and NVENC devices. This was false while AMF could only carry static
+      // metadata, and running the analyzer then would have burned GPU time for nothing.
+      if (base.init(display, adapter_p, pix_fmt, true)) return false;
 
       amf_d3d = ::amf::create_amf_d3d11(base.device.get());
       if (!amf_d3d) return false;
