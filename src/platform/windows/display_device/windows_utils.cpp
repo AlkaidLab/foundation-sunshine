@@ -369,7 +369,7 @@ namespace display_device::w_utils {
     std::vector<BYTE> device_id_data;
 
     HDEVINFO dev_info_handle { SetupDiGetClassDevsW(&monitor_guid, nullptr, nullptr, DIGCF_DEVICEINTERFACE) };
-    if (dev_info_handle) {
+    if (dev_info_handle != INVALID_HANDLE_VALUE) {
       const auto dev_info_handle_cleanup {
         util::fail_guard([&dev_info_handle]() {
           if (!SetupDiDestroyDeviceInfoList(dev_info_handle)) {
@@ -481,7 +481,7 @@ namespace display_device::w_utils {
     std::string driver_path;
 
     HDEVINFO dev_info_handle { SetupDiGetClassDevsW(&monitor_guid, nullptr, nullptr, DIGCF_DEVICEINTERFACE) };
-    if (dev_info_handle) {
+    if (dev_info_handle != INVALID_HANDLE_VALUE) {
       const auto dev_info_handle_cleanup {
         util::fail_guard([&dev_info_handle]() {
           if (!SetupDiDestroyDeviceInfoList(dev_info_handle)) {
@@ -516,7 +516,11 @@ namespace display_device::w_utils {
         }
 
         driver_path = get_driver_key(dev_info_handle, dev_info_data);
+        break;
       }
+    }
+    else {
+      BOOST_LOG(warning) << get_error_string(static_cast<LONG>(GetLastError())) << " \"SetupDiGetClassDevsW\" failed.";
     }
 
     return driver_path;

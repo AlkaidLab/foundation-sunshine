@@ -341,6 +341,10 @@ namespace display_device {
           result = configure_result_e::hdr_states_fail;
           hint = "Disable HDR for this session or make sure the selected display supports the requested HDR mode.";
           break;
+        case apply_result_e::color_profile_fail:
+          result = configure_result_e::hdr_states_fail;
+          hint = "Use the system color profile, or reinstall the selected ICC profile and try again.";
+          break;
         case apply_result_e::file_save_fail:
           result = configure_result_e::file_save_fail;
           hint = "Check Sunshine's app data folder permissions and free disk space, then try again.";
@@ -521,6 +525,10 @@ namespace display_device {
     const bool should_defer_display_settings = settings.is_changing_settings_going_to_fail();
     if (should_defer_display_settings) {
       timer->setup_timer([this, config_copy = *parsed_config, client_name = session.client_name,
+                           client_cert_uuid = session.client_cert_uuid,
+                           enable_hdr = session.enable_hdr,
+                           hdr_target_source = session.hdr_target_source,
+                           hdr_capabilities = session.hdr_capabilities,
                            pre_saved_initial_topology,
                            pre_vdd_devices = pending_vdd_.pre_vdd_devices,
                            should_prepare_vdd,
@@ -544,6 +552,13 @@ namespace display_device {
 
         auto retry_session = rtsp_stream::launch_session_t {};
         retry_session.client_name = client_name;
+        retry_session.client_cert_uuid = client_cert_uuid;
+        retry_session.enable_hdr = enable_hdr;
+        retry_session.hdr_target_source = hdr_target_source;
+        if (!client_cert_uuid.empty()) {
+          retry_session.env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+        }
+        retry_session.hdr_capabilities = hdr_capabilities;
         if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
           BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
           // WARNING! After call to the method below, this lambda function is no longer valid!
@@ -645,6 +660,7 @@ namespace display_device {
   bool
   session_t::destroy_vdd_monitor() {
     current_vdd_client_id.clear();
+    current_vdd_hdr_brightness.reset();
     return vdd_utils::destroy_vdd_monitor();
   }
 
@@ -713,7 +729,15 @@ namespace display_device {
     pre_vdd_devices.reset();
 
     const std::string current_client_id = get_client_id_from_session(session);
-    const vdd_utils::hdr_brightness_t hdr_brightness { session.max_nits, session.min_nits, session.max_full_nits };
+    const vdd_utils::hdr_brightness_t hdr_brightness {
+      session.hdr_capabilities.max_nits,
+      session.hdr_capabilities.min_nits,
+      session.hdr_capabilities.max_full_frame_nits
+    };
+    BOOST_LOG(info) << "VDD HDR luminance source: " << hdr::to_string(session.hdr_target_source)
+                    << " [max=" << hdr_brightness.max_nits
+                    << ", min=" << hdr_brightness.min_nits
+                    << ", max-full-frame=" << hdr_brightness.max_full_nits << "]";
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(session.client_name);
 
     if (config::video.capture == "vdd") {
@@ -730,6 +754,41 @@ namespace display_device {
     }
 
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
+
+    std::string rebuild_old_vdd_id;
+    const bool client_changed = !current_vdd_client_id.empty() &&
+                                !current_client_id.empty() &&
+                                current_vdd_client_id != current_client_id;
+    const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
+                                          *current_vdd_hdr_brightness != hdr_brightness;
+
+    // An existing VDD must be rebuilt when its advertised HDR capabilities no
+    // longer match this session. A shared VDD may otherwise be reused across
+    // clients when the effective capabilities are identical.
+    if (!device_zako.empty() && (client_changed || hdr_capabilities_changed)) {
+      const bool reuse_vdd = config::video.vdd_reuse;
+
+      if (reuse_vdd && !hdr_capabilities_changed) {
+        BOOST_LOG(info) << "共享VDD模式，复用现有VDD（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
+        current_vdd_client_id = current_client_id;
+      }
+      else {
+        BOOST_LOG(info) << "Rebuilding VDD to refresh session identity or HDR luminance capabilities"
+                        << " (client: " << current_vdd_client_id << " -> " << current_client_id
+                        << ", HDR capabilities changed: " << hdr_capabilities_changed << ")";
+        const auto old_vdd_id = device_zako;
+        destroy_vdd_monitor();
+        device_zako.clear();
+        rebuild_old_vdd_id = old_vdd_id;
+
+        if (!config::video.vdd_keep_enabled) {
+          BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
+          settings.remove_vdd_from_initial_topology(old_vdd_id);
+        }
+
+        std::this_thread::sleep_for(500ms);
+      }
+    }
 
     std::string mode_rebuild_old_vdd_id;
     // Update VDD resolution configuration
@@ -811,6 +870,12 @@ namespace display_device {
       settings.replace_vdd_id(mode_rebuild_old_vdd_id, device_zako);
     }
 
+    if (!rebuild_old_vdd_id.empty() && rebuild_old_vdd_id != device_zako) {
+      BOOST_LOG(info) << "Replacing VDD ID after client or HDR capability rebuild: "
+                      << rebuild_old_vdd_id << " -> " << device_zako;
+      settings.replace_vdd_id(rebuild_old_vdd_id, device_zako);
+    }
+
     if (original_output_name.empty()) {
       original_output_name = config::video.output_name;
       BOOST_LOG(debug) << "保存原始 output_name: " << original_output_name;
@@ -820,6 +885,7 @@ namespace display_device {
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
+    current_vdd_hdr_brightness = hdr_brightness;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
     return vdd_stage_result_e::ready;

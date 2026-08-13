@@ -9,6 +9,8 @@
 #include "process.h"
 
 #include <cstdint>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -44,10 +46,12 @@
 #include "clipboard_http.h"
 #include "ai/credential_store.h"
 #include "crypto.h"
+#include "display_device/color_profile.h"
 #include "display_device/session.h"
 #include "file_mapping/file_mapping_store.h"
 #include "file_handler.h"
 #include "globals.h"
+#include "hdr/client_display_capabilities.h"
 #include "http_util.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -70,6 +74,7 @@
 #ifdef _WIN32
   #include <iphlpapi.h>
   #include "display_device/vdd_utils.h"
+  #include "platform/windows/display_device/color_profile.h"
   #include "platform/windows/mic_write.h"
   #include "platform/windows/vulkan_hdr_bridge_session.h"
 #endif
@@ -1440,7 +1445,11 @@ namespace confighttp {
       }
 
       // 更新配置
-      config::update_full_config(fullConfig);
+      if (!config::update_full_config(fullConfig)) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "failed to persist configuration");
+        return;
+      }
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SaveConfig: "sv << e.what();
@@ -1450,6 +1459,116 @@ namespace confighttp {
     }
 
     outputTree.put("status", "true");
+  }
+
+  void
+  saveClients(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    nlohmann::json output {
+      {"status", false},
+    };
+
+    try {
+      std::stringstream body;
+      body << request->content.rdbuf();
+      const auto input = nlohmann::json::parse(body.str());
+      if (!input.is_object()) {
+        throw std::invalid_argument("clients must be a serialized JSON array");
+      }
+      const auto clients_it = input.find("clients");
+      if (clients_it == input.end() || !clients_it->is_string()) {
+        throw std::invalid_argument("clients must be a serialized JSON array");
+      }
+
+      const auto serialized_clients = clients_it->get<std::string>();
+      constexpr std::size_t max_clients_config_size { 1024 * 1024 };
+      if (serialized_clients.size() > max_clients_config_size) {
+        throw std::invalid_argument("clients configuration is too large");
+      }
+
+      const auto clients = nlohmann::json::parse(serialized_clients);
+      if (!clients.is_array()) {
+        throw std::invalid_argument("clients must contain a JSON array");
+      }
+      if (clients.size() > 1024) {
+        throw std::invalid_argument("too many client settings");
+      }
+
+      std::set<std::string> uuids;
+      for (const auto &client : clients) {
+        if (!client.is_object()) {
+          throw std::invalid_argument("each client setting must be an object");
+        }
+
+        if (const auto uuid_it = client.find("uuid"); uuid_it != client.end()) {
+          if (!uuid_it->is_string() || uuid_it->get_ref<const std::string &>().size() > 128) {
+            throw std::invalid_argument("client uuid must be a string of at most 128 bytes");
+          }
+          const auto &uuid = uuid_it->get_ref<const std::string &>();
+          if (!uuid.empty() && !uuids.insert(uuid).second) {
+            throw std::invalid_argument("client uuid must be unique");
+          }
+        }
+
+        if (const auto name_it = client.find("name"); name_it != client.end() &&
+            (!name_it->is_string() || name_it->get_ref<const std::string &>().size() > 256)) {
+          throw std::invalid_argument("client name must be a string of at most 256 bytes");
+        }
+
+        if (const auto profile_it = client.find("hdrProfile"); profile_it != client.end()) {
+          if (!profile_it->is_string()) {
+            throw std::invalid_argument("HDR profile must be a string");
+          }
+          const auto &profile = profile_it->get_ref<const std::string &>();
+          if (!profile.empty() && !display_device::color_profile::is_valid_profile_basename(profile)) {
+            throw std::invalid_argument("HDR profile must be an installed .icc or .icm filename");
+          }
+        }
+
+        const auto brightness_mode = client.value("hdrBrightnessMode", "auto");
+        if (brightness_mode != "auto" && brightness_mode != "manual") {
+          throw std::invalid_argument("HDR brightness mode must be auto or manual");
+        }
+        if (brightness_mode == "manual") {
+          const auto read_brightness = [&](const char *field) -> float {
+            const auto value = client.find(field);
+            if (value == client.end() || !value->is_number()) {
+              throw std::invalid_argument(std::string { "manual HDR brightness requires numeric " } + field);
+            }
+            const float number = value->get<float>();
+            if (!std::isfinite(number)) {
+              throw std::invalid_argument(std::string { field } + " must be finite");
+            }
+            return number;
+          };
+
+          const auto validated = hdr::validate_client_display_capabilities(
+            read_brightness("hdrBrightnessMaxNits"),
+            read_brightness("hdrBrightnessMinNits"),
+            read_brightness("hdrBrightnessMaxFullFrameNits"));
+          if (!validated.capabilities.reported) {
+            throw std::invalid_argument(validated.fallback_reason);
+          }
+        }
+      }
+
+      if (!config::save_clients_config(serialized_clients)) {
+        output["error"] = "failed to persist client settings";
+      }
+      else {
+        output["status"] = true;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "SaveClients: "sv << e.what();
+      output["error"] = e.what();
+    }
+
+    send_response(response, output);
   }
 
   void
@@ -1977,11 +2096,88 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
-    const nlohmann::json named_certs = nvhttp::get_all_clients();
+    nlohmann::json named_certs = nvhttp::get_all_clients();
+    const auto sessions = stream::session::get_all_sessions_info();
+    for (auto &client : named_certs) {
+      if (!client.is_object()) continue;
+      const auto uuid = client.value("uuid", std::string {});
+      const auto name = client.value("name", std::string {});
+      const auto session = std::find_if(sessions.begin(), sessions.end(), [&](const auto &candidate) {
+        return (!uuid.empty() && candidate.client_uuid == uuid) ||
+               (uuid.empty() && !name.empty() && candidate.client_name == name);
+      });
+      if (session == sessions.end()) continue;
+
+      client["hdrBrightnessRuntime"] = {
+        { "active", true },
+        { "reported", session->hdr_brightness_reported },
+        { "source", session->hdr_brightness_source },
+        { "maxNits", session->hdr_max_nits },
+        { "minNits", session->hdr_min_nits },
+        { "maxFullFrameNits", session->hdr_max_full_frame_nits },
+      };
+    }
     nlohmann::json output_tree;
     output_tree["named_certs"] = named_certs;
     output_tree["status"] = "true";
     send_response(response, output_tree);
+  }
+
+  void
+  listColorProfiles(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+#ifdef _WIN32
+    const auto windows_directory = []() -> std::filesystem::path {
+      if (const char *windir = std::getenv("WINDIR"); windir && *windir) {
+        return windir;
+      }
+      return R"(C:\Windows)";
+    }();
+    const auto color_directory = windows_directory / "System32" / "spool" / "drivers" / "color";
+
+    std::error_code error;
+    std::vector<std::string> profiles;
+    std::filesystem::directory_iterator entry { color_directory, std::filesystem::directory_options::skip_permission_denied, error };
+    const std::filesystem::directory_iterator end;
+    while (!error && entry != end) {
+      std::error_code entry_error;
+      if (entry->is_regular_file(entry_error) && !entry_error) {
+        const auto utf8_name = entry->path().filename().u8string();
+        const std::string profile_name {
+          reinterpret_cast<const char *>(utf8_name.data()),
+          utf8_name.size()
+        };
+        if (display_device::color_profile::is_valid_profile_basename(profile_name)) {
+          profiles.push_back(profile_name);
+        }
+      }
+      entry.increment(error);
+    }
+
+    if (error) {
+      send_response(response, nlohmann::json {
+        {"status", false},
+        {"supported", true},
+        {"profiles", nlohmann::json::array()},
+        {"error", "failed to enumerate installed color profiles"},
+      });
+      return;
+    }
+
+    std::sort(profiles.begin(), profiles.end());
+    send_response(response, nlohmann::json {
+      {"status", true},
+      {"supported", true},
+      {"profiles", profiles},
+    });
+#else
+    send_response(response, nlohmann::json {
+      {"status", true},
+      {"supported", false},
+      {"profiles", nlohmann::json::array()},
+    });
+#endif
   }
 
   void
@@ -2055,6 +2251,7 @@ namespace confighttp {
       for (const auto &session_info : sessions_info) {
         json session_obj;
         session_obj["client_name"] = session_info.client_name;
+        session_obj["client_uuid"] = session_info.client_uuid;
         session_obj["client_address"] = session_info.client_address;
         session_obj["state"] = session_info.state;
         session_obj["session_id"] = session_info.session_id;
@@ -2065,6 +2262,12 @@ namespace confighttp {
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["use_vdd"] = session_info.use_vdd;
+        session_obj["hdr_brightness_reported"] = session_info.hdr_brightness_reported;
+        session_obj["hdr_brightness_source"] = session_info.hdr_brightness_source;
+        session_obj["hdr_max_nits"] = session_info.hdr_max_nits;
+        session_obj["hdr_min_nits"] = session_info.hdr_min_nits;
+        session_obj["hdr_max_full_frame_nits"] = session_info.hdr_max_full_frame_nits;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
         
@@ -2137,6 +2340,75 @@ namespace confighttp {
     }
     catch (...) {
       BOOST_LOG(error) << "getRuntimeHdrStatus: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
+  getRuntimeHdrCalibration(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    if (!require_localhost(response, request, "getting HDR calibration status")) return;
+
+    try {
+      json output {
+        { "success", true },
+        { "supported", false },
+        { "vddActive", false },
+        { "hdrEnabled", false },
+        { "calibrated", false },
+        { "profileName", nullptr },
+        { "maxNits", nullptr },
+        { "minNits", nullptr },
+        { "maxFullFrameNits", nullptr },
+        { "state", "unsupported" },
+        { "sharedVdd", config::video.vdd_reuse },
+        { "activeClients", json::array() },
+      };
+
+      for (const auto &session : stream::session::get_all_sessions_info()) {
+        if (session.state == "RUNNING" && session.enable_hdr && session.use_vdd) {
+          output["activeClients"].push_back({
+            { "uuid", session.client_uuid },
+            { "name", session.client_name },
+          });
+        }
+      }
+
+#ifdef _WIN32
+      output["supported"] = true;
+      const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      if (!vdd_id.empty()) {
+        output["vddActive"] = true;
+        const auto hdr_states = display_device::get_current_hdr_states({ vdd_id });
+        const auto hdr_state = hdr_states.find(vdd_id);
+        const bool hdr_enabled = hdr_state != hdr_states.end() &&
+                                 hdr_state->second == display_device::hdr_state_e::enabled;
+        output["hdrEnabled"] = hdr_enabled;
+        output["state"] = hdr_enabled ? "ready" : "waiting_hdr";
+
+        if (const auto calibration = display_device::win_color_profile::current_hdr_calibration(vdd_id)) {
+          output["calibrated"] = true;
+          output["profileName"] = calibration->profile_name;
+          output["maxNits"] = calibration->max_nits;
+          output["minNits"] = calibration->min_nits;
+          output["maxFullFrameNits"] = calibration->max_full_frame_nits;
+          output["state"] = "calibrated";
+        }
+      }
+      else {
+        output["state"] = "waiting_vdd";
+      }
+#endif
+
+      send_response(response, output);
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getRuntimeHdrCalibration: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getRuntimeHdrCalibration: Unknown exception";
       write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
@@ -3497,7 +3769,8 @@ namespace confighttp {
     server.resource["^/api/apps/batch-delete$"]["POST"] = batchDeleteApps;
     server.resource["^/api/clients/unpair-all$"]["POST"] = unpairAll;
     server.resource["^/api/clients/list$"]["GET"] = listClients;
-    server.resource["^/api/clients/list$"]["POST"] = saveConfig;
+    server.resource["^/api/clients/list$"]["POST"] = saveClients;
+    server.resource["^/api/color-profiles$"]["GET"] = listColorProfiles;
     server.resource["^/api/clients/unpair$"]["POST"] = unpair;
     server.resource["^/api/clients/rename$"]["POST"] = renameClient;
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
@@ -3505,6 +3778,7 @@ namespace confighttp {
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
+    server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
@@ -3547,6 +3821,10 @@ namespace confighttp {
     // file upload, etc.) doesn't block other web UI requests on the same
     // single-threaded io_service.
     server.config.thread_pool_size = 2;
+    // Enforce the limit while Simple-Web-Server is buffering the request, before
+    // individual handlers parse it. This still leaves headroom for the 10 MiB
+    // base64 cover-upload endpoint.
+    server.config.max_request_streambuf_size = 16 * 1024 * 1024;
 
     auto accept_and_run = [&](https_server_t *server) {
       try {

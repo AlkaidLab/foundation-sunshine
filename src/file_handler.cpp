@@ -54,7 +54,8 @@ namespace file_handler {
     }
 
     out << contents;
-
-    return 0;
+    out.flush();
+    out.close();
+    return out ? 0 : -1;
   }
 }  // namespace file_handler

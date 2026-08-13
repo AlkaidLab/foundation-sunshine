@@ -7,12 +7,14 @@
 // local includes
 #include "settings_topology.h"
 #include "src/audio.h"
+#include "src/display_device/color_profile.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/config.h"
 #include "src/rtsp.h"
+#include "color_profile.h"
 #include "windows_utils.h"
 
 namespace display_device {
@@ -22,6 +24,7 @@ namespace display_device {
     std::string original_primary_display; /**< Original primary display in the topology we modified. Empty value if we didn't modify it. */
     device_display_mode_map_t original_modes; /**< Original display modes in the topology we modified. Empty value if we didn't modify it. */
     hdr_state_map_t original_hdr_states; /**< Original display HDR states in the topology we modified. Empty value if we didn't modify it. */
+    std::optional<win_color_profile::state_t> color_profile; /**< Temporary physical-display ICC override and its restore snapshot. */
 
     /**
      * @brief Check if the persistent data contains any meaningful modifications that need to be reverted.
@@ -40,11 +43,36 @@ namespace display_device {
       return !is_topology_the_same(topology.initial, topology.modified) ||
              !original_primary_display.empty() ||
              !original_modes.empty() ||
-             !original_hdr_states.empty();
+             !original_hdr_states.empty() ||
+             color_profile.has_value();
     }
 
-    // For JSON serialization
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(persistent_data_t, topology, original_primary_display, original_modes, original_hdr_states)
+    friend void
+    to_json(nlohmann::json &json, const persistent_data_t &data) {
+      json = {
+        { "topology", data.topology },
+        { "original_primary_display", data.original_primary_display },
+        { "original_modes", data.original_modes },
+        { "original_hdr_states", data.original_hdr_states },
+      };
+      if (data.color_profile) {
+        json["color_profile"] = *data.color_profile;
+      }
+    }
+
+    friend void
+    from_json(const nlohmann::json &json, persistent_data_t &data) {
+      json.at("topology").get_to(data.topology);
+      json.at("original_primary_display").get_to(data.original_primary_display);
+      json.at("original_modes").get_to(data.original_modes);
+      json.at("original_hdr_states").get_to(data.original_hdr_states);
+      if (const auto profile = json.find("color_profile"); profile != json.end() && !profile->is_null()) {
+        data.color_profile = profile->get<win_color_profile::state_t>();
+      }
+      else {
+        data.color_profile.reset();
+      }
+    }
   };
 
   struct settings_t::audio_data_t {
@@ -577,6 +605,24 @@ namespace display_device {
         return true;
       }
 
+      bool partially_failed = false;
+      if (data.color_profile) {
+        if (data.color_profile->version != win_color_profile::state_t::current_version) {
+          BOOST_LOG(warning) << "Discarding an incompatible persisted color-profile snapshot";
+          data.color_profile.reset();
+          data_modified = true;
+        }
+        else if (win_color_profile::restore(*data.color_profile)) {
+          data.color_profile.reset();
+          data_modified = true;
+        }
+        else {
+          // Keep the snapshot for a later retry, but do not let one missing
+          // display prevent HDR, mode, primary-display, or topology recovery.
+          partially_failed = true;
+        }
+      }
+
       // 在移除VDD之前，先检查拓扑中是否有VDD
       // 收集VDD的设备ID，分别记录：
       // - vdd_device_ids: 所有VDD设备ID（用于从HDR/modes中清理）
@@ -664,7 +710,6 @@ namespace display_device {
                                                       !data.original_hdr_states.empty();
 
       std::unordered_set<std::string> newly_enabled_devices;
-      bool partially_failed = false;
       auto current_topology = get_current_topology();
 
       // Handle modified topology changes
@@ -775,10 +820,18 @@ namespace display_device {
 
       try {
         std::ofstream file(filepath, std::ios::out | std::ios::trunc);
+        if (!file.is_open()) {
+          BOOST_LOG(error) << "Failed to open persistent display settings for writing: " << filepath;
+          return false;
+        }
         nlohmann::json json_data = data;
 
         // Write json with indentation
         file << std::setw(4) << json_data << std::endl;
+        if (!file) {
+          BOOST_LOG(error) << "Failed to write persistent display settings: " << filepath;
+          return false;
+        }
         BOOST_LOG(debug) << "Saved persistent display settings:\n"
                          << json_data.dump(4);
         return true;
@@ -886,7 +939,18 @@ namespace display_device {
     const parsed_config_t &config,
     const rtsp_stream::launch_session_t &session,
     const boost::optional<active_topology_t> &pre_saved_initial_topology) {
-    const auto do_apply_config { [this, &pre_saved_initial_topology](const parsed_config_t &config) -> settings_t::apply_result_t {
+    auto profile_setting = color_profile::resolve_client_hdr_profile(
+      config::get_clients_config(), session.client_cert_uuid, session.client_name);
+    if (!profile_setting) {
+      BOOST_LOG(warning) << "Ignoring invalid client color-profile setting: " << profile_setting.error;
+      profile_setting = {};
+    }
+    else if (profile_setting.used_legacy_name) {
+      BOOST_LOG(warning) << "Using legacy client-name matching for an Advanced Color profile; pair the client again to bind by UUID";
+    }
+
+    const bool client_hdr_enabled = session.enable_hdr;
+    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
       // 检测是否为VDD模式
       const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
 
@@ -1044,6 +1108,43 @@ namespace display_device {
       current_settings.original_hdr_states = *original_hdr_states;
       filter_vdd_devices(current_settings.original_hdr_states);
 
+      const bool wants_physical_profile = client_hdr_enabled &&
+                                          !is_vdd_mode &&
+                                          profile_setting.policy == color_profile::profile_policy_e::apply;
+      const bool existing_profile_matches = current_settings.color_profile &&
+                                            wants_physical_profile &&
+                                            current_settings.color_profile->device_id == config.device_id &&
+                                            current_settings.color_profile->applied_profile == *profile_setting.profile;
+
+      if (current_settings.color_profile && !existing_profile_matches) {
+        if (!win_color_profile::restore(*current_settings.color_profile)) {
+          return { apply_result_t::result_e::color_profile_fail };
+        }
+        current_settings.color_profile.reset();
+      }
+
+      if (profile_setting.policy == color_profile::profile_policy_e::apply && is_vdd_mode) {
+        BOOST_LOG(info) << "Ignoring physical-display ICC override for VDD; client luminance capabilities are programmed directly into the virtual display";
+      }
+
+      if (wants_physical_profile) {
+        if (!current_settings.color_profile) {
+          current_settings.color_profile = win_color_profile::snapshot(config.device_id, *profile_setting.profile);
+          if (!current_settings.color_profile) {
+            return { apply_result_t::result_e::color_profile_fail };
+          }
+
+          // Persist the restore snapshot before changing Windows color state.
+          if (const auto persist_result = persist_settings(); !persist_result) {
+            return persist_result;
+          }
+        }
+
+        if (!win_color_profile::apply(*current_settings.color_profile)) {
+          return { apply_result_t::result_e::color_profile_fail };
+        }
+      }
+
       save_guard.disable();
       return persist_settings();
     } };
@@ -1066,16 +1167,6 @@ namespace display_device {
         release_audio_sink();
       }
 
-      if (config.change_hdr_state) {
-        std::thread { [client_name = session.client_name]() {
-          if (!display_device::apply_hdr_profile(client_name)) {
-            BOOST_LOG(warning) << "Failed to apply HDR profile for client: " << client_name << "retrying later...";
-            std::this_thread::sleep_for(2s);
-            display_device::apply_hdr_profile(client_name);
-          }
-        } }
-          .detach();
-      }
     }
 
     if (!result) {
@@ -1107,9 +1198,10 @@ namespace display_device {
       bool success = try_revert_settings(*persistent_data, data_updated, skip_vdd_destroy);
       if (!success) {
         if (data_updated) {
-          save_settings(filepath, *persistent_data);  // 忽略返回值
+          save_settings(filepath, *persistent_data);  // Best effort; retain remaining restore state for retry.
         }
         BOOST_LOG(error) << "恢复显示设备设置失败！如有异常请尝试关闭基地显示器，或手动修改系统显示设置~";
+        return false;
       }
 
       // 清理持久化数据
@@ -1121,9 +1213,7 @@ namespace display_device {
         release_audio_sink();
       }
 
-      if (success) {
-        BOOST_LOG(info) << "显示设备配置已恢复";
-      }
+      BOOST_LOG(info) << "显示设备配置已恢复";
     }
     return true;
   }

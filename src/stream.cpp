@@ -627,9 +627,9 @@ namespace stream {
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
     bool enable_hdr { false };
-    float max_nits { 1000.0f };
-    float min_nits { 0.001f };
-    float max_full_nits { 1000.0f };
+    hdr::client_display_capabilities_t hdr_capabilities;
+    hdr::client_display_capabilities_t reported_hdr_capabilities;
+    hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
@@ -1753,9 +1753,9 @@ namespace stream {
       temp_launch_session.enable_sops = session->enable_sops;
       temp_launch_session.use_vdd = session->use_vdd;
       temp_launch_session.custom_screen_mode = session->custom_screen_mode;
-      temp_launch_session.max_nits = session->max_nits;
-      temp_launch_session.min_nits = session->min_nits;
-      temp_launch_session.max_full_nits = session->max_full_nits;
+      temp_launch_session.hdr_capabilities = session->hdr_capabilities;
+      temp_launch_session.reported_hdr_capabilities = session->reported_hdr_capabilities;
+      temp_launch_session.hdr_target_source = session->hdr_target_source;
 
       bool active_display_resolved = true;
       const auto active_display_event = mail::man->event<std::string>(mail::active_display);
@@ -4027,9 +4027,9 @@ namespace stream {
       // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;
       session->enable_hdr = launch_session.enable_hdr;
-      session->max_nits = launch_session.max_nits;
-      session->min_nits = launch_session.min_nits;
-      session->max_full_nits = launch_session.max_full_nits;
+      session->hdr_capabilities = launch_session.hdr_capabilities;
+      session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
+      session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
 
@@ -4247,6 +4247,12 @@ namespace stream {
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;
+          info.use_vdd = session_p->use_vdd;
+          info.hdr_brightness_reported = session_p->reported_hdr_capabilities.reported;
+          info.hdr_brightness_source = hdr::to_string(session_p->hdr_target_source);
+          info.hdr_max_nits = session_p->hdr_capabilities.max_nits;
+          info.hdr_min_nits = session_p->hdr_capabilities.min_nits;
+          info.hdr_max_full_frame_nits = session_p->hdr_capabilities.max_full_frame_nits;
 
           // Get app information
           try {

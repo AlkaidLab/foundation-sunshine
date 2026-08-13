@@ -41,6 +41,7 @@
 #include "file_mapping/file_mapping_http.h"
 #include "file_mapping/service.h"
 #include "globals.h"
+#include "hdr/session_target.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
@@ -236,6 +237,12 @@ namespace nvhttp {
     return it->second;
   }
 
+  std::optional<std::string_view>
+  find_arg(const args_t &args, const char *name) {
+    const auto it = args.find(name);
+    return it == args.end() ? std::nullopt : std::make_optional<std::string_view>(it->second);
+  }
+
   std::shared_ptr<rtsp_stream::launch_session_t>
   make_launch_session(bool host_audio, const args_t &args) {
     auto launch_session = std::make_shared<rtsp_stream::launch_session_t>();
@@ -267,9 +274,18 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
-    launch_session->max_nits = std::stof(get_arg(args, "maxBrightness", "1000"));
-    launch_session->min_nits = std::stof(get_arg(args, "minBrightness", "0.001"));
-    launch_session->max_full_nits = std::stof(get_arg(args, "maxAverageBrightness", "1000"));
+    const auto hdr_capabilities = hdr::parse_client_display_capabilities(
+      find_arg(args, "maxBrightness"),
+      find_arg(args, "minBrightness"),
+      find_arg(args, "maxAverageBrightness"));
+    launch_session->reported_hdr_capabilities = hdr_capabilities.capabilities;
+    launch_session->hdr_capabilities = hdr_capabilities.capabilities;
+    launch_session->hdr_target_source = hdr_capabilities.capabilities.reported ?
+                                          hdr::target_source_e::client_report :
+                                          hdr::target_source_e::safe_defaults;
+    if (!hdr_capabilities.fallback_reason.empty()) {
+      BOOST_LOG(warning) << hdr_capabilities.fallback_reason << "; using safe HDR luminance defaults";
+    }
 
     // Get display_name from query parameter if provided
     std::string display_name = get_arg(args, "display_name", "");
@@ -309,6 +325,7 @@ namespace nvhttp {
     launch_session->env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(launch_session->height);
     launch_session->env["SUNSHINE_CLIENT_FPS"] = std::to_string(launch_session->fps);
     launch_session->env["SUNSHINE_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
+    launch_session->sync_hdr_environment();
     launch_session->env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
     launch_session->env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
     launch_session->env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
@@ -620,6 +637,7 @@ namespace nvhttp {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
+    hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
                          << " [client_uuid=" << client_cert_uuid
@@ -787,6 +805,7 @@ namespace nvhttp {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
+    hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
                          << " [client_uuid=" << client_cert_uuid
