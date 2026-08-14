@@ -246,6 +246,7 @@ if (WIN32)
     target_link_libraries(ds5_sidecar_client_unit_tests
             Boost::log
             Boost::format
+            Boost::property_tree
             gtest_main)
     target_compile_definitions(ds5_sidecar_client_unit_tests PRIVATE
             SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"

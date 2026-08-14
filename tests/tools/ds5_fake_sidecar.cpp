@@ -75,6 +75,8 @@ int main(int argc, char **argv) {
                                            crash_once_name.c_str());
   const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + parent_pid;
   const auto recovered_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, recovered_name.c_str());
+  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + parent_pid;
+  const auto marker_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, marker_name.c_str());
   const auto path = L"\\\\.\\pipe\\" + std::wstring(pipe_name.begin(), pipe_name.end());
   const auto pipe = CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX,
                                      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -112,9 +114,11 @@ int main(int argc, char **argv) {
       std::vector<std::uint8_t> marker(6);
       marker[0] = payload[0];
       if (!reply(pipe, 101, 0, marker)) break;
+      if (marker_event) SetEvent(marker_event);
     }
   }
 
+  if (marker_event) CloseHandle(marker_event);
   if (recovered_event) CloseHandle(recovered_event);
   if (crash_once_event) CloseHandle(crash_once_event);
   CloseHandle(continue_event);

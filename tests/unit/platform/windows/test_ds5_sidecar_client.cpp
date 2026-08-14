@@ -45,10 +45,13 @@ TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
   const auto process_id = std::to_wstring(GetCurrentProcessId());
   const auto reader_name = L"Local\\sunshine-ds5-test-reader-" + process_id;
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + process_id;
+  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + process_id;
   handle_scope_t reader_event(CreateEventW(nullptr, FALSE, FALSE, reader_name.c_str()));
   handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
+  handle_scope_t marker_event(CreateEventW(nullptr, FALSE, FALSE, marker_name.c_str()));
   ASSERT_NE(reader_event.handle, nullptr);
   ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(marker_event.handle, nullptr);
 
   auto mail = std::make_shared<safe::mail_raw_t>();
   auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-lifecycle-test");
@@ -58,10 +61,12 @@ TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
 
   ASSERT_EQ(WaitForSingleObject(reader_event.handle, 2000), WAIT_OBJECT_0);
   ASSERT_TRUE(SetEvent(continue_event.handle));
+  ASSERT_EQ(WaitForSingleObject(marker_event.handle, 2000), WAIT_OBJECT_0);
   const auto marker = feedback_for_test->pop(std::chrono::seconds(2));
   ASSERT_TRUE(marker);
   ASSERT_EQ(marker->type, platf::gamepad_feedback_e::rumble);
-  // The second signal is raised immediately before the next overlapped read.
+  // The second signal is raised only after the marker was processed and the
+  // following overlapped read is actually pending.
   ASSERT_EQ(WaitForSingleObject(reader_event.handle, 2000), WAIT_OBJECT_0);
 
   const auto started = std::chrono::steady_clock::now();
