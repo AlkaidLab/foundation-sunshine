@@ -10,9 +10,12 @@
  *   integer cell so extrema and the average cover every source pixel.
  *
  * Output: Per-group scalar reductions in a structured buffer, plus a frame-global
- *   histogram accumulated by atomics.
+ *   histogram accumulated by atomics. The PQ-domain sum is accumulated per pixel
+ *   rather than taken from the histogram: the histogram is populated from one
+ *   representative sample per cell, which describes the distribution the percentiles
+ *   read but is not an exact mean.
  *   Each thread group (16x16 = 256 threads) processes one tile, writes
- *   {min, max, sum, count} of maxRGB values (in nits) to the output buffer, and folds
+ *   {min, max, sum, sum of PQ, count} of maxRGB values to the output buffer, and folds
  *   its local PQ-domain histogram into the global one with one atomic per occupied bin.
  *   A second-pass shader reduces the per-tile scalars to one result.
  *
@@ -35,6 +38,10 @@ static const uint HISTOGRAM_BINS = 256;
 // Input texture (scRGB FP16)
 Texture2D<float4> inputTexture : register(t0);
 
+// Per-cell average PQ-coded maxRGB, written alongside the cell statistics above.
+// Only bound on the snapshot path; the full-frame fallback below computes its own.
+Texture2D<float> cellPqAverage : register(t1);
+
 cbuffer AnalysisParams : register(b0) {
     uint analysisWidth;
     uint analysisHeight;
@@ -51,6 +58,7 @@ struct GroupResult {
     float minMaxRGB;                  // Minimum of max(R,G,B) in nits
     float maxMaxRGB;                  // Maximum of max(R,G,B) in nits
     float sumMaxRGB;                  // Sum of max(R,G,B) in nits (for average)
+    float sumMaxRGB_PQ;               // Sum of PQ-coded max(R,G,B) (for HDR Vivid's average)
     uint  pixelCount;                 // Number of valid pixels processed
 };
 
@@ -65,6 +73,7 @@ RWBuffer<uint> globalHistogram : register(u1);
 groupshared float gs_min[256];
 groupshared float gs_max[256];
 groupshared float gs_sum[256];
+groupshared float gs_sum_pq[256];
 groupshared uint  gs_count[256];
 groupshared uint  gs_histogram[HISTOGRAM_BINS];
 
@@ -88,6 +97,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     float minMaxRGB_nits = 10000.0;
     float maxMaxRGB_nits = 0.0;
     float sumMaxRGB_nits = 0.0;
+    float sumMaxRGB_pq = 0.0;
     float representativeMaxRGB_nits = 0.0;
     uint pixelCount = 0;
     bool valid = (DTid.x < analysisWidth && DTid.y < analysisHeight);
@@ -107,6 +117,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             minMaxRGB_nits = cellStats.r;
             maxMaxRGB_nits = cellStats.g;
             sumMaxRGB_nits = cellStats.b * pixelCount;
+            sumMaxRGB_pq = cellPqAverage.Load(int3(analysisPosition, 0)) * pixelCount;
             representativeMaxRGB_nits = cellStats.a;
         } else {
             // Full-frame fallback: scan a disjoint integer partition. The union of
@@ -119,6 +130,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
                     minMaxRGB_nits = min(minMaxRGB_nits, maxrgb_nits);
                     maxMaxRGB_nits = max(maxMaxRGB_nits, maxrgb_nits);
                     sumMaxRGB_nits += maxrgb_nits;
+                    sumMaxRGB_pq += NitsToPQ(maxrgb_nits.xxx).x;
                 }
             }
 
@@ -132,6 +144,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
     gs_min[GIndex] = valid ? minMaxRGB_nits : 10000.0;
     gs_max[GIndex] = valid ? maxMaxRGB_nits : 0.0;
     gs_sum[GIndex] = valid ? sumMaxRGB_nits : 0.0;
+    gs_sum_pq[GIndex] = valid ? sumMaxRGB_pq : 0.0;
     gs_count[GIndex] = valid ? pixelCount : 0u;
 
     GroupMemoryBarrierWithGroupSync();
@@ -152,6 +165,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             gs_min[GIndex] = min(gs_min[GIndex], gs_min[GIndex + stride]);
             gs_max[GIndex] = max(gs_max[GIndex], gs_max[GIndex + stride]);
             gs_sum[GIndex] += gs_sum[GIndex + stride];
+            gs_sum_pq[GIndex] += gs_sum_pq[GIndex + stride];
             gs_count[GIndex] += gs_count[GIndex + stride];
         }
         GroupMemoryBarrierWithGroupSync();
@@ -167,6 +181,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         result.minMaxRGB = gs_min[0];
         result.maxMaxRGB = gs_max[0];
         result.sumMaxRGB = gs_sum[0];
+        result.sumMaxRGB_PQ = gs_sum_pq[0];
         result.pixelCount = gs_count[0];
 
         groupResults[groupIndex] = result;

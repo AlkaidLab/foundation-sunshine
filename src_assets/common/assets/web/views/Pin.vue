@@ -139,14 +139,19 @@
 
           <!-- 客户端列表 -->
           <div id="client-list" v-else-if="clients && clients.length > 0" class="client-list-container">
+            <div class="brightness-guidance mx-3 mt-3 mb-2" role="note">
+              <i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i>
+              <span>{{ $t('pin.hdr_brightness_auto_info') }}</span>
+            </div>
             <div class="table-responsive">
               <table class="table table-hover table-bordered align-middle mb-0">
                 <thead class="table-dark">
                   <tr>
                     <th scope="col" width="20%" class="ps-3">{{ $t('pin.client_name') }}</th>
+                    <th scope="col" width="29%" class="ps-3">{{ $t('pin.hdr_brightness') }}</th>
                     <th scope="col" class="ps-3">
                       <span class="d-inline-flex align-items-center gap-1">
-                        {{ $t('pin.hdr_profile') }}
+                        {{ $t('pin.color_profile_override') }}
                         <i
                           class="fas fa-info-circle text-info"
                           data-tooltip="hdr-profile"
@@ -164,7 +169,7 @@
                         ></i>
                       </span>
                     </th>
-                    <th scope="col" width="30%" class="text-center">{{ $t('pin.actions') }}</th>
+                    <th scope="col" width="16%" class="text-center">{{ $t('pin.actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -174,29 +179,86 @@
                     :class="{ 'table-warning': editingStates[client.uuid] }"
                   >
                     <td class="fw-medium ps-3" :data-label="$t('pin.client_name')">{{ client.name || $t('pin.unknown_client') }}</td>
-                    <td class="ps-3" :data-label="$t('pin.hdr_profile')">
+                    <td class="ps-3 hdr-brightness-cell" :data-label="$t('pin.hdr_brightness')">
+                      <div class="cell-control">
+                        <select
+                          v-if="editingStates[client.uuid]"
+                          class="form-select form-select-sm"
+                          v-model="client.hdrBrightnessMode"
+                          :aria-label="$t('pin.hdr_brightness')"
+                        >
+                          <option value="auto">{{ $t('pin.hdr_brightness_auto') }}</option>
+                          <option value="manual">{{ $t('pin.hdr_brightness_manual') }}</option>
+                        </select>
+                        <span v-else class="setting-pill">
+                          <i
+                            :class="client.hdrBrightnessMode === 'manual' ? 'fas fa-sliders' : 'fas fa-wand-magic-sparkles'"
+                            aria-hidden="true"
+                          ></i>
+                          {{ $t(client.hdrBrightnessMode === 'manual' ? 'pin.hdr_brightness_manual' : 'pin.hdr_brightness_auto') }}
+                        </span>
+
+                        <div
+                          v-if="editingStates[client.uuid] && client.hdrBrightnessMode === 'manual'"
+                          class="manual-brightness-grid"
+                        >
+                          <label class="brightness-field">
+                            <span>{{ $t('pin.hdr_brightness_peak') }}</span>
+                            <input class="form-control form-control-sm" type="number" min="1" max="10000" step="1"
+                              v-model.number="client.hdrBrightnessMaxNits" />
+                          </label>
+                          <label class="brightness-field">
+                            <span>{{ $t('pin.hdr_brightness_min') }}</span>
+                            <input class="form-control form-control-sm" type="number" min="0" max="100" step="0.001"
+                              v-model.number="client.hdrBrightnessMinNits" />
+                          </label>
+                          <label class="brightness-field">
+                            <span>{{ $t('pin.hdr_brightness_full_frame') }}</span>
+                            <input class="form-control form-control-sm" type="number" min="1" max="10000" step="1"
+                              v-model.number="client.hdrBrightnessMaxFullFrameNits" />
+                          </label>
+                        </div>
+
+                        <div v-if="client.hdrBrightnessRuntime?.active" class="brightness-runtime">
+                          <span class="runtime-source">
+                            <i class="fas fa-circle-check" aria-hidden="true"></i>
+                            {{ $t(`pin.hdr_brightness_source_${client.hdrBrightnessRuntime.source}`) }}
+                          </span>
+                          <span class="runtime-values">
+                            {{ $t('pin.hdr_brightness_peak') }} {{ client.hdrBrightnessRuntime.maxNits }} ·
+                            {{ $t('pin.hdr_brightness_min') }} {{ client.hdrBrightnessRuntime.minNits }} ·
+                            {{ $t('pin.hdr_brightness_full_frame') }} {{ client.hdrBrightnessRuntime.maxFullFrameNits }}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="ps-3" :data-label="$t('pin.color_profile_override')">
                       <select
+                        v-if="editingStates[client.uuid]"
                         class="form-select form-select-sm"
                         v-model="client.hdrProfile"
-                        :disabled="!editingStates[client.uuid]"
-                        @change="onProfileChange(client.uuid)"
                       >
                         <option v-if="!hasIccFileList" value="" disabled>{{ $t('pin.modify_in_gui') }}</option>
-                        <option v-else value="">{{ $t('pin.none') }}</option>
+                        <option v-else value="">{{ $t('pin.system_color_profile') }}</option>
                         <option v-for="item in hdrProfileList" :value="item" :key="item">{{ item }}</option>
                       </select>
+                      <span v-else class="setting-value-text">
+                        {{ client.hdrProfile || $t('pin.system_color_profile') }}
+                      </span>
                     </td>
                     <td class="ps-3" :data-label="$t('pin.device_size')">
                       <select
+                        v-if="editingStates[client.uuid]"
                         class="form-select form-select-sm"
                         v-model="client.deviceSize"
-                        :disabled="!editingStates[client.uuid]"
-                        @change="onSizeChange(client.uuid)"
                       >
                         <option value="small">{{ $t('pin.device_size_small') }}</option>
                         <option value="medium">{{ $t('pin.device_size_medium') }}</option>
                         <option value="large">{{ $t('pin.device_size_large') }}</option>
                       </select>
+                      <span v-else class="setting-value-text">
+                        {{ $t(`pin.device_size_${client.deviceSize}`) }}
+                      </span>
                     </td>
                     <td class="text-center client-actions-cell" :data-label="$t('pin.actions')">
                       <div class="btn-toolbar justify-content-center" role="toolbar">
@@ -331,6 +393,7 @@ const {
   initPinForm,
   clickedApplyBanner,
   loadConfig,
+  loadColorProfiles,
 } = usePin()
 
 const {
@@ -389,17 +452,9 @@ const initTooltips = () => {
 onMounted(async () => {
   await loadConfig()
   await refreshClients()
+  await loadColorProfiles()
 
   initPinForm(() => setTimeout(refreshClients, 0))
-
-  if (window.electron?.getIccFileList) {
-    hasIccFileList.value = true
-    window.electron.getIccFileList((files = []) => {
-      hdrProfileList.value = files.filter(file => /.icc$/.test(file))
-    })
-  } else {
-    hasIccFileList.value = false
-  }
 
   initTooltips()
 })
@@ -445,6 +500,24 @@ watch(clients, initTooltips, { deep: true })
 .client-list-container {
   margin-top: 1rem;
 
+  .brightness-guidance {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.7rem 0.85rem;
+    color: var(--ui-text-secondary);
+    background: color-mix(in srgb, var(--ui-accent) 8%, transparent);
+    border-left: 3px solid var(--ui-accent);
+    border-radius: var(--ui-radius-sm, 6px);
+    font-size: 0.875rem;
+    line-height: 1.45;
+
+    i {
+      margin-top: 0.2rem;
+      color: var(--ui-accent);
+    }
+  }
+
   .table-responsive {
     border-radius: var(--border-radius-md, 8px);
     overflow-x: auto;
@@ -456,6 +529,86 @@ watch(clients, initTooltips, { deep: true })
     border-radius: var(--border-radius-md, 12px);
     overflow: hidden;
     margin-bottom: 0;
+  }
+
+  .cell-control {
+    display: grid;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .setting-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 0.45rem;
+    padding: 0.3rem 0.55rem;
+    color: var(--ui-text-primary);
+    background: var(--ui-accent-soft);
+    border: 1px solid color-mix(in srgb, var(--ui-accent) 22%, var(--ui-border));
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+
+    i {
+      color: var(--ui-accent);
+      font-size: 0.75rem;
+    }
+  }
+
+  .setting-value-text {
+    color: var(--ui-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.35;
+  }
+
+  .manual-brightness-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(7rem, 1fr));
+    gap: 0.5rem;
+    padding: 0.65rem;
+    background: color-mix(in srgb, var(--ui-surface) 84%, transparent);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-sm, 6px);
+  }
+
+  .brightness-field {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 0;
+    margin: 0;
+
+    span {
+      overflow: hidden;
+      color: var(--ui-text-secondary);
+      font-size: 0.72rem;
+      font-weight: 600;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .brightness-runtime {
+    display: grid;
+    gap: 0.2rem;
+    padding-left: 0.1rem;
+    line-height: 1.35;
+  }
+
+  .runtime-source {
+    color: var(--ui-success, #198754);
+    font-size: 0.78rem;
+    font-weight: 600;
+
+    i {
+      margin-right: 0.25rem;
+    }
+  }
+
+  .runtime-values {
+    color: var(--ui-text-muted);
+    font-size: 0.72rem;
   }
 }
 
@@ -566,6 +719,11 @@ watch(clients, initTooltips, { deep: true })
 /* 响应式优化 */
 @media (max-width: 768px) {
   .client-list-container {
+    .brightness-guidance {
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+
     .table-responsive {
       overflow: visible;
       border-radius: 0;
@@ -615,6 +773,33 @@ watch(clients, initTooltips, { deep: true })
         &:last-child {
           border-bottom: 0;
         }
+      }
+
+      .hdr-brightness-cell {
+        display: block;
+        text-align: left;
+
+        &::before {
+          display: block;
+          margin-bottom: 0.65rem;
+        }
+
+        .cell-control {
+          width: 100%;
+        }
+      }
+
+      .manual-brightness-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .brightness-field span {
+        white-space: normal;
+      }
+
+      .runtime-values {
+        display: block;
+        line-height: 1.5;
       }
 
       .form-select {

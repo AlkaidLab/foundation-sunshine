@@ -3,13 +3,23 @@
 // The conversion dispatch already owns the shared scRGB source. On analysis frames,
 // one output thread per analysis cell scans that cell and stores:
 //   R = minimum maxRGB nits, G = maximum maxRGB nits,
-//   B = average maxRGB nits, A = representative maxRGB nits.
+//   B = average maxRGB nits, A = representative maxRGB nits,
+// plus the cell's average PQ-coded maxRGB in a separate single-channel texture.
 // The expensive reduction can then run after releasing the source keyed mutex without
 // copying the full-resolution capture texture or losing extrema to point sampling.
 
 #ifdef HDR_ANALYSIS_SNAPSHOT
 
 RWTexture2D<float4> hdr_analysis_snapshot_uav : register(u2);
+
+// HDR Vivid's average is a PQ-domain statistic, and PQ is concave, so it cannot be
+// recovered from the linear-light average in B — mean(PQ(nits)) and PQ(mean(nits))
+// diverge by most of the range on a dark frame with small highlights. It also cannot
+// come from the representative sample in A: that is one point per cell, which is fine
+// for a distribution the percentiles then sample but not for a mean. So the cell scan
+// below accumulates it directly, and it gets its own R16F target because all four
+// channels above are already carrying an exact full-cell statistic.
+RWTexture2D<float> hdr_analysis_pq_snapshot_uav : register(u3);
 
 // Matches AnalysisParams so one buffer can serve this converter and pass 1.
 // source_size and has_cell_statistics are intentionally unused by the converter.
@@ -57,6 +67,7 @@ void StoreHdrAnalysisCellStats(
     float min_maxrgb_nits,
     float max_maxrgb_nits,
     float sum_maxrgb_nits,
+    float sum_maxrgb_pq,
     uint pixel_count,
     float representative_maxrgb_nits)
 {
@@ -69,6 +80,13 @@ void StoreHdrAnalysisCellStats(
         sum_maxrgb_nits / max(pixel_count, 1u),
         representative_maxrgb_nits
     );
+
+    // Same reason for storing a mean instead of a sum. This one quantizes far better
+    // than the nits channels: the value is a normalized PQ signal in [0, 1], where an
+    // FP16 step is under one step of the 12-bit PQ code the metadata carries below
+    // half scale and about two at the very top. Per-cell rounding is independent, so
+    // the frame mean the reduction builds out of these is tighter still.
+    hdr_analysis_pq_snapshot_uav[analysis_position] = sum_maxrgb_pq / max(pixel_count, 1u);
 }
 
 #endif

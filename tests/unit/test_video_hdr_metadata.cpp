@@ -87,6 +87,61 @@ TEST(HdrDynamicMetadata, WithholdsVividFromCodecsWithoutACarriage) {
   EXPECT_TRUE(formats_for(hlg, HEVC).vivid);
 }
 
+TEST(HdrDynamicMetadata, ReportsWhenNoFormatCanBeCarried) {
+  using video::colorspace_e;
+  using video::hdr_metadata::formats_for;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+  const sunshine_colorspace_t sdr { colorspace_e::rec709, false, 8 };
+
+  // What the capture path gates per-frame luminance analysis on. HLG over AV1 is
+  // HDR, so a colorspace check alone would keep analyzing for metadata that can
+  // never be written.
+  EXPECT_FALSE(formats_for(hlg, AV1).any());
+  EXPECT_FALSE(formats_for(sdr, HEVC).any());
+  EXPECT_FALSE(formats_for(sdr, AV1).any());
+
+  EXPECT_TRUE(formats_for(pq, AV1).any());
+  EXPECT_TRUE(formats_for(pq, HEVC).any());
+  EXPECT_TRUE(formats_for(hlg, HEVC).any());
+}
+
+TEST(HdrDynamicMetadata, IntersectsStreamFormatsWithEncoderCapability) {
+  using video::colorspace_e;
+  using video::hdr_metadata::formats_for;
+  using video::hdr_metadata::formats_t;
+  using video::sunshine_colorspace_t;
+
+  const sunshine_colorspace_t pq { colorspace_e::bt2020, false, 10 };
+  const sunshine_colorspace_t hlg { colorspace_e::bt2020hlg, true, 10 };
+
+  // What each encode device can write, independent of the stream. FFmpeg has no
+  // encoder-side serializer for AV_FRAME_DATA_DYNAMIC_HDR_VIVID, so anything driven
+  // through avcodec attaches that side data and drops it. The native NVENC and AMF
+  // paths hand-write both T.35 payloads.
+  constexpr formats_t avcodec { .hdr10plus = true, .vivid = false };
+  constexpr formats_t native { .hdr10plus = true, .vivid = true };
+
+  // HLG leaves avcodec nothing even on HEVC: HDR10+ cannot describe HLG, and the
+  // one format that could is never written. Analysis there is pure overhead.
+  EXPECT_FALSE(formats_for(hlg, HEVC).intersect(avcodec).any());
+
+  // The same stream keeps HDR Vivid on the two native paths.
+  EXPECT_TRUE(formats_for(hlg, HEVC).intersect(native).vivid);
+  EXPECT_TRUE(formats_for(hlg, HEVC).intersect(native).any());
+
+  // PQ still reaches avcodec as HDR10+, so its analysis is not gated off.
+  EXPECT_TRUE(formats_for(pq, HEVC).intersect(avcodec).hdr10plus);
+  EXPECT_FALSE(formats_for(pq, HEVC).intersect(avcodec).vivid);
+  EXPECT_TRUE(formats_for(pq, AV1).intersect(avcodec).any());
+
+  // Neither gate can add a format the other refused.
+  EXPECT_FALSE(formats_for(hlg, AV1).intersect(native).any());
+  EXPECT_FALSE(formats_for(pq, HEVC).intersect(formats_t {}).any());
+}
+
 TEST(HdrDynamicMetadata, SkipsVividPrerollWhenCodecCannotCarryIt) {
   using video::colorspace_e;
   using video::hdr_metadata::needs_vivid_startup_preroll;
@@ -113,7 +168,7 @@ TEST(HdrDynamicMetadata, SkipsVividPrerollWhenCodecCannotCarryIt) {
 
 TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
   platf::hdr_frame_luminance_stats_t stats {};
-  stats.percentile_95 = 500.0f;
+  stats.percentile_99 = 500.0f;
   stats.avg_maxrgb = 100.0f;
   stats.valid = true;
 
@@ -144,7 +199,7 @@ TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
 
 TEST(HdrDynamicMetadata, CarriesTheNineHdr10PlusPercentiles) {
   platf::hdr_frame_luminance_stats_t stats {};
-  stats.percentile_95 = 900.0f;
+  stats.percentile_99 = 1000.0f;  // The analyzer fills this from the CDF's top slot.
   stats.avg_maxrgb = 300.0f;
   const float nits[] = { 10, 50, 100, 200, 300, 500, 800, 900, 1000 };
   std::copy(std::begin(nits), std::end(nits), std::begin(stats.distribution_maxrgb));
@@ -282,7 +337,7 @@ TEST(HdrDynamicMetadata, ZeroesTheWholeDistributionOnOneBadEntry) {
 
 TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
   platf::hdr_frame_luminance_stats_t stats {};
-  stats.percentile_95 = 400.0f;
+  stats.percentile_99 = 400.0f;
   stats.avg_maxrgb = 80.0f;
   stats.valid = false;
 
@@ -293,8 +348,8 @@ TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
   std::array<uint8_t, 16> undersized_payload {};
   EXPECT_EQ(video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, undersized_payload), 0U);
 
-  const auto rejected = [&](float percentile_95, float average_maxrgb) {
-    stats.percentile_95 = percentile_95;
+  const auto rejected = [&](float peak_maxrgb, float average_maxrgb) {
+    stats.percentile_99 = peak_maxrgb;
     stats.avg_maxrgb = average_maxrgb;
     return video::hdr_metadata::serialize_hdr10plus_t35(stats, 1000, payload) == 0;
   };
@@ -306,7 +361,7 @@ TEST(HdrDynamicMetadata, RejectsInvalidHdr10PlusStatsAndOutputBuffers) {
 
 TEST(HdrDynamicMetadata, AppliesHdr10PlusTargetLuminanceFallbackAndClamp) {
   platf::hdr_frame_luminance_stats_t stats {};
-  stats.percentile_95 = 400.0f;
+  stats.percentile_99 = 400.0f;
   stats.avg_maxrgb = 80.0f;
   stats.valid = true;
 
@@ -353,7 +408,6 @@ TEST(HdrDynamicMetadata, SmoothsHdr10PlusLuminanceAcrossFrames) {
     stats.min_maxrgb = nits;
     stats.max_maxrgb = nits;
     stats.avg_maxrgb = nits;
-    stats.percentile_95 = nits;
     stats.percentile_99 = nits;
     for (auto &entry : stats.distribution_maxrgb) {
       entry = nits;
@@ -368,28 +422,29 @@ TEST(HdrDynamicMetadata, SmoothsHdr10PlusLuminanceAcrossFrames) {
   // First sample snaps: there is nothing to blend against yet.
   ema.update(flat(100.0f));
   EXPECT_TRUE(ema.initialized);
-  EXPECT_FLOAT_EQ(ema.percentile_95, 100.0f);
+  EXPECT_FLOAT_EQ(ema.percentile_99, 100.0f);
 
   // A 2x change stays under SCENE_CUT_THRESHOLD, so it blends at ALPHA.
   ema.update(flat(200.0f));
-  EXPECT_FLOAT_EQ(ema.percentile_95, 115.0f);
+  EXPECT_FLOAT_EQ(ema.percentile_99, 115.0f);
   EXPECT_FLOAT_EQ(ema.avg_maxrgb, 115.0f);
   EXPECT_FLOAT_EQ(ema.distribution_maxrgb[0], 115.0f);
 
   // A scene cut past the threshold snaps instead of dragging the old scene along.
   ema.update(flat(2000.0f));
-  EXPECT_FLOAT_EQ(ema.percentile_95, 2000.0f);
+  EXPECT_FLOAT_EQ(ema.percentile_99, 2000.0f);
 
   ema.reset();
   EXPECT_FALSE(ema.initialized);
-  EXPECT_FLOAT_EQ(ema.percentile_95, 0.0f);
+  EXPECT_FLOAT_EQ(ema.percentile_99, 0.0f);
 }
 
 TEST(HdrDynamicMetadata, SmoothedStatsSubstituteOnlyTheFilteredFields) {
   platf::hdr_frame_luminance_stats_t raw {};
   raw.avg_maxrgb = 100.0f;
   raw.max_maxrgb = 100.0f;
-  raw.percentile_95 = 100.0f;
+  raw.percentile_99 = 100.0f;
+  raw.avg_maxrgb_pq = 0.35f;
   raw.percentile_10_pq = 0.25f;
   raw.percentile_90_pq = 0.75f;
   raw.analysis_max_nits = 10000.0f;
@@ -400,21 +455,22 @@ TEST(HdrDynamicMetadata, SmoothedStatsSubstituteOnlyTheFilteredFields) {
 
   // Before the first sample there is nothing to substitute, so raw passes through.
   const auto passthrough = ema.smoothed(raw);
-  EXPECT_FLOAT_EQ(passthrough.percentile_95, 100.0f);
+  EXPECT_FLOAT_EQ(passthrough.percentile_99, 100.0f);
 
   ema.update(raw);
   auto next = raw;
   next.avg_maxrgb = 200.0f;
   next.max_maxrgb = 200.0f;
-  next.percentile_95 = 200.0f;
+  next.percentile_99 = 200.0f;
   ema.update(next);
 
   const auto smoothed = ema.smoothed(next);
-  EXPECT_FLOAT_EQ(smoothed.percentile_95, 115.0f);
+  EXPECT_FLOAT_EQ(smoothed.percentile_99, 115.0f);
   EXPECT_FLOAT_EQ(smoothed.avg_maxrgb, 115.0f);
 
   // Fields this filter does not own must survive untouched: the PQ-domain
-  // percentiles belong to HDR Vivid, which does its own averaging.
+  // statistics belong to HDR Vivid, which does its own averaging.
+  EXPECT_FLOAT_EQ(smoothed.avg_maxrgb_pq, 0.35f);
   EXPECT_FLOAT_EQ(smoothed.percentile_10_pq, 0.25f);
   EXPECT_FLOAT_EQ(smoothed.percentile_90_pq, 0.75f);
   EXPECT_FLOAT_EQ(smoothed.analysis_max_nits, 10000.0f);
@@ -427,20 +483,120 @@ TEST(HdrDynamicMetadata, GeneratesVividFieldsInPqContentDomain) {
   stats.min_maxrgb = 0.0f;
   stats.avg_maxrgb = 100.0f;
   stats.max_maxrgb = 1000.0f;
+  stats.avg_maxrgb_pq = 0.4f;
   stats.percentile_10_pq = 0.1f;
   stats.percentile_90_pq = 0.9f;
-  stats.percentile_95 = 400.0f;  // Must not replace the actual maximum.
+  stats.percentile_99 = 400.0f;  // Must not replace the actual maximum.
   stats.valid = true;
 
   const auto metadata = video::hdr_metadata::vivid_from_stats(stats);
   ASSERT_TRUE(metadata.valid);
   EXPECT_EQ(metadata.minimum_maxrgb_pq, 0);
-  EXPECT_EQ(metadata.average_maxrgb_pq,
-    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(100.0f)));
+  EXPECT_EQ(metadata.average_maxrgb_pq, video::hdr_metadata::pq_to_u12(0.4f));
   EXPECT_EQ(metadata.variance_maxrgb_pq,
     video::hdr_metadata::pq_to_u12(stats.percentile_90_pq - stats.percentile_10_pq));
   EXPECT_EQ(metadata.maximum_maxrgb_pq,
     video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(1000.0f)));
+}
+
+TEST(HdrDynamicMetadata, TakesTheVividAverageInThePqDomain) {
+  // The regression: the average was PQ(mean(nits)) while the variance beside it was
+  // a difference of PQ percentiles. PQ is concave, so Jensen's inequality makes
+  // PQ(mean) >= mean(PQ), and on a dark frame with small highlights the gap is most
+  // of the range — the display then anchors its curve far above the picture.
+  //
+  // 99% of the frame at 1 nit with 1% at 1000 nits: the PQ-domain mean is
+  // 0.99 x PQ(1) + 0.01 x PQ(1000) ~ 0.157, while the linear mean is 10.99 nits,
+  // whose PQ value is ~0.303.
+  const float pq_domain_mean =
+    0.99f * video::hdr_metadata::nits_to_pq(1.0f) +
+    0.01f * video::hdr_metadata::nits_to_pq(1000.0f);
+
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.min_maxrgb = 1.0f;
+  stats.max_maxrgb = 1000.0f;
+  stats.avg_maxrgb = 10.99f;  // The linear-light mean HDR10+ reports.
+  stats.avg_maxrgb_pq = pq_domain_mean;
+  stats.percentile_10_pq = 0.15f;
+  stats.percentile_90_pq = 0.16f;
+  stats.valid = true;
+
+  const auto metadata = video::hdr_metadata::vivid_from_stats(stats);
+  ASSERT_TRUE(metadata.valid);
+  EXPECT_EQ(metadata.average_maxrgb_pq, video::hdr_metadata::pq_to_u12(pq_domain_mean));
+  EXPECT_LT(metadata.average_maxrgb_pq,
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(stats.avg_maxrgb)));
+  // Not a rounding difference: the old mapping reported roughly twice the code value.
+  EXPECT_GT(video::hdr_metadata::pq_to_u12(
+              video::hdr_metadata::nits_to_pq(stats.avg_maxrgb)),
+    metadata.average_maxrgb_pq * 3 / 2);
+
+  // The min and max do commute with the transfer function, so they still come from
+  // the nits fields.
+  EXPECT_EQ(metadata.maximum_maxrgb_pq,
+    video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(1000.0f)));
+}
+
+TEST(HdrDynamicMetadata, WithholdsVividWithoutAPqDomainAverage) {
+  // A stats struct that never had a PQ-domain mean filled in must not silently ship
+  // a black average, and must not fall back to the linear mean this replaced.
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.min_maxrgb = 1.0f;
+  stats.max_maxrgb = 1000.0f;
+  stats.avg_maxrgb = 100.0f;
+  stats.percentile_10_pq = 0.2f;
+  stats.percentile_90_pq = 0.7f;
+  stats.valid = true;
+
+  EXPECT_FALSE(video::hdr_metadata::vivid_from_stats(stats).valid);
+
+  stats.avg_maxrgb_pq = 0.5f / 256.0f;
+  EXPECT_TRUE(video::hdr_metadata::vivid_from_stats(stats).valid);
+
+  for (const float bad : { std::numeric_limits<float>::quiet_NaN(), -0.1f, 1.5f }) {
+    stats.avg_maxrgb_pq = bad;
+    EXPECT_FALSE(video::hdr_metadata::vivid_from_stats(stats).valid);
+  }
+
+  // A genuinely black frame is not a missing statistic: both means read zero, they
+  // agree, and the metadata says the picture is black.
+  platf::hdr_frame_luminance_stats_t black {};
+  black.valid = true;
+  const auto black_metadata = video::hdr_metadata::vivid_from_stats(black);
+  EXPECT_TRUE(black_metadata.valid);
+  EXPECT_EQ(black_metadata.average_maxrgb_pq, 0);
+}
+
+TEST(HdrDynamicMetadata, KeepsMaxSclAtOrAboveEveryCarriedPercentile) {
+  using namespace video::hdr_metadata;
+
+  // The regression: maxSCL was the 95th percentile while the message also carried a
+  // 99th percentile above it, so a consumer reading maxSCL as the scene peak — as
+  // libplacebo does — clipped highlights the same message described.
+  const float nits[] = { 10, 50, 100, 200, 300, 500, 800, 900, 1000 };
+
+  // The analyzer's own pairing: the peak is the CDF's top slot.
+  const auto matched = hdr10plus_from_luminance(1000.0f, 300.0f, 1000, nits);
+  ASSERT_TRUE(matched.valid);
+  EXPECT_EQ(matched.maxscl, matched.distribution_maxrgb[8]);
+
+  // And structurally, whatever a caller reports as the peak.
+  const auto understated = hdr10plus_from_luminance(500.0f, 300.0f, 1000, nits);
+  ASSERT_TRUE(understated.valid);
+  for (size_t i = 0; i < understated.distribution_maxrgb.size(); ++i) {
+    if (i == hdr10plus_reserved_v1_index || i == hdr10plus_reserved_v2_index) {
+      continue;
+    }
+    EXPECT_LE(understated.distribution_maxrgb[i], understated.maxscl) << "CDF slot " << i;
+  }
+
+  // The fixed 8.5.4 sentinels are not measurements and must not raise it: an almost
+  // black frame keeps its own peak rather than V2's 0.00255.
+  const float dark[] = { 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+  const auto nearly_black = hdr10plus_from_luminance(1.0f, 0.5f, 1000, dark);
+  ASSERT_TRUE(nearly_black.valid);
+  EXPECT_EQ(nearly_black.maxscl, 10);
+  EXPECT_EQ(nearly_black.distribution_maxrgb[hdr10plus_reserved_v2_index], hdr10plus_reserved_v2);
 }
 
 TEST(HdrDynamicMetadata, PqConversionMatchesSt2084ReferencePoints) {
@@ -524,9 +680,9 @@ namespace {
       .min_maxrgb = 0.0f,
       .max_maxrgb = maximum,
       .avg_maxrgb = average,
+      .avg_maxrgb_pq = 0.45f,
       .percentile_10_pq = 0.20f,
       .percentile_90_pq = 0.70f,
-      .percentile_95 = 500.0f,
       .percentile_99 = 580.0f,
       .analysis_max_nits = 1000.0f,
       .sample_sequence = sequence,
@@ -573,18 +729,34 @@ TEST(HdrDynamicMetadata, VividStartupGuardRejectsInvalidAndTransitionSamples) {
   EXPECT_FALSE(guard.observe(invalid));
   EXPECT_EQ(guard.consecutive_samples(), 0U);
 
-  auto black = stable_hlg_stats(4, 0.0f, 0.0f);
+  // Vivid's average comes out of the PQ-domain statistic, so a readback that never
+  // filled it is not a sample the stream can start on.
+  invalid = stable_hlg_stats(4);
+  invalid.avg_maxrgb_pq = 0.0f;
+  EXPECT_FALSE(guard.observe(invalid));
+  EXPECT_EQ(guard.consecutive_samples(), 0U);
+
+  auto black = stable_hlg_stats(5, 0.0f, 0.0f);
   black.percentile_10_pq = 0.0f;
   black.percentile_90_pq = 0.0f;
   EXPECT_FALSE(guard.observe(black));
   EXPECT_EQ(guard.consecutive_samples(), 0U);
 
-  EXPECT_FALSE(guard.observe(stable_hlg_stats(5)));
-  // A large exposure transition restarts the consecutive run at the current sample.
-  EXPECT_FALSE(guard.observe(stable_hlg_stats(6, 500.0f, 950.0f)));
+  // Only the PQ-domain average moves: the linear mean and the peak are unchanged, so
+  // this is exactly the sample the other stability checks cannot catch.
+  auto pq_jump = stable_hlg_stats(6);
+  pq_jump.avg_maxrgb_pq = 0.80f;
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(7)));
   EXPECT_EQ(guard.consecutive_samples(), 1U);
-  EXPECT_FALSE(guard.observe(stable_hlg_stats(7, 510.0f, 940.0f)));
-  EXPECT_TRUE(guard.observe(stable_hlg_stats(8, 500.0f, 930.0f)));
+  EXPECT_FALSE(guard.observe(pq_jump));
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(8)));
+  // A large exposure transition restarts the consecutive run at the current sample.
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(9, 500.0f, 950.0f)));
+  EXPECT_EQ(guard.consecutive_samples(), 1U);
+  EXPECT_FALSE(guard.observe(stable_hlg_stats(10, 510.0f, 940.0f)));
+  EXPECT_TRUE(guard.observe(stable_hlg_stats(11, 500.0f, 930.0f)));
 }
 
 namespace {

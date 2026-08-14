@@ -480,7 +480,7 @@ namespace display_device {
 
       try {
         pt::ptree clientArray;
-        std::stringstream ss(config::nvhttp.clients);
+        std::stringstream ss(config::get_clients_config());
         pt::read_json(ss, clientArray);
 
         for (const auto &client : clientArray) {

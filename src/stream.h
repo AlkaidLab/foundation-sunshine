@@ -146,6 +146,12 @@ namespace stream {
     bool host_audio;
     bool enable_hdr;
     bool enable_mic;
+    bool use_vdd;
+    bool hdr_brightness_reported;
+    std::string hdr_brightness_source;
+    float hdr_max_nits;
+    float hdr_min_nits;
+    float hdr_max_full_frame_nits;
     std::string app_name;
     int app_id;
   };

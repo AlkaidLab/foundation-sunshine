@@ -2096,8 +2096,9 @@ namespace video {
     if (hdr10plus_sd && ema.initialized) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
+        // The 99th percentile is what maxSCL reports; see hdr10plus_from_luminance().
         const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
-          ema.percentile_95, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
+          ema.percentile_99, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
         if (frame_metadata.valid) {
           auto &params = hdr10plus->params[0];
           const auto maxscl = av_make_q(
@@ -2119,6 +2120,18 @@ namespace video {
         }
       }
     }
+  }
+
+  void
+  apply_client_target_luminance(SS_HDR_METADATA &metadata, const config_t &client_config) {
+    const auto &capabilities = client_config.hdr_capabilities;
+    if (!capabilities.reported) {
+      return;
+    }
+
+    metadata.maxDisplayLuminance = static_cast<std::uint16_t>(std::lround(capabilities.max_nits));
+    metadata.minDisplayLuminance = static_cast<std::uint32_t>(
+      std::lround(static_cast<double>(capabilities.min_nits) * 10000.0));
   }
 
   int
@@ -2688,6 +2701,7 @@ namespace video {
       bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
 
       if (has_metadata) {
+        apply_client_target_luminance(hdr_metadata, config);
         // Attach static HDR metadata (Mastering Display Color Volume + Content Light Level)
         // Required for PQ, optional but beneficial for HLG with HDR Vivid
         auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
@@ -2829,6 +2843,7 @@ namespace video {
         return nullptr;
       }
       software_encode_device->colorspace = colorspace;
+      software_encode_device->video_format = config.videoFormat;
 
       encode_device_final = std::move(software_encode_device);
     }
@@ -2864,6 +2879,7 @@ namespace video {
     if (colorspace_is_hdr(encode_device->colorspace) && encode_device->nvenc) {
       SS_HDR_METADATA hdr_metadata;
       if (disp->get_hdr_metadata(hdr_metadata)) {
+        apply_client_target_luminance(hdr_metadata, client_config);
         nvenc::nvenc_hdr_metadata nvenc_metadata;
         // Copy display primaries (RGB order)
         for (int i = 0; i < 3; i++) {
@@ -2895,6 +2911,7 @@ namespace video {
     if (colorspace_is_hdr(encode_device->colorspace) && encode_device->amf) {
       SS_HDR_METADATA hdr_metadata;
       if (disp->get_hdr_metadata(hdr_metadata)) {
+        apply_client_target_luminance(hdr_metadata, client_config);
         amf::amf_hdr_metadata amf_metadata;
         for (int i = 0; i < 3; i++) {
           amf_metadata.displayPrimaries[i].x = hdr_metadata.displayPrimaries[i].x;
@@ -3344,6 +3361,7 @@ namespace video {
 
     if (result) {
       result->colorspace = colorspace;
+      result->video_format = config.videoFormat;
     }
 
     return result;

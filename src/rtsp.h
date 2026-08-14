@@ -13,6 +13,7 @@
 #include <boost/process/v1.hpp>
 
 #include "crypto.h"
+#include "hdr/client_display_capabilities.h"
 #include "launch_session_manager.h"
 
 namespace stream::session {
@@ -52,9 +53,15 @@ namespace rtsp_stream {
     bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
-    float max_nits;
-    float min_nits;
-    float max_full_nits;
+    hdr::client_display_capabilities_t reported_hdr_capabilities;
+    hdr::client_display_capabilities_t hdr_capabilities;
+    hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
+
+    void
+    set_hdr_target(const hdr::client_display_capabilities_t &capabilities, hdr::target_source_e source);
+
+    void
+    sync_hdr_environment();
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;

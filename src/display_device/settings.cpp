@@ -21,6 +21,8 @@ namespace display_device {
         return "Failed to set new display modes (resolution + refresh rate)";
       case result_e::hdr_states_fail:
         return "Failed to set new HDR states";
+      case result_e::color_profile_fail:
+        return "Failed to apply or restore the Advanced Color profile";
       case result_e::file_save_fail:
         return "Failed to save the original settings to persistent file";
       case result_e::revert_fail:

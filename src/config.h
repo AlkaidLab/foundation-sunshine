@@ -299,4 +299,17 @@ namespace config {
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);
+
+  /**
+   * Return a synchronized snapshot of the serialized per-client settings.
+   */
+  std::string
+  get_clients_config();
+
+  /**
+   * Persist per-client settings and publish them to the running process.
+   * Unlike update_config(), an unchanged value is still a successful save.
+   */
+  bool
+  save_clients_config(const std::string &clients);
 }  // namespace config

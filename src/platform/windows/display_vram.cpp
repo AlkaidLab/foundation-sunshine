@@ -542,11 +542,13 @@ namespace platf::dxgi {
 
         bool dispatch_hdr_after_unlock = false;
         ID3D11ShaderResourceView *hdr_analysis_srv = nullptr;
+        ID3D11ShaderResourceView *hdr_analysis_pq_input_srv = nullptr;
         ID3D11Buffer *hdr_analysis_params = nullptr;
 
         if (hdr_analysis_due) {
           if (hdr_analysis_snapshot_written) {
             hdr_analysis_srv = hdr_analysis_snapshot_srv.get();
+            hdr_analysis_pq_input_srv = hdr_analysis_pq_srv.get();
             hdr_analysis_params = hdr_analysis_snapshot_cbuf.get();
           } else {
             // Fallback for the pixel-shader path and devices that cannot bind the
@@ -574,7 +576,7 @@ namespace platf::dxgi {
         }
 
         if (dispatch_hdr_after_unlock) {
-          dispatch_hdr_analysis(hdr_analysis_srv, hdr_analysis_params);
+          dispatch_hdr_analysis(hdr_analysis_srv, hdr_analysis_pq_input_srv, hdr_analysis_params);
         }
       }
 
@@ -678,13 +680,39 @@ namespace platf::dxgi {
     }
 
     int
-    init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, bool is_probe = false) {
+    init_output(ID3D11Texture2D *frame_texture, int width, int height, const ::video::sunshine_colorspace_t &colorspace, int video_format, bool is_probe = false) {
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
       runtime_status_id = 0;
       hdr_luminance_stats_out = {};
       hdr_analysis_pending = false;
       hdr_analysis_frame_index = 0;
       hdr_analysis_sample_sequence = 0;
+
+      // init() builds the analyzer from the pixel format alone, because the
+      // client's colorspace and codec are not known yet at device creation. Both
+      // decide whether any dynamic metadata format can actually be carried, so
+      // that verdict has to be reached here, before init_compute_path() picks a
+      // conversion path based on whether analysis is running.
+      //
+      // Two independent gates, and analysis is worth running only where they
+      // overlap. The stream decides what may describe the content: HLG over AV1
+      // allows nothing, because HDR10+ is PQ-only and HDR Vivid has no AV1
+      // carriage. The encoder decides what can be written: encoders driven through
+      // avcodec never emit HDR Vivid (see the AV_FRAME_DATA_DYNAMIC_HDR_VIVID
+      // comment in video.cpp), so HLG leaves them nothing either, even on HEVC.
+      // (H.264 never reaches this at all — encoder.h264[DYNAMIC_RANGE] is false
+      // unconditionally, so an HDR colorspace is impossible there.)
+      const auto stream_formats = ::video::hdr_metadata::formats_for(colorspace, video_format);
+      hdr_metadata_formats = stream_formats.intersect(encoder_metadata_formats);
+      hdr_analysis_enabled = hdr_analysis_ready && hdr_metadata_formats.any();
+      if (hdr_analysis_ready && !hdr_metadata_formats.any()) {
+        // Which side vetoed it, so the Web UI can tell "this codec cannot carry it"
+        // apart from "this encoder cannot write it".
+        hdr_analysis_failure_reason = stream_formats.any() ? "encoder_unsupported" : "format_unsupported";
+        BOOST_LOG(is_probe ? debug : info)
+          << "HDR luminance analysis disabled: no dynamic metadata format is both allowed by this "
+             "transfer function and codec, and writable by this encoder";
+      }
 
       // The underlying frame pool owns the texture, so we must reference it for ourselves
       frame_texture->AddRef();
@@ -1018,8 +1046,8 @@ namespace platf::dxgi {
       std::shared_ptr<platf::display_t> display,
       adapter_t::pointer adapter_p,
       pix_fmt_e pix_fmt,
-      bool supports_dynamic_metadata) {
-      dynamic_metadata_supported = supports_dynamic_metadata;
+      ::video::hdr_metadata::formats_t supported_formats) {
+      encoder_metadata_formats = supported_formats;
       switch (pix_fmt) {
         case pix_fmt_e::nv12:
           format = DXGI_FORMAT_NV12;
@@ -1143,8 +1171,12 @@ namespace platf::dxgi {
       const bool hdr_format =
         format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
       if (hdr_format && config::video.hdr_luminance_analysis != "off") {
-        if (!dynamic_metadata_supported) {
+        if (!encoder_metadata_formats.any()) {
           hdr_analysis_failure_reason = "encoder_unsupported";
+          // Without this the analyzer simply never appears in the log, which reads
+          // exactly like a working setup that produces no metadata.
+          BOOST_LOG(info) << "HDR luminance analysis requested but this encode device does not "
+                             "carry dynamic metadata; static metadata only";
         }
         else if (init_hdr_luminance_analyzer() != 0) {
           hdr_analysis_failure_reason = "analysis_setup_failed";
@@ -1475,10 +1507,15 @@ namespace platf::dxgi {
       runtime_status.scene_metadata_active = false;
       runtime_status.metadata_formats.clear();
       if (runtime_status.analysis_active) {
-        if (use_pq) {
+        // Report what the stream can actually carry rather than inferring it from
+        // the transfer function: HDR Vivid has no AV1 carriage, so advertising it
+        // there described metadata the encoder had already stopped emitting.
+        if (hdr_metadata_formats.hdr10plus) {
           runtime_status.metadata_formats.emplace_back("hdr10_plus");
         }
-        runtime_status.metadata_formats.emplace_back("hdr_vivid");
+        if (hdr_metadata_formats.vivid) {
+          runtime_status.metadata_formats.emplace_back("hdr_vivid");
+        }
       }
 
       runtime_status.conversion_path =
@@ -1561,6 +1598,9 @@ namespace platf::dxgi {
     texture2d_t hdr_analysis_snapshot_tex; // Capped per-cell scalar statistics from the P010 converter
     shader_res_t hdr_analysis_snapshot_srv;
     uav_t hdr_analysis_snapshot_uav;
+    texture2d_t hdr_analysis_pq_tex;       // Per-cell average PQ-coded maxRGB, same grid
+    shader_res_t hdr_analysis_pq_srv;
+    uav_t hdr_analysis_pq_uav;
     buf_t hdr_group_results_buf;           // Pass 1 output (default usage + UAV + SRV)
     uav_t hdr_group_results_uav;           // UAV view for pass 1 output
     shader_res_t hdr_group_results_srv;    // SRV view for pass 2 input
@@ -1578,7 +1618,9 @@ namespace platf::dxgi {
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
     bool hdr_analysis_pending = false;     // Whether we have results ready to read
-    bool hdr_analysis_enabled = false;     // Whether HDR analysis is initialized
+    bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
+    bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
+    ::video::hdr_metadata::formats_t hdr_metadata_formats;  // Dynamic metadata formats this stream may carry
     bool hdr_analysis_snapshot_enabled = false; // P010 converter fills the private analysis texture
     float hdr_analysis_max_nits = 10000.0f; // Clamp metadata to the encoded transfer-function range
     std::string hdr_analysis_failure_reason;
@@ -1612,7 +1654,10 @@ namespace platf::dxgi {
 
     std::uint64_t runtime_status_id = 0;
     ::video::hdr_pipeline_status_t runtime_status;
-    bool dynamic_metadata_supported = true;
+    // What this encode device can actually write into the bitstream, independent
+    // of what the stream would allow. Set at init(); intersected with the stream's
+    // own verdict in init_output().
+    ::video::hdr_metadata::formats_t encoder_metadata_formats { .hdr10plus = true, .vivid = true };
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 256;
@@ -1629,6 +1674,7 @@ namespace platf::dxgi {
       float minMaxRGB;
       float maxMaxRGB;
       float sumMaxRGB;
+      float sumMaxRGB_PQ;
       uint32_t pixelCount;
     };
 
@@ -1638,6 +1684,7 @@ namespace platf::dxgi {
       float minMaxRGB;
       float maxMaxRGB;
       float sumMaxRGB;
+      float sumMaxRGB_PQ;
       uint32_t pixelCount;
       uint32_t histogram[HISTOGRAM_BINS];
     };
@@ -1857,7 +1904,9 @@ namespace platf::dxgi {
         return -1;
       }
 
-      hdr_analysis_enabled = true;
+      // Resources exist; whether they get used is init_output()'s call, once the
+      // colorspace and codec are known.
+      hdr_analysis_ready = true;
       BOOST_LOG(info) << "HDR luminance analyzer initialized (two-pass): " << width << "x" << height
                       << ", analysis " << hdr_analysis_width << "x" << hdr_analysis_height
                       << ", " << hdr_num_groups << " groups (" << groups_x << "x" << groups_y << ")"
@@ -1872,11 +1921,13 @@ namespace platf::dxgi {
      * Pass 2: Global reduction — reads per-group results, writes 1 final result
      * Then copies final result to staging for async CPU readback next frame.
      * @param input_srv SRV of either the scRGB FP16 frame or pre-aggregated snapshot
+     * @param cell_pq_srv Per-cell PQ average that accompanies a snapshot input, else null
      * @param analysis_params Parameters describing that input
      */
     void
     dispatch_hdr_analysis(
       ID3D11ShaderResourceView *input_srv,
+      ID3D11ShaderResourceView *cell_pq_srv,
       ID3D11Buffer *analysis_params) {
       if (!hdr_analysis_enabled || !input_srv || !analysis_params) return;
 
@@ -1890,7 +1941,9 @@ namespace platf::dxgi {
 
       // ===== Pass 1: Per-tile analysis =====
       device_ctx->CSSetShader(hdr_pass1_cs.get(), nullptr, 0);
-      device_ctx->CSSetShaderResources(0, 1, &input_srv);
+      // t1 stays unbound on the full-frame fallback, which computes the PQ sum itself.
+      ID3D11ShaderResourceView *pass1_srvs[] = { input_srv, cell_pq_srv };
+      device_ctx->CSSetShaderResources(0, 2, pass1_srvs);
       ID3D11UnorderedAccessView *pass1_uavs[] = { hdr_group_results_uav.get(), hdr_global_histogram_uav.get() };
       device_ctx->CSSetUnorderedAccessViews(0, 2, pass1_uavs, nullptr);
       device_ctx->CSSetConstantBuffers(0, 1, &analysis_params);
@@ -1901,8 +1954,9 @@ namespace platf::dxgi {
 
       // Unbind pass 1 resources
       ID3D11ShaderResourceView *null_srv = nullptr;
+      ID3D11ShaderResourceView *null_srvs[2] = { nullptr, nullptr };
       ID3D11UnorderedAccessView *null_uavs[2] = { nullptr, nullptr };
-      device_ctx->CSSetShaderResources(0, 1, &null_srv);
+      device_ctx->CSSetShaderResources(0, 2, null_srvs);
       device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
 
       // ===== Pass 2: Global reduction =====
@@ -1955,9 +2009,28 @@ namespace platf::dxgi {
         hdr_luminance_stats_out.min_maxrgb = result->minMaxRGB;
         hdr_luminance_stats_out.max_maxrgb = result->maxMaxRGB;
         hdr_luminance_stats_out.avg_maxrgb = result->sumMaxRGB / static_cast<float>(result->pixelCount);
+        // HDR Vivid's average is a PQ-domain statistic like the variance beside it, so
+        // the GPU accumulates PQ(maxRGB) per pixel and this divides that sum. It cannot
+        // be derived from avg_maxrgb above (PQ is concave, so PQ(mean) is far above
+        // mean(PQ) on a dark frame with highlights) nor from the histogram below (that
+        // is populated from one representative sample per analysis cell, which is a
+        // distribution to take percentiles from, not an exact mean).
+        //
+        // std::clamp() alone would launder bad data: it passes a NaN straight through,
+        // and it turns an implausible value into exactly 1.0, which reads downstream as
+        // a legitimate "entire frame at 10,000 nits". So screen first and clamp only the
+        // FP32 rounding overshoot a sum of in-range summands can produce. An implausible
+        // value stays zero, which vivid_from_stats() reads as "the analyzer produced no
+        // PQ average" and withholds Vivid on. The rest of the sample is still published:
+        // HDR10+ does not read this field and carries its own statistics.
+        const float mean_pq = result->sumMaxRGB_PQ / static_cast<float>(result->pixelCount);
+        hdr_luminance_stats_out.avg_maxrgb_pq =
+          (std::isfinite(mean_pq) && mean_pq >= -0.001f && mean_pq <= 1.001f) ?
+            std::clamp(mean_pq, 0.0f, 1.0f) :
+            0.0f;
 
         // HDR Vivid defines variance as P90-P10 in normalized PQ signal space.
-        // Retain P95/P99 in nits for the independent HDR10+ path, and fill the nine
+        // Retain P99 in nits for the independent HDR10+ path, and fill the nine
         // percentiles ST 2094-40 deployment profiles carry from the same walk.
         const uint32_t total = result->pixelCount;
         const auto &percentages = ::video::hdr_metadata::hdr10plus_percentages;
@@ -1970,12 +2043,10 @@ namespace platf::dxgi {
         }
         const uint32_t target_10 = static_cast<uint32_t>(std::ceil(total * 0.10f));
         const uint32_t target_90 = static_cast<uint32_t>(std::ceil(total * 0.90f));
-        const uint32_t target_95 = static_cast<uint32_t>(std::ceil(total * 0.95f));
         const uint32_t target_99 = static_cast<uint32_t>(std::ceil(total * 0.99f));
         uint32_t cumulative = 0;
         bool found_10 = false;
         bool found_90 = false;
-        bool found_95 = false;
         bool found_99 = false;
 
         for (uint32_t i = 0; i < HISTOGRAM_BINS; i++) {
@@ -1995,11 +2066,6 @@ namespace platf::dxgi {
           if (!found_90 && cumulative >= target_90) {
             hdr_luminance_stats_out.percentile_90_pq = pq_bin_center;
             found_90 = true;
-          }
-          if (!found_95 && cumulative >= target_95) {
-            hdr_luminance_stats_out.percentile_95 =
-              ::video::hdr_metadata::pq_to_nits(pq_bin_center);
-            found_95 = true;
           }
           if (!found_99 && cumulative >= target_99) {
             hdr_luminance_stats_out.percentile_99 =
@@ -2046,6 +2112,9 @@ namespace platf::dxgi {
       hdr_analysis_snapshot_tex.reset();
       hdr_analysis_snapshot_srv.reset();
       hdr_analysis_snapshot_uav.reset();
+      hdr_analysis_pq_tex.reset();
+      hdr_analysis_pq_srv.reset();
+      hdr_analysis_pq_uav.reset();
       hdr_analysis_snapshot_cbuf.reset();
       hdr_analysis_snapshot_enabled = false;
       cs_scratch_tex.reset();
@@ -2340,6 +2409,23 @@ namespace platf::dxgi {
             hdr_analysis_snapshot_tex.get(), nullptr, &hdr_analysis_snapshot_uav);
         }
 
+        // A fifth per-cell scalar: the average PQ-coded maxRGB HDR Vivid reports.
+        // Single channel, and a normalized PQ signal quantizes into FP16 with room to
+        // spare, so this adds a quarter of the snapshot's footprint.
+        D3D11_TEXTURE2D_DESC pq_desc = snapshot_desc;
+        pq_desc.Format = DXGI_FORMAT_R16_FLOAT;
+        if (SUCCEEDED(snapshot_status)) {
+          snapshot_status = device->CreateTexture2D(&pq_desc, nullptr, &hdr_analysis_pq_tex);
+        }
+        if (SUCCEEDED(snapshot_status)) {
+          snapshot_status = device->CreateShaderResourceView(
+            hdr_analysis_pq_tex.get(), nullptr, &hdr_analysis_pq_srv);
+        }
+        if (SUCCEEDED(snapshot_status)) {
+          snapshot_status = device->CreateUnorderedAccessView(
+            hdr_analysis_pq_tex.get(), nullptr, &hdr_analysis_pq_uav);
+        }
+
         AnalysisParams snapshot_layout = {
           hdr_analysis_width,
           hdr_analysis_height,
@@ -2364,6 +2450,9 @@ namespace platf::dxgi {
           hdr_analysis_snapshot_tex.reset();
           hdr_analysis_snapshot_srv.reset();
           hdr_analysis_snapshot_uav.reset();
+          hdr_analysis_pq_tex.reset();
+          hdr_analysis_pq_srv.reset();
+          hdr_analysis_pq_uav.reset();
           hdr_analysis_snapshot_cbuf.reset();
           BOOST_LOG(info) << "HDR analysis snapshot unavailable, full-resolution copy fallback active: "
                           << util::log_hex(snapshot_status);
@@ -2442,12 +2531,13 @@ namespace platf::dxgi {
       device_ctx->CSSetShaderResources(0, 1, &input_srv);
       ID3D11SamplerState *cs_samp = sampler_linear.get();
       device_ctx->CSSetSamplers(0, 1, &cs_samp);
-      ID3D11UnorderedAccessView *uavs[3] = {
+      ID3D11UnorderedAccessView *uavs[4] = {
         cs_y_uav.get(),
         cs_uv_uav.get(),
         write_hdr_analysis_snapshot ? hdr_analysis_snapshot_uav.get() : nullptr,
+        write_hdr_analysis_snapshot ? hdr_analysis_pq_uav.get() : nullptr,
       };
-      const UINT uav_count = write_hdr_analysis_snapshot ? 3 : 2;
+      const UINT uav_count = write_hdr_analysis_snapshot ? 4 : 2;
       device_ctx->CSSetUnorderedAccessViews(0, uav_count, uavs, nullptr);
       ID3D11Buffer *cbufs[3] = {
         color_matrix.get(),
@@ -2469,7 +2559,7 @@ namespace platf::dxgi {
 
       // Unbind CS resources to release the UAVs before any subsequent ops.
       ID3D11ShaderResourceView *null_srv = nullptr;
-      ID3D11UnorderedAccessView *null_uavs[3] = { nullptr, nullptr, nullptr };
+      ID3D11UnorderedAccessView *null_uavs[4] = { nullptr, nullptr, nullptr, nullptr };
       ID3D11SamplerState *null_samp = nullptr;
       device_ctx->CSSetShaderResources(0, 1, &null_srv);
       device_ctx->CSSetSamplers(0, 1, &null_samp);
@@ -2506,7 +2596,10 @@ namespace platf::dxgi {
   public:
     int
     init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      int result = base.init(display, adapter_p, pix_fmt, true);
+      // Encoders reached through avcodec never emit HDR Vivid: FFmpeg has no
+      // encoder-side serializer for AV_FRAME_DATA_DYNAMIC_HDR_VIVID, so the side
+      // data is attached and dropped. HDR10+ does get written out, so it stays.
+      int result = base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = false });
       data = base.device.get();
       return result;
     }
@@ -2594,7 +2687,9 @@ namespace platf::dxgi {
         frame_texture = (ID3D11Texture2D *) frame->data[0];
       }
 
-      return base.init_output(frame_texture, frame->width, frame->height, colorspace);
+      // No client config in scope this deep in the frame-pool setup, so the codec
+      // comes from the member video.cpp filled in when this device was created.
+      return base.init_output(frame_texture, frame->width, frame->height, colorspace, video_format);
     }
 
   private:
@@ -2606,7 +2701,8 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt, true)) return false;
+      // The native NVENC path hand-writes both T.35 payloads (nvenc_base.cpp).
+      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true })) return false;
 
       auto factory = nvenc::nvenc_dynamic_factory::get();
       if (!factory) return false;
@@ -2634,7 +2730,7 @@ namespace platf::dxgi {
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
-      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, is_probe)) {
+      if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe)) {
         return false;
       }
 
@@ -2660,7 +2756,11 @@ namespace platf::dxgi {
   public:
     bool
     init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
-      if (base.init(display, adapter_p, pix_fmt, false)) return false;
+      // The AMF path splices HDR10+ / HDR Vivid into the bitstream itself (#939), so
+      // the luminance analyzer that feeds it has to be switched on here. This was off
+      // while AMF could only carry static metadata, and running the analyzer then
+      // would have burned GPU time for nothing.
+      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true })) return false;
 
       amf_d3d = ::amf::create_amf_d3d11(base.device.get());
       if (!amf_d3d) return false;
@@ -2746,7 +2846,7 @@ namespace platf::dxgi {
 
       base.apply_colorspace(colorspace);
       hdr_luminance_analysis_available = false;
-      if (base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, is_probe) != 0) {
+      if (base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe) != 0) {
         return false;
       }
 
