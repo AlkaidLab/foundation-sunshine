@@ -265,18 +265,22 @@ jobs:
       - name: Package Windows
         shell: msys2 {0}
         run: |
+          set -o pipefail
           mkdir -p artifacts
           cd build
 
           # Package the Inno Setup installer and portable ZIP.
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
+          test -f ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
           
-          # Run the Inno Setup compiler.
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss
+          # Run the Inno Setup compiler and prove that it consumed the sidecar.
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
+          grep -F "Sunshine.Ds5Sidecar.exe" inno-build.log
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
+          7z l -ba ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
