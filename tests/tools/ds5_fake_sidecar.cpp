@@ -73,6 +73,9 @@ int main(int argc, char **argv) {
   const auto crash_once_name = L"Local\\sunshine-ds5-test-crash-once-" + parent_pid;
   const auto crash_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                            crash_once_name.c_str());
+  const auto crash_always_name = L"Local\\sunshine-ds5-test-crash-always-" + parent_pid;
+  const auto crash_always_event = OpenEventW(EVENT_MODIFY_STATE, FALSE,
+                                             crash_always_name.c_str());
   const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + parent_pid;
   const auto recovered_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, recovered_name.c_str());
   const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + parent_pid;
@@ -101,6 +104,13 @@ int main(int argc, char **argv) {
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
       if (!reply(pipe, 4, request_id, response)) break;
+      if (crash_always_event) {
+        // Ensure Core has consumed the attach reply before simulating the
+        // post-attach crash; otherwise the test races pipe teardown.
+        FlushFileBuffers(pipe);
+        SetEvent(crash_always_event);
+        break;
+      }
       if (crash_once_event && WaitForSingleObject(crash_once_event, 0) == WAIT_TIMEOUT) {
         SetEvent(crash_once_event);
         break;
@@ -120,6 +130,7 @@ int main(int argc, char **argv) {
 
   if (marker_event) CloseHandle(marker_event);
   if (recovered_event) CloseHandle(recovered_event);
+  if (crash_always_event) CloseHandle(crash_always_event);
   if (crash_once_event) CloseHandle(crash_once_event);
   CloseHandle(continue_event);
   DisconnectNamedPipe(pipe);

@@ -122,4 +122,39 @@ TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   client.free(0);
 }
 
+TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {
+  config_scope_t restore_config;
+  config::input.ds5_enabled = true;
+  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+
+  const auto process_id = std::to_wstring(GetCurrentProcessId());
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + process_id;
+  const auto crash_name = L"Local\\sunshine-ds5-test-crash-always-" + process_id;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
+  handle_scope_t crash_event(CreateEventW(nullptr, FALSE, FALSE, crash_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(crash_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-recovery-failure-test");
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), false), 0);
+
+  // Both the initial sidecar and its one recovery attempt exit immediately.
+  ASSERT_EQ(WaitForSingleObject(crash_event.handle, 5000), WAIT_OBJECT_0);
+  ASSERT_EQ(WaitForSingleObject(crash_event.handle, 5000), WAIT_OBJECT_0);
+
+  int result = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  for (unsigned attempt = 0; result < 0 && std::chrono::steady_clock::now() < deadline; ++attempt) {
+    auto retry_feedback = mail->queue<platf::gamepad_feedback_msg_t>(
+      "ds5-recovery-failure-retry-" + std::to_string(attempt));
+    result = client.alloc({ 1, 0 }, std::move(retry_feedback), false);
+    if (result < 0) {
+      Sleep(10);
+    }
+  }
+  EXPECT_EQ(result, 0);
+}
+
 #endif

@@ -430,6 +430,13 @@ namespace platf::ds5 {
     }
 
     bool attach(const gamepad_id_t &id, bool audio_haptics) {
+      // A failed recovery releases global_index from the reader thread before
+      // that thread object stops being joinable. Reap it before reusing the
+      // same client for a later allocation; assigning over a joinable
+      // std::thread would terminate the process.
+      if (reader.joinable()) {
+        reader.join();
+      }
       if (!connect_and_attach(id, audio_haptics)) {
         return false;
       }
