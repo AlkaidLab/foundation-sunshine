@@ -234,7 +234,8 @@ if (WIN32)
             LINK_SEARCH_START_STATIC 1)
     add_dependencies(${PROJECT_NAME} ds5_fake_sidecar)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
-            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>")
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
+            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
 
     add_executable(ds5_sidecar_client_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
