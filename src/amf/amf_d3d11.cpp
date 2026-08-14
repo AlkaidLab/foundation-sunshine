@@ -459,11 +459,15 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE, (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS);
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_GOP_SIZE, (amf_int64) 0);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
-      // INPUT_QUEUE_SIZE / ENCODING_LATENCY_MODE: only set when user opts in.
-      // Matches FFmpeg amfenc behavior (never auto-forces LOWEST_LATENCY).
-      // See AlkaidLab/foundation-sunshine#666 for the RDNA4 freeze that
-      // motivated stopping aggressive defaults.
-      if (config.input_queue_size) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_QUEUE_SIZE, (amf_int64) *config.input_queue_size);
+      // Keep AV1's input queue shallow for interactive streaming. The RDNA4
+      // hangs in #666 were observed on H.264/HEVC, while AV1 with a queue of 1
+      // was reported unaffected. Preserve the driver default for explicitly
+      // throughput-oriented modes unless the user also chose a queue depth.
+      const bool preanalysis_enabled = config.preanalysis.value_or(0) != 0;
+      const bool multi_hw_enabled = config.multi_hw_instance_encode.value_or(false);
+      if (config.input_queue_size || (!preanalysis_enabled && !multi_hw_enabled)) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_QUEUE_SIZE, (amf_int64) config.input_queue_size.value_or(1));
+      }
       configure_multi_hw_instance(
         AMF_VIDEO_ENCODER_AV1_MULTI_HW_INSTANCE_ENCODE,
         AMF_VIDEO_ENCODER_AV1_ENABLE_SMART_ACCESS_VIDEO,

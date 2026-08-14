@@ -257,7 +257,6 @@ const config = ref(props.config)
                 min="1"
                 max="16"
                 step="1"
-                :placeholder="$t('config.amd_driver_default')"
                 v-model.number="config.amd_input_queue_size"
               />
               <div class="form-text">{{ $t('config.amd_input_queue_size_desc') }}</div>

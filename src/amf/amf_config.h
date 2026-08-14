@@ -134,11 +134,14 @@ namespace amf {
     std::optional<bool> lowlatency_mode;
 
     // --- Input Queue Size / async_depth ---
-    // Standalone path: optional AMF INPUT_QUEUE_SIZE property.
+    // Standalone H.264/HEVC: optional AMF INPUT_QUEUE_SIZE property.
+    // Standalone AV1: defaults to 1 for interactive streaming, but leaves the
+    // property unset for explicit pre-analysis or multi-HW modes. Any explicit
+    // value overrides these codec-specific defaults.
     // AVCodec compatibility path: FFmpeg-style async_depth / in-flight surface
     // cap, default 16, with no AMF INPUT_QUEUE_SIZE property set. Sunshine
-    // historically forced AMF INPUT_QUEUE_SIZE=1 for minimum latency, but that
-    // is the most fragile code path inside the driver.
+    // historically forced AMF INPUT_QUEUE_SIZE=1 for minimum latency; #666
+    // showed that restoring it broadly on H.264/HEVC is driver-sensitive.
     std::optional<int> input_queue_size;
   };
 
