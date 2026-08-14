@@ -9,6 +9,11 @@ include(dependencies/Boost_Sunshine)
 set(ENET_NO_INSTALL ON CACHE BOOL "Don't install any libraries built for enet")
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet")
 
+# Authored haptics analysis belongs to the unprivileged Sunshine process. The
+# elevated DualSense sidecar and driver remain independent of this SDK.
+set(MOONLIGHT_HAPTICS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-audio-haptics" EXCLUDE_FROM_ALL)
+
 # web server
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/Simple-Web-Server")
 

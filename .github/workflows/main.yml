@@ -161,6 +161,15 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Setup .NET for DualSense sidecar
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build self-contained DualSense sidecar
+        shell: pwsh
+        run: .\scripts\build-ds5-sidecar.ps1
+
       - name: Build Web UI
         shell: pwsh
         run: |

@@ -16,6 +16,7 @@
 #include <ViGEm/Client.h>
 
 #include "dsu_server.h"
+#include "ds5/ds5_sidecar_client.h"
 #include "keylayout.h"
 #include "misc.h"
 #include "virtual_mouse.h"
@@ -477,7 +478,7 @@ namespace platf {
 
   // Per-app mouse mode: 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
   static std::atomic<int> current_mouse_mode { 0 };
-  // Per-app gamepad mode: 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
+  // Per-app gamepad mode: 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4, 4=DualSense
   static std::atomic<int> current_gamepad_mode { 0 };
 
   void
@@ -488,11 +489,11 @@ namespace platf {
 
   void
   set_gamepad_mode(int mode) {
-    if (mode < 0 || mode > 3) {
+    if (mode < 0 || mode > 4) {
       mode = 0;
     }
     current_gamepad_mode.store(mode, std::memory_order_relaxed);
-    constexpr std::array<std::string_view, 4> names { "global", "auto", "Xbox 360", "DualShock 4" };
+    constexpr std::array<std::string_view, 5> names { "global", "auto", "Xbox 360", "DualShock 4", "DualSense" };
     BOOST_LOG(info) << "Gamepad mode set to: "sv << names[mode];
   }
 
@@ -504,6 +505,7 @@ namespace platf {
     }
     if (config::input.gamepad == "x360"sv) return 2;
     if (config::input.gamepad == "ds4"sv) return 3;
+    if (config::input.gamepad == "ds5"sv) return 4;
     return 1;
   }
 
@@ -535,6 +537,7 @@ namespace platf {
     }
 
     vigem_t *vigem;
+    std::unique_ptr<ds5::sidecar_client_t> ds5_sidecar;
     dsu_server_t *dsu_server;
     vmouse::device_t *vmouse_dev;
     int vmouse_vscroll_accum = 0;
@@ -556,6 +559,8 @@ namespace platf {
       delete raw.vigem;
       raw.vigem = nullptr;
     }
+
+    raw.ds5_sidecar = std::make_unique<ds5::sidecar_client_t>();
 
     // 初始化DSU服务器（延迟初始化，只在需要时创建）
     raw.dsu_server = nullptr;
@@ -1904,14 +1909,29 @@ namespace platf {
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
     auto raw = (input_raw_t *) input.get();
 
+    const auto gamepad_mode = effective_gamepad_mode();
+    const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
+
+    if (gamepad_mode == 4) {
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
+                      << (per_app_override ? "per-app selection" : "global selection") << ')';
+      if (!raw->ds5_sidecar || !raw->ds5_sidecar->configured()) {
+        BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
+        return -1;
+      }
+      const auto result = raw->ds5_sidecar->alloc(id, feedback_queue, config::input.ds5_audio_haptics);
+      if (result == 0) {
+        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
+        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+      }
+      return result;
+    }
+
     if (!raw->vigem) {
       return 0;
     }
 
     VIGEM_TARGET_TYPE selectedGamepadType;
-
-    const auto gamepad_mode = effective_gamepad_mode();
-    const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
 
     if (gamepad_mode == 2) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
@@ -1972,6 +1992,11 @@ namespace platf {
   void
   free_gamepad(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
+
+    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(nr)) {
+      raw->ds5_sidecar->free(nr);
+      return;
+    }
 
     if (!raw->vigem) {
       return;
@@ -2186,6 +2211,11 @@ namespace platf {
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     auto raw = (input_raw_t *) input.get();
+
+    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(nr)) {
+      raw->ds5_sidecar->submit_input(nr, gamepad_state);
+      return;
+    }
     auto vigem = raw->vigem;
 
     // If there is no gamepad support
@@ -2220,7 +2250,12 @@ namespace platf {
    */
   void
   gamepad_touch(input_t &input, const gamepad_touch_t &touch) {
-    auto vigem = ((input_raw_t *) input.get())->vigem;
+    auto raw = (input_raw_t *) input.get();
+    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(touch.id.globalIndex)) {
+      raw->ds5_sidecar->submit_touch(touch);
+      return;
+    }
+    auto vigem = raw->vigem;
 
     // If there is no gamepad support
     if (!vigem) {
@@ -2335,6 +2370,10 @@ namespace platf {
   void
   gamepad_motion(input_t &input, const gamepad_motion_t &motion) {
     auto raw = (input_raw_t *) input.get();
+    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(motion.id.globalIndex)) {
+      raw->ds5_sidecar->submit_motion(motion);
+      return;
+    }
     auto vigem = raw->vigem;
 
     // If there is no gamepad support
@@ -2390,7 +2429,12 @@ namespace platf {
    */
   void
   gamepad_battery(input_t &input, const gamepad_battery_t &battery) {
-    auto vigem = ((input_raw_t *) input.get())->vigem;
+    auto raw = (input_raw_t *) input.get();
+    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(battery.id.globalIndex)) {
+      raw->ds5_sidecar->submit_battery(battery);
+      return;
+    }
+    auto vigem = raw->vigem;
 
     // If there is no gamepad support
     if (!vigem) {
@@ -2472,6 +2516,7 @@ namespace platf {
         supported_gamepad_t { "auto", true, "" },
         supported_gamepad_t { "x360", false, "" },
         supported_gamepad_t { "ds4", false, "" },
+        supported_gamepad_t { "ds5", false, "" },
         supported_gamepad_t { "switch", true, "" },
       };
 
@@ -2482,16 +2527,20 @@ namespace platf {
     auto dsu_server = ((input_raw_t *) input)->dsu_server;
     auto enabled = vigem != nullptr;
     auto switch_enabled = dsu_server != nullptr;
+    auto ds5_enabled = config::input.ds5_enabled && !config::input.ds5_sidecar_path.empty();
     auto reason = enabled ? "" : "gamepads.vigem-not-available";
     auto switch_reason = switch_enabled ? "" : "gamepads.motion-server-not-available";
 
     // ds4 == ps4
-    static std::vector gps {
-      supported_gamepad_t { "auto", true, reason },
-      supported_gamepad_t { "x360", enabled, reason },
-      supported_gamepad_t { "ds4", enabled, reason },
-      supported_gamepad_t { "switch", switch_enabled, switch_reason }
-    };
+    // This function is queried after runtime configuration changes too. Keep
+    // per-thread stable backing storage (the API returns a reference), while
+    // avoiding cross-thread writes when HTTP/UI callers query concurrently.
+    thread_local std::vector<supported_gamepad_t> gps(5);
+    gps[0] = { "auto", true, reason };
+    gps[1] = { "x360", enabled, reason };
+    gps[2] = { "ds4", enabled, reason };
+    gps[3] = { "ds5", ds5_enabled, ds5_enabled ? "" : "gamepads.ds5-sidecar-not-available" };
+    gps[4] = { "switch", switch_enabled, switch_reason };
 
     for (auto &[name, is_enabled, reason_disabled] : gps) {
       if (!is_enabled) {
@@ -2513,6 +2562,11 @@ namespace platf {
     // We support controller touchpad input as long as we're not emulating X360
     if (effective_gamepad_mode() != 2) {
       caps |= platform_caps::controller_touch;
+    }
+
+    if (config::input.ds5_enabled && config::input.ds5_audio_haptics &&
+        !config::input.ds5_sidecar_path.empty()) {
+      caps |= platform_caps::ds5_haptics_pcm;
     }
 
     // We support pen and touch input on Win10 1809+

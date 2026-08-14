@@ -60,6 +60,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl/oblas_lite.c"
         "${CMAKE_SOURCE_DIR}/third-party/nanors/rs.c"
         "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray.h"
+        "${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp"
+        "${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.h"
         "${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp"
         "${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.h"
         "${CMAKE_SOURCE_DIR}/src/hdr/session_target.cpp"
@@ -260,6 +262,7 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${MINIUPNP_LIBRARIES}
         ${CMAKE_THREAD_LIBS_INIT}
         enet
+        moonlight::haptics
         nlohmann_json::nlohmann_json
         opus
         ${FFMPEG_LIBRARIES}

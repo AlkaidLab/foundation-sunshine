@@ -924,6 +924,9 @@ namespace proc {
         else if (*gamepad == "ds4"sv) {
           ctx.gamepad_mode = 3;
         }
+        else if (*gamepad == "ds5"sv) {
+          ctx.gamepad_mode = 4;
+        }
         else {
           BOOST_LOG(warning) << "Ignoring invalid per-app gamepad setting ["sv << *gamepad << "] for app ["sv << name << ']';
           ctx.gamepad_mode = 0;

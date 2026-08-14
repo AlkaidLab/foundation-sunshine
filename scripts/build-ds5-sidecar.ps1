@@ -1,0 +1,71 @@
+param(
+    [string]$OutputDirectory = "build/ds5-sidecar-runtime",
+    [string]$PackageCache = "build/ds5-sidecar-cache"
+)
+
+$ErrorActionPreference = 'Stop'
+$version = 'v1.6.1'
+$expectedSha256 = '00145c23D9838BE6089389CE58B3FD2B6766FA9BC0F1F3C60A3C885361B53C34'
+$url = "https://github.com/hifihedgehog/HIDMaestro/releases/download/$version/HIDMaestro-$version.zip"
+$root = Split-Path -Parent $PSScriptRoot
+$buildRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'build'))
+$cache = [System.IO.Path]::GetFullPath((Join-Path $root $PackageCache))
+$output = [System.IO.Path]::GetFullPath((Join-Path $root $OutputDirectory))
+$buildPrefix = $buildRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+foreach ($target in @($cache, $output)) {
+    if (-not $target.StartsWith($buildPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to use a DualSense build path outside $buildRoot`: $target"
+    }
+}
+$archive = Join-Path $cache "HIDMaestro-$version.zip"
+$extract = Join-Path $cache $version
+
+New-Item -ItemType Directory -Force -Path $cache | Out-Null
+if (-not (Test-Path -LiteralPath $archive) -or
+    (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expectedSha256) {
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+}
+
+$actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+if ($actualSha256 -ne $expectedSha256) {
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    throw "HIDMaestro release digest mismatch: expected $expectedSha256, got $actualSha256"
+}
+
+if (Test-Path -LiteralPath $extract) {
+    Remove-Item -LiteralPath $extract -Recurse -Force
+}
+Expand-Archive -LiteralPath $archive -DestinationPath $extract
+$core = Join-Path $extract 'HIDMaestro.Core.dll'
+if (-not (Test-Path -LiteralPath $core)) {
+    throw 'HIDMaestro.Core.dll is missing from the verified release archive'
+}
+
+if (Test-Path -LiteralPath $output) {
+    Remove-Item -LiteralPath $output -Recurse -Force
+}
+dotnet publish (Join-Path $root 'tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.csproj') `
+    --configuration Release `
+    --runtime win-x64 `
+    --self-contained true `
+    --output $output `
+    -p:HIDMaestroCorePath=$core `
+    -p:DebugType=None `
+    -p:DebugSymbols=false
+if ($LASTEXITCODE -ne 0) {
+    throw "DualSense sidecar publish failed with exit code $LASTEXITCODE"
+}
+
+# HIDMaestro is installed by the GUI from the independently verified upstream
+# package. Excluding it here keeps the Sunshine installer first-party-only.
+Remove-Item -LiteralPath (Join-Path $output 'HIDMaestro.Core.dll') -Force
+@{
+    component_version = '1.0.0-build-runtime'
+    protocol = 1
+    target = 'win-x64-self-contained'
+    hidmaestro_build_version = $version
+    hidmaestro_build_sha256 = $expectedSha256.ToLowerInvariant()
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'runtime.json') -Encoding utf8
+
+Write-Host "Published self-contained DualSense sidecar to $output"

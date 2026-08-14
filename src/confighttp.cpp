@@ -832,7 +832,7 @@ namespace confighttp {
         if (gamepad && gamepad->empty()) {
           app_node.erase("gamepad");
         }
-        else if (gamepad && *gamepad != "auto"sv && *gamepad != "x360"sv && *gamepad != "ds4"sv) {
+        else if (gamepad && *gamepad != "auto"sv && *gamepad != "x360"sv && *gamepad != "ds4"sv && *gamepad != "ds5"sv) {
           outputTree.put("status", "false");
           outputTree.put("error", "Invalid per-app gamepad type");
           return false;
