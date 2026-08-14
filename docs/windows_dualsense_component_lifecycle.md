@@ -92,9 +92,17 @@ HIDMaestro hapticLeft/hapticRight authored PCM
      -> 客户端抖动缓冲
      -> 物理 DualSense 音频触觉端点（不经过 audio-haptics SDK）
 
+HIDMaestro hapticLeft/hapticRight authored PCM
+  -> 客户端不支持 raw PCM，但支持 portable_haptic_ir_v2
+     -> Sunshine 的 authored-analysis worker
+     -> moonlight-audio-haptics AUTHORED_HAPTIC_STEREO 输入
+     -> 双 lane、设备无关 IR v2
+     -> 客户端按本机执行器能力渲染
+
 普通游戏音频，且当前没有 authored haptics PCM
   -> 客户端支持 portable_haptic_ir_v1
-     -> moonlight-audio-haptics
+     -> Sunshine 的普通音频 analysis worker
+     -> moonlight-audio-haptics AUDIO_SCENE 输入
      -> AhHapticFrame
      -> Android/HarmonyOS/其他执行器 renderer
 
@@ -106,7 +114,9 @@ HIDMaestro hapticLeft/hapticRight authored PCM
 
 未来引入 fallback 时，客户端按以下状态机仲裁：`fallback` 收到首个有效 authored PCM `STREAM_START` 或非空包后立即静音并切到 `native_pcm`；空 PCM 包只维持序列/时钟，不触发回退；断序先清空 native jitter buffer，但仍保持 native owner；只有收到 `STREAM_END`，或连续 100 ms 未收到任何 native 包，才进入 50 ms 静默保护期，随后恢复 fallback。保护期内重新收到 native 包会取消回退。每次切换都先把旧 renderer 输出归零，同一手柄禁止两个 renderer 同时输出。第一阶段尚未启用 SDK fallback，因此客户端始终只运行 `native_pcm` 或现有 rumble，不存在双重播放。
 
-第一阶段不需要修改 `moonlight-audio-haptics`：它只服务于不具备 DS5 原始音频播放能力的客户端或没有 authored haptics 的游戏。后续若希望把已创作的左右触觉 PCM 映射到双执行器设备，应新增明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。
+分析器属于 Sunshine Core，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 在有界 worker 与固定容量队列中分析一次，再按客户端能力 fan-out 原始 PCM 或 IR。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
+
+第一阶段不修改 `moonlight-audio-haptics`，只交付 raw PCM 路径。后续独立 SDK PR 新增明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。实现借鉴 MPEG Haptics 的独立 channel/curve/wavelet 数据模型和 AOSP HapticGenerator 的执行器标定边界，但不直接嵌入其文件型 Encoder，也不在 Sunshine 端执行设备专用渲染。
 
 ## 4. 用户体验设计
 
@@ -658,7 +668,8 @@ UX 验收：
 - 强端到端环路通过：Moonlight 实际 WASAPI 渲染器写入 HIDMaestro 48 kHz 四声道端点，Sidecar 从 channel 3/4 收到 960 bytes 非静音触觉 PCM。
 - Moonlight Qt 6.9.2 / MSVC Release 完整链接通过；客户端使用自适应端点容量的 15 ms 上限预缓冲，20 ms 饥饿或序号不连续时重置。
 - Sidecar `win-x64` 自包含发布通过，产物约 107 MB 且确认不包含 `HIDMaestro.Core.dll`；把官方校验 DLL 放入 staging 后，probe 返回协议 1、standard/composite profile、驱动及 USB/IP 均可用。
-- Control Panel 的 Rust 格式/类型检查、组件状态优先级单测、Vue production build 和 11 项既有 renderer 测试通过；页面在 1280×800 和窄屏断点下使用状态文字、图标和唯一推荐动作，不只依赖颜色。
+- Control Panel 已同步 Sunshine master 使用的 VDD/HDR 基线；3 项 DualSense Rust 单测、Vue production build 和 12 项 renderer 测试通过。完整配置读取失败会中止保存，USB/IP 不可用时后端拒绝 composite profile，页面仍允许用户切回 HID-only。
+- Core 的 DS5 命名管道改用 overlapped I/O；独立 fake-sidecar 回归测试覆盖 `alloc -> reader blocked -> free`，本机在 93 ms 内完成，避免同步 `ReadFile` 与 owner EOF 相互等待。
 - Windows `application` 组件的隔离安装烟测通过：自包含 Sidecar 被安装到 `tools/sunshine-ds5-sidecar`，且安装目录中不含 `HIDMaestro.Core.dll`，保持由 GUI 下载并校验第三方运行时的边界。
 
 ### 17.2 首期明确限制

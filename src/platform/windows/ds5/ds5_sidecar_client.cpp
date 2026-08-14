@@ -84,12 +84,28 @@ namespace platf::ds5 {
       p[3] = static_cast<std::uint8_t>(value >> 24);
     }
 
-    bool read_exact(HANDLE pipe, std::span<std::uint8_t> destination) {
+    bool transfer_exact(HANDLE pipe, void *buffer, std::size_t size, bool write) {
       std::size_t offset = 0;
-      while (offset < destination.size()) {
+      while (offset < size) {
+        OVERLAPPED overlapped {};
+        overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!overlapped.hEvent) {
+          return false;
+        }
+
         DWORD count = 0;
-        if (!ReadFile(pipe, destination.data() + offset,
-                      static_cast<DWORD>(destination.size() - offset), &count, nullptr) || count == 0) {
+        auto *bytes = static_cast<std::uint8_t *>(buffer) + offset;
+        const auto remaining = static_cast<DWORD>(size - offset);
+        const auto started = write ?
+                               WriteFile(pipe, bytes, remaining, &count, &overlapped) :
+                               ReadFile(pipe, bytes, remaining, &count, &overlapped);
+        bool completed = started != FALSE;
+        if (!completed && GetLastError() == ERROR_IO_PENDING) {
+          completed = WaitForSingleObject(overlapped.hEvent, INFINITE) == WAIT_OBJECT_0 &&
+                      GetOverlappedResult(pipe, &overlapped, &count, FALSE) != FALSE;
+        }
+        CloseHandle(overlapped.hEvent);
+        if (!completed || count == 0) {
           return false;
         }
         offset += count;
@@ -97,17 +113,12 @@ namespace platf::ds5 {
       return true;
     }
 
+    bool read_exact(HANDLE pipe, std::span<std::uint8_t> destination) {
+      return transfer_exact(pipe, destination.data(), destination.size(), false);
+    }
+
     bool write_exact(HANDLE pipe, std::span<const std::uint8_t> source) {
-      std::size_t offset = 0;
-      while (offset < source.size()) {
-        DWORD count = 0;
-        if (!WriteFile(pipe, source.data() + offset,
-                       static_cast<DWORD>(source.size() - offset), &count, nullptr) || count == 0) {
-          return false;
-        }
-        offset += count;
-      }
-      return true;
+      return transfer_exact(pipe, const_cast<std::uint8_t *>(source.data()), source.size(), true);
     }
   }  // namespace
 
@@ -129,6 +140,9 @@ namespace platf::ds5 {
     }
 
     bool send(message_e type, std::uint32_t request_id, std::span<const std::uint8_t> payload) {
+      if (stopping) {
+        return false;
+      }
       std::vector<std::uint8_t> frame(HEADER_SIZE + payload.size());
       write_u32(frame.data(), MAGIC);
       write_u16(frame.data() + 4, VERSION);
@@ -137,7 +151,7 @@ namespace platf::ds5 {
       write_u32(frame.data() + 12, request_id);
       std::copy(payload.begin(), payload.end(), frame.begin() + HEADER_SIZE);
       std::lock_guard lock(write_mutex);
-      return pipe != INVALID_HANDLE_VALUE && write_exact(pipe, frame);
+      return !stopping && pipe != INVALID_HANDLE_VALUE && write_exact(pipe, frame);
     }
 
     bool receive(message_t &message) {
@@ -230,7 +244,7 @@ namespace platf::ds5 {
       const auto deadline = std::chrono::steady_clock::now() + 10s;
       do {
         pipe = CreateFileW(pipe_path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                           OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
         if (pipe != INVALID_HANDLE_VALUE) {
           return true;
         }
@@ -339,6 +353,7 @@ namespace platf::ds5 {
         reader.join();
       }
       if (pipe != INVALID_HANDLE_VALUE) {
+        std::lock_guard lock(write_mutex);
         CloseHandle(pipe);
         pipe = INVALID_HANDLE_VALUE;
       }

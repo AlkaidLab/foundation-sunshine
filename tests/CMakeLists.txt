@@ -227,6 +227,33 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 
 if (WIN32)
+    add_executable(ds5_fake_sidecar
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_fake_sidecar.cpp)
+    set_target_properties(ds5_fake_sidecar PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(${PROJECT_NAME} ds5_fake_sidecar)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>")
+
+    add_executable(ds5_sidecar_client_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp)
+    target_include_directories(ds5_sidecar_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(ds5_sidecar_client_unit_tests
+            Boost::log
+            gtest_main)
+    target_compile_definitions(ds5_sidecar_client_unit_tests PRIVATE
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>")
+    target_compile_options(ds5_sidecar_client_unit_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(ds5_sidecar_client_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(ds5_sidecar_client_unit_tests ds5_fake_sidecar)
+    add_test(NAME ds5_sidecar_client_unit_tests COMMAND ds5_sidecar_client_unit_tests)
+
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
