@@ -280,7 +280,7 @@ jobs:
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
-          7z l -ba ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
