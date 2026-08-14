@@ -83,40 +83,28 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
 
 `AlkaidLab/moonlight-audio-haptics` 是“PCM 音频 -> 设备无关触觉意图（IR）”的因果 authoring/down-conversion 引擎，不是 DualSense authored haptics 的无损编解码器。ABI v1 的 80-byte `AhHapticFrame` 只有一组 `continuous_amplitude`、`transient_amplitude`、`sharpness`、`low_band_ratio` 和一个 `stereo_pan`；它不能保存两路触觉 PCM 的逐采样波形、相位与频率内容。
 
-因此第一阶段采用三档互斥路由：
+客户端产品层只提供两种互斥路由，不做隐式降级：
 
 ```text
-HIDMaestro hapticLeft/hapticRight authored PCM
-  -> 客户端支持 ds5_raw_haptics_pcm_v1
+客户端选择“真实 DualSense”且连接前发现 USB 四声道端点
+  -> 客户端只声明 ML_FF_DS5_HAPTICS_PCM
      -> Sunshine 分帧/时间戳/传输
      -> 客户端抖动缓冲
      -> 物理 DualSense 音频触觉端点（不经过 audio-haptics SDK）
 
-HIDMaestro hapticLeft/hapticRight authored PCM
-  -> 客户端不支持 raw PCM，但支持 portable_haptic_ir_v2
-     -> Sunshine 的 authored-analysis worker
+客户端选择“模拟 DualSense”
+  -> 客户端只声明 ML_FF_DS5_HAPTICS_IR_V2
+     -> Sunshine Core 的 authored-analysis 通道
      -> moonlight-audio-haptics AUTHORED_HAPTIC_STEREO 输入
      -> 双 lane、设备无关 IR v2
      -> 客户端按本机执行器能力渲染
-
-普通游戏音频，且当前没有 authored haptics PCM
-  -> 客户端支持 portable_haptic_ir_v1
-     -> Sunshine 的普通音频 analysis worker
-     -> moonlight-audio-haptics AUDIO_SCENE 输入
-     -> AhHapticFrame
-     -> Android/HarmonyOS/其他执行器 renderer
-
-以上能力均不可用
-  -> 现有低频 rumble 路径
 ```
 
-源优先级为 `authored DS5 PCM > 普通音频合成 IR > 传统 rumble`。同一手柄、同一时刻只能有一个 owner；检测到 authored PCM 活跃后必须停止普通音频合成，避免重复触觉和相位不相关的叠加。短暂断流采用带滞回的切换策略，不能按单个空音频包来回抖动。
+common-c 仍使用回调存在性生成底层能力位，但这是应用层模式的协议投影，不是第三种“自动选择”状态。两个回调同时注册属于配置错误，连接启动会失败；非官方客户端同时声明两个位时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
 
-未来引入 fallback 时，客户端按以下状态机仲裁：`fallback` 收到首个有效 authored PCM `STREAM_START` 或非空包后立即静音并切到 `native_pcm`；空 PCM 包只维持序列/时钟，不触发回退；断序先清空 native jitter buffer，但仍保持 native owner；只有收到 `STREAM_END`，或连续 100 ms 未收到任何 native 包，才进入 50 ms 静默保护期，随后恢复 fallback。保护期内重新收到 native 包会取消回退。每次切换都先把旧 renderer 输出归零，同一手柄禁止两个 renderer 同时输出。第一阶段尚未启用 SDK fallback，因此客户端始终只运行 `native_pcm` 或现有 rumble，不存在双重播放。
+分析器属于 Sunshine Core，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 的每个模拟会话维护独立、无分配的分析状态，复用现有有界反馈队列；真实会话不执行分析。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
 
-分析器属于 Sunshine Core，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 在有界 worker 与固定容量队列中分析一次，再按客户端能力 fan-out 原始 PCM 或 IR。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
-
-第一阶段不修改 `moonlight-audio-haptics`，只交付 raw PCM 路径。后续独立 SDK PR 新增明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。实现借鉴 MPEG Haptics 的独立 channel/curve/wavelet 数据模型和 AOSP HapticGenerator 的执行器标定边界，但不直接嵌入其文件型 Encoder，也不在 Sunshine 端执行设备专用渲染。
+`moonlight-audio-haptics` 通过独立 SDK PR 提供明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。Sunshine 以固定提交的子模块静态链接 SDK，并在传输适配层保证即使空流没有分析输出，也会发送静音 `STREAM_END` 清理客户端执行器。实现借鉴 MPEG Haptics 的独立 channel/curve/wavelet 数据模型和 AOSP HapticGenerator 的执行器标定边界，但不直接嵌入其文件型 Encoder，也不在 Sunshine 端执行设备专用渲染。
 
 ## 4. 用户体验设计
 
@@ -656,9 +644,9 @@ UX 验收：
 2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.1.zip`，固定下载地址和 SHA-256 `00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34`。发布物大小为 118,879,222 bytes。
 3. Sunshine 安装包仅携带自研 Sidecar 的 `win-x64` 自包含 .NET 运行时，不携带 HIDMaestro DLL。GUI 在用户明确选择安装时下载第三方发布物，校验后只提取 Core、许可证、README 和第三方通知。
 4. 首期每个 Sunshine 进程只允许一个虚拟 DualSense。Xbox 360、DualShock 4 和既有自动模式继续走 ViGEm，不改变成熟驱动支持范围。
-5. 客户端 SDP feature 为 `ML_FF_DS5_HAPTICS_PCM`，手柄能力为 `LI_CCAP_DS5_HAPTICS_PCM`；只有 Windows 客户端启用选项并检测到物理 PS5 控制器时才声明。
-6. 主机扩展控制包类型为 `0x550A`，v1 数据固定为 48 kHz、双声道、S16LE、每包不超过 480 帧；当前主机按 240 帧（5 ms）发送，使用不可靠有序传输，断序触发客户端 jitter buffer 重置。
-7. 原生第 3/4 声道触觉 PCM 不经过 `moonlight-audio-haptics`。该 SDK 只保留为“游戏没有原生 DS5 authored haptics”时的可选音频合成回退；在完成 IR 到 DualSense 波形的设备标定前，不把它宣传为 HD Haptics 等价实现。
+5. 客户端只选择 `physical` 或 `emulated`。前者预检 USB DualSense 四声道端点后声明 `ML_FF_DS5_HAPTICS_PCM`；后者声明 `ML_FF_DS5_HAPTICS_IR_V2`。两位互斥且不在运行中自动切换。
+6. `0x550A` v1 固定承载 48 kHz、双声道、S16LE 原始 PCM；`0x550B` v2 固定承载 72-byte 双 lane IR。两者均按 5 ms 节拍使用不可靠有序传输，断序/`DISCONTINUITY` 重置客户端状态。
+7. 原始第 3/4 声道触觉 PCM 只在模拟模式进入 `moonlight-audio-haptics` authored stereo API。IR 是有损、设备无关的振动意图，不宣传为原始 HD Haptics 等价物；设备标定和最终 actuator renderer 始终位于客户端。
 
 ### 17.1 已完成的本机验证
 
@@ -671,10 +659,12 @@ UX 验收：
 - Control Panel 已同步 Sunshine master 使用的 VDD/HDR 基线；3 项 DualSense Rust 单测、Vue production build 和 12 项 renderer 测试通过。完整配置读取失败会中止保存，USB/IP 不可用时后端拒绝 composite profile，页面仍允许用户切回 HID-only。
 - Core 的 DS5 命名管道改用 overlapped I/O；独立 fake-sidecar 回归测试覆盖 `alloc -> reader blocked -> free`，本机在 93 ms 内完成，避免同步 `ReadFile` 与 owner EOF 相互等待。
 - Windows `application` 组件的隔离安装烟测通过：自包含 Sidecar 被安装到 `tools/sunshine-ds5-sidecar`，且安装目录中不含 `HIDMaestro.Core.dll`，保持由 GUI 下载并校验第三方运行时的边界。
+- `moonlight-audio-haptics` authored/ABI 测试、common-c IR v2 golden parser 和 Moonlight IR-to-rumble renderer 测试通过。
+- Sunshine 合成 PCM -> SDK 双 lane IR -> 72-byte 小端序列化 -> common-c 解析的跨仓库测试通过；空流结束会产生静音 `STREAM_END`。
 
 ### 17.2 首期明确限制
 
 - GUI 的复合 profile 测试需要 UAC；用户取消授权时保留用户级组件，不反复弹出授权。
 - HIDMaestro/usbip-win2 仍是外部测试签名路线，不属于 Sunshine 后续实体证书的 WHQL/Attestation 范围。
 - 多虚拟 DS5、设备到音频端点的稳定一一映射、服务会话到交互用户音频会话的跨 session 代理留到下一阶段。
-- `moonlight-audio-haptics` 的 fallback 必须有独立开关、增益与 native-packet arbitration；检测到任何原生 DS5 PCM 后，fallback 必须立即静音，避免双重触觉。
+- 模拟模式首期只映射到 SDL 的低频/高频振动电机，不宣称还原物理 DualSense 的逐采样 HD Haptics；后续设备专用 renderer 必须保持在客户端，并沿用同一 IR 协议。

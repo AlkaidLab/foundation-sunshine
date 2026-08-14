@@ -43,6 +43,7 @@ extern "C" {
 #include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "globals.h"
+#include "haptics/authored_ir.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
@@ -83,6 +84,7 @@ extern "C" {
 #define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
 #define IDX_CURSOR 21  // Local cursor mode/update (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
+#define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -108,6 +110,7 @@ static const short packetTypes[] = {
   0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
   0x5509,  // Local cursor mode/update (Sunshine protocol extension)
   0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
+  0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -632,6 +635,9 @@ namespace stream {
       bool cursor_visible = false;
       std::uint64_t cursor_failed_revision = 0;
       std::uint32_t cursor_send_failures = 0;
+
+      std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
+      bool authored_haptics_init_failed = false;
     } control;
 
     std::uint32_t launch_session_id;
@@ -1398,14 +1404,14 @@ namespace stream {
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
-      if (!(session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM)) {
+      const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
+      const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
+      if (!sends_raw_pcm && !sends_authored_ir) {
         return 0;
       }
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
-      constexpr std::size_t wire_header_size = 28;
-      std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire_header_size + pcm_size);
       auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
         p[0] = static_cast<std::uint8_t>(v);
         p[1] = static_cast<std::uint8_t>(v >> 8);
@@ -1420,31 +1426,68 @@ namespace stream {
         write_u32(p, static_cast<std::uint32_t>(v));
         write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
       };
+      // A malformed client that declares both modes gets the lossless physical
+      // route. Official clients reject this combination before connecting.
+      if (sends_authored_ir && !sends_raw_pcm) {
+        if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
+          auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
+          if (!authored_haptics->ready()) {
+            session->control.authored_haptics_init_failed = true;
+            BOOST_LOG(error) << "Unable to initialize authored DualSense haptics analysis"sv;
+          }
+          else {
+            session->control.authored_haptics = std::move(authored_haptics);
+          }
+        }
+        if (!session->control.authored_haptics) {
+          return 0;
+        }
+        const auto wire = session->control.authored_haptics->process(
+          msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+          std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+        if (!wire) {
+          return 0;
+        }
 
-      auto *control = plaintext.data();
-      write_u16(control, packetTypes[IDX_DS5_HAPTICS_PCM]);
-      write_u16(control + 2, static_cast<std::uint16_t>(wire_header_size + pcm_size));
-      auto *wire = control + sizeof(control_header_v2);
-      wire[0] = 1;
-      wire[1] = data.flags;
-      write_u16(wire + 2, wire_header_size);
-      write_u16(wire + 4, msg.id);
-      write_u16(wire + 6, data.frame_count);
-      write_u32(wire + 8, data.sequence);
-      write_u64(wire + 12, data.presentation_time_us);
-      write_u32(wire + 20, 48000);
-      wire[24] = 2;
-      wire[25] = 16;
-      wire[26] = wire[27] = 0;
-      std::copy_n(data.pcm.begin(), pcm_size, wire + wire_header_size);
+        std::array<std::uint8_t, sizeof(control_header_v2) + haptics::authored_ir_v2_wire_size> plaintext {};
+        auto *control = plaintext.data();
+        write_u16(control, packetTypes[IDX_DS5_HAPTICS_IR_V2]);
+        write_u16(control + 2, haptics::authored_ir_v2_wire_size);
+        std::ranges::copy(*wire, control + sizeof(control_header_v2));
 
-      std::array<std::uint8_t,
-        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
-          sizeof(control_header_v2) + wire_header_size + 240 * 4) + crypto::cipher::tag_size>
-        encrypted_payload;
-      payload = encode_control(session,
-                               std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()),
-                               encrypted_payload);
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session, util::view(plaintext), encrypted_payload);
+      }
+      else {
+        constexpr std::size_t wire_header_size = 28;
+        std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire_header_size + pcm_size);
+        auto *control = plaintext.data();
+        write_u16(control, packetTypes[IDX_DS5_HAPTICS_PCM]);
+        write_u16(control + 2, static_cast<std::uint16_t>(wire_header_size + pcm_size));
+        auto *wire = control + sizeof(control_header_v2);
+        wire[0] = 1;
+        wire[1] = data.flags;
+        write_u16(wire + 2, wire_header_size);
+        write_u16(wire + 4, msg.id);
+        write_u16(wire + 6, data.frame_count);
+        write_u32(wire + 8, data.sequence);
+        write_u64(wire + 12, data.presentation_time_us);
+        write_u32(wire + 20, 48000);
+        wire[24] = 2;
+        wire[25] = 16;
+        wire[26] = wire[27] = 0;
+        std::copy_n(data.pcm.begin(), pcm_size, wire + wire_header_size);
+
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
+            sizeof(control_header_v2) + wire_header_size + 240 * 4) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session,
+                                 std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()),
+                                 encrypted_payload);
+      }
       unreliable = true;
     }
     else {
@@ -2246,7 +2289,8 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
-            has_ds5_haptics_session |= (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
+            has_ds5_haptics_session |=
+              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0;
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();

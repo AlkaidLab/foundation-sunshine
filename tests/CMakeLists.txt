@@ -122,7 +122,8 @@ set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 
 set(SUNSHINE_SOURCES
-        ${SUNSHINE_TARGET_FILES})
+        ${SUNSHINE_TARGET_FILES}
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
 
 # remove main.cpp from the list of sources
 list(REMOVE_ITEM SUNSHINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
