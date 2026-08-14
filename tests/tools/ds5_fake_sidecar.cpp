@@ -119,6 +119,10 @@ int main(int argc, char **argv) {
         break;
       }
       if (crash_once_event && WaitForSingleObject(crash_once_event, 0) == WAIT_TIMEOUT) {
+        // The attach itself must succeed before the fake peer simulates an
+        // asynchronous crash. Wait until Core consumes the reply so closing
+        // the pipe cannot race the synchronous attach transaction.
+        FlushFileBuffers(pipe);
         SetEvent(crash_once_event);
         break;
       }
