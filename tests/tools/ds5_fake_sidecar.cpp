@@ -67,18 +67,25 @@ int main(int argc, char **argv) {
   if (!pipe_name.starts_with(prefix) || pid_end == std::string::npos) return 2;
   const std::wstring parent_pid(pipe_name.begin() + prefix.size(),
                                 pipe_name.begin() + pid_end);
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + parent_pid;
+  std::array<wchar_t, 256> event_suffix_buffer {};
+  const auto event_suffix_size = GetEnvironmentVariableW(
+    L"SUNSHINE_DS5_TEST_EVENT_SUFFIX", event_suffix_buffer.data(),
+    static_cast<DWORD>(event_suffix_buffer.size()));
+  const auto event_suffix = event_suffix_size > 0 && event_suffix_size < event_suffix_buffer.size() ?
+                              std::wstring(event_suffix_buffer.data(), event_suffix_size) :
+                              parent_pid;
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + event_suffix;
   const auto continue_event = OpenEventW(SYNCHRONIZE, FALSE, continue_name.c_str());
   if (!continue_event) return 2;
-  const auto crash_once_name = L"Local\\sunshine-ds5-test-crash-once-" + parent_pid;
+  const auto crash_once_name = L"Local\\sunshine-ds5-test-crash-once-" + event_suffix;
   const auto crash_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                            crash_once_name.c_str());
-  const auto crash_always_name = L"Local\\sunshine-ds5-test-crash-always-" + parent_pid;
+  const auto crash_always_name = L"Local\\sunshine-ds5-test-crash-always-" + event_suffix;
   const auto crash_always_event = OpenEventW(EVENT_MODIFY_STATE, FALSE,
                                              crash_always_name.c_str());
-  const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + parent_pid;
+  const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + event_suffix;
   const auto recovered_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, recovered_name.c_str());
-  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + parent_pid;
+  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + event_suffix;
   const auto marker_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, marker_name.c_str());
   const auto path = L"\\\\.\\pipe\\" + std::wstring(pipe_name.begin(), pipe_name.end());
   const auto pipe = CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX,

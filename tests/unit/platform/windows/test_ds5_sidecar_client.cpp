@@ -35,6 +35,20 @@ namespace {
     }
     HANDLE handle;
   };
+
+  struct event_namespace_scope_t {
+    explicit event_namespace_scope_t(std::wstring_view test_name):
+        suffix(std::to_wstring(GetCurrentProcessId()) + L"-" +
+               std::to_wstring(GetTickCount64()) + L"-" + std::wstring(test_name)) {
+      SetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_EVENT_SUFFIX", suffix.c_str());
+    }
+
+    ~event_namespace_scope_t() {
+      SetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_EVENT_SUFFIX", nullptr);
+    }
+
+    std::wstring suffix;
+  };
 }  // namespace
 
 TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
@@ -42,10 +56,10 @@ TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
   config::input.ds5_enabled = true;
   config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
 
-  const auto process_id = std::to_wstring(GetCurrentProcessId());
-  const auto reader_name = L"Local\\sunshine-ds5-test-reader-" + process_id;
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + process_id;
-  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + process_id;
+  event_namespace_scope_t events(L"blocked-reader");
+  const auto reader_name = L"Local\\sunshine-ds5-test-reader-" + events.suffix;
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + events.suffix;
   handle_scope_t reader_event(CreateEventW(nullptr, FALSE, FALSE, reader_name.c_str()));
   handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
   handle_scope_t marker_event(CreateEventW(nullptr, FALSE, FALSE, marker_name.c_str()));
@@ -80,8 +94,8 @@ TEST(Ds5SidecarClientTests, RejectsCompositeAttachWithoutAudioEndpoint) {
   config::input.ds5_enabled = true;
   config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
 
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" +
-                             std::to_wstring(GetCurrentProcessId());
+  event_namespace_scope_t events(L"audio-endpoint");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
   handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
   ASSERT_NE(continue_event.handle, nullptr);
 
@@ -97,10 +111,10 @@ TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   config::input.ds5_enabled = true;
   config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
 
-  const auto process_id = std::to_wstring(GetCurrentProcessId());
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + process_id;
-  const auto crash_name = L"Local\\sunshine-ds5-test-crash-once-" + process_id;
-  const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + process_id;
+  event_namespace_scope_t events(L"recover-once");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto crash_name = L"Local\\sunshine-ds5-test-crash-once-" + events.suffix;
+  const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + events.suffix;
   handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
   handle_scope_t crash_event(CreateEventW(nullptr, TRUE, FALSE, crash_name.c_str()));
   handle_scope_t recovered_event(CreateEventW(nullptr, FALSE, FALSE, recovered_name.c_str()));
@@ -127,9 +141,9 @@ TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {
   config::input.ds5_enabled = true;
   config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
 
-  const auto process_id = std::to_wstring(GetCurrentProcessId());
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + process_id;
-  const auto crash_name = L"Local\\sunshine-ds5-test-crash-always-" + process_id;
+  event_namespace_scope_t events(L"recovery-failure");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto crash_name = L"Local\\sunshine-ds5-test-crash-always-" + events.suffix;
   handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
   handle_scope_t crash_event(CreateEventW(nullptr, FALSE, FALSE, crash_name.c_str()));
   ASSERT_NE(continue_event.handle, nullptr);

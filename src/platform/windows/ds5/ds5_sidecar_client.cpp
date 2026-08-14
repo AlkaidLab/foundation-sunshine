@@ -115,8 +115,14 @@ namespace platf::ds5 {
         if (!completed && GetLastError() == ERROR_IO_PENDING) {
 #ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
           if (!write) {
-            const auto event_name = L"Local\\sunshine-ds5-test-reader-" +
-                                    std::to_wstring(GetCurrentProcessId());
+            std::array<wchar_t, 256> event_suffix_buffer {};
+            const auto event_suffix_size = GetEnvironmentVariableW(
+              L"SUNSHINE_DS5_TEST_EVENT_SUFFIX", event_suffix_buffer.data(),
+              static_cast<DWORD>(event_suffix_buffer.size()));
+            const auto event_suffix = event_suffix_size > 0 && event_suffix_size < event_suffix_buffer.size() ?
+                                        std::wstring(event_suffix_buffer.data(), event_suffix_size) :
+                                        std::to_wstring(GetCurrentProcessId());
+            const auto event_name = L"Local\\sunshine-ds5-test-reader-" + event_suffix;
             if (const auto event = OpenEventW(EVENT_MODIFY_STATE, FALSE, event_name.c_str())) {
               SetEvent(event);
               CloseHandle(event);
