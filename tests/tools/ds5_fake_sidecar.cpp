@@ -70,6 +70,11 @@ int main(int argc, char **argv) {
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + parent_pid;
   const auto continue_event = OpenEventW(SYNCHRONIZE, FALSE, continue_name.c_str());
   if (!continue_event) return 2;
+  const auto crash_once_name = L"Local\\sunshine-ds5-test-crash-once-" + parent_pid;
+  const auto crash_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
+                                           crash_once_name.c_str());
+  const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + parent_pid;
+  const auto recovered_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, recovered_name.c_str());
   const auto path = L"\\\\.\\pipe\\" + std::wstring(pipe_name.begin(), pipe_name.end());
   const auto pipe = CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX,
                                      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -94,6 +99,13 @@ int main(int argc, char **argv) {
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
       if (!reply(pipe, 4, request_id, response)) break;
+      if (crash_once_event && WaitForSingleObject(crash_once_event, 0) == WAIT_TIMEOUT) {
+        SetEvent(crash_once_event);
+        break;
+      }
+      if (crash_once_event && recovered_event) {
+        SetEvent(recovered_event);
+      }
       // Let the test observe the Core reader's first blocked read before
       // sending a marker that forces one complete read-loop iteration.
       if (WaitForSingleObject(continue_event, 5000) != WAIT_OBJECT_0) break;
@@ -103,6 +115,8 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (recovered_event) CloseHandle(recovered_event);
+  if (crash_once_event) CloseHandle(crash_once_event);
   CloseHandle(continue_event);
   DisconnectNamedPipe(pipe);
   CloseHandle(pipe);

@@ -65,13 +65,31 @@ internal sealed class SidecarServer : IAsyncDisposable
         }
         finally
         {
-            linked.Cancel();
-            _controlOutgoing.Writer.TryComplete();
-            _realtimeOutgoing.Writer.TryComplete();
-            try { await writer; } catch (OperationCanceledException) { }
-            DisposeControllers();
-            _pipe = null;
-            _sessionCancellation = null;
+            try
+            {
+                linked.Cancel();
+                _controlOutgoing.Writer.TryComplete();
+                _realtimeOutgoing.Writer.TryComplete();
+                try
+                {
+                    await writer;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when the owner or host cancellation stops the writer.
+                }
+                catch (IOException) when (linked.IsCancellationRequested || !pipe.IsConnected)
+                {
+                    // A pending WriteAsync/FlushAsync reports a broken owner pipe as
+                    // IOException on Windows. Cleanup must still destroy every device.
+                }
+            }
+            finally
+            {
+                DisposeControllers();
+                _pipe = null;
+                _sessionCancellation = null;
+            }
         }
     }
 
