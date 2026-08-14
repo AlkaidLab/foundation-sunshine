@@ -258,7 +258,7 @@
                   <ResourceLink
                     v-for="resource in FEATURED_RESOURCES"
                     :key="resource.id"
-                    :href="resource.href"
+                    :href="resourceHref(resource)"
                     :title="resourceTitle(resource)"
                     :description="resourceDescription(resource)"
                     :image-src="resource.imageSrc"
@@ -429,6 +429,7 @@ import {
   CLIENT_RESOURCES,
   FEATURED_RESOURCES,
   HARMONY_CLIENT_URL,
+  resolveResourceHref,
   resolveResourceText,
 } from '../config/resources.js'
 
@@ -607,11 +608,13 @@ export default {
     },
     setupClientResources() {
       const resourcesById = new Map(CLIENT_RESOURCES.map((resource) => [resource.id, resource]))
+      const locale = this.selectedLocale || this.$i18n.locale
       return SETUP_CLIENT_RESOURCE_ORDER
         .map((id) => resourcesById.get(id))
         .filter(Boolean)
         .map((resource) => ({
           ...resource,
+          href: resolveResourceHref(resource, locale),
           icon: SETUP_CLIENT_ICON_OVERRIDES[resource.id] || resource.icon,
         }))
     }
@@ -627,6 +630,9 @@ export default {
     },
     resourceDescription(resource) {
       return resolveResourceText(this.$t, resource, 'description')
+    },
+    resourceHref(resource) {
+      return resolveResourceHref(resource, this.selectedLocale || this.$i18n.locale)
     },
     handleResourceActivate(resource, event) {
       if (resource.action !== 'harmony') return
