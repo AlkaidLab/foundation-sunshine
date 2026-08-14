@@ -155,6 +155,16 @@ namespace platf::ds5 {
     }
 
     bool receive(message_t &message) {
+#ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
+      if (online) {
+        const auto event_name = L"Local\\sunshine-ds5-test-reader-" +
+                                std::to_wstring(GetCurrentProcessId());
+        if (const auto event = OpenEventW(EVENT_MODIFY_STATE, FALSE, event_name.c_str())) {
+          SetEvent(event);
+          CloseHandle(event);
+        }
+      }
+#endif
       std::array<std::uint8_t, HEADER_SIZE> header {};
       if (!read_exact(pipe, header) || read_u32(header.data()) != MAGIC ||
           read_u16(header.data() + 4) != VERSION) {

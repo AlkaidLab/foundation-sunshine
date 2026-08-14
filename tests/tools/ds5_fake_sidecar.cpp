@@ -62,6 +62,14 @@ namespace {
 int main(int argc, char **argv) {
   if (argc != 3 || std::string_view(argv[1]) != "--pipe") return 2;
   const std::string pipe_name(argv[2]);
+  constexpr std::string_view prefix = "sunshine-ds5-v1-";
+  const auto pid_end = pipe_name.find('-', prefix.size());
+  if (!pipe_name.starts_with(prefix) || pid_end == std::string::npos) return 2;
+  const std::wstring parent_pid(pipe_name.begin() + prefix.size(),
+                                pipe_name.begin() + pid_end);
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + parent_pid;
+  const auto continue_event = OpenEventW(SYNCHRONIZE, FALSE, continue_name.c_str());
+  if (!continue_event) return 2;
   const auto path = L"\\\\.\\pipe\\" + std::wstring(pipe_name.begin(), pipe_name.end());
   const auto pipe = CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX,
                                      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -86,9 +94,16 @@ int main(int argc, char **argv) {
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
       if (!reply(pipe, 4, request_id, response)) break;
+      // Let the test observe the Core reader's first blocked read before
+      // sending a marker that forces one complete read-loop iteration.
+      if (WaitForSingleObject(continue_event, 5000) != WAIT_OBJECT_0) break;
+      std::vector<std::uint8_t> marker(6);
+      marker[0] = payload[0];
+      if (!reply(pipe, 101, 0, marker)) break;
     }
   }
 
+  CloseHandle(continue_event);
   DisconnectNamedPipe(pipe);
   CloseHandle(pipe);
   return 0;

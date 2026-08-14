@@ -245,7 +245,8 @@ if (WIN32)
             Boost::log
             gtest_main)
     target_compile_definitions(ds5_sidecar_client_unit_tests PRIVATE
-            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>")
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
+            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
     target_compile_options(ds5_sidecar_client_unit_tests PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
     set_target_properties(ds5_sidecar_client_unit_tests PROPERTIES
