@@ -5,6 +5,20 @@ import {
   isAllowedExternalUrl,
   openExternalUrl,
 } from '../utils/helpers.js'
+import { LEGAL_RESOURCES } from '../config/resources.js'
+
+test('legal resources target the current Foundation repository', () => {
+  const resources = Object.fromEntries(LEGAL_RESOURCES.map((resource) => [resource.id, resource.href]))
+
+  assert.equal(
+    resources.license,
+    'https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE',
+  )
+  assert.equal(
+    resources['third-party-notice'],
+    'https://github.com/AlkaidLab/foundation-sunshine/blob/master/NOTICE',
+  )
+})
 
 test('external URL allowlist matches the control panel command', () => {
   assert.equal(isAllowedExternalUrl('https://www.alkaidlab.com/'), true)

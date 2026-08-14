@@ -1,9 +1,15 @@
 export const HARMONY_CLIENT_URL = 'https://github.com/AlkaidLab/moonlight-harmony'
 
+const ALKAIDLAB_WEBSITE_URL = 'https://www.alkaidlab.com/'
+const ALKAIDLAB_WEBSITE_ZH_URL = 'https://www.alkaidlab.cn/'
+const VOIDLINK_APP_STORE_URL = 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808'
+const VOIDLINK_APP_STORE_ZH_URL = 'https://apps.apple.com/cn/app/voidlink/id6747717070'
+
 export const OFFICIAL_RESOURCES = [
   {
     id: 'official-website',
-    href: 'https://www.alkaidlab.com/',
+    href: ALKAIDLAB_WEBSITE_URL,
+    zhHref: ALKAIDLAB_WEBSITE_ZH_URL,
     icon: 'fas fa-globe',
     titleKey: 'resource_card.official_website_title',
     variant: 'accent',
@@ -76,7 +82,8 @@ export const CLIENT_RESOURCES = [
   },
   {
     id: 'voidlink',
-    href: 'https://apps.apple.com/cn/app/voidlink/id6747717070',
+    href: VOIDLINK_APP_STORE_URL,
+    zhHref: VOIDLINK_APP_STORE_ZH_URL,
     icon: 'fab fa-apple',
     titleKey: 'resource_card.voidlink_title',
     description: 'iOS / iPadOS',
@@ -133,7 +140,7 @@ export const HOME_RESOURCE_GROUPS = [
 export const LEGAL_RESOURCES = [
   {
     id: 'license',
-    href: 'https://github.com/qiin2333/Sunshine/blob/master/LICENSE',
+    href: 'https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE',
     icon: 'fas fa-file-alt',
     titleKey: 'resource_card.license',
     descriptionKey: 'resource_card.view_license',
@@ -141,7 +148,7 @@ export const LEGAL_RESOURCES = [
   },
   {
     id: 'third-party-notice',
-    href: 'https://github.com/qiin2333/Sunshine/blob/master/NOTICE',
+    href: 'https://github.com/AlkaidLab/foundation-sunshine/blob/master/NOTICE',
     icon: 'fas fa-exclamation-triangle',
     titleKey: 'resource_card.third_party_notice',
     descriptionKey: 'resource_card.third_party_desc',
@@ -152,7 +159,8 @@ export const LEGAL_RESOURCES = [
 export const FEATURED_RESOURCES = [
   {
     id: 'alkaidlab',
-    href: 'https://www.alkaidlab.com/',
+    href: ALKAIDLAB_WEBSITE_URL,
+    zhHref: ALKAIDLAB_WEBSITE_ZH_URL,
     imageSrc: '/images/logo-alkaidlab.png',
     imageAlt: 'AlkaidLab',
     titleKey: 'resource_card.official_website_title',
@@ -173,4 +181,8 @@ export const FEATURED_RESOURCES = [
 export function resolveResourceText(translate, resource, field) {
   const key = resource[`${field}Key`]
   return key ? translate(key) : resource[field] || ''
+}
+
+export function resolveResourceHref(resource, locale) {
+  return locale === 'zh' ? resource.zhHref || resource.href : resource.href
 }
