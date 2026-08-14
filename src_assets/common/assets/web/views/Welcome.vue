@@ -77,40 +77,31 @@
                     <label for="passwordInput" class="form-label">
                       <i class="fas fa-lock me-2"></i>{{ $t('welcome.password') }}
                     </label>
-                    <div class="input-group">
-                      <input
-                        :type="showPassword ? 'text' : 'password'"
-                        class="form-control"
-                        id="passwordInput"
-                        autocomplete="new-password"
-                        v-model="passwordData.newPassword"
-                        :placeholder="$t('welcome.password')"
-                        required
-                      />
-                      <button class="btn btn-outline-secondary toggle-password" type="button" @click="showPassword = !showPassword" :aria-label="showPassword ? $t('welcome.hide_password') : $t('welcome.show_password')">
-                        <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
-                      </button>
-                    </div>
+                    <input
+                      type="password"
+                      class="form-control"
+                      id="passwordInput"
+                      autocomplete="new-password"
+                      v-model="passwordData.newPassword"
+                      :placeholder="$t('welcome.password')"
+                      required
+                    />
                   </div>
 
                   <div class="mb-3">
                     <label for="confirmPasswordInput" class="form-label">
                       <i class="fas fa-check-circle me-2"></i>{{ $t('welcome.confirm_password') }}
                     </label>
-                    <div class="input-group" :class="{ 'is-invalid': !passwordsMatch && passwordData.confirmNewPassword }">
-                      <input
-                        :type="showConfirmPassword ? 'text' : 'password'"
-                        class="form-control"
-                        id="confirmPasswordInput"
-                        autocomplete="new-password"
-                        v-model="passwordData.confirmNewPassword"
-                        :placeholder="$t('welcome.confirm_password')"
-                        required
-                      />
-                      <button class="btn btn-outline-secondary toggle-password" type="button" @click="showConfirmPassword = !showConfirmPassword" :aria-label="showConfirmPassword ? $t('welcome.hide_password') : $t('welcome.show_password')">
-                        <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
-                      </button>
-                    </div>
+                    <input
+                      type="password"
+                      class="form-control"
+                      :class="{ 'is-invalid': !passwordsMatch && passwordData.confirmNewPassword }"
+                      id="confirmPasswordInput"
+                      autocomplete="new-password"
+                      v-model="passwordData.confirmNewPassword"
+                      :placeholder="$t('welcome.confirm_password')"
+                      required
+                    />
                     <div class="invalid-feedback d-block" v-if="!passwordsMatch && passwordData.confirmNewPassword">
                       <i class="fas fa-exclamation-circle me-1"></i>{{ $t('welcome.password_mismatch') }}
                     </div>
@@ -169,8 +160,6 @@ const { locale, setLocaleMessage } = useI18n()
 const selectedLocale = ref('en')
 
 const { error, success, loading, passwordData, passwordsMatch, isFormValid, save } = useWelcome()
-const showPassword = ref(false)
-const showConfirmPassword = ref(false)
 
 loadAutoTheme()
 
@@ -347,34 +336,6 @@ header img {
 .form-label i {
   color: var(--sketch-blue);
   margin-right: 0.3rem;
-}
-
-.toggle-password {
-  border: 1px solid var(--ui-border) !important;
-  border-left: 0 !important;
-  border-radius: 0 8px 8px 0 !important;
-  background: var(--ui-surface) !important;
-  color: var(--ui-text-secondary) !important;
-  padding: 0 14px;
-  transition: all 0.2s ease;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.toggle-password:hover,
-.toggle-password:focus,
-.toggle-password:active {
-  background: var(--ui-accent-soft) !important;
-  color: var(--ui-accent) !important;
-  border-color: var(--ui-border-strong) !important;
-  border-left: none !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.input-group .form-control {
-  border-radius: 8px 0 0 8px;
-  border-right: none;
 }
 
 /* 输入控件 */
