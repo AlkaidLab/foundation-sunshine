@@ -225,9 +225,9 @@
                             {{ $t(`pin.hdr_brightness_source_${client.hdrBrightnessRuntime.source}`) }}
                           </span>
                           <span class="runtime-values">
-                            {{ $t('pin.hdr_brightness_peak') }} {{ client.hdrBrightnessRuntime.maxNits }} ·
-                            {{ $t('pin.hdr_brightness_min') }} {{ client.hdrBrightnessRuntime.minNits }} ·
-                            {{ $t('pin.hdr_brightness_full_frame') }} {{ client.hdrBrightnessRuntime.maxFullFrameNits }}
+                            {{ $t('pin.hdr_brightness_peak') }} {{ formatHdrNits(client.hdrBrightnessRuntime.maxNits) }} ·
+                            {{ $t('pin.hdr_brightness_min') }} {{ formatHdrNits(client.hdrBrightnessRuntime.minNits, 4, true) }} ·
+                            {{ $t('pin.hdr_brightness_full_frame') }} {{ formatHdrNits(client.hdrBrightnessRuntime.maxFullFrameNits) }}
                           </span>
                         </div>
                       </div>
@@ -366,7 +366,7 @@ import { onMounted, ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
-import { usePin } from '../composables/usePin.js'
+import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
 
 const { t } = useI18n()
