@@ -159,7 +159,18 @@ jobs:
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
-        run: .\scripts\build-ds5-sidecar.ps1
+        env:
+          DS5_COMPONENT_VERSION: 1.0.0+${{ github.sha }}
+        run: .\scripts\build-ds5-sidecar.ps1 -ComponentVersion $env:DS5_COMPONENT_VERSION
+
+      - name: Package unsigned DualSense component manifest
+        shell: pwsh
+        env:
+          DS5_RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: |
+          .\scripts\package-ds5-sidecar.ps1 `
+            -RuntimeDirectory build/ds5-sidecar-runtime `
+            -ReleaseTag $env:DS5_RELEASE_TAG
 
       - name: Build Windows
         shell: msys2 {0}
@@ -208,6 +219,8 @@ jobs:
           # 生成 Inno Setup staging 目录
           echo "Generating Inno Setup staging directory..."
           cmake --install . --prefix ./inno_staging
+          test -f ./inno_staging/assets/components/dualsense.json
+          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
 
           cd ..
           
@@ -224,6 +237,8 @@ jobs:
             echo "Extracting: $PORTABLE"
             mkdir -p unsigned-files
             7z x "$PORTABLE" -o"unsigned-files" -y -aoa
+            mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-sidecar
+            cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-sidecar/
             echo "Extracted files for signing:"
             ls -laR unsigned-files/
           else
@@ -274,6 +289,22 @@ jobs:
           Write-Host "`n✓ All signatures are VALID!" -ForegroundColor Green
 
       # 使用签名后的文件重新打包 ZIP 便携版
+      # Sidecar executables are included in the SignPath input only to receive
+      # the same production signature. They are packaged separately afterwards.
+      - name: Package signed DualSense component release asset
+        shell: pwsh
+        env:
+          DS5_RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: |
+          .\scripts\package-ds5-sidecar.ps1 `
+            -RuntimeDirectory signed-files/Sunshine/tools/sunshine-ds5-sidecar `
+            -ReleaseTag $env:DS5_RELEASE_TAG
+          Copy-Item -LiteralPath build/ds5-component/dualsense.json `
+            -Destination signed-files/Sunshine/assets/components/dualsense.json -Force
+          Copy-Item -LiteralPath build/ds5-component/dualsense.json `
+            -Destination build/inno_staging/assets/components/dualsense.json -Force
+          Remove-Item -LiteralPath signed-files/Sunshine/tools/sunshine-ds5-sidecar -Recurse -Force
+
       - name: Repackage signed Portable ZIP
         shell: bash
         run: |
@@ -326,9 +357,10 @@ jobs:
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
-          test -f "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          test -f "$STAGING_DIR/assets/components/dualsense.json"
+          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
-          grep -F "Sunshine.Ds5Sidecar.exe" build/inno-signed-build.log
+          ! grep -F "Sunshine.Ds5Sidecar.exe" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
@@ -379,14 +411,26 @@ jobs:
             }
           }
 
-      # 上传最终的签名文件
+      # Upload the final signed files
+      - name: Generate signed package checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          Copy-Item -Path Sunshine-*-Portable-Signed.zip -Destination release-artifacts -Force
+          Copy-Item -Path final-signed/*.exe -Destination release-artifacts -Force
+          Copy-Item -Path build/ds5-component/Sunshine.Ds5Sidecar.*.win-x64.zip -Destination release-artifacts -Force
+          .\scripts\generate-checksums.ps1 -Path .\release-artifacts -Output "SHA256SUMS.txt"
+
       - name: Upload final signed packages
         uses: actions/upload-artifact@v4
         with:
           name: sunshine-windows-fully-signed
           path: |
-            Sunshine-*-Portable-Signed.zip
-            final-signed/*.exe
+            release-artifacts/Sunshine-*-Portable-Signed.zip
+            release-artifacts/*.exe
+            release-artifacts/Sunshine.Ds5Sidecar.*.win-x64.zip
+            release-artifacts/SHA256SUMS.txt
+            release-artifacts/checksums.json
           if-no-files-found: error
 
       # 发布到 GitHub Release
@@ -396,8 +440,11 @@ jobs:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
-            Sunshine-*-Portable-Signed.zip
-            final-signed/*.exe
+            release-artifacts/Sunshine-*-Portable-Signed.zip
+            release-artifacts/*.exe
+            release-artifacts/Sunshine.Ds5Sidecar.*.win-x64.zip
+            release-artifacts/SHA256SUMS.txt
+            release-artifacts/checksums.json
           draft: true
           prerelease: true
           allowUpdates: true

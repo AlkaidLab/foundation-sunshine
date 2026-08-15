@@ -168,7 +168,18 @@ jobs:
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
-        run: .\scripts\build-ds5-sidecar.ps1
+        env:
+          DS5_COMPONENT_VERSION: 1.0.0+${{ needs.setup_release.outputs.release_commit }}
+        run: .\scripts\build-ds5-sidecar.ps1 -ComponentVersion $env:DS5_COMPONENT_VERSION
+
+      - name: Package DualSense component release asset
+        shell: pwsh
+        env:
+          DS5_RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+        run: |
+          .\scripts\package-ds5-sidecar.ps1 `
+            -RuntimeDirectory build/ds5-sidecar-runtime `
+            -ReleaseTag $env:DS5_RELEASE_TAG
 
       - name: Build Web UI
         shell: pwsh
@@ -272,25 +283,24 @@ jobs:
           # Package the Inno Setup installer and portable ZIP.
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
-          test -f ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          test -f ./inno_staging/assets/components/dualsense.json
+          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
           
-          # Run the Inno Setup compiler and prove that it consumed the sidecar.
+          # The main package contains only the trusted component manifest.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
-          grep -F "Sunshine.Ds5Sidecar.exe" inno-build.log
+          ! grep -F "Sunshine.Ds5Sidecar.exe" inno-build.log
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
-          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/assets/components/dualsense.json"
+          ! cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/"
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
-
-      - name: Generate Checksums
-        shell: pwsh
-        run: |
-          # Generate SHA256 checksums.
-          .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
+          sidecar_assets=(../ds5-component/Sunshine.Ds5Sidecar.*.win-x64.zip)
+          test "${#sidecar_assets[@]}" -eq 1
+          cp "${sidecar_assets[0]}" ../artifacts/
 
       - name: Rename release assets
         shell: msys2 {0}
@@ -310,6 +320,10 @@ jobs:
           mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine.${NEWTAG}.WindowsInstaller.exe"
           mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.WindowsPortable.zip"
 
+      - name: Generate Checksums
+        shell: pwsh
+        run: .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -317,18 +331,25 @@ jobs:
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.WindowsPortable.zip
+            artifacts/Sunshine.Ds5Sidecar.*.win-x64.zip
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error
 
       - name: Create/Update GitHub Release
         if: needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/create-release-action@v2025.426.1549
+        uses: softprops/action-gh-release@v1
         with:
-          allowUpdates: true
           body: ${{ needs.setup_release.outputs.release_body }}
-          generateReleaseNotes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
+          generate_release_notes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
           name: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           prerelease: true
-          tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          tag_name: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          files: |
+            artifacts/Sunshine.*.WindowsInstaller.exe
+            artifacts/Sunshine.*.WindowsPortable.zip
+            artifacts/Sunshine.Ds5Sidecar.*.win-x64.zip
+            artifacts/SHA256SUMS.txt
+            artifacts/checksums.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_BOT_TOKEN }}

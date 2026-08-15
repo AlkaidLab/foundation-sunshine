@@ -17,17 +17,19 @@ install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS stylus-input-probe RUNTIME DESTINATION "tools" COMPONENT application)
 
-# The optional DualSense runtime is first-party and self-contained. HIDMaestro
-# itself is downloaded and digest-verified by the Control Panel when the user
-# opts in, so it is intentionally absent from this directory.
-set(DS5_SIDECAR_RUNTIME_DIR "${CMAKE_BINARY_DIR}/ds5-sidecar-runtime" CACHE PATH
-    "Path to the published self-contained Sunshine DualSense sidecar runtime")
-if(EXISTS "${DS5_SIDECAR_RUNTIME_DIR}/Sunshine.Ds5Sidecar.exe")
-  install(DIRECTORY "${DS5_SIDECAR_RUNTIME_DIR}/"
-          DESTINATION "tools/sunshine-ds5-sidecar"
-          COMPONENT application)
+# The optional DualSense runtime is released separately. The main package only
+# contains the manifest that binds the Control Panel to this release's asset.
+set(DS5_COMPONENT_MANIFEST_FILE "${CMAKE_BINARY_DIR}/ds5-component/dualsense.json" CACHE FILEPATH
+    "Path to the generated Sunshine DualSense component manifest")
+if(EXISTS "${DS5_COMPONENT_MANIFEST_FILE}")
+  install(FILES "${DS5_COMPONENT_MANIFEST_FILE}"
+          DESTINATION "${SUNSHINE_ASSETS_DIR}/components"
+          COMPONENT assets)
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/assets/components")
+  file(COPY "${DS5_COMPONENT_MANIFEST_FILE}"
+       DESTINATION "${CMAKE_BINARY_DIR}/assets/components")
 else()
-  message(STATUS "Self-contained DualSense sidecar was not published; optional component install will be unavailable")
+  message(STATUS "DualSense component manifest was not generated; optional component install will be unavailable")
 endif()
 
 # Shared tool: nefconw.exe (used by VDD and vmouse install scripts)

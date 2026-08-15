@@ -1,6 +1,7 @@
 param(
     [string]$OutputDirectory = "build/ds5-sidecar-runtime",
-    [string]$PackageCache = "build/ds5-sidecar-cache"
+    [string]$PackageCache = "build/ds5-sidecar-cache",
+    [string]$ComponentVersion = "1.0.0-dev"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,6 +9,11 @@ $version = 'v1.6.1'
 $expectedSha256 = '00145c23D9838BE6089389CE58B3FD2B6766FA9BC0F1F3C60A3C885361B53C34'
 $url = "https://github.com/hifihedgehog/HIDMaestro/releases/download/$version/HIDMaestro-$version.zip"
 $root = Split-Path -Parent $PSScriptRoot
+$ComponentVersion = $ComponentVersion.Trim()
+if ([string]::IsNullOrWhiteSpace($ComponentVersion) -or
+    $ComponentVersion.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+    throw 'ComponentVersion must be a non-empty file-name-safe value'
+}
 $buildRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'build'))
 $cache = [System.IO.Path]::GetFullPath((Join-Path $root $PackageCache))
 $output = [System.IO.Path]::GetFullPath((Join-Path $root $OutputDirectory))
@@ -61,7 +67,7 @@ if ($LASTEXITCODE -ne 0) {
 # package. Excluding it here keeps the Sunshine installer first-party-only.
 Remove-Item -LiteralPath (Join-Path $output 'HIDMaestro.Core.dll') -Force
 @{
-    component_version = '1.0.0-build-runtime'
+    component_version = $ComponentVersion
     protocol = 1
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version
