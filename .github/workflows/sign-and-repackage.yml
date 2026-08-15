@@ -411,6 +411,31 @@ jobs:
             }
           }
 
+      - name: Validate signed release packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          check_sidecar_absent() {
+            local asset="$1"
+            local listing
+            if ! listing="$(7z l "$asset")"; then
+              echo "Failed to inspect $asset"
+              exit 1
+            fi
+            if grep -Fq "sunshine-ds5-sidecar" <<<"$listing"; then
+              echo "$asset contains the DualSense sidecar runtime"
+              exit 1
+            fi
+          }
+
+          portable_assets=(Sunshine-*-Portable-Signed.zip)
+          installer_assets=(final-signed/*.exe)
+          test "${#portable_assets[@]}" -eq 1
+          test "${#installer_assets[@]}" -eq 1
+          check_sidecar_absent "${portable_assets[0]}"
+          check_sidecar_absent "${installer_assets[0]}"
+
       # Upload the final signed files
       - name: Generate signed package checksums
         shell: pwsh

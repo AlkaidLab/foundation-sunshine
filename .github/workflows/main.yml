@@ -292,8 +292,18 @@ jobs:
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
-          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/assets/components/dualsense.json"
-          ! cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/"
+          if ! zip_listing="$(cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/')"; then
+            echo "Failed to inspect Sunshine.zip"
+            exit 1
+          fi
+          if ! grep -Fq "Sunshine/assets/components/dualsense.json" <<<"$zip_listing"; then
+            echo "Portable ZIP is missing the DualSense component manifest"
+            exit 1
+          fi
+          if grep -Fq "Sunshine/tools/sunshine-ds5-sidecar/" <<<"$zip_listing"; then
+            echo "Portable ZIP contains the DualSense sidecar runtime"
+            exit 1
+          fi
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
