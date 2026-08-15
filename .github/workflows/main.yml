@@ -284,11 +284,11 @@ jobs:
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
           test -f ./inno_staging/assets/components/dualsense.json
-          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar
           
           # The main package contains only the trusted component manifest.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
-          ! grep -F "Sunshine.Ds5Sidecar.exe" inno-build.log
+          ! grep -F "sunshine-ds5-sidecar" inno-build.log
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
@@ -298,7 +298,7 @@ jobs:
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
-          sidecar_assets=(../ds5-component/Sunshine.Ds5Sidecar.*.win-x64.zip)
+          sidecar_assets=(./ds5-component/Sunshine.Ds5Sidecar.*.win-x64.zip)
           test "${#sidecar_assets[@]}" -eq 1
           cp "${sidecar_assets[0]}" ../artifacts/
 
@@ -338,7 +338,7 @@ jobs:
 
       - name: Create/Update GitHub Release
         if: needs.setup_release.outputs.publish_release == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           body: ${{ needs.setup_release.outputs.release_body }}
           generate_release_notes: ${{ needs.setup_release.outputs.release_generate_release_notes }}

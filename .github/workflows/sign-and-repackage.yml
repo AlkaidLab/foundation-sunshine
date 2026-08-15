@@ -220,7 +220,7 @@ jobs:
           echo "Generating Inno Setup staging directory..."
           cmake --install . --prefix ./inno_staging
           test -f ./inno_staging/assets/components/dualsense.json
-          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar
 
           cd ..
           
@@ -358,9 +358,9 @@ jobs:
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
           test -f "$STAGING_DIR/assets/components/dualsense.json"
-          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
-          ! grep -F "Sunshine.Ds5Sidecar.exe" build/inno-signed-build.log
+          ! grep -F "sunshine-ds5-sidecar" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
@@ -435,7 +435,7 @@ jobs:
 
       # 发布到 GitHub Release
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
