@@ -22,6 +22,9 @@ internal static class ProtocolSelfTest
         var hello = await ReceiveAsync(client, stopping.Token);
         Require(hello.Type == Protocol.MessageType.HelloReply && hello.RequestId == 1 && hello.Payload.Length == 4,
             "hello reply");
+        var helloCapabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(hello.Payload);
+        Require(helloCapabilities.HasFlag(Protocol.Capability.Hid), "hello HID capability");
+        Require(helloCapabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "hello adaptive trigger capability");
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
@@ -204,7 +207,8 @@ internal static class ProtocolSelfTest
         Require(state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
                                 3, 2, out var leftMessage),
             "left adaptive trigger update");
-        Require(leftMessage.Payload.Length == 26 &&
+        Require(leftMessage.Type == Protocol.MessageType.AdaptiveTriggers &&
+                leftMessage.Payload.Length == 26 &&
                 leftMessage.Payload[0] == 3 && leftMessage.Payload[1] == 2 &&
                 leftMessage.Payload[2] == AdaptiveTriggerState.LeftFlag &&
                 leftMessage.Payload[3] == left[0] && leftMessage.Payload[4] == 0 &&
