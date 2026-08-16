@@ -30,9 +30,11 @@ internal sealed class ControllerSession : IDisposable
     private const int HapticsFramesPerPacket = 240;
 
     private readonly object _stateLock = new();
+    private readonly object _outputLock = new();
     private readonly HMController _controller;
     private readonly HMProfile _profile;
     private readonly Action<Protocol.Message> _emit;
+    private readonly AdaptiveTriggerState _adaptiveTriggers = new();
     private HMGamepadState _state;
     private readonly Dictionary<uint, int> _touchSlots = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -191,38 +193,32 @@ internal sealed class ControllerSession : IDisposable
         if (!output.CrcValid)
             return;
 
-        if (TryByte(output.Fields, "leftMotor", out var left) &&
-            TryByte(output.Fields, "rightMotor", out var right))
+        lock (_outputLock)
         {
-            var payload = new byte[6];
-            payload[0] = DeviceId;
-            payload[1] = ClientControllerNumber;
-            BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(2, 2), (ushort)(left * 257));
-            BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(4, 2), (ushort)(right * 257));
-            _emit(new Protocol.Message(Protocol.MessageType.Rumble, 0, payload));
-        }
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
 
-        if (TryBytes(output.Fields, "leftTriggerEffect", out var leftEffect) &&
-            TryBytes(output.Fields, "rightTriggerEffect", out var rightEffect) &&
-            leftEffect.Length >= 11 && rightEffect.Length >= 11)
-        {
-            var payload = new byte[26];
-            payload[0] = DeviceId;
-            payload[1] = ClientControllerNumber;
-            payload[2] = 0x0C;
-            payload[3] = leftEffect[0];
-            payload[4] = rightEffect[0];
-            leftEffect.AsSpan(1, 10).CopyTo(payload.AsSpan(6, 10));
-            rightEffect.AsSpan(1, 10).CopyTo(payload.AsSpan(16, 10));
-            _emit(new Protocol.Message(Protocol.MessageType.AdaptiveTriggers, 0, payload));
-        }
+            if (TryByte(output.Fields, "leftMotor", out var left) &&
+                TryByte(output.Fields, "rightMotor", out var right))
+            {
+                var payload = new byte[6];
+                payload[0] = DeviceId;
+                payload[1] = ClientControllerNumber;
+                BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(2, 2), (ushort)(left * 257));
+                BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(4, 2), (ushort)(right * 257));
+                _emit(new Protocol.Message(Protocol.MessageType.Rumble, 0, payload));
+            }
 
-        if (output.Fields.TryGetValue("lightbar", out var value) && value is byte[] rgb && rgb.Length >= 3)
-        {
-            _emit(new Protocol.Message(
-                Protocol.MessageType.Led,
-                0,
-                new[] { DeviceId, ClientControllerNumber, rgb[0], rgb[1], rgb[2] }));
+            if (_adaptiveTriggers.TryUpdate(output.Fields, DeviceId, ClientControllerNumber, out var adaptiveTriggers))
+                _emit(adaptiveTriggers);
+
+            if (output.Fields.TryGetValue("lightbar", out var value) && value is byte[] rgb && rgb.Length >= 3)
+            {
+                _emit(new Protocol.Message(
+                    Protocol.MessageType.Led,
+                    0,
+                    new[] { DeviceId, ClientControllerNumber, rgb[0], rgb[1], rgb[2] }));
+            }
         }
     }
 
@@ -367,22 +363,16 @@ internal sealed class ControllerSession : IDisposable
         return false;
     }
 
-    private static bool TryBytes(IReadOnlyDictionary<string, object> fields, string name, out byte[] value)
-    {
-        if (fields.TryGetValue(name, out var item) && item is byte[] bytes)
-        {
-            value = bytes;
-            return true;
-        }
-        value = Array.Empty<byte>();
-        return false;
-    }
-
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
         _controller.OutputDecoded -= OnOutputDecoded;
+        lock (_outputLock)
+        {
+            if (_adaptiveTriggers.TryReset(DeviceId, ClientControllerNumber, out var adaptiveTriggers))
+                _emit(adaptiveTriggers);
+        }
         if (_controller.UsbAudio is not null)
         {
             _controller.UsbAudio.Output.FramesReceived -= OnAudioFrames;
