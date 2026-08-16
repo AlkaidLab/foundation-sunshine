@@ -638,6 +638,13 @@ namespace stream {
 
       std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
       bool authored_haptics_init_failed = false;
+      // One fallback session per controller: smoothing, throttle and watchdog
+      // state must not bleed between pads, and the watchdog stop has to reach
+      // the pad that actually stopped sending PCM.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::legacy_rumble_session_t>> legacy_haptics;
+      bool legacy_haptics_init_failed = false;
+      std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> compatibility_rumble;
+      std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> synthesized_haptics_rumble;
     } control;
 
     std::uint32_t launch_session_id;
@@ -1303,7 +1310,8 @@ namespace stream {
    * @return 0 on success.
    */
   int
-  send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg) {
+  send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg,
+                    bool synthesized_haptics = false) {
     if (!session->control.peer) {
       BOOST_LOG(warning) << "Couldn't send gamepad feedback data, still waiting for PING from Moonlight"sv;
       // Still waiting for PING from Moonlight
@@ -1318,13 +1326,21 @@ namespace stream {
       plaintext.header.payloadLength = sizeof(plaintext) - sizeof(control_header_v2);
 
       auto &data = msg.data.rumble;
+      auto &source = synthesized_haptics ?
+                       session->control.synthesized_haptics_rumble :
+                       session->control.compatibility_rumble;
+      source[msg.id] = {data.lowfreq, data.highfreq};
+      const auto compatibility = session->control.compatibility_rumble[msg.id];
+      const auto synthesized = session->control.synthesized_haptics_rumble[msg.id];
+      const auto lowfreq = std::max(compatibility.first, synthesized.first);
+      const auto highfreq = std::max(compatibility.second, synthesized.second);
 
       plaintext.useless = 0xC0FFEE;
       plaintext.id = util::endian::little(msg.id);
-      plaintext.lowfreq = util::endian::little(data.lowfreq);
-      plaintext.highfreq = util::endian::little(data.highfreq);
+      plaintext.lowfreq = util::endian::little(lowfreq);
+      plaintext.highfreq = util::endian::little(highfreq);
 
-      BOOST_LOG(verbose) << "Rumble: "sv << msg.id << " :: "sv << util::hex(data.lowfreq).to_string_view() << " :: "sv << util::hex(data.highfreq).to_string_view();
+      BOOST_LOG(verbose) << "Rumble: "sv << msg.id << " :: "sv << util::hex(lowfreq).to_string_view() << " :: "sv << util::hex(highfreq).to_string_view();
       std::array<std::uint8_t,
         sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(plaintext)) + crypto::cipher::tag_size>
         encrypted_payload;
@@ -1406,9 +1422,6 @@ namespace stream {
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
-      if (!sends_raw_pcm && !sends_authored_ir) {
-        return 0;
-      }
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
@@ -1426,9 +1439,33 @@ namespace stream {
         write_u32(p, static_cast<std::uint32_t>(v));
         write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
       };
+      if (!sends_raw_pcm && !sends_authored_ir) {
+        if (!session->control.legacy_haptics_init_failed) {
+          auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
+          if (inserted) {
+            auto created = std::make_unique<haptics::legacy_rumble_session_t>();
+            if (!created->ready()) {
+              session->control.legacy_haptics.erase(controller_session);
+              session->control.legacy_haptics_init_failed = true;
+              BOOST_LOG(error) << "Unable to initialize legacy DualSense haptics fallback"sv;
+              return 0;
+            }
+            controller_session->second = std::move(created);
+          }
+          const auto rumble = controller_session->second->process(
+            msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+            std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+          if (rumble) {
+            auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+              rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
+            return send_feedback_msg(session, legacy_msg, true);
+          }
+        }
+        return 0;
+      }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
-      if (sends_authored_ir && !sends_raw_pcm) {
+      else if (sends_authored_ir && !sends_raw_pcm) {
         if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
           auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
           if (!authored_haptics->ready()) {
@@ -2290,12 +2327,21 @@ namespace stream {
           }
           else {
             has_ds5_haptics_session |=
-              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0;
+              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
+              (config::input.ds5_enabled && config::input.ds5_audio_haptics);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
 
               send_feedback_msg(session, *feedback_msg);
+            }
+
+            for (auto &[controller_id, controller_haptics] : session->control.legacy_haptics) {
+              if (const auto rumble = controller_haptics->poll(now)) {
+                auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+                  controller_id, rumble->low_frequency, rumble->high_frequency);
+                send_feedback_msg(session, legacy_msg, true);
+              }
             }
 
             auto &hdr_queue = session->control.hdr_queue;
