@@ -38,66 +38,76 @@ internal sealed class SidecarServer : IAsyncDisposable
 
     internal async Task RunAsync(CancellationToken stoppingToken)
     {
-        await using var pipe = new NamedPipeServerStream(
-            _pipeName,
-            PipeDirection.InOut,
-            1,
-            PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.WriteThrough |
-            PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance,
-            64 * 1024,
-            64 * 1024);
-        _pipe = pipe;
-        await pipe.WaitForConnectionAsync(stoppingToken);
-        if (!OwnerVerification.ClientIsElevated(pipe))
+        while (!stoppingToken.IsCancellationRequested)
         {
-            Console.Error.WriteLine("Rejected a non-elevated DualSense sidecar pipe client");
-            return;
-        }
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        _sessionCancellation = linked;
-        var writer = WriteLoopAsync(pipe, linked.Token);
-        try
-        {
-            await ReadLoopAsync(pipe, linked.Token);
-        }
-        catch (EndOfStreamException)
-        {
-            // The owning Sunshine process disconnected. The sidecar exits after
-            // destroying every device instead of becoming an orphan service.
-        }
-        catch (IOException) when (!pipe.IsConnected)
-        {
-            // Windows may surface a broken owner pipe as ERROR_BROKEN_PIPE or
-            // ERROR_NO_DATA instead of a zero-byte read. Treat both as EOF.
-        }
-        finally
-        {
+            await using var pipe = new NamedPipeServerStream(
+                _pipeName,
+                PipeDirection.InOut,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.WriteThrough |
+                PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance,
+                64 * 1024,
+                64 * 1024);
+            _pipe = pipe;
+            await pipe.WaitForConnectionAsync(stoppingToken);
+            if (!OwnerVerification.ClientIsElevated(pipe))
+            {
+                // Core does not retry a failed launch within a session, so a
+                // rejected client must not burn the sidecar: drop the connection
+                // and keep waiting for the real owner.
+                Console.Error.WriteLine("Rejected a non-elevated DualSense sidecar pipe client");
+                _pipe = null;
+                continue;
+            }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            _sessionCancellation = linked;
+            var writer = WriteLoopAsync(pipe, linked.Token);
             try
             {
-                linked.Cancel();
-                _controlOutgoing.Writer.TryComplete();
-                _realtimeOutgoing.Writer.TryComplete();
-                try
-                {
-                    await writer;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Expected when the owner or host cancellation stops the writer.
-                }
-                catch (IOException) when (linked.IsCancellationRequested || !pipe.IsConnected)
-                {
-                    // A pending WriteAsync/FlushAsync reports a broken owner pipe as
-                    // IOException on Windows. Cleanup must still destroy every device.
-                }
+                await ReadLoopAsync(pipe, linked.Token);
+            }
+            catch (EndOfStreamException)
+            {
+                // The owning Sunshine process disconnected. The sidecar exits after
+                // destroying every device instead of becoming an orphan service.
+            }
+            catch (IOException) when (!pipe.IsConnected)
+            {
+                // Windows may surface a broken owner pipe as ERROR_BROKEN_PIPE or
+                // ERROR_NO_DATA instead of a zero-byte read. Treat both as EOF.
             }
             finally
             {
-                DisposeControllers();
-                _pipe = null;
-                _sessionCancellation = null;
+                try
+                {
+                    linked.Cancel();
+                    _controlOutgoing.Writer.TryComplete();
+                    _realtimeOutgoing.Writer.TryComplete();
+                    try
+                    {
+                        await writer;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when the owner or host cancellation stops the writer.
+                    }
+                    catch (IOException) when (linked.IsCancellationRequested || !pipe.IsConnected)
+                    {
+                        // A pending WriteAsync/FlushAsync reports a broken owner pipe as
+                        // IOException on Windows. Cleanup must still destroy every device.
+                    }
+                }
+                finally
+                {
+                    DisposeControllers();
+                    _pipe = null;
+                    _sessionCancellation = null;
+                }
             }
+
+            // The owner session ended; exit instead of serving a second owner.
+            return;
         }
     }
 

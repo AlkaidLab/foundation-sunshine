@@ -236,6 +236,9 @@ internal sealed class ControllerSession : IDisposable
         else
         {
             Interlocked.Exchange(ref _hapticsStreaming, 0);
+            // A stale sub-frame tail from the old stream must not splice into
+            // the first frame of the next stream.
+            _audioResidual = Array.Empty<byte>();
             EmitHaptics(ReadOnlySpan<byte>.Empty, 0, Protocol.HapticsFlags.StreamEnd);
         }
     }
