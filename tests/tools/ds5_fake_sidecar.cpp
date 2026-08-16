@@ -77,6 +77,9 @@ int main(int argc, char **argv) {
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + event_suffix;
   const auto continue_event = OpenEventW(SYNCHRONIZE, FALSE, continue_name.c_str());
   if (!continue_event) return 2;
+  // The test process opts this peer into emitting async feedback ahead of the
+  // attach reply, exercising the Core client's transaction multiplexing.
+  const auto interleave = GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr, 0) > 0;
   const auto crash_once_name = L"Local\\sunshine-ds5-test-crash-once-" + event_suffix;
   const auto crash_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                            crash_once_name.c_str());
@@ -108,6 +111,11 @@ int main(int argc, char **argv) {
     if (type == 1) {
       if (!reply(pipe, 2, request_id, std::vector<std::uint8_t>(4))) break;
     } else if (type == 3 && payload.size() == 4) {
+      if (interleave) {
+        std::vector<std::uint8_t> early(6);
+        early[0] = payload[0];
+        if (!reply(pipe, 101, 0, early)) break;
+      }
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
       if (!reply(pipe, 4, request_id, response)) break;

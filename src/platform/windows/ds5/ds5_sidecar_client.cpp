@@ -40,6 +40,8 @@ namespace platf::ds5 {
     constexpr std::uint16_t VERSION = 1;
     constexpr std::size_t HEADER_SIZE = 16;
     constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
+    // The sidecar protocol identifies devices with a single byte.
+    static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
 
     enum class message_e: std::uint16_t {
       hello = 1,
@@ -93,7 +95,13 @@ namespace platf::ds5 {
       p[3] = static_cast<std::uint8_t>(value >> 24);
     }
 
-    bool transfer_exact(HANDLE pipe, HANDLE stop_event, void *buffer, std::size_t size, bool write) {
+    // A data-plane write that cannot drain within this bound means the sidecar
+    // stopped reading (for example a blocked HIDMaestro call on its read loop);
+    // failing the write lets the caller bail out instead of freezing.
+    constexpr DWORD write_stall_timeout_ms = 5000;
+
+    bool transfer_exact(HANDLE pipe, HANDLE stop_event, void *buffer, std::size_t size, bool write,
+                        DWORD wait_timeout = INFINITE) {
       std::size_t offset = 0;
       while (offset < size) {
         if (WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) {
@@ -131,7 +139,7 @@ namespace platf::ds5 {
 #endif
           const std::array waits { overlapped.hEvent, stop_event };
           const auto wait_result = WaitForMultipleObjects(
-            static_cast<DWORD>(waits.size()), waits.data(), FALSE, INFINITE);
+            static_cast<DWORD>(waits.size()), waits.data(), FALSE, wait_timeout);
           if (wait_result == WAIT_OBJECT_0) {
             completed = GetOverlappedResult(pipe, &overlapped, &count, FALSE) != FALSE;
           }
@@ -159,7 +167,8 @@ namespace platf::ds5 {
 
     bool write_exact(HANDLE pipe, HANDLE stop_event, std::span<const std::uint8_t> source) {
       return transfer_exact(
-        pipe, stop_event, const_cast<std::uint8_t *>(source.data()), source.size(), true);
+        pipe, stop_event, const_cast<std::uint8_t *>(source.data()), source.size(), true,
+        write_stall_timeout_ms);
     }
 
 #ifndef SUNSHINE_DS5_SIDECAR_TEST_HOOK
@@ -287,7 +296,17 @@ namespace platf::ds5 {
       write_u32(frame.data() + 12, request_id);
       std::copy(payload.begin(), payload.end(), frame.begin() + HEADER_SIZE);
       std::lock_guard lock(write_mutex);
-      return !stopping && pipe != INVALID_HANDLE_VALUE && write_exact(pipe, stop_event, frame);
+      if (stopping || pipe == INVALID_HANDLE_VALUE) {
+        return false;
+      }
+      if (write_exact(pipe, stop_event, frame)) {
+        return true;
+      }
+      // The write stalled or the pipe broke: cancel the reader's pending read
+      // so read_loop's recovery path tears the transport down, instead of
+      // letting later senders block on a pipe that will never drain.
+      CancelIoEx(pipe, nullptr);
+      return false;
     }
 
     bool receive(message_t &message) {
@@ -306,22 +325,81 @@ namespace platf::ds5 {
       return read_exact(pipe, stop_event, message.payload);
     }
 
+    void dispatch(message_t &message) {
+      const auto &p = message.payload;
+      const auto owned_index = global_index.load();
+      switch (message.type) {
+        case message_e::rumble:
+          if (p.size() == 6 && p[0] == owned_index) {
+            feedback_queue->raise(gamepad_feedback_msg_t::make_rumble(
+              p[1], read_u16(p.data() + 2), read_u16(p.data() + 4)));
+          }
+          break;
+        case message_e::adaptive_triggers:
+          if (p.size() == 26 && p[0] == owned_index) {
+            std::array<std::uint8_t, 10> left, right;
+            std::copy_n(p.data() + 6, 10, left.begin());
+            std::copy_n(p.data() + 16, 10, right.begin());
+            feedback_queue->raise(gamepad_feedback_msg_t::make_adaptive_triggers(
+              p[1], p[2], p[3], p[4], left, right));
+          }
+          break;
+        case message_e::led:
+          if (p.size() == 5 && p[0] == owned_index) {
+            feedback_queue->raise(gamepad_feedback_msg_t::make_rgb_led(p[1], p[2], p[3], p[4]));
+          }
+          break;
+        case message_e::haptics_pcm:
+          if (p.size() >= 24 && p[0] == owned_index) {
+            const auto frames = read_u16(p.data() + 4);
+            const auto pcm_size = static_cast<std::size_t>(frames) * 4;
+            if (p[3] == 2 && p[6] == 16 && read_u32(p.data() + 20) == 48000 &&
+                frames <= 240 && p.size() == 24 + pcm_size) {
+              feedback_queue->raise(gamepad_feedback_msg_t::make_ds5_haptics_pcm(
+                p[1], p[2], frames, read_u32(p.data() + 8), read_u64(p.data() + 12),
+                p.data() + 24, pcm_size));
+            }
+          }
+          break;
+        case message_e::error:
+          BOOST_LOG(warning) << "DualSense sidecar reported an asynchronous error"sv;
+          break;
+        default:
+          break;
+      }
+    }
+
     bool transact(message_e request_type, std::span<const std::uint8_t> payload,
                   message_e reply_type, message_t &reply) {
       const auto request_id = next_request_id++;
-      if (!send(request_type, request_id, payload) || !receive(reply)) {
+      if (!send(request_type, request_id, payload)) {
         return false;
       }
-      if (reply.type == message_e::error) {
-        std::string reason;
-        if (reply.payload.size() >= 8) {
-          const auto length = std::min<std::size_t>(read_u32(reply.payload.data() + 4), reply.payload.size() - 8);
-          reason.assign(reinterpret_cast<const char *>(reply.payload.data() + 8), length);
+      while (!stopping) {
+        // Rumble, LEDs and adaptive triggers share the control channel and are
+        // emitted from a different sidecar thread, so they can legitimately
+        // arrive ahead of the reply. Dispatch them instead of misreading the
+        // first message as the reply.
+        message_t message;
+        if (!receive(message)) {
+          return false;
         }
-        BOOST_LOG(error) << "DualSense sidecar rejected request: "sv << reason;
-        return false;
+        if (message.request_id == request_id && message.type == reply_type) {
+          reply = std::move(message);
+          return true;
+        }
+        if (message.type == message_e::error && message.request_id == request_id) {
+          std::string reason;
+          if (message.payload.size() >= 8) {
+            const auto length = std::min<std::size_t>(read_u32(message.payload.data() + 4), message.payload.size() - 8);
+            reason.assign(reinterpret_cast<const char *>(message.payload.data() + 8), length);
+          }
+          BOOST_LOG(error) << "DualSense sidecar rejected request: "sv << reason;
+          return false;
+        }
+        dispatch(message);
       }
-      return reply.type == reply_type && reply.request_id == request_id;
+      return false;
     }
 
     bool launch_and_connect() {
@@ -417,6 +495,9 @@ namespace platf::ds5 {
         static_cast<std::uint8_t>(audio_haptics ? 1 : 0),
         0,
       };
+      // Claim ownership before the transaction so feedback interleaved ahead
+      // of the attach reply is routed to the queue instead of dropped.
+      global_index = id.globalIndex;
       if (!transact(message_e::attach, attach_payload, message_e::attach_reply, reply) ||
           reply.payload.size() != 8 || reply.payload[0] != attach_payload[0]) {
         return false;
@@ -426,7 +507,6 @@ namespace platf::ds5 {
         return false;
       }
 
-      global_index = id.globalIndex;
       client_index = id.clientRelativeIndex;
       audio_haptics_requested = audio_haptics;
       online = true;
@@ -477,47 +557,7 @@ namespace platf::ds5 {
       while (!stopping) {
         message_t message;
         while (!stopping && receive(message)) {
-          const auto &p = message.payload;
-          const auto owned_index = global_index.load();
-          switch (message.type) {
-            case message_e::rumble:
-              if (p.size() == 6 && p[0] == owned_index) {
-                feedback_queue->raise(gamepad_feedback_msg_t::make_rumble(
-                  p[1], read_u16(p.data() + 2), read_u16(p.data() + 4)));
-              }
-              break;
-            case message_e::adaptive_triggers:
-              if (p.size() == 26 && p[0] == owned_index) {
-                std::array<std::uint8_t, 10> left, right;
-                std::copy_n(p.data() + 6, 10, left.begin());
-                std::copy_n(p.data() + 16, 10, right.begin());
-                feedback_queue->raise(gamepad_feedback_msg_t::make_adaptive_triggers(
-                  p[1], p[2], p[3], p[4], left, right));
-              }
-              break;
-            case message_e::led:
-              if (p.size() == 5 && p[0] == owned_index) {
-                feedback_queue->raise(gamepad_feedback_msg_t::make_rgb_led(p[1], p[2], p[3], p[4]));
-              }
-              break;
-            case message_e::haptics_pcm:
-              if (p.size() >= 24 && p[0] == owned_index) {
-                const auto frames = read_u16(p.data() + 4);
-                const auto pcm_size = static_cast<std::size_t>(frames) * 4;
-                if (p[3] == 2 && p[6] == 16 && read_u32(p.data() + 20) == 48000 &&
-                    frames <= 240 && p.size() == 24 + pcm_size) {
-                  feedback_queue->raise(gamepad_feedback_msg_t::make_ds5_haptics_pcm(
-                    p[1], p[2], frames, read_u32(p.data() + 8), read_u64(p.data() + 12),
-                    p.data() + 24, pcm_size));
-                }
-              }
-              break;
-            case message_e::error:
-              BOOST_LOG(warning) << "DualSense sidecar reported an asynchronous error"sv;
-              break;
-            default:
-              break;
-          }
+          dispatch(message);
         }
         online = false;
         if (stopping) {

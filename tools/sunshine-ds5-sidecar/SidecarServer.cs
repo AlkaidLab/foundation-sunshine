@@ -10,6 +10,7 @@ internal sealed class SidecarServer : IAsyncDisposable
     private readonly string _pipeName;
     private readonly HMContext _context = new();
     private readonly Dictionary<byte, ControllerSession> _controllers = new();
+    private readonly bool _authoredHapticsAvailable;
     private readonly Channel<Protocol.Message> _controlOutgoing;
     private readonly Channel<Protocol.Message> _realtimeOutgoing;
     private readonly SemaphoreSlim _outgoingSignal = new(0, 1);
@@ -20,6 +21,8 @@ internal sealed class SidecarServer : IAsyncDisposable
     {
         _pipeName = pipeName;
         _context.LoadDefaultProfiles();
+        _authoredHapticsAvailable = _context.GetProfile("dualsense-composite") is not null &&
+                                    HMContext.IsUsbipBackendAvailable;
         _controlOutgoing = Channel.CreateUnbounded<Protocol.Message>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -35,61 +38,76 @@ internal sealed class SidecarServer : IAsyncDisposable
 
     internal async Task RunAsync(CancellationToken stoppingToken)
     {
-        await using var pipe = new NamedPipeServerStream(
-            _pipeName,
-            PipeDirection.InOut,
-            1,
-            PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.WriteThrough |
-            PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance,
-            64 * 1024,
-            64 * 1024);
-        _pipe = pipe;
-        await pipe.WaitForConnectionAsync(stoppingToken);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        _sessionCancellation = linked;
-        var writer = WriteLoopAsync(pipe, linked.Token);
-        try
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await ReadLoopAsync(pipe, linked.Token);
-        }
-        catch (EndOfStreamException)
-        {
-            // The owning Sunshine process disconnected. The sidecar exits after
-            // destroying every device instead of becoming an orphan service.
-        }
-        catch (IOException) when (!pipe.IsConnected)
-        {
-            // Windows may surface a broken owner pipe as ERROR_BROKEN_PIPE or
-            // ERROR_NO_DATA instead of a zero-byte read. Treat both as EOF.
-        }
-        finally
-        {
+            await using var pipe = new NamedPipeServerStream(
+                _pipeName,
+                PipeDirection.InOut,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.WriteThrough |
+                PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance,
+                64 * 1024,
+                64 * 1024);
+            _pipe = pipe;
+            await pipe.WaitForConnectionAsync(stoppingToken);
+            if (!OwnerVerification.ClientIsElevated(pipe))
+            {
+                // Core does not retry a failed launch within a session, so a
+                // rejected client must not burn the sidecar: drop the connection
+                // and keep waiting for the real owner.
+                Console.Error.WriteLine("Rejected a non-elevated DualSense sidecar pipe client");
+                _pipe = null;
+                continue;
+            }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            _sessionCancellation = linked;
+            var writer = WriteLoopAsync(pipe, linked.Token);
             try
             {
-                linked.Cancel();
-                _controlOutgoing.Writer.TryComplete();
-                _realtimeOutgoing.Writer.TryComplete();
-                try
-                {
-                    await writer;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Expected when the owner or host cancellation stops the writer.
-                }
-                catch (IOException) when (linked.IsCancellationRequested || !pipe.IsConnected)
-                {
-                    // A pending WriteAsync/FlushAsync reports a broken owner pipe as
-                    // IOException on Windows. Cleanup must still destroy every device.
-                }
+                await ReadLoopAsync(pipe, linked.Token);
+            }
+            catch (EndOfStreamException)
+            {
+                // The owning Sunshine process disconnected. The sidecar exits after
+                // destroying every device instead of becoming an orphan service.
+            }
+            catch (IOException) when (!pipe.IsConnected)
+            {
+                // Windows may surface a broken owner pipe as ERROR_BROKEN_PIPE or
+                // ERROR_NO_DATA instead of a zero-byte read. Treat both as EOF.
             }
             finally
             {
-                DisposeControllers();
-                _pipe = null;
-                _sessionCancellation = null;
+                try
+                {
+                    linked.Cancel();
+                    _controlOutgoing.Writer.TryComplete();
+                    _realtimeOutgoing.Writer.TryComplete();
+                    try
+                    {
+                        await writer;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when the owner or host cancellation stops the writer.
+                    }
+                    catch (IOException) when (linked.IsCancellationRequested || !pipe.IsConnected)
+                    {
+                        // A pending WriteAsync/FlushAsync reports a broken owner pipe as
+                        // IOException on Windows. Cleanup must still destroy every device.
+                    }
+                }
+                finally
+                {
+                    DisposeControllers();
+                    _pipe = null;
+                    _sessionCancellation = null;
+                }
             }
+
+            // The owner session ended; exit instead of serving a second owner.
+            return;
         }
     }
 
@@ -121,12 +139,14 @@ internal sealed class SidecarServer : IAsyncDisposable
                             header.RequestId,
                             Protocol.UInt32((uint)(Protocol.Capability.Hid |
                                                    Protocol.Capability.Output |
-                                                   Protocol.Capability.AudioFourChannel |
-                                                   Protocol.Capability.AuthoredHapticsPcm |
                                                    Protocol.Capability.Touchpad |
                                                    Protocol.Capability.Motion |
                                                    Protocol.Capability.Battery |
-                                                   Protocol.Capability.AdaptiveTriggers))));
+                                                   Protocol.Capability.AdaptiveTriggers |
+                                                   (_authoredHapticsAvailable
+                                                       ? Protocol.Capability.AudioFourChannel |
+                                                         Protocol.Capability.AuthoredHapticsPcm
+                                                       : 0)))));
                         break;
                     case Protocol.MessageType.Attach:
                         Attach(header.RequestId, payload);
