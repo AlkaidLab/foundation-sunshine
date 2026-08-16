@@ -4,8 +4,11 @@
  */
 #include "authored_ir.h"
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
+#include <limits>
 
 #include <moonlight_haptics/authored_haptics.h>
 
@@ -14,8 +17,10 @@ namespace haptics {
     constexpr std::uint8_t source_stream_start = 0x01;
     constexpr std::uint8_t source_stream_end = 0x02;
     constexpr std::uint8_t source_discontinuity = 0x04;
-    constexpr std::uint8_t ir_stream_end = 0x04;
-    constexpr std::uint8_t ir_silent = 0x08;
+    constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
+    constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
+    constexpr float legacy_noise_gate = 0.015f;
+    constexpr std::uint16_t legacy_change_threshold = 512;
 
     void
     write_u16(std::uint8_t *p, std::uint16_t value) {
@@ -41,6 +46,23 @@ namespace haptics {
     write_float(std::uint8_t *p, float value) {
       write_u32(p, std::bit_cast<std::uint32_t>(value));
     }
+
+    float
+    gated(float value) {
+      return std::clamp((value - legacy_noise_gate) / (1.0f - legacy_noise_gate), 0.0f, 1.0f);
+    }
+
+    std::uint16_t
+    rumble_u16(float value) {
+      return static_cast<std::uint16_t>(std::lround(
+        std::clamp(value, 0.0f, 1.0f) * std::numeric_limits<std::uint16_t>::max()));
+    }
+
+    bool
+    materially_changed(std::uint16_t previous, std::uint16_t current) {
+      const auto delta = previous > current ? previous - current : current - previous;
+      return delta >= legacy_change_threshold || (previous == 0) != (current == 0);
+    }
   }  // namespace
 
   void
@@ -64,10 +86,9 @@ namespace haptics {
     return _engine != nullptr;
   }
 
-  std::optional<authored_ir_v2_wire_t>
-  authored_ir_session_t::process(std::uint16_t controller_id, std::uint8_t source_flags,
-                                 std::uint16_t frame_count, std::uint32_t sequence,
-                                 std::uint64_t presentation_time_us,
+  std::optional<authored_frame_t>
+  authored_ir_session_t::analyze(std::uint8_t source_flags, std::uint16_t frame_count,
+                                 std::uint32_t sequence, std::uint64_t presentation_time_us,
                                  std::span<const std::uint8_t> pcm) {
     const auto expected_pcm_size = static_cast<std::size_t>(frame_count) * 4;
     if (!_engine || frame_count > 240 || pcm.size() != expected_pcm_size) {
@@ -97,24 +118,51 @@ namespace haptics {
       return std::nullopt;
     }
 
-    authored_ir_v2_wire_t wire {};
-    wire[0] = 2;
-    write_u16(wire.data() + 2, authored_ir_v2_wire_size);
-    write_u16(wire.data() + 4, controller_id);
-    write_u32(wire.data() + 8, sequence);
-    write_u64(wire.data() + 12, presentation_time_us);
-    write_u32(wire.data() + 20, frame_count);
     if (output_count == 0 && (source_flags & source_stream_end)) {
-      // An empty stream has no analyzable frame, but the transport must still
-      // stop the client's actuator and clear its renderer state.
-      wire[1] = ir_stream_end | ir_silent;
-      return wire;
+      return authored_frame_t {
+        .flags = AH_AUTHORED_FRAME_STREAM_END | AH_AUTHORED_FRAME_SILENT,
+        .timestamp_us = presentation_time_us,
+        .source_sequence_number = sequence,
+        .source_frame_count = frame_count,
+      };
     }
     if (output_count != 1) {
       return std::nullopt;
     }
 
     const auto &frame = output[0];
+    authored_frame_t result {
+      .flags = frame.flags,
+      .timestamp_us = frame.timestamp_us,
+      .source_sequence_number = frame.source_sequence_number,
+      .source_frame_count = frame.source_frame_count,
+      .lane_correlation = frame.lane_correlation,
+    };
+    for (std::size_t lane = 0; lane < result.lanes.size(); ++lane) {
+      result.lanes[lane] = {
+        .rms_amplitude = frame.lanes[lane].rms_amplitude,
+        .peak_amplitude = frame.lanes[lane].peak_amplitude,
+        .transient_strength = frame.lanes[lane].transient_strength,
+        .low_band_ratio = frame.lanes[lane].low_band_ratio,
+        .zero_crossing_rate_hz = frame.lanes[lane].zero_crossing_rate_hz,
+      };
+    }
+    return result;
+  }
+
+  std::optional<authored_ir_v2_wire_t>
+  authored_ir_session_t::process(std::uint16_t controller_id, std::uint8_t source_flags,
+                                 std::uint16_t frame_count, std::uint32_t sequence,
+                                 std::uint64_t presentation_time_us,
+                                 std::span<const std::uint8_t> pcm) {
+    const auto analyzed = analyze(source_flags, frame_count, sequence, presentation_time_us, pcm);
+    if (!analyzed) return std::nullopt;
+
+    authored_ir_v2_wire_t wire {};
+    wire[0] = 2;
+    write_u16(wire.data() + 2, authored_ir_v2_wire_size);
+    write_u16(wire.data() + 4, controller_id);
+    const auto &frame = *analyzed;
     if (frame.flags & AH_AUTHORED_FRAME_DISCONTINUITY) wire[1] |= 0x01;
     if (frame.flags & AH_AUTHORED_FRAME_PARTIAL) wire[1] |= 0x02;
     if (frame.flags & AH_AUTHORED_FRAME_STREAM_END) wire[1] |= 0x04;
@@ -134,5 +182,87 @@ namespace haptics {
     write_float(wire.data() + 64, frame.lane_correlation);
     write_u32(wire.data() + 68, 0);
     return wire;
+  }
+
+  bool
+  legacy_rumble_session_t::ready() const noexcept {
+    return _analyzer.ready();
+  }
+
+  std::optional<legacy_rumble_t>
+  legacy_rumble_session_t::process(std::uint16_t controller_id, std::uint8_t source_flags,
+                                   std::uint16_t frame_count, std::uint32_t sequence,
+                                   std::uint64_t presentation_time_us,
+                                   std::span<const std::uint8_t> pcm,
+                                   std::chrono::steady_clock::time_point now) {
+    const auto frame = _analyzer.analyze(
+      source_flags, frame_count, sequence, presentation_time_us, pcm);
+    if (!frame) return std::nullopt;
+
+    _controller_id = controller_id;
+    _last_input = now;
+    _have_input = true;
+
+    const bool force_emit = (source_flags & (source_stream_start | source_discontinuity)) != 0;
+    if (force_emit) {
+      _smoothed_low = 0.0f;
+      _smoothed_high = 0.0f;
+      _last_emit = {};
+    }
+
+    const bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;
+    float low_target = 0.0f;
+    float high_target = 0.0f;
+    if ((frame->flags & AH_AUTHORED_FRAME_SILENT) == 0) {
+      for (const auto &lane : frame->lanes) {
+        const auto low = lane.rms_amplitude * std::sqrt(std::clamp(lane.low_band_ratio, 0.0f, 1.0f));
+        const auto high_band = lane.rms_amplitude * std::sqrt(std::clamp(1.0f - lane.low_band_ratio, 0.0f, 1.0f));
+        const auto transient = lane.peak_amplitude * lane.transient_strength;
+        low_target = std::max(low_target, gated(low * 1.35f));
+        high_target = std::max(high_target, gated(std::max(high_band * 1.45f, transient * 1.15f)));
+      }
+    }
+
+    // Time-based attack/release prevents the mapping from depending on whether
+    // the sidecar happens to deliver 5 ms or larger PCM chunks.
+    const auto duration_seconds = static_cast<float>(frame->source_frame_count) / 48000.0f;
+    const auto smooth = [duration_seconds](float previous, float target) {
+      const auto tau = target > previous ? 0.010f : 0.035f;
+      const auto alpha = 1.0f - std::exp(-duration_seconds / tau);
+      return previous + (target - previous) * alpha;
+    };
+    _smoothed_low = must_stop ? 0.0f : smooth(_smoothed_low, low_target);
+    _smoothed_high = must_stop ? 0.0f : smooth(_smoothed_high, high_target);
+
+    const auto low = rumble_u16(_smoothed_low);
+    const auto high = rumble_u16(_smoothed_high);
+    if (!must_stop && _last_emit != std::chrono::steady_clock::time_point {} &&
+        now - _last_emit < legacy_emit_period) {
+      return std::nullopt;
+    }
+    if (!must_stop && !force_emit &&
+        !materially_changed(_last_low, low) && !materially_changed(_last_high, high)) {
+      return std::nullopt;
+    }
+
+    _last_emit = now;
+    _last_low = low;
+    _last_high = high;
+    return legacy_rumble_t {controller_id, low, high};
+  }
+
+  std::optional<legacy_rumble_t>
+  legacy_rumble_session_t::poll(std::chrono::steady_clock::time_point now) {
+    if (!_have_input || now - _last_input < legacy_watchdog_timeout ||
+        (_last_low == 0 && _last_high == 0)) {
+      return std::nullopt;
+    }
+    _have_input = false;
+    _smoothed_low = 0.0f;
+    _smoothed_high = 0.0f;
+    _last_low = 0;
+    _last_high = 0;
+    _last_emit = now;
+    return legacy_rumble_t {_controller_id, 0, 0};
   }
 }  // namespace haptics
