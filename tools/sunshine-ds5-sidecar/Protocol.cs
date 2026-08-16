@@ -19,6 +19,7 @@ internal static class Protocol
         Touchpad = 1u << 4,
         Motion = 1u << 5,
         Battery = 1u << 6,
+        AdaptiveTriggers = 1u << 7,
     }
 
     internal enum MessageType : ushort

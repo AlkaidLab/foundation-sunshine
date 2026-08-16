@@ -8,6 +8,7 @@ internal static class ProtocolSelfTest
 {
     internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath)
     {
+        VerifyAdaptiveTriggerEncoding();
         var pipeName = $"sunshine-ds5-self-test-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var server = new SidecarServer(pipeName);
@@ -31,6 +32,7 @@ internal static class ProtocolSelfTest
             "attach reply");
         var capabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(attach.Payload.AsSpan(4));
         Require(capabilities.HasFlag(Protocol.Capability.Hid), "HID capability");
+        Require(capabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "adaptive trigger capability");
         Require(!composite || capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
             "composite four-channel audio capability");
 
@@ -126,6 +128,7 @@ internal static class ProtocolSelfTest
             touch = true,
             motion = true,
             battery = true,
+            adaptive_triggers = true,
             haptics_pcm = capturedHapticsBytes != 0,
             haptics_bytes = capturedHapticsBytes,
             detached = true,
@@ -191,6 +194,40 @@ internal static class ProtocolSelfTest
 
     private static void WriteFloat(Span<byte> destination, float value) =>
         BinaryPrimitives.WriteInt32LittleEndian(destination, BitConverter.SingleToInt32Bits(value));
+
+    private static void VerifyAdaptiveTriggerEncoding()
+    {
+        var state = new AdaptiveTriggerState();
+        var left = Enumerable.Range(0x20, AdaptiveTriggerState.EffectSize).Select(value => (byte)value).ToArray();
+        var right = Enumerable.Range(0x40, AdaptiveTriggerState.EffectSize).Select(value => (byte)value).ToArray();
+
+        Require(state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
+                                3, 2, out var leftMessage),
+            "left adaptive trigger update");
+        Require(leftMessage.Payload.Length == 26 &&
+                leftMessage.Payload[0] == 3 && leftMessage.Payload[1] == 2 &&
+                leftMessage.Payload[2] == AdaptiveTriggerState.LeftFlag &&
+                leftMessage.Payload[3] == left[0] && leftMessage.Payload[4] == 0 &&
+                leftMessage.Payload.AsSpan(6, 10).SequenceEqual(left.AsSpan(1, 10)),
+            "left adaptive trigger encoding");
+
+        Require(!state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
+                                 3, 2, out _),
+            "adaptive trigger duplicate suppression");
+
+        Require(state.TryUpdate(new Dictionary<string, object> { ["rightTriggerEffect"] = right },
+                                3, 2, out var rightMessage) &&
+                rightMessage.Payload[2] == AdaptiveTriggerState.RightFlag &&
+                rightMessage.Payload[3] == left[0] && rightMessage.Payload[4] == right[0] &&
+                rightMessage.Payload.AsSpan(16, 10).SequenceEqual(right.AsSpan(1, 10)),
+            "right adaptive trigger encoding");
+
+        Require(state.TryReset(3, 2, out var resetMessage) &&
+                resetMessage.Payload[2] == (AdaptiveTriggerState.LeftFlag | AdaptiveTriggerState.RightFlag) &&
+                resetMessage.Payload.AsSpan(3).IndexOfAnyExcept((byte)0) == -1,
+            "adaptive trigger reset");
+        Require(!state.TryReset(3, 2, out _), "adaptive trigger reset duplicate suppression");
+    }
 
     private static void Require(bool condition, string operation)
     {

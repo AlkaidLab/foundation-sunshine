@@ -125,7 +125,8 @@ internal sealed class SidecarServer : IAsyncDisposable
                                                    Protocol.Capability.AuthoredHapticsPcm |
                                                    Protocol.Capability.Touchpad |
                                                    Protocol.Capability.Motion |
-                                                   Protocol.Capability.Battery))));
+                                                   Protocol.Capability.Battery |
+                                                   Protocol.Capability.AdaptiveTriggers))));
                         break;
                     case Protocol.MessageType.Attach:
                         Attach(header.RequestId, payload);
@@ -203,6 +204,7 @@ internal sealed class SidecarServer : IAsyncDisposable
                    Protocol.Capability.Touchpad |
                    Protocol.Capability.Motion |
                    Protocol.Capability.Battery |
+                   Protocol.Capability.AdaptiveTriggers |
                    (session.HasAudio
                        ? Protocol.Capability.AudioFourChannel | Protocol.Capability.AuthoredHapticsPcm
                        : 0)));
