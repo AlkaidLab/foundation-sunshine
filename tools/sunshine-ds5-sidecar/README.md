@@ -18,6 +18,8 @@ dotnet Sunshine.Ds5Sidecar.dll --probe
 ```
 
 The production process must be launched elevated and placed in the Sunshine
-Job Object. Disconnecting the owning pipe disposes every device created by
+Job Object. The pipe accepts a single connection from an elevated client of
+the creating user; non-elevated callers are rejected at connect time.
+Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.

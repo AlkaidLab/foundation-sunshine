@@ -42,6 +42,7 @@ internal sealed class ControllerSession : IDisposable
     private int _hapticsStreaming;
     private int _hapticsNeedsStart;
     private int _disposed;
+    private byte[] _audioResidual = Array.Empty<byte>();
 
     internal ControllerSession(byte deviceId,
                                byte clientControllerNumber,
@@ -224,17 +225,41 @@ internal sealed class ControllerSession : IDisposable
 
     private void OnAudioStreamingChanged(object? sender, bool streaming)
     {
-        Interlocked.Exchange(ref _hapticsStreaming, streaming ? 1 : 0);
         if (streaming)
+        {
+            // Arm the start marker before publishing the streaming flag, or a
+            // frame racing this callback could be emitted mid-stream without
+            // the StreamStart marker the client resets on.
             Interlocked.Exchange(ref _hapticsNeedsStart, 1);
+            Interlocked.Exchange(ref _hapticsStreaming, 1);
+        }
         else
+        {
+            Interlocked.Exchange(ref _hapticsStreaming, 0);
             EmitHaptics(ReadOnlySpan<byte>.Empty, 0, Protocol.HapticsFlags.StreamEnd);
+        }
     }
 
     private void OnAudioFrames(object? sender, ReadOnlyMemory<byte> pcm)
     {
-        var source = pcm.Span;
+        // Only the USB audio output thread raises this callback, so the
+        // residual carry is not guarded by a lock.
+        byte[] combined;
+        if (_audioResidual.Length == 0)
+        {
+            combined = pcm.ToArray();
+        }
+        else
+        {
+            combined = new byte[_audioResidual.Length + pcm.Length];
+            _audioResidual.AsSpan().CopyTo(combined);
+            pcm.Span.CopyTo(combined.AsSpan(_audioResidual.Length));
+        }
         var sourceFrameBytes = AudioInputChannels * BytesPerSample;
+        var usableBytes = combined.Length - combined.Length % sourceFrameBytes;
+        _audioResidual = usableBytes == combined.Length ? Array.Empty<byte>() : combined[usableBytes..];
+
+        var source = combined.AsSpan(0, usableBytes);
         var frameCount = source.Length / sourceFrameBytes;
         var offsetFrames = 0;
         while (offsetFrames < frameCount)

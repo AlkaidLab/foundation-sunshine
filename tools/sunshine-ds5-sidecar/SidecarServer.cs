@@ -10,6 +10,7 @@ internal sealed class SidecarServer : IAsyncDisposable
     private readonly string _pipeName;
     private readonly HMContext _context = new();
     private readonly Dictionary<byte, ControllerSession> _controllers = new();
+    private readonly bool _authoredHapticsAvailable;
     private readonly Channel<Protocol.Message> _controlOutgoing;
     private readonly Channel<Protocol.Message> _realtimeOutgoing;
     private readonly SemaphoreSlim _outgoingSignal = new(0, 1);
@@ -20,6 +21,8 @@ internal sealed class SidecarServer : IAsyncDisposable
     {
         _pipeName = pipeName;
         _context.LoadDefaultProfiles();
+        _authoredHapticsAvailable = _context.GetProfile("dualsense-composite") is not null &&
+                                    HMContext.IsUsbipBackendAvailable;
         _controlOutgoing = Channel.CreateUnbounded<Protocol.Message>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -46,6 +49,11 @@ internal sealed class SidecarServer : IAsyncDisposable
             64 * 1024);
         _pipe = pipe;
         await pipe.WaitForConnectionAsync(stoppingToken);
+        if (!OwnerVerification.ClientIsElevated(pipe))
+        {
+            Console.Error.WriteLine("Rejected a non-elevated DualSense sidecar pipe client");
+            return;
+        }
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         _sessionCancellation = linked;
         var writer = WriteLoopAsync(pipe, linked.Token);
@@ -121,12 +129,14 @@ internal sealed class SidecarServer : IAsyncDisposable
                             header.RequestId,
                             Protocol.UInt32((uint)(Protocol.Capability.Hid |
                                                    Protocol.Capability.Output |
-                                                   Protocol.Capability.AudioFourChannel |
-                                                   Protocol.Capability.AuthoredHapticsPcm |
                                                    Protocol.Capability.Touchpad |
                                                    Protocol.Capability.Motion |
                                                    Protocol.Capability.Battery |
-                                                   Protocol.Capability.AdaptiveTriggers))));
+                                                   Protocol.Capability.AdaptiveTriggers |
+                                                   (_authoredHapticsAvailable
+                                                       ? Protocol.Capability.AudioFourChannel |
+                                                         Protocol.Capability.AuthoredHapticsPcm
+                                                       : 0))));
                         break;
                     case Protocol.MessageType.Attach:
                         Attach(header.RequestId, payload);
