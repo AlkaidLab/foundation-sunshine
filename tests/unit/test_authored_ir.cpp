@@ -110,8 +110,7 @@ TEST(AuthoredDualSenseIr, LegacyFallbackProducesAndStopsRumble) {
   EXPECT_FALSE(session.process(2, 0, 240, 2, 5000, pcm, start + 5ms).has_value());
 
   // Once the 20 ms emit period has elapsed a louder chunk must come through,
-  // proving the suppression above was the rate limit rather than the change
-  // threshold.
+  // proving the suppression above was the rate limit.
   const auto louder = sine_pcm(100.0, 32000.0);
   const auto updated = session.process(2, 0, 240, 3, 25000, louder, start + 25ms);
   ASSERT_TRUE(updated.has_value());
@@ -128,6 +127,10 @@ TEST(AuthoredDualSenseIr, LegacyFallbackProducesAndStopsRumble) {
   ASSERT_TRUE(restarted_silent.has_value());
   EXPECT_EQ(restarted_silent->low_frequency, 0);
   EXPECT_EQ(restarted_silent->high_frequency, 0);
+
+  // Past the emit period again, held silence stays quiet instead of
+  // re-sending zero rumble at 50 Hz.
+  EXPECT_FALSE(session.process(2, 0, 240, 6, 60000, silence, start + 60ms).has_value());
 }
 
 TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {

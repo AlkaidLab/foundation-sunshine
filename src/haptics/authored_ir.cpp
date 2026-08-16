@@ -20,7 +20,6 @@ namespace haptics {
     constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_noise_gate = 0.015f;
-    constexpr std::uint16_t legacy_change_threshold = 512;
 
     void
     write_u16(std::uint8_t *p, std::uint16_t value) {
@@ -56,12 +55,6 @@ namespace haptics {
     rumble_u16(float value) {
       return static_cast<std::uint16_t>(std::lround(
         std::clamp(value, 0.0f, 1.0f) * std::numeric_limits<std::uint16_t>::max()));
-    }
-
-    bool
-    materially_changed(std::uint16_t previous, std::uint16_t current) {
-      const auto delta = previous > current ? previous - current : current - previous;
-      return delta >= legacy_change_threshold || (previous == 0) != (current == 0);
     }
   }  // namespace
 
@@ -214,6 +207,8 @@ namespace haptics {
     float low_target = 0.0f;
     float high_target = 0.0f;
     if ((frame->flags & AH_AUTHORED_FRAME_SILENT) == 0) {
+      // Trim gains compensate ERM motors' weak response to low drive levels;
+      // transients get less because peak amplitude already overshoots RMS.
       for (const auto &lane : frame->lanes) {
         const auto low = lane.rms_amplitude * std::sqrt(std::clamp(lane.low_band_ratio, 0.0f, 1.0f));
         const auto high_band = lane.rms_amplitude * std::sqrt(std::clamp(1.0f - lane.low_band_ratio, 0.0f, 1.0f));
@@ -237,12 +232,12 @@ namespace haptics {
 
     const auto low = rumble_u16(_smoothed_low);
     const auto high = rumble_u16(_smoothed_high);
-    if (!must_stop && _last_emit != std::chrono::steady_clock::time_point {} &&
-        now - _last_emit < legacy_emit_period) {
-      return std::nullopt;
-    }
+    // The 20 ms rate limit is the only emission gate. Held silence additionally
+    // stays quiet instead of re-sending zero rumble at 50 Hz.
+    const bool silent_hold = low == 0 && high == 0 && _last_low == 0 && _last_high == 0;
     if (!must_stop && !force_emit &&
-        !materially_changed(_last_low, low) && !materially_changed(_last_high, high)) {
+        (silent_hold ||
+         (_last_emit != std::chrono::steady_clock::time_point {} && now - _last_emit < legacy_emit_period))) {
       return std::nullopt;
     }
 
