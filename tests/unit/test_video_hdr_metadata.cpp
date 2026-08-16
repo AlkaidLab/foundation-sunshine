@@ -804,6 +804,28 @@ TEST(HdrDynamicMetadata, VividStartupGateHoldsHlgUntilTheGuardConverges) {
   EXPECT_EQ(later.transition, gate_t::transition_e::none);
 }
 
+TEST(HdrDynamicMetadata, VividStartupGateAllowsAnalyzerColdStart) {
+  gate_t gate { HLG, HEVC, true };
+
+  const auto start = std::chrono::steady_clock::now();
+  auto invalid = stable_hlg_stats(1);
+  invalid.valid = false;
+
+  // A slow first analyzer readback must not force this session into permanent
+  // HLG fallback before the GPU has had a chance to produce valid samples.
+  EXPECT_EQ(gate.observe(invalid, start).decision, gate_t::decision_e::hold);
+  EXPECT_EQ(gate.observe(invalid, start + std::chrono::seconds { 1 }).decision,
+    gate_t::decision_e::hold);
+
+  EXPECT_EQ(gate.observe(stable_hlg_stats(2), start + std::chrono::seconds { 1 }).decision,
+    gate_t::decision_e::hold);
+  EXPECT_EQ(gate.observe(stable_hlg_stats(3), start + std::chrono::seconds { 1 }).decision,
+    gate_t::decision_e::hold);
+  const auto ready = gate.observe(stable_hlg_stats(4), start + std::chrono::seconds { 1 });
+  EXPECT_EQ(ready.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(ready.transition, gate_t::transition_e::ready);
+}
+
 TEST(HdrDynamicMetadata, VividStartupGateGivesUpAfterTheTimeout) {
   gate_t gate { HLG, HEVC, true };
 

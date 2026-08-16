@@ -684,11 +684,11 @@ namespace video::hdr_metadata {
 
     /**
      * How long a session waits for stable analyzer output before starting without
-     * dynamic metadata. Long enough for three independent GPU readbacks at any
-     * supported analysis cadence, short enough that a client waiting on the first
-     * frame reads it as startup rather than a hang.
+     * dynamic metadata. The analyzer can take several hundred milliseconds to
+     * warm up after a display or encoder reinitialization, so leave enough room
+     * for that cold-start path while still bounding the first-frame wait.
      */
-    static constexpr auto PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
+    static constexpr auto PREROLL_TIMEOUT = std::chrono::milliseconds { 1500 };
 
     vivid_startup_gate_t(
       const sunshine_colorspace_t &colorspace,
