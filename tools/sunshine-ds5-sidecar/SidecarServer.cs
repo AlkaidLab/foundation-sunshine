@@ -146,7 +146,7 @@ internal sealed class SidecarServer : IAsyncDisposable
                                                    (_authoredHapticsAvailable
                                                        ? Protocol.Capability.AudioFourChannel |
                                                          Protocol.Capability.AuthoredHapticsPcm
-                                                       : 0))));
+                                                       : 0)))));
                         break;
                     case Protocol.MessageType.Attach:
                         Attach(header.RequestId, payload);
