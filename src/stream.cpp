@@ -638,7 +638,10 @@ namespace stream {
 
       std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
       bool authored_haptics_init_failed = false;
-      std::unique_ptr<haptics::legacy_rumble_session_t> legacy_haptics;
+      // One fallback session per controller: smoothing, throttle and watchdog
+      // state must not bleed between pads, and the watchdog stop has to reach
+      // the pad that actually stopped sending PCM.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::legacy_rumble_session_t>> legacy_haptics;
       bool legacy_haptics_init_failed = false;
       std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> compatibility_rumble;
       std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> synthesized_haptics_rumble;
@@ -1437,28 +1440,28 @@ namespace stream {
         write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
       };
       if (!sends_raw_pcm && !sends_authored_ir) {
-        if (!session->control.legacy_haptics && !session->control.legacy_haptics_init_failed) {
-          auto legacy_haptics = std::make_unique<haptics::legacy_rumble_session_t>();
-          if (!legacy_haptics->ready()) {
-            session->control.legacy_haptics_init_failed = true;
-            BOOST_LOG(error) << "Unable to initialize legacy DualSense haptics fallback"sv;
+        if (!session->control.legacy_haptics_init_failed) {
+          auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
+          if (inserted) {
+            auto created = std::make_unique<haptics::legacy_rumble_session_t>();
+            if (!created->ready()) {
+              session->control.legacy_haptics.erase(controller_session);
+              session->control.legacy_haptics_init_failed = true;
+              BOOST_LOG(error) << "Unable to initialize legacy DualSense haptics fallback"sv;
+              return 0;
+            }
+            controller_session->second = std::move(created);
           }
-          else {
-            session->control.legacy_haptics = std::move(legacy_haptics);
+          const auto rumble = controller_session->second->process(
+            msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+            std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+          if (rumble) {
+            auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+              rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
+            return send_feedback_msg(session, legacy_msg, true);
           }
         }
-        if (!session->control.legacy_haptics) {
-          return 0;
-        }
-        const auto rumble = session->control.legacy_haptics->process(
-          msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
-          std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
-        if (!rumble) {
-          return 0;
-        }
-        auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
-          rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
-        return send_feedback_msg(session, legacy_msg, true);
+        return 0;
       }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
@@ -2333,10 +2336,10 @@ namespace stream {
               send_feedback_msg(session, *feedback_msg);
             }
 
-            if (session->control.legacy_haptics) {
-              if (const auto rumble = session->control.legacy_haptics->poll(now)) {
+            for (auto &[controller_id, controller_haptics] : session->control.legacy_haptics) {
+              if (const auto rumble = controller_haptics->poll(now)) {
                 auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
-                  rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
+                  controller_id, rumble->low_frequency, rumble->high_frequency);
                 send_feedback_msg(session, legacy_msg, true);
               }
             }

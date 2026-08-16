@@ -224,8 +224,9 @@ namespace haptics {
     }
 
     // Time-based attack/release prevents the mapping from depending on whether
-    // the sidecar happens to deliver 5 ms or larger PCM chunks.
-    const auto duration_seconds = static_cast<float>(frame->source_frame_count) / 48000.0f;
+    // the sidecar happens to deliver 5 ms or larger PCM chunks. A zero-frame
+    // chunk must not freeze the smoother at its previous value.
+    const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
     const auto smooth = [duration_seconds](float previous, float target) {
       const auto tau = target > previous ? 0.010f : 0.035f;
       const auto alpha = 1.0f - std::exp(-duration_seconds / tau);

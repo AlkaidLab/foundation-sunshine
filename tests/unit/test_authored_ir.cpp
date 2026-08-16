@@ -109,14 +109,22 @@ TEST(AuthoredDualSenseIr, LegacyFallbackProducesAndStopsRumble) {
   // to 50 Hz to avoid flooding clients and platform vibration APIs.
   EXPECT_FALSE(session.process(2, 0, 240, 2, 5000, pcm, start + 5ms).has_value());
 
+  // Once the 20 ms emit period has elapsed a louder chunk must come through,
+  // proving the suppression above was the rate limit rather than the change
+  // threshold.
+  const auto louder = sine_pcm(100.0, 32000.0);
+  const auto updated = session.process(2, 0, 240, 3, 25000, louder, start + 25ms);
+  ASSERT_TRUE(updated.has_value());
+  EXPECT_GT(updated->low_frequency, first->low_frequency);
+
   const std::span<const std::uint8_t> empty_pcm;
-  const auto stopped = session.process(2, 0x02, 0, 3, 10000, empty_pcm, start + 10ms);
+  const auto stopped = session.process(2, 0x02, 0, 4, 30000, empty_pcm, start + 30ms);
   ASSERT_TRUE(stopped.has_value());
   EXPECT_EQ(stopped->low_frequency, 0);
   EXPECT_EQ(stopped->high_frequency, 0);
 
   const std::vector<std::uint8_t> silence(240 * 4);
-  const auto restarted_silent = session.process(2, 0x01, 240, 4, 15000, silence, start + 15ms);
+  const auto restarted_silent = session.process(2, 0x01, 240, 5, 35000, silence, start + 35ms);
   ASSERT_TRUE(restarted_silent.has_value());
   EXPECT_EQ(restarted_silent->low_frequency, 0);
   EXPECT_EQ(restarted_silent->high_frequency, 0);
