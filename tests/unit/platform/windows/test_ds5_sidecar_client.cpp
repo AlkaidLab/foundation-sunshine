@@ -89,6 +89,41 @@ TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
   EXPECT_LT(elapsed, std::chrono::seconds(2));
 }
 
+TEST(Ds5SidecarClientTests, AttachSurvivesInterleavedAsyncFeedback) {
+  config_scope_t restore_config;
+  config::input.ds5_enabled = true;
+  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+
+  event_namespace_scope_t events(L"interleaved-feedback");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
+  handle_scope_t marker_event(CreateEventW(nullptr, FALSE, FALSE, marker_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(marker_event.handle, nullptr);
+  ASSERT_NE(SetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", L"1"), 0);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-interleave-test");
+  auto feedback_for_test = feedback;
+  platf::ds5::sidecar_client_t client;
+  // The fake peer emits an async rumble ahead of the attach reply. The
+  // transaction must dispatch it and still match the reply; before the
+  // multiplexing fix the rumble was misread as the reply and alloc failed.
+  EXPECT_EQ(client.alloc({ 0, 0 }, std::move(feedback), false), 0);
+  SetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr);
+  const auto early = feedback_for_test->pop(std::chrono::seconds(2));
+  ASSERT_TRUE(early);
+  EXPECT_EQ(early->type, platf::gamepad_feedback_e::rumble);
+
+  ASSERT_TRUE(SetEvent(continue_event.handle));
+  ASSERT_EQ(WaitForSingleObject(marker_event.handle, 2000), WAIT_OBJECT_0);
+  const auto marker = feedback_for_test->pop(std::chrono::seconds(2));
+  ASSERT_TRUE(marker);
+  EXPECT_EQ(marker->type, platf::gamepad_feedback_e::rumble);
+  client.free(0);
+}
+
 TEST(Ds5SidecarClientTests, RejectsCompositeAttachWithoutAudioEndpoint) {
   config_scope_t restore_config;
   config::input.ds5_enabled = true;

@@ -358,6 +358,8 @@ shutdown(owner_token)
 - `attach`、`update_input`、`subscribe_output` 和 `get_status` 只接受当前连接 owner；Core 持有 owner token，GUI 测试使用独立、低权限 test token。
 - Sidecar 拒绝非所有者 detach 和 shutdown；连接断开会清理该 owner 创建的全部设备。
 - 输出报告和音频数据使用有界队列；控制消息不得被高频数据饿死。
+- 已实现的 owner 校验（v1）：管道 ACL 限定当前用户 + Sidecar 在连接建立时校验客户端进程的提权状态，非提权客户端拒绝并退出；同用户非提权进程即使抢到单实例管道也无法驱动 elevated Sidecar。GUI 低权限 test token 仍属后续工作。
+- 已实现的停滞保护（v1）：Core 对数据面写操作设置 5 秒停滞上限；写停滞会取消 reader 的挂起读取并进入既有的单次恢复路径，sidecar 读循环阻塞不再冻结 Sunshine 输入线程。
 
 高频四声道音频数据不应经 Tauri 或 JSON 传输。后续实现使用共享内存环形缓冲区或专用本地数据通道；Named Pipe 只负责控制和状态。
 
@@ -492,7 +494,7 @@ Core 维护引用计数，按 session ID 管理多客户端。第一阶段可以
 3. 安装器只操作固定组件根目录，删除前解析并验证绝对路径仍位于该根目录。
 4. Sidecar 启动路径必须来自已验证 active manifest。
 5. 不把管理员权限传给常驻 Sidecar；提权 helper 只执行单个、结构化的驱动操作。
-6. Named Pipe ACL 仅允许当前用户、Sunshine 服务身份和管理员访问。
+6. Named Pipe ACL 仅允许当前用户、Sunshine 服务身份和管理员访问；Sidecar 在连接建立时校验客户端进程已提权，拒绝非提权连接。
 7. 不按可执行文件名全局终止进程。
 8. 每个异步操作只有一个 writer，并有 operation ID、取消状态和可恢复 snapshot。
 9. GUI 收到的错误文本视为不可信数据，显示时转义；用户文案由稳定错误码映射。
