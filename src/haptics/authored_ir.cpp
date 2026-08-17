@@ -21,10 +21,11 @@ namespace haptics {
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
+    constexpr float legacy_gate_hold_seconds = 0.060f;
     constexpr float legacy_output_floor = 0.004f;
     constexpr float legacy_low_band_trim = 1.15f;
     constexpr float legacy_high_band_trim = 1.20f;
-    constexpr float legacy_transient_trim = 1.05f;
+    constexpr float legacy_transient_trim = 1.15f;
     constexpr float legacy_low_makeup_gain = 1.35f;
     constexpr float legacy_high_makeup_gain = 1.45f;
     constexpr float legacy_low_attack_seconds = 0.012f;
@@ -58,20 +59,22 @@ namespace haptics {
     }
 
     float
-    shaped(float value, float makeup_gain, bool &gate_open) {
+    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds) {
       value = std::clamp(value, 0.0f, 1.0f);
-      if (gate_open) {
-        if (value <= legacy_gate_close) {
-          gate_open = false;
-          return 0.0f;
+      if (value >= legacy_gate_open) {
+        gate.open = true;
+        gate.hold_seconds = legacy_gate_hold_seconds;
+      }
+      else if (gate.open) {
+        // Hysteresis only bridges short dips. Without the hold budget a level
+        // parked between the two thresholds -- which is exactly where residual
+        // out-of-band energy lands -- would keep the gate latched forever.
+        gate.hold_seconds -= duration_seconds;
+        if (value <= legacy_gate_close || gate.hold_seconds <= 0.0f) {
+          gate.open = false;
         }
       }
-      else if (value < legacy_gate_open) {
-        return 0.0f;
-      }
-      else {
-        gate_open = true;
-      }
+      if (!gate.open) return 0.0f;
 
       const auto gated = std::clamp(
         (value - legacy_gate_close) / (1.0f - legacy_gate_close), 0.0f, 1.0f);
@@ -227,8 +230,8 @@ namespace haptics {
     if (force_emit) {
       _smoothed_low = 0.0f;
       _smoothed_high = 0.0f;
-      _low_gate_open = false;
-      _high_gate_open = false;
+      _low_gate = {};
+      _high_gate = {};
       _last_emit = {};
     }
 
@@ -236,6 +239,8 @@ namespace haptics {
     float low_energy = 0.0f;
     float high_energy = 0.0f;
     if ((frame->flags & AH_AUTHORED_FRAME_SILENT) == 0) {
+      // Trim gains compensate ERM motors' weak response to low drive levels;
+      // transients get less because peak amplitude already overshoots RMS.
       for (const auto &lane : frame->lanes) {
         const auto low = lane.rms_amplitude * std::sqrt(std::clamp(lane.low_band_ratio, 0.0f, 1.0f));
         const auto high_band = lane.rms_amplitude * std::sqrt(std::clamp(1.0f - lane.low_band_ratio, 0.0f, 1.0f));
@@ -245,19 +250,20 @@ namespace haptics {
           high_band * legacy_high_band_trim, transient * legacy_transient_trim));
       }
     }
-    auto low_target = shaped(low_energy, legacy_low_makeup_gain, _low_gate_open);
-    auto high_target = shaped(high_energy, legacy_high_makeup_gain, _high_gate_open);
-    if (must_stop) {
-      low_target = 0.0f;
-      high_target = 0.0f;
-      _low_gate_open = false;
-      _high_gate_open = false;
-    }
 
     // The heavier low motor keeps body slightly longer; the lighter high motor
     // tracks texture and impacts quickly. Time-based coefficients keep this
     // independent of the sidecar's chunk boundaries.
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
+    if (must_stop) {
+      _low_gate = {};
+      _high_gate = {};
+    }
+    const auto low_target = must_stop ? 0.0f : shaped(
+      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds);
+    const auto high_target = must_stop ? 0.0f : shaped(
+      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds);
+
     const auto smooth = [duration_seconds](float previous, float target,
                                            float attack, float release) {
       const auto tau = target > previous ? attack : release;
@@ -268,8 +274,8 @@ namespace haptics {
       _smoothed_low, low_target, legacy_low_attack_seconds, legacy_low_release_seconds);
     _smoothed_high = must_stop ? 0.0f : smooth(
       _smoothed_high, high_target, legacy_high_attack_seconds, legacy_high_release_seconds);
-    if (low_target == 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
-    if (high_target == 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
+    if (low_target <= 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
+    if (high_target <= 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
 
     const auto low = rumble_u16(_smoothed_low);
     const auto high = rumble_u16(_smoothed_high);
@@ -290,17 +296,18 @@ namespace haptics {
 
   std::optional<legacy_rumble_t>
   legacy_rumble_session_t::poll(std::chrono::steady_clock::time_point now) {
-    if (!_have_input || now - _last_input < legacy_watchdog_timeout ||
-        (_last_low == 0 && _last_high == 0)) {
+    if (!_have_input || now - _last_input < legacy_watchdog_timeout) {
       return std::nullopt;
     }
+    const bool had_output = _last_low != 0 || _last_high != 0;
     _have_input = false;
     _smoothed_low = 0.0f;
     _smoothed_high = 0.0f;
-    _low_gate_open = false;
-    _high_gate_open = false;
+    _low_gate = {};
+    _high_gate = {};
     _last_low = 0;
     _last_high = 0;
+    if (!had_output) return std::nullopt;
     _last_emit = now;
     return legacy_rumble_t {_controller_id, 0, 0};
   }

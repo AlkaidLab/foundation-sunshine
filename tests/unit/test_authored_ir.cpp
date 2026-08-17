@@ -136,11 +136,11 @@ TEST(AuthoredDualSenseIr, LegacyFallbackProducesAndStopsRumble) {
 
 TEST(AuthoredDualSenseIr, LegacyFallbackSeparatesTactileBandsAndRejectsHiss) {
   using namespace std::chrono_literals;
-  const auto measure = [](double frequency_hz) {
+  const auto measure = [](double frequency_hz, std::uint32_t chunks) {
     haptics::legacy_rumble_session_t session;
     std::optional<haptics::legacy_rumble_t> latest;
     const auto start = std::chrono::steady_clock::time_point {1s};
-    for (std::uint32_t chunk = 0; chunk <= 20; ++chunk) {
+    for (std::uint32_t chunk = 0; chunk <= chunks; ++chunk) {
       const auto pcm = sine_pcm(frequency_hz, 24000.0, chunk * 240U);
       const auto output = session.process(
         0, chunk == 0 ? 0x01 : 0, 240, chunk,
@@ -151,16 +151,51 @@ TEST(AuthoredDualSenseIr, LegacyFallbackSeparatesTactileBandsAndRejectsHiss) {
     return latest;
   };
 
-  const auto body = measure(120.0);
-  const auto texture = measure(300.0);
-  const auto hiss = measure(1000.0);
+  const auto body = measure(120.0, 20);
+  const auto texture = measure(300.0, 20);
+  const auto hiss = measure(1000.0, 20);
   ASSERT_TRUE(body.has_value());
   ASSERT_TRUE(texture.has_value());
   ASSERT_TRUE(hiss.has_value());
   EXPECT_GT(body->low_frequency, texture->low_frequency);
   EXPECT_GT(texture->high_frequency, body->high_frequency);
-  EXPECT_GT(body->low_frequency, hiss->low_frequency * 8U);
-  EXPECT_GT(texture->high_frequency, hiss->high_frequency * 8U);
+  // Out-of-band hiss must reach exactly zero rather than merely a small value,
+  // otherwise the noise gate has latched open on the onset transient.
+  EXPECT_EQ(hiss->low_frequency, 0u);
+  EXPECT_EQ(hiss->high_frequency, 0u);
+
+  // Sustained residual stays gated no matter how long it runs.
+  const auto long_hiss = measure(1000.0, 400);
+  ASSERT_TRUE(long_hiss.has_value());
+  EXPECT_EQ(long_hiss->low_frequency, 0u);
+  EXPECT_EQ(long_hiss->high_frequency, 0u);
+}
+
+TEST(AuthoredDualSenseIr, LegacyFallbackGateReleasesAfterLoudOnset) {
+  using namespace std::chrono_literals;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+
+  // A loud in-band burst opens both gates.
+  const auto burst = sine_pcm(120.0, 32000.0);
+  const auto opened = session.process(3, 0x01, 240, 0, 0, burst, start);
+  ASSERT_TRUE(opened.has_value());
+  EXPECT_GT(opened->low_frequency, 0);
+
+  // Hysteresis must not keep them open on a level parked between the open and
+  // close thresholds; the hold budget has to expire and mute the motors.
+  std::optional<haptics::legacy_rumble_t> latest;
+  for (std::uint32_t chunk = 1; chunk <= 60; ++chunk) {
+    const auto pcm = sine_pcm(1000.0, 24000.0, chunk * 240U);
+    const auto output = session.process(
+      3, 0, 240, chunk, static_cast<std::uint64_t>(chunk) * 5000U, pcm,
+      start + std::chrono::milliseconds(chunk * 5U));
+    if (output) latest = output;
+  }
+  ASSERT_TRUE(latest.has_value());
+  EXPECT_EQ(latest->low_frequency, 0u);
+  EXPECT_EQ(latest->high_frequency, 0u);
 }
 
 TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {
