@@ -71,6 +71,15 @@ namespace haptics {
   };
 
   /**
+   * Noise-gate state for one motor. The hold budget bounds how long hysteresis
+   * may keep the gate open without the input re-crossing the open threshold.
+   */
+  struct gate_state_t {
+    bool open = false;
+    float hold_seconds = 0.0f;
+  };
+
+  /**
    * Converts authored DualSense actuator PCM into the two-motor rumble format
    * understood by legacy Moonlight clients.
    */
@@ -97,6 +106,8 @@ namespace haptics {
     std::uint16_t _last_high = 0;
     float _smoothed_low = 0.0f;
     float _smoothed_high = 0.0f;
+    gate_state_t _low_gate;
+    gate_state_t _high_gate;
     bool _have_input = false;
   };
 }  // namespace haptics
