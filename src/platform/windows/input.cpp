@@ -1914,6 +1914,7 @@ namespace platf {
 
     const auto client_prefers_ds5 = gamepad_mode == 1 &&
                                     (metadata.capabilities & GAMEPAD_CAP_PREFER_DS5);
+    auto fallback_to_ds4 = false;
     if (gamepad_mode == 4 || client_prefers_ds5) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
                       << (client_prefers_ds5 ? "requested by client" :
@@ -1924,6 +1925,7 @@ namespace platf {
           return -1;
         }
         BOOST_LOG(warning) << "Client requested DualSense emulation, but its optional sidecar component is unavailable; falling back to DualShock 4"sv;
+        fallback_to_ds4 = true;
       }
       else {
         const auto result = raw->ds5_sidecar->alloc(id, feedback_queue, config::input.ds5_audio_haptics);
@@ -1931,7 +1933,11 @@ namespace platf {
           feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
           feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
         }
-        return result;
+        if (result == 0 || !client_prefers_ds5) {
+          return result;
+        }
+        BOOST_LOG(warning) << "Client-requested DualSense allocation failed; falling back to DualShock 4"sv;
+        fallback_to_ds4 = true;
       }
     }
 
@@ -1941,7 +1947,11 @@ namespace platf {
 
     VIGEM_TARGET_TYPE selectedGamepadType;
 
-    if (gamepad_mode == 2) {
+    if (fallback_to_ds4) {
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller (DualSense fallback)"sv;
+      selectedGamepadType = DualShock4Wired;
+    }
+    else if (gamepad_mode == 2) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
       selectedGamepadType = Xbox360Wired;
     }

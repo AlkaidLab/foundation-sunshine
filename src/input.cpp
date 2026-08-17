@@ -129,7 +129,7 @@ namespace input {
   }
   struct gamepad_t {
     gamepad_t():
-        gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
+        gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE }, arrival {} {}
     ~gamepad_t() {
       if (id >= 0) {
         task_pool.push([id = this->id]() {
@@ -150,7 +150,20 @@ namespace input {
     // Sunshine forces the button to be in a specific state until the gamepad state matches that of
     // Moonlight once more.
     button_state_e back_button_state;
+
+    std::optional<platf::gamepad_arrival_t> arrival;
   };
+
+  void
+  reset_gamepad_runtime_state(gamepad_t &gamepad) {
+    if (gamepad.back_timeout_id) {
+      task_pool.cancel(gamepad.back_timeout_id);
+      gamepad.back_timeout_id = nullptr;
+    }
+    gamepad.gamepad_state = {};
+    gamepad.back_button_state = button_state_e::NONE;
+    gamepad.arrival.reset();
+  }
 
   struct input_t {
     enum shortkey_e {
@@ -960,20 +973,29 @@ namespace input {
       return;
     }
 
-    if (input->gamepads[packet->controllerNumber].id >= 0) {
-      // A client may intentionally re-declare a controller to change its emulated type or
-      // capabilities at runtime. Recreate it so the new arrival metadata takes effect.
-      BOOST_LOG(info) << "Reallocating ControllerNumber with updated metadata ["sv
-                      << packet->controllerNumber << ']';
-      free_gamepad(platf_input, input->gamepads[packet->controllerNumber].id);
-      input->gamepads[packet->controllerNumber].id = -1;
-    }
-
     platf::gamepad_arrival_t arrival {
       packet->type,
       util::endian::little(packet->capabilities),
       util::endian::little(packet->supportedButtonFlags),
     };
+
+    auto &gamepad = input->gamepads[packet->controllerNumber];
+    if (gamepad.id >= 0) {
+      if (gamepad.arrival &&
+          gamepad.arrival->type == arrival.type &&
+          gamepad.arrival->capabilities == arrival.capabilities &&
+          gamepad.arrival->supportedButtons == arrival.supportedButtons) {
+        return;
+      }
+
+      // A client may intentionally re-declare a controller to change its emulated type or
+      // capabilities at runtime. Recreate it so the new arrival metadata takes effect.
+      BOOST_LOG(info) << "Reallocating ControllerNumber with updated metadata ["sv
+                      << packet->controllerNumber << ']';
+      reset_gamepad_runtime_state(gamepad);
+      free_gamepad(platf_input, gamepad.id);
+      gamepad.id = -1;
+    }
 
     auto id = alloc_id(gamepadMask);
     if (id < 0) {
@@ -986,7 +1008,8 @@ namespace input {
       return;
     }
 
-    input->gamepads[packet->controllerNumber].id = id;
+    gamepad.id = id;
+    gamepad.arrival = arrival;
   }
 
   /**
@@ -1318,6 +1341,7 @@ namespace input {
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
+      reset_gamepad_runtime_state(gamepad);
       free_gamepad(platf_input, gamepad.id);
       gamepad.id = -1;
       return;
