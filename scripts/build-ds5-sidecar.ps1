@@ -78,6 +78,7 @@ if (-not (Test-Path -LiteralPath $core)) {
 if (Test-Path -LiteralPath $output) {
     Remove-Item -LiteralPath $output -Recurse -Force
 }
+$dotnetSdkError = 'The .NET 10 SDK is required to publish the DualSense sidecar. Install Microsoft.DotNet.SDK.10 and retry.'
 $dotnetCommand = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue
 if ($null -ne $dotnetCommand) {
     $dotnet = $dotnetCommand.Source
@@ -85,8 +86,22 @@ if ($null -ne $dotnetCommand) {
 else {
     $dotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
     if (-not (Test-Path -LiteralPath $dotnet)) {
-        throw 'The .NET 10 SDK is required to publish the DualSense sidecar. Install Microsoft.DotNet.SDK.10 and retry.'
+        throw $dotnetSdkError
     }
+}
+
+try {
+    $installedSdks = @(& $dotnet --list-sdks 2>&1)
+    $dotnetSdkExitCode = $LASTEXITCODE
+}
+catch {
+    throw $dotnetSdkError
+}
+if (
+    $dotnetSdkExitCode -ne 0 -or
+    -not ($installedSdks | Where-Object { [string]$_ -match '^\s*10\.' })
+) {
+    throw $dotnetSdkError
 }
 
 & $dotnet publish (Join-Path $root 'tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.csproj') `
