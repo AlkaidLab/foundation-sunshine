@@ -36,8 +36,41 @@ if ($actualSha256 -ne $expectedSha256) {
 if (Test-Path -LiteralPath $extract) {
     Remove-Item -LiteralPath $extract -Recurse -Force
 }
-Expand-Archive -LiteralPath $archive -DestinationPath $extract
 $core = Join-Path $extract 'HIDMaestro.Core.dll'
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    # Windows PowerShell 5.1 fails to expand this valid archive because it
+    # contains nested file entries without explicit directory entries. The
+    # sidecar only needs the verified root assembly to compile.
+    New-Item -ItemType Directory -Force -Path $extract | Out-Null
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+    try {
+        $entry = $zip.GetEntry('HIDMaestro.Core.dll')
+        if ($null -eq $entry) {
+            throw 'HIDMaestro.Core.dll is missing from the verified release archive'
+        }
+
+        $source = $entry.Open()
+        try {
+            $destination = [System.IO.File]::Create($core)
+            try {
+                $source.CopyTo($destination)
+            }
+            finally {
+                $destination.Dispose()
+            }
+        }
+        finally {
+            $source.Dispose()
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
+}
+else {
+    Expand-Archive -LiteralPath $archive -DestinationPath $extract
+}
 if (-not (Test-Path -LiteralPath $core)) {
     throw 'HIDMaestro.Core.dll is missing from the verified release archive'
 }
@@ -45,7 +78,33 @@ if (-not (Test-Path -LiteralPath $core)) {
 if (Test-Path -LiteralPath $output) {
     Remove-Item -LiteralPath $output -Recurse -Force
 }
-dotnet publish (Join-Path $root 'tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.csproj') `
+$dotnetSdkError = 'The .NET 10 SDK is required to publish the DualSense sidecar. Install Microsoft.DotNet.SDK.10 and retry.'
+$dotnetCommand = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue
+if ($null -ne $dotnetCommand) {
+    $dotnet = $dotnetCommand.Source
+}
+else {
+    $dotnet = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
+    if (-not (Test-Path -LiteralPath $dotnet)) {
+        throw $dotnetSdkError
+    }
+}
+
+try {
+    $installedSdks = @(& $dotnet --list-sdks 2>&1)
+    $dotnetSdkExitCode = $LASTEXITCODE
+}
+catch {
+    throw $dotnetSdkError
+}
+if (
+    $dotnetSdkExitCode -ne 0 -or
+    -not ($installedSdks | Where-Object { [string]$_ -match '^\s*10\.' })
+) {
+    throw $dotnetSdkError
+}
+
+& $dotnet publish (Join-Path $root 'tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.csproj') `
     --configuration Release `
     --runtime win-x64 `
     --self-contained true `
