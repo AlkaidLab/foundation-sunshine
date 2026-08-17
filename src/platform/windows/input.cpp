@@ -1919,6 +1919,10 @@ namespace platf {
                                     (metadata.capabilities & GAMEPAD_CAP_PREFER_DS5);
     auto fallback_to_ds4 = false;
     if (gamepad_mode == 4 || client_prefers_ds5) {
+      if (client_prefers_ds5 && gamepad_mode != 1) {
+        BOOST_LOG(warning) << "Client DualSense preference overrides the host gamepad mode for gamepad "sv
+                           << id.globalIndex;
+      }
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
                       << (client_prefers_ds5 ? "requested by client" :
                           per_app_override ? "per-app selection" : "global selection") << ')';

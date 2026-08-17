@@ -981,15 +981,21 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id >= 0) {
-      if (gamepad.arrival &&
+      if (gamepad.arrival) {
+        const auto selection_unchanged =
           gamepad.arrival->type == arrival.type &&
-          gamepad.arrival->capabilities == arrival.capabilities &&
-          gamepad.arrival->supportedButtons == arrival.supportedButtons) {
-        return;
+          ((gamepad.arrival->capabilities ^ arrival.capabilities) &
+           platf::GAMEPAD_TYPE_SELECTION_CAPS) == 0;
+        if (selection_unchanged) {
+          // The update cannot change the emulated device type; remember the
+          // refreshed metadata without disturbing the active virtual device.
+          gamepad.arrival = arrival;
+          return;
+        }
       }
 
-      // A client may intentionally re-declare a controller to change its emulated type or
-      // capabilities at runtime. Recreate it so the new arrival metadata takes effect.
+      // A client may intentionally re-declare a controller to change its emulated type
+      // at runtime. Recreate it so the new arrival metadata takes effect.
       BOOST_LOG(info) << "Reallocating ControllerNumber with updated metadata ["sv
                       << packet->controllerNumber << ']';
       reset_gamepad_runtime_state(gamepad);
