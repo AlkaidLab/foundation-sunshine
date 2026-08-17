@@ -19,7 +19,18 @@ namespace haptics {
     constexpr std::uint8_t source_discontinuity = 0x04;
     constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
-    constexpr float legacy_noise_gate = 0.015f;
+    constexpr float legacy_gate_open = 0.020f;
+    constexpr float legacy_gate_close = 0.010f;
+    constexpr float legacy_output_floor = 0.004f;
+    constexpr float legacy_low_band_trim = 1.15f;
+    constexpr float legacy_high_band_trim = 1.20f;
+    constexpr float legacy_transient_trim = 1.05f;
+    constexpr float legacy_low_makeup_gain = 1.35f;
+    constexpr float legacy_high_makeup_gain = 1.45f;
+    constexpr float legacy_low_attack_seconds = 0.012f;
+    constexpr float legacy_low_release_seconds = 0.040f;
+    constexpr float legacy_high_attack_seconds = 0.006f;
+    constexpr float legacy_high_release_seconds = 0.025f;
 
     void
     write_u16(std::uint8_t *p, std::uint16_t value) {
@@ -47,8 +58,24 @@ namespace haptics {
     }
 
     float
-    gated(float value) {
-      return std::clamp((value - legacy_noise_gate) / (1.0f - legacy_noise_gate), 0.0f, 1.0f);
+    shaped(float value, float makeup_gain, bool &gate_open) {
+      value = std::clamp(value, 0.0f, 1.0f);
+      if (gate_open) {
+        if (value <= legacy_gate_close) {
+          gate_open = false;
+          return 0.0f;
+        }
+      }
+      else if (value < legacy_gate_open) {
+        return 0.0f;
+      }
+      else {
+        gate_open = true;
+      }
+
+      const auto gated = std::clamp(
+        (value - legacy_gate_close) / (1.0f - legacy_gate_close), 0.0f, 1.0f);
+      return std::tanh(makeup_gain * gated) / std::tanh(makeup_gain);
     }
 
     std::uint16_t
@@ -200,35 +227,49 @@ namespace haptics {
     if (force_emit) {
       _smoothed_low = 0.0f;
       _smoothed_high = 0.0f;
+      _low_gate_open = false;
+      _high_gate_open = false;
       _last_emit = {};
     }
 
     const bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;
-    float low_target = 0.0f;
-    float high_target = 0.0f;
+    float low_energy = 0.0f;
+    float high_energy = 0.0f;
     if ((frame->flags & AH_AUTHORED_FRAME_SILENT) == 0) {
-      // Trim gains compensate ERM motors' weak response to low drive levels;
-      // transients get less because peak amplitude already overshoots RMS.
       for (const auto &lane : frame->lanes) {
         const auto low = lane.rms_amplitude * std::sqrt(std::clamp(lane.low_band_ratio, 0.0f, 1.0f));
         const auto high_band = lane.rms_amplitude * std::sqrt(std::clamp(1.0f - lane.low_band_ratio, 0.0f, 1.0f));
         const auto transient = lane.peak_amplitude * lane.transient_strength;
-        low_target = std::max(low_target, gated(low * 1.35f));
-        high_target = std::max(high_target, gated(std::max(high_band * 1.45f, transient * 1.15f)));
+        low_energy = std::max(low_energy, low * legacy_low_band_trim);
+        high_energy = std::max(high_energy, std::max(
+          high_band * legacy_high_band_trim, transient * legacy_transient_trim));
       }
     }
+    auto low_target = shaped(low_energy, legacy_low_makeup_gain, _low_gate_open);
+    auto high_target = shaped(high_energy, legacy_high_makeup_gain, _high_gate_open);
+    if (must_stop) {
+      low_target = 0.0f;
+      high_target = 0.0f;
+      _low_gate_open = false;
+      _high_gate_open = false;
+    }
 
-    // Time-based attack/release prevents the mapping from depending on whether
-    // the sidecar happens to deliver 5 ms or larger PCM chunks. A zero-frame
-    // chunk must not freeze the smoother at its previous value.
+    // The heavier low motor keeps body slightly longer; the lighter high motor
+    // tracks texture and impacts quickly. Time-based coefficients keep this
+    // independent of the sidecar's chunk boundaries.
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
-    const auto smooth = [duration_seconds](float previous, float target) {
-      const auto tau = target > previous ? 0.010f : 0.035f;
+    const auto smooth = [duration_seconds](float previous, float target,
+                                           float attack, float release) {
+      const auto tau = target > previous ? attack : release;
       const auto alpha = 1.0f - std::exp(-duration_seconds / tau);
       return previous + (target - previous) * alpha;
     };
-    _smoothed_low = must_stop ? 0.0f : smooth(_smoothed_low, low_target);
-    _smoothed_high = must_stop ? 0.0f : smooth(_smoothed_high, high_target);
+    _smoothed_low = must_stop ? 0.0f : smooth(
+      _smoothed_low, low_target, legacy_low_attack_seconds, legacy_low_release_seconds);
+    _smoothed_high = must_stop ? 0.0f : smooth(
+      _smoothed_high, high_target, legacy_high_attack_seconds, legacy_high_release_seconds);
+    if (low_target == 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
+    if (high_target == 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
 
     const auto low = rumble_u16(_smoothed_low);
     const auto high = rumble_u16(_smoothed_high);
@@ -256,6 +297,8 @@ namespace haptics {
     _have_input = false;
     _smoothed_low = 0.0f;
     _smoothed_high = 0.0f;
+    _low_gate_open = false;
+    _high_gate_open = false;
     _last_low = 0;
     _last_high = 0;
     _last_emit = now;

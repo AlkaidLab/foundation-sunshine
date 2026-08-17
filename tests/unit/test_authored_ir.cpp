@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -26,11 +27,11 @@ namespace {
   }
 
   std::vector<std::uint8_t>
-  sine_pcm(double frequency_hz, double amplitude) {
+  sine_pcm(double frequency_hz, double amplitude, std::size_t first_frame = 0) {
     std::vector<std::int16_t> pcm(240 * 2);
     for (std::size_t frame = 0; frame < 240; ++frame) {
       const auto sample = static_cast<std::int16_t>(
-        std::sin(static_cast<double>(frame) * frequency_hz * 6.283185307 / 48000.0) * amplitude);
+        std::sin(static_cast<double>(first_frame + frame) * frequency_hz * 6.283185307 / 48000.0) * amplitude);
       pcm[frame * 2] = sample;
       pcm[frame * 2 + 1] = sample;
     }
@@ -133,12 +134,41 @@ TEST(AuthoredDualSenseIr, LegacyFallbackProducesAndStopsRumble) {
   EXPECT_FALSE(session.process(2, 0, 240, 6, 60000, silence, start + 60ms).has_value());
 }
 
+TEST(AuthoredDualSenseIr, LegacyFallbackSeparatesTactileBandsAndRejectsHiss) {
+  using namespace std::chrono_literals;
+  const auto measure = [](double frequency_hz) {
+    haptics::legacy_rumble_session_t session;
+    std::optional<haptics::legacy_rumble_t> latest;
+    const auto start = std::chrono::steady_clock::time_point {1s};
+    for (std::uint32_t chunk = 0; chunk <= 20; ++chunk) {
+      const auto pcm = sine_pcm(frequency_hz, 24000.0, chunk * 240U);
+      const auto output = session.process(
+        0, chunk == 0 ? 0x01 : 0, 240, chunk,
+        static_cast<std::uint64_t>(chunk) * 5000U, pcm,
+        start + std::chrono::milliseconds(chunk * 5U));
+      if (output) latest = output;
+    }
+    return latest;
+  };
+
+  const auto body = measure(120.0);
+  const auto texture = measure(300.0);
+  const auto hiss = measure(1000.0);
+  ASSERT_TRUE(body.has_value());
+  ASSERT_TRUE(texture.has_value());
+  ASSERT_TRUE(hiss.has_value());
+  EXPECT_GT(body->low_frequency, texture->low_frequency);
+  EXPECT_GT(texture->high_frequency, body->high_frequency);
+  EXPECT_GT(body->low_frequency, hiss->low_frequency * 8U);
+  EXPECT_GT(texture->high_frequency, hiss->high_frequency * 8U);
+}
+
 TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {
   using namespace std::chrono_literals;
   haptics::legacy_rumble_session_t session;
   ASSERT_TRUE(session.ready());
   const auto start = std::chrono::steady_clock::time_point {1s};
-  const auto pcm = sine_pcm(1000.0, 24000.0);
+  const auto pcm = sine_pcm(300.0, 24000.0);
 
   const auto first = session.process(1, 0x01, 240, 1, 0, pcm, start);
   ASSERT_TRUE(first.has_value());

@@ -97,6 +97,8 @@ namespace haptics {
     std::uint16_t _last_high = 0;
     float _smoothed_low = 0.0f;
     float _smoothed_high = 0.0f;
+    bool _low_gate_open = false;
+    bool _high_gate_open = false;
     bool _have_input = false;
   };
 }  // namespace haptics
