@@ -1912,19 +1912,27 @@ namespace platf {
     const auto gamepad_mode = effective_gamepad_mode();
     const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
 
-    if (gamepad_mode == 4) {
+    const auto client_prefers_ds5 = gamepad_mode == 1 &&
+                                    (metadata.capabilities & GAMEPAD_CAP_PREFER_DS5);
+    if (gamepad_mode == 4 || client_prefers_ds5) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
-                      << (per_app_override ? "per-app selection" : "global selection") << ')';
+                      << (client_prefers_ds5 ? "requested by client" :
+                          per_app_override ? "per-app selection" : "global selection") << ')';
       if (!raw->ds5_sidecar || !raw->ds5_sidecar->configured()) {
-        BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
-        return -1;
+        if (!client_prefers_ds5) {
+          BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
+          return -1;
+        }
+        BOOST_LOG(warning) << "Client requested DualSense emulation, but its optional sidecar component is unavailable; falling back to DualShock 4"sv;
       }
-      const auto result = raw->ds5_sidecar->alloc(id, feedback_queue, config::input.ds5_audio_haptics);
-      if (result == 0) {
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+      else {
+        const auto result = raw->ds5_sidecar->alloc(id, feedback_queue, config::input.ds5_audio_haptics);
+        if (result == 0) {
+          feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
+          feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+        }
+        return result;
       }
-      return result;
     }
 
     if (!raw->vigem) {

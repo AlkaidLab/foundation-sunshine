@@ -91,6 +91,10 @@ namespace platf {
   constexpr std::uint32_t TOUCHPAD_BUTTON = 0x100000;
   constexpr std::uint32_t MISC_BUTTON = 0x200000;
 
+  // Foundation client extension carried in SS_CONTROLLER_ARRIVAL_PACKET::capabilities.
+  // Requests a native DualSense device rather than the generic PS/DS4 fallback.
+  constexpr std::uint16_t GAMEPAD_CAP_PREFER_DS5 = 0x0100;
+
   struct supported_gamepad_t {
     std::string name;
     bool is_enabled;

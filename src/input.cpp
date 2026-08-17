@@ -961,8 +961,12 @@ namespace input {
     }
 
     if (input->gamepads[packet->controllerNumber].id >= 0) {
-      BOOST_LOG(warning) << "ControllerNumber already allocated ["sv << packet->controllerNumber << ']';
-      return;
+      // A client may intentionally re-declare a controller to change its emulated type or
+      // capabilities at runtime. Recreate it so the new arrival metadata takes effect.
+      BOOST_LOG(info) << "Reallocating ControllerNumber with updated metadata ["sv
+                      << packet->controllerNumber << ']';
+      free_gamepad(platf_input, input->gamepads[packet->controllerNumber].id);
+      input->gamepads[packet->controllerNumber].id = -1;
     }
 
     platf::gamepad_arrival_t arrival {
