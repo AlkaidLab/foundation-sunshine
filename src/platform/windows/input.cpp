@@ -1912,7 +1912,10 @@ namespace platf {
     const auto gamepad_mode = effective_gamepad_mode();
     const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
 
-    const auto client_prefers_ds5 = gamepad_mode == 1 &&
+    // A client that needs DualSense-only input (such as a screen-backed
+    // touchpad) must be able to override the global controller default. Keep
+    // an explicit per-app controller selection authoritative.
+    const auto client_prefers_ds5 = !per_app_override &&
                                     (metadata.capabilities & GAMEPAD_CAP_PREFER_DS5);
     auto fallback_to_ds4 = false;
     if (gamepad_mode == 4 || client_prefers_ds5) {
