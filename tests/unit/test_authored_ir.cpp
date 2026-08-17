@@ -182,17 +182,26 @@ TEST(AuthoredDualSenseIr, LegacyFallbackGateReleasesAfterLoudOnset) {
   const auto opened = session.process(3, 0x01, 240, 0, 0, burst, start);
   ASSERT_TRUE(opened.has_value());
   EXPECT_GT(opened->low_frequency, 0);
+  EXPECT_GT(opened->high_frequency, 0);
 
   // Hysteresis must not keep them open on a level parked between the open and
   // close thresholds; the hold budget has to expire and mute the motors.
   std::optional<haptics::legacy_rumble_t> latest;
+  std::optional<haptics::legacy_rumble_t> at_240ms;
   for (std::uint32_t chunk = 1; chunk <= 60; ++chunk) {
     const auto pcm = sine_pcm(1000.0, 24000.0, chunk * 240U);
     const auto output = session.process(
       3, 0, 240, chunk, static_cast<std::uint64_t>(chunk) * 5000U, pcm,
       start + std::chrono::milliseconds(chunk * 5U));
     if (output) latest = output;
+    if (chunk == 48) at_240ms = latest;
   }
+  // Both motors reach zero by 200 ms: a 60 ms hold budget plus the low motor's
+  // 40 ms release tail. Checking at 240 ms bounds the budget instead of only
+  // proving that the gate eventually closes.
+  ASSERT_TRUE(at_240ms.has_value());
+  EXPECT_EQ(at_240ms->low_frequency, 0u);
+  EXPECT_EQ(at_240ms->high_frequency, 0u);
   ASSERT_TRUE(latest.has_value());
   EXPECT_EQ(latest->low_frequency, 0u);
   EXPECT_EQ(latest->high_frequency, 0u);
