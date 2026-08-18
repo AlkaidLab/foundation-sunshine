@@ -717,7 +717,9 @@ namespace video {
                            << " (samples=" << gate.consecutive_samples()
                            << '/' << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
                            << ", sequence=" << stats.sample_sequence
-                           << ", valid=" << stats.valid << ')';
+                           << ", valid=" << stats.valid
+                           << ", avg=" << stats.avg_maxrgb
+                           << " nits, max=" << stats.max_maxrgb << " nits)";
         break;
       case transition_e::recovered:
         BOOST_LOG(info) << encoder_name << ": HDR Vivid startup guard recovered after plain-HLG fallback; "
@@ -725,6 +727,7 @@ namespace video {
                         << " (samples=" << gate.consecutive_samples()
                         << '/' << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
                         << ", sequence=" << stats.sample_sequence
+                        << ", valid=" << stats.valid
                         << ", avg=" << stats.avg_maxrgb
                         << " nits, max=" << stats.max_maxrgb << " nits)";
         break;
