@@ -2,7 +2,9 @@
 
 #define WIN32_LEAN_AND_MEAN
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -33,6 +35,18 @@ namespace display_device::vdd_utils {
     float max_full_nits = 1000.0f;
 
     bool operator==(const hdr_brightness_t &) const = default;
+
+    // 实测上报的亮度逐会话存在小抖动;容差内视为能力未变,避免无谓重建 VDD
+    bool
+    nearly_equal(const hdr_brightness_t &other) const {
+      constexpr auto close = [](float a, float b) {
+        const float scale = std::min(std::abs(a), std::abs(b));
+        return std::abs(a - b) <= std::max(25.0f, 0.05f * scale);
+      };
+      return close(max_nits, other.max_nits) &&
+             close(min_nits, other.min_nits) &&
+             close(max_full_nits, other.max_full_nits);
+    }
   };
 
   // 物理尺寸结构（厘米）

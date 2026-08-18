@@ -760,7 +760,7 @@ namespace display_device {
                                 !current_client_id.empty() &&
                                 current_vdd_client_id != current_client_id;
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
-                                          *current_vdd_hdr_brightness != hdr_brightness;
+                                          !current_vdd_hdr_brightness->nearly_equal(hdr_brightness);
 
     // An existing VDD must be rebuilt when its advertised HDR capabilities no
     // longer match this session. A shared VDD may otherwise be reused across

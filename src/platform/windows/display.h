@@ -399,6 +399,14 @@ namespace platf::dxgi {
     set_cursor_sdr_white_level(UINT32 sdr_white_level_x1000);
 
     /**
+     * @brief Current composed SDR white level in nits, as tracked by cursor
+     *        normalization (300-nit fallback until the driver reports one).
+     *        nullopt when cursor normalization is disabled.
+     */
+    std::optional<float>
+    composed_sdr_white_nits() const;
+
+    /**
      * @brief Draw the currently-configured cursor_alpha / cursor_xor onto the
      *        given render target. Caller must hold the capture mutex for the
      *        underlying image. After the draw the blend state is reset to

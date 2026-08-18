@@ -287,6 +287,20 @@ namespace nvhttp {
       BOOST_LOG(warning) << hdr_capabilities.fallback_reason << "; using safe HDR luminance defaults";
     }
 
+    // Optional client-measured SDR reference white (moonlight-harmony extension).
+    // Parsed independently: a missing or out-of-range value simply leaves 0.
+    if (const auto sdr_white = find_arg(args, "sdrBrightness")) {
+      const int parsed_sdr_white = std::atoi(std::string { *sdr_white }.c_str());
+      if (parsed_sdr_white >= 50 && parsed_sdr_white <= 1000) {
+        launch_session->reported_hdr_capabilities.sdr_white_nits = static_cast<float>(parsed_sdr_white);
+        launch_session->hdr_capabilities.sdr_white_nits = static_cast<float>(parsed_sdr_white);
+        BOOST_LOG(info) << "Client reported SDR white level: " << parsed_sdr_white << " nits";
+      }
+      else {
+        BOOST_LOG(warning) << "Ignoring out-of-range client SDR white level: " << *sdr_white;
+      }
+    }
+
     // Get display_name from query parameter if provided
     std::string display_name = get_arg(args, "display_name", "");
     if (!display_name.empty()) {
