@@ -227,14 +227,23 @@ namespace platf::ds5 {
       return std::filesystem::weakly_canonical(configured);
 #else
       std::error_code path_error;
+      const auto install_root = std::filesystem::weakly_canonical(
+        platf::appdata().parent_path(),
+        path_error);
+      if (path_error) return std::nullopt;
+      const auto expected_active_root = install_root / "tools" /
+                                        "sunshine-ds5-component" / "active";
       const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
-      if (path_error || !std::filesystem::is_regular_file(candidate)) {
+      if (path_error || candidate.parent_path() != expected_active_root ||
+          candidate.filename() != "Sunshine.Ds5Sidecar.exe" ||
+          !std::filesystem::is_regular_file(candidate)) {
+        BOOST_LOG(error) << "Rejected a DualSense sidecar outside the fixed active component directory"sv;
         return std::nullopt;
       }
 
       boost::property_tree::ptree manifest;
       try {
-        boost::property_tree::read_json((candidate.parent_path() / "component.json").string(), manifest);
+        boost::property_tree::read_json((expected_active_root / "component.json").string(), manifest);
       }
       catch (const std::exception &exception) {
         BOOST_LOG(error) << "Unable to read the active DualSense component manifest: "sv
