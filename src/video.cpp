@@ -713,7 +713,20 @@ namespace video {
       case transition_e::timed_out:
         BOOST_LOG(warning) << encoder_name << ": HDR Vivid startup guard timed out after "
                            << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
-                           << " ms; starting this session as pure HLG without dynamic metadata";
+                           << " ms; temporarily starting as plain HLG while analysis continues"
+                           << " (samples=" << gate.consecutive_samples()
+                           << '/' << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                           << ", sequence=" << stats.sample_sequence
+                           << ", valid=" << stats.valid << ')';
+        break;
+      case transition_e::recovered:
+        BOOST_LOG(info) << encoder_name << ": HDR Vivid startup guard recovered after plain-HLG fallback; "
+                        << "switching to Vivid at IDR"
+                        << " (samples=" << gate.consecutive_samples()
+                        << '/' << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                        << ", sequence=" << stats.sample_sequence
+                        << ", avg=" << stats.avg_maxrgb
+                        << " nits, max=" << stats.max_maxrgb << " nits)";
         break;
       case transition_e::none:
         break;
