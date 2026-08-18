@@ -12,6 +12,8 @@
 
 #include <moonlight_haptics/authored_haptics.h>
 
+#include "src/logging.h"
+
 namespace haptics {
   namespace {
     constexpr std::uint8_t source_stream_start = 0x01;
@@ -212,12 +214,21 @@ namespace haptics {
     return _analyzer.ready();
   }
 
+  legacy_rumble_session_t::~legacy_rumble_session_t() {
+    BOOST_LOG(info) << "DualSense legacy haptics fallback summary for controller "
+                    << _controller_id << ": pcm_packets=" << _pcm_packets
+                    << ", rumbles_emitted=" << _emitted_rumbles
+                    << ", peak_low_energy=" << _peak_low_energy
+                    << ", peak_high_energy=" << _peak_high_energy;
+  }
+
   std::optional<legacy_rumble_t>
   legacy_rumble_session_t::process(std::uint16_t controller_id, std::uint8_t source_flags,
                                    std::uint16_t frame_count, std::uint32_t sequence,
                                    std::uint64_t presentation_time_us,
                                    std::span<const std::uint8_t> pcm,
                                    std::chrono::steady_clock::time_point now) {
+    _pcm_packets++;
     const auto frame = _analyzer.analyze(
       source_flags, frame_count, sequence, presentation_time_us, pcm);
     if (!frame) return std::nullopt;
@@ -249,6 +260,8 @@ namespace haptics {
         high_energy = std::max(high_energy, std::max(
           high_band * legacy_high_band_trim, transient * legacy_transient_trim));
       }
+      _peak_low_energy = std::max(_peak_low_energy, low_energy);
+      _peak_high_energy = std::max(_peak_high_energy, high_energy);
     }
 
     // The heavier low motor keeps body slightly longer; the lighter high motor
@@ -291,6 +304,12 @@ namespace haptics {
     _last_emit = now;
     _last_low = low;
     _last_high = high;
+    _emitted_rumbles++;
+    if (!_first_emit_logged) {
+      _first_emit_logged = true;
+      BOOST_LOG(info) << "DualSense legacy haptics fallback emitted first rumble for controller "
+                      << _controller_id << " (low=" << low << ", high=" << high << ')';
+    }
     return legacy_rumble_t {controller_id, low, high};
   }
 

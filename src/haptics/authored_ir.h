@@ -85,6 +85,12 @@ namespace haptics {
    */
   class legacy_rumble_session_t {
   public:
+    legacy_rumble_session_t() = default;
+    ~legacy_rumble_session_t();
+
+    legacy_rumble_session_t(const legacy_rumble_session_t &) = delete;
+    legacy_rumble_session_t &operator=(const legacy_rumble_session_t &) = delete;
+
     bool
     ready() const noexcept;
 
@@ -108,6 +114,11 @@ namespace haptics {
     float _smoothed_high = 0.0f;
     gate_state_t _low_gate;
     gate_state_t _high_gate;
+    std::uint64_t _pcm_packets = 0;
+    std::uint64_t _emitted_rumbles = 0;
+    float _peak_low_energy = 0.0f;
+    float _peak_high_energy = 0.0f;
     bool _have_input = false;
+    bool _first_emit_logged = false;
   };
 }  // namespace haptics

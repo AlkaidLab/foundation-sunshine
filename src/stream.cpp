@@ -1451,6 +1451,7 @@ namespace stream {
               return 0;
             }
             controller_session->second = std::move(created);
+            BOOST_LOG(info) << "DualSense legacy haptics fallback engaged for controller "sv << msg.id;
           }
           const auto rumble = controller_session->second->process(
             msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
