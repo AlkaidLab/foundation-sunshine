@@ -134,6 +134,28 @@ TEST(AuthoredDualSenseIr, LegacyFallbackProducesAndStopsRumble) {
   EXPECT_FALSE(session.process(2, 0, 240, 6, 60000, silence, start + 60ms).has_value());
 }
 
+TEST(AuthoredDualSenseIr, LegacyFallbackLiftsLowLevelContentAboveMotorFloor) {
+  using namespace std::chrono_literals;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+
+  std::optional<haptics::legacy_rumble_t> latest;
+  for (std::uint32_t chunk = 0; chunk <= 8; ++chunk) {
+    const auto pcm = sine_pcm(120.0, 1400.0, chunk * 240U);
+    const auto output = session.process(
+      0, chunk == 0 ? 0x01 : 0, 240, chunk,
+      static_cast<std::uint64_t>(chunk) * 5000U, pcm,
+      start + std::chrono::milliseconds(chunk * 5U));
+    if (output) latest = output;
+  }
+
+  ASSERT_TRUE(latest.has_value());
+  // Client renderers typically keep only the high byte. Preserve enough
+  // amplitude to clear real motor startup thresholds after that quantization.
+  EXPECT_GE(latest->low_frequency, 0x1800u);
+}
+
 TEST(AuthoredDualSenseIr, LegacyFallbackSeparatesTactileBandsAndRejectsHiss) {
   using namespace std::chrono_literals;
   const auto measure = [](double frequency_hz, std::uint32_t chunks) {

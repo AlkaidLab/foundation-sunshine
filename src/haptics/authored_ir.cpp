@@ -22,7 +22,7 @@ namespace haptics {
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
     constexpr float legacy_gate_hold_seconds = 0.060f;
-    constexpr float legacy_output_floor = 0.004f;
+    constexpr float legacy_output_floor = 0.030f;
     constexpr float legacy_low_band_trim = 1.15f;
     constexpr float legacy_high_band_trim = 1.20f;
     constexpr float legacy_transient_trim = 1.15f;
@@ -78,7 +78,12 @@ namespace haptics {
 
       const auto gated = std::clamp(
         (value - legacy_gate_close) / (1.0f - legacy_gate_close), 0.0f, 1.0f);
-      return std::tanh(makeup_gain * gated) / std::tanh(makeup_gain);
+      // ERM motors have a substantial startup threshold, while Android and HID
+      // clients commonly quantize the 16-bit protocol value to 8 bits. Lift
+      // quiet-but-valid authored content into the usable motor range without
+      // changing the noise gate or compressing full-scale output.
+      const auto perceptual = std::sqrt(gated);
+      return std::tanh(makeup_gain * perceptual) / std::tanh(makeup_gain);
     }
 
     std::uint16_t
