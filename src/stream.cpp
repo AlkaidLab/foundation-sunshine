@@ -2061,13 +2061,10 @@ namespace stream {
 
         float sdr_white_nits;
         std::memcpy(&sdr_white_nits, payload.data() + sizeof(int), sizeof(sdr_white_nits));
-        if (!std::isfinite(sdr_white_nits) || sdr_white_nits < 1.0f || sdr_white_nits > 10000.0f) {
+        if (!video::is_valid_client_sdr_white_nits(sdr_white_nits)) {
           BOOST_LOG(warning) << "Invalid client SDR white value: " << sdr_white_nits;
           return;
         }
-
-        session->config.monitor.hdr_capabilities.sdr_white_nits = sdr_white_nits;
-        session->hdr_capabilities.sdr_white_nits = sdr_white_nits;
 
         video::dynamic_param_t param {};
         param.type = video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS;

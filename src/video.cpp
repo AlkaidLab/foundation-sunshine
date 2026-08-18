@@ -1623,6 +1623,22 @@ namespace video {
     return encoder ? std::string { encoder->name } : std::string {};
   }
 
+  bool
+  active_encoder_supports_dynamic_sdr_white() {
+    const auto *encoder = active_encoder_for_status.load(std::memory_order_acquire);
+    if (!encoder) {
+      return false;
+    }
+
+    return dynamic_cast<const encoder_platform_formats_nvenc *>(encoder->platform_formats.get()) != nullptr ||
+           dynamic_cast<const encoder_platform_formats_amf *>(encoder->platform_formats.get()) != nullptr;
+  }
+
+  bool
+  is_valid_client_sdr_white_nits(float nits) {
+    return std::isfinite(nits) && nits >= 50.0f && nits <= 1000.0f;
+  }
+
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
     // We try this twice, in case we still get an error on reinitialization
@@ -3070,7 +3086,7 @@ namespace video {
     int &frame_nr,  // Store progress of the frame number
     safe::mail_t mail,
     captured_frame_event_t images,
-    config_t config,
+    config_t &config,
     std::shared_ptr<platf::display_t> disp,
     std::unique_ptr<platf::encode_device_t> encode_device,
     safe::signal_t &reinit_event,
@@ -3209,6 +3225,12 @@ namespace video {
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
+          if (param->type == dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+            // Keep the latest value in the video-thread-owned config. If the
+            // encoder is recreated after a display/capture reinit, device
+            // construction will apply this value again.
+            config.hdr_capabilities.sdr_white_nits = param->value.float_value;
+          }
           session->set_dynamic_param(*param);
         }
       }

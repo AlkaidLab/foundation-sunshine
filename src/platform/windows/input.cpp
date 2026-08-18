@@ -2559,10 +2559,6 @@ namespace platf {
   get_capabilities() {
     platform_caps::caps_t caps = 0;
 
-    // The control protocol accepts runtime SDR reference white updates. HLG
-    // converters that support them apply the value at a video frame boundary.
-    caps |= platform_caps::dynamic_sdr_white;
-
     // We support controller touchpad input as long as we're not emulating X360
     if (effective_gamepad_mode() != 2) {
       caps |= platform_caps::controller_touch;
