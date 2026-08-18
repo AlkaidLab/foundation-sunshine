@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include "src/config.h"
 #include "src/haptics/authored_ir.h"
 
 extern "C" {
@@ -228,25 +229,36 @@ TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {
   EXPECT_FALSE(session.poll(start + 200ms).has_value());
 }
 
-TEST(AuthoredDualSenseIr, LegacyFallbackErmTuningOpensQuietBand) {
+TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
   using namespace std::chrono_literals;
   // A -36 dBFS sine sits in the band where voice-coil-authored content is
   // clearly felt while the stock band-energy gate keeps rotor motors off.
-  haptics::legacy_rumble_session_t stock;
-  haptics::legacy_rumble_session_t erm(true);
-  ASSERT_TRUE(stock.ready());
-  ASSERT_TRUE(erm.ready());
+  const auto old_gate = config::input.ds5_legacy_haptics_noise_gate;
+  const auto old_curve = config::input.ds5_legacy_haptics_curve;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
   const auto start = std::chrono::steady_clock::time_point {1s};
   std::uint16_t stock_peak = 0;
-  std::uint16_t erm_peak = 0;
   for (std::uint32_t chunk = 0; chunk < 20; ++chunk) {
     const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
     const auto at = start + std::chrono::milliseconds(chunk * 5);
-    const auto s = stock.process(0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000, pcm, at);
-    if (s) stock_peak = std::max(stock_peak, s->low_frequency);
-    const auto e = erm.process(0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000, pcm, at);
-    if (e) erm_peak = std::max(erm_peak, e->low_frequency);
+    const auto out = session.process(0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000, pcm, at);
+    if (out) stock_peak = std::max(stock_peak, out->low_frequency);
   }
   EXPECT_EQ(stock_peak, 0);
-  EXPECT_GT(erm_peak, 3000);
+
+  // ERM preset values: a lower gate and a lifting curve. Config is read per
+  // packet, so the same session picks the new mapping up immediately.
+  config::input.ds5_legacy_haptics_noise_gate = 0.006;
+  config::input.ds5_legacy_haptics_curve = 0.5;
+  std::uint16_t tuned_peak = 0;
+  for (std::uint32_t chunk = 20; chunk < 40; ++chunk) {
+    const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
+    const auto at = start + std::chrono::milliseconds(chunk * 5);
+    const auto out = session.process(0, 0, 240, chunk, chunk * 5000, pcm, at);
+    if (out) tuned_peak = std::max(tuned_peak, out->low_frequency);
+  }
+  config::input.ds5_legacy_haptics_noise_gate = old_gate;
+  config::input.ds5_legacy_haptics_curve = old_curve;
+  EXPECT_GT(tuned_peak, 3000);
 }

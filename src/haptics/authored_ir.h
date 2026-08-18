@@ -85,11 +85,6 @@ namespace haptics {
    */
   class legacy_rumble_session_t {
   public:
-    // erm_tuning selects the B side of the A/B: a mapping calibrated for
-    // rotor (ERM) motors that consumes the quiet band where voice-coil
-    // haptics content is clearly felt but classic rumble motors do not start.
-    explicit legacy_rumble_session_t(bool erm_tuning = false);
-
     bool
     ready() const noexcept;
 
@@ -104,7 +99,6 @@ namespace haptics {
 
   private:
     authored_ir_session_t _analyzer;
-    bool _erm_tuning;
     std::chrono::steady_clock::time_point _last_input {};
     std::chrono::steady_clock::time_point _last_emit {};
     std::uint16_t _controller_id = 0;

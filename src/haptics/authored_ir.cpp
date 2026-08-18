@@ -12,6 +12,9 @@
 
 #include <moonlight_haptics/authored_haptics.h>
 
+#include "src/config.h"
+#include "src/logging.h"
+
 namespace haptics {
   namespace {
     constexpr std::uint8_t source_stream_start = 0x01;
@@ -21,8 +24,6 @@ namespace haptics {
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
-    constexpr float legacy_erm_gate_open = 0.006f;
-    constexpr float legacy_erm_gate_close = 0.003f;
     constexpr float legacy_gate_hold_seconds = 0.060f;
     constexpr float legacy_output_floor = 0.004f;
     constexpr float legacy_low_band_trim = 1.15f;
@@ -61,9 +62,8 @@ namespace haptics {
     }
 
     float
-    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds, bool erm_tuning) {
-      const auto gate_open = erm_tuning ? legacy_erm_gate_open : legacy_gate_open;
-      const auto gate_close = erm_tuning ? legacy_erm_gate_close : legacy_gate_close;
+    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds,
+           float gate_open, float gate_close, float curve, float strength) {
       value = std::clamp(value, 0.0f, 1.0f);
       if (value >= gate_open) {
         gate.open = true;
@@ -82,10 +82,11 @@ namespace haptics {
 
       const auto gated = std::clamp(
         (value - gate_close) / (1.0f - gate_close), 0.0f, 1.0f);
-      // ERM tuning lifts the quiet band where voice-coil-authored content is
-      // clearly felt but rotor motors do not start; tanh still caps the top.
-      const auto drive = erm_tuning ? std::sqrt(gated) : gated;
-      return std::tanh(makeup_gain * drive) / std::tanh(makeup_gain);
+      // A curve below 1 lifts the quiet band where voice-coil-authored content
+      // is clearly felt while rotor motors do not start; tanh still caps the
+      // top end so the strength multiplier cannot overdrive strong effects.
+      const auto drive = std::pow(gated, curve);
+      return strength * std::tanh(makeup_gain * drive) / std::tanh(makeup_gain);
     }
 
     std::uint16_t
@@ -219,9 +220,6 @@ namespace haptics {
     return _analyzer.ready();
   }
 
-  legacy_rumble_session_t::legacy_rumble_session_t(bool erm_tuning):
-      _erm_tuning(erm_tuning) {}
-
   std::optional<legacy_rumble_t>
   legacy_rumble_session_t::process(std::uint16_t controller_id, std::uint8_t source_flags,
                                    std::uint16_t frame_count, std::uint32_t sequence,
@@ -265,14 +263,26 @@ namespace haptics {
     // tracks texture and impacts quickly. Time-based coefficients keep this
     // independent of the sidecar's chunk boundaries.
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
+    // Tuning knobs are read per packet so UI changes apply to a running
+    // stream without reconnecting. Ranges bound the values a config file
+    // could otherwise push into nonsense.
+    const auto gate_open = static_cast<float>(
+      std::clamp(config::input.ds5_legacy_haptics_noise_gate, 0.002, 0.060));
+    const auto gate_close = gate_open * 0.5f;
+    const auto curve = static_cast<float>(
+      std::clamp(config::input.ds5_legacy_haptics_curve, 0.3, 2.0));
+    const auto strength = static_cast<float>(
+      std::clamp(config::input.ds5_legacy_haptics_strength, 0.1, 4.0));
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};
     }
     const auto low_target = must_stop ? 0.0f : shaped(
-      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds, _erm_tuning);
+      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds,
+      gate_open, gate_close, curve, strength);
     const auto high_target = must_stop ? 0.0f : shaped(
-      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds, _erm_tuning);
+      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds,
+      gate_open, gate_close, curve, strength);
 
     const auto smooth = [duration_seconds](float previous, float target,
                                            float attack, float release) {
