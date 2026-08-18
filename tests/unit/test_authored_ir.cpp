@@ -229,6 +229,40 @@ TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {
   EXPECT_FALSE(session.poll(start + 200ms).has_value());
 }
 
+TEST(AuthoredDualSenseIr, LegacyFallbackAppliesCeilingAndHighMotorScale) {
+  using namespace std::chrono_literals;
+  const auto old_settings = ds5_config::current();
+  auto settings = old_settings;
+  settings.legacy_profile = ds5_config::legacy_profile_t::custom;
+  settings.legacy_max_output = 0.40;
+  settings.legacy_high_scale = 0.50;
+  settings.legacy_response = ds5_config::legacy_response_t::fast;
+  settings.legacy_body_mix = 0.0;
+  settings.revision = old_settings.revision + 1;
+  ASSERT_TRUE(ds5_config::configure(settings));
+
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  const auto loud = sine_pcm(120.0, 32000.0);
+  std::uint16_t max_low = 0;
+  std::uint16_t max_high = 0;
+  for (std::uint32_t chunk = 0; chunk < 80; ++chunk) {
+    const auto output = session.process(
+      0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000,
+      loud, start + std::chrono::milliseconds(chunk * 5));
+    if (output) {
+      max_low = std::max(max_low, output->low_frequency);
+      max_high = std::max(max_high, output->high_frequency);
+    }
+  }
+  ASSERT_TRUE(ds5_config::configure(old_settings));
+  EXPECT_LE(max_low, static_cast<std::uint16_t>(0.40 * 65535.0));
+  EXPECT_LE(max_high, static_cast<std::uint16_t>(0.20 * 65535.0));
+  EXPECT_GT(max_low, 0u);
+  EXPECT_GT(max_high, 0u);
+}
+
 TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
   using namespace std::chrono_literals;
   // A -36 dBFS sine sits in the band where voice-coil-authored content is

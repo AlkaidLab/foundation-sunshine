@@ -21,11 +21,12 @@ namespace haptics {
     constexpr std::uint8_t source_stream_end = 0x02;
     constexpr std::uint8_t source_discontinuity = 0x04;
     constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
+    constexpr auto legacy_min_active_hold = std::chrono::milliseconds(80);
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
     constexpr float legacy_gate_hold_seconds = 0.060f;
-    constexpr float legacy_output_floor = 0.004f;
+    constexpr float legacy_output_floor = 0.030f;
     constexpr float legacy_low_band_trim = 1.15f;
     constexpr float legacy_high_band_trim = 1.20f;
     constexpr float legacy_transient_trim = 1.15f;
@@ -35,6 +36,28 @@ namespace haptics {
     constexpr float legacy_low_release_seconds = 0.040f;
     constexpr float legacy_high_attack_seconds = 0.006f;
     constexpr float legacy_high_release_seconds = 0.025f;
+
+    struct response_params_t {
+      float low_attack_seconds;
+      float low_release_seconds;
+      float high_attack_seconds;
+      float high_release_seconds;
+      float max_slew_per_second;
+    };
+
+    response_params_t response_params(ds5_config::legacy_response_t response) noexcept {
+      switch (response) {
+        case ds5_config::legacy_response_t::fast:
+          return {0.006f, 0.020f, 0.004f, 0.015f, 18.0f};
+        case ds5_config::legacy_response_t::smooth:
+          return {0.025f, 0.080f, 0.012f, 0.060f, 5.0f};
+        case ds5_config::legacy_response_t::balanced:
+          return {legacy_low_attack_seconds, legacy_low_release_seconds,
+                  legacy_high_attack_seconds, legacy_high_release_seconds, 10.0f};
+      }
+      return {legacy_low_attack_seconds, legacy_low_release_seconds,
+              legacy_high_attack_seconds, legacy_high_release_seconds, 10.0f};
+    }
 
     void
     write_u16(std::uint8_t *p, std::uint16_t value) {
@@ -243,6 +266,9 @@ namespace haptics {
       _low_gate = {};
       _high_gate = {};
       _last_emit = {};
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
     }
 
     const bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;
@@ -268,7 +294,7 @@ namespace haptics {
     // The immutable snapshot was fully validated before publication. Load it
     // once so both motor lanes use one coherent revision without per-packet
     // file access, parsing, locking, or duplicated range handling.
-    const auto settings = ds5_config::current();
+    const auto settings = ds5_config::resolve_legacy_profile(ds5_config::current());
     if (_tuning_revision != settings.revision) {
       _low_gate = {};
       _high_gate = {};
@@ -280,32 +306,69 @@ namespace haptics {
     const auto gate_close = gate_open * 0.5f;
     const auto curve = static_cast<float>(settings.legacy_curve);
     const auto strength = static_cast<float>(settings.legacy_strength);
+    const auto max_output = static_cast<float>(settings.legacy_max_output);
+    const auto high_scale = static_cast<float>(settings.legacy_high_scale);
+    const auto body_mix = static_cast<float>(settings.legacy_body_mix);
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};
     }
-    const auto low_target = must_stop ? 0.0f : shaped(
+    auto low_target = must_stop ? 0.0f : shaped(
       low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds,
       gate_open, gate_close, curve, strength);
-    const auto high_target = must_stop ? 0.0f : shaped(
+    auto high_target = must_stop ? 0.0f : shaped(
       high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds,
       gate_open, gate_close, curve, strength);
 
+    if (!must_stop) {
+      high_target *= high_scale;
+      if (_active_since != std::chrono::steady_clock::time_point {} &&
+          now - _active_since >= std::chrono::milliseconds(60)) {
+        low_target += high_target * body_mix;
+      }
+      low_target = std::min(low_target, max_output);
+      high_target = std::min(high_target, max_output * high_scale);
+    }
+
+    const auto response = response_params(settings.legacy_response);
     const auto smooth = [duration_seconds](float previous, float target,
                                            float attack, float release) {
       const auto tau = target > previous ? attack : release;
       const auto alpha = 1.0f - std::exp(-duration_seconds / tau);
       return previous + (target - previous) * alpha;
     };
-    _smoothed_low = must_stop ? 0.0f : smooth(
-      _smoothed_low, low_target, legacy_low_attack_seconds, legacy_low_release_seconds);
-    _smoothed_high = must_stop ? 0.0f : smooth(
-      _smoothed_high, high_target, legacy_high_attack_seconds, legacy_high_release_seconds);
+    const auto slew_limit = [duration_seconds, &response](float previous, float target) {
+      const auto max_delta = response.max_slew_per_second * duration_seconds;
+      return previous + std::clamp(target - previous, -max_delta, max_delta);
+    };
+    _smoothed_low = must_stop ? 0.0f : slew_limit(
+      _smoothed_low, smooth(_smoothed_low, low_target,
+                            response.low_attack_seconds, response.low_release_seconds));
+    _smoothed_high = must_stop ? 0.0f : slew_limit(
+      _smoothed_high, smooth(_smoothed_high, high_target,
+                             response.high_attack_seconds, response.high_release_seconds));
+    _smoothed_low = std::min(_smoothed_low, max_output);
+    _smoothed_high = std::min(_smoothed_high, max_output * high_scale);
     if (low_target <= 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
     if (high_target <= 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
 
-    const auto low = rumble_u16(_smoothed_low);
-    const auto high = rumble_u16(_smoothed_high);
+    auto low = rumble_u16(_smoothed_low);
+    auto high = rumble_u16(_smoothed_high);
+    if (low != 0 || high != 0) {
+      if (_active_since == std::chrono::steady_clock::time_point {}) _active_since = now;
+      _last_nonzero_low = low;
+      _last_nonzero_high = high;
+    }
+    else if (!must_stop && _active_since != std::chrono::steady_clock::time_point {} &&
+             now - _active_since < legacy_min_active_hold) {
+      low = _last_nonzero_low;
+      high = _last_nonzero_high;
+    }
+    else if (must_stop || _active_since != std::chrono::steady_clock::time_point {}) {
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
+    }
     // The 20 ms rate limit is the only emission gate. Held silence additionally
     // stays quiet instead of re-sending zero rumble at 50 Hz.
     const bool silent_hold = low == 0 && high == 0 && _last_low == 0 && _last_high == 0;
@@ -334,6 +397,9 @@ namespace haptics {
     _high_gate = {};
     _last_low = 0;
     _last_high = 0;
+    _active_since = {};
+    _last_nonzero_low = 0;
+    _last_nonzero_high = 0;
     if (!had_output) return std::nullopt;
     _last_emit = now;
     return legacy_rumble_t {_controller_id, 0, 0};

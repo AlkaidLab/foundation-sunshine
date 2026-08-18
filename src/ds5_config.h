@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 namespace ds5_config {
@@ -16,6 +17,24 @@ namespace ds5_config {
   inline constexpr double MAX_CURVE = 2.0;
   inline constexpr double MIN_NOISE_GATE = 0.002;
   inline constexpr double MAX_NOISE_GATE = 0.060;
+  inline constexpr double MIN_MAX_OUTPUT = 0.25;
+  inline constexpr double MAX_MAX_OUTPUT = 1.0;
+  inline constexpr double MIN_HIGH_SCALE = 0.25;
+  inline constexpr double MAX_HIGH_SCALE = 1.0;
+  inline constexpr double MAX_BODY_MIX = 0.35;
+
+  enum class legacy_profile_t {
+    custom,
+    quiet,
+    balanced,
+    strong,
+  };
+
+  enum class legacy_response_t {
+    fast,
+    balanced,
+    smooth,
+  };
 
   struct settings_t {
     bool enabled = false;
@@ -23,6 +42,11 @@ namespace ds5_config {
     double legacy_strength = 1.0;
     double legacy_curve = 1.0;
     double legacy_noise_gate = 0.020;
+    legacy_profile_t legacy_profile = legacy_profile_t::custom;
+    double legacy_max_output = 1.0;
+    double legacy_high_scale = 1.0;
+    legacy_response_t legacy_response = legacy_response_t::balanced;
+    double legacy_body_mix = 0.0;
     std::uint64_t revision = 1;
   };
 
@@ -69,6 +93,11 @@ namespace ds5_config {
   std::filesystem::path backup_path_for(const std::filesystem::path &settings_file);
 
   bool validate(const settings_t &settings) noexcept;
+  settings_t resolve_legacy_profile(settings_t settings) noexcept;
+  std::string_view legacy_profile_name(legacy_profile_t profile) noexcept;
+  bool parse_legacy_profile(std::string_view value, legacy_profile_t &profile) noexcept;
+  std::string_view legacy_response_name(legacy_response_t response) noexcept;
+  bool parse_legacy_response(std::string_view value, legacy_response_t &response) noexcept;
   prepared_settings_t prepare(settings_t settings) noexcept;
   bool commit(prepared_settings_t &&settings) noexcept;
   bool configure(settings_t settings) noexcept;

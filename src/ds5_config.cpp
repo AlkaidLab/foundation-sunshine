@@ -112,13 +112,98 @@ namespace ds5_config {
   }
 
   bool validate(const settings_t &settings) noexcept {
+    const auto valid_profile = settings.legacy_profile == legacy_profile_t::custom ||
+                               settings.legacy_profile == legacy_profile_t::quiet ||
+                               settings.legacy_profile == legacy_profile_t::balanced ||
+                               settings.legacy_profile == legacy_profile_t::strong;
+    const auto valid_response = settings.legacy_response == legacy_response_t::fast ||
+                                settings.legacy_response == legacy_response_t::balanced ||
+                                settings.legacy_response == legacy_response_t::smooth;
     return settings.revision > 0 &&
+           valid_profile && valid_response &&
            std::isfinite(settings.legacy_strength) &&
            settings.legacy_strength >= MIN_STRENGTH && settings.legacy_strength <= MAX_STRENGTH &&
            std::isfinite(settings.legacy_curve) &&
            settings.legacy_curve >= MIN_CURVE && settings.legacy_curve <= MAX_CURVE &&
            std::isfinite(settings.legacy_noise_gate) &&
-           settings.legacy_noise_gate >= MIN_NOISE_GATE && settings.legacy_noise_gate <= MAX_NOISE_GATE;
+           settings.legacy_noise_gate >= MIN_NOISE_GATE && settings.legacy_noise_gate <= MAX_NOISE_GATE &&
+           std::isfinite(settings.legacy_max_output) &&
+           settings.legacy_max_output >= MIN_MAX_OUTPUT && settings.legacy_max_output <= MAX_MAX_OUTPUT &&
+           std::isfinite(settings.legacy_high_scale) &&
+           settings.legacy_high_scale >= MIN_HIGH_SCALE && settings.legacy_high_scale <= MAX_HIGH_SCALE &&
+           std::isfinite(settings.legacy_body_mix) &&
+           settings.legacy_body_mix >= 0.0 && settings.legacy_body_mix <= MAX_BODY_MIX;
+  }
+
+  std::string_view legacy_profile_name(legacy_profile_t profile) noexcept {
+    switch (profile) {
+      case legacy_profile_t::quiet: return "quiet";
+      case legacy_profile_t::balanced: return "balanced";
+      case legacy_profile_t::strong: return "strong";
+      case legacy_profile_t::custom: return "custom";
+    }
+    return "custom";
+  }
+
+  bool parse_legacy_profile(std::string_view value, legacy_profile_t &profile) noexcept {
+    if (value == "quiet") profile = legacy_profile_t::quiet;
+    else if (value == "balanced") profile = legacy_profile_t::balanced;
+    else if (value == "strong") profile = legacy_profile_t::strong;
+    else if (value == "custom") profile = legacy_profile_t::custom;
+    else return false;
+    return true;
+  }
+
+  std::string_view legacy_response_name(legacy_response_t response) noexcept {
+    switch (response) {
+      case legacy_response_t::fast: return "fast";
+      case legacy_response_t::balanced: return "balanced";
+      case legacy_response_t::smooth: return "smooth";
+    }
+    return "balanced";
+  }
+
+  bool parse_legacy_response(std::string_view value, legacy_response_t &response) noexcept {
+    if (value == "fast") response = legacy_response_t::fast;
+    else if (value == "balanced") response = legacy_response_t::balanced;
+    else if (value == "smooth") response = legacy_response_t::smooth;
+    else return false;
+    return true;
+  }
+
+  settings_t resolve_legacy_profile(settings_t settings) noexcept {
+    switch (settings.legacy_profile) {
+      case legacy_profile_t::quiet:
+        settings.legacy_strength = 0.75;
+        settings.legacy_curve = 0.75;
+        settings.legacy_noise_gate = 0.008;
+        settings.legacy_max_output = 0.55;
+        settings.legacy_high_scale = 0.65;
+        settings.legacy_response = legacy_response_t::smooth;
+        settings.legacy_body_mix = 0.10;
+        break;
+      case legacy_profile_t::balanced:
+        settings.legacy_strength = 1.00;
+        settings.legacy_curve = 0.50;
+        settings.legacy_noise_gate = 0.006;
+        settings.legacy_max_output = 0.70;
+        settings.legacy_high_scale = 0.75;
+        settings.legacy_response = legacy_response_t::balanced;
+        settings.legacy_body_mix = 0.15;
+        break;
+      case legacy_profile_t::strong:
+        settings.legacy_strength = 1.10;
+        settings.legacy_curve = 0.40;
+        settings.legacy_noise_gate = 0.004;
+        settings.legacy_max_output = 0.82;
+        settings.legacy_high_scale = 0.85;
+        settings.legacy_response = legacy_response_t::fast;
+        settings.legacy_body_mix = 0.18;
+        break;
+      case legacy_profile_t::custom:
+        break;
+    }
+    return settings;
   }
 
   prepared_settings_t prepare(settings_t settings) noexcept {
@@ -167,12 +252,21 @@ namespace ds5_config {
       }
 
       const auto input = nlohmann::json::parse(contents);
-      if (!input.is_object() || input.size() != 5 ||
+      const bool has_extended = input.is_object() && input.size() == 11 &&
+                                input.contains("ds5_legacy_haptics_schema") &&
+                                input["ds5_legacy_haptics_schema"].is_number_integer() &&
+                                input["ds5_legacy_haptics_schema"].get<int>() == 2;
+      if (!input.is_object() || (input.size() != 5 && !has_extended) ||
           !input.contains("ds5_enabled") || !input["ds5_enabled"].is_boolean() ||
           !input.contains("ds5_audio_haptics") || !input["ds5_audio_haptics"].is_boolean() ||
           !input.contains("ds5_legacy_haptics_strength") || !input["ds5_legacy_haptics_strength"].is_number() ||
           !input.contains("ds5_legacy_haptics_curve") || !input["ds5_legacy_haptics_curve"].is_number() ||
-          !input.contains("ds5_legacy_haptics_noise_gate") || !input["ds5_legacy_haptics_noise_gate"].is_number()) {
+          !input.contains("ds5_legacy_haptics_noise_gate") || !input["ds5_legacy_haptics_noise_gate"].is_number() ||
+          (has_extended && (!input.contains("ds5_legacy_haptics_profile") || !input["ds5_legacy_haptics_profile"].is_string() ||
+                            !input.contains("ds5_legacy_haptics_max_output") || !input["ds5_legacy_haptics_max_output"].is_number() ||
+                            !input.contains("ds5_legacy_haptics_high_scale") || !input["ds5_legacy_haptics_high_scale"].is_number() ||
+                            !input.contains("ds5_legacy_haptics_response") || !input["ds5_legacy_haptics_response"].is_string() ||
+                            !input.contains("ds5_legacy_haptics_body_mix") || !input["ds5_legacy_haptics_body_mix"].is_number()))) {
         return {load_status_t::INVALID, {}};
       }
 
@@ -183,6 +277,15 @@ namespace ds5_config {
         input["ds5_legacy_haptics_curve"].get<double>(),
         input["ds5_legacy_haptics_noise_gate"].get<double>(),
       };
+      if (has_extended) {
+        if (!parse_legacy_profile(input["ds5_legacy_haptics_profile"].get<std::string>(), settings.legacy_profile) ||
+            !parse_legacy_response(input["ds5_legacy_haptics_response"].get<std::string>(), settings.legacy_response)) {
+          return {load_status_t::INVALID, {}};
+        }
+        settings.legacy_max_output = input["ds5_legacy_haptics_max_output"].get<double>();
+        settings.legacy_high_scale = input["ds5_legacy_haptics_high_scale"].get<double>();
+        settings.legacy_body_mix = input["ds5_legacy_haptics_body_mix"].get<double>();
+      }
       return validate(settings) ? load_result_t {load_status_t::LOADED, settings} :
                                   load_result_t {load_status_t::INVALID, {}};
     }
@@ -206,6 +309,12 @@ namespace ds5_config {
         {"ds5_legacy_haptics_strength", settings.legacy_strength},
         {"ds5_legacy_haptics_curve", settings.legacy_curve},
         {"ds5_legacy_haptics_noise_gate", settings.legacy_noise_gate},
+        {"ds5_legacy_haptics_schema", 2},
+        {"ds5_legacy_haptics_profile", legacy_profile_name(settings.legacy_profile)},
+        {"ds5_legacy_haptics_max_output", settings.legacy_max_output},
+        {"ds5_legacy_haptics_high_scale", settings.legacy_high_scale},
+        {"ds5_legacy_haptics_response", legacy_response_name(settings.legacy_response)},
+        {"ds5_legacy_haptics_body_mix", settings.legacy_body_mix},
       };
       std::ofstream file(temporary_path, std::ios::binary | std::ios::trunc);
       if (!file.is_open()) return false;

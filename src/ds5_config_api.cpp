@@ -63,6 +63,12 @@ namespace ds5_config::api {
         {"ds5_legacy_haptics_strength", settings.legacy_strength},
         {"ds5_legacy_haptics_curve", settings.legacy_curve},
         {"ds5_legacy_haptics_noise_gate", settings.legacy_noise_gate},
+        {"ds5_legacy_haptics_schema", 2},
+        {"ds5_legacy_haptics_profile", legacy_profile_name(settings.legacy_profile)},
+        {"ds5_legacy_haptics_max_output", settings.legacy_max_output},
+        {"ds5_legacy_haptics_high_scale", settings.legacy_high_scale},
+        {"ds5_legacy_haptics_response", legacy_response_name(settings.legacy_response)},
+        {"ds5_legacy_haptics_body_mix", settings.legacy_body_mix},
       };
       if (changed) result["changed"] = *changed;
       return result;
@@ -73,16 +79,30 @@ namespace ds5_config::api {
              left.audio_haptics == right.audio_haptics &&
              left.legacy_strength == right.legacy_strength &&
              left.legacy_curve == right.legacy_curve &&
-             left.legacy_noise_gate == right.legacy_noise_gate;
+             left.legacy_noise_gate == right.legacy_noise_gate &&
+             left.legacy_profile == right.legacy_profile &&
+             left.legacy_max_output == right.legacy_max_output &&
+             left.legacy_high_scale == right.legacy_high_scale &&
+             left.legacy_response == right.legacy_response &&
+             left.legacy_body_mix == right.legacy_body_mix;
     }
 
     bool parse_settings(const json &input, settings_t &settings) {
-      if (!input.is_object() || input.size() != 5 ||
+      const bool has_extended = input.is_object() && input.size() == 11 &&
+                                input.contains("ds5_legacy_haptics_schema") &&
+                                input["ds5_legacy_haptics_schema"].is_number_integer() &&
+                                input["ds5_legacy_haptics_schema"].get<int>() == 2;
+      if (!input.is_object() || (input.size() != 5 && !has_extended) ||
           !input.contains("ds5_enabled") || !input["ds5_enabled"].is_boolean() ||
           !input.contains("ds5_audio_haptics") || !input["ds5_audio_haptics"].is_boolean() ||
           !input.contains("ds5_legacy_haptics_strength") || !input["ds5_legacy_haptics_strength"].is_number() ||
           !input.contains("ds5_legacy_haptics_curve") || !input["ds5_legacy_haptics_curve"].is_number() ||
-          !input.contains("ds5_legacy_haptics_noise_gate") || !input["ds5_legacy_haptics_noise_gate"].is_number()) {
+          !input.contains("ds5_legacy_haptics_noise_gate") || !input["ds5_legacy_haptics_noise_gate"].is_number() ||
+          (has_extended && (!input.contains("ds5_legacy_haptics_profile") || !input["ds5_legacy_haptics_profile"].is_string() ||
+                            !input.contains("ds5_legacy_haptics_max_output") || !input["ds5_legacy_haptics_max_output"].is_number() ||
+                            !input.contains("ds5_legacy_haptics_high_scale") || !input["ds5_legacy_haptics_high_scale"].is_number() ||
+                            !input.contains("ds5_legacy_haptics_response") || !input["ds5_legacy_haptics_response"].is_string() ||
+                            !input.contains("ds5_legacy_haptics_body_mix") || !input["ds5_legacy_haptics_body_mix"].is_number()))) {
         return false;
       }
       settings = {
@@ -92,6 +112,15 @@ namespace ds5_config::api {
         input["ds5_legacy_haptics_curve"].get<double>(),
         input["ds5_legacy_haptics_noise_gate"].get<double>(),
       };
+      if (has_extended) {
+        if (!parse_legacy_profile(input["ds5_legacy_haptics_profile"].get<std::string>(), settings.legacy_profile) ||
+            !parse_legacy_response(input["ds5_legacy_haptics_response"].get<std::string>(), settings.legacy_response)) {
+          return false;
+        }
+        settings.legacy_max_output = input["ds5_legacy_haptics_max_output"].get<double>();
+        settings.legacy_high_scale = input["ds5_legacy_haptics_high_scale"].get<double>();
+        settings.legacy_body_mix = input["ds5_legacy_haptics_body_mix"].get<double>();
+      }
       return validate(settings);
     }
 

@@ -64,6 +64,17 @@ namespace {
       {"ds5_legacy_haptics_noise_gate", 0.006},
     };
   }
+
+  nlohmann::json extended_json() {
+    auto value = valid_json();
+    value["ds5_legacy_haptics_schema"] = 2;
+    value["ds5_legacy_haptics_profile"] = "balanced";
+    value["ds5_legacy_haptics_max_output"] = 0.70;
+    value["ds5_legacy_haptics_high_scale"] = 0.75;
+    value["ds5_legacy_haptics_response"] = "balanced";
+    value["ds5_legacy_haptics_body_mix"] = 0.15;
+    return value;
+  }
 }  // namespace
 
 TEST_F(Ds5ConfigTest, ResolvesBesideSelectedSunshineConfig) {
@@ -100,6 +111,38 @@ TEST_F(Ds5ConfigTest, RejectsMalformedSchemaAndInvalidNumbers) {
   invalid = {};
   invalid.legacy_noise_gate = 0.061;
   EXPECT_FALSE(ds5_config::validate(invalid));
+  invalid = {};
+  invalid.legacy_max_output = 0.24;
+  EXPECT_FALSE(ds5_config::validate(invalid));
+  invalid = {};
+  invalid.legacy_body_mix = 0.36;
+  EXPECT_FALSE(ds5_config::validate(invalid));
+
+  write_json(extended_json());
+  const auto extended = ds5_config::load(path_);
+  ASSERT_EQ(extended.status, ds5_config::load_status_t::LOADED);
+  EXPECT_EQ(extended.settings.legacy_profile, ds5_config::legacy_profile_t::balanced);
+  EXPECT_DOUBLE_EQ(extended.settings.legacy_max_output, 0.70);
+  EXPECT_DOUBLE_EQ(extended.settings.legacy_high_scale, 0.75);
+  EXPECT_EQ(extended.settings.legacy_response, ds5_config::legacy_response_t::balanced);
+  EXPECT_DOUBLE_EQ(extended.settings.legacy_body_mix, 0.15);
+}
+
+TEST_F(Ds5ConfigTest, ResolvesLegacyPresetsToCompleteRendererSettings) {
+  auto settings = ds5_config::settings_t {};
+  settings.legacy_profile = ds5_config::legacy_profile_t::balanced;
+  const auto resolved = ds5_config::resolve_legacy_profile(settings);
+  EXPECT_DOUBLE_EQ(resolved.legacy_strength, 1.0);
+  EXPECT_DOUBLE_EQ(resolved.legacy_curve, 0.5);
+  EXPECT_DOUBLE_EQ(resolved.legacy_noise_gate, 0.006);
+  EXPECT_DOUBLE_EQ(resolved.legacy_max_output, 0.70);
+  EXPECT_DOUBLE_EQ(resolved.legacy_high_scale, 0.75);
+  EXPECT_EQ(resolved.legacy_response, ds5_config::legacy_response_t::balanced);
+  EXPECT_DOUBLE_EQ(resolved.legacy_body_mix, 0.15);
+
+  settings.legacy_profile = ds5_config::legacy_profile_t::custom;
+  settings.legacy_strength = 1.7;
+  EXPECT_DOUBLE_EQ(ds5_config::resolve_legacy_profile(settings).legacy_strength, 1.7);
 }
 
 TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
@@ -119,6 +162,11 @@ TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_strength, replacement.legacy_strength);
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_curve, replacement.legacy_curve);
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_noise_gate, replacement.legacy_noise_gate);
+  EXPECT_EQ(loaded.settings.legacy_profile, replacement.legacy_profile);
+  EXPECT_DOUBLE_EQ(loaded.settings.legacy_max_output, replacement.legacy_max_output);
+  EXPECT_DOUBLE_EQ(loaded.settings.legacy_high_scale, replacement.legacy_high_scale);
+  EXPECT_EQ(loaded.settings.legacy_response, replacement.legacy_response);
+  EXPECT_DOUBLE_EQ(loaded.settings.legacy_body_mix, replacement.legacy_body_mix);
   // Revision describes only the current process and is not persisted.
   EXPECT_EQ(loaded.settings.revision, 1);
 }

@@ -101,9 +101,12 @@ namespace haptics {
     authored_ir_session_t _analyzer;
     std::chrono::steady_clock::time_point _last_input {};
     std::chrono::steady_clock::time_point _last_emit {};
+    std::chrono::steady_clock::time_point _active_since {};
     std::uint16_t _controller_id = 0;
     std::uint16_t _last_low = 0;
     std::uint16_t _last_high = 0;
+    std::uint16_t _last_nonzero_low = 0;
+    std::uint16_t _last_nonzero_high = 0;
     float _smoothed_low = 0.0f;
     float _smoothed_high = 0.0f;
     std::uint64_t _tuning_revision = 0;
