@@ -8,6 +8,7 @@
 // standard includes
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -290,8 +291,11 @@ namespace nvhttp {
     // Optional client-measured SDR reference white (moonlight-harmony extension).
     // Parsed independently: a missing or out-of-range value simply leaves 0.
     if (const auto sdr_white = find_arg(args, "sdrBrightness")) {
-      const int parsed_sdr_white = std::atoi(std::string { *sdr_white }.c_str());
-      if (parsed_sdr_white >= 50 && parsed_sdr_white <= 1000) {
+      int parsed_sdr_white = 0;
+      const char *begin = sdr_white->data();
+      const char *end = begin + sdr_white->size();
+      const auto [position, parse_error] = std::from_chars(begin, end, parsed_sdr_white);
+      if (parse_error == std::errc {} && position == end && parsed_sdr_white >= 50 && parsed_sdr_white <= 1000) {
         launch_session->reported_hdr_capabilities.sdr_white_nits = static_cast<float>(parsed_sdr_white);
         launch_session->hdr_capabilities.sdr_white_nits = static_cast<float>(parsed_sdr_white);
         BOOST_LOG(info) << "Client reported SDR white level: " << parsed_sdr_white << " nits";

@@ -3360,7 +3360,7 @@ namespace platf::dxgi {
 
       // Keep the established 300-nit fallback for backends without producer
       // white-level metadata. VDD replaces it with the driver's current value.
-      float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value };  // aligned to 16-byte
+      float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value.load(std::memory_order_relaxed) };  // aligned to 16-byte
       cursor_white_multiplier = make_buffer(device.get(), white_multiplier_data);
       if (!cursor_white_multiplier) {
         BOOST_LOG(warning) << "Failed to create cursor blending (normalized white) white multiplier constant buffer";
@@ -3405,7 +3405,7 @@ namespace platf::dxgi {
     }
 
     const float next_multiplier = sdr_white_nits / 80.0f;
-    if (std::abs(next_multiplier - cursor_white_multiplier_value) < 0.0001f) {
+    if (std::abs(next_multiplier - cursor_white_multiplier_value.load(std::memory_order_relaxed)) < 0.0001f) {
       return;
     }
 
@@ -3425,7 +3425,7 @@ namespace platf::dxgi {
     if (!cursor_white_normalization_enabled) {
       return std::nullopt;
     }
-    return cursor_white_multiplier_value * 80.0f;
+    return cursor_white_multiplier_value.load(std::memory_order_relaxed) * 80.0f;
   }
 
   void

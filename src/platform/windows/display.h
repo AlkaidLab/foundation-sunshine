@@ -377,7 +377,9 @@ namespace platf::dxgi {
 
     gpu_cursor_t cursor_alpha;
     gpu_cursor_t cursor_xor;
-    float cursor_white_multiplier_value = 300.0f / 80.0f;
+    // Written from the capture/cursor thread, read from the encode path
+    // (composed_sdr_white_nits), so it must be an atomic snapshot.
+    std::atomic<float> cursor_white_multiplier_value { 300.0f / 80.0f };
     bool cursor_white_normalization_enabled = false;
     bool cursor_pipeline_ready = false;
 
