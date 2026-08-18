@@ -555,6 +555,7 @@ namespace config {
     true,  // ds5_inputtino_randomize_mac
     false,  // ds5_enabled
     true,  // ds5_audio_haptics (native authored Channel 3/4 passthrough)
+    false,  // ds5_legacy_erm_tuning (A/B: ERM-calibrated legacy fallback mapping)
     {},  // ds5_sidecar_path
     false, // enable_dsu_server - disabled by default
     26760, // dsu_server_port - default DSU server port
@@ -1551,6 +1552,7 @@ namespace config {
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "ds5_enabled", input.ds5_enabled);
     bool_f(vars, "ds5_audio_haptics", input.ds5_audio_haptics);
+    bool_f(vars, "ds5_legacy_erm_tuning", input.ds5_legacy_erm_tuning);
     if (const auto path = vars.find("ds5_sidecar_path");
         path != vars.end() && !path->second.empty()) {
       path_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstdint>
@@ -225,4 +226,27 @@ TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {
   EXPECT_EQ(stopped->low_frequency, 0);
   EXPECT_EQ(stopped->high_frequency, 0);
   EXPECT_FALSE(session.poll(start + 200ms).has_value());
+}
+
+TEST(AuthoredDualSenseIr, LegacyFallbackErmTuningOpensQuietBand) {
+  using namespace std::chrono_literals;
+  // A -36 dBFS sine sits in the band where voice-coil-authored content is
+  // clearly felt while the stock band-energy gate keeps rotor motors off.
+  haptics::legacy_rumble_session_t stock;
+  haptics::legacy_rumble_session_t erm(true);
+  ASSERT_TRUE(stock.ready());
+  ASSERT_TRUE(erm.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  std::uint16_t stock_peak = 0;
+  std::uint16_t erm_peak = 0;
+  for (std::uint32_t chunk = 0; chunk < 20; ++chunk) {
+    const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
+    const auto at = start + std::chrono::milliseconds(chunk * 5);
+    const auto s = stock.process(0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000, pcm, at);
+    if (s) stock_peak = std::max(stock_peak, s->low_frequency);
+    const auto e = erm.process(0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000, pcm, at);
+    if (e) erm_peak = std::max(erm_peak, e->low_frequency);
+  }
+  EXPECT_EQ(stock_peak, 0);
+  EXPECT_GT(erm_peak, 3000);
 }

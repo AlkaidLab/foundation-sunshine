@@ -1443,7 +1443,8 @@ namespace stream {
         if (!session->control.legacy_haptics_init_failed) {
           auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
           if (inserted) {
-            auto created = std::make_unique<haptics::legacy_rumble_session_t>();
+            auto created = std::make_unique<haptics::legacy_rumble_session_t>(
+              config::input.ds5_legacy_erm_tuning);
             if (!created->ready()) {
               session->control.legacy_haptics.erase(controller_session);
               session->control.legacy_haptics_init_failed = true;

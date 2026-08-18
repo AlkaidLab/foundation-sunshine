@@ -21,6 +21,8 @@ namespace haptics {
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
+    constexpr float legacy_erm_gate_open = 0.006f;
+    constexpr float legacy_erm_gate_close = 0.003f;
     constexpr float legacy_gate_hold_seconds = 0.060f;
     constexpr float legacy_output_floor = 0.004f;
     constexpr float legacy_low_band_trim = 1.15f;
@@ -59,9 +61,11 @@ namespace haptics {
     }
 
     float
-    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds) {
+    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds, bool erm_tuning) {
+      const auto gate_open = erm_tuning ? legacy_erm_gate_open : legacy_gate_open;
+      const auto gate_close = erm_tuning ? legacy_erm_gate_close : legacy_gate_close;
       value = std::clamp(value, 0.0f, 1.0f);
-      if (value >= legacy_gate_open) {
+      if (value >= gate_open) {
         gate.open = true;
         gate.hold_seconds = legacy_gate_hold_seconds;
       }
@@ -70,15 +74,18 @@ namespace haptics {
         // parked between the two thresholds -- which is exactly where residual
         // out-of-band energy lands -- would keep the gate latched forever.
         gate.hold_seconds -= duration_seconds;
-        if (value <= legacy_gate_close || gate.hold_seconds <= 0.0f) {
+        if (value <= gate_close || gate.hold_seconds <= 0.0f) {
           gate.open = false;
         }
       }
       if (!gate.open) return 0.0f;
 
       const auto gated = std::clamp(
-        (value - legacy_gate_close) / (1.0f - legacy_gate_close), 0.0f, 1.0f);
-      return std::tanh(makeup_gain * gated) / std::tanh(makeup_gain);
+        (value - gate_close) / (1.0f - gate_close), 0.0f, 1.0f);
+      // ERM tuning lifts the quiet band where voice-coil-authored content is
+      // clearly felt but rotor motors do not start; tanh still caps the top.
+      const auto drive = erm_tuning ? std::sqrt(gated) : gated;
+      return std::tanh(makeup_gain * drive) / std::tanh(makeup_gain);
     }
 
     std::uint16_t
@@ -212,6 +219,9 @@ namespace haptics {
     return _analyzer.ready();
   }
 
+  legacy_rumble_session_t::legacy_rumble_session_t(bool erm_tuning):
+      _erm_tuning(erm_tuning) {}
+
   std::optional<legacy_rumble_t>
   legacy_rumble_session_t::process(std::uint16_t controller_id, std::uint8_t source_flags,
                                    std::uint16_t frame_count, std::uint32_t sequence,
@@ -260,9 +270,9 @@ namespace haptics {
       _high_gate = {};
     }
     const auto low_target = must_stop ? 0.0f : shaped(
-      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds);
+      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds, _erm_tuning);
     const auto high_target = must_stop ? 0.0f : shaped(
-      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds);
+      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds, _erm_tuning);
 
     const auto smooth = [duration_seconds](float previous, float target,
                                            float attack, float release) {
