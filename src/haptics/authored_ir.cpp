@@ -18,6 +18,10 @@ namespace haptics {
     constexpr std::uint8_t source_stream_end = 0x02;
     constexpr std::uint8_t source_discontinuity = 0x04;
     constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
+    // Some clients dispatch rumble on a slower timer and keep only the newest
+    // queued packet. Hold short synthesized pulses long enough that a stop
+    // packet cannot replace the only nonzero dispatch.
+    constexpr auto legacy_min_active_hold = std::chrono::milliseconds(80);
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
@@ -282,8 +286,23 @@ namespace haptics {
     if (low_target <= 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
     if (high_target <= 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
 
-    const auto low = rumble_u16(_smoothed_low);
-    const auto high = rumble_u16(_smoothed_high);
+    auto low = rumble_u16(_smoothed_low);
+    auto high = rumble_u16(_smoothed_high);
+    if (low != 0 || high != 0) {
+      if (_active_since == std::chrono::steady_clock::time_point {}) _active_since = now;
+      _last_nonzero_low = low;
+      _last_nonzero_high = high;
+    }
+    else if (!must_stop && _active_since != std::chrono::steady_clock::time_point {} &&
+             now - _active_since < legacy_min_active_hold) {
+      low = _last_nonzero_low;
+      high = _last_nonzero_high;
+    }
+    else if (must_stop || _active_since != std::chrono::steady_clock::time_point {}) {
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
+    }
     // The 20 ms rate limit is the only emission gate. Held silence additionally
     // stays quiet instead of re-sending zero rumble at 50 Hz.
     const bool silent_hold = low == 0 && high == 0 && _last_low == 0 && _last_high == 0;
@@ -312,6 +331,9 @@ namespace haptics {
     _high_gate = {};
     _last_low = 0;
     _last_high = 0;
+    _active_since = {};
+    _last_nonzero_low = 0;
+    _last_nonzero_high = 0;
     if (!had_output) return std::nullopt;
     _last_emit = now;
     return legacy_rumble_t {_controller_id, 0, 0};

@@ -156,6 +156,28 @@ TEST(AuthoredDualSenseIr, LegacyFallbackLiftsLowLevelContentAboveMotorFloor) {
   EXPECT_GE(latest->low_frequency, 0x1800u);
 }
 
+TEST(AuthoredDualSenseIr, LegacyFallbackHoldsShortPulseBeforeStop) {
+  using namespace std::chrono_literals;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  const auto pcm = sine_pcm(120.0, 24000.0);
+  const auto first = session.process(0, 0x01, 240, 1, 0, pcm, start);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_GT(first->low_frequency, 0);
+
+  const std::vector<std::uint8_t> silence(240 * 4);
+  const auto held = session.process(0, 0, 240, 2, 25000, silence, start + 25ms);
+  ASSERT_TRUE(held.has_value());
+  EXPECT_EQ(held->low_frequency, first->low_frequency);
+  EXPECT_EQ(held->high_frequency, first->high_frequency);
+
+  const auto stopped = session.process(0, 0, 240, 3, 90000, silence, start + 90ms);
+  ASSERT_TRUE(stopped.has_value());
+  EXPECT_EQ(stopped->low_frequency, 0);
+  EXPECT_EQ(stopped->high_frequency, 0);
+}
+
 TEST(AuthoredDualSenseIr, LegacyFallbackSeparatesTactileBandsAndRejectsHiss) {
   using namespace std::chrono_literals;
   const auto measure = [](double frequency_hz, std::uint32_t chunks) {
