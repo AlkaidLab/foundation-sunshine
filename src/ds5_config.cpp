@@ -112,7 +112,8 @@ namespace ds5_config {
   }
 
   bool validate(const settings_t &settings) noexcept {
-    return std::isfinite(settings.legacy_strength) &&
+    return settings.revision > 0 &&
+           std::isfinite(settings.legacy_strength) &&
            settings.legacy_strength >= MIN_STRENGTH && settings.legacy_strength <= MAX_STRENGTH &&
            std::isfinite(settings.legacy_curve) &&
            settings.legacy_curve >= MIN_CURVE && settings.legacy_curve <= MAX_CURVE &&

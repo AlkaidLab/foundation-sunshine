@@ -265,22 +265,21 @@ namespace haptics {
     // tracks texture and impacts quickly. Time-based coefficients keep this
     // independent of the sidecar's chunk boundaries.
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
-    // Tuning knobs are read per packet so UI changes apply to a running
-    // stream without reconnecting. Ranges bound the values a config file
-    // could otherwise push into nonsense; non-finite entries (a hand-edited
-    // config parsing to NaN/inf) fall back to the stock mapping instead of
-    // reaching std::lround, where NaN would be undefined behavior.
-    const auto finite_or = [](double value, double fallback) {
-      return std::isfinite(value) ? value : fallback;
-    };
+    // The immutable snapshot was fully validated before publication. Load it
+    // once so both motor lanes use one coherent revision without per-packet
+    // file access, parsing, locking, or duplicated range handling.
     const auto settings = ds5_config::current();
-    const auto gate_open = static_cast<float>(
-      std::clamp(finite_or(settings.legacy_noise_gate, 0.020), 0.002, 0.060));
+    if (_tuning_revision != settings.revision) {
+      _low_gate = {};
+      _high_gate = {};
+      _tuning_revision = settings.revision;
+      BOOST_LOG(debug) << "Controller " << controller_id
+                       << " adopted legacy haptics tuning revision " << settings.revision;
+    }
+    const auto gate_open = static_cast<float>(settings.legacy_noise_gate);
     const auto gate_close = gate_open * 0.5f;
-    const auto curve = static_cast<float>(
-      std::clamp(finite_or(settings.legacy_curve, 1.0), 0.3, 2.0));
-    const auto strength = static_cast<float>(
-      std::clamp(finite_or(settings.legacy_strength, 1.0), 0.1, 4.0));
+    const auto curve = static_cast<float>(settings.legacy_curve);
+    const auto strength = static_cast<float>(settings.legacy_strength);
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};

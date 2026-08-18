@@ -40,6 +40,7 @@ namespace platf::ds5 {
     constexpr std::uint16_t VERSION = 1;
     constexpr std::size_t HEADER_SIZE = 16;
     constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
+    std::atomic_bool trusted_component_available { false };
     // The sidecar protocol identifies devices with a single byte.
     static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
 
@@ -600,14 +601,31 @@ namespace platf::ds5 {
     }
   };
 
+  bool component_available() noexcept {
+    return trusted_component_available.load(std::memory_order_acquire);
+  }
+
+  bool refresh_component_availability() noexcept {
+    bool available = false;
+    try {
+      available = trusted_sidecar_path().has_value();
+    }
+    catch (...) {
+      available = false;
+    }
+    trusted_component_available.store(available, std::memory_order_release);
+    return available;
+  }
+
   sidecar_client_t::sidecar_client_t():
-      _impl(std::make_unique<impl_t>()) {}
+      _impl(std::make_unique<impl_t>()) {
+    refresh_component_availability();
+  }
 
   sidecar_client_t::~sidecar_client_t() = default;
 
   bool sidecar_client_t::configured() const {
-    return ds5_config::current().enabled &&
-           std::filesystem::is_regular_file(sidecar_executable_path());
+    return ds5_config::current().enabled && refresh_component_availability();
   }
 
   bool sidecar_client_t::owns(int global_index) const {

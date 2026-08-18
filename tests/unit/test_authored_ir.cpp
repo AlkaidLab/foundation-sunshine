@@ -251,6 +251,7 @@ TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
   auto tuned_settings = old_settings;
   tuned_settings.legacy_noise_gate = 0.006;
   tuned_settings.legacy_curve = 0.5;
+  tuned_settings.revision = old_settings.revision + 1;
   ASSERT_TRUE(ds5_config::configure(tuned_settings));
   std::uint16_t tuned_peak = 0;
   for (std::uint32_t chunk = 20; chunk < 40; ++chunk) {

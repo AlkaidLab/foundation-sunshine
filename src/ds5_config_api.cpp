@@ -7,7 +7,9 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -46,15 +48,32 @@ namespace ds5_config::api {
       write_json(std::move(response), status, body);
     }
 
-    json settings_json(const settings_t &settings) {
-      return {
+    json settings_json(
+      const settings_t &settings,
+      bool persisted,
+      std::optional<bool> changed = std::nullopt
+    ) {
+      json result {
         {"status", true},
+        {"applied", true},
+        {"persisted", persisted},
+        {"revision", settings.revision},
         {"ds5_enabled", settings.enabled},
         {"ds5_audio_haptics", settings.audio_haptics},
         {"ds5_legacy_haptics_strength", settings.legacy_strength},
         {"ds5_legacy_haptics_curve", settings.legacy_curve},
         {"ds5_legacy_haptics_noise_gate", settings.legacy_noise_gate},
       };
+      if (changed) result["changed"] = *changed;
+      return result;
+    }
+
+    bool same_values(const settings_t &left, const settings_t &right) noexcept {
+      return left.enabled == right.enabled &&
+             left.audio_haptics == right.audio_haptics &&
+             left.legacy_strength == right.legacy_strength &&
+             left.legacy_curve == right.legacy_curve &&
+             left.legacy_noise_gate == right.legacy_noise_gate;
     }
 
     bool parse_settings(const json &input, settings_t &settings) {
@@ -91,7 +110,12 @@ namespace ds5_config::api {
         );
         return;
       }
-      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, settings_json(result.settings));
+      const auto active = current();
+      write_json(
+        std::move(response),
+        SimpleWeb::StatusCode::success_ok,
+        settings_json(active, result.status == load_status_t::LOADED)
+      );
     }
 
     void save_config_impl(resp_https_t response, req_https_t request, const std::filesystem::path &path) {
@@ -108,8 +132,14 @@ namespace ds5_config::api {
 
       bool saved = false;
       bool applied = false;
+      bool changed = false;
       {
         std::lock_guard<std::mutex> lock(settings_transaction_mutex);
+        const auto active = current();
+        changed = !same_values(active, settings);
+        settings.revision = !changed ? active.revision :
+                              active.revision == (std::numeric_limits<std::uint64_t>::max)() ?
+                                1 : active.revision + 1;
         auto prepared = prepare(settings);
         if (prepared) {
           saved = save(path, prepared.value());
@@ -126,8 +156,17 @@ namespace ds5_config::api {
         return;
       }
 
-      BOOST_LOG(info) << "DualSense configuration saved and applied";
-      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, settings_json(settings));
+      if (changed) {
+        BOOST_LOG(info) << "DualSense configuration saved and applied at revision " << settings.revision;
+      }
+      else {
+        BOOST_LOG(debug) << "DualSense configuration save kept revision " << settings.revision;
+      }
+      write_json(
+        std::move(response),
+        SimpleWeb::StatusCode::success_ok,
+        settings_json(settings, true, changed)
+      );
     }
 
     void write_unhandled_error(resp_https_t response) noexcept {

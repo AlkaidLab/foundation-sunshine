@@ -504,7 +504,7 @@ namespace platf {
     if (app_mode != 0) {
       return app_mode;
     }
-    if (ds5_config::current().enabled) return 4;
+    if (ds5_config::current().enabled && ds5::component_available()) return 4;
     if (config::input.gamepad == "x360"sv) return 2;
     if (config::input.gamepad == "ds4"sv) return 3;
     // Legacy sunshine.conf may still contain gamepad=ds5. The independent
@@ -1913,6 +1913,9 @@ namespace platf {
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
     auto raw = (input_raw_t *) input.get();
 
+    // Component files may have been installed while Sunshine stayed running.
+    // Refresh once per allocation; the input packet hot path reads only the cache.
+    ds5::refresh_component_availability();
     const auto gamepad_mode = effective_gamepad_mode();
     const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
 
@@ -2573,7 +2576,8 @@ namespace platf {
     }
 
     const auto ds5_settings = ds5_config::current();
-    if (ds5_settings.enabled && ds5_settings.audio_haptics) {
+    if (ds5_settings.enabled && ds5_settings.audio_haptics &&
+        ds5::refresh_component_availability()) {
       caps |= platform_caps::ds5_haptics_pcm;
     }
 

@@ -4,11 +4,13 @@
  */
 
 #include <cstdint>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -80,6 +82,7 @@ TEST_F(Ds5ConfigTest, MissingFileReturnsDisabledDefaults) {
   EXPECT_DOUBLE_EQ(result.settings.legacy_strength, 1.0);
   EXPECT_DOUBLE_EQ(result.settings.legacy_curve, 1.0);
   EXPECT_DOUBLE_EQ(result.settings.legacy_noise_gate, 0.020);
+  EXPECT_EQ(result.settings.revision, 1);
 }
 
 TEST_F(Ds5ConfigTest, RejectsMalformedSchemaAndInvalidNumbers) {
@@ -101,7 +104,8 @@ TEST_F(Ds5ConfigTest, RejectsMalformedSchemaAndInvalidNumbers) {
 
 TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
   const ds5_config::settings_t previous {true, true, 1.2, 0.8, 0.010};
-  const ds5_config::settings_t replacement {false, false, 2.0, 0.5, 0.006};
+  auto replacement = ds5_config::settings_t {false, false, 2.0, 0.5, 0.006};
+  replacement.revision = 9;
 
   ASSERT_TRUE(ds5_config::save(path_, previous));
   const auto previous_contents = read_text(path_);
@@ -115,11 +119,14 @@ TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_strength, replacement.legacy_strength);
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_curve, replacement.legacy_curve);
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_noise_gate, replacement.legacy_noise_gate);
+  // Revision describes only the current process and is not persisted.
+  EXPECT_EQ(loaded.settings.revision, 1);
 }
 
 TEST_F(Ds5ConfigTest, PreparedSnapshotDoesNotPublishUntilCommit) {
   const ds5_config::settings_t active {false, true, 1.0, 1.0, 0.020};
-  const ds5_config::settings_t replacement {true, false, 2.0, 0.5, 0.006};
+  auto replacement = ds5_config::settings_t {true, false, 2.0, 0.5, 0.006};
+  replacement.revision = active.revision + 1;
   ASSERT_TRUE(ds5_config::configure(active));
 
   auto prepared = ds5_config::prepare(replacement);
@@ -128,4 +135,41 @@ TEST_F(Ds5ConfigTest, PreparedSnapshotDoesNotPublishUntilCommit) {
   ASSERT_TRUE(ds5_config::commit(std::move(prepared)));
   EXPECT_TRUE(ds5_config::current().enabled);
   EXPECT_DOUBLE_EQ(ds5_config::current().legacy_curve, 0.5);
+  EXPECT_EQ(ds5_config::current().revision, replacement.revision);
+}
+
+TEST_F(Ds5ConfigTest, ConcurrentReadersObserveOnlyCompleteSnapshots) {
+  ds5_config::settings_t first {false, true, 1.0, 1.0, 0.020};
+  ds5_config::settings_t second {true, false, 4.0, 0.3, 0.002};
+  first.revision = 1;
+  second.revision = 2;
+  ASSERT_TRUE(ds5_config::configure(first));
+
+  std::atomic_bool running {true};
+  std::atomic_bool invalid_snapshot {false};
+  std::thread reader([&]() {
+    while (running.load(std::memory_order_relaxed)) {
+      const auto observed = ds5_config::current();
+      const bool is_first = !observed.enabled && observed.audio_haptics &&
+                            observed.legacy_strength == 1.0 && observed.legacy_curve == 1.0 &&
+                            observed.legacy_noise_gate == 0.020 && observed.revision == 1;
+      const bool is_second = observed.enabled && !observed.audio_haptics &&
+                             observed.legacy_strength == 4.0 && observed.legacy_curve == 0.3 &&
+                             observed.legacy_noise_gate == 0.002 && observed.revision == 2;
+      if (!is_first && !is_second) {
+        invalid_snapshot.store(true, std::memory_order_relaxed);
+        break;
+      }
+    }
+  });
+
+  for (int iteration = 0; iteration < 2000; ++iteration) {
+    if (!ds5_config::configure(iteration % 2 == 0 ? second : first)) {
+      invalid_snapshot.store(true, std::memory_order_relaxed);
+      break;
+    }
+  }
+  running.store(false, std::memory_order_relaxed);
+  reader.join();
+  EXPECT_FALSE(invalid_snapshot.load(std::memory_order_relaxed));
 }

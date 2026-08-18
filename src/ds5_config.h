@@ -5,6 +5,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -22,6 +23,7 @@ namespace ds5_config {
     double legacy_strength = 1.0;
     double legacy_curve = 1.0;
     double legacy_noise_gate = 0.020;
+    std::uint64_t revision = 1;
   };
 
   enum class load_status_t {
