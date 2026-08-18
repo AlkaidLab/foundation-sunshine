@@ -66,6 +66,7 @@ namespace video {
     ADAPTIVE_QUANTIZATION, // 自适应量化 - 值：1个bool
     MULTI_PASS,        // 多遍编码 - 值：1个int
     VBV_BUFFER_SIZE,   // VBV缓冲区大小 - 值：1个int
+    CLIENT_SDR_WHITE_NITS, // 客户端 SDR reference white - 值：1个float (nits)
     MAX_PARAM_TYPE
   };
 

@@ -2811,6 +2811,11 @@ namespace platf::dxgi {
       return result;
     }
 
+    void
+    set_client_sdr_white_nits(float nits) override {
+      base.set_client_sdr_white(nits);
+    }
+
   private:
     d3d_base_encode_device base;
     std::unique_ptr<nvenc::nvenc_d3d11> nvenc_d3d;
@@ -2925,6 +2930,11 @@ namespace platf::dxgi {
       int result = base.convert(img_base);
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    void
+    set_client_sdr_white_nits(float nits) override {
+      base.set_client_sdr_white(nits);
     }
 
   private:

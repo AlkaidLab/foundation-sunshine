@@ -357,6 +357,14 @@ namespace platf::dxgi {
     std::unique_ptr<amf_encode_device_t>
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
+    /**
+     * @brief Current composed SDR white level in nits, as tracked by cursor
+     *        normalization (300-nit fallback until the driver reports one).
+     *        nullopt when cursor normalization is disabled.
+     */
+    std::optional<float>
+    composed_sdr_white_nits() const;
+
     std::atomic<uint32_t> next_image_id;
 
   protected:
@@ -399,14 +407,6 @@ namespace platf::dxgi {
      */
     void
     set_cursor_sdr_white_level(UINT32 sdr_white_level_x1000);
-
-    /**
-     * @brief Current composed SDR white level in nits, as tracked by cursor
-     *        normalization (300-nit fallback until the driver reports one).
-     *        nullopt when cursor normalization is disabled.
-     */
-    std::optional<float>
-    composed_sdr_white_nits() const;
 
     /**
      * @brief Draw the currently-configured cursor_alpha / cursor_xor onto the

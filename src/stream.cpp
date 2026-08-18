@@ -5,6 +5,7 @@
 #include "process.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <future>
 #include <iomanip>
@@ -1970,7 +1971,7 @@ namespace stream {
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
     // Payload 格式：
-    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区
+    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区, 9=客户端SDR白位
     // - 参数值：
     //   * 分辨率 (类型0): 2个int (8字节, width和height)
     //   * FPS (类型1): 1个float (4字节)
@@ -1985,7 +1986,8 @@ namespace stream {
         return;
       }
 
-      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      int param_type;
+      std::memcpy(&param_type, payload.data(), sizeof(param_type));
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -2039,6 +2041,41 @@ namespace stream {
         session->video.dynamic_param_change_events->raise(param);
         
         BOOST_LOG(info) << "Dynamic FPS change: " << new_fps << " fps";
+        return;
+      }
+
+      // This is an HLG conversion parameter, not part of the display/VDD HDR
+      // capability tuple. Apply it on the video thread without rebuilding the
+      // display or encoder.
+      if (param_type_enum == video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+        constexpr size_t SDR_WHITE_PAYLOAD_SIZE = sizeof(int) + sizeof(float);
+        if (payload.size() != SDR_WHITE_PAYLOAD_SIZE) {
+          BOOST_LOG(warning) << "Invalid payload size for client SDR white. Expected "
+                             << SDR_WHITE_PAYLOAD_SIZE << " bytes, got " << payload.size();
+          return;
+        }
+        if (session->config.controlProtocolType != 13 || session->config.monitor.dynamicRange != 2) {
+          BOOST_LOG(warning) << "Ignoring client SDR white update outside an encrypted HLG session";
+          return;
+        }
+
+        float sdr_white_nits;
+        std::memcpy(&sdr_white_nits, payload.data() + sizeof(int), sizeof(sdr_white_nits));
+        if (!std::isfinite(sdr_white_nits) || sdr_white_nits < 1.0f || sdr_white_nits > 10000.0f) {
+          BOOST_LOG(warning) << "Invalid client SDR white value: " << sdr_white_nits;
+          return;
+        }
+
+        session->config.monitor.hdr_capabilities.sdr_white_nits = sdr_white_nits;
+        session->hdr_capabilities.sdr_white_nits = sdr_white_nits;
+
+        video::dynamic_param_t param {};
+        param.type = video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS;
+        param.value.float_value = sdr_white_nits;
+        param.valid = true;
+        session->video.dynamic_param_change_events->raise(param);
+
+        BOOST_LOG(info) << "Dynamic client SDR white change: " << sdr_white_nits << " nits";
         return;
       }
 

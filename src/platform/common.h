@@ -331,6 +331,7 @@ namespace platf {
     constexpr caps_t touchpad_frame = 0x20;  // Native precision touchpad frame events
     constexpr caps_t cursor_shape = 0x40;  // Client-rendered cursor shape updates
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
+    constexpr caps_t dynamic_sdr_white = 0x100;  // Runtime client SDR reference white updates
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -538,6 +539,11 @@ namespace platf {
 
     virtual int
     convert(platf::img_t &img) = 0;
+
+    // Optional: supported HLG converters can apply this at a frame boundary.
+    virtual void
+    set_client_sdr_white_nits(float) {
+    }
 
     video::sunshine_colorspace_t colorspace;
 

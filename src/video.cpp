@@ -654,6 +654,9 @@ namespace video {
           }
           break;
         }
+        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
+          device->set_client_sdr_white_nits(param.value.float_value);
+          break;
         default:
           BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -820,6 +823,9 @@ namespace video {
           BOOST_LOG(info) << "NVENC encoder VBV buffer size change requested: " << param.value.int_value << " Kbps";
           break;
         }
+        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
+          device->set_client_sdr_white_nits(param.value.float_value);
+          break;
         default:
           BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -945,6 +951,9 @@ namespace video {
       switch (param.type) {
         case dynamic_param_type_e::BITRATE:
           set_bitrate(param.value.int_value);
+          break;
+        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
+          device->set_client_sdr_white_nits(param.value.float_value);
           break;
         default:
           break;
