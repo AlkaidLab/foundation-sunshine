@@ -679,6 +679,9 @@ namespace stream {
     bool enable_hdr { false };
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::client_display_capabilities_t reported_hdr_capabilities;
+    // Runtime SDR white updates are consumed by the video thread and may also
+    // be needed by a control-thread display reconfiguration.
+    std::atomic<float> dynamic_sdr_white_nits { 0.0f };
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
@@ -1926,6 +1929,9 @@ namespace stream {
       temp_launch_session.custom_screen_mode = session->custom_screen_mode;
       temp_launch_session.hdr_capabilities = session->hdr_capabilities;
       temp_launch_session.reported_hdr_capabilities = session->reported_hdr_capabilities;
+      const auto dynamic_sdr_white_nits = session->dynamic_sdr_white_nits.load(std::memory_order_acquire);
+      temp_launch_session.hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
+      temp_launch_session.reported_hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
       temp_launch_session.hdr_target_source = session->hdr_target_source;
 
       bool active_display_resolved = true;
@@ -2094,6 +2100,7 @@ namespace stream {
         param.type = video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS;
         param.value.float_value = sdr_white_nits;
         param.valid = true;
+        session->dynamic_sdr_white_nits.store(sdr_white_nits, std::memory_order_release);
         session->video.dynamic_param_change_events->raise(param);
 
         BOOST_LOG(info) << "Dynamic client SDR white change: " << sdr_white_nits << " nits";
@@ -4246,6 +4253,9 @@ namespace stream {
       session->enable_hdr = launch_session.enable_hdr;
       session->hdr_capabilities = launch_session.hdr_capabilities;
       session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
+      session->dynamic_sdr_white_nits.store(
+        launch_session.hdr_capabilities.sdr_white_nits,
+        std::memory_order_release);
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;

@@ -698,8 +698,35 @@ namespace platf::dxgi {
     }
 
     void
+    reset_sdr_band_gain() {
+      if (!hlg_display_cbuf || hlg_peak_nits_value <= 0.0f ||
+          (std::abs(hlg_sdr_band_gain_value - 1.0f) < 0.01f &&
+           std::abs(hlg_sdr_band_top_value) < 0.01f)) {
+        return;
+      }
+
+      const HlgDisplayParams params {
+        hlg_peak_nits_value,
+        hlg_system_gamma_value,
+        1.0f,
+        0.0f,
+      };
+      auto next_buffer = make_buffer(device.get(), params);
+      if (!next_buffer) {
+        BOOST_LOG(warning) << "Failed to reset HLG SDR band gain; retaining previous value"sv;
+        return;
+      }
+      hlg_display_cbuf = std::move(next_buffer);
+      hlg_sdr_band_gain_value = 1.0f;
+      hlg_sdr_band_top_value = 0.0f;
+    }
+
+    void
     set_client_sdr_white(float nits) {
       client_sdr_white_nits = std::isfinite(nits) && nits > 0.0f ? nits : 0.0f;
+      if (client_sdr_white_nits <= 0.0f) {
+        reset_sdr_band_gain();
+      }
     }
 
     // Re-anchor SDR-referenced content to the client's SDR reference white.
@@ -707,7 +734,11 @@ namespace platf::dxgi {
     // the constant buffer is only rebuilt when the gain actually changes.
     void
     update_sdr_band_gain() {
-      if (client_sdr_white_nits <= 0.0f || !hlg_display_cbuf || hlg_peak_nits_value <= 0.0f) {
+      if (client_sdr_white_nits <= 0.0f) {
+        reset_sdr_band_gain();
+        return;
+      }
+      if (!hlg_display_cbuf || hlg_peak_nits_value <= 0.0f) {
         return;
       }
       auto vram_display = std::dynamic_pointer_cast<platf::dxgi::display_vram_t>(display);
