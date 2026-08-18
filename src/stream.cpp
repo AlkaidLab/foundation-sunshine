@@ -5,8 +5,10 @@
 #include "process.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <iomanip>
 #include <optional>
@@ -134,6 +136,28 @@ namespace stream {
   }
 
   namespace {
+    std::uint32_t
+    read_dynamic_param_u32(std::string_view payload, std::size_t offset) {
+      return static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset])) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 1])) << 8) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 2])) << 16) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 3])) << 24);
+    }
+
+    std::int32_t
+    read_dynamic_param_i32(std::string_view payload, std::size_t offset) {
+      const auto value = read_dynamic_param_u32(payload, offset);
+      const auto signed_value = (value & 0x80000000u) != 0
+                                  ? static_cast<std::int64_t>(value) - (1LL << 32)
+                                  : static_cast<std::int64_t>(value);
+      return static_cast<std::int32_t>(signed_value);
+    }
+
+    float
+    read_dynamic_param_f32(std::string_view payload, std::size_t offset) {
+      return std::bit_cast<float>(read_dynamic_param_u32(payload, offset));
+    }
+
     std::int64_t
     steady_now_ms() {
       return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1979,15 +2003,15 @@ namespace stream {
     server->map(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], [&, handle_resolution_change](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_DYNAMIC_PARAM_CHANGE]"sv;
 
-      constexpr size_t MIN_PAYLOAD_SIZE = sizeof(int);
+      constexpr size_t WIRE_WORD_SIZE = sizeof(std::uint32_t);
+      constexpr size_t MIN_PAYLOAD_SIZE = WIRE_WORD_SIZE;
       if (payload.size() < MIN_PAYLOAD_SIZE) {
         BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
                            << MIN_PAYLOAD_SIZE << " bytes, got " << payload.size();
         return;
       }
 
-      int param_type;
-      std::memcpy(&param_type, payload.data(), sizeof(param_type));
+      const auto param_type = read_dynamic_param_i32(payload, 0);
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1998,28 +2022,29 @@ namespace stream {
       
       // 处理分辨率变更（需要两个int值）
       if (param_type_enum == video::dynamic_param_type_e::RESOLUTION) {
-        constexpr size_t RESOLUTION_PAYLOAD_SIZE = sizeof(int) * 3;  // 类型 + width + height
+        constexpr size_t RESOLUTION_PAYLOAD_SIZE = WIRE_WORD_SIZE * 3;  // 类型 + width + height
         if (payload.size() < RESOLUTION_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for resolution change. Expected " 
                              << RESOLUTION_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
 
-        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
-        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        const auto width = read_dynamic_param_i32(payload, WIRE_WORD_SIZE);
+        const auto height = read_dynamic_param_i32(payload, WIRE_WORD_SIZE * 2);
+        handle_resolution_change(session, width, height);
         return;
       }
 
       // 处理FPS变更（需要float值）
       if (param_type_enum == video::dynamic_param_type_e::FPS) {
-        constexpr size_t FPS_PAYLOAD_SIZE = sizeof(int) + sizeof(float);
+        constexpr size_t FPS_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
         if (payload.size() < FPS_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for FPS change. Expected " 
                              << FPS_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
 
-        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        const float new_fps = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -2048,7 +2073,7 @@ namespace stream {
       // capability tuple. Apply it on the video thread without rebuilding the
       // display or encoder.
       if (param_type_enum == video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
-        constexpr size_t SDR_WHITE_PAYLOAD_SIZE = sizeof(int) + sizeof(float);
+        constexpr size_t SDR_WHITE_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
         if (payload.size() != SDR_WHITE_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for client SDR white. Expected "
                              << SDR_WHITE_PAYLOAD_SIZE << " bytes, got " << payload.size();
@@ -2059,8 +2084,7 @@ namespace stream {
           return;
         }
 
-        float sdr_white_nits;
-        std::memcpy(&sdr_white_nits, payload.data() + sizeof(int), sizeof(sdr_white_nits));
+        const float sdr_white_nits = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
         if (!video::is_valid_client_sdr_white_nits(sdr_white_nits)) {
           BOOST_LOG(warning) << "Invalid client SDR white value: " << sdr_white_nits;
           return;
@@ -2077,14 +2101,14 @@ namespace stream {
       }
 
       // 处理其他单值参数（码率、QP等，使用int值）
-      constexpr size_t INT_PARAM_PAYLOAD_SIZE = sizeof(int) * 2;
+      constexpr size_t INT_PARAM_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
       if (payload.size() < INT_PARAM_PAYLOAD_SIZE) {
         BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
                            << INT_PARAM_PAYLOAD_SIZE << " bytes, got " << payload.size();
         return;
       }
 
-      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+      const auto param_value = read_dynamic_param_i32(payload, WIRE_WORD_SIZE);
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
