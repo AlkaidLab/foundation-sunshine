@@ -205,7 +205,7 @@ TEST(AuthoredDualSenseIr, LegacyFallbackClearsFloorAfterRelease) {
     if (chunk == 4) at_release_start = latest;
   }
   ASSERT_TRUE(at_release_start.has_value());
-  EXPECT_GT(at_release_start->low_frequency, 0);
+  EXPECT_GE(at_release_start->low_frequency, 0x07AEu);
   ASSERT_TRUE(latest.has_value());
   EXPECT_EQ(latest->low_frequency, 0u);
   EXPECT_EQ(latest->high_frequency, 0u);
