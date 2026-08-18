@@ -105,6 +105,11 @@ namespace haptics {
 
       const auto gated = std::clamp(
         (value - gate_close) / (1.0f - gate_close), 0.0f, 1.0f);
+      if (curve == 1.0f && strength == 1.0f) {
+        // Keep the PR974 default point-for-point with the established legacy
+        // tanh mapping; configurable curves take the path below.
+        return std::tanh(makeup_gain * gated) / std::tanh(makeup_gain);
+      }
       // A curve below 1 lifts the quiet band where voice-coil-authored content
       // is clearly felt while rotor motors do not start; tanh still caps the
       // top end so the strength multiplier cannot overdrive strong effects.
