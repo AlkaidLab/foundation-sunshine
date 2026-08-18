@@ -242,6 +242,9 @@ namespace haptics {
       _low_gate = {};
       _high_gate = {};
       _last_emit = {};
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
     }
 
     const bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;

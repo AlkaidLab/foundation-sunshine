@@ -167,18 +167,64 @@ TEST(AuthoredDualSenseIr, LegacyFallbackHoldsShortPulseBeforeStop) {
   ASSERT_GT(first->low_frequency, 0);
 
   const std::vector<std::uint8_t> silence(240 * 4);
-  const auto held = session.process(0, 0, 240, 2, 25000, silence, start + 25ms);
+  std::optional<haptics::legacy_rumble_t> held;
+  for (std::uint32_t chunk = 1; chunk <= 5; ++chunk) {
+    const auto output = session.process(
+      0, 0, 240, chunk, chunk * 5000, silence,
+      start + std::chrono::milliseconds(chunk * 5));
+    if (output) held = output;
+  }
   ASSERT_TRUE(held.has_value());
-  // The hold preserves a nonzero dispatch, while the analyzer's release
-  // smoothing may legitimately update its level between packets.
+  // The hold preserves a nonzero dispatch, while release smoothing may
+  // legitimately update its level between packets.
   EXPECT_GT(held->low_frequency, 0);
   EXPECT_GT(held->high_frequency, 0);
 
-  const std::span<const std::uint8_t> empty_pcm;
-  const auto stopped = session.process(0, 0x02, 0, 3, 90000, empty_pcm, start + 90ms);
+  const auto stopped = session.poll(start + 125ms);
   ASSERT_TRUE(stopped.has_value());
   EXPECT_EQ(stopped->low_frequency, 0);
   EXPECT_EQ(stopped->high_frequency, 0);
+}
+
+TEST(AuthoredDualSenseIr, LegacyFallbackClearsFloorAfterRelease) {
+  using namespace std::chrono_literals;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  const auto burst = sine_pcm(120.0, 32000.0);
+  ASSERT_TRUE(session.process(0, 0x01, 240, 0, 0, burst, start).has_value());
+
+  const std::vector<std::uint8_t> silence(240 * 4);
+  std::optional<haptics::legacy_rumble_t> at_release_start;
+  std::optional<haptics::legacy_rumble_t> latest;
+  for (std::uint32_t chunk = 1; chunk <= 80; ++chunk) {
+    const auto output = session.process(
+      0, 0, 240, chunk, chunk * 5000, silence,
+      start + std::chrono::milliseconds(chunk * 5));
+    if (output) latest = output;
+    if (chunk == 4) at_release_start = latest;
+  }
+  ASSERT_TRUE(at_release_start.has_value());
+  EXPECT_GT(at_release_start->low_frequency, 0);
+  ASSERT_TRUE(latest.has_value());
+  EXPECT_EQ(latest->low_frequency, 0u);
+  EXPECT_EQ(latest->high_frequency, 0u);
+}
+
+TEST(AuthoredDualSenseIr, LegacyFallbackDiscontinuityDoesNotReuseHold) {
+  using namespace std::chrono_literals;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  const auto burst = sine_pcm(120.0, 32000.0);
+  ASSERT_TRUE(session.process(0, 0x01, 240, 0, 0, burst, start).has_value());
+
+  const std::vector<std::uint8_t> silence(240 * 4);
+  const auto restarted = session.process(
+    0, 0x05, 240, 1, 5000, silence, start + 5ms);
+  ASSERT_TRUE(restarted.has_value());
+  EXPECT_EQ(restarted->low_frequency, 0u);
+  EXPECT_EQ(restarted->high_frequency, 0u);
 }
 
 TEST(AuthoredDualSenseIr, LegacyFallbackSeparatesTactileBandsAndRejectsHiss) {
