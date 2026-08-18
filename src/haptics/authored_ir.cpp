@@ -85,7 +85,9 @@ namespace haptics {
       // A curve below 1 lifts the quiet band where voice-coil-authored content
       // is clearly felt while rotor motors do not start; tanh still caps the
       // top end so the strength multiplier cannot overdrive strong effects.
-      const auto drive = std::pow(gated, curve);
+      // The equality fast path keeps the default mapping free of any pow()
+      // rounding drift versus the original curve.
+      const auto drive = curve == 1.0f ? gated : std::pow(gated, curve);
       return strength * std::tanh(makeup_gain * drive) / std::tanh(makeup_gain);
     }
 
@@ -265,14 +267,19 @@ namespace haptics {
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
     // Tuning knobs are read per packet so UI changes apply to a running
     // stream without reconnecting. Ranges bound the values a config file
-    // could otherwise push into nonsense.
+    // could otherwise push into nonsense; non-finite entries (a hand-edited
+    // config parsing to NaN/inf) fall back to the stock mapping instead of
+    // reaching std::lround, where NaN would be undefined behavior.
+    const auto finite_or = [](double value, double fallback) {
+      return std::isfinite(value) ? value : fallback;
+    };
     const auto gate_open = static_cast<float>(
-      std::clamp(config::input.ds5_legacy_haptics_noise_gate, 0.002, 0.060));
+      std::clamp(finite_or(config::input.ds5_legacy_haptics_noise_gate, 0.020), 0.002, 0.060));
     const auto gate_close = gate_open * 0.5f;
     const auto curve = static_cast<float>(
-      std::clamp(config::input.ds5_legacy_haptics_curve, 0.3, 2.0));
+      std::clamp(finite_or(config::input.ds5_legacy_haptics_curve, 1.0), 0.3, 2.0));
     const auto strength = static_cast<float>(
-      std::clamp(config::input.ds5_legacy_haptics_strength, 0.1, 4.0));
+      std::clamp(finite_or(config::input.ds5_legacy_haptics_strength, 1.0), 0.1, 4.0));
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};
