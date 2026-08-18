@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-#include "src/config.h"
+#include "src/ds5_config.h"
 #include "src/haptics/authored_ir.h"
 
 extern "C" {
@@ -233,8 +233,7 @@ TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
   using namespace std::chrono_literals;
   // A -36 dBFS sine sits in the band where voice-coil-authored content is
   // clearly felt while the stock band-energy gate keeps rotor motors off.
-  const auto old_gate = config::input.ds5_legacy_haptics_noise_gate;
-  const auto old_curve = config::input.ds5_legacy_haptics_curve;
+  const auto old_settings = ds5_config::current();
   haptics::legacy_rumble_session_t session;
   ASSERT_TRUE(session.ready());
   const auto start = std::chrono::steady_clock::time_point {1s};
@@ -249,8 +248,10 @@ TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
 
   // ERM preset values: a lower gate and a lifting curve. Config is read per
   // packet, so the same session picks the new mapping up immediately.
-  config::input.ds5_legacy_haptics_noise_gate = 0.006;
-  config::input.ds5_legacy_haptics_curve = 0.5;
+  auto tuned_settings = old_settings;
+  tuned_settings.legacy_noise_gate = 0.006;
+  tuned_settings.legacy_curve = 0.5;
+  ASSERT_TRUE(ds5_config::configure(tuned_settings));
   std::uint16_t tuned_peak = 0;
   for (std::uint32_t chunk = 20; chunk < 40; ++chunk) {
     const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
@@ -258,7 +259,6 @@ TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
     const auto out = session.process(0, 0, 240, chunk, chunk * 5000, pcm, at);
     if (out) tuned_peak = std::max(tuned_peak, out->low_frequency);
   }
-  config::input.ds5_legacy_haptics_noise_gate = old_gate;
-  config::input.ds5_legacy_haptics_curve = old_curve;
+  ASSERT_TRUE(ds5_config::configure(old_settings));
   EXPECT_GT(tuned_peak, 3000);
 }

@@ -12,7 +12,7 @@
 
 #include <moonlight_haptics/authored_haptics.h>
 
-#include "src/config.h"
+#include "src/ds5_config.h"
 #include "src/logging.h"
 
 namespace haptics {
@@ -273,13 +273,14 @@ namespace haptics {
     const auto finite_or = [](double value, double fallback) {
       return std::isfinite(value) ? value : fallback;
     };
+    const auto settings = ds5_config::current();
     const auto gate_open = static_cast<float>(
-      std::clamp(finite_or(config::input.ds5_legacy_haptics_noise_gate, 0.020), 0.002, 0.060));
+      std::clamp(finite_or(settings.legacy_noise_gate, 0.020), 0.002, 0.060));
     const auto gate_close = gate_open * 0.5f;
     const auto curve = static_cast<float>(
-      std::clamp(finite_or(config::input.ds5_legacy_haptics_curve, 1.0), 0.3, 2.0));
+      std::clamp(finite_or(settings.legacy_curve, 1.0), 0.3, 2.0));
     const auto strength = static_cast<float>(
-      std::clamp(finite_or(config::input.ds5_legacy_haptics_strength, 1.0), 0.1, 4.0));
+      std::clamp(finite_or(settings.legacy_strength, 1.0), 0.1, 4.0));
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};

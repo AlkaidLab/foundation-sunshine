@@ -27,7 +27,7 @@
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
-#include "src/config.h"
+#include "src/ds5_config.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 
@@ -208,28 +208,26 @@ namespace platf::ds5 {
     }
 #endif
 
-    std::optional<std::filesystem::path> trusted_sidecar_path() {
-      const auto configured = std::filesystem::path(config::input.ds5_sidecar_path);
-      if (configured.empty()) {
-        return std::nullopt;
-      }
+    std::filesystem::path sidecar_executable_path() {
 #ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
-      // The aggregate test target launches its purpose-built protocol peer.
-      // Production builds never accept this override path.
-      return std::filesystem::is_regular_file(configured) ?
-               std::optional { std::filesystem::weakly_canonical(configured) } : std::nullopt;
+      return std::filesystem::path(SUNSHINE_DS5_FAKE_SIDECAR_PATH);
+#else
+      return platf::appdata().parent_path() / "tools" / "sunshine-ds5-component" /
+             "active" / "Sunshine.Ds5Sidecar.exe";
+#endif
+    }
+
+    std::optional<std::filesystem::path> trusted_sidecar_path() {
+      // The test target supplies its purpose-built protocol peer. Production
+      // uses only the fixed component directory and never accepts a configured path.
+      const auto configured = sidecar_executable_path();
+      if (!std::filesystem::is_regular_file(configured)) return std::nullopt;
+#ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
+      return std::filesystem::weakly_canonical(configured);
 #else
       std::error_code path_error;
-      const auto expected = std::filesystem::weakly_canonical(
-        platf::appdata().parent_path() / "tools" / "sunshine-ds5-component" /
-          "active" / "Sunshine.Ds5Sidecar.exe",
-        path_error);
-      if (path_error) {
-        return std::nullopt;
-      }
       const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
-      if (path_error || candidate != expected || !std::filesystem::is_regular_file(candidate)) {
-        BOOST_LOG(error) << "Rejected an untrusted DualSense sidecar path"sv;
+      if (path_error || !std::filesystem::is_regular_file(candidate)) {
         return std::nullopt;
       }
 
@@ -608,7 +606,8 @@ namespace platf::ds5 {
   sidecar_client_t::~sidecar_client_t() = default;
 
   bool sidecar_client_t::configured() const {
-    return config::input.ds5_enabled && !config::input.ds5_sidecar_path.empty();
+    return ds5_config::current().enabled &&
+           std::filesystem::is_regular_file(sidecar_executable_path());
   }
 
   bool sidecar_client_t::owns(int global_index) const {

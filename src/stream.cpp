@@ -42,6 +42,7 @@ extern "C" {
 #include "config.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
+#include "ds5_config.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "rtsp.h"
@@ -2326,9 +2327,10 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            const auto ds5_settings = ds5_config::current();
             has_ds5_haptics_session |=
               (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
-              (config::input.ds5_enabled && config::input.ds5_audio_haptics);
+              (ds5_settings.enabled && ds5_settings.audio_haptics);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();

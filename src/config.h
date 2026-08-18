@@ -212,12 +212,6 @@ namespace config {
     bool motion_as_ds4;
     bool touchpad_as_ds4;
     bool ds5_inputtino_randomize_mac;
-    bool ds5_enabled;
-    bool ds5_audio_haptics;
-    double ds5_legacy_haptics_strength;
-    double ds5_legacy_haptics_curve;
-    double ds5_legacy_haptics_noise_gate;
-    std::string ds5_sidecar_path;
     bool enable_dsu_server;
     uint16_t dsu_server_port;
 
