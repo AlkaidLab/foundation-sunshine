@@ -196,6 +196,7 @@ TEST(AuthoredDualSenseIr, LegacyFallbackClearsFloorAfterRelease) {
 
   const std::vector<std::uint8_t> silence(240 * 4);
   std::optional<haptics::legacy_rumble_t> at_release_start;
+  std::optional<haptics::legacy_rumble_t> at_hold_expiry;
   std::optional<haptics::legacy_rumble_t> latest;
   for (std::uint32_t chunk = 1; chunk <= 80; ++chunk) {
     const auto output = session.process(
@@ -203,9 +204,13 @@ TEST(AuthoredDualSenseIr, LegacyFallbackClearsFloorAfterRelease) {
       start + std::chrono::milliseconds(chunk * 5));
     if (output) latest = output;
     if (chunk == 4) at_release_start = latest;
+    if (chunk == 16) at_hold_expiry = output;
   }
   ASSERT_TRUE(at_release_start.has_value());
   EXPECT_GE(at_release_start->low_frequency, 0x07AEu);
+  ASSERT_TRUE(at_hold_expiry.has_value());
+  EXPECT_EQ(at_hold_expiry->low_frequency, 0u);
+  EXPECT_EQ(at_hold_expiry->high_frequency, 0u);
   ASSERT_TRUE(latest.has_value());
   EXPECT_EQ(latest->low_frequency, 0u);
   EXPECT_EQ(latest->high_frequency, 0u);
