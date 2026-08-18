@@ -458,6 +458,14 @@ namespace platf::dxgi {
         auto draw = [&](auto &input, auto &y_or_yuv_viewports, auto &uv_viewport) {
           device_ctx->PSSetShaderResources(0, 1, &input);
 
+          // The SDR white gain buffer may be rebuilt at a frame boundary. Bind
+          // the current buffer here so the pixel-shader fallback sees updates
+          // just like the compute-shader path.
+          if (hlg_display_cbuf) {
+            ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
+            device_ctx->PSSetConstantBuffers(3, 1, &hlg_cbuf);
+          }
+
           // Select the correct pixel shader based on image gamma type:
           // - linear_gamma AND FP16 format: Use FP16 shader that applies transfer function
           //   (sRGB for SDR, PQ for HDR, HLG for HLG) to convert from linear light
@@ -508,6 +516,7 @@ namespace platf::dxgi {
           can_analyze_hdr_frame && should_dispatch_hdr_analysis();
         bool cs_used = false;
         bool hdr_analysis_snapshot_written = false;
+        update_sdr_band_gain();
         if (cs_path_active) {
           if (cs_for_p010) {
             // HDR P010: shader expects linear scRGB FP16 input.
@@ -694,7 +703,7 @@ namespace platf::dxgi {
     }
 
     // Re-anchor SDR-referenced content to the client's SDR reference white.
-    // Called per frame before the HLG conversion dispatch; cheap float compare,
+    // Called per frame before HLG conversion; cheap float compare,
     // the constant buffer is only rebuilt when the gain actually changes.
     void
     update_sdr_band_gain() {
@@ -2609,7 +2618,6 @@ namespace platf::dxgi {
       };
       const UINT cbuf_count = write_hdr_analysis_snapshot ? 3 : 2;
       device_ctx->CSSetConstantBuffers(0, cbuf_count, cbufs);
-      update_sdr_band_gain();
       if (hlg_display_cbuf) {
         ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
         device_ctx->CSSetConstantBuffers(3, 1, &hlg_cbuf);
