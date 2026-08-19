@@ -117,7 +117,7 @@ internal sealed class ControllerSession : IDisposable
                     SetTouch(slot, false, 0, 0, 0);
                 _touchSlots.Clear();
             }
-            else if (eventType is 0 or 1 or 3) // hover/down/move claim or update a slot
+            else if (eventType is 1 or 3) // down/move claim or update a slot
             {
                 if (!_touchSlots.TryGetValue(pointerId, out var slot))
                 {
@@ -127,6 +127,14 @@ internal sealed class ControllerSession : IDisposable
                     _touchSlots[pointerId] = slot;
                 }
                 SetTouch(slot, true, pointerId, x, y);
+            }
+            else if (eventType is 0 or 6) // hover/hover-leave are not contacts
+            {
+                // A hover packet must never claim a finger slot. HID touchpads
+                // use hover while the contact is up, and exposing it as active
+                // makes Windows interpret ordinary pointer movement as a
+                // precision-touchpad gesture (for example, menu scrolling).
+                return;
             }
             else if (eventType is 2 or 4 or 6 && _touchSlots.Remove(pointerId, out var slot))
             {
