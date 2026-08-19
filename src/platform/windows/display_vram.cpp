@@ -296,7 +296,11 @@ namespace platf::dxgi {
     struct alignas(16) HlgDisplayParams {
       float peakNits;
       float systemGamma;
-      float pad[2];
+      // SDR band re-anchoring: gain applied to scRGB levels at or below
+      // sdrBandTopScrgb (Windows SDR white / 80), fading back to 1.0 by 2x.
+      // gain 1.0 / top 0 leaves the signal untouched.
+      float sdrBandGain;
+      float sdrBandTopScrgb;
     };
     static_assert(sizeof(HlgDisplayParams) == 16);
 
@@ -454,6 +458,14 @@ namespace platf::dxgi {
         auto draw = [&](auto &input, auto &y_or_yuv_viewports, auto &uv_viewport) {
           device_ctx->PSSetShaderResources(0, 1, &input);
 
+          // The SDR white gain buffer may be rebuilt at a frame boundary. Bind
+          // the current buffer here so the pixel-shader fallback sees updates
+          // just like the compute-shader path.
+          if (hlg_display_cbuf) {
+            ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
+            device_ctx->PSSetConstantBuffers(3, 1, &hlg_cbuf);
+          }
+
           // Select the correct pixel shader based on image gamma type:
           // - linear_gamma AND FP16 format: Use FP16 shader that applies transfer function
           //   (sRGB for SDR, PQ for HDR, HLG for HLG) to convert from linear light
@@ -504,6 +516,7 @@ namespace platf::dxgi {
           can_analyze_hdr_frame && should_dispatch_hdr_analysis();
         bool cs_used = false;
         bool hdr_analysis_snapshot_written = false;
+        update_sdr_band_gain();
         if (cs_path_active) {
           if (cs_for_p010) {
             // HDR P010: shader expects linear scRGB FP16 input.
@@ -613,6 +626,8 @@ namespace platf::dxgi {
       hlg_display_cbuf.reset();
       ID3D11Buffer *null_cbuf = nullptr;
       device_ctx->PSSetConstantBuffers(3, 1, &null_cbuf);
+      hlg_sdr_band_gain_value = 1.0f;
+      hlg_sdr_band_top_value = 0.0f;
 
       float analysis_max_nits = 10000.0f;
       if (use_hlg_shader) {
@@ -626,10 +641,13 @@ namespace platf::dxgi {
                                   ? static_cast<float>(metadata.maxDisplayLuminance)
                                   : 1000.0f;
         const float system_gamma = ::video::hlg_system_gamma(peak_nits);
+        hlg_peak_nits_value = peak_nits;
+        hlg_system_gamma_value = system_gamma;
         const HlgDisplayParams params {
           peak_nits,
           system_gamma,
-          {},
+          1.0f,
+          0.0f,
         };
 
         auto hlg_params = make_buffer(device.get(), params);
@@ -677,6 +695,84 @@ namespace platf::dxgi {
       }
 
       return 0;
+    }
+
+    void
+    reset_sdr_band_gain() {
+      if (!hlg_display_cbuf || hlg_peak_nits_value <= 0.0f ||
+          (std::abs(hlg_sdr_band_gain_value - 1.0f) < 0.01f &&
+           std::abs(hlg_sdr_band_top_value) < 0.01f)) {
+        return;
+      }
+
+      const HlgDisplayParams params {
+        hlg_peak_nits_value,
+        hlg_system_gamma_value,
+        1.0f,
+        0.0f,
+      };
+      auto next_buffer = make_buffer(device.get(), params);
+      if (!next_buffer) {
+        BOOST_LOG(warning) << "Failed to reset HLG SDR band gain; retaining previous value"sv;
+        return;
+      }
+      hlg_display_cbuf = std::move(next_buffer);
+      hlg_sdr_band_gain_value = 1.0f;
+      hlg_sdr_band_top_value = 0.0f;
+    }
+
+    void
+    set_client_sdr_white(float nits) {
+      client_sdr_white_nits = std::isfinite(nits) && nits > 0.0f ? nits : 0.0f;
+      if (client_sdr_white_nits <= 0.0f) {
+        reset_sdr_band_gain();
+      }
+    }
+
+    // Re-anchor SDR-referenced content to the client's SDR reference white.
+    // Called per frame before HLG conversion; cheap float compare,
+    // the constant buffer is only rebuilt when the gain actually changes.
+    void
+    update_sdr_band_gain() {
+      if (client_sdr_white_nits <= 0.0f) {
+        reset_sdr_band_gain();
+        return;
+      }
+      if (!hlg_display_cbuf || hlg_peak_nits_value <= 0.0f) {
+        return;
+      }
+      auto vram_display = std::dynamic_pointer_cast<platf::dxgi::display_vram_t>(display);
+      if (!vram_display) {
+        return;
+      }
+      const auto windows_white = vram_display->composed_sdr_white_nits();
+      if (!windows_white || *windows_white < 50.0f) {
+        return;
+      }
+
+      const float gain = std::clamp(client_sdr_white_nits / *windows_white, 0.5f, 2.5f);
+      const float band_top = *windows_white / 80.0f;
+      if (std::abs(gain - hlg_sdr_band_gain_value) < 0.01f &&
+          std::abs(band_top - hlg_sdr_band_top_value) < 0.01f) {
+        return;
+      }
+
+      const HlgDisplayParams params {
+        hlg_peak_nits_value,
+        hlg_system_gamma_value,
+        gain,
+        band_top,
+      };
+      auto next_buffer = make_buffer(device.get(), params);
+      if (!next_buffer) {
+        BOOST_LOG(warning) << "Failed to update HLG SDR band gain; retaining previous value"sv;
+        return;
+      }
+      hlg_display_cbuf = std::move(next_buffer);
+      hlg_sdr_band_gain_value = gain;
+      hlg_sdr_band_top_value = band_top;
+      BOOST_LOG(info) << "SDR band gain: phone " << client_sdr_white_nits
+                      << " nits, windows " << *windows_white << " nits, gain " << gain;
     }
 
     int
@@ -1542,6 +1638,13 @@ namespace platf::dxgi {
     buf_t subsample_offset;
     buf_t color_matrix;
     buf_t hlg_display_cbuf;
+
+    // Client-reported SDR reference white (nits); 0 = not reported, gain stays 1.
+    float client_sdr_white_nits = 0.0f;
+    float hlg_peak_nits_value = 0.0f;
+    float hlg_system_gamma_value = 1.2f;
+    float hlg_sdr_band_gain_value = 1.0f;
+    float hlg_sdr_band_top_value = 0.0f;
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;
@@ -2730,6 +2833,7 @@ namespace platf::dxgi {
       if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
+      base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);
       if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe)) {
         return false;
       }
@@ -2744,6 +2848,11 @@ namespace platf::dxgi {
       // Propagate per-frame luminance stats from GPU analyzer to encode device
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    void
+    set_client_sdr_white_nits(float nits) override {
+      base.set_client_sdr_white(nits);
     }
 
   private:
@@ -2846,6 +2955,7 @@ namespace platf::dxgi {
 
       base.apply_colorspace(colorspace);
       hdr_luminance_analysis_available = false;
+      base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);
       if (base.init_output(static_cast<ID3D11Texture2D *>(amf_d3d->get_input_texture()), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe) != 0) {
         return false;
       }
@@ -2859,6 +2969,11 @@ namespace platf::dxgi {
       int result = base.convert(img_base);
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    void
+    set_client_sdr_white_nits(float nits) override {
+      base.set_client_sdr_white(nits);
     }
 
   private:
@@ -3294,7 +3409,7 @@ namespace platf::dxgi {
 
       // Keep the established 300-nit fallback for backends without producer
       // white-level metadata. VDD replaces it with the driver's current value.
-      float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value };  // aligned to 16-byte
+      float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value.load(std::memory_order_relaxed) };  // aligned to 16-byte
       cursor_white_multiplier = make_buffer(device.get(), white_multiplier_data);
       if (!cursor_white_multiplier) {
         BOOST_LOG(warning) << "Failed to create cursor blending (normalized white) white multiplier constant buffer";
@@ -3339,7 +3454,7 @@ namespace platf::dxgi {
     }
 
     const float next_multiplier = sdr_white_nits / 80.0f;
-    if (std::abs(next_multiplier - cursor_white_multiplier_value) < 0.0001f) {
+    if (std::abs(next_multiplier - cursor_white_multiplier_value.load(std::memory_order_relaxed)) < 0.0001f) {
       return;
     }
 
@@ -3352,6 +3467,14 @@ namespace platf::dxgi {
 
     cursor_white_multiplier = std::move(next_buffer);
     cursor_white_multiplier_value = next_multiplier;
+  }
+
+  std::optional<float>
+  display_vram_t::composed_sdr_white_nits() const {
+    if (!cursor_white_normalization_enabled) {
+      return std::nullopt;
+    }
+    return cursor_white_multiplier_value.load(std::memory_order_relaxed) * 80.0f;
   }
 
   void

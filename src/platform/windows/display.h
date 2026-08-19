@@ -357,6 +357,14 @@ namespace platf::dxgi {
     std::unique_ptr<amf_encode_device_t>
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
+    /**
+     * @brief Current composed SDR white level in nits, as tracked by cursor
+     *        normalization (300-nit fallback until the driver reports one).
+     *        nullopt when cursor normalization is disabled.
+     */
+    std::optional<float>
+    composed_sdr_white_nits() const;
+
     std::atomic<uint32_t> next_image_id;
 
   protected:
@@ -377,7 +385,9 @@ namespace platf::dxgi {
 
     gpu_cursor_t cursor_alpha;
     gpu_cursor_t cursor_xor;
-    float cursor_white_multiplier_value = 300.0f / 80.0f;
+    // Written from the capture/cursor thread, read from the encode path
+    // (composed_sdr_white_nits), so it must be an atomic snapshot.
+    std::atomic<float> cursor_white_multiplier_value { 300.0f / 80.0f };
     bool cursor_white_normalization_enabled = false;
     bool cursor_pipeline_ready = false;
 
