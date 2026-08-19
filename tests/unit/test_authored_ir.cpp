@@ -216,6 +216,46 @@ TEST(AuthoredDualSenseIr, LegacyFallbackClearsFloorAfterRelease) {
   EXPECT_EQ(latest->high_frequency, 0u);
 }
 
+TEST(AuthoredDualSenseIr, LegacyFallbackKeepsReleaseTailForLongEffect) {
+  using namespace std::chrono_literals;
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  const auto burst = sine_pcm(120.0, 32000.0);
+  const std::vector<std::uint8_t> silence(240 * 4);
+
+  // Keep the authored signal active beyond the short-pulse hold window.
+  bool saw_output = false;
+  for (std::uint32_t chunk = 0; chunk <= 20; ++chunk) {
+    const auto output = session.process(
+      0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000,
+      burst, start + std::chrono::milliseconds(chunk * 5));
+    saw_output = saw_output || output.has_value();
+  }
+  ASSERT_TRUE(saw_output);
+
+  std::optional<haptics::legacy_rumble_t> release_start;
+  std::optional<haptics::legacy_rumble_t> latest;
+  for (std::uint32_t chunk = 21; chunk <= 80; ++chunk) {
+    const auto output = session.process(
+      0, 0, 240, chunk, chunk * 5000, silence,
+      start + std::chrono::milliseconds(chunk * 5));
+    if (output) {
+      if (!release_start) release_start = output;
+      latest = output;
+    }
+  }
+
+  ASSERT_TRUE(release_start.has_value());
+  // A long effect releases through the configured tail instead of being hard
+  // cut at the 80 ms short-pulse boundary.
+  EXPECT_GT(release_start->low_frequency, 0u);
+  EXPECT_GT(release_start->high_frequency, 0u);
+  ASSERT_TRUE(latest.has_value());
+  EXPECT_EQ(latest->low_frequency, 0u);
+  EXPECT_EQ(latest->high_frequency, 0u);
+}
+
 TEST(AuthoredDualSenseIr, LegacyFallbackDiscontinuityDoesNotReuseHold) {
   using namespace std::chrono_literals;
   haptics::legacy_rumble_session_t session;
