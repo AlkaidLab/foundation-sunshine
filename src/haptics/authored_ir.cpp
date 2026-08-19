@@ -286,6 +286,14 @@ namespace haptics {
       _smoothed_low, low_target, legacy_low_attack_seconds, legacy_low_release_seconds);
     _smoothed_high = must_stop ? 0.0f : smooth(
       _smoothed_high, high_target, legacy_high_attack_seconds, legacy_high_release_seconds);
+    // Once the short-pulse hold has elapsed, do not let the release tail keep
+    // the motors active indefinitely. The hold is for dispatch reliability,
+    // not an extension of the authored signal.
+    if (!must_stop && _active_since != std::chrono::steady_clock::time_point {} &&
+        now - _active_since >= legacy_min_active_hold) {
+      if (low_target <= 0.0f) _smoothed_low = 0.0f;
+      if (high_target <= 0.0f) _smoothed_high = 0.0f;
+    }
     if (low_target <= 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
     if (high_target <= 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
 
