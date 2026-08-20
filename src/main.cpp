@@ -433,7 +433,7 @@ main(int argc, char *argv[]) {
   };
   try {
     ds5_settings_result = ds5_config::load(
-      ds5_config::path_for(config::sunshine.config_file)
+      ds5_config::path_for(file_handler::path_from_utf8(config::sunshine.config_file))
     );
   }
   catch (...) {

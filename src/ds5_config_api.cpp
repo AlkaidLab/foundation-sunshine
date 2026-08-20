@@ -23,6 +23,7 @@
 #include <boost/thread/lock_guard.hpp>
 #include <boost/thread/mutex.hpp>
 
+#include "file_handler.h"
 #include "logging.h"
 
 namespace ds5_config::api {
@@ -256,8 +257,10 @@ namespace ds5_config::api {
 
       switch (result.status) {
         case update_status_t::APPLIED:
-          BOOST_LOG(info) << "DualSense configuration saved and applied at revision "
-                          << result.state.settings.revision;
+          BOOST_LOG(info) << "DualSense configuration saved and hot-applied at revision "
+                          << result.state.settings.revision
+                          << " (enabled=" << result.state.settings.enabled
+                          << ", audio_haptics=" << result.state.settings.audio_haptics << ')';
           write_json(
             std::move(response),
             SimpleWeb::StatusCode::success_ok,
@@ -267,7 +270,8 @@ namespace ds5_config::api {
           return;
         case update_status_t::UNCHANGED:
           BOOST_LOG(debug) << "DualSense configuration was unchanged at revision "
-                           << result.state.settings.revision;
+                           << result.state.settings.revision
+                           << "; no file write was needed";
           write_json(
             std::move(response),
             SimpleWeb::StatusCode::success_ok,
@@ -316,6 +320,7 @@ namespace ds5_config::api {
           );
           return;
         case update_status_t::INVALID_STORE:
+          BOOST_LOG(error) << "DualSense configuration file could not be read; save was rejected";
           write_error(
             std::move(response),
             SimpleWeb::StatusCode::server_error_internal_server_error,
@@ -324,6 +329,7 @@ namespace ds5_config::api {
           );
           return;
         case update_status_t::SAVE_FAILED:
+          BOOST_LOG(error) << "DualSense configuration could not be written to disk";
           write_error(
             std::move(response),
             SimpleWeb::StatusCode::server_error_internal_server_error,
@@ -408,7 +414,7 @@ namespace ds5_config::api {
 
   void get_config(resp_https_t response, const std::string &sunshine_config_file) noexcept {
     try {
-      get_config_impl(response, path_for(sunshine_config_file));
+      get_config_impl(response, path_for(file_handler::path_from_utf8(sunshine_config_file)));
     }
     catch (...) {
       write_unhandled_error(std::move(response));
@@ -421,7 +427,7 @@ namespace ds5_config::api {
     const std::string &sunshine_config_file
   ) noexcept {
     try {
-      save_config_impl(response, std::move(request), path_for(sunshine_config_file));
+      save_config_impl(response, std::move(request), path_for(file_handler::path_from_utf8(sunshine_config_file)));
     }
     catch (...) {
       write_unhandled_error(std::move(response));
