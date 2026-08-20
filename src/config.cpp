@@ -1502,10 +1502,11 @@ namespace config {
     path_f(vars, "file_apps", stream.file_apps);
 #ifndef __ANDROID__
     // TODO: Android can possibly support this
-    if (!fs::exists(stream.file_apps.c_str())) {
-      fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", stream.file_apps);
+    const auto file_apps_path = file_handler::path_from_utf8(stream.file_apps);
+    if (!fs::exists(file_apps_path)) {
+      fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", file_apps_path);
       fs::permissions(
-        stream.file_apps,
+        file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,
         fs::perm_options::add
       );

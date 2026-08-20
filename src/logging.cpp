@@ -103,14 +103,16 @@ namespace logging {
   void
   archive_existing_log(const std::string &log_file) {
     namespace fs = std::filesystem;
-    const auto log_path = file_handler::path_from_utf8(log_file);
-    
-    // 检查日志文件是否存在
-    if (!fs::exists(log_path)) {
-      return;
-    }
-    
     try {
+      const auto log_path = file_handler::path_from_utf8(log_file);
+      std::error_code status_error;
+      if (!fs::exists(log_path, status_error)) {
+        if (status_error) {
+          BOOST_LOG(warning) << "Failed to inspect existing log file: " << status_error.message();
+        }
+        return;
+      }
+
       // 获取当前时间
       auto now = std::chrono::system_clock::now();
       auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -246,9 +248,16 @@ namespace logging {
 
     if (max_log_size_mb > 0) {
       // When restore_log is false, truncate the existing log file before starting rotation
-      if (!config::sunshine.restore_log && fs::exists(log_path)) {
-        std::error_code ec;
-        fs::remove(log_path, ec);
+      if (!config::sunshine.restore_log) {
+        std::error_code status_error;
+        const bool log_exists = fs::exists(log_path, status_error);
+        if (status_error) {
+          BOOST_LOG(warning) << "Failed to inspect log file before initialization: " << status_error.message();
+        }
+        else if (log_exists) {
+          std::error_code remove_error;
+          fs::remove(log_path, remove_error);
+        }
       }
 
       // Use text_file_backend with automatic size-based rotation
