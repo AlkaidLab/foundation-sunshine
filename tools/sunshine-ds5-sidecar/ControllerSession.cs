@@ -24,16 +24,15 @@ internal sealed class ControllerSession : IDisposable
     private const uint Y = 0x8000;
     private const uint Touchpad = 0x100000;
     private const uint Misc = 0x200000;
-    private const int AudioInputChannels = 4;
-    private const int HapticsOutputChannels = 2;
-    private const int BytesPerSample = 2;
     private const int HapticsFramesPerPacket = 240;
 
     private readonly object _stateLock = new();
     private readonly object _outputLock = new();
     private readonly HMController _controller;
     private readonly HMProfile _profile;
+    private readonly HMAudioOutput? _audioOutput;
     private readonly Action<Protocol.Message> _emit;
+    private DefaultAudioEndpointGuard? _audioEndpointGuard;
     private readonly AdaptiveTriggerState _adaptiveTriggers = new();
     private HMGamepadState _state;
     private readonly Dictionary<uint, int> _touchSlots = new();
@@ -63,10 +62,13 @@ internal sealed class ControllerSession : IDisposable
         };
 
         _controller.OutputDecoded += OnOutputDecoded;
-        if (_controller.UsbAudio is not null)
+        if (profile.Id == DualSenseHapticsAudio.CompositeProfileId)
         {
-            _controller.UsbAudio.Output.FramesReceived += OnAudioFrames;
-            _controller.UsbAudio.Output.StreamingChanged += OnAudioStreamingChanged;
+            _audioOutput = _controller.UsbAudio?.Output
+                ?? throw new InvalidDataException("Composite DualSense did not expose its audio output");
+            DualSenseHapticsAudio.ValidateRuntimeOutput(_audioOutput);
+            _audioOutput.FramesReceived += OnAudioFrames;
+            _audioOutput.StreamingChanged += OnAudioStreamingChanged;
         }
         // Emit a centered, untouched idle frame immediately: without it the
         // device reports an all-zero buffer until the first client input,
@@ -76,7 +78,22 @@ internal sealed class ControllerSession : IDisposable
 
     internal byte DeviceId { get; }
     internal byte ClientControllerNumber { get; }
-    internal bool HasAudio => _controller.UsbAudio is not null;
+    internal bool HasAudio => _audioOutput is not null;
+
+    internal void StartDefaultAudioEndpointGuard()
+    {
+        if (_audioOutput is null || _audioEndpointGuard is not null)
+            return;
+        _audioEndpointGuard = new DefaultAudioEndpointGuard(role =>
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+            _emit(new Protocol.Message(
+                Protocol.MessageType.AudioPolicyViolation,
+                0,
+                new[] { DeviceId, ClientControllerNumber, (byte)role, (byte)0 }));
+        });
+    }
 
     internal void SubmitInput(ReadOnlySpan<byte> payload)
     {
@@ -281,7 +298,7 @@ internal sealed class ControllerSession : IDisposable
             _audioResidual.AsSpan().CopyTo(combined);
             pcm.Span.CopyTo(combined.AsSpan(_audioResidual.Length));
         }
-        var sourceFrameBytes = AudioInputChannels * BytesPerSample;
+        var sourceFrameBytes = DualSenseHapticsAudio.InputFrameBytes;
         var usableBytes = combined.Length - combined.Length % sourceFrameBytes;
         _audioResidual = usableBytes == combined.Length ? Array.Empty<byte>() : combined[usableBytes..];
 
@@ -291,13 +308,8 @@ internal sealed class ControllerSession : IDisposable
         while (offsetFrames < frameCount)
         {
             var frames = Math.Min(HapticsFramesPerPacket, frameCount - offsetFrames);
-            var haptics = new byte[frames * HapticsOutputChannels * BytesPerSample];
-            for (var frame = 0; frame < frames; frame++)
-            {
-                var sourceOffset = (offsetFrames + frame) * sourceFrameBytes + 4;
-                var targetOffset = frame * 4;
-                source.Slice(sourceOffset, 4).CopyTo(haptics.AsSpan(targetOffset, 4));
-            }
+            var haptics = DualSenseHapticsAudio.Extract(
+                source.Slice(offsetFrames * sourceFrameBytes, frames * sourceFrameBytes));
             var flags = Volatile.Read(ref _hapticsStreaming) != 0 &&
                         Interlocked.Exchange(ref _hapticsNeedsStart, 0) != 0
                 ? Protocol.HapticsFlags.StreamStart
@@ -315,14 +327,14 @@ internal sealed class ControllerSession : IDisposable
         payload[0] = DeviceId;
         payload[1] = ClientControllerNumber;
         payload[2] = (byte)flags;
-        payload[3] = HapticsOutputChannels;
+        payload[3] = DualSenseHapticsAudio.OutputChannels;
         BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(4, 2), frameCount);
-        payload[6] = 16;
+        payload[6] = DualSenseHapticsAudio.BitsPerSample;
         BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(8, 4),
             unchecked((uint)Interlocked.Increment(ref _hapticsSequence)));
         BinaryPrimitives.WriteUInt64LittleEndian(payload.AsSpan(12, 8),
             (ulong)ElapsedMicroseconds());
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(20, 4), 48000);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(20, 4), DualSenseHapticsAudio.SampleRateHz);
         pcm.CopyTo(payload.AsSpan(24));
         _emit(new Protocol.Message(Protocol.MessageType.HapticsPcm, 0, payload));
     }
@@ -424,16 +436,18 @@ internal sealed class ControllerSession : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+        _audioEndpointGuard?.Dispose();
+        _audioEndpointGuard = null;
         _controller.OutputDecoded -= OnOutputDecoded;
         lock (_outputLock)
         {
             if (_adaptiveTriggers.TryReset(DeviceId, ClientControllerNumber, out var adaptiveTriggers))
                 _emit(adaptiveTriggers);
         }
-        if (_controller.UsbAudio is not null)
+        if (_audioOutput is not null)
         {
-            _controller.UsbAudio.Output.FramesReceived -= OnAudioFrames;
-            _controller.UsbAudio.Output.StreamingChanged -= OnAudioStreamingChanged;
+            _audioOutput.FramesReceived -= OnAudioFrames;
+            _audioOutput.StreamingChanged -= OnAudioStreamingChanged;
         }
         _controller.Dispose();
     }
