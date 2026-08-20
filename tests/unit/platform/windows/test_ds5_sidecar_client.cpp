@@ -333,8 +333,7 @@ TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
 
 TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"audio-policy-fallback");
   environment_scope_t enable_policy_fallback(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", L"1");
@@ -364,8 +363,7 @@ TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
 
 TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"cancel-recovery");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
