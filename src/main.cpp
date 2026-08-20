@@ -21,6 +21,7 @@
 #include "confighttp.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
+#include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -457,7 +458,7 @@ main(int argc, char *argv[]) {
 
   auto client_fingerprint_deinit_guard = client_fingerprint::init({
     .remote_rules_enabled = config::nvhttp.client_fingerprint_remote_rules,
-    .signing_certificate = config::nvhttp.client_fingerprint_rules_certificate,
+    .signing_certificate = file_handler::path_from_utf8(config::nvhttp.client_fingerprint_rules_certificate),
     .cache_file = platf::appdata() / "client-fingerprint-rules.json",
   });
   if (!client_fingerprint_deinit_guard) {
