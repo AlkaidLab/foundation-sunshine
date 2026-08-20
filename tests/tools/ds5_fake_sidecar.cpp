@@ -80,6 +80,14 @@ int main(int argc, char **argv) {
   // The test process opts this peer into emitting async feedback ahead of the
   // attach reply, exercising the Core client's transaction multiplexing.
   const auto interleave = GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr, 0) > 0;
+  const auto audio_policy_fallback =
+    GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", nullptr, 0) > 0;
+  const auto policy_once_name = L"Local\\sunshine-ds5-test-policy-once-" + event_suffix;
+  const auto policy_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
+                                            policy_once_name.c_str());
+  const auto hid_fallback_name = L"Local\\sunshine-ds5-test-hid-fallback-" + event_suffix;
+  const auto hid_fallback_event = OpenEventW(EVENT_MODIFY_STATE, FALSE,
+                                             hid_fallback_name.c_str());
   const auto crash_once_name = L"Local\\sunshine-ds5-test-crash-once-" + event_suffix;
   const auto crash_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                            crash_once_name.c_str());
@@ -133,7 +141,24 @@ int main(int argc, char **argv) {
       }
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
+      if (audio_policy_fallback && payload[2] == 1) {
+        response[1] = 1;
+      }
       if (!reply(pipe, 4, request_id, response)) break;
+      if (audio_policy_fallback && policy_once_event &&
+          WaitForSingleObject(policy_once_event, 0) == WAIT_TIMEOUT) {
+        // The first process accepts the composite attach, then reports the
+        // same asynchronous violation as the real endpoint guard and exits.
+        FlushFileBuffers(pipe);
+        SetEvent(policy_once_event);
+        if (!reply(pipe, 105, 0, { payload[0], payload[1], 0, 0 })) break;
+        FlushFileBuffers(pipe);
+        break;
+      }
+      if (audio_policy_fallback && policy_once_event && hid_fallback_event &&
+          WaitForSingleObject(policy_once_event, 0) == WAIT_OBJECT_0 && payload[2] == 0) {
+        SetEvent(hid_fallback_event);
+      }
       if (crash_always_event) {
         // Ensure Core has consumed the attach reply before simulating the
         // post-attach crash; otherwise the test races pipe teardown.
@@ -163,6 +188,8 @@ int main(int argc, char **argv) {
   }
 
   if (marker_event) CloseHandle(marker_event);
+  if (hid_fallback_event) CloseHandle(hid_fallback_event);
+  if (policy_once_event) CloseHandle(policy_once_event);
   if (recovery_wait_event) CloseHandle(recovery_wait_event);
   if (recovery_started_event) CloseHandle(recovery_started_event);
   if (recovered_event) CloseHandle(recovered_event);

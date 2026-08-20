@@ -8,6 +8,7 @@ internal static class ProtocolSelfTest
 {
     internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath)
     {
+        RunDeterministicChecks();
         VerifyAdaptiveTriggerEncoding();
         var pipeName = $"sunshine-ds5-self-test-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -143,6 +144,107 @@ internal static class ProtocolSelfTest
             await File.WriteAllTextAsync(resultPath, result, stopping.Token);
         return 0;
     }
+
+    internal static void RunDeterministicChecks()
+    {
+        VerifyBundledCompositeProfile();
+        VerifyHapticsChannelIsolation();
+        VerifyDefaultAudioEndpointClassification();
+    }
+
+    private static void VerifyDefaultAudioEndpointClassification()
+    {
+        var virtualDualSense = new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"SWD\MMDEVAPI\{0.0.0.00000000}.fixture", Array.Empty<string>()),
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"USB\VID_054C&PID_0CE6&MI_00\fixture",
+                new[] { @"USB\VID_054C&PID_0CE6&MI_00" }),
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"ROOT\USB\0000", new[] { @"ROOT\HIDMAESTRO_UDE" }),
+        };
+        Require(DefaultAudioEndpointGuard.IsVirtualDualSenseChain(virtualDualSense),
+            "virtual HIDMaestro DualSense endpoint classification");
+
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(virtualDualSense[..2]),
+            "physical DualSense endpoint exclusion");
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"ROOT\USB\0000", new[] { @"ROOT\HIDMAESTRO_UDE" }),
+        }), "unrelated HIDMaestro endpoint exclusion");
+    }
+
+    private static void VerifyBundledCompositeProfile()
+    {
+        using var stream = typeof(ProtocolSelfTest).Assembly.GetManifestResourceStream(
+            "Sunshine.Ds5Sidecar.profiles.dualsense-composite.json")
+            ?? throw new InvalidOperationException("Bundled composite profile is missing");
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        var profileJson = memory.ToArray();
+        DualSenseHapticsAudio.ValidateCompositeProfile(profileJson);
+
+        var profileText = System.Text.Encoding.UTF8.GetString(profileJson);
+        RequireProfileRejected(profileText.Replace("\"channels\":4", "\"channels\":2", StringComparison.Ordinal),
+            "stereo composite profile rejection");
+        RequireProfileRejected(profileText.Replace(
+                "\"hapticLeft\",\"hapticRight\"",
+                "\"hapticRight\",\"hapticLeft\"",
+                StringComparison.Ordinal),
+            "swapped haptics role rejection");
+    }
+
+    private static void RequireProfileRejected(string profileJson, string operation)
+    {
+        try
+        {
+            DualSenseHapticsAudio.ValidateCompositeProfile(System.Text.Encoding.UTF8.GetBytes(profileJson));
+            Require(false, operation);
+        }
+        catch (InvalidDataException)
+        {
+            // Expected.
+        }
+    }
+
+    private static void VerifyHapticsChannelIsolation()
+    {
+        var frames = new byte[DualSenseHapticsAudio.InputFrameBytes * 2];
+        WriteSample(frames, 0, 1234);
+        WriteSample(frames, 1, -2345);
+        WriteSample(frames, 4, short.MaxValue);
+        WriteSample(frames, 5, short.MinValue);
+        var speakerOnly = DualSenseHapticsAudio.Extract(frames);
+        Require(speakerOnly.AsSpan().IndexOfAnyExcept((byte)0) == -1,
+            "speaker channels cannot leak into haptics");
+
+        WriteSample(frames, 2, 3456);
+        WriteSample(frames, 3, -4567);
+        WriteSample(frames, 6, 5678);
+        WriteSample(frames, 7, -6789);
+        var haptics = DualSenseHapticsAudio.Extract(frames);
+        Require(BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(0, 2)) == 3456 &&
+                BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(2, 2)) == -4567 &&
+                BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(4, 2)) == 5678 &&
+                BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(6, 2)) == -6789,
+            "haptics channels preserve exact samples");
+
+        try
+        {
+            DualSenseHapticsAudio.Extract(frames.AsSpan(0, frames.Length - 1));
+            Require(false, "incomplete four-channel frame rejection");
+        }
+        catch (InvalidDataException)
+        {
+            // Expected: arbitrary callback fragmentation is reassembled by
+            // ControllerSession before complete frames reach the extractor.
+        }
+    }
+
+    private static void WriteSample(Span<byte> frames, int sample, short value) =>
+        BinaryPrimitives.WriteInt16LittleEndian(frames.Slice(sample * 2, 2), value);
 
     private static async Task SendAsync(Stream stream, Protocol.Message message, CancellationToken cancellationToken)
     {
