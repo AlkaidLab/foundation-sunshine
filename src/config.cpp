@@ -1504,7 +1504,8 @@ namespace config {
     // TODO: Android can possibly support this
     const auto file_apps_path = file_handler::path_from_utf8(stream.file_apps);
     if (!fs::exists(file_apps_path)) {
-      fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", file_apps_path);
+      const auto bundled_apps_path = file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR "/apps.json");
+      fs::copy_file(bundled_apps_path, file_apps_path);
       fs::permissions(
         file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,

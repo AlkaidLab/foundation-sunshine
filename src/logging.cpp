@@ -257,14 +257,20 @@ namespace logging {
         else if (log_exists) {
           std::error_code remove_error;
           fs::remove(log_path, remove_error);
+          if (remove_error) {
+            BOOST_LOG(warning) << "Failed to remove existing log file before initialization: " << remove_error.message();
+          }
         }
       }
+
+      const auto open_mode = std::ios_base::out |
+                             (config::sunshine.restore_log ? std::ios_base::app : std::ios_base::trunc);
 
       // Use text_file_backend with automatic size-based rotation
       auto file_backend = boost::make_shared<bl::sinks::text_file_backend>(
         bl::keywords::file_name = boost_log_path,
         bl::keywords::rotation_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024,
-        bl::keywords::open_mode = std::ios_base::out | std::ios_base::app
+        bl::keywords::open_mode = open_mode
       );
 
       // Set up file collector to manage rotated log files
