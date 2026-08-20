@@ -205,7 +205,26 @@ internal sealed class SidecarServer : IAsyncDisposable
                       ?? throw new InvalidOperationException($"HIDMaestro profile '{profileId}' is missing");
         if (!profile.RequiresUsbipBackend)
             _context.InstallDriver();
+
+        if (profile.RequiresUsbipBackend)
+        {
+            try
+            {
+                // Seed a previously seen virtual interface before it becomes
+                // present. This avoids even a transient default-device switch
+                // on every attach after the first one.
+                DefaultAudioEndpointPolicy.EnsureNeverDefault(
+                    TimeSpan.Zero, includePhantom: true, out _);
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"Unable to preseed the DualSense audio endpoint policy: {error.Message}");
+            }
+        }
+
         var controller = _context.CreateController(profile);
+        if (profile.RequiresUsbipBackend)
+            controller = ApplyDefaultAudioEndpointPolicy(controller, profile);
         ControllerSession session;
         try
         {
@@ -236,6 +255,46 @@ internal sealed class SidecarServer : IAsyncDisposable
         // endpoint is already default, Core can finish attaching and enter its
         // normal one-shot recovery path before we close this composite session.
         session.StartDefaultAudioEndpointGuard();
+    }
+
+    private HMController ApplyDefaultAudioEndpointPolicy(HMController controller, HMProfile profile)
+    {
+        const int recreationLimit = 2;
+        for (var recreation = 0; recreation <= recreationLimit; ++recreation)
+        {
+            bool changed;
+            try
+            {
+                if (!DefaultAudioEndpointPolicy.EnsureNeverDefault(
+                        TimeSpan.FromSeconds(3), includePhantom: false, out changed))
+                {
+                    Console.Error.WriteLine(
+                        "Unable to find the virtual DualSense audio interface; runtime default-device guard remains active");
+                    return controller;
+                }
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(
+                    $"Unable to apply the DualSense audio endpoint policy: {error.Message}; " +
+                    "runtime default-device guard remains active");
+                return controller;
+            }
+
+            if (!changed)
+                return controller;
+
+            // AudioEndpointBuilder consumes the EP properties when it creates
+            // the MMDevice endpoint. Once disposal begins, creation failures
+            // must propagate rather than returning a disposed controller.
+            controller.Dispose();
+            controller = _context.CreateController(profile);
+        }
+
+        Console.Error.WriteLine(
+            "DualSense audio endpoint identity did not stabilize after policy provisioning; " +
+            "runtime default-device guard remains active");
+        return controller;
     }
 
     private void Detach(uint requestId, ReadOnlySpan<byte> payload)

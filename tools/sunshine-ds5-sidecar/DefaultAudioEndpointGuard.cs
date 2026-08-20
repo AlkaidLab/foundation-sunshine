@@ -101,6 +101,21 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         if (CM_Locate_DevNodeW(out var node, instanceId, 0) != 0)
             return false;
 
+        return IsVirtualDualSenseDeviceNode(node);
+    }
+
+    internal static bool IsVirtualDualSenseDeviceNode(string instanceId, bool includePhantom)
+    {
+        if (CM_Locate_DevNodeW(out var node, instanceId, 0) != 0 &&
+            (!includePhantom || CM_Locate_DevNodeW(out node, instanceId, 1) != 0))
+        {
+            return false;
+        }
+        return IsVirtualDualSenseDeviceNode(node);
+    }
+
+    private static bool IsVirtualDualSenseDeviceNode(uint node)
+    {
         var chain = new List<DeviceNodeIdentity>();
         for (var depth = 0; depth < 12; ++depth)
         {

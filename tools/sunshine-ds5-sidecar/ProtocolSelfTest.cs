@@ -150,6 +150,7 @@ internal static class ProtocolSelfTest
         VerifyBundledCompositeProfile();
         VerifyHapticsChannelIsolation();
         VerifyDefaultAudioEndpointClassification();
+        VerifyDefaultAudioEndpointPolicy();
     }
 
     private static void VerifyDefaultAudioEndpointClassification()
@@ -174,6 +175,18 @@ internal static class ProtocolSelfTest
             new DefaultAudioEndpointGuard.DeviceNodeIdentity(
                 @"ROOT\USB\0000", new[] { @"ROOT\HIDMAESTRO_UDE" }),
         }), "unrelated HIDMaestro endpoint exclusion");
+    }
+
+    private static void VerifyDefaultAudioEndpointPolicy()
+    {
+        Require(DefaultAudioEndpointPolicy.NeedsUpdate(null, null),
+            "missing default audio endpoint policy");
+        Require(DefaultAudioEndpointPolicy.NeedsUpdate(
+                "{00000000-0000-0000-0000-000000000000}", 0x00000101),
+            "partial default audio endpoint policy");
+        Require(!DefaultAudioEndpointPolicy.NeedsUpdate(
+                "{00000000-0000-0000-0000-000000000000}", 0x00000307),
+            "complete default audio endpoint policy");
     }
 
     private static void VerifyBundledCompositeProfile()
