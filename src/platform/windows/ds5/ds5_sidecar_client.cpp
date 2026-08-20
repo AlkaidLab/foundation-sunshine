@@ -472,6 +472,9 @@ namespace platf::ds5 {
 
       const auto deadline = std::chrono::steady_clock::now() + 10s;
       do {
+        if (stopping || WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) {
+          return false;
+        }
         const auto connected_pipe = CreateFileW(pipe_path.c_str(), GENERIC_READ | GENERIC_WRITE,
                                                 0, nullptr, OPEN_EXISTING,
                                                 FILE_FLAG_OVERLAPPED, nullptr);
@@ -487,6 +490,9 @@ namespace platf::ds5 {
         WaitNamedPipeW(pipe_path.c_str(), 100);
       } while (std::chrono::steady_clock::now() < deadline);
 
+      if (stopping || WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) {
+        return false;
+      }
       BOOST_LOG(error) << "Timed out connecting to DualSense sidecar pipe"sv;
       return false;
     }
@@ -629,7 +635,9 @@ namespace platf::ds5 {
   }
 
   bool sidecar_client_t::owns(int global_index) const {
-    return _impl->online && _impl->global_index == global_index;
+    // Ownership survives a temporary transport outage so the input layer can
+    // still release the controller while the reader thread is recovering it.
+    return global_index >= 0 && _impl->global_index == global_index;
   }
 
   int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics) {
@@ -652,7 +660,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_input(int global_index, const gamepad_state_t &state) {
-    if (!owns(global_index)) return;
+    if (!owns(global_index) || !_impl->online) return;
     std::array<std::uint8_t, 20> payload {};
     payload[0] = static_cast<std::uint8_t>(global_index);
     write_u32(payload.data() + 4, state.buttonFlags);
@@ -666,7 +674,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_touch(const gamepad_touch_t &touch) {
-    if (!owns(touch.id.globalIndex)) return;
+    if (!owns(touch.id.globalIndex) || !_impl->online) return;
     std::array<std::uint8_t, 20> payload {};
     payload[0] = static_cast<std::uint8_t>(touch.id.globalIndex);
     payload[1] = touch.eventType;
@@ -678,7 +686,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_motion(const gamepad_motion_t &motion) {
-    if (!owns(motion.id.globalIndex)) return;
+    if (!owns(motion.id.globalIndex) || !_impl->online) return;
     std::array<std::uint8_t, 16> payload {};
     payload[0] = static_cast<std::uint8_t>(motion.id.globalIndex);
     payload[1] = motion.motionType;
@@ -689,7 +697,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_battery(const gamepad_battery_t &battery) {
-    if (!owns(battery.id.globalIndex)) return;
+    if (!owns(battery.id.globalIndex) || !_impl->online) return;
     std::array<std::uint8_t, 4> payload {
       static_cast<std::uint8_t>(battery.id.globalIndex), battery.state, battery.percentage, 0
     };

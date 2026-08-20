@@ -96,8 +96,23 @@ int main(int argc, char **argv) {
                                              crash_always_name.c_str());
   const auto recovered_name = L"Local\\sunshine-ds5-test-recovered-" + event_suffix;
   const auto recovered_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, recovered_name.c_str());
+  const auto recovery_started_name = L"Local\\sunshine-ds5-test-recovery-started-" + event_suffix;
+  const auto recovery_started_event = OpenEventW(EVENT_MODIFY_STATE, FALSE,
+                                                  recovery_started_name.c_str());
+  const auto recovery_wait_name = L"Local\\sunshine-ds5-test-recovery-wait-" + event_suffix;
+  const auto recovery_wait_event = OpenEventW(SYNCHRONIZE, FALSE,
+                                               recovery_wait_name.c_str());
   const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + event_suffix;
   const auto marker_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, marker_name.c_str());
+
+  // A crash-once test can hold the replacement process before it creates its
+  // pipe, exposing the Core client's assigned-but-offline recovery window.
+  if (crash_once_event && recovery_wait_event &&
+      WaitForSingleObject(crash_once_event, 0) == WAIT_OBJECT_0) {
+    if (recovery_started_event) SetEvent(recovery_started_event);
+    if (WaitForSingleObject(recovery_wait_event, 5000) != WAIT_OBJECT_0) return 5;
+  }
+
   const auto path = L"\\\\.\\pipe\\" + std::wstring(pipe_name.begin(), pipe_name.end());
   const auto pipe = CreateNamedPipeW(path.c_str(), PIPE_ACCESS_DUPLEX,
                                      PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
@@ -175,6 +190,8 @@ int main(int argc, char **argv) {
   if (marker_event) CloseHandle(marker_event);
   if (hid_fallback_event) CloseHandle(hid_fallback_event);
   if (policy_once_event) CloseHandle(policy_once_event);
+  if (recovery_wait_event) CloseHandle(recovery_wait_event);
+  if (recovery_started_event) CloseHandle(recovery_started_event);
   if (recovered_event) CloseHandle(recovered_event);
   if (crash_always_event) CloseHandle(crash_always_event);
   if (crash_once_event) CloseHandle(crash_once_event);

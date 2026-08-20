@@ -63,6 +63,11 @@ namespace {
   };
 }  // namespace
 
+TEST(Ds5SidecarClientTests, UnassignedIndexIsNotOwned) {
+  platf::ds5::sidecar_client_t client;
+  EXPECT_FALSE(client.owns(-1));
+}
+
 TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
   config_scope_t restore_config;
   config::input.ds5_enabled = true;
@@ -202,19 +207,51 @@ TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
 
   auto mail = std::make_shared<safe::mail_raw_t>();
   auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-audio-policy-fallback-test");
+  auto feedback_for_test = feedback;
   platf::ds5::sidecar_client_t client;
   ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true), 0);
   ASSERT_EQ(WaitForSingleObject(hid_fallback_event.handle, 5000), WAIT_OBJECT_0);
-  // The fake peer signals after observing the HID-only ATTACH payload, just
-  // before connect_and_attach() publishes online=true. Wait for that final
-  // local state transition instead of racing it.
-  const auto online_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (!client.owns(0) && std::chrono::steady_clock::now() < online_deadline) {
-    Sleep(1);
-  }
-  EXPECT_TRUE(client.owns(0));
   ASSERT_TRUE(SetEvent(continue_event.handle));
+  const auto marker = feedback_for_test->pop(std::chrono::seconds(2));
+  ASSERT_TRUE(marker);
+  EXPECT_EQ(marker->type, platf::gamepad_feedback_e::rumble);
+  EXPECT_TRUE(client.owns(0));
   client.free(0);
+}
+
+TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
+  config_scope_t restore_config;
+  config::input.ds5_enabled = true;
+  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+
+  event_namespace_scope_t events(L"cancel-recovery");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto crash_name = L"Local\\sunshine-ds5-test-crash-once-" + events.suffix;
+  const auto recovery_started_name = L"Local\\sunshine-ds5-test-recovery-started-" + events.suffix;
+  const auto recovery_wait_name = L"Local\\sunshine-ds5-test-recovery-wait-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
+  handle_scope_t crash_event(CreateEventW(nullptr, TRUE, FALSE, crash_name.c_str()));
+  handle_scope_t recovery_started_event(CreateEventW(nullptr, FALSE, FALSE, recovery_started_name.c_str()));
+  handle_scope_t recovery_wait_event(CreateEventW(nullptr, TRUE, FALSE, recovery_wait_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(crash_event.handle, nullptr);
+  ASSERT_NE(recovery_started_event.handle, nullptr);
+  ASSERT_NE(recovery_wait_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-cancel-recovery-test");
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), false), 0);
+  ASSERT_EQ(WaitForSingleObject(recovery_started_event.handle, 5000), WAIT_OBJECT_0);
+
+  // The transport is offline, but the sidecar still owns the controller id.
+  // The input layer relies on owns() to route release to sidecar_client_t::free().
+  EXPECT_TRUE(client.owns(0));
+  const auto started = std::chrono::steady_clock::now();
+  client.free(0);
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  EXPECT_LT(elapsed, std::chrono::seconds(3));
+  EXPECT_FALSE(client.owns(0));
 }
 
 TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {
