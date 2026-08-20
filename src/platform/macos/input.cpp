@@ -386,6 +386,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void
+  set_gamepad_mode(int mode) {
+    // Per-app virtual gamepad selection is currently Windows-only.
+  }
+
+  void
   move_mouse(
     input_t &input,
     const int deltaX,
@@ -491,6 +496,16 @@ const KeyCodeMap kKeyCodesMap[] = {
   void
   touch_update(client_input_t *input, const touch_port_t &touch_port, const touch_input_t &touch) {
     // Unimplemented feature - platform_caps::pen_touch
+  }
+
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad
+  }
+
+  void
+  touchpad_frame_update(client_input_t *input, const touchpad_frame_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad_frame
   }
 
   /**

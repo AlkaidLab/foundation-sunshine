@@ -29,8 +29,11 @@
 #include "logging.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
-#include "system_tray.h"
+#include "stream.h"
+#include "tray/system_tray.h"
+#include "tray/tray_state.h"
 #include "utility.h"
+#include "webhook/webhook.h"
 
 #ifdef _WIN32
   // from_utf8() string conversion function
@@ -172,6 +175,9 @@ namespace proc {
 
     // Apply per-app mouse mode
     platf::set_mouse_mode(_app.mouse_mode);
+    // Apply the app override before the input session creates virtual pads.
+    // The global Sunshine setting remains unchanged.
+    platf::set_gamepad_mode(_app.gamepad_mode);
 
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
@@ -244,13 +250,19 @@ namespace proc {
       auto child = platf::run_command(cmd.elevated, true, cmd.do_cmd, working_dir, _env, _pipe.get(), ec, nullptr);
 
       if (ec) {
-        BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
         // We don't want any prep commands failing launch of the desktop.
         // This is to prevent the issue where users reboot their PC and need to log in with Sunshine.
         // permission_denied is typically returned when the user impersonation fails, which can happen when user is not signed in yet.
         if (!(_app.cmd.empty() && ec == std::errc::permission_denied)) {
+          BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
           return -1;
         }
+
+        BOOST_LOG(warning) << "Skipping Desktop prep command ["sv << cmd.do_cmd
+                           << "] because Sunshine could not run it under the user's session: "sv << ec.message()
+                           << ". Desktop streaming will continue, but this prep command's effect will not be applied."sv;
+        ec.clear();
+        continue;
       }
 
       child.wait(ec);
@@ -379,7 +391,8 @@ namespace proc {
     bool has_run = _app_id > 0;
     // Only show the Stopped notification if we actually have an app to stop
     // Since terminate() is always run when a new app has started
-    if (proc::proc.get_last_run_app_name().length() > 0 && has_run) {
+    if (proc::proc.get_last_run_app_name().length() > 0 && has_run && !stream::session::has_active_video_sessions()) {
+      tray_state::set_idle(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::update_tray_stopped(proc::proc.get_last_run_app_name());
 #endif
@@ -388,10 +401,26 @@ namespace proc {
       // display_device::session_t::get().restore_state();
     }
 
+    if (has_run) {
+      try {
+        webhook::send_event_async(webhook::event_t {
+          .type = webhook::event_type_t::NV_APP_TERMINATE,
+          .timestamp = webhook::get_current_timestamp(),
+          .app_name = _app.name,
+          .app_id = _app_id
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook app termination event construction failed"sv;
+      }
+    }
+
     _app_id = -1;
 
     // Reset mouse mode to auto when app terminates
     platf::set_mouse_mode(0);
+    // Return to the global gamepad setting for the next application.
+    platf::set_gamepad_mode(0);
   }
 
   const std::vector<ctx_t> &
@@ -623,8 +652,7 @@ namespace proc {
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
-          // 使用流式校验下载，如果Magic Byte不匹配会直接中断下载
-          if (!http::download_image_with_magic_check(original_url, local_path.string())) {
+          if (!http::download_public_cover_image(original_url, local_path.string())) {
             BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }
@@ -802,6 +830,7 @@ namespace proc {
         auto wait_all = app_node.get_optional<bool>("wait-all"s);
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
+        auto gamepad = app_node.get_optional<std::string>("gamepad"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -883,6 +912,25 @@ namespace proc {
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
+        if (!gamepad || gamepad->empty()) {
+          ctx.gamepad_mode = 0;
+        }
+        else if (*gamepad == "auto"sv) {
+          ctx.gamepad_mode = 1;
+        }
+        else if (*gamepad == "x360"sv) {
+          ctx.gamepad_mode = 2;
+        }
+        else if (*gamepad == "ds4"sv) {
+          ctx.gamepad_mode = 3;
+        }
+        else if (*gamepad == "ds5"sv) {
+          ctx.gamepad_mode = 4;
+        }
+        else {
+          BOOST_LOG(warning) << "Ignoring invalid per-app gamepad setting ["sv << *gamepad << "] for app ["sv << name << ']';
+          ctx.gamepad_mode = 0;
+        }
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);

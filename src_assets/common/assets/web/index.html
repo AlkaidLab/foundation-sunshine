@@ -12,12 +12,8 @@
     import { createApp } from 'vue'
     import { initApp } from './init'
     import Home from './views/Home.vue'
-    import { initFirebase } from './config/firebase.js'
 
     console.log('Hello, Sunshine!')
-
-    // 初始化Firebase Analytics
-    initFirebase()
 
     // 创建应用实例
     const app = createApp(Home)

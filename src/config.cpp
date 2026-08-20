@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -48,6 +49,10 @@ using namespace std::literals;
 
 #define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
 namespace config {
+
+  namespace {
+    std::mutex config_file_mutex;
+  }
 
   namespace nv {
 
@@ -408,6 +413,8 @@ namespace config {
     false,  // vdd_keep_enabled
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
+    true,  // vdd_borrowed_texture
+    true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
     {
@@ -417,20 +424,23 @@ namespace config {
     },  // qsv
 
     {
-      (int) amd::usage_h264_e::ultralowlatency,  // usage (h264)
-      (int) amd::usage_hevc_e::ultralowlatency,  // usage (hevc)
-      (int) amd::usage_av1_e::ultralowlatency,  // usage (av1)
-      (int) amd::rc_h264_e::vbr_latency,  // rate control (h264)
-      (int) amd::rc_hevc_e::vbr_latency,  // rate control (hevc)
-      (int) amd::rc_av1_e::vbr_latency,  // rate control (av1)
-      0,  // enforce_hrd
-      (int) amd::quality_h264_e::balanced,  // quality (h264)
-      (int) amd::quality_hevc_e::balanced,  // quality (hevc)
-      (int) amd::quality_av1_e::balanced,  // quality (av1)
-      0,  // preanalysis
-      1,  // vbaq
+      std::nullopt,  // usage (h264): driver default, matching FFmpeg amfenc
+      std::nullopt,  // usage (hevc): driver default, matching FFmpeg amfenc
+      std::nullopt,  // usage (av1): driver default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (h264): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (hevc): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // rate control (av1): driver/AMF default, matching FFmpeg amfenc
+      std::nullopt,  // enforce_hrd: unset by default, matching FFmpeg amfenc
+      std::nullopt,  // quality (h264): driver default, matching FFmpeg amfenc
+      std::nullopt,  // quality (hevc): driver default, matching FFmpeg amfenc
+      std::nullopt,  // quality (av1): driver default, matching FFmpeg amfenc
+      std::nullopt,  // preanalysis: unset by default, matching FFmpeg amfenc
+      std::nullopt,  // vbaq: unset by default, matching FFmpeg amfenc
       (int) amd::coder_e::_auto,  // coder
       23,  // qvbr_quality (1-51, default 23)
+      0,  // ltr_frames
+      0,  // slices_per_frame
+      false,  // avcodec_compat: keep clean standalone AMF path by default
     },  // amd
 
     {
@@ -450,6 +460,7 @@ namespace config {
     {},  // output_name
     {},  // capture_target (default: empty, will be set to "display" in apply_config)
     {},  // window_title
+    true,  // capture_cursor (default: composite the host mouse cursor)
     (int) display_device::parsed_config_t::device_prep_e::no_operation,  // display_device_prep
     (int) display_device::parsed_config_t::resolution_change_e::automatic,  // resolution_change
     {},  // manual_resolution
@@ -459,8 +470,14 @@ namespace config {
     {},  // display_mode_remapping
     false,  // variable_refresh_rate
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
+    true,  // input_activity_boost
+    60,  // input_activity_boost_fps
+    150,  // input_activity_boost_window_ms
     "balanced"s,  // downscaling_quality (default: bicubic for best quality/performance balance)
-    false,  // hdr_luminance_analysis (disabled by default to avoid GPU overhead)
+    "auto"s,  // hdr_luminance_analysis (automatic for HDR streams, inactive for SDR)
+    "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
+    false,  // wgc_disable_secure_desktop (disabled by default for security)
+    true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
   };
 
   audio_t audio {
@@ -491,6 +508,8 @@ namespace config {
     platf::get_host_name(),  // sunshine_name,
     "[]",
     "sunshine_state.json"s,  // file_state
+    "[]"s,  // file_mappings
+    48020,  // file_mapping_port
     {},  // external_ip
     {
       "1280x720"s,
@@ -507,13 +526,13 @@ namespace config {
     { "60", "90", "120", "144" },  // supported fps (支持小数刷新率)
 
     SLEEP_MODE_SUSPEND,  // sleep_mode: default to S3 suspend
-  };
 
-  webhook_t webhook {
-    false,  // enabled
-    {},     // url
-    false,  // skip_ssl_verify
-    1000ms, // timeout
+    10,  // pair_max_attempts: default 10 attempts per IP per 60s
+
+    true,  // client_fingerprint_remote_rules
+    "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",
+    {},  // client_fingerprint_rules_certificate (empty uses the pinned built-in certificate)
+    24,  // client_fingerprint_rules_refresh_hours
   };
 
   input_t input {
@@ -534,6 +553,9 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
+    false,  // ds5_enabled
+    true,  // ds5_audio_haptics (native authored Channel 3/4 passthrough)
+    {},  // ds5_sidecar_path
     false, // enable_dsu_server - disabled by default
     26760, // dsu_server_port - default DSU server port
 
@@ -543,7 +565,10 @@ namespace config {
     true,  // always send scancodes
     true,  // high resolution scrolling
     true,  // native pen/touch support
+    true,  // native touchpad optimization
     true,  // virtual mouse (use driver if available)
+    false, // amf_draw_mouse_cursor
+    true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
   };
 
   sunshine_t sunshine {
@@ -562,6 +587,7 @@ namespace config {
     {},  // Bind address
     platf::appdata().string() + "/sunshine.log",  // log file
     false,  // restore_log - 默认不恢复日志文件
+    50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
     {},  // prep commands
@@ -582,12 +608,39 @@ namespace config {
     return space_tab(ch) || endline(ch);
   }
 
+  template <class It>
+  It
+  find_comment(It begin, It end) {
+    bool quoted = false;
+    bool escaped = false;
+    for (auto pos = begin; pos != end; ++pos) {
+      if (quoted) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (*pos == '\\') {
+          escaped = true;
+        }
+        else if (*pos == '"') {
+          quoted = false;
+        }
+      }
+      else if (*pos == '"') {
+        quoted = true;
+      }
+      else if (*pos == '#') {
+        return pos;
+      }
+    }
+    return end;
+  }
+
   std::string
   to_string(const char *begin, const char *end) {
     std::string result;
 
     KITTY_WHILE_LOOP(auto pos = begin, pos != end, {
-      auto comment = std::find(pos, end, '#');
+      auto comment = find_comment(pos, end);
       auto endl = std::find_if(comment, end, endline);
 
       result.append(pos, comment);
@@ -602,11 +655,34 @@ namespace config {
   It
   skip_list(It skipper, It end) {
     int stack = 1;
+    bool quoted = false;
+    bool escaped = false;
+    bool comment = false;
     while (skipper != end && stack) {
-      if (*skipper == '[') {
+      if (comment) {
+        comment = !endline(*skipper);
+      }
+      else if (quoted) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (*skipper == '\\') {
+          escaped = true;
+        }
+        else if (*skipper == '"') {
+          quoted = false;
+        }
+      }
+      else if (*skipper == '"') {
+        quoted = true;
+      }
+      else if (*skipper == '#') {
+        comment = true;
+      }
+      else if (*skipper == '[') {
         ++stack;
       }
-      if (*skipper == ']') {
+      else if (*skipper == ']') {
         --stack;
       }
 
@@ -622,7 +698,7 @@ namespace config {
   parse_option(std::string_view::const_iterator begin, std::string_view::const_iterator end) {
     begin = std::find_if_not(begin, end, whitespace);
     auto endl = std::find_if(begin, end, endline);
-    auto endc = std::find(begin, endl, '#');
+    auto endc = find_comment(begin, endl);
     endc = std::find_if(std::make_reverse_iterator(endc), std::make_reverse_iterator(begin), std::not_fn(whitespace)).base();
 
     auto eq = std::find(begin, endc, '=');
@@ -860,6 +936,33 @@ namespace config {
   }
 
   void
+  bool_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::optional<bool> &input) {
+    std::string tmp;
+    string_f(vars, name, tmp);
+
+    if (tmp.empty()) {
+      return;
+    }
+
+    input = to_bool(tmp);
+  }
+
+  void
+  int_between_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::optional<int> &input, const std::pair<int, int> &range) {
+    std::optional<int> temp;
+    int_f(vars, name, temp);
+
+    if (!temp) {
+      return;
+    }
+
+    TUPLE_2D_REF(lower, upper, range);
+    if (*temp >= lower && *temp <= upper) {
+      input = *temp;
+    }
+  }
+
+  void
   double_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, double &input) {
     std::string tmp;
     string_f(vars, name, tmp);
@@ -1090,7 +1193,8 @@ namespace config {
 
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
-      BOOST_LOG(info) << "config: '"sv << name << "' = "sv << val;
+      const auto log_value = name == "file_mappings" && !val.empty() ? "<redacted>"s : val;
+      BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
       modified_config_settings[name] = val;
     }
 
@@ -1116,6 +1220,7 @@ namespace config {
     generic_f(vars, "nvenc_temporal_filter", video.nv.temporal_filter_level, nv::temporal_filter_level_from_view);
     generic_f(vars, "nvenc_rate_control", video.nv.rate_control_mode, nv::rate_control_mode_from_view);
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
+    bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
@@ -1174,10 +1279,32 @@ namespace config {
     adjust_usage_for_hq_rc(video.amd.amd_rc_hevc, video.amd.amd_usage_hevc, 1, 5, "HEVC");
     adjust_usage_for_hq_rc(video.amd.amd_rc_av1, video.amd.amd_usage_av1, 2, 5, "AV1");
 
-    bool_f(vars, "amd_preanalysis", (bool &) video.amd.amd_preanalysis);
-    bool_f(vars, "amd_vbaq", (bool &) video.amd.amd_vbaq);
-    bool_f(vars, "amd_enforce_hrd", (bool &) video.amd.amd_enforce_hrd);
+    int_f(vars, "amd_preanalysis", video.amd.amd_preanalysis, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
+    int_f(vars, "amd_vbaq", video.amd.amd_vbaq, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
+    int_f(vars, "amd_enforce_hrd", video.amd.amd_enforce_hrd, [](const std::string_view &value) {
+      auto tmp = std::string { value };
+      return to_bool(tmp) ? 1 : 0;
+    });
     int_between_f(vars, "amd_qvbr_quality", video.amd.amd_qvbr_quality, { 1, 51 });
+    int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
+    int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
+    bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
+    bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
+    // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
+    // matches FFmpeg amfenc.c behavior of never setting the property unless
+    // the user explicitly opts in). See AlkaidLab/foundation-sunshine#666 for
+    // the RDNA4 freeze that motivated removing aggressive defaults.
+    bool_f(vars, "amd_high_motion_qb", video.amd.amd_high_motion_qb);
+    bool_f(vars, "amd_lowlatency_mode", video.amd.amd_lowlatency_mode);
+    int_between_f(vars, "amd_input_queue_size", video.amd.amd_input_queue_size, { 1, 16 });
+    // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_* enum: 0=NONE, 1=POWER_SAVING_REAL_TIME, 2=REAL_TIME, 3=LOWEST_LATENCY
+    int_between_f(vars, "amd_av1_latency_mode", video.amd.amd_av1_latency_mode, { 0, 3 });
 
     int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
     int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
@@ -1201,6 +1328,21 @@ namespace config {
     
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
+    {
+      auto first = video.adapter_name.find_first_not_of(" \t\r\n");
+      auto last = video.adapter_name.find_last_not_of(" \t\r\n");
+      std::string trimmed = (first == std::string::npos) ? std::string {} : video.adapter_name.substr(first, last - first + 1);
+      std::string lower = trimmed;
+      std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return std::tolower(c); }
+      );
+      if (trimmed.empty() || lower == "default" || lower == "auto") {
+        video.adapter_name.clear();
+      }
+      else {
+        video.adapter_name = std::move(trimmed);
+      }
+    }
     string_f(vars, "output_name", video.output_name);
     
 #ifdef _WIN32
@@ -1234,10 +1376,46 @@ namespace config {
     int_f(vars, "max_bitrate", video.max_bitrate);
     bool_f(vars, "variable_refresh_rate", video.variable_refresh_rate);
     int_between_f(vars, "minimum_fps_target", video.minimum_fps_target, { 0, 1000 });
-    bool_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
+    bool_f(vars, "input_activity_boost", video.input_activity_boost);
+    int_between_f(vars, "input_activity_boost_fps", video.input_activity_boost_fps, { 0, 1000 });
+    int_between_f(vars, "input_activity_boost_window_ms", video.input_activity_boost_window_ms, { 0, 5000 });
+    string_f(vars, "hdr_luminance_analysis", video.hdr_luminance_analysis);
+    if (video.hdr_luminance_analysis == "true" ||
+        video.hdr_luminance_analysis == "enabled" ||
+        video.hdr_luminance_analysis == "yes" ||
+        video.hdr_luminance_analysis == "enable" ||
+        video.hdr_luminance_analysis == "1") {
+      video.hdr_luminance_analysis = "on";
+    }
+    else if (video.hdr_luminance_analysis == "false" ||
+             video.hdr_luminance_analysis == "disabled" ||
+             video.hdr_luminance_analysis == "no" ||
+             video.hdr_luminance_analysis == "disable" ||
+             video.hdr_luminance_analysis == "0") {
+      video.hdr_luminance_analysis = "off";
+    }
+    if (video.hdr_luminance_analysis.empty()) {
+      video.hdr_luminance_analysis = "auto";
+    }
+    if (video.hdr_luminance_analysis != "auto" &&
+        video.hdr_luminance_analysis != "on" &&
+        video.hdr_luminance_analysis != "off") {
+      BOOST_LOG(warning) << "Invalid hdr_luminance_analysis: ["sv << video.hdr_luminance_analysis
+                         << "], valid options are: auto, on, off. Defaulting to 'auto'"sv;
+      video.hdr_luminance_analysis = "auto";
+    }
+    bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
+    bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
+    bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
+    bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
+
+    // Whether to composite the host mouse cursor into the captured frames.
+    // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
+    bool_f(vars, "capture_cursor", video.capture_cursor);
+    display_cursor = video.capture_cursor;
 
     // Downscaling quality: "fast" (bilinear+8pt average), "balanced" (bicubic), "high_quality" (future: lanczos)
     string_f(vars, "downscaling_quality", video.downscaling_quality);
@@ -1253,12 +1431,29 @@ namespace config {
       video.downscaling_quality = "balanced";
     }
 
+    // Compute-shader RGB->YUV conversion (HDR fast path).
+    string_f(vars, "capture_compute_shader", video.capture_compute_shader);
+    if (video.capture_compute_shader.empty()) {
+      video.capture_compute_shader = "auto";
+    }
+    if (video.capture_compute_shader != "auto" &&
+        video.capture_compute_shader != "on" &&
+        video.capture_compute_shader != "off") {
+      BOOST_LOG(warning) << "Invalid capture_compute_shader: ["sv << video.capture_compute_shader
+                         << "], valid options are: auto, on, off. Defaulting to 'auto'"sv;
+      video.capture_compute_shader = "auto";
+    }
+
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);
     string_f(vars, "sunshine_name", nvhttp.sunshine_name);
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
+    string_f(vars, "file_mappings", nvhttp.file_mappings);
+    int file_mapping_port = nvhttp.file_mapping_port;
+    int_between_f(vars, "file_mapping_port", file_mapping_port, { 1024, 65535 });
+    nvhttp.file_mapping_port = static_cast<std::uint16_t>(file_mapping_port);
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;
@@ -1268,6 +1463,23 @@ namespace config {
     list_string_f(vars, "resolutions"s, nvhttp.resolutions);
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
+    int_between_f(vars, "pair_max_attempts", nvhttp.pair_max_attempts, { 0, 50 });
+    bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
+    string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
+    string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
+    if (!nvhttp.client_fingerprint_rules_certificate.empty()) {
+      fs::path certificate_path = nvhttp.client_fingerprint_rules_certificate;
+      if (certificate_path.is_relative()) {
+        certificate_path = platf::appdata() / certificate_path;
+      }
+      nvhttp.client_fingerprint_rules_certificate = certificate_path.string();
+    }
+    int_between_f(
+      vars,
+      "client_fingerprint_rules_refresh_hours",
+      nvhttp.client_fingerprint_rules_refresh_hours,
+      {1, 168}
+    );
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);
@@ -1337,6 +1549,17 @@ namespace config {
     bool_f(vars, "ds4_back_as_touchpad_click", input.ds4_back_as_touchpad_click);
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
+    bool_f(vars, "ds5_enabled", input.ds5_enabled);
+    bool_f(vars, "ds5_audio_haptics", input.ds5_audio_haptics);
+    if (const auto path = vars.find("ds5_sidecar_path");
+        path != vars.end() && !path->second.empty()) {
+      path_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
+    }
+    else {
+      // path_f resolves an empty path to appdata. Preserve an explicit empty
+      // value so the optional component cannot become configured by default.
+      string_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
+    }
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
     
     int temp_port = static_cast<int>(input.dsu_server_port);
@@ -1351,8 +1574,10 @@ namespace config {
 
     bool_f(vars, "high_resolution_scrolling", input.high_resolution_scrolling);
     bool_f(vars, "native_pen_touch", input.native_pen_touch);
+    bool_f(vars, "native_touchpad_optimization", input.native_touchpad_optimization);
     bool_f(vars, "virtual_mouse", input.virtual_mouse);
     bool_f(vars, "amf_draw_mouse_cursor", input.amf_draw_mouse_cursor);
+    bool_f(vars, "clipboard_sync", input.clipboard_sync);
 
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 
@@ -1387,15 +1612,10 @@ namespace config {
     }
 
     bool_f(vars, "restore_log"s, sunshine.restore_log);
-
-    // Webhook configuration
-    bool_f(vars, "webhook_enabled"s, webhook.enabled);
-    string_f(vars, "webhook_url"s, webhook.url);
-    bool_f(vars, "webhook_skip_ssl_verify"s, webhook.skip_ssl_verify);
-    
-    int webhook_timeout = 1000;
-    int_between_f(vars, "webhook_timeout"s, webhook_timeout, { 100, 5000 });
-    webhook.timeout = std::chrono::milliseconds(webhook_timeout);
+    int_f(vars, "max_log_size_mb"s, sunshine.max_log_size_mb);
+    if (sunshine.max_log_size_mb < 0) {
+      sunshine.max_log_size_mb = 0;
+    }
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian
@@ -1584,14 +1804,16 @@ namespace config {
     // Exception: UCRT64 shortcut_launch instances may have no config loaded due to
     // insufficient permissions to create folder; port defaults will be acceptable.
     if (service_admin_launch) {
-      // This is a relaunch as admin to start the service
+      // This is a relaunch as admin to start the service only.
+      // GUI is launched by the non-elevated parent after we return.
       service_ctrl::start_service();
 
       // Always return 1 to ensure Sunshine doesn't start normally
       return 1;
     }
     else if (shortcut_launch) {
-      if (!service_ctrl::is_service_running()) {
+      bool service_was_running = service_ctrl::is_service_running();
+      if (!service_was_running) {
         // If the service isn't running, relaunch ourselves as admin to start it
         WCHAR executable[MAX_PATH];
         GetModuleFileNameW(NULL, executable, ARRAYSIZE(executable));
@@ -1609,15 +1831,14 @@ namespace config {
           return 1;
         }
 
-        // Wait for the elevated process to finish starting the service
+        // Wait for the elevated child to finish starting the service.
+        // Then launch the GUI from this non-elevated process (no UAC for GUI).
         WaitForSingleObject(shell_exec_info.hProcess, INFINITE);
         CloseHandle(shell_exec_info.hProcess);
-
-        // Wait for the UI to be ready for connections
-        service_ctrl::wait_for_ui_ready();
       }
 
-      // Launch the web UI
+      // Service is now running; launch GUI without elevation.
+      service_ctrl::wait_for_ui_ready();
       launch_ui();
 
       // Always return 1 to ensure Sunshine doesn't start normally
@@ -1630,6 +1851,7 @@ namespace config {
 
   bool
   update_config(const std::map<std::string, std::string> &updates) {
+    std::lock_guard lock { config_file_mutex };
     try {
       // 读取现有配置文件
       std::map<std::string, std::string> configMap;
@@ -1675,7 +1897,10 @@ namespace config {
         }
       }
 
-      file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+      if (file_handler::write_file(sunshine.config_file.c_str(), configStream.str()) != 0) {
+        BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
+        return false;
+      }
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -1687,12 +1912,14 @@ namespace config {
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig) {
+    std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
         "status",           // API响应状态，不是配置项
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
+        "active_encoder",   // 运行时探测后实际使用的编码器，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读
         "pair_name",        // 配对名称，由系统生成，只读
@@ -1751,17 +1978,62 @@ namespace config {
         for (const auto &[key, value] : resultMap) {
           configStream << key << " = " << value << std::endl;
         }
-        file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+        if (file_handler::write_file(sunshine.config_file.c_str(), configStream.str()) != 0) {
+          BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
+          return false;
+        }
         BOOST_LOG(info) << "Config saved successfully";
-        return true;
       }
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
-        return false;
       }
+
+      return true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save config: " << e.what();
+      return false;
+    }
+  }
+
+  std::string
+  get_clients_config() {
+    std::lock_guard lock { config_file_mutex };
+    return nvhttp.clients;
+  }
+
+  bool
+  save_clients_config(const std::string &clients) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto normalized_clients = nlohmann::json::parse(clients).dump();
+      std::map<std::string, std::string> config_map;
+      const auto file_content = file_handler::read_file(sunshine.config_file.c_str());
+      const auto existing_config = parse_config(file_content);
+      config_map.insert(existing_config.begin(), existing_config.end());
+
+      const auto existing = config_map.find("clients");
+      if (existing == config_map.end() || existing->second != normalized_clients) {
+        config_map["clients"] = normalized_clients;
+
+        std::stringstream config_stream;
+        for (const auto &[key, value] : config_map) {
+          if (!value.empty() && value != "null") {
+            config_stream << key << " = " << value << std::endl;
+          }
+        }
+
+        if (file_handler::write_file(sunshine.config_file.c_str(), config_stream.str()) != 0) {
+          BOOST_LOG(warning) << "Failed to write client settings to config file: " << sunshine.config_file;
+          return false;
+        }
+      }
+
+      nvhttp.clients = normalized_clients;
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
       return false;
     }
   }

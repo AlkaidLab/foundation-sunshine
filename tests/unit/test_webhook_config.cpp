@@ -3,144 +3,116 @@
  * @brief Test webhook configuration parsing.
  */
 
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <string>
-#include <unordered_map>
+#include <string_view>
+#include <system_error>
 
 #include "../tests_common.h"
-#include "config.h"
+#include <src/config.h>
 
-using namespace std::literals;
+namespace {
+  class temporary_sunshine_config_t {
+  public:
+    temporary_sunshine_config_t():
+        original_path_(config::sunshine.config_file),
+        path_(
+          std::filesystem::temp_directory_path() /
+          ("sunshine_webhook_config_test_" +
+           std::to_string(reinterpret_cast<std::uintptr_t>(this)) +
+           ".conf")
+        ) {
+      config::sunshine.config_file = path_.string();
+    }
 
-struct WebhookConfigTest : testing::Test {
-  void SetUp() override {
-    // Reset webhook config to defaults
-    config::webhook.enabled = false;
-    config::webhook.url = "";
-    config::webhook.skip_ssl_verify = false;
-    config::webhook.timeout = std::chrono::milliseconds(1000);
-  }
-};
+    ~temporary_sunshine_config_t() {
+      config::sunshine.config_file = original_path_;
+      std::error_code ignored;
+      std::filesystem::remove(path_, ignored);
+    }
 
-TEST_F(WebhookConfigTest, DefaultValues) {
-  EXPECT_FALSE(config::webhook.enabled);
-  EXPECT_EQ(config::webhook.url, "");
-  EXPECT_FALSE(config::webhook.skip_ssl_verify);
-  EXPECT_EQ(config::webhook.timeout.count(), 1000);
+    void write(std::string_view content) const {
+      std::ofstream file(path_, std::ios::binary | std::ios::trunc);
+      file << content;
+    }
+
+    std::string read() const {
+      std::ifstream file(path_, std::ios::binary);
+      return {
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>()
+      };
+    }
+
+  private:
+    std::string original_path_;
+    std::filesystem::path path_;
+  };
+}  // namespace
+
+TEST(WebhookConfigTest, LegacyFieldsAreOrdinaryParsedValues) {
+  const auto parsed = config::parse_config(
+    "webhook_enabled = enabled\n"
+    "webhook_url = https://example.invalid/webhook\n"
+    "webhook_skip_ssl_verify = enabled\n"
+    "webhook_timeout = 5000\n"
+    "webhook_events = 1,4\n"
+  );
+
+  EXPECT_EQ(parsed.at("webhook_enabled"), "enabled");
+  EXPECT_EQ(parsed.at("webhook_url"), "https://example.invalid/webhook");
+  EXPECT_EQ(parsed.at("webhook_skip_ssl_verify"), "enabled");
+  EXPECT_EQ(parsed.at("webhook_timeout"), "5000");
+  EXPECT_EQ(parsed.at("webhook_events"), "1,4");
 }
 
-TEST_F(WebhookConfigTest, ParseWebhookEnabled) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_enabled"] = "true";
-  
-  config::apply_config(std::move(vars));
-  
-  EXPECT_TRUE(config::webhook.enabled);
+TEST(WebhookConfigTest, GeneralConfigCanOverwriteLegacyWebhookFields) {
+  temporary_sunshine_config_t temporary_config;
+  temporary_config.write(
+    "webhook_enabled = enabled\n"
+    "webhook_url = https://example.invalid/legacy\n"
+    "webhook_skip_ssl_verify = enabled\n"
+    "webhook_timeout = 5000\n"
+    "webhook_events = 1,4\n"
+    "sunshine_name = old-name\n"
+  );
+
+  const std::map<std::string, std::string> incoming {
+    {"sunshine_name", "new-name"},
+    {"webhook_enabled", "disabled"},
+    {"webhook_url", "https://example.invalid/replacement"},
+    {"webhook_skip_ssl_verify", "disabled"},
+    {"webhook_timeout", "15000"},
+    {"webhook_events", "0,2,6"},
+  };
+  ASSERT_TRUE(config::update_full_config(incoming));
+  ASSERT_TRUE(config::update_config({
+    {"webhook_url", "https://example.invalid/second-replacement"},
+    {"sunshine_name", "final-name"},
+  }));
+
+  const auto persisted = config::parse_config(temporary_config.read());
+  EXPECT_EQ(persisted.at("sunshine_name"), "final-name");
+  EXPECT_EQ(persisted.at("webhook_enabled"), "disabled");
+  EXPECT_EQ(persisted.at("webhook_url"), "https://example.invalid/second-replacement");
+  EXPECT_EQ(persisted.at("webhook_skip_ssl_verify"), "disabled");
+  EXPECT_EQ(persisted.at("webhook_timeout"), "15000");
+  EXPECT_EQ(persisted.at("webhook_events"), "0,2,6");
 }
 
-TEST_F(WebhookConfigTest, ParseWebhookUrl) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_url"] = "https://example.com/webhook";
-  
-  config::apply_config(std::move(vars));
-  
-  EXPECT_EQ(config::webhook.url, "https://example.com/webhook");
-}
+TEST(WebhookConfigTest, EmptyLegacyValueFollowsNormalConfigRules) {
+  temporary_sunshine_config_t temporary_config;
+  temporary_config.write(
+    "webhook_url = \n"
+    "sunshine_name = old-name\n"
+  );
 
-TEST_F(WebhookConfigTest, ParseWebhookSkipSslVerify) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_skip_ssl_verify"] = "true";
-  
-  config::apply_config(std::move(vars));
-  
-  EXPECT_TRUE(config::webhook.skip_ssl_verify);
-}
-
-TEST_F(WebhookConfigTest, ParseWebhookTimeout) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_timeout"] = "2000";
-  
-  config::apply_config(std::move(vars));
-  
-  EXPECT_EQ(config::webhook.timeout.count(), 2000);
-}
-
-TEST_F(WebhookConfigTest, ParseWebhookTimeoutOutOfRange) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_timeout"] = "10000";  // Out of range (100-5000)
-  
-  config::apply_config(std::move(vars));
-  
-  // Should remain at default value
-  EXPECT_EQ(config::webhook.timeout.count(), 1000);
-}
-
-TEST_F(WebhookConfigTest, ParseWebhookTimeoutTooLow) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_timeout"] = "50";  // Too low (100-5000)
-  
-  config::apply_config(std::move(vars));
-  
-  // Should remain at default value
-  EXPECT_EQ(config::webhook.timeout.count(), 1000);
-}
-
-TEST_F(WebhookConfigTest, ParseAllWebhookSettings) {
-  std::unordered_map<std::string, std::string> vars;
-  vars["webhook_enabled"] = "true";
-  vars["webhook_url"] = "https://test.com/hook";
-  vars["webhook_skip_ssl_verify"] = "true";
-  vars["webhook_timeout"] = "3000";
-  
-  config::apply_config(std::move(vars));
-  
-  EXPECT_TRUE(config::webhook.enabled);
-  EXPECT_EQ(config::webhook.url, "https://test.com/hook");
-  EXPECT_TRUE(config::webhook.skip_ssl_verify);
-  EXPECT_EQ(config::webhook.timeout.count(), 3000);
-}
-
-TEST_F(WebhookConfigTest, ParseWebhookTimeoutBoundaryValues) {
-  // Test minimum valid value
-  {
-    std::unordered_map<std::string, std::string> vars;
-    vars["webhook_timeout"] = "100";  // Minimum valid value
-    
-    config::apply_config(std::move(vars));
-    
-    EXPECT_EQ(config::webhook.timeout.count(), 100);
-  }
-  
-  // Test maximum valid value
-  {
-    std::unordered_map<std::string, std::string> vars;
-    vars["webhook_timeout"] = "5000";  // Maximum valid value
-    
-    config::apply_config(std::move(vars));
-    
-    EXPECT_EQ(config::webhook.timeout.count(), 5000);
-  }
-}
-
-TEST_F(WebhookConfigTest, ParseWebhookBooleanVariations) {
-  // Test various boolean representations for enabled
-  std::vector<std::string> true_values = {"true", "True", "TRUE", "1", "yes", "Yes", "YES", "enable", "enabled", "on"};
-  std::vector<std::string> false_values = {"false", "False", "FALSE", "0", "no", "No", "NO", "disable", "disabled", "off"};
-  
-  for (const auto& value : true_values) {
-    std::unordered_map<std::string, std::string> vars;
-    vars["webhook_enabled"] = value;
-    
-    config::apply_config(std::move(vars));
-    
-    EXPECT_TRUE(config::webhook.enabled) << "Failed for value: " << value;
-  }
-  
-  for (const auto& value : false_values) {
-    std::unordered_map<std::string, std::string> vars;
-    vars["webhook_enabled"] = value;
-    
-    config::apply_config(std::move(vars));
-    
-    EXPECT_FALSE(config::webhook.enabled) << "Failed for value: " << value;
-  }
+  ASSERT_TRUE(config::update_config({
+    {"sunshine_name", "new-name"},
+  }));
+  EXPECT_EQ(temporary_config.read().find("webhook_url = \n"), std::string::npos);
 }

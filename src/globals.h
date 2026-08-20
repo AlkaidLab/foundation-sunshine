@@ -61,6 +61,7 @@ namespace mail {
   MAIL(video_packets);
   MAIL(audio_packets);
   MAIL(switch_display);
+  MAIL(active_display);
 
   // Local mail
   MAIL(touch_port);
@@ -69,6 +70,7 @@ namespace mail {
   MAIL(gamepad_feedback);
   MAIL(hdr);
   MAIL(dynamic_param_change);
+  MAIL(input_activity);
   MAIL(resolution_change);
 #undef MAIL
 

@@ -290,10 +290,7 @@ namespace display_device {
     }
 
     constexpr bool allow_changes { true };
-    if (!do_set_modes(modes, allow_changes)) {
-      // Error already logged
-      return false;
-    }
+    const bool first_attempt_ok { do_set_modes(modes, allow_changes) };
 
     const auto all_modes_match = [&modes](const device_display_mode_map_t &current_modes) {
       for (const auto &[device_id, requested_mode] : modes) {
@@ -312,27 +309,25 @@ namespace display_device {
     };
 
     auto current_modes { get_current_display_modes(device_ids) };
-    if (!current_modes.empty()) {
-      if (all_modes_match(current_modes)) {
-        return true;
-      }
+    if (first_attempt_ok && !current_modes.empty() && all_modes_match(current_modes)) {
+      return true;
+    }
 
-      // We have a problem when using SetDisplayConfig with SDC_ALLOW_CHANGES
-      // where it decides to use our new mode merely as a suggestion.
-      //
-      // This is good, since we don't have to be very precise with refresh rate,
-      // but also bad since it can just ignore our specified mode.
-      //
-      // However, it is possible that the user has created a custom display mode
-      // which is not exposed to the via Windows settings app. To allow this
-      // resolution to be selected, we actually need to omit SDC_ALLOW_CHANGES
-      // flag.
-      BOOST_LOG(info) << "Failed to change display modes using Windows recommended modes, trying to set modes more strictly!";
-      if (do_set_modes(modes, !allow_changes)) {
-        current_modes = get_current_display_modes(device_ids);
-        if (!current_modes.empty() && all_modes_match(current_modes)) {
-          return true;
-        }
+    // We have a problem when using SetDisplayConfig with SDC_ALLOW_CHANGES
+    // where it decides to use our new mode merely as a suggestion.
+    //
+    // This is good, since we don't have to be very precise with refresh rate,
+    // but also bad since it can just ignore our specified mode.
+    //
+    // However, it is possible that the user has created a custom display mode
+    // which is not exposed to the via Windows settings app. To allow this
+    // resolution to be selected, we actually need to omit SDC_ALLOW_CHANGES
+    // flag.
+    BOOST_LOG(info) << "Failed to change display modes using Windows recommended modes, trying to set modes more strictly!";
+    if (do_set_modes(modes, !allow_changes)) {
+      current_modes = get_current_display_modes(device_ids);
+      if (!current_modes.empty() && all_modes_match(current_modes)) {
+        return true;
       }
     }
 

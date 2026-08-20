@@ -1,0 +1,138 @@
+// DELETE APP CONFIRM MODAL
+// ============================================================================
+
+.delete-app-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  min-height: 100dvh;
+  padding: 1.25rem;
+  overflow: hidden;
+  background: var(--ui-overlay);
+  backdrop-filter: blur(6px);
+}
+
+.delete-app-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-danger-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-lg);
+  animation: modalSlideUp 0.22s ease;
+}
+
+.delete-app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--ui-border);
+
+  h5 {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    color: var(--ui-text-primary);
+    font-size: 1.05rem;
+    font-weight: 650;
+
+    i {
+      color: var(--ui-danger-text);
+    }
+  }
+}
+
+.delete-app-close {
+  flex: 0 0 auto;
+  margin: 0;
+  opacity: 0.72;
+
+  &:hover {
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 3px solid var(--ui-danger-soft);
+    outline-offset: 3px;
+  }
+}
+
+.delete-app-body {
+  padding: 1.25rem;
+  color: var(--ui-text-primary);
+  font-size: 0.95rem;
+  line-height: 1.6;
+
+  p {
+    margin: 0;
+  }
+}
+
+.delete-app-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding: 0.9rem 1.25rem;
+  background: var(--ui-surface);
+  border-top: 1px solid var(--ui-border);
+
+  button {
+    min-width: 84px;
+    padding: 0.55rem 1rem;
+    font-size: 0.9rem;
+  }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@media (max-width: 576px) {
+  .delete-app-overlay {
+    align-items: flex-end;
+    padding: 0.75rem;
+  }
+
+  .delete-app-modal {
+    width: 100%;
+  }
+
+  .delete-app-header,
+  .delete-app-body,
+  .delete-app-footer {
+    padding-right: 1rem;
+    padding-left: 1rem;
+  }
+
+  .delete-app-footer {
+    flex-direction: column-reverse;
+
+    button {
+      width: 100%;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delete-app-modal,
+  .fade-enter-active,
+  .fade-leave-active {
+    animation: none;
+    transition: none;
+  }
+}

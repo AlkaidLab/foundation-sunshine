@@ -7,6 +7,7 @@
 // platform includes
 #include <audioclient.h>
 #include <avrt.h>
+#include <chrono>
 #include <mmdeviceapi.h>
 #include <mutex>
 #include <newdev.h>
@@ -17,8 +18,11 @@
 #include "mic_write.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/tray/system_tray.h"
+#include "src/tray/tray_state.h"
 
 // Must be the last included file
 // clang-format off
@@ -249,13 +253,30 @@ namespace platf::audio {
 
   class co_init_t: public deinit_t {
   public:
-    co_init_t() {
-      CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY);
+    co_init_t():
+        status {CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY)} {
     }
 
     ~co_init_t() override {
-      CoUninitialize();
+      if (SUCCEEDED(status)) {
+        CoUninitialize();
+      }
     }
+
+    [[nodiscard]] bool
+    initialized() const noexcept {
+      // RPC_E_CHANGED_MODE 表示当前线程已经属于另一种 COM 单元模型。
+      // 此时 COM 仍可使用，但当前守卫不能负责反初始化已有单元。
+      return SUCCEEDED(status) || status == RPC_E_CHANGED_MODE;
+    }
+
+    [[nodiscard]] HRESULT
+    result() const noexcept {
+      return status;
+    }
+
+  private:
+    HRESULT status;
   };
 
   class prop_var_t {
@@ -470,7 +491,15 @@ namespace platf::audio {
       // Refill the sample buffer if needed
       while (sample_buf_pos - std::begin(sample_buf) < sample_size) {
         auto capture_result = _fill_buffer();
-        if (capture_result != capture_e::ok) {
+        if (capture_result == capture_e::timeout && continuous_audio) {
+          // Pad with silence only up to the requested frame boundary so any
+          // partial samples that _fill_buffer() managed to write before the
+          // timeout are preserved instead of being shifted into the next
+          // frame, which would cause a cumulative timing drift.
+          const auto remaining = sample_size - (sample_buf_pos - std::begin(sample_buf));
+          std::fill_n(sample_buf_pos, remaining, 0.0f);
+          sample_buf_pos += remaining;
+        } else if (capture_result != capture_e::ok) {
           return capture_result;
         }
       }
@@ -486,7 +515,7 @@ namespace platf::audio {
     }
 
     int
-    init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out) {
+    init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out, bool continuous) {
       audio_event.reset(CreateEventA(nullptr, FALSE, FALSE, nullptr));
       if (!audio_event) {
         BOOST_LOG(error) << "Couldn't create Event handle"sv;
@@ -546,6 +575,7 @@ namespace platf::audio {
       REFERENCE_TIME default_latency;
       audio_client->GetDevicePeriod(&default_latency, nullptr);
       default_latency_ms = default_latency / 1000;
+      continuous_audio = continuous;
 
       std::uint32_t frames;
       status = audio_client->GetBufferSize(&frames);
@@ -716,10 +746,12 @@ namespace platf::audio {
     util::buffer_t<float> sample_buf;
     float *sample_buf_pos;
     int channels;
+    bool continuous_audio;
 
     HANDLE mmcss_task_handle = NULL;
   };
 
+  // 初始化、写入和释放操作都由麦克风接收线程串行执行。
   std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
 
   class audio_control_t: public ::platf::audio_control_t {
@@ -808,10 +840,10 @@ namespace platf::audio {
     }
 
     std::unique_ptr<mic_t>
-    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio) override {
       auto mic = std::make_unique<mic_wasapi_t>();
 
-      if (mic->init(sample_rate, frame_size, channels)) {
+      if (mic->init(sample_rate, frame_size, channels, continuous_audio)) {
         return nullptr;
       }
 
@@ -820,6 +852,7 @@ namespace platf::audio {
       if (virtual_sink_info) {
         mic->default_endpt_changed_cb = [this] {
           BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
+          notify_virtual_sink_managed();
           set_sink(assigned_sink);
         };
       }
@@ -927,6 +960,29 @@ namespace platf::audio {
       }
 
       return failure;
+    }
+
+    void
+    notify_virtual_sink_managed() {
+      const auto now = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> lock(last_virtual_sink_notification_mutex);
+      if (now - last_virtual_sink_notification < std::chrono::seconds(30)) {
+        return;
+      }
+
+      last_virtual_sink_notification = now;
+      BOOST_LOG(info) << "Virtual audio sink is being kept selected for host audio streaming";
+      const auto notification_id = tray_state::set_notification(
+        "Audio device kept for streaming",
+        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
+      task_pool.pushDelayed([notification_id]() {
+        tray_state::clear_notification_if(notification_id);
+      }, std::chrono::seconds(10));
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+      system_tray::show_notification(
+        "Audio device kept for streaming",
+        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
+#endif
     }
 
     enum class match_field_e {
@@ -1203,12 +1259,11 @@ namespace platf::audio {
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
+    std::chrono::steady_clock::time_point last_virtual_sink_notification {};
+    std::mutex last_virtual_sink_notification_mutex;
 
     int
-    init_mic_redirect_device() {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
+    init_mic_redirect_device() override {
       if (!mic_redirect_device) {
         mic_redirect_device = std::make_unique<mic_write_wasapi_t>();
       }
@@ -1225,26 +1280,21 @@ namespace platf::audio {
     }
 
     void
-    release_mic_redirect_device() {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
+    release_mic_redirect_device() override {
       if (mic_redirect_device) {
         mic_redirect_device->restore_audio_devices();
+        mic_redirect_device.reset();
       }
     }
 
     int
-    write_mic_data(const char *data, size_t len, uint16_t seq = 0) {
-      static std::mutex mic_device_mutex;
-      std::lock_guard<std::mutex> lock(mic_device_mutex);
-
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
       if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {
         BOOST_LOG(warning) << "Mic redirect device not available or cleaning up";
         return -1;
       }
 
-      return mic_redirect_device->write_data(data, len, seq);
+      return mic_redirect_device->write_pcm(samples, frame_count);
     }
   };
 }  // namespace platf::audio
@@ -1273,6 +1323,18 @@ namespace platf {
     }
 
     return control;
+  }
+
+  std::unique_ptr<deinit_t>
+  init_audio_thread() {
+    auto guard = std::make_unique<audio::co_init_t>();
+    if (!guard->initialized()) {
+      BOOST_LOG(error) << "Failed to initialize COM for the audio thread: [0x"sv
+                       << util::hex(guard->result()).to_string_view() << ']';
+      return nullptr;
+    }
+
+    return guard;
   }
 
   std::unique_ptr<deinit_t>

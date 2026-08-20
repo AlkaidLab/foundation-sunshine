@@ -1,4 +1,5 @@
 @echo off
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 setlocal enabledelayedexpansion
 
 set "SERVICE_CONFIG_DIR=%LOCALAPPDATA%\LizardByte\Sunshine"
@@ -32,10 +33,19 @@ if %ERRORLEVEL%==0 (
     echo !CONTENT!> "%SERVICE_CONFIG_FILE%"
 )
 
-rem Stop and delete the legacy SunshineSvc service
-net stop sunshinesvc
-sc delete sunshinesvc
+rem Stop and delete the legacy SunshineSvc service (non-blocking)
+sc stop sunshinesvc >nul 2>&1
+sc delete sunshinesvc >nul 2>&1
 
-rem Stop and delete the new SunshineService service
-net stop SunshineService
-sc delete SunshineService
+rem Force-kill the service binary FIRST so SCM can transition the service to
+rem STOPPED quickly. We deliberately avoid `net stop`, which blocks for up to
+rem 30 seconds waiting on the service's stop handler — that is the typical
+rem cause of "Inno uninstaller appears frozen".
+taskkill /f /im sunshinesvc.exe >nul 2>&1
+
+rem Issue a stop control as a courtesy (idempotent, returns quickly), then
+rem delete. If still in stop-pending, SCM marks the service for deletion and
+rem removes it once stopped — which is immediate after the taskkill above.
+sc stop SunshineService >nul 2>&1
+sc delete SunshineService >nul 2>&1
+exit /b 0

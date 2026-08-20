@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "src/platform/common.h"
@@ -15,10 +16,18 @@
 #include <mmdeviceapi.h>
 #include <windows.h>
 
-// Forward declarations
-struct OpusDecoder;
-
 namespace platf::audio {
+
+  struct mic_redirect_test_result_t {
+    bool success = false;
+    std::string error_code;
+  };
+
+  /**
+   * @brief Write a short test tone through the configured virtual microphone.
+   */
+  mic_redirect_test_result_t
+  test_mic_redirect();
   
   // COM interface Release helper for safe_ptr
   template<typename T>
@@ -43,8 +52,7 @@ namespace platf::audio {
   /**
    * @brief Windows WASAPI microphone write class for client mic redirection
    * 
-   * This class handles writing client microphone data to virtual audio devices
-   * for redirection purposes. It supports OPUS decoding and various audio formats.
+   * This class handles writing mixed client microphone PCM to virtual audio devices.
    */
   class mic_write_wasapi_t: public mic_t {
   public:
@@ -62,20 +70,19 @@ namespace platf::audio {
      * @return 0 on success, -1 on failure
      */
     int
-    init();
+    init(bool test_mode = false);
 
     /**
-     * @brief Write audio data to the virtual audio device
-     * @param data Pointer to the audio data (OPUS encoded)
-     * @param len Length of the audio data in bytes
-     * @param seq Sequence number for FEC recovery (0 = unknown)
-     * @return Number of bytes written, or -1 on error
+     * @brief Write mono 48 kHz signed 16-bit PCM to the virtual audio device.
+     * @param samples Pointer to the PCM samples.
+     * @param frame_count Number of mono frames to write.
+     * @return Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
      */
     int
-    write_data(const char *data, size_t len, uint16_t seq = 0);
+    write_pcm(const std::int16_t *samples, std::size_t frame_count);
 
     /**
-     * @brief Test write functionality with silent audio
+     * @brief Write a short audible tone to the initialized render endpoint.
      * @return Number of bytes written, or -1 on error
      */
     int
@@ -186,7 +193,6 @@ namespace platf::audio {
     device_enum_t device_enum;
     audio_client_t audio_client;
     IAudioRenderClient *audio_render = nullptr;
-    OpusDecoder *opus_decoder = nullptr;
     HANDLE mmcss_task_handle = nullptr;
     WAVEFORMATEX current_format = {};
     VirtualDeviceType virtual_device_type = VirtualDeviceType::NONE;
@@ -197,16 +203,7 @@ namespace platf::audio {
       bool input_device_changed = false;
       bool settings_stored = false;
     } restoration_state;
-
-    // FEC recovery state
-    uint16_t last_seq = 0;
-    bool first_packet = true;
-    
-    // Statistics
-    uint64_t total_packets = 0;
-    uint64_t packet_loss_count = 0;
-    uint64_t fec_recovered_packets = 0;
   };
 
   extern std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;
-}  // namespace platf::audio 
+}  // namespace platf::audio

@@ -1,5 +1,8 @@
 #pragma once
 
+// standard includes
+#include <string>
+
 // local includes
 #include "display_device.h"
 
@@ -22,7 +25,7 @@ namespace display_device {
      * @brief Enum detailing how to prepare the display device.
      */
     enum class device_prep_e : int {
-      no_operation, /**< User has to make sure the display device is active, we will only verify. */
+      no_operation, /**< Do not change display topology; resolution, refresh rate, and HDR are controlled by their own options. */
       ensure_active, /**< Activate the device if needed. */
       ensure_primary, /**< Activate the device if needed and make it a primary display. */
       ensure_only_display, /**< Deactivate other displays and turn on the specified one only. */
@@ -164,6 +167,38 @@ namespace display_device {
   };
 
   /**
+   * @brief What a launch is actually aiming at.
+   *
+   * Both the display configuration and the stream startup recovery need to know
+   * the same three things - is this a virtual display, did the user pick the
+   * display on purpose, and how much are we allowed to rearrange - so they are
+   * resolved in one place instead of being re-derived per call site.
+   */
+  struct display_intent_t {
+    enum class target_e {
+      vdd, /**< A virtual display was explicitly requested by the config or the client. */
+      physical, /**< A physical display: the one that was named, or whichever is primary. */
+      unavailable /**< The client named a physical display that is not connected. */
+    };
+
+    target_e target;
+    std::string device_id; /**< Resolved device id. Empty means "whichever display is primary". */
+    bool user_named_display; /**< The device id above is an existing display the user picked on purpose. */
+    parsed_config_t::device_prep_e device_prep; /**< Config value, overridden by the client's custom screen mode. */
+  };
+
+  /**
+   * @brief Resolve what the launch is aiming at.
+   * @param config User's video related configuration.
+   * @param session Session information.
+   * @returns The resolved intent. A configured display that no longer exists is
+   *          downgraded to the primary display; a client-named one is reported
+   *          as unavailable instead.
+   */
+  display_intent_t
+  resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session);
+
+  /**
    * @brief Parse the user configuration and the session information.
    * @param config User's video related configuration.
    * @param session Session information.
@@ -177,6 +212,6 @@ namespace display_device {
    * ```
    */
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure);
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session);
 
 }  // namespace display_device

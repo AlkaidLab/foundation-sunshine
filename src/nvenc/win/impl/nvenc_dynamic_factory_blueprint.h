@@ -26,6 +26,11 @@ namespace nvenc {
       return std::make_shared<NVENC_FACTORY_CLASS>(dll);
     }
 
+    nvenc_sdk_version
+    sdk_version() const override {
+      return static_cast<nvenc_sdk_version>(NVENC_FACTORY_VERSION);
+    }
+
     std::unique_ptr<nvenc_d3d11>
     create_nvenc_d3d11_native(ID3D11Device *d3d_device) override;
 
@@ -47,6 +52,10 @@ namespace NVENC_NAMESPACE {
   #include NVENC_FACTORY_INCLUDE(dynlink_cuda.h)
   #include NVENC_FACTORY_INCLUDE(nvEncodeAPI.h)
 }  // namespace NVENC_NAMESPACE
+
+static_assert(
+  NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION == NVENC_FACTORY_VERSION,
+  "NVENC factory version does not match the selected nv-codec-headers");
 
 using namespace nvenc;
 

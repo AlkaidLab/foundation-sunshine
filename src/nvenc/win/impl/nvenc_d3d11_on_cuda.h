@@ -6,6 +6,8 @@
 
 #include "nvenc_d3d11_base.h"
 
+#include <cstdint>
+
 #ifdef NVENC_NAMESPACE
 namespace NVENC_NAMESPACE {
 #else
@@ -30,6 +32,9 @@ namespace nvenc {
     get_input_texture() override;
 
   private:
+    static constexpr std::uint32_t planar_yuv_plane_count = 3;
+    static constexpr std::uint32_t planar_yuv_bytes_per_sample = 2;
+
     bool
     init_library() override;
 
@@ -38,6 +43,20 @@ namespace nvenc {
 
     bool
     synchronize_input_buffer() override;
+
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+    bool
+    create_and_register_cuda_array_input();
+
+    void
+    destroy_cuda_array_input();
+#endif
+
+    bool
+    create_and_register_cuda_device_pointer_input();
+
+    bool
+    register_cuda_input(NV_ENC_INPUT_RESOURCE_TYPE resource_type, void *resource, std::uint32_t pitch);
 
     bool
     cuda_succeeded(CUresult result);
@@ -84,6 +103,11 @@ namespace nvenc {
       tcuGraphicsUnmapResources *cuGraphicsUnmapResources;
       tcuGraphicsSubResourceGetMappedArray *cuGraphicsSubResourceGetMappedArray;
       tcuMemcpy2D_v2 *cuMemcpy2D;
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+      tcuArray3DCreate *cuArray3DCreate;
+      tcuArrayDestroy *cuArrayDestroy;
+      tcuArrayGetPlane *cuArrayGetPlane;
+#endif
       shared_dll dll;
     } cuda_functions = {};
 
@@ -92,5 +116,9 @@ namespace nvenc {
     CUgraphicsResource cuda_d3d_input_texture = nullptr;
     CUdeviceptr cuda_surface = 0;
     size_t cuda_surface_pitch = 0;
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+    CUarray cuda_array_surface = nullptr;
+    CUarray cuda_array_planes[planar_yuv_plane_count] = {};
+#endif
   };
 }

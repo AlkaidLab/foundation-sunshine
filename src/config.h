@@ -43,6 +43,10 @@ namespace config {
     bool vdd_headless_create_enabled;
     /** When true, reuse existing VDD on client switch instead of destroying and recreating. Default true. */
     bool vdd_reuse;
+    /** When true, Zako Direct Capture borrows VDD shared textures instead of copying into Sunshine-owned capture textures. */
+    bool vdd_borrowed_texture;
+    /** Automatically validate and expose Vulkan HDR colorspaces for HDR VDD sessions. */
+    bool vdd_vulkan_hdr_bridge;
 
     struct {
       int preset;
@@ -73,6 +77,22 @@ namespace config {
       std::optional<int> amd_vbaq;
       int amd_coder;
       int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (lower=better, default=23)
+      int amd_ltr_frames = 0;  // LTR frames for RFI (0=disabled by default; matches FFmpeg amfenc behavior to avoid static-region color blocks)
+      int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
+      bool amd_avcodec_compat = false;  // Optional AVCodec-like AMF adapter; false keeps the clean standalone path.
+      std::optional<bool> amd_multi_hw_instance;
+      // The properties below historically had aggressive hardcoded defaults that
+      // forced AMF code paths FFmpeg never touches (HIGH_MOTION_QUALITY_BOOST=on,
+      // INPUT_QUEUE_SIZE=1, LOWLATENCY_MODE=on, AV1 LOWEST_LATENCY). Those paths
+      // expose latent AMD driver bugs (e.g. RDNA4 Adrenalin 26.5.x freeze after
+      // ~minutes, AlkaidLab/foundation-sunshine#666). Default is nullopt =
+      // "do not call SetProperty" so the driver picks its own default, matching
+      // FFmpeg amfenc behavior. Users can still opt in via the WebUI.
+      std::optional<bool> amd_high_motion_qb;
+      std::optional<bool> amd_lowlatency_mode;
+      // Standalone: AMF INPUT_QUEUE_SIZE. AVCodec compatibility: async_depth cap.
+      std::optional<int> amd_input_queue_size;   // 1-16
+      std::optional<int> amd_av1_latency_mode;   // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_*
     } amd;
 
     struct {
@@ -101,6 +121,7 @@ namespace config {
     std::string output_name;
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
     std::string window_title;     // Window title to capture when capture_target="window"
+    bool capture_cursor;          // Whether to composite the host mouse cursor into the stream (toggle: Ctrl+Alt+Shift+N)
     int display_device_prep;
     int resolution_change;
     std::string manual_resolution;
@@ -110,8 +131,14 @@ namespace config {
     std::vector<display_mode_remapping_t> display_mode_remapping;
     bool variable_refresh_rate;  // Allow video stream framerate to match render framerate for VRR support
     int minimum_fps_target;  // Minimum FPS target (0 = auto, 1-1000 = minimum FPS to maintain)
+    bool input_activity_boost;  // Temporarily raise encoding cadence after local input while VRR is active
+    int input_activity_boost_fps;  // Minimum FPS floor to maintain during the input activity boost window
+    int input_activity_boost_window_ms;  // Duration of the input activity boost window in milliseconds
     std::string downscaling_quality;  // Downscaling quality: "fast" (bilinear+8pt), "balanced" (bicubic), "high_quality" (future: lanczos)
-    bool hdr_luminance_analysis;  // Enable per-frame HDR luminance analysis for dynamic metadata
+    std::string hdr_luminance_analysis;  // Per-frame HDR analysis: "auto", "on", "off"
+    std::string capture_compute_shader;  // GPU frame conversion: "auto", "on", "off"
+    bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
+    bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
   };
 
   struct audio_t {
@@ -155,19 +182,22 @@ namespace config {
     std::string clients;
 
     std::string file_state;
+    std::string file_mappings;
+    std::uint16_t file_mapping_port;
 
     std::string external_ip;
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 
     int sleep_mode;  // Sleep mode: 0=suspend(S3), 1=hibernate(S4), 2=away_mode
-  };
 
-  struct webhook_t {
-    bool enabled;
-    std::string url;
-    bool skip_ssl_verify;
-    std::chrono::milliseconds timeout;
+    int pair_max_attempts;  // Max PIN pairing attempts per IP within 60s window. 0 disables limiting.
+
+    // Signed, warning-only client fingerprint rule feed.
+    bool client_fingerprint_remote_rules;
+    std::string client_fingerprint_rules_url;
+    std::string client_fingerprint_rules_certificate;
+    int client_fingerprint_rules_refresh_hours;
   };
 
   struct input_t {
@@ -182,6 +212,9 @@ namespace config {
     bool motion_as_ds4;
     bool touchpad_as_ds4;
     bool ds5_inputtino_randomize_mac;
+    bool ds5_enabled;
+    bool ds5_audio_haptics;
+    std::string ds5_sidecar_path;
     bool enable_dsu_server;
     uint16_t dsu_server_port;
 
@@ -193,8 +226,10 @@ namespace config {
 
     bool high_resolution_scrolling;
     bool native_pen_touch;
+    bool native_touchpad_optimization;
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
+    bool clipboard_sync;  ///< Bidirectional clipboard sync (text + single image). On by default; effective only when the user-session GUI agent is alive. Set to false to force-disable.
   };
 
   namespace flag {
@@ -244,6 +279,7 @@ namespace config {
 
     std::string log_file;
     bool restore_log;  // 是否恢复日志文件（true=恢复，false=覆盖）
+    int max_log_size_mb;  // 日志文件最大大小（MB），超过后自动轮转，0=不限制
     bool notify_pre_releases;
     bool system_tray;
     std::vector<prep_cmd_t> prep_cmds;
@@ -253,7 +289,6 @@ namespace config {
   extern audio_t audio;
   extern stream_t stream;
   extern nvhttp_t nvhttp;
-  extern webhook_t webhook;
   extern input_t input;
   extern sunshine_t sunshine;
 
@@ -267,4 +302,17 @@ namespace config {
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);
+
+  /**
+   * Return a synchronized snapshot of the serialized per-client settings.
+   */
+  std::string
+  get_clients_config();
+
+  /**
+   * Persist per-client settings and publish them to the running process.
+   * Unlike update_config(), an unchanged value is still a successful save.
+   */
+  bool
+  save_clients_config(const std::string &clients);
 }  // namespace config

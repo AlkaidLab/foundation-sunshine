@@ -52,21 +52,25 @@ else()
 endif()
 
 #WebUI build
-find_program(NPM npm REQUIRED)
+option(BUILD_WEB_UI "Build the web UI via npm" ON)
 
-if (NPM_OFFLINE)
-    set(NPM_INSTALL_FLAGS "--offline")
-else()
-    set(NPM_INSTALL_FLAGS "")
+if(BUILD_WEB_UI)
+    find_program(NPM npm REQUIRED)
+
+    if (NPM_OFFLINE)
+        set(NPM_INSTALL_FLAGS "--offline")
+    else()
+        set(NPM_INSTALL_FLAGS "")
+    endif()
+
+    add_custom_target(web-ui ALL
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            COMMENT "Installing NPM Dependencies and Building the Web UI"
+            COMMAND "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" install ${NPM_INSTALL_FLAGS}
+            COMMAND "${CMAKE_COMMAND}" -E env "SUNSHINE_BUILD_HOMEBREW=${NPM_BUILD_HOMEBREW}" "SUNSHINE_SOURCE_ASSETS_DIR=${NPM_SOURCE_ASSETS_DIR}" "SUNSHINE_ASSETS_DIR=${NPM_ASSETS_DIR}" "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" run build  # cmake-lint: disable=C0301
+            COMMAND_EXPAND_LISTS
+            VERBATIM)
 endif()
-
-add_custom_target(web-ui ALL
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        COMMENT "Installing NPM Dependencies and Building the Web UI"
-        COMMAND "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" install ${NPM_INSTALL_FLAGS}
-        COMMAND "${CMAKE_COMMAND}" -E env "SUNSHINE_BUILD_HOMEBREW=${NPM_BUILD_HOMEBREW}" "SUNSHINE_SOURCE_ASSETS_DIR=${NPM_SOURCE_ASSETS_DIR}" "SUNSHINE_ASSETS_DIR=${NPM_ASSETS_DIR}" "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" run build  # cmake-lint: disable=C0301
-        COMMAND_EXPAND_LISTS
-        VERBATIM)
 
 # docs
 if(BUILD_DOCS)
@@ -74,7 +78,8 @@ if(BUILD_DOCS)
 endif()
 
 # tests
-if(BUILD_TESTS)
+if(BUILD_TESTS OR BUILD_TRAY_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
@@ -90,11 +95,6 @@ endif()
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/upnp.cpp"
         DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
         PROPERTIES COMPILE_FLAGS -Wno-pedantic)
-
-# third-party/nanors
-set_source_files_properties("${CMAKE_SOURCE_DIR}/src/rswrapper.c"
-        DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
-        PROPERTIES COMPILE_FLAGS "-ftree-vectorize -funroll-loops")
 
 # third-party/ViGEmClient
 set(VIGEM_COMPILE_FLAGS "")

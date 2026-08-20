@@ -4,3 +4,10 @@ Dockerfile text eol=lf
 
 # ensure flatpak lint json files are checked out with LF line endings
 *flatpak-lint-*.json text eol=lf
+
+# i18n formatting checks compare locale files byte-for-byte with LF output
+src_assets/common/assets/web/public/assets/locale/*.json text eol=lf
+
+# ensure Windows batch scripts are checked out with CRLF line endings
+*.bat text eol=crlf
+*.cmd text eol=crlf

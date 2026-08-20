@@ -8,6 +8,8 @@
           :src="getImageUrl()" 
           :alt="app.name"
           class="app-icon"
+          loading="lazy"
+          decoding="async"
           @error="handleImageError"
         >
         <div v-else class="app-icon-placeholder">
@@ -16,24 +18,33 @@
       </div>
       
       <!-- 应用信息 -->
-      <div class="app-info" :title="app.cmd" @click="copyToClipboard(app.cmd, app.name, $event)">
+      <div class="app-info" :title="app.cmd || undefined">
         <h3 class="app-name">{{ app.name }}</h3>
-        <p class="app-command" v-if="app.cmd">
+        <button
+          v-if="app.cmd"
+          type="button"
+          class="app-command app-command-copy"
+          :title="`${$t('_common.copy')}: ${app.name}`"
+          :aria-label="`${$t('_common.copy')}: ${app.name}`"
+          @click="copyToClipboard(app.cmd, app.name, $event)"
+        >
           <i class="fas fa-terminal me-1"></i>
-          {{ truncateText(app.cmd, 50) }}
-        </p>
-        <div class="app-tags">
-          <span v-if="app['exclude-global-prep-cmd'] && app['exclude-global-prep-cmd'] !== 'false'" class="app-tag tag-exclude-global-prep-cmd">
-            <i class="fas fa-ellipsis-h me-1"></i>全局预处理命令
+          <span class="app-command-text">{{ truncateText(app.cmd, 50) }}</span>
+          <i class="fas fa-copy app-command-copy-icon" aria-hidden="true"></i>
+        </button>
+        <div v-if="hasTags" class="app-tags">
+          <span
+            v-for="tag in visibleTags"
+            :key="tag.key"
+            class="app-tag"
+            :class="tag.className"
+            :title="tag.title"
+          >
+            <span v-if="tag.count" class="badge rounded-pill bg-secondary me-1">{{ tag.count }}</span>
+            <i v-else class="fas me-1" :class="tag.icon"></i>{{ tag.label }}
           </span>
-          <span v-if="app['menu-cmd'] && app['menu-cmd'].length > 0" class="app-tag tag-menu">
-            <span class="badge rounded-pill bg-secondary me-1">{{ app['menu-cmd'].length }}</span>菜单命令
-          </span>
-          <span v-if="app.elevated && app.elevated !== 'false'" class="app-tag tag-elevated">
-            <i class="fas fa-shield-alt me-1"></i>管理员
-          </span>
-          <span v-if="app['auto-detach'] && app['auto-detach'] !== 'false'" class="app-tag tag-detach">
-            <i class="fas fa-unlink me-1"></i>关闭时不退出串流
+          <span v-if="hiddenTagCount > 0" class="app-tag tag-more" :title="tagSummaryTitle">
+            +{{ hiddenTagCount }}
           </span>
         </div>
       </div>
@@ -93,6 +104,65 @@ export default {
     }
   },
   emits: ['edit', 'delete', 'copy-success', 'copy-error'],
+  computed: {
+    tagItems() {
+      const tags = [];
+
+      if (this.app['exclude-global-prep-cmd'] && this.app['exclude-global-prep-cmd'] !== 'false') {
+        tags.push({
+          key: 'exclude-global-prep-cmd',
+          className: 'tag-exclude-global-prep-cmd',
+          icon: 'fa-ellipsis-h',
+          label: '跳过预处理',
+          title: '全局预处理命令',
+        });
+      }
+
+      if (this.app['menu-cmd'] && this.app['menu-cmd'].length > 0) {
+        tags.push({
+          key: 'menu-cmd',
+          className: 'tag-menu',
+          count: this.app['menu-cmd'].length,
+          label: '菜单',
+          title: '菜单命令',
+        });
+      }
+
+      if (this.app.elevated && this.app.elevated !== 'false') {
+        tags.push({
+          key: 'elevated',
+          className: 'tag-elevated',
+          icon: 'fa-shield-alt',
+          label: '管理员',
+          title: '管理员',
+        });
+      }
+
+      if (this.app['auto-detach'] && this.app['auto-detach'] !== 'false') {
+        tags.push({
+          key: 'auto-detach',
+          className: 'tag-detach',
+          icon: 'fa-unlink',
+          label: '分离运行',
+          title: '关闭时不退出串流',
+        });
+      }
+
+      return tags;
+    },
+    visibleTags() {
+      return this.tagItems.slice(0, 2);
+    },
+    hiddenTagCount() {
+      return Math.max(0, this.tagItems.length - this.visibleTags.length);
+    },
+    tagSummaryTitle() {
+      return this.tagItems.map(tag => tag.title).join(' / ');
+    },
+    hasTags() {
+      return this.tagItems.length > 0;
+    }
+  },
   methods: {
     /**
      * 处理图像错误
@@ -181,4 +251,4 @@ export default {
     },
   }
 }
-</script> 
+</script>

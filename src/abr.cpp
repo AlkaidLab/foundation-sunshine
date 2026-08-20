@@ -18,6 +18,7 @@
 #include "logging.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -34,8 +35,24 @@ using json = nlohmann::json;
 
 namespace abr {
 
-  static std::mutex sessions_mutex;
-  static std::unordered_map<std::string, session_state_t> sessions;
+  // NOTE: sessions are keyed by client_name (the device display name), which is the
+  // identifier that bridges the stateless HTTPS REST endpoints (abrFeedback/
+  // configureAbr resolve the client by source IP) and the streaming layer
+  // (stream::session::change_dynamic_param_for_client also routes by client_name).
+  // Limitation: two concurrently-running sessions that share the same device name
+  // would collide on a single entry and cross-contaminate state. This is acceptable
+  // because single-session deployments are immune and normally-paired devices have
+  // distinct names; supporting multi-session-same-name would require a coordinated
+  // rekey to a session-level id across resolve_client, this map, and
+  // change_dynamic_param_for_client.
+  //
+  // The LLM worker runs on a detached thread and may still be in flight (its HTTP
+  // call has a 300s timeout) when the process begins shutting down. To avoid a
+  // static-destruction-order crash — where the worker reacquires the lock and
+  // touches these globals after they have been destroyed — both are allocated with
+  // process lifetime and intentionally never freed, so a late worker is always safe.
+  static std::mutex &sessions_mutex = *new std::mutex();
+  static std::unordered_map<std::string, session_state_t> &sessions = *new std::unordered_map<std::string, session_state_t>();
 
   /**
    * @brief Sanitize client-provided network feedback values.
@@ -182,6 +199,112 @@ namespace abr {
     return tmpl;
   }
 
+  static std::string
+  trim_copy(std::string text) {
+    auto is_not_space = [](unsigned char ch) {
+      return !std::isspace(ch);
+    };
+
+    auto begin = std::find_if(text.begin(), text.end(), is_not_space);
+    if (begin == text.end()) {
+      return {};
+    }
+
+    auto end = std::find_if(text.rbegin(), text.rend(), is_not_space).base();
+    return std::string(begin, end);
+  }
+
+  static size_t
+  find_case_insensitive(const std::string &haystack, const std::string &needle, size_t start_pos = 0) {
+    if (needle.empty() || start_pos >= haystack.size()) {
+      return std::string::npos;
+    }
+
+    auto it = std::search(
+      haystack.begin() + static_cast<std::ptrdiff_t>(start_pos),
+      haystack.end(),
+      needle.begin(),
+      needle.end(),
+      [](unsigned char lhs, unsigned char rhs) {
+        return std::tolower(lhs) == std::tolower(rhs);
+      });
+
+    return it == haystack.end() ? std::string::npos : static_cast<size_t>(it - haystack.begin());
+  }
+
+  static void
+  strip_reasoning_blocks(std::string &text) {
+    static constexpr auto think_open = "<think";
+    static constexpr auto think_close = "</think>";
+
+    size_t open = find_case_insensitive(text, think_open);
+    while (open != std::string::npos) {
+      size_t open_end = text.find('>', open);
+      if (open_end == std::string::npos) {
+        break;
+      }
+
+      size_t close = find_case_insensitive(text, think_close, open_end + 1);
+      if (close == std::string::npos) {
+        text.erase(open, open_end - open + 1);
+        break;
+      }
+
+      text.erase(open, close + std::char_traits<char>::length(think_close) - open);
+      open = find_case_insensitive(text, think_open, open);
+    }
+  }
+
+  static std::string
+  extract_first_json_object(const std::string &text) {
+    size_t start = std::string::npos;
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (size_t i = 0; i < text.size(); ++i) {
+      char ch = text[i];
+
+      if (start == std::string::npos) {
+        if (ch == '{') {
+          start = i;
+          depth = 1;
+          in_string = false;
+          escaped = false;
+        }
+        continue;
+      }
+
+      if (in_string) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (ch == '\\') {
+          escaped = true;
+        }
+        else if (ch == '"') {
+          in_string = false;
+        }
+        continue;
+      }
+
+      if (ch == '"') {
+        in_string = true;
+      }
+      else if (ch == '{') {
+        ++depth;
+      }
+      else if (ch == '}') {
+        --depth;
+        if (depth == 0) {
+          return text.substr(start, i - start + 1);
+        }
+      }
+    }
+
+    return {};
+  }
+
   /**
    * @brief Build the LLM prompt by filling the template with session state.
    */
@@ -227,9 +350,12 @@ namespace abr {
    * Reads: system_prompt, temperature, max_tokens.
    */
   struct llm_params_t {
-    std::string system_prompt = "You are a streaming bitrate optimizer. Always respond with valid JSON only.";
+    std::string system_prompt = "You are a streaming bitrate optimizer. Respond with a single valid JSON object only. Do not include markdown, code fences, or reasoning tags such as <think>.";
     double temperature = 0.1;
-    int max_tokens = 150;
+    // Reasoning models (e.g. "Coder", DeepSeek-R1, QwQ) emit long <think> blocks before the JSON.
+    // 150 tokens almost always truncates them mid-thought, leaving no JSON to parse.
+    // 1024 gives enough headroom for ~600-800 reasoning tokens + the small JSON answer.
+    int max_tokens = 1024;
   };
 
   static const llm_params_t &
@@ -280,29 +406,62 @@ namespace abr {
   static action_t
   parse_llm_response(const std::string &response_body, const session_state_t &state) {
     action_t action;
+    std::string parse_target;
     try {
       auto resp = json::parse(response_body);
 
       // Extract the assistant's message content
       std::string content;
+      std::string finish_reason;
       if (resp.contains("choices") && !resp["choices"].empty()) {
         content = resp["choices"][0]["message"]["content"].get<std::string>();
+        if (resp["choices"][0].contains("finish_reason") && resp["choices"][0]["finish_reason"].is_string()) {
+          finish_reason = resp["choices"][0]["finish_reason"].get<std::string>();
+        }
       }
       else {
         action.reason = "llm_parse_error: no choices in response";
         return action;
       }
 
-      // Strip markdown code fence if present
-      if (content.find("```") != std::string::npos) {
-        auto start = content.find('{');
-        auto end = content.rfind('}');
-        if (start != std::string::npos && end != std::string::npos) {
-          content = content.substr(start, end - start + 1);
+      parse_target = trim_copy(content);
+      if (!json::accept(parse_target)) {
+        auto normalized = trim_copy(content);
+        strip_reasoning_blocks(normalized);
+        normalized = trim_copy(normalized);
+
+        if (json::accept(normalized)) {
+          parse_target = normalized;
+        }
+        else {
+          parse_target = extract_first_json_object(normalized);
         }
       }
 
-      auto decision = json::parse(content);
+      if (parse_target.empty()) {
+        // Detect the common case: a reasoning model (e.g. "Coder") emitted a <think>
+        // block but ran out of tokens before producing the JSON answer.
+        bool truncated_reasoning =
+          finish_reason == "length" &&
+          find_case_insensitive(content, "<think") != std::string::npos;
+
+        if (truncated_reasoning) {
+          action.reason = "llm_truncated: reasoning exceeded max_tokens";
+          BOOST_LOG(info) << "ABR LLM response truncated mid-reasoning (finish_reason=length); "
+                          << "increase ai_config.json max_tokens (current default 1024) for this model. "
+                          << "content: " << content.substr(0, 160);
+        }
+        else {
+          action.reason = "llm_parse_error: no JSON object in content";
+          BOOST_LOG(warning) << "ABR LLM parse error: no JSON object in content. "
+                             << "finish_reason=" << (finish_reason.empty() ? "<none>" : finish_reason)
+                             << " body: " << response_body.substr(0, 200)
+                             << " content: " << content.substr(0, 200);
+        }
+        return action;
+      }
+
+      auto decision = json::parse(parse_target);
 
       int bitrate = decision.value("bitrate", 0);
       action.reason = decision.value("reason", "llm_decision");
@@ -325,7 +484,9 @@ namespace abr {
     }
     catch (const json::exception &e) {
       action.reason = std::string("llm_parse_error: ") + e.what();
-      BOOST_LOG(warning) << "ABR LLM parse error: " << e.what() << " body: " << response_body.substr(0, 200);
+      BOOST_LOG(warning) << "ABR LLM parse error: " << e.what()
+                         << " body: " << response_body.substr(0, 200)
+                         << " extracted: " << parse_target.substr(0, 200);
     }
 
     return action;
@@ -404,22 +565,31 @@ namespace abr {
       state.last_fg_detect = std::chrono::steady_clock::now();
     }
 
-    // Apply mode presets if min/max not explicitly configured
-    if (cfg.min_bitrate_kbps <= 0 || cfg.max_bitrate_kbps <= 0) {
+    // Apply mode presets only for bounds that were not explicitly configured.
+    // This preserves a client/host maxBitrate cap when minBitrate is omitted.
+    if (state.config.min_bitrate_kbps <= 0 || state.config.max_bitrate_kbps <= 0) {
+      int preset_min_bitrate_kbps = 0;
+      int preset_max_bitrate_kbps = 0;
       switch (cfg.mode) {
         case mode_e::QUALITY:
-          state.config.min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
-          state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
+          preset_min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
+          preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
           break;
         case mode_e::LOW_LATENCY:
-          state.config.min_bitrate_kbps = 2000;
-          state.config.max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
+          preset_min_bitrate_kbps = 2000;
+          preset_max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
           break;
         case mode_e::BALANCED:
         default:
-          state.config.min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
-          state.config.max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
+          preset_min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
+          preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
           break;
+      }
+      if (state.config.min_bitrate_kbps <= 0) {
+        state.config.min_bitrate_kbps = preset_min_bitrate_kbps;
+      }
+      if (state.config.max_bitrate_kbps <= 0) {
+        state.config.max_bitrate_kbps = preset_max_bitrate_kbps;
       }
       // Guard against inverted range when initial_bitrate is very low
       if (state.config.min_bitrate_kbps > state.config.max_bitrate_kbps) {
@@ -466,6 +636,14 @@ namespace abr {
 
     std::lock_guard lock(sessions_mutex);
     auto it = sessions.find(client_name);
+    // The BOOST_LOG calls below touch the global severity loggers, which (unlike
+    // sessions/sessions_mutex) are destroyed at static teardown. A late worker
+    // logging after logging::deinit() would be a use-after-free. This is safe in
+    // practice: on shutdown the stream session is torn down first, which calls
+    // abr::cleanup() and erases this entry, so the lookup below fails and the
+    // worker returns *before* reaching any BOOST_LOG. The only residual exposure
+    // is an extremely narrow race (entry not yet erased while logging is mid-
+    // deinit), deemed acceptable rather than coupling abr to the shutdown sequence.
     if (it == sessions.end() || it->second.generation != generation) {
       return;  // Session was cleaned up or re-created while LLM was in flight
     }
@@ -610,3 +788,129 @@ namespace abr {
   }
 
 }  // namespace abr
+
+#ifdef SUNSHINE_TESTS
+  #include <gtest/gtest.h>
+
+namespace {
+
+  abr::session_state_t
+  make_test_session_state(int current_bitrate_kbps = 20000, int min_bitrate_kbps = 10000, int max_bitrate_kbps = 50000) {
+    abr::session_state_t state;
+    state.current_bitrate_kbps = current_bitrate_kbps;
+    state.config.min_bitrate_kbps = min_bitrate_kbps;
+    state.config.max_bitrate_kbps = max_bitrate_kbps;
+    return state;
+  }
+
+}  // namespace
+
+TEST(AbrLlmParseTests, ExtractsJsonAfterThinkBlock) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"message", {
+          {"role", "assistant"},
+          {"content", "<think>Need to compare packet loss and app type.</think>\n{\"bitrate\":42000,\"reason\":\"fps_game_upper_range\"}"},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state(20000, 10000, 45000);
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 42000);
+  EXPECT_EQ(action.target_bitrate_kbps, 42000);
+  EXPECT_EQ(action.reason, "fps_game_upper_range");
+}
+
+TEST(AbrLlmParseTests, ExtractsFirstJsonObjectFromMixedContent) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"message", {
+          {"role", "assistant"},
+          {"content", "Here is the result you asked for:\n```json\n{\"bitrate\":52000,\"reason\":\"quality_probe\"}\n```\nUse it carefully."},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state(30000, 10000, 50000);
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 50000);
+  EXPECT_EQ(action.target_bitrate_kbps, 50000);
+  EXPECT_EQ(action.reason, "quality_probe");
+}
+
+TEST(AbrLlmParseTests, ReportsMissingJsonWhenContentHasOnlyReasoning) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"message", {
+          {"role", "assistant"},
+          {"content", "<think>I should answer with JSON, but I forgot.</think>Still thinking..."},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state();
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 0);
+  EXPECT_EQ(action.target_bitrate_kbps, 0);
+  EXPECT_EQ(action.reason, "llm_parse_error: no JSON object in content");
+}
+
+// Regression for the real-world log:
+//   content starts with "<think>Let me analyze this step by step..." and the
+//   response was cut off by max_tokens before the closing tag / JSON appeared.
+TEST(AbrLlmParseTests, DetectsTruncatedReasoningWhenFinishReasonLength) {
+  auto response = nlohmann::json {
+    {"choices", nlohmann::json::array({
+      {
+        {"finish_reason", "length"},
+        {"message", {
+          {"role", "assistant"},
+          {"content", "<think>Let me analyze this step by step:\n\n1. **Active Window/Process**: Sunshine Desktop / sunshine-gui.exe\n   - This is a desktop streaming application, not a game\n   - Category: Desktop/Productivity"},
+        }},
+      },
+    })},
+  };
+
+  auto state = make_test_session_state();
+  auto action = abr::parse_llm_response(response.dump(), state);
+
+  EXPECT_EQ(action.new_bitrate_kbps, 0);
+  EXPECT_EQ(action.target_bitrate_kbps, 0);
+  EXPECT_EQ(action.reason, "llm_truncated: reasoning exceeded max_tokens");
+}
+
+TEST(AbrConfigTests, PreservesExplicitMaxBitrateWhenMinIsOmitted) {
+  abr::config_t cfg;
+  cfg.enabled = true;
+  cfg.min_bitrate_kbps = 0;
+  cfg.max_bitrate_kbps = 15000;
+  cfg.mode = abr::mode_e::BALANCED;
+
+  const std::string client_name = "abr-max-cap-test";
+  abr::enable(client_name, cfg, 50000, "Test Game");
+
+  auto action = abr::process_feedback(client_name, {
+    .packet_loss = 6.0,
+    .rtt_ms = 10.0,
+    .decode_fps = 60.0,
+    .dropped_frames = 0,
+    .current_bitrate_kbps = 50000,
+  });
+
+  EXPECT_GT(action.new_bitrate_kbps, 0);
+  EXPECT_LE(action.new_bitrate_kbps, cfg.max_bitrate_kbps);
+
+  abr::cleanup(client_name);
+}
+
+#endif

@@ -24,7 +24,7 @@ const outputNamePlaceholder = (props.platform === 'windows') ? '\\\\.\\DISPLAY1'
           <pre>tools\dxgi-info.exe</pre>
         </template>
         <template #linux>
-            <pre style="white-space: pre-line;">
+            <pre class="pre-line">
               Info: Detecting displays
               Info: Detected display: DVI-D-0 (id: 0) connected: false
               Info: Detected display: HDMI-0 (id: 1) connected: true
@@ -34,7 +34,7 @@ const outputNamePlaceholder = (props.platform === 'windows') ? '\\\\.\\DISPLAY1'
             </pre>
         </template>
         <template #macos>
-            <pre style="white-space: pre-line;">
+            <pre class="pre-line">
               Info: Detecting displays
               Info: Detected display: Monitor-0 (id: 3) connected: true
               Info: Detected display: Monitor-1 (id: 2) connected: true

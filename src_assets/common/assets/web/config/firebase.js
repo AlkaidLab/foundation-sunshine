@@ -1,7 +1,3 @@
-// Firebase配置和初始化
-import { initializeApp } from 'firebase/app'
-import { getAnalytics, logEvent } from 'firebase/analytics'
-
 const firebaseConfig = {
   apiKey: 'AIzaSyD7VDKZyA1PG6mCO2QdPAUXIziVfTahV0g',
   authDomain: 'sunshine-foundation-3c551.firebaseapp.com',
@@ -12,36 +8,109 @@ const firebaseConfig = {
   measurementId: 'G-F20721ZDL1',
 }
 
+const MAX_PENDING_EVENTS = 50
+const ANALYTICS_IDLE_TIMEOUT = 2000
+
 let analytics = null
+let analyticsModule = null
+let initialization = null
+let initializationScheduled = false
+let analyticsDisabled = false
+const pendingEvents = []
+
+const normalizeParamValue = (value) => {
+  let normalizedValue = value
+
+  if (Array.isArray(value)) {
+    normalizedValue = value.join(', ')
+  } else if (typeof value === 'object' && value) {
+    try {
+      normalizedValue = JSON.stringify(value)
+    } catch {
+      normalizedValue = '[unserializable]'
+    }
+  }
+
+  if (typeof normalizedValue === 'string' && normalizedValue.length > 100) {
+    return `${normalizedValue.substring(0, 97)}...`
+  }
+  return normalizedValue
+}
+
+const sanitizeParams = (params = {}) => Object.fromEntries(
+  Object.entries(params ?? {}).map(([key, value]) => [key, normalizeParamValue(value)])
+)
+
+const sendEvent = ({ eventName, params }) => {
+  if (!analytics || !analyticsModule) return
+  try {
+    analyticsModule.logEvent(analytics, eventName, params)
+  } catch (error) {
+    console.warn('记录 Firebase 事件失败:', error)
+  }
+}
+
+const flushPendingEvents = () => {
+  pendingEvents.splice(0).forEach(sendEvent)
+}
 
 export function initFirebase() {
-  try {
-    const app = initializeApp(firebaseConfig)
-    analytics = getAnalytics(app)
-    return { app, analytics }
-  } catch (error) {
-    console.error('Firebase 初始化失败:', error)
-    return null
+  initializationScheduled = false
+  if (initialization) return initialization
+
+  initialization = (async () => {
+    try {
+      const [appModule, nextAnalyticsModule] = await Promise.all([
+        import('firebase/app'),
+        import('firebase/analytics'),
+      ])
+
+      if (nextAnalyticsModule.isSupported && !(await nextAnalyticsModule.isSupported())) {
+        analyticsDisabled = true
+        pendingEvents.length = 0
+        return null
+      }
+
+      const app = appModule.getApps().length ? appModule.getApp() : appModule.initializeApp(firebaseConfig)
+      analyticsModule = nextAnalyticsModule
+      analytics = nextAnalyticsModule.getAnalytics(app)
+      flushPendingEvents()
+      return { app, analytics }
+    } catch (error) {
+      analyticsDisabled = true
+      pendingEvents.length = 0
+      console.warn('Firebase 初始化失败:', error)
+      return null
+    }
+  })()
+
+  return initialization
+}
+
+const scheduleInitialization = () => {
+  if (analyticsDisabled || initialization || initializationScheduled) return
+  initializationScheduled = true
+
+  const initialize = () => { void initFirebase() }
+  if (typeof globalThis.requestIdleCallback === 'function') {
+    globalThis.requestIdleCallback(initialize, { timeout: ANALYTICS_IDLE_TIMEOUT })
+  } else {
+    globalThis.setTimeout(initialize, 0)
   }
 }
 
 export function trackEvent(eventName, params = {}) {
-  if (!analytics) return
+  if (analyticsDisabled) return
 
-  // 处理参数：数组转字符串，截断过长值
-  const sanitized = Object.fromEntries(
-    Object.entries(params).map(([k, v]) => {
-      let val = Array.isArray(v) ? v.join(', ') : typeof v === 'object' && v ? JSON.stringify(v) : v
-      if (typeof val === 'string' && val.length > 100) val = val.substring(0, 97) + '...'
-      return [k, val]
-    })
-  )
-
-  try {
-    logEvent(analytics, eventName, sanitized)
-  } catch (error) {
-    console.error('记录事件失败:', error)
+  const event = { eventName, params: sanitizeParams(params) }
+  if (analytics && analyticsModule) {
+    sendEvent(event)
+    return
   }
+
+  if (pendingEvents.length >= MAX_PENDING_EVENTS) pendingEvents.shift()
+  pendingEvents.push(event)
+  scheduleInitialization()
 }
 
 export const trackEvents = {

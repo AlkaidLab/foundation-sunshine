@@ -17,15 +17,6 @@ export function debounce(func, wait) {
 }
 
 /**
- * 异步延迟函数
- * @param {number} ms 延迟时间（毫秒）
- * @returns {Promise} Promise对象
- */
-export function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
  * 深拷贝函数
  * @param {*} obj 需要深拷贝的对象
  * @returns {*} 深拷贝后的对象
@@ -85,89 +76,96 @@ export function isValidUrl(url) {
   }
 }
 
-/**
- * 获取文件扩展名
- * @param {string} filename 文件名
- * @returns {string} 文件扩展名
- */
-export function getFileExtension(filename) {
-  return filename.split('.').pop().toLowerCase();
-}
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'ms-windows-store:']);
 
 /**
- * 格式化文件大小
- * @param {number} bytes 字节数
- * @param {number} decimals 小数位数
- * @returns {string} 格式化后的大小
+ * 检查 URL 是否允许交给系统打开。
+ * @param {string} url 要检查的 URL
+ * @returns {boolean} 是否为允许的外部 URL
  */
-export function formatFileSize(bytes, decimals = 2) {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-}
-
-/**
- * 生成随机ID
- * @param {number} length ID长度
- * @returns {string} 随机ID
- */
-export function generateRandomId(length = 8) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+export function isAllowedExternalUrl(url) {
+  try {
+    return ALLOWED_EXTERNAL_PROTOCOLS.has(new URL(String(url).trim()).protocol);
+  } catch {
+    return false;
   }
-  return result;
 }
-
-/**
- * 验证必填字段
- * @param {Object} obj 要验证的对象
- * @param {Array} requiredFields 必填字段数组
- * @returns {Object} 验证结果 { isValid: boolean, missingFields: Array }
- */
-export function validateRequiredFields(obj, requiredFields) {
-  const missingFields = requiredFields.filter(field => 
-    !obj.hasOwnProperty(field) || obj[field] === '' || obj[field] === null || obj[field] === undefined
-  );
-  
-  return {
-    isValid: missingFields.length === 0,
-    missingFields
-  };
-} 
 
 /**
  * 检测是否在 Tauri 环境中
  * @returns {boolean} 是否在 Tauri 环境
  */
-export function isTauriEnv() {
-  return typeof window !== 'undefined' && !!(window.isTauri || window.__TAURI__);
+export function isTauriEnv(windowObject = globalThis.window) {
+  return !!(windowObject?.isTauri || windowObject?.__TAURI__);
 }
 
 /**
  * 打开外部链接（支持 Tauri 和浏览器环境）
  * @param {string} url 要打开的 URL
- * @returns {Promise<void>}
+ * @param {Window} [windowObject] 当前窗口
+ * @returns {Promise<boolean>} 是否已交给系统或浏览器打开
  */
-export async function openExternalUrl(url) {
-  if (!isValidUrl(url)) {
-    throw new Error('Invalid URL');
+export async function openExternalUrl(url, windowObject = globalThis.window) {
+  const target = String(url).trim();
+  if (!isAllowedExternalUrl(target)) {
+    throw new Error('Unsupported external URL');
   }
 
-  if (isTauriEnv()) {
-    try {
-      await window.__TAURI__.shell.open(url);
-    } catch (error) {
-      console.error('Failed to open URL with Tauri shell:', error);
-      // 降级到 window.open
-      window.open(url, '_blank');
+  const invoke = windowObject?.__TAURI__?.core?.invoke;
+  if (typeof invoke === 'function') {
+    const opened = await invoke('open_external_url', { url: target });
+    if (opened === false) {
+      throw new Error('External URL was not opened');
     }
-  } else {
-    // 非 Tauri 环境，使用 window.open
-    window.open(url, '_blank');
+    return true;
   }
-} 
+
+  const openedWindow = windowObject?.open?.(target, '_blank', 'noopener,noreferrer');
+  if (openedWindow) openedWindow.opener = null;
+  return Boolean(openedWindow);
+}
+
+const installedExternalLinkHandlers = new WeakMap();
+
+/**
+ * 在 Tauri WebUI 中把外部链接统一交给受限的原生命令处理。
+ * @param {Document} [documentObject] 当前文档
+ * @param {Window} [windowObject] 当前窗口
+ * @returns {Function|undefined} 取消监听函数
+ */
+export function installExternalLinkHandler(
+  documentObject = globalThis.document,
+  windowObject = globalThis.window,
+) {
+  if (!documentObject?.addEventListener || !isTauriEnv(windowObject)) return undefined;
+  if (installedExternalLinkHandlers.has(documentObject)) {
+    return installedExternalLinkHandlers.get(documentObject).dispose;
+  }
+
+  const handler = (event) => {
+    if (event.defaultPrevented || (event.button !== undefined && event.button !== 0)) return;
+
+    const anchor = event.target?.closest?.('a[href]');
+    if (!anchor || anchor.hasAttribute('download')) return;
+
+    const url = anchor.href;
+    if (!isAllowedExternalUrl(url)) return;
+
+    const parsedUrl = new URL(url);
+    if (parsedUrl.origin !== 'null' && parsedUrl.origin === windowObject.location?.origin) return;
+
+    event.preventDefault();
+    void openExternalUrl(url, windowObject).catch((error) => {
+      console.error('Failed to open external URL:', error);
+    });
+  };
+
+  const dispose = () => {
+    documentObject.removeEventListener('click', handler);
+    installedExternalLinkHandlers.delete(documentObject);
+  };
+
+  documentObject.addEventListener('click', handler);
+  installedExternalLinkHandlers.set(documentObject, { dispose });
+  return dispose;
+}

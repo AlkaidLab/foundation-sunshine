@@ -6,8 +6,12 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <dxgi1_2.h>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <thread>
 
 // local includes
@@ -72,6 +76,215 @@ __mingw_uuidof<winrt::IDirect3DDxgiInterfaceAccess>() -> GUID const & {
 #endif
 
 namespace platf::dxgi {
+
+  // UAC bypass for WGC capture mode.
+  // WGC cannot capture UAC prompts, so we temporarily set ConsentPromptBehaviorAdmin=0
+  // to auto-elevate without prompting during capture, and restore the original value when capture ends.
+  namespace secure_desktop {
+    static constexpr const wchar_t *kPoliciesKey = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System";
+    static constexpr const wchar_t *kValueName = L"ConsentPromptBehaviorAdmin";
+
+    static std::mutex state_mutex;
+    static int wgc_ref_count = 0;
+    static DWORD original_value = 5;  // Default: prompt for consent on secure desktop
+    static bool modified = false;
+    static std::once_flag recovery_flag;
+
+    static std::filesystem::path
+    backup_file_path() {
+      wchar_t temp[MAX_PATH];
+      GetTempPathW(MAX_PATH, temp);
+      return std::filesystem::path(temp) / L"sunshine_uac_consent_backup";
+    }
+
+    /**
+     * @brief Valid range for ConsentPromptBehaviorAdmin: 0-5.
+     */
+    static bool
+    is_valid_consent_value(DWORD value) {
+      return value <= 5;
+    }
+
+    /**
+     * @brief Save original value to a temp file for crash recovery.
+     * @return true if backup was successfully written and flushed.
+     */
+    static bool
+    save_backup(DWORD value) {
+      try {
+        auto path = backup_file_path();
+        std::ofstream f(path, std::ios::trunc);
+        if (f) {
+          f << value;
+          f.flush();
+          if (f.good()) {
+            return true;
+          }
+        }
+        BOOST_LOG(error) << "Failed to write crash recovery backup file"sv;
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Exception writing crash recovery backup file"sv;
+      }
+      return false;
+    }
+
+    /**
+     * @brief Remove the backup file.
+     */
+    static void
+    remove_backup() {
+      try {
+        std::filesystem::remove(backup_file_path());
+      }
+      catch (...) {
+      }
+    }
+
+    /**
+     * @brief Restore from crash recovery backup if it exists.
+     */
+    static void
+    recover_from_crash() {
+      try {
+        auto path = backup_file_path();
+        if (!std::filesystem::exists(path)) return;
+
+        std::ifstream f(path);
+        DWORD saved_value;
+        if (!(f >> saved_value)) {
+          BOOST_LOG(warning) << "Corrupt crash recovery backup file, removing"sv;
+          remove_backup();
+          return;
+        }
+
+        if (!is_valid_consent_value(saved_value)) {
+          BOOST_LOG(error) << "Invalid ConsentPromptBehaviorAdmin value "sv << saved_value << " in backup, rejecting"sv;
+          remove_backup();
+          return;
+        }
+
+        HKEY hkey;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kPoliciesKey, 0, KEY_WRITE, &hkey) == ERROR_SUCCESS) {
+          auto result = RegSetValueExW(hkey, kValueName, 0, REG_DWORD, (const BYTE *) &saved_value, sizeof(saved_value));
+          RegCloseKey(hkey);
+          if (result == ERROR_SUCCESS) {
+            BOOST_LOG(info) << "Restored ConsentPromptBehaviorAdmin to "sv << saved_value << " from crash recovery backup"sv;
+            remove_backup();
+          }
+          else {
+            BOOST_LOG(error) << "Failed to restore ConsentPromptBehaviorAdmin from crash backup, will retry next startup"sv;
+          }
+        }
+        else {
+          BOOST_LOG(error) << "Failed to open registry for crash recovery, will retry next startup"sv;
+        }
+      }
+      catch (...) {
+      }
+    }
+
+    /**
+     * @brief Disable UAC prompts by setting ConsentPromptBehaviorAdmin to 0 (elevate without prompting).
+     * @return true if the value was modified.
+     */
+    static bool
+    disable() {
+      std::lock_guard<std::mutex> lock(state_mutex);
+
+      if (wgc_ref_count++ > 0) {
+        // Another WGC instance already disabled it
+        return false;
+      }
+
+      // If a prior restore() failed, the registry is still at 0 and original_value
+      // holds the real pre-modification value. Don't re-read or overwrite it.
+      if (modified) {
+        BOOST_LOG(info) << "ConsentPromptBehaviorAdmin still modified from prior session (pending restore), reusing original value "sv << original_value;
+        return false;
+      }
+
+      DWORD value, size = sizeof(value);
+      auto read_result = RegGetValueW(HKEY_LOCAL_MACHINE, kPoliciesKey, kValueName, RRF_RT_REG_DWORD, nullptr, &value, &size);
+      if (read_result != ERROR_SUCCESS) {
+        BOOST_LOG(warning) << "Failed to read ConsentPromptBehaviorAdmin (error 0x"sv << util::hex(read_result).to_string_view() << "), aborting UAC disable"sv;
+        return false;
+      }
+      original_value = value;
+
+      if (value == 0) {
+        BOOST_LOG(info) << "ConsentPromptBehaviorAdmin is already 0 (auto-elevate)"sv;
+        return false;
+      }
+
+      // Persist backup BEFORE modifying registry — ensures crash recovery is possible
+      if (!save_backup(original_value)) {
+        BOOST_LOG(error) << "Cannot persist backup file, aborting UAC disable to prevent irrecoverable state"sv;
+        return false;
+      }
+
+      HKEY hkey;
+      if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kPoliciesKey, 0, KEY_WRITE, &hkey) != ERROR_SUCCESS) {
+        BOOST_LOG(warning) << "Cannot disable UAC prompts: insufficient privileges. Run Sunshine elevated to enable this feature."sv;
+        remove_backup();
+        return false;
+      }
+
+      DWORD new_value = 0;
+      auto result = RegSetValueExW(hkey, kValueName, 0, REG_DWORD, (const BYTE *) &new_value, sizeof(new_value));
+      RegCloseKey(hkey);
+
+      if (result == ERROR_SUCCESS) {
+        modified = true;
+        BOOST_LOG(info) << "Set ConsentPromptBehaviorAdmin to 0 for WGC capture (original value: "sv << original_value << ")"sv;
+        return true;
+      }
+
+      BOOST_LOG(warning) << "Failed to set ConsentPromptBehaviorAdmin [0x"sv << util::hex(result).to_string_view() << ']';
+      remove_backup();
+      return false;
+    }
+
+    /**
+     * @brief Restore the original ConsentPromptBehaviorAdmin setting.
+     */
+    static void
+    restore() {
+      std::lock_guard<std::mutex> lock(state_mutex);
+
+      if (--wgc_ref_count > 0) {
+        // Other WGC instances still active
+        return;
+      }
+
+      if (!modified) {
+        return;
+      }
+
+      HKEY hkey;
+      if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kPoliciesKey, 0, KEY_WRITE, &hkey) == ERROR_SUCCESS) {
+        auto result = RegSetValueExW(hkey, kValueName, 0, REG_DWORD, (const BYTE *) &original_value, sizeof(original_value));
+        RegCloseKey(hkey);
+        if (result == ERROR_SUCCESS) {
+          BOOST_LOG(info) << "Restored ConsentPromptBehaviorAdmin to "sv << original_value;
+          modified = false;
+          remove_backup();
+        }
+        else {
+          BOOST_LOG(error) << "Failed to restore ConsentPromptBehaviorAdmin, backup preserved for next startup"sv;
+        }
+      }
+      else {
+        BOOST_LOG(error) << "Failed to open registry for restore, backup preserved for next startup"sv;
+      }
+    }
+  }  // namespace secure_desktop
+
+  void
+  recover_secure_desktop() {
+    std::call_once(secure_desktop::recovery_flag, secure_desktop::recover_from_crash);
+  }
+
   /**
    * @brief Find a window by title (case-insensitive fuzzy matching).
    * @param window_title The window title to search for.
@@ -219,6 +432,10 @@ namespace platf::dxgi {
     item = nullptr;
     capture_session = nullptr;
     frame_pool = nullptr;
+
+    if (config::video.wgc_disable_secure_desktop) {
+      secure_desktop::restore();
+    }
   }
 
   /**
@@ -460,6 +677,15 @@ namespace platf::dxgi {
     catch (winrt::hresult_error &e) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: failed to start capture: [0x"sv << util::hex(e.code()).to_string_view() << ']';
       return -1;
+    }
+
+    // Disable UAC prompts so WGC can operate without interruption (if enabled in config)
+    if (config::video.wgc_disable_secure_desktop) {
+      secure_desktop::disable();
+    }
+    else {
+      BOOST_LOG(info) << "WGC capture active. UAC prompts will not be auto-elevated. "
+                         "Set wgc_disable_secure_desktop=true in config to auto-elevate UAC during WGC capture."sv;
     }
 
     return 0;

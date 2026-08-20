@@ -4,11 +4,25 @@
  */
 #pragma once
 
+#include "../nvenc_version.h"
+#include "impl/nvenc_shared_dll.h"
 #include "nvenc_d3d11.h"
 
+#include <functional>
 #include <memory>
 
 namespace nvenc {
+
+  /**
+   * @brief Runtime operations used to discover the installed NVENC API.
+   */
+  struct nvenc_runtime_api {
+    using load_driver_fn = std::function<shared_dll()>;
+    using get_symbol_fn = std::function<FARPROC(HMODULE, const char *)>;
+
+    load_driver_fn load_driver;
+    get_symbol_fn get_symbol;
+  };
 
   /**
    * @brief Windows NVENC encoder factory.
@@ -23,6 +37,19 @@ namespace nvenc {
      */
     static std::shared_ptr<nvenc_dynamic_factory>
     get();
+
+    /**
+     * @brief Initialize an NVENC factory using injectable runtime operations.
+     * @return `shared_ptr` containing factory on success, empty `shared_ptr` on error.
+     */
+    static std::shared_ptr<nvenc_dynamic_factory>
+    get(const nvenc_runtime_api &runtime_api);
+
+    /**
+     * @brief Get the SDK implementation selected for this factory.
+     */
+    virtual nvenc_sdk_version
+    sdk_version() const = 0;
 
     /**
      * @brief Create native Direct3D11 NVENC encoder.

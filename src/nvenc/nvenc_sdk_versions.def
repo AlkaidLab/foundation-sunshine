@@ -1,0 +1,14 @@
+/**
+ * @file src/nvenc/nvenc_sdk_versions.def
+ * @brief NVENC SDK compatibility tiers compiled into Sunshine.
+ *
+ * Keep entries ordered from newest to oldest. The numeric value must match
+ * NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION in the pinned headers.
+ *
+ * This file intentionally has no include guard because it is consumed with
+ * different SUNSHINE_NVENC_SDK definitions by C++ and CMake.
+ */
+SUNSHINE_NVENC_SDK(1301, 13_1)
+SUNSHINE_NVENC_SDK(1300, 13_0)
+SUNSHINE_NVENC_SDK(1200, 12_0)
+SUNSHINE_NVENC_SDK(1100, 11_0)

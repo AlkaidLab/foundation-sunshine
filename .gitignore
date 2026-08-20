@@ -40,6 +40,7 @@
 build/
 cmake-*/
 docs/doxyconfig*
+output/
 
 # Build logs
 build.log
@@ -50,7 +51,6 @@ CMakeUserPresets.json
 
 # npm
 node_modules/
-package-lock.json
 
 # Translations
 *.mo
@@ -61,10 +61,26 @@ package-lock.json
 
 # Python
 *.pyc
+.venv/
 venv/
+
+# Environment files
+.env
+.env.*
+
+# Local Webhook configuration may contain private endpoints or tokens.
+webhook_auth.json
+webhook_auth.json.tmp
+webhook_auth.json.bak
+webhook_auth.json.bak.tmp
 
 # Dev notes (analysis docs, guide generation, images)
 _dev_notes/
+_draft/
+instructions/
+skills/
+.codex/
+.codex-remote-attachments/
 
 # Temp HID trace files
 temphidtrace*
@@ -82,7 +98,14 @@ src_assets/windows/misc/vdd/driver/*.exe
 src_assets/windows/misc/vmouse/driver/*.dll
 src_assets/windows/misc/vmouse/driver/*.inf
 src_assets/windows/misc/vmouse/driver/*.cat
+src_assets/windows/misc/vmouse/driver/*.cer
 
 # Generated files
 src_assets/common/assets/web/welcome.html
 src_assets/common/assets/web/dist/
+# Local dev scripts
+build.sh
+
+# Sunshine DualSense .NET build outputs
+tools/sunshine-ds5-sidecar/bin/
+tools/sunshine-ds5-sidecar/obj/

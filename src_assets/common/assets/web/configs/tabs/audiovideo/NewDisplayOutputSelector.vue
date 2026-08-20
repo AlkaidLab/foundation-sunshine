@@ -2,6 +2,7 @@
 import { ref, computed } from "vue";
 import { $tp } from "../../../platform-i18n";
 import PlatformLayout from "../../../components/layout/PlatformLayout.vue";
+import VddPrerequisiteNotice from "../../../components/common/VddPrerequisiteNotice.vue";
 
 const props = defineProps(["platform", "config", "displays"]);
 
@@ -41,7 +42,7 @@ const displayDevices = computed(() => {
     }}</label>
     <select id="output_name" class="form-select" v-model="config.output_name">
       <option value="">{{ $t("_common.autodetect") }}</option>
-      <option value="ZakoHDR"> 就是要用虚拟显示器～ </option>
+      <option value="ZakoHDR">{{ $t("config.output_name_vdd_option") }}</option>
       <option
         v-for="device in displayDevices"
         :value="device.id"
@@ -51,7 +52,7 @@ const displayDevices = computed(() => {
       </option>
     </select>
     <div class="form-text">
-      <p style="white-space: pre-line">{{ $tp("config.output_name_desc") }}</p>
+      <p class="pre-line">{{ $tp("config.output_name_desc") }}</p>
       <PlatformLayout :platform="platform">
         <template #windows></template>
         <template #linux> </template>
@@ -59,6 +60,8 @@ const displayDevices = computed(() => {
       </PlatformLayout>
     </div>
   </div>
+
+  <VddPrerequisiteNotice :active="isVddMode && platform === 'windows'" />
 
   <!-- VDD mode: Reuse VDD for all clients (only shown in VDD mode, Windows only) -->
   <div class="mb-3 form-check" v-if="isVddMode && platform === 'windows'">
@@ -92,7 +95,7 @@ const displayDevices = computed(() => {
     <div class="form-text">
       {{ $t("config.output_name_desc_unix") }}<br />
       <br />
-      <pre style="white-space: pre-line" v-if="platform === 'linux'">
+      <pre class="pre-line" v-if="platform === 'linux'">
               Info: Detecting displays
               Info: Detected display: DVI-D-0 (id: 0) connected: false
               Info: Detected display: HDMI-0 (id: 1) connected: true
@@ -101,7 +104,7 @@ const displayDevices = computed(() => {
               Info: Detected display: DVI-D-1 (id: 4) connected: false
             </pre
       >
-      <pre style="white-space: pre-line" v-if="platform === 'macos'">
+      <pre class="pre-line" v-if="platform === 'macos'">
               Info: Detecting displays
               Info: Detected display: Monitor-0 (id: 3) connected: true
               Info: Detected display: Monitor-1 (id: 2) connected: true

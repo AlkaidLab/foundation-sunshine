@@ -4,12 +4,21 @@
  */
 #pragma once
 
-#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
 
+#include <boost/function.hpp>
 #include <boost/process/v1.hpp>
 
 #include "crypto.h"
-#include "thread_safe.h"
+#include "hdr/client_display_capabilities.h"
+#include "launch_session_manager.h"
+
+namespace stream::session {
+  enum class stop_reason_e : int;
+}
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
@@ -22,6 +31,9 @@ namespace rtsp_stream {
 
     std::string av_ping_payload;
     uint32_t control_connect_data;
+    std::string client_cert_uuid;
+    std::string rtsp_peer_address;
+    bool highly_suspected_unknown_client {false};
 
     boost::process::v1::environment env;
 
@@ -35,14 +47,21 @@ namespace rtsp_stream {
     int appid;
     int surround_info;
     std::string surround_params;
+    bool continuous_audio;
     bool enable_hdr;
     bool enable_sops;
-    bool enable_mic;
+    bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
-    float max_nits;
-    float min_nits;
-    float max_full_nits;
+    hdr::client_display_capabilities_t reported_hdr_capabilities;
+    hdr::client_display_capabilities_t hdr_capabilities;
+    hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
+
+    void
+    set_hdr_target(const hdr::client_display_capabilities_t &capabilities, hdr::target_source_e source);
+
+    void
+    sync_hdr_environment();
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;
@@ -54,9 +73,14 @@ namespace rtsp_stream {
     bool setup_control { false };
     bool setup_mic { false };
     bool control_only { false };
+
+    // GameStream 的 RTSP 请求可能分别使用独立 TCP 连接，
+    // 但一个启动票据最多只能创建一个串流会话。
+    bool stream_session_started { false };
+    std::string stream_announce_payload;
   };
 
-  void
+  launch_ticket_register_e
   launch_session_raise(std::shared_ptr<launch_session_t> launch_session);
 
   /**
@@ -74,10 +98,18 @@ namespace rtsp_stream {
   session_count();
 
   /**
-   * @brief Terminates all running streaming sessions.
+   * @brief Get the number of bounded launch tickets awaiting RTSP activation.
+   */
+  int
+  pending_session_count();
+
+  /**
+   * @brief Terminates all streaming sessions on the RTSP execution context.
+   * @param reason Reason recorded for sessions that are still running.
+   * @param completion Called after the termination attempt finishes.
    */
   void
-  terminate_sessions();
+  terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion);
 
   /**
    * @brief Runs the RTSP server loop.

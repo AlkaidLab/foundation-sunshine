@@ -46,6 +46,9 @@ set(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX_SAVED}")
 # Step 3: Run Inno Setup compiler
 add_custom_target(innosetup
     COMMENT "Building Inno Setup installer..."
+
+    # Ensure staging does not retain files from previous layouts
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/inno_staging"
     
     # Install to staging directory
     COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${CMAKE_BINARY_DIR}/inno_staging"
@@ -56,6 +59,7 @@ add_custom_target(innosetup
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/sunshinesvc.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/dxgi-info.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/audio-info.exe"
+    COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/stylus-input-probe.exe"
     
     # Run Inno Setup compiler
     COMMAND "${ISCC_EXECUTABLE}" "${CMAKE_BINARY_DIR}/sunshine_installer.iss"
@@ -65,12 +69,14 @@ add_custom_target(innosetup
 )
 
 # Make sure sunshine is built before creating the installer
-add_dependencies(innosetup sunshine)
+add_dependencies(innosetup sunshine stylus-input-probe)
 
 # Also provide a convenience target to just generate the staging directory
 add_custom_target(innosetup-staging
     COMMENT "Generating Inno Setup staging directory..."
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/inno_staging"
     COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${CMAKE_BINARY_DIR}/inno_staging"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     VERBATIM
 )
+add_dependencies(innosetup-staging stylus-input-probe)

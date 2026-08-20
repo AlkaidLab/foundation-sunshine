@@ -52,7 +52,7 @@ namespace platf {
     }
 
     std::unique_ptr<mic_t>
-    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) override {
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio) override {
       auto mic = std::make_unique<av_mic_t>();
       const char *audio_sink = "";
 
@@ -87,10 +87,40 @@ namespace platf {
 
       return sink;
     }
+
+    bool
+    is_sink_available(const std::string &sink) override {
+      BOOST_LOG(warning) << "audio_control_t::is_sink_available() unimplemented: "sv << sink;
+      return true;
+    }
+
+    int
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
+      // Microphone redirect to the host is not implemented on macOS yet.
+      (void) samples;
+      (void) frame_count;
+      return -1;
+    }
+
+    int
+    init_mic_redirect_device() override {
+      // No host-side virtual mic on macOS.
+      return -1;
+    }
+
+    void
+    release_mic_redirect_device() override {
+      // Nothing to release.
+    }
   };
 
   std::unique_ptr<audio_control_t>
   audio_control() {
     return std::make_unique<macos_audio_control_t>();
+  }
+
+  std::unique_ptr<deinit_t>
+  init_audio_thread() {
+    return std::make_unique<deinit_t>();
   }
 }  // namespace platf

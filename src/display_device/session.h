@@ -2,6 +2,8 @@
 
 // standard includes
 #include <mutex>
+#include <optional>
+#include <string>
 // lib includes
 #include <boost/atomic.hpp>
 // local includes
@@ -64,6 +66,36 @@ namespace display_device {
     init();
 
     /**
+     * @brief Result of trying to prepare display settings for a stream.
+     */
+    struct configure_result_t {
+      enum class result_e {
+        success,
+        deferred_retry,
+        vdd_not_installed,
+        vdd_unavailable,
+        vdd_create_failed,
+        parse_fail,
+        topology_fail,
+        primary_display_fail,
+        modes_fail,
+        hdr_states_fail,
+        file_save_fail,
+        revert_fail
+      };
+
+      explicit
+      operator bool() const {
+        return result == result_e::success || result == result_e::deferred_retry;
+      }
+
+      result_e result;
+      std::string message;
+      std::string hint;
+      bool cleanup_on_failure { false };
+    };
+
+    /**
      * @brief Configure the display device based on the user configuration and the session information.
      *
      * Upon failing to completely apply configuration, the applied settings will be reverted.
@@ -72,19 +104,18 @@ namespace display_device {
      *
      * @param config User's video related configuration.
      * @param session Session information.
-     * @note There is no return value as we still want to continue with the stream, so that
-     *       users can do something about it once they are connected. Otherwise, we might
-     *       prevent users from logging in at all...
+     * @returns A result describing whether the display configuration was applied, deferred,
+     *          or failed. Callers may continue with the stream when appropriate.
      *
      * EXAMPLES:
      * ```cpp
      * const std::shared_ptr<rtsp_stream::launch_session_t> launch_session; // Assuming ptr is properly initialized
      * const config::video_t &video_config { config::video };
      *
-     * session_t::get().configure_display(video_config, *launch_session);
+     * const auto result = session_t::get().configure_display(video_config, *launch_session);
      * ```
      */
-    void
+    configure_result_t
     configure_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure = false);
 
     /**
@@ -148,28 +179,16 @@ namespace display_device {
     create_vdd_monitor(const std::string &client_name = "");
 
     /**
+     * Create a VDD without displaying Core UI. Intended for tray providers.
+     */
+    bool
+    create_vdd_monitor_noninteractive();
+
+    /**
      * @brief Destroy VDD monitor
      */
     bool
     destroy_vdd_monitor();
-
-    /**
-     * @brief Enable VDD driver
-     */
-    void
-    enable_vdd();
-
-    /**
-     * @brief Disable VDD driver
-     */
-    void
-    disable_vdd();
-
-    /**
-     * @brief Disable and enable VDD driver
-     */
-    void
-    disable_enable_vdd();
 
     /**
      * @brief Toggle display power
@@ -182,12 +201,6 @@ namespace display_device {
      */
     bool
     is_display_on();
-
-    /**
-     * @brief Prepares VDD for use
-     */
-    void
-    prepare_vdd(parsed_config_t &config, const rtsp_stream::launch_session_t &session);
 
     /**
      * @brief A deleted copy constructor for singleton pattern.
@@ -215,6 +228,30 @@ namespace display_device {
      */
     class StateRetryTimer;
 
+    enum class vdd_mode_update_e {
+      ready,
+      recreate_monitor,
+      failed,
+    };
+
+    enum class vdd_stage_result_e {
+      ready,
+      create_failed,
+      topology_failed,
+      modes_failed,
+    };
+
+    struct pending_vdd_context_t {
+      boost::optional<active_topology_t> initial_topology;
+      boost::optional<device_info_map_t> pre_vdd_devices;
+
+      void
+      reset() {
+        initial_topology.reset();
+        pre_vdd_devices.reset();
+      }
+    };
+
     /**
      * @brief A private constructor to ensure the singleton pattern.
      * @note Cannot be defaulted in declaration because of forward declared StateRetryTimer.
@@ -236,17 +273,22 @@ namespace display_device {
     void
     start_polling_restore(revert_reason_e reason);
 
+    /**
+     * @brief 执行依赖可访问交互式 Windows 会话的 VDD 显示操作。
+     */
+    static vdd_stage_result_e
+    apply_vdd_display_stage(const parsed_config_t &config, const boost::optional<device_info_map_t> &pre_vdd_devices);
+
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
-    std::string last_vdd_setting; /**< Last VDD resolution and refresh rate setting. */
     std::string current_vdd_client_id; /**< Current client ID associated with VDD monitor. */
+    std::optional<vdd_utils::hdr_brightness_t> current_vdd_hdr_brightness; /**< HDR capabilities currently programmed into VDD. */
     std::string original_output_name; /**< Original output_name value before VDD device ID was set. */
     boost::optional<parsed_config_t::device_prep_e> current_device_prep; /**< Current device preparation mode, respecting client overrides. */
     boost::optional<parsed_config_t::vdd_prep_e> current_vdd_prep; /**< Current VDD preparation mode for VDD mode sessions. */
     boost::optional<bool> current_use_vdd; /**< Whether current session is using VDD mode. */
+    pending_vdd_context_t pending_vdd_; /**< 在显示配置成功或清理前保留的 VDD 创建基线。 */
     bool pending_restore_ = false; /**< Flag indicating if there is a pending restore settings operation waiting for unlock. */
-    bool should_replace_vdd_id_ = false; /**< Flag indicating if VDD ID needs to be replaced after client switch. */
-    std::string old_vdd_id_; /**< Old VDD ID that needs to be replaced. */
     boost::atomic<int> polling_retry_count_ {0}; /**< Retry counter for polling restore mechanism. */
 
     /**
@@ -255,16 +297,37 @@ namespace display_device {
      */
     std::unique_ptr<StateRetryTimer> timer;
 
-    void
-    update_vdd_resolution(const parsed_config_t &config, const vdd_utils::VddSettings &vdd_settings);
+    /**
+     * @brief 准备 VDD 驱动和显示器，不修改 Windows 显示拓扑。
+     * @param config 已解析的会话配置；成功时写回 VDD 设备 ID。
+     * @param session 用于标识和配置显示器的启动会话。
+     * @param pre_vdd_devices 接收新建显示器前捕获的物理显示器快照；
+     *        有值但为空表示主机确实无头。
+     */
+    vdd_stage_result_e
+    prepare_vdd(parsed_config_t &config,
+      const rtsp_stream::launch_session_t &session,
+      boost::optional<device_info_map_t> &pre_vdd_devices);
+
+    vdd_mode_update_e
+    update_vdd_resolution(const parsed_config_t &config,
+      const vdd_utils::VddSettings &vdd_settings,
+      const std::string &vdd_device_id);
 
     /**
-     * @brief Clear VDD state (client ID and last setting)
+     * @brief Clear VDD session state.
      * @note This method does NOT acquire the mutex! It is intended to be used from places
      *       where the mutex has already been locked.
      */
     void
     clear_vdd_state();
+
+    /**
+     * @brief 取消旧的延迟配置或恢复任务，并清除对应的待处理状态。
+     * @note 调用方必须已经持有 mutex。
+     */
+    void
+    cancel_pending_display_retry();
 
     /**
      * @brief Stop timer and clear VDD state

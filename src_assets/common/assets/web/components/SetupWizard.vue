@@ -1,5 +1,37 @@
 <template>
   <div class="setup-container">
+    <Teleport to="body">
+      <TransitionGroup
+        v-if="visibleCompletionNotices.length"
+        name="setup-toast"
+        tag="div"
+        class="setup-completion-toasts"
+        aria-live="polite"
+        aria-atomic="false"
+      >
+        <div
+          v-for="notice in visibleCompletionNotices"
+          :key="notice.id"
+          class="setup-completion-toast"
+          :class="`setup-completion-toast-${notice.tone}`"
+          role="status"
+        >
+          <i :class="notice.icon" aria-hidden="true"></i>
+          <span :class="{ 'setup-completion-toast-title': notice.emphasis }">
+            {{ $t(notice.messageKey) }}
+          </span>
+          <button
+            type="button"
+            class="setup-completion-toast-close"
+            :aria-label="$t('_common.close')"
+            @click="dismissCompletionNotice(notice.id)"
+          >
+            <i class="fas fa-times" aria-hidden="true"></i>
+          </button>
+        </div>
+      </TransitionGroup>
+    </Teleport>
+
     <div class="setup-card">
       <div class="setup-header">
         <img src="/images/logo-sunshine-256.png" height="60" alt="Sunshine">
@@ -102,9 +134,10 @@
               {{ $t('setup.base_display_title') }}
             </h5>
             <!-- 虚拟显示器选项 -->
-            <div class="option-card" 
-                 :class="{ selected: selectedDisplay === 'ZakoHDR' }"
-                 @click="selectedDisplay = 'ZakoHDR'">
+            <div class="option-card"
+                 :class="{ selected: isVirtualDisplay, disabled: !vddReady }"
+                 :aria-disabled="!vddReady"
+                 @click="selectVirtualDisplay">
               <div class="d-flex align-items-center">
                 <div class="option-icon-small">
                   <i class="fas fa-tv"></i>
@@ -116,14 +149,25 @@
               </div>
             </div>
 
+            <div v-if="!vddReady" class="alert alert-warning vdd-wizard-prerequisite">
+              <strong>{{ $t('setup.vdd_driver_required') }}</strong>
+              <p class="mb-2 mt-1">
+                {{ canManageVdd ? $t('setup.vdd_driver_desktop_hint') : $t('setup.vdd_driver_browser_hint') }}
+              </p>
+              <small v-if="vddStatusError" class="d-block">{{ vddStatusError }}</small>
+              <small v-else-if="vddStatus.state !== 'unknown'" class="d-block">
+                {{ $t(`config.vdd_driver_state_${vddStatus.state}`) }}
+              </small>
+            </div>
+
             <!-- 物理显示器列表 -->
-            <div v-if="displayDevices && displayDevices.length > 0">
+            <div v-if="physicalDisplayDevices.length > 0">
               <h5 class="my-3 physical-display-title">
                 <i class="fas fa-desktop"></i>
                 {{ $t('setup.physical_display') }}
               </h5>
               <div class="option-card" 
-                   v-for="device in displayDevices" 
+                   v-for="device in physicalDisplayDevices"
                    :key="device.device_id"
                    :class="{ selected: selectedDisplay === device.device_id }"
                    @click="selectedDisplay = device.device_id">
@@ -199,22 +243,29 @@
           <!-- 步骤 5: 完成 -->
           <div v-else-if="currentStep === 5">
             <div>
-              <div class="text-center mb-3">
-                <h3 class="mb-1">
-                  <i class="fas fa-check-circle setup-complete-icon"></i>
-                  {{ $t('setup.setup_complete') }}
-                </h3>
-                <p class="mb-0">{{ $t('setup.setup_complete_desc') }}</p>
-              </div>
-              
-              <div class="alert alert-info text-center" v-if="saveSuccess">
-                <i class="fas fa-info-circle"></i>
-                {{ $t('setup.config_saved') }}
-              </div>
-              
               <div class="alert alert-danger" v-if="saveError">
                 <i class="fas fa-exclamation-triangle"></i>
                 {{ saveError }}
+              </div>
+
+              <!-- 推荐服务 -->
+              <div class="promo-service-section mt-3">
+                <h5 class="mb-3">
+                  <i class="fas fa-bullhorn"></i>
+                  {{ $t('setup.featured_services') }}
+                </h5>
+                <div class="promo-service-links">
+                  <ResourceLink
+                    v-for="resource in FEATURED_RESOURCES"
+                    :key="resource.id"
+                    :href="resourceHref(resource)"
+                    :title="resourceTitle(resource)"
+                    :description="resourceDescription(resource)"
+                    :image-src="resource.imageSrc"
+                    :image-alt="resource.imageAlt"
+                    :variant="resource.variant"
+                  />
+                </div>
               </div>
 
               <!-- 客户端下载 -->
@@ -226,46 +277,18 @@
                 <div class="client-download-layout">
                   <!-- 左侧：应用下载链接 -->
                   <div class="client-links">
-                    <a class="resource-link resource-link-android"
-                       href="https://github.com/qiin2333/moonlight-vplus"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fab fa-android"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">安卓 Moonlight V+</span>
-                        <span class="resource-desc">Android / Android TV</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-harmony"
-                       href="javascript:void(0)"
-                       @click.prevent="openHarmonyModal">
-                      <div class="resource-icon"><i class="fas fa-mobile-alt"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">鸿蒙 Moonlight V+</span>
-                        <span class="resource-desc">HarmonyOS NEXT</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-apple"
-                       href="https://apps.apple.com/cn/app/voidlink/id6747717070"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fab fa-apple"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">虚空终端 (VoidLink)</span>
-                        <span class="resource-desc">iOS / iPadOS</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
-                    <a class="resource-link resource-link-desktop"
-                       href="https://github.com/qiin2333/moonlight-qt"
-                       target="_blank">
-                      <div class="resource-icon"><i class="fas fa-desktop"></i></div>
-                      <div class="resource-content">
-                        <span class="resource-title">Moonlight PC</span>
-                        <span class="resource-desc">Windows / macOS / Linux</span>
-                      </div>
-                      <i class="fas fa-external-link-alt resource-arrow"></i>
-                    </a>
+                    <ResourceLink
+                      v-for="resource in setupClientResources"
+                      :key="resource.id"
+                      :href="resource.href"
+                      :target="resource.action ? '' : '_blank'"
+                      :title="resourceTitle(resource)"
+                      :description="resourceDescription(resource)"
+                      :icon="resource.icon"
+                      :variant="resource.variant"
+                      compact
+                      @activate="handleResourceActivate(resource, $event)"
+                    />
                   </div>
                   <!-- 右侧：二维码 -->
                   <div class="client-qrcodes">
@@ -274,7 +297,7 @@
                         <img :src="androidQrCode" alt="Android QR Code" class="qr-code-image">
                       </div>
                       <div class="qr-code-label">
-                        <i class="fab fa-android"></i>
+                        <i class="fas fa-mobile-alt"></i>
                         {{ $t('setup.android_client') }}
                       </div>
                     </div>
@@ -283,7 +306,7 @@
                         <img :src="iosQrCode" alt="iOS QR Code" class="qr-code-image">
                       </div>
                       <div class="qr-code-label">
-                        <i class="fab fa-apple"></i>
+                        <i class="fas fa-tablet-alt"></i>
                         {{ $t('setup.ios_client') }}
                       </div>
                     </div>
@@ -318,8 +341,8 @@
           <button class="btn btn-setup btn-setup-primary" 
                   @click="nextStep" 
                   v-if="currentStep < 5"
-                  :disabled="!canProceed || saving">
-            {{ currentStep === 4 ? $t('setup.finish') : $t('setup.next') }}
+                  :disabled="!canProceed || saving || vddInstalling || vddStatusLoading">
+            {{ nextButtonLabel }}
             <i class="fas fa-arrow-right"></i>
           </button>
 
@@ -331,87 +354,146 @@
           </button>
       </div>
     </div>
-    <!-- Skip Wizard Modal -->
-    <Transition name="fade">
-      <div v-if="showSkipModal" class="skip-wizard-overlay" @click.self="closeSkipModal">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5>{{ $t('setup.skip_confirm_title')}}</h5>
-            <button class="btn-close" @click="closeSkipModal"></button>
-          </div>
-          <div class="skip-wizard-body">
-            <p>{{ $t('setup.skip_confirm') }}</p>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <ConfirmDialog
+      :show="showSkipModal"
+      dialog-id="skip-wizard-confirm"
+      :title="$t('setup.skip_confirm_title')"
+      title-icon="fas fa-forward"
+      tone="warning"
+      :close-label="$t('_common.close')"
+      @close="closeSkipModal"
+    >
+      <p>{{ $t('setup.skip_confirm') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeSkipModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-warning" @click="confirmSkipWizard">{{ $t('setup.skip') }}</button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Harmony Link Modal -->
-    <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showHarmonyModal" class="skip-wizard-overlay" @click.self="closeHarmonyModal">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5>鸿蒙Moonlight V+</h5>
-            <button class="btn-close" @click="closeHarmonyModal"></button>
-          </div>
-          <div class="skip-wizard-body">
-            <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
-            <p>{{ $t('setup.harmony_modal_desc') }}</p>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
-            <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
-              <i class="fas fa-external-link-alt me-1"></i>
-              {{ $t('setup.harmony_goto_repo') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-    </Teleport>
+    <ConfirmDialog
+      :show="showHarmonyModal"
+      dialog-id="setup-harmony-link"
+      :title="$t('resource_card.harmony_client')"
+      title-icon="fas fa-mobile-alt"
+      :close-label="$t('_common.close')"
+      @close="closeHarmonyModal"
+    >
+      <p>{{ $t('setup.harmony_modal_link_notice') }}</p>
+      <p>{{ $t('setup.harmony_modal_desc') }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="closeHarmonyModal">{{ $t('_common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" @click="confirmHarmonyLink">
+          <i class="fas fa-external-link-alt me-1"></i>
+          {{ $t('setup.harmony_goto_repo') }}
+        </button>
+      </template>
+    </ConfirmDialog>
 
-    <!-- Restart Countdown Modal -->
-    <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showRestartModal" class="skip-wizard-overlay">
-        <div class="skip-wizard-modal">
-          <div class="skip-wizard-header">
-            <h5><i class="fas fa-sync-alt me-2"></i>{{ $t('setup.restart_title') }}</h5>
-          </div>
-          <div class="skip-wizard-body text-center">
-            <p>{{ $t('setup.restart_desc') }}</p>
-            <div class="restart-countdown my-3">
-              <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
-              <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
-            </div>
-            <div class="progress" style="height: 6px;">
-              <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
-            </div>
-          </div>
-          <div class="skip-wizard-footer">
-            <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
-              <i class="fas fa-arrow-right me-1"></i>
-              {{ $t('setup.restart_go_now') }}
-            </button>
-          </div>
+    <ConfirmDialog
+      :show="showRestartModal"
+      dialog-id="setup-restart-countdown"
+      :title="$t('setup.restart_title')"
+      title-icon="fas fa-sync-alt"
+      :dismissible="false"
+    >
+      <div class="text-center">
+        <p>{{ $t('setup.restart_desc') }}</p>
+        <div class="restart-countdown my-3">
+          <span class="display-4 fw-bold text-primary">{{ restartCountdown }}</span>
+          <p class="text-muted mt-1">{{ $t('setup.restart_countdown_unit') }}</p>
+        </div>
+        <div class="progress" style="height: 6px;">
+          <div class="progress-bar bg-primary" :style="{ width: (restartCountdown / 8 * 100) + '%' }" role="progressbar"></div>
         </div>
       </div>
-    </Transition>
-    </Teleport>
+      <template #actions>
+        <button type="button" class="btn btn-primary" @click="skipRestartCountdown">
+          <i class="fas fa-arrow-right me-1"></i>
+          {{ $t('setup.restart_go_now') }}
+        </button>
+      </template>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script>
 import { trackEvents } from '../config/firebase.js'
+import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { openExternalUrl } from '../utils/helpers.js'
+import { detectSystemLocale } from '../config/i18n.js'
+import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
+import { useVddStatus } from '../composables/useVddStatus.js'
+import ResourceLink from './common/ResourceLink.vue'
+import ConfirmDialog from './common/ConfirmDialog.vue'
+import {
+  CLIENT_RESOURCES,
+  FEATURED_RESOURCES,
+  HARMONY_CLIENT_URL,
+  resolveResourceHref,
+  resolveResourceText,
+} from '../config/resources.js'
+
+const SETUP_CLIENT_RESOURCE_ORDER = [
+  'android-vplus',
+  'harmony-vplus',
+  'voidlink',
+  'moonlight-macos',
+  'moonlight-desktop',
+]
+
+const SETUP_CLIENT_ICON_OVERRIDES = Object.freeze({
+  'android-vplus': 'fas fa-mobile-alt',
+  voidlink: 'fas fa-tablet-alt',
+  'moonlight-macos': 'fas fa-laptop',
+})
+
+const COMPLETION_NOTICES = Object.freeze([
+  {
+    id: 'complete',
+    messageKey: 'setup.setup_complete',
+    icon: 'fas fa-check-circle',
+    tone: 'success',
+    emphasis: true,
+  },
+  {
+    id: 'ready',
+    messageKey: 'setup.setup_complete_desc',
+    icon: 'fas fa-moon',
+    tone: 'info',
+  },
+  {
+    id: 'saved',
+    messageKey: 'setup.config_saved',
+    icon: 'fas fa-save',
+    tone: 'success',
+  },
+])
+
+const COMPLETION_NOTICE_DURATION_MS = 5000
+
+// 向导第一步只暴露 简体中文(zh) / English(en) 两个选项，
+// 因此把系统语言探测结果折叠到这两者之一即可
+function detectInitialWizardLocale() {
+  const sys = detectSystemLocale() // 已经过支持白名单过滤，未知语言落到 'en'
+  return (sys === 'zh' || sys === 'zh_TW') ? 'zh' : 'en'
+}
+
+function isPhysicalDisplay(device) {
+  return !/^FRIENDLY NAME:\s*Zako HDR\s*$/im.test(device?.data || '')
+}
+
+function markLanguageSavedForReload() {
+  try {
+    window.sessionStorage.setItem(SETUP_WIZARD_LANGUAGE_SAVED_KEY, 'true')
+  } catch (e) {
+    // If sessionStorage is unavailable, the saved locale still takes effect;
+    // the user may simply see the language step again in Chinese environments.
+  }
+}
 
 export default {
   name: 'SetupWizard',
+  components: { ConfirmDialog, ResourceLink },
   props: {
     adapters: {
       type: Array,
@@ -429,11 +511,12 @@ export default {
   data() {
     return {
       currentStep: 1,
-      selectedLocale: 'zh', // 默认中文
+      // 已有 locale 时向导会跳过第一步，不预置，避免 saveConfiguration() 覆盖已有设置（如 de / ja）
+      // 首次进入向导时依然按系统 / 浏览器语言预选 zh / en
+      selectedLocale: this.hasLocale ? null : detectInitialWizardLocale(),
       selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）
-      saveSuccess: false,
       saveError: null,
       saving: false,
       showSkipModal: false, // 跳过向导确认弹窗
@@ -441,13 +524,15 @@ export default {
       showRestartModal: false, // 重启倒计时弹窗
       restartCountdown: 8, // 倒计时秒数
       restartTimer: null, // 倒计时定时器
+      visibleCompletionNoticeIds: [],
+      completionNoticeTimer: null,
       // 客户端下载链接
       androidQrCode: 'https://assets.alkaidlab.com/androidQrCode.png',
       iosQrCode: 'https://assets.alkaidlab.com/iosQrCode.png',
     }
   },
   setup() {
-    return {}
+    return { FEATURED_RESOURCES, ...useVddStatus() }
   },
   mounted() {
     // 记录进入设置向导
@@ -469,14 +554,21 @@ export default {
     if (this.uniqueAdapters.length === 1) {
       this.selectedAdapter = this.uniqueAdapters[0].name
     }
+    this.refreshVddStatus()
   },
   beforeUnmount() {
     if (this.restartTimer) {
       clearInterval(this.restartTimer)
       this.restartTimer = null
     }
+    this.clearCompletionNoticeTimer()
   },
   computed: {
+    visibleCompletionNotices() {
+      return COMPLETION_NOTICES.filter((notice) =>
+        this.visibleCompletionNoticeIds.includes(notice.id)
+      )
+    },
     canProceed() {
       if (this.currentStep === 1) {
         return this.selectedLocale !== null
@@ -492,6 +584,17 @@ export default {
     isVirtualDisplay() {
       return this.selectedDisplay === 'ZakoHDR'
     },
+    nextButtonLabel() {
+      if (this.currentStep === 3 && this.isVirtualDisplay && !this.vddReady) {
+        return this.canManageVdd
+          ? this.$t('setup.vdd_install_continue')
+          : this.$t('setup.vdd_recheck_continue')
+      }
+      return this.currentStep === 4 ? this.$t('setup.finish') : this.$t('setup.next')
+    },
+    physicalDisplayDevices() {
+      return (this.displayDevices || []).filter(isPhysicalDisplay)
+    },
     // 按 name 去重，同一名称只保留一项（保持首次出现顺序）
     uniqueAdapters() {
       const list = this.adapters ?? []
@@ -502,9 +605,40 @@ export default {
         seen.add(name)
         return true
       })
+    },
+    setupClientResources() {
+      const resourcesById = new Map(CLIENT_RESOURCES.map((resource) => [resource.id, resource]))
+      const locale = this.selectedLocale || this.$i18n.locale
+      return SETUP_CLIENT_RESOURCE_ORDER
+        .map((id) => resourcesById.get(id))
+        .filter(Boolean)
+        .map((resource) => ({
+          ...resource,
+          href: resolveResourceHref(resource, locale),
+          icon: SETUP_CLIENT_ICON_OVERRIDES[resource.id] || resource.icon,
+        }))
     }
   },
   methods: {
+    selectVirtualDisplay() {
+      if (this.vddReady) {
+        this.selectedDisplay = 'ZakoHDR'
+      }
+    },
+    resourceTitle(resource) {
+      return resolveResourceText(this.$t, resource, 'title')
+    },
+    resourceDescription(resource) {
+      return resolveResourceText(this.$t, resource, 'description')
+    },
+    resourceHref(resource) {
+      return resolveResourceHref(resource, this.selectedLocale || this.$i18n.locale)
+    },
+    handleResourceActivate(resource, event) {
+      if (resource.action !== 'harmony') return
+      event.preventDefault()
+      this.openHarmonyModal()
+    },
     previousStep() {
       if (this.currentStep > 1) {
         this.currentStep--
@@ -517,6 +651,18 @@ export default {
       } else if (this.currentStep === 2 && this.canProceed) {
         this.currentStep++
       } else if (this.currentStep === 3 && this.canProceed) {
+        if (this.isVirtualDisplay && !this.vddReady) {
+          try {
+            if (this.canManageVdd) {
+              await this.installVdd()
+            } else {
+              await this.refreshVddStatus()
+            }
+          } catch {
+            // The status panel keeps the selection and shows the actionable error.
+          }
+          if (!this.vddReady) return
+        }
         this.currentStep++
       } else if (this.currentStep === 4 && this.canProceed) {
         await this.saveConfiguration()
@@ -524,15 +670,16 @@ export default {
     },
     async saveLanguage() {
       try {
-        await fetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
+          body: {
             locale: this.selectedLocale
-          }),
+          },
         })
+        if (!response.ok) {
+          throw new Error(`Failed to save language: HTTP ${response.status}`)
+        }
+        markLanguageSavedForReload()
         // 重新加载页面以应用新语言
         window.location.reload()
       } catch (error) {
@@ -545,7 +692,7 @@ export default {
 
       try {
         // 先获取当前完整配置，保留所有已有设置
-        const currentConfig = await fetch('/api/config').then(r => r.json())
+        const currentConfig = await apiJson('/api/config')
         
         // 从完整配置中复制所有字段，避免覆盖其他配置
         const config = { ...currentConfig }
@@ -571,17 +718,14 @@ export default {
 
         console.log('保存配置:', config)
 
-        const response = await fetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(config),
+          body: config,
         })
 
         if (response.ok) {
-          this.saveSuccess = true
           this.currentStep = 5
+          this.showCompletionNotices()
           
           // 记录设置完成
           trackEvents.userAction('setup_wizard_completed', {
@@ -628,10 +772,32 @@ export default {
     closeHarmonyModal() {
       this.showHarmonyModal = false
     },
+    clearCompletionNoticeTimer() {
+      if (this.completionNoticeTimer) {
+        clearTimeout(this.completionNoticeTimer)
+        this.completionNoticeTimer = null
+      }
+    },
+    showCompletionNotices() {
+      this.clearCompletionNoticeTimer()
+      this.visibleCompletionNoticeIds = COMPLETION_NOTICES.map((notice) => notice.id)
+      this.completionNoticeTimer = setTimeout(() => {
+        this.visibleCompletionNoticeIds = []
+        this.completionNoticeTimer = null
+      }, COMPLETION_NOTICE_DURATION_MS)
+    },
+    dismissCompletionNotice(noticeId) {
+      this.visibleCompletionNoticeIds = this.visibleCompletionNoticeIds.filter(
+        (id) => id !== noticeId
+      )
+      if (this.visibleCompletionNoticeIds.length === 0) {
+        this.clearCompletionNoticeTimer()
+      }
+    },
     async confirmHarmonyLink() {
       this.closeHarmonyModal()
       try {
-        await openExternalUrl('https://github.com/AlkaidLab/moonlight-harmony')
+        await openExternalUrl(HARMONY_CLIENT_URL)
       } catch (error) {
         console.error('Failed to open URL:', error)
       }
@@ -647,19 +813,16 @@ export default {
 
       try {
         // 先获取当前完整配置，保留所有已有设置
-        const currentConfig = await fetch('/api/config').then(r => r.json())
+        const currentConfig = await apiJson('/api/config')
         
         // 从完整配置中复制所有字段，避免覆盖其他配置
         const config = { ...currentConfig }
         // 标记新手引导已完成
         config.setup_wizard_completed = true
         console.log('跳过新手引导，保存配置:', config)
-        const response = await fetch('/api/config', {
+        const response = await apiFetch('/api/config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(config),
+          body: config,
         })
 
         if (response.ok) {
@@ -698,7 +861,7 @@ export default {
     async triggerRestartAndRedirect() {
       // 调用重启 API
       try {
-        await fetch('/api/restart', { method: 'POST' })
+        await apiFetch('/api/restart', { method: 'POST' })
       } catch {
         // 重启请求可能会断开连接，忽略错误
       }
@@ -787,12 +950,18 @@ export default {
   flex-direction: column;
   align-items: center;
   z-index: 1000;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(var(--ui-accent-rgb), 0.18), transparent 34rem),
+    var(--ui-page-bg);
+  color: var(--ui-text-primary);
 }
 
 .setup-card {
-  background: var(--bs-body-bg);
-  border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--ui-shadow-md);
+  backdrop-filter: blur(22px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -803,22 +972,28 @@ export default {
 }
 
 .setup-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
   padding: 1.2em;
   text-align: center;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.setup-header img {
+  filter: drop-shadow(0 6px 14px rgba(var(--ui-accent-rgb), 0.18));
 }
 
 .setup-header h1 {
   margin: 0.3em 0 0 0;
   font-size: 1.5em;
   font-weight: 600;
+  color: var(--ui-accent);
 }
 
 .setup-header p {
   margin: 0.3em 0 0 0;
-  opacity: 0.9;
+  color: var(--ui-text-secondary);
   font-size: 0.95em;
 }
 
@@ -829,6 +1004,7 @@ export default {
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  background: color-mix(in srgb, var(--ui-surface) 74%, transparent);
 }
 
 .step-indicator {
@@ -845,6 +1021,7 @@ export default {
   align-items: center;
   gap: 0.3em;
   font-size: 0.85em;
+  color: var(--ui-text-secondary);
 }
 
 .step-number {
@@ -856,79 +1033,103 @@ export default {
   justify-content: center;
   font-weight: 600;
   font-size: 0.9em;
-  background: var(--bs-secondary-bg);
-  color: var(--bs-secondary-color);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  border: 1px solid var(--ui-border);
   transition: all 0.3s ease;
   flex-shrink: 0;
 }
 
 .step.active .step-number {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--ui-accent);
+  color: var(--ui-accent-contrast);
+  border-color: var(--ui-accent);
   transform: scale(1.05);
 }
 
+.step.active {
+  color: var(--ui-text-primary);
+}
+
 .step.completed .step-number {
-  background: #28a745;
+  background: var(--ui-success);
   color: white;
+  border-color: var(--ui-success);
 }
 
 .step-connector {
   width: 30px;
   height: 2px;
-  background: var(--bs-secondary-bg);
+  background: var(--ui-border);
   flex-shrink: 0;
 }
 
 .step-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 0.5em;
+  padding-bottom: 1em;
+  scrollbar-gutter: stable;
 }
 
 .step-content h3 {
   font-size: 1.1em;
   margin-bottom: 0.8em;
+  color: var(--ui-text-primary);
 }
 
 .option-card {
-  border: 2px solid var(--bs-border-color);
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
   padding: 0.8em 1em;
   margin-bottom: 0.6em;
   cursor: pointer;
   transition: all 0.3s ease;
-  background: var(--bs-body-bg);
+  background: var(--ui-surface);
 }
 
 .option-card:hover {
-  border-color: #667eea;
+  border-color: var(--ui-border-strong);
   transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(102, 126, 234, 0.2);
+  box-shadow: var(--ui-shadow-sm);
+  background: var(--ui-surface-hover);
 }
 
 .option-card.selected {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.1);
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+}
+
+.option-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.option-card.disabled:hover {
+  border-color: var(--ui-border);
+  transform: none;
+  box-shadow: none;
+  background: var(--ui-surface);
 }
 
 .option-card .option-icon {
   font-size: 1.8em;
   margin-bottom: 0.3em;
-  color: #667eea;
+  color: var(--ui-accent);
 }
 
 .option-card h4 {
   margin: 0.3em 0;
   font-weight: 600;
   font-size: 1em;
+  color: var(--ui-text-primary);
 }
 
 .option-card p {
   margin: 0;
-  color: var(--bs-body-color);
-  opacity: 0.85;
+  color: var(--ui-text-secondary);
   font-size: 0.85em;
   line-height: 1.3;
 }
@@ -937,30 +1138,31 @@ export default {
 .option-card-compact {
   display: flex;
   align-items: center;
-  border: 2px solid var(--bs-border-color);
+  border: 1px solid var(--ui-border);
   border-radius: 8px;
   padding: 0.5em 0.8em;
   margin-bottom: 0.4em;
   cursor: pointer;
   transition: all 0.3s ease;
-  background: var(--bs-body-bg);
+  background: var(--ui-surface);
   gap: 0.7em;
 }
 
 .option-card-compact:hover {
-  border-color: #667eea;
+  border-color: var(--ui-border-strong);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+  box-shadow: var(--ui-shadow-sm);
+  background: var(--ui-surface-hover);
 }
 
 .option-card-compact.selected {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.1);
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
 }
 
 .option-icon-compact {
   font-size: 1.2em;
-  color: #667eea;
+  color: var(--ui-accent);
   flex-shrink: 0;
   width: 2em;
   text-align: center;
@@ -970,12 +1172,12 @@ export default {
   margin: 0;
   font-weight: 600;
   font-size: 0.9em;
+  color: var(--ui-text-primary);
 }
 
 .option-card-compact .option-text p {
   margin: 0;
-  color: var(--bs-body-color);
-  opacity: 0.75;
+  color: var(--ui-text-secondary);
   font-size: 0.85em;
   line-height: 1.3;
 }
@@ -984,7 +1186,9 @@ export default {
   padding: 0.7em;
   font-size: 1em;
   border-radius: 8px;
-  border: 2px solid var(--bs-border-color);
+  border: 1px solid var(--ui-border);
+  background-color: var(--ui-surface);
+  color: var(--ui-text-primary);
   transition: all 0.3s ease;
 }
 
@@ -992,16 +1196,18 @@ export default {
 .adapter-label {
   font-size: 1.05em;
   font-weight: 600;
+  color: var(--ui-text-primary);
 }
 
 /* 物理显示器标题 */
 .physical-display-title {
   font-size: 0.95em;
+  color: var(--ui-text-primary);
 }
 
 .form-select-large:focus {
-  border-color: #667eea;
-  box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 0.2rem var(--ui-accent-soft);
 }
 
 .action-buttons {
@@ -1010,8 +1216,8 @@ export default {
   gap: 0.8em;
   flex-shrink: 0;
   padding: 1em 1.5em;
-  border-top: 1px solid var(--bs-border-color);
-  background: var(--bs-body-bg);
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface-strong);
 }
 
 .btn-setup {
@@ -1023,45 +1229,47 @@ export default {
 }
 
 .btn-setup-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border: none;
-  color: white;
+  background: var(--ui-accent);
+  border: 1px solid var(--ui-accent);
+  color: var(--ui-accent-contrast);
 }
 
 .btn-setup-primary:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  color: white;
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-md);
+  color: var(--ui-accent-contrast);
 }
 
 .btn-setup-secondary {
-  background: var(--bs-secondary-bg);
-  border: none;
-  color: var(--bs-body-color);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text-primary);
 }
 
 .btn-setup-secondary:hover:not(:disabled) {
-  background: var(--bs-tertiary-bg);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-border-strong);
   transform: translateY(-1px);
 }
 
 .btn-setup-skip {
-  background: rgba(255, 255, 255, 0.95);
-  border: 2px solid rgba(102, 126, 234, 0.7);
-  color: rgba(70, 90, 200, 1);
+  background: var(--ui-accent-soft);
+  border: 1px solid var(--ui-border-strong);
+  color: var(--ui-accent);
   font-weight: 500;
 }
 
 .btn-setup-skip:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 1);
-  border-color: rgba(102, 126, 234, 0.9);
-  color: rgba(50, 70, 180, 1);
+  background: var(--ui-surface-hover);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .adapter-info {
-  background: var(--bs-secondary-bg);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   padding: 0.8em;
   border-radius: 8px;
   margin-top: 0.8em;
@@ -1080,27 +1288,27 @@ export default {
 
 /* GPU选择提示框样式 */
 .adapter-hint-box {
-  background: rgba(102, 126, 234, 0.08);
+  background: var(--ui-accent-soft);
   padding: 0.8em 1em;
   border-radius: 8px;
-  border-left: 3px solid #667eea;
+  border-left: 3px solid var(--ui-accent);
   font-size: 0.9em;
   line-height: 1.5;
-  color: var(--bs-body-color);
+  color: var(--ui-text-secondary);
   font-weight: 500;
 }
 
 /* VDD 介绍文字样式 */
 .vdd-intro-text {
-  color: var(--bs-body-color);
-  opacity: 0.75;
+  color: var(--ui-text-secondary);
   font-size: 0.95em;
 }
 
 .adapter-vdd-hint {
   margin: 0.5em 0 0 0;
   padding: 0.5em 0.8em;
-  background: rgba(40, 167, 69, 0.1);
+  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
+  color: var(--ui-success-text);
   border-radius: 4px;
   font-size: 0.95em;
   white-space: pre-wrap;
@@ -1117,139 +1325,56 @@ export default {
 }
 
 .step-content::-webkit-scrollbar-thumb {
-  background: rgba(102, 126, 234, 0.3);
+  background: var(--ui-border-strong);
   border-radius: 3px;
 }
 
 .step-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(102, 126, 234, 0.5);
+  background: var(--ui-accent);
 }
 
-/* 完成页面标题 */
-.setup-complete-icon {
-  font-size: 1.2em;
-  color: #28a745;
-  margin-right: 0.3em;
-  vertical-align: middle;
-}
-
-/* 客户端下载样式 */
-.client-download-section {
-  background: var(--bs-secondary-bg);
+/* 完成页资源区样式 */
+.client-download-section,
+.promo-service-section {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   padding: 1em;
   border-radius: 10px;
 }
 
-.client-download-section h5 {
+.client-download-section h5,
+.promo-service-section h5 {
   font-size: 1em;
   margin-bottom: 0.8em;
-  color: var(--bs-body-color);
+  color: var(--ui-text-primary);
+}
+
+.promo-service-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75em;
 }
 
 .client-download-layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 1.5em;
   align-items: flex-start;
 }
 
 .client-links {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5em;
-  min-width: 240px;
+  min-width: 0;
 }
 
 .client-qrcodes {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: repeat(2, 168px);
   gap: 1em;
   align-items: flex-start;
-  flex: 1;
   min-width: 0;
-}
-
-/* Resource link styles (from ResourceCard) */
-.resource-link {
-  display: flex;
-  align-items: center;
-  padding: 0.6em 0.8em;
-  border-radius: 8px;
-  text-decoration: none;
-  background: linear-gradient(135deg, rgba(var(--link-color), 0.15) 0%, rgba(var(--link-color), 0.08) 100%);
-  border: 1px solid transparent;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.resource-link:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
-  text-decoration: none;
-  border-color: rgba(var(--link-color), 0.4);
-}
-
-.resource-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.1rem;
-  flex-shrink: 0;
-  margin-right: 0.8em;
-  color: white;
-  background: var(--icon-gradient);
-}
-
-.resource-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.resource-title {
-  display: block;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--bs-body-color);
-  margin-bottom: 1px;
-}
-
-.resource-desc {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--bs-secondary-color);
-}
-
-.resource-arrow {
-  font-size: 0.8rem;
-  color: var(--bs-secondary-color);
-  margin-left: 0.5rem;
-  transition: transform 0.2s ease;
-}
-
-.resource-link:hover .resource-arrow {
-  transform: translateX(3px);
-}
-
-.resource-link-android {
-  --link-color: 61, 220, 132;
-  --icon-gradient: linear-gradient(135deg, #3ddc84 0%, #00c853 100%);
-}
-
-.resource-link-apple {
-  --link-color: 128, 128, 128;
-  --icon-gradient: linear-gradient(135deg, #555 0%, #777 100%);
-}
-
-.resource-link-desktop {
-  --link-color: 108, 117, 125;
-  --icon-gradient: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-}
-
-.resource-link-harmony {
-  --link-color: 206, 48, 48;
-  --icon-gradient: linear-gradient(135deg, #ce3030 0%, #e74c3c 100%);
 }
 
 .qr-code-item {
@@ -1257,14 +1382,13 @@ export default {
   flex-direction: column;
   align-items: center;
   gap: 0.3em;
-  flex: 1;
 }
 
 .qr-code-box {
   background: white;
   padding: 0.4em;
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--ui-shadow-sm);
   width: 100%;
 }
 
@@ -1277,17 +1401,103 @@ export default {
 .qr-code-label {
   font-size: 0.8em;
   font-weight: 500;
-  color: var(--bs-body-color);
+  color: var(--ui-text-primary);
 }
 
 .qr-code-label i {
   margin-right: 0.3em;
 }
 
+.setup-completion-toasts {
+  position: fixed;
+  top: max(1rem, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 1080;
+  display: grid;
+  width: min(480px, calc(100vw - 2rem));
+  gap: 0.6rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.setup-completion-toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 48px;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-strong);
+  box-shadow: var(--ui-shadow-lg);
+  pointer-events: auto;
+}
+
+.setup-completion-toast-success {
+  border-color: color-mix(in srgb, var(--ui-success) 40%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-success) 10%, var(--ui-surface-strong));
+}
+
+.setup-completion-toast-success > i {
+  color: var(--ui-success);
+}
+
+.setup-completion-toast-info {
+  border-color: color-mix(in srgb, var(--ui-accent) 40%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface-strong));
+}
+
+.setup-completion-toast-info > i {
+  color: var(--ui-accent);
+}
+
+.setup-completion-toast-title {
+  font-weight: 700;
+}
+
+.setup-completion-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.setup-completion-toast-close:hover,
+.setup-completion-toast-close:focus-visible {
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-hover);
+}
+
+.setup-toast-enter-active,
+.setup-toast-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.setup-toast-enter-from,
+.setup-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-0.75rem);
+}
+
+.setup-toast-move {
+  transition: transform 0.2s ease;
+}
+
 /* 小图标样式 */
 .option-icon-small {
   font-size: 1.5em;
-  color: #667eea;
+  color: var(--ui-accent);
   margin-right: 0.8em;
   flex-shrink: 0;
 }
@@ -1309,129 +1519,108 @@ export default {
   margin-bottom: 1rem;
 }
 
-/* Skip Wizard Modal - 使用 ScanResultModal 样式 */
-.skip-wizard-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 20px);
-  overflow: hidden;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
+.restart-countdown .text-primary {
+  color: var(--ui-accent) !important;
+}
+
+.restart-countdown + .progress .progress-bar {
+  background: var(--ui-accent) !important;
+}
+
+@media (max-width: 768px) {
+  .setup-container {
+    padding: 0;
   }
-}
 
-.skip-wizard-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
-  width: 100%;
-  max-width: 500px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
-  animation: modalSlideUp 0.3s ease;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+  .setup-card {
+    max-width: none;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
   }
-}
 
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
+  .setup-header {
+    padding: 0.85rem 1rem;
   }
-  to {
-    transform: translateY(0);
-    opacity: 1;
+
+  .setup-header img {
+    height: 44px;
   }
-}
 
-.skip-wizard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-
-  h5 {
-    margin: 0;
-    color: var(--text-primary, #fff);
-    font-size: var(--font-size-lg, 1.1rem);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm, 8px);
+  .setup-header h1 {
+    font-size: 1.2rem;
   }
-  
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    
-    h5 {
-      color: #000000;
-    }
+
+  .setup-header p {
+    font-size: 0.82rem;
   }
-}
 
-.skip-wizard-body {
-  padding: var(--spacing-lg, 24px);
-  font-size: var(--font-size-md, 0.95rem);
-  line-height: 1.5;
-  overflow-y: auto;
-  flex: 1;
-  color: var(--text-primary, #fff);
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
+  .setup-content {
+    padding: 1rem;
   }
-}
 
-.skip-wizard-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  .step-indicator {
+    gap: 0.35rem;
+    margin-bottom: 0.9rem;
   }
-}
 
-.skip-wizard-footer button {
-  padding: 8px 16px;
-  font-size: 0.9rem;
-}
+  .step span {
+    display: none;
+  }
 
-/* Vue 过渡动画 */
-.fade-enter-active {
-  transition: opacity 0.3s ease;
-}
+  .step-number {
+    width: 26px;
+    height: 26px;
+  }
 
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
+  .step-connector {
+    width: auto;
+    min-width: 12px;
+    flex: 1;
+  }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+  .step-content {
+    padding-right: 0.25rem;
+  }
+
+  .option-card,
+  .option-card-compact {
+    padding: 0.75rem;
+  }
+
+  .action-buttons {
+    padding: 0.85rem 1rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-setup {
+    flex: 1 1 auto;
+    padding: 0.65rem 0.85rem;
+    white-space: nowrap;
+  }
+
+  .client-download-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .client-links {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .client-qrcodes {
+    width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .promo-service-links {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 

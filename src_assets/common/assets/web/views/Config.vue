@@ -3,14 +3,25 @@
     <Navbar />
     <div class="config-floating-buttons">
       <button
+        type="button"
         class="cute-btn cute-btn-primary"
         :class="{ 'has-unsaved': hasUnsaved }"
-        @click="save"
+        @click="requestConfigAction('save')"
+        :disabled="riskActionRunning"
+        :aria-label="$t('_common.save')"
         :title="hasUnsaved ? $t('config.unsaved_changes_tooltip') : $t('_common.save')"
       >
         <i class="fas fa-save"></i>
       </button>
-      <button v-if="saved && !restarted" class="cute-btn cute-btn-success" @click="apply" :title="$t('_common.apply')">
+      <button
+        v-if="saved && !restarted"
+        type="button"
+        class="cute-btn cute-btn-primary"
+        @click="requestConfigAction('apply')"
+        :disabled="riskActionRunning"
+        :aria-label="$t('_common.apply')"
+        :title="$t('_common.apply')"
+      >
         <i class="fas fa-check"></i>
       </button>
       <div class="floating-toast-container">
@@ -60,8 +71,63 @@
         </Transition>
       </div>
     </div>
+
+    <ConfirmDialog
+      :show="showRiskConfirm"
+      dialog-id="risk-confirm"
+      :title="$t(riskAction === 'apply' ? 'config.risk_confirm.title_apply' : 'config.risk_confirm.title_save')"
+      title-icon="fas fa-exclamation-triangle"
+      tone="danger"
+      max-width="720px"
+      :close-label="$t('_common.close')"
+      @close="cancelRiskConfirm"
+    >
+      <p class="risk-confirm-intro">
+        {{ $t(riskAction === 'apply' ? 'config.risk_confirm.intro_apply' : 'config.risk_confirm.intro_save') }}
+      </p>
+      <div class="risk-confirm-list">
+        <div
+          v-for="risk in riskItems"
+          :key="risk.id"
+          class="risk-item"
+          :class="risk.severity"
+        >
+          <div class="risk-item-header">
+            <span class="risk-badge" :class="risk.severity">
+              {{ $t(`config.risk_confirm.severity_${risk.severity}`) }}
+            </span>
+            <strong>{{ $t(risk.titleKey) }}</strong>
+          </div>
+          <p>{{ $t(risk.descriptionKey) }}</p>
+          <div v-if="risk.currentValue" class="risk-detail">
+            <span>{{ $t('config.risk_confirm.value_label') }}</span>
+            <code>{{ risk.currentValue }}</code>
+          </div>
+          <div v-if="risk.recoveryKey" class="risk-recovery">
+            <span>{{ $t('config.risk_confirm.recovery_label') }}</span>
+            <p>{{ $t(risk.recoveryKey) }}</p>
+          </div>
+        </div>
+      </div>
+
+      <template #actions>
+        <button type="button" class="btn btn-secondary" @click="cancelRiskConfirm" :disabled="riskActionRunning">
+          {{ $t('_common.cancel') }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-danger"
+          @click="confirmRiskAction"
+          :disabled="riskActionRunning"
+        >
+          <i v-if="riskActionRunning" class="fas fa-spinner fa-spin me-1"></i>
+          {{ $t(riskAction === 'apply' ? 'config.risk_confirm.confirm_apply' : 'config.risk_confirm.confirm_save') }}
+        </button>
+      </template>
+    </ConfirmDialog>
+
     <div class="container">
-      <h1 class="my-4 page-title">{{ $t('config.configuration') }}</h1>
+      <h1 class="mt-2 mb-4 page-title">{{ $t('config.configuration') }}</h1>
 
       <div v-if="!config" class="form card config-skeleton">
         <div class="card-header skeleton-header">
@@ -88,48 +154,50 @@
       </div>
 
       <div v-else class="form card">
-        <ul class="nav nav-tabs config-tabs card-header">
-          <template v-for="tab in tabs" :key="tab.id">
-            <li
-              v-if="tab.type === 'group' && tab.children"
-              class="nav-item dropdown"
-              :class="{ active: isEncoderTabActive(tab), show: expandedDropdown === tab.id }"
-            >
-              <a
-                class="nav-link dropdown-toggle"
-                :class="{ active: isEncoderTabActive(tab) }"
-                href="#"
-                role="button"
-                :aria-expanded="expandedDropdown === tab.id"
-                @click.prevent="toggleEncoderDropdown(tab.id, $event)"
+        <div class="config-tabs-shell">
+          <ul ref="configTabsRef" class="nav nav-tabs config-tabs">
+            <template v-for="tab in tabs" :key="tab.id">
+              <li
+                v-if="tab.type === 'group' && tab.children"
+                class="nav-item dropdown"
+                :class="{ active: isEncoderTabActive(tab), show: expandedDropdown === tab.id }"
               >
-                {{ $t(`tabs.${tab.id}`) || tab.name }}
-              </a>
-              <ul class="dropdown-menu" :class="{ show: expandedDropdown === tab.id }">
-                <li v-for="childTab in tab.children" :key="childTab.id">
-                  <a
-                    class="dropdown-item"
-                    :class="[{ active: currentTab === childTab.id }, `encoder-item-${childTab.id}`]"
-                    href="#"
-                    @click.prevent="selectEncoderTab(childTab.id, $event)"
-                  >
-                    {{ $t(`tabs.${childTab.id}`) || childTab.name }}
-                  </a>
-                </li>
-              </ul>
-            </li>
-            <li v-else class="nav-item">
-              <a
-                class="nav-link"
-                :class="{ active: tab.id === currentTab }"
-                href="#"
-                @click.prevent="currentTab = tab.id"
-              >
-                {{ $t(`tabs.${tab.id}`) || tab.name }}
-              </a>
-            </li>
-          </template>
-        </ul>
+                <a
+                  class="nav-link dropdown-toggle"
+                  :class="{ active: isEncoderTabActive(tab) }"
+                  href="#"
+                  role="button"
+                  :aria-expanded="expandedDropdown === tab.id"
+                  @click.prevent="toggleEncoderDropdown(tab.id, $event)"
+                >
+                  {{ $t(`tabs.${tab.id}`) || tab.name }}
+                </a>
+                <ul class="dropdown-menu" :class="{ show: expandedDropdown === tab.id }">
+                  <li v-for="childTab in tab.children" :key="childTab.id">
+                    <a
+                      class="dropdown-item"
+                      :class="[{ active: currentTab === childTab.id }, `encoder-item-${childTab.id}`]"
+                      href="#"
+                      @click.prevent="selectEncoderTab(childTab.id, $event)"
+                    >
+                      {{ $t(`tabs.${childTab.id}`) || childTab.name }}
+                    </a>
+                  </li>
+                </ul>
+              </li>
+              <li v-else class="nav-item">
+                <a
+                  class="nav-link"
+                  :class="{ active: tab.id === currentTab }"
+                  href="#"
+                  @click.prevent="currentTab = tab.id"
+                >
+                  {{ $t(`tabs.${tab.id}`) || tab.name }}
+                </a>
+              </li>
+            </template>
+          </ul>
+        </div>
 
         <General
           v-if="currentTab === 'general'"
@@ -149,26 +217,34 @@
         <Network v-if="currentTab === 'network'" :config="config" :platform="platform" />
         <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
         <Advanced v-if="currentTab === 'advanced'" :config="config" :platform="platform" />
-        <ContainerEncoders :current-tab="currentTab" :config="config" :platform="platform" />
+        <ContainerEncoders
+          v-if="isEncoderCurrentTab"
+          :current-tab="currentTab"
+          :config="config"
+          :platform="platform"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, provide, computed, onUnmounted } from 'vue'
+import { ref, watch, onMounted, provide, computed, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
-import General from '../configs/tabs/General.vue'
-import Inputs from '../configs/tabs/Inputs.vue'
-import Network from '../configs/tabs/Network.vue'
-import Files from '../configs/tabs/Files.vue'
-import Advanced from '../configs/tabs/Advanced.vue'
-import AudioVideo from '../configs/tabs/AudioVideo.vue'
-import ContainerEncoders from '../configs/tabs/ContainerEncoders.vue'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
+import { getPreferredEncoderTab } from '../config/encoderTabs.js'
 import { useConfig } from '../composables/useConfig.js'
-import { initFirebase, trackEvents } from '../config/firebase.js'
+import { trackEvents } from '../config/firebase.js'
 
-initFirebase()
+const General = defineAsyncComponent(() => import('../configs/tabs/General.vue'))
+const Inputs = defineAsyncComponent(() => import('../configs/tabs/Inputs.vue'))
+const Network = defineAsyncComponent(() => import('../configs/tabs/Network.vue'))
+const Files = defineAsyncComponent(() => import('../configs/tabs/Files.vue'))
+const Advanced = defineAsyncComponent(() => import('../configs/tabs/Advanced.vue'))
+const AudioVideo = defineAsyncComponent(() => import('../configs/tabs/AudioVideo.vue'))
+const ContainerEncoders = defineAsyncComponent(() => import('../configs/tabs/ContainerEncoders.vue'))
+
+const ENCODER_TAB_IDS = new Set(['nv', 'qsv', 'amd', 'vt', 'sw'])
 
 const {
   platform,
@@ -183,8 +259,9 @@ const {
   tabs,
   initTabs,
   loadConfig,
-  save,
-  apply,
+  save: saveConfig,
+  apply: applyConfig,
+  getRiskyChanges,
   handleHash,
   hasUnsavedChanges,
 } = useConfig()
@@ -192,6 +269,11 @@ const {
 const showSaveToast = ref(false)
 const showRestartToast = ref(false)
 const expandedDropdown = ref(null)
+const showRiskConfirm = ref(false)
+const riskAction = ref('save')
+const riskItems = ref([])
+const riskActionRunning = ref(false)
+const configTabsRef = ref(null)
 
 const hasUnsaved = computed(() => {
   if (!config.value) return false
@@ -203,7 +285,26 @@ const hasUnsaved = computed(() => {
   return hasUnsavedChanges()
 })
 
+const isEncoderCurrentTab = computed(() => ENCODER_TAB_IDS.has(currentTab.value))
+
 const isEncoderTabActive = (tab) => tab.type === 'group' && tab.children?.some((child) => child.id === currentTab.value)
+
+const preferredEncoderTab = (children = []) =>
+  getPreferredEncoderTab({
+    activeEncoder: config.value?.active_encoder,
+    configuredEncoder: config.value?.encoder,
+    selectedAdapter: config.value?.adapter_name,
+    adapters: config.value?.adapters,
+    platform: platform.value,
+    availableTabIds: children.map((child) => child.id),
+  })
+
+const scrollActiveTabIntoView = async () => {
+  await nextTick()
+  const activeTab = configTabsRef.value?.querySelector('.nav-link.active')
+  const behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  activeTab?.scrollIntoView?.({ behavior, block: 'nearest', inline: 'center' })
+}
 
 const toggleEncoderDropdown = (tabId, event) => {
   event.stopPropagation()
@@ -219,7 +320,7 @@ const toggleEncoderDropdown = (tabId, event) => {
   const children = encoderGroup?.children
 
   if (children?.length && !children.some((child) => child.id === currentTab.value)) {
-    currentTab.value = children[0].id
+    currentTab.value = preferredEncoderTab(children)
   }
 }
 
@@ -235,6 +336,52 @@ const showToast = (toastRef, duration = 5000) => {
     toastRef.value = false
   }, duration)
 }
+
+const runConfigAction = async (action) => {
+  if (riskActionRunning.value) return
+
+  riskActionRunning.value = true
+  try {
+    if (action === 'apply') {
+      await applyConfig()
+    } else {
+      await saveConfig()
+    }
+  } finally {
+    riskActionRunning.value = false
+  }
+}
+
+const requestConfigAction = async (action) => {
+  if (riskActionRunning.value || showRiskConfirm.value) return
+
+  const risks = getRiskyChanges(action)
+  if (risks.length > 0) {
+    riskAction.value = action
+    riskItems.value = risks
+    showRiskConfirm.value = true
+    return
+  }
+
+  await runConfigAction(action)
+}
+
+const cancelRiskConfirm = () => {
+  if (riskActionRunning.value) return
+  showRiskConfirm.value = false
+  riskItems.value = []
+}
+
+const confirmRiskAction = async () => {
+  if (riskActionRunning.value) return
+
+  const action = riskAction.value
+  showRiskConfirm.value = false
+  await runConfigAction(action)
+  riskItems.value = []
+}
+
+watch(currentTab, scrollActiveTabIntoView)
 
 watch(saved, (newVal) => {
   if (newVal && !restarted.value) {
@@ -260,18 +407,29 @@ const handleOutsideClick = (event) => {
   }
 }
 
+const handleConfigHash = () => {
+  handleHash()
+
+  if (currentTab.value === 'encoders') {
+    const encoderGroup = tabs.value.find((tab) => tab.id === 'encoders')
+    currentTab.value = preferredEncoderTab(encoderGroup?.children)
+  }
+}
+
 onMounted(async () => {
   trackEvents.pageView('configuration')
   initTabs()
   await loadConfig()
-  handleHash()
+  handleConfigHash()
 
-  window.addEventListener('hashchange', handleHash)
+  await scrollActiveTabIntoView()
+
+  window.addEventListener('hashchange', handleConfigHash)
   document.addEventListener('click', handleOutsideClick)
 })
 
 onUnmounted(() => {
-  window.removeEventListener('hashchange', handleHash)
+  window.removeEventListener('hashchange', handleConfigHash)
   document.removeEventListener('click', handleOutsideClick)
 })
 </script>
@@ -284,7 +442,7 @@ onUnmounted(() => {
 @border-radius-sm: 2px;
 @border-radius-md: 10px;
 @border-radius-lg: 12px;
-@btn-size: 56px;
+@btn-size: 52px;
 @btn-size-mobile: 48px;
 @cubic-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
 @cubic-smooth: cubic-bezier(0.4, 0, 0.2, 1);
@@ -305,21 +463,29 @@ onUnmounted(() => {
   transition: @properties @transition-fast @cubic-smooth;
 }
 
-.skeleton-gradient(@light: 0.08, @mid: 0.12) {
-  background: linear-gradient(90deg, rgba(0, 0, 0, @light) 25%, rgba(0, 0, 0, @mid) 50%, rgba(0, 0, 0, @light) 75%);
+.skeleton-gradient() {
+  background: linear-gradient(
+    90deg,
+    var(--ui-skeleton-base) 25%,
+    var(--ui-skeleton-highlight) 50%,
+    var(--ui-skeleton-base) 75%
+  );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
 }
 
 .config-page {
   padding: 1em;
-  border: 1px solid transparent;
+  border: 1px solid var(--ui-border);
   border-top: none;
+  border-radius: 0 0 var(--ui-radius-md) var(--ui-radius-md);
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
 }
 
 .config-skeleton {
   .skeleton-header {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.1));
+    background: var(--ui-surface-strong);
     border-radius: @border-radius-lg @border-radius-lg 0 0;
     padding: 0.5rem 1rem;
   }
@@ -369,7 +535,7 @@ onUnmounted(() => {
   .skeleton-label {
     width: 120px;
     height: 16px;
-    .skeleton-gradient(0.06, 0.1);
+    .skeleton-gradient();
     border-radius: 4px;
     flex-shrink: 0;
   }
@@ -377,7 +543,7 @@ onUnmounted(() => {
   .skeleton-input {
     flex: 1;
     height: 38px;
-    .skeleton-gradient(0.06, 0.1);
+    .skeleton-gradient();
     border-radius: 6px;
     max-width: 300px;
   }
@@ -392,27 +558,124 @@ onUnmounted(() => {
   }
 }
 
-[data-bs-theme='dark'] .config-skeleton {
-  .skeleton-header {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
-  }
-
-  .skeleton-tab,
-  .skeleton-title,
-  .skeleton-label,
-  .skeleton-input {
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.06) 25%,
-      rgba(255, 255, 255, 0.1) 50%,
-      rgba(255, 255, 255, 0.06) 75%
-    );
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.5s infinite;
-  }
-}
-
 .page-config {
+  min-height: 100vh;
+  padding-bottom: var(--spacing-xl);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
+
+  .page-title {
+    color: var(--ui-text-primary) !important;
+    font-weight: 600;
+  }
+
+  .form.card {
+    overflow: visible;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-md);
+    background: var(--ui-surface);
+    box-shadow: var(--ui-shadow-sm);
+  }
+
+  .config-page {
+    .accordion-item {
+      overflow: hidden;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--ui-radius-md);
+      background: var(--ui-surface);
+      box-shadow: var(--ui-shadow-sm);
+    }
+
+    .accordion-button {
+      border: 0;
+      background: var(--ui-surface-strong);
+      color: var(--ui-text-primary);
+      font-weight: 600;
+      transition: color 0.2s ease, background-color 0.2s ease;
+
+      &:hover,
+      &:not(.collapsed) {
+        background: var(--ui-accent-soft);
+        color: var(--ui-accent);
+      }
+
+      &:focus {
+        box-shadow: inset 0 0 0 2px var(--ui-accent-soft);
+      }
+    }
+
+    .accordion-body {
+      background: transparent;
+    }
+
+    pre {
+      max-width: 100%;
+      margin: 0.5rem 0;
+      padding: 0.75rem 1rem;
+      overflow: auto;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--ui-radius-sm);
+      background: var(--ui-surface);
+      color: var(--ui-text-secondary);
+      font-size: 0.82rem;
+    }
+
+    .pre-line {
+      white-space: pre-line;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.85rem;
+    }
+
+    .settings-field,
+    .settings-panel {
+      min-width: 0;
+      padding: 0.9rem;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--ui-radius-md);
+      background: var(--ui-surface);
+      box-shadow: var(--ui-shadow-sm);
+    }
+
+    .settings-panel--accent {
+      border-left: 3px solid var(--ui-accent);
+      background: color-mix(in srgb, var(--ui-accent) 5%, var(--ui-surface));
+    }
+
+    .settings-subpanel {
+      padding: 0.8rem;
+      border: 1px solid var(--ui-border);
+      border-left: 3px solid var(--ui-border-strong);
+      border-radius: var(--ui-radius-sm);
+      background: var(--ui-surface-strong);
+    }
+
+    .settings-toggle-field {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .settings-field > .form-label:first-child,
+    .settings-panel > .form-label:first-child {
+      color: var(--ui-text-primary);
+      font-weight: 600;
+    }
+
+    @media (max-width: 767.98px) {
+      .settings-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .settings-field,
+      .settings-panel {
+        padding: 0.75rem;
+      }
+    }
+  }
+
   .nav-tabs {
     border: none;
   }
@@ -424,12 +687,19 @@ onUnmounted(() => {
     font-weight: bold;
   }
 
+  .config-tabs-shell {
+    position: relative;
+    border-radius: @border-radius-lg @border-radius-lg 0 0;
+    z-index: 10;
+    background: var(--ui-surface-strong);
+  }
+
   .config-tabs {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.1));
+    background: var(--ui-surface-strong);
     border-radius: @border-radius-lg @border-radius-lg 0 0;
     padding: 0.5rem 1rem 0;
     gap: 0.5rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid var(--ui-border);
     position: relative;
     z-index: 10;
     overflow: visible;
@@ -450,7 +720,7 @@ onUnmounted(() => {
       border-radius: @border-radius-md @border-radius-md 0 0;
       padding: 0.75rem 1.5rem;
       font-weight: 500;
-      color: var(--bs-secondary-color);
+      color: var(--ui-text-secondary);
       background: transparent;
       position: relative;
       overflow: hidden;
@@ -464,20 +734,20 @@ onUnmounted(() => {
         transform: translateX(-50%) scaleX(0);
         width: 80%;
         height: 3px;
-        background: linear-gradient(90deg, var(--bs-primary), var(--bs-info));
+        background: var(--ui-accent);
         border-radius: 3px 3px 0 0;
         .transition(transform);
       }
 
       &:hover {
-        color: var(--bs-primary);
-        background: rgba(var(--bs-primary-rgb), 0.08);
+        color: var(--ui-text-primary);
+        background: var(--ui-accent-soft);
       }
 
       &.active {
-        color: var(--bs-primary);
-        background: var(--bs-body-bg);
-        box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+        color: var(--ui-accent);
+        background: var(--ui-surface);
+        box-shadow: var(--ui-shadow-sm);
         font-weight: 600;
 
         &::before {
@@ -505,9 +775,9 @@ onUnmounted(() => {
       margin-top: 0.25rem;
       padding: 0.5rem 0;
       border-radius: @border-radius-md;
-      border: 1px solid rgba(0, 0, 0, 0.1);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      background: rgba(var(--bs-body-bg-rgb), 0.95);
+      border: 1px solid var(--ui-border);
+      box-shadow: var(--ui-shadow-md);
+      background: var(--ui-surface-strong);
       backdrop-filter: blur(10px);
 
       &.show {
@@ -532,14 +802,14 @@ onUnmounted(() => {
           color: @color-intel;
         }
         &.encoder-item-sw {
-          color: var(--bs-secondary-color);
+          color: var(--ui-text-secondary);
         }
 
         &:hover {
-          background: rgba(var(--bs-primary-rgb), 0.08);
+          background: var(--ui-accent-soft);
         }
         &.active {
-          background: rgba(var(--bs-primary-rgb), 0.15);
+          background: rgba(var(--ui-accent-rgb), 0.2);
           font-weight: 600;
         }
       }
@@ -560,6 +830,114 @@ onUnmounted(() => {
 
 .toast.show {
   opacity: 1;
+}
+
+.risk-confirm-intro {
+  margin: 0 0 1rem;
+  color: var(--ui-text-secondary);
+}
+
+.risk-confirm-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.risk-item {
+  padding: 1rem;
+  border: 1px solid var(--ui-border);
+  border-radius: @border-radius-md;
+  background: var(--ui-surface);
+
+  &.critical {
+    border-color: var(--ui-danger-border);
+    background: var(--ui-danger-soft);
+  }
+
+  &.high {
+    border-color: color-mix(in srgb, var(--ui-warning) 36%, transparent);
+    background: color-mix(in srgb, var(--ui-warning) 8%, transparent);
+  }
+
+  &.medium {
+    border-color: color-mix(in srgb, var(--ui-accent) 30%, transparent);
+    background: var(--ui-accent-soft);
+  }
+
+  p {
+    margin: 0.5rem 0 0;
+    color: var(--ui-text-primary);
+    line-height: 1.5;
+  }
+
+}
+
+.risk-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+
+  strong {
+    font-size: 0.98rem;
+  }
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+
+  &.critical {
+    color: var(--ui-danger-contrast);
+    background: var(--ui-danger);
+  }
+
+  &.high {
+    color: var(--ui-warning-contrast);
+    background: var(--ui-warning);
+  }
+
+  &.medium {
+    color: var(--ui-accent-contrast);
+    background: var(--ui-accent);
+  }
+}
+
+.risk-detail,
+.risk-recovery {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--ui-border);
+
+  span {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--ui-text-secondary);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    padding: 0.2rem 0.4rem;
+    border-radius: @border-radius-sm;
+    color: var(--ui-text-primary);
+    background: var(--ui-accent-soft);
+  }
+
+}
+
+.risk-recovery p {
+  margin: 0;
+  color: var(--ui-text-secondary);
 }
 
 .config-floating-buttons {
@@ -589,90 +967,59 @@ onUnmounted(() => {
   .cute-btn {
     width: @btn-size;
     height: @btn-size;
-    border-radius: 50%;
-    border: 3px solid rgba(255, 255, 255, 0.4);
-    color: #fff;
+    border-radius: var(--ui-radius-md);
+    border: 1px solid var(--ui-border-strong);
+    color: var(--ui-accent-contrast);
     font-size: 1.25rem;
     cursor: pointer;
     position: relative;
-    overflow: hidden;
     .transition();
     .flex-center();
 
-    &::before {
-      content: '';
-      position: absolute;
-      top: -50%;
-      left: -50%;
-      width: 200%;
-      height: 200%;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
-      opacity: 0;
-      .transition(opacity);
-    }
-
-    &::after {
-      content: '';
-      position: absolute;
-      top: 20%;
-      left: 20%;
-      width: 30%;
-      height: 30%;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.6) 0%, transparent 70%);
-      border-radius: 50%;
-      opacity: 0.8;
-    }
-
     &:hover {
-      transform: scale(1.1) translateY(-2px);
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2), 0 0 30px rgba(255, 255, 255, 0.3);
-
-      &::before,
-      &::after {
-        opacity: 1;
-      }
+      transform: translateY(-1px);
+      box-shadow: var(--ui-shadow-md);
     }
 
     &:active {
-      transform: scale(0.95) translateY(0);
+      transform: scale(0.97) translateY(0);
       transition: transform 0.1s @cubic-bounce;
     }
 
+    &:focus-visible {
+      outline: none;
+      box-shadow: var(--ui-shadow-sm), 0 0 0 3px var(--ui-accent-soft);
+    }
+
     &-primary {
-      background: linear-gradient(135deg, #ff6b9d, #c44569, #f093fb);
-      background-size: 200% 200%;
-      box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
-        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      background: var(--ui-accent);
+      color: var(--ui-accent-contrast);
+      box-shadow: var(--ui-shadow-sm);
 
       &:hover {
-        animation: gradient-shift 1.5s ease infinite;
-        box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6), 0 0 40px rgba(255, 107, 157, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        background: var(--ui-accent);
+        box-shadow: var(--ui-shadow-md);
       }
 
       &.has-unsaved {
         animation: pulse-warning 2s ease-in-out 3;
-        box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
-          0 0 0 3px rgba(255, 193, 7, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        box-shadow: var(--ui-shadow-sm), 0 0 0 3px color-mix(in srgb, var(--ui-warning) 50%, transparent);
 
         &:hover {
-          animation: gradient-shift 1.5s ease infinite, pulse-warning 2s ease-in-out 3;
-          box-shadow: 0 8px 25px rgba(255, 107, 157, 0.6), 0 0 40px rgba(255, 107, 157, 0.4),
-            0 0 0 4px rgba(255, 193, 7, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+          animation: pulse-warning 2s ease-in-out 3;
+          box-shadow: var(--ui-shadow-md), 0 0 0 4px color-mix(in srgb, var(--ui-warning) 70%, transparent);
         }
       }
     }
 
     &-success {
-      background: linear-gradient(135deg, #4facfe, #00f2fe, #43e97b);
-      background-size: 200% 200%;
-      box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4), 0 0 20px rgba(79, 172, 254, 0.2),
-        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      background: var(--ui-success);
+      color: var(--ui-success-contrast);
+      box-shadow: var(--ui-shadow-sm);
 
       &:hover {
-        animation: gradient-shift 1.5s ease infinite;
-        box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6), 0 0 40px rgba(79, 172, 254, 0.4),
-          inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        background: var(--ui-success);
+        box-shadow: var(--ui-shadow-md);
       }
     }
 
@@ -683,82 +1030,32 @@ onUnmounted(() => {
     }
 
     &:hover i {
-      transform: scale(1.2) rotate(5deg);
+      transform: scale(1.06);
     }
-  }
 
-  @keyframes gradient-shift {
-    0%,
-    100% {
-      background-position: 0% 50%;
-    }
-    50% {
-      background-position: 100% 50%;
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+      transform: none;
+      box-shadow: none;
+      animation: none;
+      border-color: var(--ui-border);
+      background: var(--ui-surface-strong);
+      color: var(--ui-text-muted);
+
+      i {
+        transform: none;
+      }
     }
   }
 
   @keyframes pulse-warning {
     0%,
     100% {
-      box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
-        0 0 0 3px rgba(255, 193, 7, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      box-shadow: var(--ui-shadow-sm), 0 0 0 3px color-mix(in srgb, var(--ui-warning) 50%, transparent);
     }
     50% {
-      box-shadow: 0 4px 15px rgba(255, 107, 157, 0.4), 0 0 20px rgba(255, 107, 157, 0.2),
-        0 0 0 5px rgba(255, 193, 7, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-    }
-  }
-}
-
-// Dark mode
-[data-bs-theme='dark'] .page-config .config-tabs {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
-  border-bottom-color: rgba(255, 255, 255, 0.1);
-
-  .nav-link {
-    &:hover {
-      background: rgba(var(--bs-primary-rgb), 0.15);
-    }
-    &.active {
-      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
-    }
-  }
-
-  .dropdown-menu {
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-
-    .dropdown-item {
-      &:hover {
-        background: rgba(var(--bs-primary-rgb), 0.15);
-      }
-      &.active {
-        background: rgba(var(--bs-primary-rgb), 0.25);
-      }
-    }
-  }
-}
-
-[data-bs-theme='dark'] .config-floating-buttons .cute-btn {
-  border-color: rgba(255, 255, 255, 0.5);
-
-  &-primary {
-    box-shadow: 0 4px 15px rgba(255, 107, 157, 0.5), 0 0 25px rgba(255, 107, 157, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4);
-
-    &:hover {
-      box-shadow: 0 8px 25px rgba(255, 107, 157, 0.7), 0 0 50px rgba(255, 107, 157, 0.5),
-        inset 0 1px 0 rgba(255, 255, 255, 0.5);
-    }
-  }
-
-  &-success {
-    box-shadow: 0 4px 15px rgba(79, 172, 254, 0.5), 0 0 25px rgba(79, 172, 254, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4);
-
-    &:hover {
-      box-shadow: 0 8px 25px rgba(79, 172, 254, 0.7), 0 0 50px rgba(79, 172, 254, 0.5),
-        inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      box-shadow: var(--ui-shadow-sm), 0 0 0 5px color-mix(in srgb, var(--ui-warning) 80%, transparent);
     }
   }
 }
@@ -791,14 +1088,44 @@ onUnmounted(() => {
 
   .page-config .config-tabs {
     padding: 0.5rem 0.5rem 0;
-    gap: 0.25rem;
+    gap: 0.35rem;
     overflow-x: auto;
+    overflow-y: hidden;
     flex-wrap: nowrap;
+    scroll-padding-inline: 2rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
 
     .nav-link {
-      padding: 0.5rem 1rem;
+      min-height: 44px;
+      padding: 0.625rem 1rem;
       font-size: 0.875rem;
       white-space: nowrap;
+      scroll-snap-align: center;
+    }
+  }
+
+  .page-config .config-tabs-shell {
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2rem;
+      pointer-events: none;
+      z-index: 11;
+    }
+
+    &::before {
+      left: 0;
+      background: linear-gradient(90deg, var(--ui-surface-strong), transparent);
+    }
+
+    &::after {
+      right: 0;
+      background: linear-gradient(270deg, var(--ui-surface-strong), transparent);
     }
   }
 }

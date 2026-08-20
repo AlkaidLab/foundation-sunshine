@@ -12,6 +12,16 @@
 #include <bitset>
 
 namespace audio {
+  // Audio codec values negotiated via the "x-ml-audio.codec" RTSP attribute.
+  // Defaults to OPUS for backward compatibility with all existing Moonlight
+  // clients.
+  enum codec_e : int {
+    CODEC_OPUS = 0,
+    CODEC_AC3 = 1,
+    CODEC_EAC3 = 2,
+    CODEC_PCM_S16 = 3,  ///< Raw signed 16-bit interleaved LPCM (no compression)
+  };
+
   enum stream_config_e : int {
     STEREO,  ///< Stereo
     HIGH_STEREO,  ///< High stereo
@@ -47,12 +57,24 @@ namespace audio {
       HIGH_QUALITY,  ///< High quality audio
       HOST_AUDIO,  ///< Host audio
       CUSTOM_SURROUND_PARAMS,  ///< Custom surround parameters
+      CONTINUOUS_AUDIO,  ///< Continuous audio
       MAX_FLAGS  ///< Maximum number of flags
     };
 
     int packetDuration;
     int channels;
     int mask;
+
+    // Audio codec selected for this session (codec_e). Defaults to CODEC_OPUS.
+    // AC3/E-AC3 are intended for HDMI/SPDIF passthrough on the client side and
+    // require the client to advertise support via the "x-ml-audio.codec" RTSP
+    // attribute. When set to a non-OPUS value the encoder emits raw IEC 61937
+    // bytes inside the audio RTP payload instead of Opus packets.
+    int codec;
+
+    // Bitrate (bps) requested by the client for AC3/E-AC3 encoding. 0 means
+    // "use server default" (640 kbps for AC3, 384 kbps for E-AC3).
+    int bitrate;
 
     stream_params_t customStreamParams;
 
@@ -98,6 +120,18 @@ namespace audio {
   has_audio_ctx_ref();
 
   /**
+   * @brief Atomically acquire an audio context reference only if one already exists.
+   * @returns A live audio_ctx_ref_t when a context is already alive, an empty one otherwise.
+   * @note Unlike get_audio_ctx_ref() this never (re-)constructs the audio context, which
+   *       makes it safe for fire-and-forget probes such as microphone redirection that
+   *       must not resurrect a context after the audio capture loop has stopped.
+   *       Prefer this over the has_audio_ctx_ref() + get_audio_ctx_ref() pair to avoid
+   *       a TOCTOU race that could otherwise re-trigger start_audio_control().
+   */
+  audio_ctx_ref_t
+  try_get_audio_ctx_ref();
+
+  /**
    * @brief Check if the audio sink held by audio context is available.
    * @returns True if available (and can probably be restored), false otherwise.
    * @note Useful for delaying the release of audio context shared pointer (which
@@ -116,6 +150,7 @@ namespace audio {
 
   /**
    * @brief Start the microphone redirect device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    * @returns 0 on success, -1 on error.
    */
   int
@@ -123,17 +158,18 @@ namespace audio {
 
   /**
    * @brief Release the microphone redirect device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    */
   void
   release_mic_redirect_device();
 
   /**
-   * @brief Write microphone data to the virtual audio device.
-   * @param data Pointer to the audio data.
-   * @param size Size of the audio data in bytes.
-   * @param seq Sequence number for FEC recovery (0 = unknown)
-   * @returns Number of bytes written, or -1 on error.
+   * @brief Write mixed mono 48 kHz signed 16-bit PCM to the virtual microphone device.
+   * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
+   * @param samples Pointer to the PCM samples.
+   * @param frame_count Number of mono frames to write.
+   * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
    */
   int
-  write_mic_data(const std::uint8_t *data, size_t size, uint16_t seq = 0);
+  write_mic_pcm(const std::int16_t *samples, std::size_t frame_count);
 }  // namespace audio

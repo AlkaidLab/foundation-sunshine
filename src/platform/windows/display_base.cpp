@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <initguid.h>
+#include <iterator>
 #include <thread>
 
 #include <boost/algorithm/string/join.hpp>
@@ -30,6 +31,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 #include "display_device/windows_utils.h"
 #include "misc.h"
 #include "src/config.h"
+#include "src/cursor_channel.h"
 #include "src/display_device/display_device.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -154,10 +156,51 @@ namespace platf::dxgi {
       case DXGI_ERROR_ACCESS_LOST:
       case DXGI_ERROR_ACCESS_DENIED:
         return capture_e::reinit;
+      case DXGI_ERROR_DEVICE_REMOVED:
+      case DXGI_ERROR_DEVICE_RESET:
+        BOOST_LOG(error) << "D3D11 device lost during AcquireNextFrame [0x"sv << util::hex(status).to_string_view() << "], requesting reinit"sv;
+        return capture_e::reinit;
       default:
         BOOST_LOG(error) << "Couldn't acquire next frame [0x"sv << util::hex(status).to_string_view();
         return capture_e::error;
     }
+  }
+
+  capture_e
+  duplication_t::update_cursor(const DXGI_OUTDUPL_FRAME_INFO &frame_info,
+                               bool &shape_updated) {
+    shape_updated = false;
+    if (frame_info.PointerShapeBufferSize > 0) {
+      std::vector<std::uint8_t> img_data(frame_info.PointerShapeBufferSize);
+      DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};
+      UINT actual_size = 0;
+      const auto status = dup->GetFramePointerShape(
+        static_cast<UINT>(img_data.size()),
+        img_data.data(),
+        &actual_size,
+        &shape_info
+      );
+      if (FAILED(status) || actual_size > img_data.size()) {
+        BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv
+                         << util::hex(status).to_string_view() << ']';
+        return capture_e::error;
+      }
+
+      img_data.resize(actual_size);
+      cursor.img_data = std::move(img_data);
+      cursor.shape_info = shape_info;
+      do {
+        ++cursor.shape_id;
+      } while (cursor.shape_id == 0);
+      shape_updated = true;
+    }
+
+    if (frame_info.LastMouseUpdateTime.QuadPart) {
+      cursor.x = frame_info.PointerPosition.Position.x;
+      cursor.y = frame_info.PointerPosition.Position.y;
+      cursor.visible = frame_info.PointerPosition.Visible;
+    }
+    return capture_e::ok;
   }
 
   capture_e
@@ -186,6 +229,11 @@ namespace platf::dxgi {
         return capture_e::ok;
 
       case DXGI_ERROR_ACCESS_LOST:
+        return capture_e::reinit;
+
+      case DXGI_ERROR_DEVICE_REMOVED:
+      case DXGI_ERROR_DEVICE_RESET:
+        BOOST_LOG(error) << "D3D11 device lost during ReleaseFrame [0x"sv << util::hex(status).to_string_view() << "], requesting reinit"sv;
         return capture_e::reinit;
 
       default:
@@ -403,6 +451,15 @@ namespace platf::dxgi {
         }
       }
 
+      if (status == capture_e::ok && img_out) {
+        // Keep the encoder-ready time separate from the producer's presentation
+        // timestamp: the former measures host processing, while the latter drives RTP PTS.
+        if (!img_out->pipeline_trace) {
+          img_out->pipeline_trace.emplace();
+        }
+        img_out->pipeline_trace->capture_ready = std::chrono::steady_clock::now();
+      }
+
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:
@@ -553,7 +610,7 @@ namespace platf::dxgi {
       return -1;
     }
 
-    const auto adapter_name = from_utf8(config::video.adapter_name);
+    auto adapter_name = from_utf8(config::video.adapter_name);
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
 
@@ -565,10 +622,23 @@ namespace platf::dxgi {
     }
 
     adapter_t::pointer adapter_p;
-    for (int tries = 0; tries < 2 && !output; ++tries) {
+    // Tries:
+    //   0 - normal pass with the configured adapter filter (if any).
+    //   1 - same filter, but after nudging the display power state.
+    //   2 - last resort: if the configured adapter never matched, drop the
+    //       filter and accept any adapter so a misconfigured / stale
+    //       adapter_name doesn't make capture init fail outright.
+    for (int tries = 0; tries < 3 && !output; ++tries) {
       if (tries == 1) {
         SetThreadExecutionState(ES_DISPLAY_REQUIRED);
         Sleep(500);
+      }
+      if (tries == 2) {
+        if (adapter_name.empty()) {
+          break;
+        }
+        BOOST_LOG(warning) << "[Display Init] Configured adapter ["sv << to_utf8(adapter_name) << "] did not match any enumerated adapter; falling back to auto-select"sv;
+        adapter_name.clear();
       }
 
       for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
@@ -1027,6 +1097,15 @@ namespace platf::dxgi {
 
   const char *
   display_base_t::dxgi_format_to_string(DXGI_FORMAT format) {
+    // The table is indexed directly by the DXGI_FORMAT value, but it only covers the
+    // contiguous range of documented formats and contains NULL holes for the reserved
+    // values between B4G4R4A4_UNORM (115) and P208 (130). Formats outside that range
+    // (e.g. A4B4G4R4_UNORM = 191, the sampler feedback opaque formats, or a bogus value
+    // from a driver) would otherwise read out of bounds, and the NULL holes would be
+    // streamed as a null char pointer, which is undefined behavior.
+    if (format >= std::size(format_str) || !format_str[format]) {
+      return "DXGI_FORMAT_UNRECOGNIZED";
+    }
     return format_str[format];
   }
 
@@ -1077,6 +1156,9 @@ namespace platf {
    */
   std::shared_ptr<display_t>
   display(mem_type_e hwdevice_type, const std::string &display_name, const video::config_t &config) {
+    // Recover ConsentPromptBehaviorAdmin if Sunshine previously crashed during WGC capture (runs only once)
+    dxgi::recover_secure_desktop();
+
     auto try_init = [&](auto disp) -> std::shared_ptr<display_t> {
       if (!disp->init(config, display_name)) {
         return disp;
@@ -1087,7 +1169,9 @@ namespace platf {
     // Build list of capture methods to try
     std::vector<std::string> try_types;
 
-    if (config::video.capture.empty()) {
+    const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
+
+    if (capture_backend.empty()) {
       if (is_running_as_system_user) {
         // WGC is not available in service mode
         try_types = { "ddx" };
@@ -1097,13 +1181,18 @@ namespace platf {
         try_types = { "ddx", "wgc" };
       }
     }
-    else if (config::video.capture == "wgc" && is_running_as_system_user) {
+    else if (capture_backend == "wgc" && is_running_as_system_user) {
       // WGC explicitly requested but unavailable in service mode
       BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
       try_types = { "ddx" };
     }
+    else if (capture_backend == "vdd") {
+      // Direct VDD capture is preferred, but DDX remains a safe last resort
+      // when the producer cannot represent the selected desktop mode.
+      try_types = { "vdd", "ddx" };
+    }
     else {
-      try_types = { config::video.capture };
+      try_types = { capture_backend };
     }
 
     for (const auto &type : try_types) {
@@ -1111,6 +1200,12 @@ namespace platf {
 
       if (type == "amd" && hwdevice_type == mem_type_e::dxgi) {
         ret = try_init(std::make_shared<dxgi::display_amd_vram_t>());
+      }
+      else if (type == "vdd" && hwdevice_type == mem_type_e::dxgi) {
+        // ZakoVDD direct shared-texture capture. Works in SYSTEM context and
+        // before user logon. Only valid when the selected display is a VDD
+        // virtual monitor.
+        ret = try_init(std::make_shared<dxgi::display_vdd_vram_t>());
       }
       else if (type == "ddx") {
         if (hwdevice_type == mem_type_e::dxgi) {
@@ -1130,11 +1225,17 @@ namespace platf {
       }
 
       if (ret) {
+        cursor_channel::set_producer_available(type == "ddx" || type == "vdd");
         return ret;
+      }
+
+      if (type == "vdd") {
+        BOOST_LOG(warning) << "[vdd] direct capture initialization failed; trying DDX capture for the selected VDD output"sv;
       }
     }
 
     BOOST_LOG(error) << "Failed to create display for: " << display_name;
+    cursor_channel::set_producer_available(false);
     return nullptr;
   }
 
@@ -1160,8 +1261,9 @@ namespace platf {
       return {};
     }
 
-    dxgi::adapter_t adapter;
-    for (int x = 0; factory->EnumAdapters1(x, &adapter) != DXGI_ERROR_NOT_FOUND; ++x) {
+    dxgi::adapter_t::pointer adapter_p;
+    for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+      dxgi::adapter_t adapter { adapter_p };
       DXGI_ADAPTER_DESC1 adapter_desc;
       adapter->GetDesc1(&adapter_desc);
 
@@ -1242,8 +1344,9 @@ namespace platf {
       return {};
     }
 
-    dxgi::adapter_t adapter;
-    for (int x = 0; factory->EnumAdapters1(x, &adapter) != DXGI_ERROR_NOT_FOUND; ++x) {
+    dxgi::adapter_t::pointer adapter_p;
+    for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+      dxgi::adapter_t adapter { adapter_p };
       DXGI_ADAPTER_DESC1 adapter_desc;
       adapter->GetDesc1(&adapter_desc);
 

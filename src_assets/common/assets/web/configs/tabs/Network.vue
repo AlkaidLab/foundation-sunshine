@@ -1,163 +1,13 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
+import WebhookCard from '../webhook/WebhookCard.vue'
 
-const props = defineProps([
-  'platform',
-  'config'
-])
-
-const { t } = useI18n()
+const props = defineProps(['config'])
 
 const defaultMoonlightPort = 47989
 
 const config = ref(props.config)
 const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort)
-const showCurlModal = ref(false)
-const copied = ref(false)
-
-const curlCommand = computed(() => {
-  if (!config.value.webhook_url) {
-    return ''
-  }
-  
-  const url = config.value.webhook_url
-  const payload = JSON.stringify({
-    msgtype: 'text',
-    text: {
-      content: 'Hello, Sunshine Foundation Webhook'
-    }
-  })
-  
-  // 转义 JSON 中的双引号，以便在双引号字符串中使用
-  const escapedPayload = payload.replace(/"/g, '\\"')
-  
-  return `curl -X POST "${url}" -H "Content-Type: application/json" -d "${escapedPayload}"`
-})
-
-const showCurlCommand = () => {
-  showCurlModal.value = true
-  copied.value = false
-}
-
-const closeCurlModal = () => {
-  showCurlModal.value = false
-  copied.value = false
-}
-
-const copyCurlCommand = async () => {
-  try {
-    await navigator.clipboard.writeText(curlCommand.value)
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
-  } catch (error) {
-    // 降级方案：使用传统方法
-    const textArea = document.createElement('textarea')
-    textArea.value = curlCommand.value
-    textArea.style.position = 'fixed'
-    textArea.style.opacity = '0'
-    document.body.appendChild(textArea)
-    textArea.select()
-    try {
-      document.execCommand('copy')
-      copied.value = true
-      setTimeout(() => {
-        copied.value = false
-      }, 2000)
-    } catch (err) {
-      alert(t('config.webhook_curl_copy_failed') || '复制失败，请手动选择并复制')
-    }
-    document.body.removeChild(textArea)
-  }
-}
-
-const testWebhook = async () => {
-  if (!config.value.webhook_url) {
-    alert(t('config.webhook_test_url_required'))
-    return
-  }
-
-  try {
-    new URL(config.value.webhook_url)
-  } catch (error) {
-    alert(t('config.webhook_test_failed') + ': Invalid URL format')
-    return
-  }
-
-  try {
-    const testPayload = JSON.stringify({
-      msgtype: 'text',
-      text: {
-        content: 'Sunshine Webhook Test - This is a test message from Sunshine configuration page'
-      }
-    })
-
-    const controller = new AbortController()
-    const timeout = parseInt(config.value.webhook_timeout) || 1000
-    const timeoutId = setTimeout(() => controller.abort(), timeout)
-
-    try {
-      const response = await fetch(config.value.webhook_url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: testPayload,
-        signal: controller.signal
-      })
-
-      clearTimeout(timeoutId)
-
-      if (response.ok) {
-        alert(t('config.webhook_test_success'))
-        return
-      } else {
-        throw new Error(`HTTP ${response.status}`)
-      }
-    } catch (corsError) {
-      clearTimeout(timeoutId)
-
-      if (corsError.name === 'TypeError' && corsError.message.includes('Failed to fetch')) {
-        const noCorsController = new AbortController()
-        const noCorsTimeoutId = setTimeout(() => noCorsController.abort(), timeout)
-
-        try {
-          await fetch(config.value.webhook_url, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: testPayload,
-            signal: noCorsController.signal
-          })
-
-          clearTimeout(noCorsTimeoutId)
-          alert(t('config.webhook_test_success') + '\n\n' + t('config.webhook_test_success_cors_note'))
-        } catch (noCorsError) {
-          clearTimeout(noCorsTimeoutId)
-          if (noCorsError.name === 'AbortError') {
-            throw new Error(`Request timeout (${timeout}ms)`)
-          }
-          throw noCorsError
-        }
-      } else if (corsError.name === 'AbortError') {
-        throw new Error(`Request timeout (${timeout}ms)`)
-      } else {
-        throw corsError
-      }
-    }
-  } catch (error) {
-    if (error.name === 'AbortError' || error.message.includes('timeout')) {
-      const timeout = parseInt(config.value.webhook_timeout) || 1000
-      alert(t('config.webhook_test_failed') + `: Request timeout (${timeout}ms)`)
-    } else {
-      alert(`${t('config.webhook_test_failed')}: ${error.message || 'Unknown error'}\n\n${t('config.webhook_test_failed_note')}`)
-    }
-  }
-}
 </script>
 
 <template>
@@ -201,7 +51,8 @@ const testWebhook = async () => {
       <div class="alert alert-danger" v-if="(+effectivePort + 21) > 65535">
         <i class="fa-solid fa-xl fa-triangle-exclamation"></i> {{ $t('config.port_alert_2') }}
       </div>
-      <table class="table">
+      <div class="port-table-shell">
+      <table class="table port-table">
         <thead>
         <tr>
           <th scope="col">{{ $t('config.port_protocol') }}</th>
@@ -246,6 +97,7 @@ const testWebhook = async () => {
         </tr>
         </tbody>
       </table>
+      </div>
       <div class="alert alert-warning" v-if="config.origin_web_ui_allowed === 'wan'">
         <i class="fa-solid fa-xl fa-triangle-exclamation"></i> {{ $t('config.port_warning') }}
       </div>
@@ -291,6 +143,19 @@ const testWebhook = async () => {
       <div class="form-text">{{ $t('config.wan_encryption_mode_desc') }}</div>
     </div>
 
+    <!-- Forward Error Correction -->
+    <div class="mb-3">
+      <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
+      <input
+        id="fec_percentage"
+        v-model="config.fec_percentage"
+        class="form-control"
+        type="text"
+        placeholder="20"
+      />
+      <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
+    </div>
+
     <!-- CLOSE VERIFY SAFE -->
     <div class="mb-3">
       <label for="close_verify_safe" class="form-label">{{ $t('config.close_verify_safe') }}</label>
@@ -318,279 +183,63 @@ const testWebhook = async () => {
       <div class="form-text">{{ $t('config.ping_timeout_desc') }}</div>
     </div>
 
-    <!-- Webhook Settings -->
-    <div class="accordion">
-      <div class="accordion-item">
-        <h2 class="accordion-header">
-          <button class="accordion-button" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#webhook-collapse">
-            {{ $t('config.webhook_group') }}
-          </button>
-        </h2>
-        <div id="webhook-collapse" class="accordion-collapse collapse show">
-          <div class="accordion-body">
-            <!-- Webhook Enable -->
-            <div class="mb-3">
-              <label for="webhook_enabled" class="form-label">{{ $t('config.webhook_enabled') }}</label>
-              <select id="webhook_enabled" class="form-select" v-model="config.webhook_enabled">
-                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-                <option value="enabled">{{ $t('_common.enabled') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.webhook_enabled_desc') }}</div>
-            </div>
-
-            <!-- Webhook URL -->
-            <div class="mb-3" v-if="config.webhook_enabled === 'enabled'">
-              <label for="webhook_url" class="form-label">{{ $t('config.webhook_url') }}</label>
-              <div class="input-group">
-                <input type="url" class="form-control" id="webhook_url" placeholder="https://example.com/webhook" v-model="config.webhook_url" />
-                <button class="btn btn-outline-info" type="button" @click="testWebhook" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
-                  <i class="fas fa-paper-plane me-1"></i>{{ $t('config.webhook_test') }}
-                </button>
-                <button class="btn btn-outline-info" type="button" @click="showCurlCommand" :disabled="!config.webhook_url || config.webhook_enabled !== 'enabled'">
-                  <i class="fas fa-terminal me-1"></i>{{ $t('config.webhook_curl_command') }}
-                </button>
-              </div>
-              <div class="form-text">{{ $t('config.webhook_url_desc') }}</div>
-            </div>
-
-            <!-- Skip SSL Verify -->
-            <div class="mb-3" v-if="config.webhook_enabled === 'enabled'">
-              <label for="webhook_skip_ssl_verify" class="form-label">{{ $t('config.webhook_skip_ssl_verify') }}</label>
-              <select id="webhook_skip_ssl_verify" class="form-select" v-model="config.webhook_skip_ssl_verify">
-                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-                <option value="enabled">{{ $t('_common.enabled') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.webhook_skip_ssl_verify_desc') }}</div>
-            </div>
-
-            <!-- Webhook Timeout -->
-            <div class="mb-3" v-if="config.webhook_enabled === 'enabled'">
-              <label for="webhook_timeout" class="form-label">{{ $t('config.webhook_timeout') }}</label>
-              <input type="number" min="100" max="5000" class="form-control" id="webhook_timeout" placeholder="1000" v-model="config.webhook_timeout" />
-              <div class="form-text">{{ $t('config.webhook_timeout_desc') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
+    <!-- Pair Max Attempts (per 60s window, per IP) -->
+    <div class="mb-3">
+      <label for="pair_max_attempts" class="form-label">{{ $t('config.pair_max_attempts') }}</label>
+      <input
+        type="number"
+        class="form-control"
+        id="pair_max_attempts"
+        min="0"
+        max="50"
+        step="1"
+        placeholder="10"
+        v-model.number="config.pair_max_attempts"
+      />
+      <div class="form-text">{{ $t('config.pair_max_attempts_desc') }}</div>
     </div>
+
+    <!-- Webhook is stored and applied independently from the general configuration form. -->
+    <WebhookCard />
 
   </div>
-
-  <!-- Curl Command Modal -->
-  <Transition name="fade">
-    <div v-if="showCurlModal" class="curl-command-overlay" @click.self="closeCurlModal">
-      <div class="curl-command-modal">
-        <div class="curl-command-header">
-          <h5>
-            <i class="fas fa-terminal me-2"></i>{{ $t('config.webhook_curl_command') || 'Curl 命令' }}
-          </h5>
-          <button class="btn-close" @click="closeCurlModal"></button>
-        </div>
-        <div class="curl-command-body">
-          <p class="text-muted mb-3">{{ $t('config.webhook_curl_command_desc') || '复制以下命令到终端中执行，可以测试 webhook 是否正常工作：' }}</p>
-          <div class="curl-command-container">
-            <pre class="curl-command" id="curlCommandText">{{ curlCommand }}</pre>
-          </div>
-          <div class="alert alert-info mt-3" v-if="copied">
-            <i class="fas fa-check-circle me-2"></i>{{ $t('_common.copied') || '已复制到剪贴板' }}
-          </div>
-        </div>
-        <div class="curl-command-footer">
-          <button class="copy-btn" @click="copyCurlCommand" type="button">
-            <i class="fas fa-copy me-1"></i>{{ $t('_common.copy') }}
-          </button>
-          <button type="button" class="btn btn-secondary" @click="closeCurlModal">{{ $t('_common.close') || '关闭' }}</button>
-        </div>
-      </div>
-    </div>
-  </Transition>
 </template>
 
 <style scoped>
-/* Curl Command Modal - 使用 ScanResultModal 样式 */
-.curl-command-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 20px);
-  overflow: hidden;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
-}
-
-.curl-command-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
-  width: 100%;
-  max-width: 700px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
-  animation: modalSlideUp 0.3s ease;
-  
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
-}
-
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.curl-command-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-
-  h5 {
-    margin: 0;
-    color: var(--text-primary, #fff);
-    font-size: var(--font-size-lg, 1.1rem);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm, 8px);
-  }
-  
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    
-    h5 {
-      color: #000000;
-    }
-  }
-}
-
-.curl-command-body {
-  padding: var(--spacing-lg, 24px);
-  overflow-y: auto;
-  flex: 1;
-  color: var(--text-primary, #fff);
-  
-  p, span, div {
-    color: var(--text-primary, #fff);
-  }
-  
-  .text-muted {
-    color: rgba(255, 255, 255, 0.6);
-  }
-  
-  .alert {
-    color: var(--text-primary, #fff);
-  }
-
-  .alert-info {
-    background: rgba(23, 162, 184, 0.2);
-    border-color: rgba(23, 162, 184, 0.5);
-  }
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
-    
-    p, span, div {
-      color: #000000;
-    }
-    
-    .text-muted {
-      color: rgba(0, 0, 0, 0.6);
-    }
-    
-    .alert {
-      color: #000000;
-    }
-
-    .alert-info {
-      background: rgba(23, 162, 184, 0.15);
-      border-color: rgba(23, 162, 184, 0.4);
-    }
-  }
-}
-
-.curl-command-footer {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
-}
-
-.curl-command-container {
-  position: relative;
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-  border-radius: 4px;
-  padding: 15px;
-  
-  [data-bs-theme='light'] & {
-    background-color: rgba(248, 249, 250, 0.8);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-  }
-}
-
-.curl-command {
-  margin: 0;
-  padding: 0;
-  font-family: 'Courier New', monospace;
-  font-size: 0.9rem;
-  color: var(--text-primary, #fff);
-  background: transparent;
-  border: none;
-  white-space: pre-wrap;
-  word-break: break-all;
+.port-table-shell {
+  margin-top: 1rem;
   overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-  
-  [data-bs-theme='light'] & {
-    color: #000000;
-  }
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
 }
 
-
-/* Vue 过渡动画 */
-.fade-enter-active {
-  transition: opacity 0.3s ease;
+.port-table {
+  min-width: 540px;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--ui-text-secondary);
+  --bs-table-border-color: var(--ui-border);
+  --bs-table-hover-bg: var(--ui-surface-hover);
+  --bs-table-hover-color: var(--ui-text-primary);
 }
 
-.fade-leave-active {
-  transition: opacity 0.3s ease;
+.port-table thead th {
+  padding: 0.8rem 1rem;
+  border-bottom-color: var(--ui-border);
+  background: var(--ui-surface-strong);
+  color: var(--ui-text-primary);
+  font-weight: 600;
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.port-table td {
+  padding: 0.75rem 1rem;
+  vertical-align: middle;
+}
+
+.port-table .alert {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
 }
 </style>

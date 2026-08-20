@@ -7,8 +7,10 @@
 // lib includes
 #include <boost/log/common.hpp>
 #include <boost/log/sinks.hpp>
+#include <boost/log/sinks/text_file_backend.hpp>
 
 using text_sink = boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>;
+using file_sink = boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>;
 
 extern boost::log::sources::severity_logger<int> verbose;
 extern boost::log::sources::severity_logger<int> debug;

@@ -19,16 +19,19 @@
 AppId={{B16E5C0D-7B8A-4E3B-9F1A-2D4C6E8F0A1B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName=Sunshine Foundation Game Streaming Server v{#MyAppVersion}
+AppVerName=Foundation Sunshine Game Streaming Server v{#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/support
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={code:GetPreviousInstallDir|{autopf}\{#MyAppName}}
+; Always show the directory page so users can recover from a bad remembered path.
+DisableDirPage=no
 DefaultGroupName={#MyAppName}
-; 管理员权限
+; 管理员权限。Sunshine 必须以管理员安装：写 HKLM 注册表、安装服务/驱动/防火墙、
+; 写入 {autopf}\Sunshine 都需要提权。不允许用户在 UAC 对话框中降级到 "为当前用户安装"，
+; 否则 HKLM\SOFTWARE\AlkaidLab\Sunshine 会以错误 5 (拒绝访问) 失败。
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
 ; 输出设置
 OutputDir=@CPACK_PACKAGE_DIRECTORY@
 OutputBaseFilename=Sunshine
@@ -45,12 +48,12 @@ WizardImageAlphaFormat=defined
 WizardSizePercent=120
 ; 版本信息 (VersionInfoVersion requires X.X.X.X format, use AppVersion for display)
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoDescription=Sunshine Foundation Game Streaming Server
+VersionInfoDescription=Foundation Sunshine Game Streaming Server
 VersionInfoProductName={#MyAppName}
 ; 其他
 LicenseFile={#MyLicenseFile}
-; 允许覆盖安装
-UsePreviousAppDir=yes
+; Use our validated InstallDir registry value instead of Inno Setup's implicit previous app dir.
+UsePreviousAppDir=no
 ; 最小 Windows 版本 (Windows 10)
 MinVersion=10.0
 ; 64 位安装
@@ -59,6 +62,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; 重启管理器
 CloseApplications=yes
 RestartApplications=yes
+; Driver installation is executed from [Code], where its exit status is
+; validated. NeedRestart() requests the reboot only after a staged VDD reports
+; that its device/control interface cannot become ready in the current boot.
+RestartIfNeededByRun=no
+; Always write %TEMP%\Setup Log*.txt. Support reports for "service did not
+; install" / "files disappeared" are unanswerable without the per-file and
+; per-[Run] results, and users cannot be expected to re-run with /LOG.
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -68,15 +79,23 @@ Name: "chinesesimplified"; MessagesFile: "@CMAKE_SOURCE_DIR@\cmake\packaging\Chi
 ; English custom messages
 english.ComponentApplication=Sunshine main application
 english.ComponentAssets=Required assets (shaders, web UI)
+english.ComponentGUI=Sunshine GUI and tray agent (required)
 english.ComponentVDD=Zako Virtual Display Driver (HDR)
 english.ComponentAutostart=Launch on system startup
 english.ComponentFirewall=Add firewall exclusions
 english.ComponentGamepad=Virtual Gamepad (ViGEmBus)
 english.ComponentVmouse=Virtual Mouse Driver (UMDF)
 english.ComponentTools=Diagnostic tools (dxgi-info, audio-info)
-english.TypeFull=Full installation
-english.TypeCompact=Compact installation
+english.TypeRecommended=Recommended (virtual display + firewall + autostart)
+english.TypeFull=Full installation (all components)
+english.TypeCompact=Compact installation (core only)
 english.TypeCustom=Custom installation
+english.ComponentVDDDesc=Required for headless/remote streaming without a physical monitor. Enables HDR passthrough.
+english.ComponentFirewallDesc=Allows Moonlight clients to discover and connect to this PC over the network.
+english.ComponentAutostartDesc=Sunshine will start automatically when Windows boots. Recommended for always-on streaming.
+english.ComponentGamepadDesc=Emulates Xbox controller for games. Install only if you need gamepad input from the client.
+english.ComponentVmouseDesc=Provides smooth absolute mouse positioning. Install if cursor feels laggy.
+english.ComponentToolsDesc=dxgi-info, audio-info for troubleshooting display and audio issues.
 english.StatusResetPermissions=Resetting file permissions...
 english.StatusUpdatePath=Updating system PATH...
 english.StatusMigrateConfig=Migrating configuration files...
@@ -90,6 +109,10 @@ english.FinishOpenDocs=Open documentation
 english.FinishLaunchGUI=Launch Sunshine GUI
 english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nIt must be uninstalled before continuing.%n%nUninstall the previous version now?
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
+english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
+english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
+english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
 english.StatusStoppingService=Stopping Sunshine service...
@@ -98,15 +121,23 @@ english.StatusStoppingProcesses=Stopping running Sunshine processes...
 ; Chinese Simplified custom messages
 chinesesimplified.ComponentApplication=Sunshine 主程序
 chinesesimplified.ComponentAssets=必要资源（着色器、Web UI）
+chinesesimplified.ComponentGUI=Sunshine GUI 与托盘代理（必需）
 chinesesimplified.ComponentVDD=Zako 虚拟显示驱动（HDR）
 chinesesimplified.ComponentAutostart=开机自动启动
 chinesesimplified.ComponentFirewall=添加防火墙规则
 chinesesimplified.ComponentGamepad=虚拟手柄（ViGEmBus）
 chinesesimplified.ComponentVmouse=虚拟鼠标驱动（UMDF）
 chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info）
-chinesesimplified.TypeFull=完全安装
-chinesesimplified.TypeCompact=简洁安装
+chinesesimplified.TypeRecommended=推荐安装（虚拟显示器 + 防火墙 + 开机自启）
+chinesesimplified.TypeFull=完全安装（所有组件）
+chinesesimplified.TypeCompact=简洁安装（仅核心）
 chinesesimplified.TypeCustom=自定义安装
+chinesesimplified.ComponentVDDDesc=无头/远程串流必装。无需外接显示器即可串流，支持 HDR 直通。
+chinesesimplified.ComponentFirewallDesc=允许 Moonlight 客户端通过网络发现并连接本机。
+chinesesimplified.ComponentAutostartDesc=Windows 启动时自动运行 Sunshine。推荐常驻串流使用。
+chinesesimplified.ComponentGamepadDesc=模拟 Xbox 手柄。仅需要从客户端传入手柄输入时安装。
+chinesesimplified.ComponentVmouseDesc=提供平滑的绝对定位鼠标。如鼠标延迟可尝试安装。
+chinesesimplified.ComponentToolsDesc=dxgi-info、audio-info 等，用于排查显示和音频问题。
 chinesesimplified.StatusResetPermissions=正在重置文件权限...
 chinesesimplified.StatusUpdatePath=正在更新系统 PATH...
 chinesesimplified.StatusMigrateConfig=正在迁移配置文件...
@@ -120,28 +151,38 @@ chinesesimplified.FinishOpenDocs=打开使用文档
 chinesesimplified.FinishLaunchGUI=启动 Sunshine 管理界面
 chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%n需要先卸载才能继续。%n%n是否现在卸载旧版本？
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
+chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
+chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
+chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgVDDInstallFailed=无法安装或验证虚拟显示驱动。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
 chinesesimplified.StatusStoppingProcesses=正在停止 Sunshine 进程...
 
 [Types]
+Name: "recommended"; Description: "{cm:TypeRecommended}"
 Name: "full"; Description: "{cm:TypeFull}"
 Name: "compact"; Description: "{cm:TypeCompact}"
 Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
 
 [Components]
-Name: "application"; Description: "{cm:ComponentApplication}"; Types: full compact custom; Flags: fixed
-Name: "assets"; Description: "{cm:ComponentAssets}"; Types: full compact custom; Flags: fixed
-Name: "vdd"; Description: "{cm:ComponentVDD}"; Types: full
-Name: "autostart"; Description: "{cm:ComponentAutostart}"; Types: full
-Name: "firewall"; Description: "{cm:ComponentFirewall}"; Types: full compact
-Name: "gamepad"; Description: "{cm:ComponentGamepad}"; Types: full
-Name: "vmouse"; Description: "{cm:ComponentVmouse}"; Types: full
-Name: "tools"; Description: "{cm:ComponentTools}"; Types: full
+Name: "application"; Description: "{cm:ComponentApplication}"; Types: recommended full compact custom; Flags: fixed
+Name: "assets"; Description: "{cm:ComponentAssets}"; Types: recommended full compact custom; Flags: fixed
+Name: "gui"; Description: "{cm:ComponentGUI}"; Types: recommended full compact custom; Flags: fixed
+Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
+Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewallDesc}"; Types: recommended full compact
+Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
+Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: recommended full
+Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[InstallDelete]
+; Remove old hashed Web UI bundles before installing the freshly built frontend.
+Type: filesandordirs; Name: "{app}\assets\web"
 
 [Files]
 ; Main application
@@ -152,6 +193,11 @@ Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Comp
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\stylus-input-probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+
+; First-party self-contained DualSense sidecar runtime. Keep this mandatory so
+; packaging fails instead of producing a GUI that cannot install the component.
+Source: "{#MySourceDir}\tools\sunshine-ds5-sidecar\*"; DestDir: "{app}\tools\sunshine-ds5-sidecar"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: application
 
 ; Portable scripts (will be deleted during install, but needed for layout)
 Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -173,8 +219,12 @@ Source: "{#MySourceDir}\scripts\IMAGE_MIGRATION.md"; DestDir: "{app}\scripts"; F
 ; PATH management
 Source: "{#MySourceDir}\scripts\update-path.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 
-; Assets (includes GUI, shaders, web UI, etc.)
-Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+; Assets (shaders, web UI, etc.)
+Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+
+; Required GUI and user-session tray agent
+Source: "{#MySourceDir}\assets\gui\{#MyAppGUIExeName}"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui
+Source: "{#MySourceDir}\assets\gui\WebView2Loader.dll"; DestDir: "{app}\assets\gui"; Flags: ignoreversion skipifsourcedoesntexist; Components: gui
 
 ; Helper tools
 Source: "{#MySourceDir}\tools\device-toggler.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
@@ -184,25 +234,35 @@ Source: "{#MySourceDir}\tools\SetDpi.exe"; DestDir: "{app}\tools"; Flags: ignore
 Source: "{#MySourceDir}\tools\setreg.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 
 ; Autostart script
-Source: "{#MySourceDir}\scripts\autostart-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: autostart
+; Always copy so users can run it manually as admin if they unchecked autostart.
+Source: "{#MySourceDir}\scripts\autostart-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 ; Firewall scripts
-Source: "{#MySourceDir}\scripts\add-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: firewall
-Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: firewall
+; Always copy so users can run them manually as admin if they unchecked firewall.
+Source: "{#MySourceDir}\scripts\add-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 ; Virtual Display Driver scripts & files
-Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: vdd
-Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: vdd
-Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs; Components: vdd
+Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\vdd-device-helper.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs
 
 ; Gamepad scripts
-Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: gamepad
-Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: gamepad
+Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
 
 ; Virtual Mouse Driver scripts & files
-Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion; Components: vmouse
-Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion; Components: vmouse
-Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs; Components: vmouse
+Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
+
+; Virtual audio sink (microphone / VB-Cable) scripts
+; Always shipped — there is no install-time component for this; the user can
+; right-click + "Run as administrator" on install-vsink.bat to enable it.
+Source: "{#MySourceDir}\scripts\install-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#MySourceDir}\scripts\uninstall-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Optional diagnostic tools
 Source: "{#MySourceDir}\tools\dxgi-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
@@ -211,13 +271,13 @@ Source: "{#MySourceDir}\tools\audio-info.exe"; DestDir: "{app}\tools"; Flags: ig
 [Icons]
 ; Start Menu shortcuts
 Name: "{group}\Sunshine"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{group}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"
+Name: "{group}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Components: gui
 Name: "{group}\Sunshine Tools"; Filename: "{app}\tools"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Desktop shortcuts (optional, controlled by Tasks)
 Name: "{autodesktop}\Sunshine"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{autodesktop}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Sunshine GUI"; Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; IconFilename: "{app}\assets\gui\{#MyAppGUIExeName}"; Tasks: desktopicon; Components: gui
 
 ; Install dir shortcut
 Name: "{app}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--shortcut"; IconFilename: "{app}\{#MyAppExeName}"
@@ -227,27 +287,43 @@ Name: "{app}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--sh
 Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
 
 [Run]
-; Post-install actions (shown on progress page)
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C /Q >nul 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden
+; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
+; attribute on files & dirs. The latter is what fixes the rare "Sunshine
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
-Filename: "{app}\scripts\install-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
 Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
-Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart
 
 ; Finish page actions - user selectable
-; Use explorer.exe to launch GUI so it always runs as the non-elevated current user,
-; even though the installer itself is running with admin privileges.
-Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runascurrentuser unchecked nowait skipifsilent
-Filename: "{win}\explorer.exe"; Parameters: """{app}\assets\gui\{#MyAppGUIExeName}"""; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent
+Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
+; Launch the user-session agent with the original desktop token. The GUI then
+; owns and reconciles its HKCU autostart entry from the correct user context.
+;
+; Go through `cmd /c start` instead of pointing Filename at the GUI directly:
+; sunshine-gui.exe carries no requestedExecutionLevel manifest, so Windows
+; treats it as a legacy app and the Program Compatibility Assistant may stamp
+; a RUNASADMIN layer on its path after an earlier crash. CreateProcessAsUser
+; then fails with 740 (ERROR_ELEVATION_REQUIRED) and Inno shows a red
+; "无法执行文件 ... 错误代码 740" box on the finish page, which reads like the
+; whole install failed. cmd.exe never requires elevation, and `start` uses
+; ShellExecute, so a layered GUI just gets a normal UAC prompt instead.
+; WorkingDir has to be spelled out now: Inno derives it from Filename when it
+; is blank, which would hand the GUI {sys} instead of its own directory.
+Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeName}"""; WorkingDir: "{app}\assets\gui"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait runhidden skipifsilent runasoriginaluser; Components: gui
 
 [UninstallRun]
-; Stop running processes first
+; Remove the per-user GUI startup entry before terminating the agent.
+Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveGUIAutoStart"; Check: FileExists(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'))
+; Stop running processes first. We force-kill the service binary
+; (sunshinesvc.exe) here as well, otherwise `sc stop` later may block waiting
+; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
 Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
 Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
+Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
@@ -288,6 +364,72 @@ var
   BrandTitle: TNewStaticText;
   BrandSubtitle: TNewStaticText;
   AccentBar: TBevel;
+  ExistingInnoInstall: Boolean;
+  // Set when VerifyServiceInstalled() could not confirm the SunshineService
+  // registration. Surfaced through GetCustomSetupExitCode() so unattended
+  // callers still see a failure — the GUI updater runs us with /VERYSILENT
+  // and treats exit code 0 as "update installed successfully".
+  ServiceVerifyFailed: Boolean;
+  // 0 = ready/not selected, 101 = failed, 3010 = reboot required.
+  VDDResultCode: Integer;
+
+function VDDComponentSelected(): Boolean;
+begin
+  Result := WizardIsComponentSelected('vdd');
+end;
+
+function GetServiceInstallParameters(Param: String): String;
+begin
+  if VDDResultCode = 0 then
+    Result := ''
+  else
+    Result := '--no-start';
+end;
+
+function ShouldConfigureServiceAutostart(): Boolean;
+begin
+  Result := VDDResultCode <> 101;
+end;
+
+procedure InstallAndVerifyVDD();
+var
+  ResultCode: Integer;
+  Params, Detail: String;
+begin
+  if not VDDComponentSelected() then
+    Exit;
+
+  WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
+  Params := '--preserve-healthy-existing';
+  ResultCode := -1;
+  if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
+              SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    VDDResultCode := 101;
+    Log('Could not launch the VDD installer helper.');
+  end
+  else if ResultCode = 0 then
+  begin
+    Log('VDD installation and control-interface verification succeeded.');
+  end
+  else if ResultCode = 3010 then
+  begin
+    VDDResultCode := 3010;
+    Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
+  end
+  else
+  begin
+    VDDResultCode := 101;
+    Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
+  end;
+
+  if (VDDResultCode = 101) and (not WizardSilent) then
+  begin
+    Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
+              'Exit code: ' + IntToStr(ResultCode);
+    MsgBox(Detail, mbError, MB_OK);
+  end;
+end;
 
 procedure InitializeWizard();
 var
@@ -445,52 +587,344 @@ begin
   end;
 end;
 
+// Strip the executable path out of an UninstallString that may include
+// surrounding quotes and/or trailing arguments (e.g. '"...\Uninstall.exe" /S').
+function GetOldNSISUninstallExe(UninstallString: String): String;
+var
+  Path: String;
+  ClosePos, SpacePos: Integer;
+begin
+  Path := Trim(UninstallString);
+  if Path = '' then
+  begin
+    Result := '';
+    Exit;
+  end;
+  if Path[1] = '"' then
+  begin
+    ClosePos := Pos('"', Copy(Path, 2, Length(Path) - 1));
+    if ClosePos > 0 then
+      Path := Copy(Path, 2, ClosePos - 1)
+    else
+      Path := Copy(Path, 2, Length(Path) - 1);
+  end
+  else
+  begin
+    SpacePos := Pos(' ', Path);
+    if SpacePos > 0 then
+      Path := Copy(Path, 1, SpacePos - 1);
+  end;
+  Result := Path;
+end;
+
+// Best-effort: extract the install directory from the NSIS UninstallString.
+function GetOldNSISInstallDir(UninstallString: String): String;
+var
+  Path: String;
+  SlashPos: Integer;
+begin
+  Result := '';
+  Path := GetOldNSISUninstallExe(UninstallString);
+  if Path = '' then
+    Exit;
+  SlashPos := Length(Path);
+  while (SlashPos > 0) and (Path[SlashPos] <> '\') and (Path[SlashPos] <> '/') do
+    SlashPos := SlashPos - 1;
+  if SlashPos > 1 then
+    Result := Copy(Path, 1, SlashPos - 1);
+end;
+
+// Force-delete the NSIS uninstall registry entries left behind by an old
+// installation. Used as a fallback when the silent uninstall finishes but
+// the registry still claims the product is installed (or when the install
+// directory is already gone).
+function CleanupOldNSISRegistry(): Boolean;
+begin
+  RegDeleteKeyIncludingSubkeys(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  RegDeleteKeyIncludingSubkeys(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  Result := not DetectOldNSISInstall();
+end;
+
 // Read previous install directory from registry
 function GetPreviousInstallDir(Default: String): String;
 var
   InstallDir: String;
+  Found: Boolean;
 begin
   Result := Default;
-  if RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir) then
+  Found := RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  // Fall back to HKLM32 for legacy 32-bit installs that wrote into Wow6432Node.
+  if not Found then
+    Found := RegQueryStringValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  if not Found or (InstallDir = '') then
+    Exit;
+  if DirExists(InstallDir) and
+     FileExists(AddBackslash(InstallDir) + '{#MyAppExeName}') then
   begin
-    if DirExists(InstallDir) then
-      Result := InstallDir;
+    Result := InstallDir;
+    Exit;
   end;
+  // Silent-mode safety net (auto-update path):
+  // The GUI updater launches us with /VERYSILENT (no dir page, no user
+  // interaction). If the previous sunshine.exe is missing (user deleted/moved
+  // it, AV quarantine, etc.) but the registry still points at a real
+  // directory, prefer that directory over falling back to {autopf}\Sunshine
+  // so the silent auto-update reliably overwrites the original location
+  // instead of creating a duplicate install in Program Files.
+  if WizardSilent and DirExists(InstallDir) then
+    Result := InstallDir;
+end;
+
+procedure DeleteInstallDirRegistry();
+begin
+  // The HKLM64 InstallDir value is also covered by [Registry] uninsdeletevalue,
+  // but we explicitly clean HKLM32 legacy values (older installs may have
+  // written there) and prune empty parent keys regardless of the user's
+  // "keep data" choice.
+  RegDeleteValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir');
+  RegDeleteValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir');
+  RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine');
+  RegDeleteKeyIfEmpty(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine');
+  RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab');
+  RegDeleteKeyIfEmpty(HKLM32, 'SOFTWARE\AlkaidLab');
+end;
+
+function DetectExistingInnoInstall(): Boolean;
+var
+  InstallDir: String;
+begin
+  Result := RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  if not Result then
+    Result := RegQueryStringValue(HKLM32, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', InstallDir);
+  Result := Result and (InstallDir <> '') and DirExists(InstallDir);
+end;
+
+function ShouldRepairInstallPermissions(): Boolean;
+var
+  ResultCode: Integer;
+  VerifyLog, Params: String;
+begin
+  Result := False;
+  if not ExistingInnoInstall then
+    Exit;
+
+  // Verification is read-only and substantially cheaper than rewriting every
+  // ACL. Only legacy installs with malformed/non-canonical ACLs take the slow
+  // recursive reset path.
+  VerifyLog := ExpandConstant('{tmp}\sunshine-icacls-verify.log');
+  Params := '/c icacls "' + ExpandConstant('{app}') +
+            '" /verify /T /C > "' + VerifyLog + '" 2>&1';
+  ResultCode := -1;
+  if not Exec(ExpandConstant('{cmd}'), Params, '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+    Result := True
+  else
+    Result := ResultCode <> 0;
+
+  if not Result then
+    DeleteFile(VerifyLog);
+end;
+
+procedure VerifyServiceInstalled();
+var
+  ExpectedPath, ImagePath, Lower, Detail, TmpFile, Line: String;
+  Tries, ResultCode, i: Integer;
+  Found: Boolean;
+  Lines: TArrayOfString;
+begin
+  ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
+  Lower := Lowercase(ExpectedPath);
+
+  // Read the service binary path directly from the registry instead of
+  // parsing `sc qc` output. `sc.exe` localizes its column labels
+  // (e.g. on Spanish Windows BINARY_PATH_NAME becomes NOMBRE_RUTA_BINARIO),
+  // so the previous string-prefix match falsely failed on non-English
+  // locales even though install-service.bat had already verified the
+  // binPath via locale-safe `find /I <abs_path>` and exited 0.
+  //
+  // ImagePath is REG_EXPAND_SZ and may be wrapped in quotes when the path
+  // contains spaces (it always does under "Program Files"); substring match
+  // tolerates both forms, plus any future appended arguments.
+  //
+  // Retry a few times: SCM can take a moment to publish ImagePath after a
+  // successful `sc create`, especially when the service was just deleted
+  // out of "marked for deletion" state inside install-service.bat.
+  //
+  // The Services tree under HKLM\SYSTEM is shared between registry views. Use
+  // HKLM first so the check is not sensitive to Inno/Windows 64-bit view
+  // quirks, then fall back to HKLM64 for existing installers' behaviour.
+  ImagePath := '';
+  Found := False;
+  for Tries := 1 to 5 do
+  begin
+    Found := RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Services\SunshineService',
+                                 'ImagePath', ImagePath);
+    if not Found then
+      Found := RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
+                                   'ImagePath', ImagePath);
+    if Found and (Pos(Lower, Lowercase(ImagePath)) > 0) then
+      Exit;  // happy path
+    Sleep(500);
+  end;
+
+  // Last-resort verification: query SCM and look for the expected absolute
+  // path anywhere in the output. This remains locale-safe because we do not
+  // parse localized labels such as BINARY_PATH_NAME/NOMBRE_RUTA_BINARIO.
+  TmpFile := ExpandConstant('{tmp}\sc_qc_sunshineservice_verify.txt');
+  ResultCode := -1;
+  Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService > "' + TmpFile + '" 2>&1',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if (ResultCode = 0) and LoadStringsFromFile(TmpFile, Lines) then
+  begin
+    for i := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Line := Lines[i];
+      if Pos(Lower, Lowercase(Line)) > 0 then
+      begin
+        DeleteFile(TmpFile);
+        Exit;
+      end;
+    end;
+  end;
+  DeleteFile(TmpFile);
+
+  // Build a detailed diagnostic so support reports include the actual
+  // mismatch rather than just the generic "could not install or verify"
+  // string. This makes it obvious whether the registry is empty (sc create
+  // never ran / was blocked) vs. pointing at an old install directory
+  // (stale SCM record from a previous install on a different drive).
+  if not Found then
+    Detail := 'ImagePath: <missing>'
+  else
+    Detail := 'ImagePath: ' + ImagePath;
+  Detail := Detail + #13#10 + 'Expected: ' + ExpectedPath;
+  Detail := Detail + #13#10 + 'sc qc exit: ' + IntToStr(ResultCode);
+  // Warn, but do NOT Abort(). Aborting here rolls the whole installation back
+  // and leaves {app} holding nothing but the preserved `config` directory —
+  // a total loss for what is usually a recoverable condition (SunshineService
+  // still "marked for deletion" from the previous uninstall, a stale binPath
+  // pointing at an old install drive, SCM being slow to publish ImagePath).
+  // The files are fine; only the service registration needs another attempt,
+  // which scripts\install-service.bat, the GUI's repair action, or a reboot
+  // can all do. Keep the install and tell the user how to retry.
+  //
+  // The exit code still reports the failure — see GetCustomSetupExitCode().
+  ServiceVerifyFailed := True;
+  Log('Service verification failed. ' + Detail);
+  // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
+  // unattended install without that switch would sit here forever now that we
+  // no longer abort. The log line above carries the same information.
+  // CustomMessage() returns the string verbatim, so {app} needs ExpandConstant.
+  if not WizardSilent then
+    MsgBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK);
+end;
+
+// Report a nonzero exit code when the service could not be verified. Inno
+// returns 0 on a completed install, and callers such as the GUI's auto-updater
+// (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`, success := code = 0) would
+// otherwise report a broken install as successful. Codes 100/101 are outside
+// Inno's own range (1-8), while 3010 is the standard Windows reboot-required
+// result consumed by unattended updaters.
+function GetCustomSetupExitCode(): Integer;
+begin
+  if VDDResultCode <> 0 then
+    Result := VDDResultCode
+  else if ServiceVerifyFailed then
+    Result := 100
+  else
+    Result := 0;
 end;
 
 // Initialization: handle old NSIS upgrade
 function InitializeSetup(): Boolean;
 var
   UninstallString: String;
+  UninstallExe: String;
+  InstallDir: String;
+  Params: String;
   ResultCode: Integer;
+  Waited: Integer;
 begin
+  ExistingInnoInstall := DetectExistingInnoInstall();
   Result := True;
 
-  if DetectOldNSISInstall() then
+  if not DetectOldNSISInstall() then
+    Exit;
+
+  UninstallString := GetOldNSISUninstallString();
+  if UninstallString = '' then
+    Exit;
+
+  UninstallExe := GetOldNSISUninstallExe(UninstallString);
+  InstallDir := GetOldNSISInstallDir(UninstallString);
+
+  // If the uninstaller binary itself is gone, the registry entry is just stale
+  // metadata. Offer to clean it up rather than blocking the install entirely.
+  if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    UninstallString := GetOldNSISUninstallString();
-    if UninstallString <> '' then
+    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
     begin
-      if MsgBox(CustomMessage('MsgOldNSISDetected'),
-        mbConfirmation, MB_YESNO) = IDYES then
+      if not CleanupOldNSISRegistry() then
       begin
-        // Run the NSIS uninstaller silently
-        Exec(RemoveQuotes(UninstallString), '/S', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
-        // Give it a moment to finish
-        Sleep(2000);
-        // Check if uninstall was successful
-        if DetectOldNSISInstall() then
-        begin
-          MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
-          Result := False;
-        end;
-      end
-      else
-      begin
+        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
         Result := False;
       end;
+    end
+    else
+    begin
+      Result := False;
+    end;
+    Exit;
+  end;
+
+  if MsgBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO) <> IDYES then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  // NSIS silent uninstall quirk: with bare '/S' the uninstaller copies itself
+  // to %TEMP% and re-launches a detached process, so ewWaitUntilTerminated
+  // returns almost immediately while the real cleanup is still running. Pass
+  // '_?=<InstallDir>' so the uninstaller runs in-place and we actually wait.
+  Params := '/S';
+  if (InstallDir <> '') and DirExists(InstallDir) then
+    Params := Params + ' _?=' + InstallDir;
+
+  Exec(UninstallExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  // Poll for up to ~60 seconds in case the uninstaller still detached or its
+  // post-uninstall steps (firewall/service/driver scripts) take a while.
+  Waited := 0;
+  while DetectOldNSISInstall() and (Waited < 60) do
+  begin
+    Sleep(1000);
+    Waited := Waited + 1;
+  end;
+
+  if not DetectOldNSISInstall() then
+    Exit;
+
+  // Still detected. If the install directory is empty/gone, the uninstaller
+  // succeeded at removing files but failed to delete its own registry key
+  // (a known NSIS issue when launched with _?=). Offer to clean it up so
+  // the user is not stuck in an unrecoverable state.
+  if (InstallDir = '') or (not DirExists(InstallDir)) or
+     (not FileExists(UninstallExe)) then
+  begin
+    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
+    begin
+      if not CleanupOldNSISRegistry() then
+      begin
+        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
+        Result := False;
+      end;
+      Exit;
     end;
   end;
+
+  MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
+  Result := False;
 end;
 
 // Stop services and processes before installation to avoid locked files
@@ -514,10 +948,19 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    // Upgrade older VDDs and make driver readiness a hard gate before the
+    // Sunshine service is allowed to start. A bound-but-not-ready device is
+    // kept for Windows to finish during the requested reboot.
+    InstallAndVerifyVDD();
     // Delete portable scripts in installed version
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
   end;
+end;
+
+function NeedRestart(): Boolean;
+begin
+  Result := VDDResultCode = 3010;
 end;
 
 // Custom uninstall: ask about gamepad and data removal
@@ -536,6 +979,10 @@ begin
 
   if CurUninstallStep = usPostUninstall then
   begin
+    // InstallDir is installer state, not user data. Always remove it so a failed
+    // installation cannot lock future installs to a stale drive/path.
+    DeleteInstallDirRegistry();
+
     // Ask about data removal
     if MsgBox(FmtMessage(CustomMessage('MsgUninstallData'), [ExpandConstant('{app}')]),
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDNO then
@@ -546,10 +993,6 @@ begin
     begin
       // Remove the installation directory
       DelTree(ExpandConstant('{app}'), True, True, True);
-      // Clean up registry
-      RegDeleteValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir');
-      RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine');
-      RegDeleteKeyIfEmpty(HKLM64, 'SOFTWARE\AlkaidLab');
     end;
   end;
 end;

@@ -1,11 +1,82 @@
-import { ref, computed } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { AppService } from '../services/appService.js'
 import { APP_CONSTANTS, ENV_VARS_CONFIG } from '../utils/constants.js'
 import { debounce, deepClone } from '../utils/helpers.js'
+import { apiPostJson } from '../utils/apiFetch.js'
 import { trackEvents } from '../config/firebase.js'
-import { searchCoverImage, batchSearchCoverImages } from '../utils/coverSearch.js'
+import {
+  applyGameLibraryOverrides,
+  GAME_LIBRARY_SKILL_IDS,
+  getDefaultEnabledGameLibrarySkillIds,
+  getGameLibraryCapabilityIcon,
+  getGameLibraryCapabilityLabel,
+  getGameLibrarySelectableCapabilities,
+  getGameResourceKey,
+  normalizeGameLibrarySkillIds,
+  rememberGameLibraryApp,
+  runGameLibraryCuratorAgent,
+} from '../utils/agents/gameLibrary/gameLibraryCuratorAgent.js'
 
 const MESSAGE_DURATION = 3000
+const GAME_LIBRARY_SKILL_PREFS_KEY = 'sunshine-game-library-skills:v1'
+const REMOTE_IMAGE_URL_RE = /^https?:\/\//i
+const COVER_LOCALIZATION_CONCURRENCY = 4
+const COVER_LOCALIZATION_FAILED_FIELD = 'cover-localization-failed'
+
+function getStorage() {
+  return typeof localStorage !== 'undefined' ? localStorage : null
+}
+
+function loadEnabledGameLibrarySkillIds() {
+  const storage = getStorage()
+  if (!storage) {
+    return getDefaultEnabledGameLibrarySkillIds()
+  }
+
+  try {
+    const raw = storage.getItem(GAME_LIBRARY_SKILL_PREFS_KEY)
+    if (!raw) {
+      return getDefaultEnabledGameLibrarySkillIds()
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed?.enabledSkillIds)) {
+      return getDefaultEnabledGameLibrarySkillIds()
+    }
+    return normalizeGameLibrarySkillIds(parsed.enabledSkillIds)
+  } catch {
+    return getDefaultEnabledGameLibrarySkillIds()
+  }
+}
+
+function saveEnabledGameLibrarySkillIds(skillIds) {
+  const storage = getStorage()
+  if (!storage) return
+
+  try {
+    storage.setItem(
+      GAME_LIBRARY_SKILL_PREFS_KEY,
+      JSON.stringify({ enabledSkillIds: normalizeGameLibrarySkillIds(skillIds) })
+    )
+  } catch {
+    // Skill preferences are convenience state; scanning should continue if persistence fails.
+  }
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(1, concurrency), items.length)
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex)
+    }
+  })
+
+  await Promise.all(workers)
+  return results
+}
 
 /**
  * 应用管理组合式函数
@@ -14,8 +85,8 @@ export function useApps() {
   // 状态
   const apps = ref([])
   const originalApps = ref([])
-  const filteredApps = ref([])
   const searchQuery = ref('')
+  const committedSearchQuery = ref('')
   const editingApp = ref(null)
   const platform = ref('')
   const isSaving = ref(false)
@@ -27,16 +98,67 @@ export function useApps() {
   const debouncedSearch = ref(null)
   const isScanning = ref(false)
   const scannedApps = ref([])
+  const scannedEditSource = ref(null)
   const showScanResult = ref(false)
-  const scannedAppsSearchQuery = ref('')
-  const showGamesOnly = ref(false)
-  const selectedAppType = ref('all') // 'all', 'executable', 'shortcut', 'batch', 'command', 'url'
+  const showScanOptions = ref(false)
+  const scanProgress = reactive({
+    active: false,
+    stage: '',
+    detail: '',
+    current: 0,
+    total: 0,
+    indeterminate: false,
+  })
+  const scanOptions = reactive({
+    scope: 'libraries',
+    platforms: {
+      steam: true,
+      epic: true,
+      gog: true,
+    },
+    extractIcons: true,
+  })
+  const enabledGameLibrarySkillIds = ref(loadEnabledGameLibrarySkillIds())
   const deleteConfirmIndex = ref(null)
+
+  // 批量删除：selectionMode 仅控制 UI 是否显示多选 checkbox；
+  // selectedIndices 是 Set<number>，存的是 apps.value 的原始 index，
+  // 不能存 filteredApps 的下标，否则搜索后下标会错位。
+  const selectionMode = ref(false)
+  const selectedIndices = ref(new Set())
+  const batchDeleteConfirm = ref(false)
+  const isBatchDeleting = ref(false)
+  const appRenderKeys = new WeakMap()
+  let nextAppRenderKey = 0
 
   // 计算属性
   const messageClass = computed(() => ({
     [`alert-${messageType.value}`]: true,
   }))
+
+  const normalizeAppForChangeCheck = (app) => {
+    const { index, ...rest } = app
+    return rest
+  }
+
+  const filteredApps = computed(() => AppService.searchApps(apps.value, committedSearchQuery.value))
+  const appIndexByReference = computed(() => new Map(apps.value.map((app, index) => [app, index])))
+  const filteredAppsWithIndex = computed(() =>
+    filteredApps.value.map((app) => ({
+      app,
+      index: appIndexByReference.value.get(app) ?? -1,
+    }))
+  )
+  const selectableGameLibrarySkills = computed(() => getGameLibrarySelectableCapabilities())
+  const scanProgressPercent = computed(() => {
+    if (!scanProgress.active || scanProgress.indeterminate || !scanProgress.total) return 0
+    return Math.max(0, Math.min(100, Math.round((scanProgress.current / scanProgress.total) * 100)))
+  })
+  const scanPlatformOptions = [
+    { id: 'steam', label: 'Steam' },
+    { id: 'epic', label: 'Epic Games' },
+    { id: 'gog', label: 'GOG' },
+  ]
 
   // 消息图标映射
   const MESSAGE_ICONS = {
@@ -56,14 +178,172 @@ export function useApps() {
 
   const getMessageIcon = () => MESSAGE_ICONS[messageType.value] || MESSAGE_ICONS.success
 
+  let scanProgressHideTimer = null
+
+  const setScanProgress = (next = {}) => {
+    if (scanProgressHideTimer) {
+      clearTimeout(scanProgressHideTimer)
+      scanProgressHideTimer = null
+    }
+
+    Object.assign(scanProgress, {
+      active: true,
+      stage: next.stage || scanProgress.stage || '正在处理扫描结果',
+      detail: next.detail || '',
+      current: Number.isFinite(Number(next.current)) ? Number(next.current) : scanProgress.current,
+      total: Number.isFinite(Number(next.total)) ? Number(next.total) : scanProgress.total,
+      indeterminate: Boolean(next.indeterminate),
+    })
+  }
+
+  const resetScanProgress = () => {
+    if (scanProgressHideTimer) {
+      clearTimeout(scanProgressHideTimer)
+      scanProgressHideTimer = null
+    }
+    Object.assign(scanProgress, {
+      active: false,
+      stage: '',
+      detail: '',
+      current: 0,
+      total: 0,
+      indeterminate: false,
+    })
+  }
+
+  const completeScanProgress = (detail = 'AI 增强完成') => {
+    setScanProgress({
+      stage: 'AI 增强完成',
+      detail,
+      current: scanProgress.total || scanProgress.current,
+      total: scanProgress.total || scanProgress.current,
+      indeterminate: false,
+    })
+    scanProgressHideTimer = setTimeout(resetScanProgress, 1800)
+  }
+
+  const hasRunnableScanEnhancement = (skillIds) => normalizeGameLibrarySkillIds(skillIds)
+    .some((skillId) => skillId !== GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)
+
+  const updateScanEnhancementProgress = (progress = {}) => {
+    const total = Number(progress.total) || 0
+    const current = Math.min(Number(progress.current) || 0, total || Number(progress.current) || 0)
+
+    if (progress.skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
+      setScanProgress({
+        stage: 'AI 正在清洗游戏名称',
+        detail: progress.detail || progress.message || (total ? `正在处理第 ${current}/${total} 批` : '正在整理游戏名称和搜索关键词'),
+        current,
+        total,
+        indeterminate: !total,
+      })
+      return
+    }
+
+    if (progress.skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
+      setScanProgress({
+        stage: 'AI 正在匹配游戏封面',
+        detail: progress.detail || progress.message || (total ? `已处理 ${current}/${total} 个游戏` : '正在搜索候选封面'),
+        current,
+        total,
+        indeterminate: !total,
+      })
+      return
+    }
+
+    setScanProgress({
+      stage: progress.stage || '正在处理扫描结果',
+      detail: progress.detail || progress.message || '',
+      current,
+      total,
+      indeterminate: progress.indeterminate ?? !total,
+    })
+  }
+
+  const isGameLibrarySkillEnabled = (skillId) => enabledGameLibrarySkillIds.value.includes(skillId)
+
+  const toggleGameLibrarySkill = (skillId) => {
+    const selectable = selectableGameLibrarySkills.value.some((capability) => capability.skillId === skillId)
+    if (!selectable) return
+
+    const enabled = new Set(enabledGameLibrarySkillIds.value)
+    if (enabled.has(skillId)) {
+      enabled.delete(skillId)
+    } else {
+      enabled.add(skillId)
+    }
+
+    enabledGameLibrarySkillIds.value = normalizeGameLibrarySkillIds(Array.from(enabled))
+    saveEnabledGameLibrarySkillIds(enabledGameLibrarySkillIds.value)
+  }
+
+  const getGameLibrarySkillIcon = (skillId) => getGameLibraryCapabilityIcon(skillId)
+
+  const getGameLibrarySkillLabel = (skillId) => {
+    const locale = typeof document === 'undefined'
+      ? ''
+      : String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()
+    return getGameLibraryCapabilityLabel(skillId, { locale })
+  }
+
+  const openScanOptions = () => {
+    showScanOptions.value = true
+  }
+
+  const closeScanOptions = () => {
+    if (!isScanning.value) {
+      showScanOptions.value = false
+    }
+  }
+
+  const getSelectedScanPlatforms = () => scanPlatformOptions
+    .filter((platformOption) => scanOptions.platforms[platformOption.id])
+    .map((platformOption) => platformOption.id)
+
+  const runConfiguredScan = async () => {
+    if (scanOptions.scope === 'directory') {
+      showScanOptions.value = false
+      await scanDirectory(scanOptions.extractIcons)
+      return
+    }
+
+    const platforms = getSelectedScanPlatforms()
+    if (platforms.length === 0) {
+      showMessage('请至少选择一个游戏平台', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      return
+    }
+
+    showScanOptions.value = false
+    await scanGameLibraries({ platforms })
+  }
+
+  const getScanEnhancementMessage = (count, itemLabel) => {
+    const titleEnabled = isGameLibrarySkillEnabled(GAME_LIBRARY_SKILL_IDS.titleNormalize)
+    const coverEnabled = isGameLibrarySkillEnabled(GAME_LIBRARY_SKILL_IDS.coverSelection)
+
+    if (titleEnabled && coverEnabled) {
+      return `找到 ${count} 个${itemLabel}，正在清洗名称并搜索封面...`
+    }
+    if (titleEnabled) {
+      return `找到 ${count} 个${itemLabel}，正在清洗名称...`
+    }
+    if (coverEnabled) {
+      return `找到 ${count} 个${itemLabel}，正在搜索封面...`
+    }
+    return `找到 ${count} 个${itemLabel}`
+  }
+
   const createDefaultApp = (overrides = {}) => ({
     ...APP_CONSTANTS.DEFAULT_APP,
     index: -1,
     ...overrides,
   })
 
+  let translate = (key, params) => (params ? `${key} ${JSON.stringify(params)}` : key)
+
   // 初始化
   const init = (t) => {
+    translate = t
     envVars.value = Object.fromEntries(
       Object.entries(ENV_VARS_CONFIG).map(([key, translationKey]) => [key, t(translationKey)])
     )
@@ -75,7 +355,6 @@ export function useApps() {
     try {
       apps.value = await AppService.getApps()
       originalApps.value = deepClone(apps.value)
-      filteredApps.value = [...apps.value]
     } catch (error) {
       console.error('加载应用失败:', error)
       showMessage('加载应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
@@ -93,35 +372,51 @@ export function useApps() {
 
   // 搜索
   const performSearch = () => {
-    filteredApps.value = AppService.searchApps(apps.value, searchQuery.value)
+    committedSearchQuery.value = searchQuery.value
   }
 
   const clearSearch = () => {
     searchQuery.value = ''
+    committedSearchQuery.value = ''
     performSearch()
   }
 
   // 应用操作
-  const getOriginalIndex = (app) => apps.value.indexOf(app)
+  const getAppRenderKey = (app) => {
+    const existingKey = appRenderKeys.get(app)
+    if (existingKey) return existingKey
+
+    const key = `app-${++nextAppRenderKey}`
+    appRenderKeys.set(app, key)
+    return key
+  }
 
   const newApp = () => {
     trackEvents.userAction('new_app_clicked')
+    scannedEditSource.value = null
     editingApp.value = createDefaultApp()
   }
 
   const editApp = (index) => {
+    scannedEditSource.value = null
     editingApp.value = { ...deepClone(apps.value[index]), index }
   }
 
   const closeAppEditor = () => {
+    scannedEditSource.value = null
     editingApp.value = null
   }
 
   const handleSaveApp = async (appData) => {
     try {
       isSaving.value = true
+
       await AppService.saveApps(apps.value, appData)
+      if (scannedEditSource.value) {
+        rememberGameLibraryApp(scannedEditSource.value, appData)
+      }
       await loadApps()
+      scannedEditSource.value = null
       editingApp.value = null
       showMessage('应用保存成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
     } catch (error) {
@@ -161,22 +456,89 @@ export function useApps() {
     }
   }
 
+  // 进入/退出多选模式，退出时清空选择
+  const toggleSelectionMode = () => {
+    selectionMode.value = !selectionMode.value
+    if (!selectionMode.value) {
+      selectedIndices.value = new Set()
+    }
+  }
+
+  const toggleAppSelection = (index) => {
+    const next = new Set(selectedIndices.value)
+    if (next.has(index)) next.delete(index)
+    else next.add(index)
+    selectedIndices.value = next
+  }
+
+  const isAppSelected = (index) => selectedIndices.value.has(index)
+
+  // 全选/反选
+  const selectAllFiltered = () => {
+    const next = new Set(selectedIndices.value)
+    filteredAppsWithIndex.value.forEach(({ index }) => {
+      if (index >= 0) next.add(index)
+    })
+    selectedIndices.value = next
+  }
+
+  const clearSelection = () => {
+    selectedIndices.value = new Set()
+  }
+
+  const askBatchDelete = () => {
+    if (selectedIndices.value.size === 0) return
+    batchDeleteConfirm.value = true
+  }
+
+  const cancelBatchDelete = () => {
+    batchDeleteConfirm.value = false
+  }
+
+  const confirmBatchDelete = async () => {
+    const indices = Array.from(selectedIndices.value)
+    if (indices.length === 0) {
+      batchDeleteConfirm.value = false
+      return
+    }
+    try {
+      isBatchDeleting.value = true
+      const result = await AppService.batchDeleteApps(indices)
+      await loadApps()
+      selectedIndices.value = new Set()
+      selectionMode.value = false
+      batchDeleteConfirm.value = false
+      showMessage(
+        translate('apps.batch_delete_result', { deleted: result.deleted, remaining: result.remaining }),
+        APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+      )
+    } catch (error) {
+      console.error('批量删除失败:', error)
+      showMessage(
+        error?.message || translate('apps.batch_delete_failed'),
+        APP_CONSTANTS.MESSAGE_TYPES.ERROR
+      )
+    } finally {
+      isBatchDeleting.value = false
+    }
+  }
+
   // 检测是否有未保存的更改
-  const hasUnsavedChanges = () => {
+  const hasUnsavedChanges = computed(() => {
     if (apps.value.length !== originalApps.value.length) {
       return true
     }
   
     // 深度比较应用列表
-    const appsStr = JSON.stringify(apps.value.map(app => ({ ...app, index: undefined })))
-    const originalStr = JSON.stringify(originalApps.value.map(app => ({ ...app, index: undefined })))
+    const appsStr = JSON.stringify(apps.value.map(normalizeAppForChangeCheck))
+    const originalStr = JSON.stringify(originalApps.value.map(normalizeAppForChangeCheck))
     
     return appsStr !== originalStr
-  }
+  })
 
   const save = async () => {
     // 如果没有更改，直接返回
-    if (!hasUnsavedChanges()) {
+    if (!hasUnsavedChanges.value) {
       showMessage('没有需要保存的更改', APP_CONSTANTS.MESSAGE_TYPES.INFO)
       return
     }
@@ -197,6 +559,36 @@ export function useApps() {
   }
 
   // 拖拽排序
+  const restoreDefaultApps = async () => {
+    try {
+      const result = AppService.restoreDefaultBuiltInApps(apps.value, platform.value)
+
+      if (result.changed === 0) {
+        showMessage(translate('apps.restore_default_apps_none'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        return
+      }
+
+      isSaving.value = true
+      apps.value = result.apps
+      await AppService.saveApps(apps.value, null)
+      await loadApps()
+      showMessage(
+        translate('apps.restore_default_apps_result', { restored: result.restored, added: result.added }),
+        APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+      )
+      trackEvents.userAction('default_apps_restored', {
+        platform: platform.value,
+        restored: result.restored,
+        added: result.added,
+      })
+    } catch (error) {
+      console.error('Restore default apps failed:', error)
+      showMessage(translate('apps.restore_default_apps_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+    } finally {
+      isSaving.value = false
+    }
+  }
+
   const onDragStart = () => {
     isDragging.value = true
   }
@@ -210,6 +602,17 @@ export function useApps() {
 
   // Tauri 环境检测
   const isTauriEnv = () => !!window.__TAURI__?.core?.invoke
+
+  let scanKeySequence = 0
+  const withScanKeys = (appList) => {
+    const scanId = scanKeySequence++
+    return Array.isArray(appList)
+      ? appList.map((app, index) => ({
+          ...app,
+          '__scan-key': app['__scan-key'] || `scan-${scanId}-${index}`,
+        }))
+      : appList
+  }
 
   // 扫描目录功能
   const scanDirectory = async (extractIcons = true) => {
@@ -247,12 +650,13 @@ export function useApps() {
         showMessage('未找到可添加的应用程序', APP_CONSTANTS.MESSAGE_TYPES.INFO)
       } else {
         // 先显示扫描结果（无封面）
-        scannedApps.value = foundApps
+        const overriddenApps = withScanKeys(applyGameLibraryOverrides(foundApps))
+        scannedApps.value = overriddenApps
         showScanResult.value = true
-        showMessage(`找到 ${foundApps.length} 个应用程序，正在搜索封面...`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        showMessage(getScanEnhancementMessage(foundApps.length, '应用程序'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
         // 异步更新封面图片
-        asyncUpdateCovers(foundApps)
+        asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
       }
 
       trackEvents.userAction('directory_scanned', { count: foundApps.length, extractIcons })
@@ -265,7 +669,7 @@ export function useApps() {
   }
 
   // 扫描游戏平台库（Steam/Epic/GOG）
-  const scanGameLibraries = async () => {
+  const scanGameLibraries = async (options = {}) => {
     const tauri = window.__TAURI__
     if (!tauri?.core?.invoke) {
       showMessage('扫描功能仅在 Tauri 环境下可用', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
@@ -276,12 +680,16 @@ export function useApps() {
       isScanning.value = true
       showMessage('正在扫描游戏平台库...', APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
-      const result = await tauri.core.invoke('scan_game_libraries')
+      const requestedPlatforms = options.platforms || scanPlatformOptions.map((platformOption) => platformOption.id)
+      const result = await tauri.core.invoke('scan_game_libraries', {
+        platforms: requestedPlatforms,
+      })
 
       // 将 PlatformGame 转换为 scannedApps 格式
-      const steamGames = result.steam || []
-      const epicGames = result.epic || []
-      const gogGames = result.gog || []
+      const selectedPlatforms = new Set(requestedPlatforms)
+      const steamGames = selectedPlatforms.has('steam') ? result.steam || [] : []
+      const epicGames = selectedPlatforms.has('epic') ? result.epic || [] : []
+      const gogGames = selectedPlatforms.has('gog') ? result.gog || [] : []
       const allGames = [...steamGames, ...epicGames, ...gogGames]
 
       if (allGames.length === 0) {
@@ -299,7 +707,8 @@ export function useApps() {
           'is-game': true,
         }))
 
-        scannedApps.value = mapped
+        const overriddenApps = withScanKeys(applyGameLibraryOverrides(mapped))
+        scannedApps.value = overriddenApps
         showScanResult.value = true
 
         const parts = []
@@ -310,6 +719,7 @@ export function useApps() {
           `找到 ${result.total ?? allGames.length} 个游戏 (${parts.join(', ')})，耗时 ${result.scan_time_ms ?? 0}ms`,
           APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
         )
+        asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
       }
 
       trackEvents.userAction('game_libraries_scanned', {
@@ -327,37 +737,124 @@ export function useApps() {
   }
 
   // 异步更新封面图片
-  const asyncUpdateCovers = async (appList) => {
-    let coversFound = 0
-    const total = appList.length
+  const getScannedAppKey = getGameResourceKey
 
-    // 并行搜索所有封面，但逐个更新UI
-    const promises = appList.map(async (app, index) => {
-      try {
-        const imagePath = await searchCoverImage(encodeURIComponent(app.name))
-        if (imagePath && scannedApps.value[index]) {
-          // 更新对应位置的应用封面
-          scannedApps.value[index] = { ...scannedApps.value[index], 'image-path': imagePath }
-          coversFound++
-        }
-      } catch (error) {
-        console.warn(`搜索封面失败: ${app.name}`, error)
+  const applyEnhancedScannedApps = (baseList, enhancedList) => {
+    const enhancedByKey = new Map(baseList.map((app, index) => [getScannedAppKey(app, index), enhancedList[index]]))
+    let changed = 0
+
+    scannedApps.value = scannedApps.value.map((current, index) => {
+      const next = enhancedByKey.get(getScannedAppKey(current, index))
+      if (!next) return current
+
+      if (next.name !== current.name || next['canonical-name'] !== current['canonical-name']) {
+        changed++
       }
+
+      return { ...current, ...next }
     })
 
-    await Promise.allSettled(promises)
+    return changed
+  }
 
-    // 搜索完成后显示结果
-    showMessage(
-      `已匹配 ${coversFound}/${total} 个封面`,
-      coversFound > 0 ? APP_CONSTANTS.MESSAGE_TYPES.SUCCESS : APP_CONSTANTS.MESSAGE_TYPES.INFO
-    )
+  const asyncEnhanceAndUpdateCovers = async (appList, enabledSkillIds = enabledGameLibrarySkillIds.value) => {
+    const enabled = normalizeGameLibrarySkillIds(enabledSkillIds)
+    const shouldRunEnhancement = hasRunnableScanEnhancement(enabled)
+    let result
+
+    if (!shouldRunEnhancement) {
+      resetScanProgress()
+      return
+    }
+
+    setScanProgress({
+      stage: '准备 AI 增强',
+      detail: `将处理 ${appList.length} 个扫描结果`,
+      current: 0,
+      total: appList.length,
+      indeterminate: true,
+    })
+
+    try {
+      result = await runGameLibraryCuratorAgent(appList, {
+        enabledSkills: enabled,
+        onSkillProgress: updateScanEnhancementProgress,
+        onTitlesEnhanced(enhanced, { changed }) {
+          applyEnhancedScannedApps(appList, enhanced)
+          if (changed > 0) {
+            showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+          }
+        },
+        onCoverResolved(next, { key }) {
+          const currentIndex = scannedApps.value.findIndex((current, currentIndex) => getScannedAppKey(current, currentIndex) === key)
+          if (currentIndex !== -1) {
+            scannedApps.value[currentIndex] = {
+              ...scannedApps.value[currentIndex],
+              ...next,
+            }
+          }
+        },
+        onSkillError(skillId, error) {
+          if (skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
+            console.warn('AI name cleanup failed; falling back to original names:', error)
+            showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+          } else if (skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
+            console.warn('AI cover selection failed:', error)
+          }
+        },
+      })
+    } catch (error) {
+      console.warn('Game library enrichment failed:', error)
+      showMessage('游戏资源增强不可用，已保留原始扫描结果', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      completeScanProgress('AI 增强不可用，已保留扫描结果')
+      return
+    }
+
+    if (enabled.includes(GAME_LIBRARY_SKILL_IDS.coverSelection)) {
+      const coversFound = result.stats?.coversFound || 0
+      const total = appList.length
+      showMessage(
+        `已匹配 ${coversFound}/${total} 个封面`,
+        coversFound > 0 ? APP_CONSTANTS.MESSAGE_TYPES.SUCCESS : APP_CONSTANTS.MESSAGE_TYPES.INFO
+      )
+    }
+
+    completeScanProgress('扫描结果已更新')
   }
 
   // 扫描应用字段处理
   const getScannedAppField = (app, field) => app[field] || app[field.replace(/-/g, '_')] || ''
 
-  const getScannedAppImage = (app) => getScannedAppField(app, 'image-path')
+  const localizeScannedAppCover = async (scannedApp) => {
+    const imagePath = getScannedAppField(scannedApp, 'image-path')
+    if (!REMOTE_IMAGE_URL_RE.test(imagePath)) {
+      return scannedApp
+    }
+
+    try {
+      const result = await apiPostJson('/api/covers/upload', {
+        key: scannedApp.name,
+        url: imagePath,
+      })
+
+      if (result?.path) {
+        return {
+          ...scannedApp,
+          'image-path': result.path,
+          image_path: result.path,
+          'cover-localized': true,
+        }
+      }
+      console.warn('Cover localization did not return a local path:', scannedApp.name, result)
+    } catch (error) {
+      console.warn('Failed to localize scanned cover:', scannedApp.name, error)
+    }
+
+    return {
+      ...scannedApp,
+      [COVER_LOCALIZATION_FAILED_FIELD]: true,
+    }
+  }
 
   const createAppFromScanned = (scannedApp) => ({
     ...APP_CONSTANTS.DEFAULT_APP,
@@ -367,9 +864,23 @@ export function useApps() {
     'image-path': getScannedAppField(scannedApp, 'image-path'),
   })
 
-  const removeFromScannedList = (sourcePath) => {
-    const index = scannedApps.value.findIndex((a) => a.source_path === sourcePath)
-    if (index !== -1) {
+  const didCoverLocalizationFail = (scannedApp) => scannedApp?.[COVER_LOCALIZATION_FAILED_FIELD] === true
+
+  const findScannedAppIndex = (scannedAppOrIndex) => {
+    if (Number.isInteger(scannedAppOrIndex)) {
+      return scannedAppOrIndex
+    }
+
+    let index = scannedApps.value.indexOf(scannedAppOrIndex)
+    if (index === -1 && scannedAppOrIndex?.source_path) {
+      index = scannedApps.value.findIndex((app) => app.source_path === scannedAppOrIndex.source_path)
+    }
+    return index
+  }
+
+  const removeScannedApp = (scannedAppOrIndex) => {
+    const index = findScannedAppIndex(scannedAppOrIndex)
+    if (index >= 0 && index < scannedApps.value.length) {
       scannedApps.value.splice(index, 1)
       if (scannedApps.value.length === 0) {
         showScanResult.value = false
@@ -377,31 +888,43 @@ export function useApps() {
     }
   }
 
-  const addScannedApp = (scannedApp) => {
-    editingApp.value = createDefaultApp({
-      name: scannedApp.name,
-      cmd: scannedApp.cmd,
-      'working-dir': getScannedAppField(scannedApp, 'working-dir'),
-      'image-path': getScannedAppField(scannedApp, 'image-path'),
-    })
+  const showCoverLocalizationMessage = (localizedApp, successMessage, successType) => {
+    const failed = didCoverLocalizationFail(localizedApp)
+    showMessage(
+      failed ? `${successMessage}，但封面本地化失败，已保留原始封面地址` : successMessage,
+      failed ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : successType
+    )
+  }
 
-    removeFromScannedList(scannedApp.source_path)
-    showMessage(`正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+  const addScannedApp = async (scannedApp) => {
+    const localizedApp = await localizeScannedAppCover(scannedApp)
+
+    editingApp.value = createDefaultApp({
+      name: localizedApp.name,
+      cmd: localizedApp.cmd,
+      'working-dir': getScannedAppField(localizedApp, 'working-dir'),
+      'image-path': getScannedAppField(localizedApp, 'image-path'),
+    })
+    scannedEditSource.value = { ...localizedApp }
+
+    removeScannedApp(scannedApp)
+    showCoverLocalizationMessage(localizedApp, `正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
     trackEvents.userAction('scanned_app_edit', { name: scannedApp.name })
   }
 
-  const quickAddScannedApp = async (scannedApp, index) => {
+  const quickAddScannedApp = async (scannedApp) => {
     try {
-      apps.value.push(createAppFromScanned(scannedApp))
+      const localizedApp = await localizeScannedAppCover(scannedApp)
+      const appToAdd = createAppFromScanned(localizedApp)
+
+      apps.value.push(appToAdd)
       await AppService.saveApps(apps.value, null)
+      rememberGameLibraryApp(scannedApp, appToAdd)
       await loadApps()
 
-      scannedApps.value.splice(index, 1)
-      if (scannedApps.value.length === 0) {
-        showScanResult.value = false
-      }
+      removeScannedApp(scannedApp)
 
-      showMessage(`已添加应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      showCoverLocalizationMessage(localizedApp, `已添加应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       trackEvents.userAction('scanned_app_quick_added', { name: scannedApp.name })
     } catch (error) {
       console.error('快速添加应用失败:', error)
@@ -414,13 +937,26 @@ export function useApps() {
 
     try {
       isSaving.value = true
-      const appsToAdd = scannedApps.value.map(createAppFromScanned)
+      const scannedAppSnapshot = [...scannedApps.value]
+      const localizedScannedApps = await mapWithConcurrency(
+        scannedAppSnapshot,
+        COVER_LOCALIZATION_CONCURRENCY,
+        localizeScannedAppCover
+      )
+      const appsToAdd = localizedScannedApps.map(createAppFromScanned)
 
       apps.value.push(...appsToAdd)
       await AppService.saveApps(apps.value, null)
+      scannedAppSnapshot.forEach((scannedApp, index) => rememberGameLibraryApp(scannedApp, appsToAdd[index]))
       await loadApps()
 
-      showMessage(`已添加 ${appsToAdd.length} 个应用`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      const coverLocalizationFailureCount = localizedScannedApps.filter(didCoverLocalizationFail).length
+      showMessage(
+        coverLocalizationFailureCount > 0
+          ? `已添加 ${appsToAdd.length} 个应用，其中 ${coverLocalizationFailureCount} 个封面本地化失败，已保留原始封面地址`
+          : `已添加 ${appsToAdd.length} 个应用`,
+        coverLocalizationFailureCount > 0 ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
+      )
       trackEvents.userAction('scanned_apps_batch_added', { count: appsToAdd.length })
 
       scannedApps.value = []
@@ -436,78 +972,6 @@ export function useApps() {
   const closeScanResult = () => {
     showScanResult.value = false
     scannedApps.value = []
-    scannedAppsSearchQuery.value = ''
-    showGamesOnly.value = false
-    selectedAppType.value = 'all'
-  }
-
-  // 获取各分类的统计信息
-  const scanResultStats = computed(() => ({
-    all: scannedApps.value.length,
-    games: scannedApps.value.filter((app) => app['is-game'] === true).length,
-    executable: scannedApps.value.filter((app) => app['app-type'] === 'executable').length,
-    shortcut: scannedApps.value.filter((app) => app['app-type'] === 'shortcut').length,
-    batch: scannedApps.value.filter((app) => app['app-type'] === 'batch').length,
-    command: scannedApps.value.filter((app) => app['app-type'] === 'command').length,
-    url: scannedApps.value.filter((app) => app['app-type'] === 'url').length,
-    steam: scannedApps.value.filter((app) => app['app-type'] === 'steam').length,
-    epic: scannedApps.value.filter((app) => app['app-type'] === 'epic').length,
-    gog: scannedApps.value.filter((app) => app['app-type'] === 'gog').length,
-  }))
-
-  // 过滤扫描结果
-  const filteredScannedApps = computed(() => {
-    let filtered = scannedApps.value
-    
-    // 先按应用类型过滤
-    if (selectedAppType.value !== 'all') {
-      filtered = filtered.filter((app) => app['app-type'] === selectedAppType.value)
-    }
-    
-    // 再按游戏过滤
-    if (showGamesOnly.value) {
-      filtered = filtered.filter((app) => app['is-game'] === true)
-    }
-    
-    // 最后按搜索关键词过滤
-    if (scannedAppsSearchQuery.value) {
-      const query = scannedAppsSearchQuery.value.toLowerCase()
-      filtered = filtered.filter((app) => {
-        const name = (app.name || '').toLowerCase()
-        const cmd = (app.cmd || '').toLowerCase()
-        const sourcePath = (app.source_path || '').toLowerCase()
-        return name.includes(query) || cmd.includes(query) || sourcePath.includes(query)
-      })
-    }
-    
-    return filtered
-  })
-
-  const removeScannedApp = (index) => {
-    scannedApps.value.splice(index, 1)
-    if (scannedApps.value.length === 0) {
-      showScanResult.value = false
-    }
-  }
-
-  const searchCoverForScannedApp = async (index) => {
-    const app = scannedApps.value[index]
-    if (!app) return
-
-    try {
-      showMessage(`正在搜索封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
-      const imagePath = await searchCoverImage(app.name)
-
-      if (imagePath) {
-        scannedApps.value[index] = { ...app, 'image-path': imagePath }
-        showMessage(`已找到封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
-      } else {
-        showMessage(`未找到封面: ${app.name}`, APP_CONSTANTS.MESSAGE_TYPES.WARNING)
-      }
-    } catch (error) {
-      console.error('搜索封面失败:', error)
-      showMessage('搜索封面失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
-    }
   }
 
   const handleCopySuccess = () => showMessage('复制成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
@@ -517,6 +981,7 @@ export function useApps() {
     // 状态
     apps,
     filteredApps,
+    filteredAppsWithIndex,
     searchQuery,
     editingApp,
     platform,
@@ -524,50 +989,63 @@ export function useApps() {
     isDragging,
     viewMode,
     message,
-    messageType,
     envVars,
     debouncedSearch,
     isScanning,
     scannedApps,
     showScanResult,
-    scannedAppsSearchQuery,
-    showGamesOnly,
-    selectedAppType,
+    showScanOptions,
+    scanProgress,
+    scanOptions,
+    scanPlatformOptions,
+    selectableGameLibrarySkills,
+    selectionMode,
+    selectedIndices,
+    batchDeleteConfirm,
+    isBatchDeleting,
     // 计算属性
     messageClass,
-    filteredScannedApps,
-    scanResultStats,
+    scanProgressPercent,
     // 方法
     init,
     loadApps,
     loadPlatform,
-    performSearch,
     clearSearch,
-    getOriginalIndex,
+    getAppRenderKey,
     newApp,
     editApp,
     closeAppEditor,
     handleSaveApp,
     showDeleteForm,
-    deleteApp,
     cancelDeleteApp,
     confirmDeleteApp,
     deleteConfirmIndex,
+    toggleSelectionMode,
+    toggleAppSelection,
+    isAppSelected,
+    selectAllFiltered,
+    clearSelection,
+    askBatchDelete,
+    cancelBatchDelete,
+    confirmBatchDelete,
     save,
+    restoreDefaultApps,
     hasUnsavedChanges,
     onDragStart,
     onDragEnd,
-    scanDirectory,
-    scanGameLibraries,
+    openScanOptions,
+    closeScanOptions,
+    runConfiguredScan,
     addScannedApp,
     quickAddScannedApp,
     addAllScannedApps,
     closeScanResult,
     removeScannedApp,
-    getScannedAppImage,
-    searchCoverForScannedApp,
     isTauriEnv,
-    showMessage,
+    isGameLibrarySkillEnabled,
+    toggleGameLibrarySkill,
+    getGameLibrarySkillIcon,
+    getGameLibrarySkillLabel,
     getMessageIcon,
     handleCopySuccess,
     handleCopyError,

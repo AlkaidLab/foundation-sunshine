@@ -23,6 +23,12 @@ on:
         description: "Release tag for naming the output files"
         required: true
 
+# Opt all Node.js 20 actions onto the Node.js 24 runtime to silence the
+# `actions/checkout@v4` deprecation warning until upstream actions cut new
+# releases.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   sign-and-repackage:
     name: Sign Files and Repackage
@@ -145,6 +151,15 @@ jobs:
           echo "  Ninja: $(ninja --version)"
           echo "  GCC: $(gcc --version | head -1)"
           echo "  Cargo: $(cargo --version)"
+
+      - name: Setup .NET for DualSense sidecar
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build self-contained DualSense sidecar
+        shell: pwsh
+        run: .\scripts\build-ds5-sidecar.ps1
 
       - name: Build Windows
         shell: msys2 {0}
@@ -280,6 +295,7 @@ jobs:
       - name: Repackage signed Inno Setup installer
         shell: msys2 {0}
         run: |
+          set -o pipefail
           echo "Repackaging Inno Setup installer with signed files..."
 
           STAGING_DIR="build/inno_staging"
@@ -310,7 +326,9 @@ jobs:
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss"
+          test -f "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
+          grep -F "Sunshine.Ds5Sidecar.exe" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then

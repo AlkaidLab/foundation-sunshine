@@ -47,6 +47,19 @@ namespace crypto {
 
   x509_t
   x509(const std::string_view &x);
+  /**
+   * @brief Compares a parsed certificate with a PEM-encoded certificate.
+   *
+   * PEM is a textual envelope, so equivalent certificates may differ in line
+   * endings, wrapping, or trailing whitespace. This compares the parsed X.509
+   * objects instead of their PEM strings.
+   *
+   * @param cert Parsed certificate to compare.
+   * @param pem PEM-encoded certificate.
+   * @return true when both inputs are valid and represent the same certificate.
+   */
+  bool
+  x509_matches_pem(const X509 *cert, const std::string_view &pem);
   pkey_t
   pkey(const std::string_view &k);
   std::string

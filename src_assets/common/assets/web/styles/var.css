@@ -1,27 +1,35 @@
 /* 全局变量 */
 :root {
-  --primary-color: #0d6efd;
-  --secondary-color: #6c757d;
-  --success-color: #28a745;
-  --danger-color: #dc3545;
-  --warning-color: #ffc107;
-  --info-color: #17a2b8;
-  --light-color: #f8f9fa;
-  --dark-color: #343a40;
-  --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  --gradient-success: linear-gradient(135deg, #28a745, #20c997);
-  --gradient-success-hover: linear-gradient(135deg, #20c997, #28a745);
-  --box-shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
-  --box-shadow-md: 0 8px 16px rgba(0, 0, 0, 0.1);
-  --box-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.2);
+  --primary-color: var(--ui-accent);
+  --secondary-color: var(--ui-text-secondary);
+  --success-color: var(--ui-success);
+  --danger-color: var(--ui-danger);
+  --warning-color: var(--ui-warning);
+  --info-color: var(--ui-info);
+  --light-color: var(--ui-surface-strong);
+  --dark-color: var(--ui-text-primary);
+  --gradient-primary: linear-gradient(135deg, var(--ui-accent), var(--ui-accent-secondary));
+  --gradient-success: linear-gradient(135deg, var(--ui-success), var(--ui-success));
+  --gradient-success-hover: linear-gradient(135deg, var(--ui-success), var(--ui-success));
+  --box-shadow-sm: var(--ui-shadow-sm);
+  --box-shadow-md: var(--ui-shadow-md);
+  --box-shadow-lg: var(--ui-shadow-lg);
   --transition-default: all 0.3s ease;
-  --border-radius-sm: 0.25rem;
-  --border-radius-md: 0.5rem;
-  --border-radius-lg: 1rem;
-  --border-radius-xl: 1.5rem;
+  --border-radius-sm: var(--ui-radius-sm);
+  --border-radius-md: var(--ui-radius-md);
+  --border-radius-lg: var(--ui-radius-lg);
+  --border-radius-xl: var(--ui-radius-lg);
   --border-radius-pill: 50rem;
   --border-radius-circle: 50%;
-  --font-family-base: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  /* Match the desktop GUI while keeping native CJK rendering on every platform. */
+  --font-family-sans: Inter, 'Segoe UI Variable Text', 'Segoe UI Variable', -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC',
+    'Noto Sans SC', 'Noto Sans', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-family-base: var(--font-family-sans);
+  --font-family-mono: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+  --font-mono: var(--font-family-mono);
+  --bs-body-font-family: var(--font-family-base);
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-md: 1rem;
@@ -34,49 +42,124 @@
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
 
-  --cute-btn-border-color: rgba(255, 255, 255, 0.3);
-  --cute-btn-border-hover-color: rgba(255, 255, 255, 0.5);
+  /* Sunshine GUI-aligned design tokens: Gura blue light theme */
+  --ui-page-bg: #e6f2ff;
+  --ui-page-overlay: rgba(30, 41, 59, 0.12);
+  --ui-overlay: rgba(15, 23, 42, 0.5);
+  --ui-nav-bg: rgba(240, 248, 255, 0.92);
+  --ui-surface: rgba(255, 255, 255, 0.62);
+  --ui-surface-strong: rgba(240, 248, 255, 0.88);
+  --ui-surface-hover: rgba(255, 255, 255, 0.8);
+  --ui-border: rgba(74, 158, 255, 0.22);
+  --ui-border-strong: rgba(74, 158, 255, 0.42);
+  --ui-text-primary: #1e293b;
+  --ui-text-secondary: #64748b;
+  /* Keep secondary copy readable on translucent GUI surfaces (4.5:1 on white). */
+  --ui-text-muted: #68788e;
+  --ui-accent: #4a9eff;
+  --ui-accent-text: #306fae;
+  --ui-accent-rgb: 74, 158, 255;
+  --ui-accent-soft: rgba(74, 158, 255, 0.12);
+  --ui-accent-contrast: #ffffff;
+  --ui-accent-secondary: #7ab8ff;
+  --ui-success: #4ecdc4;
+  --ui-success-rgb: 78, 205, 196;
+  --ui-warning: #ffc107;
+  --ui-warning-rgb: 255, 193, 7;
+  --ui-danger: #ff6b6b;
+  --ui-danger-rgb: 255, 107, 107;
+  --ui-info: #7ab8ff;
+  --ui-info-rgb: 122, 184, 255;
+  --ui-success-contrast: #153c39;
+  --ui-warning-contrast: #3d2f00;
+  --ui-danger-contrast: #3f1d1d;
+  --ui-info-contrast: #17365c;
+  --ui-success-text: #267f79;
+  --ui-warning-text: #856300;
+  --ui-danger-text: #bd3f46;
+  --ui-info-text: #306fae;
+  --ui-success-soft: rgba(78, 205, 196, 0.12);
+  --ui-success-border: rgba(78, 205, 196, 0.34);
+  --ui-warning-soft: rgba(255, 193, 7, 0.13);
+  --ui-warning-border: rgba(255, 193, 7, 0.38);
+  --ui-danger-soft: rgba(255, 107, 107, 0.12);
+  --ui-danger-border: rgba(255, 107, 107, 0.34);
+  --ui-info-soft: rgba(122, 184, 255, 0.12);
+  --ui-info-border: rgba(122, 184, 255, 0.34);
+  --bs-primary-rgb: var(--ui-accent-rgb);
+  --bs-success-rgb: var(--ui-success-rgb);
+  --bs-warning-rgb: var(--ui-warning-rgb);
+  --bs-danger-rgb: var(--ui-danger-rgb);
+  --bs-info-rgb: var(--ui-info-rgb);
+  --bs-primary: var(--ui-accent);
+  --bs-success: var(--ui-success);
+  --bs-warning: var(--ui-warning);
+  --bs-danger: var(--ui-danger);
+  --bs-info: var(--ui-info);
+  --ui-skeleton-base: rgba(74, 158, 255, 0.08);
+  --ui-skeleton-highlight: rgba(74, 158, 255, 0.18);
+  --ui-radius-sm: 8px;
+  --ui-radius-md: 12px;
+  --ui-radius-lg: 16px;
+  --ui-shadow-sm: 0 4px 16px rgba(74, 158, 255, 0.1);
+  --ui-shadow-md: 0 12px 32px rgba(58, 126, 213, 0.14);
+  --ui-shadow-lg: 0 20px 48px rgba(58, 126, 213, 0.18);
 
   /* 动态文字颜色变量 - 根据背景图片亮度自动设置 */
-  --text-primary-color: #333333;
-  --text-secondary-color: #666666;
-  --text-muted-color: #999999;
-  --text-title-color: #1a1a1a;
+  --text-primary-color: var(--ui-text-primary);
+  --text-secondary-color: var(--ui-text-secondary);
+  --text-muted-color: var(--ui-text-muted);
+  --text-title-color: var(--ui-text-primary);
 }
 
 /* data-bs-theme="dark" 适配 */
 [data-bs-theme="dark"] {
-  --primary-color: #375a7f;
-  --secondary-color: #444950;
-  --success-color: #00bc8c;
-  --danger-color: #e74c3c;
-  --warning-color: #f39c12;
-  --info-color: #3498db;
-  --light-color: #23272b;
-  --dark-color: #f8f9fa;
-  --gradient-success: linear-gradient(135deg, #00bc8c, #16a085);
-  --gradient-success-hover: linear-gradient(135deg, #16a085, #00bc8c);
-  --box-shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
-  --box-shadow-md: 0 8px 16px rgba(0, 0, 0, 0.3);
-  --box-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.875rem;
-  --font-size-md: 1rem;
-  --font-size-lg: 1.25rem;
-  --font-size-xl: 1.5rem;
-  --font-size-xxl: 2rem;
-  --spacing-xs: 0.25rem;
-  --spacing-sm: 0.5rem;
-  --spacing-md: 1rem;
-  --spacing-lg: 1.5rem;
-  --spacing-xl: 2rem;
-
-  --cute-btn-border-color: rgba(0, 0, 0, 0.2);
-  --cute-btn-border-hover-color: rgba(0, 0, 0, 0.1);
-
-  /* 深色模式文字颜色 - 使用浅色 */
-  --text-primary-color: #ffffff;
-  --text-secondary-color: rgba(255, 255, 255, 0.85);
-  --text-muted-color: rgba(255, 255, 255, 0.6);
-  --text-title-color: #ffffff;
+  /* Sunshine GUI-aligned design tokens: Morandi dark theme */
+  --ui-page-bg: #2d2628;
+  --ui-page-overlay: rgba(45, 38, 40, 0.5);
+  --ui-overlay: rgba(20, 16, 18, 0.72);
+  --ui-nav-bg: rgba(45, 38, 40, 0.94);
+  --ui-surface: rgba(74, 63, 66, 0.58);
+  --ui-surface-strong: rgba(61, 50, 53, 0.88);
+  --ui-surface-hover: rgba(74, 63, 66, 0.78);
+  --ui-border: rgba(230, 213, 184, 0.2);
+  --ui-border-strong: rgba(230, 213, 184, 0.42);
+  --ui-text-primary: #f7f0e3;
+  --ui-text-secondary: #d4c4a8;
+  --ui-text-muted: #a99d8a;
+  --ui-accent: #d4a5a5;
+  --ui-accent-text: #f2e3c9;
+  --ui-accent-rgb: 212, 165, 165;
+  --ui-accent-soft: rgba(212, 165, 165, 0.14);
+  --ui-accent-contrast: #2d2628;
+  --ui-accent-secondary: #e6d5b8;
+  --ui-success: #8dbbb3;
+  --ui-success-rgb: 141, 187, 179;
+  --ui-warning: #e6d5b8;
+  --ui-warning-rgb: 230, 213, 184;
+  --ui-danger: #ff6b6b;
+  --ui-danger-rgb: 255, 107, 107;
+  --ui-info: #a2d2ff;
+  --ui-info-rgb: 162, 210, 255;
+  --ui-success-contrast: #2d2628;
+  --ui-warning-contrast: #2d2628;
+  --ui-danger-contrast: #2d2628;
+  --ui-info-contrast: #2d2628;
+  --ui-success-text: #b9ddd6;
+  --ui-warning-text: #f2e3c9;
+  --ui-danger-text: #ffb3b3;
+  --ui-info-text: #c9e4ff;
+  --ui-success-soft: rgba(141, 187, 179, 0.14);
+  --ui-success-border: rgba(141, 187, 179, 0.34);
+  --ui-warning-soft: rgba(230, 213, 184, 0.14);
+  --ui-warning-border: rgba(230, 213, 184, 0.36);
+  --ui-danger-soft: rgba(255, 107, 107, 0.14);
+  --ui-danger-border: rgba(255, 107, 107, 0.36);
+  --ui-info-soft: rgba(162, 210, 255, 0.14);
+  --ui-info-border: rgba(162, 210, 255, 0.34);
+  --ui-skeleton-base: rgba(230, 213, 184, 0.08);
+  --ui-skeleton-highlight: rgba(230, 213, 184, 0.16);
+  --ui-shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.2);
+  --ui-shadow-md: 0 14px 36px rgba(0, 0, 0, 0.3);
+  --ui-shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.38);
 }

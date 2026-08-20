@@ -48,9 +48,9 @@ export default defineConfig({
     outDir: resolve(assetsDstPath),
     emptyOutDir: true,
     chunkSizeWarningLimit: 1000,
-    // 在 Vite 7 中，同时配置 rollupOptions 和 rolldownOptions
-    // rollupOptions 用于 HTML 文件生成，rolldownOptions 用于打包优化
-    rollupOptions: {
+    // Vite 8 使用 rolldown 内核：多入口 HTML 必须放在 rolldownOptions.input
+    // 放到 rollupOptions.input 会被忽略，导致除 index.html 外其它页面 404
+    rolldownOptions: {
       input: {
         apps: resolve(assetsSrcPath, 'apps.html'),
         config: resolve(assetsSrcPath, 'config.html'),
@@ -60,8 +60,6 @@ export default defineConfig({
         troubleshooting: resolve(assetsSrcPath, 'troubleshooting.html'),
         welcome: resolve(assetsSrcPath, 'welcome.html'),
       },
-    },
-    rolldownOptions: {
       output: {
         // 优化chunk命名
         chunkFileNames: 'assets/[name]-[hash].js',

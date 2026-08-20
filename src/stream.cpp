@@ -4,28 +4,36 @@
  */
 #include "process.h"
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <future>
 #include <iomanip>
+#include <optional>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 #include <fstream>
 #include <openssl/err.h>
+#include <rs.h>
 
 #include <boost/atomic.hpp>
-#include <boost/container/flat_map.hpp>
 #include <boost/endian/arithmetic.hpp>
+#include <boost/function.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/shared_ptr.hpp>
-#include <boost/thread/mutex.hpp>
 #include <boost/thread/lock_guard.hpp>
+#include <boost/thread/mutex.hpp>
 
 #include "abr.h"
 
 extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
-#include "rswrapper.h"
 // clang-format on
 }
 
@@ -33,19 +41,28 @@ extern "C" {
   #define DATA_SHARDS_MAX 255
 #endif
 
+#include "client_fingerprint.h"
 #include "config.h"
+#include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "globals.h"
+#include "haptics/authored_ir.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
+#include "mic_mixer.h"
 #include "network.h"
+#include "perf_recorder.h"
 #include "stream.h"
 #include "sync.h"
-#include "system_tray.h"
+#include "tray/system_tray.h"
+#include "tray/tray_state.h"
 #include "thread_safe.h"
 #include "utility.h"
+#include "webhook/webhook.h"
 
+#include "clipboard_bridge.h"
+#include "cursor_channel.h"
 #include "platform/common.h"
 
 #define IDX_START_A 0
@@ -67,6 +84,10 @@ extern "C" {
 #define IDX_MIC_CONFIG 17
 #define IDX_DYNAMIC_PARAM_CHANGE 18  // 统一动态参数调整消息类型（支持码率、分辨率等）
 #define IDX_RESOLUTION_CHANGE 19  // 分辨率变化通知
+#define IDX_CLIPBOARD 20  // Clipboard sync (Sunshine protocol extension; payload forwarded to user-session GUI agent)
+#define IDX_CURSOR 21  // Local cursor mode/update (Sunshine protocol extension)
+#define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
+#define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -89,6 +110,10 @@ static const short packetTypes[] = {
   0x5505,  // Microphone config (Sunshine protocol extension)
   0x5506,  // Dynamic parameter change (Sunshine protocol extension) - 统一动态参数调整
   0x5507,  // Resolution change (Sunshine protocol extension) - 分辨率变化通知
+  0x5508,  // Clipboard sync (Sunshine protocol extension) - opaque payload forwarded to user-session GUI agent
+  0x5509,  // Local cursor mode/update (Sunshine protocol extension)
+  0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
+  0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -100,6 +125,51 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace stream {
+
+  std::uint32_t
+  video_rtp_timestamp(
+    std::chrono::steady_clock::time_point presentation_time,
+    std::chrono::steady_clock::time_point epoch) {
+    using signed_rtp_tick = std::chrono::duration<std::int64_t, std::ratio<1, 90000>>;
+    return static_cast<std::uint32_t>(
+      std::chrono::round<signed_rtp_tick>(presentation_time - epoch).count());
+  }
+
+  namespace {
+    std::uint32_t
+    read_dynamic_param_u32(std::string_view payload, std::size_t offset) {
+      return static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset])) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 1])) << 8) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 2])) << 16) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 3])) << 24);
+    }
+
+    std::int32_t
+    read_dynamic_param_i32(std::string_view payload, std::size_t offset) {
+      const auto value = read_dynamic_param_u32(payload, offset);
+      const auto signed_value = (value & 0x80000000u) != 0
+                                  ? static_cast<std::int64_t>(value) - (1LL << 32)
+                                  : static_cast<std::int64_t>(value);
+      return static_cast<std::int32_t>(signed_value);
+    }
+
+    float
+    read_dynamic_param_f32(std::string_view payload, std::size_t offset) {
+      return std::bit_cast<float>(read_dynamic_param_u32(payload, offset));
+    }
+
+    std::int64_t
+    steady_now_ms() {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+    }
+
+    std::int64_t
+    idle_ms(std::int64_t now, std::int64_t last_activity) {
+      return last_activity == 0 ? -1 : std::max<std::int64_t>(0, now - last_activity);
+    }
+  }  // namespace
 
   enum class socket_e : int {
     video,  ///< Video
@@ -244,6 +314,27 @@ namespace stream {
     std::uint32_t height;
   };
 
+  constexpr std::uint8_t cursor_protocol_version = 1;
+  constexpr std::uint8_t cursor_flag_shape = 0x01;
+  constexpr std::uint8_t cursor_flag_visible = 0x02;
+  constexpr std::size_t cursor_chunk_bytes = 60000;
+
+  struct cursor_update_header_t {
+    std::uint8_t version;
+    std::uint8_t flags;
+    std::uint16_t header_size;
+    std::uint32_t shape_id;
+    std::uint16_t width;
+    std::uint16_t height;
+    std::int16_t hotspot_x;
+    std::int16_t hotspot_y;
+    std::uint32_t total_size;
+    std::uint32_t offset;
+    std::uint16_t chunk_size;
+    std::uint16_t reserved;
+  };
+  static_assert(sizeof(cursor_update_header_t) == 28);
+
   typedef struct control_encrypted_t {
     std::uint16_t encryptedHeaderType;  // Always LE 0x0001
     std::uint16_t length;  // sizeof(seq) + 16 byte tag + secondary header and data
@@ -282,9 +373,41 @@ namespace stream {
   round_to_pkcs7_padded(std::size_t size) {
     return ((size + 15) / 16) * 16;
   }
-  constexpr std::size_t MAX_AUDIO_PACKET_SIZE = 1400;
 
-  using audio_aes_t = std::array<char, round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE)>;
+  // Maximum payload (bytes) of a single audio RTP packet BEFORE AES-CBC
+  // padding. Computed as the worst-case codec frame across all supported
+  // encodings, plus a small headroom. Each value below is the per-frame
+  // payload of the corresponding codec at its highest negotiated setting:
+  //
+  //   AC3 @640 kbps:  640e3 / 8 * (1536 / 48000)         = 2560 B  (32 ms)
+  //   E-AC3 @384k:    384e3 / 8 * (1536 / 48000)         = 1536 B  (32 ms)
+  //   PCM_S16 5ms 8c: 5 * 48 * 8 * sizeof(int16_t)        = 3840 B  (worst PCM)
+  //   Opus (any cfg): bounded well under 1500 B in practice
+  //
+  // The compile-time max() ensures adding a new codec only requires bumping
+  // the corresponding constant (or its formula) — no risk of forgetting a
+  // magic number elsewhere. session::alloc() consumes
+  // round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE) for each shard, so the
+  // shard buffer width auto-tracks this constant.
+  //
+  // Note: large frames will exceed Ethernet MTU 1500 and be IP-fragmented at
+  // the OS level — expected for raw passthrough on a LAN; receivers
+  // reassemble before delivering to the RTP layer.
+  namespace audio_payload {
+    constexpr std::size_t kAc3MaxFrameBytes    = 2560;  // 640 kbps * 32 ms
+    constexpr std::size_t kEac3MaxFrameBytes   = 1536;  // 384 kbps * 32 ms
+    constexpr std::size_t kPcmS16MaxFrameBytes = 5 * 48 * 8 * sizeof(int16_t);  // 5 ms * 48 kHz * 8 ch
+    constexpr std::size_t kOpusMaxFrameBytes   = 1500;  // generous upper bound
+    constexpr std::size_t kHeadroomBytes       = 64;    // future-proofing margin
+  }  // namespace audio_payload
+
+  constexpr std::size_t MAX_AUDIO_PACKET_SIZE =
+      std::max({
+          audio_payload::kAc3MaxFrameBytes,
+          audio_payload::kEac3MaxFrameBytes,
+          audio_payload::kPcmS16MaxFrameBytes,
+          audio_payload::kOpusMaxFrameBytes,
+      }) + audio_payload::kHeadroomBytes;
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
@@ -304,8 +427,8 @@ namespace stream {
   }
 
   static inline void
-  while_starting_do_nothing(std::atomic<session::state_e> &state) {
-    while (state.load(std::memory_order_acquire) == session::state_e::STARTING) {
+  while_starting_do_nothing(const session::lifecycle_t &lifecycle) {
+    while (lifecycle.state() == session::state_e::STARTING) {
       std::this_thread::sleep_for(1ms);
     }
   }
@@ -360,6 +483,16 @@ namespace stream {
       return 0;
     }
 
+    int
+    send_unreliable(const std::string_view &payload, net::peer_t peer) {
+      auto packet = enet_packet_create(payload.data(), payload.size(), 0);
+      if (enet_peer_send(peer, 0, packet)) {
+        enet_packet_destroy(packet);
+        return -1;
+      }
+      return 0;
+    }
+
     void
     flush() {
       enet_host_flush(_host.get());
@@ -396,40 +529,44 @@ namespace stream {
 
     control_server_t control_server;
 
+    boost::mutex mic_socket_mutex;
     boost::atomic<bool> mic_socket_enabled { false };
-    boost::atomic<int> mic_sessions_count { 0 };  // 需要麦克风的会话数
 
-    // Per-client 麦克风加密上下文（以客户端 IP 为 key）
+    // 单个会话的麦克风加密上下文。
     struct mic_cipher_ctx_t {
       crypto::cipher::cbc_t cipher;
-      crypto::aes_t iv;
 
-      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding, std::uint32_t avRiKeyId)
-          : cipher(key, padding), iv(16) {
-        // 初始化 IV：前 4 字节存储 baseIv（大端序）
-        // baseIv 对应客户端的 remoteInputAesIv 的前 4 字节
-        // avRiKeyId 就是 launch_session.iv 的前 4 字节（大端序），与 remoteInputAesIv 的前 4 字节相同
-        *(std::uint32_t *) iv.data() = util::endian::big<std::uint32_t>(avRiKeyId);
-        // 其余字节保持为 0（IV 是 16 字节，但只使用前 4 字节）
-        std::memset(iv.data() + 4, 0, 12);
-      }
+      mic_cipher_ctx_t(const crypto::aes_t &key, bool padding):
+          cipher(key, padding) {}
 
       mic_cipher_ctx_t(mic_cipher_ctx_t &&) noexcept = default;
       mic_cipher_ctx_t &operator=(mic_cipher_ctx_t &&) noexcept = default;
     };
 
-    // Per-client 加密表：IP -> shared_ptr<cipher_ctx>
-    // shared_ptr 允许在锁外安全使用 cipher_ctx（即使 map 中的条目被其他线程移除，
-    // 持有 shared_ptr 的线程仍可安全完成解密操作）
-    // 使用 boost::container::flat_map 获得更好的缓存局部性（客户端数 N≤5，线性扫描比哈希更快）
-    boost::container::flat_map<std::string, boost::shared_ptr<mic_cipher_ctx_t>> mic_ciphers;
-    boost::mutex mic_cipher_mutex;
+    struct mic_session_ctx_t {
+      std::uint32_t session_id;
+      std::uint32_t key_id;
+      boost::asio::ip::address client_address;
+      std::optional<udp::endpoint> source_endpoint;
+      std::optional<mic_cipher_ctx_t> cipher;
 
-    // TODO: 未来版本应当强制启用麦克风加密，防止被窃听
-    boost::atomic<bool> mic_reject_plaintext { false };
+      mic_session_ctx_t(
+        std::uint32_t session_id,
+        std::uint32_t key_id,
+        boost::asio::ip::address client_address,
+        std::optional<mic_cipher_ctx_t> cipher
+      ):
+          session_id {session_id},
+          key_id {key_id},
+          client_address {net::normalize_address(std::move(client_address))},
+          cipher {std::move(cipher)} {}
+    };
 
-    std::map<std::string, std::string> client_ip_to_name;
-    boost::mutex client_name_mutex;
+    // 每个会话保留独立的加密与 Opus 解码状态，麦克风线程将所有活动源混合后
+    // 写入同一个虚拟麦克风设备。会话 ID 是主身份，IP 和 UDP endpoint 只用于路由。
+    std::unordered_map<std::uint32_t, boost::shared_ptr<mic_session_ctx_t>> mic_sessions;
+    boost::mutex mic_session_mutex;
+    boost::atomic<std::uint32_t> mic_session_count { 0 };
   };
 
   struct session_t {
@@ -450,6 +587,18 @@ namespace stream {
 
     // 添加客户端名称字段
     std::string client_name;
+    std::string client_cert_uuid;
+    bool use_vdd {false};
+    int custom_screen_mode {-1};
+    bool highly_suspected_unknown_client {false};
+    std::string app_name;
+    int app_id = 0;
+
+    std::int64_t created_at_ms { 0 };
+    std::atomic<std::int64_t> last_control_activity_ms { 0 };
+    std::atomic<std::int64_t> last_video_activity_ms { 0 };
+    std::atomic<std::int64_t> last_audio_activity_ms { 0 };
+    session::lifecycle_t lifecycle;
 
     struct {
       std::string ping_payload;
@@ -484,6 +633,7 @@ namespace stream {
       std::unique_ptr<platf::deinit_t> qos;
 
       bool enable_mic;
+      bool mic_registered { false };
     } audio;
 
     struct {
@@ -501,6 +651,25 @@ namespace stream {
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
+
+      bool local_cursor_mode = false;
+      std::uint64_t cursor_revision = 0;
+      bool cursor_shape_sent = false;
+      std::uint32_t cursor_shape_id = 0;
+      bool cursor_visibility_sent = false;
+      bool cursor_visible = false;
+      std::uint64_t cursor_failed_revision = 0;
+      std::uint32_t cursor_send_failures = 0;
+
+      std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
+      bool authored_haptics_init_failed = false;
+      // One fallback session per controller: smoothing, throttle and watchdog
+      // state must not bleed between pads, and the watchdog stop has to reach
+      // the pad that actually stopped sending PCM.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::legacy_rumble_session_t>> legacy_haptics;
+      bool legacy_haptics_init_failed = false;
+      std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> compatibility_rumble;
+      std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> synthesized_haptics_rumble;
     } control;
 
     std::uint32_t launch_session_id;
@@ -508,14 +677,15 @@ namespace stream {
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
     bool enable_hdr { false };
-    float max_nits { 1000.0f };
-    float min_nits { 0.001f };
-    float max_full_nits { 1000.0f };
+    hdr::client_display_capabilities_t hdr_capabilities;
+    hdr::client_display_capabilities_t reported_hdr_capabilities;
+    // Runtime SDR white updates are consumed by the video thread and may also
+    // be needed by a control-thread display reconfiguration.
+    std::atomic<float> dynamic_sdr_white_nits { 0.0f };
+    hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
-
-    std::atomic<session::state_e> state;
 
     // Current total bitrate for this session (including FEC overhead) in Kbps
     // This is the user-configured bitrate, not the encoding bitrate
@@ -524,6 +694,101 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
   };
+
+  namespace session {
+    // 高位表示显示设备正在重配置，低 31 位记录已登记的视频会话数。
+    // 两者共用一个原子状态，确保“确认单会话”和“取得重配置权”由同一次 CAS 完成。
+    constexpr std::uint32_t VIDEO_SESSION_RECONFIGURING = std::uint32_t {1} << 31;
+    constexpr std::uint32_t VIDEO_SESSION_COUNT_MASK = ~VIDEO_SESSION_RECONFIGURING;
+
+    std::atomic_uint running_sessions;
+    boost::atomic<std::uint32_t> video_session_state {0};
+
+    // 在创建音视频线程前登记会话。显示设备重配置期间，新会话在此等待占用位释放，
+    // 避免会话启动和 VDD 重建同时进行。返回值表示它是否是首个视频会话。
+    std::optional<bool>
+    register_video_session() {
+      auto state = video_session_state.load(boost::memory_order_acquire);
+      for (;;) {
+        if ((state & VIDEO_SESSION_RECONFIGURING) != 0) {
+          state = video_session_state.wait(state, boost::memory_order_acquire);
+          continue;
+        }
+
+        const auto count = state & VIDEO_SESSION_COUNT_MASK;
+        if (count == VIDEO_SESSION_COUNT_MASK) {
+          BOOST_LOG(error) << "Cannot register another video session because the session counter is exhausted"sv;
+          return std::nullopt;
+        }
+
+        if (video_session_state.compare_exchange_weak(
+              state,
+              state + 1,
+              boost::memory_order_acq_rel,
+              boost::memory_order_acquire)) {
+          return count == 0;
+        }
+      }
+    }
+
+    // 只递减低位的会话计数，保留可能并发存在的重配置占用位。
+    // 返回注销后的会话数，由最后一个会话负责执行平台停止和显示恢复逻辑。
+    std::uint32_t
+    unregister_video_session() {
+      auto state = video_session_state.load(boost::memory_order_acquire);
+      for (;;) {
+        const auto count = state & VIDEO_SESSION_COUNT_MASK;
+        if (count == 0) {
+          BOOST_LOG(error) << "Cannot unregister a video session because the session counter is already zero"sv;
+          return 0;
+        }
+
+        const auto desired = (state & VIDEO_SESSION_RECONFIGURING) | (count - 1);
+        if (video_session_state.compare_exchange_weak(
+              state,
+              desired,
+              boost::memory_order_acq_rel,
+              boost::memory_order_acquire)) {
+          return count - 1;
+        }
+      }
+    }
+
+    std::uint32_t
+    video_session_count() {
+      return video_session_state.load(boost::memory_order_acquire) & VIDEO_SESSION_COUNT_MASK;
+    }
+
+    template <class F>
+    bool
+    run_display_reconfiguration_if_single_video_session(F &&operation) {
+      // 只有恰好一个视频会话时才允许重配置。CAS 成功设置占用位后，
+      // 后续视频会话会在 register_video_session() 中等待，不会进入重建窗口。
+      auto state = video_session_state.load(boost::memory_order_acquire);
+      for (;;) {
+        if ((state & VIDEO_SESSION_RECONFIGURING) != 0 ||
+            (state & VIDEO_SESSION_COUNT_MASK) != 1) {
+          return false;
+        }
+
+        if (video_session_state.compare_exchange_weak(
+              state,
+              state | VIDEO_SESSION_RECONFIGURING,
+              boost::memory_order_acq_rel,
+              boost::memory_order_acquire)) {
+          break;
+        }
+      }
+
+      // 无论重配置正常返回还是抛出异常，都必须清除占用位并唤醒等待的新会话。
+      auto reconfiguration_guard = util::fail_guard([]() {
+        video_session_state.fetch_and(VIDEO_SESSION_COUNT_MASK, boost::memory_order_release);
+        video_session_state.notify_all();
+      });
+      std::forward<F>(operation)();
+      return true;
+    }
+  }  // namespace session
 
   /**
    * First part of cipher must be struct of type control_encrypted_t
@@ -583,22 +848,25 @@ namespace stream {
     return std::string_view { (char *) tagged_cipher.data(), packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq) };
   }
 
-  /**
-   * @brief 确保麦克风 socket 处于打开状态。
-   * 如果 socket 已关闭（上次会话结束时被关闭），则重新 open + bind。
-   * @param ctx broadcast 上下文
-   * @return true 如果 socket 已打开或成功重新打开
-   */
   bool
-  ensure_mic_sock_open(broadcast_ctx_t &ctx) {
+  open_mic_socket_locked(broadcast_ctx_t &ctx) {
     if (ctx.mic_sock.is_open()) {
+      ctx.mic_socket_enabled.store(true);
       return true;
     }
+
+    ctx.mic_socket_enabled.store(false);
 
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
     auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
     auto mic_port = net::map_port(MIC_STREAM_PORT);
     boost::system::error_code ec;
+
+    const auto bind_address = boost::asio::ip::make_address(net::get_bind_address(address_family), ec);
+    if (ec) {
+      BOOST_LOG(error) << "Invalid microphone bind address: "sv << ec.message();
+      return false;
+    }
 
     ctx.mic_sock.open(protocol, ec);
     if (ec) {
@@ -606,92 +874,151 @@ namespace stream {
       return false;
     }
 
-    ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
+    ctx.mic_sock.bind(udp::endpoint(bind_address, mic_port), ec);
     if (ec) {
       BOOST_LOG(error) << "Couldn't re-bind Microphone socket to port ["sv << mic_port << "]: "sv << ec.message();
-      ctx.mic_sock.close();
-      return false;
-    }
-
-    BOOST_LOG(info) << "Microphone socket re-opened on port " << mic_port;
-    return true;
-  }
-
-  /**
-   * @brief 重置麦克风加密状态（清除所有客户端的加密上下文）。
-   * 在所有麦克风会话结束或 broadcast 结束时调用。
-   */
-  void
-  reset_mic_encryption(broadcast_ctx_t &ctx) {
-    boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-    ctx.mic_ciphers.clear();
-  }
-
-  /**
-   * @brief 移除指定客户端的麦克风加密上下文。
-   * 在单个客户端会话结束时调用，不影响其他客户端的加密状态。
-   * @param ctx broadcast 上下文
-   * @param client_ip 客户端 IP 地址字符串
-   */
-  void
-  remove_mic_encryption(broadcast_ctx_t &ctx, const std::string &client_ip) {
-    boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-    ctx.mic_ciphers.erase(client_ip);
-  }
-
-  /**
-   * @brief 为会话设置麦克风接收。
-   * 统一处理 mic_sessions_count 递增、socket 打开、加密上下文注册。
-   * 如果 socket 打开失败，回滚计数并跳过麦克风启用。
-   * @param session 当前会话
-   * @return true 如果麦克风设置成功
-   */
-  bool
-  setup_mic_for_session(session_t &session) {
-    auto &ctx = *session.broadcast_ref.get();
-
-    ctx.mic_sessions_count.fetch_add(1);
-
-    // 确保 mic socket 处于打开状态（上次会话结束时可能已关闭）
-    if (!ensure_mic_sock_open(ctx)) {
-      BOOST_LOG(error) << "Failed to ensure mic socket is open, microphone will be unavailable for " << session.client_name;
-      // 回滚计数 — socket 未打开不应算有效 mic 会话
-      ctx.mic_sessions_count.fetch_sub(1);
+      boost::system::error_code close_ec;
+      ctx.mic_sock.close(close_ec);
       return false;
     }
 
     ctx.mic_socket_enabled.store(true);
-
-    // 注册客户端 IP → 名称映射（用于麦克风统计日志）
-    std::string client_ip = session.audio.peer.address().to_string();
-    {
-      boost::lock_guard<boost::mutex> lg(ctx.client_name_mutex);
-      ctx.client_ip_to_name[client_ip] = session.client_name;
-      BOOST_LOG(debug) << "Registered client mapping: " << client_ip << " -> " << session.client_name;
-    }
-
-    // 检查是否需要启用 MIC 加密
-    bool should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
-    if (should_enable_mic_encryption) {
-      boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-      // Per-client cipher：用当前会话的密钥为该客户端创建独立的加密上下文
-      ctx.mic_ciphers[client_ip] = boost::make_shared<broadcast_ctx_t::mic_cipher_ctx_t>(
-        session.audio.cipher.key, session.audio.cipher.padding, session.audio.avRiKeyId);
-      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption ENABLED (per-client cipher registered for " << client_ip << ")";
-    }
-    else {
-      // 该客户端未启用加密，移除其加密上下文（如果有的话）
-      remove_mic_encryption(ctx, client_ip);
-      BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption DISABLED";
-    }
-
+    BOOST_LOG(info) << "Microphone socket opened on " << bind_address << ':' << mic_port;
     return true;
+  }
+
+  void
+  close_mic_socket_locked(broadcast_ctx_t &ctx) {
+    ctx.mic_socket_enabled.store(false);
+
+    if (!ctx.mic_sock.is_open()) {
+      return;
+    }
+
+    boost::system::error_code ec;
+    ctx.mic_sock.close(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor) {
+      BOOST_LOG(warning) << "Couldn't close Microphone socket: "sv << ec.message();
+    }
+  }
+
+  void
+  cancel_mic_receive_locked(broadcast_ctx_t &ctx) {
+    if (!ctx.mic_sock.is_open()) {
+      return;
+    }
+
+    boost::system::error_code ec;
+    ctx.mic_sock.cancel(ec);
+    if (ec && ec != boost::asio::error::bad_descriptor) {
+      BOOST_LOG(warning) << "Couldn't cancel Microphone receive: "sv << ec.message();
+    }
+  }
+
+  /**
+   * @brief Stop all microphone reception during broadcast shutdown.
+   * @param ctx The shared broadcast context.
+   * @return true if an open socket was closed.
+   */
+  bool
+  disable_mic_socket(broadcast_ctx_t &ctx) {
+    boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
+    ctx.mic_sessions.clear();
+    ctx.mic_session_count.store(0, boost::memory_order_release);
+
+    boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
+    const auto was_open = ctx.mic_sock.is_open();
+    close_mic_socket_locked(ctx);
+    return was_open;
+  }
+
+  /**
+   * @brief Release the microphone source registered by the ending session.
+   * @param ctx The shared broadcast context.
+   * @param session_id The ID of the ending session.
+   * @return true if a source registration was removed.
+   */
+  bool
+  release_mic_session(broadcast_ctx_t &ctx, std::uint32_t session_id) {
+    boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
+    if (ctx.mic_sessions.erase(session_id) == 0) {
+      return false;
+    }
+
+    const auto remaining_sessions = static_cast<std::uint32_t>(ctx.mic_sessions.size());
+    ctx.mic_session_count.store(remaining_sessions, boost::memory_order_release);
+    if (remaining_sessions != 0) {
+      return true;
+    }
+
+    boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
+    cancel_mic_receive_locked(ctx);
+    return true;
+  }
+
+  /**
+   * @brief Register an independently decoded microphone source.
+   * @param session The session that completed microphone SETUP.
+   * @param client_address The authenticated RTSP peer address.
+   */
+  void
+  setup_mic_for_session(session_t &session, const boost::asio::ip::address &client_address) {
+    auto &ctx = *session.broadcast_ref.get();
+
+    const auto should_enable_mic_encryption = (session.config.encryptionFlagsEnabled & SS_ENC_MIC) != 0;
+    std::optional<broadcast_ctx_t::mic_cipher_ctx_t> cipher;
+    if (should_enable_mic_encryption) {
+      cipher.emplace(
+        session.audio.cipher.key,
+        session.audio.cipher.padding
+      );
+    }
+
+    auto registration = boost::make_shared<broadcast_ctx_t::mic_session_ctx_t>(
+      session.launch_session_id,
+      session.audio.avRiKeyId,
+      client_address,
+      std::move(cipher)
+    );
+
+    {
+      // 统一会话表和套接字生命周期的加锁顺序，避免最后一个旧会话退出时
+      // 关闭刚为新会话打开的套接字。
+      boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
+      boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
+      if (!open_mic_socket_locked(ctx)) {
+        BOOST_LOG(error) << "Failed to open microphone socket for " << session.client_name;
+        return;
+      }
+
+      session.audio.mic_registered = true;
+      ctx.mic_sessions[session.launch_session_id] = registration;
+      ctx.mic_session_count.store(
+        static_cast<std::uint32_t>(ctx.mic_sessions.size()),
+        boost::memory_order_release);
+    }
+
+    BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption "
+                    << (should_enable_mic_encryption ? "ENABLED" : "DISABLED")
+                    << " (session " << session.launch_session_id
+                    << " registered for multi-client mixing)";
   }
 
   int
   start_broadcast(broadcast_ctx_t &ctx);
   void
   end_broadcast(broadcast_ctx_t &ctx);
+
+  static int
+  clamp_total_bitrate_to_host_cap(int bitrate_kbps, std::string_view client_name) {
+    if (config::video.max_bitrate > 0 && bitrate_kbps > config::video.max_bitrate) {
+      BOOST_LOG(info) << "Clamping dynamic bitrate for client '" << client_name
+                      << "' from " << bitrate_kbps << " Kbps to host maximum "
+                      << config::video.max_bitrate << " Kbps";
+      return config::video.max_bitrate;
+    }
+    return bitrate_kbps;
+  }
 
   static auto broadcast_shared = safe::make_shared<broadcast_ctx_t>(start_broadcast, end_broadcast);
 
@@ -802,6 +1129,7 @@ namespace stream {
       }
 
       session->pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+      session->last_control_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
       switch (event.type) {
         case ENET_EVENT_TYPE_RECEIVE: {
@@ -818,9 +1146,7 @@ namespace stream {
         case ENET_EVENT_TYPE_DISCONNECT:
           BOOST_LOG(info) << "CLIENT DISCONNECTED"sv;
           // No more clients to send video data to ^_^
-          if (session->state == session::state_e::RUNNING) {
-            session::stop(*session);
-          }
+          session::stop(*session, session::stop_reason_e::control_disconnect);
           break;
         case ENET_EVENT_TYPE_NONE:
           break;
@@ -1012,7 +1338,8 @@ namespace stream {
    * @return 0 on success.
    */
   int
-  send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg) {
+  send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg,
+                    bool synthesized_haptics = false) {
     if (!session->control.peer) {
       BOOST_LOG(warning) << "Couldn't send gamepad feedback data, still waiting for PING from Moonlight"sv;
       // Still waiting for PING from Moonlight
@@ -1020,19 +1347,28 @@ namespace stream {
     }
 
     std::string payload;
+    bool unreliable = false;
     if (msg.type == platf::gamepad_feedback_e::rumble) {
       control_rumble_t plaintext;
       plaintext.header.type = packetTypes[IDX_RUMBLE_DATA];
       plaintext.header.payloadLength = sizeof(plaintext) - sizeof(control_header_v2);
 
       auto &data = msg.data.rumble;
+      auto &source = synthesized_haptics ?
+                       session->control.synthesized_haptics_rumble :
+                       session->control.compatibility_rumble;
+      source[msg.id] = {data.lowfreq, data.highfreq};
+      const auto compatibility = session->control.compatibility_rumble[msg.id];
+      const auto synthesized = session->control.synthesized_haptics_rumble[msg.id];
+      const auto lowfreq = std::max(compatibility.first, synthesized.first);
+      const auto highfreq = std::max(compatibility.second, synthesized.second);
 
       plaintext.useless = 0xC0FFEE;
       plaintext.id = util::endian::little(msg.id);
-      plaintext.lowfreq = util::endian::little(data.lowfreq);
-      plaintext.highfreq = util::endian::little(data.highfreq);
+      plaintext.lowfreq = util::endian::little(lowfreq);
+      plaintext.highfreq = util::endian::little(highfreq);
 
-      BOOST_LOG(verbose) << "Rumble: "sv << msg.id << " :: "sv << util::hex(data.lowfreq).to_string_view() << " :: "sv << util::hex(data.highfreq).to_string_view();
+      BOOST_LOG(verbose) << "Rumble: "sv << msg.id << " :: "sv << util::hex(lowfreq).to_string_view() << " :: "sv << util::hex(highfreq).to_string_view();
       std::array<std::uint8_t,
         sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(plaintext)) + crypto::cipher::tag_size>
         encrypted_payload;
@@ -1111,12 +1447,123 @@ namespace stream {
 
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
+    else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
+      const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
+      const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
+
+      const auto &data = msg.data.ds5_haptics;
+      const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
+      auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
+        p[0] = static_cast<std::uint8_t>(v);
+        p[1] = static_cast<std::uint8_t>(v >> 8);
+      };
+      auto write_u32 = [](std::uint8_t *p, std::uint32_t v) {
+        p[0] = static_cast<std::uint8_t>(v);
+        p[1] = static_cast<std::uint8_t>(v >> 8);
+        p[2] = static_cast<std::uint8_t>(v >> 16);
+        p[3] = static_cast<std::uint8_t>(v >> 24);
+      };
+      auto write_u64 = [&write_u32](std::uint8_t *p, std::uint64_t v) {
+        write_u32(p, static_cast<std::uint32_t>(v));
+        write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
+      };
+      if (!sends_raw_pcm && !sends_authored_ir) {
+        if (!session->control.legacy_haptics_init_failed) {
+          auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
+          if (inserted) {
+            auto created = std::make_unique<haptics::legacy_rumble_session_t>();
+            if (!created->ready()) {
+              session->control.legacy_haptics.erase(controller_session);
+              session->control.legacy_haptics_init_failed = true;
+              BOOST_LOG(error) << "Unable to initialize legacy DualSense haptics fallback"sv;
+              return 0;
+            }
+            controller_session->second = std::move(created);
+          }
+          const auto rumble = controller_session->second->process(
+            msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+            std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+          if (rumble) {
+            auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+              rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
+            return send_feedback_msg(session, legacy_msg, true);
+          }
+        }
+        return 0;
+      }
+      // A malformed client that declares both modes gets the lossless physical
+      // route. Official clients reject this combination before connecting.
+      else if (sends_authored_ir && !sends_raw_pcm) {
+        if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
+          auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
+          if (!authored_haptics->ready()) {
+            session->control.authored_haptics_init_failed = true;
+            BOOST_LOG(error) << "Unable to initialize authored DualSense haptics analysis"sv;
+          }
+          else {
+            session->control.authored_haptics = std::move(authored_haptics);
+          }
+        }
+        if (!session->control.authored_haptics) {
+          return 0;
+        }
+        const auto wire = session->control.authored_haptics->process(
+          msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+          std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+        if (!wire) {
+          return 0;
+        }
+
+        std::array<std::uint8_t, sizeof(control_header_v2) + haptics::authored_ir_v2_wire_size> plaintext {};
+        auto *control = plaintext.data();
+        write_u16(control, packetTypes[IDX_DS5_HAPTICS_IR_V2]);
+        write_u16(control + 2, haptics::authored_ir_v2_wire_size);
+        std::ranges::copy(*wire, control + sizeof(control_header_v2));
+
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session, util::view(plaintext), encrypted_payload);
+      }
+      else {
+        constexpr std::size_t wire_header_size = 28;
+        std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire_header_size + pcm_size);
+        auto *control = plaintext.data();
+        write_u16(control, packetTypes[IDX_DS5_HAPTICS_PCM]);
+        write_u16(control + 2, static_cast<std::uint16_t>(wire_header_size + pcm_size));
+        auto *wire = control + sizeof(control_header_v2);
+        wire[0] = 1;
+        wire[1] = data.flags;
+        write_u16(wire + 2, wire_header_size);
+        write_u16(wire + 4, msg.id);
+        write_u16(wire + 6, data.frame_count);
+        write_u32(wire + 8, data.sequence);
+        write_u64(wire + 12, data.presentation_time_us);
+        write_u32(wire + 20, 48000);
+        wire[24] = 2;
+        wire[25] = 16;
+        wire[26] = wire[27] = 0;
+        std::copy_n(data.pcm.begin(), pcm_size, wire + wire_header_size);
+
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
+            sizeof(control_header_v2) + wire_header_size + 240 * 4) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session,
+                                 std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()),
+                                 encrypted_payload);
+      }
+      unreliable = true;
+    }
     else {
       BOOST_LOG(error) << "Unknown gamepad feedback message type"sv;
       return -1;
     }
 
-    if (session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+    const auto send_result = unreliable
+      ? session->broadcast_ref->control_server.send_unreliable(payload, session->control.peer)
+      : session->broadcast_ref->control_server.send(payload, session->control.peer);
+    if (send_result) {
       TUPLE_2D(port, addr, platf::from_sockaddr_ex((sockaddr *) &session->control.peer->address.address));
       BOOST_LOG(warning) << "Couldn't send gamepad feedback to ["sv << addr << ':' << port << ']';
 
@@ -1188,6 +1635,212 @@ namespace stream {
     return 0;
   }
 
+  /**
+   * Variable-length sibling of encode_control(). Encrypts an arbitrary-sized
+   * plaintext into the caller-provided output buffer. The output buffer must be
+   * at least `sizeof(control_encrypted_t) + round_to_pkcs7_padded(plaintext.size()) + tag_size`.
+   * Returns the encoded view, or empty on failure / insufficient capacity.
+   */
+  static std::string_view
+  encode_control_buf(session_t *session, std::string_view plaintext, std::uint8_t *out, std::size_t out_cap) {
+    const std::size_t needed = sizeof(control_encrypted_t)
+                               + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+                               + crypto::cipher::tag_size;
+    if (out_cap < needed) {
+      BOOST_LOG(error) << "encode_control_buf: insufficient buffer ("sv << out_cap << " < "sv << needed << ")"sv;
+      return {};
+    }
+
+    if (session->config.controlProtocolType != 13) {
+      // Pre-v2 control protocol — caller must already have written plaintext;
+      // not used by clipboard sync (gated by gui_alive() + capability flags).
+      return plaintext;
+    }
+
+    auto seq = session->control.seq++;
+
+    auto &iv = session->control.outgoing_iv;
+    if (session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) {
+      iv.resize(12);
+      std::copy_n((uint8_t *) &seq, sizeof(seq), std::begin(iv));
+      iv[10] = 'H';
+      iv[11] = 'C';
+    }
+    else {
+      iv.resize(16);
+      iv[0] = (std::uint8_t) seq;
+    }
+
+    auto packet = (control_encrypted_p) out;
+    auto bytes = session->control.cipher.encrypt(plaintext, packet->payload(), &iv);
+    if (bytes <= 0) {
+      BOOST_LOG(error) << "encode_control_buf: encrypt failed"sv;
+      return {};
+    }
+
+    std::uint16_t packet_length = bytes + crypto::cipher::tag_size + sizeof(control_encrypted_t::seq);
+    packet->encryptedHeaderType = util::endian::little(0x0001);
+    packet->length = util::endian::little(packet_length);
+    packet->seq = util::endian::little(seq);
+
+    return std::string_view {
+      (char *) out,
+      packet_length + sizeof(control_encrypted_t) - sizeof(control_encrypted_t::seq)
+    };
+  }
+
+  /**
+   * Send a clipboard payload as an IDX_CLIPBOARD control packet. `payload` is
+   * an opaque byte string; this function adds the framing header and encrypts.
+   * Returns 0 on success, -1 on failure or oversized payload. The raw payload
+   * is capped below 65535 bytes so the encrypted control frame length also
+   * fits in the protocol's 16-bit length field.
+   */
+  int
+  send_clipboard(session_t *session, const clipboard_bridge::payload_t &payload) {
+    if (!session->control.peer) {
+      return -1;
+    }
+
+    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
+    const std::size_t encrypted_packet_length =
+      crypto::cipher::round_to_pkcs7_padded(plaintext_size)
+      + crypto::cipher::tag_size
+      + sizeof(control_encrypted_t::seq);
+    if (payload.size() > clipboard_bridge::kMaxPayloadBytes ||
+        encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(warning) << "send_clipboard: payload too large ("sv << payload.size()
+                         << " bytes; encrypted control frame would be "sv
+                         << encrypted_packet_length << " bytes)"sv;
+      return -1;
+    }
+
+    std::vector<std::uint8_t> plaintext(plaintext_size);
+    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    hdr->type = packetTypes[IDX_CLIPBOARD];
+    hdr->payloadLength = (std::uint16_t) payload.size();
+    if (!payload.empty()) {
+      std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    }
+
+    std::vector<std::uint8_t> encrypted(
+      sizeof(control_encrypted_t)
+      + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+      + crypto::cipher::tag_size);
+
+    auto view = encode_control_buf(
+      session,
+      std::string_view { (char *) plaintext.data(), plaintext.size() },
+      encrypted.data(),
+      encrypted.size());
+    if (view.empty()) {
+      return -1;
+    }
+
+    if (session->broadcast_ref->control_server.send(view, session->control.peer)) {
+      BOOST_LOG(warning) << "Couldn't send clipboard packet"sv;
+      return -1;
+    }
+    return 0;
+  }
+
+  int
+  send_cursor_update(session_t *session,
+                     const cursor_channel::snapshot_t &cursor,
+                     bool include_shape) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
+      return -1;
+    }
+
+    const std::size_t total_size = include_shape ? cursor.bgra.size() : 0;
+    if (include_shape &&
+        (!cursor.has_shape || cursor.width == 0 || cursor.height == 0 ||
+         total_size != static_cast<std::size_t>(cursor.width) * cursor.height * 4u ||
+         total_size > std::numeric_limits<std::uint32_t>::max())) {
+      BOOST_LOG(warning) << "Refusing invalid local cursor shape"sv;
+      return -1;
+    }
+
+    std::size_t offset = 0;
+    do {
+      const std::size_t chunk_size =
+        include_shape ? std::min(cursor_chunk_bytes, total_size - offset) : 0;
+      const std::size_t cursor_payload_size = sizeof(cursor_update_header_t) + chunk_size;
+      const std::size_t plaintext_size = sizeof(control_header_v2) + cursor_payload_size;
+      const std::size_t encrypted_packet_length =
+        crypto::cipher::round_to_pkcs7_padded(plaintext_size)
+        + crypto::cipher::tag_size
+        + sizeof(control_encrypted_t::seq);
+      if (cursor_payload_size > std::numeric_limits<std::uint16_t>::max() ||
+          encrypted_packet_length > std::numeric_limits<std::uint16_t>::max()) {
+        BOOST_LOG(warning) << "Local cursor chunk exceeds control packet limit"sv;
+        return -1;
+      }
+
+      std::vector<std::uint8_t> plaintext(plaintext_size);
+      auto *control_header = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      control_header->type = util::endian::little<std::uint16_t>(packetTypes[IDX_CURSOR]);
+      control_header->payloadLength =
+        util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(cursor_payload_size));
+
+      auto *cursor_header = reinterpret_cast<cursor_update_header_t *>(
+        plaintext.data() + sizeof(control_header_v2)
+      );
+      cursor_header->version = cursor_protocol_version;
+      cursor_header->flags = (include_shape ? cursor_flag_shape : 0) |
+                             (cursor.visible ? cursor_flag_visible : 0);
+      cursor_header->header_size =
+        util::endian::little<std::uint16_t>(sizeof(cursor_update_header_t));
+      cursor_header->shape_id = util::endian::little(cursor.shape_id);
+      cursor_header->width =
+        util::endian::little<std::uint16_t>(include_shape ? cursor.width : 0);
+      cursor_header->height =
+        util::endian::little<std::uint16_t>(include_shape ? cursor.height : 0);
+      cursor_header->hotspot_x = util::endian::little<std::int16_t>(
+        include_shape ? cursor.hotspot_x : 0
+      );
+      cursor_header->hotspot_y = util::endian::little<std::int16_t>(
+        include_shape ? cursor.hotspot_y : 0
+      );
+      cursor_header->total_size =
+        util::endian::little<std::uint32_t>(static_cast<std::uint32_t>(total_size));
+      cursor_header->offset =
+        util::endian::little<std::uint32_t>(static_cast<std::uint32_t>(offset));
+      cursor_header->chunk_size =
+        util::endian::little<std::uint16_t>(static_cast<std::uint16_t>(chunk_size));
+      cursor_header->reserved = 0;
+
+      if (chunk_size != 0) {
+        std::memcpy(
+          plaintext.data() + sizeof(control_header_v2) + sizeof(cursor_update_header_t),
+          cursor.bgra.data() + offset,
+          chunk_size
+        );
+      }
+
+      std::vector<std::uint8_t> encrypted(
+        sizeof(control_encrypted_t)
+        + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+        + crypto::cipher::tag_size
+      );
+      auto view = encode_control_buf(
+        session,
+        std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
+        encrypted.data(),
+        encrypted.size()
+      );
+      if (view.empty() ||
+          session->broadcast_ref->control_server.send(view, session->control.peer)) {
+        BOOST_LOG(warning) << "Couldn't send local cursor update"sv;
+        return -1;
+      }
+
+      offset += chunk_size;
+    } while (include_shape && offset < total_size);
+
+    return 0;
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
@@ -1254,20 +1907,60 @@ namespace stream {
       // 更新会话配置
       session->config.monitor.width = new_width;
       session->config.monitor.height = new_height;
+      perf::update_session_display(
+        session->launch_session_id,
+        session->config.monitor.width,
+        session->config.monitor.height,
+        session->config.monitor.framerate
+      );
 
       // 创建临时的 launch_session_t 来更新显示设备配置
       // 注意：必须按照结构体声明顺序初始化字段
       rtsp_stream::launch_session_t temp_launch_session {};
       temp_launch_session.id = session->launch_session_id;
+      temp_launch_session.client_cert_uuid = session->client_cert_uuid;
       temp_launch_session.client_name = session->client_name;
       temp_launch_session.width = new_width;
       temp_launch_session.height = new_height;
       temp_launch_session.fps = session->config.monitor.framerate;
       temp_launch_session.enable_hdr = session->enable_hdr;
       temp_launch_session.enable_sops = session->enable_sops;
-      temp_launch_session.max_nits = session->max_nits;
-      temp_launch_session.min_nits = session->min_nits;
-      temp_launch_session.max_full_nits = session->max_full_nits;
+      temp_launch_session.use_vdd = session->use_vdd;
+      temp_launch_session.custom_screen_mode = session->custom_screen_mode;
+      temp_launch_session.hdr_capabilities = session->hdr_capabilities;
+      temp_launch_session.reported_hdr_capabilities = session->reported_hdr_capabilities;
+      const auto dynamic_sdr_white_nits = session->dynamic_sdr_white_nits.load(std::memory_order_acquire);
+      temp_launch_session.hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
+      temp_launch_session.reported_hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
+      temp_launch_session.hdr_target_source = session->hdr_target_source;
+
+      bool active_display_resolved = true;
+      const auto active_display_event = mail::man->event<std::string>(mail::active_display);
+      const auto active_display = active_display_event->view(std::chrono::milliseconds {0});
+      const bool has_active_display = active_display && !active_display->empty();
+      const std::string target_display = has_active_display ?
+                                           *active_display :
+                                           session->config.monitor.display_name;
+      if (!target_display.empty()) {
+        const auto devices = display_device::enum_available_devices();
+        const auto device_it = std::find_if(devices.begin(), devices.end(), [&](const auto &entry) {
+          return entry.first == target_display ||
+                 entry.second.display_name == target_display ||
+                 entry.second.friendly_name == target_display;
+        });
+        if (device_it != devices.end()) {
+          temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = device_it->first;
+          temp_launch_session.use_vdd = device_it->second.friendly_name == ZAKO_NAME;
+        }
+        else if (has_active_display) {
+          active_display_resolved = false;
+          BOOST_LOG(warning) << "Current capture display [" << target_display
+                             << "] is no longer available; skipping display device reconfiguration";
+        }
+        else {
+          temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = target_display;
+        }
+      }
 
       // 更新显示设备配置（重新配置模式）
       // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
@@ -1280,7 +1973,20 @@ namespace stream {
                         << " -> " << new_width << "x" << new_height;
       }
       
-      display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+      if (active_display_resolved) {
+        const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
+          const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+          if (!result) {
+            BOOST_LOG(warning) << "Dynamic display reconfiguration failed: " << result.message;
+          }
+        });
+        if (!display_reconfigured) {
+          BOOST_LOG(info) << "Skipping display device reconfiguration for the dynamic resolution request because other streaming sessions are active";
+        }
+      }
+      else {
+        BOOST_LOG(info) << "Dynamic stream resolution updated without changing the unavailable capture display";
+      }
 
       // 请求 IDR 帧以确保客户端能正确显示新分辨率
       // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
@@ -1289,13 +1995,13 @@ namespace stream {
       // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
       // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
       // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
-      BOOST_LOG(info) << "Resolution change completed: " << new_width << "x" << new_height 
+      BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
     // Payload 格式：
-    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区
+    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区, 9=客户端SDR白位
     // - 参数值：
     //   * 分辨率 (类型0): 2个int (8字节, width和height)
     //   * FPS (类型1): 1个float (4字节)
@@ -1303,14 +2009,15 @@ namespace stream {
     server->map(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], [&, handle_resolution_change](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_DYNAMIC_PARAM_CHANGE]"sv;
 
-      constexpr size_t MIN_PAYLOAD_SIZE = sizeof(int);
+      constexpr size_t WIRE_WORD_SIZE = sizeof(std::uint32_t);
+      constexpr size_t MIN_PAYLOAD_SIZE = WIRE_WORD_SIZE;
       if (payload.size() < MIN_PAYLOAD_SIZE) {
         BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
                            << MIN_PAYLOAD_SIZE << " bytes, got " << payload.size();
         return;
       }
 
-      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      const auto param_type = read_dynamic_param_i32(payload, 0);
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1321,28 +2028,29 @@ namespace stream {
       
       // 处理分辨率变更（需要两个int值）
       if (param_type_enum == video::dynamic_param_type_e::RESOLUTION) {
-        constexpr size_t RESOLUTION_PAYLOAD_SIZE = sizeof(int) * 3;  // 类型 + width + height
+        constexpr size_t RESOLUTION_PAYLOAD_SIZE = WIRE_WORD_SIZE * 3;  // 类型 + width + height
         if (payload.size() < RESOLUTION_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for resolution change. Expected " 
                              << RESOLUTION_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
 
-        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
-        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        const auto width = read_dynamic_param_i32(payload, WIRE_WORD_SIZE);
+        const auto height = read_dynamic_param_i32(payload, WIRE_WORD_SIZE * 2);
+        handle_resolution_change(session, width, height);
         return;
       }
 
       // 处理FPS变更（需要float值）
       if (param_type_enum == video::dynamic_param_type_e::FPS) {
-        constexpr size_t FPS_PAYLOAD_SIZE = sizeof(int) + sizeof(float);
+        constexpr size_t FPS_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
         if (payload.size() < FPS_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for FPS change. Expected " 
                              << FPS_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
 
-        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        const float new_fps = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -1350,6 +2058,12 @@ namespace stream {
         }
 
         session->config.monitor.framerate = static_cast<int>(new_fps);
+        perf::update_session_display(
+          session->launch_session_id,
+          session->config.monitor.width,
+          session->config.monitor.height,
+          session->config.monitor.framerate
+        );
         
         video::dynamic_param_t param;
         param.type = video::dynamic_param_type_e::FPS;
@@ -1361,15 +2075,47 @@ namespace stream {
         return;
       }
 
+      // This is an HLG conversion parameter, not part of the display/VDD HDR
+      // capability tuple. Apply it on the video thread without rebuilding the
+      // display or encoder.
+      if (param_type_enum == video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+        constexpr size_t SDR_WHITE_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
+        if (payload.size() != SDR_WHITE_PAYLOAD_SIZE) {
+          BOOST_LOG(warning) << "Invalid payload size for client SDR white. Expected "
+                             << SDR_WHITE_PAYLOAD_SIZE << " bytes, got " << payload.size();
+          return;
+        }
+        if (session->config.controlProtocolType != 13 || session->config.monitor.dynamicRange != 2) {
+          BOOST_LOG(warning) << "Ignoring client SDR white update outside an encrypted HLG session";
+          return;
+        }
+
+        const float sdr_white_nits = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
+        if (!video::is_valid_client_sdr_white_nits(sdr_white_nits)) {
+          BOOST_LOG(warning) << "Invalid client SDR white value: " << sdr_white_nits;
+          return;
+        }
+
+        video::dynamic_param_t param {};
+        param.type = video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS;
+        param.value.float_value = sdr_white_nits;
+        param.valid = true;
+        session->dynamic_sdr_white_nits.store(sdr_white_nits, std::memory_order_release);
+        session->video.dynamic_param_change_events->raise(param);
+
+        BOOST_LOG(info) << "Dynamic client SDR white change: " << sdr_white_nits << " nits";
+        return;
+      }
+
       // 处理其他单值参数（码率、QP等，使用int值）
-      constexpr size_t INT_PARAM_PAYLOAD_SIZE = sizeof(int) * 2;
+      constexpr size_t INT_PARAM_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
       if (payload.size() < INT_PARAM_PAYLOAD_SIZE) {
         BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
                            << INT_PARAM_PAYLOAD_SIZE << " bytes, got " << payload.size();
         return;
       }
 
-      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+      const auto param_value = read_dynamic_param_i32(payload, WIRE_WORD_SIZE);
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
@@ -1392,11 +2138,14 @@ namespace stream {
       };
 
       switch (param_type_enum) {
-        case video::dynamic_param_type_e::BITRATE:
-          if (validate_and_raise(param_value > 0 && param_value <= 800000, param_value, "bitrate", " Kbps")) {
-            session->current_total_bitrate = param_value;
+        case video::dynamic_param_type_e::BITRATE: {
+          const auto valid_bitrate = param_value > 0 && param_value <= 800000;
+          const auto capped_bitrate = valid_bitrate ? clamp_total_bitrate_to_host_cap(param_value, session->client_name) : param_value;
+          if (validate_and_raise(valid_bitrate, capped_bitrate, "bitrate", " Kbps")) {
+            session->current_total_bitrate = capped_bitrate;
           }
           break;
+        }
         case video::dynamic_param_type_e::QP:
           validate_and_raise(param_value >= 0 && param_value <= 51, param_value, "QP");
           break;
@@ -1440,6 +2189,58 @@ namespace stream {
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
+    server->map(packetTypes[IDX_CLIPBOARD], [](session_t *session, const std::string_view &payload) {
+      // Forward opaque payload to the user-session GUI agent. Drop silently if
+      // disabled by config or if the GUI is not currently subscribed.
+      if (!config::input.clipboard_sync) {
+        return;
+      }
+      auto &bridge = clipboard_bridge::bridge_t::instance();
+      if (!bridge.gui_alive()) {
+        return;
+      }
+      clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
+      bridge.on_inbound(session->launch_session_id, std::move(bytes));
+    });
+
+    server->map(packetTypes[IDX_CURSOR], [](session_t *session, const std::string_view &payload) {
+      if (payload.size() != 4 ||
+          static_cast<std::uint8_t>(payload[0]) != cursor_protocol_version) {
+        BOOST_LOG(warning) << "Ignoring malformed local cursor mode request"sv;
+        return;
+      }
+
+      const auto requested_mode = static_cast<std::uint8_t>(payload[1]);
+      if (requested_mode > 1) {
+        BOOST_LOG(warning) << "Ignoring unknown local cursor mode "sv
+                           << static_cast<unsigned int>(requested_mode);
+        return;
+      }
+
+      const bool enable = requested_mode == 1;
+      if (enable && session->config.controlProtocolType != 13) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode on an unencrypted control stream"sv;
+        return;
+      }
+      if (enable && !cursor_channel::producer_available()) {
+        BOOST_LOG(warning) << "Ignoring local cursor mode without an active cursor producer"sv;
+        return;
+      }
+      if (session->control.local_cursor_mode == enable) {
+        return;
+      }
+
+      session->control.local_cursor_mode = enable;
+      session->control.cursor_revision = 0;
+      session->control.cursor_shape_sent = false;
+      session->control.cursor_visibility_sent = false;
+      session->control.cursor_failed_revision = 0;
+      session->control.cursor_send_failures = 0;
+      cursor_channel::set_session_enabled(session->launch_session_id, enable);
+      BOOST_LOG(info) << "Local cursor mode "sv << (enable ? "enabled"sv : "disabled"sv)
+                      << " for session "sv << session->launch_session_id;
+    });
+
     server->map(packetTypes[IDX_INPUT_DATA], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_INPUT_DATA]"sv;
 
@@ -1455,7 +2256,7 @@ namespace stream {
 
         BOOST_LOG(error) << "Failed to verify tag"sv;
 
-        session::stop(*session);
+        session::stop(*session, session::stop_reason_e::protocol_error);
         return;
       }
 
@@ -1511,7 +2312,7 @@ namespace stream {
 
         BOOST_LOG(error) << "Failed to verify tag"sv;
 
-        session::stop(*session);
+        session::stop(*session, session::stop_reason_e::protocol_error);
         return;
       }
 
@@ -1520,7 +2321,7 @@ namespace stream {
 
       if (type == packetTypes[IDX_ENCRYPTED]) {
         BOOST_LOG(error) << "Bad packet type [IDX_ENCRYPTED] found"sv;
-        session::stop(*session);
+        session::stop(*session, session::stop_reason_e::protocol_error);
         return;
       }
 
@@ -1544,6 +2345,7 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
+      bool has_ds5_haptics_session = false;
 
       {
         auto lg = server->_sessions.lock();
@@ -1561,10 +2363,12 @@ namespace stream {
           if (now > session->pingTimeout) {
             auto address = session->control.peer ? platf::from_sockaddr((sockaddr *) &session->control.peer->address.address) : session->control.expected_peer_address;
             BOOST_LOG(info) << address << ": Ping Timeout"sv;
-            session::stop(*session);
+            session::stop(*session, session::stop_reason_e::control_timeout);
           }
 
-          if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
+          if (session->lifecycle.state() == session::state_e::STOPPING) {
+            clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+            cursor_channel::remove_session(session->launch_session_id);
             pos = server->_sessions->erase(pos);
 
             if (session->control.peer) {
@@ -1587,11 +2391,22 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            has_ds5_haptics_session |=
+              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
+              (config::input.ds5_enabled && config::input.ds5_audio_haptics);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
 
               send_feedback_msg(session, *feedback_msg);
+            }
+
+            for (auto &[controller_id, controller_haptics] : session->control.legacy_haptics) {
+              if (const auto rumble = controller_haptics->poll(now)) {
+                auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+                  controller_id, rumble->low_frequency, rumble->high_frequency);
+                send_feedback_msg(session, legacy_msg, true);
+              }
             }
 
             auto &hdr_queue = session->control.hdr_queue;
@@ -1609,10 +2424,83 @@ namespace stream {
                 send_resolution_change(session, resolution->first, resolution->second);
               }
             }
+
+            if (session->control.local_cursor_mode) {
+              cursor_channel::snapshot_t cursor;
+              if (cursor_channel::copy_latest(session->control.cursor_revision, cursor)) {
+                const bool include_shape =
+                  cursor.has_shape &&
+                  (!session->control.cursor_shape_sent ||
+                   session->control.cursor_shape_id != cursor.shape_id);
+                const bool visibility_changed =
+                  !session->control.cursor_visibility_sent ||
+                  session->control.cursor_visible != cursor.visible;
+                const bool waiting_for_shape =
+                  !cursor.has_shape &&
+                  session->control.cursor_shape_sent &&
+                  session->control.cursor_shape_id != cursor.shape_id;
+
+                if ((include_shape || visibility_changed) &&
+                    send_cursor_update(session, cursor, include_shape) == 0) {
+                  session->control.cursor_revision = cursor.revision;
+                  session->control.cursor_failed_revision = 0;
+                  session->control.cursor_send_failures = 0;
+                  session->control.cursor_visibility_sent = true;
+                  session->control.cursor_visible = cursor.visible;
+                  if (include_shape) {
+                    session->control.cursor_shape_sent = true;
+                    session->control.cursor_shape_id = cursor.shape_id;
+                  }
+                }
+                else if (!include_shape && !visibility_changed) {
+                  if (!waiting_for_shape) {
+                    session->control.cursor_revision = cursor.revision;
+                    session->control.cursor_failed_revision = 0;
+                    session->control.cursor_send_failures = 0;
+                  }
+                }
+                else {
+                  if (session->control.cursor_failed_revision != cursor.revision) {
+                    session->control.cursor_failed_revision = cursor.revision;
+                    session->control.cursor_send_failures = 0;
+                  }
+
+                  if (++session->control.cursor_send_failures >= 3) {
+                    BOOST_LOG(warning) << "Dropping local cursor revision "sv
+                                       << cursor.revision
+                                       << " after repeated send failures"sv;
+                    session->control.cursor_revision = cursor.revision;
+                    session->control.cursor_failed_revision = 0;
+                    session->control.cursor_send_failures = 0;
+                  }
+                }
+              }
+            }
           }
 
           ++pos;
         })
+
+        // Drain any clipboard messages enqueued by the GUI HTTP layer and
+        // dispatch them to matching sessions. We're already holding the
+        // _sessions lock here, which serialises with the per-session
+        // erase/insert above.
+        {
+          std::deque<clipboard_bridge::outbound_msg_t> msgs;
+          clipboard_bridge::bridge_t::instance().drain_outbound(msgs);
+          for (auto &msg : msgs) {
+            for (auto *s : *server->_sessions) {
+              if (!s->control.peer) {
+                continue;
+              }
+              if (msg.target != clipboard_bridge::kBroadcast
+                  && s->launch_session_id != msg.target) {
+                continue;
+              }
+              send_clipboard(s, msg.bytes);
+            }
+          }
+        }
       }
 
       // Don't break until any pending sessions either expire or connect
@@ -1621,7 +2509,11 @@ namespace stream {
         break;
       }
 
-      server->iterate(150ms);
+      // Cursor shapes are low-frequency, but pointer role transitions should
+      // still feel immediate. Poll the latest-value bridge once per frame while
+      // local cursor mode is active without adding another control thread.
+      server->iterate(has_ds5_haptics_session ? 5ms :
+                      cursor_channel::local_mode_active() ? 16ms : 150ms);
     }
 
     // Let all remaining connections know the server is shutting down
@@ -1641,6 +2533,13 @@ namespace stream {
     for (auto pos = std::begin(*server->_sessions); pos != std::end(*server->_sessions); ++pos) {
       auto session = *pos;
 
+      // The normal STOPPING path removes sessions from _sessions and updates
+      // the clipboard bridge immediately. If the control thread exits via the
+      // final shutdown path instead, make the same paired lifecycle update here
+      // so capability/session_count cannot retain stale launch IDs.
+      clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+      cursor_channel::remove_session(session->launch_session_id);
+
       // We may not have gotten far enough to have an ENet connection yet
       if (session->control.peer) {
         auto payload = encode_control(session, util::view(plaintext), encrypted_payload);
@@ -1658,6 +2557,23 @@ namespace stream {
     server->flush();
   }
 
+  namespace {
+    bool
+    is_terminal_udp_receive_error(const boost::system::error_code &ec) noexcept {
+      return ec == boost::asio::error::operation_aborted ||
+             ec == boost::asio::error::bad_descriptor ||
+             ec == boost::system::errc::bad_file_descriptor ||
+             ec == boost::system::errc::not_a_socket;
+    }
+
+    bool
+    is_recoverable_udp_receive_error(const boost::system::error_code &ec) noexcept {
+      return ec == boost::system::errc::connection_refused ||
+             ec == boost::system::errc::connection_reset ||
+             ec == boost::asio::error::message_size;
+    }
+  }  // namespace
+
   void
   micRecvThread(broadcast_ctx_t &ctx) {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
@@ -1666,163 +2582,291 @@ namespace stream {
     udp::endpoint peer;
     std::array<char, 2048> mic_recv_buffer;
     bool mic_device_initialized = false;
+    std::unique_ptr<platf::deinit_t> audio_thread_guard;
+    audio::audio_ctx_ref_t mic_audio_ref;
+    mic_mixer::mixer_t mixer;
+    std::unordered_set<mic_mixer::source_id_t> mixer_sources;
 
-    // 麦克风统计结构体（按客户端地址分组）
     struct MicStats {
       uint64_t total_packets = 0;
-      uint64_t decrypt_success = 0;
-      uint64_t decrypt_failed = 0;
+      uint64_t accepted_packets = 0;
+      uint64_t decode_failed = 0;
       uint64_t invalid_data = 0;
+      uint64_t unregistered = 0;
+      uint64_t route_ambiguous = 0;
     };
-    std::map<std::string, MicStats> client_stats;
+    MicStats stats;
 
-    // // SSRC验证辅助函数
-    // auto validate_mic_ssrc = [](uint32_t ssrc, const std::string &client_id) -> bool {
-    //   if (ssrc != MIC_PACKET_MAGIC) {
-    //     BOOST_LOG(warning) << "Client " << client_id << " received invalid microphone packet type (SSRC: 0x" 
-    //                       << std::hex << ssrc << std::dec << ")";
-    //     return false;
-    //   }
-    //   return true;
-    // };
+    auto release_mic_device = [&]() {
+      if (mic_device_initialized) {
+        audio::release_mic_redirect_device();
+        BOOST_LOG(debug) << "Microphone device released"sv;
+      }
+      mic_device_initialized = false;
+      mic_audio_ref = {};
+      mixer.clear();
+      mixer_sources.clear();
+    };
 
-    auto process_audio_data = [&](const uint8_t *audio_data, size_t data_size, uint16_t sequence_number, const std::string &peer_addr, const std::string &client_ip) {
+    auto decode_candidate_payload = [](const boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t> &mic_session,
+                                      const std::uint8_t *audio_data,
+                                      std::size_t data_size,
+                                      std::uint16_t sequence_number,
+                                      std::vector<std::uint8_t> &decoded_payload) -> bool {
+      decoded_payload.clear();
+      if (!mic_session->cipher) {
+        if (!mic_mixer::is_valid_opus_packet(audio_data, data_size)) {
+          return false;
+        }
+        decoded_payload.assign(audio_data, audio_data + data_size);
+        return true;
+      }
+
+      auto &cipher_ctx = *mic_session->cipher;
+      // 麦克风 CBC IV 的前 4 字节为会话 key ID 与 16 位包序号之和，其余字节为 0。
+      crypto::aes_t current_iv(16);
+      const auto iv_sequence = mic_session->key_id + sequence_number;
+      const auto iv_sequence_be = util::endian::big<std::uint32_t>(iv_sequence);
+      std::memcpy(current_iv.data(), &iv_sequence_be, sizeof(iv_sequence_be));
+      std::memset(current_iv.data() + sizeof(iv_sequence_be), 0, current_iv.size() - sizeof(iv_sequence_be));
+
+      const std::string_view ciphertext {
+        reinterpret_cast<const char *>(audio_data),
+        data_size,
+      };
+      return cipher_ctx.cipher.decrypt(ciphertext, decoded_payload, &current_iv) == 0 &&
+             mic_mixer::is_valid_opus_packet(decoded_payload.data(), decoded_payload.size());
+    };
+
+    auto process_audio_data = [&](const std::uint8_t *audio_data,
+                                  std::size_t data_size,
+                                  std::uint16_t sequence_number,
+                                  std::uint32_t source_key_id,
+                                  const udp::endpoint &source_endpoint) {
       if (!ctx.mic_socket_enabled.load()) {
         return;
       }
 
-      // 更新统计
-      auto &stats = client_stats[peer_addr];
-      stats.total_packets++;
+      ++stats.total_packets;
 
-      // 查找该客户端的 per-client 加密上下文
-      // 仅在锁内拷贝 shared_ptr，解密和写入在锁外进行
-      // 避免在持有 mutex 期间调用可能阻塞的 write_mic_data（含 WASAPI Sleep）
-      boost::shared_ptr<broadcast_ctx_t::mic_cipher_ctx_t> cipher_ctx;
+      const auto source_address = net::normalize_address(source_endpoint.address());
+      std::vector<boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t>> candidates;
       {
-        boost::lock_guard<boost::mutex> lg(ctx.mic_cipher_mutex);
-        auto it = ctx.mic_ciphers.find(client_ip);
-        if (it != ctx.mic_ciphers.end()) {
-          cipher_ctx = it->second;
+        boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
+        for (const auto &[session_id, session] : ctx.mic_sessions) {
+          (void) session_id;
+          if (session->client_address == source_address) {
+            candidates.emplace_back(session);
+          }
         }
       }
-      if (cipher_ctx) {
-          // 根据 sequenceNumber 更新 IV
-          // 客户端使用: baseIv[0:4] (Big Endian) + (sequenceNumber - 1) & 0xFFFF
-          // 这与音频加密不同，音频加密使用: avRiKeyId + sequenceNumber
-          // cipher_ctx->iv 的前 4 字节存储的是 baseIv（大端序），对应客户端的 remoteInputAesIv
-          crypto::aes_t current_iv(16);  // 确保是 16 字节
-          uint32_t baseIvVal = util::endian::big<std::uint32_t>(*(std::uint32_t *) cipher_ctx->iv.data());
-          // 服务端收到的 sequence_number 就是包里的实际值，直接使用即可（不需要减1），客户端减1是因为它的 sequenceNumber 变量在写入包后就递增了
-          uint32_t ivSeq = baseIvVal + (sequence_number & 0xFFFF);
-          *(std::uint32_t *) current_iv.data() = util::endian::big<std::uint32_t>(ivSeq);
-          // 确保后 12 字节为 0（客户端构建 IV 时后 12 字节也是 0）
-          std::memset(current_iv.data() + 4, 0, 12);
-          std::vector<std::uint8_t> plaintext;
-          std::string_view cipher_view((const char *) audio_data, data_size);
-          if (cipher_ctx->cipher.decrypt(cipher_view, plaintext, &current_iv) != 0) {
-            // 解密失败：可能是网络损坏包、IV不匹配、或密钥错误
-            stats.decrypt_failed++;
-            return;  // 丢弃数据包
-          }
 
-          stats.decrypt_success++;
-
-          if (plaintext.size() > 0) {
-            // 简单的有效性检查：Opus 数据不应该全是 0 或全是 0xFF
-            bool looks_valid = true;
-            if (plaintext.size() >= 4) {
-              uint8_t first_byte = plaintext[0];
-              uint8_t second_byte = plaintext[1];
-              uint8_t third_byte = plaintext[2];
-              uint8_t fourth_byte = plaintext[3];
-              bool all_zero = (first_byte == 0 && second_byte == 0 && third_byte == 0 && fourth_byte == 0);
-              bool all_ff = (first_byte == 0xFF && second_byte == 0xFF && third_byte == 0xFF && fourth_byte == 0xFF);
-              if (all_zero || all_ff) {
-                looks_valid = false;
-                stats.invalid_data++;
-              }
-            }
-            // 注意：如果 plaintext.size() < 4，无法验证，假设有效并继续处理
-
-            if (!looks_valid) {
-              return;  // 丢弃数据包
-            }
-          }
-
-          // 解密成功且数据看起来有效
-          audio::write_mic_data(plaintext.data(), plaintext.size(), sequence_number);
-          return;
-      }
-
-      // 该客户端没有注册加密上下文 — 视为明文数据
-
-      // 安全模式：拒绝明文数据
-      if (ctx.mic_reject_plaintext.load()) {
-        BOOST_LOG(warning) << "Rejected plaintext microphone data (mic_reject_plaintext enabled)";
-        stats.decrypt_failed++;
+      if (candidates.empty()) {
+        ++stats.unregistered;
         return;
       }
 
-      // 未加密数据或加密未启用，直接处理
-      // 也要统计未加密数据
-      stats.decrypt_success++;  // 明文数据算作"成功"
-      audio::write_mic_data(audio_data, data_size, sequence_number);
+      std::sort(candidates.begin(), candidates.end(), [](const auto &left, const auto &right) {
+        return left->session_id < right->session_id;
+      });
+
+      // 现有客户端在线路上使用固定 SSRC，因此 endpoint 和密钥试解仍是兼容路径。
+      // 若后续客户端把会话 key ID 放入 SSRC，则可在首次数据包上直接定位会话。
+      std::vector<boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t>> ordered_candidates;
+      ordered_candidates.reserve(candidates.size());
+      auto append_candidates = [&](const auto &predicate) {
+        for (const auto &candidate : candidates) {
+          if (predicate(*candidate) &&
+              std::find(ordered_candidates.begin(), ordered_candidates.end(), candidate) == ordered_candidates.end()) {
+            ordered_candidates.emplace_back(candidate);
+          }
+        }
+      };
+
+      append_candidates([&](const auto &candidate) {
+        return candidate.source_endpoint == source_endpoint;
+      });
+      if (source_key_id != MIC_PACKET_MAGIC) {
+        append_candidates([&](const auto &candidate) {
+          return candidate.key_id == source_key_id;
+        });
+      }
+      if (candidates.size() == 1) {
+        append_candidates([](const auto &) {
+          return true;
+        });
+      }
+      append_candidates([](const auto &candidate) {
+        return !candidate.source_endpoint && candidate.cipher.has_value();
+      });
+      append_candidates([](const auto &candidate) {
+        return !candidate.source_endpoint;
+      });
+      // 加密载荷可以在源端口变化后重新通过密钥定位。明文载荷没有足够身份信息，
+      // 多会话下不能安全接管另一个 endpoint 的绑定。
+      append_candidates([](const auto &candidate) {
+        return candidate.cipher.has_value();
+      });
+
+      boost::shared_ptr<broadcast_ctx_t::mic_session_ctx_t> mic_session;
+      std::vector<std::uint8_t> decoded_payload;
+      for (const auto &candidate : ordered_candidates) {
+        if (decode_candidate_payload(candidate, audio_data, data_size, sequence_number, decoded_payload)) {
+          mic_session = candidate;
+          break;
+        }
+      }
+
+      if (!mic_session) {
+        if (ordered_candidates.empty()) {
+          ++stats.route_ambiguous;
+        }
+        else {
+          ++stats.decode_failed;
+        }
+        return;
+      }
+
+      if (!mic_device_initialized) {
+        return;
+      }
+
+      if (!mixer.add_source(mic_session->session_id)) {
+        ++stats.invalid_data;
+        return;
+      }
+      mixer_sources.insert(mic_session->session_id);
+      if (!mixer.push_packet(
+            mic_session->session_id,
+            decoded_payload.data(),
+            decoded_payload.size(),
+            sequence_number)) {
+        ++stats.invalid_data;
+        return;
+      }
+
+      std::vector<std::uint32_t> displaced_sources;
+      {
+        boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
+        const auto registered = ctx.mic_sessions.find(mic_session->session_id);
+        if (registered == ctx.mic_sessions.end() || registered->second != mic_session) {
+          ++stats.unregistered;
+          return;
+        }
+
+        // 一个 UDP endpoint 在同一时刻只属于一个已验证音源。重新绑定时清理旧映射，
+        // 避免同 IP 多会话在首次试解阶段留下重复 endpoint。
+        for (auto &[session_id, registered_session] : ctx.mic_sessions) {
+          (void) session_id;
+          if (registered_session != mic_session && registered_session->source_endpoint == source_endpoint) {
+            registered_session->source_endpoint.reset();
+            displaced_sources.emplace_back(registered_session->session_id);
+          }
+        }
+        mic_session->source_endpoint = source_endpoint;
+      }
+
+      for (const auto displaced_source : displaced_sources) {
+        mixer.remove_source(displaced_source);
+        mixer_sources.erase(displaced_source);
+      }
+
+      ++stats.accepted_packets;
     };
 
-    std::function<void(const boost::system::error_code, size_t)> mic_recv_func;
+    boost::function<void(const boost::system::error_code, size_t)> mic_recv_func;
+    boost::function<void()> schedule_mix;
+    bool retry_receive_after_error = false;
+    bool reset_mic_io_cycle = false;
+    bool mix_timer_armed = false;
+    std::uint64_t mix_timer_generation = 0;
+    asio::steady_timer mix_timer {mic_io};
+    auto cancel_mix_timer = [&]() {
+      mix_timer_armed = false;
+      ++mix_timer_generation;
+      try {
+        mix_timer.cancel();
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to cancel microphone mix timer: "sv << e.what();
+      }
+    };
+    auto schedule_receive = [&]() -> bool {
+      boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+      if (broadcast_shutdown_event->peek() ||
+          !ctx.mic_socket_enabled.load() ||
+          !ctx.mic_sock.is_open() ||
+          !mic_device_initialized ||
+          ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
+        return false;
+      }
+
+      try {
+        ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
+        return true;
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to restart microphone receive: "sv << e.what();
+        return false;
+      }
+    };
+
     mic_recv_func = [&](const boost::system::error_code &ec, size_t received_bytes) {
       if (!ctx.mic_socket_enabled.load()) {
         return;
       }
 
-      // 致命错误（socket 已关闭/无效）：不重新注册接收，让 mic_io.run() 自然退出
-      if (ec) {
-        if (ec == boost::asio::error::operation_aborted ||
-            ec == boost::asio::error::bad_descriptor ||
-            ec == boost::system::errc::bad_file_descriptor ||
-            ec == boost::system::errc::not_a_socket) {
-          BOOST_LOG(debug) << "Mic socket closed: "sv << ec.message();
-          return;
-        }
-      }
-
-      // fail_guard：在此之后的任何 return 都会重新注册 async_receive_from
-      // 包括瞬态错误（connection_refused/reset）和数据处理
-      auto fg = util::fail_guard([&]() {
-        if (ctx.mic_socket_enabled.load()) {
-          ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
-        }
-      });
-
-      // 瞬态错误（connection_refused/reset）：记录但继续接收
-      // 这些通常是 ICMP 错误（客户端断开、端口不可达等），不应停止整个接收
-      if (ec) {
-        if (ec == boost::system::errc::connection_refused ||
-            ec == boost::system::errc::connection_reset) {
-          BOOST_LOG(debug) << "Mic socket transient error (ignored): "sv << ec.message();
+      if (is_terminal_udp_receive_error(ec)) {
+        BOOST_LOG(debug) << "Microphone receive stopped: "sv << ec.message();
+        // 最后一个会话退出会取消挂起的接收。如果新会话在取消回调执行前完成注册，
+        // 需要在同一个 io_context 周期内恢复接收和混音，不能把新会话留在空转状态。
+        if (!broadcast_shutdown_event->peek() &&
+            ctx.mic_socket_enabled.load() &&
+            ctx.mic_session_count.load(boost::memory_order_acquire) != 0 &&
+            mic_device_initialized) {
+          if (schedule_receive()) {
+            schedule_mix();
+          }
+          else {
+            retry_receive_after_error = true;
+            cancel_mix_timer();
+          }
         }
         else {
-          BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
+          // 没有活动会话时同时终止旧混音链，让 io_context 回到外层重新判断状态。
+          // cancel() 无法撤回已经排队的成功回调，因此还要用周期标记阻止旧回调自重挂。
+          reset_mic_io_cycle = true;
+          cancel_mix_timer();
         }
-        return;  // fail_guard 会重新注册接收
-      }
-
-      if (received_bytes < sizeof(RTP_PACKET)) {
         return;
       }
 
-      // 获取客户端标识：设备名拼接IP地址
-      std::string client_ip = peer.address().to_string();
-      std::string client_id;
-      {
-        boost::lock_guard<boost::mutex> lg(ctx.client_name_mutex);
-        auto it = ctx.client_ip_to_name.find(client_ip);
-        if (it != ctx.client_ip_to_name.end()) {
-          client_id = it->second + "@" + client_ip;  // 设备名@IP
-        } else {
-          client_id = "@" + client_ip;  // 回退到IP（未知设备名时）
+      // 正常处理数据包或遇到可恢复错误后继续挂接接收。
+      auto fg = util::fail_guard([&]() {
+        if (schedule_receive()) {
+          // 新会话可能在旧混音回调因会话数为零退出后接入。
+          // 接收恢复时同时保证混音定时器仍在运行。
+          schedule_mix();
         }
+      });
+
+      if (ec) {
+        if (is_recoverable_udp_receive_error(ec)) {
+          BOOST_LOG(debug) << "Mic socket recoverable receive error: "sv << ec.message();
+        }
+        else {
+          BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
+          retry_receive_after_error = true;
+          fg.disable();
+          cancel_mix_timer();
+        }
+        return;
+      }
+
+      retry_receive_after_error = false;
+
+      if (received_bytes < sizeof(RTP_PACKET)) {
+        return;
       }
 
       // 尝试16位扩展包类型
@@ -1832,11 +2876,13 @@ namespace stream {
           size_t header_size = sizeof(rtp_packet_ext_t);
           if (received_bytes > header_size) {
             uint16_t sequence_number = util::endian::little(header_ext->sequenceNumber);
-            // uint32_t ssrc = util::endian::little(header_ext->ssrc);  // 小端序
-            // if (!validate_mic_ssrc(ssrc, client_id)) {
-            //   return;
-            // }
-            process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, received_bytes - header_size, sequence_number, client_id, client_ip);
+            const auto source_key_id = util::endian::little(header_ext->ssrc);
+            process_audio_data(
+              reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+              received_bytes - header_size,
+              sequence_number,
+              source_key_id,
+              peer);
           }
           return;
         }
@@ -1850,20 +2896,78 @@ namespace stream {
           // 客户端按小端序发送序列号（MicrophoneStream.java 使用 LITTLE_ENDIAN）
           // 服务端必须按小端序读取，否则会读错（比如 1 会读成 256）
           uint16_t sequence_number = util::endian::little(header->rtp.sequenceNumber);
-          // uint32_t ssrc = util::endian::little(header->rtp.ssrc);  // 小端序
-          // if (!validate_mic_ssrc(ssrc, client_id)) {
-          //   return;
-          // }
+          const auto source_key_id = util::endian::little(header->rtp.ssrc);
           size_t data_size = received_bytes - header_size;
           
           // BOOST_LOG(verbose) << "Received MIC packet: total=" << received_bytes 
           //                 << " bytes, header=" << header_size 
           //                 << " bytes, data=" << data_size 
           //                 << " bytes, sequenceNumber=" << sequence_number << " (little-endian)"
-          //                 << " from " << client_id;
-          process_audio_data(reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size, data_size, sequence_number, client_id, client_ip);
+          //                 << " from " << client_ip;
+          process_audio_data(
+            reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
+            data_size,
+            sequence_number,
+            source_key_id,
+            peer);
         }
       }
+    };
+
+    schedule_mix = [&]() {
+      if (mix_timer_armed) {
+        return;
+      }
+
+      mix_timer_armed = true;
+      const auto generation = ++mix_timer_generation;
+      mix_timer.expires_after(20ms);
+      mix_timer.async_wait([&, generation](const boost::system::error_code &ec) {
+        if (generation != mix_timer_generation) {
+          return;
+        }
+        mix_timer_armed = false;
+
+        if (ec == boost::asio::error::operation_aborted ||
+            broadcast_shutdown_event->peek() ||
+            retry_receive_after_error ||
+            reset_mic_io_cycle ||
+            ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
+          return;
+        }
+
+        std::unordered_set<mic_mixer::source_id_t> registered_sources;
+        {
+          boost::lock_guard<boost::mutex> lock(ctx.mic_session_mutex);
+          for (const auto &[session_id, session] : ctx.mic_sessions) {
+            (void) session;
+            registered_sources.insert(session_id);
+          }
+        }
+
+        for (auto source_it = mixer_sources.begin(); source_it != mixer_sources.end();) {
+          if (!registered_sources.contains(*source_it)) {
+            mixer.remove_source(*source_it);
+            source_it = mixer_sources.erase(source_it);
+          }
+          else {
+            ++source_it;
+          }
+        }
+
+        if (auto mixed = mixer.mix_next_frame()) {
+          if (audio::write_mic_pcm(mixed->data(), mixed->size()) == -2) {
+            BOOST_LOG(info) << "Microphone output device was invalidated; reinitializing"sv;
+            release_mic_device();
+            retry_receive_after_error = true;
+
+            boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
+            cancel_mic_receive_locked(ctx);
+            return;
+          }
+        }
+        schedule_mix();
+      });
     };
 
     BOOST_LOG(debug) << "Starting microphone receive thread";
@@ -1871,56 +2975,85 @@ namespace stream {
     auto retry_delay = 300ms;  // 初始重试延迟，指数退避到最大5秒
 
     while (!broadcast_shutdown_event->peek()) {
-      if (!ctx.mic_socket_enabled.load()) {
+      if (!ctx.mic_socket_enabled.load() ||
+          ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
         retry_delay = 300ms;  // 会话结束时重置延迟
-
-        // 重置设备初始化标志，下次会话重新初始化麦克风设备
-        // （处理音频设备在运行中被卸载/重装的情况）
-        if (mic_device_initialized) {
-          audio::release_mic_redirect_device();
-          mic_device_initialized = false;
-          BOOST_LOG(debug) << "Microphone device released, will re-initialize on next session";
-        }
-
+        release_mic_device();
         std::this_thread::sleep_for(100ms);
         continue;
       }
 
-      // 延迟初始化麦克风设备
+      // 在麦克风设备的完整生命周期内持有音频上下文，确保音频采集退出后仍能恢复设备。
       if (!mic_device_initialized) {
+        if (!audio_thread_guard) {
+          audio_thread_guard = platf::init_audio_thread();
+          if (!audio_thread_guard) {
+            std::this_thread::sleep_for(retry_delay);
+            retry_delay = std::min(retry_delay * 2, 5000ms);
+            continue;
+          }
+        }
+
+        // 客户端麦克风可以在主机音频串流关闭时独立工作，因此活动的麦克风
+        // 会话需要能够创建并持有自己的音频控制上下文。
+        mic_audio_ref = audio::get_audio_ctx_ref();
+        if (!mic_audio_ref) {
+          std::this_thread::sleep_for(retry_delay);
+          retry_delay = std::min(retry_delay * 2, 5000ms);
+          continue;
+        }
+
         if (audio::init_mic_redirect_device() != 0) {
+          mic_audio_ref = {};
           std::this_thread::sleep_for(retry_delay);
           retry_delay = std::min(retry_delay * 2, 5000ms);  // 指数退避，最大5秒
           continue;
         }
-        mic_device_initialized = true;
-      }
 
-      ctx.mic_sock.async_receive_from(asio::buffer(mic_recv_buffer), peer, 0, mic_recv_func);
-
-      while (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
-        mic_io.run();
-      }
-      mic_io.restart();  // 重置 io_context，以便下次会话可以重新进入 mic_io.run()
-    }
-
-    if (mic_device_initialized) {
-      audio::release_mic_redirect_device();
-    }
-
-    // 打印所有客户端的麦克风解密统计
-    if (!client_stats.empty()) {
-      BOOST_LOG(info) << "=== Microphone Decryption Stats Summary ===";
-      for (const auto &[client, stats] : client_stats) {
-        if (stats.total_packets > 0) {
-          double success_rate = (double)stats.decrypt_success / stats.total_packets * 100.0;
-          BOOST_LOG(info) << "Client " << client << ": "
-                         << "total=" << stats.total_packets
-                         << ", success=" << stats.decrypt_success << " (" << std::fixed << std::setprecision(1) << success_rate << "%)"
-                         << ", failed=" << stats.decrypt_failed
-                         << ", invalid=" << stats.invalid_data;
+        if (!ctx.mic_socket_enabled.load() ||
+            ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
+          audio::release_mic_redirect_device();
+          mic_audio_ref = {};
+          continue;
         }
+
+        mic_device_initialized = true;
+        retry_delay = 300ms;
       }
+
+      if (mic_io.stopped()) {
+        mic_io.restart();
+      }
+      retry_receive_after_error = false;
+      reset_mic_io_cycle = false;
+      if (!schedule_receive()) {
+        if (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
+          std::this_thread::sleep_for(100ms);
+        }
+        continue;
+      }
+      schedule_mix();
+
+      mic_io.run();
+      if (retry_receive_after_error &&
+          ctx.mic_socket_enabled.load() &&
+          !broadcast_shutdown_event->peek()) {
+        std::this_thread::sleep_for(retry_delay);
+        retry_delay = std::min(retry_delay * 2, 5000ms);
+      }
+    }
+
+    release_mic_device();
+
+    if (stats.total_packets > 0) {
+      BOOST_LOG(info) << "=== Microphone Packet Stats Summary ===";
+      const auto success_rate = (double) stats.accepted_packets / stats.total_packets * 100.0;
+      BOOST_LOG(info) << "total=" << stats.total_packets
+                      << ", accepted=" << stats.accepted_packets << " (" << std::fixed << std::setprecision(1) << success_rate << "%)"
+                      << ", decode_failed=" << stats.decode_failed
+                      << ", invalid=" << stats.invalid_data
+                      << ", unregistered=" << stats.unregistered
+                      << ", route_ambiguous=" << stats.route_ambiguous;
     }
 
     BOOST_LOG(debug) << "Microphone receive thread ended";
@@ -1937,7 +3070,7 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     auto &io = ctx.io_context;
 
-    udp::endpoint peer;
+    std::array<udp::endpoint, 2> peers;
     std::array<std::array<char, 2048>, 2> buffers;
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
@@ -1984,22 +3117,57 @@ namespace stream {
     // 初始化接收函数
     auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
-        // 静默处理正常关闭错误
-        if (ec == boost::asio::error::operation_aborted ||
-            ec == boost::asio::error::bad_descriptor) {
-          return;  // Socket已关闭，不重新调度
+        auto &peer = peers[buf_idx];
+
+        // 广播关闭时，已关闭的套接字不能再次挂接接收；其他终止错误说明共享接收链已经失效。
+        if (is_terminal_udp_receive_error(ec)) {
+          if (broadcast_shutdown_event->peek()) {
+            BOOST_LOG(debug) << type_str << " socket closed: "sv << ec.message();
+          }
+          else {
+            BOOST_LOG(error) << type_str << " socket closed unexpectedly: "sv << ec.message();
+            broadcast_shutdown_event->raise(true);
+          }
+          return;
         }
 
-        // 静默处理网络连接错误
-        if (ec == boost::system::errc::connection_refused ||
-            ec == boost::system::errc::connection_reset) {
-          return;  // 连接错误，不重新调度
-        }
+        // 瞬态错误后继续挂接共享 UDP 接收。在 Windows 上，客户端断开产生的
+        // ICMP Port Unreachable 可能让 async_receive_from() 返回 connection_reset。
+        auto receive_again = util::fail_guard([&]() {
+          if (broadcast_shutdown_event->peek()) {
+            return;
+          }
 
-        // 如果有其他错误，记录并返回
+          if (!sock.is_open()) {
+            if (!broadcast_shutdown_event->peek()) {
+              BOOST_LOG(error) << type_str << " socket closed before receive could be restarted"sv;
+              broadcast_shutdown_event->raise(true);
+            }
+            return;
+          }
+
+          try {
+            sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
+          }
+          catch (const std::exception &e) {
+            if (!broadcast_shutdown_event->peek()) {
+              BOOST_LOG(error) << "Failed to restart async receive for "sv << type_str << ": "sv << e.what();
+              broadcast_shutdown_event->raise(true);
+            }
+          }
+        });
+
         if (ec) {
-          BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
-          return;  // 有错误，不重新调度
+          if (is_recoverable_udp_receive_error(ec)) {
+            BOOST_LOG(debug) << type_str << " socket recoverable receive error: "sv << ec.message();
+          }
+          else {
+            BOOST_LOG(error) << type_str << " receive error: "sv << ec.message();
+            receive_again.disable();
+            // 未分类错误不能继续复用半失效的共享接收链，关闭当前广播后由下一次会话重建。
+            broadcast_shutdown_event->raise(true);
+          }
+          return;
         }
 
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
@@ -2012,14 +3180,6 @@ namespace stream {
         else {
           handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
         }
-
-        // 只有在成功接收数据后才重新调度
-        try {
-          sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
-        }
-        catch (const std::exception &e) {
-          BOOST_LOG(error) << "Failed to restart async receive: " << e.what();
-        }
       };
     };
 
@@ -2027,15 +3187,18 @@ namespace stream {
       init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
       init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
 
-      video_sock.async_receive_from(asio::buffer(buffers[0]), peer, 0, recv_funcs[0]);
-      audio_sock.async_receive_from(asio::buffer(buffers[1]), peer, 0, recv_funcs[1]);
+      video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
+      audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
 
-      while (!broadcast_shutdown_event->peek()) {
-        io.run();
+      io.run();
+      if (!broadcast_shutdown_event->peek()) {
+        BOOST_LOG(error) << "Shared UDP receive loop stopped unexpectedly"sv;
+        broadcast_shutdown_event->raise(true);
       }
     }
     catch (const std::exception &e) {
       BOOST_LOG(fatal) << "recvThread exception: " << e.what();
+      broadcast_shutdown_event->raise(true);
     }
   }
 
@@ -2072,6 +3235,7 @@ namespace stream {
       frame_network_latency_logger.first_point_now();
 
       auto session = (session_t *) packet->channel_data;
+      session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
 
       std::string_view payload { (char *) packet->data(), packet->data_size() };
@@ -2101,18 +3265,47 @@ namespace stream {
         frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
       }
 
-      if (packet->frame_timestamp) {
+      const auto frame_dequeue_time = std::chrono::steady_clock::now();
+      auto processing_start = packet->frame_timestamp;
+      if (packet->pipeline_trace && packet->pipeline_trace->capture_ready) {
+        // Presentation time belongs to the RTP clock. Host processing starts
+        // when the captured frame is ready for conversion and encoding.
+        processing_start = packet->pipeline_trace->capture_ready;
+      }
+
+      if (processing_start) {
         auto duration_to_latency = [](const std::chrono::steady_clock::duration &duration) {
           const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
           return (uint16_t) std::clamp<decltype(duration_us)>((duration_us + 50) / 100, 0, std::numeric_limits<uint16_t>::max());
         };
 
-        uint16_t latency = duration_to_latency(std::chrono::steady_clock::now() - *packet->frame_timestamp);
+        uint16_t latency = duration_to_latency(frame_dequeue_time - *processing_start);
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
+        perf::record_host_latency(session->launch_session_id, latency / 10., frame_dequeue_time);
       }
       else {
         frame_header.frame_processing_latency = 0;
+      }
+
+      if (packet->pipeline_trace) {
+        const auto &trace = *packet->pipeline_trace;
+        const auto elapsed_ms = [](const auto &begin, const auto &end) -> std::optional<double> {
+          if (!begin || !end) {
+            return std::nullopt;
+          }
+
+          return std::chrono::duration<double, std::milli>(*end - *begin).count();
+        };
+
+        perf::pipeline_sample_t sample;
+        sample.capture_to_convert_ms = elapsed_ms(trace.capture_ready, trace.convert_begin);
+        sample.convert_ms = elapsed_ms(trace.convert_begin, trace.convert_end);
+        sample.encode_queue_ms = elapsed_ms(trace.convert_end, trace.encode_submit);
+        sample.encode_ms = elapsed_ms(trace.encode_submit, trace.packet_ready);
+        sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { frame_dequeue_time });
+        sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { frame_dequeue_time });
+        perf::record_pipeline_sample(session->launch_session_id, sample, frame_dequeue_time);
       }
 
       auto fecPercentage = config::stream.fec_percentage;
@@ -2198,6 +3391,13 @@ namespace stream {
         size_t ratecontrol_frame_packets_sent = 0;
         size_t ratecontrol_group_packets_sent = 0;
 
+        // RTP video timestamps use the 90 kHz media clock and the original
+        // capture presentation timestamp. Frames without a capture timestamp
+        // (intentional duplicates) retain the next scheduled pacing time.
+        const bool frame_is_dupe = !packet->frame_timestamp;
+        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_next_frame_start);
+        const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
+
         auto blockIndex = 0;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
           auto packets = (current_payload.size() + (blocksize - 1)) / blocksize;
@@ -2242,16 +3442,6 @@ namespace stream {
           };
 
           size_t next_shard_to_send = 0;
-
-          // RTP video timestamps use a 90 KHz clock and the frame_timestamp from when the frame was captured
-          // When a timestamp isn't available (duplicate frames), the timestamp from rate control is used instead.
-          bool frame_is_dupe = false;
-          if (!packet->frame_timestamp) {
-            packet->frame_timestamp = ratecontrol_next_frame_start;
-            frame_is_dupe = true;
-          }
-          using rtp_tick = std::chrono::duration<uint32_t, std::ratio<1, 90000>>;
-          uint32_t timestamp = std::chrono::round<rtp_tick>(*packet->frame_timestamp - video_epoch).count();
 
           // set FEC info now that we know for sure what our percentage will be for this frame
           for (auto x = 0; x < shards.size(); ++x) {
@@ -2401,6 +3591,7 @@ namespace stream {
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
       auto session = (session_t *) channel_data;
+      session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
       auto sequenceNumber = session->audio.sequenceNumber;
       auto timestamp = session->audio.timestamp;
@@ -2518,7 +3709,6 @@ namespace stream {
     auto control_port = net::map_port(CONTROL_PORT);
     auto video_port = net::map_port(VIDEO_STREAM_PORT);
     auto audio_port = net::map_port(AUDIO_STREAM_PORT);
-    auto mic_port = net::map_port(MIC_STREAM_PORT);
 
     if (ctx.control_server.bind(address_family, control_port)) {
       BOOST_LOG(error) << "Couldn't bind Control server to port ["sv << control_port << "], likely another process already bound to the port"sv;
@@ -2570,24 +3760,6 @@ namespace stream {
       return -1;
     }
 
-    // 仅在启用麦克风串流时启动麦克风socket
-    if (config::audio.stream_mic) {
-      ctx.mic_sock.open(protocol, ec);
-      if (ec) {
-        BOOST_LOG(fatal) << "Couldn't open socket for Microphone server: "sv << ec.message();
-        return -1;
-      }
-      ctx.mic_sock.bind(udp::endpoint(protocol, mic_port), ec);
-      if (ec) {
-        BOOST_LOG(fatal) << "Couldn't bind Microphone server to port ["sv << mic_port << "]: "sv << ec.message();
-        return -1;
-      }
-      ctx.mic_socket_enabled.store(true);
-      BOOST_LOG(info) << "Microphone socket started on port " << mic_port;
-    } else {
-      BOOST_LOG(info) << "Microphone streaming disabled by config";
-    }
-
     ctx.message_queue_queue = std::make_shared<message_queue_queue_t::element_type>(30);
 
     ctx.video_thread = std::thread { videoBroadcastThread, std::ref(ctx.video_sock) };
@@ -2620,13 +3792,7 @@ namespace stream {
     ctx.video_sock.close();
     ctx.audio_sock.close();
 
-    if (ctx.mic_socket_enabled.load()) {
-      ctx.mic_socket_enabled.store(false);
-      ctx.mic_sock.close();
-      ctx.mic_sessions_count.store(0);
-      
-      reset_mic_encryption(ctx);
-      
+    if (disable_mic_socket(ctx)) {
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
     }
 
@@ -2706,11 +3872,13 @@ namespace stream {
 
   void
   videoThread(session_t *session) {
+    auto global_shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto fg = util::fail_guard([&]() {
-      session::stop(*session);
+      const auto reason = global_shutdown_event->peek() ? session::stop_reason_e::host_terminate : session::stop_reason_e::video_ended;
+      session::stop(*session, reason);
     });
 
-    while_starting_do_nothing(session->state);
+    while_starting_do_nothing(session->lifecycle);
 
     auto ref = broadcast_shared.ref();
     auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
@@ -2731,11 +3899,13 @@ namespace stream {
 
   void
   audioThread(session_t *session) {
+    auto global_shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto fg = util::fail_guard([&]() {
-      session::stop(*session);
+      const auto reason = global_shutdown_event->peek() ? session::stop_reason_e::host_terminate : session::stop_reason_e::audio_ended;
+      session::stop(*session, reason);
     });
 
-    while_starting_do_nothing(session->state);
+    while_starting_do_nothing(session->lifecycle);
 
     auto ref = broadcast_shared.ref();
     auto error = recv_ping(session, ref, socket_e::audio, session->audio.ping_payload, session->audio.peer, config::stream.ping_timeout);
@@ -2753,23 +3923,50 @@ namespace stream {
   }
 
   namespace session {
-    std::atomic_uint running_sessions;
-    std::atomic_uint running_non_control_only_sessions;  // 跟踪非仅控制流会话的数量
-
+    const char *
+    stop_reason_name(stop_reason_e reason) {
+      switch (reason) {
+        case stop_reason_e::none:
+          return "none";
+        case stop_reason_e::control_disconnect:
+          return "control_disconnect";
+        case stop_reason_e::control_timeout:
+          return "control_timeout";
+        case stop_reason_e::protocol_error:
+          return "protocol_error";
+        case stop_reason_e::video_ended:
+          return "video_ended";
+        case stop_reason_e::audio_ended:
+          return "audio_ended";
+        case stop_reason_e::client_cancel:
+          return "client_cancel";
+        case stop_reason_e::host_terminate:
+          return "host_terminate";
+      }
+      return "unknown";
+    }
     state_e
     state(session_t &session) {
-      return session.state.load(std::memory_order_relaxed);
+      return session.lifecycle.state();
+    }
+
+    bool
+    has_active_video_sessions() {
+      return video_session_count() > 0;
     }
 
     void
-    stop(session_t &session) {
-      while_starting_do_nothing(session.state);
-      auto expected = state_e::RUNNING;
-      auto already_stopping = !session.state.compare_exchange_strong(expected, state_e::STOPPING);
-      if (already_stopping) {
+    stop(session_t &session, stop_reason_e reason) {
+      while_starting_do_nothing(session.lifecycle);
+      if (!session.lifecycle.request_stop(reason)) {
         return;
       }
 
+      BOOST_LOG(info) << "Stopping streaming session "sv << session.launch_session_id
+                      << " [client_uuid="sv << session.client_cert_uuid
+                      << ", reason="sv << stop_reason_name(reason) << ']';
+
+      perf::end_session(session.launch_session_id);
       session.shutdown_event->raise(true);
     }
 
@@ -2804,6 +4001,7 @@ namespace stream {
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);
+      tray_state::remove_session(session.launch_session_id);
 
       // 对于仅控制流会话，只减少总会话计数，不调用 streaming_will_stop
       // 只有当所有非控制流会话都结束时才调用 streaming_will_stop
@@ -2814,25 +4012,31 @@ namespace stream {
       else {
         // 非仅控制流会话：减少两个计数器
         --running_sessions;
-        // If this is the last non-control-only session, invoke the platform callbacks
-        if (--running_non_control_only_sessions == 0) {
-          // 最后一个会话结束时，确保麦克风socket已关闭
-          if (session.broadcast_ref->mic_socket_enabled.load()) {
-            session.broadcast_ref->mic_socket_enabled.store(false);
-            session.broadcast_ref->mic_sessions_count.store(0);
-            session.broadcast_ref->mic_sock.close();
-            reset_mic_encryption(*session.broadcast_ref.get());
-            BOOST_LOG(debug) << "Microphone socket closed (last session ended)";
-          }
 
+        if (session.audio.mic_registered) {
+          const auto was_registered = release_mic_session(*session.broadcast_ref.get(), session.launch_session_id);
+          session.audio.mic_registered = false;
+          BOOST_LOG(debug) << "Microphone registration for session " << session.launch_session_id
+                           << (was_registered ? " released"sv : " was already absent"sv);
+        }
+
+        // If this is the last non-control-only session, invoke the platform callbacks
+        if (unregister_video_session() == 0) {
           bool restore_display_state { true };
           if (proc::proc.running()) {
+            tray_state::set_paused(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
             system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
 #endif
 
             // TODO: make this configurable per app
             restore_display_state = false;
+          }
+          else {
+            tray_state::set_idle(proc::proc.get_last_run_app_name());
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+            system_tray::update_tray_stopped(proc::proc.get_last_run_app_name());
+#endif
           }
 
           if (restore_display_state) {
@@ -2841,31 +4045,46 @@ namespace stream {
 
           platf::streaming_will_stop();
         }
-        else {
-          // 非最后一个会话：如果当前会话启用了麦克风，减少计数
-          if (session.audio.enable_mic) {
-            int remaining_count = session.broadcast_ref->mic_sessions_count.fetch_sub(1) - 1;
-            if (remaining_count == 0) {
-              // 没有会话需要麦克风了，关闭socket并清除所有加密上下文
-              session.broadcast_ref->mic_socket_enabled.store(false);
-              session.broadcast_ref->mic_sock.close();
-              reset_mic_encryption(*session.broadcast_ref.get());
-              BOOST_LOG(debug) << "Microphone socket closed (no sessions require it)";
-            }
-            else {
-              // 只移除当前客户端的加密上下文，保留其他客户端的
-              std::string client_ip = session.audio.peer.address().to_string();
-              remove_mic_encryption(*session.broadcast_ref.get(), client_ip);
-              BOOST_LOG(debug) << "Microphone sessions remaining: " << remaining_count << " (removed cipher for " << client_ip << ")";
-            }
-          }
-        }
       }
+
+      perf::end_session(session.launch_session_id);
 
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
 
-      BOOST_LOG(debug) << "Session ended"sv;
+      std::string client_ip = session.control.expected_peer_address;
+      if (session.control.peer) {
+        try {
+          client_ip = platf::from_sockaddr(
+            (sockaddr *) &session.control.peer->address.address
+          );
+        }
+        catch (...) {
+          // Preserve the handshake address when the live peer cannot be
+          // converted during teardown.
+        }
+      }
+
+      const auto lifecycle = session.lifecycle.snapshot();
+      try {
+        webhook::send_event_async(webhook::event_t {
+          .type = webhook::event_type_t::NV_SESSION_END,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_name = session.client_name,
+          .client_ip = std::move(client_ip),
+          .app_name = session.app_name,
+          .app_id = session.app_id,
+          .session_id = std::to_string(session.launch_session_id),
+          .extra_data = {{"reason", stop_reason_name(lifecycle.stop_reason)}}
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook session end event construction failed"sv;
+      }
+
+      BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id
+                       << ", client_uuid="sv << session.client_cert_uuid
+                       << ", reason="sv << stop_reason_name(lifecycle.stop_reason) << ']';
     }
 
     int
@@ -2877,7 +4096,38 @@ namespace stream {
         return -1;
       }
 
+      bool first_video_session {false};
+      bool video_session_registered {false};
+      if (!session.control_only) {
+        const auto registration = register_video_session();
+        if (!registration) {
+          return -1;
+        }
+
+        first_video_session = *registration;
+        video_session_registered = true;
+      }
+      // 登记后的启动失败由 guard 回退计数；正常进入 RUNNING 后转交 join() 注销。
+      auto video_session_registration_guard = util::fail_guard([&]() {
+        if (video_session_registered) {
+          unregister_video_session();
+        }
+      });
+
       session.control.expected_peer_address = addr_string;
+      auto addr = boost::asio::ip::make_address(addr_string);
+      session.video.peer.address(addr);
+      session.video.peer.port(0);
+      session.audio.peer.address(addr);
+      session.audio.peer.port(0);
+
+      // 会话加入 _sessions 后，控制线程可能立即读取它。因此必须先初始化
+      // 控制线程依赖的所有字段，否则默认构造的超时时间会被误判为已经过期。
+      session.pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+      session.lifecycle.set_state(state_e::STARTING);
+      auto starting_guard = util::fail_guard([&]() {
+        session.lifecycle.set_state(state_e::RUNNING);
+      });
       if (session.control_only) {
         BOOST_LOG(info) << "Starting control-only session from ["sv << addr_string << "] - will only handle input control"sv;
       }
@@ -2885,20 +4135,12 @@ namespace stream {
         BOOST_LOG(debug) << "Expecting incoming session connections from "sv << addr_string;
       }
 
-      // Insert this session into the session list
+      // 将完成初始化的会话加入共享列表。
       {
         auto lg = session.broadcast_ref->control_server._sessions.lock();
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
-
-      auto addr = boost::asio::ip::make_address(addr_string);
-      session.video.peer.address(addr);
-      session.video.peer.port(0);
-
-      session.audio.peer.address(addr);
-      session.audio.peer.port(0);
-
-      session.pingTimeout = std::chrono::steady_clock::now() + config::stream.ping_timeout;
+      clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
 
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {
@@ -2909,43 +4151,80 @@ namespace stream {
         BOOST_LOG(debug) << "Control-only session: skipping video and audio thread creation"sv;
       }
 
-      session.state.store(state_e::RUNNING, std::memory_order_relaxed);
+      // 在生命周期仍为 STARTING 时完成麦克风注册。session::stop() 会等待该边界，
+      // 避免 join() 在套接字引用和路由信息配对前释放会话。
+      if (!session.control_only) {
+        if (session.audio.enable_mic) {
+          setup_mic_for_session(session, addr);
+        }
+      }
+
+      ++running_sessions;
+      video_session_registration_guard.disable();
+
+      perf::begin_session({
+        session.launch_session_id,
+        session.client_name,
+        session.config.monitor.width,
+        session.config.monitor.height,
+        session.config.monitor.framerate,
+        session.current_total_bitrate.load(std::memory_order_relaxed),
+        ::config::video.encoder.empty() ? "auto" : ::config::video.encoder,
+        ::config::video.capture.empty() ? "auto" : ::config::video.capture,
+        session.control_only,
+      });
+      tray_state::add_session(
+        session.launch_session_id,
+        session.client_name,
+        session.highly_suspected_unknown_client
+      );
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话
       if (session.control_only) {
-        // 仅控制流会话：只增加总会话计数，不调用平台回调
-        ++running_sessions;
         BOOST_LOG(debug) << "Control-only session started (total sessions: "sv << running_sessions.load() << ")"sv;
       }
       else {
-        // 非仅控制流会话：增加两个计数器
-        ++running_sessions;
         // If this is the first non-control-only session, invoke the platform callbacks
-        if (++running_non_control_only_sessions == 1) {
-          // 根据会话的麦克风启用标志管理麦克风socket
-          if (session.audio.enable_mic) {
-            setup_mic_for_session(session);
-          }
-          else {
-            // 如果第一个会话不需要麦克风，关闭麦克风socket
-            session.broadcast_ref->mic_socket_enabled.store(false);
-            session.broadcast_ref->mic_sock.close();
-            BOOST_LOG(info) << "Client " << session.client_name << ": Microphone socket closed (session doesn't require it)";
-          }
-
+        if (first_video_session) {
           platf::streaming_will_start();
+          tray_state::set_streaming(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif
         }
-        else {
-          // 非第一个会话：如果启用麦克风
-          if (session.audio.enable_mic) {
-            setup_mic_for_session(session);
-          }
-        }
       }
+
+      try {
+        std::map<std::string, std::string> extra_data {
+          {"resolution", std::to_string(session.config.monitor.width) + "x" + std::to_string(session.config.monitor.height)},
+          {"fps", std::to_string(session.config.monitor.framerate)}
+        };
+        if (session.highly_suspected_unknown_client) {
+          extra_data.emplace(
+            "client_integrity_warning",
+            client_fingerprint::suspicious_client_code
+          );
+        }
+        webhook::send_event_async(webhook::event_t {
+          .type = webhook::event_type_t::NV_SESSION_START,
+          .timestamp = webhook::get_current_timestamp(),
+          .client_name = session.client_name,
+          .client_ip = addr_string,
+          .app_name = session.app_name,
+          .app_id = session.app_id,
+          .session_id = std::to_string(session.launch_session_id),
+          .extra_data = std::move(extra_data)
+        });
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Webhook session start event construction failed"sv;
+      }
+
+      // 仅在 join() 依赖的状态全部提交后发布 RUNNING，
+      // 会话线程和停止请求都会等待该边界。
+      session.lifecycle.set_state(state_e::RUNNING);
+      starting_guard.disable();
 
       return 0;
     }
@@ -2958,16 +4237,26 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->created_at_ms = steady_now_ms();
 
       // 设置客户端名称
       session->client_name = launch_session.client_name;
+      session->client_cert_uuid = launch_session.client_cert_uuid;
+      session->use_vdd = launch_session.use_vdd;
+      session->custom_screen_mode = launch_session.custom_screen_mode;
+      session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
+      session->app_id = launch_session.appid;
+      session->app_name = proc::proc.get_app_name(launch_session.appid);
 
       // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;
       session->enable_hdr = launch_session.enable_hdr;
-      session->max_nits = launch_session.max_nits;
-      session->min_nits = launch_session.min_nits;
-      session->max_full_nits = launch_session.max_full_nits;
+      session->hdr_capabilities = launch_session.hdr_capabilities;
+      session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
+      session->dynamic_sdr_white_nits.store(
+        launch_session.hdr_capabilities.sdr_white_nits,
+        std::memory_order_release);
+      session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
 
@@ -3007,7 +4296,12 @@ namespace stream {
         session->video.gcm_iv_counter = 0;
       }
 
-      constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(2048);
+      // Per-shard capacity must match MAX_AUDIO_PACKET_SIZE (defined near
+      // the top of this file). The previous hardcoded 2048 here would
+      // overflow with AC3 frames (~2560 B encrypted) and corrupt neighbour
+      // shards / RS parity for E-AC3 (~1552 B), causing client-side decode
+      // failures even when the encoder reported success.
+      constexpr auto max_block_size = crypto::cipher::round_to_pkcs7_padded(MAX_AUDIO_PACKET_SIZE);
 
       util::buffer_t<char> shards { RTPA_TOTAL_SHARDS * max_block_size };
       util::buffer_t<uint8_t *> shards_p { RTPA_TOTAL_SHARDS };
@@ -3034,7 +4328,9 @@ namespace stream {
       };
 
       session->audio.ping_payload = launch_session.av_ping_payload;
-      session->audio.avRiKeyId = util::endian::big(*(std::uint32_t *) launch_session.iv.data());
+      std::uint32_t av_ri_key_id_be;
+      std::memcpy(&av_ri_key_id_be, launch_session.iv.data(), sizeof(av_ri_key_id_be));
+      session->audio.avRiKeyId = util::endian::big(av_ri_key_id_be);
       session->audio.sequenceNumber = 0;
       session->audio.timestamp = 0;
 
@@ -3043,7 +4339,6 @@ namespace stream {
       session->control_only = launch_session.control_only;
 
       session->control.peer = nullptr;
-      session->state.store(state_e::STOPPED, std::memory_order_relaxed);
 
       session->mail = std::move(mail);
 
@@ -3052,6 +4347,8 @@ namespace stream {
 
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param) {
+      auto effective_param = param;
+
       // 先检查是否有活动的广播引用，避免在无活跃session时
       // 触发start_broadcast/end_broadcast循环（"僵尸广播"），
       // 这可能阻塞HTTPS服务器线程导致客户端显示主机离线
@@ -3068,18 +4365,20 @@ namespace stream {
       auto lg = broadcast_ref->control_server._sessions.lock();
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         if (session_p->client_name == client_name &&
-            session_p->state.load(std::memory_order_relaxed) == state_e::RUNNING) {
+            session_p->lifecycle.state() == state_e::RUNNING) {
           // Update session's current total bitrate if this is a bitrate change
-          if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {
+          if (effective_param.type == video::dynamic_param_type_e::BITRATE && effective_param.valid) {
+            effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
             // The param.value.int_value is the total bitrate (user-configured, including FEC)
-            session_p->current_total_bitrate = param.value.int_value;
+            session_p->current_total_bitrate = effective_param.value.int_value;
+            perf::update_session_bitrate(session_p->launch_session_id, effective_param.value.int_value);
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
-                            << "': " << param.value.int_value << " Kbps (including FEC)";
+                            << "': " << effective_param.value.int_value << " Kbps (including FEC)";
           }
 
-          session_p->video.dynamic_param_change_events->raise(param);
+          session_p->video.dynamic_param_change_events->raise(effective_param);
           BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
-                          << "': type=" << (int) param.type;
+                          << "': type=" << (int) effective_param.type;
           return true;
         }
       }
@@ -3117,7 +4416,18 @@ namespace stream {
           session_info_t info;
 
           info.client_name = session_p->client_name;
+          info.client_uuid = session_p->client_cert_uuid;
           info.session_id = session_p->launch_session_id;
+
+          const auto lifecycle = session_p->lifecycle.snapshot();
+          info.stop_reason = stop_reason_name(lifecycle.stop_reason);
+
+          const auto now_ms = steady_now_ms();
+          info.uptime_ms = std::max<std::int64_t>(0, now_ms - session_p->created_at_ms);
+          info.control_idle_ms = idle_ms(now_ms, session_p->last_control_activity_ms.load(std::memory_order_relaxed));
+          info.video_idle_ms = idle_ms(now_ms, session_p->last_video_activity_ms.load(std::memory_order_relaxed));
+          info.audio_idle_ms = idle_ms(now_ms, session_p->last_audio_activity_ms.load(std::memory_order_relaxed));
+          info.control_connected = lifecycle.state == state_e::RUNNING && session_p->control.peer != nullptr;
 
           // Get client address
           if (session_p->control.peer) {
@@ -3133,8 +4443,7 @@ namespace stream {
           }
 
           // Get session state
-          auto state = session_p->state.load(std::memory_order_relaxed);
-          switch (state) {
+          switch (lifecycle.state) {
             case state_e::STOPPED:
               info.state = "STOPPED";
               break;
@@ -3165,6 +4474,12 @@ namespace stream {
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;
+          info.use_vdd = session_p->use_vdd;
+          info.hdr_brightness_reported = session_p->reported_hdr_capabilities.reported;
+          info.hdr_brightness_source = hdr::to_string(session_p->hdr_target_source);
+          info.hdr_max_nits = session_p->hdr_capabilities.max_nits;
+          info.hdr_min_nits = session_p->hdr_capabilities.min_nits;
+          info.hdr_max_full_frame_nits = session_p->hdr_capabilities.max_full_frame_nits;
 
           // Get app information
           try {

@@ -1,5 +1,8 @@
 name: Build and Release
 
+# Published releases are owned by sign-and-repackage.yml. Keeping that event
+# out of this workflow prevents a release created below from starting another
+# build-and-release cycle.
 on:
   pull_request:
     branches:
@@ -11,34 +14,29 @@ on:
   push:
     branches:
       - master
-  release:
-    types: [published]
   workflow_dispatch:
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
   cancel-in-progress: true
 
-jobs:
-  github_env:
-    name: GitHub Env Debug
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dump github context
-        run: echo "$GITHUB_CONTEXT"
-        shell: bash
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
+# Opt all Node.js 20 actions onto the Node.js 24 runtime. GitHub will
+# eventually flip this default itself; setting it explicitly silences the
+# `actions/checkout@v4` deprecation warning emitted on every run and keeps
+# us forward-compatible with the September 2026 Node 20 removal.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
+jobs:
   setup_release:
     name: Setup Release
     outputs:
-      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_release.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
-      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_release.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
-      release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_release.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
-      release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_release.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
-      release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_release.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
-      release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_release.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
+      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
+      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
+      release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
+      release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
+      release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
+      release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
     permissions:
       contents: write  # read does not work to check squash and merge details
     runs-on: ubuntu-latest
@@ -46,36 +44,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Debug GitHub Event
-        run: |
-          echo "GitHub Event Name: ${{ github.event_name }}"
-          echo "Has commits field: ${{ contains(toJson(github.event), 'commits') }}"
-
       - name: Setup Release (Auto)
         id: setup_release_auto
-        if: github.event_name != 'workflow_dispatch' && github.event_name != 'release'
+        if: github.event_name != 'workflow_dispatch'
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Release (Release event)
-        id: setup_release_release
-        if: github.event_name == 'release'
-        env:
-          RELEASE_BODY: ${{ github.event.release.body }}
-        run: |
-          TAG="${{ github.event.release.tag_name }}"
-          SUFFIX=$([ "${{ github.event.release.target_commitish }}" = "master" ] && echo "" || echo "-dev")
-          echo "publish_release=true" >> $GITHUB_OUTPUT
-          {
-            echo "release_body<<RELEASE_BODY_EOF"
-            echo "$RELEASE_BODY"
-            echo "RELEASE_BODY_EOF"
-          } >> $GITHUB_OUTPUT
-          echo "release_commit=${{ github.event.release.target_commitish }}" >> $GITHUB_OUTPUT
-          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=${TAG}${SUFFIX}" >> $GITHUB_OUTPUT
 
       - name: Setup Release (Manual)
         id: setup_release_manual
@@ -89,6 +63,19 @@ jobs:
           echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
           echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
 
+  vdd_smoke:
+    name: VDD helper smoke tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run VDD helper smoke tests
+        shell: pwsh
+        run: |
+          & .\src_assets\windows\misc\vdd\smoke-test-vdd-device-helper.ps1
+          & .\src_assets\windows\misc\vdd\smoke-test-install-vdd-selection.ps1
+
   build_win:
     name: Windows
     needs: setup_release
@@ -97,13 +84,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          ref: ${{ github.sha }}
           submodules: recursive
 
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
         with:
           msystem: ucrt64
+          # Required, not redundant with the `pacman -Syu` below. When
+          # msys2-runtime itself needs upgrading, pacman closes every MSYS2
+          # process to finish the job, which kills the workflow shell and fails
+          # the step with exit 1. setup-msys2 performs that upgrade with the
+          # restart it needs; by the time our own step runs, the runtime is
+          # already current and only the dependency list is left to install.
           update: true
           install: >-
             wget
@@ -111,37 +104,22 @@ jobs:
 
       - name: Update Windows dependencies
         env:
-          gcc_version: '15.1.0-5'
           opus_version: '1.6.1-1'
         shell: msys2 {0}
         run: |
-          broken_deps=(
-            "mingw-w64-ucrt-x86_64-gcc"
-            "mingw-w64-ucrt-x86_64-gcc-libs"
-          )
-
-          tarballs=""
-          for dep in "${broken_deps[@]}"; do
-            tarball="${dep}-${gcc_version}-any.pkg.tar.zst"
-
-            # download and install working version
-            wget https://repo.msys2.org/mingw/ucrt64/${tarball}
-
-            tarballs="${tarballs} ${tarball}"
-          done
-
           # download pinned opus version
           opus_tarball="mingw-w64-ucrt-x86_64-opus-${opus_version}-any.pkg.tar.zst"
           wget https://repo.msys2.org/mingw/ucrt64/${opus_tarball}
 
-          # install broken dependencies
-          if [ -n "$tarballs" ]; then
-            pacman -U --noconfirm ${tarballs}
-          fi
-
           # install dependencies
+          # NOTE: gcc/gcc-libs were previously pinned to 15.1.0-5 to work around
+          # a broken upstream gcc 15.x. Since msys2 has moved on to gcc 16.x and
+          # other packages (cmake, etc.) now require gcc-libs 16.x ABI, pinning
+          # an old gcc-libs causes cmake.exe to silently fail to load (exit 127).
+          # Let pacman install the full toolchain at the current upstream version.
           dependencies=(
             "git"
+            "mingw-w64-ucrt-x86_64-ccache"
             "mingw-w64-ucrt-x86_64-cmake"
             "mingw-w64-ucrt-x86_64-ninja"
             "mingw-w64-ucrt-x86_64-cppwinrt"
@@ -150,7 +128,7 @@ jobs:
             "mingw-w64-ucrt-x86_64-MinHook"
             "mingw-w64-ucrt-x86_64-miniupnpc"
             "mingw-w64-ucrt-x86_64-nlohmann-json"
-            "mingw-w64-ucrt-x86_64-nodejs"
+            # "mingw-w64-ucrt-x86_64-nodejs"  # Replaced by actions/setup-node (vite 8 requires MSVC Node.js)
             # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
             "mingw-w64-ucrt-x86_64-onevpl"
             "mingw-w64-ucrt-x86_64-openssl"
@@ -158,7 +136,7 @@ jobs:
             "mingw-w64-ucrt-x86_64-autotools"
           )
 
-          pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
+          pacman -Syu --noconfirm "${dependencies[@]}"
 
           # install pinned opus after Syu to prevent upgrade
           pacman --noconfirm -U ${opus_tarball}
@@ -176,11 +154,43 @@ jobs:
           echo "  Ninja: $(ninja --version)"
           echo "  GCC: $(gcc --version | head -1)"
 
-      - name: Cache npm dependencies
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup .NET for DualSense sidecar
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build self-contained DualSense sidecar
+        shell: pwsh
+        run: .\scripts\build-ds5-sidecar.ps1
+
+      - name: Build Web UI
+        shell: pwsh
+        run: |
+          npm ci
+          npm run lint:webui
+          npm run test:webui
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
+          $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
+          npm run build
+
+      - name: Cache compiler objects
         uses: actions/cache@v4
         with:
-          path: node_modules
-          key: npm-${{ hashFiles('package-lock.json') }}
+          path: ${{ github.workspace }}\.ccache
+          # The key must be unique per run for the cache to be written at all,
+          # so the prefix restore-key is what actually produces the hits: every
+          # run seeds itself from the most recent previous one.
+          key: ccache-windows-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-
 
       - name: Build Windows
         shell: msys2 {0}
@@ -189,18 +199,46 @@ jobs:
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
           GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
+          # ccache.exe is a native binary, so it reads the Windows-style path
+          # straight out of the environment even under the msys2 shell.
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          # `pacman -Syu` can move the toolchain underneath us between runs.
+          # Hashing the compiler binary instead of its mtime keeps the cache
+          # valid across runs that did not actually change gcc.
+          CCACHE_COMPILERCHECK: content
+          # Fork PRs cannot access org-scoped secrets, so private-repo driver
+          # downloads (vmouse) may fail. Downgrade missing drivers from
+          # FATAL_ERROR to WARNING so the build/configure still succeeds; the
+          # affected drivers are simply excluded from the installer.
+          DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
           mkdir -p build
+          ccache --zero-stats
           cmake \
             -B build \
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=ON \
+            -DBUILD_TRAY_TESTS=ON \
+            -DBUILD_WEB_UI=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DSUNSHINE_ASSETS_DIR=assets \
+            -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
-            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
-            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
+            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
           ninja -C build
+
+          # Printed so a run that suddenly gets slow can be diagnosed as a cache
+          # miss rather than guessed at.
+          ccache --show-stats
+
+      - name: Run native tests
+        shell: msys2 {0}
+        run: ctest --test-dir build --output-on-failure
 
       - name: Cache Inno Setup
         id: inno-cache
@@ -227,18 +265,22 @@ jobs:
       - name: Package Windows
         shell: msys2 {0}
         run: |
+          set -o pipefail
           mkdir -p artifacts
           cd build
 
-          # package - 生成 Inno Setup 安装包和 ZIP 便携版
-          # 先安装到 staging 目录
+          # Package the Inno Setup installer and portable ZIP.
+          # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
+          test -f ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
           
-          # 运行 Inno Setup 编译器
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss
+          # Run the Inno Setup compiler and prove that it consumed the sidecar.
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
+          grep -F "Sunshine.Ds5Sidecar.exe" inno-build.log
           
-          # 生成 ZIP 便携版
+          # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
+          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
@@ -247,21 +289,8 @@ jobs:
       - name: Generate Checksums
         shell: pwsh
         run: |
-          # 生成 SHA256 校验和
+          # Generate SHA256 checksums.
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
-
-      - name: Package Windows Debug Info
-        working-directory: build
-        run: |
-          # use .dbg file extension for binaries to avoid confusion with real packages
-          Get-ChildItem -File -Recurse | `
-            % { Rename-Item -Path $_.PSPath -NewName $_.Name.Replace(".exe",".dbg") }
-
-          # save the binaries with debug info
-          7z -r `
-            "-xr!CMakeFiles" `
-            "-xr!cpack_artifacts" `
-            a "../artifacts/sunshine-win32-debuginfo.7z" "*.dbg"
 
       - name: Rename release assets
         shell: msys2 {0}

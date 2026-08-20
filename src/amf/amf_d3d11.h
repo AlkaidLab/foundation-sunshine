@@ -4,11 +4,17 @@
  */
 #pragma once
 
+#include "amf_avcodec_compat.h"
 #include "amf_encoder.h"
 
+#include "src/video_hdr_bitstream.h"
+#include "src/video_hdr_metadata.h"
+
 #include <d3d11.h>
+#include <deque>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include <AMF/components/Component.h>
 #include <AMF/core/Context.h>
@@ -46,6 +52,9 @@ namespace amf {
     void
     set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) override;
 
+    void
+    set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) override;
+
     void *
     get_input_texture() override;
 
@@ -71,6 +80,18 @@ namespace amf {
     void
     set_codec_property(const wchar_t *h264_name, const wchar_t *hevc_name, const wchar_t *av1_name, T value);
 
+    /**
+     * Serialize the current luminance stats into codec-specific bitstream units and
+     * remember them for this frame index, so the units can be spliced into the
+     * matching output however many frames later AMF produces it.
+     */
+    void
+    stage_dynamic_metadata(uint64_t frame_index);
+
+    /// Drop everything remembered for a frame that was dropped or has been emitted.
+    void
+    forget_frame(uint64_t frame_index);
+
     ID3D11Device *device = nullptr;
     ::amf::AMFFactory *factory = nullptr;
     ::amf::AMFContextPtr context;
@@ -93,21 +114,62 @@ namespace amf {
     // Whether the driver supports QUERY_TIMEOUT (FFmpeg-style safety check)
     bool query_timeout_supported = false;
 
-    // Current LTR state for RFI
-    static constexpr int MAX_LTR_SLOTS = 2;
-    static constexpr uint64_t LTR_MARK_INTERVAL = 30;  // Mark LTR every N frames
+    // Current LTR state for RFI.
+    // Slot 0 is reserved as the IDR baseline (set on every IDR, never overwritten by
+    // periodic marks) so RFI always has a known-good fallback even when every recent
+    // periodic-marked frame was inside a packet-loss window. Slots 1..N-1 form a
+    // sliding window of more recent anchors.
+    static constexpr int MAX_LTR_SLOTS = 4;
+    static constexpr uint64_t LTR_MARK_INTERVAL = 4;  // Mark LTR every N frames
     int effective_ltr_slots = 0;    // Clamped to min(max_ltr_frames, MAX_LTR_SLOTS)
     int current_ltr_slot = 0;      // Which LTR slot to mark next
     bool ltr_slots_valid[MAX_LTR_SLOTS] = {};
     uint64_t ltr_slot_frame_index[MAX_LTR_SLOTS] = {};  // Frame index when each LTR slot was marked
 
-    // Pending output stashed during SubmitInput retry
-    ::amf::AMFDataPtr pending_output;
+    // Pending outputs stashed during SubmitInput retry or proactive backpressure drain
+    std::deque<::amf::AMFDataPtr> pending_outputs;
+    std::unordered_map<uint64_t, bool> frame_rfi_flags;
+
+    // Dynamic HDR metadata (HDR10+ / HDR Vivid). AMF exposes only static
+    // AMFHDRMetadata, so the payloads are written as an HEVC prefix SEI or an AV1
+    // metadata OBU and spliced into the encoder's output.
+    //
+    // The units are built when the frame is submitted, where the analyzer output
+    // still belongs to that frame, and keyed by frame index because AMF may return
+    // the encoded frame several submissions later. Trimmed like frame_rfi_flags so a
+    // stream that keeps dropping frames cannot grow the map without bound.
+    std::optional<video::hdr_bitstream::codec_e> dynamic_metadata_codec;
+    video::hdr_metadata::dynamic_metadata_builder_t dynamic_metadata;
+    platf::hdr_frame_luminance_stats_t luminance_stats {};
+    std::optional<uint16_t> hdr_display_luminance;
+    std::unordered_map<uint64_t, std::vector<uint8_t>> staged_metadata_units;
+    static constexpr size_t MAX_TRACKED_FRAMES = 256;
+
+    // FFmpeg-style proactive backpressure: track in-flight surfaces (submitted
+    // but not yet retrieved via QueryOutput) so we can drain output BEFORE
+    // SubmitInput would hit AMF_INPUT_FULL. The native AMF queue is roughly
+    // 21 frames deep per FFmpeg's amfenc.c notes; we keep our soft cap well
+    // below that to leave headroom for VCN stalls and DXGI scheduling jitter.
+    int hwsurfaces_in_queue = 0;
+    static constexpr int HWSURFACES_IN_QUEUE_DEFAULT = 16;
+    int hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
+    bool user_configured_rate_control = false;
+    bool avcodec_compat_profile = false;
+    amf_avcodec_scheduler avcodec_scheduler;
 
     // Statistics feedback state
     bool statistics_enabled = false;
     bool psnr_enabled = false;
     bool ssim_enabled = false;
+
+    // Runtime fault watchdog: count consecutive failures so we can signal
+    // a fatal error to the upper layer (triggering a real reinit) instead
+    // of silently producing no output forever. Threshold is derived from
+    // client framerate in create_encoder() so the watchdog fires after
+    // roughly the same wall-clock time regardless of fps.
+    int consecutive_submit_failures = 0;
+    int consecutive_empty_outputs = 0;
+    int max_consecutive_failures = 60;  // Set to ~1s of frames in create_encoder()
 
     std::string last_error_string;
   };

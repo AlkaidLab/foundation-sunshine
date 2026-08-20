@@ -5,9 +5,14 @@
 #include <csignal>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <vector>
+
+#include <atomic>
+#include <chrono>
+#include <mutex>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -1165,17 +1170,57 @@ namespace platf {
     return create_boost_child_from_results(ret, cmd, ec, process_info);
   }
 
+  std::error_code
+  launch_gui_agent() {
+    std::wstring executable(32768, L'\0');
+    const auto executable_length = GetModuleFileNameW(
+      nullptr,
+      executable.data(),
+      static_cast<DWORD>(executable.size()));
+    if (executable_length == 0) {
+      return { static_cast<int>(GetLastError()), std::system_category() };
+    }
+    if (executable_length >= executable.size()) {
+      return { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+    }
+    executable.resize(executable_length);
+
+    const boost::filesystem::path sunshine_path { executable };
+    const auto gui_dir = sunshine_path.parent_path() / L"assets" / L"gui";
+    const auto gui_path = gui_dir / L"sunshine-gui.exe";
+    const auto attributes = GetFileAttributesW(gui_path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+      return { static_cast<int>(GetLastError()), std::system_category() };
+    }
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+      return std::make_error_code(std::errc::no_such_file_or_directory);
+    }
+
+    auto environment = boost::this_process::environment();
+    auto working_dir = gui_dir;
+    std::error_code ec;
+    const auto command = "\"" + to_utf8(gui_path.wstring()) + "\" --hidden";
+    auto child = run_command(false, false, command, working_dir, environment, nullptr, ec, nullptr);
+    if (!ec) {
+      child.detach();
+    }
+    return ec;
+  }
+
   /**
    * @brief Open a url in the default web browser.
    * @param url The url to open.
    */
   void
   open_url(const std::string &url) {
+    const std::string cmd_path = "assets/gui/sunshine-gui.exe";
+    const std::string cmd_args = "--url=" + url;
+
     boost::process::v1::environment _env = boost::this_process::environment();
     auto working_dir = boost::filesystem::path();
     std::error_code ec;
 
-    auto child = run_command(false, true, "assets/gui/sunshine-gui.exe --url=" + url, working_dir, _env, nullptr, ec, nullptr);
+    auto child = run_command(false, false, cmd_path + " " + cmd_args, working_dir, _env, nullptr, ec, nullptr);
     if (ec) {
       BOOST_LOG(warning) << "Couldn't open url ["sv << url << "]: System: "sv << ec.message();
     }
@@ -1324,13 +1369,29 @@ namespace platf {
       }
     }
 
+    enable_mouse_keys();
+  }
+
+  void
+  enable_mouse_keys() {
     // If there is no mouse connected, enable Mouse Keys to force the cursor to appear
     if (!GetSystemMetrics(SM_MOUSEPRESENT)) {
-      BOOST_LOG(info) << "A mouse was not detected. Sunshine will enable Mouse Keys while streaming to force the mouse cursor to appear.";
+      // This function is invoked periodically (per encoded frame) so we must guard
+      // against re-reading SPI_GETMOUSEKEYS after we've already enabled it; otherwise
+      // the snapshot saved in previous_mouse_keys_state would be overwritten with
+      // our own enabled state and streaming_will_stop() would fail to restore the
+      // user's original Mouse Keys configuration.
+      if (!enabled_mouse_keys) {
+        BOOST_LOG(info) << "A mouse was not detected. Sunshine will enable Mouse Keys while streaming to force the mouse cursor to appear.";
 
-      // Get the current state of Mouse Keys so we can restore it when streaming is over
-      previous_mouse_keys_state.cbSize = sizeof(previous_mouse_keys_state);
-      if (SystemParametersInfoW(SPI_GETMOUSEKEYS, 0, &previous_mouse_keys_state, 0)) {
+        // Get the current state of Mouse Keys so we can restore it when streaming is over
+        previous_mouse_keys_state.cbSize = sizeof(previous_mouse_keys_state);
+        if (!SystemParametersInfoW(SPI_GETMOUSEKEYS, 0, &previous_mouse_keys_state, 0)) {
+          auto winerr = GetLastError();
+          BOOST_LOG(warning) << "Unable to get current state of Mouse Keys: "sv << winerr;
+          return;
+        }
+
         MOUSEKEYS new_mouse_keys_state = {};
 
         // Enable Mouse Keys
@@ -1346,10 +1407,6 @@ namespace platf {
           auto winerr = GetLastError();
           BOOST_LOG(warning) << "Unable to enable Mouse Keys: "sv << winerr;
         }
-      }
-      else {
-        auto winerr = GetLastError();
-        BOOST_LOG(warning) << "Unable to get current state of Mouse Keys: "sv << winerr;
       }
     }
   }
@@ -1655,10 +1712,128 @@ namespace platf {
     return saddr_v6;
   }
 
+  // --- Source address pinning resilience (handles host NIC IP changes mid-stream) ---
+  //
+  // The video transport pins a fixed source IP via IP_PKTINFO/IPV6_PKTINFO on every
+  // packet (to ensure correct routing on multi-homed hosts). If the host's interface
+  // IP changes during a stream (DHCP renewal, Wi-Fi reconnect, VPN toggle, sleep/wake,
+  // energy-efficient-ethernet blips, etc.), that pinned source address becomes invalid
+  // and WSASendMsg() fails with WSAEINVAL on every send, flooding the log and dropping
+  // all video traffic until the client gives up.
+  //
+  // To stay resilient we detect that failure, stop pinning the (now invalid) source
+  // address so the OS picks one by routing, and re-enable pinning when the host's
+  // address table changes (i.e. the network has stabilized).
+  static std::atomic<bool> source_pin_disabled { false };
+
+  // Whether to add the PKTINFO control message. Skipped when pinning is disabled or
+  // the source address is unspecified (in which case the OS chooses the source).
+  static bool
+  should_pin_source_address(const boost::asio::ip::address &addr) {
+    return !addr.is_unspecified() && !source_pin_disabled.load(std::memory_order_relaxed);
+  }
+
+  // Writes an IP_PKTINFO / IPV6_PKTINFO control message into cm that pins the source
+  // address (letting the OS pick the interface via ipi_ifindex=0). Returns the number
+  // of control-buffer bytes consumed (WSA_CMSG_SPACE for the option).
+  static ULONG
+  write_source_pktinfo(WSACMSGHDR *cm, const boost::asio::ip::address &source_address) {
+    if (source_address.is_v6()) {
+      IN6_PKTINFO pktInfo;
+
+      SOCKADDR_IN6 saddr_v6 = to_sockaddr(source_address.to_v6(), 0);
+      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
+      pktInfo.ipi6_ifindex = 0;
+
+      cm->cmsg_level = IPPROTO_IPV6;
+      cm->cmsg_type = IPV6_PKTINFO;
+      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
+      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+      return WSA_CMSG_SPACE(sizeof(pktInfo));
+    }
+    else {
+      IN_PKTINFO pktInfo;
+
+      SOCKADDR_IN saddr_v4 = to_sockaddr(source_address.to_v4(), 0);
+      pktInfo.ipi_addr = saddr_v4.sin_addr;
+      pktInfo.ipi_ifindex = 0;
+
+      cm->cmsg_level = IPPROTO_IP;
+      cm->cmsg_type = IP_PKTINFO;
+      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
+      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+      return WSA_CMSG_SPACE(sizeof(pktInfo));
+    }
+  }
+
+  // Rate-limited logging for the WSASendMsg() failure flood (up to 3x per video frame).
+  // Emits at most one line per second and reports how many were suppressed.
+  static void
+  log_wsasendmsg_failure(int winerr) {
+    static std::atomic<int64_t> last_log_ms { 0 };
+    static std::atomic<uint64_t> suppressed { 0 };
+
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
+    auto prev = last_log_ms.load(std::memory_order_relaxed);
+    if (now_ms - prev >= 1000 &&
+        last_log_ms.compare_exchange_strong(prev, now_ms)) {
+      auto dropped = suppressed.exchange(0);
+      if (dropped) {
+        BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr
+                           << " ("sv << dropped << " similar errors suppressed in the last second)"sv;
+      }
+      else {
+        BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr;
+      }
+    }
+    else {
+      suppressed.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+
+  // Called when WSASendMsg() fails. If the pinned source address is no longer valid
+  // (WSAEINVAL), disable source pinning so subsequent sends fall back to OS routing.
+  static void
+  handle_wsasendmsg_failure(int winerr) {
+    if (winerr == WSAEINVAL && !source_pin_disabled.exchange(true)) {
+      BOOST_LOG(warning) << "Pinned source address is no longer valid (likely a host network change); "
+                            "disabling source address pinning and letting the OS choose the source interface"sv;
+    }
+    log_wsasendmsg_failure(winerr);
+  }
+
+  // Network address change watcher: when the host's unicast address table changes,
+  // re-enable source pinning so a healthy/multi-homed configuration can resume pinning
+  // (new sessions resolve a fresh, valid source address from their control connection).
+  static void NETIOAPI_API_
+  on_unicast_address_change(PVOID, PMIB_UNICASTIPADDRESS_ROW, MIB_NOTIFICATION_TYPE) {
+    if (source_pin_disabled.exchange(false)) {
+      BOOST_LOG(info) << "Host network address change detected; re-enabling source address pinning"sv;
+    }
+  }
+
+  // Lazily register the address-change watcher on first send. The notification handle
+  // is intentionally leaked for the lifetime of the process.
+  static void
+  ensure_address_change_watcher() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+      HANDLE handle = nullptr;
+      auto err = NotifyUnicastIpAddressChange(AF_UNSPEC, on_unicast_address_change, nullptr, FALSE, &handle);
+      if (err != NO_ERROR) {
+        BOOST_LOG(warning) << "NotifyUnicastIpAddressChange() failed: "sv << err;
+      }
+    });
+  }
+
   // Use UDP segmentation offload if it is supported by the OS. If the NIC is capable, this will use
   // hardware acceleration to reduce CPU usage. Support for USO was introduced in Windows 10 20H1.
   bool
   send_batch(batched_send_info_t &send_info) {
+    ensure_address_change_watcher();
+
     WSAMSG msg;
 
     // Convert the target address into a SOCKADDR
@@ -1718,40 +1893,22 @@ namespace platf {
     msg.Control.buf = cmbuf;
     msg.Control.len = sizeof(cmbuf);
 
-    auto cm = WSA_CMSG_FIRSTHDR(&msg);
-    if (send_info.source_address.is_v6()) {
-      IN6_PKTINFO pktInfo;
+    WSACMSGHDR *cm = WSA_CMSG_FIRSTHDR(&msg);
+    bool have_cmsg = false;
 
-      SOCKADDR_IN6 saddr_v6 = to_sockaddr(send_info.source_address.to_v6(), 0);
-      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
-      pktInfo.ipi6_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IPV6;
-      cm->cmsg_type = IPV6_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-    }
-    else {
-      IN_PKTINFO pktInfo;
-
-      SOCKADDR_IN saddr_v4 = to_sockaddr(send_info.source_address.to_v4(), 0);
-      pktInfo.ipi_addr = saddr_v4.sin_addr;
-      pktInfo.ipi_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IP;
-      cm->cmsg_type = IP_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+    // Only pin the source address while it is known to be valid. If a prior send failed
+    // with WSAEINVAL (e.g. the host's interface IP changed), we skip PKTINFO and let the
+    // OS pick the source interface so the stream keeps flowing.
+    if (should_pin_source_address(send_info.source_address)) {
+      cmbuflen += write_source_pktinfo(cm, send_info.source_address);
+      have_cmsg = true;
     }
 
     if (send_info.block_count > 1) {
       cmbuflen += WSA_CMSG_SPACE(sizeof(DWORD));
 
-      cm = WSA_CMSG_NXTHDR(&msg, cm);
+      // The USO option becomes the first control message if PKTINFO was skipped.
+      cm = have_cmsg ? WSA_CMSG_NXTHDR(&msg, cm) : WSA_CMSG_FIRSTHDR(&msg);
       cm->cmsg_level = IPPROTO_UDP;
       cm->cmsg_type = UDP_SEND_MSG_SIZE;
       cm->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD));
@@ -1761,12 +1918,17 @@ namespace platf {
     msg.Control.len = cmbuflen;
 
     // If USO is not supported, this will fail and the caller will fall back to unbatched sends.
+    // We intentionally do NOT treat a batch failure as a source-pinning failure, because an
+    // unsupported-USO error is indistinguishable from an invalid-source error here; the
+    // self-heal logic lives in the unbatched send() fallback path instead.
     DWORD bytes_sent;
     return WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
   }
 
   bool
   send(send_info_t &send_info) {
+    ensure_address_change_watcher();
+
     WSAMSG msg;
 
     // Convert the target address into a SOCKADDR
@@ -1806,42 +1968,18 @@ namespace platf {
     msg.Control.buf = cmbuf;
     msg.Control.len = sizeof(cmbuf);
 
-    auto cm = WSA_CMSG_FIRSTHDR(&msg);
-    if (send_info.source_address.is_v6()) {
-      IN6_PKTINFO pktInfo;
-
-      SOCKADDR_IN6 saddr_v6 = to_sockaddr(send_info.source_address.to_v6(), 0);
-      pktInfo.ipi6_addr = saddr_v6.sin6_addr;
-      pktInfo.ipi6_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IPV6;
-      cm->cmsg_type = IPV6_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
-    }
-    else {
-      IN_PKTINFO pktInfo;
-
-      SOCKADDR_IN saddr_v4 = to_sockaddr(send_info.source_address.to_v4(), 0);
-      pktInfo.ipi_addr = saddr_v4.sin_addr;
-      pktInfo.ipi_ifindex = 0;
-
-      cmbuflen += WSA_CMSG_SPACE(sizeof(pktInfo));
-
-      cm->cmsg_level = IPPROTO_IP;
-      cm->cmsg_type = IP_PKTINFO;
-      cm->cmsg_len = WSA_CMSG_LEN(sizeof(pktInfo));
-      memcpy(WSA_CMSG_DATA(cm), &pktInfo, sizeof(pktInfo));
+    // Only pin the source address while it is known to be valid. If a prior send failed
+    // with WSAEINVAL (e.g. the host's interface IP changed), we skip PKTINFO and let the
+    // OS pick the source interface so the stream keeps flowing.
+    if (should_pin_source_address(send_info.source_address)) {
+      cmbuflen += write_source_pktinfo(WSA_CMSG_FIRSTHDR(&msg), send_info.source_address);
     }
 
     msg.Control.len = cmbuflen;
 
     DWORD bytes_sent;
     if (WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) == SOCKET_ERROR) {
-      auto winerr = WSAGetLastError();
-      BOOST_LOG(warning) << "WSASendMsg() failed: "sv << winerr;
+      handle_wsasendmsg_failure(WSAGetLastError());
       return false;
     }
 
@@ -1990,19 +2128,79 @@ namespace platf {
     return 0;
   }
 
+  namespace {
+    std::chrono::nanoseconds
+    qpc_tick_magnitude_to_duration(std::uint64_t tick_magnitude, bool negative, int64_t frequency) {
+      if (frequency <= 0) {
+        return {};
+      }
+
+      constexpr std::uint64_t nanoseconds_per_second = std::nano::den;
+      constexpr std::uint64_t positive_limit = std::numeric_limits<int64_t>::max();
+      constexpr std::uint64_t negative_limit = positive_limit + 1;
+      const std::uint64_t result_limit = negative ? negative_limit : positive_limit;
+      const auto unsigned_frequency = static_cast<std::uint64_t>(frequency);
+
+      const auto whole_seconds = tick_magnitude / unsigned_frequency;
+      const auto remaining_ticks = tick_magnitude % unsigned_frequency;
+      if (whole_seconds > result_limit / nanoseconds_per_second) {
+        return negative ? std::chrono::nanoseconds::min() : std::chrono::nanoseconds::max();
+      }
+
+      const auto whole_nanoseconds = whole_seconds * nanoseconds_per_second;
+      std::uint64_t remaining_nanoseconds;
+      if (remaining_ticks <= std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
+        remaining_nanoseconds = remaining_ticks * nanoseconds_per_second / unsigned_frequency;
+      }
+      else {
+        // QueryPerformanceFrequency is far below this branch in practice. Keep
+        // the fallback bounded for synthetic inputs that cannot be multiplied safely.
+        remaining_nanoseconds = std::min<std::uint64_t>(
+          static_cast<std::uint64_t>(
+            static_cast<long double>(remaining_ticks) * nanoseconds_per_second /
+            static_cast<long double>(unsigned_frequency)),
+          nanoseconds_per_second - 1);
+      }
+
+      if (remaining_nanoseconds > result_limit - whole_nanoseconds) {
+        return negative ? std::chrono::nanoseconds::min() : std::chrono::nanoseconds::max();
+      }
+
+      const auto nanosecond_magnitude = whole_nanoseconds + remaining_nanoseconds;
+      if (!negative) {
+        return std::chrono::nanoseconds { static_cast<int64_t>(nanosecond_magnitude) };
+      }
+      if (nanosecond_magnitude == negative_limit) {
+        return std::chrono::nanoseconds::min();
+      }
+      return std::chrono::nanoseconds { -static_cast<int64_t>(nanosecond_magnitude) };
+    }
+  }  // namespace
+
+  std::chrono::nanoseconds
+  qpc_ticks_to_duration(int64_t ticks, int64_t frequency) {
+    const bool negative = ticks < 0;
+    const auto tick_magnitude = negative ?
+                                  std::uint64_t { 0 } - static_cast<std::uint64_t>(ticks) :
+                                  static_cast<std::uint64_t>(ticks);
+    return qpc_tick_magnitude_to_duration(tick_magnitude, negative, frequency);
+  }
+
   std::chrono::nanoseconds
   qpc_time_difference(int64_t performance_counter1, int64_t performance_counter2) {
-    auto get_frequency = []() {
-      LARGE_INTEGER frequency;
-      frequency.QuadPart = 0;
-      QueryPerformanceFrequency(&frequency);
-      return frequency.QuadPart;
-    };
-    static const double frequency = get_frequency();
-    if (frequency) {
-      return std::chrono::nanoseconds((int64_t) ((performance_counter1 - performance_counter2) * frequency / std::nano::den));
-    }
-    return {};
+    static const int64_t frequency = []() {
+      LARGE_INTEGER qpc_frequency;
+      if (!QueryPerformanceFrequency(&qpc_frequency) || qpc_frequency.QuadPart <= 0) {
+        return int64_t { 0 };
+      }
+      return qpc_frequency.QuadPart;
+    }();
+
+    const bool negative = performance_counter1 < performance_counter2;
+    const auto tick_magnitude = negative ?
+                                  static_cast<std::uint64_t>(performance_counter2) - static_cast<std::uint64_t>(performance_counter1) :
+                                  static_cast<std::uint64_t>(performance_counter1) - static_cast<std::uint64_t>(performance_counter2);
+    return qpc_tick_magnitude_to_duration(tick_magnitude, negative, frequency);
   }
 
   std::wstring
@@ -2012,38 +2210,12 @@ namespace platf {
       return {};
     }
 
-    // Get the output size required to store the string (strict UTF-8 validation)
+    // Get the output size required to store the string
     auto output_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, string.data(), string.size(), nullptr, 0);
     if (output_size == 0) {
       auto winerr = GetLastError();
-
-      // Log hex dump of the first bytes to help diagnose the invalid string
-      std::ostringstream hex_dump;
-      auto dump_len = std::min<size_t>(string.size(), 64);
-      for (size_t i = 0; i < dump_len; i++) {
-        hex_dump << std::hex << std::setfill('0') << std::setw(2)
-                 << (static_cast<unsigned>(string[i]) & 0xFF);
-        if (i + 1 < dump_len) hex_dump << ' ';
-      }
-      BOOST_LOG(error) << "Failed to get UTF-16 buffer size: "sv << winerr
-                       << " (len=" << string.size()
-                       << ", hex=[" << hex_dump.str() << "]"
-                       << ", str=\"" << string.substr(0, 64) << "\")";
-
-      // Fallback: try converting from the system's default ANSI code page (e.g. GBK on Chinese Windows)
-      output_size = MultiByteToWideChar(CP_ACP, 0, string.data(), string.size(), nullptr, 0);
-      if (output_size == 0) {
-        BOOST_LOG(error) << "Fallback ANSI conversion also failed: "sv << GetLastError();
-        return {};
-      }
-      BOOST_LOG(warning) << "from_utf8: falling back to ANSI code page conversion for non-UTF-8 string";
-
-      std::wstring output(output_size, L'\0');
-      output_size = MultiByteToWideChar(CP_ACP, 0, string.data(), string.size(), output.data(), output.size());
-      if (output_size == 0) {
-        return {};
-      }
-      return output;
+      BOOST_LOG(error) << "Failed to get UTF-16 buffer size: "sv << winerr;
+      return {};
     }
 
     // Perform the conversion

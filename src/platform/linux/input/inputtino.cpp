@@ -42,6 +42,11 @@ namespace platf {
   }
 
   void
+  set_gamepad_mode(int mode) {
+    // This MVP only overrides the Windows ViGEm backend.
+  }
+
+  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     platf::mouse::move(raw, deltaX, deltaY);
@@ -87,6 +92,16 @@ namespace platf {
   touch_update(client_input_t *input, const touch_port_t &touch_port, const touch_input_t &touch) {
     auto raw = (client_input_raw_t *) input;
     platf::touch::update(raw, touch_port, touch);
+  }
+
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad
+  }
+
+  void
+  touchpad_frame_update(client_input_t *input, const touchpad_frame_t &touchpad) {
+    // Unimplemented feature - platform_caps::touchpad_frame
   }
 
   void

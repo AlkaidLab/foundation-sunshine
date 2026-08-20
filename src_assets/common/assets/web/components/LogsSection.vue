@@ -1,9 +1,9 @@
 <template>
   <div class="card shadow-sm mb-4">
-    <div class="card-header bg-dark bg-opacity-10 border-bottom-0">
+    <div class="card-header logs-card-header">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h5 class="card-title mb-0">
-          <i class="fas fa-file-alt text-dark me-2"></i>
+          <i class="fas fa-file-alt me-2"></i>
           {{ $t('troubleshooting.logs') }}
         </h5>
         <div class="d-flex align-items-center gap-2">
@@ -55,6 +55,10 @@
             <i class="fas fa-copy me-1"></i>
             {{ $t('troubleshooting.copy_config') }}
           </button>
+          <span
+            class="dev-trigger"
+            @click="handleDevTap"
+          ></span>
         </div>
       </div>
     </div>
@@ -71,7 +75,28 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { apiFetch } from '../utils/apiFetch.js'
+
+const DEV_TAP_THRESHOLD = 7
+const DEV_TAP_TIMEOUT = 3000
+const DEV_STORAGE_KEY = 'sunshine_dev_mode'
+
+const readDevMode = () => {
+  try {
+    return localStorage.getItem(DEV_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const writeDevMode = (enabled) => {
+  try {
+    localStorage.setItem(DEV_STORAGE_KEY, enabled ? '1' : '0')
+  } catch (e) {
+    console.warn('Persist dev mode failed:', e)
+  }
+}
 
 const props = defineProps({
   logFilter: {
@@ -126,11 +151,13 @@ const ignoreCaseModel = computed({
 const downloadLogs = async () => {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
   const filename = `sunshine-logs-${timestamp}.txt`
-  const content = props.actualLogs
 
-  // Tauri WebView2: use Rust save_text_file command (dialog + fs write)
+  // Tauri WebView2: fetch into memory then use Rust save_text_file command (dialog + fs write)
   if (window.__TAURI_INTERNALS__) {
     try {
+      const response = await apiFetch('/api/logs')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const content = await response.text()
       await window.__TAURI_INTERNALS__.invoke('save_text_file', {
         content,
         defaultName: filename,
@@ -144,17 +171,39 @@ const downloadLogs = async () => {
     }
   }
 
-  // Standard browser download
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = Object.assign(document.createElement('a'), {
-    href: url,
-    download: filename,
-  })
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  setTimeout(() => URL.revokeObjectURL(url), 3000)
+  // Standard browser: let browser download directly via <a> link
+  // Server returns Content-Disposition: attachment, so the browser handles
+  // the download natively without buffering the entire file in JS memory.
+  try {
+    const link = Object.assign(document.createElement('a'), {
+      href: '/api/logs',
+      download: filename,
+    })
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  } catch (e) {
+    console.error('Failed to download logs:', e)
+  }
+}
+
+// Dev mode: 7 taps within 3 seconds
+const devMode = ref(readDevMode())
+const devTapCount = ref(0)
+let devTapTimer = null
+
+const handleDevTap = () => {
+  devTapCount.value++
+  clearTimeout(devTapTimer)
+  devTapTimer = setTimeout(() => { devTapCount.value = 0 }, DEV_TAP_TIMEOUT)
+
+  if (devTapCount.value >= DEV_TAP_THRESHOLD) {
+    devTapCount.value = 0
+    devMode.value = !devMode.value
+    writeDevMode(devMode.value)
+    // Dispatch event so other components can react
+    window.dispatchEvent(new CustomEvent('sunshine-background-bypass', { detail: { enabled: devMode.value } }))
+  }
 }
 </script>
 
@@ -188,25 +237,26 @@ const downloadLogs = async () => {
 }
 
 .match-mode-btn:hover {
-  background-color: rgba(108, 117, 125, 0.1);
-  border-color: #6c757d;
+  background-color: var(--ui-accent-soft);
+  border-color: var(--ui-border-strong);
 }
 
 .btn-check:checked + .match-mode-btn {
-  background-color: #6c757d;
-  border-color: #6c757d;
-  color: #fff;
+  background-color: var(--ui-accent);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent-contrast);
 }
 
 .btn-check:checked + .match-mode-btn:hover {
-  background-color: #5a6268;
-  border-color: #545b62;
+  background-color: var(--ui-accent);
+  border-color: var(--ui-accent);
 }
 
 .logs-container {
   position: relative;
   background: #1e1e1e;
-  border-radius: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   overflow: hidden;
 }
 
@@ -251,17 +301,17 @@ const downloadLogs = async () => {
   right: 12px;
   padding: 8px 12px;
   cursor: pointer;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  border-radius: 6px;
+  color: var(--ui-accent-contrast);
+  background: var(--ui-accent);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
   transition: all 0.2s ease;
   z-index: 10;
 }
 
 .copy-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  transform: scale(1.05);
+  background: var(--ui-accent);
+  transform: translateY(-1px);
 }
 
 .copy-btn:active {
@@ -270,12 +320,9 @@ const downloadLogs = async () => {
 
 .input-group-text {
   border-right: none;
-  background-color: #fff;
-  
-  [data-bs-theme='dark'] & {
-    background-color: #212529;
-    color: #fff;
-  }
+  border-color: var(--ui-border);
+  background-color: var(--ui-surface-strong);
+  color: var(--ui-text-muted);
 }
 
 .input-group .form-control {
@@ -284,18 +331,22 @@ const downloadLogs = async () => {
 }
 
 .input-group .form-control:focus {
-  border-color: #ced4da;
+  border-color: var(--ui-border);
   box-shadow: none;
 }
 
 .input-group:focus-within {
-  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
-  border-radius: 0.375rem;
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+  border-radius: var(--ui-radius-sm);
 }
 
 .input-group:focus-within .input-group-text,
 .input-group:focus-within .form-control {
-  border-color: #86b7fe;
+  border-color: var(--ui-border-strong);
+}
+
+.logs-card-header .card-title i {
+  color: var(--ui-accent);
 }
 
 @media (max-width: 991.98px) {
@@ -308,5 +359,14 @@ const downloadLogs = async () => {
     width: 100% !important;
     margin-top: 0.5rem;
   }
+}
+
+.dev-trigger {
+  display: inline-block;
+  width: 12px;
+  min-height: 24px;
+  cursor: default;
+  user-select: none;
+  opacity: 0;
 }
 </style>

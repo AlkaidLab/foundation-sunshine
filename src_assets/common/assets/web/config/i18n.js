@@ -1,25 +1,65 @@
 import {createI18n} from "vue-i18n";
+import { getBootstrapConfig, getBootstrapLocale } from './bootstrapData.js'
 
 // Import only the fallback language files
 import en from '../public/assets/locale/en.json'
 
-export default async function() {
-    // 先尝试从 /api/config 获取实时配置（会读取配置文件）
-    let locale = "en";
+// 与后端 string_restricted_f("locale", ...) 白名单保持一致
+const SUPPORTED_LOCALES = [
+    'bg', 'cs', 'de', 'en', 'en_GB', 'en_US', 'es', 'fr',
+    'it', 'ja', 'pt', 'ru', 'sv', 'tr', 'zh', 'zh_TW',
+];
+
+// 把浏览器 / 系统语言（navigator.language，例如 "zh-CN" / "en-US"）映射到支持的 locale
+export function detectSystemLocale() {
     try {
-        let config = await (await fetch("/api/config")).json();
-        locale = config.locale ?? "en";
+        const candidates = [];
+        if (typeof navigator !== 'undefined') {
+            if (Array.isArray(navigator.languages)) candidates.push(...navigator.languages);
+            if (navigator.language) candidates.push(navigator.language);
+        }
+        for (const raw of candidates) {
+            if (!raw) continue;
+            const norm = raw.replace('-', '_'); // zh-CN -> zh_CN
+            // 1) 完整匹配（en_GB / en_US / zh_TW）
+            if (SUPPORTED_LOCALES.includes(norm)) return norm;
+            // 2) 繁体中文 / 港澳粤 → zh_TW
+            const lower = norm.toLowerCase();
+            if (lower.startsWith('zh') && /(_tw|_hk|_mo|hant)/.test(lower)) return 'zh_TW';
+            // 3) 主语言匹配（zh_CN -> zh，en_AU -> en，...）
+            const primary = norm.split('_')[0];
+            if (SUPPORTED_LOCALES.includes(primary)) return primary;
+        }
     } catch (e) {
-        // 如果失败，回退到 /api/configLocale（从内存读取）
+        console.warn('detectSystemLocale failed', e);
+    }
+    return 'en';
+}
+
+export default async function() {
+    // 优先从 /api/config 拿；读不到再试 /api/configLocale（包括 /api/config 返回但 locale 为空的情况）
+    // 全都拿不到才走系统语言探测，最后回退 en
+    let locale = null;
+    try {
+        const config = await getBootstrapConfig();
+        locale = config.locale || null;
+    } catch (e) {
+        console.warn("Failed to get /api/config", e);
+    }
+    if (!locale) {
         try {
-            let r = await (await fetch("/api/configLocale")).json();
-            locale = r.locale ?? "en";
+            const configLocale = await getBootstrapLocale();
+            locale = configLocale.locale || null;
         } catch (e2) {
-            console.error("Failed to get locale config", e, e2);
+            console.error("Failed to get /api/configLocale", e2);
         }
     }
+    if (!locale) {
+        locale = detectSystemLocale();
+    }
     
-    document.querySelector('html').setAttribute('lang', locale);
+    // html[lang] 用 BCP-47 连字符形式，让 辅助技术 / 翻译插件 能正确识别 en_US -> en-US, zh_TW -> zh-TW
+    document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
     let messages = {
         en
     };

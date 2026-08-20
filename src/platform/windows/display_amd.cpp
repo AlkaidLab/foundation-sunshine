@@ -77,6 +77,18 @@ namespace platf::dxgi {
     } while (result == AMF_REPEAT);
 
     if (result != AMF_OK) {
+      // Check if the underlying D3D11 device is lost (TDR, driver crash, etc.)
+      if (context) {
+        auto *d3d_device = static_cast<ID3D11Device *>(context->GetDX11Device(amf::AMF_DX11_1));
+        if (d3d_device) {
+          auto removed_reason = d3d_device->GetDeviceRemovedReason();
+          if (removed_reason != S_OK) {
+            BOOST_LOG(error) << "AMD DirectCapture: D3D11 device lost, reason: 0x"sv << util::hex(removed_reason).to_string_view() << ", requesting reinit"sv;
+            return capture_e::reinit;
+          }
+        }
+      }
+      BOOST_LOG(warning) << "AMD DirectCapture: QueryOutput failed with result: "sv << result;
       return capture_e::timeout;
     }
     return capture_e::ok;

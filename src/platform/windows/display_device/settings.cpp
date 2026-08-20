@@ -7,12 +7,14 @@
 // local includes
 #include "settings_topology.h"
 #include "src/audio.h"
+#include "src/display_device/color_profile.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/config.h"
 #include "src/rtsp.h"
+#include "color_profile.h"
 #include "windows_utils.h"
 
 namespace display_device {
@@ -22,6 +24,7 @@ namespace display_device {
     std::string original_primary_display; /**< Original primary display in the topology we modified. Empty value if we didn't modify it. */
     device_display_mode_map_t original_modes; /**< Original display modes in the topology we modified. Empty value if we didn't modify it. */
     hdr_state_map_t original_hdr_states; /**< Original display HDR states in the topology we modified. Empty value if we didn't modify it. */
+    std::optional<win_color_profile::state_t> color_profile; /**< Temporary physical-display ICC override and its restore snapshot. */
 
     /**
      * @brief Check if the persistent data contains any meaningful modifications that need to be reverted.
@@ -40,11 +43,36 @@ namespace display_device {
       return !is_topology_the_same(topology.initial, topology.modified) ||
              !original_primary_display.empty() ||
              !original_modes.empty() ||
-             !original_hdr_states.empty();
+             !original_hdr_states.empty() ||
+             color_profile.has_value();
     }
 
-    // For JSON serialization
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(persistent_data_t, topology, original_primary_display, original_modes, original_hdr_states)
+    friend void
+    to_json(nlohmann::json &json, const persistent_data_t &data) {
+      json = {
+        { "topology", data.topology },
+        { "original_primary_display", data.original_primary_display },
+        { "original_modes", data.original_modes },
+        { "original_hdr_states", data.original_hdr_states },
+      };
+      if (data.color_profile) {
+        json["color_profile"] = *data.color_profile;
+      }
+    }
+
+    friend void
+    from_json(const nlohmann::json &json, persistent_data_t &data) {
+      json.at("topology").get_to(data.topology);
+      json.at("original_primary_display").get_to(data.original_primary_display);
+      json.at("original_modes").get_to(data.original_modes);
+      json.at("original_hdr_states").get_to(data.original_hdr_states);
+      if (const auto profile = json.find("color_profile"); profile != json.end() && !profile->is_null()) {
+        data.color_profile = profile->get<win_color_profile::state_t>();
+      }
+      else {
+        data.color_profile.reset();
+      }
+    }
   };
 
   struct settings_t::audio_data_t {
@@ -107,6 +135,33 @@ namespace display_device {
       return new_primary_device;
     }
 
+    bool
+    is_physical_primary_candidate(const std::string &device_id, const std::string &vdd_device_id) {
+      return !device_id.empty() &&
+             device_id != vdd_device_id &&
+             get_display_friendly_name(device_id) != ZAKO_NAME;
+    }
+
+    std::string
+    find_physical_primary_candidate(const active_topology_t &topology, const std::string &vdd_device_id) {
+      for (const auto &group : topology) {
+        for (const auto &device_id : group) {
+          if (is_physical_primary_candidate(device_id, vdd_device_id)) {
+            return device_id;
+          }
+        }
+      }
+
+      return std::string {};
+    }
+
+    bool
+    should_restore_physical_primary_for_vdd_secondary(const parsed_config_t &config) {
+      return config.use_vdd &&
+             *config.use_vdd &&
+             config.vdd_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary;
+    }
+
     /**
      * @brief Change the primary display based on the configuration and previously configured primary display.
      *
@@ -120,8 +175,8 @@ namespace display_device {
      * @return Device id to be used when reverting all settings (can be empty string), or an empty optional if the function fails.
      */
     boost::optional<std::string>
-    handle_primary_display_configuration(const parsed_config_t::device_prep_e &device_prep, const std::string &previous_primary_display, const topology_metadata_t &metadata) {
-      if (device_prep == parsed_config_t::device_prep_e::ensure_primary) {
+    handle_primary_display_configuration(const parsed_config_t &config, const std::string &previous_primary_display, const topology_metadata_t &metadata, const active_topology_t &initial_topology) {
+      if (config.device_prep == parsed_config_t::device_prep_e::ensure_primary) {
         const auto original_primary_display { previous_primary_display.empty() ? get_current_primary_display(metadata) : previous_primary_display };
         const auto new_primary_display { determine_new_primary_display(original_primary_display, metadata) };
 
@@ -133,6 +188,26 @@ namespace display_device {
 
         // Here we preserve the data from persistence (unless there's none) as in the end that is what we want to go back to.
         return original_primary_display;
+      }
+
+      if (should_restore_physical_primary_for_vdd_secondary(config)) {
+        const auto physical_primary_display =
+          is_physical_primary_candidate(previous_primary_display, config.device_id) ?
+            previous_primary_display :
+            find_physical_primary_candidate(initial_topology, config.device_id);
+
+        if (physical_primary_display.empty()) {
+          BOOST_LOG(error) << "Failed to find a physical display to use as primary for VDD secondary mode.";
+          return boost::none;
+        }
+
+        BOOST_LOG(info) << "Changing primary display to physical display for VDD secondary mode: " << physical_primary_display;
+        if (!set_as_primary_device(physical_primary_display)) {
+          // Error already logged
+          return boost::none;
+        }
+
+        return std::string {};
       }
 
       if (!previous_primary_display.empty()) {
@@ -187,6 +262,43 @@ namespace display_device {
     }
 
     /**
+     * @brief Remove entries from a device_id-keyed map whose keys are not in the valid set.
+     */
+    template<typename MapT>
+    void
+    filter_stale_devices(MapT &map, const std::unordered_set<std::string> &valid_ids, const char *label) {
+      for (auto it = map.begin(); it != map.end();) {
+        if (valid_ids.find(it->first) == valid_ids.end()) {
+          BOOST_LOG(warning) << "Removing stale device from " << label << ": " << it->first;
+          it = map.erase(it);
+        }
+        else {
+          ++it;
+        }
+      }
+    }
+
+    /**
+     * @brief Remove VDD device entries from a device_id-keyed map.
+     *
+     * VDD device IDs are unstable (change on destroy/recreate), so they should not be
+     * persisted. This function removes them before saving to persistent_data.
+     */
+    template<typename MapT>
+    void
+    filter_vdd_devices(MapT &map) {
+      for (auto it = map.begin(); it != map.end();) {
+        if (get_display_friendly_name(it->first) == ZAKO_NAME) {
+          BOOST_LOG(debug) << "Excluding VDD device from persistence: " << it->first;
+          it = map.erase(it);
+        }
+        else {
+          ++it;
+        }
+      }
+    }
+
+    /**
      * @brief Modify the display modes based on the configuration and previously configured display modes.
      *
      * The function performs the necessary steps for changing the display modes if needed.
@@ -210,16 +322,7 @@ namespace display_device {
         const auto original_display_modes { previous_display_modes.empty() ? get_current_display_modes(valid_device_ids) : previous_display_modes };
         auto new_display_modes { determine_new_display_modes(resolution, refresh_rate, original_display_modes, metadata) };
 
-        // Filter out stale device IDs not in current topology
-        for (auto it = new_display_modes.begin(); it != new_display_modes.end();) {
-          if (valid_ids_set.find(it->first) == valid_ids_set.end()) {
-            BOOST_LOG(warning) << "Removing stale device from display modes: " << it->first;
-            it = new_display_modes.erase(it);
-          }
-          else {
-            ++it;
-          }
-        }
+        filter_stale_devices(new_display_modes, valid_ids_set, "display modes");
 
         BOOST_LOG(info) << "Changing display modes to: " << to_string(new_display_modes);
         if (!set_display_modes(new_display_modes)) {
@@ -232,17 +335,8 @@ namespace display_device {
       }
 
       if (!previous_display_modes.empty()) {
-        // Filter out stale device IDs before reverting
         device_display_mode_map_t filtered_modes { previous_display_modes };
-        for (auto it = filtered_modes.begin(); it != filtered_modes.end();) {
-          if (valid_ids_set.find(it->first) == valid_ids_set.end()) {
-            BOOST_LOG(warning) << "Removing stale device from rollback display modes: " << it->first;
-            it = filtered_modes.erase(it);
-          }
-          else {
-            ++it;
-          }
-        }
+        filter_stale_devices(filtered_modes, valid_ids_set, "rollback display modes");
 
         if (!filtered_modes.empty()) {
           BOOST_LOG(info) << "Changing display modes back to: " << to_string(filtered_modes);
@@ -434,9 +528,23 @@ namespace display_device {
      */
     boost::optional<hdr_state_map_t>
     handle_hdr_state_configuration(const boost::optional<bool> &change_hdr_state, const hdr_state_map_t &previous_hdr_states, const topology_metadata_t &metadata) {
+      // Build valid device ID set from current topology to filter stale entries
+      const auto valid_device_ids { get_device_ids_from_topology(metadata.current_topology) };
+      const std::unordered_set<std::string> valid_ids_set(valid_device_ids.begin(), valid_device_ids.end());
+
       if (change_hdr_state) {
-        const auto original_hdr_states { previous_hdr_states.empty() ? get_current_hdr_states(get_device_ids_from_topology(metadata.current_topology)) : previous_hdr_states };
-        const auto new_hdr_states { determine_new_hdr_states(change_hdr_state, original_hdr_states, metadata) };
+        const auto current_hdr_states { get_current_hdr_states(valid_device_ids) };
+        if (current_hdr_states.empty()) {
+          return boost::none;
+        }
+
+        auto original_hdr_states { previous_hdr_states };
+        for (const auto &[device_id, state] : current_hdr_states) {
+          original_hdr_states.try_emplace(device_id, state);
+        }
+
+        auto new_hdr_states { determine_new_hdr_states(change_hdr_state, original_hdr_states, metadata) };
+        filter_stale_devices(new_hdr_states, valid_ids_set, "HDR states");
 
         BOOST_LOG(info) << "Changing hdr states to: " << to_string(new_hdr_states);
         if (!blank_hdr_states(new_hdr_states, metadata.newly_enabled_devices) || !set_hdr_states(new_hdr_states)) {
@@ -449,10 +557,15 @@ namespace display_device {
       }
 
       if (!previous_hdr_states.empty()) {
-        BOOST_LOG(info) << "Changing hdr states back to: " << to_string(previous_hdr_states);
-        if (!blank_hdr_states(previous_hdr_states, metadata.newly_enabled_devices) || !set_hdr_states(previous_hdr_states)) {
-          // Error already logged
-          return boost::none;
+        hdr_state_map_t filtered_hdr { previous_hdr_states };
+        filter_stale_devices(filtered_hdr, valid_ids_set, "rollback HDR states");
+
+        if (!filtered_hdr.empty()) {
+          BOOST_LOG(info) << "Changing hdr states back to: " << to_string(filtered_hdr);
+          if (!blank_hdr_states(filtered_hdr, metadata.newly_enabled_devices) || !set_hdr_states(filtered_hdr)) {
+            // Error already logged
+            return boost::none;
+          }
         }
       }
 
@@ -490,6 +603,24 @@ namespace display_device {
 
       if (!data.contains_modifications()) {
         return true;
+      }
+
+      bool partially_failed = false;
+      if (data.color_profile) {
+        if (data.color_profile->version != win_color_profile::state_t::current_version) {
+          BOOST_LOG(warning) << "Discarding an incompatible persisted color-profile snapshot";
+          data.color_profile.reset();
+          data_modified = true;
+        }
+        else if (win_color_profile::restore(*data.color_profile)) {
+          data.color_profile.reset();
+          data_modified = true;
+        }
+        else {
+          // Keep the snapshot for a later retry, but do not let one missing
+          // display prevent HDR, mode, primary-display, or topology recovery.
+          partially_failed = true;
+        }
       }
 
       // 在移除VDD之前，先检查拓扑中是否有VDD
@@ -579,7 +710,6 @@ namespace display_device {
                                                       !data.original_hdr_states.empty();
 
       std::unordered_set<std::string> newly_enabled_devices;
-      bool partially_failed = false;
       auto current_topology = get_current_topology();
 
       // Handle modified topology changes
@@ -690,10 +820,18 @@ namespace display_device {
 
       try {
         std::ofstream file(filepath, std::ios::out | std::ios::trunc);
+        if (!file.is_open()) {
+          BOOST_LOG(error) << "Failed to open persistent display settings for writing: " << filepath;
+          return false;
+        }
         nlohmann::json json_data = data;
 
         // Write json with indentation
         file << std::setw(4) << json_data << std::endl;
+        if (!file) {
+          BOOST_LOG(error) << "Failed to write persistent display settings: " << filepath;
+          return false;
+        }
         BOOST_LOG(debug) << "Saved persistent display settings:\n"
                          << json_data.dump(4);
         return true;
@@ -757,6 +895,26 @@ namespace display_device {
 
   settings_t::~settings_t() = default;
 
+  void
+  settings_t::capture_audio_sink() {
+    if (audio_data) {
+      return;
+    }
+
+    BOOST_LOG(debug) << "Capturing audio sink before changing display";
+    audio_data = std::make_unique<audio_data_t>();
+  }
+
+  void
+  settings_t::release_audio_sink() {
+    if (!audio_data) {
+      return;
+    }
+
+    BOOST_LOG(debug) << "Releasing captured audio sink";
+    audio_data = nullptr;
+  }
+
   bool
   settings_t::is_changing_settings_going_to_fail() const {
     const bool session_locked = w_utils::is_user_session_locked();
@@ -781,7 +939,18 @@ namespace display_device {
     const parsed_config_t &config,
     const rtsp_stream::launch_session_t &session,
     const boost::optional<active_topology_t> &pre_saved_initial_topology) {
-    const auto do_apply_config { [this, &pre_saved_initial_topology](const parsed_config_t &config) -> settings_t::apply_result_t {
+    auto profile_setting = color_profile::resolve_client_hdr_profile(
+      config::get_clients_config(), session.client_cert_uuid, session.client_name);
+    if (!profile_setting) {
+      BOOST_LOG(warning) << "Ignoring invalid client color-profile setting: " << profile_setting.error;
+      profile_setting = {};
+    }
+    else if (profile_setting.used_legacy_name) {
+      BOOST_LOG(warning) << "Using legacy client-name matching for an Advanced Color profile; pair the client again to bind by UUID";
+    }
+
+    const bool client_hdr_enabled = session.enable_hdr;
+    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
       // 检测是否为VDD模式
       const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
 
@@ -790,9 +959,9 @@ namespace display_device {
       bool failed_while_reverting_settings { false };
 
       if (is_vdd_mode) {
-        // VDD模式：拓扑由 vdd_prep 控制（在 prepare_vdd 中已处理），这里只获取 metadata
+        // VDD模式：拓扑由 session_t 的 VDD 显示阶段控制，这里只获取 metadata
         // 这里不修改拓扑，分辨率、刷新率、HDR 等设置仍然会应用
-        BOOST_LOG(info) << "VDD mode: topology controlled by vdd_prep in prepare_vdd, only getting current topology metadata";
+        BOOST_LOG(info) << "VDD mode: topology controlled by the session VDD display stage, only getting current topology metadata";
         topology_result = get_current_topology_metadata(config.device_id);
 
         // 如果有预保存的初始拓扑（在 VDD 创建前保存的物理显示器拓扑），
@@ -825,7 +994,7 @@ namespace display_device {
           }
 
           if (audio_sink_was_captured && !audio_data) {
-            audio_data = std::make_unique<audio_data_t>();
+            capture_audio_sink();
           }
           return true;
         }, pre_saved_initial_topology);
@@ -853,10 +1022,20 @@ namespace display_device {
       // was applied.
       persistent_data_t new_settings { topology_result->pair };
       persistent_data_t &current_settings { persistent_data ? *persistent_data : new_settings };
+      const bool should_skip_new_vdd_only_persistence =
+        is_vdd_mode &&
+        !persistent_data &&
+        !pre_saved_initial_topology &&
+        is_vdd_only_topology(new_settings.topology.initial, config.device_id);
 
       const auto persist_settings = [&]() -> apply_result_t {
         if (current_settings.contains_modifications()) {
           if (!persistent_data) {
+            if (should_skip_new_vdd_only_persistence) {
+              BOOST_LOG(warning) << "VDD mode: refusing to persist current VDD-only topology as the initial restore baseline; continuing without new display restore data.";
+              return { apply_result_t::result_e::success };
+            }
+
             persistent_data = std::make_unique<persistent_data_t>(new_settings);
           }
 
@@ -898,7 +1077,7 @@ namespace display_device {
       // are responsible for the resolution, then hands off! Initial settings
       // will be re-applied when the paused session is resumed.
 
-      const auto original_primary_display { handle_primary_display_configuration(config.device_prep, current_settings.original_primary_display, topology_result->metadata) };
+      const auto original_primary_display { handle_primary_display_configuration(config, current_settings.original_primary_display, topology_result->metadata, topology_result->pair.initial) };
       if (!original_primary_display) {
         // Error already logged
         return { apply_result_t::result_e::primary_display_fail };
@@ -911,6 +1090,7 @@ namespace display_device {
         return { apply_result_t::result_e::modes_fail };
       }
       current_settings.original_modes = *original_modes;
+      filter_vdd_devices(current_settings.original_modes);
 
       // 如果有HDR切换操作，等待其他操作稳定后再进行HDR切换
       if (config.change_hdr_state) {
@@ -926,6 +1106,44 @@ namespace display_device {
         return { apply_result_t::result_e::hdr_states_fail };
       }
       current_settings.original_hdr_states = *original_hdr_states;
+      filter_vdd_devices(current_settings.original_hdr_states);
+
+      const bool wants_physical_profile = client_hdr_enabled &&
+                                          !is_vdd_mode &&
+                                          profile_setting.policy == color_profile::profile_policy_e::apply;
+      const bool existing_profile_matches = current_settings.color_profile &&
+                                            wants_physical_profile &&
+                                            current_settings.color_profile->device_id == config.device_id &&
+                                            current_settings.color_profile->applied_profile == *profile_setting.profile;
+
+      if (current_settings.color_profile && !existing_profile_matches) {
+        if (!win_color_profile::restore(*current_settings.color_profile)) {
+          return { apply_result_t::result_e::color_profile_fail };
+        }
+        current_settings.color_profile.reset();
+      }
+
+      if (profile_setting.policy == color_profile::profile_policy_e::apply && is_vdd_mode) {
+        BOOST_LOG(info) << "Ignoring physical-display ICC override for VDD; client luminance capabilities are programmed directly into the virtual display";
+      }
+
+      if (wants_physical_profile) {
+        if (!current_settings.color_profile) {
+          current_settings.color_profile = win_color_profile::snapshot(config.device_id, *profile_setting.profile);
+          if (!current_settings.color_profile) {
+            return { apply_result_t::result_e::color_profile_fail };
+          }
+
+          // Persist the restore snapshot before changing Windows color state.
+          if (const auto persist_result = persist_settings(); !persist_result) {
+            return persist_result;
+          }
+        }
+
+        if (!win_color_profile::apply(*current_settings.color_profile)) {
+          return { apply_result_t::result_e::color_profile_fail };
+        }
+      }
 
       save_guard.disable();
       return persist_settings();
@@ -936,8 +1154,7 @@ namespace display_device {
     if (display_may_change && !audio_data) {
       // It is very likely that in this situation our "current" audio device will be gone, so we
       // want to capture the audio sink immediately and extend the audio session until we revert our changes.
-      BOOST_LOG(debug) << "Capturing audio sink before changing display";
-      audio_data = std::make_unique<audio_data_t>();
+      capture_audio_sink();
     }
 
     const auto result { do_apply_config(config) };
@@ -947,20 +1164,9 @@ namespace display_device {
         // without Sunshine restarting, we should clean up, because in this situation
         // we have had to revert the changes that turned off other displays. Thus, extending
         // the session for a display that again exist is pointless.
-        BOOST_LOG(debug) << "Releasing captured audio sink";
-        audio_data = nullptr;
+        release_audio_sink();
       }
 
-      if (config.change_hdr_state) {
-        std::thread { [&client_name = session.client_name]() {
-          if (!display_device::apply_hdr_profile(client_name)) {
-            BOOST_LOG(warning) << "Failed to apply HDR profile for client: " << client_name << "retrying later...";
-            std::this_thread::sleep_for(2s);
-            display_device::apply_hdr_profile(client_name);
-          }
-        } }
-          .detach();
-      }
     }
 
     if (!result) {
@@ -992,9 +1198,10 @@ namespace display_device {
       bool success = try_revert_settings(*persistent_data, data_updated, skip_vdd_destroy);
       if (!success) {
         if (data_updated) {
-          save_settings(filepath, *persistent_data);  // 忽略返回值
+          save_settings(filepath, *persistent_data);  // Best effort; retain remaining restore state for retry.
         }
         BOOST_LOG(error) << "恢复显示设备设置失败！如有异常请尝试关闭基地显示器，或手动修改系统显示设置~";
+        return false;
       }
 
       // 清理持久化数据
@@ -1003,15 +1210,10 @@ namespace display_device {
 
       // 释放音频数据
       if (reason != revert_reason_e::topology_switch) {
-        if (audio_data) {
-          BOOST_LOG(debug) << "释放捕获的音频接收器";
-          audio_data = nullptr;
-        }
+        release_audio_sink();
       }
 
-      if (success) {
-        BOOST_LOG(info) << "显示设备配置已恢复";
-      }
+      BOOST_LOG(info) << "显示设备配置已恢复";
     }
     return true;
   }
@@ -1026,10 +1228,7 @@ namespace display_device {
     remove_file(filepath);
     persistent_data = nullptr;
 
-    if (audio_data) {
-      BOOST_LOG(debug) << "Releasing captured audio sink";
-      audio_data = nullptr;
-    }
+    release_audio_sink();
   }
 
   bool

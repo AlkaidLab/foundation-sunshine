@@ -128,6 +128,15 @@ namespace display_device {
   device_info_map_t
   enum_available_devices();
 
+#ifdef _WIN32
+  /**
+   * @brief Enumerate available devices without collapsing a CCD query failure
+   *        into a valid empty (headless) result.
+   */
+  boost::optional<device_info_map_t>
+  enum_available_devices_checked();
+#endif
+
   std::string
   find_one_of_the_available_devices(const std::string &device_id);
 
@@ -312,14 +321,5 @@ namespace display_device {
    */
   bool
   set_topology(const active_topology_t &new_topology);
-
-  /**
-   * @brief Apply the HDR profile to the specified client.
-   * @param client_name Name of the client to apply the HDR profile to.
-   * @returns True if the HDR profile has been applied, false otherwise.
-   *
-   */
-  bool
-  apply_hdr_profile(const std::string &client_name);
 
 }  // namespace display_device

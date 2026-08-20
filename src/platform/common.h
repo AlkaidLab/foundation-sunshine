@@ -5,10 +5,14 @@
 #pragma once
 
 // standard includes
+#include <array>
 #include <bitset>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 
 // lib includes
@@ -99,6 +103,7 @@ namespace platf {
     set_motion_event_state,  ///< Set motion event state
     set_rgb_led,  ///< Set RGB LED
     set_adaptive_triggers,  ///< Set adaptive triggers
+    ds5_haptics_pcm,  ///< Authored DualSense actuator PCM (48 kHz, stereo, S16LE)
   };
 
   struct gamepad_feedback_msg_t {
@@ -148,6 +153,22 @@ namespace platf {
       return msg;
     }
 
+    static gamepad_feedback_msg_t
+    make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
+                         std::uint32_t sequence, std::uint64_t presentation_time_us,
+                         const std::uint8_t *pcm, std::size_t pcm_size) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_haptics_pcm;
+      msg.id = id;
+      msg.data.ds5_haptics.flags = flags;
+      msg.data.ds5_haptics.frame_count = std::min<std::uint16_t>(frame_count, 240);
+      msg.data.ds5_haptics.sequence = sequence;
+      msg.data.ds5_haptics.presentation_time_us = presentation_time_us;
+      const auto expected_size = static_cast<std::size_t>(msg.data.ds5_haptics.frame_count) * 4;
+      std::copy_n(pcm, std::min(expected_size, pcm_size), msg.data.ds5_haptics.pcm.begin());
+      return msg;
+    }
+
     gamepad_feedback_e type;
     std::uint16_t id;
 
@@ -181,6 +202,14 @@ namespace platf {
         std::array<uint8_t, 10> left;
         std::array<uint8_t, 10> right;
       } adaptive_triggers;
+
+      struct {
+        std::uint8_t flags;
+        std::uint16_t frame_count;
+        std::uint32_t sequence;
+        std::uint64_t presentation_time_us;
+        std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> pcm;
+      } ds5_haptics;
     } data;
   };
 
@@ -296,6 +325,13 @@ namespace platf {
 
     constexpr caps_t pen_touch = 0x01;  // Pen and touch events
     constexpr caps_t controller_touch = 0x02;  // Controller touch events
+    constexpr caps_t clipboard_text = 0x04;  // Clipboard text sync (negotiated only when GUI agent is alive)
+    constexpr caps_t clipboard_image = 0x08;  // Clipboard image sync (negotiated only when GUI agent is alive)
+    constexpr caps_t touchpad = 0x10;  // Native precision touchpad events
+    constexpr caps_t touchpad_frame = 0x20;  // Native precision touchpad frame events
+    constexpr caps_t cursor_shape = 0x40;  // Client-rendered cursor shape updates
+    constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
+    constexpr caps_t dynamic_sdr_white = 0x100;  // Runtime client SDR reference white updates
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -362,6 +398,39 @@ namespace platf {
     float contactAreaMinor;
   };
 
+  struct touchpad_input_t {
+    std::uint8_t eventType;
+    std::uint8_t buttonState;
+    std::uint16_t rotation;  // Degrees (0..360) or LI_ROT_UNKNOWN
+    std::uint16_t deviceWidthMm;
+    std::uint16_t deviceHeightMm;
+    std::uint32_t pointerId;
+    float x;
+    float y;
+    float pressure;
+    float contactAreaMajor;
+    float contactAreaMinor;
+  };
+
+  constexpr std::size_t MAX_TOUCHPAD_FRAME_CONTACTS = 5;
+
+  struct touchpad_frame_contact_t {
+    std::uint8_t eventType;
+    std::uint32_t pointerId;
+    float x;
+    float y;
+    float pressure;
+  };
+
+  struct touchpad_frame_t {
+    std::uint8_t contactCount;
+    std::uint8_t buttonState;
+    std::uint16_t rotation;  // Degrees (0..360) or LI_ROT_UNKNOWN
+    std::uint16_t deviceWidthMm;
+    std::uint16_t deviceHeightMm;
+    std::array<touchpad_frame_contact_t, MAX_TOUCHPAD_FRAME_CONTACTS> contacts;
+  };
+
   struct pen_input_t {
     std::uint8_t eventType;
     std::uint8_t toolType;
@@ -378,6 +447,14 @@ namespace platf {
   class deinit_t {
   public:
     virtual ~deinit_t() = default;
+  };
+
+  struct frame_pipeline_trace_t {
+    std::optional<std::chrono::steady_clock::time_point> capture_ready;
+    std::optional<std::chrono::steady_clock::time_point> convert_begin;
+    std::optional<std::chrono::steady_clock::time_point> convert_end;
+    std::optional<std::chrono::steady_clock::time_point> encode_submit;
+    std::optional<std::chrono::steady_clock::time_point> packet_ready;
   };
 
   struct img_t: std::enable_shared_from_this<img_t> {
@@ -398,6 +475,7 @@ namespace platf {
     std::int32_t row_pitch {};
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    std::optional<frame_pipeline_trace_t> pipeline_trace;
 
     virtual ~img_t() = default;
   };
@@ -425,22 +503,34 @@ namespace platf {
    * by a D3D11 compute shader and used to generate accurate per-frame
    * HDR dynamic metadata (CUVA HDR Vivid / HDR10+).
    *
-   * Values are in nits (cd/m²). scRGB 1.0 = 80 nits.
+   * Scalar luminance and HDR10+ percentile values are in nits (cd/m²);
+   * HDR Vivid P10/P90 values are in normalized PQ signal space.
+   * scRGB 1.0 = 80 nits.
    */
-  /// Number of luminance histogram bins (each bin = 78.125 nits, covering 0-10000 nits)
-  static constexpr uint32_t HDR_HISTOGRAM_BINS = 128;
-  /// Maximum nits covered by the histogram
-  static constexpr float HDR_HISTOGRAM_MAX_NITS = 10000.0f;
-  /// Nits per histogram bin
-  static constexpr float HDR_NITS_PER_BIN = HDR_HISTOGRAM_MAX_NITS / HDR_HISTOGRAM_BINS;
-
   struct hdr_frame_luminance_stats_t {
+    /// Number of maxRGB percentiles HDR10+ deployment profiles carry.
+    /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
+    static constexpr size_t HDR10PLUS_PERCENTILES = 9;
+
     float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
     float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
-    float avg_maxrgb = 0.0f;    ///< Average of max(R,G,B) across all pixels (nits)
-    float percentile_95 = 0.0f; ///< 95th percentile of maxRGB (nits) — stable peak estimate
-    float percentile_99 = 0.0f; ///< 99th percentile of maxRGB (nits) — near-peak estimate
-    uint32_t histogram[HDR_HISTOGRAM_BINS] = {};  ///< Luminance histogram (128 bins × 78.125 nits)
+    float avg_maxrgb = 0.0f;    ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
+    /// Arithmetic mean of the PQ-coded max(R,G,B), in normalized PQ signal space, for
+    /// HDR Vivid. Accumulated per pixel by the analyzer, like avg_maxrgb, and
+    /// deliberately derived from neither its result nor the histogram: PQ is concave,
+    /// so PQ(mean(nits)) sits far above mean(PQ(nits)) on a dark frame with highlights,
+    /// and the histogram is point-sampled per analysis cell. Zero alongside a nonzero
+    /// avg_maxrgb means the analyzer did not produce one, which HDR Vivid rejects.
+    float avg_maxrgb_pq = 0.0f;
+    float percentile_10_pq = 0.0f;  ///< 10th percentile in normalized PQ signal space
+    float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
+    /// 99th percentile of maxRGB (nits). Reported as the HDR10+ maxSCL; see
+    /// video::hdr_metadata::hdr10plus_from_luminance() for why it is not max_maxrgb.
+    float percentile_99 = 0.0f;
+    /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
+    float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
+    float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
+    uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
     bool valid = false;         ///< Whether stats are available (false on first frame)
   };
 
@@ -450,7 +540,24 @@ namespace platf {
     virtual int
     convert(platf::img_t &img) = 0;
 
+    // Optional: supported HLG converters can apply this at a frame boundary.
+    virtual void
+    set_client_sdr_white_nits(float) {
+    }
+
     video::sunshine_colorspace_t colorspace;
+
+    /**
+     * @brief The codec this device encodes for, in config_t::videoFormat terms
+     *        (0 H.264, 1 HEVC, 2 AV1).
+     *
+     * Set alongside `colorspace` when the device is created, because the codec
+     * decides which dynamic HDR metadata formats can be carried at all and the
+     * platform backends reach that decision from places where the client's
+     * config is no longer in scope. -1 means nobody filled it in, which
+     * video::hdr_metadata::formats_for() reads as "no codec-gated format".
+     */
+    int video_format = -1;
 
     /**
      * @brief Per-frame HDR luminance statistics from GPU analysis.
@@ -512,6 +619,7 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     nvenc::nvenc_encoder *nvenc = nullptr;
+    bool hdr_luminance_analysis_available = false;
   };
 
   struct amf_encode_device_t: encode_device_t {
@@ -519,6 +627,7 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     amf::amf_encoder *amf = nullptr;
+    bool hdr_luminance_analysis_available = false;
   };
 
   enum class capture_e : int {
@@ -639,7 +748,7 @@ namespace platf {
     set_sink(const std::string &sink) = 0;
 
     virtual std::unique_ptr<mic_t>
-    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size) = 0;
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous) = 0;
 
     /**
      * @brief Check if the audio sink is available in the system.
@@ -653,14 +762,13 @@ namespace platf {
     sink_info() = 0;
 
     /**
-     * @brief Write microphone data to the virtual audio device.
-     * @param data Pointer to the audio data.
-     * @param size Size of the audio data in bytes.
-     * @param seq Sequence number for FEC recovery (0 = unknown)
-     * @returns Number of bytes written, or -1 on error.
+     * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
+     * @param samples Pointer to the PCM samples.
+     * @param frame_count Number of mono frames to write.
+     * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
      */
     virtual int
-    write_mic_data(const char *data, size_t size, uint16_t seq = 0) = 0;
+    write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) = 0;
 
     /**
      * @brief Initialize the microphone redirect device.
@@ -698,6 +806,13 @@ namespace platf {
   audio_control();
 
   /**
+   * @brief Initialize platform audio services required by the calling thread.
+   * @return A lifetime guard, or nullptr when thread initialization fails.
+   */
+  [[nodiscard]] std::unique_ptr<deinit_t>
+  init_audio_thread();
+
+  /**
    * @brief Get the display_t instance for the given hwdevice_type.
    * If display_name is empty, use the first monitor that's compatible you can find
    * If you require to use this parameter in a separate thread, make a copy of it.
@@ -730,6 +845,9 @@ namespace platf {
   };
   void
   adjust_thread_priority(thread_priority_e priority);
+
+  void
+  enable_mouse_keys();
 
   // Allow OS-specific actions to be taken to prepare for streaming
   void
@@ -936,6 +1054,12 @@ namespace platf {
   move_mouse(input_t &input, int deltaX, int deltaY);
   void
   set_mouse_mode(int mode);
+  /**
+   * @brief Select the gamepad emulation policy for the currently running app.
+   * @param mode 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4.
+   */
+  void
+  set_gamepad_mode(int mode);
   void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void
@@ -969,6 +1093,22 @@ namespace platf {
    */
   void
   touch_update(client_input_t *input, const touch_port_t &touch_port, const touch_input_t &touch);
+
+  /**
+   * @brief Send a native touchpad event to the OS.
+   * @param input The client-specific input context.
+   * @param touchpad The touchpad event in normalized physical surface coordinates.
+   */
+  void
+  touchpad_update(client_input_t *input, const touchpad_input_t &touchpad);
+
+  /**
+   * @brief Send one native touchpad hardware frame to the OS.
+   * @param input The client-specific input context.
+   * @param touchpad The touchpad frame in normalized physical surface coordinates.
+   */
+  void
+  touchpad_frame_update(client_input_t *input, const touchpad_frame_t &touchpad);
 
   /**
    * @brief Send a pen event to the OS.

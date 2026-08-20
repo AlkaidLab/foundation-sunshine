@@ -1,8 +1,8 @@
 <template>
-  <div>
+  <div class="pin-page">
     <Navbar />
     <div id="content" class="container">
-      <h1 class="my-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
+      <h1 class="mt-2 mb-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
 
       <!-- QR Code Pairing -->
       <div class="card mb-4 qr-pair-card">
@@ -116,7 +116,7 @@
               <div class="me-2">
                 <b>{{ $t('_common.success') }}</b> {{ $t('troubleshooting.unpair_single_success') }}
               </div>
-              <button class="btn btn-success ms-auto apply" @click="clickedApplyBanner">
+              <button class="btn btn-secondary ms-auto apply" @click="clickedApplyBanner">
                 {{ $t('_common.dismiss') }}
               </button>
             </div>
@@ -139,14 +139,19 @@
 
           <!-- 客户端列表 -->
           <div id="client-list" v-else-if="clients && clients.length > 0" class="client-list-container">
+            <div class="brightness-guidance mx-3 mt-3 mb-2" role="note">
+              <i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i>
+              <span>{{ $t('pin.hdr_brightness_auto_info') }}</span>
+            </div>
             <div class="table-responsive">
               <table class="table table-hover table-bordered align-middle mb-0">
                 <thead class="table-dark">
                   <tr>
                     <th scope="col" width="20%" class="ps-3">{{ $t('pin.client_name') }}</th>
+                    <th scope="col" width="29%" class="ps-3">{{ $t('pin.hdr_brightness') }}</th>
                     <th scope="col" class="ps-3">
                       <span class="d-inline-flex align-items-center gap-1">
-                        {{ $t('pin.hdr_profile') }}
+                        {{ $t('pin.color_profile_override') }}
                         <i
                           class="fas fa-info-circle text-info"
                           data-tooltip="hdr-profile"
@@ -164,7 +169,7 @@
                         ></i>
                       </span>
                     </th>
-                    <th scope="col" width="30%" class="text-center">{{ $t('pin.actions') }}</th>
+                    <th scope="col" width="16%" class="text-center">{{ $t('pin.actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -173,32 +178,89 @@
                     :key="client.uuid"
                     :class="{ 'table-warning': editingStates[client.uuid] }"
                   >
-                    <td class="fw-medium ps-3">{{ client.name || $t('pin.unknown_client') }}</td>
-                    <td class="ps-3">
+                    <td class="fw-medium ps-3" :data-label="$t('pin.client_name')">{{ client.name || $t('pin.unknown_client') }}</td>
+                    <td class="ps-3 hdr-brightness-cell" :data-label="$t('pin.hdr_brightness')">
+                      <div class="cell-control">
+                        <select
+                          v-if="editingStates[client.uuid]"
+                          class="form-select form-select-sm"
+                          v-model="client.hdrBrightnessMode"
+                          :aria-label="$t('pin.hdr_brightness')"
+                        >
+                          <option value="auto">{{ $t('pin.hdr_brightness_auto') }}</option>
+                          <option value="manual">{{ $t('pin.hdr_brightness_manual') }}</option>
+                        </select>
+                        <span v-else class="setting-pill">
+                          <i
+                            :class="client.hdrBrightnessMode === 'manual' ? 'fas fa-sliders' : 'fas fa-wand-magic-sparkles'"
+                            aria-hidden="true"
+                          ></i>
+                          {{ $t(client.hdrBrightnessMode === 'manual' ? 'pin.hdr_brightness_manual' : 'pin.hdr_brightness_auto') }}
+                        </span>
+
+                        <div
+                          v-if="editingStates[client.uuid] && client.hdrBrightnessMode === 'manual'"
+                          class="manual-brightness-grid"
+                        >
+                          <label class="brightness-field">
+                            <span>{{ $t('pin.hdr_brightness_peak') }}</span>
+                            <input class="form-control form-control-sm" type="number" min="1" max="10000" step="1"
+                              v-model.number="client.hdrBrightnessMaxNits" />
+                          </label>
+                          <label class="brightness-field">
+                            <span>{{ $t('pin.hdr_brightness_min') }}</span>
+                            <input class="form-control form-control-sm" type="number" min="0" max="100" step="0.001"
+                              v-model.number="client.hdrBrightnessMinNits" />
+                          </label>
+                          <label class="brightness-field">
+                            <span>{{ $t('pin.hdr_brightness_full_frame') }}</span>
+                            <input class="form-control form-control-sm" type="number" min="1" max="10000" step="1"
+                              v-model.number="client.hdrBrightnessMaxFullFrameNits" />
+                          </label>
+                        </div>
+
+                        <div v-if="client.hdrBrightnessRuntime?.active" class="brightness-runtime">
+                          <span class="runtime-source">
+                            <i class="fas fa-circle-check" aria-hidden="true"></i>
+                            {{ $t(`pin.hdr_brightness_source_${client.hdrBrightnessRuntime.source}`) }}
+                          </span>
+                          <span class="runtime-values">
+                            {{ $t('pin.hdr_brightness_peak') }} {{ formatHdrNits(client.hdrBrightnessRuntime.maxNits) }} ·
+                            {{ $t('pin.hdr_brightness_min') }} {{ formatHdrNits(client.hdrBrightnessRuntime.minNits, 4, true) }} ·
+                            {{ $t('pin.hdr_brightness_full_frame') }} {{ formatHdrNits(client.hdrBrightnessRuntime.maxFullFrameNits) }}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="ps-3" :data-label="$t('pin.color_profile_override')">
                       <select
+                        v-if="editingStates[client.uuid]"
                         class="form-select form-select-sm"
                         v-model="client.hdrProfile"
-                        :disabled="!editingStates[client.uuid]"
-                        @change="onProfileChange(client.uuid)"
                       >
                         <option v-if="!hasIccFileList" value="" disabled>{{ $t('pin.modify_in_gui') }}</option>
-                        <option v-else value="">{{ $t('pin.none') }}</option>
+                        <option v-else value="">{{ $t('pin.system_color_profile') }}</option>
                         <option v-for="item in hdrProfileList" :value="item" :key="item">{{ item }}</option>
                       </select>
+                      <span v-else class="setting-value-text">
+                        {{ client.hdrProfile || $t('pin.system_color_profile') }}
+                      </span>
                     </td>
-                    <td class="ps-3">
+                    <td class="ps-3" :data-label="$t('pin.device_size')">
                       <select
+                        v-if="editingStates[client.uuid]"
                         class="form-select form-select-sm"
                         v-model="client.deviceSize"
-                        :disabled="!editingStates[client.uuid]"
-                        @change="onSizeChange(client.uuid)"
                       >
                         <option value="small">{{ $t('pin.device_size_small') }}</option>
                         <option value="medium">{{ $t('pin.device_size_medium') }}</option>
                         <option value="large">{{ $t('pin.device_size_large') }}</option>
                       </select>
+                      <span v-else class="setting-value-text">
+                        {{ $t(`pin.device_size_${client.deviceSize}`) }}
+                      </span>
                     </td>
-                    <td class="text-center">
+                    <td class="text-center client-actions-cell" :data-label="$t('pin.actions')">
                       <div class="btn-toolbar justify-content-center" role="toolbar">
                         <!-- 编辑模式按钮 -->
                         <template v-if="!editingStates[client.uuid]">
@@ -214,7 +276,7 @@
                         <!-- 保存/取消按钮 -->
                         <template v-else>
                           <button
-                            class="btn btn-sm btn-success me-1"
+                            class="btn btn-sm btn-primary me-1"
                             @click="handleSave(client.uuid)"
                             :disabled="saving || deleting.has(client.uuid)"
                             :title="$t('pin.save_changes')"
@@ -278,7 +340,11 @@
               <button class="btn-close" @click="clientToDelete = null"></button>
             </div>
             <div class="delete-client-body">
-              <p v-html="$t('pin.delete_confirm_message', { name: clientToDelete.name || $t('pin.unknown_client') })"></p>
+              <i18n-t keypath="pin.delete_confirm_message" tag="p">
+                <template #name>
+                  <strong>{{ clientToDelete.name || $t('pin.unknown_client') }}</strong>
+                </template>
+              </i18n-t>
               <p class="text-muted small mb-0">{{ $t('pin.delete_warning') }}</p>
             </div>
             <div class="delete-client-footer">
@@ -300,7 +366,7 @@ import { onMounted, ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
-import { usePin } from '../composables/usePin.js'
+import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
 
 const { t } = useI18n()
@@ -327,6 +393,7 @@ const {
   initPinForm,
   clickedApplyBanner,
   loadConfig,
+  loadColorProfiles,
 } = usePin()
 
 const {
@@ -385,17 +452,9 @@ const initTooltips = () => {
 onMounted(async () => {
   await loadConfig()
   await refreshClients()
+  await loadColorProfiles()
 
   initPinForm(() => setTimeout(refreshClients, 0))
-
-  if (window.electron?.getIccFileList) {
-    hasIccFileList.value = true
-    window.electron.getIccFileList((files = []) => {
-      hdrProfileList.value = files.filter(file => /.icc$/.test(file))
-    })
-  } else {
-    hasIccFileList.value = false
-  }
 
   initTooltips()
 })
@@ -408,12 +467,62 @@ watch(clients, initTooltips, { deep: true })
 </style>
 
 <style scoped lang="less">
+.pin-page {
+  min-height: 100vh;
+  padding-bottom: var(--spacing-xl);
+  color: var(--ui-text-primary);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
+
+  .page-title {
+    color: var(--ui-text-primary) !important;
+    font-weight: 600;
+  }
+
+  #form > .card {
+    width: min(100%, 480px);
+  }
+
+  .table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--ui-text-primary);
+    --bs-table-border-color: var(--ui-border);
+    --bs-table-hover-bg: var(--ui-accent-soft);
+    --bs-table-hover-color: var(--ui-text-primary);
+  }
+
+  .table-dark {
+    --bs-table-bg: var(--ui-surface-strong);
+    --bs-table-color: var(--ui-text-secondary);
+    --bs-table-border-color: var(--ui-border);
+  }
+}
+
 .client-list-container {
   margin-top: 1rem;
 
+  .brightness-guidance {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.7rem 0.85rem;
+    color: var(--ui-text-secondary);
+    background: color-mix(in srgb, var(--ui-accent) 8%, transparent);
+    border-left: 3px solid var(--ui-accent);
+    border-radius: var(--ui-radius-sm, 6px);
+    font-size: 0.875rem;
+    line-height: 1.45;
+
+    i {
+      margin-top: 0.2rem;
+      color: var(--ui-accent);
+    }
+  }
+
   .table-responsive {
     border-radius: var(--border-radius-md, 8px);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
   }
 
   .table {
@@ -421,10 +530,90 @@ watch(clients, initTooltips, { deep: true })
     overflow: hidden;
     margin-bottom: 0;
   }
+
+  .cell-control {
+    display: grid;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .setting-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    gap: 0.45rem;
+    padding: 0.3rem 0.55rem;
+    color: var(--ui-text-primary);
+    background: var(--ui-accent-soft);
+    border: 1px solid color-mix(in srgb, var(--ui-accent) 22%, var(--ui-border));
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+
+    i {
+      color: var(--ui-accent);
+      font-size: 0.75rem;
+    }
+  }
+
+  .setting-value-text {
+    color: var(--ui-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.35;
+  }
+
+  .manual-brightness-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(7rem, 1fr));
+    gap: 0.5rem;
+    padding: 0.65rem;
+    background: color-mix(in srgb, var(--ui-surface) 84%, transparent);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-sm, 6px);
+  }
+
+  .brightness-field {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 0;
+    margin: 0;
+
+    span {
+      overflow: hidden;
+      color: var(--ui-text-secondary);
+      font-size: 0.72rem;
+      font-weight: 600;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .brightness-runtime {
+    display: grid;
+    gap: 0.2rem;
+    padding-left: 0.1rem;
+    line-height: 1.35;
+  }
+
+  .runtime-source {
+    color: var(--ui-success, #198754);
+    font-size: 0.78rem;
+    font-weight: 600;
+
+    i {
+      margin-right: 0.25rem;
+    }
+  }
+
+  .runtime-values {
+    color: var(--ui-text-muted);
+    font-size: 0.72rem;
+  }
 }
 
 .table-warning {
-  background-color: rgba(255, 193, 7, 0.1) !important;
+  background-color: var(--ui-warning-soft) !important;
 }
 
 /* Delete Client Modal - 使用 ScanResultModal 样式 */
@@ -437,7 +626,7 @@ watch(clients, initTooltips, { deep: true })
   width: 100vw;
   height: 100vh;
   margin: 0;
-  background: var(--overlay-bg, rgba(0, 0, 0, 0.7));
+  background: var(--modal-backdrop-bg, rgba(45, 38, 40, 0.72));
   backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex;
@@ -446,29 +635,21 @@ watch(clients, initTooltips, { deep: true })
   padding: var(--spacing-lg, 20px);
   overflow: hidden;
 
-  [data-bs-theme='light'] & {
-    background: rgba(0, 0, 0, 0.5);
-  }
 }
 
 .delete-client-modal {
-  background: var(--modal-bg, rgba(30, 30, 50, 0.95));
-  border: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.2));
-  border-radius: var(--border-radius-xl, 12px);
+  background: var(--ui-surface-strong);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
   width: 100%;
   max-width: 500px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-xl, 0 25px 50px rgba(0, 0, 0, 0.5));
+  box-shadow: var(--ui-shadow-md);
   animation: modalSlideUp 0.3s ease;
 
-  [data-bs-theme='light'] & {
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.15);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-  }
 }
 
 @keyframes modalSlideUp {
@@ -487,11 +668,11 @@ watch(clients, initTooltips, { deep: true })
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
+  border-bottom: 1px solid var(--ui-border);
 
   h5 {
     margin: 0;
-    color: var(--text-primary, #fff);
+    color: var(--ui-text-primary);
     font-size: var(--font-size-lg, 1.1rem);
     font-weight: 600;
     display: flex;
@@ -499,13 +680,6 @@ watch(clients, initTooltips, { deep: true })
     gap: var(--spacing-sm, 8px);
   }
 
-  [data-bs-theme='light'] & {
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-
-    h5 {
-      color: #000000;
-    }
-  }
 }
 
 .delete-client-body {
@@ -514,11 +688,7 @@ watch(clients, initTooltips, { deep: true })
   line-height: 1.5;
   overflow-y: auto;
   flex: 1;
-  color: var(--text-primary, #fff);
-
-  [data-bs-theme='light'] & {
-    color: #000000;
-  }
+  color: var(--ui-text-primary);
 }
 
 .delete-client-footer {
@@ -526,11 +696,8 @@ watch(clients, initTooltips, { deep: true })
   justify-content: flex-end;
   gap: 10px;
   padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.1));
-
-  [data-bs-theme='light'] & {
-    border-top: 1px solid rgba(0, 0, 0, 0.1);
-  }
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface);
 
   button {
     padding: 8px 16px;
@@ -551,12 +718,115 @@ watch(clients, initTooltips, { deep: true })
 
 /* 响应式优化 */
 @media (max-width: 768px) {
+  .client-list-container {
+    .brightness-guidance {
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+
+    .table-responsive {
+      overflow: visible;
+      border-radius: 0;
+    }
+
+    .table {
+      display: block;
+      border: 0;
+      background: transparent;
+
+      thead {
+        display: none;
+      }
+
+      tbody {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      tr {
+        display: block;
+        border: 1px solid var(--ui-border);
+        border-radius: var(--border-radius-md, 8px);
+        background: var(--ui-surface);
+        overflow: hidden;
+      }
+
+      td {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        width: 100%;
+        padding: 0.75rem 1rem !important;
+        border: 0;
+        border-bottom: 1px solid var(--ui-border);
+        text-align: right;
+
+        &::before {
+          content: attr(data-label);
+          min-width: 6.5rem;
+          color: var(--ui-text-secondary);
+          font-weight: 600;
+          text-align: left;
+        }
+
+        &:last-child {
+          border-bottom: 0;
+        }
+      }
+
+      .hdr-brightness-cell {
+        display: block;
+        text-align: left;
+
+        &::before {
+          display: block;
+          margin-bottom: 0.65rem;
+        }
+
+        .cell-control {
+          width: 100%;
+        }
+      }
+
+      .manual-brightness-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .brightness-field span {
+        white-space: normal;
+      }
+
+      .runtime-values {
+        display: block;
+        line-height: 1.5;
+      }
+
+      .form-select {
+        width: min(100%, 13rem);
+        min-height: 44px;
+      }
+
+      .client-actions-cell {
+        display: block;
+        text-align: left;
+
+        &::before {
+          display: block;
+          margin-bottom: 0.5rem;
+        }
+      }
+    }
+  }
+
   .btn-toolbar {
     flex-direction: column;
+    gap: 0.5rem;
 
     .btn {
       width: 100%;
-      margin-bottom: 0.25rem;
+      min-height: 44px;
+      margin: 0;
     }
   }
 
@@ -591,25 +861,19 @@ watch(clients, initTooltips, { deep: true })
   display: flex;
   align-items: center;
   text-align: center;
-  color: var(--bs-body-color, #dee2e6);
+  color: var(--ui-text-muted);
   font-size: 0.875rem;
 
   &::before,
   &::after {
     content: '';
     flex: 1;
-    border-bottom: 1px solid var(--border-color-light, rgba(255, 255, 255, 0.15));
+    border-bottom: 1px solid var(--ui-border);
   }
 
   span {
     padding: 0 1rem;
   }
 
-  [data-bs-theme='light'] & {
-    &::before,
-    &::after {
-      border-bottom-color: rgba(0, 0, 0, 0.15);
-    }
-  }
 }
 </style>
