@@ -243,7 +243,7 @@ internal sealed class SidecarServer : IAsyncDisposable
 
     private void LoadPatchedProfiles()
     {
-        // Upstream v1.6.1 USB DualSense profiles leave extendedReport unarmed,
+        // Upstream USB DualSense profiles leave extendedReport unarmed,
         // so the vendor-blob encoder never runs and the Sony tail of report
         // 0x01 (touch fingers at bytes 33/37, rolling counter, sensors,
         // battery) idles at 0x00. Windows and raw HID consumers decode byte

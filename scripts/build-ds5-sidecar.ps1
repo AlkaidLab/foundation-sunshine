@@ -4,8 +4,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$version = 'v1.6.1'
-$expectedSha256 = '00145c23D9838BE6089389CE58B3FD2B6766FA9BC0F1F3C60A3C885361B53C34'
+$version = 'v1.6.2'
+$expectedSha256 = '6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff'
 $url = "https://github.com/hifihedgehog/HIDMaestro/releases/download/$version/HIDMaestro-$version.zip"
 $root = Split-Path -Parent $PSScriptRoot
 $buildRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'build'))
