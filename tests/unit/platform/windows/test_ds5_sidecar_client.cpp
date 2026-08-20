@@ -51,6 +51,11 @@ namespace {
   };
 }  // namespace
 
+TEST(Ds5SidecarClientTests, UnassignedIndexIsNotOwned) {
+  platf::ds5::sidecar_client_t client;
+  EXPECT_FALSE(client.owns(-1));
+}
+
 TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
   config_scope_t restore_config;
   config::input.ds5_enabled = true;
