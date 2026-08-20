@@ -47,29 +47,11 @@ using namespace std::literals;
 #define PRIVATE_KEY_FILE CA_DIR "/cakey.pem"
 #define CERTIFICATE_FILE CA_DIR "/cacert.pem"
 
-#define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
+#define APPS_JSON_PATH file_handler::path_to_utf8(platf::appdata() / "apps.json")
 namespace config {
 
   namespace {
     std::mutex config_file_mutex;
-
-    fs::path
-    path_from_utf8(const std::string &value) {
-#ifdef _WIN32
-      return fs::path { platf::from_utf8(value) };
-#else
-      return fs::path { value };
-#endif
-    }
-
-    std::string
-    path_to_utf8(const fs::path &value) {
-#ifdef _WIN32
-      return platf::to_utf8(value.wstring());
-#else
-      return value.string();
-#endif
-    }
   }
 
   namespace nv {
@@ -598,12 +580,12 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
-    platf::appdata().string() + "/sunshine.conf",  // config file
+    file_handler::path_to_utf8(platf::appdata() / "sunshine.conf"),  // config file
     {},  // cmd args
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
-    platf::appdata().string() + "/sunshine.log",  // log file
+    file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
@@ -820,7 +802,7 @@ namespace config {
     string_f(vars, name, temp);
 
     if (!temp.empty()) {
-      input = path_from_utf8(temp);
+      input = file_handler::path_from_utf8(temp);
     }
 
     if (input.is_relative()) {
@@ -838,11 +820,11 @@ namespace config {
 
   void
   path_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input) {
-    fs::path temp = path_from_utf8(input);
+    fs::path temp = file_handler::path_from_utf8(input);
 
     path_f(vars, name, temp);
 
-    input = path_to_utf8(temp);
+    input = file_handler::path_to_utf8(temp);
   }
 
   void
@@ -1486,11 +1468,11 @@ namespace config {
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
     string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
     if (!nvhttp.client_fingerprint_rules_certificate.empty()) {
-      fs::path certificate_path = nvhttp.client_fingerprint_rules_certificate;
+      auto certificate_path = file_handler::path_from_utf8(nvhttp.client_fingerprint_rules_certificate);
       if (certificate_path.is_relative()) {
         certificate_path = platf::appdata() / certificate_path;
       }
-      nvhttp.client_fingerprint_rules_certificate = certificate_path.string();
+      nvhttp.client_fingerprint_rules_certificate = file_handler::path_to_utf8(certificate_path);
     }
     int_between_f(
       vars,
@@ -1774,11 +1756,12 @@ namespace config {
     bool config_loaded = false;
     try {
       // Create appdata folder if it does not exist
-      file_handler::make_directory(platf::appdata().string());
+      file_handler::make_directory(file_handler::path_to_utf8(platf::appdata()));
 
       // Create empty config file if it does not exist
-      if (!fs::exists(sunshine.config_file)) {
-        std::ofstream { sunshine.config_file };
+      const auto config_path = file_handler::path_from_utf8(sunshine.config_file);
+      if (!fs::exists(config_path)) {
+        std::ofstream { config_path };
       }
 
       // Read config file

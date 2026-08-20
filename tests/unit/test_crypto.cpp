@@ -6,6 +6,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -16,13 +17,10 @@
 
 #include "src/crypto.h"
 #include "src/config.h"
+#include "src/file_handler.h"
 #include "src/httpcommon.h"
 #include "src/nvhttp.h"
 #include "src/nvhttp/pairing.h"
-
-#ifdef _WIN32
-  #include "src/platform/windows/misc.h"
-#endif
 
 namespace {
   namespace fs = std::filesystem;
@@ -73,13 +71,17 @@ namespace {
       devices.push_back({ "", device });
       state.add_child("root.named_devices", devices);
       std::ofstream state_stream { state_file_ };
+      if (!state_stream.is_open()) {
+        throw std::runtime_error("unable to open pairing state fixture");
+      }
       pt::write_json(state_stream, state);
+      state_stream.flush();
+      state_stream.close();
+      if (!state_stream) {
+        throw std::runtime_error("unable to write pairing state fixture");
+      }
 
-#ifdef _WIN32
-      config::nvhttp.file_state = platf::to_utf8(state_file_.wstring());
-#else
-      config::nvhttp.file_state = state_file_.string();
-#endif
+      config::nvhttp.file_state = file_handler::path_to_utf8(state_file_);
       nvhttp::pairing::load_state();
     }
 

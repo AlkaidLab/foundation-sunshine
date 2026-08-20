@@ -4,12 +4,26 @@
  */
 #pragma once
 
+#include <filesystem>
 #include <string>
+#include <string_view>
 
 /**
  * @brief Responsible for file handling functions.
  */
 namespace file_handler {
+  /**
+   * @brief Convert a UTF-8 path string to the platform-native filesystem path.
+   */
+  std::filesystem::path
+  path_from_utf8(std::string_view path);
+
+  /**
+   * @brief Convert a platform-native filesystem path to UTF-8.
+   */
+  std::string
+  path_to_utf8(const std::filesystem::path &path);
+
   /**
    * @brief Get the parent directory of a file or directory.
    * @param path The path of the file or directory.

@@ -24,6 +24,7 @@
 
 #include "src/config.h"
 #include "src/crypto.h"
+#include "src/file_handler.h"
 #include "src/globals.h"
 #include "src/httpcommon.h"
 #include "src/logging.h"
@@ -32,10 +33,6 @@
 #include "src/tray/tray_state.h"
 #include "src/utility.h"
 #include "src/uuid.h"
-
-#ifdef _WIN32
-  #include "src/platform/windows/misc.h"
-#endif
 
 using namespace std::literals;
 
@@ -66,11 +63,7 @@ namespace nvhttp {
 
     fs::path
     state_file_path() {
-#ifdef _WIN32
-      return fs::path { platf::from_utf8(config::nvhttp.file_state) };
-#else
-      return fs::path { config::nvhttp.file_state };
-#endif
+      return file_handler::path_from_utf8(config::nvhttp.file_state);
     }
 
     struct named_cert_t {
@@ -189,13 +182,15 @@ namespace nvhttp {
       pt::ptree root;
       const auto state_path = state_file_path();
 
-      if (preserve_existing && fs::exists(state_path)) {
+      if (preserve_existing) {
         try {
-          std::ifstream state_file { state_path };
-          if (!state_file.is_open()) {
-            throw std::runtime_error("unable to open state file for reading");
+          if (fs::exists(state_path)) {
+            std::ifstream state_file { state_path };
+            if (!state_file.is_open()) {
+              throw std::runtime_error("unable to open state file for reading");
+            }
+            pt::read_json(state_file, root);
           }
-          pt::read_json(state_file, root);
         }
         catch (std::exception &e) {
           BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
@@ -424,14 +419,13 @@ namespace nvhttp {
     void
     load_state() {
       const auto state_path = state_file_path();
-      if (!fs::exists(state_path)) {
-        BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
-        http::unique_id = uuid_util::uuid_t::generate().string();
-        return;
-      }
-
       pt::ptree tree;
       try {
+        if (!fs::exists(state_path)) {
+          BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
+          http::unique_id = uuid_util::uuid_t::generate().string();
+          return;
+        }
         std::ifstream state_file { state_path };
         if (!state_file.is_open()) {
           throw std::runtime_error("unable to open state file for reading");
