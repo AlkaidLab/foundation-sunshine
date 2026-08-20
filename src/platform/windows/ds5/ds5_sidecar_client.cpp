@@ -620,7 +620,7 @@ namespace platf::ds5 {
   bool sidecar_client_t::owns(int global_index) const {
     // Ownership survives a temporary transport outage so the input layer can
     // still release the controller while the reader thread is recovering it.
-    return _impl->global_index == global_index;
+    return global_index >= 0 && _impl->global_index == global_index;
   }
 
   int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics) {
