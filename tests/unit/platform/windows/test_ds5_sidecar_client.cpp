@@ -11,9 +11,13 @@
 
   #include "src/config.h"
   #include "src/platform/windows/ds5/ds5_sidecar_client.h"
+  #include <gtest/gtest-spi.h>
   #include <gtest/gtest.h>
 
 namespace {
+  using get_environment_fn_t = DWORD(WINAPI *)(LPCWSTR, LPWSTR, DWORD);
+  using set_environment_fn_t = BOOL(WINAPI *)(LPCWSTR, LPCWSTR);
+
   struct config_scope_t {
     config_scope_t():
         enabled(config::input.ds5_enabled),
@@ -51,31 +55,157 @@ namespace {
   };
 
   struct environment_scope_t {
-    environment_scope_t(const wchar_t *variable, const wchar_t *value): variable(variable) {
+    enum class original_state_e {
+      unknown,
+      undefined,
+      defined,
+    };
+
+    environment_scope_t(const wchar_t *variable, const wchar_t *value,
+                        get_environment_fn_t get_environment = GetEnvironmentVariableW,
+                        set_environment_fn_t set_environment = SetEnvironmentVariableW):
+        variable(variable),
+        set_environment(set_environment) {
       SetLastError(ERROR_SUCCESS);
-      auto required = GetEnvironmentVariableW(variable, nullptr, 0);
-      was_defined = required != 0 || GetLastError() != ERROR_ENVVAR_NOT_FOUND;
+      auto required = get_environment(variable, nullptr, 0);
+      if (required == 0) {
+        const auto error = GetLastError();
+        if (error == ERROR_ENVVAR_NOT_FOUND) {
+          original_state = original_state_e::undefined;
+        }
+        else if (error == ERROR_SUCCESS) {
+          original_state = original_state_e::defined;
+        }
+        else {
+          ADD_FAILURE() << "GetEnvironmentVariableW size query failed: " << error;
+          return;
+        }
+      }
+      else {
+        original_state = original_state_e::defined;
+      }
+
       while (required != 0) {
         original_value.resize(required);
-        const auto copied = GetEnvironmentVariableW(variable, original_value.data(), required);
+        SetLastError(ERROR_SUCCESS);
+        const auto copied = get_environment(variable, original_value.data(), required);
+        if (copied == 0 && GetLastError() != ERROR_SUCCESS) {
+          ADD_FAILURE() << "GetEnvironmentVariableW value read failed: " << GetLastError();
+          original_state = original_state_e::unknown;
+          original_value.clear();
+          return;
+        }
         if (copied < required) {
           original_value.resize(copied);
           break;
         }
-        required = copied + 1;
+        required = copied;
       }
-      SetEnvironmentVariableW(variable, value);
+
+      if (!set_environment(variable, value)) {
+        ADD_FAILURE() << "SetEnvironmentVariableW scoped write failed: " << GetLastError();
+        original_state = original_state_e::unknown;
+        return;
+      }
+      restore_required = true;
     }
 
     ~environment_scope_t() {
-      SetEnvironmentVariableW(variable.c_str(), was_defined ? original_value.c_str() : nullptr);
+      if (!restore_required)
+        return;
+      const auto *value = original_state == original_state_e::defined ? original_value.c_str() : nullptr;
+      if (!set_environment(variable.c_str(), value)) {
+        ADD_FAILURE() << "SetEnvironmentVariableW restore failed: " << GetLastError();
+      }
     }
 
     std::wstring variable;
     std::wstring original_value;
-    bool was_defined;
+    set_environment_fn_t set_environment;
+    original_state_e original_state = original_state_e::unknown;
+    bool restore_required = false;
   };
+
+  DWORD WINAPI fail_environment_read(LPCWSTR, LPWSTR, DWORD) {
+    SetLastError(ERROR_ACCESS_DENIED);
+    return 0;
+  }
+
+  DWORD WINAPI fail_environment_value_read(LPCWSTR, LPWSTR value, DWORD) {
+    if (!value) {
+      SetLastError(ERROR_SUCCESS);
+      return 2;
+    }
+    SetLastError(ERROR_ACCESS_DENIED);
+    return 0;
+  }
+
+  BOOL WINAPI fail_environment_write(LPCWSTR, LPCWSTR) {
+    SetLastError(ERROR_ACCESS_DENIED);
+    return FALSE;
+  }
+
+  int environment_write_calls;
+
+  BOOL WINAPI fail_environment_restore(LPCWSTR, LPCWSTR) {
+    if (environment_write_calls++ == 0)
+      return TRUE;
+    SetLastError(ERROR_ACCESS_DENIED);
+    return FALSE;
+  }
 }  // namespace
+
+TEST(Ds5SidecarClientTests, EnvironmentScopeRestoresPreviousValues) {
+  const auto variable = L"SUNSHINE_DS5_TEST_ENVIRONMENT_SCOPE_" + std::to_wstring(GetCurrentProcessId());
+  EXPECT_TRUE(SetEnvironmentVariableW(variable.c_str(), nullptr));
+  {
+    environment_scope_t scoped(variable.c_str(), L"temporary");
+  }
+  SetLastError(ERROR_SUCCESS);
+  EXPECT_EQ(GetEnvironmentVariableW(variable.c_str(), nullptr, 0), 0u);
+  EXPECT_EQ(GetLastError(), ERROR_ENVVAR_NOT_FOUND);
+
+  EXPECT_TRUE(SetEnvironmentVariableW(variable.c_str(), L""));
+  {
+    environment_scope_t scoped(variable.c_str(), L"temporary");
+  }
+  SetLastError(ERROR_SUCCESS);
+  EXPECT_EQ(GetEnvironmentVariableW(variable.c_str(), nullptr, 0), 1u);
+  EXPECT_EQ(GetLastError(), ERROR_SUCCESS);
+
+  EXPECT_TRUE(SetEnvironmentVariableW(variable.c_str(), L"original"));
+  {
+    environment_scope_t scoped(variable.c_str(), L"temporary");
+  }
+  std::array<wchar_t, 16> restored {};
+  EXPECT_EQ(GetEnvironmentVariableW(
+              variable.c_str(), restored.data(), static_cast<DWORD>(restored.size())),
+            8u);
+  EXPECT_STREQ(restored.data(), L"original");
+  EXPECT_TRUE(SetEnvironmentVariableW(variable.c_str(), nullptr));
+}
+
+TEST(Ds5SidecarClientTests, EnvironmentScopeReportsApiFailures) {
+  EXPECT_NONFATAL_FAILURE(
+    { environment_scope_t scoped(L"SUNSHINE_DS5_TEST_READ_FAILURE", L"temporary",
+                                 fail_environment_read, fail_environment_write); },
+    "GetEnvironmentVariableW size query failed");
+  EXPECT_NONFATAL_FAILURE(
+    { environment_scope_t scoped(L"SUNSHINE_DS5_TEST_VALUE_READ_FAILURE", L"temporary",
+                                 fail_environment_value_read, fail_environment_write); },
+    "GetEnvironmentVariableW value read failed");
+  EXPECT_NONFATAL_FAILURE(
+    { environment_scope_t scoped(L"SUNSHINE_DS5_TEST_SET_FAILURE", L"temporary",
+                                 GetEnvironmentVariableW, fail_environment_write); },
+    "SetEnvironmentVariableW scoped write failed");
+  EXPECT_NONFATAL_FAILURE(
+    {
+      environment_write_calls = 0;
+      environment_scope_t scoped(L"SUNSHINE_DS5_TEST_RESTORE_FAILURE", L"temporary",
+                                 GetEnvironmentVariableW, fail_environment_restore);
+    },
+    "SetEnvironmentVariableW restore failed");
+}
 
 TEST(Ds5SidecarClientTests, UnassignedIndexIsNotOwned) {
   platf::ds5::sidecar_client_t client;
