@@ -316,6 +316,7 @@ TEST_F(Ds5ConfigTest, InvalidSettingsTakePrecedenceOverAnInvalidStore) {
   auto active = ds5_config::settings_t {};
   active.revision = 9;
   ASSERT_TRUE(ds5_config::configure(active));
+  const auto before = ds5_config::current();
   write_json({{"ds5_enabled", true}});
   const auto snapshot = ds5_config::api::query_state(path_);
   ASSERT_EQ(snapshot.disk_status, ds5_config::load_status_t::INVALID);
@@ -324,8 +325,10 @@ TEST_F(Ds5ConfigTest, InvalidSettingsTakePrecedenceOverAnInvalidStore) {
   invalid.legacy_strength = ds5_config::MAX_STRENGTH + 1.0;
   const auto result = ds5_config::api::update_state(path_, invalid, snapshot.entity_tag);
   EXPECT_EQ(result.status, ds5_config::api::update_status_t::INVALID_SETTINGS);
-  EXPECT_EQ(ds5_config::current().revision, active.revision);
-  EXPECT_EQ(ds5_config::current().legacy_strength, active.legacy_strength);
+  const auto after = ds5_config::current();
+  EXPECT_TRUE(same_values(after, before));
+  EXPECT_EQ(after.revision, before.revision);
+  EXPECT_EQ(after.legacy_strength, active.legacy_strength);
 }
 
 TEST_F(Ds5ConfigTest, ConcurrentReadersObserveOnlyCompleteSnapshots) {
