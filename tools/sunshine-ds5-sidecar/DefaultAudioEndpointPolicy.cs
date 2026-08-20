@@ -16,6 +16,7 @@ internal static class DefaultAudioEndpointPolicy
     private const string NeverSetAsDefaultEndpoint =
         "{F3E80BEF-1723-4FF2-BCC4-7F83DC5E46D4},3";
     private const string AnyKsNodeType = "{00000000-0000-0000-0000-000000000000}";
+    // FLOW_MASK_RENDER | FLOW_MASK_CAPTURE | every default-device role.
     private const int AllRolesAndFlows = 0x00000307;
 
     /// <summary>

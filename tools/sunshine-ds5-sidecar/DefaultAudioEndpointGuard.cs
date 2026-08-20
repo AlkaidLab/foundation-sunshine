@@ -5,10 +5,10 @@ using Microsoft.Win32;
 namespace Sunshine.Ds5Sidecar;
 
 /// <summary>
-/// Fails closed when Windows selects the virtual HIDMaestro DualSense speaker
-/// as a default render endpoint. This is intentionally read-only: changing
-/// Windows audio policy relies on undocumented APIs and would make the helper
-/// responsible for restoring user preferences after crashes or upgrades.
+/// Fails closed when Windows selects a virtual HIDMaestro DualSense audio
+/// endpoint as a default render or capture endpoint. The guard is a read-only
+/// fallback for systems where the documented never-default policy cannot be
+/// applied.
 /// </summary>
 internal sealed class DefaultAudioEndpointGuard : IDisposable
 {
@@ -37,24 +37,31 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private async Task MonitorAsync()
     {
         IMMDeviceEnumerator? enumerator = null;
+        EndpointNotificationClient? notification = null;
+        var registered = false;
         try
         {
             var type = Type.GetTypeFromCLSID(MmDeviceEnumeratorClass, throwOnError: true)!;
             enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(400));
-            do
+            notification = new EndpointNotificationClient(OnDefaultDeviceChanged);
+            var registrationResult = enumerator.RegisterEndpointNotificationCallback(notification);
+            registered = registrationResult >= 0;
+
+            // Register before taking the initial snapshot so a default-device
+            // change racing startup is either observed by the callback or by
+            // the snapshot (and harmlessly deduplicated by _reported).
+            CheckCurrentDefaults(enumerator);
+            if (registered)
             {
-                foreach (var role in Enum.GetValues<AudioRole>())
-                {
-                    if (IsDefaultVirtualDualSense(enumerator, role) &&
-                        Interlocked.Exchange(ref _reported, 1) == 0)
-                    {
-                        _onViolation(role);
-                        return;
-                    }
-                }
+                await Task.Delay(Timeout.InfiniteTimeSpan, _stopping.Token);
             }
-            while (await timer.WaitForNextTickAsync(_stopping.Token));
+            else
+            {
+                Console.Error.WriteLine(
+                    $"Unable to register the default audio endpoint monitor (0x{registrationResult:X8}); " +
+                    "falling back to low-frequency polling");
+                await PollDefaultsAsync(enumerator);
+            }
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
@@ -68,23 +75,79 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
         finally
         {
+            if (registered && enumerator is not null && notification is not null)
+            {
+                var result = enumerator.UnregisterEndpointNotificationCallback(notification);
+                if (result < 0 && !_stopping.IsCancellationRequested)
+                    Console.Error.WriteLine($"Unable to unregister the default audio endpoint monitor: 0x{result:X8}");
+            }
             if (enumerator is not null && Marshal.IsComObject(enumerator))
                 Marshal.FinalReleaseComObject(enumerator);
+            GC.KeepAlive(notification);
         }
     }
 
-    private static bool IsDefaultVirtualDualSense(IMMDeviceEnumerator enumerator, AudioRole role)
+    private void CheckCurrentDefaults(IMMDeviceEnumerator enumerator)
     {
+        foreach (var flow in Enum.GetValues<DataFlow>())
+        {
+            foreach (var role in Enum.GetValues<AudioRole>())
+            {
+                if (TryGetDefaultEndpointId(enumerator, flow, role, out var endpointId))
+                    ReportIfVirtualDualSense(role, endpointId);
+            }
+        }
+    }
+
+    private async Task PollDefaultsAsync(IMMDeviceEnumerator enumerator)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        while (await timer.WaitForNextTickAsync(_stopping.Token))
+            CheckCurrentDefaults(enumerator);
+    }
+
+    private void OnDefaultDeviceChanged(DataFlow flow, AudioRole role, string? endpointId)
+    {
+        if (endpointId is null || _stopping.IsCancellationRequested)
+            return;
+        try
+        {
+            ReportIfVirtualDualSense(role, endpointId);
+        }
+        catch (Exception error)
+        {
+            // Never let an ownership lookup escape through the Core Audio COM
+            // callback boundary.
+            Console.Error.WriteLine($"Unable to inspect the changed default audio endpoint: {error.Message}");
+        }
+    }
+
+    private void ReportIfVirtualDualSense(AudioRole role, string endpointId)
+    {
+        if (Volatile.Read(ref _reported) != 0 ||
+            !IsVirtualDualSenseEndpoint(endpointId) ||
+            Interlocked.Exchange(ref _reported, 1) != 0)
+        {
+            return;
+        }
+        _onViolation(role);
+    }
+
+    private static bool TryGetDefaultEndpointId(
+        IMMDeviceEnumerator enumerator, DataFlow flow, AudioRole role, out string endpointId)
+    {
+        endpointId = string.Empty;
         IMMDevice? endpoint = null;
         try
         {
             // AUDCLNT_E_DEVICE_INVALIDATED and E_NOTFOUND are normal while an
             // endpoint is being created or removed, so treat any failed lookup
-            // as "not currently default" and retry on the next poll.
-            if (enumerator.GetDefaultAudioEndpoint(DataFlow.Render, role, out endpoint) < 0 || endpoint is null ||
-                endpoint.GetId(out var endpointId) < 0)
+            // as "not currently default". A later notification (or the rare
+            // registration-failure polling fallback) will retry it.
+            if (enumerator.GetDefaultAudioEndpoint(flow, role, out endpoint) < 0 || endpoint is null ||
+                endpoint.GetId(out endpointId) < 0)
                 return false;
-            return IsVirtualDualSenseEndpoint(endpointId);
+            return true;
         }
         finally
         {
@@ -187,6 +250,57 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private enum DataFlow
     {
         Render = 0,
+        Capture = 1,
+    }
+
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.None)]
+    private sealed class EndpointNotificationClient : IMMNotificationClient
+    {
+        private readonly Action<DataFlow, AudioRole, string?> _onDefaultDeviceChanged;
+
+        internal EndpointNotificationClient(Action<DataFlow, AudioRole, string?> onDefaultDeviceChanged)
+        {
+            _onDefaultDeviceChanged = onDefaultDeviceChanged;
+        }
+
+        public int OnDeviceStateChanged(string deviceId, uint newState) => 0;
+        public int OnDeviceAdded(string deviceId) => 0;
+        public int OnDeviceRemoved(string deviceId) => 0;
+
+        public int OnDefaultDeviceChanged(DataFlow flow, AudioRole role, string? defaultDeviceId)
+        {
+            _onDefaultDeviceChanged(flow, role, defaultDeviceId);
+            return 0;
+        }
+
+        public int OnPropertyValueChanged(string deviceId, PropertyKey propertyKey) => 0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct PropertyKey
+    {
+        private readonly Guid _formatId;
+        private readonly uint _propertyId;
+    }
+
+    [ComImport]
+    [Guid("7991EEC9-7E89-4D85-8390-6C703CEC60C0")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMMNotificationClient
+    {
+        [PreserveSig]
+        int OnDeviceStateChanged([MarshalAs(UnmanagedType.LPWStr)] string deviceId, uint newState);
+        [PreserveSig]
+        int OnDeviceAdded([MarshalAs(UnmanagedType.LPWStr)] string deviceId);
+        [PreserveSig]
+        int OnDeviceRemoved([MarshalAs(UnmanagedType.LPWStr)] string deviceId);
+        [PreserveSig]
+        int OnDefaultDeviceChanged(DataFlow flow, AudioRole role,
+                                   [MarshalAs(UnmanagedType.LPWStr)] string? defaultDeviceId);
+        [PreserveSig]
+        int OnPropertyValueChanged([MarshalAs(UnmanagedType.LPWStr)] string deviceId,
+                                   PropertyKey propertyKey);
     }
 
     [ComImport]
@@ -201,9 +315,9 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         [PreserveSig]
         int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice endpoint);
         [PreserveSig]
-        int RegisterEndpointNotificationCallback(IntPtr callback);
+        int RegisterEndpointNotificationCallback(IMMNotificationClient callback);
         [PreserveSig]
-        int UnregisterEndpointNotificationCallback(IntPtr callback);
+        int UnregisterEndpointNotificationCallback(IMMNotificationClient callback);
     }
 
     [ComImport]
