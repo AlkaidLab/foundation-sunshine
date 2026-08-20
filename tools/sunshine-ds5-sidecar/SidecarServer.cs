@@ -20,9 +20,10 @@ internal sealed class SidecarServer : IAsyncDisposable
     internal SidecarServer(string pipeName)
     {
         _pipeName = pipeName;
-        LoadPatchedProfiles();
+        var compositeProfileValidated = LoadPatchedProfiles();
         _context.LoadDefaultProfiles();
-        _authoredHapticsAvailable = _context.GetProfile("dualsense-composite") is not null &&
+        _authoredHapticsAvailable = compositeProfileValidated &&
+                                    _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
                                     HMContext.IsUsbipBackendAvailable;
         _controlOutgoing = Channel.CreateUnbounded<Protocol.Message>(new UnboundedChannelOptions
         {
@@ -196,14 +197,34 @@ internal sealed class SidecarServer : IAsyncDisposable
         var profileId = payload[2] switch
         {
             0 => "dualsense",
-            1 => "dualsense-composite",
+            1 when _authoredHapticsAvailable => DualSenseHapticsAudio.CompositeProfileId,
+            1 => throw new InvalidOperationException("Validated DualSense four-channel audio is unavailable"),
             _ => throw new InvalidDataException("Unsupported DS5 profile mode"),
         };
         var profile = _context.GetProfile(profileId)
                       ?? throw new InvalidOperationException($"HIDMaestro profile '{profileId}' is missing");
         if (!profile.RequiresUsbipBackend)
             _context.InstallDriver();
+
+        if (profile.RequiresUsbipBackend)
+        {
+            try
+            {
+                // Seed a previously seen virtual interface before it becomes
+                // present. This avoids even a transient default-device switch
+                // on every attach after the first one.
+                DefaultAudioEndpointPolicy.EnsureNeverDefault(
+                    TimeSpan.Zero, includePhantom: true, out _);
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"Unable to preseed the DualSense audio endpoint policy: {error.Message}");
+            }
+        }
+
         var controller = _context.CreateController(profile);
+        if (profile.RequiresUsbipBackend)
+            controller = ApplyDefaultAudioEndpointPolicy(controller, profile);
         ControllerSession session;
         try
         {
@@ -230,6 +251,50 @@ internal sealed class SidecarServer : IAsyncDisposable
                        ? Protocol.Capability.AudioFourChannel | Protocol.Capability.AuthoredHapticsPcm
                        : 0)));
         Emit(new Protocol.Message(Protocol.MessageType.AttachReply, requestId, reply));
+        // Queue the successful attach reply before monitoring starts. If the
+        // endpoint is already default, Core can finish attaching and enter its
+        // normal one-shot recovery path before we close this composite session.
+        session.StartDefaultAudioEndpointGuard();
+    }
+
+    private HMController ApplyDefaultAudioEndpointPolicy(HMController controller, HMProfile profile)
+    {
+        const int recreationLimit = 2;
+        for (var recreation = 0; recreation <= recreationLimit; ++recreation)
+        {
+            bool changed;
+            try
+            {
+                if (!DefaultAudioEndpointPolicy.EnsureNeverDefault(
+                        TimeSpan.FromSeconds(3), includePhantom: false, out changed))
+                {
+                    Console.Error.WriteLine(
+                        "Unable to find the virtual DualSense audio interface; runtime default-device guard remains active");
+                    return controller;
+                }
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(
+                    $"Unable to apply the DualSense audio endpoint policy: {error.Message}; " +
+                    "runtime default-device guard remains active");
+                return controller;
+            }
+
+            if (!changed)
+                return controller;
+
+            // AudioEndpointBuilder consumes the EP properties when it creates
+            // the MMDevice endpoint. Once disposal begins, creation failures
+            // must propagate rather than returning a disposed controller.
+            controller.Dispose();
+            controller = _context.CreateController(profile);
+        }
+
+        Console.Error.WriteLine(
+            "DualSense audio endpoint identity did not stabilize after policy provisioning; " +
+            "runtime default-device guard remains active");
+        return controller;
     }
 
     private void Detach(uint requestId, ReadOnlySpan<byte> payload)
@@ -241,7 +306,7 @@ internal sealed class SidecarServer : IAsyncDisposable
         Emit(new Protocol.Message(Protocol.MessageType.DetachReply, requestId, new[] { payload[0] }));
     }
 
-    private void LoadPatchedProfiles()
+    private bool LoadPatchedProfiles()
     {
         // Upstream v1.6.1 USB DualSense profiles leave extendedReport unarmed,
         // so the vendor-blob encoder never runs and the Sony tail of report
@@ -262,15 +327,21 @@ internal sealed class SidecarServer : IAsyncDisposable
                 var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
                 using var stream = assembly.GetManifestResourceStream(resourceName)
                     ?? throw new InvalidOperationException($"Embedded profile '{resourceName}' is missing");
-                using var file = File.Create(Path.Combine(directory, id + ".json"));
-                stream.CopyTo(file);
+                using var memory = new MemoryStream();
+                stream.CopyTo(memory);
+                var profileBytes = memory.ToArray();
+                if (id == DualSenseHapticsAudio.CompositeProfileId)
+                    DualSenseHapticsAudio.ValidateCompositeProfile(profileBytes);
+                File.WriteAllBytes(Path.Combine(directory, id + ".json"), profileBytes);
             }
             if (_context.LoadProfilesFromDirectory(directory) < 2)
-                Console.Error.WriteLine("Patched DualSense profiles did not fully register");
+                throw new InvalidOperationException("Patched DualSense profiles did not fully register");
+            return true;
         }
         catch (Exception error)
         {
             Console.Error.WriteLine($"Unable to load patched DualSense profiles: {error.Message}");
+            return false;
         }
     }
 
@@ -317,6 +388,14 @@ internal sealed class SidecarServer : IAsyncDisposable
                 var frame = Protocol.Encode(message);
                 await pipe.WriteAsync(frame, cancellationToken);
                 await pipe.FlushAsync(cancellationToken);
+                if (message.Type == Protocol.MessageType.AudioPolicyViolation)
+                {
+                    // Flush the reason before ending the owner session. Core
+                    // consumes it and relaunches this controller in HID-only
+                    // mode, so input survives while suspect PCM is disabled.
+                    _sessionCancellation?.Cancel();
+                    return;
+                }
             }
         }
     }
