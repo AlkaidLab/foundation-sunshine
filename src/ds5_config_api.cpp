@@ -197,13 +197,13 @@ namespace ds5_config::api {
                             !input.contains("ds5_legacy_haptics_body_mix") || !input["ds5_legacy_haptics_body_mix"].is_number()))) {
         return false;
       }
-      settings = {
-        input["ds5_enabled"].get<bool>(),
-        input["ds5_audio_haptics"].get<bool>(),
-        input["ds5_legacy_haptics_strength"].get<double>(),
-        input["ds5_legacy_haptics_curve"].get<double>(),
-        input["ds5_legacy_haptics_noise_gate"].get<double>(),
-      };
+      // 五字段客户端早于 schema 2；处理旧文档时保留当前扩展渲染参数，
+      // 避免重置调用方无法读取和修改的设置。
+      settings.enabled = input["ds5_enabled"].get<bool>();
+      settings.audio_haptics = input["ds5_audio_haptics"].get<bool>();
+      settings.legacy_strength = input["ds5_legacy_haptics_strength"].get<double>();
+      settings.legacy_curve = input["ds5_legacy_haptics_curve"].get<double>();
+      settings.legacy_noise_gate = input["ds5_legacy_haptics_noise_gate"].get<double>();
       if (has_extended) {
         if (!parse_legacy_profile(input["ds5_legacy_haptics_profile"].get<std::string>(), settings.legacy_profile) ||
             !parse_legacy_response(input["ds5_legacy_haptics_response"].get<std::string>(), settings.legacy_response)) {
@@ -273,7 +273,7 @@ namespace ds5_config::api {
       }
 
       const auto input = json::parse(request->content.string(), nullptr, false);
-      settings_t requested;
+      auto requested = current();
       if (input.is_discarded() || !parse_settings(input, requested)) {
         write_error(
           std::move(response),
