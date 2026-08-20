@@ -20,6 +20,10 @@
 #include "src/nvhttp.h"
 #include "src/nvhttp/pairing.h"
 
+#ifdef _WIN32
+  #include "src/platform/windows/misc.h"
+#endif
+
 namespace {
   namespace fs = std::filesystem;
   namespace pt = boost::property_tree;
@@ -71,7 +75,11 @@ namespace {
       std::ofstream state_stream { state_file_ };
       pt::write_json(state_stream, state);
 
+#ifdef _WIN32
+      config::nvhttp.file_state = platf::to_utf8(state_file_.wstring());
+#else
       config::nvhttp.file_state = state_file_.string();
+#endif
       nvhttp::pairing::load_state();
     }
 

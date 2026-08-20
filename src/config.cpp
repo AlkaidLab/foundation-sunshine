@@ -52,6 +52,24 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+
+    fs::path
+    path_from_utf8(const std::string &value) {
+#ifdef _WIN32
+      return fs::path { platf::from_utf8(value) };
+#else
+      return fs::path { value };
+#endif
+    }
+
+    std::string
+    path_to_utf8(const fs::path &value) {
+#ifdef _WIN32
+      return platf::to_utf8(value.wstring());
+#else
+      return value.string();
+#endif
+    }
   }
 
   namespace nv {
@@ -802,7 +820,7 @@ namespace config {
     string_f(vars, name, temp);
 
     if (!temp.empty()) {
-      input = temp;
+      input = path_from_utf8(temp);
     }
 
     if (input.is_relative()) {
@@ -820,11 +838,11 @@ namespace config {
 
   void
   path_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input) {
-    fs::path temp = input;
+    fs::path temp = path_from_utf8(input);
 
     path_f(vars, name, temp);
 
-    input = temp.string();
+    input = path_to_utf8(temp);
   }
 
   void

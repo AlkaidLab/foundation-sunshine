@@ -33,6 +33,10 @@
 #include "src/utility.h"
 #include "src/uuid.h"
 
+#ifdef _WIN32
+  #include "src/platform/windows/misc.h"
+#endif
+
 using namespace std::literals;
 
 namespace nvhttp {
@@ -59,6 +63,15 @@ namespace nvhttp {
 
     namespace fs = std::filesystem;
     namespace pt = boost::property_tree;
+
+    fs::path
+    state_file_path() {
+#ifdef _WIN32
+      return fs::path { platf::from_utf8(config::nvhttp.file_state) };
+#else
+      return fs::path { config::nvhttp.file_state };
+#endif
+    }
 
     struct named_cert_t {
       std::string name;
@@ -174,7 +187,7 @@ namespace nvhttp {
     void
     save_state(bool preserve_existing = true) {
       pt::ptree root;
-      const fs::path state_path { config::nvhttp.file_state };
+      const auto state_path = state_file_path();
 
       if (preserve_existing && fs::exists(state_path)) {
         try {
@@ -410,7 +423,7 @@ namespace nvhttp {
 
     void
     load_state() {
-      const fs::path state_path { config::nvhttp.file_state };
+      const auto state_path = state_file_path();
       if (!fs::exists(state_path)) {
         BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
         http::unique_id = uuid_util::uuid_t::generate().string();
