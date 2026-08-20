@@ -135,6 +135,17 @@ namespace ds5_config {
            settings.legacy_body_mix >= 0.0 && settings.legacy_body_mix <= MAX_BODY_MIX;
   }
 
+  bool uses_stock_legacy_renderer(const settings_t &settings) noexcept {
+    return settings.legacy_profile == legacy_profile_t::custom &&
+           settings.legacy_strength == 1.0 &&
+           settings.legacy_curve == 0.5 &&
+           settings.legacy_noise_gate == 0.020 &&
+           settings.legacy_max_output == 1.0 &&
+           settings.legacy_high_scale == 1.0 &&
+           settings.legacy_response == legacy_response_t::balanced &&
+           settings.legacy_body_mix == 0.0;
+  }
+
   std::string_view legacy_profile_name(legacy_profile_t profile) noexcept {
     switch (profile) {
       case legacy_profile_t::quiet: return "quiet";

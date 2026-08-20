@@ -123,6 +123,15 @@ TEST(HlgSystemGamma, FallsBackToReferencePeakForInvalidValues) {
   EXPECT_NEAR(video::hlg_system_gamma(std::numeric_limits<float>::quiet_NaN()), 1.2f, 0.00001f);
 }
 
+TEST(DynamicSdrWhite, AcceptsOnlyFiniteValuesWithinProtocolRange) {
+  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(49.0f));
+  EXPECT_TRUE(video::is_valid_client_sdr_white_nits(50.0f));
+  EXPECT_TRUE(video::is_valid_client_sdr_white_nits(1000.0f));
+  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(1001.0f));
+  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(std::numeric_limits<float>::quiet_NaN()));
+  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(std::numeric_limits<float>::infinity()));
+}
+
 TEST(VideoBitrate, ConvertsTotalBitrateToEncoderBitrate) {
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 10), 45000);
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 80), 10000);

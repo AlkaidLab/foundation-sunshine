@@ -68,6 +68,10 @@ internal sealed class ControllerSession : IDisposable
             _controller.UsbAudio.Output.FramesReceived += OnAudioFrames;
             _controller.UsbAudio.Output.StreamingChanged += OnAudioStreamingChanged;
         }
+        // Emit a centered, untouched idle frame immediately: without it the
+        // device reports an all-zero buffer until the first client input,
+        // which raw consumers decode as a down touch contact at (0,0).
+        _controller.SubmitState(in _state);
     }
 
     internal byte DeviceId { get; }
@@ -117,7 +121,7 @@ internal sealed class ControllerSession : IDisposable
                     SetTouch(slot, false, 0, 0, 0);
                 _touchSlots.Clear();
             }
-            else if (eventType is 0 or 1 or 3) // hover/down/move claim or update a slot
+            else if (eventType is 1 or 3) // down/move claim or update a slot
             {
                 if (!_touchSlots.TryGetValue(pointerId, out var slot))
                 {
@@ -127,6 +131,14 @@ internal sealed class ControllerSession : IDisposable
                     _touchSlots[pointerId] = slot;
                 }
                 SetTouch(slot, true, pointerId, x, y);
+            }
+            else if (eventType is 0 or 6) // hover/hover-leave are not contacts
+            {
+                // A hover packet must never claim a finger slot. HID touchpads
+                // use hover while the contact is up, and exposing it as active
+                // makes Windows interpret ordinary pointer movement as a
+                // precision-touchpad gesture (for example, menu scrolling).
+                return;
             }
             else if (eventType is 2 or 4 or 6 && _touchSlots.Remove(pointerId, out var slot))
             {
@@ -157,12 +169,23 @@ internal sealed class ControllerSession : IDisposable
                 _state.AccelGX = x / 9.80665f;
                 _state.AccelGY = y / 9.80665f;
                 _state.AccelGZ = z / 9.80665f;
+                // The alwaysArmed extendedReport encodes sensors from the raw
+                // Sony firmware fields, not the calibrated ones. Scales follow
+                // SDL's hidapi_ps5: 8192 LSB per g, HID gyro units are 1/64 of
+                // 1024 LSB per deg/s (= 16 LSB per deg/s), pitch/yaw/roll map
+                // to SDL gyro X/Y/Z one-to-one.
+                _state.AccelX = RawAccel(_state.AccelGX);
+                _state.AccelY = RawAccel(_state.AccelGY);
+                _state.AccelZ = RawAccel(_state.AccelGZ);
             }
             else if (type == 2)
             {
                 _state.GyroDpsX = x;
                 _state.GyroDpsY = y;
                 _state.GyroDpsZ = z;
+                _state.GyroPitch = RawGyro(x);
+                _state.GyroYaw = RawGyro(y);
+                _state.GyroRoll = RawGyro(z);
             }
             else
             {
@@ -337,6 +360,12 @@ internal sealed class ControllerSession : IDisposable
             _state.TouchpadFinger1Y = py;
         }
     }
+
+    private static short RawAccel(float g) =>
+        (short)Math.Clamp((int)Math.Round(g * 8192f), short.MinValue, short.MaxValue);
+
+    private static short RawGyro(float degreesPerSecond) =>
+        (short)Math.Clamp((int)Math.Round(degreesPerSecond * 16f), short.MinValue, short.MaxValue);
 
     private static HMButton MapButtons(uint flags)
     {

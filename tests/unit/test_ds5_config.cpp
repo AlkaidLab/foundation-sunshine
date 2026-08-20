@@ -91,7 +91,7 @@ TEST_F(Ds5ConfigTest, MissingFileReturnsDisabledDefaults) {
   EXPECT_FALSE(result.settings.enabled);
   EXPECT_TRUE(result.settings.audio_haptics);
   EXPECT_DOUBLE_EQ(result.settings.legacy_strength, 1.0);
-  EXPECT_DOUBLE_EQ(result.settings.legacy_curve, 1.0);
+  EXPECT_DOUBLE_EQ(result.settings.legacy_curve, 0.5);
   EXPECT_DOUBLE_EQ(result.settings.legacy_noise_gate, 0.020);
   EXPECT_EQ(result.settings.revision, 1);
 }
@@ -143,6 +143,18 @@ TEST_F(Ds5ConfigTest, ResolvesLegacyPresetsToCompleteRendererSettings) {
   settings.legacy_profile = ds5_config::legacy_profile_t::custom;
   settings.legacy_strength = 1.7;
   EXPECT_DOUBLE_EQ(ds5_config::resolve_legacy_profile(settings).legacy_strength, 1.7);
+}
+
+TEST_F(Ds5ConfigTest, DetectsOnlyTheExactStockRendererSettings) {
+  const auto stock = ds5_config::settings_t {};
+  EXPECT_TRUE(ds5_config::uses_stock_legacy_renderer(stock));
+
+  auto customized = stock;
+  customized.legacy_max_output = 0.99;
+  EXPECT_FALSE(ds5_config::uses_stock_legacy_renderer(customized));
+  customized = stock;
+  customized.legacy_profile = ds5_config::legacy_profile_t::balanced;
+  EXPECT_FALSE(ds5_config::uses_stock_legacy_renderer(customized));
 }
 
 TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {

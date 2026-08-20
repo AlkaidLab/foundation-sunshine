@@ -112,6 +112,11 @@ namespace haptics {
     std::uint64_t _tuning_revision = 0;
     gate_state_t _low_gate;
     gate_state_t _high_gate;
+    // Set only when a motor starts releasing before the short-pulse hold
+    // expires. Such pulses are force-cleared at the boundary; long effects
+    // retain their normal release tail.
+    bool _short_release_low = false;
+    bool _short_release_high = false;
     bool _have_input = false;
   };
 }  // namespace haptics

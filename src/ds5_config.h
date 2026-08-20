@@ -40,7 +40,7 @@ namespace ds5_config {
     bool enabled = false;
     bool audio_haptics = true;
     double legacy_strength = 1.0;
-    double legacy_curve = 1.0;
+    double legacy_curve = 0.5;
     double legacy_noise_gate = 0.020;
     legacy_profile_t legacy_profile = legacy_profile_t::custom;
     double legacy_max_output = 1.0;
@@ -93,6 +93,7 @@ namespace ds5_config {
   std::filesystem::path backup_path_for(const std::filesystem::path &settings_file);
 
   bool validate(const settings_t &settings) noexcept;
+  bool uses_stock_legacy_renderer(const settings_t &settings) noexcept;
   settings_t resolve_legacy_profile(settings_t settings) noexcept;
   std::string_view legacy_profile_name(legacy_profile_t profile) noexcept;
   bool parse_legacy_profile(std::string_view value, legacy_profile_t &profile) noexcept;
