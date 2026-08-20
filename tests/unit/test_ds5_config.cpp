@@ -80,7 +80,7 @@ TEST_F(Ds5ConfigTest, MissingFileReturnsDisabledDefaults) {
   EXPECT_FALSE(result.settings.enabled);
   EXPECT_TRUE(result.settings.audio_haptics);
   EXPECT_DOUBLE_EQ(result.settings.legacy_strength, 1.0);
-  EXPECT_DOUBLE_EQ(result.settings.legacy_curve, 1.0);
+  EXPECT_DOUBLE_EQ(result.settings.legacy_curve, 0.5);
   EXPECT_DOUBLE_EQ(result.settings.legacy_noise_gate, 0.020);
   EXPECT_EQ(result.settings.revision, 1);
 }

@@ -21,11 +21,15 @@ namespace haptics {
     constexpr std::uint8_t source_stream_end = 0x02;
     constexpr std::uint8_t source_discontinuity = 0x04;
     constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
+    // Some clients dispatch rumble on a slower timer and keep only the newest
+    // queued packet. Hold short synthesized pulses long enough that a stop
+    // packet cannot replace the only nonzero dispatch.
+    constexpr auto legacy_min_active_hold = std::chrono::milliseconds(80);
     constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
     constexpr float legacy_gate_open = 0.020f;
     constexpr float legacy_gate_close = 0.010f;
     constexpr float legacy_gate_hold_seconds = 0.060f;
-    constexpr float legacy_output_floor = 0.004f;
+    constexpr float legacy_output_floor = 0.030f;
     constexpr float legacy_low_band_trim = 1.15f;
     constexpr float legacy_high_band_trim = 1.20f;
     constexpr float legacy_transient_trim = 1.15f;
@@ -82,12 +86,10 @@ namespace haptics {
 
       const auto gated = std::clamp(
         (value - gate_close) / (1.0f - gate_close), 0.0f, 1.0f);
-      // A curve below 1 lifts the quiet band where voice-coil-authored content
-      // is clearly felt while rotor motors do not start; tanh still caps the
-      // top end so the strength multiplier cannot overdrive strong effects.
-      // The equality fast path keeps the default mapping free of any pow()
-      // rounding drift versus the original curve.
-      const auto drive = curve == 1.0f ? gated : std::pow(gated, curve);
+      // Curve 0.5 is the current stock perceptual mapping. Keep its sqrt()
+      // path point-for-point with master while allowing custom exponents.
+      const auto drive = curve == 0.5f ? std::sqrt(gated) :
+                           curve == 1.0f ? gated : std::pow(gated, curve);
       return strength * std::tanh(makeup_gain * drive) / std::tanh(makeup_gain);
     }
 
@@ -243,6 +245,11 @@ namespace haptics {
       _low_gate = {};
       _high_gate = {};
       _last_emit = {};
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
+      _short_release_low = false;
+      _short_release_high = false;
     }
 
     const bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;
@@ -283,6 +290,8 @@ namespace haptics {
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};
+      _short_release_low = false;
+      _short_release_high = false;
     }
     const auto low_target = must_stop ? 0.0f : shaped(
       low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds,
@@ -290,6 +299,25 @@ namespace haptics {
     const auto high_target = must_stop ? 0.0f : shaped(
       high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds,
       gate_open, gate_close, curve, strength);
+
+    // A force clear is only appropriate when a target drops out during the
+    // minimum hold window. Effects that were already active beyond that
+    // window must use the configured release tail instead.
+    const bool within_min_hold =
+      _active_since != std::chrono::steady_clock::time_point {} &&
+      now - _active_since < legacy_min_active_hold;
+    if (must_stop || low_target > 0.0f) {
+      _short_release_low = false;
+    }
+    else if (within_min_hold) {
+      _short_release_low = true;
+    }
+    if (must_stop || high_target > 0.0f) {
+      _short_release_high = false;
+    }
+    else if (within_min_hold) {
+      _short_release_high = true;
+    }
 
     const auto smooth = [duration_seconds](float previous, float target,
                                            float attack, float release) {
@@ -301,11 +329,33 @@ namespace haptics {
       _smoothed_low, low_target, legacy_low_attack_seconds, legacy_low_release_seconds);
     _smoothed_high = must_stop ? 0.0f : smooth(
       _smoothed_high, high_target, legacy_high_attack_seconds, legacy_high_release_seconds);
+    const bool hold_expired =
+      _active_since != std::chrono::steady_clock::time_point {} &&
+      now - _active_since >= legacy_min_active_hold;
+    if (hold_expired && _short_release_low && low_target <= 0.0f) _smoothed_low = 0.0f;
+    if (hold_expired && _short_release_high && high_target <= 0.0f) _smoothed_high = 0.0f;
     if (low_target <= 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
     if (high_target <= 0.0f && _smoothed_high < legacy_output_floor) _smoothed_high = 0.0f;
 
-    const auto low = rumble_u16(_smoothed_low);
-    const auto high = rumble_u16(_smoothed_high);
+    auto low = rumble_u16(_smoothed_low);
+    auto high = rumble_u16(_smoothed_high);
+    if (low != 0 || high != 0) {
+      if (_active_since == std::chrono::steady_clock::time_point {}) _active_since = now;
+      _last_nonzero_low = low;
+      _last_nonzero_high = high;
+    }
+    else if (!must_stop && _active_since != std::chrono::steady_clock::time_point {} &&
+             now - _active_since < legacy_min_active_hold) {
+      low = _last_nonzero_low;
+      high = _last_nonzero_high;
+    }
+    else if (must_stop || _active_since != std::chrono::steady_clock::time_point {}) {
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
+      _short_release_low = false;
+      _short_release_high = false;
+    }
     // The 20 ms rate limit is the only emission gate. Held silence additionally
     // stays quiet instead of re-sending zero rumble at 50 Hz.
     const bool silent_hold = low == 0 && high == 0 && _last_low == 0 && _last_high == 0;
@@ -334,6 +384,11 @@ namespace haptics {
     _high_gate = {};
     _last_low = 0;
     _last_high = 0;
+    _active_since = {};
+    _last_nonzero_low = 0;
+    _last_nonzero_high = 0;
+    _short_release_low = false;
+    _short_release_high = false;
     if (!had_output) return std::nullopt;
     _last_emit = now;
     return legacy_rumble_t {_controller_id, 0, 0};
