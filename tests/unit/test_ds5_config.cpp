@@ -3,13 +3,15 @@
  * @brief Tests for the standalone ds5_config.json store and runtime snapshot.
  */
 
-#include <cstdint>
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -17,6 +19,7 @@
 
 #include "../tests_common.h"
 #include "src/ds5_config.h"
+#include "src/ds5_config_api.h"
 
 namespace {
   namespace fs = std::filesystem;
@@ -74,6 +77,19 @@ namespace {
     value["ds5_legacy_haptics_response"] = "balanced";
     value["ds5_legacy_haptics_body_mix"] = 0.15;
     return value;
+  }
+
+  bool same_values(const ds5_config::settings_t &left, const ds5_config::settings_t &right) {
+    return left.enabled == right.enabled &&
+           left.audio_haptics == right.audio_haptics &&
+           left.legacy_strength == right.legacy_strength &&
+           left.legacy_curve == right.legacy_curve &&
+           left.legacy_noise_gate == right.legacy_noise_gate &&
+           left.legacy_profile == right.legacy_profile &&
+           left.legacy_max_output == right.legacy_max_output &&
+           left.legacy_high_scale == right.legacy_high_scale &&
+           left.legacy_response == right.legacy_response &&
+           left.legacy_body_mix == right.legacy_body_mix;
   }
 }  // namespace
 
@@ -198,38 +214,266 @@ TEST_F(Ds5ConfigTest, PreparedSnapshotDoesNotPublishUntilCommit) {
   EXPECT_EQ(ds5_config::current().revision, replacement.revision);
 }
 
+TEST_F(Ds5ConfigTest, ConditionalUpdateRequiresTheExactQueriedStrongValidator) {
+  auto initial = ds5_config::settings_t {};
+  initial.revision = 7;
+  ASSERT_TRUE(ds5_config::configure(initial));
+  ASSERT_TRUE(ds5_config::save(path_, initial));
+  const auto snapshot = ds5_config::api::query_state(path_);
+  ASSERT_EQ(snapshot.disk_status, ds5_config::load_status_t::LOADED);
+  ASSERT_TRUE(snapshot.persisted);
+  ASSERT_FALSE(snapshot.entity_tag.empty());
+
+  auto replacement = initial;
+  replacement.enabled = true;
+  using status_t = ds5_config::api::update_status_t;
+  EXPECT_EQ(
+    ds5_config::api::update_state(path_, replacement, std::nullopt).status,
+    status_t::PRECONDITION_REQUIRED
+  );
+  for (const auto &invalid : {
+         std::string {"*"},
+         "W/" + snapshot.entity_tag,
+         snapshot.entity_tag + ",",
+         snapshot.entity_tag + "," + snapshot.entity_tag,
+       }) {
+    EXPECT_EQ(
+      ds5_config::api::update_state(path_, replacement, invalid).status,
+      status_t::INVALID_PRECONDITION
+    );
+  }
+  EXPECT_EQ(ds5_config::current().revision, initial.revision);
+  EXPECT_FALSE(ds5_config::current().enabled);
+}
+
+TEST_F(Ds5ConfigTest, StrongValidatorCoversEveryExtendedRendererField) {
+  auto initial = ds5_config::settings_t {};
+  initial.revision = 7;
+  ASSERT_TRUE(ds5_config::configure(initial));
+  ASSERT_TRUE(ds5_config::save(path_, initial));
+  const auto initial_tag = ds5_config::api::query_state(path_).entity_tag;
+
+  const auto expect_distinct_tag = [&](ds5_config::settings_t candidate) {
+    ASSERT_TRUE(ds5_config::configure(candidate));
+    ASSERT_TRUE(ds5_config::save(path_, candidate));
+    EXPECT_NE(ds5_config::api::query_state(path_).entity_tag, initial_tag);
+  };
+
+  auto candidate = initial;
+  candidate.legacy_profile = ds5_config::legacy_profile_t::balanced;
+  expect_distinct_tag(candidate);
+  candidate = initial;
+  candidate.legacy_max_output = 0.70;
+  expect_distinct_tag(candidate);
+  candidate = initial;
+  candidate.legacy_high_scale = 0.75;
+  expect_distinct_tag(candidate);
+  candidate = initial;
+  candidate.legacy_response = ds5_config::legacy_response_t::smooth;
+  expect_distinct_tag(candidate);
+  candidate = initial;
+  candidate.legacy_body_mix = 0.15;
+  expect_distinct_tag(candidate);
+}
+
+TEST_F(Ds5ConfigTest, ConditionalUpdateRejectsAStaleSnapshot) {
+  auto initial = ds5_config::settings_t {};
+  initial.revision = 7;
+  ASSERT_TRUE(ds5_config::configure(initial));
+  ASSERT_TRUE(ds5_config::save(path_, initial));
+  const auto snapshot = ds5_config::api::query_state(path_);
+
+  auto first = initial;
+  first.enabled = true;
+  const auto first_result = ds5_config::api::update_state(path_, first, snapshot.entity_tag);
+  ASSERT_EQ(first_result.status, ds5_config::api::update_status_t::APPLIED);
+  EXPECT_EQ(first_result.state.settings.revision, 8);
+  EXPECT_NE(first_result.state.entity_tag, snapshot.entity_tag);
+
+  auto stale = initial;
+  stale.audio_haptics = false;
+  const auto stale_result = ds5_config::api::update_state(path_, stale, snapshot.entity_tag);
+  EXPECT_EQ(stale_result.status, ds5_config::api::update_status_t::PRECONDITION_FAILED);
+  EXPECT_TRUE(ds5_config::current().enabled);
+  EXPECT_TRUE(ds5_config::current().audio_haptics);
+  EXPECT_EQ(ds5_config::current().revision, 8);
+
+  const auto disk = ds5_config::load(path_);
+  ASSERT_EQ(disk.status, ds5_config::load_status_t::LOADED);
+  EXPECT_TRUE(disk.settings.enabled);
+  EXPECT_TRUE(disk.settings.audio_haptics);
+}
+
+TEST_F(Ds5ConfigTest, ConditionalUpdateSkipsUnchangedPersistenceAndPublication) {
+  auto initial = ds5_config::settings_t {true, false, 1.5, 0.5, 0.006};
+  initial.revision = 11;
+  ASSERT_TRUE(ds5_config::configure(initial));
+  ASSERT_TRUE(ds5_config::save(path_, initial));
+  const auto original_contents = read_text(path_);
+  const auto snapshot = ds5_config::api::query_state(path_);
+  ASSERT_FALSE(fs::exists(ds5_config::backup_path_for(path_)));
+
+  const auto result = ds5_config::api::update_state(path_, initial, snapshot.entity_tag);
+  ASSERT_EQ(result.status, ds5_config::api::update_status_t::UNCHANGED);
+  EXPECT_TRUE(result.state.persisted);
+  EXPECT_EQ(result.state.settings.revision, initial.revision);
+  EXPECT_EQ(result.state.entity_tag, snapshot.entity_tag);
+  EXPECT_EQ(ds5_config::current().revision, initial.revision);
+  EXPECT_EQ(read_text(path_), original_contents);
+  EXPECT_FALSE(fs::exists(ds5_config::backup_path_for(path_)));
+}
+
+TEST_F(Ds5ConfigTest, ConditionalUpdateAllowsOnlyOneConcurrentWriterPerSnapshot) {
+  auto initial = ds5_config::settings_t {};
+  initial.revision = 3;
+  ASSERT_TRUE(ds5_config::configure(initial));
+  ASSERT_TRUE(ds5_config::save(path_, initial));
+  const auto snapshot = ds5_config::api::query_state(path_);
+
+  auto first = initial;
+  first.enabled = true;
+  auto second = initial;
+  second.audio_haptics = false;
+  std::optional<ds5_config::api::update_result_t> first_result;
+  std::optional<ds5_config::api::update_result_t> second_result;
+  std::atomic_int ready {0};
+  std::atomic_bool start {false};
+  std::thread first_writer([&]() {
+    ready.fetch_add(1, std::memory_order_release);
+    while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+    first_result = ds5_config::api::update_state(path_, first, snapshot.entity_tag);
+  });
+  std::thread second_writer([&]() {
+    ready.fetch_add(1, std::memory_order_release);
+    while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+    second_result = ds5_config::api::update_state(path_, second, snapshot.entity_tag);
+  });
+  while (ready.load(std::memory_order_acquire) != 2) std::this_thread::yield();
+  start.store(true, std::memory_order_release);
+  first_writer.join();
+  second_writer.join();
+
+  ASSERT_TRUE(first_result);
+  ASSERT_TRUE(second_result);
+  const bool first_applied = first_result->status == ds5_config::api::update_status_t::APPLIED;
+  const bool second_applied = second_result->status == ds5_config::api::update_status_t::APPLIED;
+  EXPECT_NE(first_applied, second_applied);
+  EXPECT_EQ(
+    first_applied ? second_result->status : first_result->status,
+    ds5_config::api::update_status_t::PRECONDITION_FAILED
+  );
+
+  const auto active = ds5_config::current();
+  const auto expected = first_applied ? first : second;
+  EXPECT_TRUE(same_values(active, expected));
+  EXPECT_EQ(active.revision, initial.revision + 1);
+  const auto disk = ds5_config::load(path_);
+  ASSERT_EQ(disk.status, ds5_config::load_status_t::LOADED);
+  EXPECT_TRUE(same_values(disk.settings, expected));
+}
+
+TEST_F(Ds5ConfigTest, ConditionalNoOpLeavesMissingDefaultStoreUntouched) {
+  auto active = ds5_config::settings_t {};
+  active.revision = 4;
+  ASSERT_TRUE(ds5_config::configure(active));
+  ASSERT_FALSE(fs::exists(path_));
+  const auto snapshot = ds5_config::api::query_state(path_);
+  ASSERT_EQ(snapshot.disk_status, ds5_config::load_status_t::MISSING);
+  ASSERT_FALSE(snapshot.persisted);
+
+  const auto result = ds5_config::api::update_state(path_, active, snapshot.entity_tag);
+  ASSERT_EQ(result.status, ds5_config::api::update_status_t::UNCHANGED);
+  EXPECT_FALSE(result.state.persisted);
+  EXPECT_EQ(result.state.settings.revision, active.revision);
+  EXPECT_EQ(result.state.entity_tag, snapshot.entity_tag);
+  EXPECT_EQ(ds5_config::current().revision, active.revision);
+  EXPECT_FALSE(fs::exists(path_));
+  EXPECT_FALSE(fs::exists(ds5_config::backup_path_for(path_)));
+}
+
+TEST_F(Ds5ConfigTest, InvalidStoreBlocksConditionalUpdate) {
+  auto active = ds5_config::settings_t {};
+  active.revision = 5;
+  ASSERT_TRUE(ds5_config::configure(active));
+  write_json({{"ds5_enabled", true}});
+  const auto snapshot = ds5_config::api::query_state(path_);
+  ASSERT_EQ(snapshot.disk_status, ds5_config::load_status_t::INVALID);
+
+  auto replacement = active;
+  replacement.enabled = true;
+  const auto result = ds5_config::api::update_state(path_, replacement, snapshot.entity_tag);
+  EXPECT_EQ(result.status, ds5_config::api::update_status_t::INVALID_STORE);
+  EXPECT_FALSE(ds5_config::current().enabled);
+  EXPECT_EQ(read_text(path_), nlohmann::json({{"ds5_enabled", true}}).dump(2) + '\n');
+}
+
 TEST_F(Ds5ConfigTest, ConcurrentReadersObserveOnlyCompleteSnapshots) {
   ds5_config::settings_t first {false, true, 1.0, 1.0, 0.020};
   ds5_config::settings_t second {true, false, 4.0, 0.3, 0.002};
+  first.legacy_profile = ds5_config::legacy_profile_t::custom;
+  first.legacy_max_output = 1.0;
+  first.legacy_high_scale = 1.0;
+  first.legacy_response = ds5_config::legacy_response_t::balanced;
+  first.legacy_body_mix = 0.0;
+  second.legacy_profile = ds5_config::legacy_profile_t::strong;
+  second.legacy_max_output = 0.55;
+  second.legacy_high_scale = 0.65;
+  second.legacy_response = ds5_config::legacy_response_t::smooth;
+  second.legacy_body_mix = 0.30;
   first.revision = 1;
   second.revision = 2;
   ASSERT_TRUE(ds5_config::configure(first));
 
   std::atomic_bool running {true};
+  std::atomic_bool reader_ready {false};
+  std::atomic_bool first_write_complete {false};
+  std::atomic_bool observed_during_writes {false};
   std::atomic_bool invalid_snapshot {false};
   std::thread reader([&]() {
-    while (running.load(std::memory_order_relaxed)) {
+    reader_ready.store(true, std::memory_order_release);
+    while (!first_write_complete.load(std::memory_order_acquire) &&
+           running.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    while (running.load(std::memory_order_acquire)) {
       const auto observed = ds5_config::current();
       const bool is_first = !observed.enabled && observed.audio_haptics &&
                             observed.legacy_strength == 1.0 && observed.legacy_curve == 1.0 &&
-                            observed.legacy_noise_gate == 0.020 && observed.revision == 1;
+                            observed.legacy_noise_gate == 0.020 &&
+                            observed.legacy_profile == ds5_config::legacy_profile_t::custom &&
+                            observed.legacy_max_output == 1.0 &&
+                            observed.legacy_high_scale == 1.0 &&
+                            observed.legacy_response == ds5_config::legacy_response_t::balanced &&
+                            observed.legacy_body_mix == 0.0 && observed.revision == 1;
       const bool is_second = observed.enabled && !observed.audio_haptics &&
                              observed.legacy_strength == 4.0 && observed.legacy_curve == 0.3 &&
-                             observed.legacy_noise_gate == 0.002 && observed.revision == 2;
+                             observed.legacy_noise_gate == 0.002 &&
+                             observed.legacy_profile == ds5_config::legacy_profile_t::strong &&
+                             observed.legacy_max_output == 0.55 &&
+                             observed.legacy_high_scale == 0.65 &&
+                             observed.legacy_response == ds5_config::legacy_response_t::smooth &&
+                             observed.legacy_body_mix == 0.30 && observed.revision == 2;
+      observed_during_writes.store(true, std::memory_order_release);
       if (!is_first && !is_second) {
-        invalid_snapshot.store(true, std::memory_order_relaxed);
+        invalid_snapshot.store(true, std::memory_order_release);
         break;
       }
     }
   });
 
-  for (int iteration = 0; iteration < 2000; ++iteration) {
-    if (!ds5_config::configure(iteration % 2 == 0 ? second : first)) {
-      invalid_snapshot.store(true, std::memory_order_relaxed);
-      break;
-    }
+  while (!reader_ready.load(std::memory_order_acquire)) std::this_thread::yield();
+  bool writes_succeeded = ds5_config::configure(second);
+  first_write_complete.store(true, std::memory_order_release);
+  while (!observed_during_writes.load(std::memory_order_acquire) &&
+         !invalid_snapshot.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
   }
-  running.store(false, std::memory_order_relaxed);
+  for (int iteration = 1; writes_succeeded && iteration < 2000; ++iteration) {
+    writes_succeeded = ds5_config::configure(iteration % 2 == 0 ? second : first);
+  }
+  running.store(false, std::memory_order_release);
   reader.join();
-  EXPECT_FALSE(invalid_snapshot.load(std::memory_order_relaxed));
+  EXPECT_TRUE(writes_succeeded);
+  EXPECT_TRUE(observed_during_writes.load(std::memory_order_acquire));
+  EXPECT_FALSE(invalid_snapshot.load(std::memory_order_acquire));
 }

@@ -1,40 +1,145 @@
 /**
  * @file src/ds5_config_api.cpp
- * @brief Authenticated HTTP handlers for independent DualSense settings.
+ * @brief Authenticated HTTP handlers and conditional transactions for DualSense settings.
  */
 
 #include "ds5_config_api.h"
 
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
+#include <locale>
 #include <mutex>
 #include <optional>
+#include <sstream>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include <nlohmann/json.hpp>
 
-#include "ds5_config.h"
 #include "logging.h"
 
 namespace ds5_config::api {
   namespace {
     using json = nlohmann::json;
+
     constexpr std::size_t MAX_REQUEST_SIZE = 64 * 1024;
+    constexpr std::size_t MAX_ENTITY_TAG_SIZE = 512;
+
+    // Covers disk inspection, precondition evaluation, persistence, and
+    // snapshot publication. Runtime readers use only the atomic snapshot.
     std::mutex settings_transaction_mutex;
 
-    SimpleWeb::CaseInsensitiveMultimap json_headers() {
+    enum class if_match_result_t {
+      MATCH,
+      MISMATCH,
+      INVALID,
+    };
+
+    bool same_values(const settings_t &left, const settings_t &right) noexcept {
+      return left.enabled == right.enabled &&
+             left.audio_haptics == right.audio_haptics &&
+             left.legacy_strength == right.legacy_strength &&
+             left.legacy_curve == right.legacy_curve &&
+             left.legacy_noise_gate == right.legacy_noise_gate &&
+             left.legacy_profile == right.legacy_profile &&
+             left.legacy_max_output == right.legacy_max_output &&
+             left.legacy_high_scale == right.legacy_high_scale &&
+             left.legacy_response == right.legacy_response &&
+             left.legacy_body_mix == right.legacy_body_mix;
+    }
+
+    std::string make_entity_tag(const settings_t &settings, bool persisted) {
+      std::ostringstream stream;
+      stream.imbue(std::locale::classic());
+      stream << "\"ds5-v2-" << std::dec << settings.revision << '-'
+             << (persisted ? '1' : '0') << '-'
+             << (settings.enabled ? '1' : '0') << (settings.audio_haptics ? '1' : '0')
+             << '-' << std::hex << std::setfill('0')
+             << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_strength)
+             << '-' << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_curve)
+             << '-' << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_noise_gate)
+             << '-' << std::setw(2) << static_cast<unsigned>(settings.legacy_profile)
+             << '-' << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_max_output)
+             << '-' << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_high_scale)
+             << '-' << std::setw(2) << static_cast<unsigned>(settings.legacy_response)
+             << '-' << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_body_mix)
+             << '\"';
+      return stream.str();
+    }
+
+    bool valid_entity_tag_character(unsigned char value) noexcept {
+      return value == 0x21 || (value >= 0x23 && value <= 0x7e) || value >= 0x80;
+    }
+
+    if_match_result_t evaluate_if_match(
+      std::string_view value,
+      std::string_view current_entity_tag
+    ) noexcept {
+      const auto first = value.find_first_not_of(" \t");
+      if (first == std::string_view::npos) return if_match_result_t::INVALID;
+      const auto last = value.find_last_not_of(" \t");
+      value = value.substr(first, last - first + 1);
+
+      // This API requires the exact strong validator returned by one GET.
+      // Wildcards, weak tags, lists, and duplicate header values are rejected.
+      if (value.size() < 2 || value.size() > MAX_ENTITY_TAG_SIZE ||
+          value.front() != '\"' || value.back() != '\"') {
+        return if_match_result_t::INVALID;
+      }
+      for (const unsigned char character : value.substr(1, value.size() - 2)) {
+        if (!valid_entity_tag_character(character)) return if_match_result_t::INVALID;
+      }
+      return value == current_entity_tag ?
+               if_match_result_t::MATCH : if_match_result_t::MISMATCH;
+    }
+
+    config_state_t query_state_locked(const std::filesystem::path &path) {
+      const auto disk = load(path);
+      const auto active = current();
+      const bool persisted = disk.status == load_status_t::LOADED &&
+                             same_values(disk.settings, active);
       return {
+        disk.status,
+        active,
+        persisted,
+        make_entity_tag(active, persisted),
+      };
+    }
+
+    std::uint64_t next_revision(std::uint64_t revision) noexcept {
+      return revision == (std::numeric_limits<std::uint64_t>::max)() ? 1 : revision + 1;
+    }
+
+    SimpleWeb::CaseInsensitiveMultimap json_headers(std::string_view entity_tag = {}) {
+      SimpleWeb::CaseInsensitiveMultimap headers {
         {"Content-Type", "application/json"},
         {"Cache-Control", "no-store"},
         {"X-Content-Type-Options", "nosniff"},
         {"X-Frame-Options", "DENY"},
         {"Content-Security-Policy", "frame-ancestors 'none';"},
       };
+      if (!entity_tag.empty()) headers.emplace("ETag", std::string(entity_tag));
+      return headers;
     }
 
-    void write_json(resp_https_t response, SimpleWeb::StatusCode status, const json &body) {
-      response->write(status, body.dump(), json_headers());
+    void write_json(
+      resp_https_t response,
+      SimpleWeb::StatusCode status,
+      const json &body,
+      std::string_view entity_tag = {}
+    ) {
+      response->write(status, body.dump(), json_headers(entity_tag));
+    }
+
+    json error_json(const char *message, const char *error_code = nullptr) {
+      json body {{"status", false}, {"error", message}};
+      if (error_code) body["error_code"] = error_code;
+      return body;
     }
 
     void write_error(
@@ -43,9 +148,7 @@ namespace ds5_config::api {
       const char *message,
       const char *error_code = nullptr
     ) {
-      json body {{"status", false}, {"error", message}};
-      if (error_code) body["error_code"] = error_code;
-      write_json(std::move(response), status, body);
+      write_json(std::move(response), status, error_json(message, error_code));
     }
 
     json settings_json(
@@ -72,19 +175,6 @@ namespace ds5_config::api {
       };
       if (changed) result["changed"] = *changed;
       return result;
-    }
-
-    bool same_values(const settings_t &left, const settings_t &right) noexcept {
-      return left.enabled == right.enabled &&
-             left.audio_haptics == right.audio_haptics &&
-             left.legacy_strength == right.legacy_strength &&
-             left.legacy_curve == right.legacy_curve &&
-             left.legacy_noise_gate == right.legacy_noise_gate &&
-             left.legacy_profile == right.legacy_profile &&
-             left.legacy_max_output == right.legacy_max_output &&
-             left.legacy_high_scale == right.legacy_high_scale &&
-             left.legacy_response == right.legacy_response &&
-             left.legacy_body_mix == right.legacy_body_mix;
     }
 
     bool parse_settings(const json &input, settings_t &settings) {
@@ -124,13 +214,32 @@ namespace ds5_config::api {
       return validate(settings);
     }
 
-    void get_config_impl(resp_https_t response, const std::filesystem::path &path) {
-      load_result_t result;
-      {
-        std::lock_guard<std::mutex> lock(settings_transaction_mutex);
-        result = load(path);
+    std::optional<std::string> request_if_match(const req_https_t &request) {
+      const auto [first, last] = request->header.equal_range("If-Match");
+      if (first == last) return std::nullopt;
+
+      std::string value;
+      for (auto entry = first; entry != last; ++entry) {
+        if (!value.empty()) value.push_back(',');
+        value.append(entry->second);
+        if (value.size() > MAX_ENTITY_TAG_SIZE) break;
       }
-      if (result.status == load_status_t::INVALID) {
+      return value;
+    }
+
+    json precondition_error_json(
+      const char *message,
+      const char *error_code,
+      std::uint64_t revision
+    ) {
+      auto body = error_json(message, error_code);
+      body["revision"] = revision;
+      return body;
+    }
+
+    void get_config_impl(resp_https_t response, const std::filesystem::path &path) {
+      const auto state = query_state(path);
+      if (state.disk_status == load_status_t::INVALID) {
         write_error(
           std::move(response),
           SimpleWeb::StatusCode::server_error_internal_server_error,
@@ -139,74 +248,195 @@ namespace ds5_config::api {
         );
         return;
       }
-      const auto active = current();
       write_json(
         std::move(response),
         SimpleWeb::StatusCode::success_ok,
-        settings_json(active, result.status == load_status_t::LOADED)
+        settings_json(state.settings, state.persisted),
+        state.entity_tag
       );
     }
 
-    void save_config_impl(resp_https_t response, req_https_t request, const std::filesystem::path &path) {
+    void save_config_impl(
+      resp_https_t response,
+      req_https_t request,
+      const std::filesystem::path &path
+    ) {
       if (request->content.size() > MAX_REQUEST_SIZE) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_payload_too_large, "Request body is too large");
+        write_error(
+          std::move(response),
+          SimpleWeb::StatusCode::client_error_payload_too_large,
+          "Request body is too large"
+        );
         return;
       }
+
       const auto input = json::parse(request->content.string(), nullptr, false);
-      settings_t settings;
-      if (input.is_discarded() || !parse_settings(input, settings)) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "Invalid DualSense configuration");
+      settings_t requested;
+      if (input.is_discarded() || !parse_settings(input, requested)) {
+        write_error(
+          std::move(response),
+          SimpleWeb::StatusCode::client_error_bad_request,
+          "Invalid DualSense configuration"
+        );
         return;
       }
 
-      bool saved = false;
-      bool applied = false;
-      bool changed = false;
-      {
-        std::lock_guard<std::mutex> lock(settings_transaction_mutex);
-        const auto active = current();
-        changed = !same_values(active, settings);
-        settings.revision = !changed ? active.revision :
-                              active.revision == (std::numeric_limits<std::uint64_t>::max)() ?
-                                1 : active.revision + 1;
-        auto prepared = prepare(settings);
-        if (prepared) {
-          saved = save(path, prepared.value());
-          if (saved) applied = commit(std::move(prepared));
-        }
-      }
-      if (!saved) {
-        write_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to write DualSense configuration");
-        return;
-      }
-      if (!applied) {
-        BOOST_LOG(error) << "DualSense configuration was persisted but could not be published to the runtime";
-        write_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to apply DualSense configuration");
-        return;
-      }
+      const auto if_match_value = request_if_match(request);
+      std::optional<std::string_view> if_match;
+      if (if_match_value) if_match = *if_match_value;
+      const auto result = update_state(path, requested, if_match);
 
-      if (changed) {
-        BOOST_LOG(info) << "DualSense configuration saved and applied at revision " << settings.revision;
+      switch (result.status) {
+        case update_status_t::APPLIED:
+          BOOST_LOG(info) << "DualSense configuration saved and applied at revision "
+                          << result.state.settings.revision;
+          write_json(
+            std::move(response),
+            SimpleWeb::StatusCode::success_ok,
+            settings_json(result.state.settings, true, true),
+            result.state.entity_tag
+          );
+          return;
+        case update_status_t::UNCHANGED:
+          BOOST_LOG(debug) << "DualSense configuration was unchanged at revision "
+                           << result.state.settings.revision;
+          write_json(
+            std::move(response),
+            SimpleWeb::StatusCode::success_ok,
+            settings_json(result.state.settings, result.state.persisted, false),
+            result.state.entity_tag
+          );
+          return;
+        case update_status_t::PRECONDITION_REQUIRED:
+          write_json(
+            std::move(response),
+            SimpleWeb::StatusCode::client_error_precondition_required,
+            precondition_error_json(
+              "Query DualSense configuration before saving",
+              "ds5_precondition_required",
+              result.state.settings.revision
+            )
+          );
+          return;
+        case update_status_t::PRECONDITION_FAILED:
+          write_json(
+            std::move(response),
+            SimpleWeb::StatusCode::client_error_precondition_failed,
+            precondition_error_json(
+              "DualSense configuration changed; query it again before saving",
+              "ds5_precondition_failed",
+              result.state.settings.revision
+            )
+          );
+          return;
+        case update_status_t::INVALID_PRECONDITION:
+          write_json(
+            std::move(response),
+            SimpleWeb::StatusCode::client_error_bad_request,
+            precondition_error_json(
+              "Invalid If-Match header",
+              "ds5_if_match_invalid",
+              result.state.settings.revision
+            )
+          );
+          return;
+        case update_status_t::INVALID_SETTINGS:
+          write_error(
+            std::move(response),
+            SimpleWeb::StatusCode::client_error_bad_request,
+            "Invalid DualSense configuration"
+          );
+          return;
+        case update_status_t::INVALID_STORE:
+          write_error(
+            std::move(response),
+            SimpleWeb::StatusCode::server_error_internal_server_error,
+            "Failed to read DualSense configuration",
+            "ds5_config_invalid"
+          );
+          return;
+        case update_status_t::SAVE_FAILED:
+          write_error(
+            std::move(response),
+            SimpleWeb::StatusCode::server_error_internal_server_error,
+            "Failed to write DualSense configuration"
+          );
+          return;
+        case update_status_t::APPLY_FAILED:
+          BOOST_LOG(error) << "DualSense configuration could not be published to the runtime";
+          write_error(
+            std::move(response),
+            SimpleWeb::StatusCode::server_error_internal_server_error,
+            "Failed to apply DualSense configuration"
+          );
+          return;
       }
-      else {
-        BOOST_LOG(debug) << "DualSense configuration save kept revision " << settings.revision;
-      }
-      write_json(
-        std::move(response),
-        SimpleWeb::StatusCode::success_ok,
-        settings_json(settings, true, changed)
-      );
     }
 
     void write_unhandled_error(resp_https_t response) noexcept {
       if (!response) return;
       try {
-        write_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "DualSense request failed");
+        write_error(
+          std::move(response),
+          SimpleWeb::StatusCode::server_error_internal_server_error,
+          "DualSense request failed"
+        );
       }
       catch (...) {
       }
     }
   }  // namespace
+
+  config_state_t query_state(const std::filesystem::path &path) {
+    std::lock_guard<std::mutex> lock(settings_transaction_mutex);
+    return query_state_locked(path);
+  }
+
+  update_result_t update_state(
+    const std::filesystem::path &path,
+    settings_t requested,
+    std::optional<std::string_view> if_match
+  ) {
+    std::lock_guard<std::mutex> lock(settings_transaction_mutex);
+    auto state = query_state_locked(path);
+
+    if (!validate(requested)) return {update_status_t::INVALID_SETTINGS, std::move(state)};
+    if (state.disk_status == load_status_t::INVALID) {
+      return {update_status_t::INVALID_STORE, std::move(state)};
+    }
+    if (!if_match) return {update_status_t::PRECONDITION_REQUIRED, std::move(state)};
+
+    switch (evaluate_if_match(*if_match, state.entity_tag)) {
+      case if_match_result_t::INVALID:
+        return {update_status_t::INVALID_PRECONDITION, std::move(state)};
+      case if_match_result_t::MISMATCH:
+        return {update_status_t::PRECONDITION_FAILED, std::move(state)};
+      case if_match_result_t::MATCH:
+        break;
+    }
+
+    if (same_values(state.settings, requested)) {
+      return {update_status_t::UNCHANGED, std::move(state)};
+    }
+
+    requested.revision = next_revision(state.settings.revision);
+    auto prepared = prepare(requested);
+    if (!prepared) return {update_status_t::APPLY_FAILED, std::move(state)};
+    if (!save(path, prepared.value())) {
+      return {update_status_t::SAVE_FAILED, std::move(state)};
+    }
+    if (!commit(std::move(prepared))) {
+      return {update_status_t::APPLY_FAILED, query_state_locked(path)};
+    }
+
+    config_state_t updated {
+      load_status_t::LOADED,
+      requested,
+      true,
+      make_entity_tag(requested, true),
+    };
+    return {update_status_t::APPLIED, std::move(updated)};
+  }
 
   void get_config(resp_https_t response, const std::string &sunshine_config_file) noexcept {
     try {
