@@ -4,7 +4,7 @@ This optional Windows helper isolates Sunshine from the third-party
 HIDMaestro runtime. It owns virtual DS5 devices and exposes the versioned
 `SDS5` named-pipe protocol. The helper does not contain HIDMaestro binaries.
 
-Build against the pinned upstream v1.6.1 runtime:
+Build against the pinned upstream v1.6.2 runtime:
 
 ```powershell
 dotnet build -c Release `
