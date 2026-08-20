@@ -155,6 +155,8 @@ internal static class ProtocolSelfTest
 
     private static void VerifyDefaultAudioEndpointClassification()
     {
+        Require(Enum.GetUnderlyingType(typeof(DefaultAudioEndpointGuard.AudioRole)) == typeof(int),
+            "default audio role COM width");
         var virtualDualSense = new[]
         {
             new DefaultAudioEndpointGuard.DeviceNodeIdentity(

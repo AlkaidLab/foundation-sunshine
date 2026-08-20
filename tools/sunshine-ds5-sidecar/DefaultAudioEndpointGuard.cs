@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.Win32;
 
 namespace Sunshine.Ds5Sidecar;
@@ -12,7 +13,7 @@ namespace Sunshine.Ds5Sidecar;
 /// </summary>
 internal sealed class DefaultAudioEndpointGuard : IDisposable
 {
-    internal enum AudioRole : byte
+    internal enum AudioRole
     {
         Console = 0,
         Multimedia = 1,
@@ -24,6 +25,12 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private static readonly Guid MmDeviceEnumeratorClass =
         new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     private readonly CancellationTokenSource _stopping = new();
+    private readonly Channel<DefaultEndpointChange> _endpointChanges =
+        Channel.CreateUnbounded<DefaultEndpointChange>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false,
+        });
     private readonly Action<AudioRole> _onViolation;
     private readonly Task _worker;
     private int _reported;
@@ -53,7 +60,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             CheckCurrentDefaults(enumerator);
             if (registered)
             {
-                await Task.Delay(Timeout.InfiniteTimeSpan, _stopping.Token);
+                await ProcessEndpointChangesAsync();
             }
             else
             {
@@ -106,20 +113,27 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             CheckCurrentDefaults(enumerator);
     }
 
+    private async Task ProcessEndpointChangesAsync()
+    {
+        await foreach (var change in _endpointChanges.Reader.ReadAllAsync(_stopping.Token))
+        {
+            try
+            {
+                ReportIfVirtualDualSense(change.Role, change.EndpointId);
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(
+                    $"Unable to inspect the changed {change.Flow} default audio endpoint: {error.Message}");
+            }
+        }
+    }
+
     private void OnDefaultDeviceChanged(DataFlow flow, AudioRole role, string? endpointId)
     {
         if (endpointId is null || _stopping.IsCancellationRequested)
             return;
-        try
-        {
-            ReportIfVirtualDualSense(role, endpointId);
-        }
-        catch (Exception error)
-        {
-            // Never let an ownership lookup escape through the Core Audio COM
-            // callback boundary.
-            Console.Error.WriteLine($"Unable to inspect the changed default audio endpoint: {error.Message}");
-        }
+        _endpointChanges.Writer.TryWrite(new DefaultEndpointChange(flow, role, endpointId));
     }
 
     private void ReportIfVirtualDualSense(AudioRole role, string endpointId)
@@ -252,6 +266,9 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         Render = 0,
         Capture = 1,
     }
+
+    private readonly record struct DefaultEndpointChange(
+        DataFlow Flow, AudioRole Role, string EndpointId);
 
     [ComVisible(true)]
     [ClassInterface(ClassInterfaceType.None)]
