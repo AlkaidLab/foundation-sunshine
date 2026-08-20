@@ -49,6 +49,18 @@ namespace {
 
     std::wstring suffix;
   };
+
+  struct environment_scope_t {
+    environment_scope_t(const wchar_t *variable, const wchar_t *value): variable(variable) {
+      SetEnvironmentVariableW(variable, value);
+    }
+
+    ~environment_scope_t() {
+      SetEnvironmentVariableW(variable.c_str(), nullptr);
+    }
+
+    std::wstring variable;
+  };
 }  // namespace
 
 TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
@@ -168,6 +180,40 @@ TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   ASSERT_TRUE(marker);
   ASSERT_EQ(marker->type, platf::gamepad_feedback_e::rumble);
   EXPECT_TRUE(client.owns(0));
+  client.free(0);
+}
+
+TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
+  config_scope_t restore_config;
+  config::input.ds5_enabled = true;
+  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+
+  event_namespace_scope_t events(L"audio-policy-fallback");
+  environment_scope_t enable_policy_fallback(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto policy_once_name = L"Local\\sunshine-ds5-test-policy-once-" + events.suffix;
+  const auto hid_fallback_name = L"Local\\sunshine-ds5-test-hid-fallback-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
+  handle_scope_t policy_once_event(CreateEventW(nullptr, TRUE, FALSE, policy_once_name.c_str()));
+  handle_scope_t hid_fallback_event(CreateEventW(nullptr, FALSE, FALSE, hid_fallback_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(policy_once_event.handle, nullptr);
+  ASSERT_NE(hid_fallback_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-audio-policy-fallback-test");
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true), 0);
+  ASSERT_EQ(WaitForSingleObject(hid_fallback_event.handle, 5000), WAIT_OBJECT_0);
+  // The fake peer signals after observing the HID-only ATTACH payload, just
+  // before connect_and_attach() publishes online=true. Wait for that final
+  // local state transition instead of racing it.
+  const auto online_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!client.owns(0) && std::chrono::steady_clock::now() < online_deadline) {
+    Sleep(1);
+  }
+  EXPECT_TRUE(client.owns(0));
+  ASSERT_TRUE(SetEvent(continue_event.handle));
   client.free(0);
 }
 

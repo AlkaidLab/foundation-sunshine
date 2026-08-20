@@ -58,6 +58,7 @@ namespace platf::ds5 {
       adaptive_triggers = 102,
       led = 103,
       haptics_pcm = 104,
+      audio_policy_violation = 105,
       error = 255,
     };
 
@@ -274,6 +275,7 @@ namespace platf::ds5 {
     std::atomic_int global_index { -1 };
     std::uint8_t client_index = 0;
     bool audio_haptics_requested = false;
+    bool force_hid_fallback = false;
     feedback_queue_t feedback_queue;
     std::uint32_t next_request_id = 1;
 
@@ -359,6 +361,18 @@ namespace platf::ds5 {
                 p[1], p[2], frames, read_u32(p.data() + 8), read_u64(p.data() + 12),
                 p.data() + 24, pcm_size));
             }
+          }
+          break;
+        case message_e::audio_policy_violation:
+          if (p.size() == 4 && p[0] == owned_index) {
+            static constexpr std::array<std::string_view, 3> role_names {
+              "console", "multimedia", "communications"
+            };
+            const auto role = p[2] < role_names.size() ? role_names[p[2]] : "unknown"sv;
+            force_hid_fallback = true;
+            audio_haptics_requested = false;
+            BOOST_LOG(warning) << "The virtual DualSense audio endpoint became the Windows "sv
+                               << role << " default; falling back to HID-only DualSense"sv;
           }
           break;
         case message_e::error:
@@ -508,7 +522,7 @@ namespace platf::ds5 {
       }
 
       client_index = id.clientRelativeIndex;
-      audio_haptics_requested = audio_haptics;
+      audio_haptics_requested = audio_haptics && !force_hid_fallback;
       online = true;
       BOOST_LOG(info) << "DualSense sidecar attached controller "sv << id.globalIndex
                       << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)");
@@ -523,6 +537,9 @@ namespace platf::ds5 {
       if (reader.joinable()) {
         reader.join();
       }
+      // A new allocation is an explicit user/session request. Only the
+      // automatic recovery of the current allocation inherits the fallback.
+      force_hid_fallback = false;
       if (!connect_and_attach(id, audio_haptics)) {
         return false;
       }

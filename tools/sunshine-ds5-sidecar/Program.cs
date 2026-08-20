@@ -6,6 +6,7 @@ using Sunshine.Ds5Sidecar;
 
 var pipeName = "sunshine-ds5-v1";
 var probe = false;
+var selfCheck = false;
 string? selfTestProfile = null;
 string? resultPath = null;
 string? audioWriterPath = null;
@@ -15,6 +16,8 @@ for (var i = 0; i < args.Length; i++)
         pipeName = args[++i];
     else if (args[i] == "--probe")
         probe = true;
+    else if (args[i] == "--self-check")
+        selfCheck = true;
     else if (args[i] == "--self-test" && i + 1 < args.Length)
         selfTestProfile = args[++i];
     else if (args[i] == "--result" && i + 1 < args.Length)
@@ -23,6 +26,18 @@ for (var i = 0; i < args.Length; i++)
         audioWriterPath = args[++i];
     else
         return Fail($"Unknown argument: {args[i]}");
+}
+
+if (selfCheck)
+{
+    ProtocolSelfTest.RunDeterministicChecks();
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        audio_layout = true,
+        channel_isolation = true,
+        default_endpoint_classification = true,
+    }));
+    return 0;
 }
 
 if (probe)

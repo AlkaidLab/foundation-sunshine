@@ -40,6 +40,7 @@ internal static class Protocol
         AdaptiveTriggers = 102,
         Led = 103,
         HapticsPcm = 104,
+        AudioPolicyViolation = 105,
         Error = 255,
     }
 
