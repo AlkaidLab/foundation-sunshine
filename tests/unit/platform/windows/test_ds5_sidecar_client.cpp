@@ -171,6 +171,41 @@ TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   client.free(0);
 }
 
+TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
+  config_scope_t restore_config;
+  config::input.ds5_enabled = true;
+  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+
+  event_namespace_scope_t events(L"cancel-recovery");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto crash_name = L"Local\\sunshine-ds5-test-crash-once-" + events.suffix;
+  const auto recovery_started_name = L"Local\\sunshine-ds5-test-recovery-started-" + events.suffix;
+  const auto recovery_wait_name = L"Local\\sunshine-ds5-test-recovery-wait-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, FALSE, continue_name.c_str()));
+  handle_scope_t crash_event(CreateEventW(nullptr, TRUE, FALSE, crash_name.c_str()));
+  handle_scope_t recovery_started_event(CreateEventW(nullptr, FALSE, FALSE, recovery_started_name.c_str()));
+  handle_scope_t recovery_wait_event(CreateEventW(nullptr, TRUE, FALSE, recovery_wait_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(crash_event.handle, nullptr);
+  ASSERT_NE(recovery_started_event.handle, nullptr);
+  ASSERT_NE(recovery_wait_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-cancel-recovery-test");
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), false), 0);
+  ASSERT_EQ(WaitForSingleObject(recovery_started_event.handle, 5000), WAIT_OBJECT_0);
+
+  // The transport is offline, but the sidecar still owns the controller id.
+  // The input layer relies on owns() to route release to sidecar_client_t::free().
+  EXPECT_TRUE(client.owns(0));
+  const auto started = std::chrono::steady_clock::now();
+  client.free(0);
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  EXPECT_LT(elapsed, std::chrono::seconds(3));
+  EXPECT_FALSE(client.owns(0));
+}
+
 TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {
   config_scope_t restore_config;
   config::input.ds5_enabled = true;
