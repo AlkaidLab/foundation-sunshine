@@ -12,7 +12,6 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -20,6 +19,9 @@
 #include <utility>
 
 #include <nlohmann/json.hpp>
+
+#include <boost/thread/lock_guard.hpp>
+#include <boost/thread/mutex.hpp>
 
 #include "logging.h"
 
@@ -32,7 +34,7 @@ namespace ds5_config::api {
 
     // Covers disk inspection, precondition evaluation, persistence, and
     // snapshot publication. Runtime readers use only the atomic snapshot.
-    std::mutex settings_transaction_mutex;
+    boost::mutex settings_transaction_mutex;
 
     enum class if_match_result_t {
       MATCH,
@@ -388,7 +390,7 @@ namespace ds5_config::api {
   }  // namespace
 
   config_state_t query_state(const std::filesystem::path &path) {
-    std::lock_guard<std::mutex> lock(settings_transaction_mutex);
+    boost::lock_guard<boost::mutex> lock(settings_transaction_mutex);
     return query_state_locked(path);
   }
 
@@ -397,7 +399,7 @@ namespace ds5_config::api {
     settings_t requested,
     std::optional<std::string_view> if_match
   ) {
-    std::lock_guard<std::mutex> lock(settings_transaction_mutex);
+    boost::lock_guard<boost::mutex> lock(settings_transaction_mutex);
     auto state = query_state_locked(path);
 
     if (!validate(requested)) return {update_status_t::INVALID_SETTINGS, std::move(state)};
