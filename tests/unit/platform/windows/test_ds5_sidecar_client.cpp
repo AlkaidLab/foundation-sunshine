@@ -52,14 +52,28 @@ namespace {
 
   struct environment_scope_t {
     environment_scope_t(const wchar_t *variable, const wchar_t *value): variable(variable) {
+      SetLastError(ERROR_SUCCESS);
+      auto required = GetEnvironmentVariableW(variable, nullptr, 0);
+      was_defined = required != 0 || GetLastError() != ERROR_ENVVAR_NOT_FOUND;
+      while (required != 0) {
+        original_value.resize(required);
+        const auto copied = GetEnvironmentVariableW(variable, original_value.data(), required);
+        if (copied < required) {
+          original_value.resize(copied);
+          break;
+        }
+        required = copied + 1;
+      }
       SetEnvironmentVariableW(variable, value);
     }
 
     ~environment_scope_t() {
-      SetEnvironmentVariableW(variable.c_str(), nullptr);
+      SetEnvironmentVariableW(variable.c_str(), was_defined ? original_value.c_str() : nullptr);
     }
 
     std::wstring variable;
+    std::wstring original_value;
+    bool was_defined;
   };
 }  // namespace
 
