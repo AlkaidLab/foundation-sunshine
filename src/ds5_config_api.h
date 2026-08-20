@@ -45,7 +45,10 @@ namespace ds5_config::api {
   /** Query one serialized disk/runtime view and its strong validator. */
   config_state_t query_state(const std::filesystem::path &path);
 
-  /** Conditionally persist and publish a complete settings document. */
+  /**
+   * Conditionally persist and publish a complete settings document.
+   * The implementation owns revision assignment; requested.revision is ignored.
+   */
   update_result_t update_state(
     const std::filesystem::path &path,
     settings_t requested,
