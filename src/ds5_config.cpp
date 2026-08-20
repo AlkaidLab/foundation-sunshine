@@ -10,11 +10,13 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
-#include <mutex>
 #include <string>
 #include <system_error>
 
 #include <nlohmann/json.hpp>
+
+#include <boost/thread/lock_guard.hpp>
+#include <boost/thread/mutex.hpp>
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -28,7 +30,7 @@ namespace ds5_config {
     namespace fs = std::filesystem;
 
     constexpr std::uintmax_t MAX_FILE_SIZE = 64 * 1024;
-    std::mutex settings_file_mutex;
+    boost::mutex settings_file_mutex;
     std::atomic<std::shared_ptr<const settings_t>> active_settings {
       std::make_shared<const settings_t>()
     };
@@ -148,7 +150,7 @@ namespace ds5_config {
   load_result_t load(const std::filesystem::path &path) noexcept {
     if (path.empty()) return {load_status_t::INVALID, {}};
     try {
-      std::lock_guard<std::mutex> lock(settings_file_mutex);
+      boost::lock_guard<boost::mutex> lock(settings_file_mutex);
       std::error_code ec;
       if (!std::filesystem::exists(path, ec)) {
         return ec ? load_result_t {load_status_t::INVALID, {}} :
@@ -195,7 +197,7 @@ namespace ds5_config {
     if (path.empty() || !validate(settings)) return false;
     std::filesystem::path temporary_path;
     try {
-      std::lock_guard<std::mutex> lock(settings_file_mutex);
+      boost::lock_guard<boost::mutex> lock(settings_file_mutex);
       temporary_path = path;
       temporary_path += ".tmp";
       remove_temp_file(temporary_path);
