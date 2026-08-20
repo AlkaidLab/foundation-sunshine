@@ -20,6 +20,7 @@ internal sealed class SidecarServer : IAsyncDisposable
     internal SidecarServer(string pipeName)
     {
         _pipeName = pipeName;
+        LoadPatchedProfiles();
         _context.LoadDefaultProfiles();
         _authoredHapticsAvailable = _context.GetProfile("dualsense-composite") is not null &&
                                     HMContext.IsUsbipBackendAvailable;
@@ -238,6 +239,39 @@ internal sealed class SidecarServer : IAsyncDisposable
         if (_controllers.Remove(payload[0], out var controller))
             controller.Dispose();
         Emit(new Protocol.Message(Protocol.MessageType.DetachReply, requestId, new[] { payload[0] }));
+    }
+
+    private void LoadPatchedProfiles()
+    {
+        // Upstream v1.6.1 USB DualSense profiles leave extendedReport unarmed,
+        // so the vendor-blob encoder never runs and the Sony tail of report
+        // 0x01 (touch fingers at bytes 33/37, rolling counter, sensors,
+        // battery) idles at 0x00. Windows and raw HID consumers decode byte
+        // 33 == 0x00 as a touch contact that is permanently down at (0,0),
+        // which the PTP stack turns into a held drag (menus auto-focus and
+        // inertia-scroll). Register our alwaysArmed copies before the stock
+        // catalog: profile loads skip duplicate IDs, so the first
+        // registration wins.
+        try
+        {
+            var assembly = typeof(SidecarServer).Assembly;
+            var directory = Path.Combine(Path.GetTempPath(), "sunshine-ds5-profiles");
+            Directory.CreateDirectory(directory);
+            foreach (var id in new[] { "dualsense", "dualsense-composite" })
+            {
+                var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
+                using var stream = assembly.GetManifestResourceStream(resourceName)
+                    ?? throw new InvalidOperationException($"Embedded profile '{resourceName}' is missing");
+                using var file = File.Create(Path.Combine(directory, id + ".json"));
+                stream.CopyTo(file);
+            }
+            if (_context.LoadProfilesFromDirectory(directory) < 2)
+                Console.Error.WriteLine("Patched DualSense profiles did not fully register");
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"Unable to load patched DualSense profiles: {error.Message}");
+        }
     }
 
     private ControllerSession GetController(ReadOnlySpan<byte> payload)
