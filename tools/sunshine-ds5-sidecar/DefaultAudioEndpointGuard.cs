@@ -13,6 +13,9 @@ namespace Sunshine.Ds5Sidecar;
 /// </summary>
 internal sealed class DefaultAudioEndpointGuard : IDisposable
 {
+    private const int DataFlowCount = 2;
+    private const int AudioRoleCount = 3;
+
     internal enum AudioRole
     {
         Console = 0,
@@ -25,11 +28,17 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private static readonly Guid MmDeviceEnumeratorClass =
         new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     private readonly CancellationTokenSource _stopping = new();
-    private readonly Channel<DefaultEndpointChange> _endpointChanges =
-        Channel.CreateUnbounded<DefaultEndpointChange>(new UnboundedChannelOptions
+    // Each flow/role pair owns one atomic latest-value slot. The capacity-one
+    // channel is only a non-blocking wakeup, so notification bursts coalesce
+    // without allowing a backlog to grow.
+    private readonly DefaultEndpointChange?[] _pendingEndpointChanges =
+        new DefaultEndpointChange?[DataFlowCount * AudioRoleCount];
+    private readonly Channel<bool> _endpointChangeSignal =
+        Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
         {
             SingleReader = true,
             SingleWriter = false,
+            FullMode = BoundedChannelFullMode.DropWrite,
         });
     private readonly Action<AudioRole> _onViolation;
     private readonly Task _worker;
@@ -115,25 +124,52 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
 
     private async Task ProcessEndpointChangesAsync()
     {
-        await foreach (var change in _endpointChanges.Reader.ReadAllAsync(_stopping.Token))
+        while (await _endpointChangeSignal.Reader.WaitToReadAsync(_stopping.Token))
         {
-            try
+            _endpointChangeSignal.Reader.TryRead(out _);
+            for (var slot = 0; slot < _pendingEndpointChanges.Length; ++slot)
             {
-                ReportIfVirtualDualSense(change.Role, change.EndpointId);
-            }
-            catch (Exception error)
-            {
-                Console.Error.WriteLine(
-                    $"Unable to inspect the changed {change.Flow} default audio endpoint: {error.Message}");
+                var change = Interlocked.Exchange(ref _pendingEndpointChanges[slot], null);
+                if (change is null)
+                    continue;
+                try
+                {
+                    ReportIfVirtualDualSense(change.Role, change.EndpointId);
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine(
+                        $"Unable to inspect the changed {change.Flow} default audio endpoint: {error.Message}");
+                }
+                if (Volatile.Read(ref _reported) != 0)
+                    return;
             }
         }
     }
 
     private void OnDefaultDeviceChanged(DataFlow flow, AudioRole role, string? endpointId)
     {
-        if (endpointId is null || _stopping.IsCancellationRequested)
+        if (endpointId is null || _stopping.IsCancellationRequested ||
+            Volatile.Read(ref _reported) != 0 || !TryGetEndpointSlot(flow, role, out var slot))
+        {
             return;
-        _endpointChanges.Writer.TryWrite(new DefaultEndpointChange(flow, role, endpointId));
+        }
+        Interlocked.Exchange(
+            ref _pendingEndpointChanges[slot], new DefaultEndpointChange(flow, role, endpointId));
+        _endpointChangeSignal.Writer.TryWrite(true);
+    }
+
+    private static bool TryGetEndpointSlot(DataFlow flow, AudioRole role, out int slot)
+    {
+        var flowIndex = (int)flow;
+        var roleIndex = (int)role;
+        if ((uint)flowIndex >= DataFlowCount || (uint)roleIndex >= AudioRoleCount)
+        {
+            slot = -1;
+            return false;
+        }
+        slot = flowIndex * AudioRoleCount + roleIndex;
+        return true;
     }
 
     private void ReportIfVirtualDualSense(AudioRole role, string endpointId)
@@ -267,7 +303,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         Capture = 1,
     }
 
-    private readonly record struct DefaultEndpointChange(
+    private sealed record DefaultEndpointChange(
         DataFlow Flow, AudioRole Role, string EndpointId);
 
     [ComVisible(true)]
