@@ -54,6 +54,9 @@ if ($runtimeMetadata.target -isnot [string] -or
 }
 $componentVersion = $runtimeMetadata.component_version
 $runtimeTarget = $runtimeMetadata.target
+if ($runtimeTarget -ne 'win-x64-self-contained') {
+    throw "DualSense sidecar runtime metadata has an unsupported target: $runtimeTarget"
+}
 
 New-Item -ItemType Directory -Force -Path $packageOutput | Out-Null
 $archive = Join-Path $packageOutput $assetName
