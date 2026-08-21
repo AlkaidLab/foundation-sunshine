@@ -214,6 +214,7 @@ namespace config {
     bool ds5_inputtino_randomize_mac;
     bool ds5_enabled;
     bool ds5_audio_haptics;
+    bool ds5_genshin_compatibility;
     std::string ds5_sidecar_path;
     bool enable_dsu_server;
     uint16_t dsu_server_port;

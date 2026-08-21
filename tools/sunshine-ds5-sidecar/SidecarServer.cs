@@ -11,6 +11,7 @@ internal sealed class SidecarServer : IAsyncDisposable
     private readonly HMContext _context = new();
     private readonly Dictionary<byte, ControllerSession> _controllers = new();
     private readonly bool _authoredHapticsAvailable;
+    private readonly bool _genshinCompatibilityAvailable;
     private readonly Channel<Protocol.Message> _controlOutgoing;
     private readonly Channel<Protocol.Message> _realtimeOutgoing;
     private readonly SemaphoreSlim _outgoingSignal = new(0, 1);
@@ -25,6 +26,9 @@ internal sealed class SidecarServer : IAsyncDisposable
         _authoredHapticsAvailable = compositeProfileValidated &&
                                     _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
                                     HMContext.IsUsbipBackendAvailable;
+        _genshinCompatibilityAvailable = _authoredHapticsAvailable &&
+                                         _context.GetProfile(
+                                             DualSenseHapticsAudio.GenshinCompatibilityProfileId) is not null;
         _controlOutgoing = Channel.CreateUnbounded<Protocol.Message>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -145,6 +149,9 @@ internal sealed class SidecarServer : IAsyncDisposable
                                                    Protocol.Capability.Motion |
                                                    Protocol.Capability.Battery |
                                                    Protocol.Capability.AdaptiveTriggers |
+                                                   (_genshinCompatibilityAvailable
+                                                       ? Protocol.Capability.GenshinCompatibilityIdentity
+                                                       : 0) |
                                                    (_authoredHapticsAvailable
                                                        ? Protocol.Capability.AudioFourChannel |
                                                          Protocol.Capability.AuthoredHapticsPcm
@@ -187,20 +194,16 @@ internal sealed class SidecarServer : IAsyncDisposable
 
     private void Attach(uint requestId, ReadOnlySpan<byte> payload)
     {
-        // id:u8, controller:u8, profile:u8 (0 HID, 1 composite), reserved:u8
+        // id:u8, controller:u8, profile:u8 (0 HID, 1 composite), flags:u8
         if (payload.Length != 4)
             throw new InvalidDataException("Invalid attach payload");
         var deviceId = payload[0];
         if (_controllers.ContainsKey(deviceId))
             throw new InvalidOperationException("The requested DS5 device already exists");
 
-        var profileId = payload[2] switch
-        {
-            0 => "dualsense",
-            1 when _authoredHapticsAvailable => DualSenseHapticsAudio.CompositeProfileId,
-            1 => throw new InvalidOperationException("Validated DualSense four-channel audio is unavailable"),
-            _ => throw new InvalidDataException("Unsupported DS5 profile mode"),
-        };
+        var profileId = SelectProfileId(
+            payload[2], (Protocol.AttachFlags)payload[3],
+            _authoredHapticsAvailable, _genshinCompatibilityAvailable);
         var profile = _context.GetProfile(profileId)
                       ?? throw new InvalidOperationException($"HIDMaestro profile '{profileId}' is missing");
         if (!profile.RequiresUsbipBackend)
@@ -247,6 +250,9 @@ internal sealed class SidecarServer : IAsyncDisposable
                    Protocol.Capability.Motion |
                    Protocol.Capability.Battery |
                    Protocol.Capability.AdaptiveTriggers |
+                   (_genshinCompatibilityAvailable
+                       ? Protocol.Capability.GenshinCompatibilityIdentity
+                       : 0) |
                    (session.HasAudio
                        ? Protocol.Capability.AudioFourChannel | Protocol.Capability.AuthoredHapticsPcm
                        : 0)));
@@ -255,6 +261,30 @@ internal sealed class SidecarServer : IAsyncDisposable
         // endpoint is already default, Core can finish attaching and enter its
         // normal one-shot recovery path before we close this composite session.
         session.StartDefaultAudioEndpointGuard();
+    }
+
+    internal static string SelectProfileId(
+        byte profileMode, Protocol.AttachFlags flags,
+        bool authoredHapticsAvailable, bool genshinCompatibilityAvailable)
+    {
+        if ((flags & ~Protocol.AttachFlags.GenshinCompatibilityIdentity) != 0)
+            throw new InvalidDataException("Unsupported DS5 attach flags");
+        var genshinCompatibility = flags.HasFlag(
+            Protocol.AttachFlags.GenshinCompatibilityIdentity);
+        if (genshinCompatibility && profileMode != 1)
+            throw new InvalidDataException("Genshin compatibility requires the composite profile");
+
+        return profileMode switch
+        {
+            0 => "dualsense",
+            1 when genshinCompatibility && genshinCompatibilityAvailable =>
+                DualSenseHapticsAudio.GenshinCompatibilityProfileId,
+            1 when genshinCompatibility =>
+                throw new InvalidOperationException("Genshin compatibility identity is unavailable"),
+            1 when authoredHapticsAvailable => DualSenseHapticsAudio.CompositeProfileId,
+            1 => throw new InvalidOperationException("Validated DualSense four-channel audio is unavailable"),
+            _ => throw new InvalidDataException("Unsupported DS5 profile mode"),
+        };
     }
 
     private HMController ApplyDefaultAudioEndpointPolicy(HMController controller, HMProfile profile)
@@ -333,8 +363,16 @@ internal sealed class SidecarServer : IAsyncDisposable
                 if (id == DualSenseHapticsAudio.CompositeProfileId)
                     DualSenseHapticsAudio.ValidateCompositeProfile(profileBytes);
                 File.WriteAllBytes(Path.Combine(directory, id + ".json"), profileBytes);
+                if (id == DualSenseHapticsAudio.CompositeProfileId)
+                {
+                    var compatibilityProfile =
+                        DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileBytes);
+                    File.WriteAllBytes(
+                        Path.Combine(directory, DualSenseHapticsAudio.GenshinCompatibilityProfileId + ".json"),
+                        compatibilityProfile);
+                }
             }
-            if (_context.LoadProfilesFromDirectory(directory) < 2)
+            if (_context.LoadProfilesFromDirectory(directory) < 3)
                 throw new InvalidOperationException("Patched DualSense profiles did not fully register");
             return true;
         }

@@ -31,6 +31,12 @@ ending the sidecar.
 Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
+The optional Genshin compatibility attach flag derives a third profile from
+`dualsense-composite` at runtime. It preserves the Sony VID/PID, descriptors,
+and four-channel layout while changing only the USB product string from
+`DualSense Wireless Controller` to the launch-model `Wireless Controller`.
+The sidecar advertises this support through a protocol capability bit so an
+older runtime cannot silently accept an ineffective setting.
 The composite session monitors the three Windows default render roles. If
 Windows selects the HIDMaestro-backed virtual DualSense speaker as a default,
 the helper reports the policy violation and exits; Sunshine then performs its

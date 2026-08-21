@@ -26,6 +26,8 @@ internal static class ProtocolSelfTest
         var helloCapabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(hello.Payload);
         Require(helloCapabilities.HasFlag(Protocol.Capability.Hid), "hello HID capability");
         Require(helloCapabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "hello adaptive trigger capability");
+        Require(helloCapabilities.HasFlag(Protocol.Capability.GenshinCompatibilityIdentity),
+            "hello Genshin compatibility identity capability");
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
@@ -148,10 +150,33 @@ internal static class ProtocolSelfTest
     internal static void RunDeterministicChecks()
     {
         VerifyBundledCompositeProfile();
+        VerifyProfileSelection();
         VerifyHapticsChannelIsolation();
         VerifyDefaultAudioEndpointClassification();
         VerifyDefaultAudioEndpointPolicy();
         VerifyControllerStateSubmissionPolicy();
+    }
+
+    private static void VerifyProfileSelection()
+    {
+        Require(SidecarServer.SelectProfileId(
+                1, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true) ==
+                DualSenseHapticsAudio.GenshinCompatibilityProfileId,
+            "Genshin compatibility attach profile selection");
+        Require(SidecarServer.SelectProfileId(
+                1, Protocol.AttachFlags.None, true, true) ==
+                DualSenseHapticsAudio.CompositeProfileId,
+            "standard composite attach profile selection");
+        try
+        {
+            SidecarServer.SelectProfileId(
+                0, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true);
+            Require(false, "Genshin compatibility HID attach rejection");
+        }
+        catch (InvalidDataException)
+        {
+            // Expected.
+        }
     }
 
     private static void VerifyControllerStateSubmissionPolicy()
@@ -212,6 +237,20 @@ internal static class ProtocolSelfTest
         stream.CopyTo(memory);
         var profileJson = memory.ToArray();
         DualSenseHapticsAudio.ValidateCompositeProfile(profileJson);
+        var compatibilityProfile = DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileJson);
+        using (var compatibilityDocument = JsonDocument.Parse(compatibilityProfile))
+        {
+            var root = compatibilityDocument.RootElement;
+            Require(root.GetProperty("id").GetString() ==
+                    DualSenseHapticsAudio.GenshinCompatibilityProfileId,
+                "Genshin compatibility profile id");
+            Require(root.GetProperty("productString").GetString() ==
+                    DualSenseHapticsAudio.GenshinCompatibilityProductString,
+                "Genshin compatibility product string");
+            Require(root.GetProperty("vid").GetString() == "0x054C" &&
+                    root.GetProperty("pid").GetString() == "0x0CE6",
+                "Genshin compatibility profile preserves Sony identity");
+        }
 
         var profileText = System.Text.Encoding.UTF8.GetString(profileJson);
         RequireProfileRejected(profileText.Replace("\"channels\":4", "\"channels\":2", StringComparison.Ordinal),
