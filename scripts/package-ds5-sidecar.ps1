@@ -24,7 +24,7 @@ function Resolve-WorkspacePath([string]$Path) {
 $runtime = Resolve-WorkspacePath $RuntimeDirectory
 $packageOutput = Resolve-WorkspacePath $PackageDirectory
 $manifestOutput = Resolve-WorkspacePath $ManifestPath
-$assetName = 'Sunshine.Ds5Sidecar.Windows-x64.zip'
+$assetName = 'Sunshine.Ds5Sidecar.x64.zip'
 
 if (-not (Test-Path -LiteralPath (Join-Path $runtime 'Sunshine.Ds5Sidecar.exe') -PathType Leaf)) {
     throw "DualSense sidecar runtime is incomplete: $runtime"

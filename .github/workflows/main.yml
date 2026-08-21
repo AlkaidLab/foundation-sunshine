@@ -294,7 +294,7 @@ jobs:
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
-          cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.Windows-x64.zip ../artifacts/
+          cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.x64.zip ../artifacts/
           cp ./ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
 
       - name: Generate Checksums
@@ -328,7 +328,7 @@ jobs:
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.WindowsPortable.zip
-            artifacts/Sunshine.Ds5Sidecar.Windows-x64.zip
+            artifacts/Sunshine.Ds5Sidecar.x64.zip
             artifacts/Sunshine.Ds5Sidecar.manifest.json
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json

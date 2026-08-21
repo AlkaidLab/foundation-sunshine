@@ -411,7 +411,7 @@ jobs:
           path: |
             Sunshine-*-Portable-Signed.zip
             final-signed/*.exe
-            signed-component/Sunshine.Ds5Sidecar.Windows-x64.zip
+            signed-component/Sunshine.Ds5Sidecar.x64.zip
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
@@ -424,7 +424,7 @@ jobs:
           files: |
             Sunshine-*-Portable-Signed.zip
             final-signed/*.exe
-            signed-component/Sunshine.Ds5Sidecar.Windows-x64.zip
+            signed-component/Sunshine.Ds5Sidecar.x64.zip
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           draft: true
           prerelease: true
