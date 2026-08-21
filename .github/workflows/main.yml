@@ -297,12 +297,6 @@ jobs:
           cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.x64.zip ../artifacts/
           cp ./ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
 
-      - name: Generate Checksums
-        shell: pwsh
-        run: |
-          # Generate SHA256 checksums.
-          .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
-
       - name: Rename release assets
         shell: msys2 {0}
         run: |
@@ -332,6 +326,12 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Generate Checksums
+        shell: pwsh
+        run: |
+          # Generate SHA256 checksums from the final release asset names.
+          .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
