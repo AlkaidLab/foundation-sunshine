@@ -312,7 +312,8 @@ jobs:
           fi
 
           # 重命名安装包和便携版
-          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine.${NEWTAG}.WindowsInstaller.exe"
+          INSTALLER_NAME="Sunshine.${NEWTAG}.WindowsInstaller.exe"
+          mv artifacts/sunshine-windows-installer.exe "artifacts/${INSTALLER_NAME}"
           mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.Portable-x64.zip"
 
           # Legacy Control Panel builds treat any release asset containing
@@ -321,7 +322,7 @@ jobs:
           for asset in artifacts/*; do
             name=$(basename "$asset")
             lower=${name,,}
-            if [[ "$lower" == *windows* && "$lower" != *windowsinstaller.exe ]]; then
+            if [[ "$lower" == *windows* && "$lower" != "${INSTALLER_NAME,,}" ]]; then
               echo "Non-installer release asset would confuse legacy updaters: $name"
               exit 1
             fi
