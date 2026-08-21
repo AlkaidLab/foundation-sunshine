@@ -145,6 +145,7 @@ internal sealed class SidecarServer : IAsyncDisposable
                                                    Protocol.Capability.Motion |
                                                    Protocol.Capability.Battery |
                                                    Protocol.Capability.AdaptiveTriggers |
+                                                   Protocol.Capability.AudioPolicyViolation |
                                                    (_authoredHapticsAvailable
                                                        ? Protocol.Capability.AudioFourChannel |
                                                          Protocol.Capability.AuthoredHapticsPcm

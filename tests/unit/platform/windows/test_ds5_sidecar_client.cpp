@@ -302,6 +302,24 @@ TEST(Ds5SidecarClientTests, RejectsCompositeAttachWithoutAudioEndpoint) {
   EXPECT_FALSE(client.owns(0));
 }
 
+TEST(Ds5SidecarClientTests, FallsBackToHidWhenPeerLacksAudioPolicyCapability) {
+  config_scope_t restore_config;
+  restore_config.enable();
+
+  event_namespace_scope_t events(L"legacy-capabilities");
+  environment_scope_t legacy_capabilities(L"SUNSHINE_DS5_TEST_LEGACY_CAPABILITIES", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-legacy-capabilities-test");
+  platf::ds5::sidecar_client_t client;
+  EXPECT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true), 0);
+  EXPECT_TRUE(client.owns(0));
+  client.free(0);
+}
+
 TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   config_scope_t restore_config;
   restore_config.enable();

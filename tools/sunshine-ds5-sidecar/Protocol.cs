@@ -20,6 +20,7 @@ internal static class Protocol
         Motion = 1u << 5,
         Battery = 1u << 6,
         AdaptiveTriggers = 1u << 7,
+        AudioPolicyViolation = 1u << 8,
     }
 
     internal enum MessageType : ushort

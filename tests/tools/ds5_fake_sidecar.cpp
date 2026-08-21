@@ -82,6 +82,8 @@ int main(int argc, char **argv) {
   const auto interleave = GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr, 0) > 0;
   const auto audio_policy_fallback =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", nullptr, 0) > 0;
+  const auto legacy_capabilities =
+    GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_LEGACY_CAPABILITIES", nullptr, 0) > 0;
   const auto policy_once_name = L"Local\\sunshine-ds5-test-policy-once-" + event_suffix;
   const auto policy_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                             policy_once_name.c_str());
@@ -132,7 +134,11 @@ int main(int argc, char **argv) {
     const auto type = read_u16(header.data() + 6);
     const auto request_id = read_u32(header.data() + 12);
     if (type == 1) {
-      if (!reply(pipe, 2, request_id, std::vector<std::uint8_t>(4))) break;
+      std::vector<std::uint8_t> capabilities(4);
+      if (!legacy_capabilities) {
+        write_u32(capabilities.data(), 1u << 8);
+      }
+      if (!reply(pipe, 2, request_id, capabilities)) break;
     } else if (type == 3 && payload.size() == 4) {
       if (interleave) {
         std::vector<std::uint8_t> early(6);

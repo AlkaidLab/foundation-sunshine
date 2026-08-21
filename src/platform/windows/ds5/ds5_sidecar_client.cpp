@@ -40,6 +40,7 @@ namespace platf::ds5 {
     constexpr std::uint16_t VERSION = 1;
     constexpr std::size_t HEADER_SIZE = 16;
     constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
+    constexpr std::uint32_t CAPABILITY_AUDIO_POLICY_VIOLATION = 1u << 8;
     std::atomic_bool trusted_component_available { false };
     // The sidecar protocol identifies devices with a single byte.
     static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
@@ -223,11 +224,14 @@ namespace platf::ds5 {
       // The test target supplies its purpose-built protocol peer. Production
       // uses only the fixed component directory and never accepts a configured path.
       const auto configured = sidecar_executable_path();
-      if (!std::filesystem::is_regular_file(configured)) return std::nullopt;
-#ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
-      return std::filesystem::weakly_canonical(configured);
-#else
       std::error_code path_error;
+      if (!std::filesystem::is_regular_file(configured, path_error) || path_error) {
+        return std::nullopt;
+      }
+#ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
+      const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
+      return path_error ? std::nullopt : std::optional { candidate };
+#else
       const auto install_root = std::filesystem::weakly_canonical(
         platf::appdata().parent_path(),
         path_error);
@@ -237,7 +241,7 @@ namespace platf::ds5 {
       const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
       if (path_error || candidate.parent_path() != expected_active_root ||
           candidate.filename() != "Sunshine.Ds5Sidecar.exe" ||
-          !std::filesystem::is_regular_file(candidate)) {
+          !std::filesystem::is_regular_file(candidate, path_error) || path_error) {
         BOOST_LOG(error) << "Rejected a DualSense sidecar outside the fixed active component directory"sv;
         return std::nullopt;
       }
@@ -513,8 +517,17 @@ namespace platf::ds5 {
       message_t reply;
       std::array<std::uint8_t, 4> hello {};
       write_u32(hello.data(), 0);
-      if (!transact(message_e::hello, hello, message_e::hello_reply, reply)) {
+      if (!transact(message_e::hello, hello, message_e::hello_reply, reply) ||
+          reply.payload.size() != 4) {
         return false;
+      }
+
+      const auto capabilities = read_u32(reply.payload.data());
+      if (audio_haptics && !(capabilities & CAPABILITY_AUDIO_POLICY_VIOLATION)) {
+        BOOST_LOG(warning) << "DualSense sidecar does not advertise audio endpoint policy protection; "sv
+                           << "falling back to HID-only DualSense"sv;
+        force_hid_fallback = true;
+        audio_haptics = false;
       }
 
       std::array<std::uint8_t, 4> attach_payload {
