@@ -78,7 +78,7 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
 - 发布 manifest 固定版本、下载地址、文件大小和 SHA-256。
 - GUI 不接受渲染器传入的任意下载 URL。
 - Sunshine 自研 Sidecar 的 `win-x64` 自包含运行时作为独立 Release 资产发布；主安装包只携带同版本 manifest，不再捆绑完整 .NET 运行时。
-- GUI 默认按 manifest 下载 Sidecar，也允许用户从任意本地目录选择匹配的官方 ZIP；放在 Sunshine 根目录或 `tools` 目录、文件名保持 `Sunshine.Ds5Sidecar.x64.zip` 的包会被自动发现。Sidecar 资产名刻意不包含 `Windows`，避免旧版整包更新器把组件 ZIP 误识别成 Sunshine 安装包。提权 helper 不接收调用方路径，只接收 allowlist 操作和随机令牌；本地 ZIP 必须通过 manifest 固定的大小与 SHA-256 校验。
+- GUI 默认按 manifest 下载 Sidecar，也允许用户从任意本地目录选择匹配的官方 ZIP；放在 Sunshine 根目录或 `tools` 目录、文件名保持 `Sunshine.Ds5Sidecar.x64.zip` 的包会被自动发现。Sidecar 与 Portable 资产名刻意不包含 `Windows`，把该标记只留给正式安装器，避免旧版整包更新器第一次升级时误选 ZIP。提权 helper 不接收调用方路径，只接收 allowlist 操作和随机令牌；本地 ZIP 必须通过 manifest 固定的大小与 SHA-256 校验。
 - 当前发布物存在 WDK 工具再分发审查事项，因此不放入 Sunshine 安装包或自有 CDN。
 - GUI 提供上游项目、许可证、来源 URL 和校验结果。
 

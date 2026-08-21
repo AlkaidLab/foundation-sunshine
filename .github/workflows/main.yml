@@ -319,7 +319,19 @@ jobs:
 
           # 重命名安装包和便携版
           mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine.${NEWTAG}.WindowsInstaller.exe"
-          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.WindowsPortable.zip"
+          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.Portable-x64.zip"
+
+          # Legacy Control Panel builds treat any release asset containing
+          # "Windows" as a full installer. Keep that marker exclusive to the
+          # actual installer so existing users can update to the fixed build.
+          for asset in artifacts/*; do
+            name=$(basename "$asset")
+            lower=${name,,}
+            if [[ "$lower" == *windows* && "$lower" != *windowsinstaller.exe ]]; then
+              echo "Non-installer release asset would confuse legacy updaters: $name"
+              exit 1
+            fi
+          done
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -327,7 +339,7 @@ jobs:
           name: sunshine-windows-r${{ github.run_number }}
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
-            artifacts/Sunshine.*.WindowsPortable.zip
+            artifacts/Sunshine.*.Portable-x64.zip
             artifacts/Sunshine.Ds5Sidecar.x64.zip
             artifacts/Sunshine.Ds5Sidecar.manifest.json
             artifacts/SHA256SUMS.txt
