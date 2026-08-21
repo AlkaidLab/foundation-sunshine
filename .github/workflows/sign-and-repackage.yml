@@ -159,7 +159,9 @@ jobs:
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
-        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag '${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}'
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Windows
         shell: msys2 {0}
@@ -277,12 +279,14 @@ jobs:
 
       - name: Package signed DualSense component
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
         run: |
           .\scripts\package-ds5-sidecar.ps1 `
             -RuntimeDirectory 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
             -PackageDirectory 'signed-component' `
             -ManifestPath 'build/ds5-sidecar-package.json' `
-            -ReleaseTag '${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}'
+            -ReleaseTag $env:RELEASE_TAG
           Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
             -Destination 'signed-files/Sunshine/tools/ds5-sidecar-package.json' -Force
           Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
@@ -305,7 +309,7 @@ jobs:
           else
             VERSION="v$(date +%Y.%m%d)"
           fi
-          7z a "../../Sunshine-${VERSION}-Windows-Portable-Signed.zip" * -y
+          7z a "../../Sunshine-${VERSION}-Windows-Portable-Signed.zip" ./* -y
           cd ../..
           echo "Created signed portable package:"
           ls -lh Sunshine-*-Portable-Signed.zip

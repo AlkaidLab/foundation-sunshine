@@ -168,7 +168,9 @@ jobs:
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
-        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag '${{ needs.setup_release.outputs.release_tag }}.杂鱼'
+        env:
+          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Web UI
         shell: pwsh

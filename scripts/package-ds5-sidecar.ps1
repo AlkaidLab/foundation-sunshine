@@ -3,7 +3,9 @@ param(
     [string]$PackageDirectory = "build/ds5-sidecar-package",
     [string]$ManifestPath = "build/ds5-sidecar-package.json",
     [string]$ReleaseTag = "",
-    [string]$Repository = "AlkaidLab/foundation-sunshine"
+    [string]$Repository = "AlkaidLab/foundation-sunshine",
+    [ValidateSet('GPL-3.0-only')]
+    [string]$License = 'GPL-3.0-only'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,6 +52,7 @@ New-Item -ItemType Directory -Force -Path $manifestDirectory | Out-Null
     component_version = $componentVersion
     protocol = $protocolVersion
     target = 'win-x64-self-contained'
+    license = $License
     asset_name = $assetName
     download_url = $downloadUrl
     sha256 = $sha256
