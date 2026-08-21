@@ -226,10 +226,13 @@
                     class="form-select form-control-enhanced"
                     v-model="formData.gamepad"
                   >
-                    <option value="">{{ t('apps.gamepad_mode_inherit') }}</option>
-                    <option value="auto">{{ t('apps.gamepad_mode_auto') }}</option>
-                    <option value="x360">{{ t('apps.gamepad_mode_x360') }}</option>
-                    <option value="ds4">{{ t('apps.gamepad_mode_ds4') }}</option>
+                    <option
+                      v-for="mode in PER_APP_GAMEPAD_MODES"
+                      :key="mode.value"
+                      :value="mode.value"
+                    >
+                      {{ t(mode.labelKey) }}
+                    </option>
                   </select>
                 </FormField>
 
@@ -328,6 +331,7 @@ import CheckboxField from './CheckboxField.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
+import { PER_APP_GAMEPAD_MODES } from '../utils/gamepadModes.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   name: '',

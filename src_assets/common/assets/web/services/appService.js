@@ -1,6 +1,7 @@
 import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
 import { deepClone, formatError } from '../utils/helpers.js';
+import { normalizePerAppGamepadMode } from '../utils/gamepadModes.js';
 
 const cloneData = deepClone;
 const normalizeAppName = (name) => String(name || '').trim().toLowerCase();
@@ -207,7 +208,7 @@ export class AppService {
       elevated: Boolean(app.elevated),
       'auto-detach': Boolean(app['auto-detach']),
       'wait-all': Boolean(app['wait-all']),
-      gamepad: ['auto', 'x360', 'ds4'].includes(app.gamepad) ? app.gamepad : '',
+      gamepad: normalizePerAppGamepadMode(app.gamepad),
       'exit-timeout': parseInt(app['exit-timeout']) || 5,
       'prep-cmd': filteredPrepCmd,
       'menu-cmd': Array.isArray(app['menu-cmd']) ? app['menu-cmd'] : [],

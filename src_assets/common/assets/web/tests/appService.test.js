@@ -96,3 +96,12 @@ test('formatAppData rejects unknown per-app gamepad values', () => {
 
   assert.equal(result.gamepad, '')
 })
+
+test('formatAppData preserves a per-app DualSense override', () => {
+  const result = AppService.formatAppData({
+    name: 'Game',
+    gamepad: 'ds5',
+  })
+
+  assert.equal(result.gamepad, 'ds5')
+})
