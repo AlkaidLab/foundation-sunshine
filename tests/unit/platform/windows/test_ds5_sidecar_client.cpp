@@ -320,6 +320,45 @@ TEST(Ds5SidecarClientTests, FallsBackToHidWhenPeerLacksAudioPolicyCapability) {
   client.free(0);
 }
 
+TEST(Ds5SidecarClientTests, SendsNegotiatedGenshinCompatibilityAttachFlag) {
+  config_scope_t restore_config;
+  restore_config.enable();
+
+  event_namespace_scope_t events(L"genshin-compatibility");
+  environment_scope_t enable_compatibility(
+    L"SUNSHINE_DS5_TEST_GENSHIN_COMPATIBILITY", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  const auto compatibility_name =
+    L"Local\\sunshine-ds5-test-genshin-compatibility-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  handle_scope_t compatibility_event(CreateEventW(nullptr, FALSE, FALSE, compatibility_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  ASSERT_NE(compatibility_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-genshin-compatibility-test");
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true, true), 0);
+  EXPECT_EQ(WaitForSingleObject(compatibility_event.handle, 2000), WAIT_OBJECT_0);
+  client.free(0);
+}
+
+TEST(Ds5SidecarClientTests, RejectsGenshinCompatibilityWithoutSidecarCapability) {
+  config_scope_t restore_config;
+  restore_config.enable();
+
+  event_namespace_scope_t events(L"genshin-capability-required");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-genshin-capability-test");
+  platf::ds5::sidecar_client_t client;
+  EXPECT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true, true), -1);
+  EXPECT_FALSE(client.owns(0));
+}
+
 TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   config_scope_t restore_config;
   restore_config.enable();

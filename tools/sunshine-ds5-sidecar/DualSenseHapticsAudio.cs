@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HIDMaestro;
 
 namespace Sunshine.Ds5Sidecar;
@@ -6,6 +7,9 @@ namespace Sunshine.Ds5Sidecar;
 internal static class DualSenseHapticsAudio
 {
     internal const string CompositeProfileId = "dualsense-composite";
+    internal const string GenshinCompatibilityProfileId = "dualsense-composite-genshin";
+    internal const string CompositeProductString = "DualSense Wireless Controller";
+    internal const string GenshinCompatibilityProductString = "Wireless Controller";
     internal const int InputChannels = 4;
     internal const int OutputChannels = 2;
     internal const int BitsPerSample = 16;
@@ -25,9 +29,34 @@ internal static class DualSenseHapticsAudio
 
     internal static void ValidateCompositeProfile(ReadOnlyMemory<byte> json)
     {
+        ValidateCompositeProfile(json, CompositeProfileId, CompositeProductString);
+    }
+
+    internal static byte[] CreateGenshinCompatibilityProfile(ReadOnlyMemory<byte> compositeJson)
+    {
+        var root = JsonNode.Parse(compositeJson.Span)?.AsObject()
+                   ?? throw new InvalidDataException("Composite profile is not a JSON object");
+        root["id"] = GenshinCompatibilityProfileId;
+        root["name"] = "DualSense (PS5) — Genshin compatibility";
+        root["productString"] = GenshinCompatibilityProductString;
+        var derived = JsonSerializer.SerializeToUtf8Bytes(root);
+        ValidateCompositeProfile(
+            derived, GenshinCompatibilityProfileId, GenshinCompatibilityProductString);
+        return derived;
+    }
+
+    internal static bool IsCompositeProfile(string profileId)
+    {
+        return profileId is CompositeProfileId or GenshinCompatibilityProfileId;
+    }
+
+    private static void ValidateCompositeProfile(
+        ReadOnlyMemory<byte> json, string expectedId, string expectedProductString)
+    {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-        RequireString(root, "id", CompositeProfileId);
+        RequireString(root, "id", expectedId);
+        RequireString(root, "productString", expectedProductString);
         RequireString(root, "backend", "usbip");
 
         if (!root.TryGetProperty("usbConfiguration", out var configuration) ||

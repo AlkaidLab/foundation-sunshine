@@ -36,12 +36,14 @@ if (selfCheck)
         audio_layout = true,
         channel_isolation = true,
         default_endpoint_classification = true,
+        genshin_compatibility_identity = true,
     }));
     return 0;
 }
 
 if (probe)
 {
+    ProtocolSelfTest.RunDeterministicChecks();
     using var context = new HMContext();
     context.LoadDefaultProfiles();
     var standard = context.GetProfile("dualsense");
@@ -53,6 +55,7 @@ if (probe)
         elevated = IsElevated(),
         standard = standard is not null,
         composite = composite is not null,
+        genshin_compatibility_identity = true,
         driver_installed = context.IsDriverInstalled,
         usbip_available = HMContext.IsUsbipBackendAvailable,
     }));

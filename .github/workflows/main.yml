@@ -168,7 +168,9 @@ jobs:
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
-        run: .\scripts\build-ds5-sidecar.ps1
+        env:
+          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Web UI
         shell: pwsh
@@ -272,19 +274,28 @@ jobs:
           # Package the Inno Setup installer and portable ZIP.
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
-          test -f ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          test -f ./inno_staging/tools/ds5-sidecar-package.json
+          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
           
-          # Run the Inno Setup compiler and prove that it consumed the sidecar.
+          # Run the Inno Setup compiler and prove that it consumed only the
+          # lightweight package manifest, not the self-contained runtime.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
-          grep -F "Sunshine.Ds5Sidecar.exe" inno-build.log
+          grep -F "ds5-sidecar-package.json" inno-build.log
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
-          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' | grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
+          grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
+          if grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe" portable-files.txt; then
+            echo "The optional DualSense runtime leaked into the main portable package"
+            exit 1
+          fi
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
+          cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.Windows-x64.zip ../artifacts/
+          cp ./ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
 
       - name: Generate Checksums
         shell: pwsh
@@ -317,6 +328,8 @@ jobs:
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.WindowsPortable.zip
+            artifacts/Sunshine.Ds5Sidecar.Windows-x64.zip
+            artifacts/Sunshine.Ds5Sidecar.manifest.json
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error

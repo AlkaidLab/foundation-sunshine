@@ -65,6 +65,7 @@ namespace {
       {"ds5_legacy_haptics_strength", 1.5},
       {"ds5_legacy_haptics_curve", 0.5},
       {"ds5_legacy_haptics_noise_gate", 0.006},
+      {"ds5_genshin_compatibility", false},
     };
   }
 
@@ -73,7 +74,8 @@ namespace {
            left.audio_haptics == right.audio_haptics &&
            left.legacy_strength == right.legacy_strength &&
            left.legacy_curve == right.legacy_curve &&
-           left.legacy_noise_gate == right.legacy_noise_gate;
+           left.legacy_noise_gate == right.legacy_noise_gate &&
+           left.genshin_compatibility == right.genshin_compatibility;
   }
 }  // namespace
 
@@ -93,6 +95,7 @@ TEST_F(Ds5ConfigTest, MissingFileReturnsDisabledDefaults) {
   EXPECT_DOUBLE_EQ(result.settings.legacy_strength, 1.0);
   EXPECT_DOUBLE_EQ(result.settings.legacy_curve, 0.5);
   EXPECT_DOUBLE_EQ(result.settings.legacy_noise_gate, 0.020);
+  EXPECT_FALSE(result.settings.genshin_compatibility);
   EXPECT_EQ(result.settings.revision, 1);
 }
 
@@ -111,11 +114,15 @@ TEST_F(Ds5ConfigTest, RejectsMalformedSchemaAndInvalidNumbers) {
   invalid = {};
   invalid.legacy_noise_gate = 0.061;
   EXPECT_FALSE(ds5_config::validate(invalid));
+  invalid = {};
+  invalid.genshin_compatibility = true;
+  EXPECT_FALSE(ds5_config::validate(invalid));
 }
 
 TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
   const ds5_config::settings_t previous {true, true, 1.2, 0.8, 0.010};
-  auto replacement = ds5_config::settings_t {false, false, 2.0, 0.5, 0.006};
+  auto replacement = ds5_config::settings_t {true, true, 2.0, 0.5, 0.006};
+  replacement.genshin_compatibility = true;
   replacement.revision = 9;
 
   ASSERT_TRUE(ds5_config::save(path_, previous));
@@ -130,6 +137,7 @@ TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_strength, replacement.legacy_strength);
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_curve, replacement.legacy_curve);
   EXPECT_DOUBLE_EQ(loaded.settings.legacy_noise_gate, replacement.legacy_noise_gate);
+  EXPECT_TRUE(loaded.settings.genshin_compatibility);
   // Revision describes only the current process and is not persisted.
   EXPECT_EQ(loaded.settings.revision, 1);
 }
@@ -333,7 +341,8 @@ TEST_F(Ds5ConfigTest, InvalidSettingsTakePrecedenceOverAnInvalidStore) {
 
 TEST_F(Ds5ConfigTest, ConcurrentReadersObserveOnlyCompleteSnapshots) {
   ds5_config::settings_t first {false, true, 1.0, 1.0, 0.020};
-  ds5_config::settings_t second {true, false, 4.0, 0.3, 0.002};
+  ds5_config::settings_t second {true, true, 4.0, 0.3, 0.002};
+  second.genshin_compatibility = true;
   first.revision = 1;
   second.revision = 2;
   ASSERT_TRUE(ds5_config::configure(first));
@@ -353,10 +362,12 @@ TEST_F(Ds5ConfigTest, ConcurrentReadersObserveOnlyCompleteSnapshots) {
       const auto observed = ds5_config::current();
       const bool is_first = !observed.enabled && observed.audio_haptics &&
                             observed.legacy_strength == 1.0 && observed.legacy_curve == 1.0 &&
-                            observed.legacy_noise_gate == 0.020 && observed.revision == 1;
-      const bool is_second = observed.enabled && !observed.audio_haptics &&
+                            observed.legacy_noise_gate == 0.020 && !observed.genshin_compatibility &&
+                            observed.revision == 1;
+      const bool is_second = observed.enabled && observed.audio_haptics &&
                              observed.legacy_strength == 4.0 && observed.legacy_curve == 0.3 &&
-                             observed.legacy_noise_gate == 0.002 && observed.revision == 2;
+                             observed.legacy_noise_gate == 0.002 && observed.genshin_compatibility &&
+                             observed.revision == 2;
       observed_during_writes.store(true, std::memory_order_release);
       if (!is_first && !is_second) {
         invalid_snapshot.store(true, std::memory_order_release);

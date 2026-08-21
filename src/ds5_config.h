@@ -23,6 +23,7 @@ namespace ds5_config {
     double legacy_strength = 1.0;
     double legacy_curve = 0.5;
     double legacy_noise_gate = 0.020;
+    bool genshin_compatibility = false;
     std::uint64_t revision = 1;
   };
 

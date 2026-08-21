@@ -40,7 +40,9 @@ namespace platf::ds5 {
     constexpr std::uint16_t VERSION = 1;
     constexpr std::size_t HEADER_SIZE = 16;
     constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
-    constexpr std::uint32_t CAPABILITY_AUDIO_POLICY_VIOLATION = 1u << 8;
+    constexpr std::uint32_t CAP_GENSHIN_COMPATIBILITY_IDENTITY = 1u << 8;
+    constexpr std::uint32_t CAPABILITY_AUDIO_POLICY_VIOLATION = 1u << 9;
+    constexpr std::uint8_t ATTACH_FLAG_GENSHIN_COMPATIBILITY = 1u << 0;
     std::atomic_bool trusted_component_available { false };
     // The sidecar protocol identifies devices with a single byte.
     static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
@@ -287,6 +289,7 @@ namespace platf::ds5 {
     std::atomic_int global_index { -1 };
     std::uint8_t client_index = 0;
     bool audio_haptics_requested = false;
+    bool genshin_compatibility_requested = false;
     bool force_hid_fallback = false;
     feedback_queue_t feedback_queue;
     std::uint32_t next_request_id = 1;
@@ -509,7 +512,9 @@ namespace platf::ds5 {
       return false;
     }
 
-    bool connect_and_attach(const gamepad_id_t &id, bool audio_haptics) {
+    bool connect_and_attach(const gamepad_id_t &id, bool audio_haptics,
+                            bool genshin_compatibility) {
+      bool use_genshin_identity = audio_haptics && genshin_compatibility;
       if (!launch_and_connect()) {
         return false;
       }
@@ -521,20 +526,25 @@ namespace platf::ds5 {
           reply.payload.size() != 4) {
         return false;
       }
-
       const auto capabilities = read_u32(reply.payload.data());
       if (audio_haptics && !(capabilities & CAPABILITY_AUDIO_POLICY_VIOLATION)) {
         BOOST_LOG(warning) << "DualSense sidecar does not advertise audio endpoint policy protection; "sv
                            << "falling back to HID-only DualSense"sv;
         force_hid_fallback = true;
         audio_haptics = false;
+        use_genshin_identity = false;
+      }
+      if (use_genshin_identity &&
+          (capabilities & CAP_GENSHIN_COMPATIBILITY_IDENTITY) == 0) {
+        BOOST_LOG(error) << "The installed DualSense sidecar does not support Genshin compatibility mode"sv;
+        return false;
       }
 
       std::array<std::uint8_t, 4> attach_payload {
         static_cast<std::uint8_t>(id.globalIndex),
         id.clientRelativeIndex,
         static_cast<std::uint8_t>(audio_haptics ? 1 : 0),
-        0,
+        static_cast<std::uint8_t>(use_genshin_identity ? ATTACH_FLAG_GENSHIN_COMPATIBILITY : 0),
       };
       // Claim ownership before the transaction so feedback interleaved ahead
       // of the attach reply is routed to the queue instead of dropped.
@@ -550,13 +560,15 @@ namespace platf::ds5 {
 
       client_index = id.clientRelativeIndex;
       audio_haptics_requested = audio_haptics && !force_hid_fallback;
+      genshin_compatibility_requested = use_genshin_identity && audio_haptics_requested;
       online = true;
       BOOST_LOG(info) << "DualSense sidecar attached controller "sv << id.globalIndex
-                      << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)");
+                      << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)")
+                      << (genshin_compatibility_requested ? " using Genshin compatibility identity" : "");
       return true;
     }
 
-    bool attach(const gamepad_id_t &id, bool audio_haptics) {
+    bool attach(const gamepad_id_t &id, bool audio_haptics, bool genshin_compatibility) {
       // A failed recovery releases global_index from the reader thread before
       // that thread object stops being joinable. Reap it before reusing the
       // same client for a later allocation; assigning over a joinable
@@ -567,7 +579,7 @@ namespace platf::ds5 {
       // A new allocation is an explicit user/session request. Only the
       // automatic recovery of the current allocation inherits the fallback.
       force_hid_fallback = false;
-      if (!connect_and_attach(id, audio_haptics)) {
+      if (!connect_and_attach(id, audio_haptics, genshin_compatibility)) {
         return false;
       }
       reader = std::thread([this] { read_loop(); });
@@ -617,7 +629,7 @@ namespace platf::ds5 {
           global_index.load(),
           client_index,
         };
-        if (!connect_and_attach(id, audio_haptics_requested)) {
+        if (!connect_and_attach(id, audio_haptics_requested, genshin_compatibility_requested)) {
           close_transport();
           break;
         }
@@ -679,12 +691,13 @@ namespace platf::ds5 {
     return global_index >= 0 && _impl->global_index == global_index;
   }
 
-  int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics) {
+  int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue,
+                              bool audio_haptics, bool genshin_compatibility) {
     if (!configured() || _impl->global_index >= 0) {
       return -1;
     }
     _impl->feedback_queue = std::move(feedback_queue);
-    if (_impl->attach(id, audio_haptics)) {
+    if (_impl->attach(id, audio_haptics, genshin_compatibility && audio_haptics)) {
       return 0;
     }
     _impl = std::make_unique<impl_t>();

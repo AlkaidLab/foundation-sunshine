@@ -48,7 +48,8 @@ namespace ds5_config::api {
              left.audio_haptics == right.audio_haptics &&
              left.legacy_strength == right.legacy_strength &&
              left.legacy_curve == right.legacy_curve &&
-             left.legacy_noise_gate == right.legacy_noise_gate;
+             left.legacy_noise_gate == right.legacy_noise_gate &&
+             left.genshin_compatibility == right.genshin_compatibility;
     }
 
     std::string make_entity_tag(const settings_t &settings, bool persisted) {
@@ -57,6 +58,7 @@ namespace ds5_config::api {
       stream << "\"ds5-v1-" << std::dec << settings.revision << '-'
              << (persisted ? '1' : '0') << '-'
              << (settings.enabled ? '1' : '0') << (settings.audio_haptics ? '1' : '0')
+             << (settings.genshin_compatibility ? '1' : '0')
              << '-' << std::hex << std::setfill('0')
              << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_strength)
              << '-' << std::setw(16) << std::bit_cast<std::uint64_t>(settings.legacy_curve)
@@ -159,18 +161,20 @@ namespace ds5_config::api {
         {"ds5_legacy_haptics_strength", settings.legacy_strength},
         {"ds5_legacy_haptics_curve", settings.legacy_curve},
         {"ds5_legacy_haptics_noise_gate", settings.legacy_noise_gate},
+        {"ds5_genshin_compatibility", settings.genshin_compatibility},
       };
       if (changed) result["changed"] = *changed;
       return result;
     }
 
     bool parse_settings(const json &input, settings_t &settings) {
-      if (!input.is_object() || input.size() != 5 ||
+      if (!input.is_object() || input.size() != 6 ||
           !input.contains("ds5_enabled") || !input["ds5_enabled"].is_boolean() ||
           !input.contains("ds5_audio_haptics") || !input["ds5_audio_haptics"].is_boolean() ||
           !input.contains("ds5_legacy_haptics_strength") || !input["ds5_legacy_haptics_strength"].is_number() ||
           !input.contains("ds5_legacy_haptics_curve") || !input["ds5_legacy_haptics_curve"].is_number() ||
-          !input.contains("ds5_legacy_haptics_noise_gate") || !input["ds5_legacy_haptics_noise_gate"].is_number()) {
+          !input.contains("ds5_legacy_haptics_noise_gate") || !input["ds5_legacy_haptics_noise_gate"].is_number() ||
+          !input.contains("ds5_genshin_compatibility") || !input["ds5_genshin_compatibility"].is_boolean()) {
         return false;
       }
       settings = {
@@ -179,6 +183,7 @@ namespace ds5_config::api {
         input["ds5_legacy_haptics_strength"].get<double>(),
         input["ds5_legacy_haptics_curve"].get<double>(),
         input["ds5_legacy_haptics_noise_gate"].get<double>(),
+        input["ds5_genshin_compatibility"].get<bool>(),
       };
       return validate(settings);
     }
@@ -260,7 +265,8 @@ namespace ds5_config::api {
           BOOST_LOG(info) << "DualSense configuration saved and hot-applied at revision "
                           << result.state.settings.revision
                           << " (enabled=" << result.state.settings.enabled
-                          << ", audio_haptics=" << result.state.settings.audio_haptics << ')';
+                          << ", audio_haptics=" << result.state.settings.audio_haptics
+                          << ", genshin_compatibility=" << result.state.settings.genshin_compatibility << ')';
           write_json(
             std::move(response),
             SimpleWeb::StatusCode::success_ok,

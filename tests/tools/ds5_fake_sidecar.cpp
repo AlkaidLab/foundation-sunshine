@@ -84,6 +84,8 @@ int main(int argc, char **argv) {
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", nullptr, 0) > 0;
   const auto legacy_capabilities =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_LEGACY_CAPABILITIES", nullptr, 0) > 0;
+  const auto genshin_compatibility =
+    GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_GENSHIN_COMPATIBILITY", nullptr, 0) > 0;
   const auto policy_once_name = L"Local\\sunshine-ds5-test-policy-once-" + event_suffix;
   const auto policy_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                             policy_once_name.c_str());
@@ -106,6 +108,10 @@ int main(int argc, char **argv) {
                                                recovery_wait_name.c_str());
   const auto marker_name = L"Local\\sunshine-ds5-test-marker-" + event_suffix;
   const auto marker_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, marker_name.c_str());
+  const auto genshin_compatibility_name =
+    L"Local\\sunshine-ds5-test-genshin-compatibility-" + event_suffix;
+  const auto genshin_compatibility_event = OpenEventW(
+    EVENT_MODIFY_STATE, FALSE, genshin_compatibility_name.c_str());
 
   // A crash-once test can hold the replacement process before it creates its
   // pipe, exposing the Core client's assigned-but-offline recovery window.
@@ -135,9 +141,14 @@ int main(int argc, char **argv) {
     const auto request_id = read_u32(header.data() + 12);
     if (type == 1) {
       std::vector<std::uint8_t> capabilities(4);
-      if (!legacy_capabilities) {
-        write_u32(capabilities.data(), 1u << 8);
+      std::uint32_t advertised_capabilities = 0;
+      if (genshin_compatibility) {
+        advertised_capabilities |= 1u << 8;
       }
+      if (!legacy_capabilities) {
+        advertised_capabilities |= 1u << 9;
+      }
+      write_u32(capabilities.data(), advertised_capabilities);
       if (!reply(pipe, 2, request_id, capabilities)) break;
     } else if (type == 3 && payload.size() == 4) {
       if (interleave) {
@@ -147,10 +158,14 @@ int main(int argc, char **argv) {
       }
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
-      if (audio_policy_fallback && payload[2] == 1) {
+      if ((audio_policy_fallback || genshin_compatibility) && payload[2] == 1) {
         response[1] = 1;
       }
       if (!reply(pipe, 4, request_id, response)) break;
+      if (genshin_compatibility && payload[2] == 1 && (payload[3] & 1) != 0 &&
+          genshin_compatibility_event) {
+        SetEvent(genshin_compatibility_event);
+      }
       if (audio_policy_fallback && policy_once_event &&
           WaitForSingleObject(policy_once_event, 0) == WAIT_TIMEOUT) {
         // The first process accepts the composite attach, then reports the
@@ -193,6 +208,7 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (genshin_compatibility_event) CloseHandle(genshin_compatibility_event);
   if (marker_event) CloseHandle(marker_event);
   if (hid_fallback_event) CloseHandle(hid_fallback_event);
   if (policy_once_event) CloseHandle(policy_once_event);

@@ -1926,10 +1926,12 @@ namespace platf {
         BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
         return -1;
       }
+      const auto ds5_settings = ds5_config::current();
       const auto result = raw->ds5_sidecar->alloc(
         id,
         feedback_queue,
-        ds5_config::current().audio_haptics
+        ds5_settings.audio_haptics,
+        ds5_settings.genshin_compatibility
       );
       if (result == 0) {
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
