@@ -159,7 +159,9 @@ jobs:
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
-        run: .\scripts\build-ds5-sidecar.ps1
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Windows
         shell: msys2 {0}
@@ -224,6 +226,8 @@ jobs:
             echo "Extracting: $PORTABLE"
             mkdir -p unsigned-files
             7z x "$PORTABLE" -o"unsigned-files" -y -aoa
+            mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging
+            cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging/
             echo "Extracted files for signing:"
             ls -laR unsigned-files/
           else
@@ -273,11 +277,30 @@ jobs:
           }
           Write-Host "`n✓ All signatures are VALID!" -ForegroundColor Green
 
+      - name: Package signed DualSense component
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: |
+          .\scripts\package-ds5-sidecar.ps1 `
+            -RuntimeDirectory 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
+            -PackageDirectory 'signed-component' `
+            -ManifestPath 'build/ds5-sidecar-package.json' `
+            -ReleaseTag $env:RELEASE_TAG
+          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
+            -Destination 'signed-files/Sunshine/tools/ds5-sidecar-package.json' -Force
+          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
+            -Destination 'build/inno_staging/tools/ds5-sidecar-package.json' -Force
+          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
+            -Destination 'signed-component/Sunshine.Ds5Sidecar.manifest.json' -Force
+          Remove-Item -LiteralPath 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
+            -Recurse -Force
+
       # 使用签名后的文件重新打包 ZIP 便携版
       - name: Repackage signed Portable ZIP
         shell: bash
         run: |
-          cd signed-files
+          cd signed-files/Sunshine
           # 使用与输入一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
             VERSION="${{ github.event.inputs.release-tag }}"
@@ -286,8 +309,8 @@ jobs:
           else
             VERSION="v$(date +%Y.%m%d)"
           fi
-          7z a "../Sunshine-${VERSION}-Windows-Portable-Signed.zip" * -y
-          cd ..
+          7z a "../../Sunshine-${VERSION}-Windows-Portable-Signed.zip" ./* -y
+          cd ../..
           echo "Created signed portable package:"
           ls -lh Sunshine-*-Portable-Signed.zip
 
@@ -326,9 +349,10 @@ jobs:
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
-          test -f "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
+          test -f "$STAGING_DIR/tools/ds5-sidecar-package.json"
+          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
-          grep -F "Sunshine.Ds5Sidecar.exe" build/inno-signed-build.log
+          grep -F "ds5-sidecar-package.json" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
@@ -387,6 +411,8 @@ jobs:
           path: |
             Sunshine-*-Portable-Signed.zip
             final-signed/*.exe
+            signed-component/Sunshine.Ds5Sidecar.Windows-x64.zip
+            signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
       # 发布到 GitHub Release
@@ -398,6 +424,8 @@ jobs:
           files: |
             Sunshine-*-Portable-Signed.zip
             final-signed/*.exe
+            signed-component/Sunshine.Ds5Sidecar.Windows-x64.zip
+            signed-component/Sunshine.Ds5Sidecar.manifest.json
           draft: true
           prerelease: true
           allowUpdates: true
