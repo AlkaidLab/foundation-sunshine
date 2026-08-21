@@ -91,6 +91,19 @@ namespace platf {
   constexpr std::uint32_t TOUCHPAD_BUTTON = 0x100000;
   constexpr std::uint32_t MISC_BUTTON = 0x200000;
 
+  // Foundation client extension carried in SS_CONTROLLER_ARRIVAL_PACKET::capabilities.
+  // Best-effort preference for a native DualSense device; the host may still fall
+  // back to DualShock 4 when the optional sidecar is unavailable. Upstream
+  // moonlight-common-c owns the low capability bits (currently 0x00FF), so
+  // Foundation extensions claim the top bit.
+  constexpr std::uint16_t GAMEPAD_CAP_PREFER_DS5 = 0x8000;
+
+  // Arrival fields that can change which emulated device type a platform selects
+  // (LI_CCAP_TOUCHPAD | LI_CCAP_ACCEL | LI_CCAP_GYRO plus the Foundation
+  // preference bit). Arrival updates touching only other fields are recorded
+  // without reallocating the active virtual device.
+  constexpr std::uint16_t GAMEPAD_TYPE_SELECTION_CAPS = 0x0038 | GAMEPAD_CAP_PREFER_DS5;
+
   struct supported_gamepad_t {
     std::string name;
     bool is_enabled;
