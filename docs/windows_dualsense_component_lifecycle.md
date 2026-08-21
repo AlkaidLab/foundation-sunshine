@@ -40,8 +40,11 @@
 |---|---|---:|---:|---|---|
 | `dualsense` | UMDF2 | 是 | 否 | HIDMaestro 动态生成并安装的 UMDF2 驱动/本机自签名证书 | 输入、触摸板、运动、自适应扳机验证与无 HD Haptics 的降级模式 |
 | `dualsense-composite` | USB/IP | 是 | 是 | 内嵌 usbip-win2 0.9.7.7 | 需要游戏识别 DS5 四声道端点并产出 authored haptics 的完整模式 |
+| `dualsense-composite-genshin` | USB/IP | 是 | 是 | 与完整模式相同 | 实验性《原神》兼容身份；只把 USB product string 改为首发版 `Wireless Controller` |
 
 复合 profile 的音频输出固定为 48 kHz、16-bit、4 声道，角色依次为 `speakerLeft`、`speakerRight`、`hapticLeft`、`hapticRight`。HIDMaestro 公共 API 可以直接交付游戏写入该端点的 PCM 帧，Sidecar 不需要从混合后的桌面音频重新猜测第 3/4 声道。
+
+兼容 profile 不维护第二份 USB 描述符：Sidecar 启动时从已校验的 `dualsense-composite` 动态派生，只修改 profile ID、显示名和 product string。GUI 默认关闭该模式，并只在 DualSense、HD Haptics、USB/IP 与新 Sidecar 能力均可用时允许启用。切换后需要重新创建虚拟手柄，用户应先开始串流，再完全退出并重新启动《原神》。该模式不修改 Windows 默认播放或录音设备，现有 never-default 防线保持不变。
 
 官方发布物当前未做 Authenticode 签名，并携带运行时、usbip-win2 安装器及 WDK 工具。第一阶段只从上游固定版本 URL 下载、校验固定 SHA-256，不随 Sunshine 安装包或自有 CDN 再分发。目前只把 Windows 11 24H2 build 26100 记为“已验证”；Windows 10 与其他 Windows 11 build 仍属于实验范围，GUI 不宣称已受支持。这里不把程序集的 `windows10.0.26100.0` API target 误当作已证明的最低 OS 版本；正式分发前必须完成真实 OS build 矩阵并据此决定拒绝安装还是显示实验性警告。
 

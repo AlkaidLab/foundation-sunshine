@@ -20,6 +20,14 @@ internal static class Protocol
         Motion = 1u << 5,
         Battery = 1u << 6,
         AdaptiveTriggers = 1u << 7,
+        GenshinCompatibilityIdentity = 1u << 8,
+    }
+
+    [Flags]
+    internal enum AttachFlags : byte
+    {
+        None = 0,
+        GenshinCompatibilityIdentity = 1 << 0,
     }
 
     internal enum MessageType : ushort

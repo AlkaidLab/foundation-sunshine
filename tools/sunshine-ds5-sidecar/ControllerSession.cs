@@ -68,7 +68,7 @@ internal sealed class ControllerSession : IDisposable
         };
 
         _controller.OutputDecoded += OnOutputDecoded;
-        if (profile.Id == DualSenseHapticsAudio.CompositeProfileId)
+        if (DualSenseHapticsAudio.IsCompositeProfile(profile.Id))
         {
             _audioOutput = _controller.UsbAudio?.Output
                 ?? throw new InvalidDataException("Composite DualSense did not expose its audio output");
