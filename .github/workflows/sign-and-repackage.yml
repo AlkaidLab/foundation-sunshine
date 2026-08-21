@@ -309,10 +309,10 @@ jobs:
           else
             VERSION="v$(date +%Y.%m%d)"
           fi
-          7z a "../../Sunshine-${VERSION}-Windows-Portable-Signed.zip" ./* -y
+          7z a "../../Sunshine-${VERSION}-Portable-x64-Signed.zip" ./* -y
           cd ../..
           echo "Created signed portable package:"
-          ls -lh Sunshine-*-Portable-Signed.zip
+          ls -lh Sunshine-*-Portable-x64-Signed.zip
 
       # 使用签名文件重新打包 Inno Setup 安装包
       - name: Repackage signed Inno Setup installer
@@ -409,9 +409,9 @@ jobs:
         with:
           name: sunshine-windows-fully-signed
           path: |
-            Sunshine-*-Portable-Signed.zip
+            Sunshine-*-Portable-x64-Signed.zip
             final-signed/*.exe
-            signed-component/Sunshine.Ds5Sidecar.Windows-x64.zip
+            signed-component/Sunshine.Ds5Sidecar.x64.zip
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
@@ -422,9 +422,9 @@ jobs:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
-            Sunshine-*-Portable-Signed.zip
+            Sunshine-*-Portable-x64-Signed.zip
             final-signed/*.exe
-            signed-component/Sunshine.Ds5Sidecar.Windows-x64.zip
+            signed-component/Sunshine.Ds5Sidecar.x64.zip
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           draft: true
           prerelease: true
