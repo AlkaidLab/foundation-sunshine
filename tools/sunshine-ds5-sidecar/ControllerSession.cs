@@ -25,6 +25,7 @@ internal sealed class ControllerSession : IDisposable
     private const uint Touchpad = 0x100000;
     private const uint Misc = 0x200000;
     private const int HapticsFramesPerPacket = 240;
+    private static readonly TimeSpan StateCoalesceWindow = TimeSpan.FromMilliseconds(4);
 
     private readonly object _stateLock = new();
     private readonly object _outputLock = new();
@@ -32,15 +33,20 @@ internal sealed class ControllerSession : IDisposable
     private readonly HMProfile _profile;
     private readonly HMAudioOutput? _audioOutput;
     private readonly Action<Protocol.Message> _emit;
+    private readonly System.Threading.Timer _stateSubmitTimer;
     private DefaultAudioEndpointGuard? _audioEndpointGuard;
     private readonly AdaptiveTriggerState _adaptiveTriggers = new();
+    private readonly ControllerStateSubmissionPolicy _submissionPolicy = new();
     private HMGamepadState _state;
     private readonly Dictionary<uint, int> _touchSlots = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private int _hapticsSequence = -1;
     private int _hapticsStreaming;
     private int _hapticsNeedsStart;
+    private int _asyncSubmitFailureReported;
     private int _disposed;
+    private bool _stateDirty;
+    private bool _stateFlushScheduled;
     private byte[] _audioResidual = Array.Empty<byte>();
 
     internal ControllerSession(byte deviceId,
@@ -74,6 +80,11 @@ internal sealed class ControllerSession : IDisposable
         // device reports an all-zero buffer until the first client input,
         // which raw consumers decode as a down touch contact at (0,0).
         _controller.SubmitState(in _state);
+        _stateSubmitTimer = new System.Threading.Timer(
+            _ => FlushScheduledState(),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
     }
 
     internal byte DeviceId { get; }
@@ -105,17 +116,23 @@ internal sealed class ControllerSession : IDisposable
         var buttons = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4));
         var leftTrigger = payload[8] / 255.0f;
         var rightTrigger = payload[9] / 255.0f;
-        var leftX = Axis(BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(12, 2)));
-        var leftY = Axis(BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(14, 2)), invert: true);
-        var rightX = Axis(BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(16, 2)));
-        var rightY = Axis(BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(18, 2)), invert: true);
+        var rawLeftX = BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(12, 2));
+        var rawLeftY = BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(14, 2));
+        var rawRightX = BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(16, 2));
+        var rawRightY = BinaryPrimitives.ReadInt16LittleEndian(payload.Slice(18, 2));
+        var leftX = Axis(rawLeftX);
+        var leftY = Axis(rawLeftY, invert: true);
+        var rightX = Axis(rawRightX);
+        var rightY = Axis(rawRightY, invert: true);
+        var analogNeutral = payload[8] == 0 && payload[9] == 0 &&
+                            rawLeftX == 0 && rawLeftY == 0 && rawRightX == 0 && rawRightY == 0;
 
         lock (_stateLock)
         {
             _state.Buttons = MapButtons(buttons);
             _state.Hat = MapHat(buttons);
             UpdateAxes(leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
-            _controller.SubmitState(in _state);
+            QueueStateSubmissionLocked(_submissionPolicy.ObserveInput(buttons, analogNeutral));
         }
     }
 
@@ -132,8 +149,12 @@ internal sealed class ControllerSession : IDisposable
 
         lock (_stateLock)
         {
+            var stateChanged = false;
+            var stateBoundary = false;
             if (eventType == 7) // LI_TOUCH_EVENT_CANCEL_ALL
             {
+                stateChanged = _touchSlots.Count != 0;
+                stateBoundary = stateChanged;
                 foreach (var slot in _touchSlots.Values.Distinct().ToArray())
                     SetTouch(slot, false, 0, 0, 0);
                 _touchSlots.Clear();
@@ -146,8 +167,10 @@ internal sealed class ControllerSession : IDisposable
                     if (_touchSlots.ContainsValue(slot))
                         return;
                     _touchSlots[pointerId] = slot;
+                    stateBoundary = true;
                 }
                 SetTouch(slot, true, pointerId, x, y);
+                stateChanged = true;
             }
             else if (eventType is 0 or 6) // hover/hover-leave are not contacts
             {
@@ -160,12 +183,15 @@ internal sealed class ControllerSession : IDisposable
             else if (eventType is 2 or 4 or 6 && _touchSlots.Remove(pointerId, out var slot))
             {
                 SetTouch(slot, false, pointerId, x, y);
+                stateChanged = true;
+                stateBoundary = true;
             }
             else if (eventType is not (2 or 4 or 5 or 6))
             {
                 throw new InvalidDataException("Unsupported touch event type");
             }
-            _controller.SubmitState(in _state);
+            if (stateChanged)
+                QueueStateSubmissionLocked(stateBoundary);
         }
     }
 
@@ -209,7 +235,7 @@ internal sealed class ControllerSession : IDisposable
                 throw new InvalidDataException("Unsupported motion type");
             }
             _state.SensorTimestamp = unchecked((uint)ElapsedMicroseconds());
-            _controller.SubmitState(in _state);
+            QueueStateSubmissionLocked();
         }
     }
 
@@ -225,8 +251,62 @@ internal sealed class ControllerSession : IDisposable
                 : (byte)Math.Clamp((payload[2] + 5) / 10, 0, 10);
             _state.BatteryCharging = payload[1] == 3;
             _state.BatteryFull = payload[1] == 5;
-            _controller.SubmitState(in _state);
+            QueueStateSubmissionLocked();
         }
+    }
+
+    private void QueueStateSubmissionLocked(bool immediate = false)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        _stateDirty = true;
+        if (immediate)
+        {
+            if (_stateFlushScheduled)
+            {
+                _stateFlushScheduled = false;
+                _stateSubmitTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            }
+            SubmitPendingStateLocked();
+        }
+        else if (!_stateFlushScheduled)
+        {
+            _stateFlushScheduled = true;
+            _stateSubmitTimer.Change(StateCoalesceWindow, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void FlushScheduledState()
+    {
+        try
+        {
+            lock (_stateLock)
+            {
+                if (Volatile.Read(ref _disposed) != 0 || !_stateFlushScheduled)
+                    return;
+                _stateFlushScheduled = false;
+                SubmitPendingStateLocked();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (Interlocked.Exchange(ref _asyncSubmitFailureReported, 1) == 0)
+            {
+                _emit(new Protocol.Message(
+                    Protocol.MessageType.Error,
+                    0,
+                    Protocol.ErrorPayload(-1, $"Unable to submit a coalesced DualSense state: {ex.Message}")));
+            }
+        }
+    }
+
+    private void SubmitPendingStateLocked()
+    {
+        if (!_stateDirty)
+            return;
+        _controller.SubmitState(in _state);
+        _stateDirty = false;
     }
 
     private void OnOutputDecoded(object? sender, HMOutputDecodedEventArgs output)
@@ -436,6 +516,15 @@ internal sealed class ControllerSession : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+        lock (_stateLock)
+        {
+            // Wait for an in-flight timer callback before disposing the HID
+            // controller, and prevent a stale state from crossing sessions.
+            _stateSubmitTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _stateSubmitTimer.Dispose();
+            _stateDirty = false;
+            _stateFlushScheduled = false;
+        }
         _audioEndpointGuard?.Dispose();
         _audioEndpointGuard = null;
         _controller.OutputDecoded -= OnOutputDecoded;
