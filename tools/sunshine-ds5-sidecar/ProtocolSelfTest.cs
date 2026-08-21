@@ -153,6 +153,18 @@ internal static class ProtocolSelfTest
         VerifyHapticsChannelIsolation();
         VerifyDefaultAudioEndpointClassification();
         VerifyDefaultAudioEndpointPolicy();
+        VerifyControllerStateSubmissionPolicy();
+    }
+
+    private static void VerifyControllerStateSubmissionPolicy()
+    {
+        var policy = new ControllerStateSubmissionPolicy();
+        Require(!policy.ObserveInput(0, true), "idle controller state coalescing");
+        Require(policy.ObserveInput(0, false), "analog activation boundary");
+        Require(!policy.ObserveInput(0, false), "continuous analog state coalescing");
+        Require(policy.ObserveInput(0, true), "analog neutral boundary");
+        Require(policy.ObserveInput(0x1000, true), "button press boundary");
+        Require(policy.ObserveInput(0, true), "button release boundary");
     }
 
     private static void VerifyDefaultAudioEndpointClassification()
