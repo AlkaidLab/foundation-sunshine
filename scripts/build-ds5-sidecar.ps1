@@ -1,6 +1,8 @@
 param(
     [string]$OutputDirectory = "build/ds5-sidecar-runtime",
-    [string]$PackageCache = "build/ds5-sidecar-cache"
+    [string]$PackageCache = "build/ds5-sidecar-cache",
+    [string]$ReleaseTag = "",
+    [string]$Repository = "AlkaidLab/foundation-sunshine"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -120,7 +122,7 @@ if ($LASTEXITCODE -ne 0) {
 # package. Excluding it here keeps the Sunshine installer first-party-only.
 Remove-Item -LiteralPath (Join-Path $output 'HIDMaestro.Core.dll') -Force
 @{
-    component_version = '1.0.0-build-runtime'
+    component_version = '1.1.0'
     protocol = 1
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version
@@ -128,3 +130,11 @@ Remove-Item -LiteralPath (Join-Path $output 'HIDMaestro.Core.dll') -Force
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'runtime.json') -Encoding utf8
 
 Write-Host "Published self-contained DualSense sidecar to $output"
+
+& (Join-Path $PSScriptRoot 'package-ds5-sidecar.ps1') `
+    -RuntimeDirectory $OutputDirectory `
+    -ReleaseTag $ReleaseTag `
+    -Repository $Repository
+if ($LASTEXITCODE -ne 0) {
+    throw "DualSense sidecar packaging failed with exit code $LASTEXITCODE"
+}

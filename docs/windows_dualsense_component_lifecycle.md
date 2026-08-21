@@ -77,6 +77,8 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
 - 后端只接受内置 allowlist 中的官方仓库和资产命名规则。
 - 发布 manifest 固定版本、下载地址、文件大小和 SHA-256。
 - GUI 不接受渲染器传入的任意下载 URL。
+- Sunshine 自研 Sidecar 的 `win-x64` 自包含运行时作为独立 Release 资产发布；主安装包只携带同版本 manifest，不再捆绑完整 .NET 运行时。
+- GUI 默认按 manifest 下载 Sidecar，也允许用户从任意本地目录选择匹配的官方 ZIP；放在 Sunshine 根目录或 `tools` 目录、文件名保持 `Sunshine.Ds5Sidecar.Windows-x64.zip` 的包会被自动发现。提权 helper 不接收调用方路径，只接收 allowlist 操作和随机令牌；本地 ZIP 必须通过 manifest 固定的大小与 SHA-256 校验。
 - 当前发布物存在 WDK 工具再分发审查事项，因此不放入 Sunshine 安装包或自有 CDN。
 - GUI 提供上游项目、许可证、来源 URL 和校验结果。
 
@@ -511,6 +513,8 @@ Core 维护引用计数，按 session ID 管理多客户端。第一阶段可以
 | `DS5-PKG-001` | 下载摘要不匹配 | 删除下载并重试 |
 | `DS5-PKG-002` | 发布包结构无效 | 停止安装并查看日志 |
 | `DS5-PKG-003` | Sidecar probe 失败 | 回滚或修复 |
+| `DS5-PKG-004` | 提权 helper 启动、授权或 IPC 失败 | 重试 UAC；不修改现有组件 |
+| `DS5-PKG-005` | 本地 Sidecar 包与当前 manifest 不匹配 | 下载同一 Sunshine Release 的组件 ZIP |
 | `DS5-DRV-001` | USB 传输缺失 | 提示安装 |
 | `DS5-DRV-002` | 用户取消 UAC | 保留组件，稍后安装 |
 | `DS5-USB-001` | attach 失败 | 清理测试会话后重试 |
@@ -651,7 +655,7 @@ UX 验收：
 
 1. Sidecar 调用 HIDMaestro v1.6.1 的公共 `HIDMaestro.Core.dll` API，不复制其实现，也不调用 HIDMaestroTest UI。
 2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.1.zip`，固定下载地址和 SHA-256 `00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34`。发布物大小为 118,879,222 bytes。
-3. Sunshine 安装包仅携带自研 Sidecar 的 `win-x64` 自包含 .NET 运行时，不携带 HIDMaestro DLL。GUI 在用户明确选择安装时下载第三方发布物，校验后只提取 Core、许可证、README 和第三方通知。
+3. Sunshine 主安装包仅携带自研 Sidecar 组件包的固定 manifest，不携带完整 .NET 运行时或 HIDMaestro DLL。Sidecar 自包含 ZIP 作为同一 Release 的独立资产发布；GUI 在用户明确选择安装时下载或读取用户选择的匹配 ZIP，并继续单独下载、校验 HIDMaestro 后只提取 Core、许可证、README 和第三方通知。
 4. 首期每个 Sunshine 进程只允许一个虚拟 DualSense。Xbox 360、DualShock 4 和既有自动模式继续走 ViGEm，不改变成熟驱动支持范围。
 5. 客户端只选择 `physical` 或 `emulated`。前者预检 USB DualSense 四声道端点后声明 `ML_FF_DS5_HAPTICS_PCM`；后者声明 `ML_FF_DS5_HAPTICS_IR_V2`。两位互斥且不在运行中自动切换。
 6. `0x550A` v1 固定承载 48 kHz、双声道、S16LE 原始 PCM；`0x550B` v2 固定承载 72-byte 双 lane IR。两者均按 5 ms 节拍使用不可靠有序传输，断序/`DISCONTINUITY` 重置客户端状态。
@@ -664,10 +668,10 @@ UX 验收：
 - 提权复合 profile 自测通过，HID、四声道音频端点和设备清理均成功。
 - 强端到端环路通过：Moonlight 实际 WASAPI 渲染器写入 HIDMaestro 48 kHz 四声道端点，Sidecar 从 channel 3/4 收到 960 bytes 非静音触觉 PCM。
 - Moonlight Qt 6.9.2 / MSVC Release 完整链接通过；客户端使用自适应端点容量的 15 ms 上限预缓冲，20 ms 饥饿或序号不连续时重置。
-- Sidecar `win-x64` 自包含发布通过，产物约 107 MB 且确认不包含 `HIDMaestro.Core.dll`；把官方校验 DLL 放入 staging 后，probe 返回协议 1、standard/composite profile、驱动及 USB/IP 均可用。
+- Sidecar `win-x64` 自包含发布通过，未压缩产物约 107 MB 且确认不包含 `HIDMaestro.Core.dll`；该运行时被压缩为独立、固定 SHA-256 的组件资产，把官方校验 DLL 放入 staging 后，probe 返回协议 1、standard/composite profile、驱动及 USB/IP 均可用。
 - Control Panel 已同步 Sunshine master 使用的 VDD/HDR 基线；3 项 DualSense Rust 单测、Vue production build 和 12 项 renderer 测试通过。完整配置读取失败会中止保存，USB/IP 不可用时后端拒绝 composite profile，页面仍允许用户切回 HID-only。
 - Core 的 DS5 命名管道改用 overlapped I/O；独立 fake-sidecar 回归测试覆盖 `alloc -> reader blocked -> free`，本机在 93 ms 内完成，避免同步 `ReadFile` 与 owner EOF 相互等待。
-- Windows `application` 组件的隔离安装烟测通过：自包含 Sidecar 被安装到 `tools/sunshine-ds5-sidecar`，且安装目录中不含 `HIDMaestro.Core.dll`，保持由 GUI 下载并校验第三方运行时的边界。
+- Windows `application` 组件的隔离安装烟测通过：主包只安装 `tools/ds5-sidecar-package.json`，不再出现 `tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe`；GUI 下载或选择本地组件包后才把 Sidecar 与经校验的 HIDMaestro Core 激活到组件目录。
 - `moonlight-audio-haptics` authored/ABI 测试、common-c IR v2 golden parser 和 Moonlight IR-to-rumble renderer 测试通过。
 - Sunshine 合成 PCM -> SDK 双 lane IR -> 72-byte 小端序列化 -> common-c 解析的跨仓库测试通过；空流结束会产生静音 `STREAM_END`。
 
