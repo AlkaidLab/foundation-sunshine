@@ -4,8 +4,8 @@
  */
 #pragma once
 
-#include <filesystem>
 #include <cstdint>
+#include <filesystem>
 #include <utility>
 
 #include <boost/smart_ptr/shared_ptr.hpp>
