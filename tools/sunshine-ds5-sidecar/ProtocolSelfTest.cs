@@ -28,8 +28,6 @@ internal static class ProtocolSelfTest
         Require(helloCapabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "hello adaptive trigger capability");
         Require(helloCapabilities.HasFlag(Protocol.Capability.GenshinCompatibilityIdentity),
             "hello Genshin compatibility identity capability");
-        Require(helloCapabilities.HasFlag(Protocol.Capability.HapticsDiagnostics),
-            "hello haptics diagnostics capability");
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
@@ -169,10 +167,6 @@ internal static class ProtocolSelfTest
                 1, Protocol.AttachFlags.None, true, true) ==
                 DualSenseHapticsAudio.CompositeProfileId,
             "standard composite attach profile selection");
-        Require(SidecarServer.SelectProfileId(
-                1, Protocol.AttachFlags.HapticsDiagnostics, true, true) ==
-                DualSenseHapticsAudio.CompositeProfileId,
-            "diagnostic composite attach profile selection");
         try
         {
             SidecarServer.SelectProfileId(

@@ -48,25 +48,18 @@ internal sealed class ControllerSession : IDisposable
     private bool _stateDirty;
     private bool _stateFlushScheduled;
     private byte[] _audioResidual = Array.Empty<byte>();
-    private readonly bool _hapticsDiagnosticsEnabled;
-    private long _debugHapticsFrames;
-    private long _debugHapticsLastReportTicks;
-    private readonly double[] _debugHapticsSquareSums = new double[DualSenseHapticsAudio.InputChannels];
-    private readonly int[] _debugHapticsPeaks = new int[DualSenseHapticsAudio.InputChannels];
 
     internal ControllerSession(byte deviceId,
                                byte clientControllerNumber,
                                HMController controller,
                                HMProfile profile,
-                               Action<Protocol.Message> emit,
-                               bool hapticsDiagnosticsEnabled = false)
+                               Action<Protocol.Message> emit)
     {
         DeviceId = deviceId;
         ClientControllerNumber = clientControllerNumber;
         _controller = controller;
         _profile = profile;
         _emit = emit;
-        _hapticsDiagnosticsEnabled = hapticsDiagnosticsEnabled;
         _state = new HMGamepadState
         {
             Axes = HMGamepadStateHelpers.StandardAxes(profile),
@@ -352,16 +345,6 @@ internal sealed class ControllerSession : IDisposable
 
     private void OnAudioStreamingChanged(object? sender, bool streaming)
     {
-        if (_hapticsDiagnosticsEnabled && streaming)
-        {
-            ResetHapticsDiagnostics();
-            EmitHapticsDiagnostics(eventType: 1, includeEmpty: true);
-        }
-        else if (_hapticsDiagnosticsEnabled)
-        {
-            ReportHapticsDiagnostics(includeEmpty: true);
-            EmitHapticsDiagnostics(eventType: 2, includeEmpty: true);
-        }
         if (streaming)
         {
             // Arm the start marker before publishing the streaming flag, or a
@@ -401,8 +384,6 @@ internal sealed class ControllerSession : IDisposable
 
         var source = combined.AsSpan(0, usableBytes);
         var frameCount = source.Length / sourceFrameBytes;
-        if (_hapticsDiagnosticsEnabled)
-            RecordHapticsDiagnostics(source, frameCount);
         var offsetFrames = 0;
         while (offsetFrames < frameCount)
         {
@@ -436,66 +417,6 @@ internal sealed class ControllerSession : IDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(20, 4), DualSenseHapticsAudio.SampleRateHz);
         pcm.CopyTo(payload.AsSpan(24));
         _emit(new Protocol.Message(Protocol.MessageType.HapticsPcm, 0, payload));
-    }
-
-    private void ResetHapticsDiagnostics()
-    {
-        _debugHapticsFrames = 0;
-        _debugHapticsLastReportTicks = _clock.ElapsedTicks;
-        Array.Clear(_debugHapticsSquareSums);
-        Array.Clear(_debugHapticsPeaks);
-    }
-
-    private void RecordHapticsDiagnostics(ReadOnlySpan<byte> pcm, int frameCount)
-    {
-        for (var frame = 0; frame < frameCount; ++frame)
-        {
-            var frameOffset = frame * DualSenseHapticsAudio.InputFrameBytes;
-            for (var channel = 0; channel < DualSenseHapticsAudio.InputChannels; ++channel)
-            {
-                var sample = BinaryPrimitives.ReadInt16LittleEndian(
-                    pcm.Slice(frameOffset + channel * DualSenseHapticsAudio.BytesPerSample, 2));
-                var magnitude = sample == short.MinValue ? 32768 : Math.Abs(sample);
-                _debugHapticsPeaks[channel] = Math.Max(_debugHapticsPeaks[channel], magnitude);
-                _debugHapticsSquareSums[channel] += (double)sample * sample;
-            }
-        }
-        _debugHapticsFrames += frameCount;
-
-        if (_clock.ElapsedTicks - _debugHapticsLastReportTicks >= Stopwatch.Frequency)
-            ReportHapticsDiagnostics(includeEmpty: false);
-    }
-
-    private void ReportHapticsDiagnostics(bool includeEmpty)
-    {
-        if (_debugHapticsFrames == 0 && !includeEmpty)
-            return;
-
-        EmitHapticsDiagnostics(eventType: 0, includeEmpty);
-    }
-
-    private void EmitHapticsDiagnostics(byte eventType, bool includeEmpty)
-    {
-        if (_debugHapticsFrames == 0 && !includeEmpty)
-            return;
-
-        var divisor = Math.Max(1, _debugHapticsFrames);
-        var rms = _debugHapticsSquareSums.Select(value => Math.Sqrt(value / divisor)).ToArray();
-        var payload = new byte[32];
-        payload[0] = DeviceId;
-        payload[1] = ClientControllerNumber;
-        payload[2] = eventType;
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(4, 4),
-            (uint)Math.Min(uint.MaxValue, _debugHapticsFrames));
-        for (var channel = 0; channel < DualSenseHapticsAudio.InputChannels; ++channel)
-        {
-            BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(8 + channel * 4, 4),
-                (uint)Math.Min(uint.MaxValue, Math.Round(rms[channel])));
-            BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(24 + channel * 2, 2),
-                (ushort)_debugHapticsPeaks[channel]);
-        }
-        _emit(new Protocol.Message(Protocol.MessageType.HapticsDiagnostics, 0, payload));
-        ResetHapticsDiagnostics();
     }
 
     private long ElapsedMicroseconds()
@@ -614,8 +535,6 @@ internal sealed class ControllerSession : IDisposable
         }
         if (_audioOutput is not null)
         {
-            if (_hapticsDiagnosticsEnabled)
-                ReportHapticsDiagnostics(includeEmpty: false);
             _audioOutput.FramesReceived -= OnAudioFrames;
             _audioOutput.StreamingChanged -= OnAudioStreamingChanged;
         }

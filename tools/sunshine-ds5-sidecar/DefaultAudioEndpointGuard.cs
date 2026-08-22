@@ -217,6 +217,46 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return IsVirtualDualSenseDeviceNode(node);
     }
 
+    internal static IReadOnlyList<string> GetActiveVirtualDualSenseRenderEndpoints()
+    {
+        const uint deviceStateActive = 0x00000001;
+        var result = new List<string>();
+        IMMDeviceEnumerator? enumerator = null;
+        IMMDeviceCollection? endpoints = null;
+        try
+        {
+            var type = Type.GetTypeFromCLSID(MmDeviceEnumeratorClass, throwOnError: true)!;
+            enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
+            Marshal.ThrowExceptionForHR(
+                enumerator.EnumAudioEndpoints(DataFlow.Render, deviceStateActive, out endpoints));
+            Marshal.ThrowExceptionForHR(endpoints.GetCount(out var count));
+            for (uint index = 0; index < count; ++index)
+            {
+                IMMDevice? endpoint = null;
+                try
+                {
+                    Marshal.ThrowExceptionForHR(endpoints.Item(index, out endpoint));
+                    Marshal.ThrowExceptionForHR(endpoint.GetId(out var endpointId));
+                    if (IsVirtualDualSenseEndpoint(endpointId))
+                        result.Add(endpointId);
+                }
+                finally
+                {
+                    if (endpoint is not null && Marshal.IsComObject(endpoint))
+                        Marshal.FinalReleaseComObject(endpoint);
+                }
+            }
+            return result;
+        }
+        finally
+        {
+            if (endpoints is not null && Marshal.IsComObject(endpoints))
+                Marshal.FinalReleaseComObject(endpoints);
+            if (enumerator is not null && Marshal.IsComObject(enumerator))
+                Marshal.FinalReleaseComObject(enumerator);
+        }
+    }
+
     internal static bool IsVirtualDualSenseDeviceNode(string instanceId, bool includePhantom)
     {
         if (CM_Locate_DevNodeW(out var node, instanceId, 0) != 0 &&
@@ -362,7 +402,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private interface IMMDeviceEnumerator
     {
         [PreserveSig]
-        int EnumAudioEndpoints(DataFlow dataFlow, uint stateMask, out IntPtr devices);
+        int EnumAudioEndpoints(DataFlow dataFlow, uint stateMask, out IMMDeviceCollection devices);
         [PreserveSig]
         int GetDefaultAudioEndpoint(DataFlow dataFlow, AudioRole role, out IMMDevice endpoint);
         [PreserveSig]
@@ -371,6 +411,17 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         int RegisterEndpointNotificationCallback(IMMNotificationClient callback);
         [PreserveSig]
         int UnregisterEndpointNotificationCallback(IMMNotificationClient callback);
+    }
+
+    [ComImport]
+    [Guid("0BD7A1BE-7A1A-44DB-8397-C0A8FE7AF53E")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMMDeviceCollection
+    {
+        [PreserveSig]
+        int GetCount(out uint count);
+        [PreserveSig]
+        int Item(uint index, out IMMDevice endpoint);
     }
 
     [ComImport]

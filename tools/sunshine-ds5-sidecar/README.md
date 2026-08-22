@@ -42,10 +42,6 @@ three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
-When Sunshine logging is set to `debug` or `verbose`, a separately negotiated
-diagnostic flag reports stream start/stop plus one-second aggregate RMS and
-peak values for all four PCM channels. Normal logging levels do not request or
-compute these diagnostics.
 The composite session monitors every Windows default render and capture role.
 If Windows selects a HIDMaestro-backed virtual DualSense endpoint as a default,
 the helper reports the policy violation and exits; Sunshine then performs its

@@ -149,7 +149,6 @@ internal sealed class SidecarServer : IAsyncDisposable
                                                    Protocol.Capability.Motion |
                                                    Protocol.Capability.Battery |
                                                    Protocol.Capability.AdaptiveTriggers |
-                                                   Protocol.Capability.HapticsDiagnostics |
                                                    (_genshinCompatibilityAvailable
                                                        ? Protocol.Capability.GenshinCompatibilityIdentity
                                                        : 0) |
@@ -232,9 +231,7 @@ internal sealed class SidecarServer : IAsyncDisposable
         ControllerSession session;
         try
         {
-            session = new ControllerSession(
-                deviceId, payload[1], controller, profile, Emit,
-                ((Protocol.AttachFlags)payload[3]).HasFlag(Protocol.AttachFlags.HapticsDiagnostics));
+            session = new ControllerSession(deviceId, payload[1], controller, profile, Emit);
         }
         catch
         {
@@ -253,7 +250,6 @@ internal sealed class SidecarServer : IAsyncDisposable
                    Protocol.Capability.Motion |
                    Protocol.Capability.Battery |
                    Protocol.Capability.AdaptiveTriggers |
-                   Protocol.Capability.HapticsDiagnostics |
                    (_genshinCompatibilityAvailable
                        ? Protocol.Capability.GenshinCompatibilityIdentity
                        : 0) |
@@ -271,8 +267,7 @@ internal sealed class SidecarServer : IAsyncDisposable
         byte profileMode, Protocol.AttachFlags flags,
         bool authoredHapticsAvailable, bool genshinCompatibilityAvailable)
     {
-        if ((flags & ~(Protocol.AttachFlags.GenshinCompatibilityIdentity |
-                       Protocol.AttachFlags.HapticsDiagnostics)) != 0)
+        if ((flags & ~Protocol.AttachFlags.GenshinCompatibilityIdentity) != 0)
             throw new InvalidDataException("Unsupported DS5 attach flags");
         var genshinCompatibility = flags.HasFlag(
             Protocol.AttachFlags.GenshinCompatibilityIdentity);

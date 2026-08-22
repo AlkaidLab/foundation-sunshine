@@ -9,12 +9,9 @@ namespace Sunshine.Ds5Sidecar;
 /// </summary>
 internal static class DualSenseSpeakerConfiguration
 {
-    private const uint DeviceStateActive = 0x00000001;
     private const ushort VtUi4 = 19;
     private const ushort VtBlob = 65;
     private const uint QuadraphonicSpeakerMask = 0x00000033;
-    private static readonly Guid MmDeviceEnumeratorClass =
-        new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     private static readonly Guid PolicyConfigClientClass =
         new("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9");
     private static readonly PropertyKey DeviceFormat = new(
@@ -44,40 +41,12 @@ internal static class DualSenseSpeakerConfiguration
     private static bool TryConfigureVirtualEndpoints(out bool changed)
     {
         changed = false;
-        var matched = false;
-        IMMDeviceEnumerator? enumerator = null;
-        IMMDeviceCollection? endpoints = null;
-        try
+        var endpointIds = DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints();
+        foreach (var endpointId in endpointIds)
         {
-            var type = Type.GetTypeFromCLSID(MmDeviceEnumeratorClass, throwOnError: true)!;
-            enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
-            ThrowIfFailed(enumerator.EnumAudioEndpoints(DataFlow.Render, DeviceStateActive, out endpoints));
-            ThrowIfFailed(endpoints.GetCount(out var count));
-
-            for (uint index = 0; index < count; ++index)
-            {
-                IMMDevice? endpoint = null;
-                try
-                {
-                    ThrowIfFailed(endpoints.Item(index, out endpoint));
-                    ThrowIfFailed(endpoint.GetId(out var candidate));
-                    if (!DefaultAudioEndpointGuard.IsVirtualDualSenseEndpoint(candidate))
-                        continue;
-                    matched = true;
-                    changed |= Apply(candidate);
-                }
-                finally
-                {
-                    Release(endpoint);
-                }
-            }
-            return matched;
+            changed |= Apply(endpointId);
         }
-        finally
-        {
-            Release(endpoints);
-            Release(enumerator);
-        }
+        return endpointIds.Count != 0;
     }
 
     private static bool Apply(string endpointId)
@@ -209,11 +178,6 @@ internal static class DualSenseSpeakerConfiguration
             Marshal.FinalReleaseComObject(instance);
     }
 
-    private enum DataFlow
-    {
-        Render = 0,
-    }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct PropertyKey(Guid formatId, uint propertyId)
     {
@@ -258,50 +222,6 @@ internal static class DualSenseSpeakerConfiguration
         internal ushort ValidBitsPerSample;
         internal uint ChannelMask;
         internal Guid SubFormat;
-    }
-
-    [ComImport]
-    [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceEnumerator
-    {
-        [PreserveSig]
-        int EnumAudioEndpoints(DataFlow dataFlow, uint stateMask, out IMMDeviceCollection endpoints);
-        [PreserveSig]
-        int GetDefaultAudioEndpoint(DataFlow dataFlow, int role, out IMMDevice endpoint);
-        [PreserveSig]
-        int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice endpoint);
-        [PreserveSig]
-        int RegisterEndpointNotificationCallback(IntPtr callback);
-        [PreserveSig]
-        int UnregisterEndpointNotificationCallback(IntPtr callback);
-    }
-
-    [ComImport]
-    [Guid("0BD7A1BE-7A1A-44DB-8397-C0A8FE7AF53E")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceCollection
-    {
-        [PreserveSig]
-        int GetCount(out uint count);
-        [PreserveSig]
-        int Item(uint index, out IMMDevice endpoint);
-    }
-
-    [ComImport]
-    [Guid("D666063F-1587-4E43-81F1-B948E807363F")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDevice
-    {
-        [PreserveSig]
-        int Activate(ref Guid interfaceId, uint classContext, IntPtr activationParameters,
-                     [MarshalAs(UnmanagedType.IUnknown)] out object instance);
-        [PreserveSig]
-        int OpenPropertyStore(uint access, out IntPtr properties);
-        [PreserveSig]
-        int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
-        [PreserveSig]
-        int GetState(out uint state);
     }
 
     [ComImport]

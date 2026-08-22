@@ -1921,8 +1921,7 @@ namespace platf {
       }
       const auto result = raw->ds5_sidecar->alloc(
         id, feedback_queue, config::input.ds5_audio_haptics,
-        config::input.ds5_genshin_compatibility,
-        config::sunshine.min_log_level <= 1);
+        config::input.ds5_genshin_compatibility);
       if (result == 0) {
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));

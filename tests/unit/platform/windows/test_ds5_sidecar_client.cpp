@@ -343,55 +343,6 @@ TEST(Ds5SidecarClientTests, RejectsGenshinCompatibilityWithoutSidecarCapability)
   EXPECT_FALSE(client.owns(0));
 }
 
-TEST(Ds5SidecarClientTests, SendsHapticsDiagnosticsOnlyAfterCapabilityNegotiation) {
-  config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
-
-  event_namespace_scope_t events(L"haptics-diagnostics");
-  environment_scope_t enable_diagnostics(
-    L"SUNSHINE_DS5_TEST_HAPTICS_DIAGNOSTICS", L"1");
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
-  const auto diagnostics_name =
-    L"Local\\sunshine-ds5-test-haptics-diagnostics-" + events.suffix;
-  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
-  handle_scope_t diagnostics_event(CreateEventW(nullptr, FALSE, FALSE, diagnostics_name.c_str()));
-  ASSERT_NE(continue_event.handle, nullptr);
-  ASSERT_NE(diagnostics_event.handle, nullptr);
-
-  auto mail = std::make_shared<safe::mail_raw_t>();
-  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-haptics-diagnostics-test");
-  platf::ds5::sidecar_client_t client;
-  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true, false, true), 0);
-  EXPECT_EQ(WaitForSingleObject(diagnostics_event.handle, 2000), WAIT_OBJECT_0);
-  client.free(0);
-}
-
-TEST(Ds5SidecarClientTests, DoesNotSendHapticsDiagnosticsWithoutCapability) {
-  config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
-
-  event_namespace_scope_t events(L"haptics-diagnostics-capability-required");
-  environment_scope_t disable_haptics_diagnostics(
-    L"SUNSHINE_DS5_TEST_HAPTICS_DIAGNOSTICS", nullptr);
-  environment_scope_t enable_audio_endpoint(L"SUNSHINE_DS5_TEST_AUDIO_ENDPOINT", L"1");
-  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
-  const auto diagnostics_name =
-    L"Local\\sunshine-ds5-test-haptics-diagnostics-" + events.suffix;
-  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
-  handle_scope_t diagnostics_event(CreateEventW(nullptr, FALSE, FALSE, diagnostics_name.c_str()));
-  ASSERT_NE(continue_event.handle, nullptr);
-  ASSERT_NE(diagnostics_event.handle, nullptr);
-
-  auto mail = std::make_shared<safe::mail_raw_t>();
-  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-haptics-capability-test");
-  platf::ds5::sidecar_client_t client;
-  ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true, false, true), 0);
-  EXPECT_EQ(WaitForSingleObject(diagnostics_event.handle, 250), WAIT_TIMEOUT);
-  client.free(0);
-}
-
 TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   config_scope_t restore_config;
   config::input.ds5_enabled = true;
