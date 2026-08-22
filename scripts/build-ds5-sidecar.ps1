@@ -121,13 +121,18 @@ if ($LASTEXITCODE -ne 0) {
 # HIDMaestro is installed by the GUI from the independently verified upstream
 # package. Excluding it here keeps the Sunshine installer first-party-only.
 Remove-Item -LiteralPath (Join-Path $output 'HIDMaestro.Core.dll') -Force
-@{
+$runtimeMetadata = @{
     component_version = '1.2.0'
     protocol = 1
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version
     hidmaestro_build_sha256 = $expectedSha256.ToLowerInvariant()
-} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'runtime.json') -Encoding utf8
+} | ConvertTo-Json
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    (Join-Path $output 'runtime.json'),
+    $runtimeMetadata + [Environment]::NewLine,
+    $utf8NoBom)
 
 Write-Host "Published self-contained DualSense sidecar to $output"
 
