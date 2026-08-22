@@ -10,7 +10,7 @@
   </PropertyGroup>
   <Target Name="RequireHIDMaestro" BeforeTargets="ResolveReferences"
           Condition="!Exists('$(HIDMaestroCorePath)')">
-    <Error Text="HIDMaestro.Core.dll was not found. Set HIDMaestroCorePath to the pinned upstream v1.6.1 runtime." />
+    <Error Text="HIDMaestro.Core.dll was not found. Set HIDMaestroCorePath to the pinned upstream v1.6.2 runtime." />
   </Target>
   <ItemGroup>
     <Reference Include="HIDMaestro.Core">
@@ -19,7 +19,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <!-- Upstream v1.6.1 USB DualSense profiles with extendedReport.alwaysArmed
+    <!-- Upstream v1.6.2 USB DualSense profiles with extendedReport.alwaysArmed
          added. The stock profiles never arm the vendor-blob encoder, so the
          Sony-specific tail of report 0x01 (touch fingers at bytes 33/37 among
          others) is never written and idles at 0x00, which every raw consumer
