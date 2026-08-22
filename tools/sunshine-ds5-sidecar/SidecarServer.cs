@@ -317,7 +317,10 @@ internal sealed class SidecarServer : IAsyncDisposable
             }
 
             if (!changed)
+            {
+                ApplySpeakerConfiguration();
                 return controller;
+            }
 
             // AudioEndpointBuilder consumes the EP properties when it creates
             // the MMDevice endpoint. Once disposal begins, creation failures
@@ -329,7 +332,31 @@ internal sealed class SidecarServer : IAsyncDisposable
         Console.Error.WriteLine(
             "DualSense audio endpoint identity did not stabilize after policy provisioning; " +
             "runtime default-device guard remains active");
+        ApplySpeakerConfiguration();
         return controller;
+    }
+
+    private static void ApplySpeakerConfiguration()
+    {
+        try
+        {
+            if (!DualSenseSpeakerConfiguration.Ensure(TimeSpan.FromSeconds(3), out var changed))
+            {
+                Console.Error.WriteLine(
+                    "Unable to find the virtual DualSense render endpoint; " +
+                    "complete its quadraphonic speaker configuration manually");
+            }
+            else
+                Console.Error.WriteLine(changed
+                    ? "Configured the virtual DualSense render endpoint as quadraphonic"
+                    : "Reapplied the virtual DualSense quadraphonic speaker configuration");
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(
+                $"Unable to configure the virtual DualSense speakers: {error.Message}; " +
+                "complete the quadraphonic speaker setup manually");
+        }
     }
 
     private void Detach(uint requestId, ReadOnlySpan<byte> payload)

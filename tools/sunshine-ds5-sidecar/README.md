@@ -36,16 +36,18 @@ The optional Genshin compatibility attach flag derives a third profile from
 and four-channel layout while changing only the USB product string from
 `DualSense Wireless Controller` to the launch-model `Wireless Controller`.
 The runtime profile starts the USB speaker control unmuted at its declared
-maximum and provisions Windows' physical/full-range speaker masks as
-quadraphonic (`0x33`), matching Genshin's documented endpoint requirements.
+maximum, provisions the full-range mask as quadraphonic (`0x33`), and commits
+the active endpoint's quadraphonic topology through DirectSound. This matches
+the settings applied by completing Windows' speaker setup wizard as required
+by Genshin.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
 When Sunshine logging is set to `debug` or `verbose`, a separately negotiated
 diagnostic flag reports stream start/stop plus one-second aggregate RMS and
 peak values for all four PCM channels. Normal logging levels do not request or
 compute these diagnostics.
-The composite session monitors the three Windows default render roles. If
-Windows selects the HIDMaestro-backed virtual DualSense speaker as a default,
+The composite session monitors every Windows default render and capture role.
+If Windows selects a HIDMaestro-backed virtual DualSense endpoint as a default,
 the helper reports the policy violation and exits; Sunshine then performs its
 single recovery attach in HID-only DS5 mode. This read-only fail-closed guard
 avoids undocumented audio-policy writes and never changes a user's defaults.

@@ -3,10 +3,10 @@ using Microsoft.Win32;
 namespace Sunshine.Ds5Sidecar;
 
 /// <summary>
-/// Applies deterministic quadraphonic/full-range endpoint properties and
-/// Windows' documented never-default policy to HIDMaestro-backed DualSense
-/// audio interfaces. The policy is scoped to the concrete virtual device
-/// instance, so a physical DualSense with the same VID/PID is untouched.
+/// Applies the full-range hint and Windows' documented never-default policy to
+/// HIDMaestro-backed DualSense audio interfaces before Windows creates the
+/// MMDevice endpoint. The active speaker topology is committed separately via
+/// DirectSound, matching the Sound control panel's speaker setup wizard.
 /// </summary>
 internal static class DefaultAudioEndpointPolicy
 {
@@ -14,9 +14,6 @@ internal static class DefaultAudioEndpointPolicy
         @"SYSTEM\CurrentControlSet\Control\DeviceClasses\{6994ad04-93ef-11d0-a3cc-00a0c9223196}";
     private const string EndpointAssociation =
         "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2";
-    // PKEY_AudioEndpoint_PhysicalSpeakers
-    private const string PhysicalSpeakers =
-        "{1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},3";
     private const string NeverSetAsDefaultEndpoint =
         "{F3E80BEF-1723-4FF2-BCC4-7F83DC5E46D4},3";
     // PKEY_AudioEndpoint_FullRangeSpeakers
@@ -81,12 +78,10 @@ internal static class DefaultAudioEndpointPolicy
 
                 matched = true;
                 if (NeedsUpdate(endpoint.GetValue(EndpointAssociation), endpoint.GetValue(NeverSetAsDefaultEndpoint)) ||
-                    NeedsSpeakerConfigurationUpdate(
-                        endpoint.GetValue(PhysicalSpeakers), endpoint.GetValue(FullRangeSpeakers)))
+                    NeedsFullRangeUpdate(endpoint.GetValue(FullRangeSpeakers)))
                 {
                     endpoint.SetValue(EndpointAssociation, AnyKsNodeType, RegistryValueKind.String);
                     endpoint.SetValue(NeverSetAsDefaultEndpoint, AllRolesAndFlows, RegistryValueKind.DWord);
-                    endpoint.SetValue(PhysicalSpeakers, QuadraphonicSpeakerMask, RegistryValueKind.DWord);
                     endpoint.SetValue(FullRangeSpeakers, QuadraphonicSpeakerMask, RegistryValueKind.DWord);
                     changed = true;
                 }
@@ -104,9 +99,8 @@ internal static class DefaultAudioEndpointPolicy
                (policyMask & AllRolesAndFlows) != AllRolesAndFlows;
     }
 
-    internal static bool NeedsSpeakerConfigurationUpdate(object? physicalSpeakers, object? fullRangeSpeakers)
+    internal static bool NeedsFullRangeUpdate(object? fullRangeSpeakers)
     {
-        return physicalSpeakers is not int physicalMask || physicalMask != QuadraphonicSpeakerMask ||
-               fullRangeSpeakers is not int fullRangeMask || fullRangeMask != QuadraphonicSpeakerMask;
+        return fullRangeSpeakers is not int fullRangeMask || fullRangeMask != QuadraphonicSpeakerMask;
     }
 }
