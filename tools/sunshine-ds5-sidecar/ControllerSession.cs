@@ -25,6 +25,10 @@ internal sealed class ControllerSession : IDisposable
     private const uint Touchpad = 0x100000;
     private const uint Misc = 0x200000;
     private const int HapticsFramesPerPacket = 240;
+    // Small transport/controller noise must not become Windows gamepad
+    // navigation input. The client sends signed stick values, while the
+    // HIDMaestro state uses [0, 1] with 0.5 as center.
+    private const short StickDeadzone = 2048;
     private static readonly TimeSpan StateCoalesceWindow = TimeSpan.FromMilliseconds(4);
 
     private readonly object _stateLock = new();
@@ -497,6 +501,8 @@ internal sealed class ControllerSession : IDisposable
 
     private static float Axis(short value, bool invert = false)
     {
+        if (Math.Abs((int)value) <= StickDeadzone)
+            return 0.5f;
         var normalized = (value - (float)short.MinValue) / ushort.MaxValue;
         return invert ? 1.0f - normalized : normalized;
     }

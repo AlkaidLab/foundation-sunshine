@@ -6,8 +6,14 @@ namespace Sunshine.Ds5Sidecar;
 
 internal static class DualSenseHapticsAudio
 {
-    internal const string CompositeProfileId = "dualsense-composite";
-    internal const string GenshinCompatibilityProfileId = "dualsense-composite-genshin";
+    // Keep Sunshine's patched profiles separate from HIDMaestro's catalog.
+    // The catalog may already contain a profile with the same id; duplicate
+    // ids are ignored by the loader, which would silently select the stock
+    // profile without extendedReport.alwaysArmed.
+    internal const string StandardProfileId = "sunshine-dualsense";
+    internal const string CompositeProfileId = "sunshine-dualsense-composite";
+    internal const string GenshinCompatibilityProfileId = "sunshine-dualsense-composite-genshin";
+    private const string BundledCompositeProfileId = "dualsense-composite";
     internal const string CompositeProductString = "DualSense Wireless Controller";
     internal const string GenshinCompatibilityProductString = "Wireless Controller";
     internal const int InputChannels = 4;
@@ -29,7 +35,15 @@ internal static class DualSenseHapticsAudio
 
     internal static void ValidateCompositeProfile(ReadOnlyMemory<byte> json)
     {
-        ValidateCompositeProfile(json, CompositeProfileId, CompositeProductString);
+        ValidateCompositeProfile(json, BundledCompositeProfileId, CompositeProductString);
+    }
+
+    internal static byte[] CreatePatchedProfile(ReadOnlyMemory<byte> json, string profileId)
+    {
+        var root = JsonNode.Parse(json.Span)?.AsObject()
+                   ?? throw new InvalidDataException("DualSense profile is not a JSON object");
+        root["id"] = profileId;
+        return JsonSerializer.SerializeToUtf8Bytes(root);
     }
 
     internal static byte[] CreateGenshinCompatibilityProfile(ReadOnlyMemory<byte> compositeJson)
@@ -50,7 +64,7 @@ internal static class DualSenseHapticsAudio
         return profileId is CompositeProfileId or GenshinCompatibilityProfileId;
     }
 
-    private static void ValidateCompositeProfile(
+    internal static void ValidateCompositeProfile(
         ReadOnlyMemory<byte> json, string expectedId, string expectedProductString)
     {
         using var document = JsonDocument.Parse(json);

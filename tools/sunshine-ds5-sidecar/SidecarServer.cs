@@ -276,7 +276,7 @@ internal sealed class SidecarServer : IAsyncDisposable
 
         return profileMode switch
         {
-            0 => "dualsense",
+            0 => DualSenseHapticsAudio.StandardProfileId,
             1 when genshinCompatibility && genshinCompatibilityAvailable =>
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
             1 when genshinCompatibility =>
@@ -352,18 +352,22 @@ internal sealed class SidecarServer : IAsyncDisposable
             var assembly = typeof(SidecarServer).Assembly;
             var directory = Path.Combine(Path.GetTempPath(), "sunshine-ds5-profiles");
             Directory.CreateDirectory(directory);
-            foreach (var id in new[] { "dualsense", "dualsense-composite" })
+            foreach (var sourceId in new[] { "dualsense", "dualsense-composite" })
             {
-                var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
+                var resourceName = $"Sunshine.Ds5Sidecar.profiles.{sourceId}.json";
                 using var stream = assembly.GetManifestResourceStream(resourceName)
                     ?? throw new InvalidOperationException($"Embedded profile '{resourceName}' is missing");
                 using var memory = new MemoryStream();
                 stream.CopyTo(memory);
-                var profileBytes = memory.ToArray();
-                if (id == DualSenseHapticsAudio.CompositeProfileId)
-                    DualSenseHapticsAudio.ValidateCompositeProfile(profileBytes);
-                File.WriteAllBytes(Path.Combine(directory, id + ".json"), profileBytes);
-                if (id == DualSenseHapticsAudio.CompositeProfileId)
+                var profileId = sourceId == "dualsense"
+                    ? DualSenseHapticsAudio.StandardProfileId
+                    : DualSenseHapticsAudio.CompositeProfileId;
+                var profileBytes = DualSenseHapticsAudio.CreatePatchedProfile(memory.ToArray(), profileId);
+                if (sourceId == "dualsense-composite")
+                    DualSenseHapticsAudio.ValidateCompositeProfile(
+                        profileBytes, profileId, DualSenseHapticsAudio.CompositeProductString);
+                File.WriteAllBytes(Path.Combine(directory, profileId + ".json"), profileBytes);
+                if (sourceId == "dualsense-composite")
                 {
                     var compatibilityProfile =
                         DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileBytes);

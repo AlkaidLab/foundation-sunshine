@@ -237,6 +237,12 @@ internal static class ProtocolSelfTest
         stream.CopyTo(memory);
         var profileJson = memory.ToArray();
         DualSenseHapticsAudio.ValidateCompositeProfile(profileJson);
+        var patchedProfile = DualSenseHapticsAudio.CreatePatchedProfile(
+            profileJson, DualSenseHapticsAudio.CompositeProfileId);
+        DualSenseHapticsAudio.ValidateCompositeProfile(
+            patchedProfile,
+            DualSenseHapticsAudio.CompositeProfileId,
+            DualSenseHapticsAudio.CompositeProductString);
         var compatibilityProfile = DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileJson);
         using (var compatibilityDocument = JsonDocument.Parse(compatibilityProfile))
         {
