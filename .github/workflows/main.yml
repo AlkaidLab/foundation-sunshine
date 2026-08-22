@@ -155,9 +155,9 @@ jobs:
           echo "  GCC: $(gcc --version | head -1)"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: package-lock.json
 
