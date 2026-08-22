@@ -36,9 +36,9 @@ The optional Genshin compatibility attach flag derives a third profile from
 and four-channel layout while changing only the USB product string from
 `DualSense Wireless Controller` to the launch-model `Wireless Controller`.
 The runtime profile starts the USB speaker control unmuted at its declared
-maximum, provisions the full-range mask as quadraphonic (`0x33`), and commits
-the active endpoint's quadraphonic topology through DirectSound. This matches
-the settings applied by completing Windows' speaker setup wizard as required
+maximum and commits the active endpoint's 4-channel, available-speaker and
+full-range masks as quadraphonic (`0x33`) through Core Audio. This matches the
+three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.

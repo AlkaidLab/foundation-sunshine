@@ -232,16 +232,14 @@ internal static class ProtocolSelfTest
         Require(!DefaultAudioEndpointPolicy.NeedsUpdate(
                 "{00000000-0000-0000-0000-000000000000}", 0x00000307),
             "complete default audio endpoint policy");
-        Require(DefaultAudioEndpointPolicy.NeedsFullRangeUpdate(null),
-            "missing DualSense full-range configuration");
-        Require(DefaultAudioEndpointPolicy.NeedsFullRangeUpdate(0x00000003),
-            "stereo DualSense full-range configuration");
-        Require(!DefaultAudioEndpointPolicy.NeedsFullRangeUpdate(0x00000033),
-            "full-range DualSense speaker configuration");
-        Require(DualSenseSpeakerConfiguration.IsQuadraphonic(0x000A0003),
-            "quadraphonic DirectSound speaker configuration");
-        Require(!DualSenseSpeakerConfiguration.IsQuadraphonic(0x00000004),
-            "stereo DirectSound speaker configuration rejection");
+        var quadraphonic = DualSenseSpeakerConfiguration.CreateQuadraphonicFormat();
+        Require(DualSenseSpeakerConfiguration.HasValidInteropLayout(),
+            "Core Audio interop ABI");
+        Require(DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
+            "quadraphonic Core Audio speaker configuration");
+        quadraphonic.ChannelMask = 0x00000003;
+        Require(!DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
+            "stereo Core Audio speaker configuration rejection");
     }
 
     private static void VerifyBundledCompositeProfile()
