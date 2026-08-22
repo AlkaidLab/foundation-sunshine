@@ -6,7 +6,6 @@
 #include "ds5_config.h"
 
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -15,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <boost/make_shared.hpp>
+#include <boost/smart_ptr/atomic_shared_ptr.hpp>
 #include <boost/thread/lock_guard.hpp>
 #include <boost/thread/mutex.hpp>
 
@@ -31,8 +32,8 @@ namespace ds5_config {
 
     constexpr std::uintmax_t MAX_FILE_SIZE = 64 * 1024;
     boost::mutex settings_file_mutex;
-    std::atomic<std::shared_ptr<const settings_t>> active_settings {
-      std::make_shared<const settings_t>()
+    boost::atomic_shared_ptr<const settings_t> active_settings {
+      boost::make_shared<const settings_t>()
     };
 
     void remove_temp_file(const fs::path &path) noexcept {
@@ -127,7 +128,7 @@ namespace ds5_config {
   prepared_settings_t prepare(settings_t settings) noexcept {
     if (!validate(settings)) return {};
     try {
-      return prepared_settings_t {std::make_shared<const settings_t>(std::move(settings))};
+      return prepared_settings_t {boost::make_shared<const settings_t>(std::move(settings))};
     }
     catch (...) {
       return {};
@@ -136,7 +137,7 @@ namespace ds5_config {
 
   bool commit(prepared_settings_t &&settings) noexcept {
     if (!settings) return false;
-    active_settings.store(std::move(settings.settings_), std::memory_order_release);
+    active_settings.store(std::move(settings.settings_));
     return true;
   }
 
@@ -145,7 +146,7 @@ namespace ds5_config {
   }
 
   settings_t current() {
-    return *active_settings.load(std::memory_order_acquire);
+    return *active_settings.load();
   }
 
   load_result_t load(const std::filesystem::path &path) noexcept {

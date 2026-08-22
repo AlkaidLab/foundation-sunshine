@@ -6,8 +6,9 @@
 
 #include <filesystem>
 #include <cstdint>
-#include <memory>
 #include <utility>
+
+#include <boost/smart_ptr/shared_ptr.hpp>
 
 namespace ds5_config {
   inline constexpr double MIN_STRENGTH = 0.1;
@@ -59,11 +60,11 @@ namespace ds5_config {
     friend bool commit(prepared_settings_t &&settings) noexcept;
 
     prepared_settings_t() noexcept = default;
-    explicit prepared_settings_t(std::shared_ptr<const settings_t> settings) noexcept:
+    explicit prepared_settings_t(boost::shared_ptr<const settings_t> settings) noexcept:
         settings_(std::move(settings)) {
     }
 
-    std::shared_ptr<const settings_t> settings_;
+    boost::shared_ptr<const settings_t> settings_;
   };
 
   std::filesystem::path path_for(const std::filesystem::path &sunshine_config_file);
