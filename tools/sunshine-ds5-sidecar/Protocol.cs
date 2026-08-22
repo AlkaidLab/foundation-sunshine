@@ -21,6 +21,7 @@ internal static class Protocol
         Battery = 1u << 6,
         AdaptiveTriggers = 1u << 7,
         GenshinCompatibilityIdentity = 1u << 8,
+        HapticsDiagnostics = 1u << 9,
     }
 
     [Flags]
@@ -28,6 +29,7 @@ internal static class Protocol
     {
         None = 0,
         GenshinCompatibilityIdentity = 1 << 0,
+        HapticsDiagnostics = 1 << 1,
     }
 
     internal enum MessageType : ushort
@@ -49,6 +51,7 @@ internal static class Protocol
         Led = 103,
         HapticsPcm = 104,
         AudioPolicyViolation = 105,
+        HapticsDiagnostics = 106,
         Error = 255,
     }
 

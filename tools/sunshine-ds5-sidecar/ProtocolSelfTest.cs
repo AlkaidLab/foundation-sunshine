@@ -28,6 +28,8 @@ internal static class ProtocolSelfTest
         Require(helloCapabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "hello adaptive trigger capability");
         Require(helloCapabilities.HasFlag(Protocol.Capability.GenshinCompatibilityIdentity),
             "hello Genshin compatibility identity capability");
+        Require(helloCapabilities.HasFlag(Protocol.Capability.HapticsDiagnostics),
+            "hello haptics diagnostics capability");
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
@@ -167,6 +169,10 @@ internal static class ProtocolSelfTest
                 1, Protocol.AttachFlags.None, true, true) ==
                 DualSenseHapticsAudio.CompositeProfileId,
             "standard composite attach profile selection");
+        Require(SidecarServer.SelectProfileId(
+                1, Protocol.AttachFlags.HapticsDiagnostics, true, true) ==
+                DualSenseHapticsAudio.CompositeProfileId,
+            "diagnostic composite attach profile selection");
         try
         {
             SidecarServer.SelectProfileId(
@@ -226,6 +232,12 @@ internal static class ProtocolSelfTest
         Require(!DefaultAudioEndpointPolicy.NeedsUpdate(
                 "{00000000-0000-0000-0000-000000000000}", 0x00000307),
             "complete default audio endpoint policy");
+        Require(DefaultAudioEndpointPolicy.NeedsSpeakerConfigurationUpdate(null, null),
+            "missing DualSense speaker configuration");
+        Require(DefaultAudioEndpointPolicy.NeedsSpeakerConfigurationUpdate(0x00000003, 0x00000003),
+            "stereo DualSense speaker configuration");
+        Require(!DefaultAudioEndpointPolicy.NeedsSpeakerConfigurationUpdate(0x00000033, 0x00000033),
+            "quadraphonic full-range DualSense speaker configuration");
     }
 
     private static void VerifyBundledCompositeProfile()
@@ -235,7 +247,7 @@ internal static class ProtocolSelfTest
             ?? throw new InvalidOperationException("Bundled composite profile is missing");
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
-        var profileJson = memory.ToArray();
+        var profileJson = DualSenseHapticsAudio.CreateRuntimeCompositeProfile(memory.ToArray());
         DualSenseHapticsAudio.ValidateCompositeProfile(profileJson);
         var compatibilityProfile = DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileJson);
         using (var compatibilityDocument = JsonDocument.Parse(compatibilityProfile))
@@ -260,6 +272,11 @@ internal static class ProtocolSelfTest
                 "\"hapticRight\",\"hapticLeft\"",
                 StringComparison.Ordinal),
             "swapped haptics role rejection");
+        RequireProfileRejected(profileText.Replace(
+                "\"volumeCurRaw\":0",
+                "\"volumeCurRaw\":-25600",
+                StringComparison.Ordinal),
+            "muted speaker control rejection");
     }
 
     private static void RequireProfileRejected(string profileJson, string operation)

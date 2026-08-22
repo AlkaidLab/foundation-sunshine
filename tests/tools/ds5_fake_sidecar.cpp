@@ -84,6 +84,8 @@ int main(int argc, char **argv) {
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", nullptr, 0) > 0;
   const auto genshin_compatibility =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_GENSHIN_COMPATIBILITY", nullptr, 0) > 0;
+  const auto haptics_diagnostics =
+    GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_HAPTICS_DIAGNOSTICS", nullptr, 0) > 0;
   const auto policy_once_name = L"Local\\sunshine-ds5-test-policy-once-" + event_suffix;
   const auto policy_once_event = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE,
                                             policy_once_name.c_str());
@@ -110,6 +112,10 @@ int main(int argc, char **argv) {
     L"Local\\sunshine-ds5-test-genshin-compatibility-" + event_suffix;
   const auto genshin_compatibility_event = OpenEventW(
     EVENT_MODIFY_STATE, FALSE, genshin_compatibility_name.c_str());
+  const auto haptics_diagnostics_name =
+    L"Local\\sunshine-ds5-test-haptics-diagnostics-" + event_suffix;
+  const auto haptics_diagnostics_event = OpenEventW(
+    EVENT_MODIFY_STATE, FALSE, haptics_diagnostics_name.c_str());
 
   // A crash-once test can hold the replacement process before it creates its
   // pipe, exposing the Core client's assigned-but-offline recovery window.
@@ -139,7 +145,10 @@ int main(int argc, char **argv) {
     const auto request_id = read_u32(header.data() + 12);
     if (type == 1) {
       std::vector<std::uint8_t> capabilities(4);
-      if (genshin_compatibility) write_u32(capabilities.data(), 1u << 8);
+      std::uint32_t capability_bits = 0;
+      if (genshin_compatibility) capability_bits |= 1u << 8;
+      if (haptics_diagnostics) capability_bits |= 1u << 9;
+      write_u32(capabilities.data(), capability_bits);
       if (!reply(pipe, 2, request_id, capabilities)) break;
     } else if (type == 3 && payload.size() == 4) {
       if (interleave) {
@@ -149,13 +158,17 @@ int main(int argc, char **argv) {
       }
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
-      if ((audio_policy_fallback || genshin_compatibility) && payload[2] == 1) {
+      if ((audio_policy_fallback || genshin_compatibility || haptics_diagnostics) && payload[2] == 1) {
         response[1] = 1;
       }
       if (!reply(pipe, 4, request_id, response)) break;
       if (genshin_compatibility && payload[2] == 1 && (payload[3] & 1) != 0 &&
           genshin_compatibility_event) {
         SetEvent(genshin_compatibility_event);
+      }
+      if (haptics_diagnostics && payload[2] == 1 && (payload[3] & 2) != 0 &&
+          haptics_diagnostics_event) {
+        SetEvent(haptics_diagnostics_event);
       }
       if (audio_policy_fallback && policy_once_event &&
           WaitForSingleObject(policy_once_event, 0) == WAIT_TIMEOUT) {
@@ -199,6 +212,7 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (haptics_diagnostics_event) CloseHandle(haptics_diagnostics_event);
   if (genshin_compatibility_event) CloseHandle(genshin_compatibility_event);
   if (marker_event) CloseHandle(marker_event);
   if (hid_fallback_event) CloseHandle(hid_fallback_event);
