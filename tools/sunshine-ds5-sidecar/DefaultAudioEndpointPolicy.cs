@@ -4,8 +4,8 @@ namespace Sunshine.Ds5Sidecar;
 
 /// <summary>
 /// Applies Windows' documented never-default policy to HIDMaestro-backed
-/// DualSense audio interfaces. The policy is scoped to the concrete virtual
-/// device instance, so a physical DualSense with the same VID/PID is untouched.
+/// DualSense audio interfaces before Windows creates the MMDevice endpoint.
+/// Active speaker properties are committed separately through Core Audio.
 /// </summary>
 internal static class DefaultAudioEndpointPolicy
 {

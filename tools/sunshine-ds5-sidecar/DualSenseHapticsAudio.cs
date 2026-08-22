@@ -32,6 +32,23 @@ internal static class DualSenseHapticsAudio
         ValidateCompositeProfile(json, CompositeProfileId, CompositeProductString);
     }
 
+    internal static byte[] CreateRuntimeCompositeProfile(ReadOnlyMemory<byte> compositeJson)
+    {
+        var root = JsonNode.Parse(compositeJson.Span)?.AsObject()
+                   ?? throw new InvalidDataException("Composite profile is not a JSON object");
+        var controls = root["usbConfiguration"]?["audioControls"]?.AsArray()
+                       ?? throw new InvalidDataException("Composite profile has no USB audio controls");
+        var speaker = controls.Select(control => control?.AsObject())
+            .FirstOrDefault(control => control?["function"]?.GetValue<string>() == "speaker")
+            ?? throw new InvalidDataException("Composite profile has no speaker audio control");
+        speaker["volumeCurRaw"] = speaker["volumeMaxRaw"]?.GetValue<int>()
+                                  ?? throw new InvalidDataException("Composite profile speaker has no maximum volume");
+
+        var runtimeProfile = JsonSerializer.SerializeToUtf8Bytes(root);
+        ValidateCompositeProfile(runtimeProfile);
+        return runtimeProfile;
+    }
+
     internal static byte[] CreateGenshinCompatibilityProfile(ReadOnlyMemory<byte> compositeJson)
     {
         var root = JsonNode.Parse(compositeJson.Span)?.AsObject()
@@ -90,6 +107,7 @@ internal static class DualSenseHapticsAudio
         if (outputStream is null)
             throw new InvalidDataException("Composite profile has no output audio stream");
         ValidateFormat(outputStream.Value);
+        ValidateSpeakerControl(root);
     }
 
     internal static void ValidateRuntimeOutput(HMAudioOutput output)
@@ -142,6 +160,28 @@ internal static class DualSenseHapticsAudio
                 throw new InvalidDataException($"Composite profile channel {index + 1} must be '{ExpectedRoles[index]}'");
             index++;
         }
+    }
+
+    private static void ValidateSpeakerControl(JsonElement root)
+    {
+        var controls = root.GetProperty("usbConfiguration").GetProperty("audioControls");
+        foreach (var control in controls.EnumerateArray())
+        {
+            if (control.GetProperty("function").GetString() != "speaker")
+                continue;
+
+            var minimum = control.GetProperty("volumeMinRaw").GetInt32();
+            var maximum = control.GetProperty("volumeMaxRaw").GetInt32();
+            var current = control.GetProperty("volumeCurRaw").GetInt32();
+            if (control.GetProperty("muteCur").GetInt32() != 0 ||
+                current <= minimum || current > maximum)
+            {
+                throw new InvalidDataException("Composite profile speaker output must start audible and unmuted");
+            }
+            return;
+        }
+
+        throw new InvalidDataException("Composite profile has no speaker audio control");
     }
 
     private static void RequireString(JsonElement element, string property, string expected)
