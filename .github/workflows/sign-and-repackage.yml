@@ -23,12 +23,6 @@ on:
         description: "Release tag for naming the output files"
         required: true
 
-# Opt all Node.js 20 actions onto the Node.js 24 runtime to silence the
-# `actions/checkout@v4` deprecation warning until upstream actions cut new
-# releases.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   sign-and-repackage:
     name: Sign Files and Repackage
@@ -38,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
@@ -153,7 +147,7 @@ jobs:
           echo "  Cargo: $(cargo --version)"
 
       - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -238,14 +232,14 @@ jobs:
       # 上传所有未签名的文件到 SignPath
       - name: Upload unsigned files for signing
         id: upload-unsigned
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: files-for-signing
           path: unsigned-files/
 
       # 提交到 SignPath 签名（使用生产策略）
       - name: Submit to SignPath for signing
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -370,13 +364,13 @@ jobs:
       # 签名最终的 Inno Setup 安装包
       - name: Upload installer for final signing
         id: upload-installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installer-for-final-signing
           path: Sunshine-*-Installer-Signed.exe
 
       - name: Sign installer
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -405,7 +399,7 @@ jobs:
 
       # 上传最终的签名文件
       - name: Upload final signed packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sunshine-windows-fully-signed
           path: |
@@ -417,7 +411,7 @@ jobs:
 
       # 发布到 GitHub Release
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)

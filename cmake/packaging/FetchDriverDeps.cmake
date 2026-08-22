@@ -17,6 +17,7 @@
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
 #   NEFCON_VERSION          — nefcon release tag (e.g. v1.10.0)
+#   NEFCON_SHA256           — expected SHA-256 of the nefcon release archive
 #   VIGEMBUS_VERSION        — pinned ViGEmBus release tag
 #   VIGEMBUS_ASSET_NAME     — pinned multi-architecture installer asset
 #   VIGEMBUS_SHA256         — expected installer digest
@@ -44,7 +45,9 @@ set(VDD_DRIVER_VERSION "v0.17.2" CACHE STRING "ZakoVDD driver version tag")
 set(VDD_WIN10_DRIVER_VERSION "v0.15.8" CACHE STRING "Win10-pinned ZakoVDD driver version tag")
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
-set(NEFCON_VERSION "v1.17.40" CACHE STRING "nefcon version tag")
+set(NEFCON_VERSION "v1.18.74" CACHE STRING "nefcon version tag")
+set(NEFCON_SHA256 "625abcdea9e84577d094ab65a8542c9977eb50f2371d216961af01cf4901f172"
+    CACHE STRING "SHA256 of the pinned nefcon release archive")
 set(VIGEMBUS_VERSION "v1.22.0" CACHE STRING "ViGEmBus release tag")
 set(VIGEMBUS_ASSET_NAME "ViGEmBus_1.22.0_x64_x86_arm64.exe"
     CACHE STRING "ViGEmBus release asset name")
@@ -366,14 +369,32 @@ function(_fetch_nefcon)
   message(STATUS "Fetching nefcon ${NEFCON_VERSION} ...")
   set(_zip_url "https://github.com/${_NEFCON_REPO}/releases/download/${NEFCON_VERSION}/nefcon_${NEFCON_VERSION}.zip")
   set(_zip "${DRIVER_DEPS_CACHE}/nefcon-${NEFCON_VERSION}.zip")
+  set(_marker "${NEFCON_DRIVER_DIR}/.release-version")
+  set(_expected_marker "${NEFCON_VERSION}:${NEFCON_SHA256}")
 
-  _driver_download("${_zip_url}" "${_zip}")
+  set(_stamp_ok FALSE)
+  if(EXISTS "${_marker}")
+    file(READ "${_marker}" _current)
+    string(STRIP "${_current}" _current)
+    if("${_current}" STREQUAL "${_expected_marker}")
+      set(_stamp_ok TRUE)
+    endif()
+  endif()
+
+  if(NOT _stamp_ok AND EXISTS "${NEFCON_DRIVER_DIR}")
+    message(STATUS "  nefcon cache is not ${NEFCON_VERSION}; clearing ${NEFCON_DRIVER_DIR}")
+    file(REMOVE_RECURSE "${NEFCON_DRIVER_DIR}")
+  endif()
+
+  _driver_download("${_zip_url}" "${_zip}" "${NEFCON_SHA256}")
 
   if(EXISTS "${_zip}" AND NOT EXISTS "${NEFCON_DRIVER_DIR}/nefconw.exe")
     set(_tmp "${DRIVER_DEPS_CACHE}/_nefcon_extract")
+    file(REMOVE_RECURSE "${_tmp}")
     file(ARCHIVE_EXTRACT INPUT "${_zip}" DESTINATION "${_tmp}")
     file(MAKE_DIRECTORY "${NEFCON_DRIVER_DIR}")
     file(COPY_FILE "${_tmp}/x64/nefconw.exe" "${NEFCON_DRIVER_DIR}/nefconw.exe")
+    file(WRITE "${_marker}" "${_expected_marker}\n")
     file(REMOVE_RECURSE "${_tmp}")
     message(STATUS "  Extracted nefconw.exe (x64) to ${NEFCON_DRIVER_DIR}")
   endif()

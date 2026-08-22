@@ -11,7 +11,7 @@ Sunshine 包含一个现代化的 Web 控制界面，基于 Vue 3 和 Compositio
 - **构建工具**: Vite 8
 - **打包器**: Rolldown
 - **UI 组件**: Bootstrap 5
-- **图标库**: FontAwesome 6
+- **图标库**: Font Awesome 7
 - **国际化**: Vue-i18n 11 (Composition API 模式)
 - **拖拽功能**: Vuedraggable 4
 - **模块系统**: ES Modules (`"type": "module"`)

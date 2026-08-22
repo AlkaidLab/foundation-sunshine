@@ -20,10 +20,8 @@ concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
   cancel-in-progress: true
 
-# Opt all Node.js 20 actions onto the Node.js 24 runtime. GitHub will
-# eventually flip this default itself; setting it explicitly silences the
-# `actions/checkout@v4` deprecation warning emitted on every run and keeps
-# us forward-compatible with the September 2026 Node 20 removal.
+# The pinned LizardByte release action still composes a Node.js 20 action.
+# Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -42,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Release (Auto)
         id: setup_release_auto
@@ -68,7 +66,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run VDD helper smoke tests
         shell: pwsh
@@ -82,7 +80,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           submodules: recursive
@@ -162,7 +160,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -184,7 +182,7 @@ jobs:
           npm run build
 
       - name: Cache compiler objects
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\.ccache
           # The key must be unique per run for the cache to be written at all,
@@ -244,7 +242,7 @@ jobs:
 
       - name: Cache Inno Setup
         id: inno-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: C:\Program Files (x86)\Inno Setup 6
           key: inno-setup-6
@@ -335,7 +333,7 @@ jobs:
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sunshine-windows-r${{ github.run_number }}
           path: |

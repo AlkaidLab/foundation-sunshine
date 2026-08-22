@@ -27,12 +27,6 @@ on:
   repository_dispatch:
     types: [driver-release]
 
-# Opt all Node.js 20 actions onto the Node.js 24 runtime to silence the
-# `actions/checkout@v4` deprecation warning until upstream actions cut new
-# releases.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   update-version:
     name: Update Driver Version Pin
@@ -43,7 +37,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve versions and update pins
         shell: bash
@@ -78,6 +72,20 @@ jobs:
             fi
             echo "Updating ${var_name} to ${new_version}"
             sed -i "s|set(${var_name} \"[^\"]*\"|set(${var_name} \"${new_version}\"|" "$CMAKE_FILE"
+          }
+
+          resolve_asset_sha256() {
+            local repo="$1"
+            local tag="$2"
+            local asset_name="$3"
+            local digest
+            digest=$(gh api "repos/${repo}/releases/tags/${tag}" \
+              --jq ".assets[] | select(.name == \"${asset_name}\") | .digest" 2>/dev/null || echo "")
+            digest="${digest#sha256:}"
+            if [[ ! "$digest" =~ ^[0-9a-fA-F]{64}$ ]]; then
+              return 1
+            fi
+            echo "${digest,,}"
           }
 
           declare -A REPOS=(
@@ -115,6 +123,14 @@ jobs:
             fi
 
             if [ -n "$ver" ]; then
+              if [ "$comp" = "nefcon" ]; then
+                asset_name="nefcon_${ver}.zip"
+                if ! sha256=$(resolve_asset_sha256 "$repo" "$ver" "$asset_name"); then
+                  echo "Warning: could not resolve SHA-256 for ${repo}/${asset_name}; skipping"
+                  continue
+                fi
+                update_pin "NEFCON_SHA256" "$sha256"
+              fi
               update_pin "$var" "$ver"
               SUMMARY="${SUMMARY}\n- ${comp}: ${ver}"
             else
@@ -127,10 +143,10 @@ jobs:
           echo "EOF" >> "$GITHUB_ENV"
 
           echo "Updated CMake file:"
-          grep -E "^set\((VMOUSE_DRIVER_VERSION|VDD_DRIVER_VERSION|VDD_WIN10_DRIVER_VERSION|NEFCON_VERSION)" "$CMAKE_FILE"
+          grep -E "^set\((VMOUSE_DRIVER_VERSION|VDD_DRIVER_VERSION|VDD_WIN10_DRIVER_VERSION|NEFCON_VERSION|NEFCON_SHA256)" "$CMAKE_FILE"
 
       - name: Create PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "chore: update driver version pins"
           title: "Update driver versions"

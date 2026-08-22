@@ -3,8 +3,8 @@
 #
 include_guard(GLOBAL)
 
-set(BOOST_VERSION "1.91.0")
-set(BOOST_RELEASE_VERSION "1.91.0-1")
+set(BOOST_VERSION "1.92.0")
+set(BOOST_RELEASE_VERSION "1.92.0")
 set(BOOST_COMPONENTS
         atomic
         beast
@@ -59,7 +59,7 @@ if(NOT Boost_FOUND)
     # Limit boost to the required libraries only
     set(BOOST_INCLUDE_LIBRARIES ${BOOST_COMPONENTS})
     set(BOOST_URL "https://github.com/boostorg/boost/releases/download/boost-${BOOST_RELEASE_VERSION}/boost-${BOOST_RELEASE_VERSION}-cmake.tar.xz")  # cmake-lint: disable=C0301
-    set(BOOST_HASH "SHA256=cc5dc5006ecbdf0051f90979be31b4eee5987d9ae14ae9fb9c03cfa43fa3cdad")
+    set(BOOST_HASH "SHA256=9bed76128d4e46755dbe818487788c6fceb6f72b378f4daa49b7e1e600d9088d")
 
     if(CMAKE_VERSION VERSION_LESS "3.24.0")
         FetchContent_Declare(
