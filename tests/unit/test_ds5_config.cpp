@@ -117,6 +117,11 @@ TEST_F(Ds5ConfigTest, RejectsMalformedSchemaAndInvalidNumbers) {
   invalid = {};
   invalid.genshin_compatibility = true;
   EXPECT_FALSE(ds5_config::validate(invalid));
+  invalid = {};
+  invalid.enabled = true;
+  invalid.audio_haptics = false;
+  invalid.genshin_compatibility = true;
+  EXPECT_FALSE(ds5_config::validate(invalid));
 }
 
 TEST_F(Ds5ConfigTest, SavesBacksUpAndReloadsCompleteSettings) {
