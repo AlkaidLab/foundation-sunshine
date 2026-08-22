@@ -23,8 +23,8 @@
 #include <boost/thread/lock_guard.hpp>
 #include <boost/thread/mutex.hpp>
 
-#include "file_handler.h"
-#include "logging.h"
+#include "src/file_handler.h"
+#include "src/logging.h"
 
 namespace ds5_config::api {
   namespace {
