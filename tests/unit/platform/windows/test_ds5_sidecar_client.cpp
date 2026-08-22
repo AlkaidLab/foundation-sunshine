@@ -373,6 +373,8 @@ TEST(Ds5SidecarClientTests, DoesNotSendHapticsDiagnosticsWithoutCapability) {
   config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
 
   event_namespace_scope_t events(L"haptics-diagnostics-capability-required");
+  environment_scope_t disable_haptics_diagnostics(
+    L"SUNSHINE_DS5_TEST_HAPTICS_DIAGNOSTICS", nullptr);
   environment_scope_t enable_audio_endpoint(L"SUNSHINE_DS5_TEST_AUDIO_ENDPOINT", L"1");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
   const auto diagnostics_name =
