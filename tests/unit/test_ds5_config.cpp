@@ -18,8 +18,8 @@
 #include <nlohmann/json.hpp>
 
 #include "../tests_common.h"
-#include "src/ds5_config.h"
-#include "src/ds5_config_api.h"
+#include "src/ds5/config.h"
+#include "src/ds5/config_api.h"
 
 namespace {
   namespace fs = std::filesystem;

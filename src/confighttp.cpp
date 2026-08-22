@@ -72,7 +72,7 @@
 #include "webhook/webhook_api.h"
 
 #ifdef _WIN32
-  #include "ds5_config_api.h"
+  #include "ds5/config_api.h"
   #include <iphlpapi.h>
   #include "display_device/vdd_utils.h"
   #include "platform/windows/display_device/color_profile.h"

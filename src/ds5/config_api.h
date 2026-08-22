@@ -1,5 +1,5 @@
 /**
- * @file src/ds5_config_api.h
+ * @file src/ds5/config_api.h
  * @brief Authenticated HTTP handlers and conditional transactions for DualSense settings.
  */
 #pragma once
@@ -12,7 +12,7 @@
 
 #include <Simple-Web-Server/server_https.hpp>
 
-#include "ds5_config.h"
+#include "config.h"
 
 namespace ds5_config::api {
   enum class update_status_t {

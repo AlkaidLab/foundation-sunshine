@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-#include "src/ds5_config.h"
+#include "src/ds5/config.h"
 #include "src/haptics/authored_ir.h"
 
 extern "C" {

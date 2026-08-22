@@ -1,9 +1,9 @@
 /**
- * @file src/ds5_config_api.cpp
+ * @file src/ds5/config_api.cpp
  * @brief Authenticated HTTP handlers and conditional transactions for DualSense settings.
  */
 
-#include "ds5_config_api.h"
+#include "config_api.h"
 
 #include <bit>
 #include <cstddef>

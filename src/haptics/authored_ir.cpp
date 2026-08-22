@@ -12,7 +12,7 @@
 
 #include <moonlight_haptics/authored_haptics.h>
 
-#include "src/ds5_config.h"
+#include "src/ds5/config.h"
 #include "src/logging.h"
 
 namespace haptics {

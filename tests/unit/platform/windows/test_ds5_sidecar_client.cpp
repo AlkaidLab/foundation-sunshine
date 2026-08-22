@@ -9,7 +9,7 @@
 
   #include <chrono>
 
-  #include "src/ds5_config.h"
+  #include "src/ds5/config.h"
   #include "src/platform/windows/ds5/ds5_sidecar_client.h"
   #include <gtest/gtest-spi.h>
   #include <gtest/gtest.h>

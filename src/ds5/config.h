@@ -1,5 +1,5 @@
 /**
- * @file src/ds5_config.h
+ * @file src/ds5/config.h
  * @brief Independently persisted, hot-applied DualSense settings.
  */
 #pragma once

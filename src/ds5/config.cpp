@@ -1,9 +1,9 @@
 /**
- * @file src/ds5_config.cpp
+ * @file src/ds5/config.cpp
  * @brief Independent DualSense settings persistence and runtime snapshot.
  */
 
-#include "ds5_config.h"
+#include "config.h"
 
 #include <array>
 #include <cmath>

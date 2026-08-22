@@ -27,7 +27,7 @@
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
-#include "src/ds5_config.h"
+#include "src/ds5/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 
