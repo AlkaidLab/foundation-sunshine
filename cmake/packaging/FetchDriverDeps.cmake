@@ -17,7 +17,8 @@
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
 #   NEFCON_VERSION          — nefcon release tag (e.g. v1.10.0)
-#   NEFCON_SHA256           — expected SHA-256 of the nefcon release archive
+#   NEFCON_SHA256           — expected SHA-256 for a custom nefcon release;
+#                             known pinned versions use their built-in digest
 #   VIGEMBUS_VERSION        — pinned ViGEmBus release tag
 #   VIGEMBUS_ASSET_NAME     — pinned multi-architecture installer asset
 #   VIGEMBUS_SHA256         — expected installer digest
@@ -46,8 +47,19 @@ set(VDD_WIN10_DRIVER_VERSION "v0.15.8" CACHE STRING "Win10-pinned ZakoVDD driver
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
 set(NEFCON_VERSION "v1.18.74" CACHE STRING "nefcon version tag")
-set(NEFCON_SHA256 "625abcdea9e84577d094ab65a8542c9977eb50f2371d216961af01cf4901f172"
-    CACHE STRING "SHA256 of the pinned nefcon release archive")
+set(NEFCON_SHA256 "" CACHE STRING "SHA256 of a custom nefcon release archive")
+if(NEFCON_VERSION STREQUAL "v1.18.74")
+  set(NEFCON_SHA256 "625abcdea9e84577d094ab65a8542c9977eb50f2371d216961af01cf4901f172"
+      CACHE STRING "SHA256 of the pinned nefcon release archive" FORCE)
+elseif(NEFCON_VERSION STREQUAL "v1.17.40")
+  # Keep existing build directories usable when their cached version predates
+  # the v1.18.74 default. A release version must always use its matching digest.
+  set(NEFCON_SHA256 "812bae7ed7dfb7d6d2284bc7de2f8ccebc92ed2a0b1ae893c53b337096e50c1a"
+      CACHE STRING "SHA256 of the pinned nefcon release archive" FORCE)
+elseif(NOT NEFCON_SHA256)
+  message(FATAL_ERROR
+    "NEFCON_SHA256 must be provided when using custom NEFCON_VERSION=${NEFCON_VERSION}")
+endif()
 set(VIGEMBUS_VERSION "v1.22.0" CACHE STRING "ViGEmBus release tag")
 set(VIGEMBUS_ASSET_NAME "ViGEmBus_1.22.0_x64_x86_arm64.exe"
     CACHE STRING "ViGEmBus release asset name")
