@@ -29,11 +29,8 @@ internal static class DualSenseSpeakerConfiguration
         var deadline = DateTime.UtcNow + timeout;
         do
         {
-            if (TryFindVirtualEndpoint(out var endpointId))
-            {
-                changed = Apply(endpointId);
+            if (TryConfigureVirtualEndpoints(out changed))
                 return true;
-            }
             if (DateTime.UtcNow >= deadline)
                 break;
             Thread.Sleep(50);
@@ -44,9 +41,10 @@ internal static class DualSenseSpeakerConfiguration
         return false;
     }
 
-    private static bool TryFindVirtualEndpoint(out string endpointId)
+    private static bool TryConfigureVirtualEndpoints(out bool changed)
     {
-        endpointId = string.Empty;
+        changed = false;
+        var matched = false;
         IMMDeviceEnumerator? enumerator = null;
         IMMDeviceCollection? endpoints = null;
         try
@@ -65,15 +63,15 @@ internal static class DualSenseSpeakerConfiguration
                     ThrowIfFailed(endpoint.GetId(out var candidate));
                     if (!DefaultAudioEndpointGuard.IsVirtualDualSenseEndpoint(candidate))
                         continue;
-                    endpointId = candidate;
-                    return true;
+                    matched = true;
+                    changed |= Apply(candidate);
                 }
                 finally
                 {
                     Release(endpoint);
                 }
             }
-            return false;
+            return matched;
         }
         finally
         {
