@@ -226,6 +226,14 @@ internal static class ProtocolSelfTest
         Require(!DefaultAudioEndpointPolicy.NeedsUpdate(
                 "{00000000-0000-0000-0000-000000000000}", 0x00000307),
             "complete default audio endpoint policy");
+        var quadraphonic = DualSenseSpeakerConfiguration.CreateQuadraphonicFormat();
+        Require(DualSenseSpeakerConfiguration.HasValidInteropLayout(),
+            "Core Audio interop ABI");
+        Require(DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
+            "quadraphonic Core Audio speaker configuration");
+        quadraphonic.ChannelMask = 0x00000003;
+        Require(!DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
+            "stereo Core Audio speaker configuration rejection");
     }
 
     private static void VerifyBundledCompositeProfile()
@@ -235,7 +243,7 @@ internal static class ProtocolSelfTest
             ?? throw new InvalidOperationException("Bundled composite profile is missing");
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
-        var profileJson = memory.ToArray();
+        var profileJson = DualSenseHapticsAudio.CreateRuntimeCompositeProfile(memory.ToArray());
         DualSenseHapticsAudio.ValidateCompositeProfile(profileJson);
         var compatibilityProfile = DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileJson);
         using (var compatibilityDocument = JsonDocument.Parse(compatibilityProfile))
@@ -260,6 +268,11 @@ internal static class ProtocolSelfTest
                 "\"hapticRight\",\"hapticLeft\"",
                 StringComparison.Ordinal),
             "swapped haptics role rejection");
+        RequireProfileRejected(profileText.Replace(
+                "\"volumeCurRaw\":0",
+                "\"volumeCurRaw\":-25600",
+                StringComparison.Ordinal),
+            "muted speaker control rejection");
     }
 
     private static void RequireProfileRejected(string profileJson, string operation)
