@@ -82,6 +82,8 @@ int main(int argc, char **argv) {
   const auto interleave = GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr, 0) > 0;
   const auto audio_policy_fallback =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", nullptr, 0) > 0;
+  const auto audio_endpoint =
+    GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_ENDPOINT", nullptr, 0) > 0;
   const auto genshin_compatibility =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_GENSHIN_COMPATIBILITY", nullptr, 0) > 0;
   const auto haptics_diagnostics =
@@ -158,7 +160,8 @@ int main(int argc, char **argv) {
       }
       std::vector<std::uint8_t> response(8);
       response[0] = payload[0];
-      if ((audio_policy_fallback || genshin_compatibility || haptics_diagnostics) && payload[2] == 1) {
+      if ((audio_endpoint || audio_policy_fallback || genshin_compatibility || haptics_diagnostics) &&
+          payload[2] == 1) {
         response[1] = 1;
       }
       if (!reply(pipe, 4, request_id, response)) break;
@@ -166,8 +169,7 @@ int main(int argc, char **argv) {
           genshin_compatibility_event) {
         SetEvent(genshin_compatibility_event);
       }
-      if (haptics_diagnostics && payload[2] == 1 && (payload[3] & 2) != 0 &&
-          haptics_diagnostics_event) {
+      if (payload[2] == 1 && (payload[3] & 2) != 0 && haptics_diagnostics_event) {
         SetEvent(haptics_diagnostics_event);
       }
       if (audio_policy_fallback && policy_once_event &&
