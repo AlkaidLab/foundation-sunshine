@@ -5,7 +5,10 @@
 #include "process.h"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <iomanip>
 #include <optional>
@@ -42,6 +45,7 @@ extern "C" {
 #include "config.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
+#include "ds5/config.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "rtsp.h"
@@ -133,6 +137,28 @@ namespace stream {
   }
 
   namespace {
+    std::uint32_t
+    read_dynamic_param_u32(std::string_view payload, std::size_t offset) {
+      return static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset])) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 1])) << 8) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 2])) << 16) |
+             (static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset + 3])) << 24);
+    }
+
+    std::int32_t
+    read_dynamic_param_i32(std::string_view payload, std::size_t offset) {
+      const auto value = read_dynamic_param_u32(payload, offset);
+      const auto signed_value = (value & 0x80000000u) != 0
+                                  ? static_cast<std::int64_t>(value) - (1LL << 32)
+                                  : static_cast<std::int64_t>(value);
+      return static_cast<std::int32_t>(signed_value);
+    }
+
+    float
+    read_dynamic_param_f32(std::string_view payload, std::size_t offset) {
+      return std::bit_cast<float>(read_dynamic_param_u32(payload, offset));
+    }
+
     std::int64_t
     steady_now_ms() {
       return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -638,6 +664,13 @@ namespace stream {
 
       std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
       bool authored_haptics_init_failed = false;
+      // One fallback session per controller: smoothing, throttle and watchdog
+      // state must not bleed between pads, and the watchdog stop has to reach
+      // the pad that actually stopped sending PCM.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::legacy_rumble_session_t>> legacy_haptics;
+      bool legacy_haptics_init_failed = false;
+      std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> compatibility_rumble;
+      std::unordered_map<std::uint16_t, std::pair<std::uint16_t, std::uint16_t>> synthesized_haptics_rumble;
     } control;
 
     std::uint32_t launch_session_id;
@@ -647,6 +680,9 @@ namespace stream {
     bool enable_hdr { false };
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::client_display_capabilities_t reported_hdr_capabilities;
+    // Runtime SDR white updates are consumed by the video thread and may also
+    // be needed by a control-thread display reconfiguration.
+    std::atomic<float> dynamic_sdr_white_nits { 0.0f };
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
@@ -1303,7 +1339,8 @@ namespace stream {
    * @return 0 on success.
    */
   int
-  send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg) {
+  send_feedback_msg(session_t *session, platf::gamepad_feedback_msg_t &msg,
+                    bool synthesized_haptics = false) {
     if (!session->control.peer) {
       BOOST_LOG(warning) << "Couldn't send gamepad feedback data, still waiting for PING from Moonlight"sv;
       // Still waiting for PING from Moonlight
@@ -1318,13 +1355,21 @@ namespace stream {
       plaintext.header.payloadLength = sizeof(plaintext) - sizeof(control_header_v2);
 
       auto &data = msg.data.rumble;
+      auto &source = synthesized_haptics ?
+                       session->control.synthesized_haptics_rumble :
+                       session->control.compatibility_rumble;
+      source[msg.id] = {data.lowfreq, data.highfreq};
+      const auto compatibility = session->control.compatibility_rumble[msg.id];
+      const auto synthesized = session->control.synthesized_haptics_rumble[msg.id];
+      const auto lowfreq = std::max(compatibility.first, synthesized.first);
+      const auto highfreq = std::max(compatibility.second, synthesized.second);
 
       plaintext.useless = 0xC0FFEE;
       plaintext.id = util::endian::little(msg.id);
-      plaintext.lowfreq = util::endian::little(data.lowfreq);
-      plaintext.highfreq = util::endian::little(data.highfreq);
+      plaintext.lowfreq = util::endian::little(lowfreq);
+      plaintext.highfreq = util::endian::little(highfreq);
 
-      BOOST_LOG(verbose) << "Rumble: "sv << msg.id << " :: "sv << util::hex(data.lowfreq).to_string_view() << " :: "sv << util::hex(data.highfreq).to_string_view();
+      BOOST_LOG(verbose) << "Rumble: "sv << msg.id << " :: "sv << util::hex(lowfreq).to_string_view() << " :: "sv << util::hex(highfreq).to_string_view();
       std::array<std::uint8_t,
         sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(plaintext)) + crypto::cipher::tag_size>
         encrypted_payload;
@@ -1406,9 +1451,6 @@ namespace stream {
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
-      if (!sends_raw_pcm && !sends_authored_ir) {
-        return 0;
-      }
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
@@ -1426,9 +1468,33 @@ namespace stream {
         write_u32(p, static_cast<std::uint32_t>(v));
         write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
       };
+      if (!sends_raw_pcm && !sends_authored_ir) {
+        if (!session->control.legacy_haptics_init_failed) {
+          auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
+          if (inserted) {
+            auto created = std::make_unique<haptics::legacy_rumble_session_t>();
+            if (!created->ready()) {
+              session->control.legacy_haptics.erase(controller_session);
+              session->control.legacy_haptics_init_failed = true;
+              BOOST_LOG(error) << "Unable to initialize legacy DualSense haptics fallback"sv;
+              return 0;
+            }
+            controller_session->second = std::move(created);
+          }
+          const auto rumble = controller_session->second->process(
+            msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+            std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+          if (rumble) {
+            auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+              rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
+            return send_feedback_msg(session, legacy_msg, true);
+          }
+        }
+        return 0;
+      }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
-      if (sends_authored_ir && !sends_raw_pcm) {
+      else if (sends_authored_ir && !sends_raw_pcm) {
         if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
           auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
           if (!authored_haptics->ready()) {
@@ -1864,6 +1930,9 @@ namespace stream {
       temp_launch_session.custom_screen_mode = session->custom_screen_mode;
       temp_launch_session.hdr_capabilities = session->hdr_capabilities;
       temp_launch_session.reported_hdr_capabilities = session->reported_hdr_capabilities;
+      const auto dynamic_sdr_white_nits = session->dynamic_sdr_white_nits.load(std::memory_order_acquire);
+      temp_launch_session.hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
+      temp_launch_session.reported_hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
       temp_launch_session.hdr_target_source = session->hdr_target_source;
 
       bool active_display_resolved = true;
@@ -1933,7 +2002,7 @@ namespace stream {
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
     // Payload 格式：
-    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区
+    // - 参数类型 (int, 4字节): 0=分辨率, 1=FPS, 2=码率, 3=QP, 4=FEC, 5=预设, 6=自适应量化, 7=多遍编码, 8=VBV缓冲区, 9=客户端SDR白位
     // - 参数值：
     //   * 分辨率 (类型0): 2个int (8字节, width和height)
     //   * FPS (类型1): 1个float (4字节)
@@ -1941,14 +2010,15 @@ namespace stream {
     server->map(packetTypes[IDX_DYNAMIC_PARAM_CHANGE], [&, handle_resolution_change](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_DYNAMIC_PARAM_CHANGE]"sv;
 
-      constexpr size_t MIN_PAYLOAD_SIZE = sizeof(int);
+      constexpr size_t WIRE_WORD_SIZE = sizeof(std::uint32_t);
+      constexpr size_t MIN_PAYLOAD_SIZE = WIRE_WORD_SIZE;
       if (payload.size() < MIN_PAYLOAD_SIZE) {
         BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
                            << MIN_PAYLOAD_SIZE << " bytes, got " << payload.size();
         return;
       }
 
-      const int param_type = *reinterpret_cast<const int *>(payload.data());
+      const auto param_type = read_dynamic_param_i32(payload, 0);
       
       if (param_type < 0 || param_type >= static_cast<int>(video::dynamic_param_type_e::MAX_PARAM_TYPE)) {
         BOOST_LOG(warning) << "Invalid parameter type: " << param_type;
@@ -1959,28 +2029,29 @@ namespace stream {
       
       // 处理分辨率变更（需要两个int值）
       if (param_type_enum == video::dynamic_param_type_e::RESOLUTION) {
-        constexpr size_t RESOLUTION_PAYLOAD_SIZE = sizeof(int) * 3;  // 类型 + width + height
+        constexpr size_t RESOLUTION_PAYLOAD_SIZE = WIRE_WORD_SIZE * 3;  // 类型 + width + height
         if (payload.size() < RESOLUTION_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for resolution change. Expected " 
                              << RESOLUTION_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
 
-        const auto *resolution_data = reinterpret_cast<const int *>(payload.data());
-        handle_resolution_change(session, resolution_data[1], resolution_data[2]);
+        const auto width = read_dynamic_param_i32(payload, WIRE_WORD_SIZE);
+        const auto height = read_dynamic_param_i32(payload, WIRE_WORD_SIZE * 2);
+        handle_resolution_change(session, width, height);
         return;
       }
 
       // 处理FPS变更（需要float值）
       if (param_type_enum == video::dynamic_param_type_e::FPS) {
-        constexpr size_t FPS_PAYLOAD_SIZE = sizeof(int) + sizeof(float);
+        constexpr size_t FPS_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
         if (payload.size() < FPS_PAYLOAD_SIZE) {
           BOOST_LOG(warning) << "Invalid payload size for FPS change. Expected " 
                              << FPS_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
 
-        const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+        const float new_fps = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -2005,15 +2076,47 @@ namespace stream {
         return;
       }
 
+      // This is an HLG conversion parameter, not part of the display/VDD HDR
+      // capability tuple. Apply it on the video thread without rebuilding the
+      // display or encoder.
+      if (param_type_enum == video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+        constexpr size_t SDR_WHITE_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
+        if (payload.size() != SDR_WHITE_PAYLOAD_SIZE) {
+          BOOST_LOG(warning) << "Invalid payload size for client SDR white. Expected "
+                             << SDR_WHITE_PAYLOAD_SIZE << " bytes, got " << payload.size();
+          return;
+        }
+        if (session->config.controlProtocolType != 13 || session->config.monitor.dynamicRange != 2) {
+          BOOST_LOG(warning) << "Ignoring client SDR white update outside an encrypted HLG session";
+          return;
+        }
+
+        const float sdr_white_nits = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
+        if (!video::is_valid_client_sdr_white_nits(sdr_white_nits)) {
+          BOOST_LOG(warning) << "Invalid client SDR white value: " << sdr_white_nits;
+          return;
+        }
+
+        video::dynamic_param_t param {};
+        param.type = video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS;
+        param.value.float_value = sdr_white_nits;
+        param.valid = true;
+        session->dynamic_sdr_white_nits.store(sdr_white_nits, std::memory_order_release);
+        session->video.dynamic_param_change_events->raise(param);
+
+        BOOST_LOG(info) << "Dynamic client SDR white change: " << sdr_white_nits << " nits";
+        return;
+      }
+
       // 处理其他单值参数（码率、QP等，使用int值）
-      constexpr size_t INT_PARAM_PAYLOAD_SIZE = sizeof(int) * 2;
+      constexpr size_t INT_PARAM_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
       if (payload.size() < INT_PARAM_PAYLOAD_SIZE) {
         BOOST_LOG(warning) << "Invalid payload size for dynamic param change. Expected at least " 
                            << INT_PARAM_PAYLOAD_SIZE << " bytes, got " << payload.size();
         return;
       }
 
-      const int param_value = reinterpret_cast<const int *>(payload.data())[1];
+      const auto param_value = read_dynamic_param_i32(payload, WIRE_WORD_SIZE);
 
       video::dynamic_param_t param;
       param.type = param_type_enum;
@@ -2289,13 +2392,23 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            const auto ds5_settings = ds5_config::current();
             has_ds5_haptics_session |=
-              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0;
+              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
+              (ds5_settings.enabled && ds5_settings.audio_haptics);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
 
               send_feedback_msg(session, *feedback_msg);
+            }
+
+            for (auto &[controller_id, controller_haptics] : session->control.legacy_haptics) {
+              if (const auto rumble = controller_haptics->poll(now)) {
+                auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
+                  controller_id, rumble->low_frequency, rumble->high_frequency);
+                send_feedback_msg(session, legacy_msg, true);
+              }
             }
 
             auto &hdr_queue = session->control.hdr_queue;
@@ -4142,6 +4255,9 @@ namespace stream {
       session->enable_hdr = launch_session.enable_hdr;
       session->hdr_capabilities = launch_session.hdr_capabilities;
       session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
+      session->dynamic_sdr_white_nits.store(
+        launch_session.hdr_capabilities.sdr_white_nits,
+        std::memory_order_release);
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;

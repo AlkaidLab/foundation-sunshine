@@ -27,7 +27,7 @@
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
-#include "src/config.h"
+#include "src/ds5/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 
@@ -40,6 +40,12 @@ namespace platf::ds5 {
     constexpr std::uint16_t VERSION = 1;
     constexpr std::size_t HEADER_SIZE = 16;
     constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
+    constexpr std::uint32_t CAP_GENSHIN_COMPATIBILITY_IDENTITY = 1u << 8;
+    constexpr std::uint32_t CAPABILITY_AUDIO_POLICY_VIOLATION = 1u << 9;
+    constexpr std::uint8_t ATTACH_FLAG_GENSHIN_COMPATIBILITY = 1u << 0;
+    std::atomic_bool trusted_component_available { false };
+    // The sidecar protocol identifies devices with a single byte.
+    static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
 
     enum class message_e: std::uint16_t {
       hello = 1,
@@ -56,6 +62,7 @@ namespace platf::ds5 {
       adaptive_triggers = 102,
       led = 103,
       haptics_pcm = 104,
+      audio_policy_violation = 105,
       error = 255,
     };
 
@@ -93,7 +100,13 @@ namespace platf::ds5 {
       p[3] = static_cast<std::uint8_t>(value >> 24);
     }
 
-    bool transfer_exact(HANDLE pipe, HANDLE stop_event, void *buffer, std::size_t size, bool write) {
+    // A data-plane write that cannot drain within this bound means the sidecar
+    // stopped reading (for example a blocked HIDMaestro call on its read loop);
+    // failing the write lets the caller bail out instead of freezing.
+    constexpr DWORD write_stall_timeout_ms = 5000;
+
+    bool transfer_exact(HANDLE pipe, HANDLE stop_event, void *buffer, std::size_t size, bool write,
+                        DWORD wait_timeout = INFINITE) {
       std::size_t offset = 0;
       while (offset < size) {
         if (WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) {
@@ -131,7 +144,7 @@ namespace platf::ds5 {
 #endif
           const std::array waits { overlapped.hEvent, stop_event };
           const auto wait_result = WaitForMultipleObjects(
-            static_cast<DWORD>(waits.size()), waits.data(), FALSE, INFINITE);
+            static_cast<DWORD>(waits.size()), waits.data(), FALSE, wait_timeout);
           if (wait_result == WAIT_OBJECT_0) {
             completed = GetOverlappedResult(pipe, &overlapped, &count, FALSE) != FALSE;
           }
@@ -159,7 +172,8 @@ namespace platf::ds5 {
 
     bool write_exact(HANDLE pipe, HANDLE stop_event, std::span<const std::uint8_t> source) {
       return transfer_exact(
-        pipe, stop_event, const_cast<std::uint8_t *>(source.data()), source.size(), true);
+        pipe, stop_event, const_cast<std::uint8_t *>(source.data()), source.size(), true,
+        write_stall_timeout_ms);
     }
 
 #ifndef SUNSHINE_DS5_SIDECAR_TEST_HOOK
@@ -199,34 +213,44 @@ namespace platf::ds5 {
     }
 #endif
 
+    std::filesystem::path sidecar_executable_path() {
+#ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
+      return std::filesystem::path(SUNSHINE_DS5_FAKE_SIDECAR_PATH);
+#else
+      return platf::appdata().parent_path() / "tools" / "sunshine-ds5-component" /
+             "active" / "Sunshine.Ds5Sidecar.exe";
+#endif
+    }
+
     std::optional<std::filesystem::path> trusted_sidecar_path() {
-      const auto configured = std::filesystem::path(config::input.ds5_sidecar_path);
-      if (configured.empty()) {
+      // The test target supplies its purpose-built protocol peer. Production
+      // uses only the fixed component directory and never accepts a configured path.
+      const auto configured = sidecar_executable_path();
+      std::error_code path_error;
+      if (!std::filesystem::is_regular_file(configured, path_error) || path_error) {
         return std::nullopt;
       }
 #ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
-      // The aggregate test target launches its purpose-built protocol peer.
-      // Production builds never accept this override path.
-      return std::filesystem::is_regular_file(configured) ?
-               std::optional { std::filesystem::weakly_canonical(configured) } : std::nullopt;
-#else
-      std::error_code path_error;
-      const auto expected = std::filesystem::weakly_canonical(
-        platf::appdata().parent_path() / "tools" / "sunshine-ds5-component" /
-          "active" / "Sunshine.Ds5Sidecar.exe",
-        path_error);
-      if (path_error) {
-        return std::nullopt;
-      }
       const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
-      if (path_error || candidate != expected || !std::filesystem::is_regular_file(candidate)) {
-        BOOST_LOG(error) << "Rejected an untrusted DualSense sidecar path"sv;
+      return path_error ? std::nullopt : std::optional { candidate };
+#else
+      const auto install_root = std::filesystem::weakly_canonical(
+        platf::appdata().parent_path(),
+        path_error);
+      if (path_error) return std::nullopt;
+      const auto expected_active_root = install_root / "tools" /
+                                        "sunshine-ds5-component" / "active";
+      const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
+      if (path_error || candidate.parent_path() != expected_active_root ||
+          candidate.filename() != "Sunshine.Ds5Sidecar.exe" ||
+          !std::filesystem::is_regular_file(candidate, path_error) || path_error) {
+        BOOST_LOG(error) << "Rejected a DualSense sidecar outside the fixed active component directory"sv;
         return std::nullopt;
       }
 
       boost::property_tree::ptree manifest;
       try {
-        boost::property_tree::read_json((candidate.parent_path() / "component.json").string(), manifest);
+        boost::property_tree::read_json((expected_active_root / "component.json").string(), manifest);
       }
       catch (const std::exception &exception) {
         BOOST_LOG(error) << "Unable to read the active DualSense component manifest: "sv
@@ -265,6 +289,8 @@ namespace platf::ds5 {
     std::atomic_int global_index { -1 };
     std::uint8_t client_index = 0;
     bool audio_haptics_requested = false;
+    bool genshin_compatibility_requested = false;
+    bool force_hid_fallback = false;
     feedback_queue_t feedback_queue;
     std::uint32_t next_request_id = 1;
 
@@ -287,7 +313,17 @@ namespace platf::ds5 {
       write_u32(frame.data() + 12, request_id);
       std::copy(payload.begin(), payload.end(), frame.begin() + HEADER_SIZE);
       std::lock_guard lock(write_mutex);
-      return !stopping && pipe != INVALID_HANDLE_VALUE && write_exact(pipe, stop_event, frame);
+      if (stopping || pipe == INVALID_HANDLE_VALUE) {
+        return false;
+      }
+      if (write_exact(pipe, stop_event, frame)) {
+        return true;
+      }
+      // The write stalled or the pipe broke: cancel the reader's pending read
+      // so read_loop's recovery path tears the transport down, instead of
+      // letting later senders block on a pipe that will never drain.
+      CancelIoEx(pipe, nullptr);
+      return false;
     }
 
     bool receive(message_t &message) {
@@ -306,22 +342,93 @@ namespace platf::ds5 {
       return read_exact(pipe, stop_event, message.payload);
     }
 
+    void dispatch(message_t &message) {
+      const auto &p = message.payload;
+      const auto owned_index = global_index.load();
+      switch (message.type) {
+        case message_e::rumble:
+          if (p.size() == 6 && p[0] == owned_index) {
+            feedback_queue->raise(gamepad_feedback_msg_t::make_rumble(
+              p[1], read_u16(p.data() + 2), read_u16(p.data() + 4)));
+          }
+          break;
+        case message_e::adaptive_triggers:
+          if (p.size() == 26 && p[0] == owned_index) {
+            std::array<std::uint8_t, 10> left, right;
+            std::copy_n(p.data() + 6, 10, left.begin());
+            std::copy_n(p.data() + 16, 10, right.begin());
+            feedback_queue->raise(gamepad_feedback_msg_t::make_adaptive_triggers(
+              p[1], p[2], p[3], p[4], left, right));
+          }
+          break;
+        case message_e::led:
+          if (p.size() == 5 && p[0] == owned_index) {
+            feedback_queue->raise(gamepad_feedback_msg_t::make_rgb_led(p[1], p[2], p[3], p[4]));
+          }
+          break;
+        case message_e::haptics_pcm:
+          if (p.size() >= 24 && p[0] == owned_index) {
+            const auto frames = read_u16(p.data() + 4);
+            const auto pcm_size = static_cast<std::size_t>(frames) * 4;
+            if (p[3] == 2 && p[6] == 16 && read_u32(p.data() + 20) == 48000 &&
+                frames <= 240 && p.size() == 24 + pcm_size) {
+              feedback_queue->raise(gamepad_feedback_msg_t::make_ds5_haptics_pcm(
+                p[1], p[2], frames, read_u32(p.data() + 8), read_u64(p.data() + 12),
+                p.data() + 24, pcm_size));
+            }
+          }
+          break;
+        case message_e::audio_policy_violation:
+          if (p.size() == 4 && p[0] == owned_index) {
+            static constexpr std::array<std::string_view, 3> role_names {
+              "console", "multimedia", "communications"
+            };
+            const auto role = p[2] < role_names.size() ? role_names[p[2]] : "unknown"sv;
+            force_hid_fallback = true;
+            audio_haptics_requested = false;
+            BOOST_LOG(warning) << "The virtual DualSense audio endpoint became the Windows "sv
+                               << role << " default; falling back to HID-only DualSense"sv;
+          }
+          break;
+        case message_e::error:
+          BOOST_LOG(warning) << "DualSense sidecar reported an asynchronous error"sv;
+          break;
+        default:
+          break;
+      }
+    }
+
     bool transact(message_e request_type, std::span<const std::uint8_t> payload,
                   message_e reply_type, message_t &reply) {
       const auto request_id = next_request_id++;
-      if (!send(request_type, request_id, payload) || !receive(reply)) {
+      if (!send(request_type, request_id, payload)) {
         return false;
       }
-      if (reply.type == message_e::error) {
-        std::string reason;
-        if (reply.payload.size() >= 8) {
-          const auto length = std::min<std::size_t>(read_u32(reply.payload.data() + 4), reply.payload.size() - 8);
-          reason.assign(reinterpret_cast<const char *>(reply.payload.data() + 8), length);
+      while (!stopping) {
+        // Rumble, LEDs and adaptive triggers share the control channel and are
+        // emitted from a different sidecar thread, so they can legitimately
+        // arrive ahead of the reply. Dispatch them instead of misreading the
+        // first message as the reply.
+        message_t message;
+        if (!receive(message)) {
+          return false;
         }
-        BOOST_LOG(error) << "DualSense sidecar rejected request: "sv << reason;
-        return false;
+        if (message.request_id == request_id && message.type == reply_type) {
+          reply = std::move(message);
+          return true;
+        }
+        if (message.type == message_e::error && message.request_id == request_id) {
+          std::string reason;
+          if (message.payload.size() >= 8) {
+            const auto length = std::min<std::size_t>(read_u32(message.payload.data() + 4), message.payload.size() - 8);
+            reason.assign(reinterpret_cast<const char *>(message.payload.data() + 8), length);
+          }
+          BOOST_LOG(error) << "DualSense sidecar rejected request: "sv << reason;
+          return false;
+        }
+        dispatch(message);
       }
-      return reply.type == reply_type && reply.request_id == request_id;
+      return false;
     }
 
     bool launch_and_connect() {
@@ -380,6 +487,9 @@ namespace platf::ds5 {
 
       const auto deadline = std::chrono::steady_clock::now() + 10s;
       do {
+        if (stopping || WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) {
+          return false;
+        }
         const auto connected_pipe = CreateFileW(pipe_path.c_str(), GENERIC_READ | GENERIC_WRITE,
                                                 0, nullptr, OPEN_EXISTING,
                                                 FILE_FLAG_OVERLAPPED, nullptr);
@@ -395,11 +505,16 @@ namespace platf::ds5 {
         WaitNamedPipeW(pipe_path.c_str(), 100);
       } while (std::chrono::steady_clock::now() < deadline);
 
+      if (stopping || WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) {
+        return false;
+      }
       BOOST_LOG(error) << "Timed out connecting to DualSense sidecar pipe"sv;
       return false;
     }
 
-    bool connect_and_attach(const gamepad_id_t &id, bool audio_haptics) {
+    bool connect_and_attach(const gamepad_id_t &id, bool audio_haptics,
+                            bool genshin_compatibility) {
+      bool use_genshin_identity = audio_haptics && genshin_compatibility;
       if (!launch_and_connect()) {
         return false;
       }
@@ -407,7 +522,21 @@ namespace platf::ds5 {
       message_t reply;
       std::array<std::uint8_t, 4> hello {};
       write_u32(hello.data(), 0);
-      if (!transact(message_e::hello, hello, message_e::hello_reply, reply)) {
+      if (!transact(message_e::hello, hello, message_e::hello_reply, reply) ||
+          reply.payload.size() != 4) {
+        return false;
+      }
+      const auto capabilities = read_u32(reply.payload.data());
+      if (audio_haptics && !(capabilities & CAPABILITY_AUDIO_POLICY_VIOLATION)) {
+        BOOST_LOG(warning) << "DualSense sidecar does not advertise audio endpoint policy protection; "sv
+                           << "falling back to HID-only DualSense"sv;
+        force_hid_fallback = true;
+        audio_haptics = false;
+        use_genshin_identity = false;
+      }
+      if (use_genshin_identity &&
+          (capabilities & CAP_GENSHIN_COMPATIBILITY_IDENTITY) == 0) {
+        BOOST_LOG(error) << "The installed DualSense sidecar does not support Genshin compatibility mode"sv;
         return false;
       }
 
@@ -415,8 +544,11 @@ namespace platf::ds5 {
         static_cast<std::uint8_t>(id.globalIndex),
         id.clientRelativeIndex,
         static_cast<std::uint8_t>(audio_haptics ? 1 : 0),
-        0,
+        static_cast<std::uint8_t>(use_genshin_identity ? ATTACH_FLAG_GENSHIN_COMPATIBILITY : 0),
       };
+      // Claim ownership before the transaction so feedback interleaved ahead
+      // of the attach reply is routed to the queue instead of dropped.
+      global_index = id.globalIndex;
       if (!transact(message_e::attach, attach_payload, message_e::attach_reply, reply) ||
           reply.payload.size() != 8 || reply.payload[0] != attach_payload[0]) {
         return false;
@@ -426,16 +558,17 @@ namespace platf::ds5 {
         return false;
       }
 
-      global_index = id.globalIndex;
       client_index = id.clientRelativeIndex;
-      audio_haptics_requested = audio_haptics;
+      audio_haptics_requested = audio_haptics && !force_hid_fallback;
+      genshin_compatibility_requested = use_genshin_identity && audio_haptics_requested;
       online = true;
       BOOST_LOG(info) << "DualSense sidecar attached controller "sv << id.globalIndex
-                      << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)");
+                      << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)")
+                      << (genshin_compatibility_requested ? " using Genshin compatibility identity" : "");
       return true;
     }
 
-    bool attach(const gamepad_id_t &id, bool audio_haptics) {
+    bool attach(const gamepad_id_t &id, bool audio_haptics, bool genshin_compatibility) {
       // A failed recovery releases global_index from the reader thread before
       // that thread object stops being joinable. Reap it before reusing the
       // same client for a later allocation; assigning over a joinable
@@ -443,7 +576,10 @@ namespace platf::ds5 {
       if (reader.joinable()) {
         reader.join();
       }
-      if (!connect_and_attach(id, audio_haptics)) {
+      // A new allocation is an explicit user/session request. Only the
+      // automatic recovery of the current allocation inherits the fallback.
+      force_hid_fallback = false;
+      if (!connect_and_attach(id, audio_haptics, genshin_compatibility)) {
         return false;
       }
       reader = std::thread([this] { read_loop(); });
@@ -477,47 +613,7 @@ namespace platf::ds5 {
       while (!stopping) {
         message_t message;
         while (!stopping && receive(message)) {
-          const auto &p = message.payload;
-          const auto owned_index = global_index.load();
-          switch (message.type) {
-            case message_e::rumble:
-              if (p.size() == 6 && p[0] == owned_index) {
-                feedback_queue->raise(gamepad_feedback_msg_t::make_rumble(
-                  p[1], read_u16(p.data() + 2), read_u16(p.data() + 4)));
-              }
-              break;
-            case message_e::adaptive_triggers:
-              if (p.size() == 26 && p[0] == owned_index) {
-                std::array<std::uint8_t, 10> left, right;
-                std::copy_n(p.data() + 6, 10, left.begin());
-                std::copy_n(p.data() + 16, 10, right.begin());
-                feedback_queue->raise(gamepad_feedback_msg_t::make_adaptive_triggers(
-                  p[1], p[2], p[3], p[4], left, right));
-              }
-              break;
-            case message_e::led:
-              if (p.size() == 5 && p[0] == owned_index) {
-                feedback_queue->raise(gamepad_feedback_msg_t::make_rgb_led(p[1], p[2], p[3], p[4]));
-              }
-              break;
-            case message_e::haptics_pcm:
-              if (p.size() >= 24 && p[0] == owned_index) {
-                const auto frames = read_u16(p.data() + 4);
-                const auto pcm_size = static_cast<std::size_t>(frames) * 4;
-                if (p[3] == 2 && p[6] == 16 && read_u32(p.data() + 20) == 48000 &&
-                    frames <= 240 && p.size() == 24 + pcm_size) {
-                  feedback_queue->raise(gamepad_feedback_msg_t::make_ds5_haptics_pcm(
-                    p[1], p[2], frames, read_u32(p.data() + 8), read_u64(p.data() + 12),
-                    p.data() + 24, pcm_size));
-                }
-              }
-              break;
-            case message_e::error:
-              BOOST_LOG(warning) << "DualSense sidecar reported an asynchronous error"sv;
-              break;
-            default:
-              break;
-          }
+          dispatch(message);
         }
         online = false;
         if (stopping) {
@@ -533,7 +629,7 @@ namespace platf::ds5 {
           global_index.load(),
           client_index,
         };
-        if (!connect_and_attach(id, audio_haptics_requested)) {
+        if (!connect_and_attach(id, audio_haptics_requested, genshin_compatibility_requested)) {
           close_transport();
           break;
         }
@@ -562,25 +658,46 @@ namespace platf::ds5 {
     }
   };
 
+  bool component_available() noexcept {
+    return trusted_component_available.load(std::memory_order_acquire);
+  }
+
+  bool refresh_component_availability() noexcept {
+    bool available = false;
+    try {
+      available = trusted_sidecar_path().has_value();
+    }
+    catch (...) {
+      available = false;
+    }
+    trusted_component_available.store(available, std::memory_order_release);
+    return available;
+  }
+
   sidecar_client_t::sidecar_client_t():
-      _impl(std::make_unique<impl_t>()) {}
+      _impl(std::make_unique<impl_t>()) {
+    refresh_component_availability();
+  }
 
   sidecar_client_t::~sidecar_client_t() = default;
 
   bool sidecar_client_t::configured() const {
-    return config::input.ds5_enabled && !config::input.ds5_sidecar_path.empty();
+    return ds5_config::current().enabled && refresh_component_availability();
   }
 
   bool sidecar_client_t::owns(int global_index) const {
-    return _impl->online && _impl->global_index == global_index;
+    // Ownership survives a temporary transport outage so the input layer can
+    // still release the controller while the reader thread is recovering it.
+    return global_index >= 0 && _impl->global_index == global_index;
   }
 
-  int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics) {
+  int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue,
+                              bool audio_haptics, bool genshin_compatibility) {
     if (!configured() || _impl->global_index >= 0) {
       return -1;
     }
     _impl->feedback_queue = std::move(feedback_queue);
-    if (_impl->attach(id, audio_haptics)) {
+    if (_impl->attach(id, audio_haptics, genshin_compatibility && audio_haptics)) {
       return 0;
     }
     _impl = std::make_unique<impl_t>();
@@ -595,7 +712,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_input(int global_index, const gamepad_state_t &state) {
-    if (!owns(global_index)) return;
+    if (!owns(global_index) || !_impl->online) return;
     std::array<std::uint8_t, 20> payload {};
     payload[0] = static_cast<std::uint8_t>(global_index);
     write_u32(payload.data() + 4, state.buttonFlags);
@@ -609,7 +726,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_touch(const gamepad_touch_t &touch) {
-    if (!owns(touch.id.globalIndex)) return;
+    if (!owns(touch.id.globalIndex) || !_impl->online) return;
     std::array<std::uint8_t, 20> payload {};
     payload[0] = static_cast<std::uint8_t>(touch.id.globalIndex);
     payload[1] = touch.eventType;
@@ -621,7 +738,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_motion(const gamepad_motion_t &motion) {
-    if (!owns(motion.id.globalIndex)) return;
+    if (!owns(motion.id.globalIndex) || !_impl->online) return;
     std::array<std::uint8_t, 16> payload {};
     payload[0] = static_cast<std::uint8_t>(motion.id.globalIndex);
     payload[1] = motion.motionType;
@@ -632,7 +749,7 @@ namespace platf::ds5 {
   }
 
   void sidecar_client_t::submit_battery(const gamepad_battery_t &battery) {
-    if (!owns(battery.id.globalIndex)) return;
+    if (!owns(battery.id.globalIndex) || !_impl->online) return;
     std::array<std::uint8_t, 4> payload {
       static_cast<std::uint8_t>(battery.id.globalIndex), battery.state, battery.percentage, 0
     };

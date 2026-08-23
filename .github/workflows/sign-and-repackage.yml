@@ -23,12 +23,6 @@ on:
         description: "Release tag for naming the output files"
         required: true
 
-# Opt all Node.js 20 actions onto the Node.js 24 runtime to silence the
-# `actions/checkout@v4` deprecation warning until upstream actions cut new
-# releases.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   sign-and-repackage:
     name: Sign Files and Repackage
@@ -38,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
@@ -153,24 +147,15 @@ jobs:
           echo "  Cargo: $(cargo --version)"
 
       - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
       - name: Build self-contained DualSense sidecar
         shell: pwsh
         env:
-          DS5_COMPONENT_VERSION: 1.0.0+${{ github.sha }}
-        run: .\scripts\build-ds5-sidecar.ps1 -ComponentVersion $env:DS5_COMPONENT_VERSION
-
-      - name: Package unsigned DualSense component manifest
-        shell: pwsh
-        env:
-          DS5_RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
-        run: |
-          .\scripts\package-ds5-sidecar.ps1 `
-            -RuntimeDirectory build/ds5-sidecar-runtime `
-            -ReleaseTag $env:DS5_RELEASE_TAG
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Windows
         shell: msys2 {0}
@@ -219,8 +204,6 @@ jobs:
           # 生成 Inno Setup staging 目录
           echo "Generating Inno Setup staging directory..."
           cmake --install . --prefix ./inno_staging
-          test -f ./inno_staging/assets/components/dualsense.json
-          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar
 
           cd ..
           
@@ -237,8 +220,8 @@ jobs:
             echo "Extracting: $PORTABLE"
             mkdir -p unsigned-files
             7z x "$PORTABLE" -o"unsigned-files" -y -aoa
-            mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-sidecar
-            cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-sidecar/
+            mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging
+            cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging/
             echo "Extracted files for signing:"
             ls -laR unsigned-files/
           else
@@ -249,14 +232,14 @@ jobs:
       # 上传所有未签名的文件到 SignPath
       - name: Upload unsigned files for signing
         id: upload-unsigned
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: files-for-signing
           path: unsigned-files/
 
       # 提交到 SignPath 签名（使用生产策略）
       - name: Submit to SignPath for signing
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -288,27 +271,30 @@ jobs:
           }
           Write-Host "`n✓ All signatures are VALID!" -ForegroundColor Green
 
-      # 使用签名后的文件重新打包 ZIP 便携版
-      # Sidecar executables are included in the SignPath input only to receive
-      # the same production signature. They are packaged separately afterwards.
-      - name: Package signed DualSense component release asset
+      - name: Package signed DualSense component
         shell: pwsh
         env:
-          DS5_RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
         run: |
           .\scripts\package-ds5-sidecar.ps1 `
-            -RuntimeDirectory signed-files/Sunshine/tools/sunshine-ds5-sidecar `
-            -ReleaseTag $env:DS5_RELEASE_TAG
-          Copy-Item -LiteralPath build/ds5-component/dualsense.json `
-            -Destination signed-files/Sunshine/assets/components/dualsense.json -Force
-          Copy-Item -LiteralPath build/ds5-component/dualsense.json `
-            -Destination build/inno_staging/assets/components/dualsense.json -Force
-          Remove-Item -LiteralPath signed-files/Sunshine/tools/sunshine-ds5-sidecar -Recurse -Force
+            -RuntimeDirectory 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
+            -PackageDirectory 'signed-component' `
+            -ManifestPath 'build/ds5-sidecar-package.json' `
+            -ReleaseTag $env:RELEASE_TAG
+          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
+            -Destination 'signed-files/Sunshine/tools/ds5-sidecar-package.json' -Force
+          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
+            -Destination 'build/inno_staging/tools/ds5-sidecar-package.json' -Force
+          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
+            -Destination 'signed-component/Sunshine.Ds5Sidecar.manifest.json' -Force
+          Remove-Item -LiteralPath 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
+            -Recurse -Force
 
+      # 使用签名后的文件重新打包 ZIP 便携版
       - name: Repackage signed Portable ZIP
         shell: bash
         run: |
-          cd signed-files
+          cd signed-files/Sunshine
           # 使用与输入一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
             VERSION="${{ github.event.inputs.release-tag }}"
@@ -317,10 +303,10 @@ jobs:
           else
             VERSION="v$(date +%Y.%m%d)"
           fi
-          7z a "../Sunshine-${VERSION}-Windows-Portable-Signed.zip" * -y
-          cd ..
+          7z a "../../Sunshine-${VERSION}-Portable-x64-Signed.zip" ./* -y
+          cd ../..
           echo "Created signed portable package:"
-          ls -lh Sunshine-*-Portable-Signed.zip
+          ls -lh Sunshine-*-Portable-x64-Signed.zip
 
       # 使用签名文件重新打包 Inno Setup 安装包
       - name: Repackage signed Inno Setup installer
@@ -357,10 +343,10 @@ jobs:
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
-          test -f "$STAGING_DIR/assets/components/dualsense.json"
-          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar"
+          test -f "$STAGING_DIR/tools/ds5-sidecar-package.json"
+          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
-          ! grep -F "sunshine-ds5-sidecar" build/inno-signed-build.log
+          grep -F "ds5-sidecar-package.json" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
@@ -378,13 +364,13 @@ jobs:
       # 签名最终的 Inno Setup 安装包
       - name: Upload installer for final signing
         id: upload-installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installer-for-final-signing
           path: Sunshine-*-Installer-Signed.exe
 
       - name: Sign installer
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -411,51 +397,16 @@ jobs:
             }
           }
 
-      - name: Validate signed release packages
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          check_sidecar_absent() {
-            local asset="$1"
-            local listing
-            if ! listing="$(7z l "$asset")"; then
-              echo "Failed to inspect $asset"
-              exit 1
-            fi
-            if grep -Fq "sunshine-ds5-sidecar" <<<"$listing"; then
-              echo "$asset contains the DualSense sidecar runtime"
-              exit 1
-            fi
-          }
-
-          portable_assets=(Sunshine-*-Portable-Signed.zip)
-          installer_assets=(final-signed/*.exe)
-          test "${#portable_assets[@]}" -eq 1
-          test "${#installer_assets[@]}" -eq 1
-          check_sidecar_absent "${portable_assets[0]}"
-          check_sidecar_absent "${installer_assets[0]}"
-
-      # Upload the final signed files
-      - name: Generate signed package checksums
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
-          Copy-Item -Path Sunshine-*-Portable-Signed.zip -Destination release-artifacts -Force
-          Copy-Item -Path final-signed/*.exe -Destination release-artifacts -Force
-          Copy-Item -Path build/ds5-component/Sunshine.Ds5Sidecar.*.win-x64.zip -Destination release-artifacts -Force
-          .\scripts\generate-checksums.ps1 -Path .\release-artifacts -Output "SHA256SUMS.txt"
-
+      # 上传最终的签名文件
       - name: Upload final signed packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sunshine-windows-fully-signed
           path: |
-            release-artifacts/Sunshine-*-Portable-Signed.zip
-            release-artifacts/*.exe
-            release-artifacts/Sunshine.Ds5Sidecar.*.win-x64.zip
-            release-artifacts/SHA256SUMS.txt
-            release-artifacts/checksums.json
+            Sunshine-*-Portable-x64-Signed.zip
+            final-signed/*.exe
+            signed-component/Sunshine.Ds5Sidecar.x64.zip
+            signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
       # 发布到 GitHub Release
@@ -465,11 +416,10 @@ jobs:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
-            release-artifacts/Sunshine-*-Portable-Signed.zip
-            release-artifacts/*.exe
-            release-artifacts/Sunshine.Ds5Sidecar.*.win-x64.zip
-            release-artifacts/SHA256SUMS.txt
-            release-artifacts/checksums.json
+            Sunshine-*-Portable-x64-Signed.zip
+            final-signed/*.exe
+            signed-component/Sunshine.Ds5Sidecar.x64.zip
+            signed-component/Sunshine.Ds5Sidecar.manifest.json
           draft: true
           prerelease: true
           allowUpdates: true

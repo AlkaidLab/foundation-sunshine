@@ -34,14 +34,17 @@
 
 ### 3.1 已验证的 HIDMaestro 能力边界
 
-以 HIDMaestro v1.6.1 官方发布物和同标签源码为准，Sunshine 必须区分两类 profile，不把 USB/IP 当作所有 DS5 模拟的必需条件：
+以 HIDMaestro v1.6.2 官方发布物和同标签源码为准，Sunshine 必须区分两类 profile，不把 USB/IP 当作所有 DS5 模拟的必需条件：
 
 | Profile | 后端 | 虚拟 HID | 四声道扬声器/触觉 | 系统级依赖 | 第一阶段用途 |
 |---|---|---:|---:|---|---|
 | `dualsense` | UMDF2 | 是 | 否 | HIDMaestro 动态生成并安装的 UMDF2 驱动/本机自签名证书 | 输入、触摸板、运动、自适应扳机验证与无 HD Haptics 的降级模式 |
 | `dualsense-composite` | USB/IP | 是 | 是 | 内嵌 usbip-win2 0.9.7.7 | 需要游戏识别 DS5 四声道端点并产出 authored haptics 的完整模式 |
+| `dualsense-composite-genshin` | USB/IP | 是 | 是 | 与完整模式相同 | 实验性《原神》兼容身份；只把 USB product string 改为首发版 `Wireless Controller` |
 
 复合 profile 的音频输出固定为 48 kHz、16-bit、4 声道，角色依次为 `speakerLeft`、`speakerRight`、`hapticLeft`、`hapticRight`。HIDMaestro 公共 API 可以直接交付游戏写入该端点的 PCM 帧，Sidecar 不需要从混合后的桌面音频重新猜测第 3/4 声道。
+
+兼容 profile 不维护第二份 USB 描述符：Sidecar 启动时从已校验的 `dualsense-composite` 动态派生，只修改 profile ID、显示名和 product string。GUI 默认关闭该模式，并只在 DualSense、HD Haptics、USB/IP 与新 Sidecar 能力均可用时允许启用。切换后需要重新创建虚拟手柄，用户应先开始串流，再完全退出并重新启动《原神》。该模式不修改 Windows 默认播放或录音设备，现有 never-default 防线保持不变。
 
 官方发布物当前未做 Authenticode 签名，并携带运行时、usbip-win2 安装器及 WDK 工具。第一阶段只从上游固定版本 URL 下载、校验固定 SHA-256，不随 Sunshine 安装包或自有 CDN 再分发。目前只把 Windows 11 24H2 build 26100 记为“已验证”；Windows 10 与其他 Windows 11 build 仍属于实验范围，GUI 不宣称已受支持。这里不把程序集的 `windows10.0.26100.0` API target 误当作已证明的最低 OS 版本；正式分发前必须完成真实 OS build 矩阵并据此决定拒绝安装还是显示实验性警告。
 
@@ -74,6 +77,8 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
 - 后端只接受内置 allowlist 中的官方仓库和资产命名规则。
 - 发布 manifest 固定版本、下载地址、文件大小和 SHA-256。
 - GUI 不接受渲染器传入的任意下载 URL。
+- Sunshine 自研 Sidecar 的 `win-x64` 自包含运行时作为独立 Release 资产发布；主安装包只携带同版本 manifest，不再捆绑完整 .NET 运行时。
+- GUI 默认按 manifest 下载 Sidecar，也允许用户从任意本地目录选择匹配的官方 ZIP；放在 Sunshine 根目录或 `tools` 目录、文件名保持 `Sunshine.Ds5Sidecar.x64.zip` 的包会被自动发现。Sidecar 与 Portable 资产名刻意不包含 `Windows`，把该标记只留给正式安装器，避免旧版整包更新器第一次升级时误选 ZIP。提权 helper 不接收调用方路径，只接收 allowlist 操作和随机令牌；本地 ZIP 必须通过 manifest 固定的大小与 SHA-256 校验。
 - 当前发布物存在 WDK 工具再分发审查事项，因此不放入 Sunshine 安装包或自有 CDN。
 - GUI 提供上游项目、许可证、来源 URL 和校验结果。
 
@@ -139,7 +144,7 @@ common-c 仍使用回调存在性生成底层能力位，但这是应用层模�
 | 项目 | 典型状态 | 用户可执行操作 |
 |---|---|---|
 | 运行组件 | 未安装、已验证、损坏、更新可用 | 安装、修复、更新 |
-| USB 传输 | 未安装、正常、需要重启、版本不兼容 | 安装、重启提示 |
+| USB 传输 | 未安装、正常、已安装但建议重启、版本不兼容 | 安装、按实际探测结果提示重启 |
 | 虚拟手柄 | 未连接、枚举中、已连接、被串流使用 | 测试、查看会话 |
 | HID 接口 | 未检测、正常、超时 | 重新测试、日志 |
 | 四声道音频 | 未检测、正常、端点不匹配 | 修复、日志 |
@@ -176,6 +181,8 @@ common-c 仍使用回调存在性生成底层能力位，但这是应用层模�
 ```
 
 用户取消下载后删除未完成文件；进入系统驱动安装后，取消只停止后续 Sunshine 操作，不假设 Windows 已回滚。
+
+若 USB/IP 安装程序返回 `3010`，组件安装不能因此中断。Control Panel 继续部署并验证 Sidecar，再以 Sidecar 的实际传输探测决定提示：传输已可用时只建议用户稍后重启；传输未就绪时保留普通 DualSense 控制，并提示重启后再启用 HD Haptics。`3010` 不是阻止安装完成的错误状态。
 
 ### 4.5 测试流程
 
@@ -221,7 +228,6 @@ enum Ds5OverallState {
     NotInstalled,
     Installing,
     TransportMissing,
-    RebootRequired,
     Ready,
     Testing,
     InUse,
@@ -358,6 +364,8 @@ shutdown(owner_token)
 - `attach`、`update_input`、`subscribe_output` 和 `get_status` 只接受当前连接 owner；Core 持有 owner token，GUI 测试使用独立、低权限 test token。
 - Sidecar 拒绝非所有者 detach 和 shutdown；连接断开会清理该 owner 创建的全部设备。
 - 输出报告和音频数据使用有界队列；控制消息不得被高频数据饿死。
+- 已实现的 owner 校验（v1）：管道 ACL 限定当前用户 + Sidecar 在连接建立时校验客户端进程的提权状态，非提权客户端拒绝并断开、继续等待真正的 owner（不因被抢连而退出，避免单次抢连导致该会话分配失败）；同用户非提权进程即使抢到单实例管道也无法驱动 elevated Sidecar。GUI 低权限 test token 仍属后续工作。
+- 已实现的停滞保护（v1）：Core 对数据面写操作设置 5 秒停滞上限；写停滞会取消 reader 的挂起读取并进入既有的单次恢复路径，sidecar 读循环阻塞不再冻结 Sunshine 输入线程。
 
 高频四声道音频数据不应经 Tauri 或 JSON 传输。后续实现使用共享内存环形缓冲区或专用本地数据通道；Named Pipe 只负责控制和状态。
 
@@ -492,7 +500,7 @@ Core 维护引用计数，按 session ID 管理多客户端。第一阶段可以
 3. 安装器只操作固定组件根目录，删除前解析并验证绝对路径仍位于该根目录。
 4. Sidecar 启动路径必须来自已验证 active manifest。
 5. 不把管理员权限传给常驻 Sidecar；提权 helper 只执行单个、结构化的驱动操作。
-6. Named Pipe ACL 仅允许当前用户、Sunshine 服务身份和管理员访问。
+6. Named Pipe ACL 仅允许当前用户、Sunshine 服务身份和管理员访问；Sidecar 在连接建立时校验客户端进程已提权，拒绝非提权连接。
 7. 不按可执行文件名全局终止进程。
 8. 每个异步操作只有一个 writer，并有 operation ID、取消状态和可恢复 snapshot。
 9. GUI 收到的错误文本视为不可信数据，显示时转义；用户文案由稳定错误码映射。
@@ -505,9 +513,10 @@ Core 维护引用计数，按 session ID 管理多客户端。第一阶段可以
 | `DS5-PKG-001` | 下载摘要不匹配 | 删除下载并重试 |
 | `DS5-PKG-002` | 发布包结构无效 | 停止安装并查看日志 |
 | `DS5-PKG-003` | Sidecar probe 失败 | 回滚或修复 |
+| `DS5-PKG-004` | 提权 helper 启动、授权或 IPC 失败 | 重试 UAC；不修改现有组件 |
+| `DS5-PKG-005` | 本地 Sidecar 包与当前 manifest 不匹配 | 下载同一 Sunshine Release 的组件 ZIP |
 | `DS5-DRV-001` | USB 传输缺失 | 提示安装 |
 | `DS5-DRV-002` | 用户取消 UAC | 保留组件，稍后安装 |
-| `DS5-DRV-003` | 需要重启 | 提示重启，不反复安装 |
 | `DS5-USB-001` | attach 失败 | 清理测试会话后重试 |
 | `DS5-HID-001` | HID 枚举超时 | 修复或日志 |
 | `DS5-AUDIO-002` | 四声道音频枚举超时 | 降级为普通反馈并提示 |
@@ -594,7 +603,7 @@ Core 维护引用计数，按 session ID 管理多客户端。第一阶段可以
 | 下载中关闭页面再打开 | 从 operation snapshot 恢复进度 |
 | SHA-256 不匹配 | 删除 partial，不污染 active 版本 |
 | 用户取消 UAC | 组件保留，状态为传输未安装 |
-| 驱动安装后需要重启 | 只提示重启，不重复安装 |
+| 驱动安装程序返回 `3010` | 继续部署并验证组件；根据实际传输探测建议重启，不重复安装 |
 | GUI 测试期间关闭页面 | 只清理 test session |
 | 串流期间关闭 GUI | 串流设备继续工作 |
 | 串流期间点击更新 | 下载并校验，延迟切换 |
@@ -644,9 +653,9 @@ UX 验收：
 
 截至 2026-08-14（Asia/Hong_Kong），首期实现已经冻结以下决策：
 
-1. Sidecar 调用 HIDMaestro v1.6.1 的公共 `HIDMaestro.Core.dll` API，不复制其实现，也不调用 HIDMaestroTest UI。
-2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.1.zip`，固定下载地址和 SHA-256 `00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34`。发布物大小为 118,879,222 bytes。
-3. Sunshine 安装包仅携带与本地版本绑定的 `assets/components/dualsense.json`，不再携带自研 Sidecar 运行时或 HIDMaestro DLL。用户明确选择安装后，GUI 只接受 manifest 固定的同版本 Sunshine Release Sidecar 资产和固定的 HIDMaestro 发布物；下载、解压和逐文件校验完成后才会激活组件。
+1. Sidecar 调用 HIDMaestro v1.6.2 的公共 `HIDMaestro.Core.dll` API，不复制其实现，也不调用 HIDMaestroTest UI。
+2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.2.zip`，固定下载地址和 SHA-256 `6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff`。发布物大小为 118,881,819 bytes。
+3. Sunshine 主安装包仅携带自研 Sidecar 组件包的固定 manifest，不携带完整 .NET 运行时或 HIDMaestro DLL。Sidecar 自包含 ZIP 作为同一 Release 的独立资产发布；GUI 在用户明确选择安装时下载或读取用户选择的匹配 ZIP，并继续单独下载、校验 HIDMaestro 后只提取 Core、许可证、README 和第三方通知。
 4. 首期每个 Sunshine 进程只允许一个虚拟 DualSense。Xbox 360、DualShock 4 和既有自动模式继续走 ViGEm，不改变成熟驱动支持范围。
 5. 客户端只选择 `physical` 或 `emulated`。前者预检 USB DualSense 四声道端点后声明 `ML_FF_DS5_HAPTICS_PCM`；后者声明 `ML_FF_DS5_HAPTICS_IR_V2`。两位互斥且不在运行中自动切换。
 6. `0x550A` v1 固定承载 48 kHz、双声道、S16LE 原始 PCM；`0x550B` v2 固定承载 72-byte 双 lane IR。两者均按 5 ms 节拍使用不可靠有序传输，断序/`DISCONTINUITY` 重置客户端状态。
@@ -659,10 +668,10 @@ UX 验收：
 - 提权复合 profile 自测通过，HID、四声道音频端点和设备清理均成功。
 - 强端到端环路通过：Moonlight 实际 WASAPI 渲染器写入 HIDMaestro 48 kHz 四声道端点，Sidecar 从 channel 3/4 收到 960 bytes 非静音触觉 PCM。
 - Moonlight Qt 6.9.2 / MSVC Release 完整链接通过；客户端使用自适应端点容量的 15 ms 上限预缓冲，20 ms 饥饿或序号不连续时重置。
-- Sidecar `win-x64` 自包含发布通过，产物约 107 MB 且确认不包含 `HIDMaestro.Core.dll`；把官方校验 DLL 放入 staging 后，probe 返回协议 1、standard/composite profile、驱动及 USB/IP 均可用。
+- Sidecar `win-x64` 自包含发布通过，未压缩产物约 107 MB 且确认不包含 `HIDMaestro.Core.dll`；该运行时被压缩为独立、固定 SHA-256 的组件资产，把官方校验 DLL 放入 staging 后，probe 返回协议 1、standard/composite profile、驱动及 USB/IP 均可用。
 - Control Panel 已同步 Sunshine master 使用的 VDD/HDR 基线；3 项 DualSense Rust 单测、Vue production build 和 12 项 renderer 测试通过。完整配置读取失败会中止保存，USB/IP 不可用时后端拒绝 composite profile，页面仍允许用户切回 HID-only。
 - Core 的 DS5 命名管道改用 overlapped I/O；独立 fake-sidecar 回归测试覆盖 `alloc -> reader blocked -> free`，本机在 93 ms 内完成，避免同步 `ReadFile` 与 owner EOF 相互等待。
-- Windows 主包的隔离安装烟测必须确认：Installer 与 Portable 仅含 `assets/components/dualsense.json`，不含 `tools/sunshine-ds5-sidecar`。Sidecar ZIP 与主包一起作为同一 Release 资产发布；签名流水线在 Sidecar 文件签名后重新生成 ZIP 和 manifest，确保 GUI 校验的是最终字节。
+- Windows `application` 组件的隔离安装烟测通过：主包只安装 `tools/ds5-sidecar-package.json`，不再出现 `tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe`；GUI 下载或选择本地组件包后才把 Sidecar 与经校验的 HIDMaestro Core 激活到组件目录。
 - `moonlight-audio-haptics` authored/ABI 测试、common-c IR v2 golden parser 和 Moonlight IR-to-rumble renderer 测试通过。
 - Sunshine 合成 PCM -> SDK 双 lane IR -> 72-byte 小端序列化 -> common-c 解析的跨仓库测试通过；空流结束会产生静音 `STREAM_END`。
 

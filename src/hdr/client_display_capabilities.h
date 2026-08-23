@@ -18,6 +18,10 @@ namespace hdr {
     float max_nits { default_max_nits };
     float min_nits { default_min_nits };
     float max_full_frame_nits { default_max_full_frame_nits };
+    // Client-measured SDR reference white in nits; 0 = client did not report one.
+    // Independently parsed (sdrBrightness launch arg), not part of the atomic
+    // three-field validation above.
+    float sdr_white_nits { 0.0f };
   };
 
   enum class target_source_e {

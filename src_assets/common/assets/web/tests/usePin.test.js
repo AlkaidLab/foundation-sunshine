@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isColorProfileFile, usePin } from '../composables/usePin.js'
+import { formatHdrNits, isColorProfileFile, usePin } from '../composables/usePin.js'
 
 const jsonResponse = (data, { ok = true, status = 200 } = {}) => ({
   ok,
@@ -16,6 +16,14 @@ test('recognizes ICC and ICM color profiles case-insensitively', () => {
   assert.equal(isColorProfileFile('display.icc.backup'), false)
   assert.equal(isColorProfileFile('displayXicc'), false)
   assert.equal(isColorProfileFile(null), false)
+})
+
+test('formats runtime HDR luminance without exposing float noise', () => {
+  assert.equal(formatHdrNits(701.9262084960938), '701.9')
+  assert.equal(formatHdrNits(155.9835968017578), '156.0')
+  assert.equal(formatHdrNits(0.0010000000474974513, 4, true), '0.001')
+  assert.equal(formatHdrNits(0.0001, 4, true), '0.0001')
+  assert.equal(formatHdrNits(Number.NaN), '—')
 })
 
 test('loads installed profiles from the authenticated Core endpoint', async () => {

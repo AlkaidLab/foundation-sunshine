@@ -769,7 +769,8 @@ namespace {
 }  // namespace
 
 TEST(HdrDynamicMetadata, VividStartupGateEmitsImmediatelyForPq) {
-  // PQ has no plain-HDR10 fallback problem, so there is nothing to wait for.
+  // PQ carries HDR10+ independently of the HLG/Vivid startup policy, so an
+  // unavailable analyzer must never route it through plain-HLG fallback.
   gate_t gate { PQ, HEVC, true };
   EXPECT_FALSE(gate.prerolling());
 
@@ -777,6 +778,11 @@ TEST(HdrDynamicMetadata, VividStartupGateEmitsImmediatelyForPq) {
   const auto first = gate.observe(stable_hlg_stats(1), now);
   EXPECT_EQ(first.decision, gate_t::decision_e::emit);
   EXPECT_EQ(first.transition, gate_t::transition_e::none);
+
+  gate_t without_analysis { PQ, HEVC, false };
+  const auto still_emitted = without_analysis.observe({}, now + gate_t::PREROLL_TIMEOUT * 2);
+  EXPECT_EQ(still_emitted.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(still_emitted.transition, gate_t::transition_e::none);
 }
 
 TEST(HdrDynamicMetadata, VividStartupGateHoldsHlgUntilTheGuardConverges) {
@@ -804,7 +810,29 @@ TEST(HdrDynamicMetadata, VividStartupGateHoldsHlgUntilTheGuardConverges) {
   EXPECT_EQ(later.transition, gate_t::transition_e::none);
 }
 
-TEST(HdrDynamicMetadata, VividStartupGateGivesUpAfterTheTimeout) {
+TEST(HdrDynamicMetadata, VividStartupGateAllowsAnalyzerColdStart) {
+  gate_t gate { HLG, HEVC, true };
+
+  const auto start = std::chrono::steady_clock::now();
+  auto invalid = stable_hlg_stats(1);
+  invalid.valid = false;
+
+  // A slow first analyzer readback must not force this session into plain-HLG
+  // fallback before the GPU has had a chance to produce valid samples.
+  EXPECT_EQ(gate.observe(invalid, start).decision, gate_t::decision_e::hold);
+  EXPECT_EQ(gate.observe(invalid, start + std::chrono::seconds { 1 }).decision,
+    gate_t::decision_e::hold);
+
+  EXPECT_EQ(gate.observe(stable_hlg_stats(2), start + std::chrono::seconds { 1 }).decision,
+    gate_t::decision_e::hold);
+  EXPECT_EQ(gate.observe(stable_hlg_stats(3), start + std::chrono::seconds { 1 }).decision,
+    gate_t::decision_e::hold);
+  const auto ready = gate.observe(stable_hlg_stats(4), start + std::chrono::seconds { 1 });
+  EXPECT_EQ(ready.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(ready.transition, gate_t::transition_e::ready);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGateFallsBackAndRecoversAfterTheTimeout) {
   gate_t gate { HLG, HEVC, true };
 
   const auto start = std::chrono::steady_clock::now();
@@ -816,14 +844,47 @@ TEST(HdrDynamicMetadata, VividStartupGateGivesUpAfterTheTimeout) {
     gate_t::decision_e::hold);
 
   const auto expired = gate.observe(invalid, start + gate_t::PREROLL_TIMEOUT);
-  EXPECT_EQ(expired.decision, gate_t::decision_e::disabled);
+  EXPECT_EQ(expired.decision, gate_t::decision_e::plain_hlg);
   EXPECT_EQ(expired.transition, gate_t::transition_e::timed_out);
 
-  // Stays disabled, and does not report the transition again: a stream that starts
-  // as plain HLG must not switch into Vivid later.
-  const auto after = gate.observe(stable_hlg_stats(2), start + gate_t::PREROLL_TIMEOUT * 2);
-  EXPECT_EQ(after.decision, gate_t::decision_e::disabled);
+  // Replayed encoder frames must not fabricate analyzer progress during fallback.
+  const auto first = stable_hlg_stats(2);
+  EXPECT_EQ(gate.observe(first, start + gate_t::PREROLL_TIMEOUT * 2).decision,
+    gate_t::decision_e::plain_hlg);
+  EXPECT_EQ(gate.observe(first, start + gate_t::PREROLL_TIMEOUT * 3).decision,
+    gate_t::decision_e::plain_hlg);
+  EXPECT_EQ(gate.consecutive_samples(), 1U);
+
+  EXPECT_EQ(gate.observe(stable_hlg_stats(3), start + gate_t::PREROLL_TIMEOUT * 4).decision,
+    gate_t::decision_e::plain_hlg);
+  const auto recovered = gate.observe(
+    stable_hlg_stats(4), start + gate_t::PREROLL_TIMEOUT * 5);
+  EXPECT_EQ(recovered.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(recovered.transition, gate_t::transition_e::recovered);
+
+  // Recovery is a one-shot transition; the gate remains enabled afterward.
+  const auto after = gate.observe(stable_hlg_stats(5), start + gate_t::PREROLL_TIMEOUT * 6);
+  EXPECT_EQ(after.decision, gate_t::decision_e::emit);
   EXPECT_EQ(after.transition, gate_t::transition_e::none);
+}
+
+TEST(HdrDynamicMetadata, VividStartupGateKeepsSamplesAcrossFallback) {
+  gate_t gate { HLG, HEVC, true };
+
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_EQ(gate.observe(stable_hlg_stats(1), start).decision, gate_t::decision_e::hold);
+
+  // The sample that arrives exactly at the deadline still counts before the gate
+  // temporarily opens as plain HLG.
+  const auto expired = gate.observe(stable_hlg_stats(2), start + gate_t::PREROLL_TIMEOUT);
+  EXPECT_EQ(expired.decision, gate_t::decision_e::plain_hlg);
+  EXPECT_EQ(expired.transition, gate_t::transition_e::timed_out);
+  EXPECT_EQ(gate.consecutive_samples(), 2U);
+
+  const auto recovered = gate.observe(
+    stable_hlg_stats(3), start + gate_t::PREROLL_TIMEOUT + std::chrono::milliseconds { 1 });
+  EXPECT_EQ(recovered.decision, gate_t::decision_e::emit);
+  EXPECT_EQ(recovered.transition, gate_t::transition_e::recovered);
 }
 
 TEST(HdrDynamicMetadata, VividStartupGateDisablesHlgWithNothingToWaitFor) {

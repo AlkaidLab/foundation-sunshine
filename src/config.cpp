@@ -47,7 +47,7 @@ using namespace std::literals;
 #define PRIVATE_KEY_FILE CA_DIR "/cakey.pem"
 #define CERTIFICATE_FILE CA_DIR "/cacert.pem"
 
-#define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
+#define APPS_JSON_PATH file_handler::path_to_utf8(platf::appdata() / "apps.json")
 namespace config {
 
   namespace {
@@ -553,9 +553,6 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
-    false,  // ds5_enabled
-    true,  // ds5_audio_haptics (native authored Channel 3/4 passthrough)
-    {},  // ds5_sidecar_path
     false, // enable_dsu_server - disabled by default
     26760, // dsu_server_port - default DSU server port
 
@@ -580,12 +577,12 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
-    platf::appdata().string() + "/sunshine.conf",  // config file
+    file_handler::path_to_utf8(platf::appdata() / "sunshine.conf"),  // config file
     {},  // cmd args
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
-    platf::appdata().string() + "/sunshine.log",  // log file
+    file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
@@ -802,7 +799,7 @@ namespace config {
     string_f(vars, name, temp);
 
     if (!temp.empty()) {
-      input = temp;
+      input = file_handler::path_from_utf8(temp);
     }
 
     if (input.is_relative()) {
@@ -820,11 +817,11 @@ namespace config {
 
   void
   path_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input) {
-    fs::path temp = input;
+    fs::path temp = file_handler::path_from_utf8(input);
 
     path_f(vars, name, temp);
 
-    input = temp.string();
+    input = file_handler::path_to_utf8(temp);
   }
 
   void
@@ -1468,11 +1465,11 @@ namespace config {
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
     string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
     if (!nvhttp.client_fingerprint_rules_certificate.empty()) {
-      fs::path certificate_path = nvhttp.client_fingerprint_rules_certificate;
+      auto certificate_path = file_handler::path_from_utf8(nvhttp.client_fingerprint_rules_certificate);
       if (certificate_path.is_relative()) {
         certificate_path = platf::appdata() / certificate_path;
       }
-      nvhttp.client_fingerprint_rules_certificate = certificate_path.string();
+      nvhttp.client_fingerprint_rules_certificate = file_handler::path_to_utf8(certificate_path);
     }
     int_between_f(
       vars,
@@ -1502,10 +1499,12 @@ namespace config {
     path_f(vars, "file_apps", stream.file_apps);
 #ifndef __ANDROID__
     // TODO: Android can possibly support this
-    if (!fs::exists(stream.file_apps.c_str())) {
-      fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", stream.file_apps);
+    const auto file_apps_path = file_handler::path_from_utf8(stream.file_apps);
+    if (!fs::exists(file_apps_path)) {
+      const auto bundled_apps_path = file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR "/apps.json");
+      fs::copy_file(bundled_apps_path, file_apps_path);
       fs::permissions(
-        stream.file_apps,
+        file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,
         fs::perm_options::add
       );
@@ -1549,17 +1548,6 @@ namespace config {
     bool_f(vars, "ds4_back_as_touchpad_click", input.ds4_back_as_touchpad_click);
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
-    bool_f(vars, "ds5_enabled", input.ds5_enabled);
-    bool_f(vars, "ds5_audio_haptics", input.ds5_audio_haptics);
-    if (const auto path = vars.find("ds5_sidecar_path");
-        path != vars.end() && !path->second.empty()) {
-      path_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
-    }
-    else {
-      // path_f resolves an empty path to appdata. Preserve an explicit empty
-      // value so the optional component cannot become configured by default.
-      string_f(vars, "ds5_sidecar_path", input.ds5_sidecar_path);
-    }
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
     
     int temp_port = static_cast<int>(input.dsu_server_port);
@@ -1756,11 +1744,12 @@ namespace config {
     bool config_loaded = false;
     try {
       // Create appdata folder if it does not exist
-      file_handler::make_directory(platf::appdata().string());
+      file_handler::make_directory(file_handler::path_to_utf8(platf::appdata()));
 
       // Create empty config file if it does not exist
-      if (!fs::exists(sunshine.config_file)) {
-        std::ofstream { sunshine.config_file };
+      const auto config_path = file_handler::path_from_utf8(sunshine.config_file);
+      if (!fs::exists(config_path)) {
+        std::ofstream { config_path };
       }
 
       // Read config file

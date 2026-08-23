@@ -1,170 +1,94 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$RuntimeDirectory,
-
-    [Parameter(Mandatory = $true)]
-    [string]$ReleaseTag,
-
-    [string]$OutputDirectory = "build/ds5-component",
-
-    [string]$ManifestOutput = ""
+    [string]$RuntimeDirectory = "build/ds5-sidecar-runtime",
+    [string]$PackageDirectory = "build/ds5-sidecar-package",
+    [string]$ManifestPath = "build/ds5-sidecar-package.json",
+    [string]$ReleaseTag = "",
+    [string]$Repository = "AlkaidLab/foundation-sunshine",
+    [ValidateSet('GPL-3.0-only')]
+    [string]$License = 'GPL-3.0-only'
 )
 
 $ErrorActionPreference = 'Stop'
-
 $root = Split-Path -Parent $PSScriptRoot
-$runtime = [System.IO.Path]::GetFullPath((Join-Path $root $RuntimeDirectory))
-$output = [System.IO.Path]::GetFullPath((Join-Path $root $OutputDirectory))
-$ReleaseTag = $ReleaseTag.Trim()
+$workspaceRoot = [System.IO.Path]::GetFullPath($root).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+$workspacePrefix = $workspaceRoot + [System.IO.Path]::DirectorySeparatorChar
 
-if ([string]::IsNullOrWhiteSpace($ReleaseTag) -or $ReleaseTag -eq 'latest') {
-    throw 'ReleaseTag must name a concrete GitHub Release'
-}
-if (-not (Test-Path -LiteralPath $runtime -PathType Container)) {
-    throw "DualSense sidecar runtime directory does not exist: $runtime"
+function Resolve-WorkspacePath([string]$Path) {
+    $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $Path))
+    if (-not $resolved.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to use a DualSense package path outside $workspaceRoot`: $resolved"
+    }
+    return $resolved
 }
 
+$runtime = Resolve-WorkspacePath $RuntimeDirectory
+$packageOutput = Resolve-WorkspacePath $PackageDirectory
+$manifestOutput = Resolve-WorkspacePath $ManifestPath
+$assetName = 'Sunshine.Ds5Sidecar.x64.zip'
+
+if (-not (Test-Path -LiteralPath (Join-Path $runtime 'Sunshine.Ds5Sidecar.exe') -PathType Leaf)) {
+    throw "DualSense sidecar runtime is incomplete: $runtime"
+}
 $runtimeMetadataPath = Join-Path $runtime 'runtime.json'
 if (-not (Test-Path -LiteralPath $runtimeMetadataPath -PathType Leaf)) {
-    throw "DualSense sidecar runtime metadata does not exist: $runtimeMetadataPath"
+    throw "DualSense sidecar runtime metadata is missing: $runtimeMetadataPath"
 }
-
-$runtimeMetadata = Get-Content -LiteralPath $runtimeMetadataPath -Raw | ConvertFrom-Json
-if ($runtimeMetadata.protocol -ne 1 -or $runtimeMetadata.target -ne 'win-x64-self-contained') {
-    throw 'DualSense sidecar runtime metadata is incompatible with the release manifest schema'
-}
-$componentVersion = [string]$runtimeMetadata.component_version
-if ([string]::IsNullOrWhiteSpace($componentVersion) -or
-    $componentVersion.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
-    throw 'DualSense sidecar runtime metadata contains an invalid component version'
-}
-
-$entrypoint = 'Sunshine.Ds5Sidecar.exe'
-if (-not (Test-Path -LiteralPath (Join-Path $runtime $entrypoint) -PathType Leaf)) {
-    throw "DualSense sidecar entrypoint does not exist: $entrypoint"
-}
-if (Test-Path -LiteralPath (Join-Path $runtime 'HIDMaestro.Core.dll') -PathType Leaf) {
-    throw 'DualSense sidecar runtime must not contain HIDMaestro.Core.dll'
-}
-
-$files = @(Get-ChildItem -LiteralPath $runtime -File | Sort-Object Name)
-if ($files.Count -eq 0) {
-    throw 'DualSense sidecar runtime has no files to package'
-}
-foreach ($file in $files) {
-    if ($file.Name -match '[\\/]') {
-        throw "DualSense sidecar runtime contains an invalid file name: $($file.Name)"
-    }
-}
-
-$payloadFiles = @(
-    foreach ($file in $files) {
-        [ordered]@{
-            path = $file.Name
-            sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            size = [int64]$file.Length
-        }
-    }
-)
-
-$payload = [ordered]@{
-    schema = 1
-    component_version = $componentVersion
-    protocol = [int]$runtimeMetadata.protocol
-    rid = 'win-x64'
-    self_contained = $true
-    entrypoint = $entrypoint
-    files = $payloadFiles
-}
-
-New-Item -ItemType Directory -Force -Path $output | Out-Null
-if ([string]::IsNullOrWhiteSpace($ManifestOutput)) {
-    $ManifestOutput = Join-Path $output 'dualsense.json'
-}
-else {
-    $ManifestOutput = [System.IO.Path]::GetFullPath((Join-Path $root $ManifestOutput))
-}
-
-$assetName = "Sunshine.Ds5Sidecar.$componentVersion.win-x64.zip"
-$archivePath = Join-Path $output $assetName
-$payloadManifestPath = Join-Path $output "payload-manifest-$PID.json"
-$payloadJson = $payload | ConvertTo-Json -Depth 6
-[System.IO.File]::WriteAllText($payloadManifestPath, $payloadJson + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
-
 try {
-    Add-Type -AssemblyName System.IO.Compression
-    if (Test-Path -LiteralPath $archivePath) {
-        Remove-Item -LiteralPath $archivePath -Force
-    }
-
-    $archive = [System.IO.Compression.ZipFile]::Open($archivePath, [System.IO.Compression.ZipArchiveMode]::Create)
-    try {
-        $archiveTimestamp = [DateTimeOffset]::new(2020, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
-        $payloadEntry = $archive.CreateEntry('payload-manifest.json', [System.IO.Compression.CompressionLevel]::Optimal)
-        $payloadEntry.LastWriteTime = $archiveTimestamp
-        $payloadEntryStream = $payloadEntry.Open()
-        try {
-            $payloadBytes = [System.IO.File]::ReadAllBytes($payloadManifestPath)
-            $payloadEntryStream.Write($payloadBytes, 0, $payloadBytes.Length)
-        }
-        finally {
-            $payloadEntryStream.Dispose()
-        }
-
-        foreach ($file in $files) {
-            $entry = $archive.CreateEntry($file.Name, [System.IO.Compression.CompressionLevel]::Optimal)
-            $entry.LastWriteTime = $archiveTimestamp
-            $entryStream = $entry.Open()
-            $sourceStream = [System.IO.File]::OpenRead($file.FullName)
-            try {
-                $sourceStream.CopyTo($entryStream)
-            }
-            finally {
-                $sourceStream.Dispose()
-                $entryStream.Dispose()
-            }
-        }
-    }
-    finally {
-        $archive.Dispose()
-    }
+    $runtimeMetadata = Get-Content -LiteralPath $runtimeMetadataPath -Raw | ConvertFrom-Json -ErrorAction Stop
 }
-finally {
-    Remove-Item -LiteralPath $payloadManifestPath -Force -ErrorAction SilentlyContinue
+catch {
+    throw "DualSense sidecar runtime metadata is invalid: $runtimeMetadataPath"
+}
+if ($runtimeMetadata.component_version -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($runtimeMetadata.component_version)) {
+    throw 'DualSense sidecar runtime metadata has an invalid component_version'
+}
+[uint32]$protocolVersion = 0
+if (-not [uint32]::TryParse([string]$runtimeMetadata.protocol, [ref]$protocolVersion) -or
+    $protocolVersion -eq 0) {
+    throw 'DualSense sidecar runtime metadata has an invalid protocol'
+}
+if ($runtimeMetadata.target -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($runtimeMetadata.target)) {
+    throw 'DualSense sidecar runtime metadata has an invalid target'
+}
+$componentVersion = $runtimeMetadata.component_version
+$runtimeTarget = $runtimeMetadata.target
+if ($runtimeTarget -ne 'win-x64-self-contained') {
+    throw "DualSense sidecar runtime metadata has an unsupported target: $runtimeTarget"
 }
 
-$archiveInfo = Get-Item -LiteralPath $archivePath
-$payloadManifestSize = [int64][System.Text.UTF8Encoding]::new($false).GetByteCount($payloadJson + [Environment]::NewLine)
-$expandedSize = [int64](($payloadFiles | Measure-Object -Property size -Sum).Sum) + $payloadManifestSize
-$encodedTag = [System.Uri]::EscapeDataString($ReleaseTag)
-$manifest = [ordered]@{
-    schema = 1
-    component = 'sunshine-dualsense'
-    component_version = $componentVersion
-    architecture = 'x86_64'
-    sidecar_protocol = [int]$runtimeMetadata.protocol
-    sunshine_version = $ReleaseTag
-    sidecar = [ordered]@{
-        url = "https://github.com/AlkaidLab/foundation-sunshine/releases/download/$encodedTag/$assetName"
-        sha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-        download_size = [int64]$archiveInfo.Length
-        expanded_size = $expandedSize
-        max_files = [int]($payloadFiles.Count + 1)
-        entrypoint = $entrypoint
-    }
-    hidmaestro = [ordered]@{
-        version = 'v1.6.1'
-        url = 'https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.6.1/HIDMaestro-v1.6.1.zip'
-        sha256 = '00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34'
-        download_size = [int64]118879222
-        allow_files = @('HIDMaestro.Core.dll', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.txt')
-    }
+New-Item -ItemType Directory -Force -Path $packageOutput | Out-Null
+$archive = Join-Path $packageOutput $assetName
+Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+Compress-Archive -Path (Join-Path $runtime '*') -DestinationPath $archive -CompressionLevel Optimal
+
+$sha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+$size = (Get-Item -LiteralPath $archive).Length
+$downloadUrl = ''
+if (-not [string]::IsNullOrWhiteSpace($ReleaseTag)) {
+    $escapedTag = [System.Uri]::EscapeDataString($ReleaseTag)
+    $downloadUrl = "https://github.com/$Repository/releases/download/$escapedTag/$assetName"
 }
 
-$manifestDirectory = Split-Path -Parent $ManifestOutput
+$manifestDirectory = Split-Path -Parent $manifestOutput
 New-Item -ItemType Directory -Force -Path $manifestDirectory | Out-Null
-$manifestJson = $manifest | ConvertTo-Json -Depth 6
-[System.IO.File]::WriteAllText($ManifestOutput, $manifestJson + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+$packageManifest = [ordered]@{
+    schema = 1
+    component_version = $componentVersion
+    protocol = $protocolVersion
+    target = $runtimeTarget
+    license = $License
+    asset_name = $assetName
+    download_url = $downloadUrl
+    sha256 = $sha256
+    size = $size
+} | ConvertTo-Json
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    $manifestOutput,
+    $packageManifest + [Environment]::NewLine,
+    $utf8NoBom)
 
-Write-Host "Packaged DualSense sidecar release asset: $archivePath"
-Write-Host "Generated DualSense component manifest: $ManifestOutput"
+Write-Host "Packaged DualSense sidecar: $archive ($size bytes, SHA-256 $sha256)"
+Write-Host "Wrote DualSense package manifest: $manifestOutput"

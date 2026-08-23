@@ -92,4 +92,4 @@
 [submodule "third-party/moonlight-audio-haptics"]
 	path = third-party/moonlight-audio-haptics
 	url = https://github.com/AlkaidLab/moonlight-audio-haptics.git
-	branch = codex/authored-stereo-ir-v2
+	branch = main

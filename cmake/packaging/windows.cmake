@@ -17,19 +17,20 @@ install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS stylus-input-probe RUNTIME DESTINATION "tools" COMPONENT application)
 
-# The optional DualSense runtime is released separately. The main package only
-# contains the manifest that binds the Control Panel to this release's asset.
-set(DS5_COMPONENT_MANIFEST_FILE "${CMAKE_BINARY_DIR}/ds5-component/dualsense.json" CACHE FILEPATH
-    "Path to the generated Sunshine DualSense component manifest")
-if(EXISTS "${DS5_COMPONENT_MANIFEST_FILE}")
-  install(FILES "${DS5_COMPONENT_MANIFEST_FILE}"
-          DESTINATION "${SUNSHINE_ASSETS_DIR}/components"
-          COMPONENT assets)
-  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/assets/components")
-  file(COPY "${DS5_COMPONENT_MANIFEST_FILE}"
-       DESTINATION "${CMAKE_BINARY_DIR}/assets/components")
+# The optional self-contained runtime is a separate release asset. The main
+# package carries only its pinned download manifest, keeping the feature
+# installable without adding the complete .NET runtime to every Sunshine copy.
+set(DS5_SIDECAR_PACKAGE_MANIFEST "${CMAKE_BINARY_DIR}/ds5-sidecar-package.json" CACHE FILEPATH
+    "Path to the pinned Sunshine DualSense sidecar package manifest")
+if(EXISTS "${DS5_SIDECAR_PACKAGE_MANIFEST}")
+  install(FILES "${DS5_SIDECAR_PACKAGE_MANIFEST}"
+          DESTINATION "tools"
+          RENAME "ds5-sidecar-package.json"
+          COMPONENT application)
+  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE ON)
 else()
-  message(STATUS "DualSense component manifest was not generated; optional component install will be unavailable")
+  message(STATUS "DualSense sidecar package manifest was not generated; optional component install will be unavailable")
+  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE OFF)
 endif()
 
 # Shared tool: nefconw.exe (used by VDD and vmouse install scripts)
@@ -232,7 +233,11 @@ set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtua
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
 # include specific packaging
-include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
+if(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE)
+  include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
+else()
+  message(STATUS "Inno Setup targets are disabled because the DualSense sidecar package manifest is missing")
+endif()
 # Legacy NSIS/WiX (kept for reference, no longer used)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)

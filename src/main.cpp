@@ -21,6 +21,7 @@
 #include "confighttp.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
+#include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -33,6 +34,7 @@
 #include "video.h"
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
+#include "ds5/config.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
@@ -424,6 +426,25 @@ main(int argc, char *argv[]) {
 
   proc::refresh(config::stream.file_apps);
 
+#ifdef _WIN32
+  ds5_config::load_result_t ds5_settings_result {
+    ds5_config::load_status_t::INVALID,
+    {}
+  };
+  try {
+    ds5_settings_result = ds5_config::load(
+      ds5_config::path_for(file_handler::path_from_utf8(config::sunshine.config_file))
+    );
+  }
+  catch (...) {
+  }
+  if (ds5_settings_result.status == ds5_config::load_status_t::INVALID ||
+      !ds5_config::configure(std::move(ds5_settings_result.settings))) {
+    BOOST_LOG(error) << "DualSense configuration is invalid; DualSense emulation is disabled"sv;
+    ds5_config::configure({});
+  }
+#endif
+
   // If any of the following fail, we log an error and continue event though sunshine will not function correctly.
   // This allows access to the UI to fix configuration problems or view the logs.
 
@@ -457,7 +478,7 @@ main(int argc, char *argv[]) {
 
   auto client_fingerprint_deinit_guard = client_fingerprint::init({
     .remote_rules_enabled = config::nvhttp.client_fingerprint_remote_rules,
-    .signing_certificate = config::nvhttp.client_fingerprint_rules_certificate,
+    .signing_certificate = file_handler::path_from_utf8(config::nvhttp.client_fingerprint_rules_certificate),
     .cache_file = platf::appdata() / "client-fingerprint-rules.json",
   });
   if (!client_fingerprint_deinit_guard) {

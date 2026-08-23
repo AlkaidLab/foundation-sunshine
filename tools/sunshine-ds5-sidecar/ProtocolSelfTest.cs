@@ -8,6 +8,8 @@ internal static class ProtocolSelfTest
 {
     internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath)
     {
+        RunDeterministicChecks();
+        VerifyAdaptiveTriggerEncoding();
         var pipeName = $"sunshine-ds5-self-test-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using var server = new SidecarServer(pipeName);
@@ -21,6 +23,13 @@ internal static class ProtocolSelfTest
         var hello = await ReceiveAsync(client, stopping.Token);
         Require(hello.Type == Protocol.MessageType.HelloReply && hello.RequestId == 1 && hello.Payload.Length == 4,
             "hello reply");
+        var helloCapabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(hello.Payload);
+        Require(helloCapabilities.HasFlag(Protocol.Capability.Hid), "hello HID capability");
+        Require(helloCapabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "hello adaptive trigger capability");
+        Require(!composite || helloCapabilities.HasFlag(Protocol.Capability.GenshinCompatibilityIdentity),
+            "hello Genshin compatibility identity capability");
+        Require(helloCapabilities.HasFlag(Protocol.Capability.AudioPolicyViolation),
+            "hello audio endpoint policy capability");
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
@@ -31,6 +40,7 @@ internal static class ProtocolSelfTest
             "attach reply");
         var capabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(attach.Payload.AsSpan(4));
         Require(capabilities.HasFlag(Protocol.Capability.Hid), "HID capability");
+        Require(capabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "adaptive trigger capability");
         Require(!composite || capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
             "composite four-channel audio capability");
 
@@ -126,6 +136,7 @@ internal static class ProtocolSelfTest
             touch = true,
             motion = true,
             battery = true,
+            adaptive_triggers = true,
             haptics_pcm = capturedHapticsBytes != 0,
             haptics_bytes = capturedHapticsBytes,
             detached = true,
@@ -137,6 +148,184 @@ internal static class ProtocolSelfTest
             await File.WriteAllTextAsync(resultPath, result, stopping.Token);
         return 0;
     }
+
+    internal static void RunDeterministicChecks()
+    {
+        VerifyBundledCompositeProfile();
+        VerifyProfileSelection();
+        VerifyHapticsChannelIsolation();
+        VerifyDefaultAudioEndpointClassification();
+        VerifyDefaultAudioEndpointPolicy();
+        VerifyControllerStateSubmissionPolicy();
+    }
+
+    private static void VerifyProfileSelection()
+    {
+        Require(SidecarServer.SelectProfileId(
+                1, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true) ==
+                DualSenseHapticsAudio.GenshinCompatibilityProfileId,
+            "Genshin compatibility attach profile selection");
+        Require(SidecarServer.SelectProfileId(
+                1, Protocol.AttachFlags.None, true, true) ==
+                DualSenseHapticsAudio.CompositeProfileId,
+            "standard composite attach profile selection");
+        try
+        {
+            SidecarServer.SelectProfileId(
+                0, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true);
+            Require(false, "Genshin compatibility HID attach rejection");
+        }
+        catch (InvalidDataException)
+        {
+            // Expected.
+        }
+    }
+
+    private static void VerifyControllerStateSubmissionPolicy()
+    {
+        var policy = new ControllerStateSubmissionPolicy();
+        Require(!policy.ObserveInput(0, true), "idle controller state coalescing");
+        Require(policy.ObserveInput(0, false), "analog activation boundary");
+        Require(!policy.ObserveInput(0, false), "continuous analog state coalescing");
+        Require(policy.ObserveInput(0, true), "analog neutral boundary");
+        Require(policy.ObserveInput(0x1000, true), "button press boundary");
+        Require(policy.ObserveInput(0, true), "button release boundary");
+    }
+
+    private static void VerifyDefaultAudioEndpointClassification()
+    {
+        Require(Enum.GetUnderlyingType(typeof(DefaultAudioEndpointGuard.AudioRole)) == typeof(int),
+            "default audio role COM width");
+        var virtualDualSense = new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"SWD\MMDEVAPI\{0.0.0.00000000}.fixture", Array.Empty<string>()),
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"USB\VID_054C&PID_0CE6&MI_00\fixture",
+                new[] { @"USB\VID_054C&PID_0CE6&MI_00" }),
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"ROOT\USB\0000", new[] { @"ROOT\HIDMAESTRO_UDE" }),
+        };
+        Require(DefaultAudioEndpointGuard.IsVirtualDualSenseChain(virtualDualSense),
+            "virtual HIDMaestro DualSense endpoint classification");
+
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(virtualDualSense[..2]),
+            "physical DualSense endpoint exclusion");
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"ROOT\USB\0000", new[] { @"ROOT\HIDMAESTRO_UDE" }),
+        }), "unrelated HIDMaestro endpoint exclusion");
+    }
+
+    private static void VerifyDefaultAudioEndpointPolicy()
+    {
+        Require(DefaultAudioEndpointPolicy.NeedsUpdate(null, null),
+            "missing default audio endpoint policy");
+        Require(DefaultAudioEndpointPolicy.NeedsUpdate(
+                "{00000000-0000-0000-0000-000000000000}", 0x00000101),
+            "partial default audio endpoint policy");
+        Require(!DefaultAudioEndpointPolicy.NeedsUpdate(
+                "{00000000-0000-0000-0000-000000000000}", 0x00000307),
+            "complete default audio endpoint policy");
+        var quadraphonic = DualSenseSpeakerConfiguration.CreateQuadraphonicFormat();
+        Require(DualSenseSpeakerConfiguration.HasValidInteropLayout(),
+            "Core Audio interop ABI");
+        Require(DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
+            "quadraphonic Core Audio speaker configuration");
+        quadraphonic.ChannelMask = 0x00000003;
+        Require(!DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
+            "stereo Core Audio speaker configuration rejection");
+    }
+
+    private static void VerifyBundledCompositeProfile()
+    {
+        using var stream = typeof(ProtocolSelfTest).Assembly.GetManifestResourceStream(
+            "Sunshine.Ds5Sidecar.profiles.dualsense-composite.json")
+            ?? throw new InvalidOperationException("Bundled composite profile is missing");
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        var profileJson = DualSenseHapticsAudio.CreateRuntimeCompositeProfile(memory.ToArray());
+        DualSenseHapticsAudio.ValidateCompositeProfile(profileJson);
+        var compatibilityProfile = DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileJson);
+        using (var compatibilityDocument = JsonDocument.Parse(compatibilityProfile))
+        {
+            var root = compatibilityDocument.RootElement;
+            Require(root.GetProperty("id").GetString() ==
+                    DualSenseHapticsAudio.GenshinCompatibilityProfileId,
+                "Genshin compatibility profile id");
+            Require(root.GetProperty("productString").GetString() ==
+                    DualSenseHapticsAudio.GenshinCompatibilityProductString,
+                "Genshin compatibility product string");
+            Require(root.GetProperty("vid").GetString() == "0x054C" &&
+                    root.GetProperty("pid").GetString() == "0x0CE6",
+                "Genshin compatibility profile preserves Sony identity");
+        }
+
+        var profileText = System.Text.Encoding.UTF8.GetString(profileJson);
+        RequireProfileRejected(profileText.Replace("\"channels\":4", "\"channels\":2", StringComparison.Ordinal),
+            "stereo composite profile rejection");
+        RequireProfileRejected(profileText.Replace(
+                "\"hapticLeft\",\"hapticRight\"",
+                "\"hapticRight\",\"hapticLeft\"",
+                StringComparison.Ordinal),
+            "swapped haptics role rejection");
+        RequireProfileRejected(profileText.Replace(
+                "\"volumeCurRaw\":0",
+                "\"volumeCurRaw\":-25600",
+                StringComparison.Ordinal),
+            "muted speaker control rejection");
+    }
+
+    private static void RequireProfileRejected(string profileJson, string operation)
+    {
+        try
+        {
+            DualSenseHapticsAudio.ValidateCompositeProfile(System.Text.Encoding.UTF8.GetBytes(profileJson));
+            Require(false, operation);
+        }
+        catch (InvalidDataException)
+        {
+            // Expected.
+        }
+    }
+
+    private static void VerifyHapticsChannelIsolation()
+    {
+        var frames = new byte[DualSenseHapticsAudio.InputFrameBytes * 2];
+        WriteSample(frames, 0, 1234);
+        WriteSample(frames, 1, -2345);
+        WriteSample(frames, 4, short.MaxValue);
+        WriteSample(frames, 5, short.MinValue);
+        var speakerOnly = DualSenseHapticsAudio.Extract(frames);
+        Require(speakerOnly.AsSpan().IndexOfAnyExcept((byte)0) == -1,
+            "speaker channels cannot leak into haptics");
+
+        WriteSample(frames, 2, 3456);
+        WriteSample(frames, 3, -4567);
+        WriteSample(frames, 6, 5678);
+        WriteSample(frames, 7, -6789);
+        var haptics = DualSenseHapticsAudio.Extract(frames);
+        Require(BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(0, 2)) == 3456 &&
+                BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(2, 2)) == -4567 &&
+                BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(4, 2)) == 5678 &&
+                BinaryPrimitives.ReadInt16LittleEndian(haptics.AsSpan(6, 2)) == -6789,
+            "haptics channels preserve exact samples");
+
+        try
+        {
+            DualSenseHapticsAudio.Extract(frames.AsSpan(0, frames.Length - 1));
+            Require(false, "incomplete four-channel frame rejection");
+        }
+        catch (InvalidDataException)
+        {
+            // Expected: arbitrary callback fragmentation is reassembled by
+            // ControllerSession before complete frames reach the extractor.
+        }
+    }
+
+    private static void WriteSample(Span<byte> frames, int sample, short value) =>
+        BinaryPrimitives.WriteInt16LittleEndian(frames.Slice(sample * 2, 2), value);
 
     private static async Task SendAsync(Stream stream, Protocol.Message message, CancellationToken cancellationToken)
     {
@@ -191,6 +380,41 @@ internal static class ProtocolSelfTest
 
     private static void WriteFloat(Span<byte> destination, float value) =>
         BinaryPrimitives.WriteInt32LittleEndian(destination, BitConverter.SingleToInt32Bits(value));
+
+    private static void VerifyAdaptiveTriggerEncoding()
+    {
+        var state = new AdaptiveTriggerState();
+        var left = Enumerable.Range(0x20, AdaptiveTriggerState.EffectSize).Select(value => (byte)value).ToArray();
+        var right = Enumerable.Range(0x40, AdaptiveTriggerState.EffectSize).Select(value => (byte)value).ToArray();
+
+        Require(state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
+                                3, 2, out var leftMessage),
+            "left adaptive trigger update");
+        Require(leftMessage.Type == Protocol.MessageType.AdaptiveTriggers &&
+                leftMessage.Payload.Length == 26 &&
+                leftMessage.Payload[0] == 3 && leftMessage.Payload[1] == 2 &&
+                leftMessage.Payload[2] == AdaptiveTriggerState.LeftFlag &&
+                leftMessage.Payload[3] == left[0] && leftMessage.Payload[4] == 0 &&
+                leftMessage.Payload.AsSpan(6, 10).SequenceEqual(left.AsSpan(1, 10)),
+            "left adaptive trigger encoding");
+
+        Require(!state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
+                                 3, 2, out _),
+            "adaptive trigger duplicate suppression");
+
+        Require(state.TryUpdate(new Dictionary<string, object> { ["rightTriggerEffect"] = right },
+                                3, 2, out var rightMessage) &&
+                rightMessage.Payload[2] == AdaptiveTriggerState.RightFlag &&
+                rightMessage.Payload[3] == left[0] && rightMessage.Payload[4] == right[0] &&
+                rightMessage.Payload.AsSpan(16, 10).SequenceEqual(right.AsSpan(1, 10)),
+            "right adaptive trigger encoding");
+
+        Require(state.TryReset(3, 2, out var resetMessage) &&
+                resetMessage.Payload[2] == (AdaptiveTriggerState.LeftFlag | AdaptiveTriggerState.RightFlag) &&
+                resetMessage.Payload.AsSpan(3).IndexOfAnyExcept((byte)0) == -1,
+            "adaptive trigger reset");
+        Require(!state.TryReset(3, 2, out _), "adaptive trigger reset duplicate suppression");
+    }
 
     private static void Require(bool condition, string operation)
     {

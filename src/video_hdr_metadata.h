@@ -652,11 +652,12 @@ namespace video::hdr_metadata {
    * The stream-startup policy wrapped around vivid_startup_guard_t.
    *
    * The guard decides whether analyzer output is trustworthy; this decides what a
-   * session does about it — hold frames back, give up after a wall-clock budget, or
-   * emit from the first frame. Both native encoder paths need the identical answer,
-   * so the state machine lives here rather than being written twice: NVENC and AMF
-   * disagreeing about when HLG starts carrying Vivid would be a bug nobody notices
-   * until it is reported as "HDR looks different on my AMD box".
+    * session does about it — hold frames back, start temporarily as plain HLG after
+    * a wall-clock budget, recover Vivid at an IDR boundary, or emit from the first
+    * frame. Both native encoder paths need the identical answer, so the state machine
+    * lives here rather than being written twice: NVENC and AMF disagreeing about when
+    * HLG starts carrying Vivid would be a bug nobody notices until it is reported as
+    * "HDR looks different on my AMD box".
    *
    * The caller owns logging and force-IDR, which is why a transition is reported
    * rather than acted on. A session must feed every capture frame through
@@ -668,13 +669,15 @@ namespace video::hdr_metadata {
     enum class decision_e {
       emit,  ///< Hand this frame's stats to the encoder.
       hold,  ///< Encode nothing yet; keep converting so the analyzer can converge.
-      disabled,  ///< This session never emits dynamic metadata.
+      plain_hlg,  ///< Encode without Vivid while a starved analyzer catches up.
+      disabled,  ///< This stream cannot emit Vivid at all.
     };
 
     enum class transition_e {
       none,
       ready,  ///< The guard just converged; the next encoded frame should be an IDR.
-      timed_out,  ///< The preroll budget just expired; start as plain HLG.
+      timed_out,  ///< The preroll budget expired; temporarily start as plain HLG.
+      recovered,  ///< A timed-out guard converged; switch to Vivid at an IDR.
     };
 
     struct result_t {
@@ -684,11 +687,11 @@ namespace video::hdr_metadata {
 
     /**
      * How long a session waits for stable analyzer output before starting without
-     * dynamic metadata. Long enough for three independent GPU readbacks at any
-     * supported analysis cadence, short enough that a client waiting on the first
-     * frame reads it as startup rather than a hang.
+     * dynamic metadata. The analyzer can take several hundred milliseconds to
+     * warm up after a display or encoder reinitialization, so leave enough room
+     * for that cold-start path while still bounding the first-frame wait.
      */
-    static constexpr auto PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
+    static constexpr auto PREROLL_TIMEOUT = std::chrono::milliseconds { 1500 };
 
     vivid_startup_gate_t(
       const sunshine_colorspace_t &colorspace,
@@ -724,12 +727,16 @@ namespace video::hdr_metadata {
       }
 
       if (guard_.observe(stats)) {
+        const bool recovered = state_ == state_e::fallback;
         state_ = state_e::enabled;
-        return { decision_e::emit, transition_e::ready };
+        return { decision_e::emit, recovered ? transition_e::recovered : transition_e::ready };
+      }
+      if (state_ == state_e::fallback) {
+        return { decision_e::plain_hlg, transition_e::none };
       }
       if (now - *preroll_started_ >= PREROLL_TIMEOUT) {
-        state_ = state_e::disabled;
-        return { decision_e::disabled, transition_e::timed_out };
+        state_ = state_e::fallback;
+        return { decision_e::plain_hlg, transition_e::timed_out };
       }
       return { decision_e::hold, transition_e::none };
     }
@@ -749,6 +756,7 @@ namespace video::hdr_metadata {
     enum class state_e {
       enabled,
       preroll,
+      fallback,
       disabled,
     };
 

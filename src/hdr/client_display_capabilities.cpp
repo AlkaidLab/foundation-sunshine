@@ -174,7 +174,10 @@ namespace hdr {
         return result;
       }
 
+      // A manual override adjusts the tone-map targets; the measured SDR
+      // reference white stays whatever the client actually reported.
       result.capabilities = validated.capabilities;
+      result.capabilities.sdr_white_nits = reported_capabilities.sdr_white_nits;
       result.source = target_source_e::manual_override;
       return result;
     }

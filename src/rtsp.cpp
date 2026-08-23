@@ -1121,6 +1121,9 @@ namespace rtsp_stream {
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;
       }
+      if (video::active_encoder_supports_dynamic_sdr_white()) {
+        caps |= platf::platform_caps::dynamic_sdr_white;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
     }
 

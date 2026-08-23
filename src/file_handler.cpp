@@ -11,7 +11,29 @@
 #include "file_handler.h"
 #include "logging.h"
 
+#ifdef _WIN32
+  #include "platform/windows/misc.h"
+#endif
+
 namespace file_handler {
+  std::filesystem::path
+  path_from_utf8(std::string_view path) {
+#ifdef _WIN32
+    return std::filesystem::path { platf::from_utf8(std::string { path }) };
+#else
+    return std::filesystem::path { path };
+#endif
+  }
+
+  std::string
+  path_to_utf8(const std::filesystem::path &path) {
+#ifdef _WIN32
+    return platf::to_utf8(path.wstring());
+#else
+    return path.string();
+#endif
+  }
+
   std::string
   get_parent_directory(const std::string &path) {
     // remove any trailing path separators
@@ -20,34 +42,35 @@ namespace file_handler {
       trimmed_path.pop_back();
     }
 
-    std::filesystem::path p(trimmed_path);
-    return p.parent_path().string();
+    return path_to_utf8(path_from_utf8(trimmed_path).parent_path());
   }
 
   bool
   make_directory(const std::string &path) {
+    const auto native_path = path_from_utf8(path);
     // first, check if the directory already exists
-    if (std::filesystem::exists(path)) {
+    if (std::filesystem::exists(native_path)) {
       return true;
     }
 
-    return std::filesystem::create_directories(path);
+    return std::filesystem::create_directories(native_path);
   }
 
   std::string
   read_file(const char *path) {
-    if (!std::filesystem::exists(path)) {
+    const auto native_path = path_from_utf8(path);
+    if (!std::filesystem::exists(native_path)) {
       BOOST_LOG(debug) << "Missing file: " << path;
       return {};
     }
 
-    std::ifstream in(path);
+    std::ifstream in(native_path);
     return std::string { (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>() };
   }
 
   int
   write_file(const char *path, const std::string_view &contents) {
-    std::ofstream out(path);
+    std::ofstream out(path_from_utf8(path));
 
     if (!out.is_open()) {
       return -1;

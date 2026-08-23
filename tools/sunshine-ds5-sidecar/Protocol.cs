@@ -19,6 +19,16 @@ internal static class Protocol
         Touchpad = 1u << 4,
         Motion = 1u << 5,
         Battery = 1u << 6,
+        AdaptiveTriggers = 1u << 7,
+        GenshinCompatibilityIdentity = 1u << 8,
+        AudioPolicyViolation = 1u << 9,
+    }
+
+    [Flags]
+    internal enum AttachFlags : byte
+    {
+        None = 0,
+        GenshinCompatibilityIdentity = 1 << 0,
     }
 
     internal enum MessageType : ushort
@@ -39,6 +49,7 @@ internal static class Protocol
         AdaptiveTriggers = 102,
         Led = 103,
         HapticsPcm = 104,
+        AudioPolicyViolation = 105,
         Error = 255,
     }
 

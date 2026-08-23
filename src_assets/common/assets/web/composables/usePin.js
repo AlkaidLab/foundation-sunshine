@@ -7,6 +7,16 @@ const STATUS_RESET_DELAY = 5000
 export const isColorProfileFile = (fileName) =>
   typeof fileName === 'string' && /\.(?:icc|icm)$/i.test(fileName)
 
+export const formatHdrNits = (value, fractionDigits = 1, trimTrailingZeros = false) => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+
+  const formatted = number.toFixed(fractionDigits)
+  return trimTrailingZeros
+    ? formatted.replace(/(?:\.0+|(\.\d*?[1-9])0+)$/, '$1')
+    : formatted
+}
+
 const isSuccessfulStatus = (status) => {
   const normalized = status?.toString().toLowerCase()
   return normalized === '1' || normalized === 'true'

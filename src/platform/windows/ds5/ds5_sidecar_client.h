@@ -9,6 +9,12 @@
 #include "src/platform/common.h"
 
 namespace platf::ds5 {
+  /** Cached result for input hot paths; refreshed at lifecycle boundaries. */
+  bool component_available() noexcept;
+
+  /** Revalidate the fixed component path, manifest, and executable digest. */
+  bool refresh_component_availability() noexcept;
+
   class sidecar_client_t {
   public:
     sidecar_client_t();
@@ -19,7 +25,8 @@ namespace platf::ds5 {
 
     bool configured() const;
     bool owns(int global_index) const;
-    int alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics);
+    int alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics,
+              bool genshin_compatibility = false);
     void free(int global_index);
     void submit_input(int global_index, const gamepad_state_t &state);
     void submit_touch(const gamepad_touch_t &touch);
