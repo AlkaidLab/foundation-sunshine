@@ -37,6 +37,11 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
 
+      - name: Resolve checked-out commit
+        id: source
+        shell: bash
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
         with:
@@ -162,7 +167,7 @@ jobs:
         env:
           BRANCH: master
           BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
-          COMMIT: ${{ github.sha }}
+          COMMIT: ${{ steps.source.outputs.commit }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
@@ -414,6 +419,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          target_commitish: ${{ steps.source.outputs.commit }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
             Sunshine-*-Portable-x64-Signed.zip
