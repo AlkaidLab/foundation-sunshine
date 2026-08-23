@@ -21,6 +21,7 @@ internal static class Protocol
         Battery = 1u << 6,
         AdaptiveTriggers = 1u << 7,
         GenshinCompatibilityIdentity = 1u << 8,
+        AudioPolicyViolation = 1u << 9,
     }
 
     [Flags]

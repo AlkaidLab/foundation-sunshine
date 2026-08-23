@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstdint>
@@ -7,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include "src/ds5/config.h"
 #include "src/haptics/authored_ir.h"
 
 extern "C" {
@@ -363,4 +365,75 @@ TEST(AuthoredDualSenseIr, LegacyFallbackWatchdogReleasesMotors) {
   EXPECT_EQ(stopped->low_frequency, 0);
   EXPECT_EQ(stopped->high_frequency, 0);
   EXPECT_FALSE(session.poll(start + 200ms).has_value());
+}
+
+TEST(AuthoredDualSenseIr, LegacyFallbackTuningKnobsOpenQuietBand) {
+  using namespace std::chrono_literals;
+  // A -36 dBFS sine sits in the band where voice-coil-authored content is
+  // clearly felt while the stock band-energy gate keeps rotor motors off.
+  const auto old_settings = ds5_config::current();
+  haptics::legacy_rumble_session_t session;
+  ASSERT_TRUE(session.ready());
+  const auto start = std::chrono::steady_clock::time_point {1s};
+  std::uint16_t stock_peak = 0;
+  for (std::uint32_t chunk = 0; chunk < 20; ++chunk) {
+    const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
+    const auto at = start + std::chrono::milliseconds(chunk * 5);
+    const auto out = session.process(0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000, pcm, at);
+    if (out) stock_peak = std::max(stock_peak, out->low_frequency);
+  }
+  EXPECT_EQ(stock_peak, 0);
+
+  // ERM preset values: a lower gate and a lifting curve. Config is read per
+  // packet, so the same session picks the new mapping up immediately.
+  auto tuned_settings = old_settings;
+  tuned_settings.legacy_noise_gate = 0.006;
+  tuned_settings.legacy_curve = 0.5;
+  tuned_settings.revision = old_settings.revision + 1;
+  ASSERT_TRUE(ds5_config::configure(tuned_settings));
+  std::uint16_t tuned_peak = 0;
+  for (std::uint32_t chunk = 20; chunk < 40; ++chunk) {
+    const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
+    const auto at = start + std::chrono::milliseconds(chunk * 5);
+    const auto out = session.process(0, 0, 240, chunk, chunk * 5000, pcm, at);
+    if (out) tuned_peak = std::max(tuned_peak, out->low_frequency);
+  }
+  ASSERT_TRUE(ds5_config::configure(old_settings));
+  EXPECT_GT(tuned_peak, 3000);
+}
+
+TEST(AuthoredDualSenseIr, LegacyFallbackStrengthScalesOutputIndependently) {
+  using namespace std::chrono_literals;
+  const auto old_settings = ds5_config::current();
+  const auto measure_peak = [&](double strength, std::uint64_t revision) {
+    auto settings = old_settings;
+    settings.legacy_strength = strength;
+    settings.legacy_curve = 0.5;
+    settings.legacy_noise_gate = 0.006;
+    settings.revision = revision;
+    EXPECT_TRUE(ds5_config::configure(settings));
+
+    haptics::legacy_rumble_session_t session;
+    EXPECT_TRUE(session.ready());
+    const auto start = std::chrono::steady_clock::time_point {1s};
+    std::uint16_t peak = 0;
+    for (std::uint32_t chunk = 0; chunk < 20; ++chunk) {
+      const auto pcm = sine_pcm(60.0, 512.0, chunk * 240U);
+      const auto output = session.process(
+        0, chunk == 0 ? 0x01 : 0, 240, chunk, chunk * 5000,
+        pcm, start + std::chrono::milliseconds(chunk * 5));
+      if (output) peak = std::max(peak, output->low_frequency);
+    }
+    return peak;
+  };
+
+  const auto half_strength = measure_peak(0.5, old_settings.revision + 1);
+  const auto full_strength = measure_peak(1.0, old_settings.revision + 2);
+  EXPECT_TRUE(ds5_config::configure(old_settings));
+  ASSERT_GT(half_strength, 0);
+  EXPECT_NEAR(
+    static_cast<double>(full_strength),
+    static_cast<double>(half_strength) * 2.0,
+    2.0
+  );
 }

@@ -12,6 +12,9 @@
 
 #include <moonlight_haptics/authored_haptics.h>
 
+#include "src/ds5/config.h"
+#include "src/logging.h"
+
 namespace haptics {
   namespace {
     constexpr std::uint8_t source_stream_start = 0x01;
@@ -63,9 +66,10 @@ namespace haptics {
     }
 
     float
-    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds) {
+    shaped(float value, float makeup_gain, gate_state_t &gate, float duration_seconds,
+           float gate_open, float gate_close, float curve, float strength) {
       value = std::clamp(value, 0.0f, 1.0f);
-      if (value >= legacy_gate_open) {
+      if (value >= gate_open) {
         gate.open = true;
         gate.hold_seconds = legacy_gate_hold_seconds;
       }
@@ -74,20 +78,19 @@ namespace haptics {
         // parked between the two thresholds -- which is exactly where residual
         // out-of-band energy lands -- would keep the gate latched forever.
         gate.hold_seconds -= duration_seconds;
-        if (value <= legacy_gate_close || gate.hold_seconds <= 0.0f) {
+        if (value <= gate_close || gate.hold_seconds <= 0.0f) {
           gate.open = false;
         }
       }
       if (!gate.open) return 0.0f;
 
       const auto gated = std::clamp(
-        (value - legacy_gate_close) / (1.0f - legacy_gate_close), 0.0f, 1.0f);
-      // ERM motors have a substantial startup threshold, while Android and HID
-      // clients commonly quantize the 16-bit protocol value to 8 bits. Lift
-      // quiet-but-valid authored content into the usable motor range without
-      // changing the noise gate or compressing full-scale output.
-      const auto perceptual = std::sqrt(gated);
-      return std::tanh(makeup_gain * perceptual) / std::tanh(makeup_gain);
+        (value - gate_close) / (1.0f - gate_close), 0.0f, 1.0f);
+      // Curve 0.5 is the current stock perceptual mapping. Keep its sqrt()
+      // path point-for-point with master while allowing custom exponents.
+      const auto drive = curve == 0.5f ? std::sqrt(gated) :
+                           curve == 1.0f ? gated : std::pow(gated, curve);
+      return strength * std::tanh(makeup_gain * drive) / std::tanh(makeup_gain);
     }
 
     std::uint16_t
@@ -269,6 +272,21 @@ namespace haptics {
     // tracks texture and impacts quickly. Time-based coefficients keep this
     // independent of the sidecar's chunk boundaries.
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
+    // The immutable snapshot was fully validated before publication. Load it
+    // once so both motor lanes use one coherent revision without per-packet
+    // file access, parsing, locking, or duplicated range handling.
+    const auto settings = ds5_config::current();
+    if (_tuning_revision != settings.revision) {
+      _low_gate = {};
+      _high_gate = {};
+      _tuning_revision = settings.revision;
+      BOOST_LOG(debug) << "Controller " << controller_id
+                       << " adopted legacy haptics tuning revision " << settings.revision;
+    }
+    const auto gate_open = static_cast<float>(settings.legacy_noise_gate);
+    const auto gate_close = gate_open * 0.5f;
+    const auto curve = static_cast<float>(settings.legacy_curve);
+    const auto strength = static_cast<float>(settings.legacy_strength);
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};
@@ -276,9 +294,11 @@ namespace haptics {
       _short_release_high = false;
     }
     const auto low_target = must_stop ? 0.0f : shaped(
-      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds);
+      low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds,
+      gate_open, gate_close, curve, strength);
     const auto high_target = must_stop ? 0.0f : shaped(
-      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds);
+      high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds,
+      gate_open, gate_close, curve, strength);
 
     // A force clear is only appropriate when a target drops out during the
     // minimum hold window. Effects that were already active beyond that

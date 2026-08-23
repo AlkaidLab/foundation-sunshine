@@ -82,6 +82,8 @@ int main(int argc, char **argv) {
   const auto interleave = GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr, 0) > 0;
   const auto audio_policy_fallback =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", nullptr, 0) > 0;
+  const auto legacy_capabilities =
+    GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_LEGACY_CAPABILITIES", nullptr, 0) > 0;
   const auto genshin_compatibility =
     GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_GENSHIN_COMPATIBILITY", nullptr, 0) > 0;
   const auto policy_once_name = L"Local\\sunshine-ds5-test-policy-once-" + event_suffix;
@@ -139,7 +141,14 @@ int main(int argc, char **argv) {
     const auto request_id = read_u32(header.data() + 12);
     if (type == 1) {
       std::vector<std::uint8_t> capabilities(4);
-      if (genshin_compatibility) write_u32(capabilities.data(), 1u << 8);
+      std::uint32_t advertised_capabilities = 0;
+      if (genshin_compatibility) {
+        advertised_capabilities |= 1u << 8;
+      }
+      if (!legacy_capabilities) {
+        advertised_capabilities |= 1u << 9;
+      }
+      write_u32(capabilities.data(), advertised_capabilities);
       if (!reply(pipe, 2, request_id, capabilities)) break;
     } else if (type == 3 && payload.size() == 4) {
       if (interleave) {

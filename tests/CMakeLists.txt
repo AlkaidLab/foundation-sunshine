@@ -241,12 +241,14 @@ if (WIN32)
     add_executable(ds5_sidecar_client_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
+            ${CMAKE_SOURCE_DIR}/src/ds5/config.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp)
     target_include_directories(ds5_sidecar_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(ds5_sidecar_client_unit_tests
             Boost::log
             Boost::format
             Boost::property_tree
+            nlohmann_json::nlohmann_json
             gtest_main)
     target_compile_definitions(ds5_sidecar_client_unit_tests PRIVATE
             SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"

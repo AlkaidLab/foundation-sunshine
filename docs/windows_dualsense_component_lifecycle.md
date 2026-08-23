@@ -34,7 +34,7 @@
 
 ### 3.1 已验证的 HIDMaestro 能力边界
 
-以 HIDMaestro v1.6.1 官方发布物和同标签源码为准，Sunshine 必须区分两类 profile，不把 USB/IP 当作所有 DS5 模拟的必需条件：
+以 HIDMaestro v1.6.2 官方发布物和同标签源码为准，Sunshine 必须区分两类 profile，不把 USB/IP 当作所有 DS5 模拟的必需条件：
 
 | Profile | 后端 | 虚拟 HID | 四声道扬声器/触觉 | 系统级依赖 | 第一阶段用途 |
 |---|---|---:|---:|---|---|
@@ -653,8 +653,8 @@ UX 验收：
 
 截至 2026-08-14（Asia/Hong_Kong），首期实现已经冻结以下决策：
 
-1. Sidecar 调用 HIDMaestro v1.6.1 的公共 `HIDMaestro.Core.dll` API，不复制其实现，也不调用 HIDMaestroTest UI。
-2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.1.zip`，固定下载地址和 SHA-256 `00145c23d9838be6089389ce58b3fd2b6766fa9bc0f1f3c60a3c885361b53c34`。发布物大小为 118,879,222 bytes。
+1. Sidecar 调用 HIDMaestro v1.6.2 的公共 `HIDMaestro.Core.dll` API，不复制其实现，也不调用 HIDMaestroTest UI。
+2. HIDMaestro 使用官方发布物 `HIDMaestro-v1.6.2.zip`，固定下载地址和 SHA-256 `6ae8df0cf317baf7e65777e2929f618916a67831b5ff1162205310f2c08b80ff`。发布物大小为 118,881,819 bytes。
 3. Sunshine 主安装包仅携带自研 Sidecar 组件包的固定 manifest，不携带完整 .NET 运行时或 HIDMaestro DLL。Sidecar 自包含 ZIP 作为同一 Release 的独立资产发布；GUI 在用户明确选择安装时下载或读取用户选择的匹配 ZIP，并继续单独下载、校验 HIDMaestro 后只提取 Core、许可证、README 和第三方通知。
 4. 首期每个 Sunshine 进程只允许一个虚拟 DualSense。Xbox 360、DualShock 4 和既有自动模式继续走 ViGEm，不改变成熟驱动支持范围。
 5. 客户端只选择 `physical` 或 `emulated`。前者预检 USB DualSense 四声道端点后声明 `ML_FF_DS5_HAPTICS_PCM`；后者声明 `ML_FF_DS5_HAPTICS_IR_V2`。两位互斥且不在运行中自动切换。

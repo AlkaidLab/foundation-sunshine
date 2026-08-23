@@ -26,8 +26,10 @@ internal static class ProtocolSelfTest
         var helloCapabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(hello.Payload);
         Require(helloCapabilities.HasFlag(Protocol.Capability.Hid), "hello HID capability");
         Require(helloCapabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "hello adaptive trigger capability");
-        Require(helloCapabilities.HasFlag(Protocol.Capability.GenshinCompatibilityIdentity),
+        Require(!composite || helloCapabilities.HasFlag(Protocol.Capability.GenshinCompatibilityIdentity),
             "hello Genshin compatibility identity capability");
+        Require(helloCapabilities.HasFlag(Protocol.Capability.AudioPolicyViolation),
+            "hello audio endpoint policy capability");
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);

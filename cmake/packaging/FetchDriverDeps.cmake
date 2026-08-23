@@ -17,7 +17,8 @@
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
 #   NEFCON_VERSION          — nefcon release tag (e.g. v1.10.0)
-#   NEFCON_SHA256           — expected SHA-256 of the nefcon release archive
+#   NEFCON_SHA256           — expected SHA-256 for a custom nefcon release;
+#                             known pinned versions use their built-in digest
 #   VIGEMBUS_VERSION        — pinned ViGEmBus release tag
 #   VIGEMBUS_ASSET_NAME     — pinned multi-architecture installer asset
 #   VIGEMBUS_SHA256         — expected installer digest
@@ -46,8 +47,35 @@ set(VDD_WIN10_DRIVER_VERSION "v0.15.8" CACHE STRING "Win10-pinned ZakoVDD driver
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
 set(NEFCON_VERSION "v1.18.74" CACHE STRING "nefcon version tag")
-set(NEFCON_SHA256 "625abcdea9e84577d094ab65a8542c9977eb50f2371d216961af01cf4901f172"
-    CACHE STRING "SHA256 of the pinned nefcon release archive")
+set(NEFCON_SHA256 "" CACHE STRING "SHA256 of a custom nefcon release archive")
+set(_NEFCON_SHA256_V1_18_74 "625abcdea9e84577d094ab65a8542c9977eb50f2371d216961af01cf4901f172")
+set(_NEFCON_SHA256_V1_17_40 "812bae7ed7dfb7d6d2284bc7de2f8ccebc92ed2a0b1ae893c53b337096e50c1a")
+if(NEFCON_VERSION STREQUAL "v1.18.74")
+  set(_NEFCON_EFFECTIVE_SHA256 "${_NEFCON_SHA256_V1_18_74}")
+elseif(NEFCON_VERSION STREQUAL "v1.17.40")
+  # Keep existing build directories usable when their cached version predates
+  # the v1.18.74 default. A release version must always use its matching digest.
+  set(_NEFCON_EFFECTIVE_SHA256 "${_NEFCON_SHA256_V1_17_40}")
+else()
+  set(_nefcon_sha256_is_stale FALSE)
+  if(DEFINED NEFCON_CUSTOM_SHA256_VERSION AND
+      NOT "${NEFCON_CUSTOM_SHA256_VERSION}" STREQUAL "${NEFCON_VERSION}" AND
+      "${NEFCON_SHA256}" STREQUAL "${NEFCON_CUSTOM_SHA256_VALUE}")
+    set(_nefcon_sha256_is_stale TRUE)
+  elseif("${NEFCON_SHA256}" STREQUAL "${_NEFCON_SHA256_V1_18_74}" OR
+      "${NEFCON_SHA256}" STREQUAL "${_NEFCON_SHA256_V1_17_40}")
+    set(_nefcon_sha256_is_stale TRUE)
+  endif()
+  if(NOT NEFCON_SHA256 OR _nefcon_sha256_is_stale)
+    message(FATAL_ERROR
+      "NEFCON_SHA256 must be provided for custom NEFCON_VERSION=${NEFCON_VERSION}; cached digests from another version are not reused")
+  endif()
+  set(_NEFCON_EFFECTIVE_SHA256 "${NEFCON_SHA256}")
+  set(NEFCON_CUSTOM_SHA256_VERSION "${NEFCON_VERSION}" CACHE INTERNAL
+      "custom nefcon version associated with the cached SHA256" FORCE)
+  set(NEFCON_CUSTOM_SHA256_VALUE "${NEFCON_SHA256}" CACHE INTERNAL
+      "last accepted custom nefcon SHA256" FORCE)
+endif()
 set(VIGEMBUS_VERSION "v1.22.0" CACHE STRING "ViGEmBus release tag")
 set(VIGEMBUS_ASSET_NAME "ViGEmBus_1.22.0_x64_x86_arm64.exe"
     CACHE STRING "ViGEmBus release asset name")
@@ -370,7 +398,7 @@ function(_fetch_nefcon)
   set(_zip_url "https://github.com/${_NEFCON_REPO}/releases/download/${NEFCON_VERSION}/nefcon_${NEFCON_VERSION}.zip")
   set(_zip "${DRIVER_DEPS_CACHE}/nefcon-${NEFCON_VERSION}.zip")
   set(_marker "${NEFCON_DRIVER_DIR}/.release-version")
-  set(_expected_marker "${NEFCON_VERSION}:${NEFCON_SHA256}")
+  set(_expected_marker "${NEFCON_VERSION}:${_NEFCON_EFFECTIVE_SHA256}")
 
   set(_stamp_ok FALSE)
   if(EXISTS "${_marker}")
@@ -386,7 +414,7 @@ function(_fetch_nefcon)
     file(REMOVE_RECURSE "${NEFCON_DRIVER_DIR}")
   endif()
 
-  _driver_download("${_zip_url}" "${_zip}" "${NEFCON_SHA256}")
+  _driver_download("${_zip_url}" "${_zip}" "${_NEFCON_EFFECTIVE_SHA256}")
 
   if(EXISTS "${_zip}" AND NOT EXISTS "${NEFCON_DRIVER_DIR}/nefconw.exe")
     set(_tmp "${DRIVER_DEPS_CACHE}/_nefcon_extract")

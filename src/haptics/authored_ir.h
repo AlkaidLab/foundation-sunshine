@@ -109,6 +109,7 @@ namespace haptics {
     std::uint16_t _last_nonzero_high = 0;
     float _smoothed_low = 0.0f;
     float _smoothed_high = 0.0f;
+    std::uint64_t _tuning_revision = 0;
     gate_state_t _low_gate;
     gate_state_t _high_gate;
     // Set only when a motor starts releasing before the short-pulse hold

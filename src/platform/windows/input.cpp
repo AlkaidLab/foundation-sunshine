@@ -17,6 +17,7 @@
 
 #include "dsu_server.h"
 #include "ds5/ds5_sidecar_client.h"
+#include "src/ds5/config.h"
 #include "keylayout.h"
 #include "misc.h"
 #include "virtual_mouse.h"
@@ -503,9 +504,12 @@ namespace platf {
     if (app_mode != 0) {
       return app_mode;
     }
+    if (ds5_config::current().enabled && ds5::component_available()) return 4;
     if (config::input.gamepad == "x360"sv) return 2;
     if (config::input.gamepad == "ds4"sv) return 3;
-    if (config::input.gamepad == "ds5"sv) return 4;
+    // Legacy sunshine.conf may still contain gamepad=ds5. The independent
+    // DS5 switch now owns that preference; disabled falls back to auto.
+    if (config::input.gamepad == "ds5"sv) return 1;
     return 1;
   }
 
@@ -1909,6 +1913,9 @@ namespace platf {
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
     auto raw = (input_raw_t *) input.get();
 
+    // Component files may have been installed while Sunshine stayed running.
+    // Refresh once per allocation; the input packet hot path reads only the cache.
+    ds5::refresh_component_availability();
     const auto gamepad_mode = effective_gamepad_mode();
     const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
 
@@ -1919,9 +1926,13 @@ namespace platf {
         BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
         return -1;
       }
+      const auto ds5_settings = ds5_config::current();
       const auto result = raw->ds5_sidecar->alloc(
-        id, feedback_queue, config::input.ds5_audio_haptics,
-        config::input.ds5_genshin_compatibility);
+        id,
+        feedback_queue,
+        ds5_settings.audio_haptics,
+        ds5_settings.genshin_compatibility
+      );
       if (result == 0) {
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
@@ -2529,7 +2540,7 @@ namespace platf {
     auto dsu_server = ((input_raw_t *) input)->dsu_server;
     auto enabled = vigem != nullptr;
     auto switch_enabled = dsu_server != nullptr;
-    auto ds5_enabled = config::input.ds5_enabled && !config::input.ds5_sidecar_path.empty();
+    auto ds5_enabled = ((input_raw_t *) input)->ds5_sidecar->configured();
     auto reason = enabled ? "" : "gamepads.vigem-not-available";
     auto switch_reason = switch_enabled ? "" : "gamepads.motion-server-not-available";
 
@@ -2566,8 +2577,9 @@ namespace platf {
       caps |= platform_caps::controller_touch;
     }
 
-    if (config::input.ds5_enabled && config::input.ds5_audio_haptics &&
-        !config::input.ds5_sidecar_path.empty()) {
+    const auto ds5_settings = ds5_config::current();
+    if (ds5_settings.enabled && ds5_settings.audio_haptics &&
+        ds5::refresh_component_availability()) {
       caps |= platform_caps::ds5_haptics_pcm;
     }
 

@@ -9,6 +9,12 @@
 #include "src/platform/common.h"
 
 namespace platf::ds5 {
+  /** Cached result for input hot paths; refreshed at lifecycle boundaries. */
+  bool component_available() noexcept;
+
+  /** Revalidate the fixed component path, manifest, and executable digest. */
+  bool refresh_component_availability() noexcept;
+
   class sidecar_client_t {
   public:
     sidecar_client_t();

@@ -9,7 +9,7 @@
 
   #include <chrono>
 
-  #include "src/config.h"
+  #include "src/ds5/config.h"
   #include "src/platform/windows/ds5/ds5_sidecar_client.h"
   #include <gtest/gtest-spi.h>
   #include <gtest/gtest.h>
@@ -20,16 +20,19 @@ namespace {
 
   struct config_scope_t {
     config_scope_t():
-        enabled(config::input.ds5_enabled),
-        path(config::input.ds5_sidecar_path) {}
+        settings(ds5_config::current()) {}
 
     ~config_scope_t() {
-      config::input.ds5_enabled = enabled;
-      config::input.ds5_sidecar_path = path;
+      ds5_config::configure(settings);
     }
 
-    bool enabled;
-    std::string path;
+    void enable() {
+      auto updated = settings;
+      updated.enabled = true;
+      ds5_config::configure(updated);
+    }
+
+    ds5_config::settings_t settings;
   };
 
   struct handle_scope_t {
@@ -214,8 +217,7 @@ TEST(Ds5SidecarClientTests, UnassignedIndexIsNotOwned) {
 
 TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"blocked-reader");
   const auto reader_name = L"Local\\sunshine-ds5-test-reader-" + events.suffix;
@@ -252,8 +254,7 @@ TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
 
 TEST(Ds5SidecarClientTests, AttachSurvivesInterleavedAsyncFeedback) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"interleaved-feedback");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
@@ -287,8 +288,7 @@ TEST(Ds5SidecarClientTests, AttachSurvivesInterleavedAsyncFeedback) {
 
 TEST(Ds5SidecarClientTests, RejectsCompositeAttachWithoutAudioEndpoint) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"audio-endpoint");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
@@ -302,10 +302,27 @@ TEST(Ds5SidecarClientTests, RejectsCompositeAttachWithoutAudioEndpoint) {
   EXPECT_FALSE(client.owns(0));
 }
 
+TEST(Ds5SidecarClientTests, FallsBackToHidWhenPeerLacksAudioPolicyCapability) {
+  config_scope_t restore_config;
+  restore_config.enable();
+
+  event_namespace_scope_t events(L"legacy-capabilities");
+  environment_scope_t legacy_capabilities(L"SUNSHINE_DS5_TEST_LEGACY_CAPABILITIES", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-legacy-capabilities-test");
+  platf::ds5::sidecar_client_t client;
+  EXPECT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true), 0);
+  EXPECT_TRUE(client.owns(0));
+  client.free(0);
+}
+
 TEST(Ds5SidecarClientTests, SendsNegotiatedGenshinCompatibilityAttachFlag) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"genshin-compatibility");
   environment_scope_t enable_compatibility(
@@ -328,8 +345,7 @@ TEST(Ds5SidecarClientTests, SendsNegotiatedGenshinCompatibilityAttachFlag) {
 
 TEST(Ds5SidecarClientTests, RejectsGenshinCompatibilityWithoutSidecarCapability) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"genshin-capability-required");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
@@ -345,8 +361,7 @@ TEST(Ds5SidecarClientTests, RejectsGenshinCompatibilityWithoutSidecarCapability)
 
 TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"recover-once");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
@@ -375,8 +390,7 @@ TEST(Ds5SidecarClientTests, RelaunchesOnceAfterUnexpectedExit) {
 
 TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"audio-policy-fallback");
   environment_scope_t enable_policy_fallback(L"SUNSHINE_DS5_TEST_AUDIO_POLICY_FALLBACK", L"1");
@@ -406,8 +420,7 @@ TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
 
 TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"cancel-recovery");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
@@ -441,8 +454,7 @@ TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
 
 TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {
   config_scope_t restore_config;
-  config::input.ds5_enabled = true;
-  config::input.ds5_sidecar_path = SUNSHINE_DS5_FAKE_SIDECAR_PATH;
+  restore_config.enable();
 
   event_namespace_scope_t events(L"recovery-failure");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;

@@ -73,7 +73,7 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseTag)) {
 
 $manifestDirectory = Split-Path -Parent $manifestOutput
 New-Item -ItemType Directory -Force -Path $manifestDirectory | Out-Null
-[ordered]@{
+$packageManifest = [ordered]@{
     schema = 1
     component_version = $componentVersion
     protocol = $protocolVersion
@@ -83,7 +83,12 @@ New-Item -ItemType Directory -Force -Path $manifestDirectory | Out-Null
     download_url = $downloadUrl
     sha256 = $sha256
     size = $size
-} | ConvertTo-Json | Set-Content -LiteralPath $manifestOutput -Encoding utf8
+} | ConvertTo-Json
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    $manifestOutput,
+    $packageManifest + [Environment]::NewLine,
+    $utf8NoBom)
 
 Write-Host "Packaged DualSense sidecar: $archive ($size bytes, SHA-256 $sha256)"
 Write-Host "Wrote DualSense package manifest: $manifestOutput"

@@ -27,7 +27,7 @@
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
-#include "src/config.h"
+#include "src/ds5/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 
@@ -41,7 +41,9 @@ namespace platf::ds5 {
     constexpr std::size_t HEADER_SIZE = 16;
     constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
     constexpr std::uint32_t CAP_GENSHIN_COMPATIBILITY_IDENTITY = 1u << 8;
+    constexpr std::uint32_t CAPABILITY_AUDIO_POLICY_VIOLATION = 1u << 9;
     constexpr std::uint8_t ATTACH_FLAG_GENSHIN_COMPATIBILITY = 1u << 0;
+    std::atomic_bool trusted_component_available { false };
     // The sidecar protocol identifies devices with a single byte.
     static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
 
@@ -211,34 +213,44 @@ namespace platf::ds5 {
     }
 #endif
 
+    std::filesystem::path sidecar_executable_path() {
+#ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
+      return std::filesystem::path(SUNSHINE_DS5_FAKE_SIDECAR_PATH);
+#else
+      return platf::appdata().parent_path() / "tools" / "sunshine-ds5-component" /
+             "active" / "Sunshine.Ds5Sidecar.exe";
+#endif
+    }
+
     std::optional<std::filesystem::path> trusted_sidecar_path() {
-      const auto configured = std::filesystem::path(config::input.ds5_sidecar_path);
-      if (configured.empty()) {
+      // The test target supplies its purpose-built protocol peer. Production
+      // uses only the fixed component directory and never accepts a configured path.
+      const auto configured = sidecar_executable_path();
+      std::error_code path_error;
+      if (!std::filesystem::is_regular_file(configured, path_error) || path_error) {
         return std::nullopt;
       }
 #ifdef SUNSHINE_DS5_SIDECAR_TEST_HOOK
-      // The aggregate test target launches its purpose-built protocol peer.
-      // Production builds never accept this override path.
-      return std::filesystem::is_regular_file(configured) ?
-               std::optional { std::filesystem::weakly_canonical(configured) } : std::nullopt;
-#else
-      std::error_code path_error;
-      const auto expected = std::filesystem::weakly_canonical(
-        platf::appdata().parent_path() / "tools" / "sunshine-ds5-component" /
-          "active" / "Sunshine.Ds5Sidecar.exe",
-        path_error);
-      if (path_error) {
-        return std::nullopt;
-      }
       const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
-      if (path_error || candidate != expected || !std::filesystem::is_regular_file(candidate)) {
-        BOOST_LOG(error) << "Rejected an untrusted DualSense sidecar path"sv;
+      return path_error ? std::nullopt : std::optional { candidate };
+#else
+      const auto install_root = std::filesystem::weakly_canonical(
+        platf::appdata().parent_path(),
+        path_error);
+      if (path_error) return std::nullopt;
+      const auto expected_active_root = install_root / "tools" /
+                                        "sunshine-ds5-component" / "active";
+      const auto candidate = std::filesystem::weakly_canonical(configured, path_error);
+      if (path_error || candidate.parent_path() != expected_active_root ||
+          candidate.filename() != "Sunshine.Ds5Sidecar.exe" ||
+          !std::filesystem::is_regular_file(candidate, path_error) || path_error) {
+        BOOST_LOG(error) << "Rejected a DualSense sidecar outside the fixed active component directory"sv;
         return std::nullopt;
       }
 
       boost::property_tree::ptree manifest;
       try {
-        boost::property_tree::read_json((candidate.parent_path() / "component.json").string(), manifest);
+        boost::property_tree::read_json((expected_active_root / "component.json").string(), manifest);
       }
       catch (const std::exception &exception) {
         BOOST_LOG(error) << "Unable to read the active DualSense component manifest: "sv
@@ -502,7 +514,7 @@ namespace platf::ds5 {
 
     bool connect_and_attach(const gamepad_id_t &id, bool audio_haptics,
                             bool genshin_compatibility) {
-      const bool use_genshin_identity = audio_haptics && genshin_compatibility;
+      bool use_genshin_identity = audio_haptics && genshin_compatibility;
       if (!launch_and_connect()) {
         return false;
       }
@@ -510,10 +522,18 @@ namespace platf::ds5 {
       message_t reply;
       std::array<std::uint8_t, 4> hello {};
       write_u32(hello.data(), 0);
-      if (!transact(message_e::hello, hello, message_e::hello_reply, reply)) {
+      if (!transact(message_e::hello, hello, message_e::hello_reply, reply) ||
+          reply.payload.size() != 4) {
         return false;
       }
-      const auto capabilities = reply.payload.size() == 4 ? read_u32(reply.payload.data()) : 0;
+      const auto capabilities = read_u32(reply.payload.data());
+      if (audio_haptics && !(capabilities & CAPABILITY_AUDIO_POLICY_VIOLATION)) {
+        BOOST_LOG(warning) << "DualSense sidecar does not advertise audio endpoint policy protection; "sv
+                           << "falling back to HID-only DualSense"sv;
+        force_hid_fallback = true;
+        audio_haptics = false;
+        use_genshin_identity = false;
+      }
       if (use_genshin_identity &&
           (capabilities & CAP_GENSHIN_COMPATIBILITY_IDENTITY) == 0) {
         BOOST_LOG(error) << "The installed DualSense sidecar does not support Genshin compatibility mode"sv;
@@ -638,13 +658,31 @@ namespace platf::ds5 {
     }
   };
 
+  bool component_available() noexcept {
+    return trusted_component_available.load(std::memory_order_acquire);
+  }
+
+  bool refresh_component_availability() noexcept {
+    bool available = false;
+    try {
+      available = trusted_sidecar_path().has_value();
+    }
+    catch (...) {
+      available = false;
+    }
+    trusted_component_available.store(available, std::memory_order_release);
+    return available;
+  }
+
   sidecar_client_t::sidecar_client_t():
-      _impl(std::make_unique<impl_t>()) {}
+      _impl(std::make_unique<impl_t>()) {
+    refresh_component_availability();
+  }
 
   sidecar_client_t::~sidecar_client_t() = default;
 
   bool sidecar_client_t::configured() const {
-    return config::input.ds5_enabled && !config::input.ds5_sidecar_path.empty();
+    return ds5_config::current().enabled && refresh_component_availability();
   }
 
   bool sidecar_client_t::owns(int global_index) const {
