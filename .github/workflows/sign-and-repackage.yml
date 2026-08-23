@@ -414,6 +414,29 @@ jobs:
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
+      - name: Validate release tag target
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          tag_ref="refs/tags/${RELEASE_TAG}"
+          git check-ref-format "$tag_ref"
+          tag_refs=$(git ls-remote --tags origin "$tag_ref" "${tag_ref}^{}")
+          if [[ -z "$tag_refs" ]]; then
+            exit 0
+          fi
+
+          tag_commit=$(printf '%s\n' "$tag_refs" | awk -v ref="${tag_ref}^{}" '$2 == ref { print $1; exit }')
+          if [[ -z "$tag_commit" ]]; then
+            tag_commit=$(printf '%s\n' "$tag_refs" | awk -v ref="$tag_ref" '$2 == ref { print $1; exit }')
+          fi
+          if [[ "$tag_commit" != "$SOURCE_COMMIT" ]]; then
+            echo "Release tag $RELEASE_TAG does not point to the checked-out commit"
+            exit 1
+          fi
+
       # 发布到 GitHub Release
       - name: Create Release
         uses: softprops/action-gh-release@v3
