@@ -88,4 +88,40 @@ namespace video::hdr_bitstream {
   bool
   insert(codec_e codec, std::span<const uint8_t> units, std::vector<uint8_t> &bitstream);
 
+  /**
+   * Remove every Dolby Vision RPU NAL (HEVC unspecified NAL type 62) from an
+   * access unit, together with its start code.
+   *
+   * The removal spans from the RPU's own 0x000001 start code to the next one,
+   * so it may take a leading zero of a following four-byte start code with it
+   * — the remainder is still a conformant three-byte start code, and the
+   * matched triple itself is never touched. Returns whether anything was
+   * removed.
+   */
+  bool
+  strip_hevc_dolby_vision_rpus(std::vector<uint8_t> &bitstream);
+
+  /**
+   * Splice one Dolby Vision RPU into an HEVC access unit as its last NAL.
+   *
+   * Unlike the T.35 carriage above, which must precede the picture data it
+   * describes, an RPU goes at the end of the access unit — the position
+   * dovi_tool settled on for player and device compatibility. rpu_nalu is the
+   * complete NAL without start code (0x7C 0x01 + emulation-prevented RPU, as
+   * produced by video::dolby_vision::rpu_generator_t::generate()); layer 0
+   * and temporal id 0 are required, which is what that generator emits.
+   *
+   * The access unit must carry picture data: injecting into a header-only
+   * unit would attach an RPU to no picture at all. Existing RPU NALs are
+   * stripped first, so the call is idempotent — running it twice over the
+   * same buffer yields identical bytes. Returns false and leaves the
+   * bitstream unchanged when rpu_nalu is malformed or the unit has no VCL
+   * NAL.
+   *
+   * Binding the RPU to the right encoded frame is the caller's job; see
+   * video::dolby_vision::staged_rpu_queue_t.
+   */
+  bool
+  inject_hevc_dolby_vision_rpu(std::span<const uint8_t> rpu_nalu, std::vector<uint8_t> &bitstream);
+
 }  // namespace video::hdr_bitstream

@@ -251,3 +251,165 @@ TEST(HdrBitstream, SplicesSeveralUnitsAsOneContiguousInsert) {
   EXPECT_TRUE(std::equal(units.begin(), units.end(), frame.begin() + 1));
   EXPECT_EQ(frame.back(), 0xAF);
 }
+
+namespace {
+
+  using video::hdr_bitstream::inject_hevc_dolby_vision_rpu;
+  using video::hdr_bitstream::strip_hevc_dolby_vision_rpus;
+
+  /// A plausible RPU NAL: type 62 header plus a body without start-code patterns.
+  bytes_t
+  make_rpu_nal(bytes_t body = { 0x19, 0x08, 0x09, 0xAA, 0xBB }) {
+    bytes_t nal { 0x7C, 0x01 };
+    nal.insert(nal.end(), body.begin(), body.end());
+    return nal;
+  }
+
+  /// A start-code-prefixed NAL of the given type.
+  bytes_t
+  make_nal(uint8_t type, bytes_t body = { 0x01, 0xAA }) {
+    bytes_t nal { 0x00, 0x00, 0x00, 0x01 };
+    nal.push_back(static_cast<uint8_t>(type << 1));
+    nal.push_back(0x01);
+    nal.insert(nal.end(), body.begin(), body.end());
+    return nal;
+  }
+
+  size_t
+  count_rpu_nals(const bytes_t &au) {
+    size_t count = 0;
+    for (size_t offset = 0; offset + 3 < au.size(); ++offset) {
+      if (au[offset] == 0x00 && au[offset + 1] == 0x00 && au[offset + 2] == 0x01 &&
+          ((au[offset + 3] >> 1) & 0x3F) == 62) {
+        ++count;
+      }
+    }
+    return count;
+  }
+
+  bool
+  ends_with(const bytes_t &au, const bytes_t &suffix) {
+    return au.size() >= suffix.size() &&
+           std::equal(suffix.begin(), suffix.end(), au.end() - static_cast<std::ptrdiff_t>(suffix.size()));
+  }
+
+  bytes_t
+  concat(std::initializer_list<bytes_t> parts) {
+    bytes_t out;
+    for (const auto &part : parts) {
+      out.insert(out.end(), part.begin(), part.end());
+    }
+    return out;
+  }
+
+}  // namespace
+
+TEST(HdrBitstream, InjectsDolbyVisionRpuAsTheLastNal) {
+  // VPS, SPS, PPS, then an IDR slice — the RPU goes after all of them.
+  const bytes_t au = concat({
+    make_nal(32),  // VPS
+    make_nal(33),  // SPS
+    make_nal(34),  // PPS
+    make_nal(19),  // IDR_W_RADL slice
+  });
+
+  const bytes_t rpu = make_rpu_nal();
+  bytes_t frame = au;
+  ASSERT_TRUE(inject_hevc_dolby_vision_rpu(rpu, frame));
+
+  ASSERT_EQ(frame.size(), au.size() + 4 + rpu.size());
+  EXPECT_EQ(count_rpu_nals(frame), 1u);
+  const bytes_t tail = concat({ { 0x00, 0x00, 0x00, 0x01 }, rpu });
+  EXPECT_TRUE(ends_with(frame, tail));
+  // The original access unit is untouched ahead of the appended NAL.
+  EXPECT_TRUE(std::equal(au.begin(), au.end(), frame.begin()));
+}
+
+TEST(HdrBitstream, RpuInjectionIsIdempotent) {
+  const bytes_t au = concat({ make_nal(33), make_nal(1) });
+
+  const bytes_t rpu = make_rpu_nal();
+  bytes_t once = au;
+  ASSERT_TRUE(inject_hevc_dolby_vision_rpu(rpu, once));
+
+  bytes_t twice = once;
+  ASSERT_TRUE(inject_hevc_dolby_vision_rpu(rpu, twice));
+  EXPECT_EQ(twice, once) << "re-running the injector must not duplicate the RPU";
+  EXPECT_EQ(count_rpu_nals(twice), 1u);
+}
+
+TEST(HdrBitstream, InjectionReplacesAStaleRpu) {
+  // An access unit that already carries an RPU mid-stream (e.g. an encoder
+  // that wrote one, or a retried frame) must end up with exactly the new RPU.
+  const bytes_t rpu_old = make_rpu_nal({ 0x19, 0x08, 0x11, 0x22 });
+  const bytes_t rpu_new = make_rpu_nal({ 0x19, 0x08, 0x33, 0x44, 0x55 });
+
+  const bytes_t au = concat({
+    make_nal(33),                                       // SPS
+    concat({ { 0x00, 0x00, 0x00, 0x01 }, rpu_old }),  // stale RPU
+    make_nal(1),                                        // slice
+  });
+  ASSERT_EQ(count_rpu_nals(au), 1u);
+
+  bytes_t frame = au;
+  ASSERT_TRUE(inject_hevc_dolby_vision_rpu(rpu_new, frame));
+
+  EXPECT_EQ(count_rpu_nals(frame), 1u);
+  const bytes_t tail = concat({ { 0x00, 0x00, 0x00, 0x01 }, rpu_new });
+  EXPECT_TRUE(ends_with(frame, tail));
+  // The stale body bytes are gone, not merely superseded by position.
+  EXPECT_EQ(std::search(frame.begin(), frame.end(), rpu_old.begin(), rpu_old.end()), frame.end());
+}
+
+TEST(HdrBitstream, InjectsOneRpuIntoAMultiSlicePicture) {
+  const bytes_t au = concat({ make_nal(1, { 0x01, 0xA1 }), make_nal(1, { 0x01, 0xA2 }) });
+
+  const bytes_t rpu = make_rpu_nal();
+  bytes_t frame = au;
+  ASSERT_TRUE(inject_hevc_dolby_vision_rpu(rpu, frame));
+  EXPECT_EQ(count_rpu_nals(frame), 1u);
+  EXPECT_TRUE(std::equal(au.begin(), au.end(), frame.begin()));
+  EXPECT_EQ(frame.size(), au.size() + 4 + rpu.size());
+}
+
+TEST(HdrBitstream, RejectsRpuInjectionIntoHeaderOnlyAccessUnit) {
+  const bytes_t headers_only = concat({ make_nal(32), make_nal(33) });
+
+  bytes_t frame = headers_only;
+  EXPECT_FALSE(inject_hevc_dolby_vision_rpu(make_rpu_nal(), frame));
+  EXPECT_EQ(frame, headers_only) << "a refused injection must leave the frame sendable";
+
+  // Malformed RPU references are refused before anything is touched.
+  EXPECT_FALSE(inject_hevc_dolby_vision_rpu({}, frame));
+  EXPECT_FALSE(inject_hevc_dolby_vision_rpu(bytes_t({ 0x7C }), frame));
+  EXPECT_FALSE(inject_hevc_dolby_vision_rpu(bytes_t({ 0x78, 0x01, 0xAA }), frame));  // type 60
+  EXPECT_FALSE(inject_hevc_dolby_vision_rpu(bytes_t({ 0x7C, 0x02, 0xAA }), frame));  // temporal id 1
+  EXPECT_EQ(frame, headers_only);
+}
+
+TEST(HdrBitstream, StripsDolbyVisionRpus) {
+  const bytes_t rpu = make_rpu_nal({ 0x19, 0x08, 0x77 });
+  const bytes_t au = concat({
+    make_nal(33),
+    concat({ { 0x00, 0x00, 0x00, 0x01 }, rpu }),
+    make_nal(1),
+  });
+  ASSERT_EQ(count_rpu_nals(au), 1u);
+
+  bytes_t frame = au;
+  EXPECT_TRUE(strip_hevc_dolby_vision_rpus(frame));
+  EXPECT_EQ(count_rpu_nals(frame), 0u);
+  // The SPS survives untouched and the slice keeps a valid start code: the
+  // erase takes the stale RPU's start code with the zeros ahead of it, so the
+  // slice's four-byte code loses its leading zero to the walk-back and reads
+  // as a three-byte code — still conformant Annex-B.
+  EXPECT_EQ(frame,
+    bytes_t({
+      0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0xAA,  // SPS
+      0x00, 0x00, 0x01, 0x02, 0x01, 0x01, 0xAA,        // slice, three-byte start code
+    }));
+
+  // Stripping is idempotent.
+  EXPECT_FALSE(strip_hevc_dolby_vision_rpus(frame));
+  EXPECT_EQ(count_rpu_nals(frame), 0u);
+}

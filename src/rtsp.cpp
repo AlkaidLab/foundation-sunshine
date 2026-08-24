@@ -29,6 +29,7 @@ extern "C" {
 #include "config.h"
 #include "cursor_channel.h"
 #include "globals.h"
+#include "hdr/dynamic_hdr_selection.h"
 #include "input.h"
 #include "logging.h"
 #include "network.h"
@@ -1397,6 +1398,14 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
     args.try_emplace("x-nv-video[0].clientRefreshRateX100"sv, "0"sv);  // NTSC framerate support (e.g., 5994 = 59.94fps)
 
+    // Dynamic HDR negotiation (Sunshine extension, opt-in by client).
+    // Absent arguments keep the legacy behavior: the client reported nothing,
+    // so nothing is negotiated away from it.
+    args.try_emplace("x-ss-video[0].dynamicHdrCaps"sv, "0"sv);
+    args.try_emplace("x-ss-video[0].dolbyVisionMaxLevel"sv, "0"sv);
+    args.try_emplace("x-ss-video[0].dolbyVisionDirectSurface"sv, "0"sv);
+    args.try_emplace("x-ss-video[0].dynamicHdrPreference"sv, "0"sv);
+
     // Audio codec selection (Sunshine extension, opt-in by client).
     // 0 = Opus (default, backward compatible)
     // 1 = AC3 passthrough
@@ -1615,6 +1624,31 @@ namespace rtsp_stream {
       return;
     }
 
+    // One-shot dynamic HDR selection (docs/dolby_vision_profile81.md §4). The
+    // client's report arrived with this ANNOUNCE; the verdict rides back in
+    // the response headers and config.monitor carries it to the encode path.
+    const auto dynamic_hdr_request = hdr::parse_dynamic_hdr_request(
+      args.at("x-ss-video[0].dynamicHdrCaps"sv),
+      args.at("x-ss-video[0].dolbyVisionMaxLevel"sv),
+      args.at("x-ss-video[0].dolbyVisionDirectSurface"sv),
+      args.at("x-ss-video[0].dynamicHdrPreference"sv));
+    const hdr::dynamic_hdr_selection_t dynamic_hdr_selection = hdr::select_dynamic_hdr(
+      dynamic_hdr_request,
+      {
+        .dolby_vision_enabled = config::video.dolby_vision,
+        .video_format = config.monitor.videoFormat,
+        .dynamic_range_mode = config.monitor.dynamicRange,
+      });
+    config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
+    if (dynamic_hdr_selection.dolby_vision_active()) {
+      BOOST_LOG(info) << "Dynamic HDR negotiated: dolby_vision_profile_81"sv;
+    }
+    else if (dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none) {
+      BOOST_LOG(info) << "Dynamic HDR negotiated: "sv << hdr::to_string(dynamic_hdr_selection.format)
+                      << " (dolby vision fallback: "sv
+                      << hdr::to_string(dynamic_hdr_selection.fallback_reason) << ')';
+    }
+
     // 检测是否仅控制流会话（只有 control 流被设置，没有 video 和 audio）
     session.control_only = session.setup_control && !session.setup_video && !session.setup_audio;
     if (session.control_only) {
@@ -1648,6 +1682,22 @@ namespace rtsp_stream {
 
     session.stream_announce_payload = std::move(announce_payload);
     session.stream_session_started = true;
+
+    // The selection headers go only on the success response — the strings are
+    // locals that outlive the synchronous respond() call.
+    auto dynamic_hdr_value = std::to_string(hdr::to_wire(dynamic_hdr_selection.format));
+    OPTION_ITEM dynamic_hdr_option {};
+    dynamic_hdr_option.option = const_cast<char *>("X-SS-Dynamic-HDR");
+    dynamic_hdr_option.content = dynamic_hdr_value.data();
+    option.next = &dynamic_hdr_option;
+
+    auto dynamic_hdr_fallback_value = hdr::to_string(dynamic_hdr_selection.fallback_reason);
+    OPTION_ITEM dynamic_hdr_fallback_option {};
+    if (dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none) {
+      dynamic_hdr_fallback_option.option = const_cast<char *>("X-SS-Dynamic-HDR-Fallback");
+      dynamic_hdr_fallback_option.content = const_cast<char *>(dynamic_hdr_fallback_value.data());
+      dynamic_hdr_option.next = &dynamic_hdr_fallback_option;
+    }
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

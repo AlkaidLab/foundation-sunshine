@@ -200,6 +200,62 @@ namespace video::hdr_bitstream {
       return std::nullopt;
     }
 
+    // H.265 table 7-1: unspecified NAL types 0x7C >> 1 == 62 carry the Dolby
+    // Vision RPU in Profile 5/7/8 streams.
+    constexpr uint8_t hevc_dovi_rpu_nut = 62;
+
+    /**
+     * Erase one NAL unit: the run of zeros ahead of its 0x000001 start code,
+     * the matched start code itself, and everything through the byte before
+     * the next start code's 0x000001 (or the end of the buffer). Returns the
+     * erase start, which is where a scanning caller must resume: after the
+     * shift, that position holds what used to follow the erased NAL.
+     *
+     * Walking back over the leading zeros is what makes removal complete: a
+     * four-byte start code's first zero sits ahead of the matched triple, and
+     * leaving it behind would grow the buffer by one byte per inject/strip
+     * cycle. It is also always safe: zeros before a start code can only be
+     * the removed NAL's own leading zeros or the previous NAL's
+     * trailing_zero_8bits / cabac_zero_words, which a decoder must accept or
+     * ignore either way — never meaningful RBSP, since 00 00 inside a payload
+     * is escaped.
+     */
+    size_t
+    erase_hevc_nal(std::vector<uint8_t> &au, size_t start_code) {
+      size_t begin = start_code;
+      while (begin > 0 && au[begin - 1] == 0x00) {
+        --begin;
+      }
+
+      const size_t payload = start_code + 3;
+      size_t next = payload + 1;
+      while (next + 3 <= au.size() &&
+             !(au[next] == 0x00 && au[next + 1] == 0x00 && au[next + 2] == 0x01)) {
+        ++next;
+      }
+      const size_t end = (next + 3 <= au.size()) ? next : au.size();
+      au.erase(au.begin() + static_cast<std::ptrdiff_t>(begin),
+        au.begin() + static_cast<std::ptrdiff_t>(end));
+      return begin;
+    }
+
+    /**
+     * Offset of the next 0x000001 start code at or after `from`, or nullopt.
+     *
+     * The returned offset points at the first 0x00 of the matched triple, so
+     * additional zeros in front of it stay attributed to whatever precedes
+     * them — the same convention hevc_insert_offset() uses.
+     */
+    std::optional<size_t>
+    find_hevc_start_code(std::span<const uint8_t> au, size_t from) {
+      for (size_t offset = from; offset + 3 <= au.size(); ++offset) {
+        if (au[offset] == 0x00 && au[offset + 1] == 0x00 && au[offset + 2] == 0x01) {
+          return offset;
+        }
+      }
+      return std::nullopt;
+    }
+
   }  // namespace
 
   std::optional<codec_e>
@@ -253,6 +309,46 @@ namespace video::hdr_bitstream {
 
     bitstream.insert(
       bitstream.begin() + static_cast<std::ptrdiff_t>(*offset), units.begin(), units.end());
+    return true;
+  }
+
+  bool
+  strip_hevc_dolby_vision_rpus(std::vector<uint8_t> &bitstream) {
+    bool removed = false;
+    size_t search = 0;
+    while (auto start_code = find_hevc_start_code(bitstream, search)) {
+      const size_t payload = *start_code + 3;
+      if (payload >= bitstream.size()) {
+        break;  // start code with no NAL behind it: nothing to attribute
+      }
+      if (((bitstream[payload] >> 1) & 0x3F) == hevc_dovi_rpu_nut) {
+        search = erase_hevc_nal(bitstream, *start_code);  // bytes shifted left; resume at the erase start
+        removed = true;
+      }
+      else {
+        search = payload + 1;
+      }
+    }
+    return removed;
+  }
+
+  bool
+  inject_hevc_dolby_vision_rpu(std::span<const uint8_t> rpu_nalu, std::vector<uint8_t> &bitstream) {
+    if (rpu_nalu.size() < 3 ||
+        rpu_nalu[0] != (hevc_dovi_rpu_nut << 1) ||  // layer 0, forbidden 0
+        rpu_nalu[1] != 0x01) {                      // layer 0, temporal id +1 = 1
+      return false;
+    }
+
+    // An RPU describes a picture; a header-only access unit has none.
+    if (!hevc_insert_offset(bitstream)) {
+      return false;
+    }
+
+    strip_hevc_dolby_vision_rpus(bitstream);
+
+    bitstream.insert(bitstream.end(), { 0x00, 0x00, 0x00, 0x01 });
+    bitstream.insert(bitstream.end(), rpu_nalu.begin(), rpu_nalu.end());
     return true;
   }
 
