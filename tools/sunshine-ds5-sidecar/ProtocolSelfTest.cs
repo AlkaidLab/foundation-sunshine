@@ -157,6 +157,17 @@ internal static class ProtocolSelfTest
         VerifyDefaultAudioEndpointClassification();
         VerifyDefaultAudioEndpointPolicy();
         VerifyControllerStateSubmissionPolicy();
+        VerifySensorTimestampEncoding();
+    }
+
+    private static void VerifySensorTimestampEncoding()
+    {
+        Require(ControllerSession.EncodeSensorTimestamp(0) == 0,
+            "DualSense sensor timestamp origin");
+        Require(ControllerSession.EncodeSensorTimestamp(1_000_000) == 3_000_000,
+            "DualSense sensor timestamp tick rate");
+        Require(ControllerSession.EncodeSensorTimestamp(0x55555556) == 2,
+            "DualSense sensor timestamp rollover");
     }
 
     private static void VerifyProfileSelection()

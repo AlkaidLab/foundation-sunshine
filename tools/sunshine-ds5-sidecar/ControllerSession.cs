@@ -234,9 +234,16 @@ internal sealed class ControllerSession : IDisposable
             {
                 throw new InvalidDataException("Unsupported motion type");
             }
-            _state.SensorTimestamp = unchecked((uint)ElapsedMicroseconds());
+            _state.SensorTimestamp = EncodeSensorTimestamp(ElapsedMicroseconds());
             QueueStateSubmissionLocked();
         }
+    }
+
+    internal static uint EncodeSensorTimestamp(long elapsedMicroseconds)
+    {
+        // A standard DualSense report stores sensor time in 1/3 microsecond
+        // ticks. The 32-bit counter is expected to wrap naturally.
+        return unchecked((uint)(elapsedMicroseconds * 3L));
     }
 
     internal void SubmitBattery(ReadOnlySpan<byte> payload)
