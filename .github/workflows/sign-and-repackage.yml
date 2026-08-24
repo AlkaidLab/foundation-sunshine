@@ -37,6 +37,11 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
 
+      - name: Resolve checked-out commit
+        id: source
+        shell: bash
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
         with:
@@ -160,9 +165,9 @@ jobs:
       - name: Build Windows
         shell: msys2 {0}
         env:
-          BRANCH: master
+          BRANCH: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.ref }}
           BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
-          COMMIT: ${{ github.sha }}
+          COMMIT: ${{ steps.source.outputs.commit }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
@@ -409,11 +414,35 @@ jobs:
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
+      - name: Validate release tag target
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          tag_ref="refs/tags/${RELEASE_TAG}"
+          git check-ref-format "$tag_ref"
+          tag_refs=$(git ls-remote --tags origin "$tag_ref" "${tag_ref}^{}")
+          if [[ -z "$tag_refs" ]]; then
+            exit 0
+          fi
+
+          tag_commit=$(printf '%s\n' "$tag_refs" | awk -v ref="${tag_ref}^{}" '$2 == ref { print $1; exit }')
+          if [[ -z "$tag_commit" ]]; then
+            tag_commit=$(printf '%s\n' "$tag_refs" | awk -v ref="$tag_ref" '$2 == ref { print $1; exit }')
+          fi
+          if [[ "$tag_commit" != "$SOURCE_COMMIT" ]]; then
+            echo "Release tag $RELEASE_TAG does not point to the checked-out commit"
+            exit 1
+          fi
+
       # 发布到 GitHub Release
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          target_commitish: ${{ steps.source.outputs.commit }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
             Sunshine-*-Portable-x64-Signed.zip
