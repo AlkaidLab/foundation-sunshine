@@ -186,6 +186,14 @@ TEST(DynamicHdrSelection, MalformedArgumentsFallBackToLegacy) {
   EXPECT_EQ(garbage.caps_mask, 0u);
   EXPECT_EQ(garbage.preference, dynamic_hdr_preference_e::automatic);
 
+  // An explicitly sent "0" is a real report of "no dynamic formats": only
+  // the ANNOUNCE layer decides presence, so absent and explicit-zero must
+  // stay distinguishable (the legacy-client downgrade regression).
+  const auto explicit_zero = parse_dynamic_hdr_request(
+    std::string_view("0"), {}, {}, {});
+  EXPECT_TRUE(explicit_zero.caps_reported);
+  EXPECT_EQ(explicit_zero.caps_mask, 0u);
+
   // Unknown capability bits reject the whole report rather than partially
   // trusting it.
   const auto unknown_bits = parse_dynamic_hdr_request(

@@ -1312,6 +1312,37 @@ namespace rtsp_stream {
     respond(sock, session, &seqn, 200, "OK", req->sequenceNumber, {});
   }
 
+  /**
+   * The X-SS-Dynamic-HDR response option chain. Both the first ANNOUNCE and
+   * its idempotent retry must return the same headers — a retrying client
+   * has no other way to learn the host's selection — so the chain is built
+   * from the result stored on the launch session. The strings live in this
+   * object, which must outlive the respond() call it is attached to.
+   */
+  struct dynamic_hdr_response_headers_t {
+    std::string format_value;
+    std::string fallback_value;
+    OPTION_ITEM format_item {};
+    OPTION_ITEM fallback_item {};
+
+    dynamic_hdr_response_headers_t(int format, std::string_view fallback_reason):
+        format_value(std::to_string(format)),
+        fallback_value(fallback_reason) {
+      format_item.option = const_cast<char *>("X-SS-Dynamic-HDR");
+      format_item.content = format_value.data();
+      if (!fallback_value.empty()) {
+        fallback_item.option = const_cast<char *>("X-SS-Dynamic-HDR-Fallback");
+        fallback_item.content = fallback_value.data();
+        format_item.next = &fallback_item;
+      }
+    }
+
+    void
+    attach(OPTION_ITEM &head) {
+      head.next = &format_item;
+    }
+  };
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
@@ -1330,6 +1361,10 @@ namespace rtsp_stream {
     if (session.stream_session_started) {
       if (payload == session.stream_announce_payload) {
         BOOST_LOG(debug) << "Ignoring duplicate ANNOUNCE for launch session "sv << session.id;
+        dynamic_hdr_response_headers_t dynamic_hdr_headers(
+          session.negotiated_dynamic_hdr_format,
+          session.negotiated_dynamic_hdr_fallback);
+        dynamic_hdr_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1399,12 +1434,11 @@ namespace rtsp_stream {
     args.try_emplace("x-nv-video[0].clientRefreshRateX100"sv, "0"sv);  // NTSC framerate support (e.g., 5994 = 59.94fps)
 
     // Dynamic HDR negotiation (Sunshine extension, opt-in by client).
-    // Absent arguments keep the legacy behavior: the client reported nothing,
-    // so nothing is negotiated away from it.
-    args.try_emplace("x-ss-video[0].dynamicHdrCaps"sv, "0"sv);
-    args.try_emplace("x-ss-video[0].dolbyVisionMaxLevel"sv, "0"sv);
-    args.try_emplace("x-ss-video[0].dolbyVisionDirectSurface"sv, "0"sv);
-    args.try_emplace("x-ss-video[0].dynamicHdrPreference"sv, "0"sv);
+    // Deliberately NO try_emplace defaults here: an absent attribute must
+    // reach the parser as absent, not as "0" — a defaulted "0" would look
+    // like a client that reported "no capabilities" and get it downgraded
+    // from the unconditional HDR10+ of previous versions (see
+    // parse_dynamic_hdr_request()'s caps_reported contract).
 
     // Audio codec selection (Sunshine extension, opt-in by client).
     // 0 = Opus (default, backward compatible)
@@ -1627,11 +1661,18 @@ namespace rtsp_stream {
     // One-shot dynamic HDR selection (docs/dolby_vision_profile81.md §4). The
     // client's report arrived with this ANNOUNCE; the verdict rides back in
     // the response headers and config.monitor carries it to the encode path.
+    const auto find_arg = [&args](std::string_view key) -> std::optional<std::string_view> {
+      const auto entry = args.find(key);
+      if (entry == args.end()) {
+        return std::nullopt;
+      }
+      return entry->second;
+    };
     const auto dynamic_hdr_request = hdr::parse_dynamic_hdr_request(
-      args.at("x-ss-video[0].dynamicHdrCaps"sv),
-      args.at("x-ss-video[0].dolbyVisionMaxLevel"sv),
-      args.at("x-ss-video[0].dolbyVisionDirectSurface"sv),
-      args.at("x-ss-video[0].dynamicHdrPreference"sv));
+      find_arg("x-ss-video[0].dynamicHdrCaps"sv),
+      find_arg("x-ss-video[0].dolbyVisionMaxLevel"sv),
+      find_arg("x-ss-video[0].dolbyVisionDirectSurface"sv),
+      find_arg("x-ss-video[0].dynamicHdrPreference"sv));
     const hdr::dynamic_hdr_selection_t dynamic_hdr_selection = hdr::select_dynamic_hdr(
       dynamic_hdr_request,
       {
@@ -1640,6 +1681,11 @@ namespace rtsp_stream {
         .dynamic_range_mode = config.monitor.dynamicRange,
       });
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
+    session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;
+    session.negotiated_dynamic_hdr_fallback =
+      dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none
+        ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
+        : std::string {};
     if (dynamic_hdr_selection.dolby_vision_active()) {
       BOOST_LOG(info) << "Dynamic HDR negotiated: dolby_vision_profile_81"sv;
     }
@@ -1683,21 +1729,10 @@ namespace rtsp_stream {
     session.stream_announce_payload = std::move(announce_payload);
     session.stream_session_started = true;
 
-    // The selection headers go only on the success response — the strings are
-    // locals that outlive the synchronous respond() call.
-    auto dynamic_hdr_value = std::to_string(hdr::to_wire(dynamic_hdr_selection.format));
-    OPTION_ITEM dynamic_hdr_option {};
-    dynamic_hdr_option.option = const_cast<char *>("X-SS-Dynamic-HDR");
-    dynamic_hdr_option.content = dynamic_hdr_value.data();
-    option.next = &dynamic_hdr_option;
-
-    auto dynamic_hdr_fallback_value = hdr::to_string(dynamic_hdr_selection.fallback_reason);
-    OPTION_ITEM dynamic_hdr_fallback_option {};
-    if (dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none) {
-      dynamic_hdr_fallback_option.option = const_cast<char *>("X-SS-Dynamic-HDR-Fallback");
-      dynamic_hdr_fallback_option.content = const_cast<char *>(dynamic_hdr_fallback_value.data());
-      dynamic_hdr_option.next = &dynamic_hdr_fallback_option;
-    }
+    dynamic_hdr_response_headers_t dynamic_hdr_headers(
+      session.negotiated_dynamic_hdr_format,
+      session.negotiated_dynamic_hdr_fallback);
+    dynamic_hdr_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }
