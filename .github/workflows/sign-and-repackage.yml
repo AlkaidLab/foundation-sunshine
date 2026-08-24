@@ -165,7 +165,7 @@ jobs:
       - name: Build Windows
         shell: msys2 {0}
         env:
-          BRANCH: master
+          BRANCH: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.ref }}
           BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
           COMMIT: ${{ steps.source.outputs.commit }}
         run: |
