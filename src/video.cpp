@@ -2189,8 +2189,11 @@ namespace video {
     }
 
     metadata.maxDisplayLuminance = static_cast<std::uint16_t>(std::lround(capabilities.max_nits));
-    metadata.minDisplayLuminance = static_cast<std::uint32_t>(
-      std::lround(static_cast<double>(capabilities.min_nits) * 10000.0));
+    // The field is uint16_t in 1/10000-nit units: clamp before the cast so a
+    // client reporting min_nits >= 6.5536 cannot wrap into a bogus floor.
+    metadata.minDisplayLuminance = static_cast<std::uint16_t>(std::clamp(
+      static_cast<std::uint32_t>(std::lround(static_cast<double>(capabilities.min_nits) * 10000.0)),
+      0u, 0xFFFFu));
   }
 
   int
@@ -2995,6 +2998,10 @@ namespace video {
     const bool dv_pq = encode_device && colorspace_is_pq(encode_device->colorspace);
     auto session = std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
 
+    // Contract note: a negotiated-DV session that cannot carry the RPU still
+    // serves a valid HDR10-compatible HEVC base layer; the client's decoder
+    // routing must tolerate RPU absence and fall back. These warnings are the
+    // diagnostics for exactly that path -- do not promise the RPU here.
     if (client_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) &&
         !is_probe) {
       // Dynamic L1 is the whole point of the pipeline; without analyzer
@@ -3054,6 +3061,11 @@ namespace video {
     const bool dv_pq = encode_device && colorspace_is_pq(encode_device->colorspace);
     auto session = std::make_unique<amf_encode_session_t>(std::move(encode_device), client_config.videoFormat);
 
+    // Contract note: a negotiated-DV session that cannot carry the RPU still
+    // serves a valid HDR10-compatible HEVC base layer; the client's decoder
+    // routing must tolerate RPU absence and fall back (docs dolby_vision_
+    // profile81.md SS 5.3). These warnings are the diagnostics for exactly
+    // that path -- do not promise the RPU here.
     if (client_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) &&
         !is_probe) {
       if (!dv_analysis_usable) {
