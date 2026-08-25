@@ -32,6 +32,7 @@ extern "C" {
 #include "config.h"
 #include "display_device/display_device.h"
 #include "globals.h"
+#include "hdr/dynamic_hdr_selection.h"
 #include "input.h"
 #include "logging.h"
 #include "nvenc/nvenc_encoder.h"
@@ -39,6 +40,7 @@ extern "C" {
 #include "platform/common.h"
 #include "sync.h"
 #include "video.h"
+#include "video_dolby_vision.h"
 #include "video_hdr_metadata.h"
 #include "video_probe.h"
 
@@ -756,6 +758,10 @@ namespace video {
       }
     }
 
+    /// Session-level Dolby Vision state; inert until the negotiated session
+    /// enables it in make_nvenc_encode_session().
+    dolby_vision::rpu_injector_t dolby_vision_;
+
     int
     convert(platf::img_t &img) override {
       if (!device) return -1;
@@ -872,6 +878,10 @@ namespace video {
         device->nvenc->set_luminance_stats(device->hdr_luminance_stats);
       }
 
+      // Stage this frame's Dolby Vision RPU keyed by the submitted index; the
+      // splice happens when the encoded access unit surfaces.
+      dolby_vision_.stage(frame_index, device->hdr_luminance_stats);
+
       auto result = device->nvenc->encode_frame(frame_index, force_idr);
       force_idr = false;
       return result;
@@ -918,6 +928,10 @@ namespace video {
                         << " ms timeout)";
       }
     }
+
+    /// Session-level Dolby Vision state; inert until the negotiated session
+    /// enables it in make_amf_encode_session().
+    dolby_vision::rpu_injector_t dolby_vision_;
 
     int
     convert(platf::img_t &img) override {
@@ -997,6 +1011,10 @@ namespace video {
       if (gated.decision == decision_e::emit && device->hdr_luminance_stats.valid) {
         device->amf->set_luminance_stats(device->hdr_luminance_stats);
       }
+
+      // Stage this frame's Dolby Vision RPU keyed by the submitted index; the
+      // splice happens when the encoded access unit surfaces.
+      dolby_vision_.stage(frame_index, device->hdr_luminance_stats);
 
       auto result = device->amf->encode_frame(frame_index, force_idr);
       force_idr = false;
@@ -2171,8 +2189,11 @@ namespace video {
     }
 
     metadata.maxDisplayLuminance = static_cast<std::uint16_t>(std::lround(capabilities.max_nits));
-    metadata.minDisplayLuminance = static_cast<std::uint32_t>(
-      std::lround(static_cast<double>(capabilities.min_nits) * 10000.0));
+    // The field is uint16_t in 1/10000-nit units: clamp before the cast so a
+    // client reporting min_nits >= 6.5536 cannot wrap into a bogus floor.
+    metadata.minDisplayLuminance = static_cast<std::uint16_t>(std::clamp(
+      static_cast<std::uint32_t>(std::lround(static_cast<double>(capabilities.min_nits) * 10000.0)),
+      0u, 0xFFFFu));
   }
 
   int
@@ -2318,6 +2339,10 @@ namespace video {
       BOOST_LOG(error) << "NvENC frame index mismatch " << frame_nr << " " << encoded_frame.frame_index;
     }
 
+    // The RPU rides with the access unit it was generated for, matched by the
+    // encoder's own frame index round trip — never by callback order.
+    session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
@@ -2371,6 +2396,10 @@ namespace video {
       // Normal pipeline latency: encoder buffered one frame and is returning a previous frame
       BOOST_LOG(debug) << "AMF pipeline lag: submitted " << frame_nr << ", got " << encoded_frame.frame_index;
     }
+
+    // AMF may return an older frame than the one submitted; the RPU splice
+    // keys on the encoder's own output index, so pipeline lag cannot mismatch.
+    session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
@@ -2908,6 +2937,31 @@ namespace video {
     return session;
   }
 
+  /**
+   * The L6 the RPU carries mirrors the host display's RAW mastering metadata,
+   * deliberately not run through apply_client_target_luminance(): the RPU
+   * describes the content, and the client display's peak belongs to display
+   * adaptation, which the terminal Dolby engine already knows (docs §3.3).
+   */
+  std::optional<dolby_vision::session_config_t>
+  dolby_vision_config_for_session(platf::display_t *disp) {
+    SS_HDR_METADATA raw;
+    if (!disp->get_hdr_metadata(raw)) {
+      return std::nullopt;
+    }
+
+    const auto clamp_u16 = [](uint16_t value, uint16_t low, uint16_t high) {
+      return std::clamp(value, low, high);
+    };
+
+    dolby_vision::session_config_t config;
+    config.source_mastering_peak_nits = clamp_u16(raw.maxDisplayLuminance, 1, 10000);
+    config.mastering_min_nits_x10000 = clamp_u16(raw.minDisplayLuminance, 1, 10000);
+    config.max_cll_nits = clamp_u16(raw.maxContentLightLevel, 0, 10000);
+    config.max_fall_nits = clamp_u16(raw.maxFrameAverageLightLevel, 0, 10000);
+    return config;
+  }
+
   std::unique_ptr<nvenc_encode_session_t>
   make_nvenc_encode_session(platf::display_t *disp, const config_t &client_config, std::unique_ptr<platf::nvenc_encode_device_t> encode_device, bool is_probe = false) {
     if (!encode_device->init_encoder(client_config, encode_device->colorspace, is_probe)) {
@@ -2939,7 +2993,39 @@ namespace video {
       }
     }
 
-    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
+    // The device moves into the session; sample its gates beforehand.
+    const bool dv_analysis_usable = encode_device && hdr_luminance_analysis_usable(encode_device->hdr_luminance_analysis_available);
+    const bool dv_pq = encode_device && colorspace_is_pq(encode_device->colorspace);
+    auto session = std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
+
+    // Contract note: a negotiated-DV session that cannot carry the RPU still
+    // serves a valid HDR10-compatible HEVC base layer; the client's decoder
+    // routing must tolerate RPU absence and fall back. These warnings are the
+    // diagnostics for exactly that path -- do not promise the RPU here.
+    if (client_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) &&
+        !is_probe) {
+      // Dynamic L1 is the whole point of the pipeline; without analyzer
+      // output the stream would carry nothing but a static template.
+      if (!dv_analysis_usable) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but luminance analysis is unavailable; "
+                              "streaming without RPU"sv;
+      }
+      else if (!dv_pq) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but the final colorspace is not PQ; "
+                              "streaming without RPU"sv;
+      }
+      else if (const auto dv_config = dolby_vision_config_for_session(disp);
+               !dv_config || !session->dolby_vision_.configure(*dv_config)) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but no usable mastering metadata; "
+                              "streaming without RPU"sv;
+      }
+      else {
+        BOOST_LOG(info) << "NVENC: Dolby Vision Profile 8.1 active (mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+    }
+
+    return session;
   }
 
   std::unique_ptr<amf_encode_session_t>
@@ -2970,7 +3056,38 @@ namespace video {
       }
     }
 
-    return std::make_unique<amf_encode_session_t>(std::move(encode_device), client_config.videoFormat);
+    // The device moves into the session; sample its gates beforehand.
+    const bool dv_analysis_usable = encode_device && hdr_luminance_analysis_usable(encode_device->hdr_luminance_analysis_available);
+    const bool dv_pq = encode_device && colorspace_is_pq(encode_device->colorspace);
+    auto session = std::make_unique<amf_encode_session_t>(std::move(encode_device), client_config.videoFormat);
+
+    // Contract note: a negotiated-DV session that cannot carry the RPU still
+    // serves a valid HDR10-compatible HEVC base layer; the client's decoder
+    // routing must tolerate RPU absence and fall back (docs dolby_vision_
+    // profile81.md SS 5.3). These warnings are the diagnostics for exactly
+    // that path -- do not promise the RPU here.
+    if (client_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) &&
+        !is_probe) {
+      if (!dv_analysis_usable) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but luminance analysis is unavailable; "
+                              "streaming without RPU"sv;
+      }
+      else if (!dv_pq) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but the final colorspace is not PQ; "
+                              "streaming without RPU"sv;
+      }
+      else if (const auto dv_config = dolby_vision_config_for_session(disp);
+               !dv_config || !session->dolby_vision_.configure(*dv_config)) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but no usable mastering metadata; "
+                              "streaming without RPU"sv;
+      }
+      else {
+        BOOST_LOG(info) << "AMF: Dolby Vision Profile 8.1 active (mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+    }
+
+    return session;
   }
 
   std::unique_ptr<encode_session_t>
@@ -2989,6 +3106,14 @@ namespace video {
     }
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
+      // The RPU splice needs to grow the encoded access unit, which only the
+      // native NVENC/AMF paths own end to end; an AVPacket cannot be resized
+      // in place. The stream stays a valid HDR10-compatible HEVC base layer,
+      // so the client is served — just without the Dolby Vision metadata.
+      if (!is_probe && effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81)) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but an avcodec-family encoder was selected; "
+                              "streaming HDR10 without RPU"sv;
+      }
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
       return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }

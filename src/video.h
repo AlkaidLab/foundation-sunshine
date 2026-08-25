@@ -115,6 +115,12 @@ namespace video {
        HDR encoding activates when dynamicRange > 0 and the display is operating in HDR mode */
     int dynamicRange;
 
+    /* Selected dynamic HDR format for this session, as hdr::dynamic_hdr_format_e
+       (0 none, 1 HDR10+, 2 vivid PQ, 3 vivid HLG, 4 Dolby Vision Profile 8.1).
+       Negotiated once in the RTSP ANNOUNCE from the client's reported capabilities;
+       the encode path gates Dolby Vision RPU injection on it. */
+    int dynamic_hdr_format = 0;
+
     int chromaSamplingType;  // 0 - 4:2:0, 1 - 4:4:4
 
     int enableIntraRefresh;  // 0 - disabled, 1 - enabled

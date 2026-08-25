@@ -78,6 +78,11 @@ namespace rtsp_stream {
     // 但一个启动票据最多只能创建一个串流会话。
     bool stream_session_started { false };
     std::string stream_announce_payload;
+    /// One-shot dynamic HDR negotiation result (hdr::to_wire value and
+    /// fallback reason name, empty when none), echoed in the first ANNOUNCE
+    /// 200 response and its idempotent retries alike.
+    int negotiated_dynamic_hdr_format { 0 };
+    std::string negotiated_dynamic_hdr_fallback;
   };
 
   launch_ticket_register_e
