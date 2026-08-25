@@ -1670,7 +1670,6 @@ namespace rtsp_stream {
     };
     const auto dynamic_hdr_request = hdr::parse_dynamic_hdr_request(
       find_arg("x-ss-video[0].dynamicHdrCaps"sv),
-      find_arg("x-ss-video[0].dolbyVisionMaxLevel"sv),
       find_arg("x-ss-video[0].dolbyVisionDirectSurface"sv),
       find_arg("x-ss-video[0].dynamicHdrPreference"sv));
     const hdr::dynamic_hdr_selection_t dynamic_hdr_selection = hdr::select_dynamic_hdr(

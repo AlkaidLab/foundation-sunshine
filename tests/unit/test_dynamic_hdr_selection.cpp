@@ -36,7 +36,6 @@ namespace {
     request.caps_mask = DYNAMIC_HDR_CAPS_HDR10_PLUS | DYNAMIC_HDR_CAPS_DOLBY_VISION_81;
     request.caps_reported = true;
     request.dolby_vision_direct_surface = true;
-    request.dolby_vision_max_level = 30;  // ~4K60 in Dolby level terms
     request.preference = preference;
     return request;
   }
@@ -166,22 +165,30 @@ TEST(DynamicHdrSelection, AutomaticPreferenceLosesSilently) {
 TEST(DynamicHdrSelection, ParsesSdpArguments) {
   const auto request = parse_dynamic_hdr_request(
     std::string_view("9"),       // HDR10+ | DV 8.1
-    std::string_view("30"),      // max level
     std::string_view("1"),       // direct surface
     std::string_view("1")        // preference: dolby_vision
   );
   EXPECT_TRUE(request.caps_reported);
   EXPECT_EQ(request.caps_mask,
     DYNAMIC_HDR_CAPS_HDR10_PLUS | DYNAMIC_HDR_CAPS_DOLBY_VISION_81);
-  EXPECT_EQ(request.dolby_vision_max_level, 30u);
   EXPECT_TRUE(request.dolby_vision_direct_surface);
   EXPECT_EQ(request.preference, dynamic_hdr_preference_e::dolby_vision);
+
+  // Unknown capability bits are masked off, not fatal: a future client keeps
+  // its negotiation with the subset this host understands.
+  const auto future = parse_dynamic_hdr_request(
+    std::string_view("25"),      // HDR10+ | DV 8.1 | unknown bit 4
+    std::string_view("1"),
+    std::string_view("0"));
+  EXPECT_TRUE(future.caps_reported);
+  EXPECT_EQ(future.caps_mask,
+    DYNAMIC_HDR_CAPS_HDR10_PLUS | DYNAMIC_HDR_CAPS_DOLBY_VISION_81);
 }
 
 TEST(DynamicHdrSelection, MalformedArgumentsFallBackToLegacy) {
   // One bad field must not flip a legacy client into a negotiated downgrade.
   const auto garbage = parse_dynamic_hdr_request(
-    std::string_view("not-a-number"), {}, {}, {});
+    std::string_view("not-a-number"), {}, {});
   EXPECT_FALSE(garbage.caps_reported);
   EXPECT_EQ(garbage.caps_mask, 0u);
   EXPECT_EQ(garbage.preference, dynamic_hdr_preference_e::automatic);
@@ -190,29 +197,22 @@ TEST(DynamicHdrSelection, MalformedArgumentsFallBackToLegacy) {
   // the ANNOUNCE layer decides presence, so absent and explicit-zero must
   // stay distinguishable (the legacy-client downgrade regression).
   const auto explicit_zero = parse_dynamic_hdr_request(
-    std::string_view("0"), {}, {}, {});
+    std::string_view("0"), {}, {});
   EXPECT_TRUE(explicit_zero.caps_reported);
   EXPECT_EQ(explicit_zero.caps_mask, 0u);
 
-  // Unknown capability bits reject the whole report rather than partially
-  // trusting it.
-  const auto unknown_bits = parse_dynamic_hdr_request(
-    std::string_view("1000"), {}, {}, {});
-  EXPECT_FALSE(unknown_bits.caps_reported);
+  // Unknown preference value falls back to automatic; a surface value is
+  // parsed independently of the caps report.
+  const auto bad_preference = parse_dynamic_hdr_request(
+    std::string_view("9"), std::string_view("2"), std::string_view("7"));
+  EXPECT_TRUE(bad_preference.caps_reported);
+  EXPECT_TRUE(bad_preference.dolby_vision_direct_surface);
+  EXPECT_EQ(bad_preference.preference, dynamic_hdr_preference_e::automatic);
 
   // Missing everything: the full legacy default.
-  const auto empty = parse_dynamic_hdr_request({}, {}, {}, {});
+  const auto empty = parse_dynamic_hdr_request({}, {}, {});
   EXPECT_FALSE(empty.caps_reported);
   EXPECT_EQ(empty.preference, dynamic_hdr_preference_e::automatic);
-
-  // Out-of-range level clamps to absent (0) instead of wrapping.
-  const auto bad_level = parse_dynamic_hdr_request(
-    std::string_view("9"), std::string_view("999999"), std::string_view("2"), std::string_view("7"));
-  EXPECT_TRUE(bad_level.caps_reported);
-  EXPECT_EQ(bad_level.dolby_vision_max_level, 0u);
-  EXPECT_TRUE(bad_level.dolby_vision_direct_surface);
-  // Unknown preference value falls back to automatic.
-  EXPECT_EQ(bad_level.preference, dynamic_hdr_preference_e::automatic);
 }
 
 TEST(DynamicHdrSelection, WireValuesAreStable) {

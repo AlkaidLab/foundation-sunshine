@@ -291,8 +291,7 @@ dynamic_hdr_caps:
 
 ```text
 客户端 → 主机（ANNOUNCE SDP a= 行，缺省均为传统客户端语义）：
-  x-ss-video[0].dynamicHdrCaps             位掩码，见上
-  x-ss-video[0].dolbyVisionMaxLevel        0-255
+  x-ss-video[0].dynamicHdrCaps             位掩码，见上；主机对未知位 mask-off
   x-ss-video[0].dolbyVisionDirectSurface   0/1
   x-ss-video[0].dynamicHdrPreference       0 自动 / 1 DV / 2 HDR10+ / 3 仅 HDR10
 

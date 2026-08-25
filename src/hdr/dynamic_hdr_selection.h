@@ -68,7 +68,6 @@ namespace hdr {
     /// client that sent nothing and keeps today's unconditional behavior.
     std::uint32_t caps_mask = 0;
     bool caps_reported = false;
-    std::uint32_t dolby_vision_max_level = 0;
     bool dolby_vision_direct_surface = false;
     dynamic_hdr_preference_e preference = dynamic_hdr_preference_e::automatic;
   };
@@ -112,15 +111,16 @@ namespace hdr {
     const dynamic_hdr_host_gates_t &gates) noexcept;
 
   /**
-   * Parse the four SDP arguments. Missing or malformed values fall back to
+   * Parse the three SDP arguments. Missing or malformed values fall back to
    * the legacy defaults — caps_reported stays false unless the caps argument
    * itself is present and well-formed, so one bad field cannot flip a legacy
-   * client into a negotiated downgrade.
+   * client into a negotiated downgrade. Unknown capability bits are masked
+   * off while keeping the report valid: a future client must not lose its
+   * whole negotiation because this host does not know the newest format.
    */
   [[nodiscard]] dynamic_hdr_request_t
   parse_dynamic_hdr_request(
     std::optional<std::string_view> caps,
-    std::optional<std::string_view> dolby_vision_max_level,
     std::optional<std::string_view> dolby_vision_direct_surface,
     std::optional<std::string_view> preference) noexcept;
 

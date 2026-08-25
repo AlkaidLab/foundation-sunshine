@@ -107,29 +107,23 @@ namespace hdr {
   dynamic_hdr_request_t
   parse_dynamic_hdr_request(
     std::optional<std::string_view> caps,
-    std::optional<std::string_view> dolby_vision_max_level,
     std::optional<std::string_view> dolby_vision_direct_surface,
     std::optional<std::string_view> preference) noexcept {
     dynamic_hdr_request_t request;
 
     // A well-formed caps argument switches the client into negotiated mode;
     // anything wrong with it leaves the legacy behavior in place rather than
-    // downgrading the client behind its back.
+    // downgrading the client behind its back. Bits this host does not know
+    // are masked off, not fatal: the report survives with the subset this
+    // host understands (an explicit 0 stays a valid "no formats" report).
     if (caps) {
-      const auto mask = parse_uint(*caps);
-      constexpr std::uint64_t known_bits = DYNAMIC_HDR_CAPS_HDR10_PLUS |
-                                           DYNAMIC_HDR_CAPS_VIVID_PQ |
-                                           DYNAMIC_HDR_CAPS_VIVID_HLG |
-                                           DYNAMIC_HDR_CAPS_DOLBY_VISION_81;
-      if (mask && (*mask & ~known_bits) == 0) {
-        request.caps_mask = static_cast<std::uint32_t>(*mask);
+      if (const auto mask = parse_uint(*caps)) {
+        constexpr std::uint64_t known_bits = DYNAMIC_HDR_CAPS_HDR10_PLUS |
+                                             DYNAMIC_HDR_CAPS_VIVID_PQ |
+                                             DYNAMIC_HDR_CAPS_VIVID_HLG |
+                                             DYNAMIC_HDR_CAPS_DOLBY_VISION_81;
+        request.caps_mask = static_cast<std::uint32_t>(*mask & known_bits);
         request.caps_reported = true;
-      }
-    }
-
-    if (dolby_vision_max_level) {
-      if (const auto level = parse_uint(*dolby_vision_max_level); level && *level <= 0xFF) {
-        request.dolby_vision_max_level = static_cast<std::uint32_t>(*level);
       }
     }
 
