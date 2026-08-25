@@ -327,7 +327,8 @@ if (client.dv81 && codec == HEVC && colorspace == BT2020_PQ && bit_depth == 10 &
 ```
 
 优先级：用户选「自动」→ DV 8.1 → HDR10+ → HDR10；用户明确选 HDR10+ → HDR10+ →
-HDR10；用户明确选 Dolby Vision → DV 8.1 → HDR10+ → HDR10。
+HDR10；用户明确选 Dolby Vision → **DV 8.1 → HDR10（直落）** —— 客户端的 DV
+请求只携带 DV 能力位，主机任一门失败即裁决为纯 HDR10，不经过 HDR10+ 中转。
 
 服务器必须把最终结果回传：`selected_dynamic_hdr_format`、
 `selected_dolby_vision_profile`、`selected_dolby_vision_level`、`fallback_reason`。
@@ -518,7 +519,7 @@ RPU/frame 错配计数             0
 Dolby：Profile 8.1，单层 HDR10 兼容 BL，动态 L1，静态 L5/L6，无 EL，无人工 Trim
 显示：MediaCodec video/dolby-vision，Direct Surface
 分辨率：1080p60 / 1440p60 / 4K60
-降级：Dolby Vision 8.1 → HDR10+ → HDR10
+降级：Dolby Vision 8.1 → HDR10（直落，客户端 DV 请求只报 DV 位）
 ```
 
 产品设置（**客户端 UI，位于 Moonlight V+**。格式选择是设备相关决策：同一
