@@ -47,8 +47,6 @@ namespace config {
     bool vdd_borrowed_texture;
     /** Automatically validate and expose Vulkan HDR colorspaces for HDR VDD sessions. */
     bool vdd_vulkan_hdr_bridge;
-    /** Experimental master switch for Dolby Vision Profile 8.1 negotiation. Off until the end-to-end pipeline lands. */
-    bool dolby_vision;
 
     struct {
       int preset;

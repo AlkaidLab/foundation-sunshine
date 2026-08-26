@@ -54,7 +54,6 @@ namespace hdr {
   /// reported as X-SS-Dynamic-HDR-Fallback for client-side diagnostics.
   enum class dynamic_hdr_fallback_e {
     none,
-    host_disabled,  ///< Host-side experimental switch is off
     codec_unsupported,  ///< Dolby Vision 8.1 requires HEVC
     colorspace_unsupported,  ///< Requires BT.2020 PQ (dynamicRangeMode 1)
     client_caps_missing,  ///< Client reported no Dolby Vision capability
@@ -74,9 +73,6 @@ namespace hdr {
 
   /// Host-side gates known at ANNOUNCE time.
   struct dynamic_hdr_host_gates_t {
-    /// config::video.dolby_vision — experimental master switch. The whole
-    /// pipeline must be off until end-to-end validation lands.
-    bool dolby_vision_enabled = false;
     /// config_t::videoFormat convention: 0 H.264, 1 HEVC, 2 AV1.
     int video_format = 0;
     /// x-nv-video[0].dynamicRangeMode: 0 SDR, 1 PQ, 2 HLG.
@@ -100,8 +96,8 @@ namespace hdr {
    *
    * Priority: preference dolby_vision/automatic → DV 8.1 → HDR10+ → HDR10;
    * preference hdr10_plus → HDR10+ → HDR10; preference hdr10_only → HDR10.
-   * DV additionally requires HEVC, PQ, the client capability with a direct
-   * surface, and the host switch. HDR10+ requires PQ; a client that reported
+   * DV additionally requires HEVC, PQ, and the client capability with a
+   * direct surface. HDR10+ requires PQ; a client that reported
    * capabilities without the HDR10+ bit gets plain HDR10, while a legacy
    * client (no report) keeps the unconditional HDR10+ of previous versions.
    */

@@ -1675,7 +1675,6 @@ namespace rtsp_stream {
     const hdr::dynamic_hdr_selection_t dynamic_hdr_selection = hdr::select_dynamic_hdr(
       dynamic_hdr_request,
       {
-        .dolby_vision_enabled = config::video.dolby_vision,
         .video_format = config.monitor.videoFormat,
         .dynamic_range_mode = config.monitor.dynamicRange,
       });

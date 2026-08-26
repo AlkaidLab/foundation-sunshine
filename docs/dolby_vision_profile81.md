@@ -304,9 +304,9 @@ dynamic_hdr_caps:
                                         4 dolby_vision_profile_81）
   X-SS-Dynamic-HDR-Fallback:   <枚举名>  仅当客户端具备/请求了 DV 却未获选时出现
 
-主机侧开关：sunshine.conf `dolby_vision = enabled`（默认关闭，实验性；接受
-true/yes/enable/enabled/on/1 等布尔写法）
-结果同时写入 config.monitor.dynamic_hdr_format 供编码路径消费。
+主机侧无开关：协商无条件参与（客户端上报能力即协商）。开关在 Sony 电视
+端到端点亮验证后移除 —— 安全边界由协商模型本身提供：客户端不报 DV 位
+就永远不会协商出 DV，任何门失败直落 HDR10。
 ```
 
 兼容规则：**未上报能力位的旧客户端保持现状** —— HDR10+ 仍无条件发送（历版
@@ -415,8 +415,9 @@ golden bitstream 测试。验收：每个 AU 恰好一个 RPU、`dovi_tool info`
 RPU、去除 RPU 后基础层仍是 HDR10、网络分片/重传/IDR 后仍可解码、不增加一帧缓冲。
 
 已落地：原生 RPU 写入器（dovi_tool 交叉验证）、HEVC 注入器与 golden tests、
-`dolby_vision` feature flag、NVENC/AMF 编码会话接入（§3.6）。剩余部分是
-**网络 + 客户端侧的端到端验证**（需要 Moonlight V+ 配合，不在本仓库）。
+NVENC/AMF 编码会话接入（§3.6）。**网络 + 客户端侧端到端已验证**（2026-08-25
+OPPO 真机解码链路 + Sony 电视 Dolby Vision 点亮）；主机侧灰度开关在验证通过
+后移除，协商无条件参与。
 
 ### Phase 2：实时 L1 元数据（主机端已随编码接入落地）
 
@@ -537,9 +538,10 @@ Dolby：Profile 8.1，单层 HDR10 兼容 BL，动态 L1，静态 L5/L6，无 EL
   ○ HDR10              使用静态 HDR
 ```
 
-主机侧 UI 决策：**不做格式选择界面**。`sunshine.conf` 的 `dolby_vision`
-保留为实验性灰度阀门，验证完成前不进 WebUI（防误开）；降级原因、失败
-缓存、兼容性提示全部由客户端展示（§5.4/§5.5）。
+主机侧 UI 决策：**不做格式选择界面**。曾在验证期存在的 `dolby_vision`
+灰度开关已在 Sony 电视点亮后移除 —— 安全边界由协商模型本身提供（客户端
+不报 DV 位就永远不会协商出 DV）；降级原因、失败缓存、兼容性提示全部由
+客户端展示（§5.4/§5.5）。
 
 **最正确的实施顺序不是先把动态 RPU 写进 Sunshine**，而是先用一条确定正确的
 Profile 8.1 测试码流打通 Moonlight V+ 的 `video/dolby-vision → Direct Surface`。

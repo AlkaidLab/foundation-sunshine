@@ -42,10 +42,7 @@ namespace hdr {
     // through to the HDR10+ chain while keeping the reason it lost.
     if (dv_preferred) {
       std::optional<dynamic_hdr_fallback_e> dv_fallback;
-      if (!gates.dolby_vision_enabled) {
-        dv_fallback = dynamic_hdr_fallback_e::host_disabled;
-      }
-      else if (gates.video_format != 1) {
+      if (gates.video_format != 1) {
         dv_fallback = dynamic_hdr_fallback_e::codec_unsupported;
       }
       else if (gates.dynamic_range_mode != 1) {
@@ -174,8 +171,6 @@ namespace hdr {
     switch (fallback) {
       case dynamic_hdr_fallback_e::none:
         return "none";
-      case dynamic_hdr_fallback_e::host_disabled:
-        return "host_disabled";
       case dynamic_hdr_fallback_e::codec_unsupported:
         return "codec_unsupported";
       case dynamic_hdr_fallback_e::colorspace_unsupported:

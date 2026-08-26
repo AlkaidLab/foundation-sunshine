@@ -41,8 +41,8 @@ namespace {
   }
 
   dynamic_hdr_host_gates_t
-  hevc_pq_host(bool dolby_vision_enabled = true) {
-    return { .dolby_vision_enabled = dolby_vision_enabled, .video_format = 1, .dynamic_range_mode = 1 };
+  hevc_pq_host() {
+    return { .video_format = 1, .dynamic_range_mode = 1 };
   }
 
 }  // namespace
@@ -71,25 +71,22 @@ TEST(DynamicHdrSelection, ReportsEachRefusalReason) {
   };
 
   const std::vector<case_t> cases {
-    // Host switch off.
-    { dynamic_hdr_fallback_e::host_disabled, dynamic_hdr_format_e::hdr10_plus,
-      full_dv_client(), hevc_pq_host(false) },
     // DV 8.1 is HEVC-only. HDR10+ still has an AV1 carriage, so only H.264
     // loses both.
     { dynamic_hdr_fallback_e::codec_unsupported, dynamic_hdr_format_e::hdr10_plus,
       full_dv_client(),
-      { .dolby_vision_enabled = true, .video_format = 2, .dynamic_range_mode = 1 } },
+      { .video_format = 2, .dynamic_range_mode = 1 } },
     { dynamic_hdr_fallback_e::codec_unsupported, dynamic_hdr_format_e::none,
       full_dv_client(),
-      { .dolby_vision_enabled = true, .video_format = 0, .dynamic_range_mode = 1 } },
+      { .video_format = 0, .dynamic_range_mode = 1 } },
     // DV 8.1 rides an HDR10-compatible PQ base layer. Without PQ there is no
     // HDR10+ to fall through to either.
     { dynamic_hdr_fallback_e::colorspace_unsupported, dynamic_hdr_format_e::none,
       full_dv_client(),
-      { .dolby_vision_enabled = true, .video_format = 1, .dynamic_range_mode = 0 } },
+      { .video_format = 1, .dynamic_range_mode = 0 } },
     { dynamic_hdr_fallback_e::colorspace_unsupported, dynamic_hdr_format_e::none,
       full_dv_client(),
-      { .dolby_vision_enabled = true, .video_format = 1, .dynamic_range_mode = 2 } },
+      { .video_format = 1, .dynamic_range_mode = 2 } },
     // Client reported caps without the DV bit while explicitly asking for
     // Dolby Vision.
     { dynamic_hdr_fallback_e::client_caps_missing, dynamic_hdr_format_e::hdr10_plus,
@@ -115,9 +112,9 @@ TEST(DynamicHdrSelection, ReportsEachRefusalReason) {
 
 TEST(DynamicHdrSelection, LegacyClientKeepsUnconditionalHdr10Plus) {
   // No capability report at all: the client keeps what every previous
-  // Sunshine version sent, including with the DV switch off.
+  // Sunshine version sent.
   dynamic_hdr_request_t legacy;
-  const auto selection = select_dynamic_hdr(legacy, hevc_pq_host(false));
+  const auto selection = select_dynamic_hdr(legacy, hevc_pq_host());
   EXPECT_EQ(selection.format, dynamic_hdr_format_e::hdr10_plus);
   EXPECT_EQ(selection.fallback_reason, dynamic_hdr_fallback_e::none);
 }
