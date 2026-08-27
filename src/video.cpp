@@ -3559,15 +3559,15 @@ namespace video {
       return std::nullopt;
     }
 
-    // Get encode device colorspace for HDR metadata (need to create a temporary device)
-    auto encode_device = make_encode_device(*disp, encoder, ctx.config);
-    if (!encode_device) {
-      return std::nullopt;
-    }
+    // The encode colorspace is fully determined by the client config and the
+    // display's HDR state — building a throwaway encode device here used to
+    // spin up a whole encoder pipeline (including a CUDA interop context for
+    // 4:4:4) just to read that value back.
+    const auto colorspace = colorspace_from_client_config(ctx.config, disp->is_hdr());
 
     // Update client with our current HDR display state
     hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-    if (colorspace_is_hdr(encode_device->colorspace)) {
+    if (colorspace_is_hdr(colorspace)) {
       if (disp->get_hdr_metadata(hdr_info->metadata)) {
         hdr_info->enabled = true;
       }
