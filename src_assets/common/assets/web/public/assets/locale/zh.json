@@ -198,7 +198,7 @@
     "display_profile_fixed_resolution": "固定分辨率",
     "display_profile_fixed_refresh_rate": "固定刷新率",
     "display_profile_fixed_hdr": "固定 HDR 状态",
-    "display_profile_fixed_hdr_inherit": "不固定（跟随客户端请求）",
+    "display_profile_fixed_hdr_inherit": "跟随全局（不固定）",
     "display_profile_fixed_hdr_on": "固定开启",
     "display_profile_fixed_hdr_off": "固定关闭",
     "display_profile_advanced_res_note": "实现原理：服务端强制覆盖客户端上报的分辨率与帧率（width/height/fps 并启用\"优化游戏设置\"），串流始终使用固定值。分辨率与刷新率相互独立：未输入值的维度继续使用上方卡片的选项。仅全局\"分辨率调整\"为\"使用客户端要求的分辨率\"（默认）时生效；全局\"帧率更改\"同理。",
