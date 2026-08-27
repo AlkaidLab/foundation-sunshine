@@ -700,6 +700,14 @@ namespace display_device {
           if (data.original_modes.erase(vdd_id) > 0) {
             BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
           }
+          if (data.original_primary_display == vdd_id) {
+            // The session-created VDD that was primary is being destroyed.
+            // Clearing it lets the topology revert below restore the correct
+            // primary device instead of failing on the now-removed VDD.
+            BOOST_LOG(debug) << "Cleared original_primary_display pointing to destroyed VDD: " << vdd_id;
+            data.original_primary_display.clear();
+            data_modified = true;
+          }
         }
       }
 
@@ -1285,6 +1293,12 @@ namespace display_device {
     // Remove VDD from display modes (avoid trying to restore mode for destroyed VDD)
     if (persistent_data->original_modes.erase(vdd_id) > 0) {
       BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
+    }
+    if (persistent_data->original_primary_display == vdd_id) {
+      // The VDD is being destroyed/rebuilt, so it can no longer be restored
+      // as the primary display. The topology revert will re-select a primary.
+      BOOST_LOG(debug) << "Cleared original_primary_display pointing to rebuilt VDD: " << vdd_id;
+      persistent_data->original_primary_display.clear();
     }
     
     // Save updated persistent data
