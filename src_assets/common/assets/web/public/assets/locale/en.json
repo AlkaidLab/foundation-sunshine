@@ -206,7 +206,6 @@
     "display_profile_physical_global_vdd_warning": "Note: if the global \"Output display\" is set to the virtual display (ZakoHDR), this option has no effect - the stream will still use the virtual display. Set the global output display to auto-detect or a physical display first.",
     "display_profile_dual_gpu_hint": "Dual-GPU laptops: the internal display device ID may change when the GPU path switches; if streaming fails, prefer \"Force a physical display\".",
     "display_profile_resolution_ignore_hint": "Keep the host resolution; client resolution requests are ignored.",
-    "display_profile_refresh_rate_disabled_hint": "Keep the host refresh rate; client refresh rate requests are ignored.",
     "display_profile_refresh_rate_follow_hint": "Apply the frame rate requested by the client (the base build auto-enables \"Optimize game settings\")."
   },
   "config": {

@@ -33,7 +33,11 @@ export function normalizeAppDisplayProfile(app) {
   if (!['', 'no_operation', 'client'].includes(normalized['display-resolution-mode'])) {
     normalized['display-resolution-mode'] = ''
   }
-  if (!['', 'no_operation', 'client'].includes(normalized['display-refresh-rate-mode'])) {
+  // The refresh rate has no per-app "ignore client" gate in the 0-change
+  // design (upstream applies the client fps unconditionally in the
+  // automatic branch), so `no_operation` would silently do nothing while
+  // also disabling the shared sops gate for the resolution. Drop it.
+  if (!['', 'client'].includes(normalized['display-refresh-rate-mode'])) {
     normalized['display-refresh-rate-mode'] = ''
   }
   if (normalized['display-resolution'] && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(normalized['display-resolution'])) {

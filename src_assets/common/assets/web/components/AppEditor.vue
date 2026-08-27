@@ -201,7 +201,7 @@
                       name="app_refresh_rate_change"
                       label-key="apps.display_profile_refresh_rate"
                       option-key-prefix="apps.display_profile_"
-                      :options="['inherit', 'no_operation', 'follow_client']"
+                      :options="['inherit', 'follow_client']"
                       :option-labels="appRefreshRateOptionLabels"
                       :platform-aware="false"
                       :disabled="hasFixedRefreshRate"
@@ -570,7 +570,6 @@ const appResolutionOptionLabels = computed(() => ({
 }))
 const appRefreshRateOptionLabels = computed(() => ({
   inherit: t('apps.display_profile_inherit'),
-  no_operation: tp('config.refresh_rate_change_no_operation'),
   follow_client: tp('config.refresh_rate_change_automatic'),
 }))
 const displayRuleValue = (mode) => {
@@ -634,7 +633,6 @@ const resHintText = computed(() => {
 })
 const rrHintText = computed(() => {
   const rule = appRefreshRateRule.value
-  if (rule === 'no_operation') return t('apps.display_profile_refresh_rate_disabled_hint')
   if (rule === 'follow_client') return t('apps.display_profile_refresh_rate_follow_hint')
   return ''
 })

@@ -43,6 +43,16 @@ test('invalid mode values are cleared', () => {
   assert.equal(normalized['display-refresh-rate-mode'], '')
 })
 
+test('refresh rate no_operation is dropped (no per-app refresh gate in the 0-change design)', () => {
+  const normalized = normalizeAppDisplayProfile({
+    name: 'Game',
+    'display-target': 'physical',
+    'display-refresh-rate-mode': 'no_operation',
+  })
+
+  assert.equal(normalized['display-refresh-rate-mode'], '')
+})
+
 test('invalid fixed values are cleared', () => {
   const normalized = normalizeAppDisplayProfile({
     name: 'Game',

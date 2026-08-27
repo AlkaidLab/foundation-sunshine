@@ -206,7 +206,6 @@
     "display_profile_physical_global_vdd_warning": "注意：全局\"输出显示器\"为虚拟显示器（ZakoHDR）时，本选项将不生效——仍会串流虚拟屏。请先将全局\"输出显示器\"设为自动检测或物理屏。",
     "display_profile_dual_gpu_hint": "双显卡笔记本提示：内屏设备 ID 可能随 GPU 路径切换而变化，若串流失败建议使用\"强制使用物理显示器\"。",
     "display_profile_resolution_ignore_hint": "保持主机当前分辨率，客户端请求不生效。",
-    "display_profile_refresh_rate_disabled_hint": "保持主机当前刷新率，客户端请求不生效。",
     "display_profile_refresh_rate_follow_hint": "应用客户端请求的帧率（基地版自动启用\"优化游戏设置\"）。"
   },
   "config": {
