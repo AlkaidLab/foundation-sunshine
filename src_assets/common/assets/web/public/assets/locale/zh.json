@@ -202,7 +202,12 @@
     "display_profile_fixed_hdr_on": "固定开启",
     "display_profile_fixed_hdr_off": "固定关闭",
     "display_profile_advanced_res_note": "实现原理：服务端强制覆盖客户端上报的分辨率与帧率（width/height/fps 并启用\"优化游戏设置\"），串流始终使用固定值。分辨率与刷新率相互独立：未输入值的维度继续使用上方卡片的选项。仅全局\"分辨率调整\"为\"使用客户端要求的分辨率\"（默认）时生效；全局\"帧率更改\"同理。",
-    "display_profile_advanced_hdr_note": "实现原理：服务端直接改写客户端 HDR 请求（hdrMode），本应用始终使用固定 HDR 状态。仅全局\"HDR 状态更改\"为\"自动\"（默认）时生效；显示器需支持 HDR；与主机当前状态一致时无操作。"
+    "display_profile_advanced_hdr_note": "实现原理：服务端直接改写客户端 HDR 请求（hdrMode），本应用始终使用固定 HDR 状态。仅全局\"HDR 状态更改\"为\"自动\"（默认）时生效；显示器需支持 HDR；与主机当前状态一致时无操作。",
+    "display_profile_physical_global_vdd_warning": "注意：全局\"输出显示器\"为虚拟显示器（ZakoHDR）时，本选项将不生效——仍会串流虚拟屏。请先将全局\"输出显示器\"设为自动检测或物理屏。",
+    "display_profile_dual_gpu_hint": "双显卡笔记本提示：内屏设备 ID 可能随 GPU 路径切换而变化，若串流失败建议使用\"强制使用物理显示器\"。",
+    "display_profile_resolution_ignore_hint": "保持主机当前分辨率，客户端请求不生效。",
+    "display_profile_refresh_rate_disabled_hint": "保持主机当前刷新率，客户端请求不生效。",
+    "display_profile_refresh_rate_follow_hint": "应用客户端请求的帧率（基地版自动启用\"优化游戏设置\"）。"
   },
   "config": {
     "adapter_name": "适配器名称",

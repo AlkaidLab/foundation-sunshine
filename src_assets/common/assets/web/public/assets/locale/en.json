@@ -202,7 +202,12 @@
     "display_profile_fixed_hdr_on": "Force on",
     "display_profile_fixed_hdr_off": "Force off",
     "display_profile_advanced_res_note": "Implementation: the server overrides the resolution and frame rate reported by the client (width/height/fps with \"Optimize game settings\" enabled), so the stream always uses the fixed values. Resolution and refresh rate are independent: a dimension without a value keeps using the options above. Only effective while the global \"Resolution change\" is set to \"Use resolution provided by the client\" (the default); the same applies to the refresh rate.",
-    "display_profile_advanced_hdr_note": "Implementation: the server overrides the client HDR request (hdrMode), so this app always uses the fixed HDR state. Only effective while the global \"HDR state change\" is set to \"Automatic\" (the default); the display must support HDR. No change when the host is already in the target state."
+    "display_profile_advanced_hdr_note": "Implementation: the server overrides the client HDR request (hdrMode), so this app always uses the fixed HDR state. Only effective while the global \"HDR state change\" is set to \"Automatic\" (the default); the display must support HDR. No change when the host is already in the target state.",
+    "display_profile_physical_global_vdd_warning": "Note: if the global \"Output display\" is set to the virtual display (ZakoHDR), this option has no effect - the stream will still use the virtual display. Set the global output display to auto-detect or a physical display first.",
+    "display_profile_dual_gpu_hint": "Dual-GPU laptops: the internal display device ID may change when the GPU path switches; if streaming fails, prefer \"Force a physical display\".",
+    "display_profile_resolution_ignore_hint": "Keep the host resolution; client resolution requests are ignored.",
+    "display_profile_refresh_rate_disabled_hint": "Keep the host refresh rate; client refresh rate requests are ignored.",
+    "display_profile_refresh_rate_follow_hint": "Apply the frame rate requested by the client (the base build auto-enables \"Optimize game settings\")."
   },
   "config": {
     "adapter_name": "Adapter Name",

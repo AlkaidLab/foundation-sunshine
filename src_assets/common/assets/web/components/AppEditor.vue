@@ -158,6 +158,14 @@
                   :displays="displayDevices"
                 />
 
+                <div v-if="showPhysicalGlobalVddWarning" class="alert alert-warning display-profile-alert" role="alert">
+                  <i class="fas fa-triangle-exclamation me-2"></i>
+                  {{ t('apps.display_profile_physical_global_vdd_warning') }}
+                </div>
+                <div class="form-text" style="margin-top: .35rem;">
+                  {{ t('apps.display_profile_dual_gpu_hint') }}
+                </div>
+
                 <template v-if="hasForcedDisplayProfile">
                   <div v-if="formData['display-target'] === 'virtual' && formData['display-device-prep'] === 'ensure_only_display'" class="alert alert-warning display-profile-alert" role="alert">
                     <i class="fas fa-triangle-exclamation me-2"></i>
@@ -185,9 +193,7 @@
                       :platform-aware="false"
                       :disabled="hasFixedResolution"
                     >
-                      <div class="form-text" v-if="appResolutionRule === 'follow_client'">
-                        {{ tp('config.resolution_change_ogs_desc') }}
-                      </div>
+                      <div class="form-text">{{ resHintText }}</div>
                     </DisplayRuleRadioGroup>
 
                     <DisplayRuleRadioGroup
@@ -200,6 +206,7 @@
                       :platform-aware="false"
                       :disabled="hasFixedRefreshRate"
                     >
+                      <div class="form-text">{{ rrHintText }}</div>
                     </DisplayRuleRadioGroup>
                   </div>
 
@@ -518,11 +525,13 @@ const isNewApp = computed(() => !props.app || props.app.index === -1)
 
 // ---- App Display Profile (server-side per-app display scheme) ----
 const displayDevices = ref([])
+const globalOutputName = ref('')
 
 const loadDisplayDevices = async () => {
   try {
     const config = await apiJson('/api/config')
     displayDevices.value = Array.isArray(config.display_devices) ? config.display_devices : []
+    globalOutputName.value = typeof config.output_name === 'string' ? config.output_name : ''
   } catch (_) {
     displayDevices.value = []
   }
@@ -609,6 +618,25 @@ const displayProfileValid = computed(() => {
   if (hasFixedResolution.value && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(formData.value['display-resolution'])) return false
   if (hasFixedRefreshRate.value && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(formData.value['display-refresh-rate'])) return false
   return true
+})
+// The default-physical-display option cannot override a global virtual
+// display selection (0-change design): warn the user about it.
+const showPhysicalGlobalVddWarning = computed(() =>
+  formData.value?.['display-target'] === 'physical' &&
+  !formData.value?.['display-output-name'] &&
+  globalOutputName.value === 'ZakoHDR'
+)
+const resHintText = computed(() => {
+  const rule = appResolutionRule.value
+  if (rule === 'no_operation') return t('apps.display_profile_resolution_ignore_hint')
+  if (rule === 'follow_client') return tp('config.resolution_change_ogs_desc')
+  return ''
+})
+const rrHintText = computed(() => {
+  const rule = appRefreshRateRule.value
+  if (rule === 'no_operation') return t('apps.display_profile_refresh_rate_disabled_hint')
+  if (rule === 'follow_client') return t('apps.display_profile_refresh_rate_follow_hint')
+  return ''
 })
 // ---- end App Display Profile ----
 
