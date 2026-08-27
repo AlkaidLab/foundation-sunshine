@@ -718,18 +718,6 @@ namespace display_device {
           newly_enabled_devices = get_newly_enabled_devices_from_topology(current_topology, data.topology.modified);
           current_topology = data.topology.modified;
 
-          // Revert HDR states
-          if (!data.original_hdr_states.empty()) {
-            BOOST_LOG(info) << "Changing back the HDR states to: " << to_string(data.original_hdr_states);
-            if (set_hdr_states(data.original_hdr_states)) {
-              data.original_hdr_states.clear();
-              data_modified = true;
-            }
-            else {
-              partially_failed = true;
-            }
-          }
-
           // Revert display modes
           if (!data.original_modes.empty()) {
             BOOST_LOG(info) << "Changing back the display modes to: " << to_string(data.original_modes);
@@ -791,6 +779,20 @@ namespace display_device {
         BOOST_LOG(debug) << "Trying to fix HDR states (if needed).";
         blank_hdr_states(current_hdr_states, newly_enabled_devices);
         set_hdr_states(current_hdr_states);
+      }
+
+      // Revert HDR states last: topology and display mode changes on Windows
+      // can reset the HDR state, so restoring it before them would leave the
+      // display in the wrong HDR mode after the revert.
+      if (!data.original_hdr_states.empty()) {
+        BOOST_LOG(info) << "Changing back the HDR states to: " << to_string(data.original_hdr_states);
+        if (set_hdr_states(data.original_hdr_states)) {
+          data.original_hdr_states.clear();
+          data_modified = true;
+        }
+        else {
+          partially_failed = true;
+        }
       }
 
       return !partially_failed;
