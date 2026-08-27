@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -24,6 +25,7 @@
 
 #include "config.h"
 #include "crypto.h"
+#include "display_device/parsed_config.h"
 #include "display_device/session.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -152,6 +154,101 @@ namespace proc {
 
     // Now that we have a complete path, we can just use parent_path()
     return cmd_path.parent_path();
+  }
+
+  bool
+  proc_t::apply_app_display_profile(int app_id, rtsp_stream::launch_session_t &launch_session) const {
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto &app) {
+      return app.id == std::to_string(app_id);
+    });
+    if (iter == _apps.end()) {
+      return false;
+    }
+
+    const auto &app = *iter;
+    if (app.display_target < 0) {
+      // No per-app scheme: leave the client request and the global
+      // configuration fully in control (upstream behavior).
+      return true;
+    }
+
+    // 1. Display target: virtual or physical. Maps onto the existing
+    //    use_vdd flag and the SUNSHINE_CLIENT_DISPLAY_NAME environment
+    //    variable, which the display intent resolution already consumes.
+    if (app.display_target == 1) {
+      launch_session.use_vdd = true;
+      launch_session.env.erase("SUNSHINE_CLIENT_DISPLAY_NAME");
+    }
+    else {
+      launch_session.use_vdd = false;
+      if (!app.display_output_name.empty()) {
+        launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = app.display_output_name;
+      }
+      else {
+        launch_session.env.erase("SUNSHINE_CLIENT_DISPLAY_NAME");
+      }
+    }
+
+    // 2. Display layout. The device_prep_e enum values map 1:1 onto the
+    //    existing custom_screen_mode values consumed by resolve_device_prep().
+    if (app.display_device_prep >= 0) {
+      launch_session.custom_screen_mode = app.display_device_prep;
+    }
+
+    // 3. Resolution / refresh rate policy.
+    //    no_operation -> ignore client requests (keep the host mode) by
+    //    gating "Optimize game settings" off. automatic -> follow the client:
+    //    leave sops untouched (the base build auto-enables it; vanilla honors
+    //    the client setting).
+    if (app.display_resolution_mode == 0 || app.display_refresh_rate_mode == 0) {
+      launch_session.enable_sops = false;
+    }
+
+    // 4. Advanced: fixed resolution / refresh rate. Only applied when a
+    //    value is present; an empty field keeps the card options above.
+    //    Requires the global resolution/refresh rate policy to be
+    //    "automatic" (the default) for the values to be applied.
+    if (!app.display_resolution.empty()) {
+      std::stringstream ss(app.display_resolution);
+      int width = 0;
+      int height = 0;
+      char separator = 0;
+      if (ss >> width >> separator >> height && separator == 'x' && width > 0 && height > 0) {
+        launch_session.width = width;
+        launch_session.height = height;
+        launch_session.enable_sops = true;
+      }
+      else {
+        BOOST_LOG(warning) << "Ignoring invalid fixed display resolution ["sv << app.display_resolution
+                           << "] for app ["sv << app.name << ']';
+      }
+    }
+    if (!app.display_refresh_rate.empty()) {
+      try {
+        const int fps = std::stoi(app.display_refresh_rate);
+        if (fps > 0) {
+          launch_session.fps = fps;
+          launch_session.enable_sops = true;
+        }
+      }
+      catch (...) {
+        BOOST_LOG(warning) << "Ignoring invalid fixed refresh rate ["sv << app.display_refresh_rate
+                           << "] for app ["sv << app.name << ']';
+      }
+    }
+
+    // 5. Advanced: fixed HDR state. Overrides the client hdrMode request;
+    //    takes effect when the global "HDR state change" is automatic (the
+    //    default), otherwise the global no_operation gate keeps the host
+    //    state untouched.
+    if (app.display_hdr >= 0) {
+      launch_session.enable_hdr = app.display_hdr != 0;
+    }
+
+    BOOST_LOG(info) << "Applied app display profile [app=" << app.name
+                    << ", target=" << app.display_target
+                    << ", prep=" << launch_session.custom_screen_mode << ']';
+    return true;
   }
 
   int
@@ -831,6 +928,14 @@ namespace proc {
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
         auto gamepad = app_node.get_optional<std::string>("gamepad"s);
+        auto display_target = app_node.get_optional<std::string>("display-target"s);
+        auto display_device_prep = app_node.get_optional<std::string>("display-device-prep"s);
+        auto display_resolution_mode = app_node.get_optional<std::string>("display-resolution-mode"s);
+        auto display_refresh_rate_mode = app_node.get_optional<std::string>("display-refresh-rate-mode"s);
+        auto display_output_name = app_node.get_optional<std::string>("display-output-name"s);
+        auto display_resolution = app_node.get_optional<std::string>("display-resolution"s);
+        auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
+        auto display_hdr = app_node.get_optional<std::string>("display-hdr"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -932,6 +1037,44 @@ namespace proc {
           ctx.gamepad_mode = 0;
         }
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
+
+        // ---- App Display Profile (server-side per-app display scheme) ----
+        // Missing/invalid values keep the defaults (-1 / empty) so the app
+        // inherits the client request and the global configuration.
+        if (display_target && *display_target == "physical"sv) {
+          ctx.display_target = 0;
+        }
+        else if (display_target && *display_target == "virtual"sv) {
+          ctx.display_target = 1;
+        }
+        if (display_device_prep && !display_device_prep->empty()) {
+          ctx.display_device_prep = display_device::parsed_config_t::device_prep_from_view(*display_device_prep);
+        }
+        if (display_resolution_mode && *display_resolution_mode == "no_operation"sv) {
+          ctx.display_resolution_mode = 0;
+        }
+        else if (display_resolution_mode && *display_resolution_mode == "client"sv) {
+          ctx.display_resolution_mode = 1;
+        }
+        if (display_refresh_rate_mode && *display_refresh_rate_mode == "no_operation"sv) {
+          ctx.display_refresh_rate_mode = 0;
+        }
+        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
+          ctx.display_refresh_rate_mode = 1;
+        }
+        ctx.display_output_name = display_output_name.value_or("");
+        ctx.display_resolution = display_resolution.value_or("");
+        ctx.display_refresh_rate = display_refresh_rate.value_or("");
+        if (display_hdr && *display_hdr == "on"sv) {
+          ctx.display_hdr = 1;
+        }
+        else if (display_hdr && *display_hdr == "off"sv) {
+          ctx.display_hdr = 0;
+        }
+        else {
+          BOOST_LOG(warning) << "Ignoring invalid per-app display-hdr setting ["sv
+                             << display_hdr.value_or("") << "] for app ["sv << name << ']';
+        }
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {

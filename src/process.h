@@ -72,6 +72,27 @@ namespace proc {
     int mouse_mode;  ///< 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
     int gamepad_mode;  ///< 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
     std::chrono::seconds exit_timeout;
+
+    /**
+     * Server-side per-app display scheme (App Display Profile).
+     *
+     * These fields mirror the `display-*` keys of apps.json. Negative/empty
+     * values mean "inherit": the client request and the global configuration
+     * keep working exactly as in upstream. When set, the server overrides the
+     * matching client requests (priority: app profile > client > global).
+     *
+     * The values are mapped onto existing launch_session fields only
+     * (use_vdd, custom_screen_mode, enable_sops, SUNSHINE_CLIENT_DISPLAY_NAME,
+     * width/height/fps, enable_hdr); no new launch_session fields are added.
+     */
+    int display_target {-1};          ///< -1=inherit, 0=physical, 1=virtual
+    int display_device_prep {-1};     ///< -1=inherit, 0=no_operation, 1=ensure_active, 2=ensure_primary, 3=ensure_only_display, 4=ensure_secondary
+    int display_resolution_mode {-1}; ///< -1=inherit, 0=no_operation (ignore client), 1=automatic (follow client)
+    int display_refresh_rate_mode {-1}; ///< -1=inherit, 0=no_operation (ignore client), 1=automatic (follow client)
+    std::string display_output_name;  ///< Physical display device id used when display_target=physical; empty = default physical display
+    std::string display_resolution;   ///< Fixed resolution "WxH" (advanced option); empty = not set
+    std::string display_refresh_rate; ///< Fixed refresh rate in Hz (advanced option); empty = not set
+    int display_hdr {-1};             ///< -1=inherit, 0=force off, 1=force on (advanced option)
   };
 
   class proc_t {
@@ -87,6 +108,20 @@ namespace proc {
 
     int
     execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session);
+
+    /**
+     * @brief Apply the per-app display scheme (App Display Profile) to a launch session.
+     *
+     * Called after the client parameters are parsed (nvhttp) and before the
+     * display preparation flow starts. Apps without a configured scheme are
+     * left untouched so the client and global configuration keep full control.
+     *
+     * @param app_id The application id to look up.
+     * @param launch_session Session to apply the scheme to (in place).
+     * @return True if the app exists (whether or not it had a scheme).
+     */
+    bool
+    apply_app_display_profile(int app_id, rtsp_stream::launch_session_t &launch_session) const;
 
     /**
      * @return `_app_id` if a process is running, otherwise returns `0`

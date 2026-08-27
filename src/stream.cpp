@@ -1973,7 +1973,12 @@ namespace stream {
         BOOST_LOG(info) << "Reconfiguring display device for new resolution: " << old_width << "x" << old_height 
                         << " -> " << new_width << "x" << new_height;
       }
-      
+
+      // Re-apply the per-app display scheme so the reconfiguration keeps the
+      // app profile (fixed values, target, layout) instead of the plain
+      // session copy.
+      proc::proc.apply_app_display_profile(session->app_id, temp_launch_session);
+
       if (active_display_resolved) {
         const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
           const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
