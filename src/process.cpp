@@ -1071,9 +1071,9 @@ namespace proc {
         else if (display_hdr && *display_hdr == "off"sv) {
           ctx.display_hdr = 0;
         }
-        else {
+        else if (display_hdr && !display_hdr->empty()) {
           BOOST_LOG(warning) << "Ignoring invalid per-app display-hdr setting ["sv
-                             << display_hdr.value_or("") << "] for app ["sv << name << ']';
+                             << *display_hdr << "] for app ["sv << name << ']';
         }
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
