@@ -430,7 +430,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePlatformI18n } from '../platform-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
@@ -492,6 +492,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'save-app'])
+
+// Provide the platform to the shared display components (they call
+// usePlatformI18n() which reads the injected 'platform').
+provide(
+  'platform',
+  computed(() => props.platform)
+)
 
 const { t } = useI18n()
 const platformMessage = usePlatformI18n(props.platform)
