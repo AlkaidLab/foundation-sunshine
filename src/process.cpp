@@ -228,7 +228,10 @@ namespace proc {
         const int fps = std::stoi(app.display_refresh_rate);
         if (fps > 0) {
           launch_session.fps = fps;
-          launch_session.enable_sops = true;
+          // The refresh rate automatic branch applies session.fps without
+          // consulting enable_sops, so a fixed refresh rate must not flip the
+          // shared sops gate: doing so would also make the resolution follow
+          // the client, overriding a per-app "no_operation" resolution policy.
         }
       }
       catch (...) {
