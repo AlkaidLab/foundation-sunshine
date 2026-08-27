@@ -4,22 +4,50 @@ import { $tp } from "../../../platform-i18n";
 import PlatformLayout from "../../../components/layout/PlatformLayout.vue";
 import VddPrerequisiteNotice from "../../../components/common/VddPrerequisiteNotice.vue";
 
-const props = defineProps(["platform", "config", "displays"]);
+const props = defineProps({
+  platform: String,
+  config: {
+    type: Object,
+    default: null,
+  },
+  modelValue: {
+    type: String,
+    default: undefined,
+  },
+  displays: {
+    type: Array,
+    default: undefined,
+  },
+  context: {
+    type: String,
+    default: 'global',
+    validator: (value) => ['global', 'app'].includes(value),
+  },
+});
+
+const emit = defineEmits(['update:modelValue']);
 
 const config = ref(props.config);
-// const outputNamePlaceholder =
-//   props.platform === "windows"
-//     ? "{de9bb7e2-186e-505b-9e93-f48793333810}"
-//     : "4531345";
+const isAppContext = computed(() => props.context === 'app');
+const outputName = computed({
+  get: () => isAppContext.value ? props.modelValue : config.value?.output_name,
+  set: (value) => {
+    if (isAppContext.value) {
+      emit('update:modelValue', value);
+    } else if (config.value) {
+      config.value.output_name = value;
+    }
+  },
+});
 
 // Check if VDD mode is enabled (output_name is 'ZakoHDR')
 const isVddMode = computed(() => {
-  return config.value.output_name === 'ZakoHDR'
+  return outputName.value === 'ZakoHDR'
 });
 
 // "DISPLAY NAME: \\\\.\\DISPLAY1\nFRIENDLY NAME: F32D80U\nDEVICE STATE: PRIMARY\nHDR STATE: ENABLED"
 const displayDevices = computed(() => {
-  const devices = config.value.display_devices;
+  const devices = props.displays ?? config.value?.display_devices;
   if (!Array.isArray(devices)) {
     return [];
   }
@@ -33,16 +61,37 @@ const displayDevices = computed(() => {
       .replace("()", ""),
   }));
 });
+
+const selectedPhysicalDevice = computed(() => {
+  if (!isAppContext.value || !outputName.value || ['__inherit__', '__physical__', 'ZakoHDR'].includes(outputName.value)) {
+    return null;
+  }
+  return displayDevices.value.some((device) => device.id === outputName.value)
+    ? null
+    : { id: outputName.value, name: outputName.value };
+});
 </script>
 
 <template>
   <div class="mb-3">
-    <label for="output_name" class="form-label">{{
+    <label :for="isAppContext ? 'app_output_name' : 'output_name'" class="form-label">{{
       $t("config.output_name_windows")
     }}</label>
-    <select id="output_name" class="form-select" v-model="config.output_name">
-      <option value="">{{ $t("_common.autodetect") }}</option>
+    <select :id="isAppContext ? 'app_output_name' : 'output_name'" class="form-select" v-model="outputName">
+      <template v-if="isAppContext">
+        <option value="__inherit__">{{ $t("apps.display_profile_inherit") }}</option>
+        <option value="__physical__">
+          {{ $t("apps.display_profile_physical") }}
+        </option>
+      </template>
+      <option v-else value="">{{ $t("_common.autodetect") }}</option>
       <option value="ZakoHDR">{{ $t("config.output_name_vdd_option") }}</option>
+      <option
+        v-if="selectedPhysicalDevice"
+        :value="selectedPhysicalDevice.id"
+      >
+        {{ selectedPhysicalDevice.name }}
+      </option>
       <option
         v-for="device in displayDevices"
         :value="device.id"
@@ -52,7 +101,7 @@ const displayDevices = computed(() => {
       </option>
     </select>
     <div class="form-text">
-      <p class="pre-line">{{ $tp("config.output_name_desc") }}</p>
+      <p class="pre-line">{{ isAppContext ? $t("apps.display_profile_policy_desc") : $tp("config.output_name_desc") }}</p>
       <PlatformLayout :platform="platform">
         <template #windows></template>
         <template #linux> </template>
@@ -64,7 +113,7 @@ const displayDevices = computed(() => {
   <VddPrerequisiteNotice :active="isVddMode && platform === 'windows'" />
 
   <!-- VDD mode: Reuse VDD for all clients (only shown in VDD mode, Windows only) -->
-  <div class="mb-3 form-check" v-if="isVddMode && platform === 'windows'">
+  <div class="mb-3 form-check" v-if="!isAppContext && isVddMode && platform === 'windows'">
     <input
       type="checkbox"
       class="form-check-input"

@@ -144,6 +144,117 @@
                 </FormField>
               </AccordionItem>
 
+              <AccordionItem
+                v-if="isWindows"
+                id="displayProfile"
+                icon="fa-display"
+                :title="t('apps.display_profile_title')"
+                parent-id="appFormAccordion"
+              >
+                <NewDisplayOutputSelector
+                  v-model="appDisplayOutput"
+                  context="app"
+                  :platform="platform"
+                  :displays="displayDevices"
+                />
+
+                <template v-if="hasForcedDisplayProfile">
+                  <div v-if="formData['display-target'] === 'virtual' && formData['display-device-prep'] === 'ensure_only_display'" class="alert alert-warning display-profile-alert" role="alert">
+                    <i class="fas fa-triangle-exclamation me-2"></i>
+                    {{ t('apps.display_profile_exclusive_warning') }}
+                  </div>
+
+                  <DisplayPreparationPicker v-model="formData['display-device-prep']" />
+
+                  <details class="display-options-note">
+                    <summary>
+                      <i class="fas fa-circle-info" aria-hidden="true"></i>
+                      {{ tp('config.display_device_options_note') }}
+                    </summary>
+                    <p class="pre-line">{{ tp('config.display_device_options_note_desc') }}</p>
+                  </details>
+
+                  <div class="display-rule-grid">
+                    <DisplayRuleRadioGroup
+                      v-model="appResolutionRule"
+                      name="app_resolution_change"
+                      label-key="apps.display_profile_resolution"
+                      option-key-prefix="apps.display_profile_"
+                      :options="['inherit', 'no_operation', 'follow_client']"
+                      :option-labels="appResolutionOptionLabels"
+                      :platform-aware="false"
+                      :disabled="hasFixedResolution"
+                    >
+                      <div class="form-text" v-if="appResolutionRule === 'follow_client'">
+                        {{ tp('config.resolution_change_ogs_desc') }}
+                      </div>
+                    </DisplayRuleRadioGroup>
+
+                    <DisplayRuleRadioGroup
+                      v-model="appRefreshRateRule"
+                      name="app_refresh_rate_change"
+                      label-key="apps.display_profile_refresh_rate"
+                      option-key-prefix="apps.display_profile_"
+                      :options="['inherit', 'no_operation', 'follow_client']"
+                      :option-labels="appRefreshRateOptionLabels"
+                      :platform-aware="false"
+                      :disabled="hasFixedRefreshRate"
+                    >
+                    </DisplayRuleRadioGroup>
+                  </div>
+
+                  <!-- Advanced options: server-side fixed values (implementation notes in the UI) -->
+                  <details class="advanced-options-note">
+                    <summary>
+                      <i class="fas fa-flask" aria-hidden="true"></i>
+                      {{ t('apps.display_profile_advanced_title') }}
+                      <span class="advanced-sub">{{ t('apps.display_profile_advanced_sub') }}</span>
+                    </summary>
+                    <div class="advanced-body">
+                      <div class="form-check form-switch">
+                        <input
+                          type="checkbox"
+                          class="form-check-input"
+                          id="app_fixed_values_switch"
+                          v-model="fixedValuesEnabled"
+                        />
+                        <label class="form-check-label" for="app_fixed_values_switch">
+                          {{ t('apps.display_profile_fixed_resolution') }} / {{ t('apps.display_profile_fixed_refresh_rate') }}
+                        </label>
+                      </div>
+                      <div class="field-row">
+                        <input
+                          type="text"
+                          class="form-control monospace"
+                          id="app_fixed_resolution"
+                          placeholder="2560x1440"
+                          v-model.trim="formData['display-resolution']"
+                        />
+                        <span class="field-sep">@</span>
+                        <input
+                          type="text"
+                          class="form-control monospace"
+                          id="app_fixed_refresh_rate"
+                          placeholder="60"
+                          v-model.trim="formData['display-refresh-rate']"
+                        />
+                      </div>
+                      <div class="impl-note">{{ t('apps.display_profile_advanced_res_note') }}</div>
+
+                      <div class="field-row hdr-row">
+                        <label class="form-label" for="app_fixed_hdr">{{ t('apps.display_profile_fixed_hdr') }}</label>
+                        <select class="form-select" id="app_fixed_hdr" v-model="formData['display-hdr']">
+                          <option value="">{{ t('apps.display_profile_fixed_hdr_inherit') }}</option>
+                          <option value="on">{{ t('apps.display_profile_fixed_hdr_on') }}</option>
+                          <option value="off">{{ t('apps.display_profile_fixed_hdr_off') }}</option>
+                        </select>
+                      </div>
+                      <div class="impl-note">{{ t('apps.display_profile_advanced_hdr_note') }}</div>
+                    </div>
+                  </details>
+                </template>
+              </AccordionItem>
+
               <AccordionItem id="commands" icon="fa-terminal" :title="t('apps.command_settings')" parent-id="appFormAccordion">
                 <div class="form-group-enhanced">
                   <div class="form-check form-switch">
@@ -321,6 +432,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { usePlatformI18n } from '../platform-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
 import CommandTable from './CommandTable.vue'
@@ -328,9 +440,13 @@ import ImageSelector from './ImageSelector.vue'
 import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
+import DisplayPreparationPicker from '../configs/tabs/audiovideo/DisplayPreparationPicker.vue'
+import DisplayRuleRadioGroup from '../configs/tabs/audiovideo/DisplayRuleRadioGroup.vue'
+import NewDisplayOutputSelector from '../configs/tabs/audiovideo/NewDisplayOutputSelector.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
-import { apiPostJson } from '../utils/apiFetch.js'
+import { apiJson, apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
+import { normalizeAppDisplayProfile } from '../utils/appDisplayProfile.js'
 import { PER_APP_GAMEPAD_MODES } from '../utils/gamepadModes.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
@@ -350,6 +466,14 @@ const DEFAULT_FORM_DATA = Object.freeze({
   detached: [],
   'image-path': '',
   'working-dir': '',
+  'display-target': '',
+  'display-device-prep': 'ensure_active',
+  'display-resolution-mode': '',
+  'display-refresh-rate-mode': '',
+  'display-output-name': '',
+  'display-resolution': '',
+  'display-refresh-rate': '',
+  'display-hdr': '',
 })
 
 const FIELD_VALIDATION_MAP = Object.freeze({
@@ -370,6 +494,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'save-app'])
 
 const { t } = useI18n()
+const platformMessage = usePlatformI18n(props.platform)
+const tp = (key) => platformMessage.getMessageUsingPlatform(key)
 
 const modalElement = ref(null)
 const fileInput = ref(null)
@@ -382,6 +508,103 @@ const fileSelector = ref(null)
 
 const isWindows = computed(() => props.platform === 'windows')
 const isNewApp = computed(() => !props.app || props.app.index === -1)
+
+// ---- App Display Profile (server-side per-app display scheme) ----
+const displayDevices = ref([])
+
+const loadDisplayDevices = async () => {
+  try {
+    const config = await apiJson('/api/config')
+    displayDevices.value = Array.isArray(config.display_devices) ? config.display_devices : []
+  } catch (_) {
+    displayDevices.value = []
+  }
+}
+
+const hasForcedDisplayProfile = computed(() => Boolean(formData.value?.['display-target']))
+const appDisplayOutput = computed({
+  get: () => {
+    const target = formData.value?.['display-target']
+    if (!target) return '__inherit__'
+    if (target === 'virtual') return 'ZakoHDR'
+    return formData.value?.['display-output-name'] || '__physical__'
+  },
+  set: (outputName) => {
+    if (outputName === '__inherit__') {
+      formData.value['display-target'] = ''
+      formData.value['display-output-name'] = ''
+    } else if (outputName === 'ZakoHDR') {
+      formData.value['display-target'] = 'virtual'
+      formData.value['display-output-name'] = ''
+    } else {
+      formData.value['display-target'] = 'physical'
+      formData.value['display-output-name'] = outputName === '__physical__' ? '' : outputName
+    }
+  },
+})
+const displayRuleModes = Object.freeze({
+  '': 'inherit',
+  no_operation: 'no_operation',
+  client: 'follow_client',
+})
+const appResolutionOptionLabels = computed(() => ({
+  inherit: t('apps.display_profile_inherit'),
+  no_operation: tp('config.resolution_change_no_operation'),
+  follow_client: tp('config.resolution_change_automatic'),
+}))
+const appRefreshRateOptionLabels = computed(() => ({
+  inherit: t('apps.display_profile_inherit'),
+  no_operation: tp('config.refresh_rate_change_no_operation'),
+  follow_client: tp('config.refresh_rate_change_automatic'),
+}))
+const displayRuleValue = (mode) => {
+  if (mode === 'no_operation') return 'no_operation'
+  if (mode === 'follow_client') return 'client'
+  return ''
+}
+const hasFixedResolution = computed(() => Boolean(formData.value?.['display-resolution']?.trim()))
+const hasFixedRefreshRate = computed(() => Boolean(formData.value?.['display-refresh-rate']?.trim()))
+const fixedValuesEnabled = computed({
+  get: () => hasFixedResolution.value || hasFixedRefreshRate.value,
+  set: (enabled) => {
+    if (!enabled) {
+      formData.value['display-resolution'] = ''
+      formData.value['display-refresh-rate'] = ''
+    }
+  },
+})
+const appResolutionRule = computed({
+  get: () => {
+    if (hasFixedResolution.value) return 'follow_client'
+    return displayRuleModes[formData.value?.['display-resolution-mode']] || 'inherit'
+  },
+  set: (mode) => {
+    if (mode !== 'follow_client') {
+      formData.value['display-resolution'] = ''
+    }
+    formData.value['display-resolution-mode'] = displayRuleValue(mode)
+  },
+})
+const appRefreshRateRule = computed({
+  get: () => {
+    if (hasFixedRefreshRate.value) return 'follow_client'
+    return displayRuleModes[formData.value?.['display-refresh-rate-mode']] || 'inherit'
+  },
+  set: (mode) => {
+    if (mode !== 'follow_client') {
+      formData.value['display-refresh-rate'] = ''
+    }
+    formData.value['display-refresh-rate-mode'] = displayRuleValue(mode)
+  },
+})
+const displayProfileValid = computed(() => {
+  if (!formData.value?.['display-target']) return true
+  if (hasFixedResolution.value && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(formData.value['display-resolution'])) return false
+  if (hasFixedRefreshRate.value && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(formData.value['display-refresh-rate'])) return false
+  return true
+})
+// ---- end App Display Profile ----
+
 const isFormValid = computed(() => {
   // name 字段是必填的，必须验证通过
   const nameValid = validation.value.name?.isValid === true
@@ -389,7 +612,7 @@ const isFormValid = computed(() => {
   // cmd 字段不是必填的，如果已验证则使用验证结果，如果未验证或为空则认为有效
   const cmdValid = validation.value.cmd?.isValid !== false  // undefined 或 true 都认为有效
   
-  return nameValid && cmdValid
+  return nameValid && cmdValid && displayProfileValid.value
 })
 
 const showMessage = (message, type = 'info') => {
@@ -639,7 +862,7 @@ const saveApp = async () => {
     return
   }
 
-  const editedApp = { ...formData.value }
+  const editedApp = normalizeAppDisplayProfile({ ...formData.value })
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }
@@ -659,6 +882,7 @@ watch(
 )
 
 onMounted(() => {
+  void loadDisplayDevices()
   nextTick(() => {
     initializeModal()
     initializeFileSelector()
@@ -779,6 +1003,154 @@ onBeforeUnmount(cleanup)
     white-space: nowrap;
     
     color: var(--ui-text-muted);
+  }
+}
+
+/* ===== App Display Profile ===== */
+.display-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.display-options-note {
+  margin: 0 0 1rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-soft);
+  color: var(--ui-text-secondary);
+}
+
+.display-options-note summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  color: var(--ui-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.display-options-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.display-options-note summary i {
+  color: var(--ui-accent);
+}
+
+.display-options-note summary::after {
+  margin-left: auto;
+  font-family: 'Font Awesome 7 Free';
+  font-weight: 900;
+  content: '\f078';
+  transition: transform 0.2s ease;
+}
+
+.display-options-note[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.display-options-note p {
+  margin: 0;
+  padding: 0 0.85rem 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.display-profile-alert {
+  border-color: color-mix(in srgb, var(--bs-warning) 45%, var(--ui-border));
+  background: color-mix(in srgb, var(--bs-warning) 12%, var(--ui-surface));
+  color: var(--ui-text);
+}
+
+/* Advanced options (server-side fixed values) */
+.advanced-options-note {
+  margin-top: 0.4rem;
+  border: 1px dashed var(--ui-accent);
+  border-radius: var(--ui-radius-md);
+  background: color-mix(in srgb, var(--ui-accent) 4%, var(--ui-surface));
+}
+
+.advanced-options-note summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  color: var(--ui-accent);
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+
+.advanced-options-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-options-note summary::after {
+  margin-left: auto;
+  font-family: 'Font Awesome 7 Free';
+  font-weight: 900;
+  content: '\f078';
+  color: var(--ui-text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.advanced-options-note[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.advanced-options-note .advanced-sub {
+  color: var(--ui-text-muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+.advanced-body {
+  padding: 0 0.9rem 0.9rem;
+}
+
+.advanced-body .field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.45rem 0;
+  flex-wrap: wrap;
+}
+
+.advanced-body .field-row input[type="text"] {
+  width: 9rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.advanced-body .field-row .field-sep {
+  color: var(--ui-text-secondary);
+  font-size: 0.8rem;
+}
+
+.advanced-body .field-row.hdr-row .form-select {
+  width: 14rem;
+}
+
+.advanced-body .impl-note {
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--ui-radius-sm);
+  background: #fff8e6;
+  border: 1px solid #f0d99a;
+  color: #6b5310;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 767.98px) {
+  .display-rule-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

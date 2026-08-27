@@ -19,15 +19,27 @@ defineProps({
     type: Array,
     required: true,
   },
+  optionLabels: {
+    type: Object,
+    default: () => ({}),
+  },
+  platformAware: {
+    type: Boolean,
+    default: true,
+  },
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
 </script>
 
 <template>
-  <section class="display-setting-card">
+  <section class="display-setting-card" :class="{ 'is-disabled': disabled }">
     <h3 :id="`${name}_label`" class="display-setting-title">
-      {{ $tp(labelKey) }}
+      {{ platformAware ? $tp(labelKey) : $t(labelKey) }}
     </h3>
     <div class="display-rule-options" role="radiogroup" :aria-labelledby="`${name}_label`">
       <label
@@ -42,9 +54,10 @@ const emit = defineEmits(['update:modelValue'])
           :name="name"
           :value="option"
           :checked="modelValue === option"
+          :disabled="disabled"
           @change="emit('update:modelValue', option)"
         />
-        <span>{{ $tp(optionKeyPrefix + option) }}</span>
+        <span>{{ optionLabels[option] || (platformAware ? $tp(optionKeyPrefix + option) : $t(optionKeyPrefix + option)) }}</span>
       </label>
     </div>
     <slot></slot>
@@ -58,6 +71,21 @@ const emit = defineEmits(['update:modelValue'])
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
   background: var(--ui-surface);
+  transition:
+    opacity 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.display-setting-card.is-disabled {
+  opacity: 0.62;
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent) 20%, transparent);
+}
+
+.display-setting-card.is-disabled .display-setting-title::after {
+  content: ' 🔒';
+  font-size: 0.72rem;
 }
 
 .display-setting-title {
@@ -87,7 +115,8 @@ const emit = defineEmits(['update:modelValue'])
   transition:
     border-color 0.2s ease,
     background-color 0.2s ease,
-    color 0.2s ease;
+    color 0.2s ease,
+    opacity 0.25s ease;
 }
 
 .display-rule-option:hover {
@@ -101,9 +130,19 @@ const emit = defineEmits(['update:modelValue'])
   color: var(--ui-text-primary);
 }
 
+.display-rule-option:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .display-rule-option .form-check-input {
   flex: 0 0 auto;
   margin: 0.1rem 0 0;
   cursor: pointer;
+}
+
+.display-rule-option .form-check-input:disabled {
+  cursor: not-allowed;
 }
 </style>
