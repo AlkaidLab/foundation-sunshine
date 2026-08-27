@@ -2830,7 +2830,12 @@ namespace platf::dxgi {
       if (!nvenc_d3d) return false;
 
       hdr_luminance_analysis_available = false;
-      if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
+      auto nvenc_config = config::video.nv;
+      // The block-linear array input is experimental: it has stalled encoder
+      // probing on some drivers and a wedged probe delays every stream start.
+      // Probe the known-good pitch-linear path; only real sessions opt in.
+      nvenc_config.cuda_array_input = nvenc_config.cuda_array_input && !is_probe;
+      if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
       base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);

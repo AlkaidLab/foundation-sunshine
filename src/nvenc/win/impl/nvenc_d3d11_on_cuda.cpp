@@ -6,6 +6,11 @@
 
 #include "../../common_impl/nvenc_utils.h"
 
+#include <map>
+#include <memory>
+#include <mutex>
+#include <utility>
+
 #ifdef NVENC_NAMESPACE
 namespace NVENC_NAMESPACE {
 #else
@@ -42,12 +47,12 @@ namespace nvenc {
         destroy_cuda_array_input();
 #endif
       }
-
-      if (cuda_failed(cuda_functions.cuCtxDestroy(cuda_context))) {
-        BOOST_LOG(error) << "NvEnc: cuCtxDestroy() failed: error " << last_cuda_error;
-      }
-      cuda_context = nullptr;
     }
+
+    // The CUDA context is shared per adapter and outlives this encoder; drop
+    // only the reference, the per-adapter cache keeps it alive.
+    interop_context.reset();
+    cuda_context = nullptr;
   }
 
   ID3D11Texture2D *
@@ -55,72 +60,143 @@ namespace nvenc {
     return d3d_input_texture.GetInterfacePtr();
   }
 
+  cuda_interop_context::~cuda_interop_context() {
+    if (context) {
+      if (functions.cuCtxDestroy(context) != CUDA_SUCCESS) {
+        BOOST_LOG(error) << "NvEnc: cuCtxDestroy() failed for shared CUDA interop context";
+      }
+      context = nullptr;
+    }
+  }
+
+  // One CUDA interop context per DXGI adapter, kept for the process lifetime.
+  // Encoder probing alone used to cycle through several full create/destroy
+  // lifecycles (one per 4:4:4 candidate, another per session setup), and each
+  // cycle is driver interop churn we have no reason to exercise.
+  using cuda_interop_luid_key_t = std::pair<LONG, DWORD>;
+  static std::mutex g_cuda_interop_cache_mutex;
+  static std::map<cuda_interop_luid_key_t, std::shared_ptr<cuda_interop_context>> g_cuda_interop_cache;
+
+  static std::shared_ptr<cuda_interop_context>
+  acquire_cuda_interop_context(ID3D11Device *d3d_device) {
+    IDXGIDevicePtr dxgi_device;
+    IDXGIAdapterPtr dxgi_adapter;
+    if (!d3d_device ||
+        FAILED(d3d_device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) ||
+        FAILED(dxgi_device->GetAdapter(&dxgi_adapter))) {
+      BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter for CUDA interop";
+      return nullptr;
+    }
+
+    DXGI_ADAPTER_DESC adapter_desc {};
+    if (FAILED(dxgi_adapter->GetDesc(&adapter_desc))) {
+      // A zeroed AdapterLuid would key every failing adapter onto the same
+      // cache entry, i.e. another GPU's CUDA context.
+      BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter description for CUDA interop";
+      return nullptr;
+    }
+    const cuda_interop_luid_key_t key { adapter_desc.AdapterLuid.HighPart, adapter_desc.AdapterLuid.LowPart };
+
+    std::lock_guard<std::mutex> lock(g_cuda_interop_cache_mutex);
+    if (auto it = g_cuda_interop_cache.find(key); it != g_cuda_interop_cache.end()) {
+      return it->second;
+    }
+
+    auto interop = std::make_shared<cuda_interop_context>();
+    auto &functions = interop->functions;
+
+    constexpr auto dll_name = "nvcuda.dll";
+    if (!(functions.dll = make_shared_dll(LoadLibraryEx(dll_name, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32)))) {
+      BOOST_LOG(debug) << "NvEnc: couldn't load CUDA dynamic library " << dll_name;
+      return nullptr;
+    }
+
+    auto load_function = [&]<typename T>(T &location, auto symbol) -> bool {
+      location = (T) GetProcAddress(functions.dll.get(), symbol);
+      return location != nullptr;
+    };
+    if (!load_function(functions.cuInit, "cuInit") ||
+        !load_function(functions.cuD3D11GetDevice, "cuD3D11GetDevice") ||
+        !load_function(functions.cuCtxCreate, "cuCtxCreate_v2") ||
+        !load_function(functions.cuCtxDestroy, "cuCtxDestroy_v2") ||
+        !load_function(functions.cuCtxPushCurrent, "cuCtxPushCurrent_v2") ||
+        !load_function(functions.cuCtxPopCurrent, "cuCtxPopCurrent_v2") ||
+        !load_function(functions.cuMemAllocPitch, "cuMemAllocPitch_v2") ||
+        !load_function(functions.cuMemFree, "cuMemFree_v2") ||
+        !load_function(functions.cuGraphicsD3D11RegisterResource, "cuGraphicsD3D11RegisterResource") ||
+        !load_function(functions.cuGraphicsUnregisterResource, "cuGraphicsUnregisterResource") ||
+        !load_function(functions.cuGraphicsMapResources, "cuGraphicsMapResources") ||
+        !load_function(functions.cuGraphicsUnmapResources, "cuGraphicsUnmapResources") ||
+        !load_function(functions.cuGraphicsSubResourceGetMappedArray, "cuGraphicsSubResourceGetMappedArray") ||
+        !load_function(functions.cuMemcpy2D, "cuMemcpy2D_v2")) {
+      BOOST_LOG(error) << "NvEnc: missing CUDA functions in " << dll_name;
+      return nullptr;
+    }
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+    else if (!load_function(functions.cuArray3DCreate, "cuArray3DCreate_v2") ||
+             !load_function(functions.cuArrayDestroy, "cuArrayDestroy") ||
+             !load_function(functions.cuArrayGetPlane, "cuArrayGetPlane")) {
+      BOOST_LOG(info) << "NvEnc: CUDA array input functions unavailable, using CUDA device pointer input";
+      functions.cuArray3DCreate = nullptr;
+      functions.cuArrayDestroy = nullptr;
+      functions.cuArrayGetPlane = nullptr;
+    }
+#endif
+
+    CUresult last_error;
+    CUdevice cuda_device;
+    if ((last_error = functions.cuInit(0)) == CUDA_SUCCESS &&
+        (last_error = functions.cuD3D11GetDevice(&cuda_device, dxgi_adapter)) == CUDA_SUCCESS &&
+        (last_error = functions.cuCtxCreate(&interop->context, CU_CTX_SCHED_BLOCKING_SYNC, cuda_device)) == CUDA_SUCCESS &&
+        (last_error = functions.cuCtxPopCurrent(&interop->context)) == CUDA_SUCCESS) {
+      g_cuda_interop_cache.emplace(key, interop);
+      return interop;
+    }
+
+    BOOST_LOG(error) << "NvEnc: couldn't create CUDA interop context: error " << last_error;
+    // ~cuda_interop_context releases a partially created context, if any
+    return nullptr;
+  }
+
+  // cuCtxPushCurrent() cannot fail on a healthy context, so a failure means
+  // the shared context is dead (GPU reset, adapter removal). Evict it so the
+  // next encoder object builds a fresh one: the failing session dies once and
+  // the existing session-reinit logic retries with a new context, instead of
+  // the poisoned entry breaking every future 4:4:4 session until service
+  // restart. Worst case (the context was actually fine) this costs one
+  // context re-creation.
+  static void
+  evict_dead_cuda_interop_context(CUcontext context) {
+    std::shared_ptr<cuda_interop_context> evicted;
+    {
+      std::lock_guard<std::mutex> lock(g_cuda_interop_cache_mutex);
+      for (auto it = g_cuda_interop_cache.begin(); it != g_cuda_interop_cache.end(); ++it) {
+        if (it->second && it->second->context == context) {
+          BOOST_LOG(warning) << "NvEnc: evicting dead CUDA interop context from the per-adapter cache";
+          evicted = it->second;
+          g_cuda_interop_cache.erase(it);
+          break;
+        }
+      }
+    }
+    // Drop the cache's reference outside the lock; if this was the last one,
+    // ~cuda_interop_context runs and its cuCtxDestroy() on the dead context
+    // just fails and logs.
+    evicted.reset();
+  }
+
   bool
   nvenc_d3d11_on_cuda::init_library() {
     if (!nvenc_d3d11_base::init_library()) return false;
 
-    constexpr auto dll_name = "nvcuda.dll";
+    interop_context = acquire_cuda_interop_context(d3d_device.GetInterfacePtr());
+    if (!interop_context) return false;
 
-    if ((cuda_functions.dll = make_shared_dll(LoadLibraryEx(dll_name, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32)))) {
-      auto load_function = [&]<typename T>(T &location, auto symbol) -> bool {
-        location = (T) GetProcAddress(cuda_functions.dll.get(), symbol);
-        return location != nullptr;
-      };
-      if (!load_function(cuda_functions.cuInit, "cuInit") ||
-          !load_function(cuda_functions.cuD3D11GetDevice, "cuD3D11GetDevice") ||
-          !load_function(cuda_functions.cuCtxCreate, "cuCtxCreate_v2") ||
-          !load_function(cuda_functions.cuCtxDestroy, "cuCtxDestroy_v2") ||
-          !load_function(cuda_functions.cuCtxPushCurrent, "cuCtxPushCurrent_v2") ||
-          !load_function(cuda_functions.cuCtxPopCurrent, "cuCtxPopCurrent_v2") ||
-          !load_function(cuda_functions.cuMemAllocPitch, "cuMemAllocPitch_v2") ||
-          !load_function(cuda_functions.cuMemFree, "cuMemFree_v2") ||
-          !load_function(cuda_functions.cuGraphicsD3D11RegisterResource, "cuGraphicsD3D11RegisterResource") ||
-          !load_function(cuda_functions.cuGraphicsUnregisterResource, "cuGraphicsUnregisterResource") ||
-          !load_function(cuda_functions.cuGraphicsMapResources, "cuGraphicsMapResources") ||
-          !load_function(cuda_functions.cuGraphicsUnmapResources, "cuGraphicsUnmapResources") ||
-          !load_function(cuda_functions.cuGraphicsSubResourceGetMappedArray, "cuGraphicsSubResourceGetMappedArray") ||
-          !load_function(cuda_functions.cuMemcpy2D, "cuMemcpy2D_v2")) {
-        BOOST_LOG(error) << "NvEnc: missing CUDA functions in " << dll_name;
-        cuda_functions = {};
-      }
-#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
-      else if (!load_function(cuda_functions.cuArray3DCreate, "cuArray3DCreate_v2") ||
-               !load_function(cuda_functions.cuArrayDestroy, "cuArrayDestroy") ||
-               !load_function(cuda_functions.cuArrayGetPlane, "cuArrayGetPlane")) {
-        BOOST_LOG(info) << "NvEnc: CUDA array input functions unavailable, using CUDA device pointer input";
-        cuda_functions.cuArray3DCreate = nullptr;
-        cuda_functions.cuArrayDestroy = nullptr;
-        cuda_functions.cuArrayGetPlane = nullptr;
-      }
-#endif
-    }
-    else {
-      BOOST_LOG(debug) << "NvEnc: couldn't load CUDA dynamic library " << dll_name;
-    }
+    cuda_functions = interop_context->functions;
+    cuda_context = interop_context->context;
+    device = cuda_context;
 
-    if (cuda_functions.dll) {
-      IDXGIDevicePtr dxgi_device;
-      IDXGIAdapterPtr dxgi_adapter;
-      if (d3d_device &&
-          SUCCEEDED(d3d_device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) &&
-          SUCCEEDED(dxgi_device->GetAdapter(&dxgi_adapter))) {
-        CUdevice cuda_device;
-        if (cuda_succeeded(cuda_functions.cuInit(0)) &&
-            cuda_succeeded(cuda_functions.cuD3D11GetDevice(&cuda_device, dxgi_adapter)) &&
-            cuda_succeeded(cuda_functions.cuCtxCreate(&cuda_context, CU_CTX_SCHED_BLOCKING_SYNC, cuda_device)) &&
-            cuda_succeeded(cuda_functions.cuCtxPopCurrent(&cuda_context))) {
-          device = cuda_context;
-        }
-        else {
-          BOOST_LOG(error) << "NvEnc: couldn't create CUDA interop context: error " << last_cuda_error;
-        }
-      }
-      else {
-        BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter for CUDA interop";
-      }
-    }
-
-    return device != nullptr;
+    return true;
   }
 
   bool
@@ -195,9 +271,10 @@ namespace nvenc {
     }
 
 #if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
-    // Opt-in only. The array path has shipped ghosted output and has been seen to
-    // stall during encoder probing on some drivers, so the pitch-linear device
-    // pointer stays the default until it is confirmed good on real hardware.
+    // Opt-in only, and probing never takes this path (d3d_nvenc_encode_device_t
+    // forces the device pointer when is_probe): the array path has shipped
+    // ghosted output and stalled on some drivers, so it stays experimental for
+    // real sessions until it is confirmed good on real hardware.
     if (encoder_params.cuda_array_input) {
       if (create_and_register_cuda_array_input()) {
         BOOST_LOG(info) << "NvEnc: using block-linear CUDA array input";
@@ -432,6 +509,9 @@ namespace nvenc {
     }
     else {
       BOOST_LOG(error) << "NvEnc: cuCtxPushCurrent() failed: error " << last_cuda_error;
+      if (cuda_context) {
+        evict_dead_cuda_interop_context(cuda_context);
+      }
       return { *this, nullptr };
     }
   }
