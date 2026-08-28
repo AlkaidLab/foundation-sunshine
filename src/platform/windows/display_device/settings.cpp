@@ -1336,6 +1336,14 @@ namespace display_device {
       persistent_data->original_modes[new_id] = mode_value;
       BOOST_LOG(debug) << "Replaced VDD ID in original_modes: " << old_id << " -> " << new_id;
     }
+
+    if (persistent_data->original_primary_display == old_id) {
+      // The rebuilt VDD keeps the primary-display record pointing at a live
+      // device, so a later revert restores primary to the new VDD instead of
+      // failing on the destroyed one.
+      persistent_data->original_primary_display = new_id;
+      BOOST_LOG(debug) << "Replaced VDD ID in original_primary_display: " << old_id << " -> " << new_id;
+    }
     
     // Save updated persistent data
     save_settings(filepath, *persistent_data);
