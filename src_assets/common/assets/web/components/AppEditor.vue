@@ -236,6 +236,7 @@
                           id="app_fixed_resolution"
                           placeholder="2560x1440"
                           v-model.trim="formData['display-resolution']"
+                          :disabled="!fixedValuesEnabled"
                         />
                         <span class="field-sep">@</span>
                         <input
@@ -244,6 +245,7 @@
                           id="app_fixed_refresh_rate"
                           placeholder="60"
                           v-model.trim="formData['display-refresh-rate']"
+                          :disabled="!fixedValuesEnabled"
                         />
                       </div>
                       <div class="impl-note">{{ t('apps.display_profile_advanced_res_note') }}</div>
@@ -579,15 +581,25 @@ const displayRuleValue = (mode) => {
 }
 const hasFixedResolution = computed(() => Boolean(formData.value?.['display-resolution']?.trim()))
 const hasFixedRefreshRate = computed(() => Boolean(formData.value?.['display-refresh-rate']?.trim()))
-const fixedValuesEnabled = computed({
-  get: () => hasFixedResolution.value || hasFixedRefreshRate.value,
-  set: (enabled) => {
-    if (!enabled) {
-      formData.value['display-resolution'] = ''
-      formData.value['display-refresh-rate'] = ''
-    }
-  },
+// The fixed-values switch is a real control: it owns the enabled state and
+// the inputs are disabled while it is off. It initializes from existing
+// values, turns itself on when a value is typed, and clears both values
+// when turned off.
+const fixedValuesEnabled = ref(false)
+watch(fixedValuesEnabled, (enabled) => {
+  if (!enabled) {
+    formData.value['display-resolution'] = ''
+    formData.value['display-refresh-rate'] = ''
+  }
 })
+watch(
+  () => [formData.value?.['display-resolution'], formData.value?.['display-refresh-rate']],
+  ([resolution, refreshRate]) => {
+    if (resolution?.trim() || refreshRate?.trim()) {
+      fixedValuesEnabled.value = true
+    }
+  }
+)
 const appResolutionRule = computed({
   get: () => {
     if (hasFixedResolution.value) return 'follow_client'
@@ -723,6 +735,9 @@ const ensureDefaultValues = () => {
 const initializeForm = (app) => {
   formData.value = { ...DEFAULT_FORM_DATA, ...deepClone(app) }
   ensureDefaultValues()
+  fixedValuesEnabled.value = Boolean(
+    formData.value['display-resolution']?.trim() || formData.value['display-refresh-rate']?.trim()
+  )
   validation.value = {}
   imageError.value = ''
   // 立即验证所有字段，确保表单状态正确

@@ -25,7 +25,7 @@ export function normalizeAppDisplayProfile(app) {
     if (key.startsWith('display-') && !DISPLAY_PROFILE_FIELDS.has(key)) delete normalized[key]
   }
 
-  if (!normalized['display-target']) {
+  if (!['physical', 'virtual'].includes(normalized['display-target'])) {
     for (const key of DISPLAY_PROFILE_FIELDS) delete normalized[key]
     return normalized
   }
