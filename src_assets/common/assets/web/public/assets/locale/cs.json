@@ -235,7 +235,7 @@
     "amd_quality_quality": "kvalita -- preferovat kvalitu",
     "amd_quality_speed": "Rychlost -- preferovat rychlost",
     "amd_qvbr_quality": "Úroveň kvality AMF QVBR",
-    "amd_qvbr_quality_desc": "Úroveň kvality pro režim řízení bitrate QVBR. Rozsah: 1-51 (nižší = lepší kvalita). Výchozí: 23. Platí pouze když je řízení bitrate nastaveno na 'qvbr'.",
+    "amd_qvbr_quality_desc": "Úroveň kvality pro režim řízení bitrate QVBR. Rozsah: 1-51 (vyšší = lepší kvalita). Výchozí: 23. Platí pouze když je řízení bitrate nastaveno na 'qvbr'.",
     "amd_rc": "Ovládání AMF",
     "amd_rc_cbr": "cbr -- konstantní bitrate (doporučujeme pokud je HRD zapnuto)",
     "amd_rc_cqp": "cqp -- konstantní qp režim",

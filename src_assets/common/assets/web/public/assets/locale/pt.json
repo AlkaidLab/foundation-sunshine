@@ -235,7 +235,7 @@
     "amd_quality_quality": "qualidade -- preferir qualidade",
     "amd_quality_speed": "velocidade -- preferir velocidade",
     "amd_qvbr_quality": "Nível de qualidade AMF QVBR",
-    "amd_qvbr_quality_desc": "Nível de qualidade para o modo de controlo de taxa QVBR. Intervalo: 1-51 (menor = melhor qualidade). Predefinição: 23. Aplica-se apenas quando o controlo de taxa está definido como 'qvbr'.",
+    "amd_qvbr_quality_desc": "Nível de qualidade para o modo de controlo de taxa QVBR. Intervalo: 1-51 (maior = melhor qualidade). Predefinição: 23. Aplica-se apenas quando o controlo de taxa está definido como 'qvbr'.",
     "amd_rc": "Controle de Taxa AMF",
     "amd_rc_cbr": "cbr -- taxa de bits constante (padrão)",
     "amd_rc_cqp": "cqp -- modo qp constante",

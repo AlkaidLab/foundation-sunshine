@@ -235,7 +235,7 @@
     "amd_quality_quality": "품질 - 품질 선호",
     "amd_quality_speed": "속도 - 속도 선호",
     "amd_qvbr_quality": "AMF QVBR 품질 레벨",
-    "amd_qvbr_quality_desc": "QVBR 레이트 제어 모드의 품질 레벨. 범위: 1-51 (낮을수록 고품질). 기본값: 23. 레이트 제어가 'qvbr'로 설정된 경우에만 적용됩니다.",
+    "amd_qvbr_quality_desc": "QVBR 레이트 제어 모드의 품질 레벨. 범위: 1-51 (높을수록 고품질). 기본값: 23. 레이트 제어가 'qvbr'로 설정된 경우에만 적용됩니다.",
     "amd_rc": "AMF 비율 제어",
     "amd_rc_cbr": "cbr - 일정한 비트레이트(HRD가 활성화된 경우 권장)",
     "amd_rc_cqp": "CQP -- 상수 QP 모드",

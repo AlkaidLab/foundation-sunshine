@@ -235,7 +235,7 @@
     "amd_quality_quality": "Qualität -- Qualität bevorzugen",
     "amd_quality_speed": "speed -- bevorzuge Geschwindigkeit",
     "amd_qvbr_quality": "AMF QVBR-Qualitätsstufe",
-    "amd_qvbr_quality_desc": "Qualitätsstufe für den QVBR-Ratensteuerungsmodus. Bereich: 1-51 (niedriger = bessere Qualität). Standard: 23. Gilt nur wenn die Ratensteuerung auf 'qvbr' eingestellt ist.",
+    "amd_qvbr_quality_desc": "Qualitätsstufe für den QVBR-Ratensteuerungsmodus. Bereich: 1-51 (höher = bessere Qualität). Standard: 23. Gilt nur wenn die Ratensteuerung auf 'qvbr' eingestellt ist.",
     "amd_rc": "AMF-Ratensteuerung",
     "amd_rc_cbr": "cbr – Konstante Bitrate",
     "amd_rc_cqp": "cqp -- Konstanter qp-Modus",

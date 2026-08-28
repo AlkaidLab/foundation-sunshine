@@ -235,7 +235,7 @@
     "amd_quality_quality": "品質 -- 品質を優先",
     "amd_quality_speed": "スピード -- 速度を優先",
     "amd_qvbr_quality": "AMF QVBR品質レベル",
-    "amd_qvbr_quality_desc": "QVBRレート制御モードの品質レベル。範囲: 1-51（低い方が高品質）。デフォルト: 23。レート制御が'qvbr'に設定されている場合のみ適用。",
+    "amd_qvbr_quality_desc": "QVBRレート制御モードの品質レベル。範囲: 1-51（高い方が高品質）。デフォルト: 23。レート制御が'qvbr'に設定されている場合のみ適用。",
     "amd_rc": "AMFレート制御",
     "amd_rc_cbr": "cbr -- 固定ビットレート（デフォルト）",
     "amd_rc_cqp": "cqp -- 固定qp モード",
