@@ -655,6 +655,11 @@ namespace nvhttp {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
+    // Apply the server-side per-app display scheme (if any) after the client
+    // parameters are parsed but before HDR target resolution, so the profile
+    // overrides (use_vdd / enable_hdr) are what resolve_session_target and the
+    // VDD HDR calibration see.
+    proc::proc.apply_app_display_profile(appid, *launch_session);
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
@@ -664,10 +669,6 @@ namespace nvhttp {
                          << ", rule_revision=" << fingerprint_match.revision
                          << ", rule_source=" << fingerprint_match.source << ']';
     }
-
-    // Apply the server-side per-app display scheme (if any) after the client
-    // parameters are parsed, so the app profile overrides the client requests.
-    proc::proc.apply_app_display_profile(appid, *launch_session);
 
     if (rtsp_stream::session_count() == 0) {
       // We want to prepare display only if there are no active sessions at
@@ -827,6 +828,9 @@ namespace nvhttp {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
+    // Keep the server-side per-app display scheme applied on resume too,
+    // before HDR target resolution so the profile overrides are honored.
+    proc::proc.apply_app_display_profile(current_appid, *launch_session);
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
@@ -836,9 +840,6 @@ namespace nvhttp {
                          << ", rule_revision=" << fingerprint_match.revision
                          << ", rule_source=" << fingerprint_match.source << ']';
     }
-
-    // Keep the server-side per-app display scheme applied on resume too.
-    proc::proc.apply_app_display_profile(current_appid, *launch_session);
 
     if (no_active_sessions) {
       // Prepare before publishing the ticket so the handshake expiration
