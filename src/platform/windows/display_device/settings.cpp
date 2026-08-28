@@ -700,10 +700,15 @@ namespace display_device {
           if (data.original_modes.erase(vdd_id) > 0) {
             BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
           }
-          if (data.original_primary_display == vdd_id) {
+          if (data.original_primary_display == vdd_id &&
+              vdd_device_ids.count(vdd_id) == 0) {
             // The session-created VDD that was primary is being destroyed.
-            // Clearing it lets the topology revert below restore the correct
-            // primary device instead of failing on the now-removed VDD.
+            // vdd_device_ids only contains VDDs that still exist (collected
+            // from the friendly name above), so a missing entry means the
+            // device is gone. Clearing the record lets the topology revert
+            // below restore the correct primary device instead of failing on
+            // the removed VDD. Retained VDDs (vdd_keep_enabled or resident in
+            // the initial topology) keep their primary-display record.
             BOOST_LOG(debug) << "Cleared original_primary_display pointing to destroyed VDD: " << vdd_id;
             data.original_primary_display.clear();
             data_modified = true;
