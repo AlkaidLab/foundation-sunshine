@@ -50,7 +50,7 @@
       >
         <div class="version-update-summary">
           <div class="version-update-copy">
-            <span class="release-channel">{{ $t(update.channelLabelKey) }}</span>
+            <span class="release-channel">{{ update.channelLabel }}</span>
             <h2 :id="`version-update-${update.channel}`" class="version-update-title">
               {{ $t(update.titleKey) }}
             </h2>
@@ -66,7 +66,7 @@
               @click="handleDownloadClick(update.release.html_url, update.channel)"
             >
               <i :class="pendingNativeChannel === update.channel ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
-              {{ $t('index.download_update') }}
+              {{ $t('index.download') }}
               <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
             </button>
             <button
@@ -145,11 +145,8 @@ const props = defineProps({
   parsedPreReleaseBody: String,
 })
 
-const formatReleaseBody = (body = '') => {
-  let notes = body.replace(
-    /^\s*<h[1-6][^>]*>\s*What(?:'|’)?s Changed\s*<\/h[1-6]>\s*/i,
-    ''
-  )
+const extractReleaseDetails = (body = '') => {
+  let notes = body
   let contributors = ''
   let fullChangelog = ''
 
@@ -176,22 +173,22 @@ const availableUpdates = computed(() => {
   if (props.notifyPreReleases && props.preReleaseBuildAvailable && props.preReleaseVersion?.release) {
     updates.push({
       channel: 'prerelease',
-      channelLabelKey: 'index.beta_version',
+      channelLabel: 'Beta',
       titleKey: 'index.update_available',
       descriptionKey: 'index.new_pre_release',
       release: props.preReleaseVersion.release,
-      details: formatReleaseBody(props.parsedPreReleaseBody),
+      details: extractReleaseDetails(props.parsedPreReleaseBody),
     })
   }
 
   if (props.stableBuildAvailable && props.githubVersion?.release) {
     updates.push({
       channel: 'stable',
-      channelLabelKey: 'index.stable_version',
+      channelLabel: 'Stable',
       titleKey: 'index.update_available',
       descriptionKey: 'index.new_stable',
       release: props.githubVersion.release,
-      details: formatReleaseBody(props.parsedStableBody),
+      details: extractReleaseDetails(props.parsedStableBody),
     })
   }
 
@@ -728,6 +725,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.8rem;
+  margin-left: auto;
   color: var(--ui-text-secondary);
 }
 
@@ -803,6 +801,10 @@ onBeforeUnmount(() => {
   .version-update-footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .release-contributors {
+    align-self: flex-end;
   }
 }
 
