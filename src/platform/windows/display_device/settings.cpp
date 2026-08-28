@@ -678,6 +678,18 @@ namespace display_device {
         BOOST_LOG(debug) << "VDD在初始拓扑中（常驻VDD），保留不销毁";
       }
 
+      // vdd_device_ids was collected before destroy_vdd_monitor() ran, so it
+      // still contains the VDDs destroyed above. Re-enumerate after
+      // destruction: a VDD id that no longer resolves to a friendly name is
+      // confirmed gone, while retained devices (vdd_keep_enabled or resident
+      // in the initial topology) still resolve and keep their records.
+      std::unordered_set<std::string> existing_vdd_ids;
+      for (const auto &vdd_id : vdd_device_ids) {
+        if (!get_display_friendly_name(vdd_id).empty()) {
+          existing_vdd_ids.insert(vdd_id);
+        }
+      }
+
       // Remove VDD devices from topology before reverting, as VDD may have been destroyed
       // This function now returns the IDs of removed devices
       const auto vdd_ids_from_initial = remove_vdd_from_topology(data.topology.initial);
@@ -701,14 +713,14 @@ namespace display_device {
             BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
           }
           if (data.original_primary_display == vdd_id &&
-              vdd_device_ids.count(vdd_id) == 0) {
+              existing_vdd_ids.count(vdd_id) == 0) {
             // The session-created VDD that was primary is being destroyed.
-            // vdd_device_ids only contains VDDs that still exist (collected
-            // from the friendly name above), so a missing entry means the
-            // device is gone. Clearing the record lets the topology revert
-            // below restore the correct primary device instead of failing on
-            // the removed VDD. Retained VDDs (vdd_keep_enabled or resident in
-            // the initial topology) keep their primary-display record.
+            // existing_vdd_ids is re-enumerated after destruction, so a
+            // missing entry means the device is gone. Clearing the record
+            // lets the topology revert below restore the correct primary
+            // device instead of failing on the removed VDD. Retained VDDs
+            // (vdd_keep_enabled or resident in the initial topology) keep
+            // their primary-display record.
             BOOST_LOG(debug) << "Cleared original_primary_display pointing to destroyed VDD: " << vdd_id;
             data.original_primary_display.clear();
             data_modified = true;
