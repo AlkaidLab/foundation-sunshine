@@ -235,7 +235,7 @@
     "amd_quality_quality": "quality -- prefer quality",
     "amd_quality_speed": "speed -- prefer speed",
     "amd_qvbr_quality": "AMF QVBR Quality Level",
-    "amd_qvbr_quality_desc": "Quality level for QVBR rate control mode. Range: 1-51 (lower = better quality). Default: 23. Only applies when rate control is set to 'qvbr'.",
+    "amd_qvbr_quality_desc": "Quality level for QVBR rate control mode. Range: 1-51 (higher = better quality). Default: 23. Only applies when rate control is set to 'qvbr'.",
     "amd_rc": "AMF Rate Control",
     "amd_rc_cbr": "cbr -- constant bitrate",
     "amd_rc_cqp": "cqp -- constant qp mode",

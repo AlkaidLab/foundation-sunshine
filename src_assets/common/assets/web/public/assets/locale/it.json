@@ -235,7 +235,7 @@
     "amd_quality_quality": "qualità -- preferisce la qualità",
     "amd_quality_speed": "velocità -- preferisce la velocità",
     "amd_qvbr_quality": "Livello qualità AMF QVBR",
-    "amd_qvbr_quality_desc": "Livello di qualità per la modalità di controllo bitrate QVBR. Intervallo: 1-51 (più basso = migliore qualità). Predefinito: 23. Si applica solo quando il controllo bitrate è impostato su 'qvbr'.",
+    "amd_qvbr_quality_desc": "Livello di qualità per la modalità di controllo bitrate QVBR. Intervallo: 1-51 (più alto = migliore qualità). Predefinito: 23. Si applica solo quando il controllo bitrate è impostato su 'qvbr'.",
     "amd_rc": "Controllo della Velocità AMF",
     "amd_rc_cbr": "cbr -- bitrate costante",
     "amd_rc_cqp": "cqp -- modalità qp costante",

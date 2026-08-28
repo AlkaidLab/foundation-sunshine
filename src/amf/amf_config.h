@@ -88,7 +88,7 @@ namespace amf {
     std::optional<int> pa_activity_type;
 
     // --- QVBR quality level ---
-    // For QVBR rate control mode: quality level 1-51 (lower=better)
+    // For QVBR rate control mode: quality level 1-51 (higher=better)
     std::optional<int> qvbr_quality_level;
 
     // --- Multi-HW instance encode / Smart Access Video ---

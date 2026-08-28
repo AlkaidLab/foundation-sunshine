@@ -235,7 +235,7 @@
     "amd_quality_quality": "kvalitet – föredra kvalitet",
     "amd_quality_speed": "speed -- föredra hastighet",
     "amd_qvbr_quality": "AMF QVBR-kvalitetsnivå",
-    "amd_qvbr_quality_desc": "Kvalitetsnivå för QVBR-hastighetskontrollläge. Intervall: 1-51 (lägre = bättre kvalitet). Standard: 23. Gäller bara när hastighetskontrollen är inställd på 'qvbr'.",
+    "amd_qvbr_quality_desc": "Kvalitetsnivå för QVBR-hastighetskontrollläge. Intervall: 1-51 (högre = bättre kvalitet). Standard: 23. Gäller bara när hastighetskontrollen är inställd på 'qvbr'.",
     "amd_rc": "AMF Rate kontroll",
     "amd_rc_cbr": "cbr – konstant bithastighet",
     "amd_rc_cqp": "cqp – konstant qp-läge",

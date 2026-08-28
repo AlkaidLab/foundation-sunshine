@@ -235,7 +235,7 @@
     "amd_quality_quality": "qualité -- préférer la qualité",
     "amd_quality_speed": "Vitesse -- Préférez la vitesse",
     "amd_qvbr_quality": "Niveau de qualité AMF QVBR",
-    "amd_qvbr_quality_desc": "Niveau de qualité pour le mode de contrôle de débit QVBR. Plage : 1-51 (plus bas = meilleure qualité). Par défaut : 23. S'applique uniquement quand le contrôle de débit est réglé sur 'qvbr'.",
+    "amd_qvbr_quality_desc": "Niveau de qualité pour le mode de contrôle de débit QVBR. Plage : 1-51 (plus élevé = meilleure qualité). Par défaut : 23. S'applique uniquement quand le contrôle de débit est réglé sur 'qvbr'.",
     "amd_rc": "Contrôle du débit AMF",
     "amd_rc_cbr": "cbr -- débit constant",
     "amd_rc_cqp": "cqp -- mode constant qp",

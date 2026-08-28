@@ -235,7 +235,7 @@
     "amd_quality_quality": "calidad -- Preferir calidad",
     "amd_quality_speed": "velocidad -- preferir velocidad",
     "amd_qvbr_quality": "Nivel de calidad AMF QVBR",
-    "amd_qvbr_quality_desc": "Nivel de calidad para el modo de control de tasa QVBR. Rango: 1-51 (menor = mejor calidad). Predeterminado: 23. Solo aplica cuando el control de tasa está en 'qvbr'.",
+    "amd_qvbr_quality_desc": "Nivel de calidad para el modo de control de tasa QVBR. Rango: 1-51 (mayor = mejor calidad). Predeterminado: 23. Solo aplica cuando el control de tasa está en 'qvbr'.",
     "amd_rc": "Control de tasa AMF",
     "amd_rc_cbr": "cbr -- velocidad de bits constante (recomendada si HRD está habilitado)",
     "amd_rc_cqp": "cqp -- modo qp constante",

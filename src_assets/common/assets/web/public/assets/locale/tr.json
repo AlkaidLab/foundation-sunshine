@@ -235,7 +235,7 @@
     "amd_quality_quality": "kalite -- kaliteyi tercih et",
     "amd_quality_speed": "hız -- hızı tercih et",
     "amd_qvbr_quality": "AMF QVBR Kalite Seviyesi",
-    "amd_qvbr_quality_desc": "QVBR hız kontrolü modu için kalite seviyesi. Aralık: 1-51 (düşük = daha iyi kalite). Varsayılan: 23. Yalnızca hız kontrolü 'qvbr' olarak ayarlandığında geçerlidir.",
+    "amd_qvbr_quality_desc": "QVBR hız kontrolü modu için kalite seviyesi. Aralık: 1-51 (yüksek = daha iyi kalite). Varsayılan: 23. Yalnızca hız kontrolü 'qvbr' olarak ayarlandığında geçerlidir.",
     "amd_rc": "AMF Oran Kontrolü",
     "amd_rc_cbr": "cbr -- sabit bit hızı (HRD etkinleştirilmişse önerilir)",
     "amd_rc_cqp": "cqp -- sabit qp modu",

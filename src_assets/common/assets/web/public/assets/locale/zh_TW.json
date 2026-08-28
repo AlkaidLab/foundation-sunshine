@@ -235,7 +235,7 @@
     "amd_quality_quality": "quality—偏好品質",
     "amd_quality_speed": "speed—偏好速度",
     "amd_qvbr_quality": "AMF QVBR 品質等級",
-    "amd_qvbr_quality_desc": "QVBR碼率控制模式的品質等級。範圍：1-51（越低越好）。預設：23。僅在碼率控制設為 'qvbr' 時生效。",
+    "amd_qvbr_quality_desc": "QVBR碼率控制模式的品質等級。範圍：1-51（越高越好）。預設：23。僅在碼率控制設為 'qvbr' 時生效。",
     "amd_rc": "AMF 速率控制",
     "amd_rc_cbr": "cbr—固定位元率（如果啟用 HRD，建議使用）",
     "amd_rc_cqp": "cqp—常數 qp 模式",
