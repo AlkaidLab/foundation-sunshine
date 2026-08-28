@@ -43,6 +43,18 @@ test('invalid mode values are cleared', () => {
   assert.equal(normalized['display-refresh-rate-mode'], '')
 })
 
+test('invalid display-target clears the whole profile', () => {
+  const normalized = normalizeAppDisplayProfile({
+    name: 'Game',
+    'display-target': 'bogus',
+    'display-device-prep': 'ensure_primary',
+    'display-resolution-mode': 'client',
+    'display-hdr': 'on',
+  })
+
+  assert.deepEqual(normalized, { name: 'Game' })
+})
+
 test('refresh rate no_operation is dropped (no per-app refresh gate in the 0-change design)', () => {
   const normalized = normalizeAppDisplayProfile({
     name: 'Game',
