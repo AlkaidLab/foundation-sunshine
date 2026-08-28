@@ -3,13 +3,14 @@
     <div class="card-header version-card-header">
       <div class="version-card-heading">
         <span class="version-card-icon" aria-hidden="true">
-          <i class="fas fa-code-branch"></i>
+          <i class="fas fa-download"></i>
         </span>
-        <h5 class="card-title mb-0">Version</h5>
+        <h5 class="card-title mb-0">{{ $t('index.check_updates') }}</h5>
       </div>
       <div class="current-version" :title="version.version">
+        <span class="current-version-label">{{ $t('index.current_version') }}</span>
+        <span class="current-version-value">{{ version.version }}</span>
         <span class="current-version-dot" aria-hidden="true"></span>
-        <span>{{ version.version }}</span>
       </div>
     </div>
     <div class="card-body">
@@ -49,25 +50,59 @@
       >
         <div class="version-update-summary">
           <div class="version-update-copy">
-            <span class="release-channel">{{ update.channelLabel }}</span>
+            <span class="release-channel">{{ $t(update.channelLabelKey) }}</span>
             <h2 :id="`version-update-${update.channel}`" class="version-update-title">
               {{ $t(update.titleKey) }}
             </h2>
             <h3 class="version-release-name">{{ update.release.name }}</h3>
+            <p class="version-update-description">{{ $t(update.descriptionKey) }}</p>
           </div>
-          <button
-            type="button"
-            class="btn btn-primary btn-download"
-            :disabled="pendingNativeChannel !== ''"
-            :aria-busy="pendingNativeChannel === update.channel"
-            @click="handleDownloadClick(update.release.html_url, update.channel)"
-          >
-            <i :class="pendingNativeChannel === update.channel ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
-            {{ $t('index.download') }}
-            <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
-          </button>
+          <div class="version-update-actions">
+            <button
+              type="button"
+              class="btn btn-primary btn-download"
+              :disabled="pendingNativeChannel !== ''"
+              :aria-busy="pendingNativeChannel === update.channel"
+              @click="handleDownloadClick(update.release.html_url, update.channel)"
+            >
+              <i :class="pendingNativeChannel === update.channel ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
+              {{ $t('index.download_update') }}
+              <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
+            </button>
+            <button
+              v-if="update.release.html_url"
+              type="button"
+              class="release-page-link"
+              @click="handleReleasePageClick(update.release.html_url)"
+            >
+              {{ $t('index.view_release') }}
+              <i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
-        <div v-if="update.body" class="markdown-content" v-html="update.body"></div>
+        <div v-if="update.details.notes" class="version-notes">
+          <h3 class="version-notes-title">{{ $t('index.update_details') }}</h3>
+          <div class="markdown-content" v-html="update.details.notes"></div>
+        </div>
+        <div
+          v-if="update.details.fullChangelog || update.details.contributors"
+          class="version-update-footer"
+        >
+          <button
+            v-if="update.details.fullChangelog"
+            type="button"
+            class="full-changelog"
+            @click="handleReleasePageClick(update.details.fullChangelog)"
+          >
+            <i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>
+            <span>{{ $t('index.full_changelog') }}</span>
+            <i class="fas fa-chevron-right" aria-hidden="true"></i>
+          </button>
+          <div v-if="update.details.contributors" class="release-contributors">
+            <span class="release-footer-label">{{ $t('index.contributors') }}</span>
+            <div class="contributors-content" v-html="update.details.contributors"></div>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -110,26 +145,53 @@ const props = defineProps({
   parsedPreReleaseBody: String,
 })
 
+const formatReleaseBody = (body = '') => {
+  let notes = body.replace(
+    /^\s*<h[1-6][^>]*>\s*What(?:'|’)?s Changed\s*<\/h[1-6]>\s*/i,
+    ''
+  )
+  let contributors = ''
+  let fullChangelog = ''
+
+  const contributorsHeading = notes.match(/<h([1-6])[^>]*>\s*Contributors\s*<\/h\1>/i)
+  if (contributorsHeading) {
+    contributors = notes.slice(contributorsHeading.index + contributorsHeading[0].length).trim()
+    notes = notes.slice(0, contributorsHeading.index).trim()
+  }
+
+  const fullChangelogParagraph = notes.match(
+    /<p>\s*<strong>\s*Full Changelog:\s*<\/strong>[\s\S]*?<\/p>/i
+  )
+  if (fullChangelogParagraph) {
+    fullChangelog = fullChangelogParagraph[0].match(/<a\b[^>]*href="([^"]+)"/i)?.[1] || ''
+    notes = notes.replace(fullChangelogParagraph[0], '').trim()
+  }
+
+  return { notes, fullChangelog, contributors }
+}
+
 const availableUpdates = computed(() => {
   const updates = []
 
   if (props.notifyPreReleases && props.preReleaseBuildAvailable && props.preReleaseVersion?.release) {
     updates.push({
       channel: 'prerelease',
-      channelLabel: 'Beta',
-      titleKey: 'index.new_pre_release',
+      channelLabelKey: 'index.beta_version',
+      titleKey: 'index.update_available',
+      descriptionKey: 'index.new_pre_release',
       release: props.preReleaseVersion.release,
-      body: props.parsedPreReleaseBody,
+      details: formatReleaseBody(props.parsedPreReleaseBody),
     })
   }
 
   if (props.stableBuildAvailable && props.githubVersion?.release) {
     updates.push({
       channel: 'stable',
-      channelLabel: 'Stable',
-      titleKey: 'index.new_stable',
+      channelLabelKey: 'index.stable_version',
+      titleKey: 'index.update_available',
+      descriptionKey: 'index.new_stable',
       release: props.githubVersion.release,
-      body: props.parsedStableBody,
+      details: formatReleaseBody(props.parsedStableBody),
     })
   }
 
@@ -234,6 +296,15 @@ const handleDownloadClick = (url, channel) => {
   showDownloadConfirm.value = true
 }
 
+const handleReleasePageClick = async (url) => {
+  if (!url) return
+  try {
+    await openExternalUrl(url)
+  } catch (error) {
+    console.error('Failed to open release URL:', error)
+  }
+}
+
 const confirmDownload = async () => {
   const url = pendingDownloadUrl.value
   showDownloadConfirm.value = false
@@ -270,7 +341,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-lg);
-  background: color-mix(in srgb, var(--ui-surface-strong) 94%, transparent);
+  background: var(--ui-surface-strong);
+  backdrop-filter: blur(24px) saturate(115%);
   box-shadow: var(--ui-shadow-md);
 }
 
@@ -279,7 +351,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1rem 1.5rem;
+  padding: 1.1rem 1.5rem;
   border-bottom: 1px solid var(--ui-border);
   background: transparent;
 }
@@ -308,6 +380,7 @@ onBeforeUnmount(() => {
   color: var(--ui-text-primary);
   font-size: 1.1rem;
   font-weight: 650;
+  white-space: nowrap;
 }
 
 .current-version {
@@ -318,10 +391,14 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.current-version span:last-child {
+.current-version-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.current-version-label {
+  color: var(--ui-text-primary);
 }
 
 .current-version-dot {
@@ -334,7 +411,7 @@ onBeforeUnmount(() => {
 }
 
 .version-card > .card-body {
-  padding: 0 1.5rem 1.5rem;
+  padding: 0 1.75rem 1.25rem;
 }
 
 /* Loading State */
@@ -373,7 +450,7 @@ onBeforeUnmount(() => {
 
 /* Version Update Section */
 .version-update {
-  padding: 1.5rem 0 0;
+  padding: 1.55rem 0.25rem 0;
 }
 
 .version-update + .version-update {
@@ -391,22 +468,37 @@ onBeforeUnmount(() => {
 .version-update-title {
   margin: 0.8rem 0 0;
   color: var(--ui-text-primary);
-  font-size: 1.08rem;
-  font-weight: 650;
+  font-size: 1.25rem;
+  font-weight: 700;
   line-height: 1.45;
 }
 
 .release-channel {
   display: inline-flex;
   align-items: center;
-  min-height: 1.6rem;
-  padding: 0.18rem 0.7rem;
+  min-height: 1.75rem;
+  padding: 0.22rem 0.78rem;
   border-radius: 999px;
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent);
+  background: var(--ui-accent);
+  color: #fff;
   font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+
+.version-update-description {
+  margin: 0.85rem 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.version-update-actions {
+  display: flex;
+  min-width: 10rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.7rem;
 }
 
 .btn-download {
@@ -444,20 +536,50 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-/* Markdown Content */
-.markdown-content {
+.release-page-link {
+  align-self: center;
+  padding: 0.1rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.release-page-link i {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.release-page-link:hover {
+  text-decoration: underline;
+}
+
+/* Release notes */
+.version-notes {
   margin-top: 1.5rem;
   padding-top: 1.35rem;
-  line-height: 1.6;
   border-top: 1px solid var(--ui-border);
 }
 
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3,
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
+.version-notes-title {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: 1.16rem;
+  font-weight: 700;
+}
+
+.markdown-content {
+  margin-top: 0.9rem;
+  line-height: 1.6;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4),
+.markdown-content :deep(h5),
+.markdown-content :deep(h6) {
   margin-top: 1.4rem;
   margin-bottom: 0.75rem;
   font-weight: 600;
@@ -465,42 +587,46 @@ onBeforeUnmount(() => {
   color: var(--ui-text-primary);
 }
 
-.markdown-content h1:first-child,
-.markdown-content h2:first-child,
-.markdown-content h3:first-child {
-  margin-top: 0;
+.markdown-content :deep(h1:first-child),
+.markdown-content :deep(h2:first-child),
+.markdown-content :deep(h3:first-child) {
+  display: none;
 }
 
-.markdown-content h1 {
+.markdown-content :deep(h1) {
   font-size: 1.35em;
 }
 
-.markdown-content h2 {
+.markdown-content :deep(h2) {
   font-size: 1.2em;
 }
 
-.markdown-content h3 {
+.markdown-content :deep(h3) {
   font-size: 1.1em;
 }
 
-.markdown-content p {
+.markdown-content :deep(p) {
   margin-bottom: 0.75rem;
   white-space: pre-line;
   color: var(--ui-text-secondary);
 }
 
-.markdown-content ul,
-.markdown-content ol {
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
   margin-bottom: 0.75rem;
   padding-left: 1.5rem;
 }
 
-.markdown-content li {
+.markdown-content :deep(li) {
   margin-bottom: 0.42rem;
   color: var(--ui-text-secondary);
 }
 
-.markdown-content code {
+.markdown-content :deep(li::marker) {
+  color: var(--ui-accent);
+}
+
+.markdown-content :deep(code) {
   background: var(--ui-accent-soft);
   padding: 0.2em 0.4em;
   border-radius: 4px;
@@ -509,7 +635,7 @@ onBeforeUnmount(() => {
   color: var(--ui-accent);
 }
 
-.markdown-content pre {
+.markdown-content :deep(pre) {
   background: var(--ui-surface-strong);
   padding: 1rem;
   border-radius: 8px;
@@ -518,13 +644,13 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ui-border);
 }
 
-.markdown-content pre code {
+.markdown-content :deep(pre code) {
   background: none;
   padding: 0;
   color: inherit;
 }
 
-.markdown-content blockquote {
+.markdown-content :deep(blockquote) {
   border-left: 4px solid var(--ui-accent);
   margin: 1rem 0;
   padding-left: 1rem;
@@ -532,19 +658,19 @@ onBeforeUnmount(() => {
   font-style: italic;
 }
 
-.markdown-content a {
+.markdown-content :deep(a) {
   color: var(--ui-accent);
   text-decoration: none;
   font-weight: 500;
   transition: color 0.2s ease;
 }
 
-.markdown-content a:hover {
+.markdown-content :deep(a:hover) {
   color: var(--ui-accent);
   text-decoration: underline;
 }
 
-.markdown-content table {
+.markdown-content :deep(table) {
   border-collapse: collapse;
   width: 100%;
   margin: 1rem 0;
@@ -552,20 +678,89 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.markdown-content img {
+.markdown-content :deep(img) {
   border-radius: 50%;
 }
 
-.markdown-content th,
-.markdown-content td {
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
   border: 1px solid var(--ui-border);
   padding: 0.75rem 1rem;
   text-align: left;
 }
 
-.markdown-content th {
+.markdown-content :deep(th) {
   background: var(--ui-surface-strong);
   font-weight: 600;
+}
+
+.version-update-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-top: 1.35rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--ui-border);
+}
+
+.full-changelog {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.full-changelog:hover {
+  text-decoration: underline;
+}
+
+.full-changelog .fa-chevron-right {
+  font-size: 0.68rem;
+}
+
+.release-contributors {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  color: var(--ui-text-secondary);
+}
+
+.release-footer-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.contributors-content {
+  display: flex;
+  align-items: center;
+}
+
+.contributors-content :deep(p) {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.contributors-content :deep(img) {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 2px solid color-mix(in srgb, var(--ui-surface-strong) 90%, transparent);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.contributors-content :deep(a) {
+  color: var(--ui-accent);
+  text-decoration: none;
 }
 
 @media (max-width: 720px) {
@@ -579,14 +774,22 @@ onBeforeUnmount(() => {
   }
 
   .current-version {
-    max-width: 58%;
+    max-width: 62%;
     padding-top: 0.38rem;
     font-size: 0.8rem;
+  }
+
+  .current-version-label {
+    display: none;
   }
 
   .version-update-summary {
     grid-template-columns: minmax(0, 1fr);
     gap: 1.25rem;
+  }
+
+  .version-update-actions {
+    min-width: 0;
   }
 
   .btn-download {
@@ -595,6 +798,11 @@ onBeforeUnmount(() => {
 
   .markdown-content {
     overflow-x: auto;
+  }
+
+  .version-update-footer {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
