@@ -155,6 +155,8 @@ absent
   -> creating          加载 profile、创建 USB/IP 设备
   -> enumerating       等待 Windows capture endpoint 稳定
   -> idle              endpoint 存在，主机应用尚未打开
+  -> remote_active     capture pin 未打开但收到有效远端 PCM（is_host_streaming=false）
+  -> idle              capture pin 未打开且收到 STREAM_END 或 MicFlush（is_host_streaming=false）
   -> host_capturing    Windows 应用已打开 UAC IN stream
   -> remote_active     有有效客户端 PCM
   -> host_capturing    客户端断流，继续提交静音
