@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "Etkinleştirildiğinde, Sunshine Zako Virtual Mouse sürücüsünü (kuruluysa) HID düzeyinde fare girişini simüle etmek için kullanır. Raw Input kullanan oyunların fare olaylarını almasını sağlar. Devre dışı bırakıldığında veya sürücü kurulu değilse SendInput kullanılır.",
     "virtual_sink": "Sanal Lavabo",
     "virtual_sink_desc": "Kullanılacak sanal ses cihazını manuel olarak belirleyin. Ayarlanmamışsa, cihaz otomatik olarak seçilir. Otomatik cihaz seçimini kullanmak için bu alanı boş bırakmanızı şiddetle tavsiye ederiz!",
+    "virtual_sink_lock": "Yayın sırasında sanal ses aygıtını seçili tut",
+    "virtual_sink_lock_desc": "Etkinleştirildiğinde Sunshine sanal ses aygıtını seçili tutar. Devre dışı bırakıldığında hoparlörlere veya kulaklıklara geçebilirsiniz; geri dönene kadar istemcide ses olmaz. Yayın sona erdiğinde son seçtiğiniz aygıt korunur.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Sanal fare sürücüsü kurulsun mu?",
     "vmouse_confirm_uninstall": "Sanal fare sürücüsü kaldırılsın mı?",

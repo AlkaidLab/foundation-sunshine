@@ -753,6 +753,32 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### virtual_sink_lock
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Controls whether Sunshine keeps the virtual audio device selected while streaming. Disable it to switch
+            to another output device; the client remains silent until you switch back. The last selected device stays
+            selected when streaming ends.
+            @note{This option currently applies only to Windows.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            virtual_sink_lock = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### stream_audio
 
 <table>

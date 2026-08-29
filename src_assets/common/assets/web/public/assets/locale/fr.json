@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "Lorsqu'activé, Sunshine utilisera le pilote Zako Virtual Mouse (s'il est installé) pour simuler l'entrée souris au niveau HID. Cela permet aux jeux utilisant Raw Input de recevoir les événements souris. Lorsque désactivé ou le pilote n'est pas installé, revient à SendInput.",
     "virtual_sink": "Évier virtuel",
     "virtual_sink_desc": "Spécifiez manuellement un périphérique audio virtuel à utiliser. Si non défini, le périphérique est choisi automatiquement. Nous vous recommandons fortement de laisser ce champ vide pour utiliser la sélection automatique de l'appareil !",
+    "virtual_sink_lock": "Conserver le périphérique audio virtuel pendant le streaming",
+    "virtual_sink_lock_desc": "Lorsque cette option est activée, Sunshine conserve le périphérique audio virtuel sélectionné. Lorsqu’elle est désactivée, vous pouvez passer aux haut-parleurs ou au casque ; le client reste silencieux jusqu’à ce que vous reveniez au périphérique virtuel. Le dernier périphérique sélectionné est conservé à la fin du stream.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Installer le pilote de souris virtuelle ?",
     "vmouse_confirm_uninstall": "Désinstaller le pilote de souris virtuelle ?",

@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "Když je povoleno, Sunshine použije ovladač Zako Virtual Mouse (pokud je nainstalován) k simulaci vstupu myši na úrovni HID. Umožňuje hrám s Raw Input přijímat události myši. Když je zakázáno nebo ovladač není nainstalován, přepne na SendInput.",
     "virtual_sink": "Virtuální šinek",
     "virtual_sink_desc": "Ručně zadejte virtuální audio zařízení, které má být použito. Pokud je zařízení odstaveno, je vybráno automaticky. Důrazně doporučujeme ponechat toto pole prázdné pro automatický výběr zařízení!",
+    "virtual_sink_lock": "Zachovat virtuální zvukové zařízení během streamování",
+    "virtual_sink_lock_desc": "Je-li zapnuto, Sunshine ponechá virtuální zvukové zařízení vybrané. Po vypnutí můžete přepnout na reproduktory nebo sluchátka; klient zůstane bez zvuku, dokud nepřepnete zpět. Po skončení streamu zůstane vybrané poslední zařízení.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Nainstalovat ovladač virtuální myši?",
     "vmouse_confirm_uninstall": "Odinstalovat ovladač virtuální myši?",

@@ -113,6 +113,15 @@ const testMicrophoneRoute = async () => {
           <div class="form-text">{{ $t('config.virtual_sink_desc') }}</div>
         </div>
 
+        <!-- Keep Virtual Audio Device Selected -->
+        <Checkbox
+          class="mb-3"
+          id="virtual_sink_lock"
+          locale-prefix="config"
+          v-model="config.virtual_sink_lock"
+          :default="true"
+        ></Checkbox>
+
         <!-- Install Steam Audio Drivers -->
         <div class="mb-3">
           <label for="install_steam_audio_drivers" class="form-label">{{

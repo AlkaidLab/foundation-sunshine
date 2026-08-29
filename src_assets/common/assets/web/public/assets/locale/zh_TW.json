@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "啟用後，Sunshine 將使用 Zako 虛擬滑鼠驅動（需已安裝）在 HID 層模擬滑鼠輸入，使 Raw Input 遊戲能正常接收滑鼠事件。停用或未安裝驅動時，回退至 SendInput。",
     "virtual_sink": "虛擬音訊輸出",
     "virtual_sink_desc": "手動指定要使用的虛擬音訊裝置。如果未設定，則會自動選擇裝置。我們強烈建議將此欄位留空，以使用自動裝置選擇！",
+    "virtual_sink_lock": "串流期間保持虛擬音訊裝置",
+    "virtual_sink_lock_desc": "開啟後，串流期間會一直保持虛擬音訊裝置為系統輸出。關閉後，你可以切換到喇叭或耳機；主機聲音改由其他裝置播放後，用戶端將沒有聲音，切回虛擬音訊裝置即可恢復。串流結束時會保留你最後選擇的裝置。",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "安裝虛擬滑鼠驅動？",
     "vmouse_confirm_uninstall": "解除安裝虛擬滑鼠驅動？",

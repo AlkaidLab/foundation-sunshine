@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "Po włączeniu Sunshine użyje sterownika Zako Virtual Mouse (jeśli zainstalowany) do symulacji wejścia myszy na poziomie HID. Pozwala grom używającym Raw Input odbierać zdarzenia myszy. Po wyłączeniu lub braku sterownika, powrót do SendInput.",
     "virtual_sink": "Wirtualne wyjście audio",
     "virtual_sink_desc": "Ręczne określenie używanego wirtualnego urządzenia audio. Jeśli nie jest ustawione, urządzenie zostanie wybrane automatycznie. Zdecydowanie zalecamy pozostawienie tego pola pustego, aby korzystać z automatycznego wyboru urządzenia!",
+    "virtual_sink_lock": "Zachowaj wybrane wirtualne urządzenie audio podczas strumieniowania",
+    "virtual_sink_lock_desc": "Po włączeniu Sunshine utrzymuje wybrane wirtualne urządzenie audio. Po wyłączeniu możesz przełączyć się na głośniki lub słuchawki; klient pozostanie bez dźwięku do czasu ponownego wybrania urządzenia wirtualnego. Po zakończeniu strumieniowania pozostanie wybrane ostatnie urządzenie.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Zainstalować sterownik wirtualnej myszy?",
     "vmouse_confirm_uninstall": "Odinstalować sterownik wirtualnej myszy?",

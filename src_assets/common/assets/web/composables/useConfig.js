@@ -60,6 +60,7 @@ const DEFAULT_TABS = [
     options: {
       audio_sink: '',
       virtual_sink: '',
+      virtual_sink_lock: true,
       install_steam_audio_drivers: 'enabled',
       output_name: '',
       hdr_luminance_analysis: 'auto',

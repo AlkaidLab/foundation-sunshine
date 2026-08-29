@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "Quando ativado, o Sunshine usará o driver Zako Virtual Mouse (se instalado) para simular a entrada do mouse no nível HID. Permite que jogos com Raw Input recebam eventos do mouse. Quando desativado ou driver não instalado, volta ao SendInput.",
     "virtual_sink": "Pia virtual",
     "virtual_sink_desc": "Especificar manualmente um dispositivo de áudio virtual a ser usado. Se não for definido, o dispositivo será escolhido automaticamente. É altamente recomendável deixar esse campo em branco para usar a seleção automática de dispositivos!",
+    "virtual_sink_lock": "Manter o dispositivo de áudio virtual selecionado durante a transmissão",
+    "virtual_sink_lock_desc": "Quando ativado, o Sunshine mantém o dispositivo de áudio virtual selecionado. Quando desativado, você pode mudar para alto-falantes ou fones de ouvido; o cliente fica sem som até você voltar ao dispositivo virtual. O último dispositivo selecionado é mantido quando a transmissão termina.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Instalar o driver de mouse virtual?",
     "vmouse_confirm_uninstall": "Desinstalar o driver de mouse virtual?",

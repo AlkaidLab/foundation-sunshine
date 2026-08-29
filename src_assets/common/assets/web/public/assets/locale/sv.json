@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "När aktiverad använder Sunshine Zako Virtual Mouse-drivrutinen (om installerad) för att simulera musinmatning på HID-nivå. Tillåter spel med Raw Input att ta emot mushändelser. När inaktiverad eller drivrutin ej installerad, återgår till SendInput.",
     "virtual_sink": "Virtuell sink",
     "virtual_sink_desc": "Ange manuellt en virtuell ljudenhet som ska användas. Om enheten inte är inställd väljs enheten automatiskt. Vi rekommenderar starkt att lämna detta fält tomt för att använda automatiskt val av enhet!",
+    "virtual_sink_lock": "Behåll den virtuella ljudenheten vald under strömning",
+    "virtual_sink_lock_desc": "När detta är aktiverat behåller Sunshine den virtuella ljudenheten vald. När det är inaktiverat kan du byta till högtalare eller hörlurar; klienten är tyst tills du byter tillbaka. Den senast valda enheten behålls när strömningen avslutas.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Installera den virtuella musdrivrutinen?",
     "vmouse_confirm_uninstall": "Avinstallera den virtuella musdrivrutinen?",

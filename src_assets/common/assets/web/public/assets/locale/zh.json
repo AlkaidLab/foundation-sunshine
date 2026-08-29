@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "启用后，Sunshine 将使用 Zako 虚拟鼠标驱动（需已安装）在 HID 层模拟鼠标输入，使 Raw Input 游戏能正常接收鼠标事件。禁用或未安装驱动时，回退至 SendInput。",
     "virtual_sink": "虚拟音频输出设备",
     "virtual_sink_desc": "手动指定要使用的虚拟音频设备。如果未设置，则会自动选择设备。我们强烈建议将此字段留空，以便使用自动设备选择！",
+    "virtual_sink_lock": "串流期间保持虚拟音频设备",
+    "virtual_sink_lock_desc": "开启后，串流期间会一直保持虚拟音频设备为系统输出。关闭后，你可以切换到音箱或耳机；主机声音改从其他设备播放后，客户端将没有声音，切回虚拟音频设备即可恢复。串流结束时会保留你最后选择的设备。",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "安装虚拟鼠标驱动？",
     "vmouse_confirm_uninstall": "卸载虚拟鼠标驱动？",

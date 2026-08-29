@@ -624,6 +624,13 @@ namespace platf::audio {
     ~mic_wasapi_t() override {
       if (device_enum) {
         device_enum->UnregisterEndpointNotificationCallback(&endpt_notification);
+
+        // The stream can stop after Windows posts a default endpoint change
+        // but before sample() observes it. Process that final notification so
+        // an unlocked virtual sink still preserves the user's last selection.
+        if (default_endpt_changed_cb && endpt_notification.check_default_render_device_changed()) {
+          (*default_endpt_changed_cb)();
+        }
       }
 
       if (audio_client) {
@@ -653,13 +660,17 @@ namespace platf::audio {
 
       // Check if the default audio device has changed
       if (endpt_notification.check_default_render_device_changed()) {
+        bool reinitialize_capture = true;
+
         // Invoke the audio_control_t's callback if it wants one
         if (default_endpt_changed_cb) {
-          (*default_endpt_changed_cb)();
+          reinitialize_capture = (*default_endpt_changed_cb)();
         }
 
-        // Reinitialize to pick up the new default device
-        return capture_e::reinit;
+        if (reinitialize_capture) {
+          // Reinitialize to pick up the new default device
+          return capture_e::reinit;
+        }
       }
 
       status = WaitForSingleObjectEx(audio_event.get(), default_latency_ms, FALSE);
@@ -739,7 +750,7 @@ namespace platf::audio {
     audio_capture_t audio_capture;
 
     audio_notification_t endpt_notification;
-    std::optional<std::function<void()>> default_endpt_changed_cb;
+    std::optional<std::function<bool()>> default_endpt_changed_cb;
 
     REFERENCE_TIME default_latency_ms;
 
@@ -847,13 +858,23 @@ namespace platf::audio {
         return nullptr;
       }
 
-      // If this is a virtual sink, set a callback that will change the sink back if it's changed
+      // A virtual sink either remains locked as the Windows default or keeps
+      // its existing capture session when the user changes the default output.
       auto virtual_sink_info = extract_virtual_sink_info(assigned_sink);
       if (virtual_sink_info) {
-        mic->default_endpt_changed_cb = [this] {
-          BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
-          notify_virtual_sink_managed();
-          set_sink(assigned_sink);
+        const bool virtual_sink_lock = config::audio.virtual_sink_lock;
+        mic->default_endpt_changed_cb = [this, virtual_sink_lock]() -> bool {
+          if (virtual_sink_lock) {
+            BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
+            notify_virtual_sink_managed();
+            set_sink(assigned_sink);
+            return true;
+          }
+
+          preserve_default_on_stop.store(true, std::memory_order_release);
+          BOOST_LOG(info) << "Default audio output changed while output locking is disabled; "
+                             "keeping the existing audio capture device"sv;
+          return false;
         };
       }
 
@@ -960,6 +981,11 @@ namespace platf::audio {
       }
 
       return failure;
+    }
+
+    bool
+    should_restore_sink() const override {
+      return !preserve_default_on_stop.load(std::memory_order_acquire);
     }
 
     void
@@ -1259,6 +1285,7 @@ namespace platf::audio {
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
+    std::atomic_bool preserve_default_on_stop { false };
     std::chrono::steady_clock::time_point last_virtual_sink_notification {};
     std::mutex last_virtual_sink_notification_mutex;
 

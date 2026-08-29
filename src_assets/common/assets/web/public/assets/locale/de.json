@@ -750,6 +750,8 @@
     "virtual_mouse_desc": "Wenn aktiviert, verwendet Sunshine den Zako Virtual Mouse-Treiber (falls installiert) zur Simulation der Mauseingabe auf HID-Ebene. Dies ermöglicht Spielen mit Raw Input den Empfang von Mausereignissen. Wenn deaktiviert oder Treiber nicht installiert, wird auf SendInput zurückgegriffen.",
     "virtual_sink": "Virtueller Sink",
     "virtual_sink_desc": "Legen Sie ein virtuelles Audiogerät manuell fest. Wenn nicht gesetzt, wird das Gerät automatisch ausgewählt. Wir empfehlen dringend, dieses Feld leer zu lassen, um die automatische Geräteauswahl zu verwenden!",
+    "virtual_sink_lock": "Virtuelles Audiogerät beim Streaming ausgewählt lassen",
+    "virtual_sink_lock_desc": "Wenn aktiviert, lässt Sunshine das virtuelle Audiogerät ausgewählt. Wenn deaktiviert, können Sie zu Lautsprechern oder Kopfhörern wechseln; der Client bleibt stumm, bis Sie zurückwechseln. Nach dem Stream bleibt das zuletzt ausgewählte Gerät aktiv.",
     "virtual_sink_placeholder": "Steam Streaming Speakers",
     "vmouse_confirm_install": "Virtuellen Maustreiber installieren?",
     "vmouse_confirm_uninstall": "Virtuellen Maustreiber deinstallieren?",

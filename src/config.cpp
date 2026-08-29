@@ -483,6 +483,7 @@ namespace config {
   audio_t audio {
     {},  // audio_sink
     {},  // virtual_sink
+    true,  // virtual_sink_lock (preserve existing virtual audio routing behavior)
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
@@ -1481,6 +1482,7 @@ namespace config {
 
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
+    bool_f(vars, "virtual_sink_lock", audio.virtual_sink_lock);
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
