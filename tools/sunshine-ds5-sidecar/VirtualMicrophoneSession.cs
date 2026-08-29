@@ -187,7 +187,7 @@ internal sealed class VirtualMicrophoneSession : IDisposable
             var dropped = SaturatingAdd(_queue.DroppedFrames, _pumpDroppedFrames);
             var buffered = SaturatingAdd(
                 (uint)Math.Max(0, _queue.BufferedBytes),
-                GetRuntimeBufferedBytes());
+                _hostStreaming ? GetRuntimeBufferedBytes() : 0);
             return new Protocol.MicrophoneStatus(
                 Generation, state, _hostStreaming, buffered, _underruns,
                 dropped, _submitErrors, _lastError);

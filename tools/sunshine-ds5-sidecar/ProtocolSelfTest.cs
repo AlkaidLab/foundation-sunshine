@@ -614,10 +614,18 @@ internal static class ProtocolSelfTest
                         0xfe, 0xff, 0xfe, 0xff,
                     }),
                 "virtual microphone mono to stereo submission");
+            input.BufferedBytes = 1_920;
             var activeStatus = session.GetStatus();
             Require(activeStatus.State == Protocol.MicrophoneState.RemoteActive &&
-                    activeStatus.IsHostStreaming,
+                    activeStatus.IsHostStreaming && activeStatus.BufferedBytes == 1_920,
                 "virtual microphone remote active state");
+            input.SetStreaming(false);
+            var stoppedStatus = session.GetStatus();
+            Require(stoppedStatus.State == Protocol.MicrophoneState.RemoteActive &&
+                    !stoppedStatus.IsHostStreaming && stoppedStatus.BufferedBytes == 0,
+                "virtual microphone hides stale runtime buffer after capture pin close");
+            input.BufferedBytes = 0;
+            input.SetStreaming(true);
 
             session.Flush();
             input.Submissions.Clear();
