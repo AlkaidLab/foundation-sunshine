@@ -439,6 +439,69 @@ TEST(HdrDynamicMetadata, SmoothsHdr10PlusLuminanceAcrossFrames) {
   EXPECT_FLOAT_EQ(ema.percentile_99, 0.0f);
 }
 
+TEST(HdrDynamicMetadata, DetectsDistributionSceneChangesOnlyOnNewSamples) {
+  const auto scene = [](uint64_t sequence, float mean_pq, float distribution_nits) {
+    platf::hdr_frame_luminance_stats_t stats {};
+    stats.sample_sequence = sequence;
+    stats.avg_maxrgb_pq = mean_pq;
+    stats.percentile_10_pq = 0.10f;
+    stats.percentile_90_pq = 0.60f;
+    stats.max_maxrgb = 1000.0f;
+    std::fill(std::begin(stats.distribution_maxrgb), std::end(stats.distribution_maxrgb), distribution_nits);
+    stats.valid = true;
+    return stats;
+  };
+
+  video::hdr_metadata::scene_change_detector_t detector;
+  const auto first = detector.observe(scene(1, 0.30f, 100.0f));
+  EXPECT_TRUE(first.new_sample);
+  EXPECT_TRUE(first.scene_change);
+
+  // Four encoded frames may reuse one GPU readback. It must remain one event.
+  const auto repeated = detector.observe(scene(1, 0.30f, 100.0f));
+  EXPECT_FALSE(repeated.new_sample);
+  EXPECT_FALSE(repeated.scene_change);
+
+  const auto stable = detector.observe(scene(2, 0.32f, 110.0f));
+  EXPECT_TRUE(stable.new_sample);
+  EXPECT_FALSE(stable.scene_change);
+
+  // The exact peak is unchanged, but the luminance distribution belongs to a
+  // different scene. Peak-ratio detection alone misses this transition.
+  const auto cut = detector.observe(scene(3, 0.33f, 1000.0f));
+  EXPECT_TRUE(cut.new_sample);
+  EXPECT_TRUE(cut.scene_change);
+}
+
+TEST(HdrDynamicMetadata, SceneChangeResetsTheVividWindow) {
+  const auto scene = [](uint64_t sequence, float mean_pq, float nits) {
+    platf::hdr_frame_luminance_stats_t stats {};
+    stats.sample_sequence = sequence;
+    stats.min_maxrgb = nits;
+    stats.max_maxrgb = nits;
+    stats.avg_maxrgb = nits;
+    stats.avg_maxrgb_pq = mean_pq;
+    stats.percentile_10_pq = mean_pq;
+    stats.percentile_90_pq = mean_pq;
+    stats.percentile_99 = nits;
+    std::fill(std::begin(stats.distribution_maxrgb), std::end(stats.distribution_maxrgb), nits);
+    stats.valid = true;
+    return stats;
+  };
+
+  video::hdr_metadata::dynamic_metadata_builder_t builder;
+  builder.configure({ .hdr10plus = false, .vivid = true });
+  for (int frame = 0; frame < 32; ++frame) {
+    ASSERT_FALSE(builder.build(scene(1, 0.20f, 10.0f), 1000).vivid.empty());
+  }
+
+  const auto payload = builder.build(scene(2, 0.70f, 1000.0f), 1000).vivid;
+  ASSERT_FALSE(payload.empty());
+  const std::vector<uint8_t> bytes(payload.begin(), payload.end());
+  size_t bit_offset = 6 * 8 + 12;  // T.35 prefix + minimum_maxrgb
+  EXPECT_EQ(read_bits(bytes, bit_offset, 12), video::hdr_metadata::pq_to_u12(0.70f));
+}
+
 TEST(HdrDynamicMetadata, SmoothedStatsSubstituteOnlyTheFilteredFields) {
   platf::hdr_frame_luminance_stats_t raw {};
   raw.avg_maxrgb = 100.0f;

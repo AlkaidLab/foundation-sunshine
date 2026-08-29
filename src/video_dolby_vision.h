@@ -65,9 +65,10 @@ namespace video::dolby_vision {
    * above mean(PQ(nits)) on dark frames with highlights and would anchor the
    * display's curve too high. max uses the 99th percentile rather than the
    * true peak, for the same scRGB-overshoot reason hdr10plus_from_luminance()
-   * reports percentile 99 as maxSCL. min uses the 10th percentile so a black
-   * UI pixel, letterbox bar, or transparent composite region cannot pin the
-   * frame minimum at zero; the clamp to [0, 12] bounds it regardless.
+   * reports percentile 99 as maxSCL. min uses the first percentile, but only
+   * reports zero when at least one percent of the histogram is in its near-black
+   * bin. That keeps a few black UI pixels from pinning the frame minimum while
+   * preserving materially black scenes. Older analyzer output falls back to P10.
    *
    * Callers should pass EMA-smoothed stats (hdr_luminance_ema_t::smoothed())
    * for temporal stability, exactly as the HDR10+ path does.
@@ -77,7 +78,9 @@ namespace video::dolby_vision {
    * a positive linear mean) — the same guard vivid_from_stats() applies.
    */
   std::optional<frame_metadata_t>
-  frame_metadata_from_stats(const platf::hdr_frame_luminance_stats_t &stats);
+  frame_metadata_from_stats(
+    const platf::hdr_frame_luminance_stats_t &stats,
+    bool scene_refresh = false);
 
   struct session_config_t {
     /// Mastering display peak in nits (L6 max_display_mastering_luminance).
@@ -249,6 +252,8 @@ namespace video::dolby_vision {
   private:
     rpu_generator_t generator_;
     staged_rpu_queue_t queue_;
+    hdr_metadata::scene_change_detector_t scene_detector_;
+    hdr_metadata::hdr_luminance_ema_t luminance_filter_;
     std::optional<frame_metadata_t> last_metadata_;
     bool enabled_ = false;
   };
