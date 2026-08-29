@@ -317,7 +317,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-strong);
   backdrop-filter: blur(24px) saturate(115%);
   box-shadow: var(--ui-shadow-md);
 }
