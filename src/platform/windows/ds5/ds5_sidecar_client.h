@@ -4,7 +4,9 @@
  */
 #pragma once
 
+#include <filesystem>
 #include <memory>
+#include <optional>
 
 #include "src/platform/common.h"
 
@@ -14,6 +16,9 @@ namespace platf::ds5 {
 
   /** Revalidate the fixed component path, manifest, and executable digest. */
   bool refresh_component_availability() noexcept;
+
+  /** Return the validated executable path used by virtual-device-host clients. */
+  std::optional<std::filesystem::path> trusted_component_path();
 
   class sidecar_client_t {
   public:

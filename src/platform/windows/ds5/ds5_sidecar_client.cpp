@@ -643,10 +643,14 @@ namespace platf::ds5 {
     return trusted_component_available.load(std::memory_order_acquire);
   }
 
+  std::optional<std::filesystem::path> trusted_component_path() {
+    return trusted_sidecar_path();
+  }
+
   bool refresh_component_availability() noexcept {
     bool available = false;
     try {
-      available = trusted_sidecar_path().has_value();
+      available = trusted_component_path().has_value();
     }
     catch (...) {
       available = false;
