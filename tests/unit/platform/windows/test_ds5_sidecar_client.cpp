@@ -11,6 +11,7 @@
 
   #include "src/ds5/config.h"
   #include "src/platform/windows/ds5/ds5_sidecar_client.h"
+  #include "src/platform/windows/virtual_device_host/protocol.h"
   #include <gtest/gtest-spi.h>
   #include <gtest/gtest.h>
 
@@ -157,6 +158,26 @@ namespace {
     return FALSE;
   }
 }  // namespace
+
+TEST(VirtualDeviceHostProtocolTests, FreezesSds5V1Abi) {
+  namespace protocol = platf::virtual_device_host::protocol;
+  EXPECT_EQ(protocol::MAGIC, 0x35534453u);
+  EXPECT_EQ(protocol::VERSION, 1u);
+  EXPECT_EQ(protocol::HEADER_SIZE, 16u);
+  EXPECT_EQ(protocol::CAP_VIRTUAL_MICROPHONE, 1u << 10);
+  EXPECT_EQ(protocol::CAP_PERSISTENT_DEVICE_HOST, 1u << 11);
+  EXPECT_EQ(protocol::CAP_MICROPHONE_STATUS, 1u << 12);
+  EXPECT_EQ(static_cast<std::uint16_t>(protocol::message_e::mic_create), 12u);
+  EXPECT_EQ(static_cast<std::uint16_t>(protocol::message_e::mic_status), 107u);
+  EXPECT_EQ(protocol::MIC_CREATE_PAYLOAD_SIZE, 8u);
+  EXPECT_EQ(protocol::MIC_CREATE_REPLY_PAYLOAD_SIZE, 16u);
+  EXPECT_EQ(protocol::MIC_OPERATION_REPLY_PAYLOAD_SIZE, 8u);
+  EXPECT_EQ(protocol::MIC_PCM_HEADER_SIZE, 20u);
+  EXPECT_EQ(protocol::MIC_STATUS_PAYLOAD_SIZE, 28u);
+  EXPECT_EQ(protocol::MAX_MIC_PCM_FRAMES, 960u);
+  EXPECT_EQ(static_cast<std::int32_t>(protocol::mic_result_e::invalid_format), -1001);
+  EXPECT_EQ(static_cast<std::int32_t>(protocol::mic_result_e::device_not_created), -1004);
+}
 
 TEST(Ds5SidecarClientTests, EnvironmentScopeRestoresPreviousValues) {
   const auto variable = L"SUNSHINE_DS5_TEST_ENVIRONMENT_SCOPE_" + std::to_wstring(GetCurrentProcessId());

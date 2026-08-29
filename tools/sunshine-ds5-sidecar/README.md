@@ -1,8 +1,11 @@
-# Sunshine DualSense sidecar
+# Sunshine virtual device host
 
 This optional Windows helper isolates Sunshine from the third-party
-HIDMaestro runtime. It owns virtual DS5 devices and exposes the versioned
-`SDS5` named-pipe protocol. The helper does not contain HIDMaestro binaries.
+HIDMaestro runtime. The shipping executable remains
+`Sunshine.Ds5Sidecar.exe` for component-upgrade compatibility, while the
+process now uses a `VirtualDeviceHostServer` and `DeviceRegistry` internally.
+It owns virtual devices and exposes the versioned `SDS5` named-pipe protocol.
+The helper does not contain HIDMaestro binaries.
 
 Build against the pinned upstream v1.6.2 runtime:
 
@@ -17,8 +20,8 @@ Read-only capability probe:
 dotnet Sunshine.Ds5Sidecar.dll --probe
 ```
 
-Deterministic four-channel layout and channel-isolation check (no elevation
-or virtual device required):
+Deterministic protocol ABI, microphone queue/runtime-contract, four-channel
+layout, and channel-isolation checks (no elevation or virtual device required):
 
 ```powershell
 dotnet Sunshine.Ds5Sidecar.dll --self-check
@@ -42,6 +45,30 @@ three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
+The v1 wire contract reserves capability bits and message numbers for the
+virtual microphone. Normal startup intentionally does not advertise them;
+only the explicit development prototype can enable those capabilities.
+
+The Phase 2 composite-profile microphone path is development-only and requires
+both the exact HIDMaestro 1.6.2.0 runtime and an explicit opt-in. Its elevated
+attach/PCM/flush/destroy smoke test is:
+
+```powershell
+dotnet Sunshine.Ds5Sidecar.dll --self-test microphone-prototype
+```
+
+For an end-to-end developer check, `microphone-capture` snapshots the active
+capture endpoints, creates the prototype, opens only its newly added endpoint
+through WASAPI, streams a 440 Hz signal for five seconds, and requires observed
+host streaming, zero submit errors, captured frames, and non-zero PCM before it
+passes:
+
+```powershell
+dotnet Sunshine.Ds5Sidecar.dll --self-test microphone-capture
+```
+
+This temporary path also enumerates the composite profile's HID and render
+interfaces; it is not the final capture-only virtual microphone product.
 The composite session monitors every Windows default render and capture role.
 If Windows selects a HIDMaestro-backed virtual DualSense endpoint as a default,
 the helper reports the policy violation and exits; Sunshine then performs its
