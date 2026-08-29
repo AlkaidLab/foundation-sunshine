@@ -111,7 +111,7 @@ internal static class ProtocolSelfTest
         var generation = BinaryPrimitives.ReadUInt32LittleEndian(create.Payload.AsSpan(4, 4));
         Require(generation != 0, "microphone prototype generation");
 
-        WasapiCaptureProbe? captureProbe = null;
+        string? captureEndpointId = null;
         if (requireHostCapture)
         {
             string[] addedEndpoints = Array.Empty<string>();
@@ -125,67 +125,79 @@ internal static class ProtocolSelfTest
             }
             Require(addedEndpoints.Length == 1,
                 "microphone prototype unique WASAPI capture endpoint");
-            captureProbe = WasapiCaptureProbe.Open(addedEndpoints[0]);
+            captureEndpointId = addedEndpoints[0];
         }
-        using var captureProbeScope = captureProbe;
 
         var packetCount = requireHostCapture ? 500u : 2u;
-        for (uint sequence = 0; sequence < packetCount; ++sequence)
-        {
-            var flags = sequence == 0 ? Protocol.MicPcmFlags.StreamStart : Protocol.MicPcmFlags.None;
-            if (sequence + 1 == packetCount)
-                flags |= Protocol.MicPcmFlags.StreamEnd;
-            var payload = CreateMicPcmPayload(
-                generation, sequence, sequence * 10_000, 480, flags);
-            for (var frame = 0; frame < 480; ++frame)
-            {
-                var sampleIndex = sequence * 480u + (uint)frame;
-                var sample = (short)(Math.Sin(sampleIndex * 2.0 * Math.PI * 440.0 / 48_000.0) * 4_096);
-                BinaryPrimitives.WriteInt16LittleEndian(
-                    payload.AsSpan(Protocol.MicPcmHeaderSize + frame * 2, 2), sample);
-            }
-            await SendAsync(client, new Protocol.Message(
-                Protocol.MessageType.MicPcm, 0, payload), stopping.Token);
-            if (requireHostCapture)
-            {
-                await Task.Delay(10, stopping.Token);
-                captureProbe!.Drain();
-            }
-        }
-
-        captureProbe?.Drain();
-
         var hostStreamingSeen = false;
         uint submitErrors = 0;
-        await SendAsync(client, new Protocol.Message(
-            Protocol.MessageType.MicFlush, 3, Array.Empty<byte>()), stopping.Token);
-        var flush = await ReceiveUntilAsync(
-            client, Protocol.MessageType.MicFlushReply, 3, stopping.Token,
-            message =>
-            {
-                if (message.Type != Protocol.MessageType.MicStatus ||
-                    message.Payload.Length != Protocol.MicStatusPayloadSize)
-                    return;
-                hostStreamingSeen |= message.Payload[5] != 0;
-                submitErrors = Math.Max(submitErrors,
-                    BinaryPrimitives.ReadUInt32LittleEndian(message.Payload.AsSpan(20, 4)));
-            });
-        Require(BinaryPrimitives.ReadInt32LittleEndian(flush.Payload.AsSpan(0, 4)) ==
-                (int)Protocol.MicrophoneResult.Success,
-            "microphone prototype flush");
+        ulong capturedFrames = 0;
+        ulong nonZeroFrames = 0;
         if (requireHostCapture)
         {
+            var captureResult = await WasapiCaptureProbe.RunOnDedicatedThreadAsync(
+                captureEndpointId!, probe =>
+                {
+                    for (uint sequence = 0; sequence < packetCount; ++sequence)
+                    {
+                        var payload = CreateMicrophoneTestPcmPayload(
+                            generation, sequence, packetCount);
+                        SendAsync(client, new Protocol.Message(
+                            Protocol.MessageType.MicPcm, 0, payload), stopping.Token)
+                            .GetAwaiter().GetResult();
+                        Task.Delay(10, stopping.Token).GetAwaiter().GetResult();
+                        probe.Drain();
+                    }
+                    probe.Drain();
+
+                    var streamingSeen = false;
+                    uint errors = 0;
+                    SendAsync(client, new Protocol.Message(
+                        Protocol.MessageType.MicFlush, 3, Array.Empty<byte>()), stopping.Token)
+                        .GetAwaiter().GetResult();
+                    var flushReply = ReceiveUntilAsync(
+                        client, Protocol.MessageType.MicFlushReply, 3, stopping.Token,
+                        message => ObserveMicrophoneStatus(
+                            message, ref streamingSeen, ref errors))
+                        .GetAwaiter().GetResult();
+                    return (Flush: flushReply, HostStreamingSeen: streamingSeen,
+                        SubmitErrors: errors, probe.CapturedFrames, probe.NonZeroFrames);
+                });
+            Require(BinaryPrimitives.ReadInt32LittleEndian(
+                    captureResult.Flush.Payload.AsSpan(0, 4)) ==
+                    (int)Protocol.MicrophoneResult.Success,
+                "microphone prototype flush");
+            hostStreamingSeen = captureResult.HostStreamingSeen;
+            submitErrors = captureResult.SubmitErrors;
+            capturedFrames = captureResult.CapturedFrames;
+            nonZeroFrames = captureResult.NonZeroFrames;
             Require(hostStreamingSeen, "microphone prototype host capture pin");
             Require(submitErrors == 0, "microphone prototype host capture submissions");
-            Require(captureProbe!.CapturedFrames != 0,
+            Require(capturedFrames != 0,
                 "microphone prototype WASAPI captured frames");
-            Require(captureProbe.NonZeroFrames != 0,
+            Require(nonZeroFrames != 0,
                 "microphone prototype WASAPI non-zero frames");
         }
+        else
+        {
+            for (uint sequence = 0; sequence < packetCount; ++sequence)
+            {
+                var payload = CreateMicrophoneTestPcmPayload(
+                    generation, sequence, packetCount);
+                await SendAsync(client, new Protocol.Message(
+                    Protocol.MessageType.MicPcm, 0, payload), stopping.Token);
+            }
 
-        var capturedFrames = captureProbe?.CapturedFrames ?? 0;
-        var nonZeroFrames = captureProbe?.NonZeroFrames ?? 0;
-        captureProbe?.Dispose();
+            await SendAsync(client, new Protocol.Message(
+                Protocol.MessageType.MicFlush, 3, Array.Empty<byte>()), stopping.Token);
+            var flush = await ReceiveUntilAsync(
+                client, Protocol.MessageType.MicFlushReply, 3, stopping.Token,
+                message => ObserveMicrophoneStatus(
+                    message, ref hostStreamingSeen, ref submitErrors));
+            Require(BinaryPrimitives.ReadInt32LittleEndian(flush.Payload.AsSpan(0, 4)) ==
+                    (int)Protocol.MicrophoneResult.Success,
+                "microphone prototype flush");
+        }
 
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.MicDestroy, 4, Array.Empty<byte>()), stopping.Token);
@@ -215,6 +227,38 @@ internal static class ProtocolSelfTest
         if (!string.IsNullOrWhiteSpace(resultPath))
             await File.WriteAllTextAsync(resultPath, output, stopping.Token);
         return 0;
+    }
+
+    private static byte[] CreateMicrophoneTestPcmPayload(
+        uint generation, uint sequence, uint packetCount)
+    {
+        var flags = sequence == 0
+            ? Protocol.MicPcmFlags.StreamStart
+            : Protocol.MicPcmFlags.None;
+        if (sequence + 1 == packetCount)
+            flags |= Protocol.MicPcmFlags.StreamEnd;
+        var payload = CreateMicPcmPayload(
+            generation, sequence, sequence * 10_000, 480, flags);
+        for (var frame = 0; frame < 480; ++frame)
+        {
+            var sampleIndex = sequence * 480u + (uint)frame;
+            var sample = (short)(Math.Sin(
+                sampleIndex * 2.0 * Math.PI * 440.0 / 48_000.0) * 4_096);
+            BinaryPrimitives.WriteInt16LittleEndian(
+                payload.AsSpan(Protocol.MicPcmHeaderSize + frame * 2, 2), sample);
+        }
+        return payload;
+    }
+
+    private static void ObserveMicrophoneStatus(
+        Protocol.Message message, ref bool hostStreamingSeen, ref uint submitErrors)
+    {
+        if (message.Type != Protocol.MessageType.MicStatus ||
+            message.Payload.Length != Protocol.MicStatusPayloadSize)
+            return;
+        hostStreamingSeen |= message.Payload[5] != 0;
+        submitErrors = Math.Max(submitErrors,
+            BinaryPrimitives.ReadUInt32LittleEndian(message.Payload.AsSpan(20, 4)));
     }
 
     internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath)

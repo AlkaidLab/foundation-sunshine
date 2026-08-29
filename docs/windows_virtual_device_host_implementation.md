@@ -6,7 +6,7 @@
 - 日期：2026-08-28
 - 目标平台：Windows 10/11 x64；ARM64 在首期完成接口设计但不承诺发布
 - 进程：Sunshine Core + 一个 Core 持有的虚拟设备宿主
-- 初期运行时：HIDMaestro v1.6.2 + 未修改的已签名 usbip-win2 0.9.7.7
+- 初期运行时：HIDMaestro 发布标签 `v1.6.2`（`HIDMaestro.Core.dll` 的 `AssemblyFileVersion = 1.6.2.0`）+ 未修改的已签名 usbip-win2 0.9.7.7
 - 首个新增设备：`Sunshine Virtual Microphone`
 
 本文把现有 `Sunshine.Ds5Sidecar` 从“虚拟 DualSense 的附属进程”演进为“Sunshine 虚拟设备宿主”。宿主继续隔离第三方 .NET 运行时，但同时管理彼此独立的虚拟 DS5、DS5 USB Audio 和 USB 虚拟麦克风。
@@ -79,7 +79,7 @@ Sunshine Virtual Device Host
   `-- VirtualMicrophoneSession[0..1]
         `-- USB/IP UAC1 capture-only device
               `-- usbip-win2 UDE bus
-                    `-- Windows usbaudio.sys/usbaudio2.sys
+                    `-- Windows usbaudio.sys
 ```
 
 首期继续使用 `Sunshine.Ds5Sidecar.exe` 文件名和现有组件 manifest，避免一次改动同时触发下载资产、安装目录、摘要和 GUI 迁移。代码内部先引入通用 `VirtualDeviceHostServer`；待协议和组件升级路径稳定后，再单独迁移到 `Sunshine.DeviceSidecar.exe`。
@@ -166,7 +166,16 @@ creating/enumerating/idle/host_capturing/remote_active
   -> device_faulted
 ```
 
-`host_capturing` 和 `remote_active` 是两个正交事实。没有远端 PCM 不表示 Windows 应用没有打开麦克风；此时必须输出静音。
+`host_capturing` 和 `remote_active` 是两个正交事实。`state` 表示最重要的活动来源，`is_host_streaming` 独立表示 Windows capture pin 是否打开；Core 和 GUI 必须按下表解释组合，而不能只读取其中一个字段：
+
+| 应用/capture pin | 远端 PCM | `state` | `is_host_streaming` | Core/GUI 解释 |
+|---|---|---|---|---|
+| 已打开 | 无 | `host_capturing` | `true` | 应用正在采集，宿主提交静音 |
+| 已打开 | 有 | `remote_active` | `true` | 远端 PCM 正被主机应用消费 |
+| 已关闭 | 仍在发送 | `remote_active` | `false` | 远端仍活动，但没有主机消费者；pin close 会先清空已排队 PCM，后续数据仍受有界队列约束 |
+| 已关闭 | 无 | `idle` | `false` | endpoint 已枚举但双方均空闲 |
+
+应用关闭时若队列中仍有 PCM，宿主必须在发出状态前清空队列，因此不会向 Core 暴露“pin 已关闭但保留陈旧 buffered bytes”的稳态。没有远端 PCM 不表示 Windows 应用没有打开麦克风；此时必须输出静音。
 
 ### 5.3 生命周期不变量
 
@@ -398,8 +407,7 @@ src/platform/windows/virtual_device_host/
 class mic_sink_t {
 public:
   virtual int start() = 0;
-  virtual int write_pcm(std::span<const std::int16_t> samples,
-                        std::uint64_t capture_time_us) = 0;
+  virtual int write_pcm(std::span<const std::int16_t> samples) = 0;
   virtual void flush() = 0;
   virtual void stop_stream() = 0;
   virtual void shutdown() = 0;
@@ -413,6 +421,8 @@ public:
 wasapi_cable_mic_sink_t   现有 VB-CABLE 路径
 usbip_mic_sink_t          新宿主/UAC 路径
 ```
+
+现有 `write_mic_pcm(samples, frame_count)` 调用方无需提供时间戳。`usbip_mic_sink_t` 在将 PCM 放入发送队列时，以单调时钟生成仅用于诊断的 `capture_time_us`；未来若上游能提供源时间戳，可把它作为可选元数据传入适配层，但不得改变现有调用契约。
 
 `stop_stream()` 与 `shutdown()` 必须分开：前者对应远端会话结束，只 flush；后者才允许销毁 endpoint。
 
@@ -465,7 +475,7 @@ tools/sunshine-ds5-sidecar/
 
 1. Named Pipe 继续使用 `CurrentUserOnly`、随机名称和单实例。
 2. Sidecar 在连接建立时校验 owner 进程 token/elevation；协议中的 PID、名称或 token 字符串不作为授权依据。
-3. Sidecar 必须位于固定、经 canonicalize 的 active component 目录，并由 Core 校验 manifest 和 SHA-256。
+3. Sidecar 必须位于固定、经 canonicalize 的 active component 目录，并由 Core 校验 manifest 和 SHA-256。产品启用前还必须验证目录及文件 owner/DACL、拒绝每个路径分量和 executable 上的 reparse point，并在摘要校验至 `CreateProcessW` 完成期间持有禁止写入/替换的已验证文件句柄或采用等效原子机制；当前按路径二次打开的实现存在 TOCTOU 风险，不能仅以摘要校验视为已关闭。
 4. Core 不向宿主传任意 profile 路径、DLL 路径、URL、命令行或 VID/PID。
 5. 麦克风 profile 是组件内受校验资产；宿主只接受内置 profile ID。
 6. `MicPcm` 做 checked arithmetic，拒绝长度溢出、非固定格式和超出 20 ms 的单包。
@@ -673,9 +683,10 @@ USB 虚拟麦克风从“实验性”升级为默认候选前，必须同时满�
 2. 与本机 UAC1 attach/detach、pin close 和 endpoint purge 相关的已知内核崩溃问题已在该签名版本中修复并完成复现回归。
 3. 第 16 节的 HVCI/Secure Boot 和长期稳定性矩阵通过。
 4. 发布 VID/PID、产品字符串和设备身份策略完成法律与兼容性审查。
-5. 组件 manifest、来源、SHA-256、许可证和回滚版本固定。
-6. 用户可以显式选择 VB-CABLE 回退，升级不会强制迁移现有配置。
-7. GUI 明确区分用户级宿主组件与系统级 USB/IP 传输，安装和卸载影响在 UAC 前说明。
+5. 组件 manifest、来源、SHA-256、许可证和回滚版本固定；manifest 使用明确的 `hidmaestro_file_version = 1.6.2.0` 字段，并与 `HasPinnedMicrophoneRuntime` 的 `AssemblyFileVersion` 检查一致。
+6. active 组件目录的受保护 owner/DACL、全路径 reparse point 拒绝及 Sidecar 校验—启动 TOCTOU 防护通过专门安全回归。
+7. 用户可以显式选择 VB-CABLE 回退，升级不会强制迁移现有配置。
+8. GUI 明确区分用户级宿主组件与系统级 USB/IP 传输，安装和卸载影响在 UAC 前说明。
 
 在上述条件未全部满足时：
 
@@ -718,5 +729,5 @@ USB 虚拟麦克风从“实验性”升级为默认候选前，必须同时满�
 - [usbip-win2](https://github.com/vadimgrn/usbip-win2)：当前已签名 UDE bus 的上游项目。
 - [usbip-win2 #181](https://github.com/vadimgrn/usbip-win2/issues/181)：与本机模拟 UAC endpoint teardown 接近的 kernel pool corruption 风险记录。
 - [usbip-win2 #180](https://github.com/vadimgrn/usbip-win2/issues/180)：同版本的另一项 kernel pool corruption 风险记录。
-- [Microsoft USB Audio 2.0 drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-2-0-audio-drivers)：Windows inbox USB Audio 驱动的格式、clock 和 packet 约束。
+- [Microsoft USB Audio Class system driver (Usbaudio.sys)](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-audio-class-system-driver--usbaudio-sys-)：当前 UAC1 profile 使用的 Windows inbox 驱动；UAC2/`usbaudio2.sys` 仅作为未来路径考虑。
 - [Microsoft UDE client driver](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/writing-a-ude-client-driver)：UDE bus/client driver 边界和签名责任。

@@ -68,7 +68,34 @@ internal sealed class WasapiCaptureProbe : IDisposable
         }
     }
 
-    internal static WasapiCaptureProbe Open(string endpointId)
+    internal static Task<T> RunOnDedicatedThreadAsync<T>(
+        string endpointId, Func<WasapiCaptureProbe, T> action)
+    {
+        var completion = new TaskCompletionSource<T>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                T result;
+                using (var probe = Open(endpointId))
+                    result = action(probe);
+                completion.TrySetResult(result);
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "Sunshine WASAPI capture probe",
+        };
+        thread.Start();
+        return completion.Task;
+    }
+
+    private static WasapiCaptureProbe Open(string endpointId)
     {
         var enumerator = CreateEnumerator();
         IMMDevice? device = null;
