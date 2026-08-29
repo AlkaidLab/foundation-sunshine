@@ -52,7 +52,7 @@
           <div class="version-update-copy">
             <span class="release-channel">{{ update.channelLabel }}</span>
             <h2 :id="`version-update-${update.channel}`" class="version-update-title">
-              {{ $t(update.titleKey) }}
+              {{ $t('index.update_available') }}
             </h2>
             <h3 class="version-release-name">{{ update.release.name }}</h3>
             <p class="version-update-description">{{ $t(update.descriptionKey) }}</p>
@@ -146,7 +146,10 @@ const props = defineProps({
 })
 
 const extractReleaseDetails = (body = '') => {
-  let notes = body
+  let notes = body.replace(
+    /^\s*<h[1-6][^>]*>\s*What(?:'|’|&(?:#39|apos);)?s Changed\s*<\/h[1-6]>\s*/i,
+    ''
+  )
   let contributors = ''
   let fullChangelog = ''
 
@@ -157,12 +160,14 @@ const extractReleaseDetails = (body = '') => {
   }
 
   const fullChangelogParagraph = notes.match(
-    /<p>\s*<strong>\s*Full Changelog:\s*<\/strong>[\s\S]*?<\/p>/i
+    /<p>\s*<strong>\s*Full Changelog\s*:?\s*<\/strong>\s*:?\s*[\s\S]*?<\/p>/i
   )
   if (fullChangelogParagraph) {
     fullChangelog = fullChangelogParagraph[0].match(/<a\b[^>]*href="([^"]+)"/i)?.[1] || ''
     notes = notes.replace(fullChangelogParagraph[0], '').trim()
   }
+
+  notes = notes.replace(/(?:\s*<hr\s*\/?>\s*)+$/i, '').trim()
 
   return { notes, fullChangelog, contributors }
 }
@@ -174,7 +179,6 @@ const availableUpdates = computed(() => {
     updates.push({
       channel: 'prerelease',
       channelLabel: 'Beta',
-      titleKey: 'index.update_available',
       descriptionKey: 'index.new_pre_release',
       release: props.preReleaseVersion.release,
       details: extractReleaseDetails(props.parsedPreReleaseBody),
@@ -185,7 +189,6 @@ const availableUpdates = computed(() => {
     updates.push({
       channel: 'stable',
       channelLabel: 'Stable',
-      titleKey: 'index.update_available',
       descriptionKey: 'index.new_stable',
       release: props.githubVersion.release,
       details: extractReleaseDetails(props.parsedStableBody),
@@ -554,9 +557,7 @@ onBeforeUnmount(() => {
 
 /* Release notes */
 .version-notes {
-  margin-top: 1.5rem;
-  padding-top: 1.35rem;
-  border-top: 1px solid var(--ui-border);
+  margin-top: 1.75rem;
 }
 
 .version-notes-title {
@@ -582,12 +583,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
   line-height: 1.25;
   color: var(--ui-text-primary);
-}
-
-.markdown-content :deep(h1:first-child),
-.markdown-content :deep(h2:first-child),
-.markdown-content :deep(h3:first-child) {
-  display: none;
 }
 
 .markdown-content :deep(h1) {
