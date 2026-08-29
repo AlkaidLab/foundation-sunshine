@@ -55,6 +55,14 @@ namespace platf::audio {
   /** Update the selected backend after initialization or fallback. */
   void
   report_mic_redirect_backend(std::string active_backend, std::string fallback_reason = {});
+
+  /** Atomically reserve the redirect path for a UI test. */
+  bool
+  try_begin_mic_redirect_test();
+
+  /** Release a redirect-path reservation obtained by try_begin_mic_redirect_test(). */
+  void
+  end_mic_redirect_test();
   
   // COM interface Release helper for safe_ptr
   template<typename T>

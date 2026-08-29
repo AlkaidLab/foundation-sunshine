@@ -256,11 +256,11 @@ onBeforeUnmount(() => {
         <code v-if="micTestResult.errorCode" class="d-block mt-1">{{ micTestResult.errorCode }}</code>
       </div>
 
-      <section v-if="platform === 'windows'" class="stream-mic-status mt-3" aria-live="polite">
+      <section v-if="platform === 'windows'" class="stream-mic-status mt-3">
         <div class="stream-mic-status__header">
           <div>
             <h6 class="mb-1">{{ $t('config.microphone_redirect_status') }}</h6>
-            <span class="badge" :class="micStatusClass">
+            <span class="badge" :class="micStatusClass" aria-live="polite">
               {{ micStatus ? $t(`config.microphone_redirect_state_${micStatus.state || 'absent'}`) : $t('config.microphone_redirect_state_unknown') }}
             </span>
           </div>

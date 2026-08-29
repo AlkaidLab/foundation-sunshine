@@ -123,6 +123,9 @@ namespace platf::virtual_device_host {
   struct microphone_client_t::impl_t {
     struct pcm_block_t {
       std::vector<std::int16_t> samples;
+      std::uint32_t sequence = 0;
+      std::uint64_t timestamp_us = 0;
+      std::uint16_t flags = 0;
     };
 
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -361,21 +364,10 @@ namespace platf::virtual_device_host {
       std::vector<std::uint8_t> payload(
         wire::MIC_PCM_HEADER_SIZE + block.samples.size() * sizeof(std::int16_t));
       write_u32(payload.data(), generation);
-      write_u32(payload.data() + 4, sequence++);
-      const auto timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-      write_u64(payload.data() + 8, static_cast<std::uint64_t>(timestamp));
+      write_u32(payload.data() + 4, block.sequence);
+      write_u64(payload.data() + 8, block.timestamp_us);
       write_u16(payload.data() + 16, frames);
-      std::uint16_t flags = 0;
-      if (!stream_started) {
-        flags |= wire::mic_stream_start;
-        stream_started = true;
-      }
-      if (discontinuity) {
-        flags |= wire::mic_discontinuity;
-        discontinuity = false;
-      }
-      write_u16(payload.data() + 18, flags);
+      write_u16(payload.data() + 18, block.flags);
       std::memcpy(payload.data() + wire::MIC_PCM_HEADER_SIZE,
                   block.samples.data(), block.samples.size() * sizeof(std::int16_t));
       return payload;
@@ -430,6 +422,18 @@ namespace platf::virtual_device_host {
             block = std::move(queue.front());
             queued_frames -= block.samples.size();
             queue.pop_front();
+            block.sequence = sequence++;
+            block.timestamp_us = static_cast<std::uint64_t>(
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (!stream_started) {
+              block.flags |= wire::mic_stream_start;
+              stream_started = true;
+            }
+            if (discontinuity) {
+              block.flags |= wire::mic_discontinuity;
+              discontinuity = false;
+            }
             have_block = true;
           }
         }

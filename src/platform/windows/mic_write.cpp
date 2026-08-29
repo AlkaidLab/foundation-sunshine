@@ -468,6 +468,14 @@ namespace platf::audio {
     const std::lock_guard lock(test_mutex);
 
     const auto backend = config::audio.microphone_redirect_backend;
+    if (!try_begin_mic_redirect_test()) {
+      return { false, "MIC_TEST_BUSY", mic_redirect_status().active_backend };
+    }
+    struct test_reservation_t {
+      ~test_reservation_t() {
+        end_mic_redirect_test();
+      }
+    } test_reservation;
     if (backend == "disabled") {
       report_mic_redirect_backend({}, "MIC_BACKEND_DISABLED");
       return { false, "MIC_BACKEND_DISABLED", "disabled" };
@@ -476,10 +484,6 @@ namespace platf::audio {
     std::string usbip_fallback_reason;
     if (backend == "usbip_experimental" || backend == "auto") {
       auto &client = virtual_device_host::persistent_microphone_client();
-      const auto existing_status = virtual_device_host::microphone_status();
-      if (client.online() && existing_status.state == "remote_active") {
-        return { false, "MIC_TEST_BUSY", "usbip_experimental" };
-      }
       if (client.start()) {
         report_mic_redirect_backend("usbip_experimental");
         constexpr auto sample_rate = 48'000u;

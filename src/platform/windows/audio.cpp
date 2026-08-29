@@ -759,7 +759,13 @@ namespace platf::audio {
     vb_cable,
     usbip,
   };
+  enum class mic_redirect_owner_e {
+    none,
+    session,
+    test,
+  };
   std::atomic<mic_backend_e> active_mic_backend { mic_backend_e::none };
+  std::atomic<mic_redirect_owner_e> mic_redirect_owner { mic_redirect_owner_e::none };
   std::mutex mic_backend_status_mutex;
   std::string mic_backend_fallback_reason;
 
@@ -776,6 +782,20 @@ namespace platf::audio {
     }
     std::lock_guard lock(mic_backend_status_mutex);
     mic_backend_fallback_reason = std::move(fallback_reason);
+  }
+
+  bool
+  try_begin_mic_redirect_test() {
+    auto expected = mic_redirect_owner_e::none;
+    return mic_redirect_owner.compare_exchange_strong(
+      expected, mic_redirect_owner_e::test);
+  }
+
+  void
+  end_mic_redirect_test() {
+    auto expected = mic_redirect_owner_e::test;
+    mic_redirect_owner.compare_exchange_strong(
+      expected, mic_redirect_owner_e::none);
   }
 
   mic_redirect_status_t
@@ -1338,6 +1358,12 @@ namespace platf::audio {
         BOOST_LOG(info) << "Client microphone redirection backend is disabled"sv;
         return -1;
       }
+      auto expected_owner = mic_redirect_owner_e::none;
+      if (!mic_redirect_owner.compare_exchange_strong(
+            expected_owner, mic_redirect_owner_e::session)) {
+        BOOST_LOG(warning) << "Microphone redirect path is already in use"sv;
+        return -1;
+      }
 
       if (backend == "usbip_experimental" || backend == "auto") {
         auto &usbip = virtual_device_host::persistent_microphone_client();
@@ -1355,6 +1381,7 @@ namespace platf::audio {
           report_mic_redirect_backend({}, usbip_fallback_reason);
           BOOST_LOG(error) << "The experimental USB/IP virtual microphone backend failed: "sv
                            << usbip_fallback_reason;
+          mic_redirect_owner = mic_redirect_owner_e::none;
           return -1;
         }
         report_mic_redirect_backend("vb_cable", usbip_fallback_reason);
@@ -1372,6 +1399,9 @@ namespace platf::audio {
         report_mic_redirect_backend({}, backend == "auto" ?
                                           usbip_fallback_reason :
                                           "MIC_TEST_DEVICE_UNAVAILABLE");
+        auto expected_owner = mic_redirect_owner_e::session;
+        mic_redirect_owner.compare_exchange_strong(
+          expected_owner, mic_redirect_owner_e::none);
         return -1;
       }
 
@@ -1392,6 +1422,7 @@ namespace platf::audio {
         }
         // Keep the endpoint alive across Moonlight sessions. Its process-wide
         // owner destroys it when Sunshine exits.
+        mic_redirect_owner = mic_redirect_owner_e::none;
         return;
       }
       if (mic_redirect_device) {
@@ -1399,6 +1430,9 @@ namespace platf::audio {
         mic_redirect_device.reset();
       }
       report_mic_redirect_backend({});
+      auto expected_owner = mic_redirect_owner_e::session;
+      mic_redirect_owner.compare_exchange_strong(
+        expected_owner, mic_redirect_owner_e::none);
     }
 
     int
