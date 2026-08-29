@@ -158,6 +158,8 @@ internal static class ProtocolSelfTest
         VerifyDefaultAudioEndpointPolicy();
         VerifyControllerStateSubmissionPolicy();
         VerifySensorTimestampEncoding();
+        VerifyOutputValidityFlags();
+        VerifyOutputValidityGating();
     }
 
     private static void VerifySensorTimestampEncoding()
@@ -399,7 +401,7 @@ internal static class ProtocolSelfTest
         var right = Enumerable.Range(0x40, AdaptiveTriggerState.EffectSize).Select(value => (byte)value).ToArray();
 
         Require(state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
-                                3, 2, out var leftMessage),
+                                default, 3, 2, out var leftMessage),
             "left adaptive trigger update");
         Require(leftMessage.Type == Protocol.MessageType.AdaptiveTriggers &&
                 leftMessage.Payload.Length == 26 &&
@@ -410,11 +412,11 @@ internal static class ProtocolSelfTest
             "left adaptive trigger encoding");
 
         Require(!state.TryUpdate(new Dictionary<string, object> { ["leftTriggerEffect"] = left },
-                                 3, 2, out _),
+                                 default, 3, 2, out _),
             "adaptive trigger duplicate suppression");
 
         Require(state.TryUpdate(new Dictionary<string, object> { ["rightTriggerEffect"] = right },
-                                3, 2, out var rightMessage) &&
+                                default, 3, 2, out var rightMessage) &&
                 rightMessage.Payload[2] == AdaptiveTriggerState.RightFlag &&
                 rightMessage.Payload[3] == left[0] && rightMessage.Payload[4] == right[0] &&
                 rightMessage.Payload.AsSpan(16, 10).SequenceEqual(right.AsSpan(1, 10)),
@@ -426,6 +428,91 @@ internal static class ProtocolSelfTest
             "adaptive trigger reset");
         Require(!state.TryReset(3, 2, out _), "adaptive trigger reset duplicate suppression");
     }
+
+    private static void VerifyOutputValidityFlags()
+    {
+        var absent = OutputValidFlags.From(new Dictionary<string, object>());
+        Require(absent.LeftTrigger && absent.RightTrigger && absent.Lightbar,
+            "output validity fallback");
+
+        var silent = Flags(0x00, 0x00);
+        Require(!silent.LeftTrigger && !silent.RightTrigger && !silent.Lightbar,
+            "output validity gates every field it governs");
+
+        Require(Flags(0x0C, 0x00) is { LeftTrigger: true, RightTrigger: true },
+            "output validity both triggers");
+        Require(Flags(0x08, 0x00) is { LeftTrigger: true, RightTrigger: false },
+            "output validity left trigger only");
+        Require(Flags(0x04, 0x00) is { LeftTrigger: false, RightTrigger: true },
+            "output validity right trigger only");
+        Require(Flags(0x00, 0x44).Lightbar && !Flags(0x00, 0x40).Lightbar,
+            "output validity lightbar control");
+
+        // A byte the decoder hides governs nothing: exposing only the lightbar
+        // byte must not start gating the triggers.
+        var lightbarOnly = OutputValidFlags.From(new Dictionary<string, object>
+        {
+            ["validFlag1"] = (byte)0x40,
+        });
+        Require(!lightbarOnly.Lightbar &&
+                lightbarOnly.LeftTrigger && lightbarOnly.RightTrigger,
+            "output validity gates per byte");
+    }
+
+    private static void VerifyOutputValidityGating()
+    {
+        var effect = Enumerable.Range(0x22, AdaptiveTriggerState.EffectSize).Select(value => (byte)value).ToArray();
+        var idle = new byte[AdaptiveTriggerState.EffectSize];
+        var state = new AdaptiveTriggerState();
+
+        // A report that programs one trigger leaves the other's bytes zero. The
+        // trigger it is not programming keeps the effect the client holds. The
+        // validFlag0 bits are spelled out so a wrong constant cannot make the
+        // gate agree with itself.
+        var rightOnly = new Dictionary<string, object>
+        {
+            ["leftTriggerEffect"] = idle,
+            ["rightTriggerEffect"] = effect,
+            ["validFlag0"] = (byte)0x04,
+        };
+        var leftOnly = new Dictionary<string, object>
+        {
+            ["leftTriggerEffect"] = effect,
+            ["rightTriggerEffect"] = idle,
+            ["validFlag0"] = (byte)0x08,
+        };
+
+        Require(state.TryUpdate(rightOnly, OutputValidFlags.From(rightOnly), 1, 0, out var right) &&
+                right.Payload[2] == AdaptiveTriggerState.RightFlag &&
+                right.Payload[4] == effect[0],
+            "right trigger armed by its own report");
+        Require(state.TryUpdate(leftOnly, OutputValidFlags.From(leftOnly), 1, 0, out var left) &&
+                left.Payload[2] == AdaptiveTriggerState.LeftFlag &&
+                left.Payload[3] == effect[0] && left.Payload[4] == effect[0],
+            "left trigger armed without disturbing the right");
+        Require(!state.TryUpdate(leftOnly, OutputValidFlags.From(leftOnly), 1, 0, out _),
+            "an unprogrammed trigger is never released");
+
+        // A report that says it is programming both triggers with no effect is
+        // the game letting go, and it reaches the client as written.
+        var releaseBoth = new Dictionary<string, object>
+        {
+            ["leftTriggerEffect"] = idle,
+            ["rightTriggerEffect"] = idle,
+            ["validFlag0"] = (byte)0x0C,
+        };
+        Require(state.TryUpdate(releaseBoth, OutputValidFlags.From(releaseBoth), 1, 0, out var release) &&
+                release.Payload[2] == (AdaptiveTriggerState.LeftFlag | AdaptiveTriggerState.RightFlag) &&
+                release.Payload.AsSpan(3).IndexOfAnyExcept((byte)0) == -1,
+            "a programmed release reaches the client");
+    }
+
+    private static OutputValidFlags Flags(byte flag0, byte flag1) =>
+        OutputValidFlags.From(new Dictionary<string, object>
+        {
+            ["validFlag0"] = flag0,
+            ["validFlag1"] = flag1,
+        });
 
     private static void Require(bool condition, string operation)
     {

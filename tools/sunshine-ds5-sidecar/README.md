@@ -47,3 +47,13 @@ If Windows selects a HIDMaestro-backed virtual DualSense endpoint as a default,
 the helper reports the policy violation and exits; Sunshine then performs its
 single recovery attach in HID-only DS5 mode. This read-only fail-closed guard
 avoids undocumented audio-policy writes and never changes a user's defaults.
+
+The trigger effects and lightbar of an output report a game writes to the
+virtual pad are read the way the hardware reads them: only when the report's
+validity byte for that field is set. A game leaves the fields it is not
+programming zero, and reading those zeros as an instruction would cancel an
+effect the game just armed and strobe a held color. A validity byte the decoder
+does not expose governs nothing, so the fields it would gate are read
+unconditionally. The motor bytes are read unconditionally as well, because their
+zeros can cancel a rumble that is still playing while gating them can drop a
+stop that has no other way to arrive.
