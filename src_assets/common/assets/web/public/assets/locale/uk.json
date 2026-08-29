@@ -439,7 +439,7 @@
     "microphone_redirect_apply_note": "Backend changes take effect after saving and applying the configuration.",
     "microphone_redirect_available": "Available",
     "microphone_redirect_backend": "Microphone redirection backend",
-    "microphone_redirect_backend_auto": "Automatic: USB/IP, then VB-Cable (recommended)",
+    "microphone_redirect_backend_auto": "Automatic: USB/IP, then VB-Cable",
     "microphone_redirect_backend_desc": "Select how Moonlight microphone audio is exposed to Windows applications.",
     "microphone_redirect_backend_disabled": "Disabled",
     "microphone_redirect_backend_usbip": "USB/IP virtual microphone (experimental)",

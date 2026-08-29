@@ -439,7 +439,7 @@
     "microphone_redirect_apply_note": "後端變更會在儲存並套用設定後生效。",
     "microphone_redirect_available": "可用",
     "microphone_redirect_backend": "麥克風重新導向後端",
-    "microphone_redirect_backend_auto": "自動：優先 USB/IP，失敗後使用 VB-Cable（建議）",
+    "microphone_redirect_backend_auto": "自動：優先 USB/IP，失敗後使用 VB-Cable",
     "microphone_redirect_backend_desc": "選擇 Moonlight 麥克風音訊以何種方式提供給 Windows 應用程式。",
     "microphone_redirect_backend_disabled": "停用",
     "microphone_redirect_backend_usbip": "USB/IP 虛擬麥克風（實驗性）",
