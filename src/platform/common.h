@@ -540,7 +540,7 @@ namespace platf {
     virtual int
     convert(platf::img_t &img) = 0;
 
-    // Optional: supported HLG converters can apply this at a frame boundary.
+    // Optional: supported HDR converters can apply this at a frame boundary.
     virtual void
     set_client_sdr_white_nits(float) {
     }

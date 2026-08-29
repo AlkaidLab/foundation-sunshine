@@ -28,6 +28,7 @@
  */
 
 #include "include/common.hlsl"
+#include "include/hdr_pre_encode_transform.hlsl"
 
 // scRGB to nits conversion factor
 static const float SCRGB_NITS_PER_UNIT = 80.0;
@@ -126,6 +127,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             for (uint y = cellBegin.y; y < cellEnd.y; ++y) {
                 for (uint x = cellBegin.x; x < cellEnd.x; ++x) {
                     float3 pixel = inputTexture.Load(int3(uint2(x, y), 0)).rgb;
+                    pixel = ApplyHdrPreEncodeTransform(pixel);
                     float maxrgb_nits = HdrAnalysisMaxRgbNits(pixel);
                     minMaxRGB_nits = min(minMaxRGB_nits, maxrgb_nits);
                     maxMaxRGB_nits = max(maxMaxRGB_nits, maxrgb_nits);
@@ -136,6 +138,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
 
             uint2 representativePosition = (cellBegin + cellEnd - 1) / 2;
             float3 representative = inputTexture.Load(int3(representativePosition, 0)).rgb;
+            representative = ApplyHdrPreEncodeTransform(representative);
             representativeMaxRGB_nits = HdrAnalysisMaxRgbNits(representative);
         }
     }

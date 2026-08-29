@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <d3d11.h>
@@ -283,6 +284,13 @@ namespace platf::dxgi {
     virtual bool
     get_hdr_metadata(SS_HDR_METADATA &metadata) override;
 
+    /**
+     * @brief Current Windows SDR reference white for this DXGI output.
+     *        The DisplayConfig query is cached for one second.
+     */
+    std::optional<float>
+    sdr_white_nits() const;
+
     const char *
     dxgi_format_to_string(DXGI_FORMAT format);
     const char *
@@ -291,10 +299,16 @@ namespace platf::dxgi {
     get_supported_capture_formats() = 0;
 
   private:
+    std::wstring display_device_name;
+
     // Cached HDR metadata for change detection
     std::optional<SS_HDR_METADATA> cached_hdr_metadata;
     std::chrono::steady_clock::time_point last_hdr_check_time;
     static constexpr std::chrono::milliseconds hdr_check_interval { 1000 };  // Check every 1 second
+
+    mutable std::optional<float> cached_sdr_white_nits;
+    mutable std::chrono::steady_clock::time_point last_sdr_white_check_time;
+    static constexpr std::chrono::milliseconds sdr_white_check_interval { 1000 };
 
   protected:
     int
@@ -358,12 +372,12 @@ namespace platf::dxgi {
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
     /**
-     * @brief Current composed SDR white level in nits, as tracked by cursor
-     *        normalization (300-nit fallback until the driver reports one).
-     *        nullopt when cursor normalization is disabled.
+     * @brief Current captured SDR white level in nits. Prefer producer metadata
+     *        when VDD supplies it, otherwise query the selected Windows output.
+     *        The legacy 300-nit value is used only if neither source is available.
      */
     std::optional<float>
-    composed_sdr_white_nits() const;
+    capture_sdr_white_nits() const;
 
     std::atomic<uint32_t> next_image_id;
 
@@ -385,9 +399,11 @@ namespace platf::dxgi {
 
     gpu_cursor_t cursor_alpha;
     gpu_cursor_t cursor_xor;
-    // Written from the capture/cursor thread, read from the encode path
-    // (composed_sdr_white_nits), so it must be an atomic snapshot.
+    // Written from the capture/cursor thread and used by cursor rendering.
     std::atomic<float> cursor_white_multiplier_value { 300.0f / 80.0f };
+    // Producer-reported capture white is independent of cursor rendering. Keep
+    // it separate so a cursor constant-buffer failure cannot corrupt encoding.
+    std::atomic<float> producer_sdr_white_nits { 0.0f };
     bool cursor_white_normalization_enabled = false;
     bool cursor_pipeline_ready = false;
 
