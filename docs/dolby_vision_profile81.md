@@ -132,9 +132,13 @@ public:
 };
 
 /// L1 元数据推导：avg 取 stats.avg_maxrgb_pq（PQ 域均值），
-/// max 取 percentile_99（离群点防护），min 取 percentile_10_pq 后钳位。
+/// max 取 percentile_99（离群点防护）。有扩展近黑统计时，近黑覆盖率达到 1%
+/// 才把 min 报告为零，否则取 percentile_1_pq；旧分析结果回退到 percentile_10_pq。
+/// 所有值随后钳位。
 std::optional<frame_metadata_t>
-frame_metadata_from_stats(const platf::hdr_frame_luminance_stats_t &stats);
+frame_metadata_from_stats(
+  const platf::hdr_frame_luminance_stats_t &stats,
+  bool scene_refresh = false);
 
 /// frame_id 绑定的固定容量在途 RPU 队列：编码输出按 frame_index 取回对应 RPU，
 /// 超过最大在途帧数返回失败 —— 调用方应停止 DV 而不是错位附接。

@@ -709,6 +709,43 @@ TEST(DolbyVisionInjector, MarksEachDetectedSceneExactlyOnce) {
   EXPECT_EQ(parse_injected_rpu(next_au).scene_refresh, 1u);
 }
 
+TEST(DolbyVisionInjector, DefersSceneRefreshUntilMetadataIsValid) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));
+
+  auto first_scene = valid_stats();
+  first_scene.sample_sequence = 1;
+  first_scene.percentile_90_pq = 0.60f;
+  std::fill(std::begin(first_scene.distribution_maxrgb),
+    std::end(first_scene.distribution_maxrgb), 100.0f);
+  injector.stage(1, first_scene);
+  bytes_t first_au = make_au();
+  injector.inject(1, first_au);
+  ASSERT_EQ(parse_injected_rpu(first_au).scene_refresh, 1u);
+
+  auto invalid_cut = first_scene;
+  invalid_cut.sample_sequence = 2;
+  invalid_cut.near_black_stats_valid = true;
+  invalid_cut.percentile_1_pq = 0.001f;
+  invalid_cut.near_black_fraction = std::numeric_limits<float>::quiet_NaN();
+  std::fill(std::begin(invalid_cut.distribution_maxrgb),
+    std::end(invalid_cut.distribution_maxrgb), 1000.0f);
+  injector.stage(2, invalid_cut);
+  bytes_t invalid_au = make_au();
+  injector.inject(2, invalid_au);
+  // The conservative previous metadata is reused without falsely claiming that
+  // the new scene's invalid analysis was applied.
+  EXPECT_EQ(parse_injected_rpu(invalid_au).scene_refresh, 0u);
+
+  auto recovered = invalid_cut;
+  recovered.sample_sequence = 3;
+  recovered.near_black_fraction = 0.02f;
+  injector.stage(3, recovered);
+  bytes_t recovered_au = make_au();
+  injector.inject(3, recovered_au);
+  EXPECT_EQ(parse_injected_rpu(recovered_au).scene_refresh, 1u);
+}
+
 TEST(DolbyVisionInjector, OverflowDisablesTheSession) {
   rpu_injector_t injector;
   ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));

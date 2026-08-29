@@ -255,6 +255,7 @@ namespace video::dolby_vision {
     hdr_metadata::scene_change_detector_t scene_detector_;
     hdr_metadata::hdr_luminance_ema_t luminance_filter_;
     std::optional<frame_metadata_t> last_metadata_;
+    bool pending_scene_refresh_ = false;
     bool enabled_ = false;
   };
 

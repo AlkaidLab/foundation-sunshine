@@ -476,11 +476,15 @@ namespace video::dolby_vision {
     const auto scene = scene_detector_.observe(stats);
     if (scene.new_sample && scene.scene_change) {
       luminance_filter_.reset();
+      pending_scene_refresh_ = true;
     }
     luminance_filter_.update(stats);
     if (const auto metadata = frame_metadata_from_stats(
-          luminance_filter_.smoothed(stats), scene.scene_change)) {
+          luminance_filter_.smoothed(stats), pending_scene_refresh_)) {
       last_metadata_ = metadata;
+      // Consume the refresh only after a valid RPU can carry it. An invalid
+      // analyzer sample must not strand the new scene without a refresh.
+      pending_scene_refresh_ = false;
     }
     if (!last_metadata_) {
       return;  // cold analyzer: this frame ships without an RPU, like HDR10+ does
@@ -522,6 +526,7 @@ namespace video::dolby_vision {
     scene_detector_.reset();
     luminance_filter_.reset();
     last_metadata_.reset();
+    pending_scene_refresh_ = false;
     queue_.clear();
     generator_.reset();
   }
