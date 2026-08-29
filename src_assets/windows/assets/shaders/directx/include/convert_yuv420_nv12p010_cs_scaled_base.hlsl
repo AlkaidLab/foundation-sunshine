@@ -124,6 +124,9 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
                     float2 cell_uv = (float2(x, y) + 0.5) / float2(out_rect_size);
                     cell_rgb = SampleCatmullRom5Tap(cell_uv, src_size_f);
                 }
+#ifdef HDR_PRE_ENCODE_TRANSFORM_AVAILABLE
+                cell_rgb = ApplyHdrPreEncodeTransform(cell_rgb);
+#endif
                 float maxrgb_nits = HdrAnalysisMaxRgbNits(cell_rgb);
                 min_maxrgb_nits = min(min_maxrgb_nits, maxrgb_nits);
                 max_maxrgb_nits = max(max_maxrgb_nits, maxrgb_nits);
@@ -140,7 +143,11 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             sum_maxrgb_nits,
             sum_maxrgb_pq,
             pixel_count,
+#ifdef HDR_PRE_ENCODE_TRANSFORM_AVAILABLE
+            HdrAnalysisMaxRgbNits(ApplyHdrPreEncodeTransform(src_rgb))
+#else
             HdrAnalysisMaxRgbNits(src_rgb)
+#endif
         );
     }
 #endif

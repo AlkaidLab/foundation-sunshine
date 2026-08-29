@@ -2076,7 +2076,7 @@ namespace stream {
         return;
       }
 
-      // This is an HLG conversion parameter, not part of the display/VDD HDR
+      // This is an HDR conversion parameter, not part of the display/VDD HDR
       // capability tuple. Apply it on the video thread without rebuilding the
       // display or encoder.
       if (param_type_enum == video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
@@ -2086,8 +2086,8 @@ namespace stream {
                              << SDR_WHITE_PAYLOAD_SIZE << " bytes, got " << payload.size();
           return;
         }
-        if (session->config.controlProtocolType != 13 || session->config.monitor.dynamicRange != 2) {
-          BOOST_LOG(warning) << "Ignoring client SDR white update outside an encrypted HLG session";
+        if (session->config.controlProtocolType != 13 || session->config.monitor.dynamicRange == 0) {
+          BOOST_LOG(warning) << "Ignoring client SDR white update outside an encrypted HDR session";
           return;
         }
 
