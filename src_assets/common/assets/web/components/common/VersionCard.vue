@@ -61,7 +61,7 @@
             <button
               type="button"
               class="btn btn-primary btn-download"
-              :disabled="pendingNativeChannel !== ''"
+              :disabled="pendingNativeChannel !== '' || (!nativeUpdaterAvailable && !update.release.html_url)"
               :aria-busy="pendingNativeChannel === update.channel"
               @click="handleDownloadClick(update.release.html_url, update.channel)"
             >
@@ -130,6 +130,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { openExternalUrl } from '../../utils/helpers.js'
+import { extractReleaseDetails } from '../../utils/releaseDetails.js'
 
 const props = defineProps({
   version: Object,
@@ -144,33 +145,6 @@ const props = defineProps({
   parsedStableBody: String,
   parsedPreReleaseBody: String,
 })
-
-const extractReleaseDetails = (body = '') => {
-  let notes = body.replace(
-    /^\s*<h[1-6][^>]*>\s*What(?:'|’|&(?:#39|apos);)?s Changed\s*<\/h[1-6]>\s*/i,
-    ''
-  )
-  let contributors = ''
-  let fullChangelog = ''
-
-  const contributorsHeading = notes.match(/<h([1-6])[^>]*>\s*Contributors\s*<\/h\1>/i)
-  if (contributorsHeading) {
-    contributors = notes.slice(contributorsHeading.index + contributorsHeading[0].length).trim()
-    notes = notes.slice(0, contributorsHeading.index).trim()
-  }
-
-  const fullChangelogParagraph = notes.match(
-    /<p>\s*<strong>\s*Full Changelog\s*:?\s*<\/strong>\s*:?\s*[\s\S]*?<\/p>/i
-  )
-  if (fullChangelogParagraph) {
-    fullChangelog = fullChangelogParagraph[0].match(/<a\b[^>]*href="([^"]+)"/i)?.[1] || ''
-    notes = notes.replace(fullChangelogParagraph[0], '').trim()
-  }
-
-  notes = notes.replace(/(?:\s*<hr\s*\/?>\s*)+$/i, '').trim()
-
-  return { notes, fullChangelog, contributors }
-}
 
 const availableUpdates = computed(() => {
   const updates = []
@@ -291,6 +265,8 @@ const handleDownloadClick = (url, channel) => {
     requestNativeUpdate(channel)
     return
   }
+
+  if (!url) return
 
   pendingDownloadUrl.value = url
   showDownloadConfirm.value = true
@@ -740,6 +716,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.45rem;
   margin: 0;
+}
+
+.contributors-content :deep(ul) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .contributors-content :deep(img) {
