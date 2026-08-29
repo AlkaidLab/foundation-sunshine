@@ -812,17 +812,24 @@
     "window_title_placeholder": "es., Nome Applicazione"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine è una piattaforma autonoma di game stream per Moonlight.",
     "download": "Scarica",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Stai eseguendo una versione in anteprima di Sunshine. Potresti riscontrare bug o altri problemi. Si prega di segnalare eventuali problemi incontrati. Grazie per aver contribuito a rendere Sunshine un software migliore!",
     "loading_latest": "Caricamento dell'ultima versione...",
     "new_pre_release": "Una nuova versione pre-rilascio è disponibile!",
     "new_stable": "Una nuova versione Stabile è disponibile!",
     "startup_errors": "<b>Attenzione!</b> Sunshine ha rilevato questi errori durante l'avvio. Ti <b>raccomandamo vivamente </b> di risolverli prima dello streaming.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Stai per aprire la pagina di download degli aggiornamenti nel browser. Continuare?",
     "version_dirty": "Grazie per aver contribuito a rendere Sunshine un software migliore!",
     "version_latest": "Stai eseguendo l'ultima versione di Sunshine",
     "view_logs": "Visualizza log",
+    "view_release": "View release",
     "welcome": "Ciao, Foundation Sunshine!"
   },
   "navbar": {

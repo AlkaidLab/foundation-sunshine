@@ -812,17 +812,24 @@
     "window_title_placeholder": "par ex., Nom de l'application"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine est un serveur de streaming auto-hébergé pour Moonlight.",
     "download": "Télécharger",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Vous utilisez une version pré-publiée de Sunshine. Vous pouvez rencontrer des bugs ou d'autres problèmes. Veuillez signaler tout problème que vous rencontrez. Merci de nous aider à faire de Sunshine un meilleur logiciel!",
     "loading_latest": "Chargement de la dernière version...",
     "new_pre_release": "Une nouvelle préversion est disponible !",
     "new_stable": "Une nouvelle version stable est disponible !",
     "startup_errors": "<b>Attention !</b> Sunshine a détecté ces erreurs lors du démarrage. Nous <b>recommandons vivement de</b> les corriger avant de commencer à streamer.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Vous êtes sur le point d'ouvrir la page de téléchargement des mises à jour dans votre navigateur. Continuer ?",
     "version_dirty": "Merci de contribuer à faire de Sunshine un meilleur logiciel !",
     "version_latest": "Vous utilisez la dernière version de Sunshine",
     "view_logs": "Voir les journaux",
+    "view_release": "View release",
     "welcome": "Bonjour, Foundation Sunshine !"
   },
   "navbar": {

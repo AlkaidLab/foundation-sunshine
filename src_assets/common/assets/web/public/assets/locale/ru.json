@@ -812,17 +812,24 @@
     "window_title_placeholder": "например, Имя Приложения"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine - это ваш собственный сервер вещания игр для Moonlight.",
     "download": "Скачать",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Вы используете предварительную версию Sunshine. Вы можете столкнуться с ошибками или другими проблемами. Пожалуйста, сообщайте о проблемах, с которыми вы столкнётесь. Благодарим за помощь по улучшению Sunshine!",
     "loading_latest": "Загрузка свежей версии...",
     "new_pre_release": "Доступна новая предварительная версия!",
     "new_stable": "Доступна новая стабильная версия!",
     "startup_errors": "<b>Внимание!</b> Sunshine обнаружил эти ошибки во время запуска. Мы <b>НАСТОЯТЕЛЬНО РЕКОМЕНДУЕМ</b> исправить их перед запуском вещания.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Вы собираетесь открыть страницу загрузки обновлений в браузере. Продолжить?",
     "version_dirty": "Спасибо за помощь по улучшению Sunshine!",
     "version_latest": "Вы используете свежую версию Sunshine",
     "view_logs": "Просмотр журналов",
+    "view_release": "View release",
     "welcome": "Привет, Foundation Sunshine!"
   },
   "navbar": {

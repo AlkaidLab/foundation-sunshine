@@ -812,17 +812,24 @@
     "window_title_placeholder": "ej., Nombre de la aplicación"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine es un servidor de transmisión de juego autoalojado para Moonlight.",
     "download": "Descargar",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Está ejecutando una versión pre-lanzamiento de Sunshine. Puede que experimente fallos u otros problemas. Por favor, informe de cualquier problema que encuentre. ¡Gracias por ayudar a hacer de Sunshine un mejor software!",
     "loading_latest": "Cargando la última versión...",
     "new_pre_release": "¡Una nueva versión de pre-lanzamiento está disponible!",
     "new_stable": "¡Una nueva versión estable está disponible!",
     "startup_errors": "<b>Atención.</b> Sunshine ha detectado estos errores durante el arranque. <b>RECOMENDAMOS ENCARECIDAMENTE</b> solucionarlos antes de transmitir.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Está a punto de abrir la página de descarga de actualizaciones en su navegador. ¿Continuar?",
     "version_dirty": "¡Gracias por ayudar a hacer de Sunshine un mejor software!",
     "version_latest": "Está ejecutando la última versión de Sunshine",
     "view_logs": "Ver registros",
+    "view_release": "View release",
     "welcome": "¡Hola, Foundation Sunshine!"
   },
   "navbar": {

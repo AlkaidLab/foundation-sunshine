@@ -812,17 +812,24 @@
     "window_title_placeholder": "örneğin, Uygulama Adı"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine, Moonlight için kendi kendine barındırılan bir oyun akışı sunucusudur.",
     "download": "İndir",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Sunshine'ın yayın öncesi bir sürümünü çalıştırıyorsunuz. Hatalar veya başka sorunlar yaşayabilirsiniz. Lütfen karşılaştığınız sorunları bildirin. Sunshine'ın daha iyi bir yazılım olmasına yardımcı olduğunuz için teşekkür ederiz!",
     "loading_latest": "Son sürüm yükleniyor...",
     "new_pre_release": "Yeni Bir Yayın Öncesi Sürüm Mevcut!",
     "new_stable": "Yeni bir Kararlı Sürüm Kullanılabilir!",
     "startup_errors": "<b>Dikkat!</b> Sunshine başlatma sırasında bu hataları tespit etti. Yayınlamadan önce bunları düzeltmenizi <b>ŞİDDETLE TAVSİYE</b> EDERİZ.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Güncelleme indirme sayfası tarayıcınızda açılacak. Devam edilsin mi?",
     "version_dirty": "Sunshine'ı daha iyi bir yazılım haline getirmeye yardımcı olduğunuz için teşekkür ederiz!",
     "version_latest": "Sunshine'ın en son sürümünü çalıştırıyorsunuz",
     "view_logs": "Günlükleri görüntüle",
+    "view_release": "View release",
     "welcome": "Merhaba, Foundation Sunshine!"
   },
   "navbar": {

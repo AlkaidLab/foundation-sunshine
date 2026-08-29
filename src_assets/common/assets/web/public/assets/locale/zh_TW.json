@@ -812,17 +812,24 @@
     "window_title_placeholder": "例如：應用程式名稱"
   },
   "index": {
+    "check_updates": "檢查更新",
+    "contributors": "貢獻者",
+    "current_version": "目前版本",
     "description": "Sunshine 是 Moonlight 的自架遊戲串流主機。",
     "download": "下載",
+    "full_changelog": "查看完整更新日誌",
     "installed_version_not_stable": "您正在運行的是 Sunshine 的預發行版本。您可能會遇到錯誤或其他問題。請報告您遇到的任何問題。感謝您的協助，讓 Sunshine 成為更好的軟體！",
     "loading_latest": "正在載入最新版本…",
     "new_pre_release": "提供新的預發行版本！",
     "new_stable": "有新的穩定版本可用！",
     "startup_errors": "<b>注意！</b> Sunshine 在啟動時檢測到這些錯誤。我們<b>強烈建議</b>在開始串流之前修復它們。",
+    "update_available": "發現新版本",
+    "update_details": "更新內容",
     "update_download_confirm": "即將在瀏覽器中開啟更新下載頁面，是否繼續？",
     "version_dirty": "感謝您的協助，讓 Sunshine 成為更好的軟體！",
     "version_latest": "您正在執行最新版本的 Sunshine",
     "view_logs": "查看日誌",
+    "view_release": "查看發佈頁",
     "welcome": "你好，Foundation Sunshine！"
   },
   "navbar": {

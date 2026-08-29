@@ -812,17 +812,24 @@
     "window_title_placeholder": "例如：yuanshen"
   },
   "index": {
+    "check_updates": "检查更新",
+    "contributors": "贡献者",
+    "current_version": "当前版本",
     "description": "摇光所至，皆为现场。",
     "download": "下崽",
+    "full_changelog": "查看完整更新日志",
     "installed_version_not_stable": "你正在用 Sunshine 的测试版呢！可能会遇到各种小问题，记得报告给咱哦～感谢帮忙让 Sunshine 变得更好！",
     "loading_latest": "正在检查最新版本...",
     "new_pre_release": "有新的不稳定版可以玩啦！",
     "new_stable": "新的杂鱼版本来啦！",
     "startup_errors": "<b>注意啦！</b>Sunshine 启动时发现了一些问题。杂鱼们<b>最好</b>在串流前修好它们哦～",
+    "update_available": "发现新版本",
+    "update_details": "更新内容",
     "update_download_confirm": "即将在浏览器中打开更新下载页面，是否继续？",
     "version_dirty": "感谢杂鱼帮忙让 Sunshine 变得更好！",
     "version_latest": "杂鱼用的是最新版的 Sunshine 呢～",
     "view_logs": "查看日志",
+    "view_release": "查看发布页",
     "welcome": "你好，Foundation Sunshine！"
   },
   "navbar": {

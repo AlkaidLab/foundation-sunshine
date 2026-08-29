@@ -812,16 +812,23 @@
     "window_title_placeholder": "e.g., Application Name"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Alkaid. Be There, From Anywhere.",
     "download": "Download",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "You are running a pre-release version of Sunshine. You may experience bugs or other issues. Please report any issues you encounter. Thank you for helping to make Sunshine a better software!",
     "loading_latest": "Loading latest release...",
     "new_pre_release": "A new Pre-Release Version is Available!",
     "new_stable": "A new Stable Version is Available!",
     "startup_errors": "<b>Attention!</b> Sunshine detected these errors during startup. We <b>STRONGLY RECOMMEND</b> fixing them before streaming.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "You are about to open the update download page in your browser. Continue?",
     "version_dirty": "Thank you for helping to make Sunshine a better software!",
     "version_latest": "You are running the latest version of Sunshine",
+    "view_release": "View release",
     "view_logs": "View Logs",
     "welcome": "Hello, Foundation Sunshine!"
   },

@@ -812,17 +812,24 @@
     "window_title_placeholder": "např. Název aplikace"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Alkaid. Buďte tam odkudkoli.",
     "download": "Stáhnout",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Používáte předverzi Sunshine. Můžete zaznamenat chyby nebo jiné problémy. Prosím nahlaste všechny problémy, se kterými se setkáváte. Děkujeme, že jste pomohli udělat sunshine lepší software!",
     "loading_latest": "Načítání nejnovější verze...",
     "new_pre_release": "Je k dispozici nová verze před-vydání!",
     "new_stable": "K dispozici je nová stabilní verze!",
     "startup_errors": "<b>Pozor!</b> Sunshine zjistil tyto chyby během spouštění. <b>Důrazně doporučujeme</b> je před streamováním opravit.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Chystáte se otevřít stránku stahování aktualizací v prohlížeči. Pokračovat?",
     "version_dirty": "Děkujeme, že pomáháte zlepšovat Sunshine!",
     "version_latest": "Používáte nejnovější verzi Sunshine",
     "view_logs": "Zobrazit protokoly",
+    "view_release": "View release",
     "welcome": "Vítejte ve Foundation Sunshine!"
   },
   "navbar": {

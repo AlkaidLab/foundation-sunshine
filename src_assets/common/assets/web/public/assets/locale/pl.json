@@ -812,17 +812,24 @@
     "window_title_placeholder": "np. Nazwa Aplikacji"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine jest samodzielnym hostem strumienia gry dla Moonlight.",
     "download": "Pobierz",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Korzystasz z przedpremierowej wersji Sunshine. Mogą wystąpić błędy lub inne problemy. Prosimy o zgłaszanie wszelkich napotkanych problemów. Dziękujemy za pomoc w ulepszaniu oprogramowania Sunshine!",
     "loading_latest": "Ładowanie najnowszej wersji...",
     "new_pre_release": "Dostępna jest nowa wersja przedpremierowa!",
     "new_stable": "Nowa stabilna wersja jest już dostępna!",
     "startup_errors": "<b>Uwaga!</b> Sunshine wykrył te błędy podczas uruchamiania. <b>ZDECYDOWANIE ZALECAMY</b> ich naprawienie przed rozpoczęciem streamowania.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Za chwilę otworzysz stronę pobierania aktualizacji w przeglądarce. Kontynuować?",
     "version_dirty": "Dziękujemy za pomoc w ulepszaniu oprogramowania Sunshine!",
     "version_latest": "Korzystasz z najnowszej wersji Sunshine",
     "view_logs": "Wyświetl dzienniki",
+    "view_release": "View release",
     "welcome": "Witaj, Foundation Sunshine!"
   },
   "navbar": {

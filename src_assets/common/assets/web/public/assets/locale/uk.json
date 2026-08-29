@@ -812,17 +812,24 @@
     "window_title_placeholder": "наприклад, Ім'я Програми"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine - це самостійний ігровий стримінговий хостинг для Moonlight.",
     "download": "Завантажити",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Ви використовуєте попередню версію Sunshine. Ви можете зіткнутися з помилками або іншими проблемами. Будь ласка, повідомляйте про будь-які проблеми, з якими ви зіткнулися. Дякуємо, що допомагаєте зробити Sunshine кращою програмою!",
     "loading_latest": "Завантаження останньої версії...",
     "new_pre_release": "Доступна нова Pre-Release версія!",
     "new_stable": "Доступна нова стабільна версія!",
     "startup_errors": "<b>Увага!</b> Sunshine виявив ці помилки під час запуску. Ми НАПОЛЕГЛИВО <b>РЕКОМЕНДУЄМО</b> виправити їх перед стримінгом.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "Ви збираєтеся відкрити сторінку завантаження оновлень у браузері. Продовжити?",
     "version_dirty": "Дякуємо, що допомагаєте зробити Sunshine кращою програмою!",
     "version_latest": "Ви використовуєте останню версію Sunshine",
     "view_logs": "Переглянути журнали",
+    "view_release": "View release",
     "welcome": "Привіт, Foundation Sunshine!"
   },
   "navbar": {

@@ -812,17 +812,24 @@
     "window_title_placeholder": "напр., Име на приложение"
   },
   "index": {
+    "check_updates": "Check for updates",
+    "contributors": "Contributors",
+    "current_version": "Current version",
     "description": "Sunshine е сървър за собствено поточно предаване на игри, предназначен за ползване с Moonlight.",
     "download": "Сваляне",
+    "full_changelog": "View full changelog",
     "installed_version_not_stable": "Използвате предварителна версия на Sunshine. Възможно е да се сблъскате с различни видове проблеми. Моля, съобщавайте за всички проблеми, които срещате. Благодарим, че помагате да направим Sunshine по-добър софтуер!",
     "loading_latest": "Зареждане на последната версия…",
     "new_pre_release": "Има нова версия предварителна версия!",
     "new_stable": "Има нова стабилна версия!",
     "startup_errors": "<b>Внимание!</b> Sunshine засече тези грешки по време на стартиране. <b>НАИСТИНА Е ПРЕПОРЪЧИТЕЛНО</b> да ги отстраните, преди да започнете излъчването.",
+    "update_available": "Update available",
+    "update_details": "What's new",
     "update_download_confirm": "На път сте да отворите страницата за изтегляне на актуализации във вашия браузър. Продължи?",
     "version_dirty": "Благодарим, че помогнахте да направим Sunshine по-добър софтуер!",
     "version_latest": "Използвате най-новата версия на Sunshine",
     "view_logs": "Преглед на журнали",
+    "view_release": "View release",
     "welcome": "Здравейте от Foundation Sunshine!"
   },
   "navbar": {
