@@ -144,6 +144,7 @@ namespace config {
   struct audio_t {
     std::string sink;
     std::string virtual_sink;
+    std::string microphone_redirect_backend;
     bool stream;
     bool stream_mic;
     bool install_steam_drivers;

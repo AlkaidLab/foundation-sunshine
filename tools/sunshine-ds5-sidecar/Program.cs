@@ -7,6 +7,7 @@ using Sunshine.Ds5Sidecar;
 var pipeName = "sunshine-ds5-v1";
 var probe = false;
 var selfCheck = false;
+var enableCompositeMicrophonePrototype = false;
 string? selfTestProfile = null;
 string? resultPath = null;
 string? audioWriterPath = null;
@@ -18,6 +19,8 @@ for (var i = 0; i < args.Length; i++)
         probe = true;
     else if (args[i] == "--self-check")
         selfCheck = true;
+    else if (args[i] == "--enable-composite-microphone-prototype")
+        enableCompositeMicrophonePrototype = true;
     else if (args[i] == "--self-test" && i + 1 < args.Length)
         selfTestProfile = args[++i];
     else if (args[i] == "--result" && i + 1 < args.Length)
@@ -31,10 +34,16 @@ for (var i = 0; i < args.Length; i++)
 if (selfCheck)
 {
     ProtocolSelfTest.RunDeterministicChecks();
+    await ProtocolSelfTest.RunHostProtocolChecksAsync();
     Console.WriteLine(JsonSerializer.Serialize(new
     {
         audio_layout = true,
         channel_isolation = true,
+        protocol_abi = true,
+        host_protocol = true,
+        microphone_pcm_queue = true,
+        hidmaestro_microphone_contract = true,
+        virtual_microphone_session = true,
         default_endpoint_classification = true,
         genshin_compatibility_identity = true,
         audio_policy_violation = true,
@@ -60,6 +69,8 @@ if (probe)
         audio_policy_violation = true,
         driver_installed = context.IsDriverInstalled,
         usbip_available = HMContext.IsUsbipBackendAvailable,
+        pinned_microphone_runtime = DeviceRegistry.HasPinnedMicrophoneRuntime,
+        composite_microphone_prototype_requested = enableCompositeMicrophonePrototype,
     }));
     return 0;
 }
@@ -68,10 +79,13 @@ if (selfTestProfile is not null)
 {
     if (!IsElevated())
         return Fail("sunshine-ds5-sidecar protocol self-test must run elevated");
-    if (selfTestProfile is not ("standard" or "composite"))
-        return Fail("--self-test must be 'standard' or 'composite'");
+    if (selfTestProfile is not ("standard" or "composite" or "microphone-prototype" or "microphone-capture"))
+        return Fail("--self-test must be 'standard', 'composite', 'microphone-prototype', or 'microphone-capture'");
     try
     {
+        if (selfTestProfile is "microphone-prototype" or "microphone-capture")
+            return await ProtocolSelfTest.RunMicrophonePrototypeAsync(
+                resultPath, requireHostCapture: selfTestProfile == "microphone-capture");
         return await ProtocolSelfTest.RunAsync(selfTestProfile == "composite", resultPath, audioWriterPath);
     }
     catch (Exception ex)
@@ -92,7 +106,8 @@ Console.CancelKeyPress += (_, eventArgs) =>
     shutdown.Cancel();
 };
 
-await using var server = new SidecarServer(pipeName);
+await using var server = new VirtualDeviceHostServer(
+    pipeName, enableCompositeMicrophonePrototype);
 try
 {
     await server.RunAsync(shutdown.Token);

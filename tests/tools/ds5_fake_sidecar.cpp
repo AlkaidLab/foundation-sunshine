@@ -60,9 +60,11 @@ namespace {
 }
 
 int main(int argc, char **argv) {
-  if (argc != 3 || std::string_view(argv[1]) != "--pipe") return 2;
+  const auto microphone_mode = argc == 4 &&
+                               std::string_view(argv[3]) == "--enable-composite-microphone-prototype";
+  if ((argc != 3 && !microphone_mode) || std::string_view(argv[1]) != "--pipe") return 2;
   const std::string pipe_name(argv[2]);
-  constexpr std::string_view prefix = "sunshine-ds5-v1-";
+  const std::string_view prefix = microphone_mode ? "sunshine-mic-v1-" : "sunshine-ds5-v1-";
   const auto pid_end = pipe_name.find('-', prefix.size());
   if (!pipe_name.starts_with(prefix) || pid_end == std::string::npos) return 2;
   const std::wstring parent_pid(pipe_name.begin() + prefix.size(),
@@ -75,8 +77,9 @@ int main(int argc, char **argv) {
                               std::wstring(event_suffix_buffer.data(), event_suffix_size) :
                               parent_pid;
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + event_suffix;
-  const auto continue_event = OpenEventW(SYNCHRONIZE, FALSE, continue_name.c_str());
-  if (!continue_event) return 2;
+  const auto continue_event = microphone_mode ? nullptr :
+                                OpenEventW(SYNCHRONIZE, FALSE, continue_name.c_str());
+  if (!microphone_mode && !continue_event) return 2;
   // The test process opts this peer into emitting async feedback ahead of the
   // attach reply, exercising the Core client's transaction multiplexing.
   const auto interleave = GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_INTERLEAVE", nullptr, 0) > 0;
@@ -148,8 +151,31 @@ int main(int argc, char **argv) {
       if (!legacy_capabilities) {
         advertised_capabilities |= 1u << 9;
       }
+      if (microphone_mode) {
+        advertised_capabilities |= (1u << 10) | (1u << 11) | (1u << 12);
+      }
       write_u32(capabilities.data(), advertised_capabilities);
       if (!reply(pipe, 2, request_id, capabilities)) break;
+    } else if (microphone_mode && type == 12 && payload.size() == 8) {
+      std::vector<std::uint8_t> response(16);
+      write_u32(response.data() + 4, 1);
+      if (!reply(pipe, 13, request_id, response)) break;
+    } else if (microphone_mode && type == 14 && payload.size() >= 20) {
+      std::vector<std::uint8_t> status(28);
+      write_u32(status.data(), 1);
+      status[4] = 5;  // remote_active
+      status[5] = 1;  // host_streaming
+      if (!reply(pipe, 107, 0, status)) break;
+    } else if (microphone_mode && type == 15) {
+      std::vector<std::uint8_t> response(8);
+      write_u32(response.data() + 4, 1);
+      if (!reply(pipe, 16, request_id, response)) break;
+    } else if (microphone_mode && type == 17) {
+      std::vector<std::uint8_t> response(8);
+      write_u32(response.data() + 4, 1);
+      if (!reply(pipe, 18, request_id, response)) break;
+    } else if (microphone_mode && type == 11) {
+      break;
     } else if (type == 3 && payload.size() == 4) {
       if (interleave) {
         std::vector<std::uint8_t> early(6);
@@ -217,7 +243,7 @@ int main(int argc, char **argv) {
   if (recovered_event) CloseHandle(recovered_event);
   if (crash_always_event) CloseHandle(crash_always_event);
   if (crash_once_event) CloseHandle(crash_once_event);
-  CloseHandle(continue_event);
+  if (continue_event) CloseHandle(continue_event);
   DisconnectNamedPipe(pipe);
   CloseHandle(pipe);
   return 0;

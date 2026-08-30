@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <mmdeviceapi.h>
 #include <mutex>
+#include <numbers>
 #include <roapi.h>
 #include <synchapi.h>
 #include <urlmon.h>
@@ -22,6 +23,7 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/windows/virtual_device_host/microphone_client.h"
 
 // Must be the last included file
 // clang-format off
@@ -465,9 +467,62 @@ namespace platf::audio {
     static std::mutex test_mutex;
     const std::lock_guard lock(test_mutex);
 
+    const auto backend = config::audio.microphone_redirect_backend;
+    if (!try_begin_mic_redirect_test()) {
+      return { false, "MIC_TEST_BUSY", mic_redirect_status().active_backend };
+    }
+    struct test_reservation_t {
+      ~test_reservation_t() {
+        end_mic_redirect_test();
+      }
+    } test_reservation;
+    if (backend == "disabled") {
+      report_mic_redirect_backend({}, "MIC_BACKEND_DISABLED");
+      return { false, "MIC_BACKEND_DISABLED", "disabled" };
+    }
+
+    std::string usbip_fallback_reason;
+    if (backend == "usbip_experimental" || backend == "auto") {
+      auto &client = virtual_device_host::persistent_microphone_client();
+      if (client.start()) {
+        report_mic_redirect_backend("usbip_experimental");
+        constexpr auto sample_rate = 48'000u;
+        constexpr auto frames_per_packet = 480u;
+        constexpr auto packet_count = 100u;
+        std::array<std::int16_t, frames_per_packet> pcm {};
+        for (std::uint32_t packet = 0; packet < packet_count; ++packet) {
+          for (std::uint32_t frame = 0; frame < frames_per_packet; ++frame) {
+            const auto sample = packet * frames_per_packet + frame;
+            pcm[frame] = static_cast<std::int16_t>(
+              std::sin(sample * 2.0 * std::numbers::pi * 440.0 / sample_rate) * 4096.0);
+          }
+          if (client.write_pcm(pcm.data(), pcm.size()) < 0) {
+            report_mic_redirect_backend({}, "MIC_USBIP_WRITE_FAILED");
+            return { false, "MIC_USBIP_WRITE_FAILED", "usbip_experimental" };
+          }
+          Sleep(10);
+        }
+        if (!client.flush()) {
+          report_mic_redirect_backend({}, "MIC_USBIP_FLUSH_FAILED");
+          return { false, "MIC_USBIP_FLUSH_FAILED", "usbip_experimental" };
+        }
+        return { true, {}, "usbip_experimental" };
+      }
+      const auto status = virtual_device_host::microphone_status();
+      usbip_fallback_reason = status.error_code.empty() ?
+                                "MIC_USBIP_DEVICE_UNAVAILABLE" :
+                                status.error_code;
+      if (backend == "usbip_experimental") {
+        report_mic_redirect_backend({}, usbip_fallback_reason);
+        return { false,
+                 usbip_fallback_reason,
+                 "usbip_experimental" };
+      }
+    }
+
     const auto com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(com_status) && com_status != RPC_E_CHANGED_MODE) {
-      return { false, "MIC_TEST_COM_FAILED" };
+      return { false, "MIC_TEST_COM_FAILED", "vb_cable" };
     }
 
     mic_redirect_test_result_t result;
@@ -482,6 +537,9 @@ namespace platf::audio {
       else {
         result.success = true;
       }
+      result.backend = "vb_cable";
+      report_mic_redirect_backend(result.success ? "vb_cable" : "",
+                                  result.success ? usbip_fallback_reason : result.error_code);
     }
 
     if (SUCCEEDED(com_status)) {
