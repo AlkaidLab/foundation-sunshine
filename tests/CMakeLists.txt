@@ -83,6 +83,7 @@ add_executable(remote_connect_service_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
 target_include_directories(remote_connect_service_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_connect_service_unit_tests
+        Boost::format
         Boost::log
         OpenSSL::Crypto
         gtest_main)
