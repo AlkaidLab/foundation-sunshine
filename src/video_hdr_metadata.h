@@ -330,6 +330,16 @@ namespace video::hdr_metadata {
     return pq_to_u12(nits_to_pq(nits > 0.0f ? nits : 1000.0f));
   }
 
+  namespace detail {
+    inline bool
+    has_valid_scene_metrics(const platf::hdr_frame_luminance_stats_t &stats) {
+      return stats.valid &&
+             std::isfinite(stats.avg_maxrgb_pq) &&
+             std::isfinite(stats.percentile_10_pq) &&
+             std::isfinite(stats.percentile_90_pq);
+    }
+  }  // namespace detail
+
   /**
    * Detect metadata-relevant scene discontinuities without encoder lookahead.
    *
@@ -344,7 +354,7 @@ namespace video::hdr_metadata {
   public:
     bool
     observe(const platf::hdr_frame_luminance_stats_t &stats) {
-      if (!stats.valid) {
+      if (!detail::has_valid_scene_metrics(stats)) {
         return false;
       }
       if (initialized_ && stats.sample_sequence != 0 && stats.sample_sequence == last_sample_sequence_) {
@@ -368,12 +378,6 @@ namespace video::hdr_metadata {
     differs_materially(
       const platf::hdr_frame_luminance_stats_t &previous,
       const platf::hdr_frame_luminance_stats_t &current) {
-      if (!std::isfinite(previous.avg_maxrgb_pq) || !std::isfinite(current.avg_maxrgb_pq) ||
-          !std::isfinite(previous.percentile_10_pq) || !std::isfinite(current.percentile_10_pq) ||
-          !std::isfinite(previous.percentile_90_pq) || !std::isfinite(current.percentile_90_pq)) {
-        return false;
-      }
-
       const float mean_delta = std::abs(current.avg_maxrgb_pq - previous.avg_maxrgb_pq);
       const float low_delta = std::abs(current.percentile_10_pq - previous.percentile_10_pq);
       const float high_delta = std::abs(current.percentile_90_pq - previous.percentile_90_pq);
@@ -640,7 +644,7 @@ namespace video::hdr_metadata {
   public:
     dynamic_metadata_temporal_result_t
     update(const platf::hdr_frame_luminance_stats_t &stats) {
-      if (!stats.valid) {
+      if (!detail::has_valid_scene_metrics(stats)) {
         return {};
       }
 

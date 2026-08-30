@@ -465,6 +465,38 @@ TEST(HdrDynamicMetadata, DetectsDistributionSceneChangesOnlyOnNewSamples) {
   EXPECT_TRUE(detector.observe(scene(3, 0.33f, 1000.0f)));
 }
 
+TEST(HdrDynamicMetadata, InvalidPqSamplesDoNotPoisonTemporalState) {
+  const auto scene = [](uint64_t sequence, float mean_pq, float nits) {
+    platf::hdr_frame_luminance_stats_t stats {};
+    stats.sample_sequence = sequence;
+    stats.min_maxrgb = nits;
+    stats.max_maxrgb = nits;
+    stats.avg_maxrgb = nits;
+    stats.avg_maxrgb_pq = mean_pq;
+    stats.percentile_10_pq = mean_pq;
+    stats.percentile_90_pq = mean_pq;
+    stats.percentile_99 = nits;
+    std::fill(std::begin(stats.distribution_maxrgb), std::end(stats.distribution_maxrgb), nits);
+    stats.valid = true;
+    return stats;
+  };
+
+  video::hdr_metadata::dynamic_metadata_temporal_state_t temporal;
+  ASSERT_TRUE(temporal.update(scene(1, 0.20f, 10.0f)).vivid.valid);
+
+  auto invalid = scene(2, 0.45f, 15.0f);
+  invalid.percentile_10_pq = std::numeric_limits<float>::quiet_NaN();
+  const auto rejected = temporal.update(invalid);
+  EXPECT_FALSE(rejected.hdr10plus_stats.valid);
+  EXPECT_FALSE(rejected.vivid.valid);
+
+  // The rejected sample must neither become the scene baseline nor enter either
+  // temporal filter. This cut therefore snaps both formats to the new scene.
+  const auto cut = temporal.update(scene(3, 0.70f, 20.0f));
+  EXPECT_FLOAT_EQ(cut.hdr10plus_stats.percentile_99, 20.0f);
+  EXPECT_EQ(cut.vivid.average_maxrgb_pq, video::hdr_metadata::pq_to_u12(0.70f));
+}
+
 TEST(HdrDynamicMetadata, SceneChangeResetsTheVividWindow) {
   const auto scene = [](uint64_t sequence, float mean_pq, float nits) {
     platf::hdr_frame_luminance_stats_t stats {};
