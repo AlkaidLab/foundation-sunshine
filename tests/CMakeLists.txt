@@ -78,9 +78,10 @@ if (WIN32)
 endif ()
 add_test(NAME remote_connect_invite_unit_tests COMMAND remote_connect_invite_unit_tests)
 
+set(REMOTE_CONNECT_SERVICE_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
 add_executable(remote_connect_service_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_connect/service.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
+        ${REMOTE_CONNECT_SERVICE_TEST_SOURCE})
 target_include_directories(remote_connect_service_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_connect_service_unit_tests
         Boost::format
@@ -146,6 +147,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+list(REMOVE_ITEM TEST_SOURCES ${REMOTE_CONNECT_SERVICE_TEST_SOURCE})
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
