@@ -530,6 +530,13 @@ namespace config {
 
     10,  // pair_max_attempts: default 10 attempts per IP per 60s
 
+    false,  // remote_connect_enabled
+    {},  // remote_connect_profile
+    {},  // remote_connect_virtual_ip
+    {},  // remote_connect_network_name
+    {},  // remote_connect_network_secret
+    "udp://public.easytier.top:11010",  // remote_connect_peer
+
     true,  // client_fingerprint_remote_rules
     "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",
     {},  // client_fingerprint_rules_certificate (empty uses the pinned built-in certificate)
@@ -1462,6 +1469,12 @@ namespace config {
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
     int_between_f(vars, "pair_max_attempts", nvhttp.pair_max_attempts, { 0, 50 });
+    bool_f(vars, "remote_connect_enabled", nvhttp.remote_connect_enabled);
+    string_f(vars, "remote_connect_profile", nvhttp.remote_connect_profile);
+    string_f(vars, "remote_connect_virtual_ip", nvhttp.remote_connect_virtual_ip);
+    string_f(vars, "remote_connect_network_name", nvhttp.remote_connect_network_name);
+    string_f(vars, "remote_connect_network_secret", nvhttp.remote_connect_network_secret);
+    string_f(vars, "remote_connect_peer", nvhttp.remote_connect_peer);
     bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
     string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);

@@ -11,6 +11,28 @@
             <i class="fas fa-qrcode me-2"></i>{{ $t('pin.qr_pairing') }}
           </h5>
           <p class="text-muted mb-3">{{ $t('pin.qr_pairing_desc') }}</p>
+          <div class="remote-connect-control d-flex align-items-center justify-content-between gap-3 p-3 mb-3 rounded border text-start">
+            <div>
+              <div class="fw-semibold">{{ $t('pin.remote_connect') }}</div>
+              <div class="small text-muted">{{ $t('pin.remote_connect_desc') }}</div>
+              <span v-if="remoteConnectEnabled" class="badge mt-2" :class="remoteConnectRunning ? 'bg-success' : 'bg-warning text-dark'">
+                {{ remoteConnectRunning ? $t('pin.remote_connect_ready') : $t('pin.remote_connect_starting') }}
+              </span>
+            </div>
+            <div class="form-check form-switch m-0">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                role="switch"
+                :checked="remoteConnectEnabled"
+                :disabled="remoteConnectBusy || !remoteConnectAvailable"
+                @change="setRemoteConnectEnabled($event.target.checked)"
+              />
+            </div>
+          </div>
+          <div v-if="remoteConnectError" class="alert alert-warning py-2 mb-3">
+            {{ remoteConnectError }}
+          </div>
           <div class="alert alert-danger d-flex align-items-start mb-3" style="font-size: 0.85rem;">
             <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
             <span>{{ $t('pin.qr_pairing_warning') }}</span>
@@ -404,8 +426,14 @@ const {
   qrError,
   qrPaired,
   qrActive,
+  remoteConnectEnabled,
+  remoteConnectRunning,
+  remoteConnectAvailable,
+  remoteConnectBusy,
+  remoteConnectError,
   generateQrCode,
   cancelQrCode,
+  setRemoteConnectEnabled,
 } = useQrPair()
 
 const clientToDelete = ref(null)

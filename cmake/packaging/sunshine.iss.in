@@ -195,6 +195,15 @@ Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: i
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\stylus-input-probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
+; V+ remote connection runtime
+#if "@EASYTIER_AVAILABLE@" == "TRUE"
+Source: "{#MySourceDir}\tools\easytier\easytier-core.exe"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\easytier\Packet.dll"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\easytier\WinDivert64.sys"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\easytier\wintun.dll"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\easytier\LICENSE-EasyTier.txt"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
+#endif
+
 ; Pinned manifest for the separately distributed first-party DualSense runtime.
 Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 

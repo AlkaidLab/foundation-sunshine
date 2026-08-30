@@ -2,6 +2,7 @@
 
 # Fetch driver dependencies (downloads at configure time)
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
+include(${CMAKE_MODULE_PATH}/packaging/FetchEasyTier.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 
@@ -16,6 +17,27 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS stylus-input-probe RUNTIME DESTINATION "tools" COMPONENT application)
+
+# V+ remote connection runtime. Only the core and its Windows networking
+# dependencies are installed; the EasyTier CLI/Web UI remain hidden from users.
+if(EASYTIER_AVAILABLE)
+  install(FILES
+          "${EASYTIER_RUNTIME_DIR}/easytier-core.exe"
+          "${EASYTIER_RUNTIME_DIR}/Packet.dll"
+          "${EASYTIER_RUNTIME_DIR}/WinDivert64.sys"
+          "${EASYTIER_RUNTIME_DIR}/wintun.dll"
+          "${EASYTIER_LICENSE}"
+          DESTINATION "tools/easytier"
+          COMPONENT application)
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tools/easytier")
+  file(COPY
+       "${EASYTIER_RUNTIME_DIR}/easytier-core.exe"
+       "${EASYTIER_RUNTIME_DIR}/Packet.dll"
+       "${EASYTIER_RUNTIME_DIR}/WinDivert64.sys"
+       "${EASYTIER_RUNTIME_DIR}/wintun.dll"
+       "${EASYTIER_LICENSE}"
+       DESTINATION "${CMAKE_BINARY_DIR}/tools/easytier")
+endif()
 
 # The optional self-contained runtime is a separate release asset. The main
 # package carries only its pinned download manifest, keeping the feature

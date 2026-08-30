@@ -194,6 +194,15 @@ namespace config {
 
     int pair_max_attempts;  // Max PIN pairing attempts per IP within 60s window. 0 disables limiting.
 
+    // V+ remote connection. The secret is generated locally and only leaves
+    // the host through an authenticated, short-lived pairing QR code.
+    bool remote_connect_enabled;
+    std::string remote_connect_profile;
+    std::string remote_connect_virtual_ip;
+    std::string remote_connect_network_name;
+    std::string remote_connect_network_secret;
+    std::string remote_connect_peer;
+
     // Signed, warning-only client fingerprint rule feed.
     bool client_fingerprint_remote_rules;
     std::string client_fingerprint_rules_url;
