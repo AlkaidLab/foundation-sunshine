@@ -8,11 +8,14 @@
 #include <audioclient.h>
 #include <avrt.h>
 #include <chrono>
+#include <memory>
 #include <mmdeviceapi.h>
 #include <mutex>
 #include <newdev.h>
+#include <optional>
 #include <roapi.h>
 #include <synchapi.h>
+#include <utility>
 
 // local includes
 #include "mic_write.h"
@@ -280,6 +283,166 @@ namespace platf::audio {
     HRESULT status;
   };
 
+  struct output_change_state_t {
+    std::mutex mutex;
+    bool active = false;
+    std::uint64_t generation = 0;
+    std::uint64_t notification_id = 0;
+    std::wstring protected_output_id;
+    std::wstring pending_target_id;
+    std::wstring transition_output_id;
+    bool keep_capture_session = false;
+    bool approved_output_selected = false;
+  };
+
+  int
+  set_default_endpoint_roles(IPolicyConfig *policy, const std::wstring &endpoint_id) {
+    int failures = 0;
+    for (int role = 0; role < (int) ERole_enum_count; ++role) {
+      const auto status = policy->SetDefaultEndpoint(endpoint_id.c_str(), (ERole) role);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Couldn't set audio endpoint ["sv << to_utf8(endpoint_id)
+                           << "] to role ["sv << role << "]: 0x"sv
+                           << util::hex(status).to_string_view();
+        ++failures;
+      }
+    }
+    return failures;
+  }
+
+  bool
+  endpoint_is_active(IMMDeviceEnumerator *device_enum, const std::wstring &endpoint_id) {
+    device_t device;
+    if (FAILED(device_enum->GetDevice(endpoint_id.c_str(), &device)) || !device) {
+      return false;
+    }
+
+    DWORD state = 0;
+    return SUCCEEDED(device->GetState(&state)) && (state & DEVICE_STATE_ACTIVE) != 0;
+  }
+
+  void
+  apply_approved_output_change(
+    const std::weak_ptr<output_change_state_t> &weak_state,
+    const std::uint64_t generation) {
+    const auto state = weak_state.lock();
+    if (!state) {
+      return;
+    }
+
+    std::wstring target_id;
+    std::wstring previous_id;
+    bool previous_keep_capture = false;
+    {
+      std::lock_guard lock { state->mutex };
+      if (!state->active || state->generation != generation || state->pending_target_id.empty()) {
+        return;
+      }
+
+      target_id = state->pending_target_id;
+      previous_id = state->protected_output_id;
+      previous_keep_capture = state->keep_capture_session;
+      state->transition_output_id = target_id;
+      state->keep_capture_session = true;
+    }
+
+    co_init_t co_init;
+    if (!co_init.initialized()) {
+      BOOST_LOG(warning) << "Couldn't initialize COM to apply an approved audio output change: 0x"sv
+                         << util::hex(co_init.result()).to_string_view();
+      std::lock_guard lock { state->mutex };
+      if (state->generation == generation) {
+        state->transition_output_id.clear();
+        state->keep_capture_session = previous_keep_capture;
+        state->pending_target_id.clear();
+        state->notification_id = 0;
+      }
+      return;
+    }
+
+    policy_t policy;
+    device_enum_t device_enum;
+    const auto policy_status = CoCreateInstance(
+      CLSID_CPolicyConfigClient,
+      nullptr,
+      CLSCTX_ALL,
+      IID_IPolicyConfig,
+      (void **) &policy);
+    const auto enum_status = CoCreateInstance(
+      CLSID_MMDeviceEnumerator,
+      nullptr,
+      CLSCTX_ALL,
+      IID_IMMDeviceEnumerator,
+      (void **) &device_enum);
+
+    const bool target_active = SUCCEEDED(policy_status) &&
+                               SUCCEEDED(enum_status) &&
+                               endpoint_is_active(device_enum.get(), target_id);
+    const bool applied = target_active && set_default_endpoint_roles(policy.get(), target_id) == 0;
+
+    std::wstring restore_id;
+    {
+      std::lock_guard lock { state->mutex };
+      if (!state->active || state->generation != generation) {
+        restore_id = state->protected_output_id;
+        if (state->transition_output_id == target_id) {
+          state->transition_output_id.clear();
+        }
+      }
+      else if (applied) {
+        state->protected_output_id = target_id;
+        state->transition_output_id.clear();
+        state->pending_target_id.clear();
+        state->notification_id = 0;
+        state->approved_output_selected = true;
+        BOOST_LOG(info) << "Applied approved audio output change to ["sv << to_utf8(target_id) << ']';
+      }
+      else {
+        restore_id = previous_id;
+        state->transition_output_id.clear();
+        state->pending_target_id.clear();
+        state->notification_id = 0;
+        state->keep_capture_session = previous_keep_capture;
+      }
+    }
+
+    if (!restore_id.empty() && policy) {
+      set_default_endpoint_roles(policy.get(), restore_id);
+    }
+
+    if (!applied) {
+      BOOST_LOG(warning) << "Failed to apply approved audio output change; keeping the previous output"sv;
+    }
+  }
+
+  void
+  record_output_change_decision(
+    const std::weak_ptr<output_change_state_t> &weak_state,
+    const std::uint64_t generation,
+    const bool accepted) {
+    const auto state = weak_state.lock();
+    if (!state) {
+      return;
+    }
+
+    {
+      std::lock_guard lock { state->mutex };
+      if (!state->active || state->generation != generation || state->pending_target_id.empty()) {
+        return;
+      }
+
+      if (!accepted) {
+        state->pending_target_id.clear();
+        state->notification_id = 0;
+        return;
+      }
+    }
+
+    task_pool.push([weak_state, generation]() {
+      apply_approved_output_change(weak_state, generation);
+    });
+  }
+
   class prop_var_t {
   public:
     prop_var_t() {
@@ -440,8 +603,9 @@ namespace platf::audio {
     // IMMNotificationClient
     HRESULT STDMETHODCALLTYPE
     OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR pwstrDeviceId) {
-      if (flow == eRender) {
-        default_render_device_changed_flag.store(true);
+      if (flow == eRender && pwstrDeviceId) {
+        std::lock_guard lock { default_render_device_changed_mutex };
+        default_render_device_changed = pwstrDeviceId;
       }
       return S_OK;
     }
@@ -471,16 +635,18 @@ namespace platf::audio {
     }
 
     /**
-     * @brief Checks if the default rendering device changed and resets the change flag
-     * @return `true` if the device changed since last call
+     * @brief Takes the most recent default rendering endpoint change.
+     * @return The new endpoint ID, or `std::nullopt` when no change is pending.
      */
-    bool
-    check_default_render_device_changed() {
-      return default_render_device_changed_flag.exchange(false);
+    std::optional<std::wstring>
+    take_default_render_device_changed() {
+      std::lock_guard lock { default_render_device_changed_mutex };
+      return std::exchange(default_render_device_changed, std::nullopt);
     }
 
   private:
-    std::atomic_bool default_render_device_changed_flag;
+    std::mutex default_render_device_changed_mutex;
+    std::optional<std::wstring> default_render_device_changed;
   };
 
   class mic_wasapi_t: public mic_t {
@@ -653,14 +819,18 @@ namespace platf::audio {
       } block_aligned;
 
       // Check if the default audio device has changed
-      if (endpt_notification.check_default_render_device_changed()) {
+      if (auto endpoint_id = endpt_notification.take_default_render_device_changed()) {
+        bool reinitialize_capture = true;
+
         // Invoke the audio_control_t's callback if it wants one
         if (default_endpt_changed_cb) {
-          (*default_endpt_changed_cb)();
+          reinitialize_capture = (*default_endpt_changed_cb)(*endpoint_id);
         }
 
-        // Reinitialize to pick up the new default device
-        return capture_e::reinit;
+        if (reinitialize_capture) {
+          // Reinitialize to pick up the new default device
+          return capture_e::reinit;
+        }
       }
 
       status = WaitForSingleObjectEx(audio_event.get(), default_latency_ms, FALSE);
@@ -740,7 +910,7 @@ namespace platf::audio {
     audio_capture_t audio_capture;
 
     audio_notification_t endpt_notification;
-    std::optional<std::function<void()>> default_endpt_changed_cb;
+    std::optional<std::function<bool(const std::wstring &)>> default_endpt_changed_cb;
 
     REFERENCE_TIME default_latency_ms;
 
@@ -934,13 +1104,12 @@ namespace platf::audio {
         return nullptr;
       }
 
-      // If this is a virtual sink, set a callback that will change the sink back if it's changed
+      // If this is a virtual sink, protect the Windows default output while
+      // leaving an explicitly approved change on the existing capture session.
       auto virtual_sink_info = extract_virtual_sink_info(assigned_sink);
       if (virtual_sink_info) {
-        mic->default_endpt_changed_cb = [this] {
-          BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
-          notify_virtual_sink_managed();
-          set_sink(assigned_sink);
+        mic->default_endpt_changed_cb = [this](const std::wstring &endpoint_id) {
+          return handle_default_output_change(endpoint_id);
         };
       }
 
@@ -1019,6 +1188,7 @@ namespace platf::audio {
 
     int
     set_sink(const std::string &sink) override {
+      const bool is_virtual_sink = extract_virtual_sink_info(sink).has_value();
       auto device_id = set_format(sink);
       if (!device_id) {
         return -1;
@@ -1044,32 +1214,175 @@ namespace platf::audio {
       // back after another application changes it
       if (!failure) {
         assigned_sink = sink;
+        if (is_virtual_sink) {
+          enable_output_protection(*device_id);
+        }
+        else {
+          disable_output_protection(*device_id);
+        }
       }
 
       return failure;
     }
 
-    void
-    notify_virtual_sink_managed() {
-      const auto now = std::chrono::steady_clock::now();
-      std::lock_guard<std::mutex> lock(last_virtual_sink_notification_mutex);
-      if (now - last_virtual_sink_notification < std::chrono::seconds(30)) {
-        return;
+    bool
+    should_restore_sink() const override {
+      std::lock_guard lock { output_change_state->mutex };
+      return !output_change_state->approved_output_selected;
+    }
+
+    std::string
+    endpoint_friendly_name(const std::wstring &endpoint_id) {
+      device_t device;
+      if (FAILED(device_enum->GetDevice(endpoint_id.c_str(), &device)) || !device) {
+        return {};
       }
 
-      last_virtual_sink_notification = now;
-      BOOST_LOG(info) << "Virtual audio sink is being kept selected for host audio streaming";
-      const auto notification_id = tray_state::set_notification(
-        "Audio device kept for streaming",
-        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
-      task_pool.pushDelayed([notification_id]() {
+      prop_t properties;
+      if (FAILED(device->OpenPropertyStore(STGM_READ, &properties)) || !properties) {
+        return {};
+      }
+
+      prop_var_t friendly_name;
+      if (SUCCEEDED(properties->GetValue(PKEY_Device_FriendlyName, &friendly_name.prop)) &&
+          friendly_name.prop.pwszVal) {
+        return to_utf8(friendly_name.prop.pwszVal);
+      }
+
+      prop_var_t description;
+      if (SUCCEEDED(properties->GetValue(PKEY_Device_DeviceDesc, &description.prop)) &&
+          description.prop.pwszVal) {
+        return to_utf8(description.prop.pwszVal);
+      }
+
+      return {};
+    }
+
+    std::uint64_t
+    reset_output_change_state_locked(const std::wstring &endpoint_id) {
+      const auto stale_notification_id = output_change_state->notification_id;
+      ++output_change_state->generation;
+      output_change_state->notification_id = 0;
+      output_change_state->pending_target_id.clear();
+      output_change_state->transition_output_id.clear();
+      output_change_state->keep_capture_session = false;
+      output_change_state->approved_output_selected = false;
+      output_change_state->protected_output_id = endpoint_id;
+      return stale_notification_id;
+    }
+
+    void
+    enable_output_protection(const std::wstring &endpoint_id) {
+      std::uint64_t stale_notification_id;
+      {
+        std::lock_guard lock { output_change_state->mutex };
+        stale_notification_id = reset_output_change_state_locked(endpoint_id);
+        output_change_state->active = true;
+      }
+
+      if (stale_notification_id != 0) {
+        tray_state::clear_notification_if(stale_notification_id);
+      }
+    }
+
+    void
+    disable_output_protection(const std::wstring &current_output_id) {
+      std::uint64_t stale_notification_id;
+      {
+        std::lock_guard lock { output_change_state->mutex };
+        // Keep the current endpoint as the rollback target for an approval task
+        // that may already be running while streaming shuts down.
+        stale_notification_id = reset_output_change_state_locked(current_output_id);
+        output_change_state->active = false;
+      }
+
+      if (stale_notification_id != 0) {
+        tray_state::clear_notification_if(stale_notification_id);
+      }
+    }
+
+    bool
+    handle_default_output_change(const std::wstring &target_id) {
+      std::wstring protected_id;
+      std::uint64_t generation = 0;
+      bool keep_capture_session = false;
+      bool create_notification = false;
+      {
+        std::lock_guard lock { output_change_state->mutex };
+        if (!output_change_state->active || output_change_state->protected_output_id.empty()) {
+          return true;
+        }
+
+        keep_capture_session = output_change_state->keep_capture_session;
+        protected_id = output_change_state->protected_output_id;
+
+        if (!output_change_state->transition_output_id.empty() &&
+            target_id == output_change_state->transition_output_id) {
+          return false;
+        }
+
+        if (target_id == protected_id) {
+          return false;
+        }
+
+        if (output_change_state->pending_target_id != target_id) {
+          generation = ++output_change_state->generation;
+          output_change_state->pending_target_id = target_id;
+          output_change_state->notification_id = 0;
+          create_notification = true;
+        }
+      }
+
+      BOOST_LOG(info) << "Restoring protected audio output ["sv << to_utf8(protected_id)
+                      << "] after Windows requested ["sv << to_utf8(target_id) << ']';
+      set_default_endpoint_roles(policy.get(), protected_id);
+
+      if (!create_notification) {
+        return false;
+      }
+
+      auto target_name = endpoint_friendly_name(target_id);
+      const std::weak_ptr<output_change_state_t> weak_state = output_change_state;
+      const auto notification_id = tray_state::set_actionable_notification(
+        "Audio output change requested",
+        target_name,
+        "default",
+        "confirm_audio_output",
+        [weak_state, generation](const bool accepted) {
+          record_output_change_decision(weak_state, generation, accepted);
+        });
+
+      bool request_is_current = false;
+      {
+        std::lock_guard lock { output_change_state->mutex };
+        request_is_current = output_change_state->active &&
+                             output_change_state->generation == generation &&
+                             output_change_state->pending_target_id == target_id;
+        if (request_is_current) {
+          output_change_state->notification_id = notification_id;
+        }
+      }
+
+      if (!request_is_current) {
         tray_state::clear_notification_if(notification_id);
-      }, std::chrono::seconds(10));
+        return !keep_capture_session;
+      }
+
+      task_pool.pushDelayed([notification_id, weak_state, generation]() {
+        if (!tray_state::decide_notification(notification_id, false)) {
+          record_output_change_decision(weak_state, generation, false);
+        }
+      }, std::chrono::seconds(30));
+
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::show_notification(
-        "Audio device kept for streaming",
-        "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
+        "Audio output change blocked",
+        target_name.empty() ?
+          "Sunshine kept the current audio output selected while streaming." :
+          "Sunshine kept the current audio output selected instead of switching to " + target_name + ".");
 #endif
+
+      return !keep_capture_session;
     }
 
     enum class match_field_e {
@@ -1341,13 +1654,25 @@ namespace platf::audio {
     }
 
     ~audio_control_t() override {
+      std::uint64_t notification_id = 0;
+      {
+        std::lock_guard lock { output_change_state->mutex };
+        output_change_state->active = false;
+        ++output_change_state->generation;
+        notification_id = output_change_state->notification_id;
+        output_change_state->notification_id = 0;
+        output_change_state->pending_target_id.clear();
+        output_change_state->transition_output_id.clear();
+      }
+      if (notification_id != 0) {
+        tray_state::clear_notification_if(notification_id);
+      }
     }
 
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
-    std::chrono::steady_clock::time_point last_virtual_sink_notification {};
-    std::mutex last_virtual_sink_notification_mutex;
+    std::shared_ptr<output_change_state_t> output_change_state = std::make_shared<output_change_state_t>();
 
     int
     init_mic_redirect_device() override {

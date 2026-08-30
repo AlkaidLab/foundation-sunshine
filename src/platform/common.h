@@ -753,6 +753,15 @@ namespace platf {
     virtual int
     set_sink(const std::string &sink) = 0;
 
+    /**
+     * @brief Whether Sunshine should restore the output selected before streaming.
+     * @details A platform may preserve an output change explicitly approved by the user.
+     */
+    virtual bool
+    should_restore_sink() const {
+      return true;
+    }
+
     virtual std::unique_ptr<mic_t>
     microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous) = 0;
 

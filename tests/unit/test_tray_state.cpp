@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <optional>
 
 #include <src/tray/tray_state.h>
 
@@ -169,6 +170,61 @@ TEST_F(TrayStateTest, OldNotificationTimerCannotClearNewNotification) {
   EXPECT_NE(json.at("status"), "notification");
 }
 
+TEST_F(TrayStateTest, ActionableNotificationAcceptsOneMatchingDecision) {
+  std::optional<bool> decision;
+  const auto notification_id = tray_state::set_actionable_notification(
+    "Audio output change requested",
+    "Speakers",
+    "default",
+    "confirm_audio_output",
+    [&decision](const bool accepted) {
+      decision = accepted;
+    });
+
+  EXPECT_FALSE(tray_state::acknowledge_notification(notification_id));
+  EXPECT_FALSE(tray_state::decide_notification(notification_id + 1, true));
+  EXPECT_FALSE(decision.has_value());
+
+  EXPECT_TRUE(tray_state::decide_notification(notification_id, true));
+  ASSERT_TRUE(decision.has_value());
+  EXPECT_TRUE(*decision);
+  EXPECT_FALSE(tray_state::decide_notification(notification_id, false));
+  EXPECT_FALSE(tray_state::to_json().at("notification").at("active").get<bool>());
+}
+
+TEST_F(TrayStateTest, ReplacingActionableNotificationInvalidatesItsDecision) {
+  bool called = false;
+  const auto old_id = tray_state::set_actionable_notification(
+    "Old",
+    "Speakers",
+    "default",
+    "confirm_audio_output",
+    [&called](const bool) {
+      called = true;
+    });
+  const auto new_id = tray_state::set_notification("New", "New notification");
+
+  EXPECT_FALSE(tray_state::decide_notification(old_id, true));
+  EXPECT_FALSE(called);
+  EXPECT_EQ(tray_state::to_json().at("notification").at("id").get<std::uint64_t>(), new_id);
+}
+
+TEST_F(TrayStateTest, ActionableNotificationCanBeRejected) {
+  std::optional<bool> decision;
+  const auto notification_id = tray_state::set_actionable_notification(
+    "Audio output change requested",
+    "Headphones",
+    "default",
+    "confirm_audio_output",
+    [&decision](const bool accepted) {
+      decision = accepted;
+    });
+
+  EXPECT_TRUE(tray_state::decide_notification(notification_id, false));
+  ASSERT_TRUE(decision.has_value());
+  EXPECT_FALSE(*decision);
+}
+
 TEST_F(TrayStateTest, PublishesStableProtocolIdentity) {
   const auto first = tray_state::to_json();
   const auto second = tray_state::to_json();
@@ -183,6 +239,9 @@ TEST_F(TrayStateTest, PublishesStableProtocolIdentity) {
     first.at("capabilities").end());
   EXPECT_NE(
     std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "sessions-v1"),
+    first.at("capabilities").end());
+  EXPECT_NE(
+    std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "notification-decision-v1"),
     first.at("capabilities").end());
   EXPECT_NE(
     std::find(first.at("capabilities").begin(), first.at("capabilities").end(), "shutdown"),

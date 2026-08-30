@@ -501,6 +501,19 @@ namespace tray_http {
         return action_success("Notification acknowledged");
       }
 
+      if (action == "notification_decide") {
+        if (!notification_id || *notification_id == 0) {
+          return action_error("notification_id is required");
+        }
+        if (!enabled) {
+          return action_error("enabled is required");
+        }
+        if (!tray_state::decide_notification(*notification_id, *enabled)) {
+          return action_error("Notification decision is stale or not actionable");
+        }
+        return action_success(*enabled ? "Notification accepted" : "Notification rejected");
+      }
+
       return action_error("Unknown tray action");
     }
 

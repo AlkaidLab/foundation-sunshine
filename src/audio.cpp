@@ -683,6 +683,11 @@ namespace audio {
       return;
     }
 
+    if (!ctx.control->should_restore_sink()) {
+      BOOST_LOG(info) << "Keeping the audio output approved during streaming"sv;
+      return;
+    }
+
     // Change back to the host sink, unless there was none
     const std::string &sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
     if (!sink.empty()) {

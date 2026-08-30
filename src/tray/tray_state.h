@@ -10,6 +10,7 @@
 namespace tray_state {
 
   using change_sink_t = std::function<void()>;
+  using notification_decision_sink_t = std::function<void(bool)>;
 
   inline constexpr std::uint32_t protocol_version = 1;
 
@@ -90,6 +91,15 @@ namespace tray_state {
   std::uint64_t
   set_notification(const std::string &title, const std::string &message, const std::string &icon = "default", const std::string &action = {});
 
+  std::uint64_t
+  set_actionable_notification(
+    const std::string &title,
+    const std::string &message,
+    const std::string &icon,
+    const std::string &action,
+    notification_decision_sink_t decision_sink
+  );
+
   void
   clear_notification();
 
@@ -98,6 +108,9 @@ namespace tray_state {
 
   bool
   acknowledge_notification(std::uint64_t notification_id);
+
+  bool
+  decide_notification(std::uint64_t notification_id, bool accepted);
 
   void
   set_vdd_state(bool active, bool keep_enabled, bool headless_create_enabled, bool cooldown);

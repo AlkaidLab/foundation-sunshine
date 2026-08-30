@@ -15,6 +15,8 @@ namespace tray_state {
     state_t current_state;
     std::uint64_t next_notification_id = 0;
     std::uint64_t next_operation_id = 0;
+    std::uint64_t notification_decision_id = 0;
+    notification_decision_sink_t notification_decision_sink;
     std::mutex change_sink_mutex;
     change_sink_t change_sink;
     std::int64_t
@@ -175,6 +177,8 @@ namespace tray_state {
       current_state.notification.message.clear();
       current_state.notification.icon = "locked";
       current_state.notification.action = "open_pin";
+      notification_decision_id = 0;
+      notification_decision_sink = {};
       touch_locked();
     }
     notify_changed();
@@ -188,6 +192,8 @@ namespace tray_state {
       current_state.pairing_client_name.clear();
       if (current_state.notification.action == "open_pin") {
         current_state.notification = {};
+        notification_decision_id = 0;
+        notification_decision_sink = {};
       }
       touch_locked();
     }
@@ -205,6 +211,37 @@ namespace tray_state {
       current_state.notification.message = message;
       current_state.notification.icon = icon;
       current_state.notification.action = action;
+      notification_decision_id = 0;
+      notification_decision_sink = {};
+      touch_locked();
+      notification_id = current_state.notification.id;
+    }
+    notify_changed();
+    return notification_id;
+  }
+
+  std::uint64_t
+  set_actionable_notification(
+    const std::string &title,
+    const std::string &message,
+    const std::string &icon,
+    const std::string &action,
+    notification_decision_sink_t decision_sink) {
+    if (action.empty() || !decision_sink) {
+      return set_notification(title, message, icon, action);
+    }
+
+    std::uint64_t notification_id;
+    {
+      std::lock_guard lock { state_mutex };
+      current_state.notification.id = ++next_notification_id;
+      current_state.notification.active = true;
+      current_state.notification.title = title;
+      current_state.notification.message = message;
+      current_state.notification.icon = icon;
+      current_state.notification.action = action;
+      notification_decision_id = current_state.notification.id;
+      notification_decision_sink = std::move(decision_sink);
       touch_locked();
       notification_id = current_state.notification.id;
     }
@@ -217,6 +254,8 @@ namespace tray_state {
     {
       std::lock_guard lock { state_mutex };
       current_state.notification = {};
+      notification_decision_id = 0;
+      notification_decision_sink = {};
       touch_locked();
     }
     notify_changed();
@@ -230,6 +269,8 @@ namespace tray_state {
         return;
       }
       current_state.notification = {};
+      notification_decision_id = 0;
+      notification_decision_sink = {};
       touch_locked();
     }
     notify_changed();
@@ -243,6 +284,10 @@ namespace tray_state {
         return false;
       }
 
+      if (notification_decision_id == notification_id && notification_decision_sink) {
+        return false;
+      }
+
       // Pairing remains actionable until the pairing flow succeeds, expires, or
       // is cancelled. Clicking the menu must not make the PIN entry point vanish.
       if (current_state.pairing_pending || current_state.notification.action == "open_pin") {
@@ -252,6 +297,29 @@ namespace tray_state {
       current_state.notification = {};
       touch_locked();
     }
+    notify_changed();
+    return true;
+  }
+
+  bool
+  decide_notification(const std::uint64_t notification_id, const bool accepted) {
+    notification_decision_sink_t decision_sink;
+    {
+      std::lock_guard lock { state_mutex };
+      if (!current_state.notification.active ||
+          current_state.notification.id != notification_id ||
+          notification_decision_id != notification_id ||
+          !notification_decision_sink) {
+        return false;
+      }
+
+      decision_sink = std::move(notification_decision_sink);
+      notification_decision_id = 0;
+      current_state.notification = {};
+      touch_locked();
+    }
+
+    decision_sink(accepted);
     notify_changed();
     return true;
   }
@@ -405,7 +473,7 @@ namespace tray_state {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
-      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown" }) },
+      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "notification-decision-v1", "pairing", "vdd", "shutdown" }) },
       { "status", current_presentation.status },
       { "icon", current_presentation.icon },
       { "tooltip", current_presentation.tooltip },
