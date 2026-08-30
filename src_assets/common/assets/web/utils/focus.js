@@ -17,3 +17,8 @@ export function getFocusableElements(container) {
     return style.display !== 'none' && style.visibility !== 'hidden'
   })
 }
+
+export function resolveDialogTeleportTarget(element, fallback = 'body') {
+  if (!element || typeof element.closest !== 'function') return fallback
+  return element.closest('.modal') || fallback
+}
