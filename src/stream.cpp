@@ -567,6 +567,7 @@ namespace stream {
     std::unordered_map<std::uint32_t, boost::shared_ptr<mic_session_ctx_t>> mic_sessions;
     boost::mutex mic_session_mutex;
     boost::atomic<std::uint32_t> mic_session_count { 0 };
+    boost::atomic<bool> mic_playout_reset_pending { false };
   };
 
   struct session_t {
@@ -947,6 +948,11 @@ namespace stream {
 
     const auto remaining_sessions = static_cast<std::uint32_t>(ctx.mic_sessions.size());
     ctx.mic_session_count.store(remaining_sessions, boost::memory_order_release);
+    if (remaining_sessions == 0) {
+      // 记录会话计数经过零点的边沿。即使新会话在 cancel 回调执行前接入，
+      // 麦克风线程也必须从新的绝对播放截止时间开始。
+      ctx.mic_playout_reset_pending.store(true, boost::memory_order_release);
+    }
     if (remaining_sessions != 0) {
       return true;
     }
@@ -2834,6 +2840,12 @@ namespace stream {
         BOOST_LOG(error) << "Failed to cancel microphone mix timer: "sv << e.what();
       }
     };
+    auto reset_playout_clock_if_pending = [&]() {
+      if (ctx.mic_playout_reset_pending.load(boost::memory_order_acquire) &&
+          ctx.mic_playout_reset_pending.exchange(false, boost::memory_order_acq_rel)) {
+        cancel_mix_timer();
+      }
+    };
     auto schedule_receive = [&]() -> bool {
       boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
       if (broadcast_shutdown_event->peek() ||
@@ -2853,6 +2865,13 @@ namespace stream {
         return false;
       }
     };
+    auto retry_with_reopened_mic_socket = [&]() {
+      retry_receive_after_error = true;
+      mixer.clear();
+      mixer_sources.clear();
+      reopen_mic_socket_after_error = true;
+      cancel_mix_timer();
+    };
 
     mic_recv_func = [&](const boost::system::error_code &ec, size_t received_bytes) {
       if (!ctx.mic_socket_enabled.load()) {
@@ -2871,8 +2890,16 @@ namespace stream {
             schedule_mix();
           }
           else {
-            retry_receive_after_error = true;
-            cancel_mix_timer();
+            if (!broadcast_shutdown_event->peek() &&
+                ctx.mic_socket_enabled.load() &&
+                ctx.mic_session_count.load(boost::memory_order_acquire) != 0 &&
+                mic_device_initialized) {
+              retry_with_reopened_mic_socket();
+            }
+            else {
+              reset_mic_io_cycle = true;
+              cancel_mix_timer();
+            }
           }
         }
         else {
@@ -2899,14 +2926,10 @@ namespace stream {
         }
         else {
           BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
-          retry_receive_after_error = true;
           fg.disable();
           // 未分类 socket 错误会进入退避重试。旧播放 slot 已失去实时性，
           // 只清理 mixer 状态，不重建与网络错误无关的 WASAPI 设备。
-          mixer.clear();
-          mixer_sources.clear();
-          reopen_mic_socket_after_error = true;
-          cancel_mix_timer();
+          retry_with_reopened_mic_socket();
         }
         return;
       }
@@ -2967,6 +2990,10 @@ namespace stream {
     };
 
     schedule_mix = [&]() {
+      reset_playout_clock_if_pending();
+      if (ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
+        return;
+      }
       if (mix_timer_armed) {
         return;
       }
@@ -3052,6 +3079,7 @@ namespace stream {
     while (!broadcast_shutdown_event->peek()) {
       if (ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
         retry_delay = 300ms;  // 会话结束时重置延迟
+        reset_playout_clock_if_pending();
         release_mic_device();
         if (had_active_mic_sessions) {
           log_mic_stats("sessions ended"sv);
