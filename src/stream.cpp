@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <cstring>
 #include <future>
-#include <iomanip>
 #include <optional>
 #include <queue>
 #include <unordered_map>
@@ -2596,8 +2595,43 @@ namespace stream {
       uint64_t invalid_data = 0;
       uint64_t unregistered = 0;
       uint64_t route_ambiguous = 0;
+      uint64_t wasapi_backpressure_drops = 0;
     };
     MicStats stats;
+
+    auto log_mic_stats = [&](std::string_view reason) {
+      const auto mixer_stats = mixer.take_stats();
+      const auto has_diagnostics = stats.total_packets != 0 ||
+                                   stats.wasapi_backpressure_drops != 0 ||
+                                   mixer_stats.duplicate_packets != 0 ||
+                                   mixer_stats.late_packets != 0 ||
+                                   mixer_stats.buffer_overflow_packets != 0 ||
+                                   mixer_stats.timeline_reanchors != 0 ||
+                                   mixer_stats.plc_frames != 0 ||
+                                   mixer_stats.decode_failures != 0 ||
+                                   mixer_stats.skipped_playout_frames != 0;
+      if (!has_diagnostics) {
+        stats = {};
+        return;
+      }
+
+      BOOST_LOG(info) << "Microphone diagnostics ("sv << reason
+                      << "): packets="sv << stats.total_packets
+                      << ", accepted="sv << stats.accepted_packets
+                      << ", route_decode_failed="sv << stats.decode_failed
+                      << ", invalid="sv << stats.invalid_data
+                      << ", unregistered="sv << stats.unregistered
+                      << ", route_ambiguous="sv << stats.route_ambiguous
+                      << ", duplicate="sv << mixer_stats.duplicate_packets
+                      << ", late="sv << mixer_stats.late_packets
+                      << ", queue_overflow="sv << mixer_stats.buffer_overflow_packets
+                      << ", reanchors="sv << mixer_stats.timeline_reanchors
+                      << ", plc="sv << mixer_stats.plc_frames
+                      << ", opus_decode_failed="sv << mixer_stats.decode_failures
+                      << ", skipped_slots="sv << mixer_stats.skipped_playout_frames
+                      << ", wasapi_drops="sv << stats.wasapi_backpressure_drops;
+      stats = {};
+    };
 
     auto release_mic_device = [&]() {
       if (mic_device_initialized) {
@@ -2643,6 +2677,7 @@ namespace stream {
     auto process_audio_data = [&](const std::uint8_t *audio_data,
                                   std::size_t data_size,
                                   std::uint16_t sequence_number,
+                                  std::optional<std::uint32_t> timestamp_ms,
                                   std::uint32_t source_key_id,
                                   const udp::endpoint &source_endpoint) {
       if (!ctx.mic_socket_enabled.load()) {
@@ -2742,7 +2777,8 @@ namespace stream {
             mic_session->session_id,
             decoded_payload.data(),
             decoded_payload.size(),
-            sequence_number)) {
+            sequence_number,
+            timestamp_ms)) {
         ++stats.invalid_data;
         return;
       }
@@ -2782,10 +2818,13 @@ namespace stream {
     bool reset_mic_io_cycle = false;
     bool mix_timer_armed = false;
     std::uint64_t mix_timer_generation = 0;
+    using mix_clock_t = asio::steady_timer::clock_type;
+    std::optional<mix_clock_t::time_point> next_mix_deadline;
     asio::steady_timer mix_timer {mic_io};
     auto cancel_mix_timer = [&]() {
       mix_timer_armed = false;
       ++mix_timer_generation;
+      next_mix_deadline.reset();
       try {
         mix_timer.cancel();
       }
@@ -2883,6 +2922,7 @@ namespace stream {
               reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
               received_bytes - header_size,
               sequence_number,
+              std::nullopt,
               source_key_id,
               peer);
           }
@@ -2898,6 +2938,7 @@ namespace stream {
           // 客户端按小端序发送序列号（MicrophoneStream.java 使用 LITTLE_ENDIAN）
           // 服务端必须按小端序读取，否则会读错（比如 1 会读成 256）
           uint16_t sequence_number = util::endian::little(header->rtp.sequenceNumber);
+          const auto timestamp_ms = util::endian::little(header->rtp.timestamp);
           const auto source_key_id = util::endian::little(header->rtp.ssrc);
           size_t data_size = received_bytes - header_size;
           
@@ -2910,6 +2951,7 @@ namespace stream {
             reinterpret_cast<const uint8_t *>(mic_recv_buffer.data()) + header_size,
             data_size,
             sequence_number,
+            timestamp_ms,
             source_key_id,
             peer);
         }
@@ -2923,7 +2965,10 @@ namespace stream {
 
       mix_timer_armed = true;
       const auto generation = ++mix_timer_generation;
-      mix_timer.expires_after(20ms);
+      if (!next_mix_deadline) {
+        next_mix_deadline = mix_clock_t::now() + 20ms;
+      }
+      mix_timer.expires_at(*next_mix_deadline);
       mix_timer.async_wait([&, generation](const boost::system::error_code &ec) {
         if (generation != mix_timer_generation) {
           return;
@@ -2936,6 +2981,13 @@ namespace stream {
             reset_mic_io_cycle ||
             ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
           return;
+        }
+
+        const auto now = mix_clock_t::now();
+        if (now >= *next_mix_deadline + 20ms) {
+          const auto missed_frames = static_cast<std::size_t>((now - *next_mix_deadline) / 20ms);
+          mixer.skip_playout_frames(missed_frames);
+          *next_mix_deadline += 20ms * missed_frames;
         }
 
         std::unordered_set<mic_mixer::source_id_t> registered_sources;
@@ -2958,16 +3010,29 @@ namespace stream {
         }
 
         if (auto mixed = mixer.mix_next_frame()) {
-          if (audio::write_mic_pcm(mixed->data(), mixed->size()) == -2) {
-            BOOST_LOG(info) << "Microphone output device was invalidated; reinitializing"sv;
+          const auto write_result = audio::write_mic_pcm(mixed->data(), mixed->size());
+          if (write_result == 0) {
+            ++stats.wasapi_backpressure_drops;
+          }
+          if (write_result < 0) {
+            if (write_result == -2) {
+              BOOST_LOG(info) << "Microphone output device was invalidated; reinitializing"sv;
+            }
+            else {
+              BOOST_LOG(warning) << "Microphone output write failed; reinitializing"sv;
+            }
             release_mic_device();
             retry_receive_after_error = true;
+            reset_mic_io_cycle = true;
+            cancel_mix_timer();
 
             boost::lock_guard<boost::mutex> lock(ctx.mic_socket_mutex);
             cancel_mic_receive_locked(ctx);
             return;
           }
         }
+
+        *next_mix_deadline += 20ms;
         schedule_mix();
       });
     };
@@ -2975,22 +3040,28 @@ namespace stream {
     BOOST_LOG(debug) << "Starting microphone receive thread";
 
     auto retry_delay = 300ms;  // 初始重试延迟，指数退避到最大5秒
+    bool had_active_mic_sessions = false;
 
     while (!broadcast_shutdown_event->peek()) {
       if (!ctx.mic_socket_enabled.load() ||
           ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
         retry_delay = 300ms;  // 会话结束时重置延迟
         release_mic_device();
-        std::this_thread::sleep_for(100ms);
+        if (had_active_mic_sessions) {
+          log_mic_stats("sessions ended"sv);
+          had_active_mic_sessions = false;
+        }
+        (void) broadcast_shutdown_event->view(100ms);
         continue;
       }
+      had_active_mic_sessions = true;
 
       // 在麦克风设备的完整生命周期内持有音频上下文，确保音频采集退出后仍能恢复设备。
       if (!mic_device_initialized) {
         if (!audio_thread_guard) {
           audio_thread_guard = platf::init_audio_thread();
           if (!audio_thread_guard) {
-            std::this_thread::sleep_for(retry_delay);
+            (void) broadcast_shutdown_event->view(retry_delay);
             retry_delay = std::min(retry_delay * 2, 5000ms);
             continue;
           }
@@ -3000,14 +3071,14 @@ namespace stream {
         // 会话需要能够创建并持有自己的音频控制上下文。
         mic_audio_ref = audio::get_audio_ctx_ref();
         if (!mic_audio_ref) {
-          std::this_thread::sleep_for(retry_delay);
+          (void) broadcast_shutdown_event->view(retry_delay);
           retry_delay = std::min(retry_delay * 2, 5000ms);
           continue;
         }
 
         if (audio::init_mic_redirect_device() != 0) {
           mic_audio_ref = {};
-          std::this_thread::sleep_for(retry_delay);
+          (void) broadcast_shutdown_event->view(retry_delay);
           retry_delay = std::min(retry_delay * 2, 5000ms);  // 指数退避，最大5秒
           continue;
         }
@@ -3030,7 +3101,7 @@ namespace stream {
       reset_mic_io_cycle = false;
       if (!schedule_receive()) {
         if (ctx.mic_socket_enabled.load() && !broadcast_shutdown_event->peek()) {
-          std::this_thread::sleep_for(100ms);
+          (void) broadcast_shutdown_event->view(100ms);
         }
         continue;
       }
@@ -3040,23 +3111,13 @@ namespace stream {
       if (retry_receive_after_error &&
           ctx.mic_socket_enabled.load() &&
           !broadcast_shutdown_event->peek()) {
-        std::this_thread::sleep_for(retry_delay);
+        (void) broadcast_shutdown_event->view(retry_delay);
         retry_delay = std::min(retry_delay * 2, 5000ms);
       }
     }
 
     release_mic_device();
-
-    if (stats.total_packets > 0) {
-      BOOST_LOG(info) << "=== Microphone Packet Stats Summary ===";
-      const auto success_rate = (double) stats.accepted_packets / stats.total_packets * 100.0;
-      BOOST_LOG(info) << "total=" << stats.total_packets
-                      << ", accepted=" << stats.accepted_packets << " (" << std::fixed << std::setprecision(1) << success_rate << "%)"
-                      << ", decode_failed=" << stats.decode_failed
-                      << ", invalid=" << stats.invalid_data
-                      << ", unregistered=" << stats.unregistered
-                      << ", route_ambiguous=" << stats.route_ambiguous;
-    }
+    log_mic_stats("shutdown"sv);
 
     BOOST_LOG(debug) << "Microphone receive thread ended";
   }

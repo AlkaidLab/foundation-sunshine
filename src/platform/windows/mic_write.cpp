@@ -35,6 +35,15 @@ DEFINE_PROPERTYKEY(PKEY_DeviceInterface_FriendlyName, 0x026e516e, 0xb814, 0x414b
 
 namespace platf::audio {
 
+  namespace {
+    bool
+    is_mic_device_lost(HRESULT status) noexcept {
+      return status == AUDCLNT_E_DEVICE_INVALIDATED ||
+             status == AUDCLNT_E_RESOURCES_INVALIDATED ||
+             status == AUDCLNT_E_SERVICE_NOT_RUNNING;
+    }
+  }  // namespace
+
   template <class T>
   void
   co_task_free(T *p) {
@@ -73,22 +82,10 @@ namespace platf::audio {
   mic_write_wasapi_t::cleanup() {
     is_cleaning_up.store(true);
 
-    // 等待音频处理完成
+    // 停止音频客户端，不在清理路径等待尾部数据。
     if (audio_client) {
-      // 停止音频客户端
+      // 停止后 endpoint 不再消费已排队帧，因此不能在这里轮询 padding 等待清空。
       audio_client->Stop();
-
-      // 等待缓冲区清空
-      UINT32 bufferFrameCount = 0;
-      UINT32 padding = 0;
-      HRESULT status = audio_client->GetBufferSize(&bufferFrameCount);
-      if (SUCCEEDED(status)) {
-        // 等待缓冲区完全清空，最多等待 500ms
-        int max_wait = 50;
-        while (SUCCEEDED(audio_client->GetCurrentPadding(&padding)) && padding > 0 && max_wait-- > 0) {
-          Sleep(10);
-        }
-      }
     }
 
     // COM 接口释放顺序很重要：
@@ -103,6 +100,8 @@ namespace platf::audio {
     // 显式释放 audio_client 和 device_enum，确保正确的释放顺序
     audio_client.reset();
     device_enum.reset();
+    buffer_frame_count = 0;
+    pcm_output_buffer.clear();
 
     if (mmcss_task_handle) {
       AvRevertMmThreadCharacteristics(mmcss_task_handle);
@@ -244,6 +243,13 @@ namespace platf::audio {
     // 保存使用的格式信息
     current_format = *used_format;
 
+    status = audio_client->GetBufferSize(&buffer_frame_count);
+    if (FAILED(status) || buffer_frame_count == 0) {
+      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      cleanup();
+      return -1;
+    }
+
     // 启动音频客户端
     status = audio_client->Start();
     if (FAILED(status)) {
@@ -281,42 +287,13 @@ namespace platf::audio {
       return -1;
     }
 
-    // Handle channel conversion if necessary
-    std::vector<int16_t> pcm_output_buffer;
-    auto framesToWrite = static_cast<UINT32>(frame_count);
+    const auto framesToWrite = static_cast<UINT32>(frame_count);
 
-    if (current_format.nChannels == 1) {
-      // Mono output, direct copy
-      pcm_output_buffer.assign(samples, samples + frame_count);
-    }
-    else if (current_format.nChannels == 2) {
-      // Stereo output, duplicate mono samples
-      pcm_output_buffer.resize(frame_count * 2);
-      for (std::size_t i = 0; i < frame_count; ++i) {
-        pcm_output_buffer[i * 2] = samples[i];  // Left channel
-        pcm_output_buffer[i * 2 + 1] = samples[i];  // Right channel
-      }
-    }
-    else {
-      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
-      return -1;
-    }
-
-    // 获取缓冲区大小和当前填充的帧数
-    UINT32 bufferFrameCount = 0;
+    // 共享模式下可用空间等于初始化时的固定 buffer size 减当前 padding。
     UINT32 padding = 0;
-    auto status = audio_client->GetBufferSize(&bufferFrameCount);
+    auto status = audio_client->GetCurrentPadding(&padding);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
-        BOOST_LOG(warning) << "Audio device invalidated during mic write (GetBufferSize)";
-        return -2;  // Special return value indicating device invalidated
-      }
-      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
-      return -1;
-    }
-    status = audio_client->GetCurrentPadding(&padding);
-    if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (GetCurrentPadding)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -324,64 +301,42 @@ namespace platf::audio {
       return -1;
     }
 
-    // 确保padding不超过缓冲区大小
-    if (padding > bufferFrameCount) {
-      BOOST_LOG(warning) << "Invalid padding value: " << padding << " > " << bufferFrameCount << ", using 0";
-      padding = 0;
-    }
-
-    UINT32 availableFrames = bufferFrameCount - padding;
-
-    // 如果缓冲区空间不足，进行多次等待尝试
-    if (framesToWrite > availableFrames) {
-      BOOST_LOG(verbose) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
-
-      // 最多尝试3次，每次等待时间递增
-      const int max_retries = 3;
-      for (int retry = 0; retry < max_retries && framesToWrite > availableFrames; ++retry) {
-        // 根据需要的帧数计算等待时间：帧数 / 48000 * 1000 (ms)
-        // 保守估计，等待所需时间的 80%
-        DWORD wait_ms = static_cast<DWORD>((framesToWrite - availableFrames) * 1000 / 48000 * 0.8);
-        wait_ms = std::max(wait_ms, 5ul);  // 最少等待 5ms
-        wait_ms = std::min(wait_ms, 50ul); // 最多等待 50ms
-        
-        Sleep(wait_ms);
-
-        // 重新检查可用空间
-        status = audio_client->GetCurrentPadding(&padding);
-        if (FAILED(status)) {
-          BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
-          return -1;
-        }
-
-        if (padding > bufferFrameCount) {
-          padding = 0;
-        }
-
-        availableFrames = bufferFrameCount - padding;
-        
-        if (framesToWrite <= availableFrames) {
-          BOOST_LOG(verbose) << "Buffer space available after " << (retry + 1) << " retries";
-          break;
-        }
-      }
-
-      // 如果仍然没有足够空间，降级为 debug 日志并截断
-      if (framesToWrite > availableFrames) {
-        BOOST_LOG(warning) << "Mic write buffer still full after retries: " << framesToWrite << " frames requested, " << availableFrames << " available. Truncating.";
-        framesToWrite = availableFrames;
-      }
-    }
-
-    if (framesToWrite == 0) {
+    if (padding > buffer_frame_count) {
+      BOOST_LOG(warning) << "Invalid mic write padding value: " << padding << " > " << buffer_frame_count;
       return 0;
+    }
+
+    const auto availableFrames = buffer_frame_count - padding;
+    if (framesToWrite == 0 || framesToWrite > availableFrames) {
+      // 麦克风 UDP、混音和设备写入共用一个线程。空间不足时整帧丢弃，
+      // 不能在这里等待，否则会同时阻塞所有客户端的收包。
+      return 0;
+    }
+
+    // 确认端点有空间后再转换声道，避免背压丢帧路径做无效拷贝。
+    if (current_format.nChannels == 1) {
+      pcm_output_buffer.assign(samples, samples + frame_count);
+    }
+    else if (current_format.nChannels == 2) {
+      pcm_output_buffer.resize(frame_count * 2);
+      for (std::size_t i = 0; i < frame_count; ++i) {
+        pcm_output_buffer[i * 2] = samples[i];
+        pcm_output_buffer[i * 2 + 1] = samples[i];
+      }
+    }
+    else {
+      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
+      return -1;
     }
 
     // 获取渲染缓冲区
     BYTE *pData = nullptr;
     status = audio_render->GetBuffer(framesToWrite, &pData);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (status == AUDCLNT_E_BUFFER_TOO_LARGE) {
+        return 0;
+      }
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (GetBuffer)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -395,7 +350,7 @@ namespace platf::audio {
     // 释放缓冲区
     status = audio_render->ReleaseBuffer(framesToWrite, 0);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (ReleaseBuffer)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -436,11 +391,8 @@ namespace platf::audio {
         return -1;
       }
       total_bytes_written += bytes_written;
-      // Stay ahead of playback so the render buffer never drains mid-tone. The
-      // default Windows timer granularity is ~15.6 ms, so any requested delay is
-      // rounded up to a whole tick: Sleep(18) really costs ~31 ms and starves a
-      // 20 ms packet. One tick is comfortably shorter than the packet, and
-      // write_pcm() backs off on its own once the buffer is full.
+      // 测试音保持较短的写入间隔；缓冲区已满时 write_pcm() 会丢弃当前帧，
+      // 不会把测试路径的等待逻辑带回实时写入函数。
       Sleep(10);
     }
 

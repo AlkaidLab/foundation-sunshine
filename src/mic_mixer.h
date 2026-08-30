@@ -15,6 +15,17 @@ namespace mic_mixer {
 
   constexpr std::uint32_t sample_rate = 48000;
   constexpr std::size_t frame_samples = sample_rate / 50;
+  constexpr std::size_t jitter_buffer_frames = 2;
+
+  struct stats_t {
+    std::uint64_t duplicate_packets {0};
+    std::uint64_t late_packets {0};
+    std::uint64_t buffer_overflow_packets {0};
+    std::uint64_t timeline_reanchors {0};
+    std::uint64_t plc_frames {0};
+    std::uint64_t decode_failures {0};
+    std::uint64_t skipped_playout_frames {0};
+  };
 
   /**
    * @brief Validate that a payload contains a decodable Opus packet shape.
@@ -50,10 +61,16 @@ namespace mic_mixer {
     clear();
 
     /**
-     * @brief Decode and queue one Opus packet for a source.
+     * @brief Queue one Opus packet for a source's playout timeline.
      */
     bool
-    push_packet(source_id_t source_id, const std::uint8_t *data, std::size_t size, std::uint16_t sequence_number);
+    push_packet(
+      source_id_t source_id,
+      const std::uint8_t *data,
+      std::size_t size,
+      std::uint16_t sequence_number,
+      std::optional<std::uint32_t> timestamp_ms
+    );
 
     /**
      * @brief Mix one queued frame from every source into a mono PCM frame.
@@ -61,6 +78,18 @@ namespace mic_mixer {
      */
     std::optional<std::vector<std::int16_t>>
     mix_next_frame();
+
+    /**
+     * @brief Advance the playout clock without decoding missed frames.
+     */
+    void
+    skip_playout_frames(std::size_t frame_count);
+
+    /**
+     * @brief Return and reset diagnostics accumulated by the mixer thread.
+     */
+    stats_t
+    take_stats();
 
   private:
     struct impl_t;
