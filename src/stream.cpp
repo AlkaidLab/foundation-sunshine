@@ -2812,10 +2812,12 @@ namespace stream {
       ++stats.accepted_packets;
     };
 
+    auto retry_delay = 300ms;  // 初始重试延迟，连续错误指数退避到最大5秒
     boost::function<void(const boost::system::error_code, size_t)> mic_recv_func;
     boost::function<void()> schedule_mix;
     bool retry_receive_after_error = false;
     bool reset_mic_io_cycle = false;
+    bool reopen_mic_socket_after_error = false;
     bool mix_timer_armed = false;
     std::uint64_t mix_timer_generation = 0;
     using mix_clock_t = asio::steady_timer::clock_type;
@@ -2899,12 +2901,18 @@ namespace stream {
           BOOST_LOG(error) << "Mic socket error: "sv << ec.message();
           retry_receive_after_error = true;
           fg.disable();
+          // 未分类 socket 错误会进入退避重试。旧播放 slot 已失去实时性，
+          // 只清理 mixer 状态，不重建与网络错误无关的 WASAPI 设备。
+          mixer.clear();
+          mixer_sources.clear();
+          reopen_mic_socket_after_error = true;
           cancel_mix_timer();
         }
         return;
       }
 
       retry_receive_after_error = false;
+      retry_delay = 300ms;
 
       if (received_bytes < sizeof(RTP_PACKET)) {
         return;
@@ -3039,12 +3047,10 @@ namespace stream {
 
     BOOST_LOG(debug) << "Starting microphone receive thread";
 
-    auto retry_delay = 300ms;  // 初始重试延迟，指数退避到最大5秒
     bool had_active_mic_sessions = false;
 
     while (!broadcast_shutdown_event->peek()) {
-      if (!ctx.mic_socket_enabled.load() ||
-          ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
+      if (ctx.mic_session_count.load(boost::memory_order_acquire) == 0) {
         retry_delay = 300ms;  // 会话结束时重置延迟
         release_mic_device();
         if (had_active_mic_sessions) {
@@ -3055,6 +3061,32 @@ namespace stream {
         continue;
       }
       had_active_mic_sessions = true;
+
+      if (reopen_mic_socket_after_error || !ctx.mic_socket_enabled.load()) {
+        bool has_active_sessions = false;
+        bool socket_ready = false;
+        {
+          // 复用注册/注销路径的锁序，在会话锁内重新确认 shutdown 尚未清空会话。
+          boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
+          has_active_sessions = !ctx.mic_sessions.empty();
+          if (has_active_sessions) {
+            boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
+            if (reopen_mic_socket_after_error) {
+              close_mic_socket_locked(ctx);
+            }
+            socket_ready = open_mic_socket_locked(ctx);
+          }
+        }
+        if (!has_active_sessions) {
+          continue;
+        }
+        if (!socket_ready) {
+          (void) broadcast_shutdown_event->view(retry_delay);
+          retry_delay = std::min(retry_delay * 2, 5000ms);
+          continue;
+        }
+        reopen_mic_socket_after_error = false;
+      }
 
       // 在麦克风设备的完整生命周期内持有音频上下文，确保音频采集退出后仍能恢复设备。
       if (!mic_device_initialized) {

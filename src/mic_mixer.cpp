@@ -274,6 +274,7 @@ namespace mic_mixer {
     }
 
     if (target_slot < impl_->next_playout_slot) {
+      ++impl_->stats.late_packets;
       return false;
     }
 

@@ -368,6 +368,28 @@ TEST(MicMixerTest, ConcealsOneMissingFrame) {
   EXPECT_TRUE(mixer.mix_next_frame().has_value());
 }
 
+TEST(MicMixerTest, CountsAnOrderedPacketThatArrivesAfterPlc) {
+  auto encoder = make_encoder();
+  const auto first_packet = encode_frame(encoder.get(), mic_mixer::frame_samples, 1000);
+  const auto late_packet = encode_frame(encoder.get(), mic_mixer::frame_samples, 2000);
+  ASSERT_FALSE(first_packet.empty());
+  ASSERT_FALSE(late_packet.empty());
+
+  mic_mixer::mixer_t mixer;
+  ASSERT_TRUE(mixer.add_source(1));
+  ASSERT_TRUE(mixer.push_packet(1, first_packet.data(), first_packet.size(), 1, 20));
+
+  EXPECT_FALSE(mixer.mix_next_frame().has_value());
+  EXPECT_FALSE(mixer.mix_next_frame().has_value());
+  EXPECT_TRUE(mixer.mix_next_frame().has_value());
+  EXPECT_TRUE(mixer.mix_next_frame().has_value());  // PLC for sequence 2
+
+  EXPECT_FALSE(mixer.push_packet(1, late_packet.data(), late_packet.size(), 2, 40));
+  const auto stats = mixer.take_stats();
+  EXPECT_EQ(stats.plc_frames, 1);
+  EXPECT_EQ(stats.late_packets, 1);
+}
+
 TEST(MicMixerTest, StopsConcealmentForAnInactiveSource) {
   auto encoder = make_encoder();
   const auto packet = encode_frame(encoder.get(), mic_mixer::frame_samples, 1000);
@@ -517,4 +539,28 @@ TEST(MicMixerTest, SkippingHostFramesKeepsCurrentAndFuturePackets) {
   ASSERT_TRUE(third.has_value());
   EXPECT_EQ(*second, expected[0]);
   EXPECT_EQ(*third, expected[1]);
+}
+
+TEST(MicMixerTest, ClearDropsQueuedAudioAndRebuffersTheNewSource) {
+  auto old_encoder = make_encoder();
+  auto new_encoder = make_encoder();
+  const auto old_packet = encode_frame(old_encoder.get(), mic_mixer::frame_samples, 1000);
+  const auto new_packet = encode_frame(new_encoder.get(), mic_mixer::frame_samples, 3000);
+  ASSERT_FALSE(old_packet.empty());
+  ASSERT_FALSE(new_packet.empty());
+  const auto expected = decode_single_frame(new_packet);
+
+  mic_mixer::mixer_t mixer;
+  ASSERT_TRUE(mixer.add_source(1));
+  ASSERT_TRUE(mixer.push_packet(1, old_packet.data(), old_packet.size(), 1, 20));
+  EXPECT_FALSE(mixer.mix_next_frame().has_value());
+  mixer.clear();
+
+  ASSERT_TRUE(mixer.add_source(2));
+  ASSERT_TRUE(mixer.push_packet(2, new_packet.data(), new_packet.size(), 1, 20));
+  EXPECT_FALSE(mixer.mix_next_frame().has_value());
+  EXPECT_FALSE(mixer.mix_next_frame().has_value());
+  const auto mixed = mixer.mix_next_frame();
+  ASSERT_TRUE(mixed.has_value());
+  EXPECT_EQ(*mixed, expected);
 }
