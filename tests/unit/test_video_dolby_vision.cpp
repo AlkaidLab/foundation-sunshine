@@ -12,6 +12,7 @@
 
 #include "../tests_common.h"
 
+#include <limits>
 #include <vector>
 
 namespace {
@@ -321,6 +322,51 @@ TEST(DolbyVisionRpu, DerivesLevel1FromStats) {
   EXPECT_FALSE(frame_metadata_from_stats(stats).has_value());
 }
 
+TEST(DolbyVisionRpu, UsesNearBlackCoverageForARobustMinimum) {
+  platf::hdr_frame_luminance_stats_t stats;
+  stats.valid = true;
+  stats.avg_maxrgb_pq = 0.5f;
+  stats.avg_maxrgb = 120.0f;
+  stats.percentile_99 = 1000.0f;
+  stats.percentile_10_pq = 0.05f;
+  stats.percentile_1_pq = 0.001f;  // -> PQ code 4
+  stats.near_black_stats_valid = true;
+
+  // A few dark pixels retain the robust first percentile instead of forcing black.
+  stats.near_black_fraction = 0.005f;
+  auto metadata = frame_metadata_from_stats(stats);
+  ASSERT_TRUE(metadata.has_value());
+  EXPECT_EQ(metadata->min_pq, 4);
+
+  // A material black region is part of the scene and should be represented as zero.
+  stats.near_black_fraction = 0.02f;
+  metadata = frame_metadata_from_stats(stats);
+  ASSERT_TRUE(metadata.has_value());
+  EXPECT_EQ(metadata->min_pq, 0);
+
+  stats.near_black_fraction = std::numeric_limits<float>::quiet_NaN();
+  EXPECT_FALSE(frame_metadata_from_stats(stats).has_value());
+}
+
+TEST(DolbyVisionRpu, SmoothsAllLevel1FieldsAndResetsAtSceneBoundaries) {
+  video::dolby_vision::level1_temporal_filter_t filter;
+
+  frame_metadata_t first { .min_pq = 0, .max_pq = 2081, .avg_pq = 819 };
+  EXPECT_EQ(filter.update(first).min_pq, first.min_pq);
+
+  frame_metadata_t next { .min_pq = 12, .max_pq = 4081, .avg_pq = 2819 };
+  const auto smoothed = filter.update(next);
+  EXPECT_EQ(smoothed.min_pq, 2);
+  EXPECT_EQ(smoothed.max_pq, 2381);
+  EXPECT_EQ(smoothed.avg_pq, 1119);
+
+  filter.reset();
+  const auto reset = filter.update(next);
+  EXPECT_EQ(reset.min_pq, next.min_pq);
+  EXPECT_EQ(reset.max_pq, next.max_pq);
+  EXPECT_EQ(reset.avg_pq, next.avg_pq);
+}
+
 TEST(DolbyVisionRpu, EmitsNothingBeforeConfigure) {
   rpu_generator_t generator;
   const auto nal = generator.generate(typical_metadata());
@@ -572,6 +618,17 @@ namespace {
     return count;
   }
 
+  parsed_rpu_t
+  parse_injected_rpu(const bytes_t &au) {
+    for (size_t i = 0; i + 3 < au.size(); ++i) {
+      if (au[i] == 0x00 && au[i + 1] == 0x00 && au[i + 2] == 0x01 && au[i + 3] == 0x7C) {
+        return parse_nal(std::span<const uint8_t>(au).subspan(i + 3));
+      }
+    }
+    ADD_FAILURE() << "injected access unit contains no Dolby Vision RPU";
+    return {};
+  }
+
 }  // namespace
 
 TEST(DolbyVisionInjector, IsInertBeforeConfigure) {
@@ -638,6 +695,74 @@ TEST(DolbyVisionInjector, ReusesLastAnalysisWhenStatsGoMissing) {
   bytes_t au = make_au();
   injector.inject(2, au);
   EXPECT_EQ(count_rpu_nals(au), 1u) << "conservative metadata beats a metadata-less frame";
+}
+
+TEST(DolbyVisionInjector, MarksEachDetectedSceneExactlyOnce) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));
+
+  auto first_scene = valid_stats();
+  first_scene.sample_sequence = 1;
+  first_scene.percentile_90_pq = 0.60f;
+  std::fill(std::begin(first_scene.distribution_maxrgb),
+    std::end(first_scene.distribution_maxrgb), 100.0f);
+
+  injector.stage(1, first_scene);
+  bytes_t first_au = make_au();
+  injector.inject(1, first_au);
+  EXPECT_EQ(parse_injected_rpu(first_au).scene_refresh, 1u);
+
+  // Reusing the same analyzer sample must not repeat scene_refresh.
+  injector.stage(2, first_scene);
+  bytes_t repeated_au = make_au();
+  injector.inject(2, repeated_au);
+  EXPECT_EQ(parse_injected_rpu(repeated_au).scene_refresh, 0u);
+
+  auto next_scene = first_scene;
+  next_scene.sample_sequence = 2;
+  std::fill(std::begin(next_scene.distribution_maxrgb),
+    std::end(next_scene.distribution_maxrgb), 1000.0f);
+  injector.stage(3, next_scene);
+  bytes_t next_au = make_au();
+  injector.inject(3, next_au);
+  EXPECT_EQ(parse_injected_rpu(next_au).scene_refresh, 1u);
+}
+
+TEST(DolbyVisionInjector, DefersSceneRefreshUntilMetadataIsValid) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));
+
+  auto first_scene = valid_stats();
+  first_scene.sample_sequence = 1;
+  first_scene.percentile_90_pq = 0.60f;
+  std::fill(std::begin(first_scene.distribution_maxrgb),
+    std::end(first_scene.distribution_maxrgb), 100.0f);
+  injector.stage(1, first_scene);
+  bytes_t first_au = make_au();
+  injector.inject(1, first_au);
+  ASSERT_EQ(parse_injected_rpu(first_au).scene_refresh, 1u);
+
+  auto invalid_cut = first_scene;
+  invalid_cut.sample_sequence = 2;
+  invalid_cut.near_black_stats_valid = true;
+  invalid_cut.percentile_1_pq = 0.001f;
+  invalid_cut.near_black_fraction = std::numeric_limits<float>::quiet_NaN();
+  std::fill(std::begin(invalid_cut.distribution_maxrgb),
+    std::end(invalid_cut.distribution_maxrgb), 1000.0f);
+  injector.stage(2, invalid_cut);
+  bytes_t invalid_au = make_au();
+  injector.inject(2, invalid_au);
+  // The conservative previous metadata is reused without falsely claiming that
+  // the new scene's invalid analysis was applied.
+  EXPECT_EQ(parse_injected_rpu(invalid_au).scene_refresh, 0u);
+
+  auto recovered = invalid_cut;
+  recovered.sample_sequence = 3;
+  recovered.near_black_fraction = 0.02f;
+  injector.stage(3, recovered);
+  bytes_t recovered_au = make_au();
+  injector.inject(3, recovered_au);
+  EXPECT_EQ(parse_injected_rpu(recovered_au).scene_refresh, 1u);
 }
 
 TEST(DolbyVisionInjector, OverflowDisablesTheSession) {

@@ -132,9 +132,14 @@ public:
 };
 
 /// L1 元数据推导：avg 取 stats.avg_maxrgb_pq（PQ 域均值），
-/// max 取 percentile_99（离群点防护），min 取 percentile_10_pq 后钳位。
+/// max 取 percentile_99（离群点防护）。有扩展近黑统计时，近黑覆盖率达到 1%
+/// 才把 min 报告为零，否则取 percentile_1_pq；旧分析结果回退到 percentile_10_pq。
+/// 所有值随后钳位。
 std::optional<frame_metadata_t>
 frame_metadata_from_stats(const platf::hdr_frame_luminance_stats_t &stats);
+
+/// 在场景边界之间统一平滑 min/avg/max；切场时先 reset()，避免旧场景拖尾。
+class level1_temporal_filter_t { ... };
 
 /// frame_id 绑定的固定容量在途 RPU 队列：编码输出按 frame_index 取回对应 RPU，
 /// 超过最大在途帧数返回失败 —— 调用方应停止 DV 而不是错位附接。
@@ -180,8 +185,8 @@ L1 偏移也相同 —— 但这只是巧合，不应成为依赖。`configure()
 现有统计不能机械复制成 DV 的语义：
 
 - **`min_pq` 不能用绝对最小像素。** 游戏中一个黑色 UI 像素、黑边或透明合成区域就能
-  把整帧最小值钉死在零。用「原始最小值 + 低百分位亮度 + 黑像素比例 + 时间稳定器」
-  共同生成稳健最小值。
+  把整帧最小值钉死在零。分析器同时给出 PQ 第 1 百分位和首个 PQ 直方图 bin 的覆盖率；
+  覆盖率达到 1% 才报告零，否则采用第 1 百分位。旧分析结果没有扩展统计时回退到 P10。
 - **`avg_pq` 必须是 PQ 域平均，不是 `average_maxrgb`。** PQ 是凹函数，
   `PQ(mean(nits)) ≥ mean(PQ(nits))`，暗场带高光时差距是整个动态范围的大部分。
   现有 `stats.avg_maxrgb_pq` 正是逐像素累加的 PQ 域平均，直接用它。
@@ -425,8 +430,10 @@ OPPO 真机解码链路 + Sony 电视 Dolby Vision 点亮）；主机侧灰度�
 统计缺失时的保守 RPU、RPU/frame_id 严格匹配、零分配优化。
 
 已落地：avg/max/min 推导与钳位（§3.2）、统计缺失复用上次有效值、首帧预热跳过、
-frame_index 严格绑定、队列溢出即停、稳态零分配。待实机调优：场景切换信号
-（当前 scene_refresh 恒 false，EMA 的切场检测尚未导出）。
+frame_index 严格绑定、队列溢出即停、稳态零分配。L1 min/avg/max 使用专用时域滤波器；
+`scene_refresh` 由独立 GPU 样本的 PQ 均值、P10/P90 与 HDR10+ 分位分布共同判定，
+切场时先清空滤波历史，重复使用同一分析样本不会重复刷新。
+待实机调优：按游戏类型校准切场阈值与近黑覆盖率阈值。
 
 ### Phase 3：正式协议协商与降级（协商层已落地）
 

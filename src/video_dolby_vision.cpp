@@ -160,11 +160,17 @@ namespace video::dolby_vision {
     const bool finite = std::isfinite(stats.avg_maxrgb_pq) &&
                         std::isfinite(stats.avg_maxrgb) &&
                         std::isfinite(stats.percentile_99) &&
-                        std::isfinite(stats.percentile_10_pq);
+                        std::isfinite(stats.percentile_10_pq) &&
+                        (!stats.near_black_stats_valid ||
+                          (std::isfinite(stats.percentile_1_pq) &&
+                           std::isfinite(stats.near_black_fraction)));
     if (!finite ||
         stats.avg_maxrgb_pq < 0.0f || stats.avg_maxrgb_pq > 1.0f ||
         stats.percentile_99 < 0.0f ||
-        stats.percentile_10_pq < 0.0f || stats.percentile_10_pq > 1.0f) {
+        stats.percentile_10_pq < 0.0f || stats.percentile_10_pq > 1.0f ||
+        (stats.near_black_stats_valid &&
+          (stats.percentile_1_pq < 0.0f || stats.percentile_1_pq > 1.0f ||
+           stats.near_black_fraction < 0.0f || stats.near_black_fraction > 1.0f))) {
       return std::nullopt;
     }
     // Zero PQ-domain mean beside a positive linear mean means the analyzer
@@ -174,11 +180,42 @@ namespace video::dolby_vision {
     }
 
     frame_metadata_t raw;
-    raw.min_pq = pq_signal_u12_rounded(stats.percentile_10_pq);
+    constexpr float meaningful_near_black_coverage = 0.01f;
+    const float robust_min_pq = stats.near_black_stats_valid ?
+                                  (stats.near_black_fraction >= meaningful_near_black_coverage ?
+                                     0.0f : stats.percentile_1_pq) :
+                                  stats.percentile_10_pq;
+    raw.min_pq = pq_signal_u12_rounded(robust_min_pq);
     raw.max_pq = pq_code_u12_rounded(stats.percentile_99);
     raw.avg_pq = pq_signal_u12_rounded(stats.avg_maxrgb_pq);
-    raw.scene_refresh = false;
     return clamp_level1(raw.min_pq, raw.max_pq, raw.avg_pq);
+  }
+
+  frame_metadata_t
+  level1_temporal_filter_t::update(const frame_metadata_t &raw) {
+    if (!initialized_) {
+      min_pq_ = raw.min_pq;
+      max_pq_ = raw.max_pq;
+      avg_pq_ = raw.avg_pq;
+      initialized_ = true;
+    }
+    else {
+      min_pq_ += ALPHA * (raw.min_pq - min_pq_);
+      max_pq_ += ALPHA * (raw.max_pq - max_pq_);
+      avg_pq_ += ALPHA * (raw.avg_pq - avg_pq_);
+    }
+
+    auto filtered = clamp_level1(
+      static_cast<uint16_t>(std::lround(min_pq_)),
+      static_cast<uint16_t>(std::lround(max_pq_)),
+      static_cast<uint16_t>(std::lround(avg_pq_)));
+    filtered.scene_refresh = raw.scene_refresh;
+    return filtered;
+  }
+
+  void
+  level1_temporal_filter_t::reset() {
+    *this = {};
   }
 
   bool
@@ -459,14 +496,26 @@ namespace video::dolby_vision {
     // Missing analysis reuses the last good values: once RPUs are flowing,
     // a frame without one would make the client's Dolby engine fall back to
     // static HDR10 mapping for that frame — a visible brightness step.
-    if (const auto metadata = frame_metadata_from_stats(stats)) {
+    if (scene_detector_.observe(stats)) {
+      level1_filter_.reset();
+      pending_scene_refresh_ = true;
+    }
+    if (const auto raw_metadata = frame_metadata_from_stats(stats)) {
+      auto metadata = level1_filter_.update(*raw_metadata);
+      metadata.scene_refresh = pending_scene_refresh_;
       last_metadata_ = metadata;
+      // Consume the refresh only after a valid RPU can carry it. An invalid
+      // analyzer sample must not strand the new scene without a refresh.
+      pending_scene_refresh_ = false;
     }
     if (!last_metadata_) {
       return;  // cold analyzer: this frame ships without an RPU, like HDR10+ does
     }
 
-    if (!queue_.stage(frame_index, generator_, *last_metadata_)) {
+    const auto metadata_for_frame = *last_metadata_;
+    // Reused luminance is intentional, but a refresh belongs to one picture.
+    last_metadata_->scene_refresh = false;
+    if (!queue_.stage(frame_index, generator_, metadata_for_frame)) {
       // In-flight overflow means the encoder's output can no longer be
       // trusted to surface in order; stop rather than risk a stale RPU
       // landing on a newer picture (docs §3.5).
@@ -496,7 +545,10 @@ namespace video::dolby_vision {
   void
   rpu_injector_t::disable() {
     enabled_ = false;
+    scene_detector_.reset();
+    level1_filter_.reset();
     last_metadata_.reset();
+    pending_scene_refresh_ = false;
     queue_.clear();
     generator_.reset();
   }

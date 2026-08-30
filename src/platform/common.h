@@ -522,6 +522,12 @@ namespace platf {
     /// and the histogram is point-sampled per analysis cell. Zero alongside a nonzero
     /// avg_maxrgb means the analyzer did not produce one, which HDR Vivid rejects.
     float avg_maxrgb_pq = 0.0f;
+    /// First percentile and near-black coverage from the analyzer's PQ histogram.
+    /// `near_black_fraction` is the fraction in histogram bin zero (PQ < 1/256).
+    /// The validity bit distinguishes an older analyzer from a genuinely black frame.
+    float percentile_1_pq = 0.0f;
+    float near_black_fraction = 0.0f;
+    bool near_black_stats_valid = false;
     float percentile_10_pq = 0.0f;  ///< 10th percentile in normalized PQ signal space
     float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
     /// 99th percentile of maxRGB (nits). Reported as the HDR10+ maxSCL; see

@@ -330,6 +330,88 @@ namespace video::hdr_metadata {
     return pq_to_u12(nits_to_pq(nits > 0.0f ? nits : 1000.0f));
   }
 
+  namespace detail {
+    inline bool
+    has_valid_scene_metrics(const platf::hdr_frame_luminance_stats_t &stats) {
+      return stats.valid &&
+             std::isfinite(stats.avg_maxrgb_pq) &&
+             std::isfinite(stats.percentile_10_pq) &&
+             std::isfinite(stats.percentile_90_pq);
+    }
+  }  // namespace detail
+
+  /**
+   * Detect metadata-relevant scene discontinuities without encoder lookahead.
+   *
+   * The analyzer runs below the video frame rate, so only a new sample_sequence
+   * may advance this state. Comparing repeated samples would turn one transition
+   * into several scene refreshes. The decision is made in PQ space from the mean,
+   * low/high percentiles, and the HDR10+ distribution; a lone scRGB peak is not
+   * enough to call a cut because cursors, subtitles, and compositor overshoot can
+   * all create one.
+   */
+  class scene_change_detector_t {
+  public:
+    bool
+    observe(const platf::hdr_frame_luminance_stats_t &stats) {
+      if (!detail::has_valid_scene_metrics(stats)) {
+        return false;
+      }
+      if (initialized_ && stats.sample_sequence != 0 && stats.sample_sequence == last_sample_sequence_) {
+        return false;
+      }
+
+      const bool scene_change = !initialized_ || differs_materially(previous_, stats);
+      previous_ = stats;
+      last_sample_sequence_ = stats.sample_sequence;
+      initialized_ = true;
+      return scene_change;
+    }
+
+    void
+    reset() {
+      *this = {};
+    }
+
+  private:
+    static bool
+    differs_materially(
+      const platf::hdr_frame_luminance_stats_t &previous,
+      const platf::hdr_frame_luminance_stats_t &current) {
+      const float mean_delta = std::abs(current.avg_maxrgb_pq - previous.avg_maxrgb_pq);
+      const float low_delta = std::abs(current.percentile_10_pq - previous.percentile_10_pq);
+      const float high_delta = std::abs(current.percentile_90_pq - previous.percentile_90_pq);
+
+      float distribution_delta_sum = 0.0f;
+      float distribution_delta_max = 0.0f;
+      size_t distribution_count = 0;
+      for (size_t i = 0; i < std::size(current.distribution_maxrgb); ++i) {
+        const float previous_nits = previous.distribution_maxrgb[i];
+        const float current_nits = current.distribution_maxrgb[i];
+        if (!std::isfinite(previous_nits) || !std::isfinite(current_nits) ||
+            previous_nits < 0.0f || current_nits < 0.0f) {
+          continue;
+        }
+        const float delta = std::abs(nits_to_pq(current_nits) - nits_to_pq(previous_nits));
+        distribution_delta_sum += delta;
+        distribution_delta_max = std::max(distribution_delta_max, delta);
+        ++distribution_count;
+      }
+      const float distribution_delta_mean = distribution_count > 0 ?
+                                              distribution_delta_sum / distribution_count :
+                                              0.0f;
+
+      return mean_delta >= 0.10f ||
+             std::max(low_delta, high_delta) >= 0.18f ||
+             (distribution_delta_mean >= 0.10f && distribution_delta_max >= 0.14f) ||
+             (mean_delta >= 0.06f && distribution_delta_mean >= 0.06f);
+    }
+
+    platf::hdr_frame_luminance_stats_t previous_ {};
+    uint64_t last_sample_sequence_ = 0;
+    bool initialized_ = false;
+  };
+
   struct vivid_metadata_t {
     uint16_t minimum_maxrgb_pq = 0;
     uint16_t average_maxrgb_pq = 0;
@@ -546,6 +628,51 @@ namespace video::hdr_metadata {
     uint32_t average_sum_ = 0;
     uint32_t variance_sum_ = 0;
     uint32_t maximum_sum_ = 0;
+  };
+
+  struct dynamic_metadata_temporal_result_t {
+    platf::hdr_frame_luminance_stats_t hdr10plus_stats {};
+    vivid_metadata_t vivid {};
+  };
+
+  /**
+   * Apply the shared scene-aware temporal policy before format-specific
+   * serialization. Native encoders and the AVCodec path both own one instance
+   * per session so their HDR10+ and HDR Vivid behavior cannot drift apart.
+   */
+  class dynamic_metadata_temporal_state_t {
+  public:
+    dynamic_metadata_temporal_result_t
+    update(const platf::hdr_frame_luminance_stats_t &stats) {
+      if (!detail::has_valid_scene_metrics(stats)) {
+        return {};
+      }
+
+      const bool scene_change = scene_detector_.observe(stats);
+      if (scene_change) {
+        hdr10plus_ema_.reset();
+        vivid_filter_.reset();
+      }
+
+      const auto vivid = vivid_filter_.update(stats);
+      hdr10plus_ema_.update(stats);
+      return {
+        .hdr10plus_stats = hdr10plus_ema_.smoothed(stats),
+        .vivid = vivid,
+      };
+    }
+
+    void
+    reset() {
+      scene_detector_.reset();
+      hdr10plus_ema_.reset();
+      vivid_filter_.reset();
+    }
+
+  private:
+    scene_change_detector_t scene_detector_;
+    hdr_luminance_ema_t hdr10plus_ema_;
+    vivid_temporal_filter_t vivid_filter_;
   };
 
   /**
@@ -895,17 +1022,16 @@ namespace video::hdr_metadata {
         return payloads;
       }
 
-      const auto vivid = vivid_filter_.update(stats);
-      hdr10plus_ema_.update(stats);
+      const auto filtered = temporal_state_.update(stats);
 
       if (formats_.hdr10plus) {
         const auto size = serialize_hdr10plus_t35(
-          hdr10plus_ema_.smoothed(stats), max_display_luminance, hdr10plus_storage_);
+          filtered.hdr10plus_stats, max_display_luminance, hdr10plus_storage_);
         if (size > 0) {
           payloads.hdr10plus = std::span(hdr10plus_storage_).first(size);
         }
       }
-      if (formats_.vivid && serialize_vivid_t35(vivid, vivid_storage_) > 0) {
+      if (formats_.vivid && serialize_vivid_t35(filtered.vivid, vivid_storage_) > 0) {
         payloads.vivid = vivid_storage_;
       }
       return payloads;
@@ -914,15 +1040,13 @@ namespace video::hdr_metadata {
     /// Drop temporal history, e.g. when an encoder is recreated mid-session.
     void
     reset() {
-      hdr10plus_ema_.reset();
-      vivid_filter_.reset();
+      temporal_state_.reset();
       vivid_storage_.clear();
     }
 
   private:
     formats_t formats_ {};
-    hdr_luminance_ema_t hdr10plus_ema_;
-    vivid_temporal_filter_t vivid_filter_;
+    dynamic_metadata_temporal_state_t temporal_state_;
     std::array<uint8_t, hdr10plus_t35_max_payload_size> hdr10plus_storage_ {};
     std::vector<uint8_t> vivid_storage_;
   };
