@@ -3,6 +3,28 @@ import { readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const localeDirectory = new URL('../public/assets/locale/', import.meta.url)
+const recommendationPatterns = {
+  bg: /препоръч/i,
+  cs: /doporuč/i,
+  de: /empfohl/i,
+  en: /recommend/i,
+  en_GB: /recommend/i,
+  en_US: /recommend/i,
+  es: /recomendad/i,
+  fr: /recommand/i,
+  it: /consigliat|raccomandat/i,
+  ja: /推奨/,
+  ko: /권장/,
+  pl: /zalecan/i,
+  pt: /recomendad/i,
+  pt_BR: /recomendad/i,
+  ru: /рекоменд/i,
+  sv: /rekommend/i,
+  tr: /öneril|tavsiye/i,
+  uk: /рекоменд/i,
+  zh: /推荐/,
+  zh_TW: /建議|推薦/,
+}
 
 test('experimental USB/IP routing is not labelled as recommended', async () => {
   const localeFiles = (await readdir(localeDirectory)).filter((name) => name.endsWith('.json'))
@@ -10,9 +32,16 @@ test('experimental USB/IP routing is not labelled as recommended', async () => {
   for (const localeFile of localeFiles) {
     const locale = JSON.parse(await readFile(new URL(localeFile, localeDirectory), 'utf8'))
     const label = locale.config?.microphone_redirect_backend_auto
+    const language = localeFile.replace(/\.json$/, '')
+    const recommendationPattern = recommendationPatterns[language]
 
     assert.equal(typeof label, 'string', `${localeFile} is missing the automatic microphone backend label`)
-    assert.doesNotMatch(label, /recommended|推荐|建議/i, `${localeFile} recommends an experimental backend`)
+    assert.ok(recommendationPattern, `${localeFile} is missing a recommendation-language guard`)
+    assert.doesNotMatch(
+      label,
+      recommendationPattern,
+      `${localeFile} recommends an experimental backend`,
+    )
   }
 })
 
