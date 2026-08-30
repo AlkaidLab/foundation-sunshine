@@ -348,6 +348,25 @@ TEST(DolbyVisionRpu, UsesNearBlackCoverageForARobustMinimum) {
   EXPECT_FALSE(frame_metadata_from_stats(stats).has_value());
 }
 
+TEST(DolbyVisionRpu, SmoothsAllLevel1FieldsAndResetsAtSceneBoundaries) {
+  video::dolby_vision::level1_temporal_filter_t filter;
+
+  frame_metadata_t first { .min_pq = 0, .max_pq = 2081, .avg_pq = 819 };
+  EXPECT_EQ(filter.update(first).min_pq, first.min_pq);
+
+  frame_metadata_t next { .min_pq = 12, .max_pq = 4081, .avg_pq = 2819 };
+  const auto smoothed = filter.update(next);
+  EXPECT_EQ(smoothed.min_pq, 2);
+  EXPECT_EQ(smoothed.max_pq, 2381);
+  EXPECT_EQ(smoothed.avg_pq, 1119);
+
+  filter.reset();
+  const auto reset = filter.update(next);
+  EXPECT_EQ(reset.min_pq, next.min_pq);
+  EXPECT_EQ(reset.max_pq, next.max_pq);
+  EXPECT_EQ(reset.avg_pq, next.avg_pq);
+}
+
 TEST(DolbyVisionRpu, EmitsNothingBeforeConfigure) {
   rpu_generator_t generator;
   const auto nal = generator.generate(typical_metadata());

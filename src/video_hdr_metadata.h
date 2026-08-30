@@ -342,25 +342,20 @@ namespace video::hdr_metadata {
    */
   class scene_change_detector_t {
   public:
-    struct result_t {
-      bool new_sample = false;
-      bool scene_change = false;
-    };
-
-    result_t
+    bool
     observe(const platf::hdr_frame_luminance_stats_t &stats) {
       if (!stats.valid) {
-        return {};
+        return false;
       }
       if (initialized_ && stats.sample_sequence != 0 && stats.sample_sequence == last_sample_sequence_) {
-        return {};
+        return false;
       }
 
       const bool scene_change = !initialized_ || differs_materially(previous_, stats);
       previous_ = stats;
       last_sample_sequence_ = stats.sample_sequence;
       initialized_ = true;
-      return { .new_sample = true, .scene_change = scene_change };
+      return scene_change;
     }
 
     void
@@ -629,6 +624,51 @@ namespace video::hdr_metadata {
     uint32_t average_sum_ = 0;
     uint32_t variance_sum_ = 0;
     uint32_t maximum_sum_ = 0;
+  };
+
+  struct dynamic_metadata_temporal_result_t {
+    platf::hdr_frame_luminance_stats_t hdr10plus_stats {};
+    vivid_metadata_t vivid {};
+  };
+
+  /**
+   * Apply the shared scene-aware temporal policy before format-specific
+   * serialization. Native encoders and the AVCodec path both own one instance
+   * per session so their HDR10+ and HDR Vivid behavior cannot drift apart.
+   */
+  class dynamic_metadata_temporal_state_t {
+  public:
+    dynamic_metadata_temporal_result_t
+    update(const platf::hdr_frame_luminance_stats_t &stats) {
+      if (!stats.valid) {
+        return {};
+      }
+
+      const bool scene_change = scene_detector_.observe(stats);
+      if (scene_change) {
+        hdr10plus_ema_.reset();
+        vivid_filter_.reset();
+      }
+
+      const auto vivid = vivid_filter_.update(stats);
+      hdr10plus_ema_.update(stats);
+      return {
+        .hdr10plus_stats = hdr10plus_ema_.smoothed(stats),
+        .vivid = vivid,
+      };
+    }
+
+    void
+    reset() {
+      scene_detector_.reset();
+      hdr10plus_ema_.reset();
+      vivid_filter_.reset();
+    }
+
+  private:
+    scene_change_detector_t scene_detector_;
+    hdr_luminance_ema_t hdr10plus_ema_;
+    vivid_temporal_filter_t vivid_filter_;
   };
 
   /**
@@ -978,25 +1018,16 @@ namespace video::hdr_metadata {
         return payloads;
       }
 
-      const auto scene = scene_detector_.observe(stats);
-      if (scene.new_sample && scene.scene_change) {
-        // First sample resets empty filters; later cuts discard the old scene
-        // before the current sample is inserted into either temporal model.
-        hdr10plus_ema_.reset();
-        vivid_filter_.reset();
-      }
-
-      const auto vivid = vivid_filter_.update(stats);
-      hdr10plus_ema_.update(stats);
+      const auto filtered = temporal_state_.update(stats);
 
       if (formats_.hdr10plus) {
         const auto size = serialize_hdr10plus_t35(
-          hdr10plus_ema_.smoothed(stats), max_display_luminance, hdr10plus_storage_);
+          filtered.hdr10plus_stats, max_display_luminance, hdr10plus_storage_);
         if (size > 0) {
           payloads.hdr10plus = std::span(hdr10plus_storage_).first(size);
         }
       }
-      if (formats_.vivid && serialize_vivid_t35(vivid, vivid_storage_) > 0) {
+      if (formats_.vivid && serialize_vivid_t35(filtered.vivid, vivid_storage_) > 0) {
         payloads.vivid = vivid_storage_;
       }
       return payloads;
@@ -1005,17 +1036,13 @@ namespace video::hdr_metadata {
     /// Drop temporal history, e.g. when an encoder is recreated mid-session.
     void
     reset() {
-      scene_detector_.reset();
-      hdr10plus_ema_.reset();
-      vivid_filter_.reset();
+      temporal_state_.reset();
       vivid_storage_.clear();
     }
 
   private:
     formats_t formats_ {};
-    scene_change_detector_t scene_detector_;
-    hdr_luminance_ema_t hdr10plus_ema_;
-    vivid_temporal_filter_t vivid_filter_;
+    dynamic_metadata_temporal_state_t temporal_state_;
     std::array<uint8_t, hdr10plus_t35_max_payload_size> hdr10plus_storage_ {};
     std::vector<uint8_t> vivid_storage_;
   };

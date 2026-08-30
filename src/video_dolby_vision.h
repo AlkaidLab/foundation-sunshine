@@ -70,17 +70,34 @@ namespace video::dolby_vision {
    * bin. That keeps a few black UI pixels from pinning the frame minimum while
    * preserving materially black scenes. Older analyzer output falls back to P10.
    *
-   * Callers should pass EMA-smoothed stats (hdr_luminance_ema_t::smoothed())
-   * for temporal stability, exactly as the HDR10+ path does.
+   * This function is a stateless mapping. The injector applies its dedicated
+   * Level 1 temporal filter after conversion so min/avg/max are smoothed as one
+   * coherent Dolby metadata tuple.
    *
    * Returns nullopt when the stats are absent or carry the signature of an
    * analyzer that never filled the PQ-domain mean (zero avg_maxrgb_pq beside
    * a positive linear mean) — the same guard vivid_from_stats() applies.
    */
   std::optional<frame_metadata_t>
-  frame_metadata_from_stats(
-    const platf::hdr_frame_luminance_stats_t &stats,
-    bool scene_refresh = false);
+  frame_metadata_from_stats(const platf::hdr_frame_luminance_stats_t &stats);
+
+  /** Smooth the three Dolby L1 fields together between scene boundaries. */
+  class level1_temporal_filter_t {
+  public:
+    frame_metadata_t
+    update(const frame_metadata_t &raw);
+
+    void
+    reset();
+
+  private:
+    static constexpr float ALPHA = 0.15f;
+
+    float min_pq_ = 0.0f;
+    float max_pq_ = 0.0f;
+    float avg_pq_ = 0.0f;
+    bool initialized_ = false;
+  };
 
   struct session_config_t {
     /// Mastering display peak in nits (L6 max_display_mastering_luminance).
@@ -253,7 +270,7 @@ namespace video::dolby_vision {
     rpu_generator_t generator_;
     staged_rpu_queue_t queue_;
     hdr_metadata::scene_change_detector_t scene_detector_;
-    hdr_metadata::hdr_luminance_ema_t luminance_filter_;
+    level1_temporal_filter_t level1_filter_;
     std::optional<frame_metadata_t> last_metadata_;
     bool pending_scene_refresh_ = false;
     bool enabled_ = false;

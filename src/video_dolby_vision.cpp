@@ -152,9 +152,7 @@ namespace video::dolby_vision {
   }
 
   std::optional<frame_metadata_t>
-  frame_metadata_from_stats(
-    const platf::hdr_frame_luminance_stats_t &stats,
-    bool scene_refresh) {
+  frame_metadata_from_stats(const platf::hdr_frame_luminance_stats_t &stats) {
     if (!stats.valid) {
       return std::nullopt;
     }
@@ -190,9 +188,34 @@ namespace video::dolby_vision {
     raw.min_pq = pq_signal_u12_rounded(robust_min_pq);
     raw.max_pq = pq_code_u12_rounded(stats.percentile_99);
     raw.avg_pq = pq_signal_u12_rounded(stats.avg_maxrgb_pq);
-    auto result = clamp_level1(raw.min_pq, raw.max_pq, raw.avg_pq);
-    result.scene_refresh = scene_refresh;
-    return result;
+    return clamp_level1(raw.min_pq, raw.max_pq, raw.avg_pq);
+  }
+
+  frame_metadata_t
+  level1_temporal_filter_t::update(const frame_metadata_t &raw) {
+    if (!initialized_) {
+      min_pq_ = raw.min_pq;
+      max_pq_ = raw.max_pq;
+      avg_pq_ = raw.avg_pq;
+      initialized_ = true;
+    }
+    else {
+      min_pq_ += ALPHA * (raw.min_pq - min_pq_);
+      max_pq_ += ALPHA * (raw.max_pq - max_pq_);
+      avg_pq_ += ALPHA * (raw.avg_pq - avg_pq_);
+    }
+
+    auto filtered = clamp_level1(
+      static_cast<uint16_t>(std::lround(min_pq_)),
+      static_cast<uint16_t>(std::lround(max_pq_)),
+      static_cast<uint16_t>(std::lround(avg_pq_)));
+    filtered.scene_refresh = raw.scene_refresh;
+    return filtered;
+  }
+
+  void
+  level1_temporal_filter_t::reset() {
+    *this = {};
   }
 
   bool
@@ -473,14 +496,13 @@ namespace video::dolby_vision {
     // Missing analysis reuses the last good values: once RPUs are flowing,
     // a frame without one would make the client's Dolby engine fall back to
     // static HDR10 mapping for that frame — a visible brightness step.
-    const auto scene = scene_detector_.observe(stats);
-    if (scene.new_sample && scene.scene_change) {
-      luminance_filter_.reset();
+    if (scene_detector_.observe(stats)) {
+      level1_filter_.reset();
       pending_scene_refresh_ = true;
     }
-    luminance_filter_.update(stats);
-    if (const auto metadata = frame_metadata_from_stats(
-          luminance_filter_.smoothed(stats), pending_scene_refresh_)) {
+    if (const auto raw_metadata = frame_metadata_from_stats(stats)) {
+      auto metadata = level1_filter_.update(*raw_metadata);
+      metadata.scene_refresh = pending_scene_refresh_;
       last_metadata_ = metadata;
       // Consume the refresh only after a valid RPU can carry it. An invalid
       // analyzer sample must not strand the new scene without a refresh.
@@ -524,7 +546,7 @@ namespace video::dolby_vision {
   rpu_injector_t::disable() {
     enabled_ = false;
     scene_detector_.reset();
-    luminance_filter_.reset();
+    level1_filter_.reset();
     last_metadata_.reset();
     pending_scene_refresh_ = false;
     queue_.clear();

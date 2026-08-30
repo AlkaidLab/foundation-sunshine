@@ -453,24 +453,16 @@ TEST(HdrDynamicMetadata, DetectsDistributionSceneChangesOnlyOnNewSamples) {
   };
 
   video::hdr_metadata::scene_change_detector_t detector;
-  const auto first = detector.observe(scene(1, 0.30f, 100.0f));
-  EXPECT_TRUE(first.new_sample);
-  EXPECT_TRUE(first.scene_change);
+  EXPECT_TRUE(detector.observe(scene(1, 0.30f, 100.0f)));
 
   // Four encoded frames may reuse one GPU readback. It must remain one event.
-  const auto repeated = detector.observe(scene(1, 0.30f, 100.0f));
-  EXPECT_FALSE(repeated.new_sample);
-  EXPECT_FALSE(repeated.scene_change);
+  EXPECT_FALSE(detector.observe(scene(1, 0.30f, 100.0f)));
 
-  const auto stable = detector.observe(scene(2, 0.32f, 110.0f));
-  EXPECT_TRUE(stable.new_sample);
-  EXPECT_FALSE(stable.scene_change);
+  EXPECT_FALSE(detector.observe(scene(2, 0.32f, 110.0f)));
 
   // The exact peak is unchanged, but the luminance distribution belongs to a
   // different scene. Peak-ratio detection alone misses this transition.
-  const auto cut = detector.observe(scene(3, 0.33f, 1000.0f));
-  EXPECT_TRUE(cut.new_sample);
-  EXPECT_TRUE(cut.scene_change);
+  EXPECT_TRUE(detector.observe(scene(3, 0.33f, 1000.0f)));
 }
 
 TEST(HdrDynamicMetadata, SceneChangeResetsTheVividWindow) {

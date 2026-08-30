@@ -417,7 +417,6 @@ namespace platf::dxgi {
       if (!img.blank) {
         auto &img_ctx = img_ctx_map[img.id];
         const bool can_analyze_hdr_frame = hdr_analysis_enabled && img.linear_gamma && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-        const uint64_t hdr_current_frame_sequence = ++hdr_capture_frame_sequence;
 
         // Open the shared capture texture with our ID3D11Device
         if (initialize_image_context(img, img_ctx)) {
@@ -425,14 +424,7 @@ namespace platf::dxgi {
         }
 
         // Poll the previous analysis result before taking the capture mutex.
-        read_hdr_analysis_results(hdr_current_frame_sequence);
-        if (hdr_luminance_stats_out.valid) {
-          const uint64_t age = hdr_current_frame_sequence >= hdr_luminance_stats_out.analyzed_frame_sequence ?
-                                 hdr_current_frame_sequence - hdr_luminance_stats_out.analyzed_frame_sequence :
-                                 0;
-          hdr_luminance_stats_out.sample_age_frames = static_cast<uint32_t>(
-            std::min<uint64_t>(age, std::numeric_limits<uint32_t>::max()));
-        }
+        read_hdr_analysis_results();
         if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
           runtime_status.scene_metadata_active = true;
           ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
@@ -606,7 +598,7 @@ namespace platf::dxgi {
         }
 
         if (hdr_analysis_source) {
-          dispatch_hdr_analysis(hdr_analysis_source, hdr_current_frame_sequence);
+          dispatch_hdr_analysis(hdr_analysis_source);
         }
       }
 
@@ -794,10 +786,8 @@ namespace platf::dxgi {
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
       runtime_status_id = 0;
       hdr_luminance_stats_out = {};
-      hdr_staging_pending.fill(false);
-      hdr_staging_frame_sequences.fill(0);
+      hdr_analysis_pending = false;
       hdr_analysis_frame_index = 0;
-      hdr_capture_frame_sequence = 0;
       hdr_analysis_sample_sequence = 0;
 
       // init() builds the analyzer from the pixel format alone, because the
@@ -1720,11 +1710,7 @@ namespace platf::dxgi {
     uav_t hdr_final_result_uav;            // UAV view for pass 2 output
     buf_t hdr_global_histogram_buf;        // 256-bin PQ histogram accumulated by pass 1 atomics
     uav_t hdr_global_histogram_uav;        // Typed R32_UINT UAV (clearable + atomic-capable)
-    // A small ring prevents a slow asynchronous Map() from making a later
-    // CopyResource overwrite the still-pending result it was meant to read.
-    std::array<buf_t, 4> hdr_staging_bufs;
-    std::array<uint64_t, 4> hdr_staging_frame_sequences {};
-    std::array<bool, 4> hdr_staging_pending {};
+    buf_t hdr_staging_buf;                 // One non-blocking CPU readback; new analysis waits while pending
     buf_t hdr_analysis_cbuf;               // Constant buffer for pass 1 (analysis resolution)
     buf_t hdr_analysis_snapshot_cbuf;      // Shared converter/pass 1 params for the snapshot
     buf_t hdr_reduce_cbuf;                 // Constant buffer for pass 2 (numGroups)
@@ -1732,8 +1718,8 @@ namespace platf::dxgi {
     uint32_t hdr_analysis_height = 0;      // Analysis grid height (downsampled from source)
     uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
-    uint64_t hdr_capture_frame_sequence = 0; // Counts captured frames presented to conversion
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
+    bool hdr_analysis_pending = false;     // Prevents overwriting a readback the GPU has not completed
     bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
     bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
     ::video::hdr_metadata::formats_t hdr_metadata_formats;  // Dynamic metadata formats this stream may carry
@@ -2014,12 +2000,10 @@ namespace platf::dxgi {
       staging_desc.Usage = D3D11_USAGE_STAGING;
       staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
-      for (auto &staging_buffer : hdr_staging_bufs) {
-        status = device->CreateBuffer(&staging_desc, nullptr, &staging_buffer);
-        if (FAILED(status)) {
-          BOOST_LOG(warning) << "Failed to create HDR staging buffer: " << util::log_hex(status);
-          return -1;
-        }
+      status = device->CreateBuffer(&staging_desc, nullptr, &hdr_staging_buf);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "Failed to create HDR staging buffer: " << util::log_hex(status);
+        return -1;
       }
 
       // Resources exist; whether they get used is init_output()'s call, once the
@@ -2029,8 +2013,7 @@ namespace platf::dxgi {
                       << ", analysis " << hdr_analysis_width << "x" << hdr_analysis_height
                       << ", " << hdr_num_groups << " groups (" << groups_x << "x" << groups_y << ")"
                       << ", interval 1/" << HDR_ANALYSIS_INTERVAL
-                      << ", staging ring: " << hdr_staging_bufs.size() << " x "
-                      << sizeof(FinalResult) << " bytes";
+                      << ", staging: " << sizeof(FinalResult) << " bytes";
       return 0;
     }
 
@@ -2067,15 +2050,13 @@ namespace platf::dxgi {
      * @param source Unified full-frame or snapshot analysis input.
      */
     void
-    dispatch_hdr_analysis(const HdrAnalysisSource &source, uint64_t frame_sequence) {
+    dispatch_hdr_analysis(const HdrAnalysisSource &source) {
       if (!hdr_analysis_enabled || !source) return;
-
-      const auto free_slot = std::find(hdr_staging_pending.begin(), hdr_staging_pending.end(), false);
-      if (free_slot == hdr_staging_pending.end()) {
-        BOOST_LOG(debug) << "HDR analysis readback ring full; skipping capture frame " << frame_sequence;
+      if (hdr_analysis_pending) {
+        // The GPU is already behind this analysis cadence. Drop the new sample
+        // instead of queuing progressively older metadata or blocking capture.
         return;
       }
-      const size_t staging_index = static_cast<size_t>(free_slot - hdr_staging_pending.begin());
 
       // Unbind render targets to avoid resource hazard (SRV vs RTV conflict)
       ID3D11RenderTargetView *null_rtv = nullptr;
@@ -2130,11 +2111,8 @@ namespace platf::dxgi {
       device_ctx->CSSetConstantBuffers(0, 1, &null_cb);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
 
-      // Capture this dispatch in its own staging slot. GPU command ordering keeps
-      // the shared final buffer safe while the CPU may still be reading older slots.
-      device_ctx->CopyResource(hdr_staging_bufs[staging_index].get(), hdr_final_result_buf.get());
-      hdr_staging_frame_sequences[staging_index] = frame_sequence;
-      hdr_staging_pending[staging_index] = true;
+      device_ctx->CopyResource(hdr_staging_buf.get(), hdr_final_result_buf.get());
+      hdr_analysis_pending = true;
     }
 
     /**
@@ -2143,42 +2121,24 @@ namespace platf::dxgi {
      * and computes PQ-domain percentiles from the histogram.
      */
     void
-    read_hdr_analysis_results(uint64_t current_frame_sequence) {
-      while (true) {
-        size_t staging_index = hdr_staging_pending.size();
-        for (size_t i = 0; i < hdr_staging_pending.size(); ++i) {
-          if (hdr_staging_pending[i] &&
-              (staging_index == hdr_staging_pending.size() ||
-               hdr_staging_frame_sequences[i] < hdr_staging_frame_sequences[staging_index])) {
-            staging_index = i;
-          }
-        }
-        if (staging_index == hdr_staging_pending.size()) {
-          return;
-        }
-
-        if (!read_hdr_analysis_result(staging_index, current_frame_sequence)) {
-          return;  // Oldest result is still on the GPU; later copies cannot be ready yet.
-        }
+    read_hdr_analysis_results() {
+      if (!hdr_analysis_pending) {
+        return;
       }
-    }
-
-    bool
-    read_hdr_analysis_result(size_t staging_index, uint64_t current_frame_sequence) {
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       HRESULT status = device_ctx->Map(
-        hdr_staging_bufs[staging_index].get(), 0,
+        hdr_staging_buf.get(), 0,
         D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
 
       if (status == DXGI_ERROR_WAS_STILL_DRAWING) {
         // GPU hasn't finished yet — skip this readback, try next frame
-        return false;
+        return;
       }
 
       if (FAILED(status)) {
         BOOST_LOG(debug) << "HDR staging Map failed: " << util::log_hex(status);
-        hdr_staging_pending[staging_index] = false;
-        return true;
+        hdr_analysis_pending = false;
+        return;
       }
 
       auto *result = reinterpret_cast<const FinalResult *>(mapped.pData);
@@ -2266,18 +2226,11 @@ namespace platf::dxgi {
 
         hdr_luminance_stats_out.analysis_max_nits = hdr_analysis_max_nits;
         hdr_luminance_stats_out.sample_sequence = ++hdr_analysis_sample_sequence;
-        hdr_luminance_stats_out.analyzed_frame_sequence = hdr_staging_frame_sequences[staging_index];
-        const uint64_t age = current_frame_sequence >= hdr_luminance_stats_out.analyzed_frame_sequence ?
-                               current_frame_sequence - hdr_luminance_stats_out.analyzed_frame_sequence :
-                               0;
-        hdr_luminance_stats_out.sample_age_frames = static_cast<uint32_t>(
-          std::min<uint64_t>(age, std::numeric_limits<uint32_t>::max()));
         hdr_luminance_stats_out.valid = true;
       }
 
-      device_ctx->Unmap(hdr_staging_bufs[staging_index].get(), 0);
-      hdr_staging_pending[staging_index] = false;
-      return true;
+      device_ctx->Unmap(hdr_staging_buf.get(), 0);
+      hdr_analysis_pending = false;
     }
 
     // ===== Compute-shader RGB->P010 fast path (Phase 1) =====

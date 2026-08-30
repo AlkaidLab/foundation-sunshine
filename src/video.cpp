@@ -553,7 +553,7 @@ namespace video {
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
       frame_timestamps = std::move(other.frame_timestamps);
-      hdr_ema = other.hdr_ema;
+      dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -671,10 +671,9 @@ namespace video {
     std::vector<packet_raw_t::replace_t> replacements;
     frame_timestamp_ring_t frame_timestamps;
 
-    // Temporal filters are session-local so a new stream cannot inherit metadata
-    // history from the previous stream.
-    hdr_metadata::hdr_luminance_ema_t hdr_ema;
-    hdr_metadata::vivid_temporal_filter_t vivid_filter;
+    // Scene-aware temporal state is session-local so a new stream cannot inherit
+    // metadata history from the previous stream.
+    hdr_metadata::dynamic_metadata_temporal_state_t dynamic_metadata_temporal;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -2117,14 +2116,14 @@ namespace video {
    * the recommended 32-frame mean. HDR10+ keeps its independent EMA path.
    *
    * @param frame The AVFrame with pre-allocated dynamic HDR side data
-   * @param ema Temporally-smoothed HDR10+ luminance statistics
+   * @param hdr10plus_stats Temporally-smoothed HDR10+ luminance statistics
    * @param vivid_metadata Filtered HDR Vivid statistics in normalized PQ space
    * @param max_display_luminance Mapped client display peak luminance in nits
    */
   void
   update_hdr_dynamic_metadata(
     AVFrame *frame,
-    const hdr_metadata::hdr_luminance_ema_t &ema,
+    const platf::hdr_frame_luminance_stats_t &hdr10plus_stats,
     const hdr_metadata::vivid_metadata_t &vivid_metadata,
     uint16_t max_display_luminance) {
     if (!frame) return;
@@ -2152,12 +2151,15 @@ namespace video {
 
     // Update HDR10+ dynamic metadata
     auto hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
-    if (hdr10plus_sd && ema.initialized) {
+    if (hdr10plus_sd && hdr10plus_stats.valid) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
         // The 99th percentile is what maxSCL reports; see hdr10plus_from_luminance().
         const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
-          ema.percentile_99, ema.avg_maxrgb, max_display_luminance, ema.distribution_maxrgb);
+          hdr10plus_stats.percentile_99,
+          hdr10plus_stats.avg_maxrgb,
+          max_display_luminance,
+          hdr10plus_stats.distribution_maxrgb);
         if (frame_metadata.valid) {
           auto &params = hdr10plus->params[0];
           const auto maxscl = av_make_q(
@@ -2223,8 +2225,7 @@ namespace video {
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
-        session.hdr_ema.update(raw_stats);
-        const auto vivid_metadata = session.vivid_filter.update(raw_stats);
+        const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
 
         uint16_t max_lum = 1000;
         auto mdm_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
@@ -2234,7 +2235,8 @@ namespace video {
             max_lum = static_cast<uint16_t>(av_q2d(mdm->max_luminance));
           }
         }
-        update_hdr_dynamic_metadata(frame, session.hdr_ema, vivid_metadata, max_lum);
+        update_hdr_dynamic_metadata(
+          frame, filtered.hdr10plus_stats, filtered.vivid, max_lum);
       }
     }
 
