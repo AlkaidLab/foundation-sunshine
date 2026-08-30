@@ -67,6 +67,17 @@ namespace remote_connect {
       config::nvhttp.remote_connect_peer = value.peer;
     }
 
+    std::map<std::string, std::string>
+    enrollment_updates(const enrollment_t &value) {
+      return {
+        {"remote_connect_profile", value.profile},
+        {"remote_connect_virtual_ip", value.virtual_ip},
+        {"remote_connect_network_name", value.network_name},
+        {"remote_connect_network_secret", value.network_secret},
+        {"remote_connect_peer", value.peer},
+      };
+    }
+
     bool
     ensure_config_locked() {
       const auto previous = current_enrollment();
@@ -237,14 +248,7 @@ namespace remote_connect {
 
       runtime.stop();
       apply_enrollment(replacement);
-      const std::map<std::string, std::string> updates {
-        {"remote_connect_profile", replacement.profile},
-        {"remote_connect_virtual_ip", replacement.virtual_ip},
-        {"remote_connect_network_name", replacement.network_name},
-        {"remote_connect_network_secret", replacement.network_secret},
-        {"remote_connect_peer", replacement.peer},
-      };
-      if (!config::update_config(updates)) {
+      if (!config::update_config(enrollment_updates(replacement))) {
         apply_enrollment(previous);
         if (config::nvhttp.remote_connect_enabled) start_locked();
         last_error = "Unable to persist new remote access credentials";
@@ -253,6 +257,21 @@ namespace remote_connect {
 
       last_error.clear();
       if (config::nvhttp.remote_connect_enabled && !start_locked()) {
+        const auto replacement_error = last_error;
+        runtime.stop();
+        apply_enrollment(previous);
+        if (!config::update_config(enrollment_updates(previous))) {
+          last_error = replacement_error + "; unable to persist the previous credentials during rollback";
+          return {false, status_locked()};
+        }
+
+        last_error.clear();
+        if (!start_locked()) {
+          const auto rollback_error = last_error;
+          last_error = replacement_error + "; previous credentials were restored, but their runtime also failed to start: " + rollback_error;
+          return {false, status_locked()};
+        }
+        last_error = replacement_error + "; previous credentials and runtime were restored";
         return {false, status_locked()};
       }
       return {true, status_locked()};
