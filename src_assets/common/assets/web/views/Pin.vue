@@ -29,9 +29,15 @@
                 :aria-describedby="remoteConnectError ? 'remote-connect-error' : 'remote-connect-description'"
                 :checked="remoteConnectEnabled"
                 :disabled="remoteConnectBusy || !remoteConnectAvailable"
-                @change="onRemoteConnectToggle"
+                @change="handleRemoteConnectToggle"
               />
             </div>
+          </div>
+          <div v-if="remoteConnectEnabled || remoteConnectError" class="d-flex align-items-center justify-content-between gap-3 mb-3 text-start">
+            <span v-if="remoteConnectEnabled" class="small text-muted">{{ $t('pin.remote_connect_persistent_warning') }}</span>
+            <button class="btn btn-outline-danger btn-sm flex-shrink-0" :class="{ 'ms-auto': !remoteConnectEnabled }" :disabled="remoteConnectBusy" @click="handleRemoteConnectReset">
+              {{ $t('pin.remote_connect_reset') }}
+            </button>
           </div>
           <div v-if="remoteConnectError" id="remote-connect-error" class="alert alert-warning py-2 mb-3">
             {{ remoteConnectError }}
@@ -437,6 +443,7 @@ const {
   generateQrCode,
   cancelQrCode,
   onRemoteConnectToggle,
+  resetRemoteConnect,
 } = useQrPair()
 
 const clientToDelete = ref(null)
@@ -461,6 +468,18 @@ const handleCancelEdit = (uuid) => cancelEdit(uuid)
 
 const handleUnpairAll = async () => {
   if (confirm(t('pin.unpair_all_confirm'))) await unpairAll()
+}
+
+const handleRemoteConnectToggle = async (event) => {
+  if (event.target.checked && !confirm(t('pin.remote_connect_enable_confirm'))) {
+    event.target.checked = false
+    return
+  }
+  await onRemoteConnectToggle(event)
+}
+
+const handleRemoteConnectReset = async () => {
+  if (confirm(t('pin.remote_connect_reset_confirm'))) await resetRemoteConnect()
 }
 
 const initTooltips = () => {

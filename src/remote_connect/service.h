@@ -43,4 +43,7 @@ namespace remote_connect {
   operation_result_t
   set_enabled(bool enabled);
 
+  operation_result_t
+  reset_enrollment();
+
 }  // namespace remote_connect

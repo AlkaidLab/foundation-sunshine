@@ -90,16 +90,10 @@ if(FETCH_EASYTIER)
     "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118")
 
   if(EXISTS "${_EASYTIER_ARCHIVE}")
-    set(_runtime_complete TRUE)
-    foreach(_file IN LISTS _EASYTIER_REQUIRED_FILES)
-      if(NOT EXISTS "${EASYTIER_RUNTIME_DIR}/${_file}")
-        set(_runtime_complete FALSE)
-      endif()
-    endforeach()
-    if(NOT _runtime_complete)
-      file(REMOVE_RECURSE "${EASYTIER_RUNTIME_DIR}")
-      file(ARCHIVE_EXTRACT INPUT "${_EASYTIER_ARCHIVE}" DESTINATION "${EASYTIER_CACHE_DIR}")
-    endif()
+    # Always derive the packaged runtime from the verified archive. Otherwise a
+    # tampered stale extraction could have its digest compiled into Sunshine.
+    file(REMOVE_RECURSE "${EASYTIER_RUNTIME_DIR}")
+    file(ARCHIVE_EXTRACT INPUT "${_EASYTIER_ARCHIVE}" DESTINATION "${EASYTIER_CACHE_DIR}")
   endif()
 endif()
 
@@ -124,3 +118,13 @@ endif()
 
 set(EASYTIER_AVAILABLE "${EASYTIER_AVAILABLE}" CACHE INTERNAL
     "Whether the verified EasyTier runtime is available" FORCE)
+
+if(EASYTIER_AVAILABLE AND TARGET sunshine)
+  foreach(_component IN ITEMS easytier-core.exe Packet.dll WinDivert64.sys wintun.dll)
+    file(SHA256 "${EASYTIER_RUNTIME_DIR}/${_component}" _component_sha256)
+    string(MAKE_C_IDENTIFIER "${_component}" _component_id)
+    string(TOUPPER "${_component_id}" _component_id)
+    target_compile_definitions(sunshine PRIVATE
+      "EASYTIER_${_component_id}_SHA256=\"${_component_sha256}\"")
+  endforeach()
+endif()

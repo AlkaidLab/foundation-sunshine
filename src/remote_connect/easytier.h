@@ -7,6 +7,9 @@
 
 namespace remote_connect::easytier {
 
+  bool
+  virtual_subnet_conflicts(const std::string &virtual_ip);
+
   class runtime_t {
   public:
     runtime_t();

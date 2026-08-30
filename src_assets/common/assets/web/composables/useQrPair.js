@@ -106,6 +106,7 @@ export function useQrPair() {
   }
 
   const loadRemoteConnectStatus = async () => {
+    remoteConnectBusy.value = true
     try {
       const data = await apiJson('/api/remote-connect')
       remoteConnectEnabled.value = Boolean(data.enabled)
@@ -114,6 +115,8 @@ export function useQrPair() {
       remoteConnectError.value = data.error || ''
     } catch (error) {
       remoteConnectError.value = error?.message || 'Unable to read remote connection status'
+    } finally {
+      remoteConnectBusy.value = false
     }
   }
 
@@ -146,6 +149,29 @@ export function useQrPair() {
     target.checked = remoteConnectEnabled.value
   }
 
+  const resetRemoteConnect = async () => {
+    remoteConnectBusy.value = true
+    remoteConnectError.value = ''
+    await cancelQrCode()
+    try {
+      const data = await apiJson('/api/remote-connect/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      remoteConnectEnabled.value = Boolean(data.enabled)
+      remoteConnectRunning.value = Boolean(data.running)
+      remoteConnectAvailable.value = data.available !== false
+      remoteConnectError.value = data.error || ''
+      return data.status !== false
+    } catch (error) {
+      remoteConnectError.value = error?.message || 'Unable to reset remote access'
+      return false
+    } finally {
+      remoteConnectBusy.value = false
+    }
+  }
+
   onMounted(loadRemoteConnectStatus)
 
   onUnmounted(() => {
@@ -166,9 +192,11 @@ export function useQrPair() {
     remoteConnectAvailable,
     remoteConnectBusy,
     remoteConnectError,
+    loadRemoteConnectStatus,
     generateQrCode,
     cancelQrCode,
     setRemoteConnectEnabled,
     onRemoteConnectToggle,
+    resetRemoteConnect,
   }
 }

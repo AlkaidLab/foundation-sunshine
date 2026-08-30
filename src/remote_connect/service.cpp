@@ -35,15 +35,41 @@ namespace remote_connect {
       return result;
     }
 
-    bool
-    ensure_config_locked() {
-      const auto previous = enrollment_t {
+    std::string
+    random_virtual_ip() {
+      for (int attempt = 0; attempt < 64; ++attempt) {
+        const auto seed = random_hex(2);
+        const auto octet_b = 64 + (std::stoul(seed.substr(0, 2), nullptr, 16) % 64);
+        const auto octet_c = std::stoul(seed.substr(2, 2), nullptr, 16);
+        const auto candidate = "100." + std::to_string(octet_b) + "." + std::to_string(octet_c) + ".1";
+        if (!easytier::virtual_subnet_conflicts(candidate)) return candidate;
+      }
+      throw std::runtime_error("Unable to find a remote virtual subnet that does not overlap an active local network");
+    }
+
+    enrollment_t
+    current_enrollment() {
+      return {
         config::nvhttp.remote_connect_profile,
         config::nvhttp.remote_connect_virtual_ip,
         config::nvhttp.remote_connect_network_name,
         config::nvhttp.remote_connect_network_secret,
         config::nvhttp.remote_connect_peer,
       };
+    }
+
+    void
+    apply_enrollment(const enrollment_t &value) {
+      config::nvhttp.remote_connect_profile = value.profile;
+      config::nvhttp.remote_connect_virtual_ip = value.virtual_ip;
+      config::nvhttp.remote_connect_network_name = value.network_name;
+      config::nvhttp.remote_connect_network_secret = value.network_secret;
+      config::nvhttp.remote_connect_peer = value.peer;
+    }
+
+    bool
+    ensure_config_locked() {
+      const auto previous = current_enrollment();
 
       std::map<std::string, std::string> updates;
       try {
@@ -58,11 +84,7 @@ namespace remote_connect {
           updates["remote_connect_profile"] = config::nvhttp.remote_connect_profile;
         }
         if (config::nvhttp.remote_connect_virtual_ip.empty()) {
-          const auto &seed = get_seed();
-          const auto octet_a = 64 + (std::stoul(seed.substr(0, 2), nullptr, 16) % 64);
-          const auto octet_b = 1 + (std::stoul(seed.substr(2, 2), nullptr, 16) % 253);
-          config::nvhttp.remote_connect_virtual_ip =
-            "10." + std::to_string(octet_a) + "." + std::to_string(octet_b) + ".1";
+          config::nvhttp.remote_connect_virtual_ip = random_virtual_ip();
           updates["remote_connect_virtual_ip"] = config::nvhttp.remote_connect_virtual_ip;
         }
         if (config::nvhttp.remote_connect_network_name.empty()) {
@@ -86,11 +108,7 @@ namespace remote_connect {
         last_error = e.what();
       }
 
-      config::nvhttp.remote_connect_profile = previous.profile;
-      config::nvhttp.remote_connect_virtual_ip = previous.virtual_ip;
-      config::nvhttp.remote_connect_network_name = previous.network_name;
-      config::nvhttp.remote_connect_network_secret = previous.network_secret;
-      config::nvhttp.remote_connect_peer = previous.peer;
+      apply_enrollment(previous);
       return false;
     }
 
@@ -200,6 +218,50 @@ namespace remote_connect {
     }
 
     return {true, status_locked()};
+  }
+
+  operation_result_t
+  reset_enrollment() {
+    std::lock_guard lock(service_mutex);
+    const auto previous = current_enrollment();
+
+    try {
+      const auto seed = random_hex(16);
+      enrollment_t replacement {
+        "host-" + seed.substr(0, 16),
+        random_virtual_ip(),
+        "remote-" + seed.substr(0, 20),
+        random_hex(32),
+        previous.peer.empty() ? "udp://public.easytier.top:11010" : previous.peer,
+      };
+
+      runtime.stop();
+      apply_enrollment(replacement);
+      const std::map<std::string, std::string> updates {
+        {"remote_connect_profile", replacement.profile},
+        {"remote_connect_virtual_ip", replacement.virtual_ip},
+        {"remote_connect_network_name", replacement.network_name},
+        {"remote_connect_network_secret", replacement.network_secret},
+        {"remote_connect_peer", replacement.peer},
+      };
+      if (!config::update_config(updates)) {
+        apply_enrollment(previous);
+        if (config::nvhttp.remote_connect_enabled) start_locked();
+        last_error = "Unable to persist new remote access credentials";
+        return {false, status_locked()};
+      }
+
+      last_error.clear();
+      if (config::nvhttp.remote_connect_enabled && !start_locked()) {
+        return {false, status_locked()};
+      }
+      return {true, status_locked()};
+    }
+    catch (const std::exception &e) {
+      apply_enrollment(previous);
+      last_error = e.what();
+      return {false, status_locked()};
+    }
   }
 
 }  // namespace remote_connect

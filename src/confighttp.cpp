@@ -1974,6 +1974,24 @@ namespace confighttp {
   }
 
   void
+  resetRemoteConnect(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto result = remote_connect::reset_enrollment();
+    const auto &remote_status = result.status;
+    send_response(std::move(response), {
+      {"status", result.success},
+      {"enabled", remote_status.enabled},
+      {"running", remote_status.running},
+      {"available", remote_status.available},
+      {"virtual_ip", remote_status.virtual_ip},
+      {"error", remote_status.error},
+    });
+  }
+
+  void
   generateQrPairInfo(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -3882,6 +3900,7 @@ namespace confighttp {
     server.resource["^/api/qr-pair$"]["GET"] = getQrPairStatus;
     server.resource["^/api/remote-connect$"]["GET"] = getRemoteConnectStatus;
     server.resource["^/api/remote-connect$"]["POST"] = setRemoteConnectEnabled;
+    server.resource["^/api/remote-connect/reset$"]["POST"] = resetRemoteConnect;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/logs$"]["GET"] = getLogs;
     server.resource["^/api/apps$"]["POST"] = saveApp;
