@@ -229,6 +229,9 @@ export default {
       return countMap[key] || 0
     },
 
+    /**
+     * Resolve the nested Teleport target before moving focus into the cover finder.
+     */
     onOpen() {
       this.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
       this.teleportTarget = resolveDialogTeleportTarget(this.previousFocus)
