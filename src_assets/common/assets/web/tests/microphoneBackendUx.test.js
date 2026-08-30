@@ -15,3 +15,28 @@ test('experimental USB/IP routing is not labelled as recommended', async () => {
     assert.doesNotMatch(label, /recommended|推荐|建議/i, `${localeFile} recommends an experimental backend`)
   }
 })
+
+test('reviewed microphone locales do not fall back to English', async () => {
+  const english = JSON.parse(await readFile(new URL('en.json', localeDirectory), 'utf8'))
+  const microphoneKeys = [
+    ...Object.keys(english.config).filter((key) => key.startsWith('microphone_redirect_')),
+    'stream_mic_test_note_usbip',
+    'stream_mic_test_success_usbip',
+    'stream_mic_test_usbip_unavailable',
+  ]
+
+  for (const language of ['es', 'fr', 'it', 'ja', 'ko', 'tr', 'uk']) {
+    const locale = JSON.parse(
+      await readFile(new URL(`${language}.json`, localeDirectory), 'utf8'),
+    )
+
+    for (const key of microphoneKeys) {
+      assert.equal(typeof locale.config?.[key], 'string', `${language}.json is missing ${key}`)
+      assert.notEqual(
+        locale.config[key],
+        english.config[key],
+        `${language}.json leaves ${key} in English`,
+      )
+    }
+  }
+})
