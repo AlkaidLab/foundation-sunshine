@@ -195,7 +195,7 @@ Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: i
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\stylus-input-probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
-; V+ remote connection runtime
+; Remote Connect runtime
 #if "@EASYTIER_AVAILABLE@" == "TRUE"
 Source: "{#MySourceDir}\tools\easytier\easytier-core.exe"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\easytier\Packet.dll"; DestDir: "{app}\tools\easytier"; Flags: ignoreversion; Components: application
@@ -331,6 +331,7 @@ Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart
 ; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
 Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
 Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
+Filename: "taskkill"; Parameters: "/f /im easytier-core.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillEasyTier"
 Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"

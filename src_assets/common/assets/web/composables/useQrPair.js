@@ -140,6 +140,12 @@ export function useQrPair() {
     }
   }
 
+  const onRemoteConnectToggle = async (event) => {
+    const target = event.target
+    await setRemoteConnectEnabled(target.checked)
+    target.checked = remoteConnectEnabled.value
+  }
+
   onMounted(loadRemoteConnectStatus)
 
   onUnmounted(() => {
@@ -163,5 +169,6 @@ export function useQrPair() {
     generateQrCode,
     cancelQrCode,
     setRemoteConnectEnabled,
+    onRemoteConnectToggle,
   }
 }

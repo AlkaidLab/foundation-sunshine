@@ -66,6 +66,8 @@
 #include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
+#include "remote_connect/invite.h"
+#include "remote_connect/service.h"
 #include "rtsp.h"
 #include "src/display_device/to_string.h"
 #include "src/tray/tray_http.h"
@@ -97,223 +99,12 @@ namespace confighttp {
   // return busy if not acquired
   static std::atomic<bool> apps_writing { false };
   static std::mutex file_mapping_store_transaction_mutex;
-  static std::mutex remote_connect_mutex;
-  static std::optional<boost::process::v1::child> remote_connect_process;
-  static std::optional<boost::process::v1::group> remote_connect_process_group;
-  static std::string remote_connect_error;
 
   using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
 
   using args_t = SimpleWeb::CaseInsensitiveMultimap;
   using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
   using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
-
-  static std::string
-  random_hex(std::size_t byte_count) {
-    std::vector<unsigned char> bytes(byte_count);
-    if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) {
-      throw std::runtime_error("Unable to generate secure random data");
-    }
-    static constexpr char alphabet[] = "0123456789abcdef";
-    std::string result;
-    result.reserve(byte_count * 2);
-    for (auto value : bytes) {
-      result.push_back(alphabet[value >> 4]);
-      result.push_back(alphabet[value & 0x0f]);
-    }
-    return result;
-  }
-
-  static std::string
-  url_encode(const std::string &value) {
-    std::ostringstream encoded;
-    encoded << std::hex << std::uppercase;
-    for (const auto ch : value) {
-      const auto c = static_cast<unsigned char>(ch);
-      if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-        encoded << ch;
-      }
-      else {
-        encoded << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-      }
-    }
-    return encoded.str();
-  }
-
-  static std::string
-  toml_escape(const std::string &value) {
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (const auto ch : value) {
-      if (ch == '\\' || ch == '"') escaped.push_back('\\');
-      if (ch == '\n') {
-        escaped += "\\n";
-      }
-      else if (ch != '\r') {
-        escaped.push_back(ch);
-      }
-    }
-    return escaped;
-  }
-
-  static bool
-  ensure_remote_connect_config() {
-    if (!config::nvhttp.remote_connect_profile.empty() &&
-        !config::nvhttp.remote_connect_virtual_ip.empty() &&
-        !config::nvhttp.remote_connect_network_name.empty() &&
-        !config::nvhttp.remote_connect_network_secret.empty() &&
-        !config::nvhttp.remote_connect_peer.empty()) {
-      return true;
-    }
-
-    try {
-      const auto seed = random_hex(16);
-      const auto octet_a = 64 + (std::stoul(seed.substr(0, 2), nullptr, 16) % 64);
-      const auto octet_b = 1 + (std::stoul(seed.substr(2, 2), nullptr, 16) % 253);
-      config::nvhttp.remote_connect_profile = "host-" + seed.substr(0, 16);
-      config::nvhttp.remote_connect_virtual_ip =
-        "10." + std::to_string(octet_a) + "." + std::to_string(octet_b) + ".1";
-      config::nvhttp.remote_connect_network_name = "vplus-" + seed.substr(0, 20);
-      config::nvhttp.remote_connect_network_secret = random_hex(32);
-      if (config::nvhttp.remote_connect_peer.empty()) {
-        config::nvhttp.remote_connect_peer = "udp://public.easytier.top:11010";
-      }
-
-      return config::update_config({
-        {"remote_connect_profile", config::nvhttp.remote_connect_profile},
-        {"remote_connect_virtual_ip", config::nvhttp.remote_connect_virtual_ip},
-        {"remote_connect_network_name", config::nvhttp.remote_connect_network_name},
-        {"remote_connect_network_secret", config::nvhttp.remote_connect_network_secret},
-        {"remote_connect_peer", config::nvhttp.remote_connect_peer},
-      });
-    }
-    catch (const std::exception &e) {
-      remote_connect_error = e.what();
-      return false;
-    }
-  }
-
-  static fs::path
-  find_easytier_core() {
-#ifdef _WIN32
-    constexpr auto executable_name = "easytier-core.exe";
-#else
-    constexpr auto executable_name = "easytier-core";
-#endif
-    const std::array candidates {
-      platf::appdata().parent_path() / "tools" / "easytier" / executable_name,
-      platf::appdata().parent_path() / executable_name,
-      platf::appdata() / executable_name,
-    };
-    for (const auto &candidate : candidates) {
-      if (fs::is_regular_file(candidate)) return candidate;
-    }
-    const auto searched = boost::process::v1::search_path(executable_name);
-    if (!searched.empty()) return fs::path(searched.string());
-    return {};
-  }
-
-  static bool
-  write_easytier_config() {
-    std::ostringstream toml;
-    toml << "instance_name = \"VPlus\"\n"
-         << "hostname = \"" << toml_escape(config::nvhttp.sunshine_name) << "\"\n"
-         << "ipv4 = \"" << config::nvhttp.remote_connect_virtual_ip << "/24\"\n"
-         << "dhcp = false\n"
-         << "listeners = [\"tcp://0.0.0.0:11010\", \"udp://0.0.0.0:11010\"]\n"
-         << "rpc_portal = \"127.0.0.1:0\"\n\n"
-         << "[network_identity]\n"
-         << "network_name = \"" << toml_escape(config::nvhttp.remote_connect_network_name) << "\"\n"
-         << "network_secret = \"" << toml_escape(config::nvhttp.remote_connect_network_secret) << "\"\n\n"
-         << "[[peer]]\n"
-         << "uri = \"" << toml_escape(config::nvhttp.remote_connect_peer) << "\"\n\n"
-         << "[flags]\n"
-         << "latency_first = true\n";
-    const auto path = platf::appdata() / "vplus-easytier.toml";
-    return file_handler::write_file(file_handler::path_to_utf8(path).c_str(), toml.str()) == 0;
-  }
-
-  struct remote_connect_status_t {
-    bool running;
-    std::string error;
-  };
-
-  static bool
-  remote_connect_running_locked() {
-    if (!remote_connect_process || !remote_connect_process->valid()) return false;
-    std::error_code error_code;
-    const bool running = remote_connect_process->running(error_code);
-    if (error_code) {
-      remote_connect_error = error_code.message();
-      return false;
-    }
-    if (!running && remote_connect_error.empty()) {
-      remote_connect_error = "Remote connection stopped unexpectedly";
-    }
-    return running;
-  }
-
-  static remote_connect_status_t
-  remote_connect_status() {
-    std::lock_guard lock(remote_connect_mutex);
-    return {remote_connect_running_locked(), remote_connect_error};
-  }
-
-  static bool
-  start_remote_connect() {
-    std::lock_guard lock(remote_connect_mutex);
-    if (remote_connect_running_locked()) return true;
-    remote_connect_process.reset();
-    remote_connect_process_group.reset();
-    remote_connect_error.clear();
-
-    if (!ensure_remote_connect_config() || !write_easytier_config()) {
-      if (remote_connect_error.empty()) remote_connect_error = "Unable to write EasyTier configuration";
-      return false;
-    }
-    const auto executable = find_easytier_core();
-    if (executable.empty()) {
-      remote_connect_error = "The remote connection component is unavailable. Repair or reinstall Foundation Sunshine.";
-      return false;
-    }
-
-    const auto config_path = platf::appdata() / "vplus-easytier.toml";
-    const auto executable_utf8 = file_handler::path_to_utf8(executable);
-    const auto config_utf8 = file_handler::path_to_utf8(config_path);
-    const std::string command = "\"" + executable_utf8 + "\" --config-file \"" + config_utf8 + "\"";
-    boost::filesystem::path working_dir(executable.parent_path().string());
-    auto environment = boost::this_process::environment();
-    std::error_code error_code;
-    remote_connect_process_group.emplace();
-    // EasyTier creates the host TUN adapter, so request the elevated user token
-    // when Sunshine itself is running as the Windows service account.
-    auto child = platf::run_command(
-      true, false, command, working_dir, environment, nullptr, error_code, &*remote_connect_process_group
-    );
-    if (error_code || !child.valid()) {
-      remote_connect_error = error_code ? error_code.message() : "Unable to start EasyTier core";
-      remote_connect_process_group.reset();
-      return false;
-    }
-    remote_connect_process.emplace(std::move(child));
-    return true;
-  }
-
-  static void
-  stop_remote_connect() {
-    std::lock_guard lock(remote_connect_mutex);
-    if (remote_connect_running_locked()) {
-      if (remote_connect_process_group) {
-        proc::terminate_process_group(*remote_connect_process, *remote_connect_process_group, 5s);
-      }
-      else {
-        remote_connect_process->terminate();
-      }
-    }
-    remote_connect_process.reset();
-    remote_connect_process_group.reset();
-    remote_connect_error.clear();
-  }
 
   enum class op_e {
     ADD,  ///< Add client
@@ -2137,16 +1928,13 @@ namespace confighttp {
   getRemoteConnectStatus(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
     print_req(request);
-    if (config::nvhttp.remote_connect_enabled && !remote_connect_status().running) {
-      start_remote_connect();
-    }
-    const auto remote_status = remote_connect_status();
+    const auto remote_status = remote_connect::status();
     nlohmann::json output {
       {"status", true},
-      {"enabled", config::nvhttp.remote_connect_enabled},
+      {"enabled", remote_status.enabled},
       {"running", remote_status.running},
-      {"available", !find_easytier_core().empty()},
-      {"virtual_ip", config::nvhttp.remote_connect_virtual_ip},
+      {"available", remote_status.available},
+      {"virtual_ip", remote_status.virtual_ip},
       {"error", remote_status.error},
     };
     send_response(std::move(response), output);
@@ -2158,29 +1946,29 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
     print_req(request);
 
-    nlohmann::json input;
+    bool enabled;
     try {
       std::stringstream body;
       body << request->content.rdbuf();
-      input = nlohmann::json::parse(body.str());
+      const auto input = nlohmann::json::parse(body.str());
+      if (!input.is_object() || !input.contains("enabled") || !input["enabled"].is_boolean()) {
+        throw std::invalid_argument("enabled must be a boolean");
+      }
+      enabled = input["enabled"].get<bool>();
     }
     catch (const std::exception &e) {
       send_response(std::move(response), {{"status", false}, {"error", e.what()}});
       return;
     }
 
-    const bool enabled = input.value("enabled", false);
-    config::nvhttp.remote_connect_enabled = enabled;
-    config::update_config({{"remote_connect_enabled", enabled ? "true" : "false"}});
-
-    const bool running = enabled ? start_remote_connect() : (stop_remote_connect(), false);
-    const auto remote_status = remote_connect_status();
+    const auto result = remote_connect::set_enabled(enabled);
+    const auto &remote_status = result.status;
     send_response(std::move(response), {
-      {"status", !enabled || running},
-      {"enabled", enabled},
+      {"status", result.success},
+      {"enabled", remote_status.enabled},
       {"running", remote_status.running},
-      {"available", !find_easytier_core().empty()},
-      {"virtual_ip", config::nvhttp.remote_connect_virtual_ip},
+      {"available", remote_status.available},
+      {"virtual_ip", remote_status.virtual_ip},
       {"error", remote_status.error},
     });
   }
@@ -2282,34 +2070,32 @@ namespace confighttp {
       }
     }
 
-    // V+ v2 codes carry an allow-listed EasyTier enrollment profile. Legacy
-    // LAN-only QR codes remain unchanged when remote connection is disabled.
-    std::string url;
+    std::optional<remote_connect::enrollment_t> enrollment;
     if (config::nvhttp.remote_connect_enabled) {
-      if (!start_remote_connect()) {
-        const auto remote_status = remote_connect_status();
+      if (!remote_connect::start()) {
+        const auto remote_status = remote_connect::status();
         outputTree.put("status", false);
         outputTree.put("error", remote_status.error);
         return;
       }
-      host = config::nvhttp.remote_connect_virtual_ip;
-      const auto expires_at = std::time(nullptr) + 120;
-      url = "moonlight://pair?v=2&host=" + url_encode(host) +
-            "&port=" + std::to_string(port) +
-            "&pin=" + url_encode(pin) +
-            "&name=" + url_encode(server_name) +
-            "&profile=" + url_encode(config::nvhttp.remote_connect_profile) +
-            "&et_host=" + url_encode(host) +
-            "&et_name=" + url_encode(config::nvhttp.remote_connect_network_name) +
-            "&et_secret=" + url_encode(config::nvhttp.remote_connect_network_secret) +
-            "&et_peer=" + url_encode(config::nvhttp.remote_connect_peer) +
-            "&expires=" + std::to_string(expires_at);
+      enrollment = remote_connect::enrollment();
+      host = enrollment->virtual_ip;
     }
-    else {
-      url = "moonlight://pair?host=" + url_encode(host) +
-            "&port=" + std::to_string(port) +
-            "&pin=" + url_encode(pin) +
-            "&name=" + url_encode(server_name);
+    std::string url;
+    try {
+      url = remote_connect::build_invite({
+        host,
+        static_cast<std::uint16_t>(port),
+        pin,
+        server_name,
+        enrollment,
+        std::time(nullptr) + 120,
+      });
+    }
+    catch (const std::exception &e) {
+      outputTree.put("status", false);
+      outputTree.put("error", e.what());
+      return;
     }
 
     outputTree.put("status", true);
@@ -4074,9 +3860,7 @@ namespace confighttp {
 
   void
   start() {
-    if (config::nvhttp.remote_connect_enabled && !start_remote_connect()) {
-      BOOST_LOG(warning) << "V+ remote connection failed to start: " << remote_connect_status().error;
-    }
+    remote_connect::start_if_enabled();
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
     auto port_https = net::map_port(PORT_HTTPS);
@@ -4213,7 +3997,7 @@ namespace confighttp {
     shutdown_event->view();
 
     server.stop();
-    stop_remote_connect();
+    remote_connect::stop();
 
     tcp.join();
   }

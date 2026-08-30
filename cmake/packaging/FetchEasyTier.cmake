@@ -9,7 +9,7 @@ if(NOT WIN32)
   return()
 endif()
 
-option(FETCH_EASYTIER "Download the EasyTier runtime used by V+ remote connection" ON)
+option(FETCH_EASYTIER "Download the EasyTier runtime used by Remote Connect" ON)
 option(EASYTIER_REQUIRED "Treat a missing EasyTier runtime as a configuration error" ON)
 set(EASYTIER_VERSION "v2.6.4")
 set(EASYTIER_CACHE_DIR "${CMAKE_BINARY_DIR}/_easytier" CACHE PATH "EasyTier runtime cache")
@@ -119,7 +119,7 @@ if(NOT EASYTIER_AVAILABLE)
       "The pinned EasyTier ${EASYTIER_VERSION} runtime is unavailable. "
       "Set FETCH_EASYTIER=ON with network access, or provide the verified runtime in ${EASYTIER_RUNTIME_DIR}.")
   endif()
-  message(WARNING "EasyTier is unavailable; V+ remote connection will not be included in this package")
+  message(WARNING "EasyTier is unavailable; Remote Connect will not be included in this package")
 endif()
 
 set(EASYTIER_AVAILABLE "${EASYTIER_AVAILABLE}" CACHE INTERNAL

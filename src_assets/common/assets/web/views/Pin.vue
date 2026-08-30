@@ -13,8 +13,8 @@
           <p class="text-muted mb-3">{{ $t('pin.qr_pairing_desc') }}</p>
           <div class="remote-connect-control d-flex align-items-center justify-content-between gap-3 p-3 mb-3 rounded border text-start">
             <div>
-              <div class="fw-semibold">{{ $t('pin.remote_connect') }}</div>
-              <div class="small text-muted">{{ $t('pin.remote_connect_desc') }}</div>
+              <label class="fw-semibold" for="remote-connect-switch">{{ $t('pin.remote_connect') }}</label>
+              <div id="remote-connect-description" class="small text-muted">{{ $t('pin.remote_connect_desc') }}</div>
               <span v-if="remoteConnectEnabled" class="badge mt-2" :class="remoteConnectRunning ? 'bg-success' : 'bg-warning text-dark'">
                 {{ remoteConnectRunning ? $t('pin.remote_connect_ready') : $t('pin.remote_connect_starting') }}
               </span>
@@ -24,13 +24,16 @@
                 class="form-check-input"
                 type="checkbox"
                 role="switch"
+                id="remote-connect-switch"
+                :aria-label="$t('pin.remote_connect')"
+                :aria-describedby="remoteConnectError ? 'remote-connect-error' : 'remote-connect-description'"
                 :checked="remoteConnectEnabled"
                 :disabled="remoteConnectBusy || !remoteConnectAvailable"
-                @change="setRemoteConnectEnabled($event.target.checked)"
+                @change="onRemoteConnectToggle"
               />
             </div>
           </div>
-          <div v-if="remoteConnectError" class="alert alert-warning py-2 mb-3">
+          <div v-if="remoteConnectError" id="remote-connect-error" class="alert alert-warning py-2 mb-3">
             {{ remoteConnectError }}
           </div>
           <div class="alert alert-danger d-flex align-items-start mb-3" style="font-size: 0.85rem;">
@@ -433,7 +436,7 @@ const {
   remoteConnectError,
   generateQrCode,
   cancelQrCode,
-  setRemoteConnectEnabled,
+  onRemoteConnectToggle,
 } = useQrPair()
 
 const clientToDelete = ref(null)

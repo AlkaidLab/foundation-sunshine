@@ -194,7 +194,7 @@ namespace config {
 
     int pair_max_attempts;  // Max PIN pairing attempts per IP within 60s window. 0 disables limiting.
 
-    // V+ remote connection. The secret is generated locally and only leaves
+    // Remote connection. The secret is generated locally and only leaves
     // the host through an authenticated, short-lived pairing QR code.
     bool remote_connect_enabled;
     std::string remote_connect_profile;
