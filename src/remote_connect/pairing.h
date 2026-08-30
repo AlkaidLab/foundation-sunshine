@@ -1,23 +1,27 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 #include <string>
-
-#include "types.h"
 
 namespace remote_connect {
 
-  struct invite_t {
+  struct pairing_request_t {
     std::string host;
     std::uint16_t port;
     std::string pin;
     std::string server_name;
-    std::optional<enrollment_t> enrollment;
     std::int64_t expires_at;
   };
 
-  std::string
-  build_invite(const invite_t &invite);
+  struct pairing_result_t {
+    bool success;
+    bool remote;
+    std::string host;
+    std::string url;
+    std::string error;
+  };
+
+  pairing_result_t
+  create_pairing_invite(pairing_request_t request);
 
 }  // namespace remote_connect

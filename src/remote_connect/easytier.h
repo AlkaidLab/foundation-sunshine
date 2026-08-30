@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include "service.h"
+#include "types.h"
 
 namespace remote_connect::easytier {
 

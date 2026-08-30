@@ -23,7 +23,6 @@
 #include <iomanip>
 #include <map>
 #include <mutex>
-#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -66,7 +65,8 @@
 #include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
-#include "remote_connect/invite.h"
+#include "remote_connect/api.h"
+#include "remote_connect/pairing.h"
 #include "remote_connect/service.h"
 #include "rtsp.h"
 #include "src/display_device/to_string.h"
@@ -1928,16 +1928,7 @@ namespace confighttp {
   getRemoteConnectStatus(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
     print_req(request);
-    const auto remote_status = remote_connect::status();
-    nlohmann::json output {
-      {"status", true},
-      {"enabled", remote_status.enabled},
-      {"running", remote_status.running},
-      {"available", remote_status.available},
-      {"virtual_ip", remote_status.virtual_ip},
-      {"error", remote_status.error},
-    };
-    send_response(std::move(response), output);
+    remote_connect::api::get_status(std::move(response));
   }
 
   void
@@ -1945,32 +1936,7 @@ namespace confighttp {
     if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
     print_req(request);
-
-    bool enabled;
-    try {
-      std::stringstream body;
-      body << request->content.rdbuf();
-      const auto input = nlohmann::json::parse(body.str());
-      if (!input.is_object() || !input.contains("enabled") || !input["enabled"].is_boolean()) {
-        throw std::invalid_argument("enabled must be a boolean");
-      }
-      enabled = input["enabled"].get<bool>();
-    }
-    catch (const std::exception &e) {
-      send_response(std::move(response), {{"status", false}, {"error", e.what()}});
-      return;
-    }
-
-    const auto result = remote_connect::set_enabled(enabled);
-    const auto &remote_status = result.status;
-    send_response(std::move(response), {
-      {"status", result.success},
-      {"enabled", remote_status.enabled},
-      {"running", remote_status.running},
-      {"available", remote_status.available},
-      {"virtual_ip", remote_status.virtual_ip},
-      {"error", remote_status.error},
-    });
+    remote_connect::api::set_enabled(std::move(response), std::move(request));
   }
 
   void
@@ -1978,17 +1944,7 @@ namespace confighttp {
     if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
     print_req(request);
-
-    const auto result = remote_connect::reset_enrollment();
-    const auto &remote_status = result.status;
-    send_response(std::move(response), {
-      {"status", result.success},
-      {"enabled", remote_status.enabled},
-      {"running", remote_status.running},
-      {"available", remote_status.available},
-      {"virtual_ip", remote_status.virtual_ip},
-      {"error", remote_status.error},
-    });
+    remote_connect::api::reset_enrollment(std::move(response));
   }
 
   void
@@ -2088,42 +2044,28 @@ namespace confighttp {
       }
     }
 
-    std::optional<remote_connect::enrollment_t> enrollment;
-    if (config::nvhttp.remote_connect_enabled) {
-      if (!remote_connect::start()) {
-        const auto remote_status = remote_connect::status();
-        outputTree.put("status", false);
-        outputTree.put("error", remote_status.error);
-        return;
-      }
-      enrollment = remote_connect::enrollment();
-      host = enrollment->virtual_ip;
-    }
-    std::string url;
-    try {
-      url = remote_connect::build_invite({
-        host,
-        static_cast<std::uint16_t>(port),
-        pin,
-        server_name,
-        enrollment,
-        std::time(nullptr) + 120,
-      });
-    }
-    catch (const std::exception &e) {
+    const auto pairing = remote_connect::create_pairing_invite({
+      std::move(host),
+      static_cast<std::uint16_t>(port),
+      pin,
+      server_name,
+      std::time(nullptr) + 120,
+    });
+    if (!pairing.success) {
       outputTree.put("status", false);
-      outputTree.put("error", e.what());
+      outputTree.put("error", pairing.error);
       return;
     }
+    host = pairing.host;
 
     outputTree.put("status", true);
     outputTree.put("pin", pin);
     outputTree.put("host", host);
     outputTree.put("port", port);
     outputTree.put("name", server_name);
-    outputTree.put("url", url);
+    outputTree.put("url", pairing.url);
     outputTree.put("expires_in", 120);
-    outputTree.put("remote_connect", config::nvhttp.remote_connect_enabled);
+    outputTree.put("remote_connect", pairing.remote);
   }
 
   void

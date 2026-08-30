@@ -1,0 +1,28 @@
+#pragma once
+
+#include <string>
+
+namespace remote_connect {
+
+  struct enrollment_t {
+    std::string profile;
+    std::string virtual_ip;
+    std::string network_name;
+    std::string network_secret;
+    std::string peer;
+  };
+
+  struct status_t {
+    bool enabled;
+    bool running;
+    bool available;
+    std::string virtual_ip;
+    std::string error;
+  };
+
+  struct operation_result_t {
+    bool success;
+    status_t status;
+  };
+
+}  // namespace remote_connect
