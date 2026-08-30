@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 namespace remote_connect {
@@ -23,6 +24,13 @@ namespace remote_connect {
   struct operation_result_t {
     bool success;
     status_t status;
+  };
+
+  struct pairing_state_t {
+    bool success;
+    bool enabled;
+    std::optional<enrollment_t> enrollment;
+    std::string error;
   };
 
 }  // namespace remote_connect

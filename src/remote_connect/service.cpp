@@ -181,6 +181,18 @@ namespace remote_connect {
     };
   }
 
+  pairing_state_t
+  prepare_pairing() {
+    std::lock_guard lock(service_mutex);
+    if (!config::nvhttp.remote_connect_enabled) {
+      return { true, false, std::nullopt, {} };
+    }
+    if (!start_locked()) {
+      return { false, true, std::nullopt, last_error };
+    }
+    return { true, true, current_enrollment(), {} };
+  }
+
   bool
   start() {
     std::lock_guard lock(service_mutex);

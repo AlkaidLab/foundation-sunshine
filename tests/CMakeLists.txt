@@ -78,6 +78,21 @@ if (WIN32)
 endif ()
 add_test(NAME remote_connect_invite_unit_tests COMMAND remote_connect_invite_unit_tests)
 
+add_executable(remote_connect_service_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/service.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
+target_include_directories(remote_connect_service_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_service_unit_tests
+        Boost::log
+        OpenSSL::Crypto
+        gtest_main)
+target_compile_options(remote_connect_service_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_service_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_service_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_service_unit_tests COMMAND remote_connect_service_unit_tests)
+
 if (WIN32)
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
