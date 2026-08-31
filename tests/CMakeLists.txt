@@ -261,6 +261,30 @@ if (WIN32)
     add_dependencies(ds5_sidecar_client_unit_tests ds5_fake_sidecar)
     add_test(NAME ds5_sidecar_client_unit_tests COMMAND ds5_sidecar_client_unit_tests)
 
+    add_executable(microphone_client_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_microphone_client.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
+            ${CMAKE_SOURCE_DIR}/src/ds5/config.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp)
+    target_include_directories(microphone_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(microphone_client_unit_tests
+            Boost::log
+            Boost::format
+            Boost::property_tree
+            nlohmann_json::nlohmann_json
+            gtest_main)
+    target_compile_definitions(microphone_client_unit_tests PRIVATE
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
+            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
+    target_compile_options(microphone_client_unit_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(microphone_client_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(microphone_client_unit_tests ds5_fake_sidecar)
+    add_test(NAME microphone_client_unit_tests COMMAND microphone_client_unit_tests)
+
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)

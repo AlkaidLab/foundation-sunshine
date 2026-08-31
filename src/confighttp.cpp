@@ -1666,11 +1666,47 @@ namespace confighttp {
     send_response(response, nlohmann::json {
       {"success", result.success},
       {"error_code", result.error_code},
+      {"backend", result.backend},
     });
 #else
     send_response(response, nlohmann::json {
       {"success", false},
       {"error_code", "MIC_TEST_UNSUPPORTED"},
+    });
+#endif
+  }
+
+  void
+  getMicrophoneStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+#ifdef _WIN32
+    const auto status = platf::audio::mic_redirect_status();
+    send_response(response, nlohmann::json {
+      {"success", true},
+      {"configured_backend", status.configured_backend},
+      {"active_backend", status.active_backend},
+      {"fallback_reason", status.fallback_reason},
+      {"component_available", status.component_available},
+      {"online", status.online},
+      {"device_created", status.device_created},
+      {"host_streaming", status.host_streaming},
+      {"generation", status.generation},
+      {"state", status.state},
+      {"buffered_bytes", status.buffered_bytes},
+      {"underruns", status.underruns},
+      {"dropped_frames", status.dropped_frames},
+      {"submit_errors", status.submit_errors},
+      {"last_error", status.last_error},
+      {"error_code", status.error_code},
+    });
+#else
+    send_response(response, nlohmann::json {
+      {"success", true},
+      {"configured_backend", "disabled"},
+      {"active_backend", ""},
+      {"state", "unsupported"},
+      {"component_available", false},
     });
 #endif
   }
@@ -3783,6 +3819,7 @@ namespace confighttp {
     server.resource["^/api/boom$"]["GET"] = boom;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
+    server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
 #ifdef _WIN32
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;

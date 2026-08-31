@@ -30,41 +30,24 @@
 #include "src/ds5/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
+#include "src/platform/windows/virtual_device_host/protocol.h"
 
 namespace platf::ds5 {
   using namespace std::chrono_literals;
   using namespace std::literals;
 
   namespace {
-    constexpr std::uint32_t MAGIC = 0x35534453;
-    constexpr std::uint16_t VERSION = 1;
-    constexpr std::size_t HEADER_SIZE = 16;
-    constexpr std::uint32_t MAX_PAYLOAD = 1024 * 1024;
-    constexpr std::uint32_t CAP_GENSHIN_COMPATIBILITY_IDENTITY = 1u << 8;
-    constexpr std::uint32_t CAPABILITY_AUDIO_POLICY_VIOLATION = 1u << 9;
-    constexpr std::uint8_t ATTACH_FLAG_GENSHIN_COMPATIBILITY = 1u << 0;
+    using virtual_device_host::protocol::ATTACH_FLAG_GENSHIN_COMPATIBILITY;
+    using virtual_device_host::protocol::CAP_AUDIO_POLICY_VIOLATION;
+    using virtual_device_host::protocol::CAP_GENSHIN_COMPATIBILITY_IDENTITY;
+    using virtual_device_host::protocol::HEADER_SIZE;
+    using virtual_device_host::protocol::MAGIC;
+    using virtual_device_host::protocol::MAX_PAYLOAD;
+    using virtual_device_host::protocol::VERSION;
+    using virtual_device_host::protocol::message_e;
     std::atomic_bool trusted_component_available { false };
     // The sidecar protocol identifies devices with a single byte.
     static_assert(platf::MAX_GAMEPADS <= 256, "DS5 device ids must fit the wire format");
-
-    enum class message_e: std::uint16_t {
-      hello = 1,
-      hello_reply = 2,
-      attach = 3,
-      attach_reply = 4,
-      detach = 5,
-      detach_reply = 6,
-      input = 7,
-      touch = 8,
-      motion = 9,
-      battery = 10,
-      rumble = 101,
-      adaptive_triggers = 102,
-      led = 103,
-      haptics_pcm = 104,
-      audio_policy_violation = 105,
-      error = 255,
-    };
 
     struct message_t {
       message_e type;
@@ -306,11 +289,9 @@ namespace platf::ds5 {
         return false;
       }
       std::vector<std::uint8_t> frame(HEADER_SIZE + payload.size());
-      write_u32(frame.data(), MAGIC);
-      write_u16(frame.data() + 4, VERSION);
-      write_u16(frame.data() + 6, static_cast<std::uint16_t>(type));
-      write_u32(frame.data() + 8, static_cast<std::uint32_t>(payload.size()));
-      write_u32(frame.data() + 12, request_id);
+      const auto header = virtual_device_host::protocol::encode_header(
+        type, static_cast<std::uint32_t>(payload.size()), request_id);
+      std::copy(header.begin(), header.end(), frame.begin());
       std::copy(payload.begin(), payload.end(), frame.begin() + HEADER_SIZE);
       std::lock_guard lock(write_mutex);
       if (stopping || pipe == INVALID_HANDLE_VALUE) {
@@ -527,7 +508,7 @@ namespace platf::ds5 {
         return false;
       }
       const auto capabilities = read_u32(reply.payload.data());
-      if (audio_haptics && !(capabilities & CAPABILITY_AUDIO_POLICY_VIOLATION)) {
+      if (audio_haptics && !(capabilities & CAP_AUDIO_POLICY_VIOLATION)) {
         BOOST_LOG(warning) << "DualSense sidecar does not advertise audio endpoint policy protection; "sv
                            << "falling back to HID-only DualSense"sv;
         force_hid_fallback = true;
@@ -662,10 +643,14 @@ namespace platf::ds5 {
     return trusted_component_available.load(std::memory_order_acquire);
   }
 
+  std::optional<std::filesystem::path> trusted_component_path() {
+    return trusted_sidecar_path();
+  }
+
   bool refresh_component_availability() noexcept {
     bool available = false;
     try {
-      available = trusted_sidecar_path().has_value();
+      available = trusted_component_path().has_value();
     }
     catch (...) {
       available = false;
