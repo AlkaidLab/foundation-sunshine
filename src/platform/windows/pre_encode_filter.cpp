@@ -61,6 +61,70 @@ namespace platf::dxgi {
         static_cast<std::uint32_t>(desc.AdapterLuid.LowPart);
     }
 
+    std::string_view
+    validate_sdr_input(const gpu_frame_view_t &input, std::uint64_t adapter_luid) {
+      if (!input.texture || !input.srv || input.width == 0 || input.height == 0) {
+        return "invalid_input";
+      }
+      if (input.semantic.domain != frame_domain_e::sdr_rec709 ||
+          input.semantic.encoding != pixel_encoding_class_e::unorm8 ||
+          input.semantic.borrowed) {
+        return "input_contract_mismatch";
+      }
+      if (adapter_luid != 0 && input.semantic.adapter_luid != 0 &&
+          input.semantic.adapter_luid != adapter_luid) {
+        return "adapter_mismatch";
+      }
+      if (input.format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+          input.format != DXGI_FORMAT_R8G8B8A8_UNORM) {
+        return "unsupported_format";
+      }
+      return {};
+    }
+
+    filter_result_t
+    make_scrgb_result(
+      const gpu_frame_view_t &input,
+      ID3D11Texture2D *texture,
+      ID3D11ShaderResourceView *srv) {
+      auto output_semantic = input.semantic;
+      output_semantic.domain = frame_domain_e::linear_scrgb;
+      output_semantic.encoding = pixel_encoding_class_e::float16;
+      output_semantic.reference_white_nits = 80.0f;
+      output_semantic.borrowed = false;
+      return {
+        .status = filter_status_e::ready,
+        .frame = {
+          .texture = texture,
+          .srv = srv,
+          .format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+          .semantic = output_semantic,
+          .width = input.width,
+          .height = input.height,
+        },
+        .reason = {},
+      };
+    }
+
+    std::string_view
+    truehdr_failure_reason(foundation_truehdr_status_e status, bool during_create) {
+      switch (status) {
+        case FOUNDATION_TRUEHDR_STATUS_INVALID_ARGUMENT:
+          return during_create ? "backend_create_invalid_argument" : "backend_process_invalid_argument";
+        case FOUNDATION_TRUEHDR_STATUS_UNSUPPORTED:
+          return during_create ? "backend_create_unsupported" : "backend_process_unsupported";
+        case FOUNDATION_TRUEHDR_STATUS_RUNTIME_UNAVAILABLE:
+          return during_create ? "backend_create_runtime_unavailable" : "backend_process_runtime_unavailable";
+        case FOUNDATION_TRUEHDR_STATUS_DEVICE_LOST:
+          return during_create ? "backend_create_device_lost" : "backend_process_device_lost";
+        case FOUNDATION_TRUEHDR_STATUS_INTERNAL_ERROR:
+          return during_create ? "backend_create_internal_error" : "backend_process_internal_error";
+        case FOUNDATION_TRUEHDR_STATUS_OK:
+          break;
+      }
+      return during_create ? "backend_create_unknown_error" : "backend_process_unknown_error";
+    }
+
     com_ptr_t<ID3DBlob>
     compile_mock_shader() {
       const auto shader_path =
@@ -112,21 +176,8 @@ namespace platf::dxgi {
 
       filter_result_t
       process(const gpu_frame_view_t &input) override {
-        if (!input.texture || !input.srv || input.width == 0 || input.height == 0) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "invalid_input" };
-        }
-        if (input.semantic.domain != frame_domain_e::sdr_rec709 ||
-            input.semantic.encoding != pixel_encoding_class_e::unorm8 ||
-            input.semantic.borrowed) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "input_contract_mismatch" };
-        }
-        if (adapter_luid_ != 0 && input.semantic.adapter_luid != 0 &&
-            input.semantic.adapter_luid != adapter_luid_) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "adapter_mismatch" };
-        }
-        if (input.format != DXGI_FORMAT_B8G8R8A8_UNORM &&
-            input.format != DXGI_FORMAT_R8G8B8A8_UNORM) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "unsupported_format" };
+        if (const auto reason = validate_sdr_input(input, adapter_luid_); !reason.empty()) {
+          return { .status = filter_status_e::failed, .frame = {}, .reason = reason };
         }
         if (!ensure_output(input.width, input.height)) {
           return { .status = filter_status_e::failed, .frame = {}, .reason = "output_allocation_failed" };
@@ -145,24 +196,7 @@ namespace platf::dxgi {
         device_context_->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
         device_context_->CSSetShader(nullptr, nullptr, 0);
 
-        auto output_semantic = input.semantic;
-        output_semantic.domain = frame_domain_e::linear_scrgb;
-        output_semantic.encoding = pixel_encoding_class_e::float16;
-        output_semantic.reference_white_nits = 80.0f;
-        output_semantic.borrowed = false;
-
-        return {
-          .status = filter_status_e::ready,
-          .frame = {
-            .texture = output_texture_.get(),
-            .srv = output_srv_.get(),
-            .format = DXGI_FORMAT_R16G16B16A16_FLOAT,
-            .semantic = output_semantic,
-            .width = input.width,
-            .height = input.height,
-          },
-          .reason = {},
-        };
+        return make_scrgb_result(input, output_texture_.get(), output_srv_.get());
       }
 
       void
@@ -256,24 +290,11 @@ namespace platf::dxgi {
 
       filter_result_t
       process(const gpu_frame_view_t &input) override {
-        if (!input.texture || !input.srv || input.width == 0 || input.height == 0) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "invalid_input" };
-        }
-        if (input.semantic.domain != frame_domain_e::sdr_rec709 ||
-            input.semantic.encoding != pixel_encoding_class_e::unorm8 ||
-            input.semantic.borrowed) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "input_contract_mismatch" };
-        }
-        if (adapter_luid_ != 0 && input.semantic.adapter_luid != 0 &&
-            input.semantic.adapter_luid != adapter_luid_) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "adapter_mismatch" };
-        }
-        if (input.format != DXGI_FORMAT_B8G8R8A8_UNORM &&
-            input.format != DXGI_FORMAT_R8G8B8A8_UNORM) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "unsupported_format" };
+        if (const auto reason = validate_sdr_input(input, adapter_luid_); !reason.empty()) {
+          return { .status = filter_status_e::failed, .frame = {}, .reason = reason };
         }
         if (!ensure_output_and_instance(input.width, input.height)) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "backend_initialization_failed" };
+          return { .status = filter_status_e::failed, .frame = {}, .reason = initialization_failure_ };
         }
 
         foundation_truehdr_status_e status;
@@ -286,26 +307,13 @@ namespace platf::dxgi {
             output_texture_.get());
         }
         if (status != FOUNDATION_TRUEHDR_STATUS_OK) {
-          return { .status = filter_status_e::failed, .frame = {}, .reason = "backend_process_failed" };
+          return {
+            .status = filter_status_e::failed,
+            .frame = {},
+            .reason = truehdr_failure_reason(status, false),
+          };
         }
-
-        auto output_semantic = input.semantic;
-        output_semantic.domain = frame_domain_e::linear_scrgb;
-        output_semantic.encoding = pixel_encoding_class_e::float16;
-        output_semantic.reference_white_nits = 80.0f;
-        output_semantic.borrowed = false;
-        return {
-          .status = filter_status_e::ready,
-          .frame = {
-            .texture = output_texture_.get(),
-            .srv = output_srv_.get(),
-            .format = DXGI_FORMAT_R16G16B16A16_FLOAT,
-            .semantic = output_semantic,
-            .width = input.width,
-            .height = input.height,
-          },
-          .reason = {},
-        };
+        return make_scrgb_result(input, output_texture_.get(), output_srv_.get());
       }
 
       void
@@ -327,6 +335,7 @@ namespace platf::dxgi {
         if (instance_ && output_texture_ && width_ == width && height_ == height) {
           return true;
         }
+        initialization_failure_ = "backend_initialization_failed";
         destroy_instance();
         output_srv_.reset();
         output_texture_.reset();
@@ -342,11 +351,13 @@ namespace platf::dxgi {
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
         ID3D11Texture2D *texture_raw = nullptr;
         if (FAILED(device_->CreateTexture2D(&desc, nullptr, &texture_raw))) {
+          initialization_failure_ = "backend_output_allocation_failed";
           return false;
         }
         output_texture_.reset(texture_raw);
         ID3D11ShaderResourceView *srv_raw = nullptr;
         if (FAILED(device_->CreateShaderResourceView(output_texture_.get(), nullptr, &srv_raw))) {
+          initialization_failure_ = "backend_output_view_creation_failed";
           output_texture_.reset();
           return false;
         }
@@ -367,6 +378,9 @@ namespace platf::dxgi {
           status = loader_.api()->create(device_, &config, &instance_);
         }
         if (status != FOUNDATION_TRUEHDR_STATUS_OK || !instance_) {
+          initialization_failure_ = status == FOUNDATION_TRUEHDR_STATUS_OK
+                                      ? "backend_create_missing_instance"
+                                      : truehdr_failure_reason(status, true);
           instance_ = nullptr;
           output_srv_.reset();
           output_texture_.reset();
@@ -374,6 +388,7 @@ namespace platf::dxgi {
         }
         width_ = width;
         height_ = height;
+        initialization_failure_ = {};
         return true;
       }
 
@@ -394,6 +409,7 @@ namespace platf::dxgi {
       pre_encode_filter_config_t config_;
       void *instance_ = nullptr;
       std::uint64_t adapter_luid_;
+      std::string_view initialization_failure_ { "backend_initialization_failed" };
       com_ptr_t<ID3D11Texture2D> output_texture_;
       com_ptr_t<ID3D11ShaderResourceView> output_srv_;
       std::uint32_t width_ = 0;
@@ -513,6 +529,7 @@ namespace platf::dxgi {
           std::move(fallback),
           loader.error());
       }
+      BOOST_LOG(info) << "Loaded external SDR-to-HDR backend; feature creation is deferred until the first frame";
       auto primary = std::make_unique<external_sdr_to_hdr_filter_t>(
         device,
         device_context,

@@ -1309,15 +1309,6 @@ namespace platf::dxgi {
           BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
           return -1;
         }
-        if (this->display->pre_encode_filter == pre_encode_filter_e::external_sdr_to_hdr) {
-          const auto &backend_path = this->display->pre_encode_filter_backend_path;
-          if (backend_path.empty() || !backend_path.is_absolute()) {
-            BOOST_LOG(warning) << "RTX HDR backend path is empty or not absolute; using the SDR-in-HDR GPU fallback"sv;
-          }
-          else {
-            BOOST_LOG(info) << "Initializing external SDR-to-HDR backend with session-stable GPU fallback"sv;
-          }
-        }
         pre_encode_filter = make_pre_encode_filter(
           this->display->pre_encode_filter,
           device.get(),

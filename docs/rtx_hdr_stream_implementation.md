@@ -767,8 +767,10 @@ typedef const foundation_truehdr_api_t *(FOUNDATION_TRUEHDR_CALL *foundation_tru
   成功时写出不透明实例；
 - `process()` 接收同一 device 的立即 context、只读 RGBA8/BGRA8 SDR 输入及由 Sunshine
   独占的 FP16 scRGB 输出；
-- `OK` 表示结果可编码；`INVALID_ARGUMENT` 表示调用契约错误；`UNSUPPORTED` 和
-  `RUNTIME_UNAVAILABLE` 触发兼容回退；`DEVICE_LOST` 和 `INTERNAL_ERROR` 使本会话降级；
+- `OK` 表示结果可编码；所有非 `OK` 状态统一映射为 `filter_status_e::failed`，销毁 primary
+  并进入同一个 session-stable degraded fallback；host 不按状态码执行不同的恢复策略，但会把
+  create/process 阶段及 `INVALID_ARGUMENT`、`UNSUPPORTED`、`RUNTIME_UNAVAILABLE`、
+  `DEVICE_LOST` 或 `INTERNAL_ERROR` 类别保存在稳定失败原因中，供运行状态和诊断展示；
 - 所有 ABI 入口捕获内部异常并转换为 `INTERNAL_ERROR`；
 - `process()` 不分配主机输出纹理；
 - 输入只读，输出由 Sunshine 独占；
@@ -777,17 +779,21 @@ typedef const foundation_truehdr_api_t *(FOUNDATION_TRUEHDR_CALL *foundation_tru
 
 ### 8.3 DLL 加载安全
 
-主机从 Sunshine 可执行文件绝对路径解析：
+正式包默认从 Sunshine 安装目录解析：
 
 ```text
 <install>/tools/rtx_hdr/foundation_truehdr_backend.dll
 ```
 
-使用 `LoadLibraryExW` 和受限搜索路径。不得依赖当前工作目录。验证：
+当前 loader 已实现：
 
-- 文件存在；
+- 路径必须是绝对路径；
+- 使用 `LoadLibraryExW` 和受限 DLL 搜索路径，不依赖当前工作目录；
 - ABI version 完全匹配；
 - 所有必需导出存在；
+
+以下属于正式组件发布门禁，不是当前自定义开发路径 loader 已实现的运行时保证：
+
 - 组件 manifest 中 SHA-256 匹配；
 - 正式包中的第一方 DLL 有 Authenticode 签名；
 - vendor runtime 只验证固定版本和 hash，不重新签名。
@@ -815,8 +821,9 @@ NVIDIA NGX 的全局生命周期需要串行化。首版不引入额外 worker�
 disabled
    │ 配置启用 + 客户端 HDR
    ▼
-probing
-   ├── create 失败/组件缺失 ──→ degraded（内置兼容回退）
+warming_up（filter 已构造，feature 尚未创建）
+   │ 首次 process：同步 create + evaluate
+   ├── create/process 失败 ──→ degraded（内置兼容回退）
    ▼
 active
    ├── 首次 process 失败 ─→ degraded（内置兼容回退）
@@ -826,8 +833,10 @@ degraded（本会话不可自动恢复）
 
 ### 9.2 同步执行边界
 
-首版没有 worker、job queue、取消点或 deadline：`create()` 在滤镜构造路径同步执行，
-`process()` 在现有 convert/encode 调用线程同步执行，对外只观察到 `ready` 或 `failed`。
+首版没有 worker、job queue、取消点或 deadline：滤镜构造只加载 DLL 并保存依赖；feature
+`create()` 在首帧 `process()` 中按实际输入尺寸同步懒初始化，随后在同一 convert/encode
+调用线程同步 evaluate。首帧的 create 与 evaluate 耗时都会计入 pre-encode 延迟，create
+失败也只会在首帧被观察到。滤镜对外只返回 `ready` 或 `failed`。
 VDD borrowed 帧会先复制到私有纹理并释放 keyed mutex，因此 SDK 调用不会占用捕获资源，
 但其 GPU/驱动耗时仍直接计入当前帧的 pre-encode 时间。首次处理失败后立即永久切换到内置
 SDR-in-HDR 回退，不逐帧重试。若实测发现 NGX 调用会无界阻塞，再把独立 worker 或进程隔离
@@ -1034,7 +1043,7 @@ Windows 应用编辑器已新增 RTX HDR 卡片：
 ```cpp
 std::string source_hdr_mode;       // sdr/native_hdr/synthetic_hdr
 std::string synthetic_hdr_backend; // none/nvidia_truehdr
-std::string synthetic_hdr_state;   // disabled/probing/warming_up/active/degraded
+std::string synthetic_hdr_state;   // disabled/warming_up/active/degraded
 std::string synthetic_hdr_failure_reason;
 double synthetic_hdr_gpu_ms_p50;
 double synthetic_hdr_gpu_ms_p95;
@@ -1200,7 +1209,7 @@ tests/tools/fake_truehdr_backend.cpp
 - client max nits 限制 peak；
 - ABI 不匹配/导出缺失/hash 错误；
 - ready→active、首次 primary 失败→degraded 并切换兼容回退；
-- 同步 create/process 失败不会占用 borrowed capture 资源；
+- 首帧 process 中同步 create/process 失败不会占用 borrowed capture 资源；
 - TrueHDR 激活时清空旧 luminance temporal state；
 - 多会话 NGX 调用由进程级 mutex 串行化。
 
@@ -1445,7 +1454,7 @@ src_assets/common/assets/web/public/assets/locale/*.json
 5. WGC、DXGI、VDD 三种捕获后端至少各通过一轮 30 分钟稳定测试；
 6. TrueHDR 输出被现有 HDR analyzer 分析，动态元数据与画面来自同一帧源；
 7. 控制通道、AVFrame、NVENC/AMF 路径使用同一静态 metadata resolver；
-8. 后端缺失、ABI 不匹配、feature create 失败、超时、device removal 均能安全降级；
+8. 后端缺失、ABI 不匹配、feature create/process 失败及 device removal 状态均能安全降级；
 9. 不出现逐帧 TrueHDR/fallback 亮度闪烁；
 10. 多客户端不会因全局 NGX 锁或挂起导致非 TrueHDR 会话冻结；
 11. 安装包、签名、hash、原子更新和卸载通过干净机器测试；
@@ -1460,7 +1469,7 @@ src_assets/common/assets/web/public/assets/locale/*.json
 | 风险 | 影响 | 缓解 |
 |---|---|---|
 | NGX API 非线程安全 | 多会话冻结/崩溃 | backend 内进程级 mutex 串行化所有 NGX 调用 |
-| SDK 调用不可取消 | encoder 线程卡住 | keyed mutex 提前释放；实测若出现无界阻塞则升级独立进程隔离 |
+| SDK 调用不可取消 | encoder 线程仍可能被同步 create/process 卡住 | 提前释放 keyed mutex 仅保证捕获资源不被长期占用；无界阻塞需要后续用独立进程隔离 |
 | 后处理策略渗入捕获层 | 每加后端/算法都修改 WGC、DXGI、VDD | 只传 `capture_contract_t`，只返回 `captured_frame_desc_t` |
 | 源显示意外进入 HDR | 双重转换/颜色错误 | 显示策略关闭 HDR、格式探测拒绝 FP16 输入 |
 | SDR 显示无 HDR metadata | 客户端色调映射错误 | 独立 stream metadata resolver |

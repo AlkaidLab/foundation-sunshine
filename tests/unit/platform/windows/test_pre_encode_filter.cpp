@@ -253,7 +253,7 @@ namespace {
     EXPECT_EQ(first.frame.semantic.domain, platf::frame_domain_e::linear_scrgb);
     EXPECT_TRUE(filter->degraded());
     EXPECT_EQ(filter->backend_name(), "gpu_sdr_in_hdr_fallback");
-    EXPECT_EQ(filter->failure_reason(), "backend_process_failed");
+    EXPECT_EQ(filter->failure_reason(), "backend_process_internal_error");
 
     // The failing primary is discarded for the session; a second frame must
     // remain healthy on the GPU fallback path.

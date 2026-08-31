@@ -131,6 +131,10 @@ int wmain(int argc, wchar_t **argv) {
                           D3D11_BIND_UNORDERED_ACCESS;
   ID3D11Texture2D *output = nullptr;
   hr = device->CreateTexture2D(&output_desc, nullptr, &output);
+  ID3D11UnorderedAccessView *output_uav = nullptr;
+  if (SUCCEEDED(hr)) {
+    hr = device->CreateUnorderedAccessView(output, nullptr, &output_uav);
+  }
 
   D3D11_TEXTURE2D_DESC staging_desc = output_desc;
   staging_desc.Usage = D3D11_USAGE_STAGING;
@@ -141,6 +145,7 @@ int wmain(int argc, wchar_t **argv) {
     hr = device->CreateTexture2D(&staging_desc, nullptr, &staging);
   }
   if (FAILED(hr)) {
+    release(output_uav);
     release(output);
     release(input);
     release(context);
@@ -148,6 +153,9 @@ int wmain(int argc, wchar_t **argv) {
     FreeLibrary(module);
     return fail("creating the scRGB output textures failed");
   }
+  constexpr float clear_color[4] { 0.0f, 0.0f, 0.0f, 0.0f };
+  context->ClearUnorderedAccessViewFloat(output_uav, clear_color);
+  release(output_uav);
 
   foundation_truehdr_config_t config {};
   config.struct_size = sizeof(config);
