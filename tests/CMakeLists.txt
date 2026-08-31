@@ -103,6 +103,7 @@ add_executable(loopback_usbip_bridge_unit_tests
 target_include_directories(loopback_usbip_bridge_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(loopback_usbip_bridge_unit_tests
+        Boost::asio
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
         gtest_main)
@@ -120,6 +121,7 @@ add_executable(remote_usb_broker_adapter_unit_tests
 target_include_directories(remote_usb_broker_adapter_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_broker_adapter_unit_tests
+        Boost::asio
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
         gtest_main)
@@ -139,6 +141,7 @@ add_executable(remote_usb_broker_server_unit_tests
 target_include_directories(remote_usb_broker_server_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_broker_server_unit_tests
+        Boost::asio
         Boost::system
         ${OPENSSL_LIBRARIES}
         ${CMAKE_THREAD_LIBS_INIT}
@@ -157,8 +160,10 @@ add_executable(remote_usb_capability_unit_tests
 target_include_directories(remote_usb_capability_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_capability_unit_tests
+        Boost::asio
         Boost::system
         ${OPENSSL_LIBRARIES}
+        nlohmann_json::nlohmann_json
         gtest_main)
 target_compile_options(remote_usb_capability_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
@@ -185,6 +190,7 @@ add_executable(remote_usb_host_controller_unit_tests
 target_include_directories(remote_usb_host_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_host_controller_unit_tests
+        Boost::asio
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
         gtest_main)
