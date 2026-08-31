@@ -104,7 +104,7 @@ TEST(RemoteUsbContractVectors, RustCoreVectorsDecodeWithSunshineCodec) {
   EXPECT_EQ(hello.session_token, 3u);
   EXPECT_EQ(hello.attachment_token, 7u);
   EXPECT_EQ(hello.lease_token, 9u);
-  EXPECT_EQ(hello.max_urb, 4096u);
+  EXPECT_EQ(hello.max_urb, 49u);
   EXPECT_EQ(hello.max_inflight, 4u);
 
   const auto capability = vector_bytes(vectors, "capability_payload");
