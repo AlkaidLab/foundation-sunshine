@@ -3008,6 +3008,10 @@ namespace stream {
         if (generation != mix_timer_generation) {
           return;
         }
+        reset_playout_clock_if_pending();
+        if (generation != mix_timer_generation) {
+          return;
+        }
         mix_timer_armed = false;
 
         if (ec == boost::asio::error::operation_aborted ||
