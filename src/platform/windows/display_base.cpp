@@ -51,6 +51,11 @@ namespace platf::dxgi {
   duplication_t::init(display_base_t *display, const ::video::config_t &config) {
     HRESULT status;
 
+    // Number of DuplicateOutput attempts before giving up. The backoff between attempts is
+    // only useful when another attempt actually follows, so the last iteration must not sleep.
+    constexpr int max_duplicate_attempts = 2;
+    constexpr auto duplicate_retry_delay = 200ms;
+
     // Capture format will be determined from the first call to AcquireNextFrame()
     display->capture_format = DXGI_FORMAT_UNKNOWN;
 
@@ -68,7 +73,7 @@ namespace platf::dxgi {
         }
 
         // We try this twice, in case we still get an error on reinitialization
-        for (int x = 0; x < 2; ++x) {
+        for (int x = 0; x < max_duplicate_attempts; ++x) {
           // Ensure we can duplicate the current display
           syncThreadDesktop();
 
@@ -76,7 +81,9 @@ namespace platf::dxgi {
           if (SUCCEEDED(status)) {
             break;
           }
-          std::this_thread::sleep_for(200ms);
+          if (x + 1 < max_duplicate_attempts) {
+            std::this_thread::sleep_for(duplicate_retry_delay);
+          }
         }
 
         // We don't retry with DuplicateOutput() because we can hit this codepath when we're racing
@@ -97,7 +104,7 @@ namespace platf::dxgi {
           return -1;
         }
 
-        for (int x = 0; x < 2; ++x) {
+        for (int x = 0; x < max_duplicate_attempts; ++x) {
           // Ensure we can duplicate the current display
           syncThreadDesktop();
 
@@ -105,7 +112,9 @@ namespace platf::dxgi {
           if (SUCCEEDED(status)) {
             break;
           }
-          std::this_thread::sleep_for(200ms);
+          if (x + 1 < max_duplicate_attempts) {
+            std::this_thread::sleep_for(duplicate_retry_delay);
+          }
         }
 
         if (FAILED(status)) {
@@ -532,7 +541,8 @@ namespace platf::dxgi {
     }
 
     // Check if we can use the Desktop Duplication API on this output
-    for (int x = 0; x < 2; ++x) {
+    constexpr int max_duplicate_attempts = 2;
+    for (int x = 0; x < max_duplicate_attempts; ++x) {
       dup_t dup;
 
       // Only resynchronize the thread desktop when not enumerating displays.
@@ -552,7 +562,10 @@ namespace platf::dxgi {
       if (enumeration_only && status == E_ACCESSDENIED) {
         break;
       }
-      else {
+      else if (x + 1 < max_duplicate_attempts) {
+        // Only back off when another attempt follows. This function is called once per
+        // output on every display enumeration, and enumeration itself runs on every
+        // capture reinit, so a trailing sleep here is paid repeatedly for no benefit.
         std::this_thread::sleep_for(200ms);
       }
     }
@@ -586,6 +599,32 @@ namespace platf::dxgi {
   display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
     static std::once_flag windows_cpp_once_flag;
 
+    // Phase timings for the init path. Capture reinit latency is dominated by the fixed
+    // backoffs in this function rather than by steady-state work, so record where the time
+    // actually goes instead of guessing. All stamps start equal so that an early failure
+    // reports zero for the phases it never reached.
+    const auto init_start = std::chrono::steady_clock::now();
+    auto output_selected_at = init_start;
+    auto device_created_at = init_start;
+    auto hdr_probed_at = init_start;
+    int output_select_passes = 0;
+    int dda_test_count = 0;
+    int hdr_metadata_retries = 0;
+
+    auto ms_between = [](std::chrono::steady_clock::time_point from, std::chrono::steady_clock::time_point to) {
+      return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(to - from).count();
+    };
+
+    auto log_init_timing = [&](const char *outcome) {
+      BOOST_LOG(info)
+        << "[Display Init] timing ("sv << outcome << "): total="sv << ms_between(init_start, std::chrono::steady_clock::now()) << "ms"sv
+        << ", output_select="sv << ms_between(init_start, output_selected_at) << "ms"sv
+        << " (passes="sv << output_select_passes << ", dda_tests="sv << dda_test_count << ')'
+        << ", device_create="sv << ms_between(output_selected_at, device_created_at) << "ms"sv
+        << ", hdr_probe="sv << ms_between(device_created_at, hdr_probed_at) << "ms"sv
+        << " (retries="sv << hdr_metadata_retries << ')';
+    };
+
     std::call_once(windows_cpp_once_flag, []() {
       if (auto user32 = LoadLibraryA("user32.dll")) {
         if (auto f = (BOOL(*)(HANDLE)) GetProcAddress(user32, "SetProcessDpiAwarenessContext")) {
@@ -607,6 +646,7 @@ namespace platf::dxgi {
     HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to create DXGIFactory1 [0x"sv << util::hex(status).to_string_view() << ']';
+      log_init_timing("factory create failed");
       return -1;
     }
 
@@ -630,6 +670,7 @@ namespace platf::dxgi {
     //       filter and accept any adapter so a misconfigured / stale
     //       adapter_name doesn't make capture init fail outright.
     for (int tries = 0; tries < 3 && !output; ++tries) {
+      ++output_select_passes;
       if (tries == 1) {
         SetThreadExecutionState(ES_DISPLAY_REQUIRED);
         Sleep(500);
@@ -663,8 +704,13 @@ namespace platf::dxgi {
             continue;
           }
 
-          const bool output_accepted = is_rdp_session ||
-                                       (desc.AttachedToDesktop && test_dxgi_duplication(adapter_tmp, output_tmp, false));
+          // Same short-circuit as before: RDP accepts any enumerated output, and the
+          // (expensive) duplication test only runs for desktop-attached outputs.
+          bool output_accepted = is_rdp_session;
+          if (!output_accepted && desc.AttachedToDesktop) {
+            ++dda_test_count;
+            output_accepted = test_dxgi_duplication(adapter_tmp, output_tmp, false);
+          }
 
           if (output_accepted) {
             BOOST_LOG(is_rdp_session ? info : debug) << "[Display Init] Selected display: " << to_utf8(desc.DeviceName);
@@ -699,8 +745,11 @@ namespace platf::dxgi {
       }
     }
 
+    output_selected_at = std::chrono::steady_clock::now();
+
     if (!output) {
       BOOST_LOG(error) << "Failed to locate an output device"sv;
+      log_init_timing("no output found");
       return -1;
     }
 
@@ -717,6 +766,7 @@ namespace platf::dxgi {
     status = adapter->QueryInterface(IID_IDXGIAdapter, (void **) &adapter_p);
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to query IDXGIAdapter interface"sv;
+      log_init_timing("adapter query failed");
       return -1;
     }
 
@@ -733,8 +783,11 @@ namespace platf::dxgi {
 
     adapter_p->Release();
 
+    device_created_at = std::chrono::steady_clock::now();
+
     if (FAILED(status)) {
       BOOST_LOG(error) << "Failed to create D3D11 device [0x"sv << util::hex(status).to_string_view() << ']';
+      log_init_timing("device create failed");
       return -1;
     }
 
@@ -819,6 +872,7 @@ namespace platf::dxgi {
       status = device->QueryInterface(IID_IDXGIDevice, (void **) &dxgi);
       if (FAILED(status)) {
         BOOST_LOG(warning) << "Failed to query DXGI interface [0x"sv << util::hex(status).to_string_view() << ']';
+        log_init_timing("dxgi device query failed");
         return -1;
       }
 
@@ -862,6 +916,7 @@ namespace platf::dxgi {
 
       if (!is_hdr_metadata_valid(desc1) && !is_rdp_session) {
         for (int retry = 0; retry < 3 && !is_hdr_metadata_valid(desc1); ++retry) {
+          ++hdr_metadata_retries;
           std::this_thread::sleep_for(std::chrono::milliseconds(100 * (1 << retry)));
           output6->GetDesc1(&desc1);
         }
@@ -890,8 +945,11 @@ namespace platf::dxgi {
                                                  "sRGB (G22)");
     }
 
+    hdr_probed_at = std::chrono::steady_clock::now();
+
     if (!timer || !*timer) {
       BOOST_LOG(error) << "Uninitialized high precision timer";
+      log_init_timing("no timer");
       return -1;
     }
 
@@ -900,6 +958,8 @@ namespace platf::dxgi {
     last_hdr_check_time = std::chrono::steady_clock::now();
     cached_sdr_white_nits.reset();
     last_sdr_white_check_time = {};
+
+    log_init_timing("ok");
 
     return 0;
   }
