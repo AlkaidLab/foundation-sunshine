@@ -402,7 +402,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, nextTick, watch } from 'vue'
+import { computed, onMounted, ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
@@ -453,12 +453,17 @@ const {
   enabled: remoteConnectEnabled,
   running: remoteConnectRunning,
   available: remoteConnectAvailable,
-  busy: remoteConnectBusy,
+  busy: remoteConnectRequestBusy,
   error: remoteConnectError,
   loadStatus: loadRemoteConnectStatus,
   setEnabled: setRemoteConnectEnabled,
   reset: resetRemoteConnect,
 } = useRemoteConnect()
+
+const remoteConnectTransitioning = ref(false)
+const remoteConnectBusy = computed(
+  () => remoteConnectRequestBusy.value || remoteConnectTransitioning.value,
+)
 
 const clientToDelete = ref(null)
 
@@ -486,23 +491,39 @@ const handleUnpairAll = async () => {
 
 const handleRemoteConnectToggle = async (event) => {
   const target = event.target
+  if (remoteConnectBusy.value) {
+    target.checked = remoteConnectEnabled.value
+    return
+  }
+
   const enabled = target.checked
   if (enabled && !confirm(t('pin.remote_connect_enable_confirm'))) {
     target.checked = false
     return
   }
 
-  const regenerateQr = qrActive.value
-  if (regenerateQr) await cancelQrCode()
-  const success = await setRemoteConnectEnabled(enabled)
-  target.checked = remoteConnectEnabled.value
-  if (success && regenerateQr) await generateQrCode()
+  remoteConnectTransitioning.value = true
+  try {
+    const regenerateQr = qrActive.value
+    if (regenerateQr) await cancelQrCode()
+    const success = await setRemoteConnectEnabled(enabled)
+    if (success && regenerateQr) await generateQrCode()
+  } finally {
+    target.checked = remoteConnectEnabled.value
+    remoteConnectTransitioning.value = false
+  }
 }
 
 const handleRemoteConnectReset = async () => {
-  if (!confirm(t('pin.remote_connect_reset_confirm'))) return
-  await cancelQrCode()
-  await resetRemoteConnect()
+  if (remoteConnectBusy.value || !confirm(t('pin.remote_connect_reset_confirm'))) return
+
+  remoteConnectTransitioning.value = true
+  try {
+    await cancelQrCode()
+    await resetRemoteConnect()
+  } finally {
+    remoteConnectTransitioning.value = false
+  }
 }
 
 const initTooltips = () => {
