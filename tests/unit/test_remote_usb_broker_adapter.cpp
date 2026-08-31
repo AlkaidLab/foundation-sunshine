@@ -267,6 +267,9 @@ TEST(RemoteUsbBrokerAdapter, OpensAndRoutesCompletePduWithoutReplyInspection) {
   socket.connect(tcp::endpoint(asio::ip::make_address(endpoint->address), endpoint->port), error);
   ASSERT_FALSE(error) << error.message();
   ASSERT_TRUE(perform_import(socket));
+  for (int attempt = 0; attempt < 200 && !adapter.imported(); ++attempt) {
+    std::this_thread::sleep_for(5ms);
+  }
   ASSERT_TRUE(adapter.imported());
 
   constexpr std::uint32_t devid = 0x00010002;
