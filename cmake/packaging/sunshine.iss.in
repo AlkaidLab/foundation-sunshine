@@ -216,6 +216,8 @@ Source: "{#MySourceDir}\scripts\languages\*"; DestDir: "{app}\scripts\languages"
 Source: "{#MySourceDir}\scripts\install-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\scripts\uninstall-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\scripts\sleep.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\stop-process-tree.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\stop-process-tree.ps1"; Flags: dontcopy
 
 ; Migration scripts
 Source: "{#MySourceDir}\scripts\migrate-config.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
@@ -324,11 +326,11 @@ Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeNa
 [UninstallRun]
 ; Remove the per-user GUI startup entry before terminating the agent.
 Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveGUIAutoStart"; Check: FileExists(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'))
-; Stop only the process trees owned by Sunshine. /t includes a Sunshine-owned
-; EasyTier child without terminating a separately launched EasyTier instance.
-Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
-Filename: "taskkill"; Parameters: "/t /f /im sunshine.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshine"
-Filename: "taskkill"; Parameters: "/t /f /im sunshinesvc.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshineSvc"
+; Match the executable path before terminating a process tree. This stops only
+; this installation and its EasyTier child, leaving portable/other installs alone.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\scripts\stop-process-tree.ps1"" -ExecutablePath ""{app}\assets\gui\{#MyAppGUIExeName}"""; Flags: runhidden waituntilterminated; RunOnceId: "KillGUI"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\scripts\stop-process-tree.ps1"" -ExecutablePath ""{app}\{#MyAppExeName}"""; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshine"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\scripts\stop-process-tree.ps1"" -ExecutablePath ""{app}\tools\sunshinesvc.exe"""; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshineSvc"
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
@@ -936,16 +938,33 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
+  ProcessStopScript, ProcessStopParams: String;
 begin
   Result := '';
   // Stop the Sunshine service
   Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Kill any running processes
-  // Kill the Sunshine-owned process tree if graceful service stop did not
-  // terminate every child. This leaves independent EasyTier instances alone.
-  Exec('taskkill', '/t /f /im sunshine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/t /f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // The new helper is embedded in the installer, so it is available before
+  // files from an older installation are replaced.
+  ExtractTemporaryFile('stop-process-tree.ps1');
+  ProcessStopScript := ExpandConstant('{tmp}\stop-process-tree.ps1');
+
+  ProcessStopParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' +
+    AddQuotes(ExpandConstant('{app}\{#MyAppExeName}'));
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), ProcessStopParams,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  ProcessStopParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' +
+    AddQuotes(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'));
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), ProcessStopParams,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  ProcessStopParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' +
+    AddQuotes(ExpandConstant('{app}\tools\sunshinesvc.exe'));
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), ProcessStopParams,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   // Small delay to allow processes to release files
   Sleep(1000);
 end;
