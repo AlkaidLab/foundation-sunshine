@@ -474,6 +474,7 @@ namespace platf::audio {
 
     const auto com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(com_status) && com_status != RPC_E_CHANGED_MODE) {
+      report_mic_redirect_backend({}, "MIC_TEST_COM_FAILED");
       return { false, "MIC_TEST_COM_FAILED", "vb_cable" };
     }
 
