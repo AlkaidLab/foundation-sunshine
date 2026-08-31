@@ -97,6 +97,13 @@ if (NOT BUILD_TESTS)
     return()
 endif ()
 
+set(REMOTE_USB_SOCKET_LIBRARIES)
+set(REMOTE_USB_TLS_PLATFORM_LIBRARIES)
+if (WIN32)
+    list(APPEND REMOTE_USB_SOCKET_LIBRARIES ws2_32)
+    list(APPEND REMOTE_USB_TLS_PLATFORM_LIBRARIES crypt32)
+endif ()
+
 add_executable(loopback_usbip_bridge_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
@@ -106,6 +113,7 @@ target_link_libraries(loopback_usbip_bridge_unit_tests
         Boost::asio
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
         gtest_main)
 target_compile_options(loopback_usbip_bridge_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
@@ -124,6 +132,7 @@ target_link_libraries(remote_usb_broker_adapter_unit_tests
         Boost::asio
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
         gtest_main)
 target_compile_options(remote_usb_broker_adapter_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
@@ -145,6 +154,8 @@ target_link_libraries(remote_usb_broker_server_unit_tests
         Boost::system
         ${OPENSSL_LIBRARIES}
         ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
+        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
         gtest_main)
 target_compile_options(remote_usb_broker_server_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
@@ -164,6 +175,8 @@ target_link_libraries(remote_usb_capability_unit_tests
         Boost::system
         ${OPENSSL_LIBRARIES}
         nlohmann_json::nlohmann_json
+        ${REMOTE_USB_SOCKET_LIBRARIES}
+        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
         gtest_main)
 target_compile_options(remote_usb_capability_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
@@ -194,6 +207,7 @@ target_link_libraries(remote_usb_host_controller_unit_tests
         Boost::process
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
         gtest_main)
 target_compile_options(remote_usb_host_controller_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
