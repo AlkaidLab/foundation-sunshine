@@ -111,7 +111,8 @@ namespace platf::audio {
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual audio device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
-     * @return Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
+     * @return Number of bytes written, 0 when the current frame was dropped due to backpressure,
+     *         -1 on a generic error, or -2 when the device was invalidated.
      */
     int
     write_pcm(const std::int16_t *samples, std::size_t frame_count);
@@ -230,6 +231,8 @@ namespace platf::audio {
     IAudioRenderClient *audio_render = nullptr;
     HANDLE mmcss_task_handle = nullptr;
     WAVEFORMATEX current_format = {};
+    UINT32 buffer_frame_count = 0;
+    std::vector<std::int16_t> pcm_output_buffer;
     VirtualDeviceType virtual_device_type = VirtualDeviceType::NONE;
 
     // Audio device restoration state
