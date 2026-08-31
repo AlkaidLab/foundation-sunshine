@@ -97,6 +97,104 @@ if (NOT BUILD_TESTS)
     return()
 endif ()
 
+add_executable(loopback_usbip_bridge_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
+target_include_directories(loopback_usbip_bridge_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(loopback_usbip_bridge_unit_tests
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        gtest_main)
+target_compile_options(loopback_usbip_bridge_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(loopback_usbip_bridge_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME loopback_usbip_bridge_unit_tests COMMAND loopback_usbip_bridge_unit_tests)
+
+add_executable(remote_usb_broker_adapter_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_broker_adapter.cpp)
+target_include_directories(remote_usb_broker_adapter_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_usb_broker_adapter_unit_tests
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        gtest_main)
+target_compile_options(remote_usb_broker_adapter_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_usb_broker_adapter_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_broker_adapter_unit_tests COMMAND remote_usb_broker_adapter_unit_tests)
+
+add_executable(remote_usb_broker_server_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_broker_server.cpp)
+target_include_directories(remote_usb_broker_server_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_usb_broker_server_unit_tests
+        Boost::system
+        ${OPENSSL_LIBRARIES}
+        ${CMAKE_THREAD_LIBS_INIT}
+        gtest_main)
+target_compile_options(remote_usb_broker_server_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_usb_broker_server_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_broker_server_unit_tests COMMAND remote_usb_broker_server_unit_tests)
+
+add_executable(remote_usb_capability_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_http.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_capability.cpp)
+target_include_directories(remote_usb_capability_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_usb_capability_unit_tests
+        Boost::system
+        ${OPENSSL_LIBRARIES}
+        gtest_main)
+target_compile_options(remote_usb_capability_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_usb_capability_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_capability_unit_tests COMMAND remote_usb_capability_unit_tests)
+
+add_executable(remote_usb_tombstone_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_tombstone.cpp)
+target_include_directories(remote_usb_tombstone_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_usb_tombstone_unit_tests gtest_main)
+target_compile_options(remote_usb_tombstone_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_usb_tombstone_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_tombstone_unit_tests COMMAND remote_usb_tombstone_unit_tests)
+
+add_executable(remote_usb_host_controller_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp)
+target_include_directories(remote_usb_host_controller_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_usb_host_controller_unit_tests
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        gtest_main)
+target_compile_options(remote_usb_host_controller_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_usb_host_controller_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_host_controller_unit_tests COMMAND remote_usb_host_controller_unit_tests)
+
 # modify SUNSHINE_DEFINITIONS
 if (WIN32)
     list(APPEND
@@ -318,4 +416,3 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
-

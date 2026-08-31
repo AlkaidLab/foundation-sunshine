@@ -50,6 +50,14 @@ namespace nvhttp {
   constexpr auto PORT_HTTPS = -5;
 
   /**
+   * Remote USB broker TLS port, relative to Sunshine's configurable base port.
+   * The broker is a raw, independently authenticated byte stream and cannot
+   * share the GameStream HTTPS listener.  Keeping it adjacent to the base
+   * port preserves custom-port deployments without exposing USB/IP 3240.
+   */
+  constexpr auto PORT_REMOTE_USB = 1;
+
+  /**
    * @brief Start the nvhttp server.
    * @examples
    * nvhttp::start();

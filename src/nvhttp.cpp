@@ -10,6 +10,8 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <shared_mutex>
@@ -24,6 +26,7 @@
 #include <Simple-Web-Server/server_http.hpp>
 #include <boost/atomic.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -62,6 +65,10 @@
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "process.h"
+#include "remote_usb/remote_usb_broker_server.h"
+#include "remote_usb/remote_usb_http.h"
+#include "remote_usb/remote_usb_host_controller.h"
+#include "remote_usb/remote_usb_tombstone.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "tray/system_tray.h"
@@ -212,6 +219,266 @@ namespace nvhttp {
   using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
   using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
   using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
+
+  namespace {
+
+    bool
+    remote_usb_valid_port(std::string_view value) noexcept {
+      if (value.empty() || value.size() > 5) {
+        return false;
+      }
+      std::uint32_t port = 0;
+      const auto result = std::from_chars(value.data(), value.data() + value.size(), port, 10);
+      return result.ec == std::errc {} && result.ptr == value.data() + value.size() &&
+             port != 0 && port <= 65535;
+    }
+
+    bool
+    remote_usb_valid_reg_name(std::string_view value) noexcept {
+      /* Keep the accepted set deliberately narrower than RFC 3986's reg-name:
+       * it covers DNS, mDNS and ordinary host aliases while excluding userinfo,
+       * percent escapes, path separators and other ambiguous authority syntax. */
+      if (value.empty() || value.size() > 253 || value.front() == '.' ||
+          value.front() == '-') {
+        return false;
+      }
+      /* A single trailing dot is the canonical fully-qualified DNS spelling. */
+      if (value.back() == '.') {
+        value.remove_suffix(1);
+      }
+      if (value.empty() || value.back() == '-') {
+        return false;
+      }
+      std::size_t label_start = 0;
+      for (std::size_t index = 0; index <= value.size(); ++index) {
+        if (index == value.size() || value[index] == '.') {
+          if (index == label_start) {
+            return false;
+          }
+          const auto label_size = index - label_start;
+          if (label_size > 63 || value[label_start] == '-' ||
+              value[index - 1] == '-') {
+            return false;
+          }
+          label_start = index + 1;
+          continue;
+        }
+        const auto byte = static_cast<unsigned char>(value[index]);
+        if (!(std::isalnum(byte) || byte == '-' || byte == '_')) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    bool
+    remote_usb_unspecified_literal(std::string_view host) noexcept {
+      boost::system::error_code error;
+      const auto address = boost::asio::ip::make_address(host, error);
+      return !error && address.is_unspecified();
+    }
+
+    /** Parse an HTTP authority and return a host without brackets or port. */
+    std::string
+    remote_usb_parse_authority(std::string_view authority) {
+      if (authority.empty() || authority.size() > 512) {
+        return {};
+      }
+      for (const auto byte : authority) {
+        const auto value = static_cast<unsigned char>(byte);
+        if (value <= 0x20u || value >= 0x7fu) {
+          return {};
+        }
+      }
+
+      std::string_view host = authority;
+      if (authority.front() == '[') {
+        const auto closing = authority.find(']');
+        if (closing == std::string_view::npos || closing <= 1 ||
+            authority.find('[', 1) != std::string_view::npos ||
+            authority.find(']', closing + 1) != std::string_view::npos) {
+          return {};
+        }
+        host = authority.substr(1, closing - 1);
+        boost::system::error_code error;
+        const auto address = boost::asio::ip::make_address(host, error);
+        if (error || !address.is_v6() || address.is_unspecified()) {
+          return {};
+        }
+        if (closing + 1 < authority.size()) {
+          if (authority[closing + 1] != ':' ||
+              !remote_usb_valid_port(authority.substr(closing + 2))) {
+            return {};
+          }
+        }
+        return std::string { host };
+      }
+
+      if (authority.find('[') != std::string_view::npos ||
+          authority.find(']') != std::string_view::npos) {
+        return {};
+      }
+      const auto first_colon = authority.find(':');
+      if (first_colon != std::string_view::npos) {
+        /* IPv6 literals must use the bracketed authority form. */
+        if (first_colon != authority.rfind(':') ||
+            !remote_usb_valid_port(authority.substr(first_colon + 1))) {
+          return {};
+        }
+        host = authority.substr(0, first_colon);
+      }
+      if (!remote_usb_valid_reg_name(host) || remote_usb_unspecified_literal(host)) {
+        return {};
+      }
+      return std::string { host };
+    }
+
+    /**
+     * Return the concrete local address selected for the authenticated TLS
+     * socket.  A valid Host header is parsed as a fallback, but is never used
+     * when the kernel can report the actual destination interface; this keeps
+     * a client-controlled Host value from redirecting the broker endpoint.
+     */
+    std::string
+    remote_usb_request_host(const req_https_t &request) {
+      if (!request) {
+        return {};
+      }
+
+      std::string parsed_host;
+      const auto it = request->header.find("host");
+      if (it != request->header.end()) {
+        if (request->header.count("host") != 1) {
+          /* Multiple Host fields are ambiguous and should have been rejected
+           * by the HTTP parser; fail closed if one reaches the route. */
+          return {};
+        }
+        parsed_host = remote_usb_parse_authority(it->second);
+        if (parsed_host.empty()) {
+          return {};
+        }
+      }
+
+      try {
+        const auto local = request->local_endpoint();
+        if (local.port() != 0 && !local.address().is_unspecified()) {
+          return local.address().to_string();
+        }
+      }
+      catch (const std::exception &) {
+        /* Fall back to the already validated Host authority below. */
+      }
+      return parsed_host;
+    }
+
+    /**
+     * Canonicalize the current Moonlight uniqueid for the optional wire
+     * identity binding.  The fixed-width HELLO can carry either the legacy
+     * 16-byte ASCII hex identity or an opaque 16-byte identity represented by
+     * its 32-character uppercase hex rendering (used for UUID/hashed IDs).
+     */
+    std::string
+    remote_usb_wire_identity(const std::string &value) {
+      if ((value.size() != 16 && value.size() != 32) ||
+          !std::all_of(value.begin(), value.end(), [](unsigned char byte) {
+            return std::isxdigit(byte) != 0;
+          })) {
+        return {};
+      }
+
+      std::string normalized = value;
+      std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char byte) {
+        return static_cast<char>(std::toupper(byte));
+      });
+      return normalized;
+    }
+
+    std::string
+    remote_usb_wire_identity(const std::array<std::uint8_t, 16> &value) {
+      const bool printable = std::all_of(value.begin(), value.end(), [](std::uint8_t byte) {
+        return std::isprint(static_cast<unsigned char>(byte)) != 0;
+      });
+      if (printable) {
+        std::string text(reinterpret_cast<const char *>(value.data()), value.size());
+        if (const auto normalized = remote_usb_wire_identity(text); !normalized.empty()) {
+          return normalized;
+        }
+      }
+
+      static constexpr char hex[] = "0123456789ABCDEF";
+      std::string encoded;
+      encoded.reserve(value.size() * 2);
+      for (const auto byte : value) {
+        encoded.push_back(hex[(byte >> 4) & 0x0Fu]);
+        encoded.push_back(hex[byte & 0x0Fu]);
+      }
+      return encoded;
+    }
+
+    struct remote_usb_identity_key {
+      std::uint64_t stream_generation { 0 };
+      std::uint64_t session_token { 0 };
+      std::uint64_t attachment_token { 0 };
+      std::uint64_t lease_token { 0 };
+
+      friend bool operator==(const remote_usb_identity_key &lhs,
+                             const remote_usb_identity_key &rhs) noexcept {
+        return lhs.stream_generation == rhs.stream_generation &&
+               lhs.session_token == rhs.session_token &&
+               lhs.attachment_token == rhs.attachment_token &&
+               lhs.lease_token == rhs.lease_token;
+      }
+    };
+
+    struct remote_usb_identity_key_hash {
+      std::size_t operator()(const remote_usb_identity_key &value) const noexcept {
+        /* SplitMix-style mixing keeps adjacent token values from clustering in
+         * the unordered maps without exposing the values in diagnostics. */
+        const auto mix = [](std::uint64_t input) {
+          input += 0x9e3779b97f4a7c15ULL;
+          input = (input ^ (input >> 30)) * 0xbf58476d1ce4e5b9ULL;
+          input = (input ^ (input >> 27)) * 0x94d049bb133111ebULL;
+          return input ^ (input >> 31);
+        };
+        const auto first = mix(value.stream_generation);
+        const auto second = mix(value.session_token + first);
+        const auto third = mix(value.attachment_token + second);
+        const auto fourth = mix(value.lease_token + third);
+        return static_cast<std::size_t>(fourth ^ (fourth >> 32));
+      }
+    };
+
+    remote_usb_identity_key
+    remote_usb_identity(const remote_usb::session_binding &binding) noexcept {
+      return {
+        binding.stream_generation,
+        binding.session_token,
+        binding.attachment_token,
+        binding.lease_token,
+      };
+    }
+
+    remote_usb_identity_key
+    remote_usb_identity(const remote_usb::usbip_host_identity &identity) noexcept {
+      return {
+        0,
+        identity.session_token,
+        identity.attachment_token,
+        identity.lease_token,
+      };
+    }
+
+    remote_usb_identity_key
+    remote_usb_identity(const remote_usb::usbip_host_binding &binding) noexcept {
+      return {
+        binding.stream_generation,
+        binding.identity.session_token,
+        binding.identity.attachment_token,
+        binding.identity.lease_token,
+      };
+    }
+
+  }  // namespace
 
   // Get the client certificate UUID authenticated on this request's TLS connection.
   std::string
@@ -1052,6 +1319,317 @@ namespace nvhttp {
     file_mapping_config.authorize_client = is_file_mapping_client_paired;
     file_mapping_service.start(std::move(file_mapping_config));
 
+    /*
+     * The Remote USB broker is a separate raw TLS byte listener.  It shares
+     * the nvhttp certificate and pairing database, but never shares the
+     * GameStream HTTP/RTSP sockets or the public USB/IP port.  Capabilities
+     * are issued below only after this listener has bound successfully.
+     */
+    /* The loopback endpoint is deliberately short-lived.  Keep host attach
+     * state outside broker_session so a disconnect can cancel an in-flight
+     * usbip-win2 ioctl and detach a port that completed concurrently. */
+    remote_usb::usbip_host_controller remote_usb_host_controller;
+    const bool remote_usb_host_supported =
+      remote_usb_host_controller.backend_supported();
+    if (!remote_usb_host_supported) {
+      /* Do not advertise a transport that this build cannot complete.  The
+       * capability route below returns a stable 503 reason instead of
+       * allowing a client to reach OPEN and fail after consuming a lease. */
+      BOOST_LOG(info) << "Remote USB is disabled: no compatible host USB/IP backend";
+    }
+    std::mutex remote_usb_host_mutex;
+    using remote_usb_host_binding_map = std::unordered_map<
+      remote_usb_identity_key,
+      remote_usb::usbip_host_binding,
+      remote_usb_identity_key_hash>;
+    struct remote_usb_host_operation {
+      /* `attempt` is allocated before dispatch.  A completion can race the
+       * return from attach(), so the operation id alone is not enough to
+       * distinguish an old callback from a newer connection reusing tokens. */
+      std::uint64_t attempt { 0 };
+      remote_usb::usbip_host_controller::operation_id id { 0 };
+    };
+    using remote_usb_host_operation_map = std::unordered_map<
+      remote_usb_identity_key,
+      remote_usb_host_operation,
+      remote_usb_identity_key_hash>;
+    using remote_usb_host_identity_set = std::unordered_set<
+      remote_usb_identity_key,
+      remote_usb_identity_key_hash>;
+    using remote_usb_closed_identity_set = remote_usb::bounded_tombstone_set<
+      remote_usb_identity_key,
+      remote_usb_identity_key_hash>;
+    remote_usb_host_binding_map remote_usb_attached_bindings;
+    remote_usb_host_operation_map remote_usb_attach_operations;
+    remote_usb_closed_identity_set remote_usb_closed_identities;
+    remote_usb_host_identity_set remote_usb_detach_scheduled;
+    std::uint64_t remote_usb_next_attach_attempt { 1 };
+
+    const auto remote_usb_allocate_attach_attempt = [&]() {
+      for (;;) {
+        auto candidate = remote_usb_next_attach_attempt++;
+        if (remote_usb_next_attach_attempt == 0) {
+          remote_usb_next_attach_attempt = 1;
+        }
+        if (candidate == 0) {
+          continue;
+        }
+        const auto used = std::any_of(
+          remote_usb_attach_operations.begin(), remote_usb_attach_operations.end(),
+          [candidate](const auto &entry) { return entry.second.attempt == candidate; });
+        if (!used) {
+          return candidate;
+        }
+      }
+    };
+
+    const auto remote_usb_adapter_status = [](remote_usb::usbip_host_status status) {
+      switch (status) {
+        case remote_usb::usbip_host_status::ok:
+          return remote_usb::adapter_status::ok;
+        case remote_usb::usbip_host_status::invalid_argument:
+          return remote_usb::adapter_status::invalid_argument;
+        case remote_usb::usbip_host_status::unsupported:
+          return remote_usb::adapter_status::unsupported;
+        case remote_usb::usbip_host_status::busy:
+        case remote_usb::usbip_host_status::stopped:
+        case remote_usb::usbip_host_status::cancelled:
+          return remote_usb::adapter_status::invalid_state;
+        case remote_usb::usbip_host_status::launch_failed:
+        case remote_usb::usbip_host_status::attach_failed:
+        case remote_usb::usbip_host_status::detach_failed:
+        case remote_usb::usbip_host_status::timed_out:
+          return remote_usb::adapter_status::bridge_failure;
+      }
+      return remote_usb::adapter_status::bridge_failure;
+    };
+
+    /* Deduplicate detach requests issued by a close callback and by a late
+     * attach completion racing that callback. */
+    const auto remote_usb_schedule_detach =
+      [&](remote_usb::usbip_host_binding binding) {
+        const auto identity = remote_usb_identity(binding);
+        {
+          std::lock_guard lock(remote_usb_host_mutex);
+          if (!remote_usb_detach_scheduled.insert(identity).second) {
+            return;
+          }
+        }
+        remote_usb::usbip_host_controller::operation_id operation = 0;
+        try {
+          operation = remote_usb_host_controller.detach(
+            std::move(binding),
+            [&, identity](remote_usb::usbip_host_result result) {
+              {
+                std::lock_guard lock(remote_usb_host_mutex);
+                remote_usb_detach_scheduled.erase(identity);
+              }
+              if (!result.ok()) {
+                BOOST_LOG(debug) << "Remote USB host detach did not complete";
+              }
+            });
+        } catch (...) {
+          /* A failed worker allocation must not strand the de-duplication
+           * marker; a later close or retry still needs to be able to issue
+           * cleanup. */
+          std::lock_guard lock(remote_usb_host_mutex);
+          remote_usb_detach_scheduled.erase(identity);
+          BOOST_LOG(debug) << "Remote USB host detach dispatch failed";
+          return;
+        }
+        if (operation == 0) {
+          std::lock_guard lock(remote_usb_host_mutex);
+          remote_usb_detach_scheduled.erase(identity);
+        }
+      };
+
+    remote_usb::capability_store remote_usb_capability_store;
+    auto remote_usb_broker = std::make_shared<remote_usb::broker_server>(
+      remote_usb::broker_server_config {
+        .bind_address = bind_address.empty() ? "0.0.0.0" : bind_address,
+        /* Bind an ephemeral broker port.  The capability response carries the
+         * actual bound port, so no fixed public USB/IP port is exposed and
+         * custom Sunshine base-port mappings cannot collide. */
+        .port = 0,
+        .certificate_file = config::nvhttp.cert,
+        .private_key_file = config::nvhttp.pkey,
+        .capabilities = &remote_usb_capability_store,
+        .client_certificate_uuid = [](SSL *ssl) {
+          if (ssl == nullptr) {
+            return std::string {};
+          }
+          crypto::x509_t peer {
+#if OPENSSL_VERSION_MAJOR >= 3
+            SSL_get1_peer_certificate(ssl)
+#else
+            SSL_get_peer_certificate(ssl)
+#endif
+          };
+          return peer ? pairing::client_uuid_for_cert(peer.get()) : std::string {};
+        },
+        .authorize_client = [](std::string_view,
+                               const remote_usb::broker_hello &hello,
+                               const remote_usb::capability &capability) {
+          return remote_usb::capability_store::matches_wire_identity(
+            capability, hello.wire_client_uuid);
+        },
+        .on_local_endpoint_ready =
+          [&](const remote_usb::endpoint &local_endpoint,
+              const remote_usb::session_binding &session,
+              remote_usb::local_endpoint_ready_completion completion) {
+            const auto identity = remote_usb_identity(session);
+            std::uint64_t attempt = 0;
+            bool reject = false;
+            {
+              std::lock_guard lock(remote_usb_host_mutex);
+              if (remote_usb_attach_operations.contains(identity) ||
+                  remote_usb_attached_bindings.contains(identity)) {
+                reject = true;
+              } else {
+                remote_usb_closed_identities.erase(identity);
+                attempt = remote_usb_allocate_attach_attempt();
+                remote_usb_attach_operations.emplace(
+                  identity, remote_usb_host_operation { attempt, 0 });
+              }
+            }
+            if (reject) {
+              completion(false, remote_usb::adapter_status::invalid_state);
+              return;
+            }
+
+            remote_usb::usbip_host_request request;
+            request.server_endpoint = local_endpoint;
+            request.identity = {
+              session.session_token,
+              session.attachment_token,
+              session.lease_token,
+            };
+            request.stream_generation = session.stream_generation;
+            remote_usb::usbip_host_controller::operation_id operation = 0;
+            try {
+              operation = remote_usb_host_controller.attach(
+                std::move(request),
+                [&, identity, attempt, completion = std::move(completion)](
+                  remote_usb::usbip_host_result result) mutable {
+                  bool abandoned = false;
+                  if (result.ok() && result.binding) {
+                    std::lock_guard lock(remote_usb_host_mutex);
+                    const auto operation_it = remote_usb_attach_operations.find(identity);
+                    const bool current_attempt =
+                      operation_it != remote_usb_attach_operations.end() &&
+                      operation_it->second.attempt == attempt;
+                    if (current_attempt) {
+                      remote_usb_attach_operations.erase(operation_it);
+                    }
+                    if (!current_attempt || remote_usb_closed_identities.contains(identity)) {
+                      abandoned = true;
+                    } else {
+                      remote_usb_attached_bindings[identity] = *result.binding;
+                    }
+                  } else {
+                    std::lock_guard lock(remote_usb_host_mutex);
+                    const auto operation_it = remote_usb_attach_operations.find(identity);
+                    const bool current_attempt =
+                      operation_it != remote_usb_attach_operations.end() &&
+                      operation_it->second.attempt == attempt;
+                    if (current_attempt) {
+                      remote_usb_attach_operations.erase(operation_it);
+                    }
+                    abandoned = !current_attempt ||
+                               remote_usb_closed_identities.contains(identity);
+                  }
+
+                  if (abandoned) {
+                    if (result.binding) {
+                      remote_usb_schedule_detach(*result.binding);
+                    }
+                    return;
+                  }
+                  completion(
+                    result.ok(),
+                    result.ok() ? remote_usb::adapter_status::ok
+                                : remote_usb_adapter_status(result.status));
+                });
+            }
+            catch (...) {
+              /* The reservation was installed before dispatch so a close can
+               * cancel a worker immediately.  If dispatch itself throws,
+               * remove only this attempt and let broker_adapter's surrounding
+               * handler complete OPEN with a bridge failure. */
+              std::lock_guard lock(remote_usb_host_mutex);
+              const auto operation_it = remote_usb_attach_operations.find(identity);
+              if (operation_it != remote_usb_attach_operations.end() &&
+                  operation_it->second.attempt == attempt) {
+                remote_usb_attach_operations.erase(operation_it);
+              }
+              throw;
+            }
+
+            if (operation == 0) {
+              /* dispatch() already delivered a terminal result to completion;
+               * erase only our reservation in case that callback was unable to
+               * run (for example, a future runner rejects before dispatch). */
+              std::lock_guard lock(remote_usb_host_mutex);
+              const auto operation_it = remote_usb_attach_operations.find(identity);
+              if (operation_it != remote_usb_attach_operations.end() &&
+                  operation_it->second.attempt == attempt) {
+                remote_usb_attach_operations.erase(operation_it);
+              }
+              return;
+            }
+            bool cancel_now = false;
+            {
+              std::lock_guard lock(remote_usb_host_mutex);
+              const auto operation_it = remote_usb_attach_operations.find(identity);
+              if (remote_usb_closed_identities.contains(identity) ||
+                  remote_usb_attached_bindings.contains(identity) ||
+                  operation_it == remote_usb_attach_operations.end() ||
+                  operation_it->second.attempt != attempt) {
+                cancel_now = true;
+              } else {
+                operation_it->second.id = operation;
+              }
+            }
+            if (cancel_now) {
+              (void)remote_usb_host_controller.cancel(operation);
+            }
+          },
+        .on_session_closed =
+          [&](const remote_usb::session_binding &session,
+              remote_usb::close_reason) {
+            const auto identity = remote_usb_identity(session);
+            remote_usb::usbip_host_controller::operation_id operation = 0;
+            std::optional<remote_usb::usbip_host_binding> binding;
+            {
+              std::lock_guard lock(remote_usb_host_mutex);
+              remote_usb_closed_identities.insert(identity);
+              if (const auto it = remote_usb_attach_operations.find(identity);
+                  it != remote_usb_attach_operations.end()) {
+                operation = it->second.id;
+                remote_usb_attach_operations.erase(it);
+              }
+              if (const auto it = remote_usb_attached_bindings.find(identity);
+                  it != remote_usb_attached_bindings.end()) {
+                binding = it->second;
+                remote_usb_attached_bindings.erase(it);
+              }
+            }
+            if (operation != 0) {
+              (void)remote_usb_host_controller.cancel(operation);
+            }
+            if (binding) {
+              remote_usb_schedule_detach(std::move(*binding));
+            }
+          },
+      });
+    if (remote_usb_host_supported) {
+      const auto remote_usb_broker_result = remote_usb_broker->start();
+      if (!remote_usb_broker_result) {
+        BOOST_LOG(warning) << "Remote USB broker is unavailable: "
+                           << remote_usb_broker_result.error;
+      }
+    }
+
     network_probe::service_t network_probe_service;
     https_server_t https_server { config::nvhttp.cert, config::nvhttp.pkey };
     http_server_t http_server;
@@ -1155,6 +1733,165 @@ namespace nvhttp {
         resp->write(out.status, out.body, out.headers);
       };
 
+    /*
+     * Issue a short-lived, one-shot capability for the independent Remote
+     * USB broker.  The HTTPS connection has already passed the paired-client
+     * certificate verifier above; the certificate UUID is therefore the
+     * authenticated identity, while the 16-byte client uniqueid and the three
+     * lease tokens are retained as independent HELLO bindings (the identities
+     * are intentionally distinct in Sunshine's pairing state).
+     */
+    https_server.resource["^/api/v1/remote-usb/capability$"]["GET"] =
+      [&](resp_https_t resp, req_https_t req) {
+        if (!remote_usb_host_supported) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::server_error_service_unavailable,
+            "unsupported_platform");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+        const auto args = req->parse_query_string();
+        const auto generation_it = args.find("stream_generation");
+        if (generation_it == args.end() || args.count("stream_generation") != 1) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::client_error_bad_request,
+            "invalid_generation");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        /*
+         * Lease tokens are bearer material. New clients send them in
+         * dedicated HTTPS headers so they never appear in request URLs or
+         * the access logs of a reverse proxy. Keep a query fallback for older
+         * clients during the protocol migration, but reject a partial or
+         * ambiguous header tuple instead of silently mixing sources.
+         */
+        std::string session_token;
+        std::string attachment_token;
+        std::string lease_token;
+        const auto read_unique_header = [&](const std::string &name,
+                                             std::string &value) {
+          if (req->header.count(name) != 1) {
+            return false;
+          }
+          const auto it = req->header.find(name);
+          if (it == req->header.end()) {
+            return false;
+          }
+          value = it->second;
+          return true;
+        };
+        const bool has_token_header =
+          req->header.count("X-Remote-USB-Session-Token") != 0 ||
+          req->header.count("X-Remote-USB-Attachment-Token") != 0 ||
+          req->header.count("X-Remote-USB-Lease-Token") != 0;
+        if (has_token_header) {
+          if (!read_unique_header("X-Remote-USB-Session-Token", session_token) ||
+              !read_unique_header("X-Remote-USB-Attachment-Token", attachment_token) ||
+              !read_unique_header("X-Remote-USB-Lease-Token", lease_token) ||
+              args.count("session_token") != 0 ||
+              args.count("attachment_token") != 0 ||
+              args.count("lease_token") != 0) {
+            const auto out = remote_usb_http::make_error_response(
+              SimpleWeb::StatusCode::client_error_bad_request,
+              "ambiguous_token_binding");
+            resp->write(out.status, out.body, out.headers);
+            return;
+          }
+        }
+        else {
+          const auto session_it = args.find("session_token");
+          const auto attachment_it = args.find("attachment_token");
+          const auto lease_it = args.find("lease_token");
+          if (session_it == args.end() || attachment_it == args.end() ||
+              lease_it == args.end() || args.count("session_token") != 1 ||
+              args.count("attachment_token") != 1 || args.count("lease_token") != 1) {
+            const auto out = remote_usb_http::make_error_response(
+              SimpleWeb::StatusCode::client_error_bad_request,
+              "missing_token");
+            resp->write(out.status, out.body, out.headers);
+            return;
+          }
+          session_token = session_it->second;
+          attachment_token = attachment_it->second;
+          lease_token = lease_it->second;
+        }
+
+        std::string parse_error;
+        const auto request = remote_usb_http::parse_capability_request(
+          generation_it->second,
+          session_token,
+          attachment_token,
+          lease_token,
+          parse_error);
+        if (!request) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::client_error_bad_request,
+            "invalid_token_binding", parse_error);
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        const auto client_uuid = get_client_cert_uuid_from_request(req);
+        if (client_uuid.empty()) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::client_error_unauthorized,
+            "client_not_paired");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        const auto uniqueid_it = args.find("uniqueid");
+        if (uniqueid_it == args.end() || args.count("uniqueid") != 1) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::client_error_bad_request,
+            "missing_uniqueid");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        const auto wire_identity = remote_usb_wire_identity(uniqueid_it->second);
+        if (wire_identity.empty()) {
+          /* The v1 Android/native exporter uses a 16-byte ASCII hex ID.  Do
+           * not issue a capability that cannot be bound to that HELLO. */
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::client_error_bad_request,
+            "invalid_uniqueid");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        const auto endpoint_host = remote_usb_request_host(req);
+        const auto endpoint_port = remote_usb_broker->bound_port();
+        if (endpoint_host.empty() || endpoint_port == 0) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::server_error_service_unavailable,
+            "broker_unavailable");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        const auto issued = remote_usb_capability_store.issue(
+          client_uuid,
+          request->stream_generation,
+          remote_usb::capability_endpoint { endpoint_host, endpoint_port },
+          wire_identity,
+          request->session_token,
+          request->attachment_token,
+          request->lease_token);
+        if (!issued) {
+          const auto out = remote_usb_http::make_error_response(
+            SimpleWeb::StatusCode::client_error_too_many_requests,
+            "capability_limit");
+          resp->write(out.status, out.body, out.headers);
+          return;
+        }
+
+        const auto out = remote_usb_http::make_capability_response(*issued);
+        resp->write(out.status, out.body, out.headers);
+      };
+
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
     https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
@@ -1237,12 +1974,29 @@ namespace nvhttp {
     // Wait for any event
     shutdown_event->view();
 
-    file_mapping_service.stop();
+    /* Stop the public HTTP listeners first.  Once their worker threads have
+     * joined, no capability request or route callback can race broker/host
+     * teardown below. */
     https_server.stop();
     http_server.stop();
-
     ssl.join();
     tcp.join();
+
+    /* Stop the raw broker before destroying its capability store.  This also
+     * closes any TLS sessions that may still be consuming a one-shot nonce. */
+    remote_usb_broker->stop();
+    /* Join/cancel usbip-win2 workers only after broker sessions have notified
+     * the host binding registry.  The controller's stop path retries every
+     * accepted binding that was not already detached by a session close. */
+    remote_usb_host_controller.stop();
+    {
+      std::lock_guard lock(remote_usb_host_mutex);
+      remote_usb_attach_operations.clear();
+      remote_usb_attached_bindings.clear();
+      remote_usb_closed_identities.clear();
+      remote_usb_detach_scheduled.clear();
+    }
+    file_mapping_service.stop();
   }
 
 }  // namespace nvhttp
