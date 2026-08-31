@@ -31,10 +31,20 @@ namespace {
     release_runtime_start = false;
   }
 
-  void
+  bool
   wait_for_runtime_start() {
+    using namespace std::chrono_literals;
+
     std::unique_lock lock(runtime_mutex);
-    runtime_condition.wait(lock, []() { return runtime_start_entered; });
+    if (runtime_condition.wait_for(lock, 5s, []() { return runtime_start_entered; })) {
+      return true;
+    }
+
+    // Never leave the async start blocked when the test barrier times out.
+    release_runtime_start = true;
+    lock.unlock();
+    runtime_condition.notify_all();
+    return false;
   }
 
   void
@@ -141,7 +151,7 @@ TEST(RemoteConnectService, PairingSnapshotSerializesConcurrentDisable) {
   auto pairing_future = std::async(std::launch::async, []() {
     return remote_connect::prepare_pairing();
   });
-  wait_for_runtime_start();
+  ASSERT_TRUE(wait_for_runtime_start()) << "EasyTier runtime start did not reach the test barrier";
 
   std::promise<void> disable_started;
   auto disable_future = std::async(std::launch::async, [&disable_started]() {
@@ -174,7 +184,7 @@ TEST(RemoteConnectService, PairingSnapshotSerializesConcurrentCredentialReset) {
   auto pairing_future = std::async(std::launch::async, []() {
     return remote_connect::prepare_pairing();
   });
-  wait_for_runtime_start();
+  ASSERT_TRUE(wait_for_runtime_start()) << "EasyTier runtime start did not reach the test barrier";
 
   std::promise<void> reset_started;
   auto reset_future = std::async(std::launch::async, [&reset_started]() {

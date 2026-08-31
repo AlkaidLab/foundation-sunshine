@@ -324,12 +324,11 @@ Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeNa
 [UninstallRun]
 ; Remove the per-user GUI startup entry before terminating the agent.
 Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveGUIAutoStart"; Check: FileExists(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'))
-; Stop running processes first. We force-kill the service binary
-; (sunshinesvc.exe) here as well, otherwise `sc stop` later may block waiting
-; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
+; Stop only the process trees owned by Sunshine. /t includes a Sunshine-owned
+; EasyTier child without terminating a separately launched EasyTier instance.
 Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
-Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
-Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+Filename: "taskkill"; Parameters: "/t /f /im sunshine.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshine"
+Filename: "taskkill"; Parameters: "/t /f /im sunshinesvc.exe"; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshineSvc"
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
@@ -942,9 +941,11 @@ begin
   // Stop the Sunshine service
   Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   // Kill any running processes
-  Exec('taskkill', '/f /im sunshine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Kill the Sunshine-owned process tree if graceful service stop did not
+  // terminate every child. This leaves independent EasyTier instances alone.
+  Exec('taskkill', '/t /f /im sunshine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill', '/t /f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   // Small delay to allow processes to release files
   Sleep(1000);
 end;
