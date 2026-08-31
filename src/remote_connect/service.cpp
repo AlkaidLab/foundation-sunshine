@@ -108,7 +108,7 @@ namespace remote_connect {
           updates["remote_connect_network_secret"] = config::nvhttp.remote_connect_network_secret;
         }
         if (config::nvhttp.remote_connect_peer.empty()) {
-          config::nvhttp.remote_connect_peer = "udp://public.easytier.top:11010";
+          config::nvhttp.remote_connect_peer = default_peer;
           updates["remote_connect_peer"] = config::nvhttp.remote_connect_peer;
         }
 
@@ -143,15 +143,7 @@ namespace remote_connect {
     bool
     start_locked() {
       if (!ensure_config_locked()) return false;
-      const bool started = runtime.start(enrollment_t {
-                                           config::nvhttp.remote_connect_profile,
-                                           config::nvhttp.remote_connect_virtual_ip,
-                                           config::nvhttp.remote_connect_network_name,
-                                           config::nvhttp.remote_connect_network_secret,
-                                           config::nvhttp.remote_connect_peer,
-                                         },
-                                         config::nvhttp.sunshine_name,
-                                         last_error);
+      const bool started = runtime.start(current_enrollment(), config::nvhttp.sunshine_name, last_error);
       if (started) last_error.clear();
       return started;
     }
@@ -169,18 +161,6 @@ namespace remote_connect {
     return status_locked();
   }
 
-  enrollment_t
-  enrollment() {
-    std::lock_guard lock(service_mutex);
-    return {
-      config::nvhttp.remote_connect_profile,
-      config::nvhttp.remote_connect_virtual_ip,
-      config::nvhttp.remote_connect_network_name,
-      config::nvhttp.remote_connect_network_secret,
-      config::nvhttp.remote_connect_peer,
-    };
-  }
-
   pairing_state_t
   prepare_pairing() {
     std::lock_guard lock(service_mutex);
@@ -191,12 +171,6 @@ namespace remote_connect {
       return { false, true, std::nullopt, last_error };
     }
     return { true, true, current_enrollment(), {} };
-  }
-
-  bool
-  start() {
-    std::lock_guard lock(service_mutex);
-    return start_locked();
   }
 
   void
@@ -255,7 +229,7 @@ namespace remote_connect {
         random_virtual_ip(),
         "remote-" + seed.substr(0, 20),
         random_hex(32),
-        previous.peer.empty() ? "udp://public.easytier.top:11010" : previous.peer,
+        previous.peer.empty() ? default_peer : previous.peer,
       };
 
       runtime.stop();

@@ -6,16 +6,10 @@ namespace remote_connect {
   status_t
   status();
 
-  enrollment_t
-  enrollment();
-
   // Atomically observe the enabled state, start the runtime when needed, and
   // snapshot the credentials used by that runtime.
   pairing_state_t
   prepare_pairing();
-
-  bool
-  start();
 
   void
   stop();

@@ -5,6 +5,8 @@
 
 namespace remote_connect {
 
+  inline constexpr char default_peer[] = "udp://public.easytier.top:11010";
+
   struct enrollment_t {
     std::string profile;
     std::string virtual_ip;

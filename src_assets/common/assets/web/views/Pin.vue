@@ -408,6 +408,7 @@ import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
 import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
+import { useRemoteConnect } from '../composables/useRemoteConnect.js'
 
 const { t } = useI18n()
 
@@ -444,16 +445,20 @@ const {
   qrError,
   qrPaired,
   qrActive,
-  remoteConnectEnabled,
-  remoteConnectRunning,
-  remoteConnectAvailable,
-  remoteConnectBusy,
-  remoteConnectError,
   generateQrCode,
   cancelQrCode,
-  onRemoteConnectToggle,
-  resetRemoteConnect,
 } = useQrPair()
+
+const {
+  enabled: remoteConnectEnabled,
+  running: remoteConnectRunning,
+  available: remoteConnectAvailable,
+  busy: remoteConnectBusy,
+  error: remoteConnectError,
+  loadStatus: loadRemoteConnectStatus,
+  setEnabled: setRemoteConnectEnabled,
+  reset: resetRemoteConnect,
+} = useRemoteConnect()
 
 const clientToDelete = ref(null)
 
@@ -480,15 +485,24 @@ const handleUnpairAll = async () => {
 }
 
 const handleRemoteConnectToggle = async (event) => {
-  if (event.target.checked && !confirm(t('pin.remote_connect_enable_confirm'))) {
-    event.target.checked = false
+  const target = event.target
+  const enabled = target.checked
+  if (enabled && !confirm(t('pin.remote_connect_enable_confirm'))) {
+    target.checked = false
     return
   }
-  await onRemoteConnectToggle(event)
+
+  const regenerateQr = qrActive.value
+  if (regenerateQr) await cancelQrCode()
+  const success = await setRemoteConnectEnabled(enabled)
+  target.checked = remoteConnectEnabled.value
+  if (success && regenerateQr) await generateQrCode()
 }
 
 const handleRemoteConnectReset = async () => {
-  if (confirm(t('pin.remote_connect_reset_confirm'))) await resetRemoteConnect()
+  if (!confirm(t('pin.remote_connect_reset_confirm'))) return
+  await cancelQrCode()
+  await resetRemoteConnect()
 }
 
 const initTooltips = () => {
@@ -509,6 +523,7 @@ const initTooltips = () => {
 }
 
 onMounted(async () => {
+  loadRemoteConnectStatus()
   await loadConfig()
   await refreshClients()
   await loadColorProfiles()

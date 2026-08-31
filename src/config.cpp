@@ -29,6 +29,7 @@
 
 #include "display_device/parsed_config.h"
 #include "platform/common.h"
+#include "remote_connect/types.h"
 
 #ifdef _WIN32
   #include <shellapi.h>
@@ -535,7 +536,7 @@ namespace config {
     {},  // remote_connect_virtual_ip
     {},  // remote_connect_network_name
     {},  // remote_connect_network_secret
-    "udp://public.easytier.top:11010",  // remote_connect_peer
+    remote_connect::default_peer,  // remote_connect_peer
 
     true,  // client_fingerprint_remote_rules
     "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",

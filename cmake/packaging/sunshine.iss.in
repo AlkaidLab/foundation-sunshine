@@ -934,11 +934,22 @@ begin
   Result := False;
 end;
 
+procedure StopProcessTreeAtPath(ProcessStopScript, ExecutablePath: String);
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' + AddQuotes(ExecutablePath);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 // Stop services and processes before installation to avoid locked files
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
-  ProcessStopScript, ProcessStopParams: String;
+  ProcessStopScript: String;
 begin
   Result := '';
   // Stop the Sunshine service
@@ -948,23 +959,9 @@ begin
   ExtractTemporaryFile('stop-process-tree.ps1');
   ProcessStopScript := ExpandConstant('{tmp}\stop-process-tree.ps1');
 
-  ProcessStopParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' +
-    AddQuotes(ExpandConstant('{app}\{#MyAppExeName}'));
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), ProcessStopParams,
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  ProcessStopParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' +
-    AddQuotes(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'));
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), ProcessStopParams,
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  ProcessStopParams := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' +
-    AddQuotes(ExpandConstant('{app}\tools\sunshinesvc.exe'));
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), ProcessStopParams,
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  StopProcessTreeAtPath(ProcessStopScript, ExpandConstant('{app}\{#MyAppExeName}'));
+  StopProcessTreeAtPath(ProcessStopScript, ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'));
+  StopProcessTreeAtPath(ProcessStopScript, ExpandConstant('{app}\tools\sunshinesvc.exe'));
   // Small delay to allow processes to release files
   Sleep(1000);
 end;
