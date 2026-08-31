@@ -44,6 +44,10 @@ namespace platf {
 namespace platf::dxgi {
   namespace bp = boost::process::v1;
 
+  namespace {
+    std::atomic<std::uint64_t> next_capture_source_generation { 1 };
+  }
+
   /**
    * DDAPI-specific initialization goes here.
    */
@@ -586,6 +590,13 @@ namespace platf::dxgi {
   display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
     static std::once_flag windows_cpp_once_flag;
 
+    capture_contract = config.effective_frame_pipeline_policy().capture;
+    pre_encode_filter = config.pre_encode_filter;
+    pre_encode_filter_config = config.pre_encode_filter_config;
+    pre_encode_filter_backend_path = config.pre_encode_filter_backend_path;
+    capture_source_generation =
+      next_capture_source_generation.fetch_add(1, std::memory_order_relaxed);
+
     std::call_once(windows_cpp_once_flag, []() {
       if (auto user32 = LoadLibraryA("user32.dll")) {
         if (auto f = (BOOL(*)(HANDLE)) GetProcAddress(user32, "SetProcessDpiAwarenessContext")) {
@@ -740,6 +751,9 @@ namespace platf::dxgi {
 
     DXGI_ADAPTER_DESC adapter_desc;
     adapter->GetDesc(&adapter_desc);
+    capture_adapter_luid =
+      (static_cast<std::uint64_t>(static_cast<std::uint32_t>(adapter_desc.AdapterLuid.HighPart)) << 32) |
+      static_cast<std::uint32_t>(adapter_desc.AdapterLuid.LowPart);
 
     BOOST_LOG(info)
       << "Device Description : " << to_utf8(adapter_desc.Description)
@@ -902,6 +916,16 @@ namespace platf::dxgi {
     last_sdr_white_check_time = {};
 
     return 0;
+  }
+
+  captured_frame_desc_t
+  display_base_t::describe_captured_frame(DXGI_FORMAT format, bool borrowed) const {
+    return describe_dxgi_captured_frame(
+      format,
+      capture_linear_gamma,
+      borrowed,
+      capture_adapter_luid,
+      capture_source_generation);
   }
 
   bool

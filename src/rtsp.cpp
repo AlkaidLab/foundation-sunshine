@@ -1547,6 +1547,24 @@ namespace rtsp_stream {
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
       monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
+#ifdef _WIN32
+      const bool post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange > 0;
+      if (post_process_hdr_active) {
+        monitor.pre_encode_filter = platf::pre_encode_filter_e::external_sdr_to_hdr;
+        monitor.pre_encode_filter_config = {
+          .contrast = static_cast<float>(session.synthetic_hdr.contrast),
+          .saturation = static_cast<float>(session.synthetic_hdr.saturation),
+          .middle_gray_nits = static_cast<float>(session.synthetic_hdr.middle_gray),
+          .peak_nits = static_cast<float>(session.synthetic_hdr.peak_nits),
+        };
+        monitor.pre_encode_filter_backend_path = config::video.rtx_hdr_backend_path;
+      }
+#else
+      constexpr bool post_process_hdr_active = false;
+#endif
+      monitor.frame_pipeline_policy =
+        platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active);
+      monitor.frame_pipeline_policy_resolved = true;
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
       monitor.hdr_capabilities = session.hdr_capabilities;

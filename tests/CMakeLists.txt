@@ -65,7 +65,87 @@ if (WIN32)
 endif ()
 add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 
+add_executable(frame_contract_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/platform/frame_contract.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp)
 if (WIN32)
+    target_sources(frame_contract_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.cpp)
+endif ()
+target_include_directories(frame_contract_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(frame_contract_unit_tests gtest_main)
+target_compile_options(frame_contract_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(frame_contract_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(frame_contract_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
+
+if (WIN32)
+    add_executable(pre_encode_filter_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
+    target_include_directories(pre_encode_filter_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(pre_encode_filter_unit_tests
+            d3d11
+            d3dcompiler
+            dxgi
+            gtest_main)
+    target_compile_definitions(pre_encode_filter_unit_tests PRIVATE
+            SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
+    target_compile_options(pre_encode_filter_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(pre_encode_filter_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_test(NAME pre_encode_filter_unit_tests COMMAND pre_encode_filter_unit_tests)
+
+    add_library(fake_truehdr_backend SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
+    target_include_directories(fake_truehdr_backend PRIVATE "${CMAKE_SOURCE_DIR}")
+    set_target_properties(fake_truehdr_backend PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+
+    add_library(fake_truehdr_bad_backend SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
+    target_include_directories(fake_truehdr_bad_backend PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_bad_backend PRIVATE FAKE_TRUEHDR_BAD_ABI)
+    set_target_properties(fake_truehdr_bad_backend PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+
+    add_library(fake_truehdr_failing_backend SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
+    target_include_directories(fake_truehdr_failing_backend PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_failing_backend PRIVATE FAKE_TRUEHDR_PROCESS_FAILS)
+    set_target_properties(fake_truehdr_failing_backend PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+
+    add_executable(truehdr_backend_loader_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_backend_loader.cpp)
+    target_include_directories(truehdr_backend_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(truehdr_backend_loader_unit_tests gtest_main)
+    target_compile_definitions(truehdr_backend_loader_unit_tests PRIVATE
+            FAKE_TRUEHDR_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_backend>"
+            FAKE_TRUEHDR_BAD_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_bad_backend>")
+    target_compile_options(truehdr_backend_loader_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(truehdr_backend_loader_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(truehdr_backend_loader_unit_tests
+            fake_truehdr_backend
+            fake_truehdr_bad_backend)
+    add_dependencies(pre_encode_filter_unit_tests
+            fake_truehdr_backend
+            fake_truehdr_failing_backend)
+    target_compile_definitions(pre_encode_filter_unit_tests PRIVATE
+            FAKE_TRUEHDR_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_backend>"
+            FAKE_TRUEHDR_FAILING_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_failing_backend>")
+    add_test(NAME truehdr_backend_loader_unit_tests COMMAND truehdr_backend_loader_unit_tests)
+
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
     target_include_directories(vdd_prerequisite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

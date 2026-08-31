@@ -25,6 +25,7 @@
 #include <AMF/core/CurrentTime.h>
 
 #include "src/platform/common.h"
+#include "src/platform/windows/frame_contract.h"
 #include "src/utility.h"
 #include "src/video.h"
 #include "vdd_frame_channel.h"
@@ -209,6 +210,13 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+    capture_contract_t capture_contract;
+    pre_encode_filter_e pre_encode_filter = pre_encode_filter_e::none;
+    pre_encode_filter_config_t pre_encode_filter_config;
+    std::filesystem::path pre_encode_filter_backend_path;
+
+    captured_frame_desc_t
+    describe_captured_frame(DXGI_FORMAT format, bool borrowed) const;
 
     /**
      * @brief Indicates whether the display's output colorspace uses linear gamma.
@@ -311,6 +319,9 @@ namespace platf::dxgi {
     static constexpr std::chrono::milliseconds sdr_white_check_interval { 1000 };
 
   protected:
+    std::uint64_t capture_adapter_luid = 0;
+    std::uint64_t capture_source_generation = 0;
+
     int
     get_pixel_pitch() {
       return (capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT) ? 8 : 4;

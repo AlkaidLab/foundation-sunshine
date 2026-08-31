@@ -124,6 +124,8 @@ const DEFAULT_TABS = [
       av1_mode: 0,
       capture: '',
       encoder: '',
+      rtx_hdr: 'off',
+      rtx_hdr_backend_path: '',
     },
   },
   {

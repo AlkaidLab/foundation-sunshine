@@ -478,6 +478,8 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
+    "off"s,  // rtx_hdr: off | per_app
+    {},  // rtx_hdr_backend_path (absolute path to the versioned backend DLL)
   };
 
   audio_t audio {
@@ -1409,6 +1411,19 @@ namespace config {
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
+    string_f(vars, "rtx_hdr", video.rtx_hdr);
+    if (video.rtx_hdr == "true" || video.rtx_hdr == "on" || video.rtx_hdr == "enabled" || video.rtx_hdr == "1") {
+      video.rtx_hdr = "per_app";
+    }
+    if (video.rtx_hdr.empty()) {
+      video.rtx_hdr = "off";
+    }
+    if (video.rtx_hdr != "off" && video.rtx_hdr != "per_app") {
+      BOOST_LOG(warning) << "Invalid rtx_hdr mode: ["sv << video.rtx_hdr
+                         << "], valid options are: off, per_app. Defaulting to 'off'"sv;
+      video.rtx_hdr = "off";
+    }
+    string_f(vars, "rtx_hdr_backend_path", video.rtx_hdr_backend_path);
 
     // Whether to composite the host mouse cursor into the captured frames.
     // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.

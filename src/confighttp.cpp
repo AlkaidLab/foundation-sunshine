@@ -2370,6 +2370,7 @@ namespace confighttp {
 #endif
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
+        { "configured_rtx_hdr_mode", config::video.rtx_hdr },
         { "pipelines", json::array() },
       };
 
@@ -2384,6 +2385,9 @@ namespace confighttp {
           { "conversion_path", status.conversion_path },
           { "conversion_fallback_reason", status.conversion_fallback_reason },
           { "analysis_failure_reason", status.analysis_failure_reason },
+          { "synthetic_hdr_backend", status.synthetic_hdr_backend },
+          { "synthetic_hdr_state", status.synthetic_hdr_state },
+          { "synthetic_hdr_failure_reason", status.synthetic_hdr_failure_reason },
         });
       }
 

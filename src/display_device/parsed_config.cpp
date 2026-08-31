@@ -479,7 +479,10 @@ namespace display_device {
       const auto hdr_prep_option { static_cast<parsed_config_t::hdr_prep_e>(config.hdr_prep) };
       switch (hdr_prep_option) {
         case parsed_config_t::hdr_prep_e::automatic:
-          return session.enable_hdr;
+          // An SDR-to-HDR pre-encode filter needs the source desktop to stay
+          // SDR even though the client-facing stream is HDR. This decision is
+          // made during display preparation, before capture is constructed.
+          return session.enable_hdr && !session.synthetic_hdr.enabled;
         case parsed_config_t::hdr_prep_e::no_operation:
         default:
           return boost::none;

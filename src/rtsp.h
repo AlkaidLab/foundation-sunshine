@@ -23,6 +23,14 @@ namespace stream::session {
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
 
+  struct synthetic_hdr_config_t {
+    bool enabled { false };
+    int contrast { 0 };
+    int saturation { 0 };
+    int middle_gray { 50 };
+    int peak_nits { 1000 };
+  };
+
   struct launch_session_t {
     uint32_t id;
 
@@ -56,6 +64,7 @@ namespace rtsp_stream {
     hdr::client_display_capabilities_t reported_hdr_capabilities;
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
+    synthetic_hdr_config_t synthetic_hdr;
 
     void
     set_hdr_target(const hdr::client_display_capabilities_t &capabilities, hdr::target_source_e source);

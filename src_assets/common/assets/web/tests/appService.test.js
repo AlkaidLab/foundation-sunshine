@@ -105,3 +105,24 @@ test('formatAppData preserves a per-app DualSense override', () => {
 
   assert.equal(result.gamepad, 'ds5')
 })
+
+test('formatAppData normalizes per-app RTX HDR settings', () => {
+  const result = AppService.formatAppData({
+    name: 'Game',
+    'rtx-hdr': {
+      mode: 'on',
+      contrast: 140,
+      saturation: -120,
+      'middle-gray': 70,
+      'peak-nits': 850,
+    },
+  })
+
+  assert.deepEqual(result['rtx-hdr'], {
+    mode: 'on',
+    contrast: 100,
+    saturation: -100,
+    'middle-gray': 70,
+    'peak-nits': 850,
+  })
+})

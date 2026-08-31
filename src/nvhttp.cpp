@@ -267,6 +267,11 @@ namespace nvhttp {
     launch_session->unique_id = (get_arg(args, "uniqueid", "unknown"));
     launch_session->client_name = (get_arg(args, "clientname", "unknown"));
     launch_session->appid = util::from_view(get_arg(args, "appid", "unknown"));
+    if (config::video.rtx_hdr == "per_app") {
+      if (const auto app_rtx_hdr = proc::proc.get_app_rtx_hdr_config(launch_session->appid)) {
+        launch_session->synthetic_hdr = *app_rtx_hdr;
+      }
+    }
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
     launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));

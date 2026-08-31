@@ -455,6 +455,7 @@ namespace platf::dxgi {
       d3d_img->linear_gamma = capture_linear_gamma;
       d3d_img->borrowed_vdd_texture = true;
       d3d_img->borrowed_vdd_frame = true;
+      d3d_img->frame_desc = describe_captured_frame(desc.Format, true);
       d3d_img->borrowed_vdd_mutex.reset(handoff_mutex);
       d3d_img->borrowed_vdd_slot = handoff_slot;
       d3d_img->encoder_acquire_key = vdd_borrowed_encoder_key;
