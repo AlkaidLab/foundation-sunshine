@@ -1352,16 +1352,15 @@ namespace amf {
 
   void
   amf_d3d11::set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) {
-    // Remembered even when the encoder is not ready yet: ST 2094-40 reports the
-    // mastering display peak, so the dynamic metadata builder needs the same value
-    // the static metadata was built from. Held as an optional rather than a plain
-    // peak because a display may legitimately report zero (display_base.cpp copies
-    // DXGI's MaxLuminance verbatim, and the VDD path clamps to a 0 floor); what
-    // gates dynamic metadata is whether HDR was configured at all, mirroring the
-    // `hdr_metadata &&` check on the NVENC side.
-    hdr_display_luminance = metadata ?
-                              std::optional<uint16_t> { metadata->maxDisplayLuminance } :
-                              std::nullopt;
+    // Remembered even when the encoder is not ready yet: dynamic HDR metadata
+    // reports the receiving display target independently from the content mastering
+    // peak carried by static metadata. Held as an optional rather than a plain
+    // peak so the absence of HDR configuration remains distinguishable from a
+    // resolved fallback target, mirroring the `hdr_metadata &&` check on the
+    // NVENC side.
+    target_display_luminance = metadata ?
+                                   std::optional<uint16_t> { metadata->targetDisplayLuminance } :
+                                   std::nullopt;
 
     if (!encoder || !context) return;
 
@@ -1402,7 +1401,8 @@ namespace amf {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_HDR_METADATA, hdr_buffer);
       }
 
-      BOOST_LOG(info) << "AMF: HDR metadata set (max luminance: " << metadata->maxDisplayLuminance << " nits)";
+      BOOST_LOG(info) << "AMF: HDR metadata set (mastering peak: " << metadata->maxDisplayLuminance
+                      << " nits, target display: " << metadata->targetDisplayLuminance << " nits)";
     }
   }
 
@@ -1421,12 +1421,12 @@ namespace amf {
     // No carriage for this codec, HDR never configured, or nothing this stream may
     // emit: the frame goes out as the encoder produced it. A zero display peak is
     // not a reason to skip — hdr10plus_from_luminance() falls back to 1000 nits for
-    // the targeted system display, and HDR Vivid never reads the value.
-    if (!dynamic_metadata_codec || !hdr_display_luminance || !luminance_stats.valid) {
+    // the targeted system display.
+    if (!dynamic_metadata_codec || !target_display_luminance || !luminance_stats.valid) {
       return;
     }
 
-    const auto payloads = dynamic_metadata.build(luminance_stats, *hdr_display_luminance);
+    const auto payloads = dynamic_metadata.build(luminance_stats, *target_display_luminance);
     if (payloads.empty()) {
       return;
     }

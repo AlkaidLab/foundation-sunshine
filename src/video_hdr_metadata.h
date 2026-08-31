@@ -330,6 +330,24 @@ namespace video::hdr_metadata {
     return pq_to_u12(nits_to_pq(nits > 0.0f ? nits : 1000.0f));
   }
 
+  /**
+   * Resolve the peak used by target-display fields in dynamic HDR metadata.
+   * This stays separate from the content mastering peak.
+   */
+  inline uint16_t
+  resolve_target_display_luminance(
+    bool client_reported,
+    float client_max_nits,
+    uint16_t mastering_peak_nits) {
+    const float fallback = mastering_peak_nits > 0 ?
+                             static_cast<float>(mastering_peak_nits) :
+                             1000.0f;
+    const float requested = client_reported && std::isfinite(client_max_nits) && client_max_nits > 0.0f ?
+                              client_max_nits :
+                              fallback;
+    return static_cast<uint16_t>(std::lround(std::clamp(requested, 1.0f, 10000.0f)));
+  }
+
   namespace detail {
     inline bool
     has_valid_scene_metrics(const platf::hdr_frame_luminance_stats_t &stats) {

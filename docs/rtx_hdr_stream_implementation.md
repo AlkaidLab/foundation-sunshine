@@ -910,10 +910,12 @@ Synthetic HDR 默认值：
 
 - primaries：BT.2020；
 - white point：D65；
-- max display luminance：`min(truehdr_peak, client_max)`；
-- min display luminance：客户端报告值，否则 0.005 nits；
-- MaxCLL：初始等于目标峰值；
-- MaxFALL：初始为 `min(400, max_luminance)`；
+- 静态 max display luminance：与传给 TrueHDR 后端的会话 mastering peak 相同；
+- 静态 min display luminance：0.0001 nits；
+- MaxCLL：初始等于 mastering peak；
+- MaxFALL：0，表示帧平均峰值未知；
+- HDR10+/HDR Vivid 的 target display peak 独立使用客户端报告峰值；客户端未报告有效值时
+  才回退到 mastering peak。不得为了适配客户端而改写合成 HDR 的静态 mastering metadata；
 - 动态分析有效后，逐帧动态元数据来自 post-TrueHDR 帧，但控制通道和 encoder 的
   静态 mastering metadata 不在会话中途互相矛盾。
 
@@ -1602,7 +1604,9 @@ TrueHDR，而非单纯把 SDR 错标成 HDR；VDD 的 SDR 捕获事实也没有�
 
 初次联调时，原有客户端亮度适配曾把 1000-nit TrueHDR 处理结果的静态 metadata 改写为客户端
 报告的 2000 nit。PR 前审计已收紧该边界：合成 HDR 保留与后端参数相同的会话 mastering peak，
-避免像素处理峰值与信号不一致；原生 HDR 仍沿用现有客户端适配行为。
+避免像素处理峰值与信号不一致；HDR10+/HDR Vivid 另用客户端峰值作为 target display，确保
+例如 1000-nit 母版发往 400-nit 客户端时，动态色调映射目标仍为 400 nits。原生 HDR 继续沿用
+现有客户端适配行为，Dolby Vision L6 继续只描述内容母版。
 
 本次联调还暴露并修复了两个闭环问题：
 

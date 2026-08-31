@@ -530,8 +530,15 @@ namespace video {
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
-    avcodec_encode_session_t(avcodec_ctx_t &&avcodec_ctx, std::unique_ptr<platf::avcodec_encode_device_t> encode_device, int inject):
-        avcodec_ctx { std::move(avcodec_ctx) }, device { std::move(encode_device) }, inject { inject } {}
+    avcodec_encode_session_t(
+      avcodec_ctx_t &&avcodec_ctx,
+      std::unique_ptr<platf::avcodec_encode_device_t> encode_device,
+      uint16_t dynamic_metadata_target_peak_nits,
+      int inject):
+        avcodec_ctx { std::move(avcodec_ctx) },
+        device { std::move(encode_device) },
+        dynamic_metadata_target_peak_nits { dynamic_metadata_target_peak_nits },
+        inject { inject } {}
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
     ~avcodec_encode_session_t() {
@@ -554,6 +561,7 @@ namespace video {
       replacements = std::move(other.replacements);
       frame_timestamps = std::move(other.frame_timestamps);
       dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
+      dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -674,6 +682,7 @@ namespace video {
     // Scene-aware temporal state is session-local so a new stream cannot inherit
     // metadata history from the previous stream.
     hdr_metadata::dynamic_metadata_temporal_state_t dynamic_metadata_temporal;
+    uint16_t dynamic_metadata_target_peak_nits = 1000;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -2279,16 +2288,11 @@ namespace video {
       if (raw_stats.valid) {
         const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
 
-        uint16_t max_lum = 1000;
-        auto mdm_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
-        if (mdm_sd) {
-          auto *mdm = reinterpret_cast<AVMasteringDisplayMetadata *>(mdm_sd->data);
-          if (mdm && mdm->has_luminance) {
-            max_lum = static_cast<uint16_t>(av_q2d(mdm->max_luminance));
-          }
-        }
         update_hdr_dynamic_metadata(
-          frame, filtered.hdr10plus_stats, filtered.vivid, max_lum);
+          frame,
+          filtered.hdr10plus_stats,
+          filtered.vivid,
+          session.dynamic_metadata_target_peak_nits);
       }
     }
 
@@ -2809,6 +2813,8 @@ namespace video {
     frame->colorspace = ctx->colorspace;
     frame->chroma_location = ctx->chroma_sample_location;
 
+    uint16_t dynamic_metadata_target_peak_nits = 1000;
+
     // Attach HDR metadata to the AVFrame
     // Both PQ (ST 2084) and HLG (ARIB STD-B67) can carry HDR metadata.
     // PQ uses absolute luminance and requires static metadata (MDCV, CLL).
@@ -2826,6 +2832,10 @@ namespace video {
 
       if (has_metadata) {
         apply_client_target_luminance(hdr_metadata, config);
+        dynamic_metadata_target_peak_nits = hdr_metadata::resolve_target_display_luminance(
+          config.hdr_capabilities.reported,
+          config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         // Attach static HDR metadata (Mastering Display Color Volume + Content Light Level)
         // Required for PQ, optional but beneficial for HLG with HDR Vivid
         auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
@@ -2898,8 +2908,9 @@ namespace video {
             params.knee_point_y = av_make_q(0, 1);
             params.num_bezier_curve_anchors = 0;
 
-            // Set targeted system display maximum luminance from static metadata
-            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
+              dynamic_metadata_target_peak_nits,
+              1);
             hdr10plus->targeted_system_display_actual_peak_luminance_flag = 0;
             hdr10plus->mastering_display_actual_peak_luminance_flag = 0;
 
@@ -2939,7 +2950,7 @@ namespace video {
             params.color_saturation_num = 0;
 
             const auto target_display_pq =
-              hdr_metadata::target_display_pq_u12(static_cast<float>(hdr_metadata.maxDisplayLuminance));
+              hdr_metadata::target_display_pq_u12(static_cast<float>(dynamic_metadata_target_peak_nits));
             for (int i = 0; i < 2; i++) {
               auto &tm_params = params.tm_params[i];
               tm_params.targeted_system_display_maximum_luminance =
@@ -2984,6 +2995,7 @@ namespace video {
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
+      dynamic_metadata_target_peak_nits,
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
@@ -3039,6 +3051,10 @@ namespace video {
         nvenc_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
         nvenc_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
         nvenc_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        nvenc_metadata.targetDisplayLuminance = hdr_metadata::resolve_target_display_luminance(
+          client_config.hdr_capabilities.reported,
+          client_config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         nvenc_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
         nvenc_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
         encode_device->nvenc->set_hdr_metadata(nvenc_metadata);
@@ -3102,6 +3118,10 @@ namespace video {
         amf_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
         amf_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
         amf_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        amf_metadata.targetDisplayLuminance = hdr_metadata::resolve_target_display_luminance(
+          client_config.hdr_capabilities.reported,
+          client_config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         amf_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
         amf_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
         encode_device->amf->set_hdr_metadata(amf_metadata);

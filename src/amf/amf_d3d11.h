@@ -141,7 +141,7 @@ namespace amf {
     std::optional<video::hdr_bitstream::codec_e> dynamic_metadata_codec;
     video::hdr_metadata::dynamic_metadata_builder_t dynamic_metadata;
     platf::hdr_frame_luminance_stats_t luminance_stats {};
-    std::optional<uint16_t> hdr_display_luminance;
+    std::optional<uint16_t> target_display_luminance;
     std::unordered_map<uint64_t, std::vector<uint8_t>> staged_metadata_units;
     static constexpr size_t MAX_TRACKED_FRAMES = 256;
 
