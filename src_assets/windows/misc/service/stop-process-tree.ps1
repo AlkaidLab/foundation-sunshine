@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)]
-  [string] $ExecutablePath
+  [string] $ExecutablePath,
+
+  [switch] $IncludeDescendants
 )
 
 $targetPath = [System.IO.Path]::GetFullPath($ExecutablePath)
@@ -22,5 +24,9 @@ $matchingProcesses = @(
 
 $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
 foreach ($process in $matchingProcesses) {
-  & $taskkill /t /f /pid $process.ProcessId | Out-Null
+  $arguments = @('/f', '/pid', [string] $process.ProcessId)
+  if ($IncludeDescendants) {
+    $arguments = @('/t') + $arguments
+  }
+  & $taskkill @arguments | Out-Null
 }
