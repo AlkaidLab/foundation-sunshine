@@ -12,7 +12,7 @@
 #include <d3dcompiler.h>
 #include <dxgi.h>
 
-#include "src/logging.h"
+#include "src/logging_severity.h"
 #include "rtx_hdr/backend_loader.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)
