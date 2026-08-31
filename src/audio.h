@@ -169,7 +169,7 @@ namespace audio {
    * @param samples Pointer to the PCM samples.
    * @param frame_count Number of mono frames to write.
    * @returns Number of bytes written, 0 when the current frame was dropped due to backpressure,
-   *          -1 on a generic error, or -2 when the device was invalidated.
+   *          -1 on a generic error, or -2 when the active output backend became unavailable.
    */
   int
   write_mic_pcm(const std::int16_t *samples, std::size_t frame_count);

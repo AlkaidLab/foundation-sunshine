@@ -2642,7 +2642,7 @@ namespace stream {
     auto release_mic_device = [&]() {
       if (mic_device_initialized) {
         audio::release_mic_redirect_device();
-        BOOST_LOG(debug) << "Microphone device released"sv;
+        BOOST_LOG(debug) << "Microphone redirect session released"sv;
       }
       mic_device_initialized = false;
       mic_audio_ref = {};
@@ -3055,7 +3055,7 @@ namespace stream {
           }
           if (write_result < 0) {
             if (write_result == -2) {
-              BOOST_LOG(info) << "Microphone output device was invalidated; reinitializing"sv;
+              BOOST_LOG(info) << "Microphone output backend became unavailable; reinitializing"sv;
             }
             else {
               BOOST_LOG(warning) << "Microphone output write failed; reinitializing"sv;
