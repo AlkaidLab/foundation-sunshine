@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <openssl/ssl.h>
 
@@ -35,6 +36,44 @@ struct broker_hello {
   std::uint32_t max_inflight { 0 };
   bool isochronous { false };
 };
+
+/** Decoded RUSB frame header, kept independent from the transport socket. */
+struct broker_frame_header {
+  std::uint8_t type { 0 };
+  std::uint32_t flags { 0 };
+  std::uint32_t payload_length { 0 };
+  std::uint64_t session_token { 0 };
+  std::uint64_t sequence { 0 };
+};
+
+inline constexpr std::size_t broker_hello_size = 84;
+inline constexpr std::size_t broker_frame_header_size = 32;
+inline constexpr std::size_t broker_capability_prefix_size = 34;
+
+/** Decode and validate the normative RUSB v1 HELLO wire value. */
+bool decode_broker_hello(const std::array<std::uint8_t, broker_hello_size> &wire,
+                         broker_hello &hello) noexcept;
+
+/** Decode and validate a normative RUSB v1 frame header. */
+bool decode_broker_frame_header(
+  const std::array<std::uint8_t, broker_frame_header_size> &wire,
+  broker_frame_header &header,
+  std::uint32_t max_payload) noexcept;
+
+/** Encode a normative RUSB v1 frame header. */
+void encode_broker_frame_header(
+  std::array<std::uint8_t, broker_frame_header_size> &wire,
+  std::uint8_t type,
+  std::uint32_t flags,
+  std::uint32_t payload_length,
+  std::uint64_t session_token,
+  std::uint64_t sequence) noexcept;
+
+/** Decode and validate a CAPABILITY payload and its USB descriptor metadata. */
+bool decode_broker_capability_payload(const std::vector<std::uint8_t> &payload,
+                                      device_info &device,
+                                      std::uint64_t &lease_token,
+                                      std::uint64_t &attachment_token);
 
 /** Result returned by start/configuration without throwing from nvhttp. */
 struct broker_server_result {

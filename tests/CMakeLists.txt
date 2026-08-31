@@ -164,6 +164,32 @@ set_target_properties(remote_usb_broker_server_unit_tests PROPERTIES
         CXX_STANDARD_REQUIRED ON)
 add_test(NAME remote_usb_broker_server_unit_tests COMMAND remote_usb_broker_server_unit_tests)
 
+add_executable(remote_usb_contract_vectors_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_contract_vectors.cpp)
+target_include_directories(remote_usb_contract_vectors_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_compile_definitions(remote_usb_contract_vectors_unit_tests PRIVATE
+        RUSB_VECTOR_FILE="${CMAKE_SOURCE_DIR}/third-party/moonlight-remote-usb-core/contract/vectors-v1.json")
+target_link_libraries(remote_usb_contract_vectors_unit_tests
+        Boost::asio
+        Boost::system
+        ${OPENSSL_LIBRARIES}
+        nlohmann_json::nlohmann_json
+        ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
+        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
+        gtest_main)
+target_compile_options(remote_usb_contract_vectors_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_usb_contract_vectors_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_contract_vectors_unit_tests COMMAND remote_usb_contract_vectors_unit_tests)
+
 add_executable(remote_usb_capability_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_http.cpp

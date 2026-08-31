@@ -349,6 +349,48 @@ parse_device_capability(const std::vector<std::uint8_t> &payload,
 
 }  // namespace
 
+bool
+decode_broker_hello(const std::array<std::uint8_t, broker_hello_size> &wire,
+                    broker_hello &hello) noexcept {
+  return decode_hello(wire, hello);
+}
+
+bool
+decode_broker_frame_header(
+  const std::array<std::uint8_t, broker_frame_header_size> &wire,
+  broker_frame_header &header,
+  std::uint32_t max_payload) noexcept {
+  frame_header decoded;
+  if (!decode_frame_header(wire, decoded, max_payload)) {
+    return false;
+  }
+  header.type = decoded.type;
+  header.flags = decoded.flags;
+  header.payload_length = decoded.payload_length;
+  header.session_token = decoded.session_token;
+  header.sequence = decoded.sequence;
+  return true;
+}
+
+void
+encode_broker_frame_header(
+  std::array<std::uint8_t, broker_frame_header_size> &wire,
+  std::uint8_t type,
+  std::uint32_t flags,
+  std::uint32_t payload_length,
+  std::uint64_t session_token,
+  std::uint64_t sequence) noexcept {
+  encode_frame_header(wire, type, flags, payload_length, session_token, sequence);
+}
+
+bool
+decode_broker_capability_payload(const std::vector<std::uint8_t> &payload,
+                                  device_info &device,
+                                  std::uint64_t &lease_token,
+                                  std::uint64_t &attachment_token) {
+  return parse_device_capability(payload, device, lease_token, attachment_token);
+}
+
 class broker_session final : public std::enable_shared_from_this<broker_session> {
 public:
   broker_session(std::shared_ptr<broker_server::impl> owner,

@@ -93,3 +93,6 @@
 	path = third-party/moonlight-audio-haptics
 	url = https://github.com/AlkaidLab/moonlight-audio-haptics.git
 	branch = main
+[submodule "third-party/moonlight-remote-usb-core"]
+	path = third-party/moonlight-remote-usb-core
+	url = https://github.com/qiin2333/moonlight-remote-usb-core.git
