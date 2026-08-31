@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include <boost/property_tree/ptree_fwd.hpp>
+
 /**
  * @brief Responsible for file handling functions.
  */
@@ -68,4 +70,18 @@ namespace file_handler {
    */
   int
   write_file(const char *path, const std::string_view &contents);
+
+  /**
+   * @brief Read a JSON file whose path is encoded as UTF-8.
+   * @throws boost::property_tree::json_parser_error on open or parse failure.
+   */
+  void
+  read_json(std::string_view path, boost::property_tree::ptree &tree);
+
+  /**
+   * @brief Write a property tree to a JSON file whose path is encoded as UTF-8.
+   * @throws boost::property_tree::json_parser_error on open or write failure.
+   */
+  void
+  write_json(std::string_view path, const boost::property_tree::ptree &tree, bool pretty = true);
 }  // namespace file_handler

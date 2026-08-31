@@ -25,6 +25,7 @@
 #include "config.h"
 #include "crypto.h"
 #include "display_device/session.h"
+#include "file_handler.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "platform/common.h"
@@ -647,18 +648,18 @@ namespace proc {
         std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
         
         // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
-        auto local_path = std::filesystem::path(platf::appdata().string()) / "covers" / filename;
+        auto local_path = platf::appdata() / "covers" / filename;
         
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
-          if (!http::download_public_cover_image(original_url, local_path.string())) {
+          if (!http::download_public_cover_image(original_url, file_handler::path_to_utf8(local_path))) {
             BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }
         }
         
-        app_image_path = local_path.string();
+        app_image_path = file_handler::path_to_utf8(local_path);
       } catch (const std::exception& e) {
         BOOST_LOG(warning) << "Error processing image URL: " << e.what();
         return DEFAULT_APP_IMAGE_PATH;
@@ -680,7 +681,7 @@ namespace proc {
     }
 
     // 检查图像扩展名是否支持
-    auto image_extension = std::filesystem::path(app_image_path).extension().string();
+    auto image_extension = file_handler::path_from_utf8(app_image_path).extension().string();
     boost::to_lower(image_extension);
     if (image_extension != ".png" && image_extension != ".jpg" && image_extension != ".jpeg") {
       BOOST_LOG(warning) << "Unsupported image extension: " << image_extension;
@@ -690,9 +691,9 @@ namespace proc {
     // 检查各种可能的图像路径
     std::vector<std::string> paths_to_check = {
       // 1. 检查assets目录中的相对路径
-      (std::filesystem::path(SUNSHINE_ASSETS_DIR) / app_image_path).string(),
+      file_handler::path_to_utf8(file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / file_handler::path_from_utf8(app_image_path)),
       // 2. 检查covers目录中的相对路径
-      (std::filesystem::path(platf::appdata().string()) / "covers" / app_image_path).string(),
+      file_handler::path_to_utf8(platf::appdata() / "covers" / file_handler::path_from_utf8(app_image_path)),
       // 2. 处理旧的steam默认图像定义
       app_image_path == "./assets/steam.png" ? SUNSHINE_ASSETS_DIR "/steam.png" : "",
       // 3. 检查绝对路径
@@ -700,7 +701,7 @@ namespace proc {
     };
     
     for (const auto& path : paths_to_check) {
-      if (!path.empty() && std::filesystem::exists(path)) {
+      if (!path.empty() && std::filesystem::exists(file_handler::path_from_utf8(path))) {
         return path;
       }
     }
@@ -723,7 +724,7 @@ namespace proc {
 
     // Read file and update calculated SHA
     char buf[1024 * 16];
-    std::ifstream file(filename, std::ifstream::binary);
+    std::ifstream file(file_handler::path_from_utf8(filename), std::ifstream::binary);
     while (file.good()) {
       file.read(buf, sizeof(buf));
       if (!EVP_DigestUpdate(ctx.get(), buf, file.gcount())) {
@@ -799,7 +800,7 @@ namespace proc {
     pt::ptree tree;
 
     try {
-      pt::read_json(file_name, tree);
+      file_handler::read_json(file_name, tree);
 
       auto &apps_node = tree.get_child("apps"s);
       auto &env_vars = tree.get_child("env"s);

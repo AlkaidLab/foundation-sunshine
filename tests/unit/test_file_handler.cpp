@@ -4,6 +4,8 @@
  */
 #include <chrono>
 
+#include <boost/property_tree/ptree.hpp>
+
 #include <src/file_handler.h>
 
 #include "../tests_common.h"
@@ -103,6 +105,30 @@ TEST(FileHandlerTests, ReadsAndWritesUnicodePath) {
   ASSERT_TRUE(file_handler::make_directory(utf8_root));
   ASSERT_EQ(file_handler::write_file(utf8_file.c_str(), "unicode-path"), 0);
   EXPECT_EQ(file_handler::read_file(utf8_file.c_str()), "unicode-path");
+
+  std::error_code ignored;
+  std::filesystem::remove_all(root, ignored);
+}
+
+TEST(FileHandlerTests, ReadsAndWritesJsonInUnicodePath) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    (std::filesystem::path { L"sunshine_JSON路径_" } /
+                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto file = root / L"应用配置.json";
+  const auto utf8_root = file_handler::path_to_utf8(root);
+  const auto utf8_file = file_handler::path_to_utf8(file);
+
+  ASSERT_TRUE(file_handler::make_directory(utf8_root));
+
+  boost::property_tree::ptree expected;
+  expected.put("name", "Sunshine");
+  expected.put("enabled", true);
+  ASSERT_NO_THROW(file_handler::write_json(utf8_file, expected));
+
+  boost::property_tree::ptree actual;
+  ASSERT_NO_THROW(file_handler::read_json(utf8_file, actual));
+  EXPECT_EQ(actual.get<std::string>("name"), "Sunshine");
+  EXPECT_TRUE(actual.get<bool>("enabled"));
 
   std::error_code ignored;
   std::filesystem::remove_all(root, ignored);

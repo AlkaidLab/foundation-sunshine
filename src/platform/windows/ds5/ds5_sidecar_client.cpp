@@ -20,6 +20,7 @@
 #include <random>
 #include <sstream>
 #include <span>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -233,7 +234,11 @@ namespace platf::ds5 {
 
       boost::property_tree::ptree manifest;
       try {
-        boost::property_tree::read_json((expected_active_root / "component.json").string(), manifest);
+        std::ifstream manifest_file_stream(expected_active_root / "component.json", std::ios::binary);
+        if (!manifest_file_stream.is_open()) {
+          throw std::runtime_error("unable to open component manifest");
+        }
+        boost::property_tree::read_json(manifest_file_stream, manifest);
       }
       catch (const std::exception &exception) {
         BOOST_LOG(error) << "Unable to read the active DualSense component manifest: "sv

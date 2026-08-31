@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <initializer_list>
@@ -64,11 +65,12 @@ namespace http {
     if (clean_slate) {
       unique_id = uuid_util::uuid_t::generate().string();
       auto dir = std::filesystem::temp_directory_path() / "Sunshine"sv;
-      config::nvhttp.cert = (dir / ("cert-"s + unique_id)).string();
-      config::nvhttp.pkey = (dir / ("pkey-"s + unique_id)).string();
+      config::nvhttp.cert = file_handler::path_to_utf8(dir / ("cert-"s + unique_id));
+      config::nvhttp.pkey = file_handler::path_to_utf8(dir / ("pkey-"s + unique_id));
     }
 
-    if ((!fs::exists(config::nvhttp.pkey) || !fs::exists(config::nvhttp.cert)) &&
+    if ((!fs::exists(file_handler::path_from_utf8(config::nvhttp.pkey)) ||
+         !fs::exists(file_handler::path_from_utf8(config::nvhttp.cert))) &&
         create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
       return -1;
     }
@@ -84,9 +86,9 @@ namespace http {
   save_user_creds(const std::string &file, const std::string &username, const std::string &password, bool run_our_mouth) {
     pt::ptree outputTree;
 
-    if (fs::exists(file)) {
+    if (fs::exists(file_handler::path_from_utf8(file))) {
       try {
-        pt::read_json(file, outputTree);
+        file_handler::read_json(file, outputTree);
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't read user credentials: "sv << e.what();
@@ -99,7 +101,7 @@ namespace http {
     outputTree.put("salt", salt);
     outputTree.put("password", util::hex(crypto::hash(password + salt)).to_string());
     try {
-      pt::write_json(file, outputTree);
+      file_handler::write_json(file, outputTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(error) << "error writing to the credentials file, perhaps try this again as an administrator? Details: "sv << e.what();
@@ -112,13 +114,13 @@ namespace http {
 
   bool
   user_creds_exist(const std::string &file) {
-    if (!fs::exists(file)) {
+    if (!fs::exists(file_handler::path_from_utf8(file))) {
       return false;
     }
 
     pt::ptree inputTree;
     try {
-      pt::read_json(file, inputTree);
+      file_handler::read_json(file, inputTree);
       return inputTree.find("username") != inputTree.not_found() &&
              inputTree.find("password") != inputTree.not_found() &&
              inputTree.find("salt") != inputTree.not_found();
@@ -134,7 +136,7 @@ namespace http {
   reload_user_creds(const std::string &file) {
     pt::ptree inputTree;
     try {
-      pt::read_json(file, inputTree);
+      file_handler::read_json(file, inputTree);
       config::sunshine.username = inputTree.get<std::string>("username");
       config::sunshine.password = inputTree.get<std::string>("password");
       config::sunshine.salt = inputTree.get<std::string>("salt");
@@ -148,8 +150,8 @@ namespace http {
 
   int
   create_creds(const std::string &pkey, const std::string &cert) {
-    fs::path pkey_path = pkey;
-    fs::path cert_path = cert;
+    fs::path pkey_path = file_handler::path_from_utf8(pkey);
+    fs::path cert_path = file_handler::path_from_utf8(cert);
 
     auto creds = crypto::gen_creds("Sunshine Gamestream Host"sv, 2048);
 
@@ -217,7 +219,12 @@ namespace http {
       return false;
     }
 
-    FILE *fp = fopen(file.c_str(), "wb");
+    FILE *fp = nullptr;
+#ifdef _WIN32
+    fp = _wfopen(file_handler::path_from_utf8(file).c_str(), L"wb");
+#else
+    fp = fopen(file.c_str(), "wb");
+#endif
     if (!fp) {
       BOOST_LOG(error) << "Couldn't open ["sv << file << "] for ["sv << url << ']';
       curl_easy_cleanup(curl);
@@ -253,9 +260,10 @@ namespace http {
     fclose(fp);
     if (result != CURLE_OK) {
         // Cleanup partial file
-        if (fs::exists(file)) {
-            boost::system::error_code ec;
-            fs::remove(file, ec); // Don't crash if delete fails
+        const auto native_file = file_handler::path_from_utf8(file);
+        if (fs::exists(native_file)) {
+            std::error_code ec;
+            fs::remove(native_file, ec); // Don't crash if delete fails
         }
     }
     return result == CURLE_OK;
@@ -720,7 +728,11 @@ namespace {
           }
 
           // Check passed, open file
+#ifdef _WIN32
+          ctx->fp = _wfopen(file_handler::path_from_utf8(ctx->filename).c_str(), L"wb");
+#else
           ctx->fp = fopen(ctx->filename.c_str(), "wb");
+#endif
           if (!ctx->fp) {
             BOOST_LOG(error) << "Couldn't open ["sv << ctx->filename << "] for ["sv << ctx->url << ']';
             return 0;
@@ -841,9 +853,10 @@ namespace {
       }
 
       // Cleanup partial file if it exists (though usually it shouldn't be much)
-      if (boost::filesystem::exists(file)) {
-        boost::system::error_code remove_ec;
-        boost::filesystem::remove(file, remove_ec);
+      const auto native_file = file_handler::path_from_utf8(file);
+      if (std::filesystem::exists(native_file)) {
+        std::error_code remove_ec;
+        std::filesystem::remove(native_file, remove_ec);
       }
       return false;
     }
@@ -853,9 +866,10 @@ namespace {
     if (!ctx.checked) {
       BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
       // Cleanup if file was created
-      if (boost::filesystem::exists(file)) {
-        boost::system::error_code remove_ec;
-        boost::filesystem::remove(file, remove_ec);
+      const auto native_file = file_handler::path_from_utf8(file);
+      if (std::filesystem::exists(native_file)) {
+        std::error_code remove_ec;
+        std::filesystem::remove(native_file, remove_ec);
       }
       return false;
     }

@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/platform/run_command.h"
 #include "src/platform/windows/misc.h"
@@ -255,9 +256,9 @@ namespace platf::vulkan_hdr_bridge {
     bool
     run_helper(const std::filesystem::path &probe, const std::string &arguments,
                const char *operation, bool log_errors = true) {
-      const std::string command = '"' + probe.string() + "\" " + arguments;
+      const std::string command = '"' + file_handler::path_to_utf8(probe) + "\" " + arguments;
       boost::process::v1::environment environment = boost::this_process::environment();
-      boost::filesystem::path working_directory = probe.parent_path().string();
+      boost::filesystem::path working_directory { probe.parent_path().wstring() };
       std::error_code error;
       auto child = platf::run_command(true, false, command, working_directory, environment, nullptr, error, nullptr);
       if (error || !child.valid()) {
@@ -334,7 +335,7 @@ namespace platf::vulkan_hdr_bridge {
 
     bool
     register_user_manifest(const std::filesystem::path &probe, const std::filesystem::path &manifest) {
-      return run_helper(probe, "--register-implicit-layer \"" + manifest.string() + "\"", "per-user layer registration");
+      return run_helper(probe, "--register-implicit-layer \"" + file_handler::path_to_utf8(manifest) + "\"", "per-user layer registration");
     }
 
     bool
@@ -351,7 +352,7 @@ namespace platf::vulkan_hdr_bridge {
       const auto layer_dll = directory / kLayerDllName;
       const auto probe = directory / kProbeName;
       if (!artifacts_installed()) {
-        BOOST_LOG(warning) << "Vulkan HDR bridge artifacts are not installed under " << directory.string();
+        BOOST_LOG(warning) << "Vulkan HDR bridge artifacts are not installed under " << file_handler::path_to_utf8(directory);
         set_status("unavailable", "Vulkan HDR bridge files are not installed.");
         return false;
       }

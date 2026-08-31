@@ -17,15 +17,18 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <limits>
 #include <locale>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <unordered_set>
 #include <vector>
 
 #include "src/globals.h"
+#include "src/file_handler.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
 #include "src/platform/windows/display_device/windows_utils.h"
@@ -145,7 +148,8 @@ namespace display_device {
 
     bool
     execute_vdd_disable_enable_command() {
-      static const std::string kDevManPath = (std::filesystem::path(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe").string();
+      static const std::string kDevManPath = file_handler::path_to_utf8(
+        file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe");
       static const std::string kDriverName = "Zako Display Adapter";
       static constexpr auto kAction = "disable_enable";
 
@@ -200,13 +204,25 @@ namespace display_device {
       try {
         pt::ptree root;
         if (std::filesystem::exists(settings_path)) {
-          pt::read_xml(settings_path.string(), root);
+          std::ifstream input(settings_path, std::ios::binary);
+          if (!input.is_open()) {
+            throw std::runtime_error("unable to open VDD settings for reading");
+          }
+          pt::read_xml(input, root);
         }
 
         root.put("vdd_settings.cursor.HardwareCursor", enabled ? "true" : "false");
 
         auto setting = boost::property_tree::xml_writer_make_settings<std::string>(' ', 2);
-        pt::write_xml(settings_path.string(), root, std::locale(), setting);
+        std::ofstream output(settings_path, std::ios::binary | std::ios::trunc);
+        if (!output.is_open()) {
+          throw std::runtime_error("unable to open VDD settings for writing");
+        }
+        pt::write_xml(output, root, setting);
+        output.flush();
+        if (!output) {
+          throw std::runtime_error("unable to write VDD settings");
+        }
         return true;
       }
       catch (const std::exception &e) {
@@ -233,7 +249,11 @@ namespace display_device {
       try {
         if (std::filesystem::exists(settings_path)) {
           pt::ptree tree;
-          pt::read_xml(settings_path.string(), tree);
+          std::ifstream input(settings_path, std::ios::binary);
+          if (!input.is_open()) {
+            throw std::runtime_error("unable to open VDD settings for reading");
+          }
+          pt::read_xml(input, tree);
 
           if (const auto value = tree.get_optional<std::string>("vdd_settings.cursor.HardwareCursor")) {
             persisted_enabled = hardware_cursor_export_enabled(*value);
