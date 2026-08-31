@@ -74,6 +74,11 @@ jobs:
           & .\src_assets\windows\misc\vdd\smoke-test-vdd-device-helper.ps1
           & .\src_assets\windows\misc\vdd\smoke-test-install-vdd-selection.ps1
 
+      - name: Run process cleanup smoke tests
+        shell: pwsh
+        run: |
+          & .\src_assets\windows\misc\service\smoke-test-stop-process-tree.ps1
+
   build_win:
     name: Windows
     needs: setup_release

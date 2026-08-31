@@ -8,24 +8,28 @@
 
 #include "process.h"
 
-#include <cstdint>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cctype>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <algorithm>
-#include <atomic>
-#include <mutex>
-#include <stdexcept>
-#include <random>
 #include <map>
+#include <mutex>
+#include <random>
 #include <set>
 #include <sstream>
-#include <cstdio>
-#include <ctime>
+#include <stdexcept>
 #include <thread>
 #include <utility>
+#include <vector>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -36,6 +40,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include <boost/filesystem.hpp>
+#include <boost/regex.hpp>
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
 #include <Simple-Web-Server/server_https.hpp>
@@ -60,6 +65,9 @@
 #include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
+#include "remote_connect/api.h"
+#include "remote_connect/pairing.h"
+#include "remote_connect/service.h"
 #include "rtsp.h"
 #include "src/display_device/to_string.h"
 #include "src/tray/tray_http.h"
@@ -1917,6 +1925,29 @@ namespace confighttp {
   }
 
   void
+  getRemoteConnectStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    remote_connect::api::get_status(std::move(response));
+  }
+
+  void
+  setRemoteConnectEnabled(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    remote_connect::api::set_enabled(std::move(response), std::move(request));
+  }
+
+  void
+  resetRemoteConnect(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    remote_connect::api::reset_enrollment(std::move(response));
+  }
+
+  void
   generateQrPairInfo(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -2013,19 +2044,28 @@ namespace confighttp {
       }
     }
 
-    // Build the moonlight:// URL
-    std::string url = "moonlight://pair?host=" + host +
-                      "&port=" + std::to_string(port) +
-                      "&pin=" + pin +
-                      "&name=" + server_name;
+    const auto pairing = remote_connect::create_pairing_invite({
+      std::move(host),
+      static_cast<std::uint16_t>(port),
+      pin,
+      server_name,
+      std::time(nullptr) + 120,
+    });
+    if (!pairing.success) {
+      outputTree.put("status", false);
+      outputTree.put("error", pairing.error);
+      return;
+    }
+    host = pairing.host;
 
     outputTree.put("status", true);
     outputTree.put("pin", pin);
     outputTree.put("host", host);
     outputTree.put("port", port);
     outputTree.put("name", server_name);
-    outputTree.put("url", url);
+    outputTree.put("url", pairing.url);
     outputTree.put("expires_in", 120);
+    outputTree.put("remote_connect", pairing.remote);
   }
 
   void
@@ -3780,6 +3820,7 @@ namespace confighttp {
 
   void
   start() {
+    remote_connect::start_if_enabled();
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
     auto port_https = net::map_port(PORT_HTTPS);
@@ -3799,6 +3840,9 @@ namespace confighttp {
     server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
     server.resource["^/api/qr-pair/cancel$"]["POST"] = cancelQrPair;
     server.resource["^/api/qr-pair$"]["GET"] = getQrPairStatus;
+    server.resource["^/api/remote-connect$"]["GET"] = getRemoteConnectStatus;
+    server.resource["^/api/remote-connect$"]["POST"] = setRemoteConnectEnabled;
+    server.resource["^/api/remote-connect/reset$"]["POST"] = resetRemoteConnect;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/logs$"]["GET"] = getLogs;
     server.resource["^/api/apps$"]["POST"] = saveApp;
@@ -3914,6 +3958,7 @@ namespace confighttp {
     shutdown_event->view();
 
     server.stop();
+    remote_connect::stop();
 
     tcp.join();
   }

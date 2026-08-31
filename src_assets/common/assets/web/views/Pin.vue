@@ -11,6 +11,46 @@
             <i class="fas fa-qrcode me-2"></i>{{ $t('pin.qr_pairing') }}
           </h5>
           <p class="text-muted mb-3">{{ $t('pin.qr_pairing_desc') }}</p>
+          <div class="remote-connect-control d-flex align-items-center justify-content-between gap-3 p-3 mb-3 rounded border text-start">
+            <div>
+              <label class="fw-semibold" for="remote-connect-switch">{{ $t('pin.remote_connect') }}</label>
+              <div id="remote-connect-description" class="small text-muted">{{ $t('pin.remote_connect_desc') }}</div>
+              <span v-if="remoteConnectEnabled" class="badge mt-2" :class="remoteConnectRunning ? 'bg-success' : 'bg-warning text-dark'">
+                {{ remoteConnectRunning ? $t('pin.remote_connect_ready') : $t('pin.remote_connect_starting') }}
+              </span>
+            </div>
+            <div class="form-check form-switch m-0">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                role="switch"
+                id="remote-connect-switch"
+                :aria-label="$t('pin.remote_connect')"
+                :aria-describedby="remoteConnectError ? 'remote-connect-error' : 'remote-connect-description'"
+                :checked="remoteConnectEnabled"
+                :disabled="remoteConnectBusy || !remoteConnectAvailable"
+                @change="handleRemoteConnectToggle"
+              />
+            </div>
+          </div>
+          <div v-if="remoteConnectEnabled || remoteConnectError" class="d-flex align-items-center justify-content-between gap-3 mb-3 text-start">
+            <span v-if="remoteConnectEnabled" class="small text-muted">{{ $t('pin.remote_connect_persistent_warning') }}</span>
+            <button class="btn btn-outline-danger btn-sm flex-shrink-0" :class="{ 'ms-auto': !remoteConnectEnabled }" :disabled="remoteConnectBusy" @click="handleRemoteConnectReset">
+              {{ $t('pin.remote_connect_reset') }}
+            </button>
+          </div>
+          <div v-if="remoteConnectError" id="remote-connect-error" class="alert alert-warning py-2 mb-3">
+            <div>{{ remoteConnectError }}</div>
+            <a
+              v-if="!remoteConnectAvailable"
+              class="alert-link d-inline-block mt-1"
+              href="https://github.com/EasyTier/EasyTier#installation"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <i class="fas fa-external-link-alt me-1"></i>{{ $t('pin.remote_connect_install') }}
+            </a>
+          </div>
           <div class="alert alert-danger d-flex align-items-start mb-3" style="font-size: 0.85rem;">
             <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
             <span>{{ $t('pin.qr_pairing_warning') }}</span>
@@ -34,10 +74,10 @@
               </div>
             </div>
             <div class="d-flex gap-2 justify-content-center">
-              <button class="btn btn-outline-primary btn-sm" @click="generateQrCode" :disabled="qrLoading">
+              <button class="btn btn-outline-primary btn-sm" @click="generateQrCode" :disabled="remoteConnectBusy">
                 <i class="fas fa-sync-alt me-1"></i>{{ $t('pin.qr_refresh') }}
               </button>
-              <button class="btn btn-outline-secondary btn-sm" @click="cancelQrCode">
+              <button class="btn btn-outline-secondary btn-sm" @click="cancelQrCode" :disabled="remoteConnectBusy">
                 <i class="fas fa-times me-1"></i>{{ $t('_common.cancel') }}
               </button>
             </div>
@@ -57,7 +97,7 @@
           <!-- Generate Button -->
           <div v-else>
             <div v-if="qrError" class="alert alert-danger mb-3">{{ qrError }}</div>
-            <button class="btn btn-primary" @click="generateQrCode" :disabled="qrLoading">
+            <button class="btn btn-primary" @click="generateQrCode" :disabled="remoteConnectBusy">
               <span v-if="qrLoading" class="spinner-border spinner-border-sm me-2"></span>
               <i v-else class="fas fa-qrcode me-2"></i>
               {{ $t('pin.qr_generate') }}
@@ -362,12 +402,13 @@
 </template>
 
 <script setup>
-import { onMounted, ref, nextTick, watch } from 'vue'
+import { computed, onMounted, ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tooltip } from 'bootstrap'
 import Navbar from '../components/layout/Navbar.vue'
 import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
+import { useRemoteConnect } from '../composables/useRemoteConnect.js'
 
 const { t } = useI18n()
 
@@ -408,6 +449,22 @@ const {
   cancelQrCode,
 } = useQrPair()
 
+const {
+  enabled: remoteConnectEnabled,
+  running: remoteConnectRunning,
+  available: remoteConnectAvailable,
+  busy: remoteConnectRequestBusy,
+  error: remoteConnectError,
+  loadStatus: loadRemoteConnectStatus,
+  setEnabled: setRemoteConnectEnabled,
+  reset: resetRemoteConnect,
+} = useRemoteConnect()
+
+const remoteConnectTransitioning = ref(false)
+const remoteConnectBusy = computed(
+  () => remoteConnectRequestBusy.value || remoteConnectTransitioning.value || qrLoading.value,
+)
+
 const clientToDelete = ref(null)
 
 const handleDelete = (client) => {
@@ -432,6 +489,43 @@ const handleUnpairAll = async () => {
   if (confirm(t('pin.unpair_all_confirm'))) await unpairAll()
 }
 
+const handleRemoteConnectToggle = async (event) => {
+  const target = event.target
+  if (remoteConnectBusy.value) {
+    target.checked = remoteConnectEnabled.value
+    return
+  }
+
+  const enabled = target.checked
+  if (enabled && !confirm(t('pin.remote_connect_enable_confirm'))) {
+    target.checked = false
+    return
+  }
+
+  remoteConnectTransitioning.value = true
+  try {
+    const regenerateQr = qrActive.value
+    if (regenerateQr) await cancelQrCode()
+    const success = await setRemoteConnectEnabled(enabled)
+    if (success && regenerateQr) await generateQrCode()
+  } finally {
+    target.checked = remoteConnectEnabled.value
+    remoteConnectTransitioning.value = false
+  }
+}
+
+const handleRemoteConnectReset = async () => {
+  if (remoteConnectBusy.value || !confirm(t('pin.remote_connect_reset_confirm'))) return
+
+  remoteConnectTransitioning.value = true
+  try {
+    await cancelQrCode()
+    await resetRemoteConnect()
+  } finally {
+    remoteConnectTransitioning.value = false
+  }
+}
+
 const initTooltips = () => {
   nextTick(() => {
     const tooltipConfigs = [
@@ -450,6 +544,7 @@ const initTooltips = () => {
 }
 
 onMounted(async () => {
+  loadRemoteConnectStatus()
   await loadConfig()
   await refreshClients()
   await loadColorProfiles()

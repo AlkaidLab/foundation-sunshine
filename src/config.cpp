@@ -29,6 +29,7 @@
 
 #include "display_device/parsed_config.h"
 #include "platform/common.h"
+#include "remote_connect/types.h"
 
 #ifdef _WIN32
   #include <shellapi.h>
@@ -529,6 +530,13 @@ namespace config {
     SLEEP_MODE_SUSPEND,  // sleep_mode: default to S3 suspend
 
     10,  // pair_max_attempts: default 10 attempts per IP per 60s
+
+    false,  // remote_connect_enabled
+    {},  // remote_connect_profile
+    {},  // remote_connect_virtual_ip
+    {},  // remote_connect_network_name
+    {},  // remote_connect_network_secret
+    remote_connect::default_peer,  // remote_connect_peer
 
     true,  // client_fingerprint_remote_rules
     "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",
@@ -1191,7 +1199,8 @@ namespace config {
 
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
-      const auto log_value = name == "file_mappings" && !val.empty() ? "<redacted>"s : val;
+      const bool sensitive = name == "file_mappings" || name == "remote_connect_network_secret";
+      const auto log_value = sensitive && !val.empty() ? "<redacted>"s : val;
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
       modified_config_settings[name] = val;
     }
@@ -1462,6 +1471,12 @@ namespace config {
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
     int_between_f(vars, "pair_max_attempts", nvhttp.pair_max_attempts, { 0, 50 });
+    bool_f(vars, "remote_connect_enabled", nvhttp.remote_connect_enabled);
+    string_f(vars, "remote_connect_profile", nvhttp.remote_connect_profile);
+    string_f(vars, "remote_connect_virtual_ip", nvhttp.remote_connect_virtual_ip);
+    string_f(vars, "remote_connect_network_name", nvhttp.remote_connect_network_name);
+    string_f(vars, "remote_connect_network_secret", nvhttp.remote_connect_network_secret);
+    string_f(vars, "remote_connect_peer", nvhttp.remote_connect_peer);
     bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
     string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);

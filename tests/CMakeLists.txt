@@ -65,6 +65,36 @@ if (WIN32)
 endif ()
 add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 
+add_executable(remote_connect_invite_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/url_utils.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/invite.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_invite.cpp)
+target_include_directories(remote_connect_invite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_invite_unit_tests gtest_main)
+target_compile_options(remote_connect_invite_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_invite_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_invite_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_invite_unit_tests COMMAND remote_connect_invite_unit_tests)
+
+set(REMOTE_CONNECT_SERVICE_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
+add_executable(remote_connect_service_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/service.cpp
+        ${REMOTE_CONNECT_SERVICE_TEST_SOURCE})
+target_include_directories(remote_connect_service_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_service_unit_tests
+        Boost::format
+        Boost::log
+        OpenSSL::Crypto
+        gtest_main)
+target_compile_options(remote_connect_service_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_service_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_service_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_service_unit_tests COMMAND remote_connect_service_unit_tests)
+
 if (WIN32)
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
@@ -117,6 +147,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+list(REMOVE_ITEM TEST_SOURCES ${REMOTE_CONNECT_SERVICE_TEST_SOURCE})
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})

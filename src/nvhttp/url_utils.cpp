@@ -1,8 +1,26 @@
 #include "url_utils.h"
 
 #include <cctype>
+#include <iomanip>
+#include <sstream>
 
 namespace nvhttp::url_utils {
+
+  std::string
+  encode(const std::string &value) {
+    std::ostringstream encoded;
+    encoded << std::hex << std::uppercase;
+    for (const auto ch : value) {
+      const auto c = static_cast<unsigned char>(ch);
+      if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+        encoded << ch;
+      }
+      else {
+        encoded << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+      }
+    }
+    return encoded.str();
+  }
 
   std::string
   decode(std::string value) {
