@@ -74,10 +74,10 @@
               </div>
             </div>
             <div class="d-flex gap-2 justify-content-center">
-              <button class="btn btn-outline-primary btn-sm" @click="generateQrCode" :disabled="qrLoading">
+              <button class="btn btn-outline-primary btn-sm" @click="generateQrCode" :disabled="remoteConnectBusy">
                 <i class="fas fa-sync-alt me-1"></i>{{ $t('pin.qr_refresh') }}
               </button>
-              <button class="btn btn-outline-secondary btn-sm" @click="cancelQrCode">
+              <button class="btn btn-outline-secondary btn-sm" @click="cancelQrCode" :disabled="remoteConnectBusy">
                 <i class="fas fa-times me-1"></i>{{ $t('_common.cancel') }}
               </button>
             </div>
@@ -97,7 +97,7 @@
           <!-- Generate Button -->
           <div v-else>
             <div v-if="qrError" class="alert alert-danger mb-3">{{ qrError }}</div>
-            <button class="btn btn-primary" @click="generateQrCode" :disabled="qrLoading">
+            <button class="btn btn-primary" @click="generateQrCode" :disabled="remoteConnectBusy">
               <span v-if="qrLoading" class="spinner-border spinner-border-sm me-2"></span>
               <i v-else class="fas fa-qrcode me-2"></i>
               {{ $t('pin.qr_generate') }}
@@ -462,7 +462,7 @@ const {
 
 const remoteConnectTransitioning = ref(false)
 const remoteConnectBusy = computed(
-  () => remoteConnectRequestBusy.value || remoteConnectTransitioning.value,
+  () => remoteConnectRequestBusy.value || remoteConnectTransitioning.value || qrLoading.value,
 )
 
 const clientToDelete = ref(null)
