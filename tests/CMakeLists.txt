@@ -82,11 +82,16 @@ endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
 
 if (WIN32)
+    set(PRE_ENCODE_FILTER_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
+    set(TRUEHDR_BACKEND_LOADER_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_backend_loader.cpp)
+
     add_executable(pre_encode_filter_unit_tests
             ${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/pre_encode_filter_test_stubs.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
+            ${PRE_ENCODE_FILTER_TEST_SOURCE})
     target_include_directories(pre_encode_filter_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(pre_encode_filter_unit_tests
             Boost::log
@@ -127,7 +132,7 @@ if (WIN32)
 
     add_executable(truehdr_backend_loader_unit_tests
             ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_backend_loader.cpp)
+            ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
     target_include_directories(truehdr_backend_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(truehdr_backend_loader_unit_tests gtest_main)
     target_compile_definitions(truehdr_backend_loader_unit_tests PRIVATE
@@ -202,6 +207,13 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
+if (WIN32)
+    # These tests depend on generated fake backend paths and run in dedicated
+    # targets above; do not compile a second copy into the aggregate suite.
+    list(REMOVE_ITEM TEST_SOURCES
+            ${PRE_ENCODE_FILTER_TEST_SOURCE}
+            ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
+endif ()
 
 set(SUNSHINE_SOURCES
         ${SUNSHINE_TARGET_FILES}
