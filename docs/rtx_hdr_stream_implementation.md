@@ -396,9 +396,8 @@ struct frame_pipeline_policy_t {
 };
 
 frame_pipeline_policy_t resolve_frame_pipeline_policy(
-  bool client_requests_hdr,
-  bool synthetic_hdr_requested,
-  bool host_hdr_automation_enabled);
+  int dynamic_range,
+  bool post_process_hdr_active);
 ```
 
 主要结果：
@@ -595,23 +594,26 @@ namespace platf::dxgi {
     ID3D11Texture2D *texture = nullptr;
     ID3D11ShaderResourceView *srv = nullptr;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
-    platf::captured_frame_desc_t semantic;
-    int width = 0;
-    int height = 0;
+    captured_frame_desc_t semantic;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
   };
 
   struct filter_result_t {
     filter_status_e status = filter_status_e::bypass;
     gpu_frame_view_t frame;
     std::string_view reason;
-    double gpu_ms = 0.0;
   };
 
   class pre_encode_filter_t {
   public:
     virtual ~pre_encode_filter_t() = default;
+    virtual bool requires_detached_input() const = 0;
     virtual filter_result_t process(const gpu_frame_view_t &input) = 0;
     virtual void flush() = 0;
+    virtual std::string_view backend_name() const = 0;
+    virtual bool degraded() const { return false; }
+    virtual std::string_view failure_reason() const { return {}; }
   };
 }
 ```
@@ -715,62 +717,60 @@ loader fail-closed。
 ### 8.2 版本化 C ABI
 
 ```c
+#define FOUNDATION_TRUEHDR_CALL __cdecl
 #define FOUNDATION_TRUEHDR_ABI_VERSION 1u
+#define FOUNDATION_TRUEHDR_GET_API_EXPORT "foundation_truehdr_get_api"
 
-typedef enum fth_result {
-  FTH_OK = 0,
-  FTH_PENDING = 1,
-  FTH_UNAVAILABLE = 2,
-  FTH_INVALID_ARGUMENT = 3,
-  FTH_UNSUPPORTED_FORMAT = 4,
-  FTH_DEVICE_REMOVED = 5,
-  FTH_TIMEOUT = 6,
-  FTH_INTERNAL_ERROR = 7
-} fth_result;
+typedef enum foundation_truehdr_status_e {
+  FOUNDATION_TRUEHDR_STATUS_OK = 0,
+  FOUNDATION_TRUEHDR_STATUS_INVALID_ARGUMENT = 1,
+  FOUNDATION_TRUEHDR_STATUS_UNSUPPORTED = 2,
+  FOUNDATION_TRUEHDR_STATUS_RUNTIME_UNAVAILABLE = 3,
+  FOUNDATION_TRUEHDR_STATUS_DEVICE_LOST = 4,
+  FOUNDATION_TRUEHDR_STATUS_INTERNAL_ERROR = 5,
+} foundation_truehdr_status_e;
 
-typedef struct fth_params_v1 {
+typedef struct foundation_truehdr_config_t {
   uint32_t struct_size;
-  uint32_t contrast;
-  uint32_t saturation;
-  uint32_t middle_gray;
-  uint32_t peak_nits;
-} fth_params_v1;
+  uint32_t width;
+  uint32_t height;
+  float contrast;
+  float saturation;
+  float middle_gray_nits;
+  float peak_nits;
+} foundation_truehdr_config_t;
 
-typedef struct fth_capabilities_v1 {
-  uint32_t struct_size;
+typedef struct foundation_truehdr_api_t {
   uint32_t abi_version;
-  uint32_t min_width;
-  uint32_t min_height;
-  uint32_t max_width;
-  uint32_t max_height;
-  uint32_t supports_bgra8;
-  uint32_t supports_rgba8;
-  char runtime_version[64];
-} fth_capabilities_v1;
+  uint32_t struct_size;
+  foundation_truehdr_status_e (FOUNDATION_TRUEHDR_CALL *create)(
+    void *d3d11_device,
+    const foundation_truehdr_config_t *config,
+    void **instance);
+  foundation_truehdr_status_e (FOUNDATION_TRUEHDR_CALL *process)(
+    void *instance,
+    void *d3d11_device_context,
+    void *sdr_input_texture,
+    void *scrgb_output_texture);
+  void (FOUNDATION_TRUEHDR_CALL *flush)(void *instance);
+  void (FOUNDATION_TRUEHDR_CALL *destroy)(void *instance);
+} foundation_truehdr_api_t;
 
-typedef void *fth_handle;
-
-uint32_t fth_get_abi_version(void);
-fth_result fth_query_capabilities(
-  ID3D11Device *device,
-  fth_capabilities_v1 *out_caps);
-fth_result fth_create(ID3D11Device *device, fth_handle *out_handle);
-fth_result fth_process(
-  fth_handle handle,
-  ID3D11Texture2D *sdr_input,
-  ID3D11Texture2D *hdr_output,
-  const fth_params_v1 *params);
-fth_result fth_flush(fth_handle handle);
-void fth_destroy(fth_handle handle);
-const char *fth_result_string(fth_result result);
+typedef const foundation_truehdr_api_t *(FOUNDATION_TRUEHDR_CALL *foundation_truehdr_get_api_fn)(
+  uint32_t requested_abi_version);
 ```
 
 约束：
 
-- 所有结构首字段为 `struct_size`；
-- 所有导出函数 `noexcept`，内部异常转换为 `FTH_INTERNAL_ERROR`；
-- 错误字符串是静态只读 ASCII，不跨边界释放；
-- `fth_process()` 不分配主机输出纹理；
+- `foundation_truehdr_get_api()` 是唯一导出，ABI 版本不匹配时返回空指针；
+- `create()` 接收 D3D11 device 和包含尺寸、对比度、饱和度、中灰及峰值亮度的配置，
+  成功时写出不透明实例；
+- `process()` 接收同一 device 的立即 context、只读 RGBA8/BGRA8 SDR 输入及由 Sunshine
+  独占的 FP16 scRGB 输出；
+- `OK` 表示结果可编码；`INVALID_ARGUMENT` 表示调用契约错误；`UNSUPPORTED` 和
+  `RUNTIME_UNAVAILABLE` 触发兼容回退；`DEVICE_LOST` 和 `INTERNAL_ERROR` 使本会话降级；
+- 所有 ABI 入口捕获内部异常并转换为 `INTERNAL_ERROR`；
+- `process()` 不分配主机输出纹理；
 - 输入只读，输出由 Sunshine 独占；
 - 后端不写注册表、不修改 NVIDIA profile、不创建窗口；
 - DLL 卸载前必须销毁所有 handle。
@@ -816,49 +816,24 @@ disabled
    │ 配置启用 + 客户端 HDR
    ▼
 probing
-   ├── 不支持/组件缺失 ──→ unavailable
-   ▼
-warming_up
-   ├── 连续 3 帧成功 ──→ active
-   ├── 超时/失败 ─────→ degraded
+   ├── create 失败/组件缺失 ──→ degraded（内置兼容回退）
    ▼
 active
-   ├── 连续 3 次失败 ─→ degraded
-   ├── device removed ─→ reinit_required
+   ├── 首次 process 失败 ─→ degraded（内置兼容回退）
    ▼
 degraded（本会话不可自动恢复）
 ```
 
-### 9.2 Warming-up
+### 9.2 同步执行边界
 
-- 后端 feature create 可异步执行；
-- 未 ready 时使用固定中性 SDR→PQ 路径；
-- 只有连续 3 帧 TrueHDR 成功才转为 active；
-- 激活时请求 IDR，并在 IDR 前完成画面切换；
-- 如果现有编码器接口无法保证“转换切换与 IDR 同帧”，首期改为启动时最多等待一个
-  有界 warm-up 窗口，成功后再开始首帧编码；超时则整会话 degraded，避免画面中途跳变。
+首版没有 worker、job queue、取消点或 deadline：`create()` 在滤镜构造路径同步执行，
+`process()` 在现有 convert/encode 调用线程同步执行，对外只观察到 `ready` 或 `failed`。
+VDD borrowed 帧会先复制到私有纹理并释放 keyed mutex，因此 SDK 调用不会占用捕获资源，
+但其 GPU/驱动耗时仍直接计入当前帧的 pre-encode 时间。首次处理失败后立即永久切换到内置
+SDR-in-HDR 回退，不逐帧重试。若实测发现 NGX 调用会无界阻塞，再把独立 worker 或进程隔离
+作为后续设计引入，届时才定义 pending、取消、超时和 circuit breaker 语义。
 
-优先选择第二种“首帧前决策”，画质更稳定、状态更简单。
-
-### 9.3 Deadline
-
-每帧处理 deadline 从有效帧周期计算，不提供用户可调毫秒值：
-
-```cpp
-budget = clamp(frame_period * 0.60, 2ms, 10ms);
-```
-
-该数值是等待上限，不是 SDK 调用取消点。超过预算：
-
-- 尚未开始的 job 取消；
-- 已开始的 job 完成后丢弃结果；
-- 记录 timeout；
-- 连续 3 次触发 session circuit breaker；
-- 不阻塞捕获线程。
-
-发布前应根据 GPU 实测调整比例，但不得使用无限等待。
-
-### 9.4 降级画面
+### 9.3 降级画面
 
 降级后仍保持 HDR wire contract，使用已有 SDR→PQ shader：
 
@@ -1224,10 +1199,10 @@ tests/tools/fake_truehdr_backend.cpp
 - SDR 显示器下生成合法 BT.2020/D65 metadata；
 - client max nits 限制 peak；
 - ABI 不匹配/导出缺失/hash 错误；
-- pending→active、active→degraded；
-- 超时 circuit breaker；
+- ready→active、首次 primary 失败→degraded 并切换兼容回退；
+- 同步 create/process 失败不会占用 borrowed capture 资源；
 - TrueHDR 激活时清空旧 luminance temporal state；
-- 多会话 job 串行与 stale replacement。
+- 多会话 NGX 调用由进程级 mutex 串行化。
 
 ### 14.2 后端 contract test
 
@@ -1289,7 +1264,7 @@ AI 输出不使用逐像素 golden image；使用统计不变量、感知截图�
   不下降作为证据；
 - 新增 host latency p95 不超过一个 frame interval；
 - 4K60 无持续队列积压；
-- 4K120 不满足 deadline 时必须稳定降级，不得拖垮捕获或编码；
+- 4K120 若同步处理延迟不能满足门槛，则不得列为受支持模式；
 - dropped frame rate 增量小于 0.5 个百分点；
 - 30 分钟稳定测试无 D3D11 live object 增长；
 - 100 次会话启停无 backend handle、线程或 DLL 引用泄漏；
@@ -1484,8 +1459,8 @@ src_assets/common/assets/web/public/assets/locale/*.json
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| NGX API 非线程安全 | 多会话冻结/崩溃 | 单 worker 串行、bounded wait、进程级 fail-fast |
-| SDK 调用不可取消 | encoder 卡住 | keyed mutex 提前释放、deadline、必要时升级独立进程 |
+| NGX API 非线程安全 | 多会话冻结/崩溃 | backend 内进程级 mutex 串行化所有 NGX 调用 |
+| SDK 调用不可取消 | encoder 线程卡住 | keyed mutex 提前释放；实测若出现无界阻塞则升级独立进程隔离 |
 | 后处理策略渗入捕获层 | 每加后端/算法都修改 WGC、DXGI、VDD | 只传 `capture_contract_t`，只返回 `captured_frame_desc_t` |
 | 源显示意外进入 HDR | 双重转换/颜色错误 | 显示策略关闭 HDR、格式探测拒绝 FP16 输入 |
 | SDR 显示无 HDR metadata | 客户端色调映射错误 | 独立 stream metadata resolver |

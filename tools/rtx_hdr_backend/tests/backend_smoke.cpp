@@ -168,20 +168,31 @@ int wmain(int argc, wchar_t **argv) {
   }
 
   bool meaningful_output = false;
-  std::uint16_t first_rgb[3] {};
+  std::uint16_t center_rgb[3] {};
   if (status == FOUNDATION_TRUEHDR_STATUS_OK) {
     D3D11_MAPPED_SUBRESOURCE mapped {};
     hr = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
     if (SUCCEEDED(hr)) {
-      const auto *first = static_cast<const std::uint16_t *>(mapped.pData);
-      first_rgb[0] = first[0];
-      first_rgb[1] = first[1];
-      first_rgb[2] = first[2];
       const auto *center_row = reinterpret_cast<const std::uint16_t *>(
         static_cast<const std::uint8_t *>(mapped.pData) + (height / 2u) * mapped.RowPitch);
       const auto center = static_cast<std::size_t>(width / 2u) * 4u;
-      meaningful_output = center_row[center] != 0 || center_row[center + 1] != 0 ||
-                          center_row[center + 2] != 0;
+      center_rgb[0] = center_row[center];
+      center_rgb[1] = center_row[center + 1];
+      center_rgb[2] = center_row[center + 2];
+      for (UINT y = 0; y < height && !meaningful_output; ++y) {
+        const auto *row = reinterpret_cast<const std::uint16_t *>(
+          static_cast<const std::uint8_t *>(mapped.pData) + y * mapped.RowPitch);
+        for (UINT x = 0; x < width && !meaningful_output; ++x) {
+          for (UINT channel = 0; channel < 3; ++channel) {
+            const auto value = row[static_cast<std::size_t>(x) * 4u + channel];
+            const bool finite_positive = (value & 0x8000u) == 0 && (value & 0x7c00u) != 0x7c00u;
+            if (finite_positive && value > 0x3c00u) {  // FP16 1.0
+              meaningful_output = true;
+              break;
+            }
+          }
+        }
+      }
       context->Unmap(staging, 0);
     }
   }
@@ -204,7 +215,7 @@ int wmain(int argc, wchar_t **argv) {
     return fail("TrueHDR completed but produced no readable HDR pixels on " + gpu);
   }
   std::cout << "PASS: NGX TrueHDR processed 1920x1080 SDR to FP16 scRGB on " << gpu
-            << "; first RGB half bits=" << first_rgb[0] << ',' << first_rgb[1] << ','
-            << first_rgb[2] << '\n';
+            << "; center RGB half bits=" << center_rgb[0] << ',' << center_rgb[1] << ','
+            << center_rgb[2] << '\n';
   return 0;
 }

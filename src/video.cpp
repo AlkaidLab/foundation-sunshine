@@ -2244,7 +2244,9 @@ namespace video {
     metadata.minDisplayLuminance = 1;  // 0.0001 nit units
     metadata.maxFullFrameLuminance = peak_nits;
     metadata.maxContentLightLevel = peak_nits;
-    metadata.maxFrameAverageLightLevel = peak_nits;
+    // TrueHDR's frame-average luminance is not known at session setup. Zero is
+    // the HDR10 "unknown" value and avoids suggesting a full frame at MaxCLL.
+    metadata.maxFrameAverageLightLevel = 0;
     return true;
   }
 

@@ -135,6 +135,10 @@ namespace {
       if (!same_device) {
         return FOUNDATION_TRUEHDR_STATUS_INVALID_ARGUMENT;
       }
+      const auto context_type = input_context->GetType();
+      if (context_type != D3D11_DEVICE_CONTEXT_IMMEDIATE) {
+        return FOUNDATION_TRUEHDR_STATUS_INVALID_ARGUMENT;
+      }
 
       D3D11_TEXTURE2D_DESC input_desc {};
       D3D11_TEXTURE2D_DESC output_desc {};
@@ -169,7 +173,7 @@ namespace {
       std::lock_guard lock { ngx_mutex };
       multithread_scope_t multithread_scope { multithread };
       const auto status = NGX_D3D11_EVALUATE_TRUEHDR_EXT(
-        input_context,
+        context,
         feature,
         parameters,
         &params);
@@ -195,6 +199,9 @@ namespace {
           NVSDK_NGX_D3D11_ReleaseFeature(feature);
           feature = nullptr;
         }
+        // Preserve the teardown order used by the RTX Video SDK 1.1 DX11
+        // TrueHDR samples: release feature, shut down NGX, then destroy the
+        // capability parameters returned during initialization.
         if (ngx_initialized) {
           NVSDK_NGX_D3D11_Shutdown1(device);
           ngx_initialized = false;

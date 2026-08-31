@@ -11,7 +11,7 @@ namespace {
     EXPECT_EQ(loader.error(), "backend_path_not_absolute");
 
     EXPECT_FALSE(loader.load(std::filesystem::temp_directory_path() / "missing_truehdr_backend.dll"));
-    EXPECT_EQ(loader.error(), "backend_load_failed");
+    EXPECT_EQ(loader.error().find("backend_load_failed:"), 0u);
   }
 
   TEST(TrueHdrBackendLoader, LoadsCompleteVersionedApi) {

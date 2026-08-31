@@ -12,6 +12,7 @@
 #include <d3dcompiler.h>
 #include <dxgi.h>
 
+#include "src/logging.h"
 #include "rtx_hdr/backend_loader.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)
@@ -78,6 +79,13 @@ namespace platf::dxgi {
         &errors_raw);
       com_ptr_t<ID3DBlob> errors { errors_raw };
       if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to compile pre-encode shader " << shader_path.string()
+                         << ": "
+                         << (errors ? std::string_view {
+                               static_cast<const char *>(errors->GetBufferPointer()),
+                               errors->GetBufferSize()
+                             }
+                                    : std::string_view { "no compiler diagnostic" });
         if (shader_raw) {
           shader_raw->Release();
         }
@@ -481,7 +489,11 @@ namespace platf::dxgi {
     ID3D11DeviceContext *device_context,
     const std::filesystem::path &backend_path,
     const pre_encode_filter_config_t &config) {
-    if (kind == pre_encode_filter_e::none || !device || !device_context) {
+    if (kind == pre_encode_filter_e::none) {
+      return {};
+    }
+    if (!device || !device_context) {
+      BOOST_LOG(error) << "Cannot create pre-encode filter without a D3D11 device and immediate context";
       return {};
     }
     if (kind == pre_encode_filter_e::mock_sdr_to_scrgb) {
@@ -491,7 +503,9 @@ namespace platf::dxgi {
       auto fallback = make_mock_filter(device, device_context);
       rtx_hdr::backend_loader_t loader;
       if (!loader.load(backend_path)) {
+        BOOST_LOG(warning) << "TrueHDR backend unavailable: " << loader.error();
         if (!fallback) {
+          BOOST_LOG(error) << "TrueHDR backend and built-in SDR-in-HDR fallback are both unavailable";
           return {};
         }
         return std::make_unique<failover_filter_t>(
@@ -512,6 +526,7 @@ namespace platf::dxgi {
       }
       return std::make_unique<failover_filter_t>(std::move(primary), std::move(fallback));
     }
+    BOOST_LOG(error) << "Unknown pre-encode filter kind: " << static_cast<int>(kind);
     return {};
   }
 }  // namespace platf::dxgi

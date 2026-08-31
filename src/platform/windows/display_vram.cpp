@@ -529,6 +529,7 @@ namespace platf::dxgi {
           if (filter_result.status != filter_status_e::ready ||
               !filter_result.frame.texture || !filter_result.frame.srv) {
             BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
+            update_synthetic_hdr_runtime_status(false, filter_result.reason);
             return -1;
           }
           update_synthetic_hdr_runtime_status(true);
@@ -1734,7 +1735,9 @@ namespace platf::dxgi {
     }
 
     void
-    update_synthetic_hdr_runtime_status(bool processed_frame) {
+    update_synthetic_hdr_runtime_status(
+      bool processed_frame,
+      std::string_view frame_failure = {}) {
       if (!pre_encode_filter) {
         runtime_status.synthetic_hdr_backend = "none";
         runtime_status.synthetic_hdr_state = "disabled";
@@ -1743,10 +1746,12 @@ namespace platf::dxgi {
       }
 
       const std::string backend { pre_encode_filter->backend_name() };
-      const std::string state = pre_encode_filter->degraded()
+      const std::string state = !frame_failure.empty() || pre_encode_filter->degraded()
                                   ? "degraded"
                                   : processed_frame ? "active" : "warming_up";
-      const std::string reason { pre_encode_filter->failure_reason() };
+      const std::string reason = frame_failure.empty()
+                                   ? std::string { pre_encode_filter->failure_reason() }
+                                   : std::string { frame_failure };
       if (runtime_status.synthetic_hdr_backend == backend &&
           runtime_status.synthetic_hdr_state == state &&
           runtime_status.synthetic_hdr_failure_reason == reason) {
@@ -2210,6 +2215,25 @@ namespace platf::dxgi {
 
       // Pixel-shader fallback: preserve the source outside the encoder keyed
       // mutex, then let the common pass-1 analyzer apply HdrPreEncodeTransform.
+      if (!hdr_analysis_input_tex || !encoder_texture) {
+        return {};
+      }
+      D3D11_TEXTURE2D_DESC analysis_desc {};
+      D3D11_TEXTURE2D_DESC encoder_desc {};
+      hdr_analysis_input_tex->GetDesc(&analysis_desc);
+      encoder_texture->GetDesc(&encoder_desc);
+      if (analysis_desc.Width != encoder_desc.Width ||
+          analysis_desc.Height != encoder_desc.Height ||
+          analysis_desc.MipLevels != encoder_desc.MipLevels ||
+          analysis_desc.ArraySize != encoder_desc.ArraySize ||
+          analysis_desc.Format != encoder_desc.Format ||
+          analysis_desc.SampleDesc.Count != encoder_desc.SampleDesc.Count ||
+          analysis_desc.SampleDesc.Quality != encoder_desc.SampleDesc.Quality) {
+        // WGC window capture may change size independently of the display-sized
+        // analysis resources. Dropping this sample is safer than copying
+        // incompatible resources and reusing stale luminance metadata.
+        return {};
+      }
       device_ctx->CopyResource(hdr_analysis_input_tex.get(), encoder_texture);
       return {
         hdr_analysis_input_srv.get(),

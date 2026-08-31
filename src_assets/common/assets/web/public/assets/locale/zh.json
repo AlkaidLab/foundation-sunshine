@@ -695,7 +695,7 @@
     "rtx_hdr_backend_path": "TrueHDR 后端 DLL",
     "rtx_hdr_backend_path_desc": "foundation_truehdr_backend.dll 的绝对路径。后端不可用或处理失败时，会话会安全降级到内置 SDR-in-HDR 兼容路径。",
     "rtx_hdr_desc": "按应用启用捕获后的 SDR 到 HDR 处理，不改变捕获后端；客户端必须请求 HDR。",
-    "rtx_hdr_off": "关闭（原 pipeline 无额外开销）",
+    "rtx_hdr_off": "关闭（无额外管线开销）",
     "rtx_hdr_per_app": "按应用启用",
     "sleep_mode": "睡眠模式",
     "sleep_mode_away": "离开模式（关闭显示器，即时唤醒）",

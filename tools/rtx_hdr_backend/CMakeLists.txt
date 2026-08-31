@@ -13,6 +13,16 @@ endif ()
 if (NOT EXISTS "${SUNSHINE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_abi.h")
   message(FATAL_ERROR "SUNSHINE_SOURCE_DIR does not contain backend_abi.h")
 endif ()
+set(RTX_VIDEO_SDK_IMPORT_LIBRARY
+  "${RTX_VIDEO_SDK_ROOT}/lib/Windows/x64/nvsdk_ngx_d.lib")
+set(RTX_VIDEO_SDK_TRUEHDR_DLL
+  "${RTX_VIDEO_SDK_ROOT}/bin/Windows/x64/rel/nvngx_truehdr.dll")
+if (NOT EXISTS "${RTX_VIDEO_SDK_IMPORT_LIBRARY}")
+  message(FATAL_ERROR "RTX Video SDK import library not found: ${RTX_VIDEO_SDK_IMPORT_LIBRARY}")
+endif ()
+if (NOT EXISTS "${RTX_VIDEO_SDK_TRUEHDR_DLL}")
+  message(FATAL_ERROR "RTX Video SDK TrueHDR runtime not found: ${RTX_VIDEO_SDK_TRUEHDR_DLL}")
+endif ()
 
 add_library(foundation_truehdr_backend SHARED src/backend.cpp)
 target_compile_features(foundation_truehdr_backend PRIVATE cxx_std_20)
@@ -27,7 +37,7 @@ target_include_directories(foundation_truehdr_backend PRIVATE
 target_link_libraries(foundation_truehdr_backend PRIVATE
   d3d11
   dxgi
-  "${RTX_VIDEO_SDK_ROOT}/lib/Windows/x64/nvsdk_ngx_d.lib")
+  "${RTX_VIDEO_SDK_IMPORT_LIBRARY}")
 set_property(TARGET foundation_truehdr_backend PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 set_target_properties(foundation_truehdr_backend PROPERTIES
@@ -36,7 +46,7 @@ set_target_properties(foundation_truehdr_backend PROPERTIES
 
 add_custom_command(TARGET foundation_truehdr_backend POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-    "${RTX_VIDEO_SDK_ROOT}/bin/Windows/x64/rel/nvngx_truehdr.dll"
+    "${RTX_VIDEO_SDK_TRUEHDR_DLL}"
     "$<TARGET_FILE_DIR:foundation_truehdr_backend>/nvngx_truehdr.dll")
 
 add_executable(foundation_truehdr_backend_smoke tests/backend_smoke.cpp)

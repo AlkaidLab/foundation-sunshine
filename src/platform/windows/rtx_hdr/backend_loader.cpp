@@ -42,7 +42,8 @@ namespace platf::dxgi::rtx_hdr {
       nullptr,
       LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!module_) {
-      error_ = "backend_load_failed";
+      const auto load_error = GetLastError();
+      error_ = "backend_load_failed:" + std::to_string(load_error);
       return false;
     }
 
