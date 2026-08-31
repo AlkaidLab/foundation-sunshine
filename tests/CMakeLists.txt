@@ -191,6 +191,7 @@ target_include_directories(remote_usb_host_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_host_controller_unit_tests
         Boost::asio
+        Boost::process
         Boost::system
         ${CMAKE_THREAD_LIBS_INIT}
         gtest_main)

@@ -13,6 +13,7 @@ set(BOOST_COMPONENTS
         function
         locale
         log
+        process
         program_options
         system
 )
@@ -51,7 +52,6 @@ if(NOT Boost_FOUND)
     list(APPEND BOOST_COMPONENTS
             crc
             format
-            process
             property_tree)
 
     set(BOOST_ENABLE_CMAKE ON)
