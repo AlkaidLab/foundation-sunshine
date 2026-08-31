@@ -7,6 +7,9 @@
 
 namespace remote_connect::easytier {
 
+  inline constexpr char installation_required_error[] =
+    "EasyTier is not installed in its official default location. Install EasyTier separately, then restart Sunshine.";
+
   bool
   virtual_subnet_conflicts(const std::string &virtual_ip);
 

@@ -2,9 +2,6 @@
 
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <iomanip>
-#include <optional>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -14,14 +11,12 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/process/v1.hpp>
 
-#include <openssl/evp.h>
-
 #ifdef _WIN32
   #include <winsock2.h>
   #include <iphlpapi.h>
+  #include <windows.h>
 #endif
 
-#include "src/crypto.h"
 #include "src/file_handler.h"
 #include "src/network.h"
 #include "src/nvhttp.h"
@@ -43,59 +38,43 @@ namespace remote_connect::easytier {
     }
 
 #ifdef _WIN32
-    struct runtime_component_t {
-      const char *filename;
-      const char *expected_sha256;
-    };
-
-    std::optional<std::string>
-    calculate_sha256(const fs::path &path) {
-      crypto::md_ctx_t context {EVP_MD_CTX_create()};
-      if (!context || EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) return std::nullopt;
-
-      std::ifstream file(path, std::ios::binary);
-      if (!file) return std::nullopt;
-      char buffer[16 * 1024];
-      while (file.good()) {
-        file.read(buffer, sizeof(buffer));
-        if (EVP_DigestUpdate(context.get(), buffer, static_cast<std::size_t>(file.gcount())) != 1) {
-          return std::nullopt;
-        }
-      }
-      if (!file.eof()) return std::nullopt;
-
-      unsigned char digest[EVP_MAX_MD_SIZE];
-      unsigned int digest_size = 0;
-      if (EVP_DigestFinal_ex(context.get(), digest, &digest_size) != 1) return std::nullopt;
-
-      std::ostringstream encoded;
-      encoded << std::hex << std::setfill('0');
-      for (unsigned int index = 0; index < digest_size; ++index) {
-        encoded << std::setw(2) << static_cast<unsigned int>(digest[index]);
-      }
-      return encoded.str();
-    }
-
     fs::path
     find_core() {
-#if defined(EASYTIER_EASYTIER_CORE_EXE_SHA256) && defined(EASYTIER_PACKET_DLL_SHA256) && \
-    defined(EASYTIER_WINDIVERT64_SYS_SHA256) && defined(EASYTIER_WINTUN_DLL_SHA256)
-      const auto runtime_dir = platf::appdata().parent_path() / "tools" / "easytier";
-      constexpr runtime_component_t components[] = {
-        {"easytier-core.exe", EASYTIER_EASYTIER_CORE_EXE_SHA256},
-        {"Packet.dll", EASYTIER_PACKET_DLL_SHA256},
-        {"WinDivert64.sys", EASYTIER_WINDIVERT64_SYS_SHA256},
-        {"wintun.dll", EASYTIER_WINTUN_DLL_SHA256},
+      // EasyTier's official Windows installer places the complete runtime here.
+      // Deliberately avoid PATH/current-directory lookup: Sunshine may run as a
+      // service, so accepting a user-writable executable would be unsafe.
+      constexpr const wchar_t *components[] = {
+        L"easytier-core.exe",
+        L"Packet.dll",
+        L"WinDivert64.sys",
+        L"wintun.dll",
       };
-      for (const auto &component : components) {
-        const auto path = runtime_dir / component.filename;
-        const auto digest = calculate_sha256(path);
-        if (!digest || *digest != component.expected_sha256) return {};
+      constexpr const wchar_t *program_files_variables[] = {
+        L"ProgramW6432",  // Native Program Files from a 32-bit process on 64-bit Windows.
+        L"ProgramFiles",
+      };
+      for (const auto *variable : program_files_variables) {
+        std::wstring program_files(32768, L'\0');
+        const auto length = GetEnvironmentVariableW(
+          variable,
+          program_files.data(),
+          static_cast<DWORD>(program_files.size())
+        );
+        if (length == 0 || length >= program_files.size()) continue;
+        program_files.resize(length);
+
+        const auto runtime_dir = fs::path(program_files) / "EasyTier";
+        bool complete = true;
+        for (const auto *component : components) {
+          std::error_code error_code;
+          if (!fs::is_regular_file(runtime_dir / component, error_code) || error_code) {
+            complete = false;
+            break;
+          }
+        }
+        if (complete) return runtime_dir / "easytier-core.exe";
       }
-      return runtime_dir / "easytier-core.exe";
-#else
       return {};
-#endif
     }
 #else
     fs::path
@@ -265,7 +244,7 @@ namespace remote_connect::easytier {
 
     const auto executable = find_core();
     if (executable.empty()) {
-      error = "The remote connection component is unavailable. Repair or reinstall Foundation Sunshine.";
+      error = installation_required_error;
       return false;
     }
 

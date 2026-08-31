@@ -129,7 +129,7 @@ namespace remote_connect {
       const bool available = runtime.available();
       auto error = last_error;
       if (!available && error.empty()) {
-        error = "The remote connection component is unavailable. Repair or reinstall Foundation Sunshine.";
+        error = easytier::installation_required_error;
       }
       return {
         config::nvhttp.remote_connect_enabled,

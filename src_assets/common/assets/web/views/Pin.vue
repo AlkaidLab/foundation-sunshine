@@ -40,7 +40,16 @@
             </button>
           </div>
           <div v-if="remoteConnectError" id="remote-connect-error" class="alert alert-warning py-2 mb-3">
-            {{ remoteConnectError }}
+            <div>{{ remoteConnectError }}</div>
+            <a
+              v-if="!remoteConnectAvailable"
+              class="alert-link d-inline-block mt-1"
+              href="https://github.com/EasyTier/EasyTier/releases"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <i class="fas fa-external-link-alt me-1"></i>{{ $t('pin.remote_connect_install') }}
+            </a>
           </div>
           <div class="alert alert-danger d-flex align-items-start mb-3" style="font-size: 0.85rem;">
             <i class="fas fa-exclamation-triangle me-2 mt-1"></i>

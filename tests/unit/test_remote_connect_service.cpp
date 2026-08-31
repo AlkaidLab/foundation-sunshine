@@ -21,6 +21,7 @@ namespace {
   bool block_runtime_start;
   bool runtime_start_entered;
   bool release_runtime_start;
+  bool runtime_available;
 
   void
   reset_runtime_barrier() {
@@ -48,6 +49,7 @@ namespace {
   void
   configure_remote_connect() {
     remote_connect::stop();
+    runtime_available = true;
     config::nvhttp = {};
     config::nvhttp.sunshine_name = "test-host";
     config::nvhttp.remote_connect_enabled = true;
@@ -86,7 +88,7 @@ namespace remote_connect::easytier {
 
   bool
   runtime_t::available() const {
-    return true;
+    return runtime_available;
   }
 
   bool
@@ -95,7 +97,11 @@ namespace remote_connect::easytier {
   }
 
   bool
-  runtime_t::start(const enrollment_t &, const std::string &, std::string &) {
+  runtime_t::start(const enrollment_t &, const std::string &, std::string &error) {
+    if (!runtime_available) {
+      error = installation_required_error;
+      return false;
+    }
     std::unique_lock lock(runtime_mutex);
     runtime_start_entered = true;
     runtime_condition.notify_all();
@@ -111,6 +117,20 @@ namespace remote_connect::easytier {
     state_->running = false;
   }
 }  // namespace remote_connect::easytier
+
+TEST(RemoteConnectService, MissingExternalRuntimeCannotBeEnabled) {
+  configure_remote_connect();
+  config::nvhttp.remote_connect_enabled = false;
+  runtime_available = false;
+
+  const auto result = remote_connect::set_enabled(true);
+
+  EXPECT_FALSE(result.success);
+  EXPECT_FALSE(result.status.enabled);
+  EXPECT_FALSE(result.status.running);
+  EXPECT_FALSE(result.status.available);
+  EXPECT_NE(result.status.error.find("Install EasyTier separately"), std::string::npos);
+}
 
 TEST(RemoteConnectService, PairingSnapshotSerializesConcurrentDisable) {
   using namespace std::chrono_literals;
