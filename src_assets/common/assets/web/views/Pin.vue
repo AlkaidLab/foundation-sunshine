@@ -44,7 +44,7 @@
             <a
               v-if="!remoteConnectAvailable"
               class="alert-link d-inline-block mt-1"
-              href="https://github.com/EasyTier/EasyTier/releases"
+              href="https://github.com/EasyTier/EasyTier#installation"
               target="_blank"
               rel="noopener noreferrer"
             >
