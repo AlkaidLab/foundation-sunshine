@@ -114,7 +114,8 @@ scene_refresh 两变体）生成 RPU bin，dovi_tool 2.3.3 验证：
 
 - **RPU 对 HLG BL 的兼容性**（Phase 0 消解）：手写模板基于 8.1 实测 golden；
   若 dovi_tool 显示 HLG 源需要不同的 mapping 头，Phase 0 即停，重新评估。
-- **客户端矛盾上报**（8.1/8.4 同报 + 请求 HLG）：主机按 client_caps_missing 落回 HDR10，
+- **客户端矛盾上报**（8.1/8.4 同报 + 请求 HLG）：主机按 colorspace_unsupported
+  拒绝 8.4，HLG 会话直落**无动态元数据的普通 HLG**（HDR10+ 需 PQ，无中转），
   行为保守不炸。
 - **旧主机 + 新客户端**：新客户端报 1<<4 位，旧主机 mask off，协商行为同现状。
 - **真机覆盖**：Phase 4 需要一台"仅支持 8.4"的目标设备做正例；8.1 设备回归只需现有
