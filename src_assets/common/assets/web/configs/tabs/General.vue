@@ -11,6 +11,7 @@ const props = defineProps({
 
 const config = ref(props.config)
 const globalPrepCmd = ref(props.globalPrepCmd)
+const isEmbeddedGui = window.isTauri === true && window.parent !== window
 
 function addCmd() {
   let template = {
@@ -128,6 +129,7 @@ function handleCommandOrderChanged(newOrder) {
 
       <!-- Enable system tray -->
       <Checkbox
+        v-if="!isEmbeddedGui"
         container-class="settings-field settings-toggle-field"
         id="system_tray"
         locale-prefix="config"
