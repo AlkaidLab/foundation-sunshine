@@ -130,6 +130,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp"
         "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.h"
         "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_tombstone.h"
+        "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_service.cpp"
+        "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_service.h"
         "${CMAKE_SOURCE_DIR}/src/file_handler.cpp"
         "${CMAKE_SOURCE_DIR}/src/file_handler.h"
         "${CMAKE_SOURCE_DIR}/src/globals.cpp"
