@@ -117,6 +117,10 @@ using usbip_command_runner = std::function<usbip_command_result(
   const std::shared_ptr<std::atomic_bool> &cancel,
   std::size_t max_output_bytes)>;
 
+/** Injectable only to exercise process reader allocation failures in tests. */
+using usbip_reader_thread_factory =
+  std::function<std::thread(std::function<void()>)>;
+
 struct usbip_host_controller_config {
   /** Empty selects the platform default (`usbip.exe` on Windows). */
   std::string executable;
@@ -126,6 +130,7 @@ struct usbip_host_controller_config {
   std::size_t max_output_bytes { 64u * 1024u };
   std::size_t max_concurrent_operations { 4 };
   usbip_command_runner command_runner;
+  usbip_reader_thread_factory reader_thread_factory;
 };
 
 using usbip_host_completion = std::function<void(usbip_host_result)>;

@@ -16,6 +16,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -157,6 +158,36 @@ TEST(RemoteUsbHostController, AutomaticBackendIsNativeOnlyWithoutInjectedRunner)
   EXPECT_EQ(controller.backend(), remote_usb::usbip_host_backend::unsupported);
   EXPECT_FALSE(controller.backend_supported());
 #endif
+  controller.stop();
+}
+
+TEST(RemoteUsbHostController, ReaderThreadCreationFailureReturnsTerminalResult) {
+  remote_usb::usbip_host_controller_config config;
+#ifdef _WIN32
+  config.executable = "cmd.exe";
+#else
+  config.executable = "/bin/sh";
+#endif
+  config.backend = remote_usb::usbip_host_backend::usbip_win2;
+  config.attach_timeout = 2s;
+  std::atomic_size_t reader_launches { 0 };
+  config.reader_thread_factory = [&](std::function<void()> function) {
+    if (reader_launches.fetch_add(1, std::memory_order_relaxed) == 1) {
+      throw std::system_error(
+        std::make_error_code(std::errc::resource_unavailable_try_again),
+        "reader thread unavailable");
+    }
+    return std::thread(std::move(function));
+  };
+
+  result_harness results;
+  remote_usb::usbip_host_controller controller(std::move(config));
+  ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  const auto result = results.result_at(0);
+  EXPECT_FALSE(result.ok());
+  EXPECT_NE(result.detail.find("reader thread unavailable"), std::string::npos);
+  EXPECT_EQ(reader_launches.load(std::memory_order_relaxed), 2U);
   controller.stop();
 }
 

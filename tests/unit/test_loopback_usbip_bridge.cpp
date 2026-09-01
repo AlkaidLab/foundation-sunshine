@@ -1036,30 +1036,24 @@ TEST(LoopbackUsbipBridge, AllowsSelfStopFromClosedCallback) {
     EXPECT_EQ(close_calls, 1U);
   }
 
-  bool external_stop_started = false;
-  bool external_stop_returned = false;
-  std::thread external_stop([&]() {
-    {
-      std::lock_guard lock(callback_mutex);
-      external_stop_started = true;
-      callback_condition.notify_all();
-    }
-    bridge.stop();
-    std::lock_guard lock(callback_mutex);
-    external_stop_returned = true;
-    callback_condition.notify_all();
-  });
+  /* A self-detached bridge must remain busy until its I/O callback returns;
+   * otherwise the detached run loop could overlap a new bridge generation. */
+  remote_usb::callbacks replacement_callbacks;
+  replacement_callbacks.on_request = [](std::vector<std::uint8_t>) { return true; };
+  boost::system::error_code restart_error;
+  EXPECT_FALSE(bridge.start(test_device(), std::move(replacement_callbacks),
+                            restart_error).has_value());
+  EXPECT_EQ(restart_error,
+            boost::system::errc::make_error_code(
+              boost::system::errc::device_or_resource_busy));
   {
-    std::unique_lock lock(callback_mutex);
-    const bool started = callback_condition.wait_for(lock, 2s, [&]() {
-      return external_stop_started;
-    });
-    EXPECT_TRUE(started);
+    std::lock_guard lock(callback_mutex);
     release_callback = true;
   }
   callback_condition.notify_all();
-  external_stop.join();
-  EXPECT_TRUE(external_stop_returned);
+  /* stop() now deterministically waits for the self-detached I/O thread's
+   * completion barrier before releasing the retained state. */
+  bridge.stop();
   EXPECT_FALSE(bridge.running());
   /* Idempotence also covers the case where the callback won the detach race. */
   bridge.stop();

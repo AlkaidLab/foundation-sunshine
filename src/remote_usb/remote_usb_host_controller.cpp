@@ -68,7 +68,8 @@ run_process(const std::string &executable,
             const std::vector<std::string> &arguments,
             std::chrono::milliseconds timeout,
             const std::shared_ptr<std::atomic_bool> &cancel,
-            std::size_t max_output_bytes) {
+            std::size_t max_output_bytes,
+            const usbip_reader_thread_factory &reader_thread_factory) {
   usbip_command_result result;
   bp::ipstream standard_output;
   bp::ipstream standard_error;
@@ -92,24 +93,56 @@ run_process(const std::string &executable,
     return result;
   }
 
-  std::thread output_reader([&]() {
-    std::string line;
-    while (std::getline(standard_output, line)) {
-      append_bounded(result.standard_output, line, max_output_bytes);
-      if (result.standard_output.size() < max_output_bytes) {
-        append_bounded(result.standard_output, "\n", max_output_bytes);
+  std::thread output_reader;
+  std::thread error_reader;
+  try {
+    output_reader = reader_thread_factory([&]() {
+      std::string line;
+      while (std::getline(standard_output, line)) {
+        append_bounded(result.standard_output, line, max_output_bytes);
+        if (result.standard_output.size() < max_output_bytes) {
+          append_bounded(result.standard_output, "\n", max_output_bytes);
+        }
       }
-    }
-  });
-  std::thread error_reader([&]() {
-    std::string line;
-    while (std::getline(standard_error, line)) {
-      append_bounded(result.standard_error, line, max_output_bytes);
-      if (result.standard_error.size() < max_output_bytes) {
-        append_bounded(result.standard_error, "\n", max_output_bytes);
+    });
+    error_reader = reader_thread_factory([&]() {
+      std::string line;
+      while (std::getline(standard_error, line)) {
+        append_bounded(result.standard_error, line, max_output_bytes);
+        if (result.standard_error.size() < max_output_bytes) {
+          append_bounded(result.standard_error, "\n", max_output_bytes);
+        }
       }
+    });
+  }
+  catch (const std::exception &exception) {
+    std::error_code ignored;
+    child.terminate(ignored);
+    child.wait(ignored);
+    if (output_reader.joinable()) {
+      output_reader.join();
     }
-  });
+    if (error_reader.joinable()) {
+      error_reader.join();
+    }
+    result.exit_code = child.exit_code();
+    result.standard_error = exception.what();
+    return result;
+  }
+  catch (...) {
+    std::error_code ignored;
+    child.terminate(ignored);
+    child.wait(ignored);
+    if (output_reader.joinable()) {
+      output_reader.join();
+    }
+    if (error_reader.joinable()) {
+      error_reader.join();
+    }
+    result.exit_code = child.exit_code();
+    result.standard_error = "unable to create process output reader";
+    return result;
+  }
 
   const auto bounded_timeout = timeout <= 0ms ? 1ms : timeout;
   const auto deadline = std::chrono::steady_clock::now() + bounded_timeout;
@@ -197,8 +230,22 @@ usbip_host_controller::usbip_host_controller(usbip_host_controller_config config
   if (config_.max_concurrent_operations == 0) {
     config_.max_concurrent_operations = 1;
   }
+  if (!config_.reader_thread_factory) {
+    config_.reader_thread_factory = [](std::function<void()> function) {
+      return std::thread(std::move(function));
+    };
+  }
   if (!config_.command_runner) {
-    config_.command_runner = run_process;
+    config_.command_runner =
+      [reader_thread_factory = config_.reader_thread_factory](
+        const std::string &executable,
+        const std::vector<std::string> &arguments,
+        std::chrono::milliseconds timeout,
+        const std::shared_ptr<std::atomic_bool> &cancel,
+        std::size_t max_output_bytes) {
+        return run_process(executable, arguments, timeout, cancel,
+                           max_output_bytes, reader_thread_factory);
+      };
   }
 }
 
