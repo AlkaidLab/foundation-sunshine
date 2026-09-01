@@ -21,12 +21,17 @@ strip/inject、`dynamic_hdr_selection` 协商框架、NVENC/AMF 注入链路、H
 
 ## 2. 与 RTX HDR（PR #1018）的互斥
 
-RTX HDR pre-encode filter 固定输出 PQ 语义（修复合入后 HLG 会话不再激活 filter，
+RTX HDR pre-encode filter 固定输出 PQ 语义（HLG 会话不激活 filter，
 rtsp.cpp 守卫 `dynamicRange == 1`）。因此：
 
 - app 开启 `rtx-hdr` 时，8.4 **不参与协商**（8.1 不受影响，其会话本就锁 PQ）。
-- 实现位置：`select_dynamic_hdr` 增加 host gate `pre_encode_filter_active`；
-  或协商后由 rtsp 拒绝。前者可在 ANNOUNCE 响应头里给客户端明确 fallback 原因，选前者。
+- 实现位置：`select_dynamic_hdr` 的 host gate `synthetic_hdr_enabled` —— 跟随
+  **应用特性**（`session.synthetic_hdr.enabled`）而非会话 filter 状态，因为
+  HLG 请求下 filter 恒为关闭，用 filter 状态做 gate 会让 RTX HDR 应用在 HLG
+  路径漏排除。gate 可在 ANNOUNCE 响应头里给客户端明确 fallback 原因
+  （`colorspace_unsupported`）。
+- 术语链（`rtx_hdr` / `synthetic_hdr` / `pre_encode_filter` 三层各自的消费
+  边界）见 rtx_hdr_stream_implementation.md §2.7。
 
 ## 3. 主机端改动
 
