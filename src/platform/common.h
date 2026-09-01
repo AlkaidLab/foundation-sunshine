@@ -712,6 +712,17 @@ namespace platf {
       return false;
     }
 
+    /**
+     * @brief Whether this capture/display path can run the configured pre-encode
+     *        filter. Sessions on paths returning false must disable the filter
+     *        (and re-resolve the frame pipeline policy) instead of signalling
+     *        HDR output no filter produces.
+     */
+    virtual bool
+    supports_pre_encode_filter() {
+      return false;
+    }
+
     virtual bool
     get_hdr_metadata(SS_HDR_METADATA &metadata) {
       std::memset(&metadata, 0, sizeof(metadata));

@@ -678,6 +678,9 @@ namespace stream {
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
     bool enable_hdr { false };
+    rtsp_stream::synthetic_hdr_config_t synthetic_hdr;
+    platf::frame_pipeline_policy_t frame_pipeline_policy;
+    bool frame_pipeline_policy_resolved { false };
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::client_display_capabilities_t reported_hdr_capabilities;
     // Runtime SDR white updates are consumed by the video thread and may also
@@ -1930,6 +1933,12 @@ namespace stream {
       temp_launch_session.height = new_height;
       temp_launch_session.fps = session->config.monitor.framerate;
       temp_launch_session.enable_hdr = session->enable_hdr;
+      // Keep the synthetic-HDR state and the resolved frame pipeline policy in
+      // sync with the active session; dropping them would re-parse the display
+      // prep decision and flip the source display to HDR mid-stream.
+      temp_launch_session.synthetic_hdr = session->synthetic_hdr;
+      temp_launch_session.frame_pipeline_policy = session->frame_pipeline_policy;
+      temp_launch_session.frame_pipeline_policy_resolved = session->frame_pipeline_policy_resolved;
       temp_launch_session.enable_sops = session->enable_sops;
       temp_launch_session.use_vdd = session->use_vdd;
       temp_launch_session.custom_screen_mode = session->custom_screen_mode;
@@ -4378,6 +4387,9 @@ namespace stream {
       // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;
       session->enable_hdr = launch_session.enable_hdr;
+      session->synthetic_hdr = launch_session.synthetic_hdr;
+      session->frame_pipeline_policy = launch_session.frame_pipeline_policy;
+      session->frame_pipeline_policy_resolved = launch_session.frame_pipeline_policy_resolved;
       session->hdr_capabilities = launch_session.hdr_capabilities;
       session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
       session->dynamic_sdr_white_nits.store(

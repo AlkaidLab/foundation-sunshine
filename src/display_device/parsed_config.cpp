@@ -482,7 +482,7 @@ namespace display_device {
           // An SDR-to-HDR pre-encode filter needs the source desktop to stay
           // SDR even though the client-facing stream is HDR. This decision is
           // made during display preparation, before capture is constructed.
-          return session.enable_hdr && !session.synthetic_hdr.enabled;
+          return display_prepared_for_hdr(config, session);
         case parsed_config_t::hdr_prep_e::no_operation:
         default:
           return boost::none;
@@ -536,6 +536,22 @@ namespace display_device {
       }
     }
   }  // namespace
+
+  bool
+  display_prepared_for_hdr(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+    if (session.frame_pipeline_policy_resolved) {
+      switch (session.frame_pipeline_policy.source_display) {
+        case platf::source_display_intent_e::require_hdr:
+          return true;
+        case platf::source_display_intent_e::require_sdr:
+          return false;
+        case platf::source_display_intent_e::unchanged:
+        default:
+          break;
+      }
+    }
+    return session.enable_hdr && !session.synthetic_hdr.enabled;
+  }
 
   display_intent_t
   resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {

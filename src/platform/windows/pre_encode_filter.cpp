@@ -36,33 +36,8 @@ namespace platf::dxgi {
     template <class T>
     using com_ptr_t = std::unique_ptr<T, com_release_t<T>>;
 
-    std::uint64_t
-    device_adapter_luid(ID3D11Device *device) {
-      com_ptr_t<IDXGIDevice> dxgi_device;
-      IDXGIDevice *dxgi_device_raw = nullptr;
-      if (FAILED(device->QueryInterface(IID_IDXGIDevice, reinterpret_cast<void **>(&dxgi_device_raw)))) {
-        return 0;
-      }
-      dxgi_device.reset(dxgi_device_raw);
-
-      com_ptr_t<IDXGIAdapter> adapter;
-      IDXGIAdapter *adapter_raw = nullptr;
-      if (FAILED(dxgi_device->GetAdapter(&adapter_raw))) {
-        return 0;
-      }
-      adapter.reset(adapter_raw);
-
-      DXGI_ADAPTER_DESC desc {};
-      if (FAILED(adapter->GetDesc(&desc))) {
-        return 0;
-      }
-      return
-        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(desc.AdapterLuid.HighPart)) << 32) |
-        static_cast<std::uint32_t>(desc.AdapterLuid.LowPart);
-    }
-
     std::string_view
-    validate_sdr_input(const gpu_frame_view_t &input, std::uint64_t adapter_luid) {
+    validate_sdr_input(const gpu_frame_view_t &input) {
       if (!input.texture || !input.srv || input.width == 0 || input.height == 0) {
         return "invalid_input";
       }
@@ -71,12 +46,13 @@ namespace platf::dxgi {
           input.semantic.borrowed) {
         return "input_contract_mismatch";
       }
-      if (adapter_luid != 0 && input.semantic.adapter_luid != 0 &&
-          input.semantic.adapter_luid != adapter_luid) {
-        return "adapter_mismatch";
-      }
+      // X8 is bit-identical to BGRA8 except for a padding alpha channel, which
+      // neither the mock shader nor the vendor backend reads. The frame always
+      // arrives on this filter's own device via the private handoff copy, so
+      // there is no adapter identity to validate here.
       if (input.format != DXGI_FORMAT_B8G8R8A8_UNORM &&
-          input.format != DXGI_FORMAT_R8G8B8A8_UNORM) {
+          input.format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+          input.format != DXGI_FORMAT_B8G8R8X8_UNORM) {
         return "unsupported_format";
       }
       return {};
@@ -166,8 +142,7 @@ namespace platf::dxgi {
         com_ptr_t<ID3D11ComputeShader> shader):
           device_ { device },
           device_context_ { device_context },
-          shader_ { std::move(shader) },
-          adapter_luid_ { device_adapter_luid(device) } {}
+          shader_ { std::move(shader) } {}
 
       bool
       requires_detached_input() const override {
@@ -176,7 +151,7 @@ namespace platf::dxgi {
 
       filter_result_t
       process(const gpu_frame_view_t &input) override {
-        if (const auto reason = validate_sdr_input(input, adapter_luid_); !reason.empty()) {
+        if (const auto reason = validate_sdr_input(input); !reason.empty()) {
           return { .status = filter_status_e::failed, .frame = {}, .reason = reason };
         }
         if (!ensure_output(input.width, input.height)) {
@@ -258,7 +233,6 @@ namespace platf::dxgi {
       ID3D11Device *device_;
       ID3D11DeviceContext *device_context_;
       com_ptr_t<ID3D11ComputeShader> shader_;
-      std::uint64_t adapter_luid_;
       com_ptr_t<ID3D11Texture2D> output_texture_;
       com_ptr_t<ID3D11ShaderResourceView> output_srv_;
       com_ptr_t<ID3D11UnorderedAccessView> output_uav_;
@@ -276,8 +250,7 @@ namespace platf::dxgi {
           device_ { device },
           device_context_ { device_context },
           loader_ { std::move(loader) },
-          config_ { config },
-          adapter_luid_ { device_adapter_luid(device) } {}
+          config_ { config } {}
 
       ~external_sdr_to_hdr_filter_t() override {
         destroy_instance();
@@ -290,7 +263,7 @@ namespace platf::dxgi {
 
       filter_result_t
       process(const gpu_frame_view_t &input) override {
-        if (const auto reason = validate_sdr_input(input, adapter_luid_); !reason.empty()) {
+        if (const auto reason = validate_sdr_input(input); !reason.empty()) {
           return { .status = filter_status_e::failed, .frame = {}, .reason = reason };
         }
         if (!ensure_output_and_instance(input.width, input.height)) {
@@ -408,7 +381,6 @@ namespace platf::dxgi {
       rtx_hdr::backend_loader_t loader_;
       pre_encode_filter_config_t config_;
       void *instance_ = nullptr;
-      std::uint64_t adapter_luid_;
       std::string_view initialization_failure_ { "backend_initialization_failed" };
       com_ptr_t<ID3D11Texture2D> output_texture_;
       com_ptr_t<ID3D11ShaderResourceView> output_srv_;

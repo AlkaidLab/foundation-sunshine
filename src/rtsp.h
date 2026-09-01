@@ -15,6 +15,7 @@
 #include "crypto.h"
 #include "hdr/client_display_capabilities.h"
 #include "launch_session_manager.h"
+#include "src/platform/frame_contract.h"
 
 namespace stream::session {
   enum class stop_reason_e : int;
@@ -65,6 +66,12 @@ namespace rtsp_stream {
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
     synthetic_hdr_config_t synthetic_hdr;
+
+    // Resolved frame-pipeline policy for this session, published by RTSP SETUP
+    // so display preparation consumes the same decision as the capture/encode
+    // side. Unresolved (false) sessions keep the legacy raw-flag behavior.
+    platf::frame_pipeline_policy_t frame_pipeline_policy;
+    bool frame_pipeline_policy_resolved { false };
 
     void
     set_hdr_target(const hdr::client_display_capabilities_t &capabilities, hdr::target_source_e source);

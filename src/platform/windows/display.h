@@ -373,6 +373,12 @@ namespace platf::dxgi {
     bool
     is_codec_supported(std::string_view name, const ::video::config_t &config) override;
 
+    // Only the D3D11 VRAM capture path constructs the pre-encode filter.
+    bool
+    supports_pre_encode_filter() override {
+      return true;
+    }
+
     std::unique_ptr<avcodec_encode_device_t>
     make_avcodec_encode_device(pix_fmt_e pix_fmt) override;
 

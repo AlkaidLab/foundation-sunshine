@@ -505,10 +505,12 @@ namespace platf::dxgi {
           if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {
             release_capture_mutex();
             BOOST_LOG(error) << "Pre-encode filter rejected captured frame contract"sv;
+            update_synthetic_hdr_runtime_status(false, "capture_contract_mismatch");
             return -1;
           }
           if (!prepare_filter_handoff(img_ctx.encoder_texture.get(), img.frame_desc)) {
             release_capture_mutex();
+            update_synthetic_hdr_runtime_status(false, "filter_handoff_failed");
             return -1;
           }
           device_ctx->CopyResource(filter_handoff_texture.get(), img_ctx.encoder_texture.get());

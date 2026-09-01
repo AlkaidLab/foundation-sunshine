@@ -1548,7 +1548,13 @@ namespace rtsp_stream {
       monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
 #ifdef _WIN32
-      const bool post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange > 0;
+      // The TrueHDR chain (filter output, synthetic metadata, wire colorspace)
+      // is specified for PQ only; HLG sessions must keep the legacy capture
+      // path. Docs §5.4 of rtx_hdr_stream_implementation.md.
+      const bool post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange == 1;
+      if (session.synthetic_hdr.enabled && monitor.dynamicRange == 2) {
+        BOOST_LOG(warning) << "RTX HDR requires PQ (dynamicRangeMode=1); ignoring it for this HLG session"sv;
+      }
       if (post_process_hdr_active) {
         monitor.pre_encode_filter = platf::pre_encode_filter_e::external_sdr_to_hdr;
         monitor.pre_encode_filter_config = {
@@ -1565,6 +1571,13 @@ namespace rtsp_stream {
       monitor.frame_pipeline_policy =
         platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active);
       monitor.frame_pipeline_policy_resolved = true;
+#ifdef _WIN32
+      // Publish the resolved policy on the launch session so display
+      // preparation consumes the same decision as the capture/encode side
+      // instead of re-deriving it from raw flags.
+      session.frame_pipeline_policy = monitor.frame_pipeline_policy;
+      session.frame_pipeline_policy_resolved = true;
+#endif
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
       monitor.hdr_capabilities = session.hdr_capabilities;

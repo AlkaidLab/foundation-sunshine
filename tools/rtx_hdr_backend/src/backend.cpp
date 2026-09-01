@@ -146,7 +146,9 @@ namespace {
       output->GetDesc(&output_desc);
       const bool valid_input =
         input_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-        input_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
+        input_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+        // Same sampling semantics as BGRA8 with a padding alpha channel.
+        input_desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM;
       if (!valid_input || output_desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT ||
           !(output_desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) ||
           input_desc.Width != output_desc.Width || input_desc.Height != output_desc.Height ||

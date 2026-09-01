@@ -877,8 +877,8 @@ SDR-in-HDR 回退，不逐帧重试。若实测发现 NGX 调用会无界阻塞�
 首期限制 `peak_nits` 为 400–1000：
 
 - 不复制未经本项目验证的 1000→2000 nits 后缩放补偿；
-- 客户端报告最大亮度低于配置值时取较小值；
-- 客户端未报告时默认 1000；
+- 配置值即会话固定的 mastering peak（见 §10.4/§19）；客户端报告的峰值只进 target-display 动态元数据，不得改写静态 mastering metadata；
+- 客户端未报告时动态 target-display 元数据回退 mastering peak；
 - 未来开放 2000 前必须完成模型版本、输出裁剪、middle-gray 和动态元数据一致性测试。
 
 ### 10.4 Synthetic HDR 静态元数据（后续统一化目标）

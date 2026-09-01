@@ -3555,6 +3555,31 @@ namespace video {
     };
   }
 
+  /**
+   * @brief Disable the pre-encode filter when the opened display cannot satisfy
+   *        its preconditions, keeping the wire signal consistent with the pixels
+   *        actually produced (rtx_hdr_stream_implementation.md §5.3
+   *        source_display_not_sdr / §6.3 capability-probe degradation).
+   */
+  void
+  strip_unusable_pre_encode_filter(platf::display_t &disp, config_t &config) {
+    if (config.pre_encode_filter == platf::pre_encode_filter_e::none) {
+      return;
+    }
+    if (!disp.supports_pre_encode_filter()) {
+      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling RTX HDR for this session"sv;
+    }
+    else if (disp.is_hdr()) {
+      BOOST_LOG(warning) << "Source display is already in HDR mode (source_display_not_sdr); disabling RTX HDR for this session"sv;
+    }
+    else {
+      return;
+    }
+    config.pre_encode_filter = platf::pre_encode_filter_e::none;
+    config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(config.dynamicRange, false);
+    config.frame_pipeline_policy_resolved = true;
+  }
+
   std::unique_ptr<platf::encode_device_t>
   make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
     std::unique_ptr<platf::encode_device_t> result;
@@ -3623,6 +3648,7 @@ namespace video {
     ctx.touch_port_events->raise(make_port(disp, ctx.config));
 
     // Create encode device with NTSC framerate fallback support
+    strip_unusable_pre_encode_filter(*disp, ctx.config);
     auto make_encode_device_func = [&]() {
       return make_encode_device(*disp, encoder, ctx.config);
     };
@@ -4054,6 +4080,7 @@ namespace video {
 
       auto &encoder = *chosen_encoder;
 
+      strip_unusable_pre_encode_filter(*display, config);
       auto encode_device = make_encode_device(*display, encoder, config);
       if (!encode_device) {
         return;

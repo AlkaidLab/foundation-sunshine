@@ -214,4 +214,16 @@ namespace display_device {
   boost::optional<parsed_config_t>
   make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session);
 
+  /**
+   * @brief Whether display preparation should put the source display in HDR mode.
+   * @param config User's video related configuration.
+   * @param session Session information.
+   * @returns The session's resolved source-display intent when available, with
+   *          the legacy enable_hdr/synthetic_hdr flags as fallback. This is the
+   *          single decision shared by HDR prep and every display-prep consumer
+   *          (e.g. the Vulkan HDR bridge); do not re-derive it from raw flags.
+   */
+  bool
+  display_prepared_for_hdr(const config::video_t &config, const rtsp_stream::launch_session_t &session);
+
 }  // namespace display_device
