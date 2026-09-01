@@ -1409,6 +1409,7 @@ namespace nvhttp {
     const auto remote_usb_schedule_detach =
       [&](remote_usb::usbip_host_binding binding) {
         const auto identity = remote_usb_identity(binding);
+        const auto retry_binding = binding;
         {
           std::lock_guard lock(remote_usb_host_mutex);
           if (!remote_usb_detach_scheduled.insert(identity).second) {
@@ -1419,10 +1420,16 @@ namespace nvhttp {
         try {
           operation = remote_usb_host_controller.detach(
             std::move(binding),
-            [&, identity](remote_usb::usbip_host_result result) {
+            [&, identity, retry_binding](remote_usb::usbip_host_result result) {
               {
                 std::lock_guard lock(remote_usb_host_mutex);
                 remote_usb_detach_scheduled.erase(identity);
+                if (!result.ok()) {
+                  /* Keep the exact failed binding available to the shutdown
+                   * cleanup pass.  try_emplace cannot overwrite a newer
+                   * successful attach for the same lease identity. */
+                  remote_usb_attached_bindings.try_emplace(identity, retry_binding);
+                }
               }
               if (!result.ok()) {
                 BOOST_LOG(debug) << "Remote USB host detach did not complete";
@@ -1483,7 +1490,8 @@ namespace nvhttp {
             {
               std::lock_guard lock(remote_usb_host_mutex);
               if (remote_usb_attach_operations.contains(identity) ||
-                  remote_usb_attached_bindings.contains(identity)) {
+                  remote_usb_attached_bindings.contains(identity) ||
+                  remote_usb_detach_scheduled.contains(identity)) {
                 reject = true;
               } else {
                 remote_usb_closed_identities.erase(identity);
@@ -1985,6 +1993,30 @@ namespace nvhttp {
     /* Stop the raw broker before destroying its capability store.  This also
      * closes any TLS sessions that may still be consuming a one-shot nonce. */
     remote_usb_broker->stop();
+    /* A detach completion can fail while the broker is closing.  Drain the
+     * owner-level registry once more before stopping the controller; failed
+     * operations remain registered inside the controller for its synchronous
+     * final cleanup pass. */
+    std::vector<remote_usb::usbip_host_binding> remote_usb_cleanup_bindings;
+    try {
+      std::lock_guard lock(remote_usb_host_mutex);
+      remote_usb_cleanup_bindings.reserve(remote_usb_attached_bindings.size());
+      for (auto it = remote_usb_attached_bindings.begin();
+           it != remote_usb_attached_bindings.end();) {
+        if (remote_usb_detach_scheduled.contains(it->first)) {
+          ++it;
+          continue;
+        }
+        remote_usb_cleanup_bindings.push_back(it->second);
+        it = remote_usb_attached_bindings.erase(it);
+      }
+    }
+    catch (...) {
+      BOOST_LOG(debug) << "Remote USB shutdown binding snapshot failed";
+    }
+    for (auto &binding : remote_usb_cleanup_bindings) {
+      remote_usb_schedule_detach(std::move(binding));
+    }
     /* Join/cancel usbip-win2 workers only after broker sessions have notified
      * the host binding registry.  The controller's stop path retries every
      * accepted binding that was not already detached by a session close. */

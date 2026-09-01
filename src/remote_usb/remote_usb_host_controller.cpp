@@ -134,12 +134,12 @@ run_process(const std::string &executable,
 
   std::error_code wait_error;
   child.wait(wait_error);
+  output_reader.join();
+  error_reader.join();
   if (wait_error && !terminated) {
     result.standard_error = wait_error.message();
   }
   result.exit_code = child.exit_code();
-  output_reader.join();
-  error_reader.join();
   return result;
 }
 
@@ -388,7 +388,11 @@ usbip_host_controller::dispatch(operation_kind kind,
                   cleanup->kind = operation_kind::detach;
                   cleanup->binding = leaked_binding;
                   cleanup->cancel = std::make_shared<std::atomic_bool>(false);
-                  (void)run_detach(cleanup);
+                  const auto cleanup_result = run_detach(cleanup);
+                  if (!cleanup_result.ok()) {
+                    std::lock_guard lock(mutex_);
+                    remember_binding_locked(leaked_binding);
+                  }
                 }
                 catch (...) {
                   /* Best effort only: preserve the terminal operation result
@@ -445,7 +449,14 @@ usbip_host_controller::dispatch(operation_kind kind,
                      * token; otherwise the default runner would terminate the
                      * cleanup helper before it can release the virtual port. */
                     cleanup->cancel = std::make_shared<std::atomic_bool>(false);
-                    (void)run_detach(cleanup);
+                    const auto cleanup_result = run_detach(cleanup);
+                    if (!cleanup_result.ok()) {
+                      /* stop() snapshots accepted bindings after workers join.
+                       * Retaining a failed compensation here gives that final
+                       * cleanup pass a binding it can retry. */
+                      std::lock_guard lock(mutex_);
+                      remember_binding_locked(attached_binding);
+                    }
                     result.status = op->cancel->load(std::memory_order_acquire)
                                       ? usbip_host_status::cancelled
                                       : usbip_host_status::stopped;
@@ -583,7 +594,11 @@ usbip_host_controller::stop() noexcept {
       cleanup->kind = operation_kind::detach;
       cleanup->binding = binding;
       cleanup->cancel = std::make_shared<std::atomic_bool>(false);
-      (void)run_detach(cleanup);
+      const auto result = run_detach(cleanup);
+      if (!result.ok()) {
+        std::lock_guard lock(mutex_);
+        remember_binding_locked(binding);
+      }
     }
     catch (...) {
       /* Best effort only.  Never let cleanup tear down the owner. */

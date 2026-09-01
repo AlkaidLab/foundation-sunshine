@@ -1036,17 +1036,25 @@ TEST(LoopbackUsbipBridge, AllowsSelfStopFromClosedCallback) {
     EXPECT_EQ(close_calls, 1U);
   }
 
+  bool external_stop_started = false;
   bool external_stop_returned = false;
   std::thread external_stop([&]() {
+    {
+      std::lock_guard lock(callback_mutex);
+      external_stop_started = true;
+      callback_condition.notify_all();
+    }
     bridge.stop();
     std::lock_guard lock(callback_mutex);
     external_stop_returned = true;
     callback_condition.notify_all();
   });
-  std::this_thread::sleep_for(50ms);
   {
-    std::lock_guard lock(callback_mutex);
-    EXPECT_FALSE(external_stop_returned);
+    std::unique_lock lock(callback_mutex);
+    const bool started = callback_condition.wait_for(lock, 2s, [&]() {
+      return external_stop_started;
+    });
+    EXPECT_TRUE(started);
     release_callback = true;
   }
   callback_condition.notify_all();

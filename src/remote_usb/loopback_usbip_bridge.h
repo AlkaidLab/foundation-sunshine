@@ -92,7 +92,9 @@ public:
   /**
    * Start listening on 127.0.0.1 and return the endpoint to advertise to the
    * local usbip-win2 helper.  `device.busid` must be non-empty and at most 31
-   * bytes; `callbacks.on_request` is required.
+   * bytes, but is used only for validation and replaced by an opaque value.
+   * Use the returned `endpoint.busid` as the advertised ID.
+   * `callbacks.on_request` is required.
    */
   std::optional<endpoint> start(device_info device,
                                 callbacks callbacks,

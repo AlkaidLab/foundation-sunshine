@@ -104,6 +104,13 @@ if (WIN32)
     list(APPEND REMOTE_USB_TLS_PLATFORM_LIBRARIES crypt32)
 endif ()
 
+set(RUSB_VECTOR_JSON
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-remote-usb-core/contract/vectors-v1.json")
+if (NOT EXISTS "${RUSB_VECTOR_JSON}")
+    message(FATAL_ERROR
+            "Missing ${RUSB_VECTOR_JSON}. Run: git submodule update --init --recursive")
+endif ()
+
 add_executable(loopback_usbip_bridge_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
@@ -173,7 +180,7 @@ add_executable(remote_usb_contract_vectors_unit_tests
 target_include_directories(remote_usb_contract_vectors_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_compile_definitions(remote_usb_contract_vectors_unit_tests PRIVATE
-        RUSB_VECTOR_FILE="${CMAKE_SOURCE_DIR}/third-party/moonlight-remote-usb-core/contract/vectors-v1.json")
+        RUSB_VECTOR_FILE="${RUSB_VECTOR_JSON}")
 target_link_libraries(remote_usb_contract_vectors_unit_tests
         Boost::asio
         Boost::system
@@ -290,8 +297,9 @@ target_link_libraries(${PROJECT_NAME}
         ${PLATFORM_LIBRARIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC
         ${SUNSHINE_DEFINITIONS}
-        ${TEST_DEFINITIONS}
-        RUSB_VECTOR_FILE="${CMAKE_SOURCE_DIR}/third-party/moonlight-remote-usb-core/contract/vectors-v1.json")
+        ${TEST_DEFINITIONS})
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+        RUSB_VECTOR_FILE="${RUSB_VECTOR_JSON}")
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 target_link_options(${PROJECT_NAME} PRIVATE)
 

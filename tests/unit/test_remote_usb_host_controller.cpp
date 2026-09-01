@@ -337,6 +337,68 @@ TEST(RemoteUsbHostController, RejectsDuplicateLeaseAndUnknownBinding) {
   controller.stop();
 }
 
+TEST(RemoteUsbHostController, RejectsUnsafeEndpointsAndMalformedHubPorts) {
+  const auto expect_rejected_request = [](remote_usb::usbip_host_request request) {
+    command_harness commands;
+    result_harness results;
+    remote_usb::usbip_host_controller controller(make_config(commands));
+    EXPECT_EQ(controller.attach(std::move(request), results.callback()), 0U);
+    EXPECT_TRUE(results.wait_results(1));
+    EXPECT_EQ(results.result_at(0).status,
+              remote_usb::usbip_host_status::invalid_argument);
+    {
+      std::lock_guard lock(commands.mutex);
+      EXPECT_TRUE(commands.calls.empty());
+    }
+    controller.stop();
+  };
+
+  auto non_loopback = make_request();
+  non_loopback.server_endpoint.address = "203.0.113.10";
+  expect_rejected_request(std::move(non_loopback));
+
+  auto oversized_busid = make_request();
+  oversized_busid.server_endpoint.busid.assign(32, 'a');
+  expect_rejected_request(std::move(oversized_busid));
+
+  auto non_printable_busid = make_request();
+  non_printable_busid.server_endpoint.busid = "usb";
+  non_printable_busid.server_endpoint.busid.push_back('\x1f');
+  non_printable_busid.server_endpoint.busid += "device";
+  expect_rejected_request(std::move(non_printable_busid));
+
+  {
+    command_harness commands;
+    result_harness results;
+    remote_usb::usbip_host_controller controller(make_config(commands));
+    auto maximum_busid = make_request();
+    maximum_busid.server_endpoint.busid.assign(31, '~');
+    ASSERT_NE(controller.attach(std::move(maximum_busid), results.callback()), 0U);
+    ASSERT_TRUE(results.wait_results(1));
+    EXPECT_TRUE(results.result_at(0).ok());
+    controller.stop();
+  }
+
+  for (const std::string output : { "", "0", "256", "not-a-port" }) {
+    SCOPED_TRACE(output);
+    command_harness commands;
+    result_harness results;
+    commands.behavior = [output](const std::vector<std::string> &,
+                                 const std::shared_ptr<std::atomic_bool> &) {
+      remote_usb::usbip_command_result result;
+      result.exit_code = 0;
+      result.standard_output = output;
+      return result;
+    };
+    remote_usb::usbip_host_controller controller(make_config(commands));
+    ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+    ASSERT_TRUE(results.wait_results(1));
+    EXPECT_EQ(results.result_at(0).status,
+              remote_usb::usbip_host_status::attach_failed);
+    controller.stop();
+  }
+}
+
 TEST(RemoteUsbHostController, CancellationIsPropagatedAndStopJoinsWorker) {
   command_harness commands;
   result_harness results;
@@ -544,6 +606,57 @@ TEST(RemoteUsbHostController, LateAttachCompletionUsesLiveDetachToken) {
     EXPECT_TRUE(detach_succeeded);
   }
   controller.stop();
+}
+
+TEST(RemoteUsbHostController, StopRetriesFailedLateAttachCompensation) {
+  command_harness commands;
+  result_harness results;
+  std::mutex behavior_mutex;
+  std::condition_variable behavior_condition;
+  bool attach_started = false;
+  std::size_t detach_attempts = 0;
+  commands.behavior = [&](const std::vector<std::string> &arguments,
+                          const std::shared_ptr<std::atomic_bool> &cancel) {
+    remote_usb::usbip_command_result result;
+    if (std::find(arguments.begin(), arguments.end(), "attach") != arguments.end()) {
+      {
+        std::lock_guard lock(behavior_mutex);
+        attach_started = true;
+        behavior_condition.notify_all();
+      }
+      while (!cancel->load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(1ms);
+      }
+      result.exit_code = 0;
+      result.standard_output = "7\n";
+      return result;
+    }
+
+    {
+      std::lock_guard lock(behavior_mutex);
+      ++detach_attempts;
+      result.exit_code = detach_attempts == 1 ? 1 : 0;
+    }
+    return result;
+  };
+
+  remote_usb::usbip_host_controller controller(make_config(commands));
+  ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+  {
+    std::unique_lock lock(behavior_mutex);
+    ASSERT_TRUE(behavior_condition.wait_for(lock, 2s, [&]() {
+      return attach_started;
+    }));
+  }
+
+  controller.stop();
+  ASSERT_TRUE(results.wait_results(1));
+  EXPECT_EQ(results.result_at(0).status, remote_usb::usbip_host_status::cancelled);
+  EXPECT_TRUE(commands.wait_calls(3));
+  {
+    std::lock_guard lock(behavior_mutex);
+    EXPECT_EQ(detach_attempts, 2U);
+  }
 }
 
 TEST(RemoteUsbHostController, CompletionMayCallStopFromWorker) {

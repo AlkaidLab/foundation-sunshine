@@ -524,6 +524,16 @@ struct broker_server::impl : public std::enable_shared_from_this<broker_server::
     worker_condition.wait(lock, [this]() { return worker_finished; });
   }
 
+  void reset_work_guard() noexcept {
+    try {
+      std::lock_guard lock(lifecycle_mutex);
+      work_guard.reset();
+    }
+    catch (...) {
+      /* io.stop() still releases run(); cleanup must remain noexcept. */
+    }
+  }
+
   bool post_session_close(const std::shared_ptr<broker_session> &session,
                           close_reason reason) {
     {
@@ -1629,7 +1639,7 @@ broker_server::start() {
       holder->acceptor.close(ignored);
       holder->close_sessions_noexcept(
         run_threw ? close_reason::internal_error : close_reason::stopped);
-      holder->work_guard.reset();
+      holder->reset_work_guard();
       holder->io.stop();
       holder->bound_port.store(0);
 
@@ -1701,14 +1711,14 @@ broker_server::stop() {
    * safe and prevents a residual session from surviving forever. */
   if (callback_thread && !self_worker && state->worker_is_alive()) {
     state->worker_detach_requested.store(true);
-    state->work_guard.reset();
+    state->reset_work_guard();
     state->io.stop();
     return;
   }
 
   if (first_stop) {
     state->close_sessions_noexcept(close_reason::stopped);
-    state->work_guard.reset();
+    state->reset_work_guard();
     state->io.stop();
   }
 

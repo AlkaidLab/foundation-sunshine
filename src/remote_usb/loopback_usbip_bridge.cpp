@@ -484,9 +484,11 @@ struct loopback_usbip_bridge::impl final : std::enable_shared_from_this<loopback
 
     boost::system::error_code ignored;
     socket.set_option(tcp::no_delay(true), ignored);
+    std::uint64_t session_generation = 0;
     {
       std::lock_guard lock(mutex);
       ++generation;
+      session_generation = generation;
       session_active = true;
       current_phase = phase::waiting_devlist;
       imported_callback_sent = false;
@@ -497,7 +499,7 @@ struct loopback_usbip_bridge::impl final : std::enable_shared_from_this<loopback
       outstanding.clear();
       cancelled_submits.clear();
     }
-    begin_control_read(generation);
+    begin_control_read(session_generation);
   }
 
   void
