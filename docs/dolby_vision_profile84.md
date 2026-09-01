@@ -21,8 +21,9 @@ strip/inject、`dynamic_hdr_selection` 协商框架、NVENC/AMF 注入链路、H
 
 ## 2. 与 RTX HDR（PR #1018）的互斥
 
-RTX HDR pre-encode filter 固定输出 PQ 语义（HLG 会话不激活 filter，
-rtsp.cpp 守卫 `dynamicRange == 1`）。因此：
+RTX HDR 管线固定 PQ 编码输出：TrueHDR 滤镜输出 FP16 linear scRGB，由后续
+RGB→PQ/P010 编码阶段产生 PQ 码流（HLG 会话不激活滤镜，rtsp.cpp 守卫
+`dynamicRange == 1`）。因此：
 
 - app 开启 `rtx-hdr` 时，8.4 **不参与协商**（8.1 不受影响，其会话本就锁 PQ）。
 - 实现位置：`select_dynamic_hdr` 的 host gate `synthetic_hdr_enabled` —— 跟随
@@ -46,8 +47,9 @@ rtsp.cpp 守卫 `dynamicRange == 1`）。因此：
   1. HEVC 门失败 → codec_unsupported（不变）
   2. `dynamic_range_mode == 1` 且 caps 有 8.1 → **8.1**（现状优先级不变）
   3. `dynamic_range_mode == 2` 且 caps 有 8.4 且无 8.1 → **8.4**
-     （caps 同时有 8.1/8.4 且 HLG：属客户端矛盾上报，按 client_caps_missing 落回，
-     客户端应自己在请求 HLG 时不报 8.1）
+     （caps 同时有 8.1/8.4 且 HLG：属客户端矛盾上报，按 colorspace_unsupported
+     落回 —— 8.1 报位意味着客户端应预期 PQ，与 HLG 请求冲突；客户端应自己在
+     请求 HLG 时不报 8.1）
   4. RTX HDR per-app 激活 → 8.4 门失败，reason `colorspace_unsupported`
   5. direct surface 门不变
 - `dynamic_hdr_selection_t::dolby_vision_active()` 改为 8.1 或 8.4。
