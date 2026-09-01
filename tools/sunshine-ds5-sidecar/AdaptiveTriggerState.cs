@@ -11,6 +11,7 @@ internal sealed class AdaptiveTriggerState
     private readonly byte[] _right = new byte[EffectSize];
 
     internal bool TryUpdate(IReadOnlyDictionary<string, object> fields,
+                            OutputValidFlags valid,
                             byte deviceId,
                             byte controllerNumber,
                             out Protocol.Message message)
@@ -18,14 +19,18 @@ internal sealed class AdaptiveTriggerState
         lock (_lock)
         {
             byte flags = 0;
-            if (TryGetEffect(fields, "leftTriggerEffect", out var left) &&
+            // A trigger this report is not programming keeps the effect the
+            // client holds; its zero bytes are not a release.
+            if (valid.LeftTrigger &&
+                TryGetEffect(fields, "leftTriggerEffect", out var left) &&
                 !_left.AsSpan().SequenceEqual(left))
             {
                 left.CopyTo(_left);
                 flags |= LeftFlag;
             }
 
-            if (TryGetEffect(fields, "rightTriggerEffect", out var right) &&
+            if (valid.RightTrigger &&
+                TryGetEffect(fields, "rightTriggerEffect", out var right) &&
                 !_right.AsSpan().SequenceEqual(right))
             {
                 right.CopyTo(_right);
