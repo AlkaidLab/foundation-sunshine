@@ -1708,7 +1708,7 @@ namespace rtsp_stream {
       {
         .video_format = config.monitor.videoFormat,
         .dynamic_range_mode = config.monitor.dynamicRange,
-        .pre_encode_filter_active = post_process_hdr_active,
+        .synthetic_hdr_enabled = session.synthetic_hdr.enabled,
       });
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
     session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;

@@ -79,9 +79,11 @@ namespace hdr {
     int video_format = 0;
     /// x-nv-video[0].dynamicRangeMode: 0 SDR, 1 PQ, 2 HLG.
     int dynamic_range_mode = 0;
-    /// An active SDR-to-HDR pre-encode filter (RTX HDR) pins the wire to PQ,
-    /// excluding the HLG-base-layer profile 8.4.
-    bool pre_encode_filter_active = false;
+    /// The app has the SDR-to-HDR (RTX HDR) feature enabled. Its pipeline is
+    /// PQ-pinned, which excludes the HLG-base profile 8.4 for the whole app —
+    /// even when the filter itself stays off because the client requested HLG
+    /// (docs/dolby_vision_profile84.md §2).
+    bool synthetic_hdr_enabled = false;
   };
 
   struct dynamic_hdr_selection_t {

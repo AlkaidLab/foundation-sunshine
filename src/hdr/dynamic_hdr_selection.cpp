@@ -61,10 +61,10 @@ namespace hdr {
         }
       }
       else if (caps_84 && !caps_81 && gates.dynamic_range_mode == 2) {
-        // 8.4 is the HLG-base-layer channel. An active pre-encode filter
-        // (RTX HDR) pins the wire to PQ, so it excludes 8.4 — an 8.1 report
-        // alongside 8.4 keeps PQ the expected transfer and falls through too.
-        if (gates.pre_encode_filter_active) {
+        // 8.4 is the HLG-base-layer channel. An app with the SDR-to-HDR
+        // feature (RTX HDR) is excluded from it outright (profile84.md §2),
+        // and so is an 8.1 report, which keeps PQ the expected transfer.
+        if (gates.synthetic_hdr_enabled) {
           dv_fallback = dynamic_hdr_fallback_e::colorspace_unsupported;
         }
         else if (!request.dolby_vision_direct_surface) {

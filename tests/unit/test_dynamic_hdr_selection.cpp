@@ -280,15 +280,21 @@ TEST(DynamicHdrSelection, AlwaysPrefers81WhenReported) {
   EXPECT_EQ(hlg.fallback_reason, dynamic_hdr_fallback_e::colorspace_unsupported);
 }
 
-TEST(DynamicHdrSelection, ActivePreEncodeFilterExcludes84ButNot81) {
-  // RTX HDR pins the wire to PQ: the HLG-base-layer profile is out.
-  const auto hlg = select_dynamic_hdr(dv84_client(), { .video_format = 1, .dynamic_range_mode = 2, .pre_encode_filter_active = true });
+TEST(DynamicHdrSelection, SyntheticHdrAppExcludes84ButNot81) {
+  // An RTX HDR app is excluded from 8.4 for the whole app (profile84.md §2),
+  // including the HLG ANNOUNCE path where the filter itself stays off —
+  // the exclusion follows the app feature, not the per-session filter state.
+  const auto hlg = select_dynamic_hdr(dv84_client(), { .video_format = 1, .dynamic_range_mode = 2, .synthetic_hdr_enabled = true });
   EXPECT_EQ(hlg.format, dynamic_hdr_format_e::none);
   EXPECT_EQ(hlg.fallback_reason, dynamic_hdr_fallback_e::colorspace_unsupported);
 
   // 8.1 rides the same PQ signal the filter produces, so it stays available.
-  const auto pq = select_dynamic_hdr(full_dv_client(), { .video_format = 1, .dynamic_range_mode = 1, .pre_encode_filter_active = true });
+  const auto pq = select_dynamic_hdr(full_dv_client(), { .video_format = 1, .dynamic_range_mode = 1, .synthetic_hdr_enabled = true });
   EXPECT_EQ(pq.format, dynamic_hdr_format_e::dolby_vision_profile_81);
+
+  // Without the app feature the same HLG report still negotiates 8.4.
+  const auto plain_hlg = select_dynamic_hdr(dv84_client(), hevc_hlg_host());
+  EXPECT_EQ(plain_hlg.format, dynamic_hdr_format_e::dolby_vision_profile_84);
 }
 
 TEST(DynamicHdrSelection, EightyFourRefusalOnHlgHasNoHdr10PlusFallthrough) {
