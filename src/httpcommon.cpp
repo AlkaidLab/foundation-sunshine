@@ -44,6 +44,16 @@
 #include "utility.h"
 #include "uuid.h"
 
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+#endif
+
 namespace http {
   using namespace std::literals;
   namespace fs = std::filesystem;
@@ -436,6 +446,25 @@ namespace {
   constexpr auto COVER_DOWNLOAD_MAX_BYTES = static_cast<std::size_t>(10 * 1024 * 1024);
   constexpr auto COVER_DNS_TIMEOUT = std::chrono::seconds(10);
 
+  void remove_file_noexcept(const std::filesystem::path &path) noexcept {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+  }
+
+  bool replace_file(const std::filesystem::path &temporary_path, const std::filesystem::path &destination_path) noexcept {
+#ifdef _WIN32
+    return MoveFileExW(
+             temporary_path.c_str(),
+             destination_path.c_str(),
+             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+           ) != FALSE;
+#else
+    std::error_code ec;
+    std::filesystem::rename(temporary_path, destination_path, ec);
+    return !ec;
+#endif
+  }
+
   struct ParsedDownloadUrl {
     std::string scheme;
     std::string host;
@@ -814,8 +843,14 @@ namespace {
       return false;
     }
 
+    const auto destination_path = file_handler::path_from_utf8(file);
+    auto temporary_path = destination_path;
+    const auto temporary_suffix = file_handler::path_from_utf8(std::string { ".download-" } + uuid_util::uuid_t::generate().string());
+    temporary_path += temporary_suffix.native();
+    remove_file_noexcept(temporary_path);
+
     ImageCheckContext ctx;
-    ctx.filename = file;
+    ctx.filename = file_handler::path_to_utf8(temporary_path);
     ctx.url = url;
 
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, ssl_version);
@@ -836,9 +871,8 @@ namespace {
     CURLcode result = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
 
-    if (ctx.fp) {
-      fclose(ctx.fp);
-    }
+    const bool close_ok = !ctx.fp || fclose(ctx.fp) == 0;
+    ctx.fp = nullptr;
 
     curl_slist_free_all(resolve_list);
     curl_easy_cleanup(curl);
@@ -852,12 +886,7 @@ namespace {
         BOOST_LOG(error) << "Download failed: HTTP " << response_code << " [" << url << "]";
       }
 
-      // Cleanup partial file if it exists (though usually it shouldn't be much)
-      const auto native_file = file_handler::path_from_utf8(file);
-      if (std::filesystem::exists(native_file)) {
-        std::error_code remove_ec;
-        std::filesystem::remove(native_file, remove_ec);
-      }
+      remove_file_noexcept(temporary_path);
       return false;
     }
 
@@ -865,12 +894,19 @@ namespace {
     // Treat as failure (empty or too small file)
     if (!ctx.checked) {
       BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
-      // Cleanup if file was created
-      const auto native_file = file_handler::path_from_utf8(file);
-      if (std::filesystem::exists(native_file)) {
-        std::error_code remove_ec;
-        std::filesystem::remove(native_file, remove_ec);
-      }
+      remove_file_noexcept(temporary_path);
+      return false;
+    }
+
+    if (!ctx.valid || !close_ok) {
+      BOOST_LOG(error) << "Downloaded image could not be finalized ["sv << url << ']';
+      remove_file_noexcept(temporary_path);
+      return false;
+    }
+
+    if (!replace_file(temporary_path, destination_path)) {
+      BOOST_LOG(error) << "Couldn't replace downloaded image ["sv << file << ']';
+      remove_file_noexcept(temporary_path);
       return false;
     }
 

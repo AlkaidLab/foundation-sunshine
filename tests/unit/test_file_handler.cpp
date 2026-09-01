@@ -5,6 +5,7 @@
 #include <chrono>
 
 #include <boost/property_tree/ptree.hpp>
+#include <Simple-Web-Server/utility.hpp>
 
 #include <src/file_handler.h>
 
@@ -132,5 +133,13 @@ TEST(FileHandlerTests, ReadsAndWritesJsonInUnicodePath) {
 
   std::error_code ignored;
   std::filesystem::remove_all(root, ignored);
+}
+
+TEST(FileHandlerTests, ConvertsPercentEncodedUnicodeFilename) {
+  const std::filesystem::path expected { L"中文封面.png" };
+  const auto encoded = SimpleWeb::Percent::encode(file_handler::path_to_utf8(expected));
+  const auto actual = file_handler::path_from_utf8(SimpleWeb::Percent::decode(encoded));
+
+  EXPECT_EQ(actual, expected);
 }
 #endif

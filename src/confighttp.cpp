@@ -39,6 +39,7 @@
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
 #include <Simple-Web-Server/server_https.hpp>
+#include <Simple-Web-Server/utility.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 
 #include "config.h"
@@ -436,6 +437,7 @@ namespace confighttp {
     if (path.find("/boxart/") == 0) {
       path = path.substr(8); // Remove "/boxart/" prefix
     }
+    path = SimpleWeb::Percent::decode(path);
 
     BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
@@ -443,7 +445,8 @@ namespace confighttp {
     static const fs::path coversRoot = fs::weakly_canonical(platf::appdata() / "covers");
 
     // First try to find in SUNSHINE_ASSETS_DIR
-    fs::path targetPath = fs::weakly_canonical(assetsRoot / path);
+    const auto requestedPath = file_handler::path_from_utf8(path);
+    fs::path targetPath = fs::weakly_canonical(assetsRoot / requestedPath);
     fs::path finalPath;
     bool found = false;
 
@@ -456,7 +459,7 @@ namespace confighttp {
     
     // If not found in boxart, try covers directory
     if (!found) {
-      targetPath = fs::weakly_canonical(coversRoot / path);
+      targetPath = fs::weakly_canonical(coversRoot / requestedPath);
       // For covers, we use isChildPath which allows subdirectories but prevents traversal out of root
       if (isChildPath(targetPath, coversRoot) && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
         finalPath = targetPath;
@@ -526,7 +529,8 @@ namespace confighttp {
     fs::path nodeModulesPath(webDirPath / "assets");
 
     // .relative_path is needed to shed any leading slash that might exist in the request path
-    auto filePath = fs::weakly_canonical(webDirPath / fs::path(request->path).relative_path());
+    const auto decodedRequestPath = SimpleWeb::Percent::decode(request->path);
+    auto filePath = fs::weakly_canonical(webDirPath / file_handler::path_from_utf8(decodedRequestPath).relative_path());
 
     // Don't do anything if file does not exist or is outside the assets directory
     if (!isChildPath(filePath, nodeModulesPath)) {
@@ -644,7 +648,7 @@ namespace confighttp {
 
     //print_req(request);
 
-    const std::filesystem::path log_path(config::sunshine.log_file);
+    const auto log_path = file_handler::path_from_utf8(config::sunshine.log_file);
 
     // --- Mode 1: No X-Log-Offset header → stream full file from disk (download) ---
     auto offset_it = request->header.find("X-Log-Offset");
@@ -3768,14 +3772,19 @@ namespace confighttp {
       boost::filesystem::path work_dir;
       
       if (!working_dir.empty()) {
+        const auto native_working_dir = file_handler::path_from_utf8(working_dir);
         // 验证工作目录是否存在
-        if (!boost::filesystem::exists(working_dir) || !boost::filesystem::is_directory(working_dir)) {
+        if (!fs::exists(native_working_dir) || !fs::is_directory(native_working_dir)) {
           BOOST_LOG(warning) << "TestMenuCmd: Invalid working directory: " << working_dir;
           outputTree.put("status", false);
           outputTree.put("error", "Invalid working directory");
           return;
         }
-        work_dir = boost::filesystem::path(working_dir);
+#ifdef _WIN32
+        work_dir = boost::filesystem::path(native_working_dir.wstring());
+#else
+        work_dir = boost::filesystem::path(native_working_dir.string());
+#endif
       } else {
         work_dir = boost::filesystem::current_path();
       }
