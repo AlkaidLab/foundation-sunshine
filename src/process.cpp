@@ -500,6 +500,18 @@ namespace proc {
     return _app.name;
   }
 
+  std::optional<rtsp_stream::synthetic_hdr_config_t>
+  proc_t::get_app_rtx_hdr_config(int app_id) const {
+    if (_app_id == app_id && _app_id > 0) {
+      return _app.rtx_hdr;
+    }
+    const auto app_id_string = std::to_string(app_id);
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id_string](const auto &app) {
+      return app.id == app_id_string;
+    });
+    return iter == _apps.end() ? std::nullopt : iter->rtx_hdr;
+  }
+
   void
   proc_t::run_menu_cmd(std::string cmd_id) {
     auto iter = std::find_if(_app.menu_cmds.begin(), _app.menu_cmds.end(), [&cmd_id](const auto menu_cmd) {
@@ -832,6 +844,7 @@ namespace proc {
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
         auto gamepad = app_node.get_optional<std::string>("gamepad"s);
+        auto rtx_hdr_node = app_node.get_child_optional("rtx-hdr"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -933,6 +946,19 @@ namespace proc {
           ctx.gamepad_mode = 0;
         }
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
+        if (rtx_hdr_node) {
+          const auto mode = rtx_hdr_node->get<std::string>("mode", "inherit");
+          if (mode != "on" && mode != "off" && mode != "inherit") {
+            BOOST_LOG(warning) << "Ignoring invalid RTX HDR mode ["sv << mode << "] for app ["sv << name << ']';
+          }
+          ctx.rtx_hdr = rtsp_stream::synthetic_hdr_config_t {
+            .enabled = mode == "on",
+            .contrast = std::clamp(rtx_hdr_node->get<int>("contrast", 0), -100, 100),
+            .saturation = std::clamp(rtx_hdr_node->get<int>("saturation", 0), -100, 100),
+            .middle_gray = std::clamp(rtx_hdr_node->get<int>("middle-gray", 50), 10, 100),
+            .peak_nits = std::clamp(rtx_hdr_node->get<int>("peak-nits", 1000), 400, 1000),
+          };
+        }
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {

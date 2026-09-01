@@ -274,6 +274,14 @@ TEST(HdrDynamicMetadata, NormalizesHdr10PlusAgainstTheReferencePeakNotTheDisplay
   EXPECT_EQ(bright.maxscl, 40000);
 }
 
+TEST(HdrDynamicMetadata, SeparatesClientTargetPeakFromMasteringPeak) {
+  EXPECT_EQ(video::hdr_metadata::resolve_target_display_luminance(true, 400.0f, 1000), 400);
+  EXPECT_EQ(video::hdr_metadata::resolve_target_display_luminance(false, 400.0f, 1000), 1000);
+  EXPECT_EQ(video::hdr_metadata::resolve_target_display_luminance(true, 20000.0f, 1000), 10000);
+  EXPECT_EQ(video::hdr_metadata::resolve_target_display_luminance(true, 0.0f, 1000), 1000);
+  EXPECT_EQ(video::hdr_metadata::resolve_target_display_luminance(false, 0.0f, 0), 1000);
+}
+
 TEST(HdrDynamicMetadata, ReservesTheHdr10PlusV1AndV2DistributionSlots) {
   // libplacebo reads a nonzero slot 1 as ST 2094-50 V1, the 99.99% scene
   // luminance, and prefers the CIE-Y values derived from it over maxSCL. Leaking

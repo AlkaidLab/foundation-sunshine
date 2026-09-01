@@ -26,6 +26,7 @@ extern "C" {
 #include "display_cursor.h"
 #include "display_vram_internal.h"
 #include "misc.h"
+#include "pre_encode_filter.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
@@ -416,7 +417,6 @@ namespace platf::dxgi {
       auto &img = (img_d3d_t &) img_base;
       if (!img.blank) {
         auto &img_ctx = img_ctx_map[img.id];
-        const bool can_analyze_hdr_frame = hdr_analysis_enabled && img.linear_gamma && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 
         // Open the shared capture texture with our ID3D11Device
         if (initialize_image_context(img, img_ctx)) {
@@ -478,6 +478,75 @@ namespace platf::dxgi {
           gpu_timing->borrowed_vdd = img.borrowed_vdd_texture;
         }
 
+        bool capture_mutex_released = false;
+        auto release_capture_mutex = [&]() -> bool {
+          if (capture_mutex_released) {
+            return true;
+          }
+          bool released = false;
+          if (borrowed_vdd_frame) {
+            released = img.release_borrowed_vdd_after_convert(img_ctx.encoder_mutex.get());
+          }
+          else {
+            released = SUCCEEDED(img_ctx.encoder_mutex->ReleaseSync(encoder_release_key));
+          }
+          capture_mutex_released = released;
+          return released;
+        };
+
+        ID3D11Texture2D *conversion_input_texture = img_ctx.encoder_texture.get();
+        ID3D11ShaderResourceView *conversion_input_srv = img_ctx.encoder_input_res.get();
+        DXGI_FORMAT conversion_input_format = img.format;
+        auto conversion_input_semantic = img.frame_desc;
+
+        if (pre_encode_filter) {
+          auto source_contract = display->capture_contract;
+          source_contract.require_private_handoff = false;
+          if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {
+            release_capture_mutex();
+            BOOST_LOG(error) << "Pre-encode filter rejected captured frame contract"sv;
+            update_synthetic_hdr_runtime_status(false, "capture_contract_mismatch");
+            return -1;
+          }
+          if (!prepare_filter_handoff(img_ctx.encoder_texture.get(), img.frame_desc)) {
+            release_capture_mutex();
+            update_synthetic_hdr_runtime_status(false, "filter_handoff_failed");
+            return -1;
+          }
+          device_ctx->CopyResource(filter_handoff_texture.get(), img_ctx.encoder_texture.get());
+          if (!release_capture_mutex()) {
+            return -1;
+          }
+
+          auto handoff_semantic = img.frame_desc;
+          handoff_semantic.borrowed = false;
+          const auto filter_result = pre_encode_filter->process({
+            .texture = filter_handoff_texture.get(),
+            .srv = filter_handoff_srv.get(),
+            .format = img.format,
+            .semantic = handoff_semantic,
+            .width = static_cast<std::uint32_t>(img.width),
+            .height = static_cast<std::uint32_t>(img.height),
+          });
+          if (filter_result.status != filter_status_e::ready ||
+              !filter_result.frame.texture || !filter_result.frame.srv) {
+            BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
+            update_synthetic_hdr_runtime_status(false, filter_result.reason);
+            return -1;
+          }
+          update_synthetic_hdr_runtime_status(true);
+          conversion_input_texture = filter_result.frame.texture;
+          conversion_input_srv = filter_result.frame.srv;
+          conversion_input_format = filter_result.frame.format;
+          conversion_input_semantic = filter_result.frame.semantic;
+        }
+
+        const bool input_is_linear_fp16 =
+          conversion_input_semantic.domain == frame_domain_e::linear_scrgb &&
+          conversion_input_semantic.encoding == pixel_encoding_class_e::float16 &&
+          conversion_input_format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+        const bool can_analyze_hdr_frame = hdr_analysis_enabled && input_is_linear_fp16;
+
         auto draw = [&](auto &input, auto &y_or_yuv_viewports, auto &uv_viewport) {
           device_ctx->PSSetShaderResources(0, 1, &input);
 
@@ -502,7 +571,7 @@ namespace platf::dxgi {
           // This prevents double-gamma when the display is in ACM/HDR mode but the
           // capture is in a non-FP16 format, and also when a driver returns FP16 data
           // that already carries sRGB gamma (G22 colorspace with FP16 format).
-          const bool use_linear_shader = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
+          const bool use_linear_shader = input_is_linear_fp16;
 
           // Draw Y/YUV
           device_ctx->OMSetRenderTargets(1, &out_Y_or_YUV_rtv, nullptr);
@@ -534,7 +603,6 @@ namespace platf::dxgi {
         // Draw captured frame
         // Try compute-shader fast path first (HDR PQ/HLG -> P010, or SDR -> NV12;
         // type0, no rotation; scaling supported via *_scaled variants).
-        const bool input_is_linear_fp16 = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
         const bool hdr_analysis_due =
           can_analyze_hdr_frame && should_dispatch_hdr_analysis();
         bool cs_used = false;
@@ -550,7 +618,7 @@ namespace platf::dxgi {
                                (cs_is_scaled ? cs_p010_scaled_hdr_analysis : cs_p010_hdr_analysis) :
                                (cs_is_scaled ? cs_p010_scaled : cs_p010);
               cs_used = try_dispatch_cs_convert(
-                img_ctx.encoder_input_res.get(),
+                conversion_input_srv,
                 shader,
                 write_hdr_analysis_snapshot,
                 gpu_timing);
@@ -564,12 +632,12 @@ namespace platf::dxgi {
                               : (cs_is_scaled ? cs_nv12_pass_scaled : cs_nv12_pass);
             if (shader) {
               cs_used = try_dispatch_cs_convert(
-                img_ctx.encoder_input_res.get(), shader, false, gpu_timing);
+                conversion_input_srv, shader, false, gpu_timing);
             }
           }
         }
         if (!cs_used) {
-          draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+          draw(conversion_input_srv, out_Y_or_YUV_viewports, out_UV_viewport);
           mark_draw_gpu_timing(gpu_timing);
         }
 
@@ -579,18 +647,13 @@ namespace platf::dxgi {
         const HdrAnalysisSource hdr_analysis_source = hdr_analysis_due
                                                         ? prepare_hdr_analysis_source(
                                                             hdr_analysis_snapshot_written,
-                                                            img_ctx.encoder_texture.get())
+                                                            conversion_input_texture)
                                                         : HdrAnalysisSource {};
 
         // Release encoder mutex to allow capture code to reuse this image.
         finish_gpu_timing_sample(gpu_timing, std::move(gpu_timing_sample));
-        if (borrowed_vdd_frame) {
-          if (!img.release_borrowed_vdd_after_convert(img_ctx.encoder_mutex.get())) {
-            return -1;
-          }
-        }
-        else {
-          img_ctx.encoder_mutex->ReleaseSync(encoder_release_key);
+        if (!release_capture_mutex()) {
+          return -1;
         }
         if (vram_timing_enabled) {
           cpu_submit_timing.add(elapsed_ms(std::chrono::steady_clock::now() - submit_start));
@@ -1234,6 +1297,32 @@ namespace platf::dxgi {
       }
       display = nullptr;
 
+      if (this->display->pre_encode_filter != pre_encode_filter_e::none) {
+        const bool hdr_output =
+          format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+        if (!hdr_output) {
+          BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
+          return -1;
+        }
+        const auto &contract = this->display->capture_contract;
+        if (contract.required_domain != frame_domain_e::sdr_rec709 ||
+            contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
+            !contract.require_private_handoff) {
+          BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
+          return -1;
+        }
+        pre_encode_filter = make_pre_encode_filter(
+          this->display->pre_encode_filter,
+          device.get(),
+          device_ctx.get(),
+          this->display->pre_encode_filter_backend_path,
+          this->display->pre_encode_filter_config);
+        if (!pre_encode_filter) {
+          BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
+          return -1;
+        }
+      }
+
       blend_disable = make_blend(device.get(), false, false);
       if (!blend_disable) {
         return -1;
@@ -1354,6 +1443,53 @@ namespace platf::dxgi {
       img_ctx.img_weak = img.weak_from_this();
 
       return 0;
+    }
+
+    bool
+    prepare_filter_handoff(
+      ID3D11Texture2D *source,
+      const captured_frame_desc_t &semantic) {
+      if (!source || semantic.domain != frame_domain_e::sdr_rec709 ||
+          semantic.encoding != pixel_encoding_class_e::unorm8) {
+        BOOST_LOG(error) << "Cannot detach unsupported pre-encode filter input"sv;
+        return false;
+      }
+
+      D3D11_TEXTURE2D_DESC source_desc {};
+      source->GetDesc(&source_desc);
+      if (filter_handoff_texture &&
+          filter_handoff_width == source_desc.Width &&
+          filter_handoff_height == source_desc.Height &&
+          filter_handoff_format == source_desc.Format &&
+          filter_handoff_generation == semantic.source_generation) {
+        return true;
+      }
+
+      filter_handoff_srv.reset();
+      filter_handoff_texture.reset();
+      source_desc.MipLevels = 1;
+      source_desc.ArraySize = 1;
+      source_desc.Usage = D3D11_USAGE_DEFAULT;
+      source_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+      source_desc.CPUAccessFlags = 0;
+      source_desc.MiscFlags = 0;
+      auto status = device->CreateTexture2D(&source_desc, nullptr, &filter_handoff_texture);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create private filter handoff texture: "sv << util::log_hex(status);
+        return false;
+      }
+      status = device->CreateShaderResourceView(
+        filter_handoff_texture.get(), nullptr, &filter_handoff_srv);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create private filter handoff SRV: "sv << util::log_hex(status);
+        filter_handoff_texture.reset();
+        return false;
+      }
+      filter_handoff_width = source_desc.Width;
+      filter_handoff_height = source_desc.Height;
+      filter_handoff_format = source_desc.Format;
+      filter_handoff_generation = semantic.source_generation;
+      return true;
     }
 
     query_t
@@ -1592,6 +1728,35 @@ namespace platf::dxgi {
     }
 
     void
+    update_synthetic_hdr_runtime_status(
+      bool processed_frame,
+      std::string_view frame_failure = {}) {
+      if (!pre_encode_filter) {
+        runtime_status.synthetic_hdr_backend = "none";
+        runtime_status.synthetic_hdr_state = "disabled";
+        runtime_status.synthetic_hdr_failure_reason.clear();
+        return;
+      }
+
+      const std::string backend { pre_encode_filter->backend_name() };
+      const std::string state = !frame_failure.empty() || pre_encode_filter->degraded()
+                                  ? "degraded"
+                                  : processed_frame ? "active" : "warming_up";
+      const std::string reason = frame_failure.empty()
+                                   ? std::string { pre_encode_filter->failure_reason() }
+                                   : std::string { frame_failure };
+      if (runtime_status.synthetic_hdr_backend == backend &&
+          runtime_status.synthetic_hdr_state == state &&
+          runtime_status.synthetic_hdr_failure_reason == reason) {
+        return;
+      }
+      runtime_status.synthetic_hdr_backend = backend;
+      runtime_status.synthetic_hdr_state = state;
+      runtime_status.synthetic_hdr_failure_reason = reason;
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+    }
+
+    void
     publish_runtime_status(
       const ::video::sunshine_colorspace_t &colorspace,
       bool is_probe) {
@@ -1630,6 +1795,7 @@ namespace platf::dxgi {
         cs_path_active ? std::string {} : cs_fallback_reason;
       runtime_status.analysis_failure_reason =
         runtime_status.analysis_active ? std::string {} : hdr_analysis_failure_reason;
+      update_synthetic_hdr_runtime_status(false);
 
       if (runtime_status_id == 0) {
         runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
@@ -1658,6 +1824,14 @@ namespace platf::dxgi {
     // convert(). We can't store them in the img_t itself because it is shared
     // amongst multiple hwdevice_t objects (and therefore multiple ID3D11Devices).
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
+
+    std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
+    texture2d_t filter_handoff_texture;
+    shader_res_t filter_handoff_srv;
+    std::uint32_t filter_handoff_width = 0;
+    std::uint32_t filter_handoff_height = 0;
+    DXGI_FORMAT filter_handoff_format = DXGI_FORMAT_UNKNOWN;
+    std::uint64_t filter_handoff_generation = 0;
 
     std::shared_ptr<display_base_t> display;
 
@@ -2034,6 +2208,25 @@ namespace platf::dxgi {
 
       // Pixel-shader fallback: preserve the source outside the encoder keyed
       // mutex, then let the common pass-1 analyzer apply HdrPreEncodeTransform.
+      if (!hdr_analysis_input_tex || !encoder_texture) {
+        return {};
+      }
+      D3D11_TEXTURE2D_DESC analysis_desc {};
+      D3D11_TEXTURE2D_DESC encoder_desc {};
+      hdr_analysis_input_tex->GetDesc(&analysis_desc);
+      encoder_texture->GetDesc(&encoder_desc);
+      if (analysis_desc.Width != encoder_desc.Width ||
+          analysis_desc.Height != encoder_desc.Height ||
+          analysis_desc.MipLevels != encoder_desc.MipLevels ||
+          analysis_desc.ArraySize != encoder_desc.ArraySize ||
+          analysis_desc.Format != encoder_desc.Format ||
+          analysis_desc.SampleDesc.Count != encoder_desc.SampleDesc.Count ||
+          analysis_desc.SampleDesc.Quality != encoder_desc.SampleDesc.Quality) {
+        // WGC window capture may change size independently of the display-sized
+        // analysis resources. Dropping this sample is safer than copying
+        // incompatible resources and reusing stale luminance metadata.
+        return {};
+      }
       device_ctx->CopyResource(hdr_analysis_input_tex.get(), encoder_texture);
       return {
         hdr_analysis_input_srv.get(),
@@ -3935,6 +4128,7 @@ namespace platf::dxgi {
     img->format = (capture_format == DXGI_FORMAT_UNKNOWN) ? DXGI_FORMAT_B8G8R8A8_UNORM : capture_format;
     img->linear_gamma = capture_linear_gamma;
     img->borrowed_vdd_texture = false;
+    img->frame_desc = dummy ? captured_frame_desc_t {} : describe_captured_frame(img->format, false);
 
     D3D11_TEXTURE2D_DESC t {};
     t.Width = img->width;

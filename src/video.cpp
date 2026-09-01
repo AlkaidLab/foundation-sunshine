@@ -530,8 +530,15 @@ namespace video {
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
-    avcodec_encode_session_t(avcodec_ctx_t &&avcodec_ctx, std::unique_ptr<platf::avcodec_encode_device_t> encode_device, int inject):
-        avcodec_ctx { std::move(avcodec_ctx) }, device { std::move(encode_device) }, inject { inject } {}
+    avcodec_encode_session_t(
+      avcodec_ctx_t &&avcodec_ctx,
+      std::unique_ptr<platf::avcodec_encode_device_t> encode_device,
+      uint16_t dynamic_metadata_target_peak_nits,
+      int inject):
+        avcodec_ctx { std::move(avcodec_ctx) },
+        device { std::move(encode_device) },
+        dynamic_metadata_target_peak_nits { dynamic_metadata_target_peak_nits },
+        inject { inject } {}
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
     ~avcodec_encode_session_t() {
@@ -554,6 +561,7 @@ namespace video {
       replacements = std::move(other.replacements);
       frame_timestamps = std::move(other.frame_timestamps);
       dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
+      dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -674,6 +682,7 @@ namespace video {
     // Scene-aware temporal state is session-local so a new stream cannot inherit
     // metadata history from the previous stream.
     hdr_metadata::dynamic_metadata_temporal_state_t dynamic_metadata_temporal;
+    uint16_t dynamic_metadata_target_peak_nits = 1000;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -2185,6 +2194,14 @@ namespace video {
 
   void
   apply_client_target_luminance(SS_HDR_METADATA &metadata, const config_t &client_config) {
+    const auto pipeline = client_config.effective_frame_pipeline_policy();
+    if (platf::postprocess_produces_hdr_output(pipeline, client_config.pre_encode_filter)) {
+      // The synthetic backend has already rendered against this session's
+      // fixed mastering peak. Replacing it with the client's panel peak would
+      // make the signalled mastering metadata disagree with the actual pixels.
+      return;
+    }
+
     const auto &capabilities = client_config.hdr_capabilities;
     if (!capabilities.reported) {
       return;
@@ -2196,6 +2213,50 @@ namespace video {
     metadata.minDisplayLuminance = static_cast<std::uint16_t>(std::clamp(
       static_cast<std::uint32_t>(std::lround(static_cast<double>(capabilities.min_nits) * 10000.0)),
       0u, 0xFFFFu));
+  }
+
+  bool
+  synthetic_hdr_source_active(const config_t &config) {
+    const auto pipeline = config.effective_frame_pipeline_policy();
+    return platf::postprocess_produces_hdr_output(
+      pipeline,
+      config.pre_encode_filter);
+  }
+
+  bool
+  get_effective_hdr_metadata(
+    platf::display_t *display,
+    const config_t &config,
+    SS_HDR_METADATA &metadata) {
+    if (!synthetic_hdr_source_active(config)) {
+      return display->get_hdr_metadata(metadata);
+    }
+
+    std::memset(&metadata, 0, sizeof(metadata));
+    // Synthetic HDR is mastered in Rec. 2020 with D65. Its mastering peak is
+    // the same session-stable peak passed to the vendor backend, not a value
+    // queried from the deliberately SDR source display.
+    metadata.displayPrimaries[0].x = static_cast<std::uint16_t>(0.708f * 50000.0f);
+    metadata.displayPrimaries[0].y = static_cast<std::uint16_t>(0.292f * 50000.0f);
+    metadata.displayPrimaries[1].x = static_cast<std::uint16_t>(0.170f * 50000.0f);
+    metadata.displayPrimaries[1].y = static_cast<std::uint16_t>(0.797f * 50000.0f);
+    metadata.displayPrimaries[2].x = static_cast<std::uint16_t>(0.131f * 50000.0f);
+    metadata.displayPrimaries[2].y = static_cast<std::uint16_t>(0.046f * 50000.0f);
+    metadata.whitePoint.x = static_cast<std::uint16_t>(0.3127f * 50000.0f);
+    metadata.whitePoint.y = static_cast<std::uint16_t>(0.3290f * 50000.0f);
+
+    const auto peak_nits = static_cast<std::uint16_t>(std::lround(std::clamp(
+      config.pre_encode_filter_config.peak_nits,
+      1.0f,
+      10000.0f)));
+    metadata.maxDisplayLuminance = peak_nits;
+    metadata.minDisplayLuminance = 1;  // 0.0001 nit units
+    metadata.maxFullFrameLuminance = peak_nits;
+    metadata.maxContentLightLevel = peak_nits;
+    // TrueHDR's frame-average luminance is not known at session setup. Zero is
+    // the HDR10 "unknown" value and avoids suggesting a full frame at MaxCLL.
+    metadata.maxFrameAverageLightLevel = 0;
+    return true;
   }
 
   int
@@ -2227,16 +2288,11 @@ namespace video {
       if (raw_stats.valid) {
         const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
 
-        uint16_t max_lum = 1000;
-        auto mdm_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
-        if (mdm_sd) {
-          auto *mdm = reinterpret_cast<AVMasteringDisplayMetadata *>(mdm_sd->data);
-          if (mdm && mdm->has_luminance) {
-            max_lum = static_cast<uint16_t>(av_q2d(mdm->max_luminance));
-          }
-        }
         update_hdr_dynamic_metadata(
-          frame, filtered.hdr10plus_stats, filtered.vivid, max_lum);
+          frame,
+          filtered.hdr10plus_stats,
+          filtered.vivid,
+          session.dynamic_metadata_target_peak_nits);
       }
     }
 
@@ -2757,6 +2813,8 @@ namespace video {
     frame->colorspace = ctx->colorspace;
     frame->chroma_location = ctx->chroma_sample_location;
 
+    uint16_t dynamic_metadata_target_peak_nits = 1000;
+
     // Attach HDR metadata to the AVFrame
     // Both PQ (ST 2084) and HLG (ARIB STD-B67) can carry HDR metadata.
     // PQ uses absolute luminance and requires static metadata (MDCV, CLL).
@@ -2770,10 +2828,14 @@ namespace video {
       const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace, config.videoFormat);
 
       SS_HDR_METADATA hdr_metadata;
-      bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
+      bool has_metadata = get_effective_hdr_metadata(disp, config, hdr_metadata);
 
       if (has_metadata) {
         apply_client_target_luminance(hdr_metadata, config);
+        dynamic_metadata_target_peak_nits = hdr_metadata::resolve_target_display_luminance(
+          config.hdr_capabilities.reported,
+          config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         // Attach static HDR metadata (Mastering Display Color Volume + Content Light Level)
         // Required for PQ, optional but beneficial for HLG with HDR Vivid
         auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
@@ -2846,8 +2908,9 @@ namespace video {
             params.knee_point_y = av_make_q(0, 1);
             params.num_bezier_curve_anchors = 0;
 
-            // Set targeted system display maximum luminance from static metadata
-            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
+              dynamic_metadata_target_peak_nits,
+              1);
             hdr10plus->targeted_system_display_actual_peak_luminance_flag = 0;
             hdr10plus->mastering_display_actual_peak_luminance_flag = 0;
 
@@ -2887,7 +2950,7 @@ namespace video {
             params.color_saturation_num = 0;
 
             const auto target_display_pq =
-              hdr_metadata::target_display_pq_u12(static_cast<float>(hdr_metadata.maxDisplayLuminance));
+              hdr_metadata::target_display_pq_u12(static_cast<float>(dynamic_metadata_target_peak_nits));
             for (int i = 0; i < 2; i++) {
               auto &tm_params = params.tm_params[i];
               tm_params.targeted_system_display_maximum_luminance =
@@ -2932,6 +2995,7 @@ namespace video {
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
+      dynamic_metadata_target_peak_nits,
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
@@ -2946,9 +3010,9 @@ namespace video {
    * adaptation, which the terminal Dolby engine already knows (docs §3.3).
    */
   std::optional<dolby_vision::session_config_t>
-  dolby_vision_config_for_session(platf::display_t *disp) {
+  dolby_vision_config_for_session(platf::display_t *disp, const config_t &client_config) {
     SS_HDR_METADATA raw;
-    if (!disp->get_hdr_metadata(raw)) {
+    if (!get_effective_hdr_metadata(disp, client_config, raw)) {
       return std::nullopt;
     }
 
@@ -2975,7 +3039,7 @@ namespace video {
     // HLG benefits from these SEI for HDR Vivid tone mapping on the decoder side.
     if (colorspace_is_hdr(encode_device->colorspace) && encode_device->nvenc) {
       SS_HDR_METADATA hdr_metadata;
-      if (disp->get_hdr_metadata(hdr_metadata)) {
+      if (get_effective_hdr_metadata(disp, client_config, hdr_metadata)) {
         apply_client_target_luminance(hdr_metadata, client_config);
         nvenc::nvenc_hdr_metadata nvenc_metadata;
         // Copy display primaries (RGB order)
@@ -2987,6 +3051,10 @@ namespace video {
         nvenc_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
         nvenc_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
         nvenc_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        nvenc_metadata.targetDisplayLuminance = hdr_metadata::resolve_target_display_luminance(
+          client_config.hdr_capabilities.reported,
+          client_config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         nvenc_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
         nvenc_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
         encode_device->nvenc->set_hdr_metadata(nvenc_metadata);
@@ -3016,7 +3084,7 @@ namespace video {
         BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but the final colorspace is not PQ; "
                               "streaming without RPU"sv;
       }
-      else if (const auto dv_config = dolby_vision_config_for_session(disp);
+      else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
                !dv_config || !session->dolby_vision_.configure(*dv_config)) {
         BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but no usable mastering metadata; "
                               "streaming without RPU"sv;
@@ -3039,7 +3107,7 @@ namespace video {
     // Set HDR metadata for AMF encoder if HDR is enabled
     if (colorspace_is_hdr(encode_device->colorspace) && encode_device->amf) {
       SS_HDR_METADATA hdr_metadata;
-      if (disp->get_hdr_metadata(hdr_metadata)) {
+      if (get_effective_hdr_metadata(disp, client_config, hdr_metadata)) {
         apply_client_target_luminance(hdr_metadata, client_config);
         amf::amf_hdr_metadata amf_metadata;
         for (int i = 0; i < 3; i++) {
@@ -3050,6 +3118,10 @@ namespace video {
         amf_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
         amf_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
         amf_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        amf_metadata.targetDisplayLuminance = hdr_metadata::resolve_target_display_luminance(
+          client_config.hdr_capabilities.reported,
+          client_config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         amf_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
         amf_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
         encode_device->amf->set_hdr_metadata(amf_metadata);
@@ -3078,7 +3150,7 @@ namespace video {
         BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but the final colorspace is not PQ; "
                               "streaming without RPU"sv;
       }
-      else if (const auto dv_config = dolby_vision_config_for_session(disp);
+      else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
                !dv_config || !session->dolby_vision_.configure(*dv_config)) {
         BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but no usable mastering metadata; "
                               "streaming without RPU"sv;
@@ -3483,6 +3555,31 @@ namespace video {
     };
   }
 
+  /**
+   * @brief Disable the pre-encode filter when the opened display cannot satisfy
+   *        its preconditions, keeping the wire signal consistent with the pixels
+   *        actually produced (rtx_hdr_stream_implementation.md §5.3
+   *        source_display_not_sdr / §6.3 capability-probe degradation).
+   */
+  void
+  strip_unusable_pre_encode_filter(platf::display_t &disp, config_t &config) {
+    if (config.pre_encode_filter == platf::pre_encode_filter_e::none) {
+      return;
+    }
+    if (!disp.supports_pre_encode_filter()) {
+      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling RTX HDR for this session"sv;
+    }
+    else if (disp.is_hdr()) {
+      BOOST_LOG(warning) << "Source display is already in HDR mode (source_display_not_sdr); disabling RTX HDR for this session"sv;
+    }
+    else {
+      return;
+    }
+    config.pre_encode_filter = platf::pre_encode_filter_e::none;
+    config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(config.dynamicRange, false);
+    config.frame_pipeline_policy_resolved = true;
+  }
+
   std::unique_ptr<platf::encode_device_t>
   make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
     std::unique_ptr<platf::encode_device_t> result;
@@ -3551,6 +3648,7 @@ namespace video {
     ctx.touch_port_events->raise(make_port(disp, ctx.config));
 
     // Create encode device with NTSC framerate fallback support
+    strip_unusable_pre_encode_filter(*disp, ctx.config);
     auto make_encode_device_func = [&]() {
       return make_encode_device(*disp, encoder, ctx.config);
     };
@@ -3570,7 +3668,7 @@ namespace video {
     // Update client with our current HDR display state
     hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
     if (colorspace_is_hdr(colorspace)) {
-      if (disp->get_hdr_metadata(hdr_info->metadata)) {
+      if (get_effective_hdr_metadata(disp, ctx.config, hdr_info->metadata)) {
         hdr_info->enabled = true;
       }
       else {
@@ -3982,6 +4080,7 @@ namespace video {
 
       auto &encoder = *chosen_encoder;
 
+      strip_unusable_pre_encode_filter(*display, config);
       auto encode_device = make_encode_device(*display, encoder, config);
       if (!encode_device) {
         return;
@@ -3993,7 +4092,7 @@ namespace video {
       // Update client with our current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
       if (colorspace_is_hdr(encode_device->colorspace)) {
-        if (display->get_hdr_metadata(hdr_info->metadata)) {
+        if (get_effective_hdr_metadata(display.get(), config, hdr_info->metadata)) {
           hdr_info->enabled = true;
         }
         else {

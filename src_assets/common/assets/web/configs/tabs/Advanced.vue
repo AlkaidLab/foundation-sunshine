@@ -247,6 +247,27 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
       </div>
     </div>
 
+    <div class="settings-panel mt-3" v-if="platform === 'windows'">
+      <label for="rtx_hdr" class="form-label">{{ $t('config.rtx_hdr') }}</label>
+      <select id="rtx_hdr" class="form-select" v-model="config.rtx_hdr">
+        <option value="off">{{ $t('config.rtx_hdr_off') }}</option>
+        <option value="per_app">{{ $t('config.rtx_hdr_per_app') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.rtx_hdr_desc') }}</div>
+
+      <div class="mt-3" v-if="config.rtx_hdr === 'per_app'">
+        <label for="rtx_hdr_backend_path" class="form-label">{{ $t('config.rtx_hdr_backend_path') }}</label>
+        <input
+          id="rtx_hdr_backend_path"
+          class="form-control"
+          type="text"
+          v-model="config.rtx_hdr_backend_path"
+          placeholder="C:\\Program Files\\Sunshine\\tools\\rtx_hdr\\foundation_truehdr_backend.dll"
+        />
+        <div class="form-text">{{ $t('config.rtx_hdr_backend_path_desc') }}</div>
+      </div>
+    </div>
+
     <!-- Capture -->
     <div class="settings-panel mt-3" v-if="platform !== 'macos'">
       <AdapterNameSelector :platform="platform" :config="config" />

@@ -445,7 +445,8 @@ namespace display_device {
     }
 
     const bool vulkan_hdr_bridge_requested =
-      should_prepare_vdd && !is_system_rdp_vdd_session && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
+      should_prepare_vdd && !is_system_rdp_vdd_session &&
+      display_prepared_for_hdr(config, session) && config.vdd_vulkan_hdr_bridge;
     const bool will_disable_physical_displays =
       should_prepare_vdd && !is_system_rdp_vdd_session &&
       parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;

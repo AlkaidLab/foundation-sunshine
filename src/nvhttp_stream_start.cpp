@@ -402,6 +402,9 @@ namespace nvhttp::stream_start {
       recovery_session.surround_params = launch_session.surround_params;
       recovery_session.continuous_audio = launch_session.continuous_audio;
       recovery_session.enable_hdr = launch_session.enable_hdr;
+      recovery_session.synthetic_hdr = launch_session.synthetic_hdr;
+      recovery_session.frame_pipeline_policy = launch_session.frame_pipeline_policy;
+      recovery_session.frame_pipeline_policy_resolved = launch_session.frame_pipeline_policy_resolved;
       recovery_session.enable_sops = launch_session.enable_sops;
       recovery_session.enable_mic = launch_session.enable_mic;
       recovery_session.use_vdd = true;

@@ -851,7 +851,7 @@ namespace nvenc {
     if (luminance_stats.valid && hdr_metadata && (video_format == 1 || video_format == 2)) {
       // The payloads live in dynamic_metadata until the next frame, which outlasts
       // the nvEncEncodePicture() call below.
-      const auto payloads = dynamic_metadata.build(luminance_stats, hdr_metadata->maxDisplayLuminance);
+      const auto payloads = dynamic_metadata.build(luminance_stats, hdr_metadata->targetDisplayLuminance);
       for (auto payload : { payloads.hdr10plus, payloads.vivid }) {
         if (payload.empty()) {
           continue;
@@ -1045,7 +1045,8 @@ namespace nvenc {
   nvenc_base::set_hdr_metadata(const std::optional<nvenc_hdr_metadata> &metadata) {
     hdr_metadata = metadata;
     if (metadata) {
-      BOOST_LOG(debug) << "NvEnc: HDR metadata set - maxDisplayLuminance: " << metadata->maxDisplayLuminance
+      BOOST_LOG(debug) << "NvEnc: HDR metadata set - mastering peak: " << metadata->maxDisplayLuminance
+                       << " nits, target display: " << metadata->targetDisplayLuminance
                        << " nits, minDisplayLuminance: " << (metadata->minDisplayLuminance / 10000.0)
                        << " nits, maxCLL: " << metadata->maxContentLightLevel
                        << " nits, maxFALL: " << metadata->maxFrameAverageLightLevel << " nits";

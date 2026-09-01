@@ -23,8 +23,9 @@ namespace amf {
       uint16_t y;  // Normalized to 50,000
     } whitePoint;
 
-    uint16_t maxDisplayLuminance;        // Nits
+    uint16_t maxDisplayLuminance;        // Mastering peak in nits
     uint16_t minDisplayLuminance;        // 1/10000th of a nit
+    uint16_t targetDisplayLuminance;     // Client target peak for dynamic metadata
     uint16_t maxContentLightLevel;       // Nits
     uint16_t maxFrameAverageLightLevel;  // Nits
   };

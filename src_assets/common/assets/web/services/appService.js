@@ -213,6 +213,13 @@ export class AppService {
       'prep-cmd': filteredPrepCmd,
       'menu-cmd': Array.isArray(app['menu-cmd']) ? app['menu-cmd'] : [],
       detached: Array.isArray(app.detached) ? app.detached : [],
+      'rtx-hdr': {
+        mode: ['inherit', 'on', 'off'].includes(app['rtx-hdr']?.mode) ? app['rtx-hdr'].mode : 'inherit',
+        contrast: Math.max(-100, Math.min(100, Number(app['rtx-hdr']?.contrast) || 0)),
+        saturation: Math.max(-100, Math.min(100, Number(app['rtx-hdr']?.saturation) || 0)),
+        'middle-gray': Math.max(10, Math.min(100, Number(app['rtx-hdr']?.['middle-gray']) || 50)),
+        'peak-nits': Math.max(400, Math.min(1000, Number(app['rtx-hdr']?.['peak-nits']) || 1000)),
+      },
       'image-path': app['image-path']?.trim() || '',
       'working-dir': app['working-dir']?.trim() || ''
     };

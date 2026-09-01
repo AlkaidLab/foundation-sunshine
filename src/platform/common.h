@@ -25,6 +25,7 @@
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/frame_contract.h"
 #include "src/thread_safe.h"
 #include "src/utility.h"
 #include "src/video_colorspace.h"
@@ -476,6 +477,7 @@ namespace platf {
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     std::optional<frame_pipeline_trace_t> pipeline_trace;
+    captured_frame_desc_t frame_desc;
 
     virtual ~img_t() = default;
   };
@@ -707,6 +709,17 @@ namespace platf {
 
     virtual bool
     is_hdr() {
+      return false;
+    }
+
+    /**
+     * @brief Whether this capture/display path can run the configured pre-encode
+     *        filter. Sessions on paths returning false must disable the filter
+     *        (and re-resolve the frame pipeline policy) instead of signalling
+     *        HDR output no filter produces.
+     */
+    virtual bool
+    supports_pre_encode_filter() {
       return false;
     }
 
