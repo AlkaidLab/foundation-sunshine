@@ -39,6 +39,7 @@
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
 #include <Simple-Web-Server/server_https.hpp>
+#include <Simple-Web-Server/utility.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 
 #include "config.h"
@@ -385,7 +386,12 @@ namespace confighttp {
   getStaticResource(resp_https_t response, req_https_t request, const std::string& path, const std::string& contentType) {
     // print_req(request);
 
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(file_handler::path_from_utf8(path), std::ios::binary);
+    if (!in.is_open()) {
+      BOOST_LOG(error) << "Failed to open Web UI resource: " << path;
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
+      return;
+    }
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", contentType);
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
@@ -431,14 +437,16 @@ namespace confighttp {
     if (path.find("/boxart/") == 0) {
       path = path.substr(8); // Remove "/boxart/" prefix
     }
+    path = SimpleWeb::Percent::decode(path);
 
     BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
-    static const fs::path assetsRoot = fs::weakly_canonical(fs::path(SUNSHINE_ASSETS_DIR));
+    static const fs::path assetsRoot = fs::weakly_canonical(file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR));
     static const fs::path coversRoot = fs::weakly_canonical(platf::appdata() / "covers");
 
     // First try to find in SUNSHINE_ASSETS_DIR
-    fs::path targetPath = fs::weakly_canonical(assetsRoot / path);
+    const auto requestedPath = file_handler::path_from_utf8(path);
+    fs::path targetPath = fs::weakly_canonical(assetsRoot / requestedPath);
     fs::path finalPath;
     bool found = false;
 
@@ -446,17 +454,17 @@ namespace confighttp {
     if (targetPath.parent_path() == assetsRoot && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
       finalPath = targetPath;
       found = true;
-      BOOST_LOG(debug) << "Found in boxart: " << finalPath.string();
+      BOOST_LOG(debug) << "Found in boxart: " << file_handler::path_to_utf8(finalPath);
     }
     
     // If not found in boxart, try covers directory
     if (!found) {
-      targetPath = fs::weakly_canonical(coversRoot / path);
+      targetPath = fs::weakly_canonical(coversRoot / requestedPath);
       // For covers, we use isChildPath which allows subdirectories but prevents traversal out of root
       if (isChildPath(targetPath, coversRoot) && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
         finalPath = targetPath;
         found = true;
-        BOOST_LOG(debug) << "Found in covers: " << finalPath.string();
+        BOOST_LOG(debug) << "Found in covers: " << file_handler::path_to_utf8(finalPath);
       }
     }
 
@@ -466,17 +474,17 @@ namespace confighttp {
       finalPath = assetsRoot / "box.png";
       // Ensure default file exists, otherwise we might fail later
       if (!fs::exists(finalPath)) {
-        BOOST_LOG(warning) << "Default box.png not found at: " << finalPath.string();
+        BOOST_LOG(warning) << "Default box.png not found at: " << file_handler::path_to_utf8(finalPath);
         response->write(SimpleWeb::StatusCode::client_error_not_found, "Image not found");
         return;
       }
     }
 
-    std::string imagePath = finalPath.string();
+    const auto imagePath = file_handler::path_to_utf8(finalPath);
 
     // Get file size
     std::error_code ec;
-    auto fileSize = fs::file_size(imagePath, ec);
+    auto fileSize = fs::file_size(finalPath, ec);
     if (ec) {
       BOOST_LOG(warning) << "Failed to get file size for: " << imagePath;
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read image file");
@@ -484,7 +492,7 @@ namespace confighttp {
     }
 
     // Determine Content-Type from file extension
-    std::string ext = fs::path(imagePath).extension().string();
+    std::string ext = finalPath.extension().string();
     if (!ext.empty() && ext[0] == '.') {
       ext = ext.substr(1);
     }
@@ -499,7 +507,7 @@ namespace confighttp {
     BOOST_LOG(debug) << "Serving boxart: " << imagePath << " (Content-Type: " << contentType << ", Size: " << fileSize << " bytes)";
 
     // Return image resource
-    std::ifstream in(imagePath, std::ios::binary);
+    std::ifstream in(finalPath, std::ios::binary);
     if (!in.is_open()) {
       BOOST_LOG(warning) << "Failed to open image file: " << imagePath;
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open image file");
@@ -517,18 +525,19 @@ namespace confighttp {
   void
   getNodeModules(resp_https_t response, req_https_t request) {
     // print_req(request);
-    fs::path webDirPath(WEB_DIR);
+    fs::path webDirPath = file_handler::path_from_utf8(WEB_DIR);
     fs::path nodeModulesPath(webDirPath / "assets");
 
     // .relative_path is needed to shed any leading slash that might exist in the request path
-    auto filePath = fs::weakly_canonical(webDirPath / fs::path(request->path).relative_path());
+    const auto decodedRequestPath = SimpleWeb::Percent::decode(request->path);
+    auto filePath = fs::weakly_canonical(webDirPath / file_handler::path_from_utf8(decodedRequestPath).relative_path());
 
     // Don't do anything if file does not exist or is outside the assets directory
     if (!isChildPath(filePath, nodeModulesPath)) {
       BOOST_LOG(warning) << "Someone requested a path " << filePath << " that is outside the assets folder";
       response->write(SimpleWeb::StatusCode::client_error_bad_request, "Bad Request");
     }
-    else if (!fs::exists(filePath)) {
+    else if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
       response->write(SimpleWeb::StatusCode::client_error_not_found);
     }
     else {
@@ -541,7 +550,12 @@ namespace confighttp {
         // if it is, set the content type to the mime type
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", mimeType->second);
-        std::ifstream in(filePath.string(), std::ios::binary);
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in.is_open()) {
+          BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(filePath);
+          response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
+          return;
+        }
         response->write(SimpleWeb::StatusCode::success_ok, in, headers);
       }
       // do not return any file if the type is not in the map
@@ -582,7 +596,7 @@ namespace confighttp {
     if (current_size <= prev_size || prev_size == 0 || !old_content) {
       return nullptr;
     }
-    std::ifstream in(log_path.string(), std::ios::binary);
+    std::ifstream in(log_path, std::ios::binary);
     if (!in || !in.seekg(static_cast<std::streamoff>(prev_size))) {
       return nullptr;
     }
@@ -600,7 +614,7 @@ namespace confighttp {
    */
   static std::shared_ptr<const std::string>
   read_file_range(const std::filesystem::path &path, std::uintmax_t offset, std::uintmax_t length) {
-    std::ifstream in(path.string(), std::ios::binary);
+    std::ifstream in(path, std::ios::binary);
     if (!in || !in.seekg(static_cast<std::streamoff>(offset))) {
       return nullptr;
     }
@@ -634,12 +648,12 @@ namespace confighttp {
 
     //print_req(request);
 
-    const std::filesystem::path log_path(config::sunshine.log_file);
+    const auto log_path = file_handler::path_from_utf8(config::sunshine.log_file);
 
     // --- Mode 1: No X-Log-Offset header → stream full file from disk (download) ---
     auto offset_it = request->header.find("X-Log-Offset");
     if (offset_it == request->header.end()) {
-      std::ifstream in(log_path.string(), std::ios::binary);
+      std::ifstream in(log_path, std::ios::binary);
       if (!in.is_open()) {
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open log file");
         return;
@@ -822,7 +836,7 @@ namespace confighttp {
 
     try {
       pt::read_json(ss, inputTree);
-      pt::read_json(config::stream.file_apps, fileTree);
+      file_handler::read_json(config::stream.file_apps, fileTree);
 
       auto &apps_node = fileTree.get_child("apps"s);
       auto &input_apps_node = inputTree.get_child("apps"s);
@@ -896,7 +910,7 @@ namespace confighttp {
         }
       }
 
-      pt::write_json(config::stream.file_apps, fileTree);
+      file_handler::write_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SaveApp: "sv << e.what();
@@ -939,7 +953,7 @@ namespace confighttp {
     });
     pt::ptree fileTree;
     try {
-      pt::read_json(config::stream.file_apps, fileTree);
+      file_handler::read_json(config::stream.file_apps, fileTree);
       auto &apps_node = fileTree.get_child("apps"s);
       int index = stoi(request->path_match[1]);
 
@@ -961,7 +975,7 @@ namespace confighttp {
         fileTree.erase("apps");
         fileTree.push_back(std::make_pair("apps", newApps));
       }
-      pt::write_json(config::stream.file_apps, fileTree);
+      file_handler::write_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "DeleteApp: "sv << e.what();
@@ -1069,7 +1083,7 @@ namespace confighttp {
 
     pt::ptree fileTree;
     try {
-      pt::read_json(config::stream.file_apps, fileTree);
+      file_handler::read_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
@@ -1117,7 +1131,7 @@ namespace confighttp {
       fileTree.erase("apps");
       fileTree.push_back(std::make_pair("apps", newApps));
 
-      pt::write_json(config::stream.file_apps, fileTree);
+      file_handler::write_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
@@ -1172,10 +1186,11 @@ namespace confighttp {
     }
     auto url = inputTree.get("url", "");
 
-    const std::string coverdir = platf::appdata().string() + "/covers/";
+    const std::string coverdir = file_handler::path_to_utf8(platf::appdata() / "covers");
     file_handler::make_directory(coverdir);
 
-    std::basic_string path = coverdir + http::url_escape(key) + ".png";
+    const auto cover_path = file_handler::path_from_utf8(coverdir) / (http::url_escape(key) + ".png");
+    const std::string path = file_handler::path_to_utf8(cover_path);
     if (!url.empty()) {
       if (!http::download_public_cover_image(url, path)) {
         outputTree.put("error", "Failed to download public HTTPS cover");
@@ -1193,7 +1208,7 @@ namespace confighttp {
       }
       auto data = SimpleWeb::Crypto::Base64::decode(base64_str);
 
-      std::ofstream imgfile(path, std::ios::binary);
+      std::ofstream imgfile(file_handler::path_from_utf8(path), std::ios::binary);
       if (!imgfile.is_open()) {
         outputTree.put("error", "Failed to create file");
         return;
@@ -1316,7 +1331,7 @@ namespace confighttp {
     // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
     std::filesystem::path idd_option_path = platf::appdata() / "vdd_settings.xml";
 
-    BOOST_LOG(info) << "VDD配置文件路径: " << idd_option_path.string();
+    BOOST_LOG(info) << "VDD配置文件路径: " << file_handler::path_to_utf8(idd_option_path);
 
     if (!fs::exists(idd_option_path)) {
         return false;
@@ -1327,7 +1342,13 @@ namespace confighttp {
     pt::ptree root;
 
     try {
-      pt::read_xml(idd_option_path.string(), existing_root);
+      {
+        std::ifstream input(idd_option_path, std::ios::binary);
+        if (!input.is_open()) {
+          throw std::runtime_error("Unable to open VDD configuration file");
+        }
+        pt::read_xml(input, existing_root);
+      }
       // 如果现有配置文件中已有vdd_settings节点
       if (existing_root.get_child_optional("vdd_settings")) {
         // 复制现有配置
@@ -1386,9 +1407,15 @@ namespace confighttp {
       boost::regex empty_lines_regex("\\n\\s*\\n");
       xml_content = boost::regex_replace(xml_content, empty_lines_regex, "\n");
 
-      std::ofstream file(idd_option_path.string());
+      std::ofstream file(idd_option_path);
+      if (!file.is_open()) {
+        throw std::runtime_error("Unable to open VDD configuration file");
+      }
       file << xml_content;
-      file.close();
+      file.flush();
+      if (!file) {
+        throw std::runtime_error("Unable to write VDD configuration file");
+      }
 
       return true;
     }
@@ -2728,15 +2755,15 @@ namespace confighttp {
   /**
    * @brief 获取 AI 配置文件路径（与 sunshine.conf 同目录）
    */
-  static std::string
+  static fs::path
   getAiConfigPath() {
-    auto config_dir = fs::path(config::sunshine.config_file).parent_path();
-    return (config_dir / "ai_config.json").string();
+    auto config_dir = file_handler::path_from_utf8(config::sunshine.config_file).parent_path();
+    return config_dir / "ai_config.json";
   }
 
   static fs::path
   getAiCredentialPath() {
-    auto config_dir = fs::path(config::sunshine.config_file).parent_path();
+    auto config_dir = file_handler::path_from_utf8(config::sunshine.config_file).parent_path();
     return config_dir / "ai_llm_credential.bin";
   }
 
@@ -2801,7 +2828,8 @@ namespace confighttp {
 
     auto path = getAiConfigPath();
     try {
-      std::string content = file_handler::read_file(path.c_str());
+      const auto utf8_path = file_handler::path_to_utf8(path);
+      std::string content = file_handler::read_file(utf8_path.c_str());
       if (!content.empty()) {
         auto persisted = nlohmann::json::parse(content);
         ai_config_cache = persisted;
@@ -3571,11 +3599,12 @@ namespace confighttp {
    */
   std::string
   calculate_file_hash(const std::string &filepath) {
-    if (filepath.empty() || !boost::filesystem::exists(filepath)) {
+    const auto native_path = file_handler::path_from_utf8(filepath);
+    if (filepath.empty() || !fs::exists(native_path)) {
       return "";
     }
 
-    std::ifstream file(filepath, std::ios::binary);
+    std::ifstream file(native_path, std::ios::binary);
     if (!file.is_open()) {
       return "";
     }
@@ -3715,18 +3744,18 @@ namespace confighttp {
       
       if (!executable_path.empty()) {
         // 如果是相对路径，尝试解析为绝对路径
-        boost::filesystem::path exec_path(executable_path);
+        auto exec_path = file_handler::path_from_utf8(executable_path);
         if (!exec_path.is_absolute()) {
           // 在PATH中查找或使用工作目录
           if (!working_dir.empty()) {
-            exec_path = boost::filesystem::path(working_dir) / exec_path;
+            exec_path = file_handler::path_from_utf8(working_dir) / exec_path;
           }
         }
         
-        file_hash = calculate_file_hash(exec_path.string());
+        file_hash = calculate_file_hash(file_handler::path_to_utf8(exec_path));
         
-        if (file_hash.empty() && boost::filesystem::exists(exec_path)) {
-          BOOST_LOG(warning) << "TestMenuCmd: Failed to calculate hash for executable: " << exec_path;
+        if (file_hash.empty() && fs::exists(exec_path)) {
+          BOOST_LOG(warning) << "TestMenuCmd: Failed to calculate hash for executable: " << file_handler::path_to_utf8(exec_path);
         }
       }
 
@@ -3743,14 +3772,19 @@ namespace confighttp {
       boost::filesystem::path work_dir;
       
       if (!working_dir.empty()) {
+        const auto native_working_dir = file_handler::path_from_utf8(working_dir);
         // 验证工作目录是否存在
-        if (!boost::filesystem::exists(working_dir) || !boost::filesystem::is_directory(working_dir)) {
+        if (!fs::exists(native_working_dir) || !fs::is_directory(native_working_dir)) {
           BOOST_LOG(warning) << "TestMenuCmd: Invalid working directory: " << working_dir;
           outputTree.put("status", false);
           outputTree.put("error", "Invalid working directory");
           return;
         }
-        work_dir = boost::filesystem::path(working_dir);
+#ifdef _WIN32
+        work_dir = boost::filesystem::path(native_working_dir.wstring());
+#else
+        work_dir = boost::filesystem::path(native_working_dir.string());
+#endif
       } else {
         work_dir = boost::filesystem::current_path();
       }
