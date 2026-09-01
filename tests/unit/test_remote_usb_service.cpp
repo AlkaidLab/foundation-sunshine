@@ -21,6 +21,6 @@ TEST(RemoteUsbService, RejectsCapabilityBeforeStart) {
   request.attachment_token = 2;
   request.lease_token = 3;
   const auto result = service.issue_capability(std::move(request));
-  EXPECT_EQ(result.status, remote_usb::capability_issue_status::unsupported);
+  EXPECT_EQ(result.status, remote_usb::capability_issue_status::unavailable);
   EXPECT_FALSE(result);
 }

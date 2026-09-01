@@ -78,6 +78,7 @@ namespace remote_usb {
 
     usbip_host_controller host_controller;
     bool host_supported { false };
+    bool start_attempted { false };
     capability_store capabilities;
     std::shared_ptr<broker_server> broker;
     std::mutex mutex;
@@ -315,6 +316,7 @@ namespace remote_usb {
     if (impl_->broker) {
       return { false, "already_started" };
     }
+    impl_->start_attempted = true;
     impl_->host_supported = impl_->host_controller.backend_supported();
     if (!impl_->host_supported) {
       return { false, "unsupported_platform" };
@@ -344,10 +346,14 @@ namespace remote_usb {
 
   capability_issue_result
   remote_usb_service::issue_capability(capability_issue_request request) {
+    if (!impl_->broker) {
+      return { impl_->start_attempted && !impl_->host_supported ? capability_issue_status::unsupported : capability_issue_status::unavailable,
+        std::nullopt };
+    }
     if (!impl_->host_supported) {
       return { capability_issue_status::unsupported, std::nullopt };
     }
-    if (!impl_->broker || !impl_->broker->running() || impl_->broker->bound_port() == 0 ||
+    if (!impl_->broker->running() || impl_->broker->bound_port() == 0 ||
         request.endpoint_host.empty()) {
       return { capability_issue_status::unavailable, std::nullopt };
     }
