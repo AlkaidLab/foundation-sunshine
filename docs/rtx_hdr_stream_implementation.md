@@ -116,6 +116,27 @@ FP16 输出纹理，再把两者交给后端处理。这样可以：
 SDR→PQ；TrueHDR 连续成功后只在可控边界激活；连续失败后本会话永久降级，直到下次
 重建视频会话。
 
+### 2.7 术语链：rtx_hdr / synthetic_hdr / pre_encode_filter 各指什么
+
+同一特性在代码里有三个名字，分别属于三层，**只能被各自所在层消费**，不能拿相邻层
+的值做另一层的判断（2026-09 曾因此产生 8.4 协商误判，见 profile84.md §2）：
+
+| 名字 | 所在层 | 生命周期 | 消费者 |
+|---|---|---|---|
+| `rtx_hdr`（apps.json 配置键） | 用户配置 | 持久 | nvhttp：填充 `session.synthetic_hdr` |
+| `synthetic_hdr.enabled`（`launch_session_t`） | 会话意图 | ANNOUNCE 时即可读 | 协商层 gate `synthetic_hdr_enabled`；`post_process_hdr_active` 的输入 |
+| `pre_encode_filter`（`video::config_t`）+ `post_process_hdr_active`（本地计算） | 管线对象 | 编码会话期间 | display_vram 的 filter 构造、colorspace/metadata 决策 |
+
+边界规则（均有单测钉住）：
+
+- HLG 守卫钉 PQ：`post_process_hdr_active = synthetic_hdr.enabled && dynamicRange == 1`，
+  因此 **HLG 会话里 filter 对象恒不存在**；
+- 8.4 协商排除跟随**应用意图**（`synthetic_hdr.enabled` → gate
+  `synthetic_hdr_enabled`），不跟随会话 filter 状态 —— 否则 RTX HDR 应用 + HLG
+  客户端会漏排除；
+- 协商 gate 位于 `dynamic_hdr_host_gates_t`（dynamic_hdr_selection.h），消费规则
+  见 profile84.md §2、§3.1。
+
 ---
 
 ## 3. 范围

@@ -31,11 +31,13 @@ namespace hdr {
     const dynamic_hdr_host_gates_t &gates) noexcept {
     const bool dv_preferred = request.preference == dynamic_hdr_preference_e::automatic ||
                               request.preference == dynamic_hdr_preference_e::dolby_vision;
+    const bool caps_81 = (request.caps_mask & DYNAMIC_HDR_CAPS_DOLBY_VISION_81) != 0;
+    const bool caps_84 = (request.caps_mask & DYNAMIC_HDR_CAPS_DOLBY_VISION_84) != 0;
     // "Requested" covers both a capability the client offered and an explicit
     // preference for Dolby Vision — the latter without the former is a client
     // bug worth a diagnostic, not silence.
     const bool dv_requested = dv_preferred &&
-                              (((request.caps_mask & DYNAMIC_HDR_CAPS_DOLBY_VISION_81) != 0) ||
+                              ((caps_81 || caps_84) ||
                                 request.preference == dynamic_hdr_preference_e::dolby_vision);
 
     // The DV verdict first: a selection returns immediately, a refusal falls
@@ -45,18 +47,35 @@ namespace hdr {
       if (gates.video_format != 1) {
         dv_fallback = dynamic_hdr_fallback_e::codec_unsupported;
       }
-      else if (gates.dynamic_range_mode != 1) {
-        dv_fallback = dynamic_hdr_fallback_e::colorspace_unsupported;
-      }
-      else if ((request.caps_mask & DYNAMIC_HDR_CAPS_DOLBY_VISION_81) == 0) {
+      else if (!caps_81 && !caps_84) {
         dv_fallback = dynamic_hdr_fallback_e::client_caps_missing;
       }
-      else if (!request.dolby_vision_direct_surface) {
-        dv_fallback = dynamic_hdr_fallback_e::direct_surface_missing;
+      else if (caps_81 && gates.dynamic_range_mode == 1) {
+        // 8.1 wins whenever it is servable, regardless of an 8.4 report
+        // (profile84.md §3.1: PQ base layer is the priority channel).
+        if (!request.dolby_vision_direct_surface) {
+          dv_fallback = dynamic_hdr_fallback_e::direct_surface_missing;
+        }
+        else {
+          return { dynamic_hdr_format_e::dolby_vision_profile_81, dynamic_hdr_fallback_e::none };
+        }
       }
-
-      if (!dv_fallback) {
-        return { dynamic_hdr_format_e::dolby_vision_profile_81, dynamic_hdr_fallback_e::none };
+      else if (caps_84 && !caps_81 && gates.dynamic_range_mode == 2) {
+        // 8.4 is the HLG-base-layer channel. An app with the SDR-to-HDR
+        // feature (RTX HDR) is excluded from it outright (profile84.md §2),
+        // and so is an 8.1 report, which keeps PQ the expected transfer.
+        if (gates.synthetic_hdr_enabled) {
+          dv_fallback = dynamic_hdr_fallback_e::colorspace_unsupported;
+        }
+        else if (!request.dolby_vision_direct_surface) {
+          dv_fallback = dynamic_hdr_fallback_e::direct_surface_missing;
+        }
+        else {
+          return { dynamic_hdr_format_e::dolby_vision_profile_84, dynamic_hdr_fallback_e::none };
+        }
+      }
+      else {
+        dv_fallback = dynamic_hdr_fallback_e::colorspace_unsupported;
       }
 
       // The reason is only worth reporting when the client actually asked
@@ -84,7 +103,7 @@ namespace hdr {
     // Non-DV preference: a DV-capable client that chose otherwise gets the
     // preference as the reason, for client-side "you disabled this" UI.
     const dynamic_hdr_fallback_e preference_reason =
-      (request.caps_mask & DYNAMIC_HDR_CAPS_DOLBY_VISION_81) != 0
+      (request.caps_mask & (DYNAMIC_HDR_CAPS_DOLBY_VISION_81 | DYNAMIC_HDR_CAPS_DOLBY_VISION_84)) != 0
         ? dynamic_hdr_fallback_e::preference
         : dynamic_hdr_fallback_e::none;
 
@@ -118,7 +137,8 @@ namespace hdr {
         constexpr std::uint64_t known_bits = DYNAMIC_HDR_CAPS_HDR10_PLUS |
                                              DYNAMIC_HDR_CAPS_VIVID_PQ |
                                              DYNAMIC_HDR_CAPS_VIVID_HLG |
-                                             DYNAMIC_HDR_CAPS_DOLBY_VISION_81;
+                                             DYNAMIC_HDR_CAPS_DOLBY_VISION_81 |
+                                             DYNAMIC_HDR_CAPS_DOLBY_VISION_84;
         request.caps_mask = static_cast<std::uint32_t>(*mask & known_bits);
         request.caps_reported = true;
       }
@@ -162,6 +182,8 @@ namespace hdr {
         return "vivid_hlg";
       case dynamic_hdr_format_e::dolby_vision_profile_81:
         return "dolby_vision_profile_81";
+      case dynamic_hdr_format_e::dolby_vision_profile_84:
+        return "dolby_vision_profile_84";
     }
     return "unknown";
   }
