@@ -3065,29 +3065,40 @@ namespace video {
 
     // The device moves into the session; sample its gates beforehand.
     const bool dv_analysis_usable = encode_device && hdr_luminance_analysis_usable(encode_device->hdr_luminance_analysis_available);
-    const bool dv_pq = encode_device && colorspace_is_pq(encode_device->colorspace);
+    const auto dv_format = static_cast<hdr::dynamic_hdr_format_e>(client_config.dynamic_hdr_format);
+    const bool dv_negotiated = dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ||
+                               dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84;
+    // 8.1 rides PQ, 8.4 rides HLG: the RPU metadata domain is the same
+    // (profile84.md Phase 0), only the required base-layer transfer differs.
+    const bool dv_transfer_ok =
+      encode_device &&
+      ((dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 && colorspace_is_pq(encode_device->colorspace)) ||
+        (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84 && colorspace_is_hlg(encode_device->colorspace)));
     auto session = std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
 
     // Contract note: a negotiated-DV session that cannot carry the RPU still
     // serves a valid HDR10-compatible HEVC base layer; the client's decoder
     // routing must tolerate RPU absence and fall back. These warnings are the
     // diagnostics for exactly that path -- do not promise the RPU here.
-    if (client_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) &&
-        !is_probe) {
+    if (dv_negotiated && !is_probe) {
       // Dynamic L1 is the whole point of the pipeline; without analyzer
       // output the stream would carry nothing but a static template.
       if (!dv_analysis_usable) {
         BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but luminance analysis is unavailable; "
                               "streaming without RPU"sv;
       }
-      else if (!dv_pq) {
-        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but the final colorspace is not PQ; "
-                              "streaming without RPU"sv;
+      else if (!dv_transfer_ok) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but the final colorspace does not match the "
+                              "negotiated profile; streaming without RPU"sv;
       }
       else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
                !dv_config || !session->dolby_vision_.configure(*dv_config)) {
         BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but no usable mastering metadata; "
                               "streaming without RPU"sv;
+      }
+      else if (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84) {
+        BOOST_LOG(info) << "NVENC: Dolby Vision Profile 8.4 active (HLG base layer, mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
       }
       else {
         BOOST_LOG(info) << "NVENC: Dolby Vision Profile 8.1 active (mastering peak "
@@ -3132,7 +3143,15 @@ namespace video {
 
     // The device moves into the session; sample its gates beforehand.
     const bool dv_analysis_usable = encode_device && hdr_luminance_analysis_usable(encode_device->hdr_luminance_analysis_available);
-    const bool dv_pq = encode_device && colorspace_is_pq(encode_device->colorspace);
+    const auto dv_format = static_cast<hdr::dynamic_hdr_format_e>(client_config.dynamic_hdr_format);
+    const bool dv_negotiated = dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ||
+                               dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84;
+    // 8.1 rides PQ, 8.4 rides HLG: the RPU metadata domain is the same
+    // (profile84.md Phase 0), only the required base-layer transfer differs.
+    const bool dv_transfer_ok =
+      encode_device &&
+      ((dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 && colorspace_is_pq(encode_device->colorspace)) ||
+        (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84 && colorspace_is_hlg(encode_device->colorspace)));
     auto session = std::make_unique<amf_encode_session_t>(std::move(encode_device), client_config.videoFormat);
 
     // Contract note: a negotiated-DV session that cannot carry the RPU still
@@ -3140,20 +3159,23 @@ namespace video {
     // routing must tolerate RPU absence and fall back (docs dolby_vision_
     // profile81.md SS 5.3). These warnings are the diagnostics for exactly
     // that path -- do not promise the RPU here.
-    if (client_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) &&
-        !is_probe) {
+    if (dv_negotiated && !is_probe) {
       if (!dv_analysis_usable) {
         BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but luminance analysis is unavailable; "
                               "streaming without RPU"sv;
       }
-      else if (!dv_pq) {
-        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but the final colorspace is not PQ; "
-                              "streaming without RPU"sv;
+      else if (!dv_transfer_ok) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but the final colorspace does not match the "
+                              "negotiated profile; streaming without RPU"sv;
       }
       else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
                !dv_config || !session->dolby_vision_.configure(*dv_config)) {
         BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but no usable mastering metadata; "
                               "streaming without RPU"sv;
+      }
+      else if (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84) {
+        BOOST_LOG(info) << "AMF: Dolby Vision Profile 8.4 active (HLG base layer, mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
       }
       else {
         BOOST_LOG(info) << "AMF: Dolby Vision Profile 8.1 active (mastering peak "
@@ -3184,7 +3206,9 @@ namespace video {
       // native NVENC/AMF paths own end to end; an AVPacket cannot be resized
       // in place. The stream stays a valid HDR10-compatible HEVC base layer,
       // so the client is served — just without the Dolby Vision metadata.
-      if (!is_probe && effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81)) {
+      if (!is_probe &&
+          (effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) ||
+            effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_84))) {
         BOOST_LOG(warning) << "Dolby Vision negotiated but an avcodec-family encoder was selected; "
                               "streaming HDR10 without RPU"sv;
       }

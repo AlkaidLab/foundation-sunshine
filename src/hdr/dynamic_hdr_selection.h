@@ -30,6 +30,7 @@ namespace hdr {
     DYNAMIC_HDR_CAPS_VIVID_PQ = 1u << 1,
     DYNAMIC_HDR_CAPS_VIVID_HLG = 1u << 2,
     DYNAMIC_HDR_CAPS_DOLBY_VISION_81 = 1u << 3,
+    DYNAMIC_HDR_CAPS_DOLBY_VISION_84 = 1u << 4,
   };
 
   /// The format the host selected, reported as X-SS-Dynamic-HDR.
@@ -40,6 +41,7 @@ namespace hdr {
     vivid_pq = 2,
     vivid_hlg = 3,
     dolby_vision_profile_81 = 4,
+    dolby_vision_profile_84 = 5,  ///< DV with an HLG base layer
   };
 
   /// The client-side user preference, x-ss-video[0].dynamicHdrPreference.
@@ -54,8 +56,8 @@ namespace hdr {
   /// reported as X-SS-Dynamic-HDR-Fallback for client-side diagnostics.
   enum class dynamic_hdr_fallback_e {
     none,
-    codec_unsupported,  ///< Dolby Vision 8.1 requires HEVC
-    colorspace_unsupported,  ///< Requires BT.2020 PQ (dynamicRangeMode 1)
+    codec_unsupported,  ///< Dolby Vision requires HEVC
+    colorspace_unsupported,  ///< 8.1 requires BT.2020 PQ; 8.4 requires BT.2020 HLG (or is excluded by an active pre-encode filter)
     client_caps_missing,  ///< Client reported no Dolby Vision capability
     direct_surface_missing,  ///< Client cannot promise a direct surface path
     preference,  ///< A non-DV preference won
@@ -77,6 +79,9 @@ namespace hdr {
     int video_format = 0;
     /// x-nv-video[0].dynamicRangeMode: 0 SDR, 1 PQ, 2 HLG.
     int dynamic_range_mode = 0;
+    /// An active SDR-to-HDR pre-encode filter (RTX HDR) pins the wire to PQ,
+    /// excluding the HLG-base-layer profile 8.4.
+    bool pre_encode_filter_active = false;
   };
 
   struct dynamic_hdr_selection_t {
@@ -87,19 +92,23 @@ namespace hdr {
 
     bool
     dolby_vision_active() const {
-      return format == dynamic_hdr_format_e::dolby_vision_profile_81;
+      return format == dynamic_hdr_format_e::dolby_vision_profile_81 ||
+             format == dynamic_hdr_format_e::dolby_vision_profile_84;
     }
   };
 
   /**
-   * The one-shot session decision, docs §4.2.
+   * The one-shot session decision, docs/dolby_vision_profile81.md §4 and
+   * docs/dolby_vision_profile84.md §3.1.
    *
-   * Priority: preference dolby_vision/automatic → DV 8.1 → HDR10+ → HDR10;
-   * preference hdr10_plus → HDR10+ → HDR10; preference hdr10_only → HDR10.
-   * DV additionally requires HEVC, PQ, and the client capability with a
-   * direct surface. HDR10+ requires PQ; a client that reported
-   * capabilities without the HDR10+ bit gets plain HDR10, while a legacy
-   * client (no report) keeps the unconditional HDR10+ of previous versions.
+   * DV priority: 8.1 whenever the client reports it and the session is PQ;
+   * 8.4 only when the client reports 8.4 alone and the session is HLG
+   * (user-confirmed rule). Preference: dolby_vision/automatic → DV →
+   * HDR10+ → HDR10; hdr10_plus → HDR10+ → HDR10; hdr10_only → HDR10.
+   * DV additionally requires HEVC and the client capability with a direct
+   * surface. HDR10+ requires PQ; a client that reported capabilities without
+   * the HDR10+ bit gets plain HDR10, while a legacy client (no report) keeps
+   * the unconditional HDR10+ of previous versions.
    */
   [[nodiscard]] dynamic_hdr_selection_t
   select_dynamic_hdr(

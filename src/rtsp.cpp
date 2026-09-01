@@ -1451,6 +1451,8 @@ namespace rtsp_stream {
 
     std::int64_t configuredBitrateKbps;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
+    // Set inside the SDP parse below; consumed by the dynamic HDR selection.
+    bool post_process_hdr_active = false;
     auto getArg = [&args](std::string_view key) {
       return util::from_view(args.at(key));
     };
@@ -1551,7 +1553,7 @@ namespace rtsp_stream {
       // The TrueHDR chain (filter output, synthetic metadata, wire colorspace)
       // is specified for PQ only; HLG sessions must keep the legacy capture
       // path. Docs §5.4 of rtx_hdr_stream_implementation.md.
-      const bool post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange == 1;
+      post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange == 1;
       if (session.synthetic_hdr.enabled && monitor.dynamicRange == 2) {
         BOOST_LOG(warning) << "RTX HDR requires PQ (dynamicRangeMode=1); ignoring it for this HLG session"sv;
       }
@@ -1565,8 +1567,6 @@ namespace rtsp_stream {
         };
         monitor.pre_encode_filter_backend_path = config::video.rtx_hdr_backend_path;
       }
-#else
-      constexpr bool post_process_hdr_active = false;
 #endif
       monitor.frame_pipeline_policy =
         platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active);
@@ -1708,6 +1708,7 @@ namespace rtsp_stream {
       {
         .video_format = config.monitor.videoFormat,
         .dynamic_range_mode = config.monitor.dynamicRange,
+        .pre_encode_filter_active = post_process_hdr_active,
       });
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
     session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;
@@ -1716,7 +1717,7 @@ namespace rtsp_stream {
         ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
         : std::string {};
     if (dynamic_hdr_selection.dolby_vision_active()) {
-      BOOST_LOG(info) << "Dynamic HDR negotiated: dolby_vision_profile_81"sv;
+      BOOST_LOG(info) << "Dynamic HDR negotiated: "sv << hdr::to_string(dynamic_hdr_selection.format);
     }
     else if (dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none) {
       BOOST_LOG(info) << "Dynamic HDR negotiated: "sv << hdr::to_string(dynamic_hdr_selection.format)
