@@ -106,6 +106,7 @@ if(WIN32)
             Boost::asio
             Boost::system
             shell32
+            ole32
             user32
             advapi32
             ws2_32

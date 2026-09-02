@@ -1,6 +1,6 @@
 /**
  * @file src/remote_usb/virtual_touchscreen_device.h
- * @brief A local virtual multi-touch HID touchscreen served over the loopback
+ * @brief A local virtual single-touch HID touchscreen served over the loopback
  *        USB/IP bridge, so usbip-win2 attaches it as a real USB touchscreen.
  *
  * The device answers control transfers (descriptors) and queued interrupt-IN
@@ -38,12 +38,13 @@ struct touchscreen_contact {
 };
 
 /**
- * A single-client virtual USB multi-touch touchscreen.  The class owns the
+ * A single-client virtual USB single-touch touchscreen.  The class owns the
  * USB/IP device-side protocol state machine; the owner wires it to a
- * loopback_usbip_bridge with callbacks::on_request and send_reply().
+ * loopback_usbip_bridge with callbacks::on_request and send_reply(), and
+ * calls reset() from callbacks::on_closed.
  *
- * Thread-safety: handle_request() and touch callbacks may be called from
- * different threads; internal state is mutex-protected.
+ * Thread-safety: all public methods may be called from different threads;
+ * internal state is mutex-protected.
  */
 class virtual_touchscreen_device final {
 public:
@@ -57,7 +58,8 @@ public:
     /** Digitizer active-area resolution (logical max of X/Y axes). */
     std::uint16_t width_px { 1920 };
     std::uint16_t height_px { 1080 };
-    /** Number of parallel finger slots carried in every report (1..10). */
+    /** Reserved for a future parallel-slot descriptor.  The current
+     *  implementation emits single-touch reports and ignores this value. */
     std::uint8_t finger_slots { 5 };
   };
 
@@ -80,8 +82,15 @@ public:
   /** Install the reply hook (typically bridge.send_reply). */
   void set_send_reply(std::function<void(std::vector<std::uint8_t>)> send);
 
-  /** True between a successful OP_REQ_IMPORT and connection teardown. */
+  /** True between a successful OP_REQ_IMPORT and reset(). */
   bool imported() const;
+
+  /**
+   * Drop all per-connection state (imported flag, queued frames, live
+   * contacts, last mouse report, submit counter).  Call when the USB/IP
+   * client disconnects so the next session does not inherit stale frames.
+   */
+  void reset();
 
   /**
    * Replace the current contact set.  Contacts present in `contacts` are
@@ -93,7 +102,7 @@ public:
   /** Mouse mode: send a relative movement + button state frame. */
   void update_mouse(std::int8_t dx, std::int8_t dy, std::uint8_t buttons);
 
-  /** Whether the guest has issued OP_REQ_IMPORT (used by tests). */
+  /** Number of interrupt-IN submits answered so far (used by tests). */
   unsigned submitted_in_urbs() const;
 
 private:

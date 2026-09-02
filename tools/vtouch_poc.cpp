@@ -21,13 +21,17 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <objbase.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 
 #include <boost/system/error_code.hpp>
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -46,13 +50,19 @@ is_elevated() {
   return ((BOOL (WINAPI *)()) proc)() != FALSE;
 }
 
+/**
+ * Run a child process with stdout/stderr captured, killing it after
+ * `timeout_ms`.  The pipe is drained on a helper thread so the timeout is
+ * enforced even while the child keeps its output handles open.
+ */
 static std::string
-run_tool(const std::wstring &cmdline) {
+run_tool(const std::wstring &cmdline, DWORD timeout_ms = 15000) {
   SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
   HANDLE read_end = nullptr, write_end = nullptr;
   if (!CreatePipe(&read_end, &write_end, &sa, 0)) {
     return "pipe failed";
   }
+  SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
   STARTUPINFOW si = {};
   si.cb = sizeof(si);
   si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
@@ -70,34 +80,85 @@ run_tool(const std::wstring &cmdline) {
   }
   CloseHandle(write_end);
   std::string out;
-  char buf[1024];
-  DWORD read = 0;
-  while (ReadFile(read_end, buf, sizeof(buf), &read, nullptr) && read != 0) {
-    out.append(buf, read);
+  std::thread reader([&]() {
+    char buf[1024];
+    DWORD read = 0;
+    while (ReadFile(read_end, buf, sizeof(buf), &read, nullptr) && read != 0) {
+      out.append(buf, read);
+    }
+  });
+  bool timed_out = false;
+  if (WaitForSingleObject(pi.hProcess, timeout_ms) == WAIT_TIMEOUT) {
+    timed_out = true;
+    TerminateProcess(pi.hProcess, 1);
+    WaitForSingleObject(pi.hProcess, 5000);
   }
-  WaitForSingleObject(pi.hProcess, 15000);
+  // Once the child is gone the write end has no more owners (usbip.exe spawns
+  // no grandchildren), so the reader observes EOF and exits.
+  reader.join();
   DWORD code = 0;
   GetExitCodeProcess(pi.hProcess, &code);
   CloseHandle(read_end);
   CloseHandle(pi.hProcess);
   CloseHandle(pi.hThread);
   char tail[64];
-  snprintf(tail, sizeof(tail), "[exit %lu]", (unsigned long) code);
+  snprintf(tail, sizeof(tail), timed_out ? "[timeout, killed]" : "[exit %lu]", (unsigned long) code);
   out += tail;
   return out;
 }
 
+/** Dispatch queued window messages, then sleep until `ms` has elapsed. */
+static void
+pump_sleep(DWORD ms) {
+  const ULONGLONG deadline = GetTickCount64() + ms;
+  for (;;) {
+    MSG msg;
+    unsigned dispatched = 0;
+    while (dispatched++ < 256 && PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+      TranslateMessage(&msg);
+      DispatchMessageW(&msg);
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (now >= deadline) {
+      return;
+    }
+    MsgWaitForMultipleObjects(0, nullptr, FALSE, (DWORD) (deadline - now), QS_ALLINPUT);
+  }
+}
+
+static bool
+keyboard_visible(RECT *location = nullptr) {
+  IFrameworkInputPane *pane = nullptr;
+  if (SUCCEEDED(CoCreateInstance(CLSID_FrameworkInputPane, nullptr, CLSCTX_INPROC_SERVER,
+                                 IID_IFrameworkInputPane, reinterpret_cast<void **>(&pane)))) {
+    RECT rect {};
+    const bool visible = SUCCEEDED(pane->Location(&rect)) &&
+                         rect.right > rect.left && rect.bottom > rect.top;
+    pane->Release();
+    if (location) {
+      *location = rect;
+    }
+    if (visible) {
+      return true;
+    }
+  }
+
+  HWND tip = FindWindowW(L"IPTip_Main_Window", nullptr);
+  return tip && IsWindowVisible(tip);
+}
+
 static void
 print_status() {
-  HWND tip = FindWindowW(L"IPTip_Main_Window", nullptr);
-  bool tip_visible = tip && IsWindowVisible(tip);
-  printf("keyboard: IPTip hwnd=%p visible=%d\n", (void *) tip, (int) tip_visible);
+  RECT rect {};
+  const bool visible = keyboard_visible(&rect);
+  printf("keyboard: visible=%d rect=(%ld,%ld)-(%ld,%ld)\n", (int) visible,
+         (long) rect.left, (long) rect.top, (long) rect.right, (long) rect.bottom);
 }
 
 // ---- auto mode: create a foreground edit window, tap it, watch the keyboard ----
 
 static HWND g_host = nullptr, g_edit = nullptr;
-static bool g_imported = false;
+static std::atomic_bool g_imported { false };  // written on the bridge I/O thread
 static bool g_verbose = false;
 static int g_raw_input_frames = 0;
 
@@ -149,10 +210,13 @@ host_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         auto *raw = (RAWINPUT *) buf.data();
         if (raw->header.dwType == RIM_TYPEHID) {
           ++g_raw_input_frames;
-          printf("[raw] WM_INPUT hid dwSize=%u count=%u first=%02X %02X %02X %02X\n",
-                 raw->data.hid.dwSizeHid, raw->data.hid.dwCount,
-                 raw->data.hid.bRawData[0], raw->data.hid.bRawData[1],
-                 raw->data.hid.bRawData[2], raw->data.hid.bRawData[3]);
+          if (g_verbose) {
+            printf("[raw] WM_INPUT hid dwSize=%lu count=%lu first=%02X %02X %02X %02X\n",
+                   (unsigned long) raw->data.hid.dwSizeHid,
+                   (unsigned long) raw->data.hid.dwCount,
+                   raw->data.hid.bRawData[0], raw->data.hid.bRawData[1],
+                   raw->data.hid.bRawData[2], raw->data.hid.bRawData[3]);
+          }
         }
       }
     }
@@ -176,11 +240,10 @@ host_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
 static bool
 wait_keyboard_visible(int timeout_ms) {
   for (int i = 0; i < timeout_ms / 250; ++i) {
-    HWND tip = FindWindowW(L"IPTip_Main_Window", nullptr);
-    if (tip && IsWindowVisible(tip)) {
+    if (keyboard_visible()) {
       return true;
     }
-    Sleep(250);
+    pump_sleep(250);
   }
   return false;
 }
@@ -204,7 +267,7 @@ StealForeground() {
   DWORD cur = GetCurrentThreadId();
   AttachThreadInput(cur, fg_thread, TRUE);
   SetForegroundWindow(g_host);
-  SetFocus(g_edit);
+  SetFocus(g_host);
   AttachThreadInput(cur, fg_thread, FALSE);
 }
 
@@ -214,12 +277,25 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
   wc.lpfnWndProc = host_proc;
   wc.lpszClassName = L"VtouchPocHost";
   wc.hInstance = GetModuleHandleW(nullptr);
-  RegisterClassW(&wc);
+  if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    printf("[auto] RegisterClass failed err=%lu\n", GetLastError());
+    return 1;
+  }
   g_host = CreateWindowExW(0, wc.lpszClassName, L"Vtouch POC", WS_OVERLAPPEDWINDOW,
                            200, 200, 640, 320, nullptr, nullptr, wc.hInstance, nullptr);
+  if (!g_host) {
+    printf("[auto] CreateWindow(host) failed err=%lu\n", GetLastError());
+    return 1;
+  }
   g_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"click target",
                            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                            10, 10, 600, 48, g_host, nullptr, wc.hInstance, nullptr);
+  if (!g_edit) {
+    printf("[auto] CreateWindow(edit) failed err=%lu\n", GetLastError());
+    DestroyWindow(g_host);
+    g_host = nullptr;
+    return 1;
+  }
   g_old_edit_proc = (WNDPROC) SetWindowLongPtrW(g_edit, GWLP_WNDPROC, (LONG_PTR) edit_proc_hook);
   ShowWindow(g_host, SW_SHOW);
   EnableMouseInPointer(TRUE);  // observe WM_POINTER with pointerType
@@ -235,18 +311,22 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
     printf("[raw] RegisterRawInputDevices failed err=%lu\n", GetLastError());
   }
 
-  // Bring the edit to foreground (attach to the current foreground thread).
+  // Activate the host but leave the edit unfocused; the touch must focus it.
   HWND fg = GetForegroundWindow();
   DWORD fg_thread = GetWindowThreadProcessId(fg, nullptr);
   DWORD cur = GetCurrentThreadId();
   AttachThreadInput(cur, fg_thread, TRUE);
   SetForegroundWindow(g_host);
-  SetFocus(g_edit);
+  SetFocus(g_host);
   AttachThreadInput(cur, fg_thread, FALSE);
-  Sleep(400);
+  pump_sleep(400);
 
-  RECT r;
-  GetWindowRect(g_edit, &r);
+  RECT r {};
+  if (!GetWindowRect(g_edit, &r) || IsRectEmpty(&r)) {
+    printf("[auto] GetWindowRect(edit) failed err=%lu rect=(%ld,%ld)-(%ld,%ld)\n",
+           GetLastError(), (long) r.left, (long) r.top, (long) r.right, (long) r.bottom);
+    return 1;
+  }
   int x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
   printf("[auto] foreground set; tapping edit centre at (%d,%d)\n", x, y);
 
@@ -261,15 +341,15 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
   bool ever_focused = false;
   for (int attempt = 1; attempt <= 3 && !ever_focused; ++attempt) {
     StealForeground();
-    Sleep(200);
+    pump_sleep(200);
     to_digitizer(x, y);
-    Sleep(120);
+    pump_sleep(120);
     to_digitizer(x, y + 1);
-    Sleep(60);
+    pump_sleep(60);
     to_digitizer(x, y);
-    Sleep(120);
+    pump_sleep(120);
     dev.update_contacts({});
-    Sleep(600);
+    pump_sleep(600);
     GUITHREADINFO gti {};
     gti.cbSize = sizeof(gti);
     GetGUIThreadInfo(0, &gti);
@@ -293,6 +373,7 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
 
 int
 wmain(int argc, wchar_t **argv) {
+  const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   setvbuf(stdout, nullptr, _IONBF, 0);
   std::wstring usbip_path;
   bool auto_mode = false;
@@ -339,10 +420,11 @@ wmain(int argc, wchar_t **argv) {
     return dev.handle_request(pdu);
   };
   callbacks.on_imported = []() {
-    g_imported = true;
+    g_imported.store(true);
     printf(">>> vhci imported the device\n");
   };
-  callbacks.on_closed = [](remote_usb::close_reason reason) {
+  callbacks.on_closed = [&dev](remote_usb::close_reason reason) {
+    dev.reset();
     printf(">>> bridge closed (%d)\n", (int) reason);
   };
 
@@ -362,56 +444,51 @@ wmain(int argc, wchar_t **argv) {
   // Attach through usbip-win2.  The attach command needs admin rights; when
   // we are not elevated, launch it via UAC and wait for the IMPORT request.
   {
-    std::wstring cmd = L"\"" + usbip_path + L"\" --tcp-port " +
-                       std::to_wstring(endpoint->port) + L" attach --remote " +
-                       std::wstring(endpoint->address.begin(), endpoint->address.end()) +
-                       L" --bus-id " + std::wstring(endpoint->busid.begin(), endpoint->busid.end()) +
-                       L" --terse";
+    const std::wstring args = L"--tcp-port " + std::to_wstring(endpoint->port) +
+                              L" attach --remote " +
+                              std::wstring(endpoint->address.begin(), endpoint->address.end()) +
+                              L" --bus-id " +
+                              std::wstring(endpoint->busid.begin(), endpoint->busid.end()) +
+                              L" --terse";
     if (is_elevated()) {
-      std::string out = run_tool(cmd);
+      std::string out = run_tool(L"\"" + usbip_path + L"\" " + args);
       printf("usbip attach: %s\n", out.c_str());
     }
     else {
+      // Launch usbip.exe itself (never a shell) so the caller-supplied path
+      // cannot be interpreted as command syntax under elevation.  Its output
+      // is not captured; success is observed through on_imported below.
       printf("not elevated; requesting UAC for the attach command...\n");
-      char log_path[MAX_PATH];
-      snprintf(log_path, sizeof(log_path), "%s\\vtouch-attach.log", getenv("TEMP") ? getenv("TEMP") : ".");
-      wchar_t cmd_buf[2048];
-      swprintf_s(cmd_buf,
-                 L"/c \"\"%s\" --tcp-port %u attach --remote %hs --bus-id %hs --terse"
-                 L" > \"%hs\" 2>&1\"",
-                 usbip_path.c_str(), endpoint->port, endpoint->address.c_str(),
-                 endpoint->busid.c_str(), log_path);
       SHELLEXECUTEINFOW sei = {};
       sei.cbSize = sizeof(sei);
       sei.fMask = SEE_MASK_NOCLOSEPROCESS;
       sei.lpVerb = L"runas";
-      sei.lpFile = L"cmd.exe";
-      sei.lpParameters = cmd_buf;
+      sei.lpFile = usbip_path.c_str();
+      sei.lpParameters = args.c_str();
       sei.nShow = SW_HIDE;
-      if (!ShellExecuteExW(&sei)) {
-        printf("UAC declined; cannot attach without admin.\n");
+      if (!ShellExecuteExW(&sei) || !sei.hProcess) {
+        printf("UAC declined or launch failed (err=%lu); cannot attach without admin.\n",
+               GetLastError());
         bridge.stop();
         return 1;
       }
-      WaitForSingleObject(sei.hProcess, 30000);
-      CloseHandle(sei.hProcess);
-      FILE *log = fopen(log_path, "r");
-      if (log) {
-        char buf[2048];
-        size_t n = fread(buf, 1, sizeof(buf) - 1, log);
-        buf[n] = 0;
-        printf("usbip attach output: %s\n", buf);
-        fclose(log);
+      DWORD code = 0;
+      if (WaitForSingleObject(sei.hProcess, 30000) == WAIT_TIMEOUT) {
+        printf("usbip attach still running after 30 s; continuing to wait for import.\n");
       }
+      else if (GetExitCodeProcess(sei.hProcess, &code)) {
+        printf("usbip attach exit code: %lu\n", (unsigned long) code);
+      }
+      CloseHandle(sei.hProcess);
     }
   }
 
   // The bridge answers OP_REQ_IMPORT itself; wait for its callback.  The
   // VHCI service retries attach attempts in the background, so be generous.
-  for (int i = 0; i < 600 && !g_imported; ++i) {
+  for (int i = 0; i < 600 && !g_imported.load(); ++i) {
     Sleep(100);
   }
-  if (!g_imported) {
+  if (!g_imported.load()) {
     printf("device was not imported (attach failed or timed out).\n");
     bridge.stop();
     return 1;
@@ -419,37 +496,46 @@ wmain(int argc, wchar_t **argv) {
   printf("device imported by VHCI; checking raw input device list...\n");
   Sleep(1500);  // let HIDCLASS finish enumeration
   print_raw_digitizer_count("after-attach");
-  system("powershell -NoProfile -Command \"Get-PnpDevice | Where-Object { ($_.Present) -and ($_.InstanceId -match 'VID_5355')} | Format-List FriendlyName,Status,Class,Present,InstanceId | Out-File -Encoding utf8 C:\\Users\\mohaha\\AppData\\Local\\Temp\\vt-pnp-online.txt\"");
-  system("powershell -NoProfile -Command \"Get-PnpDevice -Class HIDClass | Where-Object Present | Format-List FriendlyName,Status,InstanceId | Out-File -Encoding utf8 C:\\Users\\mohaha\\AppData\\Local\\Temp\\vt-hid-online.txt\"");
+  // Fixed command text, launched without a shell; output goes to our log.
+  printf("[pnp] %s\n",
+         run_tool(L"powershell.exe -NoProfile -NonInteractive -Command "
+                  L"\"Get-PnpDevice | Where-Object { $_.Present -and $_.InstanceId -match 'VID_5355' } "
+                  L"| Format-List FriendlyName,Status,Class,InstanceId | Out-String -Width 200\"")
+           .c_str());
 
   const int screen_w = GetSystemMetrics(SM_CXSCREEN);
   const int screen_h = GetSystemMetrics(SM_CYSCREEN);
 
   if (mouse_mode) {
-  POINT start_pos, now_pos;
-  GetCursorPos(&start_pos);
-  double max_dist = 0;
-  auto sampler = std::thread([&]() {
-    while (true) {
-      Sleep(40);
-      GetCursorPos(&now_pos);
-      double d = hypot(now_pos.x - start_pos.x, now_pos.y - start_pos.y);
-      double snap = d;
-      if (snap > max_dist) max_dist = snap;
-    }
-  });
-  sampler.detach();
+    POINT start_pos;
+    GetCursorPos(&start_pos);
+    std::atomic_bool stop_sampling { false };
+    std::mutex sample_mutex;
+    double max_dist = 0;  // guarded by sample_mutex
+    std::thread sampler([&]() {
+      while (!stop_sampling.load()) {
+        Sleep(40);
+        POINT p;
+        GetCursorPos(&p);
+        const double d = hypot(p.x - start_pos.x, p.y - start_pos.y);
+        std::lock_guard<std::mutex> lock(sample_mutex);
+        if (d > max_dist) max_dist = d;
+      }
+    });
     printf("[mouse] wiggling the pointer for 4 s -- watch the cursor\n");
     for (int i = 0; i < 200; ++i) {
       double a = 2.0 * 3.141592653589793 * i / 50.0;
       dev.update_mouse((std::int8_t) (cos(a) * 6), (std::int8_t) (sin(a) * 6), 0);
       Sleep(20);
     }
-  Sleep(300);
-  GetCursorPos(&now_pos);
-  double final_dist = hypot(now_pos.x - start_pos.x, now_pos.y - start_pos.y);
-  printf("[mouse] cursor moved: max=%.0f px final=%.0f px -> %s\n", max_dist, final_dist,
-         (max_dist > 20 ? "INPUT PATH WORKS" : "cursor did not move"));
+    Sleep(300);
+    stop_sampling.store(true);
+    sampler.join();
+    POINT now_pos;
+    GetCursorPos(&now_pos);
+    double final_dist = hypot(now_pos.x - start_pos.x, now_pos.y - start_pos.y);
+    printf("[mouse] cursor moved: max=%.0f px final=%.0f px -> %s\n", max_dist, final_dist,
+           (max_dist > 20 ? "INPUT PATH WORKS" : "cursor did not move"));
     printf("[mouse] wiggle done\n");
     Sleep(2000);
     bridge.stop();
@@ -458,7 +544,7 @@ wmain(int argc, wchar_t **argv) {
 
   if (auto_mode) {
     int rc = run_auto(dev, screen_w, screen_h);
-    Sleep(3000);
+    pump_sleep(3000);
     bridge.stop();
     return rc;
   }
@@ -550,5 +636,8 @@ wmain(int argc, wchar_t **argv) {
 
   bridge.stop();
   printf("bye\n");
+  if (SUCCEEDED(com_result)) {
+    CoUninitialize();
+  }
   return 0;
 }

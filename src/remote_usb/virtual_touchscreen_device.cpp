@@ -1,6 +1,6 @@
 /**
  * @file src/remote_usb/virtual_touchscreen_device.cpp
- * @brief Implementation of the virtual USB multi-touch touchscreen.
+ * @brief Implementation of the virtual USB single-touch touchscreen.
  *
  * USB/IP PDU headers are big-endian (network order); USB descriptor/report
  * payloads are little-endian per the USB specification.
@@ -30,8 +30,15 @@ namespace {
   constexpr std::uint32_t kRetUnlink = 0x0004;
 
   constexpr std::size_t kPduHeaderSize = 48;
+  constexpr std::size_t kOpCommonSize = 8;
+  constexpr std::size_t kDeviceBlockSize = 312;
+  constexpr std::size_t kInterfaceBlockSize = 4;
 
   constexpr std::int32_t kStallEpipe = -32;  // -EPIPE, usbip status convention
+
+  // Frames buffered while the guest is not polling; oldest frames are dropped
+  // beyond this so an unattached device cannot grow without bound.
+  constexpr std::size_t kMaxQueuedReports = 64;
 
   void
   put_u16le(std::vector<std::uint8_t> &out, std::size_t offset, std::uint16_t value) {
@@ -215,17 +222,6 @@ namespace {
     return finger.tip || finger.in_range;
   }
 
-  std::size_t
-  live_finger_count(const std::vector<report_finger> &fingers) {
-    std::size_t count = 0;
-    for (const auto &finger : fingers) {
-      if (finger_is_live(finger)) {
-        ++count;
-      }
-    }
-    return count;
-  }
-
   std::vector<std::uint8_t>
   build_input_report(const std::vector<report_finger> &fingers, std::uint8_t slots) {
     (void) slots;
@@ -282,13 +278,12 @@ struct virtual_touchscreen_device::impl {
   std::vector<std::uint8_t> config_descriptor;
   std::size_t interrupt_packet_size { 64 };
 
-  // Pending interrupt-IN submits awaiting data, in arrival order.
+  /** Addressing of one interrupt-IN submit, echoed back in RET_SUBMIT. */
   struct pending_submit {
     std::uint32_t seqnum;
     std::uint32_t devid;
     std::uint32_t endpoint;
   };
-  std::vector<pending_submit> pending_in;
 
   // Frames queued for delivery (lift transitions, then the live snapshot).
   std::vector<std::vector<std::uint8_t>> queued_reports;
@@ -346,6 +341,26 @@ struct virtual_touchscreen_device::impl {
     config_descriptor.push_back(0x04);    // bInterval: 1 ms @ high speed
   }
 
+  /** Bounded FIFO push; drops the oldest frame once the cap is reached. */
+  void
+  push_report_locked(std::vector<std::uint8_t> report) {
+    if (queued_reports.size() >= kMaxQueuedReports) {
+      queued_reports.erase(queued_reports.begin());
+    }
+    queued_reports.push_back(std::move(report));
+  }
+
+  /** Clears all per-connection state so a new client starts clean. */
+  void
+  reset_locked() {
+    imported_flag = false;
+    in_submit_count = 0;
+    queued_reports.clear();
+    active_fingers.clear();
+    last_mouse_report.clear();
+  }
+
+  /** 312-byte `usbip_usb_device` block (shared by DEVLIST and IMPORT). */
   void
   append_device_block(std::vector<std::uint8_t> &out) const {
     auto path_str = padded_string(path, 256);
@@ -367,7 +382,11 @@ struct virtual_touchscreen_device::impl {
     out.push_back(0x01);                                   // bConfigurationValue
     out.push_back(0x01);                                   // bNumConfigurations
     out.push_back(0x01);                                   // bNumInterfaces
+  }
 
+  /** 4-byte `usbip_usb_interface` block (DEVLIST only). */
+  void
+  append_interface_block(std::vector<std::uint8_t> &out) const {
     out.push_back(0x03);                                   // bInterfaceClass: HID
     out.push_back(0x00);                                   // bInterfaceSubClass
     out.push_back(0x00);                                   // bInterfaceProtocol
@@ -443,18 +462,18 @@ struct virtual_touchscreen_device::impl {
 
     if (class_request) {
       if (dir_in) {
-        // GET_REPORT.  The feature report (Contact Count Maximum) has its own
-        // layout: report id + one byte.  Answering it with the input layout
-        // makes HIDCLASS reject the digitizer during initialisation.
+        // GET_REPORT.  Neither descriptor declares Feature/Output reports, so
+        // only INPUT is answerable; anything else stalls.
         const std::uint8_t report_type = static_cast<std::uint8_t>(wValue >> 8);
+        if (report_type != 0x01) {
+          reply_control_locked(seqnum, nullptr, 0, kStallEpipe);
+          return;
+        }
         std::vector<std::uint8_t> report;
-        if (report_type == 0x03) {  // FEATURE
-          report = { 0x02, 0x0A };  // Contact Count Maximum
+        if (cfg.mouse_mode) {  // last mouse report
+          report = last_mouse_report.empty() ? build_mouse_report(0, 0, 0) : last_mouse_report;
         }
-        else if (cfg.mouse_mode) {  // INPUT: last mouse report
-          report = last_mouse_report;
-        }
-        else {                      // INPUT: idle-touch snapshot
+        else {                 // idle-touch snapshot
           report = build_input_report(active_fingers, cfg.finger_slots);
         }
         const std::size_t size = std::min<std::size_t>(report.size(), wLength);
@@ -535,28 +554,6 @@ struct virtual_touchscreen_device::impl {
     const std::size_t size = std::min<std::size_t>(descriptor.size(), wLength);
     reply_control_locked(seqnum, descriptor.data(), size, 0);
   }
-
-  void
-  deliver_locked() {
-    while (!pending_in.empty()) {
-      if (!queued_reports.empty()) {
-        auto report = std::move(queued_reports.front());
-        queued_reports.erase(queued_reports.begin());
-        auto submit = pending_in.front();
-        pending_in.erase(pending_in.begin());
-        reply_submit_locked(submit, 0, report.data(), report.size());
-        continue;
-      }
-      if (!cfg.mouse_mode && !active_fingers.empty()) {
-        auto report = build_input_report(active_fingers, cfg.finger_slots);
-        auto submit = pending_in.front();
-        pending_in.erase(pending_in.begin());
-        reply_submit_locked(submit, 0, report.data(), report.size());
-        continue;
-      }
-      break;
-    }
-  }
 };
 
 virtual_touchscreen_device::virtual_touchscreen_device(config cfg) :
@@ -589,7 +586,14 @@ virtual_touchscreen_device::info() const {
 
 void
 virtual_touchscreen_device::set_send_reply(std::function<void(std::vector<std::uint8_t>)> send) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->send = std::move(send);
+}
+
+void
+virtual_touchscreen_device::reset() {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->reset_locked();
 }
 
 bool
@@ -614,15 +618,18 @@ virtual_touchscreen_device::handle_request(const std::vector<std::uint8_t> &pdu)
   std::lock_guard<std::mutex> lock(impl_->mutex);
 
   if (code == kOpReqDevlist) {
-    if (pdu.size() != 8) {
+    if (pdu.size() != kOpCommonSize) {
       return false;
     }
+    // op_common + ndev + usbip_usb_device + usbip_usb_interface[bNumInterfaces]
     std::vector<std::uint8_t> wire;
-    wire.reserve(12 + 304);
+    wire.reserve(kOpCommonSize + 4 + kDeviceBlockSize + kInterfaceBlockSize);
     append_u16be(wire, kUsbipVersion);
     append_u16be(wire, kRepDevlist);
     append_u32be(wire, 0);  // status: ok
+    append_u32be(wire, 1);  // ndev
     impl_->append_device_block(wire);
+    impl_->append_interface_block(wire);
     if (impl_->send) {
       impl_->send(std::move(wire));
     }
@@ -630,13 +637,14 @@ virtual_touchscreen_device::handle_request(const std::vector<std::uint8_t> &pdu)
   }
 
   if (code == kOpReqImport) {
-    if (pdu.size() < 40) {
+    if (pdu.size() < kOpCommonSize + 32) {
       return false;
     }
     const auto requested = padded_string(impl_->busid, 32);
-    const bool match = std::equal(requested.begin(), requested.end(), pdu.begin() + 8);
+    const bool match = std::equal(requested.begin(), requested.end(), pdu.begin() + kOpCommonSize);
+    // op_common + usbip_usb_device (no interface block on IMPORT)
     std::vector<std::uint8_t> wire;
-    wire.reserve(12 + 304);
+    wire.reserve(kOpCommonSize + kDeviceBlockSize);
     append_u16be(wire, kUsbipVersion);
     append_u16be(wire, kRepImport);
     append_u32be(wire, match ? 0 : static_cast<std::uint32_t>(-2));  // -ENODEV on mismatch
@@ -714,14 +722,9 @@ virtual_touchscreen_device::handle_request(const std::vector<std::uint8_t> &pdu)
     if (pdu.size() < kPduHeaderSize) {
       return false;
     }
+    // Every submit is answered synchronously, so nothing is ever parked and
+    // there is nothing to cancel; acknowledge the unlink as a no-op.
     const std::uint32_t seqnum = get_u32be(pdu.data() + 4);
-    const std::uint32_t unlink_seqnum = get_u32be(pdu.data() + 20);
-    auto &pending = impl_->pending_in;
-    const auto found = std::find_if(pending.begin(), pending.end(),
-      [unlink_seqnum](const impl::pending_submit &s) { return s.seqnum == unlink_seqnum; });
-    if (found != pending.end()) {
-      pending.erase(found);
-    }
     impl_->reply_unlink_locked(seqnum, 0);
     return true;
   }
@@ -733,8 +736,7 @@ void
 virtual_touchscreen_device::update_mouse(std::int8_t dx, std::int8_t dy, std::uint8_t buttons) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->last_mouse_report = build_mouse_report(dx, dy, buttons);
-  impl_->queued_reports.push_back(impl_->last_mouse_report);
-  impl_->deliver_locked();
+  impl_->push_report_locked(impl_->last_mouse_report);
 }
 
 void
@@ -755,7 +757,7 @@ virtual_touchscreen_device::update_contacts(const std::vector<touchscreen_contac
   }
 
   // Contacts that disappeared since the last update emit one explicit lift
-  // frame (tip=0, in_range=0) so the multi-touch stack releases them cleanly.
+  // frame (tip=0, in_range=0) so the touch stack releases them cleanly.
   std::vector<report_finger> lift_frame = impl_->active_fingers;
   bool lift_needed = false;
   for (auto &finger : lift_frame) {
@@ -767,7 +769,7 @@ virtual_touchscreen_device::update_contacts(const std::vector<touchscreen_contac
     }
   }
   if (lift_needed) {
-    impl_->queued_reports.push_back(build_input_report(lift_frame, impl_->cfg.finger_slots));
+    impl_->push_report_locked(build_input_report(lift_frame, impl_->cfg.finger_slots));
   }
 
   std::vector<report_finger> snapshot;
@@ -777,7 +779,6 @@ virtual_touchscreen_device::update_contacts(const std::vector<touchscreen_contac
     snapshot.push_back(finger);
   }
   impl_->active_fingers = std::move(snapshot);
-  impl_->deliver_locked();
 }
 
 }  // namespace remote_usb
