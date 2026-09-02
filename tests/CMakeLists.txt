@@ -345,8 +345,9 @@ add_executable(remote_usb_service_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_service.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_service.cpp)
 target_include_directories(remote_usb_service_unit_tests PRIVATE
+        # Avoid adding src as a broad include root: on MinGW it can shadow the
+        # system <process.h> with Sunshine's src/process.h through pthread.h.
         "${CMAKE_SOURCE_DIR}"
-        "${CMAKE_SOURCE_DIR}/src"
         "${OPENSSL_INCLUDE_DIR}")
 target_link_libraries(remote_usb_service_unit_tests
         Boost::asio
