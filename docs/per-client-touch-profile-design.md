@@ -21,7 +21,7 @@
 
 1. `clients[]` schema 增加 `touch` 对象（启用开关、AutoInvoke 预处理）
 2. 会话开始时按档案：写 AutoInvoke 注册表键组（记录 undo）；会话结束时反向还原
-3. 虚拟触摸屏设备的正式化：从 POC 工具形态接入服务内会话生命周期
+3. 虚拟触摸屏设备的正式化：**不属于本设计稿**——设备已从键盘路径移除，留作未来 direct touch 注入层（见 §6）
 4. 任何失败不阻断流会话（触摸是增强能力，降级仅日志）
 
 ### 非目标
@@ -39,7 +39,7 @@
 | 客户端档案容器 | `sunshine.conf` 的 `clients` 键（`config.cpp:2011-2050`），schema 校验在 `confighttp.cpp:1503-1592` | `touch` 对象直接加入现有 schema |
 | 客户端识别 | `client_cert_uuid`（`pairing.cpp:493`，`launch_session_t` 携带，`rtsp.h:43`） | 会话内按 uuid 查档案 |
 | 会话挂载点 | 开始：`configure_display`（`nvhttp_stream_start.cpp:222/488/688`）；结束：`restore_state`（`stream.cpp:4160-4180`） | 触摸事务挂载于 VDD 阶段之后 |
-| USB/IP 设备端（direct touch 层，键盘路径不使用） | PR #1025 `virtual_touchscreen_device` + `loopback_usbip_bridge` | 键盘路径无依赖；input 路由接入时启用 |
+| USB/IP 设备端（direct touch 层，键盘路径无依赖） | PR #1025 `virtual_touchscreen_device` + `loopback_usbip_bridge` | 未来 input 路由接入时启用；不是键盘功能的前提 |
 | 面板入口 | 控制面板 clients 管理（`/api/clients/list`） | `touch` 字段 UI 在现有客户端编辑界面扩展 |
 
 ## 4. Schema 设计
@@ -70,11 +70,11 @@
 ```text
 会话开始（configure_display，VDD prepare 之后）
   ├─ 按 client_cert_uuid 解析 touch 档案；无 touch/enabled=false → 跳过
-  └─ [T1] 写注册表预处理 + 记录 undo → appdata/touch_session_undo.json
+  └─ [T1] 写注册表预处理 + 记录 undo → appdata/touch_keyboard_undo.json
         失败 → 降级日志，会话继续；undo 文件已存在（并发会话）→ 跳过写入
 
 会话结束（restore_state，最后一个视频会话注销）
-  └─ [R1] 应用 touch_session_undo.json 还原注册表；仅还原成功后删除 undo 文件
+  └─ [R1] 应用 touch_keyboard_undo.json 还原注册表；仅全部还原成功后删除 undo 文件（部分失败保留以供重试）
 ```
 
 ### 5.2 注册表项与目标 hive
@@ -132,5 +132,5 @@ A/B 挂载实测（挂载弹 / 卸载仍弹）证明键盘体验**不依赖自�
 ## 9. 发布闸门
 
 1. `clients` schema 变更需控制面板同步发版（新字段 UI）
-2. usbip-win2 组件版本固定（当前 0.9.7.7），升级需重跑真机矩阵
+2. usbip-win2 组件版本固定（当前 0.9.7.7）仅约束未来 direct touch 注入层；键盘注册表事务无此依赖
 3. 注册表写入面限定于 §5.2 键组（含 undo），键集合变更需评审

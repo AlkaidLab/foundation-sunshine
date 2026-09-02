@@ -270,20 +270,25 @@ namespace touch_kb {
     }
     RegCloseKey(key);
 
-    try {
-      nlohmann::json undo = {
-        { "hive", to_utf8(hive.prefix) },
-        { "keys", undo_keys },
-      };
-      const auto path = undo_path();
-      std::filesystem::create_directories(path.parent_path());
-      std::ofstream undo_file(path.string());
-      undo_file << undo.dump(2);
+    nlohmann::json undo = {
+      { "hive", to_utf8(hive.prefix) },
+      { "keys", undo_keys },
+    };
+
+    // CREATE_NEW is the atomic ownership grant; a concurrent transaction
+    // loses here and skips instead of clobbering the captured values.
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, FALSE };
+    HANDLE journal = CreateFileW(undo_path().c_str(), GENERIC_WRITE, 0, &sa, CREATE_NEW,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (journal == INVALID_HANDLE_VALUE) {
+      BOOST_LOG(warning) << "touch_kb: journal creation failed (concurrent transaction?), err="
+                         << GetLastError();
+      return false;
     }
-    catch (const std::exception &e) {
-      BOOST_LOG(warning) << "touch_kb: cannot persist the undo journal: " << e.what();
-      all_written = false;
-    }
+    const auto content = undo.dump(2);
+    DWORD written = 0;
+    WriteFile(journal, content.c_str(), (DWORD) content.size(), &written, nullptr);
+    CloseHandle(journal);
 
     BOOST_LOG(info) << "touch_kb: AutoInvoke key group applied (complete=" << all_written << ")";
     return all_written;
@@ -325,23 +330,33 @@ namespace touch_kb {
       return;
     }
 
+    bool all_restored = true;
     if (undo.contains("keys")) {
       for (const auto &entry : undo["keys"]) {
         const auto name = to_wstring(entry.value("name", ""));
         if (name.empty() || !key) {
           continue;
         }
+        bool ok = false;
         if (entry.value("exists", false)) {
           const auto value = (DWORD) entry.value("value", 0);
-          write_value(key, name.c_str(), value);
+          ok = write_value(key, name.c_str(), value);
         }
         else {
-          delete_value(key, name.c_str());
+          ok = delete_value(key, name.c_str());
         }
+        all_restored &= ok;
       }
     }
     if (key) {
       RegCloseKey(key);
+    }
+
+    // Keep the journal on partial failure so the next session can retry the
+    // restore; deleting it here would strand the user's original values.
+    if (!all_restored) {
+      BOOST_LOG(warning) << "touch_kb: registry restore incomplete; keeping the undo journal";
+      return;
     }
 
     std::error_code ec;
