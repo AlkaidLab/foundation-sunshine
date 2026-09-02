@@ -59,7 +59,6 @@ add_custom_target(innosetup
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/sunshinesvc.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/dxgi-info.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/audio-info.exe"
-    COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/stylus-input-probe.exe"
     
     # Run Inno Setup compiler
     COMMAND "${ISCC_EXECUTABLE}" "${CMAKE_BINARY_DIR}/sunshine_installer.iss"
@@ -69,7 +68,10 @@ add_custom_target(innosetup
 )
 
 # Make sure sunshine is built before creating the installer
-add_dependencies(innosetup sunshine stylus-input-probe)
+add_dependencies(innosetup sunshine)
+if(TARGET web-ui)
+    add_dependencies(innosetup web-ui)
+endif()
 
 # Also provide a convenience target to just generate the staging directory
 add_custom_target(innosetup-staging
@@ -79,4 +81,7 @@ add_custom_target(innosetup-staging
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     VERBATIM
 )
-add_dependencies(innosetup-staging stylus-input-probe)
+add_dependencies(innosetup-staging sunshine)
+if(TARGET web-ui)
+    add_dependencies(innosetup-staging web-ui)
+endif()

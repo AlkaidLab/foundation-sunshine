@@ -183,6 +183,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [InstallDelete]
 ; Remove old hashed Web UI bundles before installing the freshly built frontend.
 Type: filesandordirs; Name: "{app}\assets\web"
+; The native GUI plugin replaces the legacy standalone diagnostic executable.
+Type: files; Name: "{app}\tools\stylus-input-probe.exe"
 
 [Files]
 ; Main application
@@ -193,7 +195,6 @@ Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Comp
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
-Source: "{#MySourceDir}\tools\stylus-input-probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
 ; Pinned manifest for the separately distributed first-party DualSense runtime.
 Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
@@ -223,6 +224,7 @@ Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*"; F
 
 ; Required GUI and user-session tray agent
 Source: "{#MySourceDir}\assets\gui\{#MyAppGUIExeName}"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui
+Source: "{#MySourceDir}\assets\gui\alkaidlab-plugin-stylus.dll"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui
 Source: "{#MySourceDir}\assets\gui\WebView2Loader.dll"; DestDir: "{app}\assets\gui"; Flags: ignoreversion skipifsourcedoesntexist; Components: gui
 
 ; Helper tools
