@@ -62,6 +62,13 @@ namespace rtsp_stream {
     bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
+
+    // Client-declared intent to use the on-screen touch keyboard during the
+    // session.  Tri-state: -1 undeclared (fall back to the per-client server
+    // profile), 0 explicitly off, 1 explicitly on.  When effective-on, the
+    // host attaches the virtual USB touchscreen and applies the touch
+    // keyboard AutoInvoke registry key group for the session.
+    int touch_keyboard { -1 };
     hdr::client_display_capabilities_t reported_hdr_capabilities;
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };

@@ -216,6 +216,22 @@ set_target_properties(loopback_usbip_bridge_unit_tests PROPERTIES
         CXX_STANDARD_REQUIRED ON)
 add_test(NAME loopback_usbip_bridge_unit_tests COMMAND loopback_usbip_bridge_unit_tests)
 
+add_executable(virtual_touchscreen_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
+target_include_directories(virtual_touchscreen_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(virtual_touchscreen_unit_tests
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        gtest_main)
+target_compile_options(virtual_touchscreen_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(virtual_touchscreen_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME virtual_touchscreen_unit_tests COMMAND virtual_touchscreen_unit_tests)
+
 add_executable(remote_usb_broker_adapter_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp

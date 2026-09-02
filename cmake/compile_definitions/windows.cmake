@@ -168,6 +168,10 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
+        "${CMAKE_SOURCE_DIR}/src/virtual_touchscreen_session.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_touchscreen_session.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
@@ -248,6 +252,7 @@ list(PREPEND PLATFORM_LIBRARIES
         userenv
         ws2_32
         wsock32
+        wtsapi32
 )
 
 if(SUNSHINE_ENABLE_TRAY AND SUNSHINE_ENABLE_LEGACY_TRAY)

@@ -2014,6 +2014,34 @@ namespace config {
   }
 
   bool
+  get_client_touch_keyboard_enabled(const std::string &uuid) {
+    if (uuid.empty()) {
+      return false;
+    }
+    try {
+      const auto clients = nlohmann::json::parse(get_clients_config());
+      if (!clients.is_array()) {
+        return false;
+      }
+      for (const auto &entry : clients) {
+        if (!entry.is_object() || !entry.contains("uuid")) {
+          continue;
+        }
+        if (entry["uuid"] != uuid) {
+          continue;
+        }
+        return entry.contains("touch") &&
+               entry["touch"].is_object() &&
+               entry["touch"].value("enabled", false) == true;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read touch profile for client: " << e.what();
+    }
+    return false;
+  }
+
+  bool
   save_clients_config(const std::string &clients) {
     std::lock_guard lock { config_file_mutex };
     try {

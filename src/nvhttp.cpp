@@ -482,6 +482,9 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
+    // Client-declared touch-keyboard intent (Sunshine protocol extension).
+    // -1 undeclared: fall back to the per-client server profile.
+    launch_session->touch_keyboard = util::from_view(get_arg(args, "touchKeyboard", "-1"));
     const auto hdr_capabilities = hdr::parse_client_display_capabilities(
       find_arg(args, "maxBrightness"),
       find_arg(args, "minBrightness"),
