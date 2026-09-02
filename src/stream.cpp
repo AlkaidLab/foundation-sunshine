@@ -64,6 +64,8 @@ extern "C" {
 #include "clipboard_bridge.h"
 #include "cursor_channel.h"
 #include "platform/common.h"
+#include "touch_keyboard_session.h"
+#include "virtual_touchscreen_session.h"
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -4178,6 +4180,12 @@ namespace stream {
           if (restore_display_state) {
             display_device::session_t::get().restore_state();
           }
+
+#ifdef _WIN32
+          // Touch experience teardown (paired with the mount at stream start).
+          touch_kb::end_session();
+          vts::stop();
+#endif
 
           platf::streaming_will_stop();
         }

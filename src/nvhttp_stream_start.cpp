@@ -19,7 +19,9 @@
 #include "display_device/vdd_capability.h"
 #include "hdr/session_target.h"
 #include "logging.h"
+#include "touch_keyboard_session.h"
 #include "video.h"
+#include "virtual_touchscreen_session.h"
 
 namespace nvhttp::stream_start {
 
@@ -690,6 +692,25 @@ namespace nvhttp::stream_start {
     if (display_result) {
       hdr::adopt_vdd_calibration_if_needed(launch_session);
     }
+
+#ifdef _WIN32
+    // Touch experience: attach the virtual touchscreen when the client (or
+    // its server profile) opted in, then enable the touch-keyboard AutoInvoke
+    // key group for the session.  Failures degrade to a log line only.
+    {
+      bool touch_effective = false;
+      if (launch_session.touch_keyboard < 0) {
+        touch_effective = config::get_client_touch_keyboard_enabled(launch_session.client_cert_uuid);
+      }
+      else {
+        touch_effective = launch_session.touch_keyboard == 1;
+      }
+      if (vts::start({"", (std::uint16_t) std::max(0, launch_session.width),
+                      (std::uint16_t) std::max(0, launch_session.height)})) {
+        touch_kb::start_session(touch_effective);
+      }
+    }
+#endif
     auto_recovery_result_t recovery_result;
     const auto probe_target = make_probe_target(intent);
     bool probe_matches_display_state = false;
