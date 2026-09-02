@@ -32,9 +32,15 @@ if(NOT FETCH_GUI)
 endif()
 
 set(_gui_stamp "${GUI_DIR}/.sunshine-gui-bundle")
+set(_cached_gui_tag "")
+if(EXISTS "${_gui_stamp}")
+  file(READ "${_gui_stamp}" _cached_gui_tag)
+  string(STRIP "${_cached_gui_tag}" _cached_gui_tag)
+endif()
 if(EXISTS "${GUI_DIR}/sunshine-gui.exe" AND
    EXISTS "${GUI_DIR}/alkaidlab-plugin-stylus.dll" AND
-   EXISTS "${_gui_stamp}")
+   EXISTS "${_gui_stamp}" AND
+   (GUI_VERSION STREQUAL "latest" OR _cached_gui_tag STREQUAL "${GUI_VERSION}"))
   message(STATUS "GUI bundle already cached at ${GUI_DIR}")
   return()
 endif()

@@ -26,7 +26,8 @@ if(NPM AND CARGO AND POWERSHELL_EXECUTABLE)
           COMMAND ${NPM} run build:renderer
           COMMAND ${CMAKE_COMMAND} -E echo "Building Tauri backend with Cargo..."
           COMMAND ${CARGO} build --manifest-path src-tauri/Cargo.toml --release
-          USES_TERMINAL)
+          USES_TERMINAL
+          VERBATIM)
 else()
   message(STATUS "npm/cargo/PowerShell not found — sunshine-control-panel target disabled (GUI will be fetched from release)")
 endif()
