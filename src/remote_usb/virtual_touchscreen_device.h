@@ -29,7 +29,8 @@ struct touchscreen_contact {
   std::uint8_t contact_id { 0 };
   std::uint16_t x { 0 };
   std::uint16_t y { 0 };
-  /** 0..255; 0 while lifted. */
+  /** Accepted for API stability; the current single-touch report layout
+   *  does not carry pressure. */
   std::uint8_t pressure { 0 };
   /** Finger is touching the surface. */
   bool tip { false };

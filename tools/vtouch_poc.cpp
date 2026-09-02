@@ -12,6 +12,27 @@
  *   circle           draw a slow circle at screen centre for ~2 s
  *   status           print keyboard/window visibility
  *   quit             detach and exit
+ *
+ * Flags:
+ *   --auto    run the full automated verdict (attach, foreground edit,
+ *             synthetic taps, focus/click/keyboard-visibility checks)
+ *   --mouse   attach a boot-mouse profile instead (control experiment;
+ *             verified working: moves the real cursor)
+ *   --log <path>   redirect all output to a file (use with elevated runs)
+ *   --verbose hex-dump every USB/IP PDU
+ *
+ * Known issue (open): with the touchscreen profile, hover positioning works
+ * (the cursor tracks the contact pixel exactly) but tip-down click delivery
+ * does not happen: the target window receives no WM_LBUTTONDOWN /
+ * WM_POINTERDOWN, focus never lands, and the touch keyboard never auto-
+ * invokes.  Reproduced consistently on Windows 11 26200 + usbip-win2
+ * 0.9.7.7 with four report-descriptor variants (parallel multi-touch,
+ * vmulti-style hybrid, minimal single-touch, +Confidence bit).  Run
+ * `--auto --log <file>` and read the `tap #` / `[click]` / `RESULT` lines;
+ * a mouse-profile build (`--mouse`) proves the USB/IP -> VHCI -> HIDCLASS
+ * -> input-stack path itself works.  Suspects: 26200 touch-stack policy
+ * for virtual HID touchscreens, remote-session interference, hvctl
+ * validation of non-certified digitizers.
  */
 #ifndef UNICODE
 #define UNICODE
