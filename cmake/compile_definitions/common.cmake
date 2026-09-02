@@ -124,8 +124,6 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/file_mapping/service.cpp"
         "${CMAKE_SOURCE_DIR}/src/file_mapping/service.h"
         "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.cpp"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.h"
         "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.h"
         "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp"
         "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.h"

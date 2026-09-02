@@ -65,7 +65,6 @@ extern "C" {
 #include "cursor_channel.h"
 #include "platform/common.h"
 #include "touch_keyboard_session.h"
-#include "virtual_touchscreen_session.h"
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -4182,9 +4181,9 @@ namespace stream {
           }
 
 #ifdef _WIN32
-          // Touch experience teardown (paired with the mount at stream start).
+          // Restore the touch-keyboard registry transaction started at
+          // stream start (see the touch_kb mount in nvhttp_stream_start).
           touch_kb::end_session();
-          vts::stop();
 #endif
 
           platf::streaming_will_stop();

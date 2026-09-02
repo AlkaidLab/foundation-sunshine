@@ -309,7 +309,12 @@ StealForeground() {
 }
 
 static int
-run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h) {
+run_auto(remote_usb::virtual_touchscreen_device &dev, int hid_w, int hid_h) {
+  // Source domain: physical screen pixels (GetWindowRect / SetCursorPos are
+  // physical in a per-monitor-v2 aware process).  Target domain: the HID
+  // digitizer's declared logical range.
+  const int screen_w = GetSystemMetrics(SM_CXSCREEN);
+  const int screen_h = GetSystemMetrics(SM_CYSCREEN);
   WNDCLASSW wc = {};
   wc.lpfnWndProc = host_proc;
   wc.lpszClassName = L"VtouchPocHost";
@@ -370,8 +375,8 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
   auto to_digitizer = [&](int px, int py) {
     dev.update_contacts({ remote_usb::touchscreen_contact {
       1,
-      (std::uint16_t) ((std::int64_t) px * 1920 / screen_w),
-      (std::uint16_t) ((std::int64_t) py * 1080 / screen_h),
+      (std::uint16_t) ((std::int64_t) px * hid_w / screen_w),
+      (std::uint16_t) ((std::int64_t) py * hid_h / screen_h),
       100, true, true } });
   };
   // Three tap attempts; each checks whether the edit gains keyboard focus.
@@ -579,6 +584,9 @@ wmain(int argc, wchar_t **argv) {
                   L"| Format-List FriendlyName,Status,Class,InstanceId | Out-String -Width 200\"")
            .c_str());
 
+  // Digitizer logical range == the descriptor's declared size.  With DPI
+  // awareness on, GetSystemMetrics would return physical pixels of the whole
+  // monitor, which is NOT the digitizer's coordinate basis.
   const int screen_w = GetSystemMetrics(SM_CXSCREEN);
   const int screen_h = GetSystemMetrics(SM_CYSCREEN);
 
@@ -659,7 +667,7 @@ wmain(int argc, wchar_t **argv) {
   }
 
   if (auto_mode) {
-    int rc = run_auto(dev, screen_w, screen_h);
+    int rc = run_auto(dev, cfg.width_px, cfg.height_px);
     pump_sleep(3000);
     bridge.stop();
     return rc;
