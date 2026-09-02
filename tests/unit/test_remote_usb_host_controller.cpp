@@ -167,6 +167,7 @@ TEST(RemoteUsbHostController, ReaderThreadCreationFailureReturnsTerminalResult) 
 #ifdef _WIN32
   const auto command_interpreter = std::getenv("ComSpec");
   ASSERT_NE(command_interpreter, nullptr);
+  ASSERT_NE(command_interpreter[0], '\0');
   config.executable = command_interpreter;
 #else
   config.executable = "/bin/sh";
