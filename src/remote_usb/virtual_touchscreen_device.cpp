@@ -394,14 +394,14 @@ struct virtual_touchscreen_device::impl {
   }
 
   void
-  reply_submit_locked(const pending_submit &submit, std::int32_t status,
-                      const std::uint8_t *data, std::size_t size) {
+  reply_submit_locked(std::uint32_t seqnum, std::uint32_t devid, std::uint32_t endpoint,
+                      std::int32_t status, const std::uint8_t *data, std::size_t size) {
     std::vector<std::uint8_t> wire(kPduHeaderSize + size, 0);
     put_u32be(wire.data(), 0, kRetSubmit);
-    put_u32be(wire.data(), 4, submit.seqnum);
-    put_u32be(wire.data(), 8, submit.devid);
+    put_u32be(wire.data(), 4, seqnum);
+    put_u32be(wire.data(), 8, devid);
     put_u32be(wire.data(), 12, 1);  // direction: IN
-    put_u32be(wire.data(), 16, submit.endpoint);
+    put_u32be(wire.data(), 16, endpoint);
     put_i32be(wire.data(), 20, status);
     put_i32be(wire.data(), 24, static_cast<std::int32_t>(size));
     put_i32be(wire.data(), 32, -1);  // number_of_packets
@@ -686,17 +686,14 @@ virtual_touchscreen_device::handle_request(const std::vector<std::uint8_t> &pdu)
       if (!impl_->queued_reports.empty()) {
         auto report = std::move(impl_->queued_reports.front());
         impl_->queued_reports.erase(impl_->queued_reports.begin());
-        impl_->reply_submit_locked(impl::pending_submit { seqnum, devid, endpoint }, 0,
-                                   report.data(), report.size());
+        impl_->reply_submit_locked(seqnum, devid, endpoint, 0, report.data(), report.size());
       }
       else if (!impl_->cfg.mouse_mode && !impl_->active_fingers.empty()) {
         auto report = build_input_report(impl_->active_fingers, impl_->cfg.finger_slots);
-        impl_->reply_submit_locked(impl::pending_submit { seqnum, devid, endpoint }, 0,
-                                   report.data(), report.size());
+        impl_->reply_submit_locked(seqnum, devid, endpoint, 0, report.data(), report.size());
       }
       else {
-        impl_->reply_submit_locked(impl::pending_submit { seqnum, devid, endpoint }, 0,
-                                   nullptr, 0);
+        impl_->reply_submit_locked(seqnum, devid, endpoint, 0, nullptr, 0);
       }
       return true;
     }
@@ -757,19 +754,19 @@ virtual_touchscreen_device::update_contacts(const std::vector<touchscreen_contac
   }
 
   // Contacts that disappeared since the last update emit one explicit lift
-  // frame (tip=0, in_range=0) so the touch stack releases them cleanly.
-  std::vector<report_finger> lift_frame = impl_->active_fingers;
-  bool lift_needed = false;
-  for (auto &finger : lift_frame) {
+  // frame (tip=0, in_range=0) so the touch stack releases them cleanly.  The
+  // lift frame carries only the released contacts: build_input_report()
+  // prefers a live finger, so mixing would swallow the lift.
+  std::vector<report_finger> lifted_only;
+  for (const auto &finger : impl_->active_fingers) {
     if (finger_is_live(finger) && !next.contains(finger.contact_id)) {
-      finger.tip = false;
-      finger.in_range = false;
-      finger.pressure = 0;
-      lift_needed = true;
+      lifted_only.push_back(report_finger {
+        finger.contact_id, finger.x, finger.y, 0, false, false,
+      });
     }
   }
-  if (lift_needed) {
-    impl_->push_report_locked(build_input_report(lift_frame, impl_->cfg.finger_slots));
+  if (!lifted_only.empty()) {
+    impl_->push_report_locked(build_input_report(lifted_only, impl_->cfg.finger_slots));
   }
 
   std::vector<report_finger> snapshot;

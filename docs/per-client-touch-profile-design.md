@@ -15,7 +15,7 @@
 1. **弹不弹**：触摸 digitizer 在场 + 触摸输入 + `EnableDesktopModeAutoInvoke`
 2. **长什么样**：显示器 EDID 物理尺寸档位（≥18" 强制 undocked，<18" 允许 docked）——软件手段无法覆盖，EDID 是唯一判定源（Apollo #818 实验结论）
 
-现状：`clients` JSON 已有 per-client 的 `deviceSize`（物理尺寸 cm），经 `CREATEMONITOR {GUID}:[nits][wCm,hCm]` 传入 VDD——**EDID 档位绑定已落地**。本设计稿把"弹"的一侧（虚拟触摸屏设备）也纳入 per-client 档案，与 `deviceSize` 同级管理。对照实验（见非目标）确认：**设备挂载即满足弹出条件，无需注册表预处理**。
+现状：`clients` JSON 已有 per-client 的 `deviceSize`（物理尺寸 cm），经 `CREATEMONITOR {GUID}:[nits][wCm,hCm]` 传入 VDD——**EDID 档位绑定已落地**。本设计稿把"弹"的一侧（虚拟触摸屏设备）也纳入 per-client 档案，与 `deviceSize` 同级管理。对照实验（2026-09-02 全变量隔离）确认：**设备挂载提供触摸输入源，弹出策略由 TabletTip AutoInvoke 键组决定——两者都需要**（键组全 0 时不弹，恢复后弹出，见 §5.2）。
 
 ### 目标
 
@@ -67,7 +67,7 @@
 
 ### 5.1 时序
 
-```
+```text
 会话开始（configure_display，VDD prepare 之后）
   ├─ 按 client_cert_uuid 解析 touch 档案；无 touch/enabled=false → 跳过
   ├─ [T1] 写注册表预处理 + 记录 undo → appdata/touch_session_undo.json
@@ -76,8 +76,8 @@
         任一步失败 → 执行已成功步骤的逆操作，降级日志，会话继续
 
 会话结束（restore_state，最后一个视频会话注销）
-  ├─ detach（usbip detach --port）+ 销毁设备与 bridge
-  └─ 应用 touch_session_undo.json 还原注册表，删除 undo 文件
+  ├─ [R1] 先应用 touch_session_undo.json 还原注册表；仅还原成功后删除 undo 文件
+  ├─ [R2] detach（usbip detach --port）+ 销毁设备与 bridge（失败仅告警，不影响 R1）
 ```
 
 ### 5.2 注册表项与目标 hive
@@ -117,17 +117,16 @@
 | 内容 | 文件 |
 |---|---|
 | schema 校验扩展 | `confighttp.cpp`（clients 路由校验处） |
-| 档案读取 helper | `config.cpp`（clients 存取器旁新增 `get_touch_profile(uuid)`） |
-| 注册表事务模块 | 新 `src/platform/windows/touch_session.cpp/.h`（hive 解析、undo json） |
-| 设备 attach/detach 封装 | 新 `src/remote_usb/virtual_touchscreen_session.cpp/.h`（组合 device + bridge + host_controller） |
+| 档案读取 helper | `config.cpp` `get_client_touch_keyboard_enabled(uuid)` |
+| 注册表事务模块 | `src/touch_keyboard_session.h` + `src/platform/windows/touch_keyboard_session.cpp`（hive 解析、undo json） |
+| 设备 attach/detach 封装 | `src/virtual_touchscreen_session.h` + `src/platform/windows/virtual_touchscreen_session.cpp`（组合 device + bridge + usbip attach） |
 | 挂载 | `nvhttp_stream_start.cpp`（开始）、`stream.cpp`（restore_state 旁结束） |
-| 面板 UI | 控制面板客户端编辑界面加 touch 开关与布局选择（后端字段透传即可） |
+| 面板 UI | 控制面板客户端编辑界面加 touch 开关（后端字段透传即可） |
 
 ## 8. 测试计划
 
 - 单测：`touch` schema 校验、undo 写入/还原、无 touch 字段的向后兼容
-- 对照实验：`autoInvoke=false` 时仅 attach 验证键盘是否弹出（确认注册表依赖）
-- 对照实验：`autoInvoke=false` 时仅 attach 验证键盘是否弹出（确认注册表依赖）
+- 对照实验（已完成 2026-09-02）：键组全 0 不弹、恢复后弹出——注册表依赖确认
 - 真机（console 会话）：attach → tap 记事本 → 键盘弹出（PR #1025 已有判据）；会话结束后注册表还原、设备消失、reattach 正常
 - 降级：usbip-win2 组件缺失 / attach 失败时流会话不受影响
 - 断电类异常：undo 文件残留时下次会话开始先尝试还原
@@ -136,4 +135,4 @@
 
 1. `clients` schema 变更需控制面板同步发版（新字段 UI）
 2. usbip-win2 组件版本固定（当前 0.9.7.7），升级需重跑真机矩阵
-3. 注册表写入面收敛到单键（AutoInvoke），后续扩展需评审
+3. 注册表写入面限定于 §5.2 键组（含 undo），键集合变更需评审

@@ -411,9 +411,9 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
     SetCursorPos(mx, my);
     Sleep(150);
     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-    Sleep(60);
+    pump_sleep(60);
     mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-    Sleep(1000);
+    pump_sleep(1000);
     GUITHREADINFO g2 {};
     g2.cbSize = sizeof(g2);
     GetGUIThreadInfo(0, &g2);
