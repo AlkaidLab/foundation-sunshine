@@ -620,12 +620,12 @@ wmain(int argc, wchar_t **argv) {
     // profile's own tip-click issue is tracked separately.
     {
       create_test_window();
-      Sleep(300);
+      pump_sleep(300);
       StealForeground();
-      Sleep(200);
+      pump_sleep(200);
       SetForegroundWindow(g_host);
       SetFocus(g_edit);
-      Sleep(200);
+      pump_sleep(200);
       // Nudge the cursor onto the edit centre with relative moves.
       POINT cur;
       GetCursorPos(&cur);
