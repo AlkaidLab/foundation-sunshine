@@ -23,7 +23,6 @@
 #include "video.h"
 
 #include <algorithm>
-#include "virtual_touchscreen_session.h"
 
 namespace nvhttp::stream_start {
 
@@ -696,9 +695,10 @@ namespace nvhttp::stream_start {
     }
 
 #ifdef _WIN32
-    // Touch experience: attach the virtual touchscreen when the client (or
-    // its server profile) opted in, then enable the touch-keyboard AutoInvoke
-    // key group for the session.  Failures degrade to a log line only.
+    // Touch-keyboard experience: when the client (or its server profile)
+    // opts in, enable the AutoInvoke registry key group for the session.
+    // The touch digitizer itself is expected to be present already (VDD /
+    // remote-software virtual digitizer); failures degrade to a log line.
     {
       bool touch_effective = false;
       if (launch_session.touch_keyboard < 0) {
@@ -707,10 +707,7 @@ namespace nvhttp::stream_start {
       else {
         touch_effective = launch_session.touch_keyboard == 1;
       }
-      if (vts::start({"", (std::uint16_t) std::max(0, launch_session.width),
-                      (std::uint16_t) std::max(0, launch_session.height)})) {
-        touch_kb::start_session(touch_effective);
-      }
+      touch_kb::start_session(touch_effective);
     }
 #endif
     auto_recovery_result_t recovery_result;

@@ -104,13 +104,13 @@
 - TabletTip 值由 TextInputHost 进程读取并缓存，会话中写入**可能到下一次键盘进程启动才生效**；AutoInvoke 主键经验上即时生效。设计上接受"尽力而为"，不强制重启 TextInputHost（杀进程影响正在输入的用户）。
 - 同机多客户端并发会话：注册表是 per-user 全局的，后写覆盖前写。第一层明确**仅支持单活动会话场景**，多会话并发时触摸事务跳过并告警（VDD 会话本身也是单活动假设）。
 
-## 6. 虚拟触摸屏设备接入形态
+## 6. 虚拟触摸屏设备的定位（不在键盘路径内）
 
-- 生命周期：**per-session**（与会话同生共死），非常驻——避免非流期间虚拟设备污染桌面
-- attach 命令封装复用 `remote_usb/remote_usb_host_controller` 的 usbip 命令构造（`--terse`，无 `--receive-mode`/`--once`）
-- 依赖声明：usbip-win2 组件（与 DS5 完整模式组件同源，`FetchDriverDeps.cmake` 已有下载通道）；组件缺失时 T2/T3 跳过并给出一次性日志
-- keepalive、lift 帧、0 长度 idle 应答等协议行为已在 PR #1025 设备类中实现，直接沿用
-- 坐标映射：单 VDD 场景 digitizer logical range 对齐虚拟桌面；多屏路由问题记入非目标
+A/B 挂载实测（挂载弹 / 卸载仍弹）证明键盘体验**不依赖自建设备**——宿主机已有的触摸 digitizer（VDD / 远程软件的 `\?\VIRTUAL_DIGITIZER`）已满足输入源。PR #1025 中的 USB/IP 虚拟触摸屏设备与 POC 保留在仓库，定位重写为：
+
+- **direct touch 输入注入的修复**：Sunshine 的合成指针触摸注入（InjectSyntheticPointerInput）在 25H2 (26200) 失效，客户端 direct touch 模式的触摸事件无法到达主机应用。USB HID 触摸屏经 hidusb 路径注入是实测可行的替代（console 会话 tap 记事本光标落入已验证）
+- 依赖 usbip-win2 组件（独立部署事项）；组件缺失时仅 direct touch 注入缺失，键盘体验不受影响
+- `virtual_touchscreen_session` 封装已从主 target 移除，input 路径接入时按需恢复
 
 ## 7. 代码落点
 
@@ -126,7 +126,8 @@
 ## 8. 测试计划
 
 - 单测：`touch` schema 校验、undo 写入/还原、无 touch 字段的向后兼容
-- 对照实验（已完成 2026-09-02）：键组全 0 不弹、恢复后弹出——注册表依赖确认
+- 键组依赖消融（已完成 2026-09-02）：全键置 0 + TabTip 重启 → 不弹；恢复 → 弹
+- A/B 挂载实测（已完成 2026-09-02）：挂载弹 / 卸载仍弹——键盘体验不依赖自建设备，架构据此简化
 - 真机（console 会话）：attach → tap 记事本 → 键盘弹出（PR #1025 已有判据）；会话结束后注册表还原、设备消失、reattach 正常
 - 降级：usbip-win2 组件缺失 / attach 失败时流会话不受影响
 - 断电类异常：undo 文件残留时下次会话开始先尝试还原

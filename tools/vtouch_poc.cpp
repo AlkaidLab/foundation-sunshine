@@ -579,8 +579,11 @@ wmain(int argc, wchar_t **argv) {
                   L"| Format-List FriendlyName,Status,Class,InstanceId | Out-String -Width 200\"")
            .c_str());
 
-  const int screen_w = GetSystemMetrics(SM_CXSCREEN);
-  const int screen_h = GetSystemMetrics(SM_CYSCREEN);
+  // Digitizer logical range == the descriptor's declared size.  With DPI
+  // awareness on, GetSystemMetrics would return physical pixels of the whole
+  // monitor, which is NOT the digitizer's coordinate basis.
+  const int screen_w = cfg.width_px;
+  const int screen_h = cfg.height_px;
 
   if (mouse_mode) {
     POINT start_pos;
