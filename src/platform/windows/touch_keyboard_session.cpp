@@ -223,6 +223,14 @@ namespace touch_kb {
       return false;
     }
 
+    // Single owner: an existing undo journal means another stream session is
+    // already running the transaction.  Skip rather than overwrite its
+    // captured values; the running session's end_session() will restore.
+    if (std::filesystem::exists(undo_path())) {
+      BOOST_LOG(info) << "touch_kb: transaction already active; skipping";
+      return true;
+    }
+
     const auto hive = get_hive();
     std::wstring subkey = REG_SUBKEY;
     const wchar_t sep = L'\\';

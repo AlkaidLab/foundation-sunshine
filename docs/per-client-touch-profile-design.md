@@ -20,7 +20,7 @@
 ### 目标
 
 1. `clients[]` schema 增加 `touch` 对象（启用开关、AutoInvoke 预处理）
-2. 会话开始时按档案：attach 虚拟触摸屏 + 写 AutoInvoke 注册表键组（记录 undo）；会话结束时反向还原
+2. 会话开始时按档案：写 AutoInvoke 注册表键组（记录 undo）；会话结束时反向还原
 3. 虚拟触摸屏设备的正式化：从 POC 工具形态接入服务内会话生命周期
 4. 任何失败不阻断流会话（触摸是增强能力，降级仅日志）
 
@@ -39,7 +39,7 @@
 | 客户端档案容器 | `sunshine.conf` 的 `clients` 键（`config.cpp:2011-2050`），schema 校验在 `confighttp.cpp:1503-1592` | `touch` 对象直接加入现有 schema |
 | 客户端识别 | `client_cert_uuid`（`pairing.cpp:493`，`launch_session_t` 携带，`rtsp.h:43`） | 会话内按 uuid 查档案 |
 | 会话挂载点 | 开始：`configure_display`（`nvhttp_stream_start.cpp:222/488/688`）；结束：`restore_state`（`stream.cpp:4160-4180`） | 触摸事务挂载于 VDD 阶段之后 |
-| USB/IP 设备端 | PR #1025 `virtual_touchscreen_device` + `loopback_usbip_bridge` | 原样接入，attach 用 `usbip.exe`（usbip-win2 组件） |
+| USB/IP 设备端（direct touch 层，键盘路径不使用） | PR #1025 `virtual_touchscreen_device` + `loopback_usbip_bridge` | 键盘路径无依赖；input 路由接入时启用 |
 | 面板入口 | 控制面板 clients 管理（`/api/clients/list`） | `touch` 字段 UI 在现有客户端编辑界面扩展 |
 
 ## 4. Schema 设计
@@ -58,7 +58,7 @@
 }
 ```
 
-- `enabled`：会话期间为此客户端创建并 attach 虚拟触摸屏
+- `enabled`：会话期间为此客户端启用触摸键盘注册表事务（前提：宿主机已有触摸 digitizer，见非目标）
 - `autoInvoke`：会话期间写 AutoInvoke 注册表键组（见 §5.2，undo 到原值）。**全变量隔离对照实验（2026-09-02）证实必需**：全部 AutoInvoke 键置 0 后，设备挂载 + 触摸 tap 键盘不再弹出；键组恢复后弹出。触摸键盘自动弹出依赖这批注册表键，无法省略
 
 校验：`touch.enabled` 为 false 时忽略其余字段。
@@ -70,14 +70,11 @@
 ```text
 会话开始（configure_display，VDD prepare 之后）
   ├─ 按 client_cert_uuid 解析 touch 档案；无 touch/enabled=false → 跳过
-  ├─ [T1] 写注册表预处理 + 记录 undo → appdata/touch_session_undo.json
-  ├─ [T2] 创建 virtual_touchscreen_device + loopback_usbip_bridge
-  └─ [T3] usbip.exe attach（复用 remote_usb 的 usbip_host_controller 命令封装）
-        任一步失败 → 执行已成功步骤的逆操作，降级日志，会话继续
+  └─ [T1] 写注册表预处理 + 记录 undo → appdata/touch_session_undo.json
+        失败 → 降级日志，会话继续；undo 文件已存在（并发会话）→ 跳过写入
 
 会话结束（restore_state，最后一个视频会话注销）
-  ├─ [R1] 先应用 touch_session_undo.json 还原注册表；仅还原成功后删除 undo 文件
-  ├─ [R2] detach（usbip detach --port）+ 销毁设备与 bridge（失败仅告警，不影响 R1）
+  └─ [R1] 应用 touch_session_undo.json 还原注册表；仅还原成功后删除 undo 文件
 ```
 
 ### 5.2 注册表项与目标 hive
@@ -128,8 +125,8 @@ A/B 挂载实测（挂载弹 / 卸载仍弹）证明键盘体验**不依赖自�
 - 单测：`touch` schema 校验、undo 写入/还原、无 touch 字段的向后兼容
 - 键组依赖消融（已完成 2026-09-02）：全键置 0 + TabTip 重启 → 不弹；恢复 → 弹
 - A/B 挂载实测（已完成 2026-09-02）：挂载弹 / 卸载仍弹——键盘体验不依赖自建设备，架构据此简化
-- 真机（console 会话）：attach → tap 记事本 → 键盘弹出（PR #1025 已有判据）；会话结束后注册表还原、设备消失、reattach 正常
-- 降级：usbip-win2 组件缺失 / attach 失败时流会话不受影响
+- 真机（console 会话）：点文本框 → 键盘弹出；会话结束后注册表键组还原、再次会话重新生效
+- 降级：任何注册表事务失败时流会话不受影响
 - 断电类异常：undo 文件残留时下次会话开始先尝试还原
 
 ## 9. 发布闸门
