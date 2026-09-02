@@ -282,6 +282,22 @@ edit_proc_hook(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 static void
+create_test_window() {
+  WNDCLASSW wc = {};
+  wc.lpfnWndProc = host_proc;
+  wc.lpszClassName = L"VtouchPocHost";
+  wc.hInstance = GetModuleHandleW(nullptr);
+  RegisterClassW(&wc);
+  g_host = CreateWindowExW(0, wc.lpszClassName, L"Vtouch POC", WS_OVERLAPPEDWINDOW,
+                           200, 200, 640, 320, nullptr, nullptr, wc.hInstance, nullptr);
+  g_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"click target",
+                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                           10, 10, 600, 48, g_host, nullptr, wc.hInstance, nullptr);
+  g_old_edit_proc = (WNDPROC) SetWindowLongPtrW(g_edit, GWLP_WNDPROC, (LONG_PTR) edit_proc_hook);
+  ShowWindow(g_host, SW_SHOW);
+}
+
+static void
 StealForeground() {
   HWND fg = GetForegroundWindow();
   DWORD fg_thread = GetWindowThreadProcessId(fg, nullptr);
@@ -558,6 +574,46 @@ wmain(int argc, wchar_t **argv) {
     printf("[mouse] cursor moved: max=%.0f px final=%.0f px -> %s\n", max_dist, final_dist,
            (max_dist > 20 ? "INPUT PATH WORKS" : "cursor did not move"));
     printf("[mouse] wiggle done\n");
+
+    // Secondary control experiment: point the cursor at the edit field and
+    // send a left button press+release through the virtual mouse.  This
+    // checks the click path of the virtual HID device; the touchscreen
+    // profile's own tip-click issue is tracked separately.
+    {
+      create_test_window();
+      Sleep(300);
+      StealForeground();
+      Sleep(200);
+      SetForegroundWindow(g_host);
+      SetFocus(g_edit);
+      Sleep(200);
+      // Nudge the cursor onto the edit centre with relative moves.
+      POINT cur;
+      GetCursorPos(&cur);
+      RECT r;
+      GetWindowRect(g_edit, &r);
+      int tx = (r.left + r.right) / 2, ty = (r.top + r.bottom) / 2;
+      while ((abs(cur.x - tx) > 60 || abs(cur.y - ty) > 60)) {
+        dev.update_mouse((std::int8_t) ((tx - cur.x) / 8), (std::int8_t) ((ty - cur.y) / 8), 0);
+        cur.x += (tx - cur.x) / 8;
+        cur.y += (ty - cur.y) / 8;
+        Sleep(15);
+      }
+      g_clicks = 0;
+      dev.update_mouse(0, 0, 0x01);  // left down
+      Sleep(60);
+      dev.update_mouse(0, 0, 0x00);  // left up
+      Sleep(600);
+      GUITHREADINFO gti {};
+      gti.cbSize = sizeof(gti);
+      GetGUIThreadInfo(0, &gti);
+      printf("[mouse] click messages seen at edit: %d, focus on edit: %s\n",
+             g_clicks, gti.hwndFocus == g_edit ? "YES" : "no");
+      printf("[mouse] VERDICT: virtual-mouse left-click %s\n",
+             (g_clicks > 0 && gti.hwndFocus == g_edit) ? "WORKS"
+             : (g_clicks > 0 ? "delivered but focus off" : "NOT delivered"));
+    }
+
     Sleep(2000);
     bridge.stop();
     return 0;
