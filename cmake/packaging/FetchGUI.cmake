@@ -32,17 +32,30 @@ if(NOT FETCH_GUI)
 endif()
 
 set(_gui_stamp "${GUI_DIR}/.sunshine-gui-bundle")
-set(_cached_gui_tag "")
+set(_cached_gui_repo "")
+set(_cached_gui_asset "")
+set(_cached_gui_request "")
 if(EXISTS "${_gui_stamp}")
-  file(READ "${_gui_stamp}" _cached_gui_tag)
-  string(STRIP "${_cached_gui_tag}" _cached_gui_tag)
+  file(STRINGS "${_gui_stamp}" _cached_gui_stamp)
+  list(LENGTH _cached_gui_stamp _cached_gui_stamp_size)
+  if(_cached_gui_stamp_size GREATER_EQUAL 4)
+    list(GET _cached_gui_stamp 0 _cached_gui_repo)
+    list(GET _cached_gui_stamp 1 _cached_gui_asset)
+    list(GET _cached_gui_stamp 2 _cached_gui_request)
+  endif()
 endif()
 if(EXISTS "${GUI_DIR}/sunshine-gui.exe" AND
    EXISTS "${GUI_DIR}/alkaidlab-plugin-stylus.dll" AND
    EXISTS "${_gui_stamp}" AND
-   (GUI_VERSION STREQUAL "latest" OR _cached_gui_tag STREQUAL "${GUI_VERSION}"))
-  message(STATUS "GUI bundle already cached at ${GUI_DIR}")
-  return()
+   "${_cached_gui_repo}" STREQUAL "${GUI_REPO}" AND
+   "${_cached_gui_asset}" STREQUAL "${GUI_ASSET_NAME}" AND
+   "${_cached_gui_request}" STREQUAL "${GUI_VERSION}")
+  file(SIZE "${GUI_DIR}/sunshine-gui.exe" _cached_gui_size)
+  file(SIZE "${GUI_DIR}/alkaidlab-plugin-stylus.dll" _cached_plugin_size)
+  if(_cached_gui_size GREATER 0 AND _cached_plugin_size GREATER 0)
+    message(STATUS "GUI bundle already cached at ${GUI_DIR}")
+    return()
+  endif()
 endif()
 
 file(MAKE_DIRECTORY "${GUI_DIR}")
@@ -218,8 +231,9 @@ if(_extracted_gui_size EQUAL 0 OR _extracted_plugin_size EQUAL 0)
   return()
 endif()
 
-# Publish the bundle only after every required file has been validated. A
-# failed download or extraction therefore leaves an existing cache untouched.
+# Publish only after validating every required file. Invalidate the old stamp
+# first so an interrupted copy cannot make a mixed bundle look complete.
+file(REMOVE "${_gui_stamp}")
 configure_file("${_extract_dir}/sunshine-gui.exe" "${GUI_DIR}/sunshine-gui.exe" COPYONLY)
 configure_file(
   "${_extract_dir}/alkaidlab-plugin-stylus.dll"
@@ -233,7 +247,8 @@ if(EXISTS "${_extract_dir}/WebView2Loader.dll")
 else()
   file(REMOVE "${GUI_DIR}/WebView2Loader.dll")
 endif()
-file(WRITE "${_gui_stamp}" "${_selected_tag}\n")
+file(WRITE "${_gui_stamp}"
+  "${GUI_REPO}\n${GUI_ASSET_NAME}\n${GUI_VERSION}\n${_selected_tag}\n")
 file(REMOVE_RECURSE "${_extract_dir}")
 
 math(EXPR _bundle_size_mb "(${_extracted_gui_size} + ${_extracted_plugin_size}) / 1048576")
