@@ -399,6 +399,31 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
     print_status();
   }
   printf("[auto] edit focus ever gained: %s\n", ever_focused ? "YES" : "NO");
+
+  // Real-click control: a genuine mouse click, same trigger as the human
+  // verification, judged via IFrameworkInputPane.
+  {
+    StealForeground();
+    Sleep(200);
+    RECT rr;
+    GetWindowRect(g_edit, &rr);
+    int mx = (rr.left + rr.right) / 2, my = (rr.top + rr.bottom) / 2;
+    SetCursorPos(mx, my);
+    Sleep(150);
+    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    Sleep(60);
+    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    Sleep(1000);
+    GUITHREADINFO g2 {};
+    g2.cbSize = sizeof(g2);
+    GetGUIThreadInfo(0, &g2);
+    RECT krect {};
+    bool kv = keyboard_visible(&krect);
+    printf("[realclick] click at (%d,%d): focus on edit=%s keyboard visible=%s rect=(%ld,%ld)-(%ld,%ld)\n",
+           mx, my, g2.hwndFocus == g_edit ? "YES" : "no", kv ? "YES" : "no",
+           (long) krect.left, (long) krect.top, (long) krect.right, (long) krect.bottom);
+  }
+
   printf("[auto] tap sent; waiting up to 8 s for the touch keyboard...\n");
   bool visible = wait_keyboard_visible(8000);
   printf("[auto] raw input frames seen at sink: %d\n", g_raw_input_frames);
@@ -411,6 +436,20 @@ run_auto(remote_usb::virtual_touchscreen_device &dev, int screen_w, int screen_h
 int
 wmain(int argc, wchar_t **argv) {
   const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  // Physical-pixel coordinates everywhere: without this, GetWindowRect /
+  // SetCursorPos / synthetic touch coordinates are virtualised on scaled
+  // displays and taps land on the wrong pixel.
+  {
+    using SetCtxFn = BOOL(WINAPI *)(void *);
+    auto fn = (SetCtxFn) GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext");
+    void *per_monitor_v2 = (void *) -4;  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    if (fn && fn(per_monitor_v2)) {
+      printf("dpi awareness: per-monitor v2\n");
+    }
+    else {
+      printf("dpi awareness: unavailable or set failed\n");
+    }
+  }
   setvbuf(stdout, nullptr, _IONBF, 0);
   std::wstring usbip_path;
   bool auto_mode = false;
