@@ -326,6 +326,9 @@ internal sealed class ControllerSession : IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
+            // A field this report does not claim is not programming anything.
+            // The motor bytes are the exception; see OutputValidFlags.
+            var valid = OutputValidFlags.From(output.Fields);
             if (TryByte(output.Fields, "leftMotor", out var left) &&
                 TryByte(output.Fields, "rightMotor", out var right))
             {
@@ -337,10 +340,11 @@ internal sealed class ControllerSession : IDisposable
                 _emit(new Protocol.Message(Protocol.MessageType.Rumble, 0, payload));
             }
 
-            if (_adaptiveTriggers.TryUpdate(output.Fields, DeviceId, ClientControllerNumber, out var adaptiveTriggers))
+            if (_adaptiveTriggers.TryUpdate(output.Fields, valid, DeviceId, ClientControllerNumber, out var adaptiveTriggers))
                 _emit(adaptiveTriggers);
 
-            if (output.Fields.TryGetValue("lightbar", out var value) && value is byte[] rgb && rgb.Length >= 3)
+            if (valid.Lightbar &&
+                output.Fields.TryGetValue("lightbar", out var value) && value is byte[] rgb && rgb.Length >= 3)
             {
                 _emit(new Protocol.Message(
                     Protocol.MessageType.Led,
