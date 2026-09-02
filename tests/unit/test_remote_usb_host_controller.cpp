@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -164,7 +165,10 @@ TEST(RemoteUsbHostController, AutomaticBackendIsNativeOnlyWithoutInjectedRunner)
 TEST(RemoteUsbHostController, ReaderThreadCreationFailureReturnsTerminalResult) {
   remote_usb::usbip_host_controller_config config;
 #ifdef _WIN32
-  config.executable = "cmd.exe";
+  const auto command_interpreter = std::getenv("ComSpec");
+  ASSERT_NE(command_interpreter, nullptr);
+  ASSERT_NE(command_interpreter[0], '\0');
+  config.executable = command_interpreter;
 #else
   config.executable = "/bin/sh";
 #endif
