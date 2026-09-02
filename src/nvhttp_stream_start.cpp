@@ -21,6 +21,8 @@
 #include "logging.h"
 #include "touch_keyboard_session.h"
 #include "video.h"
+
+#include <algorithm>
 #include "virtual_touchscreen_session.h"
 
 namespace nvhttp::stream_start {
