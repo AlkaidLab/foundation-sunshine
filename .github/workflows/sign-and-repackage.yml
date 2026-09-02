@@ -185,7 +185,6 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
           ninja -C build
-          ninja -C build sunshine-control-panel
 
       # Install Inno Setup
       - name: Install Inno Setup
@@ -333,6 +332,10 @@ jobs:
           SIGNED_SRC="signed-files/Sunshine"
           
           echo "Replacing with signed files..."
+          if [ ! -f "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" ]; then
+            echo "Error: signed alkaidlab-plugin-stylus.dll is missing"
+            exit 1
+          fi
           cp -fv "$SIGNED_SRC/sunshine.exe"                 "$STAGING_DIR/sunshine.exe"
           cp -fv "$SIGNED_SRC/zlib1.dll"                    "$STAGING_DIR/zlib1.dll"
           cp -fv "$SIGNED_SRC/tools/sunshinesvc.exe"        "$STAGING_DIR/tools/sunshinesvc.exe"
@@ -345,6 +348,7 @@ jobs:
           cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/tools/audio-info.exe"
           cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
           cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"
+          cp -fv "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" "$STAGING_DIR/assets/gui/alkaidlab-plugin-stylus.dll"
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
