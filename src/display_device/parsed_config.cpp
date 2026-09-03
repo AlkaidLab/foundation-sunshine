@@ -723,7 +723,7 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
     parsed_config_t parsed_config;
 
     // 显示器目标、是否为VDD、以及device_prep统一在此解析
@@ -736,10 +736,13 @@ namespace display_device {
     parsed_config.device_prep = intent.device_prep;
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
+    // Resume 的任意零值模式都不能用于显示配置；保持现有分辨率和刷新率。
+    const bool resume_mode_invalid = !is_reconfigure && (session.width <= 0 || session.height <= 0 || session.fps <= 0);
     // 解析分辨率和刷新率配置
-    if (!parse_resolution_option(config, session, parsed_config) ||
-        !parse_refresh_rate_option(config, session, parsed_config) ||
-        !remap_display_modes_if_needed(config, session, parsed_config)) {
+    if (!resume_mode_invalid &&
+        (!parse_resolution_option(config, session, parsed_config) ||
+         !parse_refresh_rate_option(config, session, parsed_config) ||
+         !remap_display_modes_if_needed(config, session, parsed_config))) {
       // 任何一步失败都返回空值
       return boost::none;
     }
