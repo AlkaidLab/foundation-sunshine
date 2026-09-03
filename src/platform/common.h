@@ -33,6 +33,7 @@
 extern "C" {
 #include <moonlight-common-c/src/Limelight.h>
 }
+#include "src/moonlight_compat.h"
 
 using namespace std::literals;
 
@@ -333,6 +334,7 @@ namespace platf {
     constexpr caps_t cursor_shape = 0x40;  // Client-rendered cursor shape updates
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
     constexpr caps_t dynamic_sdr_white = 0x100;  // Runtime client SDR reference white updates
+    constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
   };  // namespace platform_caps
 
   struct gamepad_state_t {

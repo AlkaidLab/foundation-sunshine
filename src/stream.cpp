@@ -65,6 +65,7 @@ extern "C" {
 #include "cursor_channel.h"
 #include "platform/common.h"
 #include "touch_keyboard_session.h"
+#include "text_context/bridge.h"
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -89,6 +90,7 @@ extern "C" {
 #define IDX_CURSOR 21  // Local cursor mode/update (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
+#define IDX_TEXT_CONTEXT 24  // Remote text focus/context update (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -115,6 +117,7 @@ static const short packetTypes[] = {
   0x5509,  // Local cursor mode/update (Sunshine protocol extension)
   0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
   0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
+  0x550C,  // Remote text context update (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -1755,6 +1758,32 @@ namespace stream {
   }
 
   int
+  send_text_context(session_t *session, const text_context::payload_t &payload) {
+    if (!session->control.peer || session->config.controlProtocolType != 13 ||
+        payload.size() != text_context::kWireSize) {
+      return -1;
+    }
+    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
+    std::vector<std::uint8_t> plaintext(plaintext_size);
+    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    hdr->type = packetTypes[IDX_TEXT_CONTEXT];
+    hdr->payloadLength = static_cast<std::uint16_t>(payload.size());
+    std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+
+    std::vector<std::uint8_t> encrypted(
+      sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
+      crypto::cipher::tag_size);
+    const auto view = encode_control_buf(session,
+      std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
+      encrypted.data(), encrypted.size());
+    if (view.empty() || session->broadcast_ref->control_server.send(view, session->control.peer)) {
+      BOOST_LOG(warning) << "Couldn't send remote text context packet"sv;
+      return -1;
+    }
+    return 0;
+  }
+
+  int
   send_cursor_update(session_t *session,
                      const cursor_channel::snapshot_t &cursor,
                      bool include_shape) {
@@ -2362,6 +2391,7 @@ namespace stream {
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
       bool has_ds5_haptics_session = false;
+      bool has_text_context_session = false;
 
       {
         auto lg = server->_sessions.lock();
@@ -2384,6 +2414,7 @@ namespace stream {
 
           if (session->lifecycle.state() == session::state_e::STOPPING) {
             clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+            text_context::bridge_t::instance().session_stopped(session->launch_session_id);
             cursor_channel::remove_session(session->launch_session_id);
             pos = server->_sessions->erase(pos);
 
@@ -2411,6 +2442,8 @@ namespace stream {
             has_ds5_haptics_session |=
               (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
               (ds5_settings.enabled && ds5_settings.audio_haptics);
+            has_text_context_session |=
+              (session->config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0;
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -2518,6 +2551,24 @@ namespace stream {
             }
           }
         }
+
+        {
+          std::deque<text_context::outbound_msg_t> messages;
+          text_context::bridge_t::instance().drain_outbound(messages);
+          for (auto &message : messages) {
+            bool delivered = false;
+            for (auto *session : *server->_sessions) {
+              if (!session->control.peer || session->launch_session_id != message.target ||
+                  (session->config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) == 0) {
+                continue;
+              }
+              delivered = send_text_context(session, message.bytes) == 0;
+              break;
+            }
+            BOOST_LOG(debug) << "Remote text context outbound: target=" << message.target
+                            << ", delivered=" << delivered;
+          }
+        }
       }
 
       // Don't break until any pending sessions either expire or connect
@@ -2530,7 +2581,7 @@ namespace stream {
       // still feel immediate. Poll the latest-value bridge once per frame while
       // local cursor mode is active without adding another control thread.
       server->iterate(has_ds5_haptics_session ? 5ms :
-                      cursor_channel::local_mode_active() ? 16ms : 150ms);
+                      (has_text_context_session || cursor_channel::local_mode_active()) ? 16ms : 150ms);
     }
 
     // Let all remaining connections know the server is shutting down
@@ -2555,6 +2606,7 @@ namespace stream {
       // final shutdown path instead, make the same paired lifecycle update here
       // so capability/session_count cannot retain stale launch IDs.
       clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+      text_context::bridge_t::instance().session_stopped(session->launch_session_id);
       cursor_channel::remove_session(session->launch_session_id);
 
       // We may not have gotten far enough to have an ENet connection yet
@@ -4232,7 +4284,7 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
-      session.input = input::alloc(session.mail);
+      session.input = input::alloc(session.mail, session.launch_session_id);
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
@@ -4284,6 +4336,7 @@ namespace stream {
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
       clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
+      text_context::bridge_t::instance().session_started(session.launch_session_id);
 
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {

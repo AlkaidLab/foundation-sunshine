@@ -45,6 +45,7 @@
 #include "config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
+#include "text_context/http.h"
 #include "ai/credential_store.h"
 #include "crypto.h"
 #include "display_device/color_profile.h"
@@ -3902,6 +3903,15 @@ namespace confighttp {
     // basic-auth via the lambda below.
     clipboard_http::register_routes(server,
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
+        return authenticate(std::move(resp), std::move(req));
+      });
+    text_context::http::register_routes(server,
+      [](text_context::http::resp_https_t resp, text_context::http::req_https_t req) {
+        const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
+        if (net::from_address(address) != net::PC) {
+          resp->write(SimpleWeb::StatusCode::client_error_forbidden);
+          return false;
+        }
         return authenticate(std::move(resp), std::move(req));
       });
     tray_http::auth_fn tray_local_auth = [](tray_http::resp_https_t resp, tray_http::req_https_t req) {

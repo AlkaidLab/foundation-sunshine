@@ -10,6 +10,8 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
+#include "moonlight_compat.h"
+
 // standard includes
 #include <algorithm>
 #include <array>
@@ -26,6 +28,7 @@ extern "C" {
 
 // local includes
 #include "clipboard_bridge.h"
+#include "text_context/bridge.h"
 #include "config.h"
 #include "cursor_channel.h"
 #include "globals.h"
@@ -1125,6 +1128,9 @@ namespace rtsp_stream {
       if (video::active_encoder_supports_dynamic_sdr_white()) {
         caps |= platf::platform_caps::dynamic_sdr_white;
       }
+      if (text_context::bridge_t::instance().gui_alive()) {
+        caps |= platf::platform_caps::remote_text_context;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
     }
 
@@ -1529,6 +1535,9 @@ namespace rtsp_stream {
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
+      BOOST_LOG(debug) << "Moonlight feature flags: 0x" << std::hex << config.mlFeatureFlags
+                      << std::dec << ", remote_text_context="
+                      << ((config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0);
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
