@@ -10,7 +10,6 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
-#include "moonlight_compat.h"
 
 // standard includes
 #include <algorithm>

@@ -33,7 +33,6 @@
 extern "C" {
 #include <moonlight-common-c/src/Limelight.h>
 }
-#include "src/moonlight_compat.h"
 
 using namespace std::literals;
 
