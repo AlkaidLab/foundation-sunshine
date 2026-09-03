@@ -1061,9 +1061,12 @@ namespace input {
 
     const auto screen_x = abs_port.offset_x + static_cast<std::int32_t>(std::lround(touch.x * abs_port.width));
     const auto screen_y = abs_port.offset_y + static_cast<std::int32_t>(std::lround(touch.y * abs_port.height));
-    BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
-                    << ", x=" << screen_x << ", y=" << screen_y
-                    << ", viewport=" << abs_port.width << 'x' << abs_port.height;
+    if (touch.eventType != LI_TOUCH_EVENT_MOVE && touch.eventType != LI_TOUCH_EVENT_HOVER &&
+        touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
+      BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
+                      << ", x=" << screen_x << ", y=" << screen_y
+                      << ", viewport=" << abs_port.width << 'x' << abs_port.height;
+    }
     text_context::bridge_t::instance().record_touch(
       input->session_id, touch.eventType, touch.pointerId, screen_x, screen_y,
       abs_port.offset_x, abs_port.offset_y,
