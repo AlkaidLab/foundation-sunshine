@@ -407,7 +407,7 @@ namespace display_device {
       }
     }
 
-    auto parsed_config = make_parsed_config(config, session);
+    auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);
