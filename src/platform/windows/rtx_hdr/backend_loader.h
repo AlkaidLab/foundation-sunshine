@@ -48,14 +48,4 @@ namespace platf::dxgi::rtx_hdr {
     const foundation_truehdr_api_t *api_ = nullptr;
     std::string error_;
   };
-
-  /**
-   * Best-effort search for an NVIDIA TrueHDR runtime (nvngx_truehdr.dll) that
-   * already exists on this machine. Informational only: it feeds setup hints
-   * in logs and the Web UI; nothing is loaded from the result automatically.
-   * Searches the directory of backend_path (when given), then the NVIDIA
-   * Program Files locations, with bounded recursion.
-   */
-  std::string
-  locate_system_truehdr_runtime(const std::filesystem::path &backend_path = {});
 }  // namespace platf::dxgi::rtx_hdr

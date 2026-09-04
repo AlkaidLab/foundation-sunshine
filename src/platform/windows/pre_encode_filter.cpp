@@ -492,10 +492,8 @@ namespace platf::dxgi {
       rtx_hdr::backend_loader_t loader;
       if (!loader.load(backend_path)) {
         BOOST_LOG(warning) << "TrueHDR backend unavailable: " << loader.error();
-        if (const auto runtime_hint = rtx_hdr::locate_system_truehdr_runtime(backend_path); !runtime_hint.empty()) {
-          BOOST_LOG(info) << "Found NVIDIA TrueHDR runtime at: " << runtime_hint
-                          << "; copy nvngx_truehdr.dll next to the backend DLL and configure its absolute path";
-        }
+        BOOST_LOG(info) << "Build foundation_truehdr_backend.dll with scripts/build-rtx-hdr-backend.ps1, "
+                           "keep the user-provided nvngx_truehdr.dll beside it, and configure the backend's absolute path";
         if (!fallback) {
           BOOST_LOG(error) << "TrueHDR backend and built-in SDR-in-HDR fallback are both unavailable";
           return {};
