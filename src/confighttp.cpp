@@ -9,6 +9,7 @@
 #include "process.h"
 
 #include <cstdint>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <random>
 #include <map>
@@ -2377,6 +2379,44 @@ namespace confighttp {
     }
   }
 
+#ifdef _WIN32
+  namespace {
+    // /api/runtime/hdr is polled every 3s while an HDR pipeline is active, so a
+    // full filesystem scan on every request is wasted I/O. Cache per backend
+    // path with a short TTL: a freshly-installed runtime still shows up within
+    // a reasonable window, but the steady state costs nothing.
+    struct truehdr_hint_cache_entry_t {
+      std::string backend_path;
+      std::string hint;
+      std::chrono::steady_clock::time_point expires_at {};
+    };
+
+    std::mutex truehdr_hint_cache_mutex;
+    std::optional<truehdr_hint_cache_entry_t> truehdr_hint_cache;
+
+    std::string
+    cached_truehdr_hint(const std::string &backend_path) {
+      const auto now = std::chrono::steady_clock::now();
+      {
+        std::lock_guard lock { truehdr_hint_cache_mutex };
+        if (truehdr_hint_cache && truehdr_hint_cache->backend_path == backend_path &&
+            now < truehdr_hint_cache->expires_at) {
+          return truehdr_hint_cache->hint;
+        }
+      }
+      const auto hint = platf::dxgi::rtx_hdr::locate_system_truehdr_runtime(
+        backend_path.empty() ? std::filesystem::path {} : std::filesystem::path { backend_path });
+      {
+        std::lock_guard lock { truehdr_hint_cache_mutex };
+        truehdr_hint_cache = truehdr_hint_cache_entry_t {
+          backend_path, hint, now + std::chrono::seconds(30)
+        };
+      }
+      return hint;
+    }
+  }  // namespace
+#endif
+
   void
   getRuntimeHdrStatus(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
@@ -2388,17 +2428,19 @@ namespace confighttp {
     }
 
     try {
+      const auto statuses = video::get_hdr_pipeline_statuses();
       std::string truehdr_runtime_hint;
 #ifdef _WIN32
-      if (config::video.rtx_hdr != "off") {
-        std::filesystem::path backend_dir;
-        if (!config::video.rtx_hdr_backend_path.empty()) {
-          backend_dir = std::filesystem::path { config::video.rtx_hdr_backend_path }.parent_path();
-        }
-        truehdr_runtime_hint = platf::dxgi::rtx_hdr::locate_system_truehdr_runtime(backend_dir);
+      // The hint is only consumed by the Web UI when a pipeline is degraded for
+      // a backend reason; skip the filesystem walk for a healthy session.
+      const bool needs_backend_hint = std::any_of(statuses.begin(), statuses.end(), [](const auto &status) {
+        return status.synthetic_hdr_state == "degraded" &&
+               status.synthetic_hdr_failure_reason.find("backend") != std::string::npos;
+      });
+      if (needs_backend_hint) {
+        truehdr_runtime_hint = cached_truehdr_hint(config::video.rtx_hdr_backend_path);
       }
 #endif
-      const auto statuses = video::get_hdr_pipeline_statuses();
       json response_json {
         { "success", true },
         { "status_code", 200 },

@@ -114,15 +114,26 @@ const truehdrSetupHint = computed(() => {
   const reason = pipeline.synthetic_hdr_failure_reason || ''
   if (!reason.includes('backend')) return ''
   const hint = hdrRuntimeStatus.value?.truehdr_runtime_hint
-  if (reason === 'backend_path_not_absolute') {
+
+  // Load/ABI failures mean the DLL is missing, misconfigured, or the wrong
+  // build — the fix is placing/building the backend, and a detected runtime
+  // tells the user exactly where.
+  const isLoadFailure =
+    reason === 'backend_path_not_absolute' ||
+    reason.startsWith('backend_load_failed') ||
+    reason === 'backend_export_missing' ||
+    reason === 'backend_abi_mismatch' ||
+    reason === 'backend_api_incomplete'
+  if (isLoadFailure) {
     return hint
       ? `NVIDIA TrueHDR runtime detected at: ${hint} — place foundation_truehdr_backend.dll there and set the backend path to it (Advanced tab).`
       : 'nvngx_truehdr.dll not found on this machine. Install NVIDIA App (RTX Video) or download the NVIDIA RTX Video SDK, then build the backend with scripts/build-rtx-hdr-backend.ps1.'
   }
-  if (reason.startsWith('backend_')) {
-    return `TrueHDR backend could not be loaded (${reason}). Rebuild it with scripts/build-rtx-hdr-backend.ps1 and verify nvngx_truehdr.dll sits next to it.`
-  }
-  return ''
+
+  // Everything else under the "backend" prefix is a runtime failure: the DLL
+  // loaded but NGX failed (device lost, runtime unavailable, invalid argument,
+  // ...). Rebuilding the backend will not help.
+  return `TrueHDR backend failed at runtime (${reason}). This is a GPU/driver/SDK issue — verify NVIDIA App (RTX Video) and the GPU driver, then restart the stream.`
 })
 
 async function handleVisibilityChange() {

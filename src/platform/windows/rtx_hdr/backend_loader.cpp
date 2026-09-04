@@ -90,6 +90,9 @@ namespace platf::dxgi::rtx_hdr {
       return entry.is_regular_file(ec) && entry.path().filename() == std::filesystem::path { kTrueHdrRuntimeName };
     }
 
+    // Walk `root` up to `max_depth` levels looking for the runtime DLL. Bounded
+    // by kMaxScanEntries to cap the worst case on a deep or slow directory.
+    // Returns an empty string when absent (or on a scan error).
     std::string
     search_directory(const std::filesystem::path &root, int max_depth) {
       std::error_code ec;
@@ -107,7 +110,11 @@ namespace platf::dxgi::rtx_hdr {
           it.disable_recursion_pending();
         }
         if (is_truehdr_runtime(*it)) {
-          return it->path().string();
+          // Return UTF-8, not the native narrow encoding: this string feeds
+          // JSON and the Web UI, which must never see ANSI mojibake for a
+          // non-ASCII install path.
+          const auto u8 = it->path().u8string();
+          return std::string { reinterpret_cast<const char *>(u8.data()), u8.size() };
         }
       }
       return {};
