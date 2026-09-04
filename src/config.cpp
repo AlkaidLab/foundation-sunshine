@@ -1921,6 +1921,104 @@ namespace config {
     }
   }
 
+  std::string
+  get_config_value(const std::string &key) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto values = parse_config(file_handler::read_file(sunshine.config_file.c_str()));
+      const auto value = values.find(key);
+      return value == values.end() ? std::string {} : value->second;
+    }
+    catch (const std::exception &exception) {
+      BOOST_LOG(warning) << "Failed to read config value '" << key << "': " << exception.what();
+      return {};
+    }
+  }
+
+  config_update_e
+  set_rtx_hdr_backend_path(const std::string &backend_path) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto config_path = file_handler::path_from_utf8(sunshine.config_file);
+      std::ifstream input(config_path, std::ios::binary);
+      if (!input.is_open()) {
+        BOOST_LOG(error) << "Unable to open Sunshine config for RTX HDR update: " << sunshine.config_file;
+        return config_update_e::error;
+      }
+      const std::string content {
+        std::istreambuf_iterator<char> { input },
+        std::istreambuf_iterator<char> {},
+      };
+      if (!input.eof() && input.fail()) {
+        BOOST_LOG(error) << "Unable to read Sunshine config for RTX HDR update: " << sunshine.config_file;
+        return config_update_e::error;
+      }
+      auto parsed = parse_config(content);
+      std::map<std::string, std::string> values { parsed.begin(), parsed.end() };
+      const auto current = values.find("rtx_hdr_backend_path");
+      const std::string current_value = current == values.end() ? std::string {} : current->second;
+      if (current_value == backend_path) {
+        return config_update_e::unchanged;
+      }
+      if (backend_path.empty()) {
+        values.erase("rtx_hdr_backend_path");
+      }
+      else {
+        values["rtx_hdr_backend_path"] = backend_path;
+      }
+
+      std::ostringstream serialized;
+      for (const auto &[key, value] : values) {
+        if (!value.empty() && value != "null") {
+          serialized << key << " = " << value << std::endl;
+        }
+      }
+      const auto temporary = config_path.parent_path() /
+                             (config_path.filename().wstring() + L".rtx-hdr.tmp");
+      {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output.is_open()) {
+          BOOST_LOG(error) << "Unable to create temporary Sunshine config: " << file_handler::path_to_utf8(temporary);
+          return config_update_e::error;
+        }
+        output << serialized.str();
+        output.flush();
+        if (!output) {
+          BOOST_LOG(error) << "Unable to flush temporary Sunshine config: " << file_handler::path_to_utf8(temporary);
+          output.close();
+          std::error_code cleanup_error;
+          std::filesystem::remove(temporary, cleanup_error);
+          return config_update_e::error;
+        }
+      }
+#ifdef _WIN32
+      if (!MoveFileExW(
+            temporary.c_str(),
+            config_path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        BOOST_LOG(error) << "Unable to atomically replace Sunshine config: " << GetLastError();
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary, cleanup_error);
+        return config_update_e::error;
+      }
+#else
+      std::error_code replace_error;
+      std::filesystem::rename(temporary, config_path, replace_error);
+      if (replace_error) {
+        BOOST_LOG(error) << "Unable to atomically replace Sunshine config: " << replace_error.message();
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary, cleanup_error);
+        return config_update_e::error;
+      }
+#endif
+      return config_update_e::changed;
+    }
+    catch (const std::exception &exception) {
+      BOOST_LOG(error) << "Failed to update RTX HDR backend path: " << exception.what();
+      return config_update_e::error;
+    }
+  }
+
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig) {
     std::lock_guard lock { config_file_mutex };

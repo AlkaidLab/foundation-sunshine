@@ -302,6 +302,18 @@ namespace config {
   bool
   update_config(const std::map<std::string, std::string> &updates);
 
+  std::string
+  get_config_value(const std::string &key);
+
+  enum class config_update_e {
+    changed,
+    unchanged,
+    error,
+  };
+
+  config_update_e
+  set_rtx_hdr_backend_path(const std::string &backend_path);
+
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);
 

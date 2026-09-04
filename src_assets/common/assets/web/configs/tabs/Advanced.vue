@@ -1,16 +1,19 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PlatformLayout from '../../components/layout/PlatformLayout.vue'
 import VddPrerequisiteNotice from '../../components/common/VddPrerequisiteNotice.vue'
 import AdapterNameSelector from './advanced/AdapterNameSelector.vue'
 import CaptureCompatibilityOverrides from './advanced/CaptureCompatibilityOverrides.vue'
+import { createNativeRtxHdrBridge } from '../../utils/nativeRtxHdrBridge.js'
 
 const { t } = useI18n()
 
 const props = defineProps(['platform', 'config', 'global_prep_cmd'])
 
 const config = ref(props.config)
+const nativeRtxHdrManagerAvailable = ref(false)
+let nativeRtxHdrBridge
 
 // 检查是否在 Tauri 环境中（通过 inject-script.js 注入）
 const isTauri = computed(() => {
@@ -111,7 +114,22 @@ onMounted(() => {
   if (isTauri.value && isWGCSelected.value) {
     checkSunshineMode()
   }
+  nativeRtxHdrBridge = createNativeRtxHdrBridge({
+    windowObject: window,
+    documentObject: document,
+    onAvailability: (available) => { nativeRtxHdrManagerAvailable.value = available },
+  })
+  window.addEventListener('message', nativeRtxHdrBridge.handleMessage)
+  nativeRtxHdrBridge.requestContext()
 })
+
+onBeforeUnmount(() => {
+  if (nativeRtxHdrBridge) {
+    window.removeEventListener('message', nativeRtxHdrBridge.handleMessage)
+  }
+})
+
+const openNativeRtxHdrManager = () => nativeRtxHdrBridge?.openManager()
 
 watch(isWGCSelected, (newValue) => {
   if (newValue && isTauri.value) {
@@ -265,6 +283,15 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
           placeholder="C:\\Program Files\\Sunshine\\tools\\rtx_hdr\\foundation_truehdr_backend.dll"
         />
         <div class="form-text">{{ $t('config.rtx_hdr_backend_path_desc') }}</div>
+        <button
+          v-if="nativeRtxHdrManagerAvailable"
+          type="button"
+          class="btn btn-outline-primary btn-sm mt-2"
+          @click="openNativeRtxHdrManager"
+        >
+          <i class="fas fa-puzzle-piece me-1" aria-hidden="true"></i>
+          Control Panel · RTX HDR
+        </button>
       </div>
     </div>
 
