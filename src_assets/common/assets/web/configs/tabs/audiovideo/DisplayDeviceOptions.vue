@@ -104,6 +104,27 @@ const hdrRuntimeConversionLabel = computed(() => {
   return 'D3D11 Pixel Shader'
 })
 
+// Actionable guidance when the TrueHDR backend is missing or failed to load.
+// Technical strings stay in English on purpose: they reference file names and
+// build commands verbatim, matching the rest of this diagnostics panel.
+const truehdrSetupHint = computed(() => {
+  const pipeline = activeHdrPipeline.value
+  if (!pipeline || pipeline.hdr_mode === 'sdr') return ''
+  if (pipeline.synthetic_hdr_state !== 'degraded') return ''
+  const reason = pipeline.synthetic_hdr_failure_reason || ''
+  if (!reason.includes('backend')) return ''
+  const hint = hdrRuntimeStatus.value?.truehdr_runtime_hint
+  if (reason === 'backend_path_not_absolute') {
+    return hint
+      ? `NVIDIA TrueHDR runtime detected at: ${hint} — place foundation_truehdr_backend.dll there and set the backend path to it (Advanced tab).`
+      : 'nvngx_truehdr.dll not found on this machine. Install NVIDIA App (RTX Video) or download the NVIDIA RTX Video SDK, then build the backend with scripts/build-rtx-hdr-backend.ps1.'
+  }
+  if (reason.startsWith('backend_')) {
+    return `TrueHDR backend could not be loaded (${reason}). Rebuild it with scripts/build-rtx-hdr-backend.ps1 and verify nvngx_truehdr.dll sits next to it.`
+  }
+  return ''
+})
+
 async function handleVisibilityChange() {
   if (!hdrRuntimeStatusActive || document.hidden) return
   await refreshHdrRuntimeStatus()
@@ -297,6 +318,11 @@ onUnmounted(() => {
 
                 <div v-if="hdrRuntimeConversionLabel" class="form-text mt-2">
                   {{ $t('config.capture_compute_shader') }}: {{ hdrRuntimeConversionLabel }}
+                </div>
+
+                <div v-if="truehdrSetupHint" class="form-text mt-2 text-warning">
+                  <i class="fas fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                  {{ truehdrSetupHint }}
                 </div>
               </div>
             </div>

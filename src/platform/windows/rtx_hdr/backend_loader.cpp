@@ -5,6 +5,7 @@
 
 #include "backend_loader.h"
 
+#include <cstdlib>
 #include <utility>
 
 namespace platf::dxgi::rtx_hdr {
@@ -77,5 +78,55 @@ namespace platf::dxgi::rtx_hdr {
       FreeLibrary(module_);
       module_ = nullptr;
     }
+  }
+
+  namespace {
+    constexpr auto kTrueHdrRuntimeName = L"nvngx_truehdr.dll";
+    constexpr std::size_t kMaxScanEntries = 20000;
+
+    bool
+    is_truehdr_runtime(const std::filesystem::directory_entry &entry) {
+      std::error_code ec;
+      return entry.is_regular_file(ec) && entry.path().filename() == std::filesystem::path { kTrueHdrRuntimeName };
+    }
+
+    std::string
+    search_directory(const std::filesystem::path &root, int max_depth) {
+      std::error_code ec;
+      if (root.empty() || !std::filesystem::is_directory(root, ec)) {
+        return {};
+      }
+      std::filesystem::recursive_directory_iterator it {
+        root, std::filesystem::directory_options::skip_permission_denied, ec
+      };
+      for (std::size_t scanned = 0; it != std::filesystem::end(it); it.increment(ec)) {
+        if (ec || ++scanned > kMaxScanEntries) {
+          return {};
+        }
+        if (it.depth() >= max_depth) {
+          it.disable_recursion_pending();
+        }
+        if (is_truehdr_runtime(*it)) {
+          return it->path().string();
+        }
+      }
+      return {};
+    }
+  }  // namespace
+
+  std::string
+  locate_system_truehdr_runtime(const std::filesystem::path &backend_path) {
+    if (!backend_path.empty()) {
+      if (auto hint = search_directory(backend_path.parent_path(), 0); !hint.empty()) {
+        return hint;
+      }
+    }
+    const std::filesystem::path program_files {
+      std::getenv("ProgramFiles") ? std::getenv("ProgramFiles") : "C:/Program Files"
+    };
+    if (auto hint = search_directory(program_files / L"NVIDIA Corporation" / L"NVIDIA app", 3); !hint.empty()) {
+      return hint;
+    }
+    return search_directory(program_files / L"NVIDIA Corporation", 2);
   }
 }  // namespace platf::dxgi::rtx_hdr

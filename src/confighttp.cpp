@@ -62,6 +62,9 @@
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "rtsp.h"
+#ifdef _WIN32
+  #include "src/platform/windows/rtx_hdr/backend_loader.h"
+#endif
 #include "src/display_device/to_string.h"
 #include "src/tray/tray_http.h"
 #include "stream.h"
@@ -2385,6 +2388,16 @@ namespace confighttp {
     }
 
     try {
+      std::string truehdr_runtime_hint;
+#ifdef _WIN32
+      if (config::video.rtx_hdr != "off") {
+        std::filesystem::path backend_dir;
+        if (!config::video.rtx_hdr_backend_path.empty()) {
+          backend_dir = std::filesystem::path { config::video.rtx_hdr_backend_path }.parent_path();
+        }
+        truehdr_runtime_hint = platf::dxgi::rtx_hdr::locate_system_truehdr_runtime(backend_dir);
+      }
+#endif
       const auto statuses = video::get_hdr_pipeline_statuses();
       json response_json {
         { "success", true },
@@ -2398,6 +2411,7 @@ namespace confighttp {
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
         { "configured_rtx_hdr_mode", config::video.rtx_hdr },
+        { "truehdr_runtime_hint", truehdr_runtime_hint },
         { "pipelines", json::array() },
       };
 
