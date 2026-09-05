@@ -19,6 +19,8 @@
 
 #include <boost/system/error_code.hpp>
 
+#include "usbip_endpoint.h"
+
 namespace remote_usb {
 
 /** USB interface class tuple advertised by USB/IP control-plane replies. */
@@ -69,12 +71,6 @@ struct callbacks {
   std::function<bool(std::vector<std::uint8_t>)> on_request;
   std::function<void()> on_imported;
   std::function<void(close_reason)> on_closed;
-};
-
-struct endpoint {
-  std::string address { "127.0.0.1" };
-  std::uint16_t port { 0 };
-  std::string busid;
 };
 
 /**

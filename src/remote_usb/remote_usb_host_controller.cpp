@@ -281,13 +281,12 @@ usbip_host_controller::dispatch(operation_kind kind,
   }
 
   const bool valid_request = kind == operation_kind::attach
-                               ? valid_endpoint(request.server_endpoint) &&
-                                   valid_identity(request.identity)
+                               ? valid_endpoint(request.server_endpoint)
                                : valid_binding(binding);
   if (!valid_request) {
     usbip_host_result result;
     result.status = usbip_host_status::invalid_argument;
-    result.detail = "invalid usbip host endpoint or lease identity";
+    result.detail = "invalid usbip host endpoint";
     try {
       completion(std::move(result));
     }
@@ -327,14 +326,12 @@ usbip_host_controller::dispatch(operation_kind kind,
         }
         if (candidate_active &&
             ((kind == operation_kind::attach &&
-              candidate->request.identity == request.identity &&
-              candidate->request.stream_generation == request.stream_generation) ||
+              candidate->request.server_endpoint == request.server_endpoint) ||
              (kind == operation_kind::detach &&
-              candidate->binding.identity == binding.identity &&
-              candidate->binding.stream_generation == binding.stream_generation))) {
+              candidate->binding == binding))) {
           immediate_result = invalid_result(usbip_host_status::busy,
                                              0,
-                                             "the lease already has an operation");
+                                             "the device already has an operation");
           break;
         }
       }
@@ -342,30 +339,24 @@ usbip_host_controller::dispatch(operation_kind kind,
         const auto accepted = std::find_if(
           accepted_bindings_.begin(), accepted_bindings_.end(),
           [&request](const usbip_host_binding &candidate) {
-            return candidate.identity == request.identity &&
-                   candidate.stream_generation == request.stream_generation;
+            return candidate.server_endpoint == request.server_endpoint;
           });
         if (accepted != accepted_bindings_.end()) {
           immediate_result = invalid_result(
             usbip_host_status::busy, 0,
-            "the lease is already attached");
+            "the endpoint is already attached");
         }
       }
       if (!immediate_result && kind == operation_kind::detach) {
         const auto accepted = std::find_if(
           accepted_bindings_.begin(), accepted_bindings_.end(),
           [&binding](const usbip_host_binding &candidate) {
-            return candidate.identity == binding.identity &&
-                   candidate.server_endpoint.address == binding.server_endpoint.address &&
-                   candidate.server_endpoint.port == binding.server_endpoint.port &&
-                   candidate.server_endpoint.busid == binding.server_endpoint.busid &&
-                   candidate.hub_port == binding.hub_port &&
-                   candidate.stream_generation == binding.stream_generation;
+            return candidate == binding;
           });
         if (accepted == accepted_bindings_.end()) {
           immediate_result = invalid_result(
             usbip_host_status::invalid_argument, 0,
-            "the lease is not attached by this controller");
+            "the binding is not attached by this controller");
         }
       }
       if (!immediate_result && active >= config_.max_concurrent_operations) {
@@ -391,7 +382,12 @@ usbip_host_controller::dispatch(operation_kind kind,
               [candidate](const std::shared_ptr<operation> &existing) {
                 return existing->id == candidate;
               });
-            if (collision == operations_.end()) {
+            const auto binding_collision = std::find_if(
+              accepted_bindings_.begin(), accepted_bindings_.end(),
+              [candidate](const usbip_host_binding &existing) {
+                return existing.binding_id == candidate;
+              });
+            if (collision == operations_.end() && binding_collision == accepted_bindings_.end()) {
               return candidate;
             }
           }
@@ -839,7 +835,7 @@ usbip_host_controller::run_attach(const std::shared_ptr<operation> &operation) {
     return result;
   }
   const auto &request = operation->request;
-  if (!valid_endpoint(request.server_endpoint) || !valid_identity(request.identity)) {
+  if (!valid_endpoint(request.server_endpoint)) {
     result.status = usbip_host_status::invalid_argument;
     result.detail = "invalid usbip attach request";
     return result;
@@ -854,7 +850,7 @@ usbip_host_controller::run_attach(const std::shared_ptr<operation> &operation) {
     "--tcp-port", std::to_string(request.server_endpoint.port),
     "attach", "--remote", request.server_endpoint.address,
     "--bus-id", request.server_endpoint.busid,
-    "--once", "--terse", "--receive-mode", "zero-copy"
+    "--once", "--terse"
   };
   usbip_command_result command;
   try {
@@ -890,9 +886,8 @@ usbip_host_controller::run_attach(const std::shared_ptr<operation> &operation) {
   result.status = usbip_host_status::ok;
   result.binding = usbip_host_binding {
     request.server_endpoint,
-    request.identity,
     *hub_port,
-    request.stream_generation,
+    operation->id,
   };
   return result;
 }
@@ -970,13 +965,8 @@ usbip_host_controller::valid_endpoint(const endpoint &value) noexcept {
 }
 
 bool
-usbip_host_controller::valid_identity(const usbip_host_identity &value) noexcept {
-  return value.session_token != 0 && value.attachment_token != 0 && value.lease_token != 0;
-}
-
-bool
 usbip_host_controller::valid_binding(const usbip_host_binding &value) noexcept {
-  return valid_endpoint(value.server_endpoint) && valid_identity(value.identity) &&
+  return valid_endpoint(value.server_endpoint) && value.binding_id != 0 &&
          value.hub_port >= 1 && value.hub_port <= kMaxHubPort;
 }
 
@@ -1158,8 +1148,7 @@ usbip_host_controller::remember_binding_locked(const usbip_host_binding &binding
   const auto exists = std::find_if(
     accepted_bindings_.begin(), accepted_bindings_.end(),
     [&binding](const usbip_host_binding &candidate) {
-      return candidate.identity == binding.identity &&
-             candidate.stream_generation == binding.stream_generation;
+      return candidate == binding;
     });
   if (exists == accepted_bindings_.end()) {
     accepted_bindings_.push_back(binding);
@@ -1171,9 +1160,7 @@ usbip_host_controller::forget_binding_locked(const usbip_host_binding &binding) 
   accepted_bindings_.erase(
     std::remove_if(accepted_bindings_.begin(), accepted_bindings_.end(),
       [&binding](const usbip_host_binding &candidate) {
-        return candidate.identity == binding.identity &&
-               candidate.hub_port == binding.hub_port &&
-               candidate.stream_generation == binding.stream_generation;
+        return candidate == binding;
       }),
     accepted_bindings_.end());
 }

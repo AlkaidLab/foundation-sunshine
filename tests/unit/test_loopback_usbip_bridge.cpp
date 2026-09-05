@@ -436,13 +436,13 @@ TEST(LoopbackUsbipBridge, GeneratesFreshOpaqueBusidPerStart) {
   boost::system::error_code error;
   const auto first = bridge.start(test_device(), events.callbacks(), error);
   ASSERT_TRUE(first.has_value()) << error.message();
-  ASSERT_EQ(first->busid.size(), 29U);
+  ASSERT_EQ(first->busid.size(), 30U);
   bridge.stop();
 
   const auto second = bridge.start(test_device(), events.callbacks(), error);
   ASSERT_TRUE(second.has_value()) << error.message();
-  EXPECT_EQ(second->busid.size(), 29U);
-  EXPECT_EQ(second->busid.rfind("rusb-", 0), 0U);
+  EXPECT_EQ(second->busid.size(), 30U);
+  EXPECT_EQ(second->busid.rfind("usbip-", 0), 0U);
   EXPECT_NE(first->busid, second->busid);
   bridge.stop();
 }
@@ -456,8 +456,8 @@ TEST(LoopbackUsbipBridge, ServesControlAndSubmitRoundTrip) {
   EXPECT_EQ(endpoint->address, "127.0.0.1");
   EXPECT_NE(endpoint->port, 0);
   EXPECT_NE(endpoint->port, 3240);
-  EXPECT_EQ(endpoint->busid.size(), 29U);
-  EXPECT_EQ(endpoint->busid.rfind("rusb-", 0), 0U);
+  EXPECT_EQ(endpoint->busid.size(), 30U);
+  EXPECT_EQ(endpoint->busid.rfind("usbip-", 0), 0U);
   EXPECT_NE(endpoint->busid, "1-2");
   ASSERT_TRUE(bridge.running());
 

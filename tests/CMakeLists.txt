@@ -191,13 +191,6 @@ if (WIN32)
     list(APPEND REMOTE_USB_TLS_PLATFORM_LIBRARIES crypt32)
 endif ()
 
-set(RUSB_VECTOR_JSON
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-remote-usb-core/contract/vectors-v1.json")
-if (NOT EXISTS "${RUSB_VECTOR_JSON}")
-    message(FATAL_ERROR
-            "Missing ${RUSB_VECTOR_JSON}. Run: git submodule update --init --recursive")
-endif ()
-
 add_executable(loopback_usbip_bridge_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
@@ -232,107 +225,6 @@ set_target_properties(virtual_touchscreen_unit_tests PROPERTIES
         CXX_STANDARD_REQUIRED ON)
 add_test(NAME virtual_touchscreen_unit_tests COMMAND virtual_touchscreen_unit_tests)
 
-add_executable(remote_usb_broker_adapter_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_broker_adapter.cpp)
-target_include_directories(remote_usb_broker_adapter_unit_tests PRIVATE
-        "${CMAKE_SOURCE_DIR}")
-target_link_libraries(remote_usb_broker_adapter_unit_tests
-        Boost::asio
-        Boost::system
-        ${CMAKE_THREAD_LIBS_INIT}
-        ${REMOTE_USB_SOCKET_LIBRARIES}
-        gtest_main)
-target_compile_options(remote_usb_broker_adapter_unit_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(remote_usb_broker_adapter_unit_tests PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON)
-add_test(NAME remote_usb_broker_adapter_unit_tests COMMAND remote_usb_broker_adapter_unit_tests)
-
-add_executable(remote_usb_broker_server_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_server.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_broker_server.cpp)
-target_include_directories(remote_usb_broker_server_unit_tests PRIVATE
-        "${CMAKE_SOURCE_DIR}")
-target_link_libraries(remote_usb_broker_server_unit_tests
-        Boost::asio
-        Boost::system
-        ${OPENSSL_LIBRARIES}
-        ${CMAKE_THREAD_LIBS_INIT}
-        ${REMOTE_USB_SOCKET_LIBRARIES}
-        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
-        gtest_main)
-target_compile_options(remote_usb_broker_server_unit_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(remote_usb_broker_server_unit_tests PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON)
-add_test(NAME remote_usb_broker_server_unit_tests COMMAND remote_usb_broker_server_unit_tests)
-
-add_executable(remote_usb_contract_vectors_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_server.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_contract_vectors.cpp)
-target_include_directories(remote_usb_contract_vectors_unit_tests PRIVATE
-        "${CMAKE_SOURCE_DIR}")
-target_compile_definitions(remote_usb_contract_vectors_unit_tests PRIVATE
-        RUSB_VECTOR_FILE="${RUSB_VECTOR_JSON}")
-target_link_libraries(remote_usb_contract_vectors_unit_tests
-        Boost::asio
-        Boost::system
-        ${OPENSSL_LIBRARIES}
-        nlohmann_json::nlohmann_json
-        ${CMAKE_THREAD_LIBS_INIT}
-        ${REMOTE_USB_SOCKET_LIBRARIES}
-        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
-        gtest_main)
-target_compile_options(remote_usb_contract_vectors_unit_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(remote_usb_contract_vectors_unit_tests PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON)
-add_test(NAME remote_usb_contract_vectors_unit_tests COMMAND remote_usb_contract_vectors_unit_tests)
-
-add_executable(remote_usb_capability_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_http.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_capability.cpp)
-target_include_directories(remote_usb_capability_unit_tests PRIVATE
-        "${CMAKE_SOURCE_DIR}")
-target_link_libraries(remote_usb_capability_unit_tests
-        Boost::asio
-        Boost::system
-        ${OPENSSL_LIBRARIES}
-        nlohmann_json::nlohmann_json
-        ${REMOTE_USB_SOCKET_LIBRARIES}
-        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
-        gtest_main)
-target_compile_options(remote_usb_capability_unit_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(remote_usb_capability_unit_tests PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON)
-add_test(NAME remote_usb_capability_unit_tests COMMAND remote_usb_capability_unit_tests)
-
-add_executable(remote_usb_tombstone_unit_tests
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_tombstone.cpp)
-target_include_directories(remote_usb_tombstone_unit_tests PRIVATE
-        "${CMAKE_SOURCE_DIR}")
-target_link_libraries(remote_usb_tombstone_unit_tests gtest_main)
-target_compile_options(remote_usb_tombstone_unit_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(remote_usb_tombstone_unit_tests PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON)
-add_test(NAME remote_usb_tombstone_unit_tests COMMAND remote_usb_tombstone_unit_tests)
-
 add_executable(remote_usb_host_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp)
@@ -352,35 +244,28 @@ set_target_properties(remote_usb_host_controller_unit_tests PROPERTIES
         CXX_STANDARD_REQUIRED ON)
 add_test(NAME remote_usb_host_controller_unit_tests COMMAND remote_usb_host_controller_unit_tests)
 
-add_executable(remote_usb_service_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_adapter.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_broker_server.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_capability.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_service.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_service.cpp)
-target_include_directories(remote_usb_service_unit_tests PRIVATE
-        # Avoid adding src as a broad include root: on MinGW it can shadow the
-        # system <process.h> with Sunshine's src/process.h through pthread.h.
-        "${CMAKE_SOURCE_DIR}"
-        "${OPENSSL_INCLUDE_DIR}")
-target_link_libraries(remote_usb_service_unit_tests
-        Boost::asio
-        Boost::process
-        Boost::system
-        ${OPENSSL_LIBRARIES}
-        nlohmann_json::nlohmann_json
-        ${CMAKE_THREAD_LIBS_INIT}
-        ${REMOTE_USB_SOCKET_LIBRARIES}
-        ${REMOTE_USB_TLS_PLATFORM_LIBRARIES}
-        gtest_main)
-target_compile_options(remote_usb_service_unit_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(remote_usb_service_unit_tests PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON)
-add_test(NAME remote_usb_service_unit_tests COMMAND remote_usb_service_unit_tests)
+# Drives the production TLS service for tests/tools/test_reverse_tunnel.py and
+# paired Moonlight probe runs, including real usbip-win2 device imports.
+add_executable(reverse_tunnel_probe
+        ${CMAKE_SOURCE_DIR}/tests/tools/reverse_tunnel_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/reverse_tunnel_service.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp)
+target_include_directories(reverse_tunnel_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(reverse_tunnel_probe PRIVATE
+        Boost::asio Boost::process Boost::system Boost::log
+        OpenSSL::SSL OpenSSL::Crypto nlohmann_json::nlohmann_json
+        ${CMAKE_THREAD_LIBS_INIT} ${REMOTE_USB_SOCKET_LIBRARIES})
+set_target_properties(reverse_tunnel_probe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+find_package(Python3 QUIET COMPONENTS Interpreter)
+find_program(REVERSE_TUNNEL_OPENSSL_EXECUTABLE openssl)
+if (Python3_Interpreter_FOUND AND REVERSE_TUNNEL_OPENSSL_EXECUTABLE)
+    add_test(NAME reverse_tunnel_transport_tests
+            COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/tools/test_reverse_tunnel.py"
+            "$<TARGET_FILE:reverse_tunnel_probe>"
+            --openssl "${REVERSE_TUNNEL_OPENSSL_EXECUTABLE}")
+    set_tests_properties(reverse_tunnel_transport_tests PROPERTIES TIMEOUT 60)
+endif ()
 
 # modify SUNSHINE_DEFINITIONS
 if (WIN32)
@@ -441,8 +326,6 @@ target_link_libraries(${PROJECT_NAME}
 target_compile_definitions(${PROJECT_NAME} PUBLIC
         ${SUNSHINE_DEFINITIONS}
         ${TEST_DEFINITIONS})
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-        RUSB_VECTOR_FILE="${RUSB_VECTOR_JSON}")
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 target_link_options(${PROJECT_NAME} PRIVATE)
 

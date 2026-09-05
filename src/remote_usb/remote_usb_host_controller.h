@@ -2,7 +2,7 @@
  * @file src/remote_usb/remote_usb_host_controller.h
  * @brief Structured host-side USB/IP attach and detach orchestration.
  *
- * The broker exposes a short-lived loopback USB/IP endpoint.  This controller
+ * The tunnel exposes a short-lived loopback USB/IP endpoint.  This controller
  * is the only layer allowed to turn that endpoint into a usbip-win2 command;
  * callers never have to concatenate a shell command or parse an arbitrary
  * process lifetime.
@@ -23,38 +23,24 @@
 #include <thread>
 #include <vector>
 
-#include "loopback_usbip_bridge.h"
+#include "usbip_endpoint.h"
 
 namespace remote_usb {
 
-/** The non-secret owner identity of one remote USB lease. */
-struct usbip_host_identity {
-  std::uint64_t session_token { 0 };
-  std::uint64_t attachment_token { 0 };
-  std::uint64_t lease_token { 0 };
-
-  friend bool operator==(const usbip_host_identity &lhs,
-                         const usbip_host_identity &rhs) noexcept {
-    return lhs.session_token == rhs.session_token &&
-           lhs.attachment_token == rhs.attachment_token &&
-           lhs.lease_token == rhs.lease_token;
-  }
-};
-
+/** The tunnel authenticates the peer before requesting a local USB/IP attach.
+ *  The endpoint identifies an active device, but ports may be reused later. */
 struct usbip_host_request {
   endpoint server_endpoint;
-  usbip_host_identity identity;
-  /** Stream generation is carried for lifecycle correlation only. */
-  std::uint64_t stream_generation { 0 };
 };
 
 struct usbip_host_binding {
   endpoint server_endpoint;
-  usbip_host_identity identity;
   /** usbip-win2 virtual hub port returned by `attach --terse`. */
   std::uint16_t hub_port { 0 };
-  /** Stream generation is carried for lifecycle correlation only. */
-  std::uint64_t stream_generation { 0 };
+  /** Controller-issued attach operation ID; rejects stale detach after reuse. */
+  std::uint64_t binding_id { 0 };
+
+  friend bool operator==(const usbip_host_binding &, const usbip_host_binding &) = default;
 };
 
 enum class usbip_host_status : std::uint8_t {
@@ -219,7 +205,6 @@ private:
                                    std::string detail) const;
 
   static bool valid_endpoint(const endpoint &value) noexcept;
-  static bool valid_identity(const usbip_host_identity &value) noexcept;
   static bool valid_binding(const usbip_host_binding &value) noexcept;
   static std::optional<std::uint16_t> parse_hub_port(std::string_view output) noexcept;
   static std::string trim_ascii(std::string_view value);
