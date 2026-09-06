@@ -203,7 +203,9 @@ print_raw_digitizer_count(const char *tag) {
       UINT nsize = sizeof(name);
       GetRawInputDeviceInfoW(d.hDevice, RIDI_DEVICENAME, name, &nsize);
       printf("[raw] %s: digitizer vid=0x%04X pid=0x%04X usage=0x%02X path=%ls\n", tag,
-             info.hid.dwVendorId, info.hid.dwProductId, info.hid.usUsage, name);
+             static_cast<unsigned int>(info.hid.dwVendorId),
+             static_cast<unsigned int>(info.hid.dwProductId),
+             static_cast<unsigned int>(info.hid.usUsage), name);
     }
   }
   printf("[raw] %s: %d digitizer(s) total\n", tag, digitizers);
@@ -247,7 +249,7 @@ host_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
     POINTER_INFO pi {};
     if (GetPointerInfo(pid, &pi)) {
       printf("[ptr] msg=0x%03X id=%u type=%u flags=0x%X at (%ld,%ld)\n",
-             m, pid, pi.pointerType, pi.pointerFlags,
+             m, pid, static_cast<unsigned int>(pi.pointerType), pi.pointerFlags,
              (long) pi.ptPixelLocation.x, (long) pi.ptPixelLocation.y);
     }
     else {

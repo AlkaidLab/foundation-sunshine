@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "Exponera Web UI till internet är en säkerhetsrisk! Fortsätt på egen risk!",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "Om du använder en omvänd proxy för Web UI ska Sunshine-värdens faktiska IP-adress för ett nätverksgränssnitt användas som upstream-adress. Använd inte localhost, 127.0.0.0/8 eller IPv6-loopbackadressen ::1 som proxymål.",
     "qp": "Kvantifieringsparameter",
     "qp_desc": "Vissa enheter kanske inte stöder konstant Bit Rate. För dessa enheter, QP används istället. Högre värde innebär mer komprimering, men mindre kvalitet.",
     "qsv_coder": "QuickSync kodare (H264)",
