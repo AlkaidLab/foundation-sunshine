@@ -11,6 +11,7 @@
 #                             driver is excluded from packaging.
 #   VMOUSE_DRIVER_VERSION   — ZakoVirtualMouse release tag (e.g. v1.1.0)
 #   VMOUSE_PUBLIC_REPO      — Public repo hosting vmouse release assets
+#                             and their GitHub SHA-256 digests
 #                             (default: AlkaidLab/zako-vmouse-release)
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
@@ -95,13 +96,64 @@ set(VIGEMBUS_DIR "${DRIVER_DEPS_CACHE}/vigembus" CACHE PATH "" FORCE)
 set(VIGEMBUS_INSTALLER "${VIGEMBUS_DIR}/${VIGEMBUS_ASSET_NAME}"
     CACHE FILEPATH "Pinned ViGEmBus installer" FORCE)
 
+set(_DRIVER_DOWNLOAD_ATTEMPTS 3)
+set(_DRIVER_DOWNLOAD_TIMEOUT_SECONDS 60)
+set(_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS 15)
+
 if(NOT FETCH_DRIVER_DEPS)
   message(STATUS "Driver dependency downloads disabled (FETCH_DRIVER_DEPS=OFF)")
   return()
 endif()
 
 # ---------------------------------------------------------------------------
-# Helper: download a public release asset (skip if already cached)
+# Helper: download a file with bounded retries. Partial downloads are removed
+# between attempts; completed files are cached by the caller.
+# ---------------------------------------------------------------------------
+function(_driver_download_with_retries url output_path)
+  get_filename_component(_dir "${output_path}" DIRECTORY)
+  file(MAKE_DIRECTORY "${_dir}")
+
+  foreach(_attempt RANGE 1 ${_DRIVER_DOWNLOAD_ATTEMPTS})
+    file(REMOVE "${output_path}")
+    if(ARGN)
+      file(DOWNLOAD "${url}" "${output_path}"
+        STATUS _status
+        TLS_VERIFY ON
+        TIMEOUT ${_DRIVER_DOWNLOAD_TIMEOUT_SECONDS}
+        INACTIVITY_TIMEOUT ${_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS}
+        HTTPHEADER ${ARGN})
+    else()
+      file(DOWNLOAD "${url}" "${output_path}"
+        STATUS _status
+        TLS_VERIFY ON
+        TIMEOUT ${_DRIVER_DOWNLOAD_TIMEOUT_SECONDS}
+        INACTIVITY_TIMEOUT ${_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS})
+    endif()
+
+    list(GET _status 0 _code)
+    if(_code EQUAL 0 AND EXISTS "${output_path}")
+      file(SIZE "${output_path}" _size)
+      if(_size GREATER 0)
+        return()
+      endif()
+      set(_status 1 "downloaded file is empty")
+      set(_code 1)
+    endif()
+
+    list(GET _status 1 _message)
+    file(REMOVE "${output_path}")
+    if(_attempt LESS _DRIVER_DOWNLOAD_ATTEMPTS)
+      message(STATUS
+        "  Download attempt ${_attempt}/${_DRIVER_DOWNLOAD_ATTEMPTS} failed (${_code}): ${_message}; retrying")
+    else()
+      message(WARNING
+        "  Download failed after ${_DRIVER_DOWNLOAD_ATTEMPTS} attempts (${_code}): ${_message}")
+    endif()
+  endforeach()
+endfunction()
+
+# ---------------------------------------------------------------------------
+# Helper: download a public release asset (skip if a verified cache exists)
 # ---------------------------------------------------------------------------
 function(_driver_download url output_path)
   set(_expected_sha256 "")
@@ -122,29 +174,8 @@ function(_driver_download url output_path)
     endif()
   endif()
 
-  get_filename_component(_dir "${output_path}" DIRECTORY)
-  file(MAKE_DIRECTORY "${_dir}")
-
   message(STATUS "  Downloading: ${url}")
-
-  file(DOWNLOAD "${url}" "${output_path}"
-    STATUS _status
-    TLS_VERIFY ON)
-  list(GET _status 0 _code)
-  if(NOT _code EQUAL 0)
-    list(GET _status 1 _msg)
-    message(WARNING "  Download failed (${_code}): ${_msg}")
-    file(REMOVE "${output_path}")
-    return()
-  endif()
-
-  if(EXISTS "${output_path}")
-    file(SIZE "${output_path}" _size)
-    if(_size EQUAL 0)
-      message(WARNING "  Downloaded file is empty: ${output_path}")
-      file(REMOVE "${output_path}")
-    endif()
-  endif()
+  _driver_download_with_retries("${url}" "${output_path}")
 
   if(EXISTS "${output_path}" AND _expected_sha256)
     file(SHA256 "${output_path}" _actual_sha256)
@@ -158,24 +189,59 @@ function(_driver_download url output_path)
   endif()
 endfunction()
 
+function(_download_github_release_metadata repository version output_path)
+  if(EXISTS "${output_path}")
+    return()
+  endif()
+
+  set(_url "https://api.github.com/repos/${repository}/releases/tags/${version}")
+  set(_temporary_path "${output_path}.download")
+  _driver_download_with_retries(
+    "${_url}"
+    "${_temporary_path}"
+    "Accept: application/vnd.github+json"
+    "X-GitHub-Api-Version: 2022-11-28"
+    "User-Agent: Sunshine-Foundation-CMake")
+
+  if(EXISTS "${_temporary_path}")
+    file(RENAME "${_temporary_path}" "${output_path}")
+  endif()
+endfunction()
+
+function(_github_release_asset_sha256 metadata_path asset_name output_variable)
+  set(${output_variable} "" PARENT_SCOPE)
+  if(NOT EXISTS "${metadata_path}")
+    return()
+  endif()
+
+  file(READ "${metadata_path}" _release_json)
+  string(JSON _asset_count ERROR_VARIABLE _json_error LENGTH "${_release_json}" assets)
+  if(NOT _json_error STREQUAL "NOTFOUND" OR _asset_count EQUAL 0)
+    return()
+  endif()
+
+  math(EXPR _last_asset_index "${_asset_count} - 1")
+  foreach(_asset_index RANGE 0 ${_last_asset_index})
+    string(JSON _name ERROR_VARIABLE _name_error GET "${_release_json}" assets ${_asset_index} name)
+    if(NOT _name_error STREQUAL "NOTFOUND" OR NOT _name STREQUAL asset_name)
+      continue()
+    endif()
+
+    string(JSON _digest ERROR_VARIABLE _digest_error GET "${_release_json}" assets ${_asset_index} digest)
+    if(_digest_error STREQUAL "NOTFOUND" AND _digest MATCHES "^sha256:([0-9A-Fa-f]{64})$")
+      string(TOLOWER "${CMAKE_MATCH_1}" _sha256)
+      set(${output_variable} "${_sha256}" PARENT_SCOPE)
+    endif()
+    return()
+  endforeach()
+endfunction()
+
 # ---------------------------------------------------------------------------
 # ZakoVirtualMouse (public release assets)
 # ---------------------------------------------------------------------------
-function(_fetch_vmouse_impl _files)
+function(_fetch_vmouse_impl _files output_verified)
+  set(${output_verified} FALSE PARENT_SCOPE)
   message(STATUS "Fetching ZakoVirtualMouse ${VMOUSE_DRIVER_VERSION} ...")
-
-  # Check if all files already cached
-  set(_all_cached TRUE)
-  foreach(_f ${_files})
-    if(NOT EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
-      set(_all_cached FALSE)
-      break()
-    endif()
-  endforeach()
-  if(_all_cached)
-    message(STATUS "  All vmouse files already cached")
-    return()
-  endif()
 
   file(MAKE_DIRECTORY "${VMOUSE_DRIVER_DIR}")
 
@@ -184,14 +250,36 @@ function(_fetch_vmouse_impl _files)
     return()
   endif()
 
+  set(_metadata_path "${VMOUSE_DRIVER_DIR}/.release-metadata.json")
+  _download_github_release_metadata(
+    "${VMOUSE_PUBLIC_REPO}"
+    "${VMOUSE_DRIVER_VERSION}"
+    "${_metadata_path}")
+  if(NOT EXISTS "${_metadata_path}")
+    message(WARNING "  GitHub release metadata is unavailable for ${VMOUSE_DRIVER_VERSION}")
+    return()
+  endif()
+
   message(STATUS "  Downloading from public repo ${VMOUSE_PUBLIC_REPO} ...")
   foreach(_f ${_files})
-    if(EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
+    _github_release_asset_sha256("${_metadata_path}" "${_f}" _expected_sha256)
+    if(NOT _expected_sha256)
+      message(WARNING "  GitHub release metadata has no SHA-256 digest for ${_f}")
+      file(REMOVE "${VMOUSE_DRIVER_DIR}/${_f}")
       continue()
     endif()
     set(_url "https://github.com/${VMOUSE_PUBLIC_REPO}/releases/download/${VMOUSE_DRIVER_VERSION}/${_f}")
-    _driver_download("${_url}" "${VMOUSE_DRIVER_DIR}/${_f}")
+    _driver_download("${_url}" "${VMOUSE_DRIVER_DIR}/${_f}" "${_expected_sha256}")
   endforeach()
+
+  set(_all_verified TRUE)
+  foreach(_f ${_files})
+    if(NOT EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
+      set(_all_verified FALSE)
+      break()
+    endif()
+  endforeach()
+  set(${output_verified} ${_all_verified} PARENT_SCOPE)
 endfunction()
 
 # The vmouse assets are downloaded as bare filenames with no version in them, so
@@ -201,34 +289,30 @@ endfunction()
 function(_fetch_vmouse)
   set(_files ZakoVirtualMouse.dll ZakoVirtualMouse.inf ZakoVirtualMouse.cat ZakoVirtualMouse.cer)
   set(_marker "${VMOUSE_DRIVER_DIR}/.release-version")
+  set(_expected_marker "${VMOUSE_PUBLIC_REPO}|${VMOUSE_DRIVER_VERSION}")
 
   set(_stamp_ok FALSE)
   if(EXISTS "${_marker}")
     file(READ "${_marker}" _current)
     string(STRIP "${_current}" _current)
-    if("${_current}" STREQUAL "${VMOUSE_DRIVER_VERSION}")
+    if("${_current}" STREQUAL "${_expected_marker}")
       set(_stamp_ok TRUE)
     endif()
   endif()
 
   if(NOT _stamp_ok AND EXISTS "${VMOUSE_DRIVER_DIR}")
-    message(STATUS "  vmouse cache is not ${VMOUSE_DRIVER_VERSION}; clearing ${VMOUSE_DRIVER_DIR}")
+    message(STATUS "  vmouse cache source or version changed; clearing ${VMOUSE_DRIVER_DIR}")
     file(REMOVE_RECURSE "${VMOUSE_DRIVER_DIR}")
   endif()
 
-  _fetch_vmouse_impl("${_files}")
+  _fetch_vmouse_impl("${_files}" _all_verified)
 
-  # Only stamp a complete set — a partial download must retry on the next
-  # configure instead of being treated as a good cache.
-  set(_all_ok TRUE)
-  foreach(_f ${_files})
-    if(NOT EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
-      set(_all_ok FALSE)
-      break()
-    endif()
-  endforeach()
-  if(_all_ok)
-    file(WRITE "${_marker}" "${VMOUSE_DRIVER_VERSION}\n")
+  # Only stamp a complete, digest-verified set. A partial download must retry
+  # on the next configure instead of being treated as a good cache.
+  if(_all_verified)
+    file(WRITE "${_marker}" "${_expected_marker}\n")
+  else()
+    file(REMOVE "${_marker}")
   endif()
 endfunction()
 
