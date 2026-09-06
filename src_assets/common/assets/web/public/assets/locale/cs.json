@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "Vystavení webového uživatelského rozhraní na internet je bezpečnostní riziko! Pokračujte na vlastní nebezpečí!",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "Pokud pro Web UI používáte reverzní proxy, nastavte jako upstream skutečnou IP adresu síťového rozhraní hostitele Sunshine. Jako cíl proxy nepoužívejte localhost, 127.0.0.0/8 ani zpětnou IPv6 adresu ::1.",
     "qp": "Parametr kvantizace",
     "qp_desc": "Některá zařízení nemusí podporovat Constant Bit Rate. Pro tato zařízení se místo toho používá QP. Vyšší hodnota znamená větší kompresi, ale menší kvalitu.",
     "qsv_coder": "Kodér QuickSync (H264)",

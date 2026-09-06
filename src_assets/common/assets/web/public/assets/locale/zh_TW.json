@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "將網頁 UI 暴露於網際網路存在安全風險！請自行承擔風險！",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "如需反向代理 Web UI，請將上游位址設定為 Sunshine 主機的實際網路介面 IP。請勿使用 localhost、127.0.0.0/8 或 IPv6 回送位址 ::1 作為代理目標。",
     "qp": "量化參數",
     "qp_desc": "某些裝置可能不支援 Constant Bit Rate。對於這些裝置，會使用 QP 來取代。值越高表示壓縮越多，但品質越低。",
     "qsv_coder": "QuickSync 編碼器（H264）",
