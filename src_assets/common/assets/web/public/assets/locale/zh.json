@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "暴露 Web UI 到公网存在安全风险！请自行承担风险！",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "如需反向代理 Web UI，请将上游地址配置为 Sunshine 主机的实际网卡 IP。请勿使用 localhost、127.0.0.0/8 或 IPv6 回环地址 ::1 作为代理目标。",
     "qp": "量化参数 (QP)",
     "qp_desc": "某些设备可能不支持恒定码率。对于这些设备，则使用 QP 代替。数值越大，压缩率越高，但质量越差。",
     "qsv_coder": "QuickSync 编码器 (H264)",
