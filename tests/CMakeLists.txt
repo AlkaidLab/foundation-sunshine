@@ -185,10 +185,8 @@ if (NOT BUILD_TESTS)
 endif ()
 
 set(REMOTE_USB_SOCKET_LIBRARIES)
-set(REMOTE_USB_TLS_PLATFORM_LIBRARIES)
 if (WIN32)
     list(APPEND REMOTE_USB_SOCKET_LIBRARIES mswsock ws2_32)
-    list(APPEND REMOTE_USB_TLS_PLATFORM_LIBRARIES crypt32)
 endif ()
 
 add_executable(loopback_usbip_bridge_unit_tests

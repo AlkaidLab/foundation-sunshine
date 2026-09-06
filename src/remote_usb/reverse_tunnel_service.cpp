@@ -84,7 +84,7 @@ namespace remote_usb {
         stream_.async_handshake(ssl::stream_base::server,
           [self](boost::system::error_code error) {
             if (error) {
-              BOOST_LOG(info) << "Reverse USB tunnel TLS rejected: " << error.message();
+              BOOST_LOG(info) << "Remote USB tunnel TLS rejected: " << error.message();
               self->finish();
               return;
             }
@@ -117,7 +117,7 @@ namespace remote_usb {
           if (error) {
             return;  // cancelled: forwarding started or the session ended
           }
-          BOOST_LOG(warning) << "Reverse USB tunnel startup timed out";
+          BOOST_LOG(warning) << "Remote USB tunnel startup timed out";
           self->abort();
         });
       }
@@ -140,9 +140,11 @@ namespace remote_usb {
 
       void
       handle_handshake_line() {
+        /* async_read_until only completes after the delimiter, so the
+         * newline is always present here; overflow is rejected by the
+         * bounded dynamic_buffer's read error path instead. */
         const auto newline = handshake_.find('\n');
         if (newline == std::string::npos) {
-          reply_error("handshake line too long");
           return;
         }
 
@@ -163,7 +165,7 @@ namespace remote_usb {
           return;
         }
         if (!tokens_equal(token, config_.session_token)) {
-          BOOST_LOG(warning) << "Reverse USB tunnel rejected a mismatched session token";
+          BOOST_LOG(warning) << "Remote USB tunnel rejected a mismatched session token";
           reply_error("unauthorized");
           return;
         }
@@ -235,7 +237,7 @@ namespace remote_usb {
           return;
         }
         if (!result.ok() || !result.binding) {
-          BOOST_LOG(warning) << "Reverse USB tunnel usbip attach failed: " << result.detail;
+          BOOST_LOG(warning) << "Remote USB tunnel usbip attach failed: " << result.detail;
           reply_error("usbip attach failed");
           return;
         }
