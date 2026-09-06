@@ -5,7 +5,9 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <ostream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,6 +15,41 @@
 #include <utility>
 
 namespace http_util {
+  inline std::string
+  sanitize_request_log_value(std::string_view value, const std::size_t max_length = 256) {
+    std::string sanitized;
+    const auto length = std::min(value.size(), max_length);
+    sanitized.reserve(length + (value.size() > max_length ? 3 : 0));
+
+    for (std::size_t index = 0; index < length; ++index) {
+      const auto character = static_cast<unsigned char>(value[index]);
+      sanitized.push_back(character < 0x20 || character == 0x7F ? '?' : static_cast<char>(character));
+    }
+    if (value.size() > max_length) {
+      sanitized.append("...");
+    }
+    return sanitized;
+  }
+
+  template <class Fields, std::size_t AllowedCount>
+  void
+  append_allowed_request_log_fields(
+    std::ostream &stream,
+    std::string_view prefix,
+    const Fields &fields,
+    const std::array<std::string_view, AllowedCount> &allowed_names,
+    std::string_view separator
+  ) {
+    bool first = true;
+    for (const auto &[name, value] : fields) {
+      if (std::find(allowed_names.begin(), allowed_names.end(), name) == allowed_names.end()) {
+        continue;
+      }
+      stream << (first ? prefix : separator) << name << '=' << sanitize_request_log_value(value);
+      first = false;
+    }
+  }
+
   namespace detail {
     inline std::string_view
     trim_ascii_whitespace(std::string_view value) {

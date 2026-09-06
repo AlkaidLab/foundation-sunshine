@@ -8,6 +8,7 @@
 
 #include "process.h"
 
+#include <array>
 #include <cstdint>
 #include <cmath>
 #include <cstdlib>
@@ -114,8 +115,8 @@ namespace confighttp {
                << ", METHOD: " << request->method
                << ", PATH: " << request->path;
     
-    // Disabled until request logging has an explicit field allowlist and
-    // redaction policy. Headers and query parameters may contain credentials.
+    // Headers stay disabled because authentication and proxy headers may
+    // contain credentials.
     /*
     // Headers
     if (!request->header.empty()) {
@@ -128,18 +129,20 @@ namespace confighttp {
       }
     }
     
-    // Query parameters
-    auto query_params = request->parse_query_string();
-    if (!query_params.empty()) {
-      log_stream << ", PARAMS: ";
-      bool first = true;
-      for (auto &[name, val] : query_params) {
-        if (!first) log_stream << "&";
-        log_stream << name << "=" << val;
-        first = false;
-      }
-    }
     */
+
+    static constexpr std::array safe_query_parameters {
+      "bitrate"sv,
+      "clientname"sv,
+    };
+    auto query_params = request->parse_query_string();
+    http_util::append_allowed_request_log_fields(
+      log_stream,
+      ", PARAMS: "sv,
+      query_params,
+      safe_query_parameters,
+      "&"sv
+    );
     
     BOOST_LOG(verbose) << log_stream.str();
   }
@@ -2743,7 +2746,7 @@ namespace confighttp {
       targetUrl += "?" + request->query_string;
     }
 
-    BOOST_LOG(info) << "Steam API proxy request: " << targetUrl;
+    BOOST_LOG(info) << "Steam API proxy request path: " << http_util::sanitize_request_log_value(path);
 
     // 安全检查：防止SSRF，确保目标主机确实是api.steampowered.com
     if (http::url_get_host(targetUrl) != "api.steampowered.com") {
@@ -2763,7 +2766,7 @@ namespace confighttp {
         
         response->write(SimpleWeb::StatusCode::success_ok, content, headers);
       } else {
-        BOOST_LOG(error) << "Steam API request failed: " << targetUrl;
+        BOOST_LOG(error) << "Steam API request failed for path: " << http_util::sanitize_request_log_value(path);
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API request failed");
       }
     } catch (const std::exception& e) {
@@ -2791,7 +2794,7 @@ namespace confighttp {
       targetUrl += "?" + request->query_string;
     }
 
-    BOOST_LOG(info) << "Steam Store proxy request: " << targetUrl;
+    BOOST_LOG(info) << "Steam Store proxy request path: " << http_util::sanitize_request_log_value(path);
 
     // 安全检查：防止SSRF，确保目标主机确实是store.steampowered.com
     if (http::url_get_host(targetUrl) != "store.steampowered.com") {
@@ -2811,7 +2814,7 @@ namespace confighttp {
         
         response->write(SimpleWeb::StatusCode::success_ok, content, headers);
       } else {
-        BOOST_LOG(error) << "Steam Store request failed: " << targetUrl;
+        BOOST_LOG(error) << "Steam Store request failed for path: " << http_util::sanitize_request_log_value(path);
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store request failed");
       }
     } catch (const std::exception& e) {
