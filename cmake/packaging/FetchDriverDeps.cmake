@@ -10,10 +10,8 @@
 #                             missing files become a WARNING and the affected
 #                             driver is excluded from packaging.
 #   VMOUSE_DRIVER_VERSION   — ZakoVirtualMouse release tag (e.g. v1.1.0)
-#   VMOUSE_PUBLIC_REPO      — Public mirror repo for vmouse release assets
-#                             (default: AlkaidLab/zako-vmouse-release). Tried
-#                             first; falls back to private repo via API if
-#                             GITHUB_TOKEN is available.
+#   VMOUSE_PUBLIC_REPO      — Public repo hosting vmouse release assets
+#                             (default: AlkaidLab/zako-vmouse-release)
 #   VDD_DRIVER_VERSION      — ZakoVDD release tag (e.g. v0.1.4)
 #   VDD_WIN10_DRIVER_VERSION — Win10-pinned ZakoVDD release tag
 #   NEFCON_VERSION          — nefcon release tag (e.g. v1.10.0)
@@ -22,7 +20,6 @@
 #   VIGEMBUS_VERSION        — pinned ViGEmBus release tag
 #   VIGEMBUS_ASSET_NAME     — pinned multi-architecture installer asset
 #   VIGEMBUS_SHA256         — expected installer digest
-#   GITHUB_TOKEN            — Token for private repos (or set env GITHUB_TOKEN)
 #
 # Output variables (CACHE FORCE, available to parent):
 #   VMOUSE_DRIVER_DIR       — Directory containing vmouse driver files
@@ -83,9 +80,8 @@ set(VIGEMBUS_SHA256 "89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd0
     CACHE STRING "SHA256 of the pinned ViGEmBus installer")
 
 # Repositories
-set(_VMOUSE_REPO "AlkaidLab/ZakoVirtualMouse")
 set(VMOUSE_PUBLIC_REPO "AlkaidLab/zako-vmouse-release" CACHE STRING
-    "Public mirror repo (owner/name) hosting ZakoVirtualMouse release assets")
+    "Public repo (owner/name) hosting ZakoVirtualMouse release assets")
 set(_VDD_REPO "qiin2333/zako-vdd")
 set(_NEFCON_REPO "nefarius/nefcon")
 
@@ -104,15 +100,8 @@ if(NOT FETCH_DRIVER_DEPS)
   return()
 endif()
 
-# GitHub token for private repos
-if(NOT GITHUB_TOKEN AND DEFINED ENV{GITHUB_TOKEN})
-  set(GITHUB_TOKEN "$ENV{GITHUB_TOKEN}")
-endif()
-
 # ---------------------------------------------------------------------------
-# Helper: download a single file (skip if already cached)
-# Uses curl for authenticated requests to handle GitHub's 302 redirects
-# properly (CMake file(DOWNLOAD) doesn't forward auth headers on redirect).
+# Helper: download a public release asset (skip if already cached)
 # ---------------------------------------------------------------------------
 function(_driver_download url output_path)
   set(_expected_sha256 "")
@@ -138,34 +127,15 @@ function(_driver_download url output_path)
 
   message(STATUS "  Downloading: ${url}")
 
-  if(GITHUB_TOKEN)
-    # Use curl to handle GitHub's 302 redirects for private repo assets.
-    # CMake's file(DOWNLOAD) won't send auth headers after redirect to S3.
-    find_program(_CURL curl REQUIRED)
-    execute_process(
-      COMMAND "${_CURL}" -fsSL
-        -H "Authorization: token ${GITHUB_TOKEN}"
-        -H "Accept: application/octet-stream"
-        -o "${output_path}"
-        "${url}"
-      RESULT_VARIABLE _code
-      ERROR_VARIABLE _err)
-    if(NOT _code EQUAL 0)
-      message(WARNING "  curl download failed (${_code}): ${_err}")
-      file(REMOVE "${output_path}")
-      return()
-    endif()
-  else()
-    file(DOWNLOAD "${url}" "${output_path}"
-      STATUS _status
-      TLS_VERIFY ON)
-    list(GET _status 0 _code)
-    if(NOT _code EQUAL 0)
-      list(GET _status 1 _msg)
-      message(WARNING "  Download failed (${_code}): ${_msg}")
-      file(REMOVE "${output_path}")
-      return()
-    endif()
+  file(DOWNLOAD "${url}" "${output_path}"
+    STATUS _status
+    TLS_VERIFY ON)
+  list(GET _status 0 _code)
+  if(NOT _code EQUAL 0)
+    list(GET _status 1 _msg)
+    message(WARNING "  Download failed (${_code}): ${_msg}")
+    file(REMOVE "${output_path}")
+    return()
   endif()
 
   if(EXISTS "${output_path}")
@@ -189,10 +159,7 @@ function(_driver_download url output_path)
 endfunction()
 
 # ---------------------------------------------------------------------------
-# ZakoVirtualMouse  (private repo — use GitHub API for authenticated downloads)
-# For private repos, browser_download_url returns 302→S3 which rejects
-# forwarded auth headers. We must use the GitHub REST API asset endpoint
-# with Accept: application/octet-stream.
+# ZakoVirtualMouse (public release assets)
 # ---------------------------------------------------------------------------
 function(_fetch_vmouse_impl _files)
   message(STATUS "Fetching ZakoVirtualMouse ${VMOUSE_DRIVER_VERSION} ...")
@@ -212,103 +179,19 @@ function(_fetch_vmouse_impl _files)
 
   file(MAKE_DIRECTORY "${VMOUSE_DRIVER_DIR}")
 
-  # ---- Attempt 1: public mirror repo (no auth needed) ----
-  if(VMOUSE_PUBLIC_REPO)
-    message(STATUS "  Trying public mirror ${VMOUSE_PUBLIC_REPO} ...")
-    foreach(_f ${_files})
-      if(EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
-        continue()
-      endif()
-      set(_url "https://github.com/${VMOUSE_PUBLIC_REPO}/releases/download/${VMOUSE_DRIVER_VERSION}/${_f}")
-      _driver_download("${_url}" "${VMOUSE_DRIVER_DIR}/${_f}")
-    endforeach()
-
-    # If all files now present, we're done.
-    set(_all_ok TRUE)
-    foreach(_f ${_files})
-      if(NOT EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
-        set(_all_ok FALSE)
-        break()
-      endif()
-    endforeach()
-    if(_all_ok)
-      message(STATUS "  vmouse fetched from public mirror")
-      return()
-    endif()
-  endif()
-
-  # ---- Attempt 2: private repo via GitHub API (requires token) ----
-  if(NOT GITHUB_TOKEN)
-    message(WARNING
-      "  vmouse not available from public mirror '${VMOUSE_PUBLIC_REPO}' "
-      "at tag ${VMOUSE_DRIVER_VERSION}, and GITHUB_TOKEN is not set to fall "
-      "back on private repo ${_VMOUSE_REPO}.")
+  if(NOT VMOUSE_PUBLIC_REPO)
+    message(WARNING "  VMOUSE_PUBLIC_REPO is empty")
     return()
   endif()
 
-  find_program(_CURL curl REQUIRED)
-
-  # Query release assets via GitHub API
-  set(_api_url "https://api.github.com/repos/${_VMOUSE_REPO}/releases/tags/${VMOUSE_DRIVER_VERSION}")
-  set(_json "${DRIVER_DEPS_CACHE}/_vmouse_release.json")
-  execute_process(
-    COMMAND "${_CURL}" -fsSL
-      -H "Authorization: token ${GITHUB_TOKEN}"
-      -H "Accept: application/vnd.github+json"
-      -o "${_json}"
-      "${_api_url}"
-    RESULT_VARIABLE _rc
-    ERROR_VARIABLE _err)
-  if(NOT _rc EQUAL 0)
-    message(WARNING "  Failed to query vmouse release API (${_rc}): ${_err}")
-    return()
-  endif()
-
-  # For each required file, find its asset id and download via API
+  message(STATUS "  Downloading from public repo ${VMOUSE_PUBLIC_REPO} ...")
   foreach(_f ${_files})
     if(EXISTS "${VMOUSE_DRIVER_DIR}/${_f}")
       continue()
     endif()
-
-    # Extract asset download URL from JSON using regex
-    # The API JSON contains entries like:
-    #   "name": "ZakoVirtualMouse.dll", ... "url": "https://api.github.com/repos/.../assets/12345"
-    file(READ "${_json}" _json_content)
-
-    # Find block for this asset: locate "name": "<filename>" then extract nearest "url"
-    # We use string(REGEX) to find the asset API url
-    string(REGEX MATCH "\"url\"[^}]*\"name\":[ ]*\"${_f}\"" _match_after "${_json_content}")
-    string(REGEX MATCH "\"name\":[ ]*\"${_f}\"[^}]*\"url\"" _match_before "${_json_content}")
-
-    set(_asset_api_url "")
-    # Try to extract the url from the assets array
-    # GitHub API returns assets like: { "url": "https://api.github.com/repos/.../assets/ID", ... "name": "file" }
-    string(REGEX MATCH "\"url\":[ ]*\"(https://api\\.github\\.com/repos/[^\"]+/assets/[0-9]+)\"[^}]*\"name\":[ ]*\"${_f}\"" _m "${_json_content}")
-    if(_m)
-      set(_asset_api_url "${CMAKE_MATCH_1}")
-    endif()
-
-    if(NOT _asset_api_url)
-      message(WARNING "  Could not find asset URL for ${_f} in release JSON")
-      continue()
-    endif()
-
-    message(STATUS "  Downloading ${_f} via API: ${_asset_api_url}")
-    execute_process(
-      COMMAND "${_CURL}" -fsSL
-        -H "Authorization: token ${GITHUB_TOKEN}"
-        -H "Accept: application/octet-stream"
-        -o "${VMOUSE_DRIVER_DIR}/${_f}"
-        "${_asset_api_url}"
-      RESULT_VARIABLE _rc
-      ERROR_VARIABLE _err)
-    if(NOT _rc EQUAL 0)
-      message(WARNING "  Download failed for ${_f} (${_rc}): ${_err}")
-      file(REMOVE "${VMOUSE_DRIVER_DIR}/${_f}")
-    endif()
+    set(_url "https://github.com/${VMOUSE_PUBLIC_REPO}/releases/download/${VMOUSE_DRIVER_VERSION}/${_f}")
+    _driver_download("${_url}" "${VMOUSE_DRIVER_DIR}/${_f}")
   endforeach()
-
-  file(REMOVE "${_json}")
 endfunction()
 
 # The vmouse assets are downloaded as bare filenames with no version in them, so
@@ -459,7 +342,6 @@ function(_check_driver name available_var)
     if(DRIVER_DEPS_REQUIRED)
       message(FATAL_ERROR
         "Missing ${name} driver dependencies:\n  ${_list}\n"
-        "For private repos, set -DGITHUB_TOKEN=<token> or env GITHUB_TOKEN.\n"
         "To skip downloads: -DFETCH_DRIVER_DEPS=OFF (provide files manually in ${DRIVER_DEPS_CACHE}).\n"
         "To make missing drivers non-fatal (e.g. for fork-PR CI): -DDRIVER_DEPS_REQUIRED=OFF.")
     else()
