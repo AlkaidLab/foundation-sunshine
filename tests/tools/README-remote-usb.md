@@ -34,4 +34,30 @@ This test temporarily exports/imports the selected device and restarts the local
 - Real-device loopback: TLS forwarding and usbip-win2 attach succeeded at virtual hub port 1. The imported node bound to `VirtualBox USB Driver`, and ADB did not find the imported phone within 30 seconds. This is a failed hardware E2E, not a full pass.
 - After the failed test, `usbip port` was empty and the physical phone reappeared as an authorized device in local ADB.
 
-The local results establish the tested transport/controller behavior. Real device usability on separate computers and the full Moonlight UI/video-session flow remain unverified.
+The same-OS loopback result above is superseded for the separate-OS hardware case by the VM test below. The full Moonlight UI/video-session flow remains unverified.
+
+## Hyper-V Windows 10 result: 2026-09-06
+
+The host exported the physical phone using usbipd-win, the production Qt tunnel connected through an SSH port forward to the production Sunshine tunnel service in a Windows 10 VM, and usbip-win2 0.9.7.8 imported it at virtual hub port 1. The VM recognized VID:PID `18d1:4ee7` and ADB enumerated the phone, without the VirtualBox binding seen in same-OS loopback.
+
+ADB reported `unauthorized`, so the hardware check was changed to standard, read-only USB control transfers that require no phone interaction. The native `usb_control_probe.cpp` uses the installed Android WinUSB interface GUID to read the device descriptor and serial string, checks the expected VID/PID/serial, and executes 20 `GET_STATUS` requests via `WinUsb_ControlTransfer`.
+
+**Passed:** two cycles of TLS forwarding, real device import, matching descriptor/serial and 20 status reads, followed by release. The second cycle reused hub port 1 successfully. The initial test and the parameterized reproduction script each passed both cycles. Each release left `usbip port` empty; afterward the phone returned to authorized local ADB. usbip-win2 also logged "device is not connected" on the explicit detach after tunnel closure; the port-empty and reimport checks verified the resulting cleanup.
+
+This verifies real-device USB control transfers and reconnect through both production transport classes. It does not establish ADB shell authorization, sustained bulk/isochronous throughput, other device classes, or the Moonlight video-session/UI flow.
+
+### Reproduce without phone authorization
+
+Build the WinUSB probe from a Visual Studio x64 Native Tools prompt:
+
+```bat
+cl /EHsc /std:c++17 /MT /Febuild\usb_control_probe.exe /Fobuild\usb_control_probe.obj tests\tools\usb_control_probe.cpp setupapi.lib winusb.lib
+```
+
+Prepare a separate Windows importer with SSH access, usbip-win2, and `reverse_tunnel_probe.exe` plus its runtime DLLs and `usb_control_probe.exe` in `C:/usb-e2e`. Use an exporter with an already-shared Android device using the standard Android WinUSB interface. Stop ADB on the importer; the script restarts ADB on the exporter to release/recover its handle. Configure local Qt/OpenSSL DLL and plugin paths as for the transport suite. Then run:
+
+```powershell
+python tests/tools/run_usb_control_vm_e2e.py --ssh-target <user@importer> --identity-file <ssh-key> --client-probe <client-probe.exe> --busid <busid> --vid <hex-vid> --pid <hex-pid> --serial <serial> --output <new-evidence-directory>
+```
+
+The script refuses pre-existing imports and forwards a local SSH port to the importer's loopback TLS listener. Both the local output directory and the unique remote `control-*` directory contain temporary test credentials; keep them private and out of version control. The control probe is an Android WinUSB smoke test, not a generic device-class test.
