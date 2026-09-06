@@ -308,12 +308,12 @@ function(_fetch_vmouse)
 
   _fetch_vmouse_impl("${_files}" _all_verified)
 
-  # Only stamp a complete, digest-verified set. A partial download must retry
-  # on the next configure instead of being treated as a good cache.
+  # Only retain a complete, digest-verified set. File presence plus the source
+  # marker is not sufficient proof after metadata or cache files are removed.
   if(_all_verified)
     file(WRITE "${_marker}" "${_expected_marker}\n")
   else()
-    file(REMOVE "${_marker}")
+    file(REMOVE_RECURSE "${VMOUSE_DRIVER_DIR}")
   endif()
 endfunction()
 
