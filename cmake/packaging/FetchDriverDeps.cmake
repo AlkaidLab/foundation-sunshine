@@ -106,10 +106,10 @@ if(NOT FETCH_DRIVER_DEPS)
 endif()
 
 # ---------------------------------------------------------------------------
-# Helper: download a file with bounded retries. Partial downloads are removed
-# between attempts; completed files are cached by the caller.
+# Helper: download and optionally verify a file with bounded retries. Partial
+# or mismatched downloads are removed between attempts.
 # ---------------------------------------------------------------------------
-function(_driver_download_with_retries url output_path)
+function(_driver_download_with_retries url output_path expected_sha256)
   get_filename_component(_dir "${output_path}" DIRECTORY)
   file(MAKE_DIRECTORY "${_dir}")
 
@@ -131,10 +131,20 @@ function(_driver_download_with_retries url output_path)
     if(_code EQUAL 0 AND EXISTS "${output_path}")
       file(SIZE "${output_path}" _size)
       if(_size GREATER 0)
-        return()
+        if(NOT expected_sha256)
+          return()
+        endif()
+
+        file(SHA256 "${output_path}" _actual_sha256)
+        if(_actual_sha256 STREQUAL expected_sha256)
+          return()
+        endif()
+        set(_status 1 "SHA256 mismatch (expected ${expected_sha256}, actual ${_actual_sha256})")
+        set(_code 1)
+      else()
+        set(_status 1 "downloaded file is empty")
+        set(_code 1)
       endif()
-      set(_status 1 "downloaded file is empty")
-      set(_code 1)
     endif()
 
     list(GET _status 1 _message)
@@ -172,18 +182,7 @@ function(_driver_download url output_path)
   endif()
 
   message(STATUS "  Downloading: ${url}")
-  _driver_download_with_retries("${url}" "${output_path}")
-
-  if(EXISTS "${output_path}" AND _expected_sha256)
-    file(SHA256 "${output_path}" _actual_sha256)
-    if(NOT _actual_sha256 STREQUAL _expected_sha256)
-      message(WARNING
-        "  SHA256 mismatch for ${output_path}\n"
-        "  expected: ${_expected_sha256}\n"
-        "  actual:   ${_actual_sha256}")
-      file(REMOVE "${output_path}")
-    endif()
-  endif()
+  _driver_download_with_retries("${url}" "${output_path}" "${_expected_sha256}")
 endfunction()
 
 function(_download_github_release_metadata repository version output_path)
@@ -196,6 +195,7 @@ function(_download_github_release_metadata repository version output_path)
   _driver_download_with_retries(
     "${_url}"
     "${_temporary_path}"
+    ""
     "Accept: application/vnd.github+json"
     "X-GitHub-Api-Version: 2022-11-28"
     "User-Agent: Sunshine-Foundation-CMake")
