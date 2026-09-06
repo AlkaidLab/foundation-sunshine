@@ -12,6 +12,8 @@
 #include <chrono>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <limits>
 #include <filesystem>
 #include <memory>
 #include <shared_mutex>
@@ -65,8 +67,7 @@
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "process.h"
-#include "remote_usb/remote_usb_http.h"
-#include "remote_usb/remote_usb_service.h"
+#include "remote_usb/reverse_tunnel_service.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "tray/system_tray.h"
@@ -218,202 +219,6 @@ namespace nvhttp {
   using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
   using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
 
-  namespace {
-
-    bool
-    remote_usb_valid_port(std::string_view value) noexcept {
-      if (value.empty() || value.size() > 5) {
-        return false;
-      }
-      std::uint32_t port = 0;
-      const auto result = std::from_chars(value.data(), value.data() + value.size(), port, 10);
-      return result.ec == std::errc {} && result.ptr == value.data() + value.size() &&
-             port != 0 && port <= 65535;
-    }
-
-    bool
-    remote_usb_valid_reg_name(std::string_view value) noexcept {
-      /* Keep the accepted set deliberately narrower than RFC 3986's reg-name:
-       * it covers DNS, mDNS and ordinary host aliases while excluding userinfo,
-       * percent escapes, path separators and other ambiguous authority syntax. */
-      if (value.empty() || value.size() > 253 || value.front() == '.' ||
-          value.front() == '-') {
-        return false;
-      }
-      /* A single trailing dot is the canonical fully-qualified DNS spelling. */
-      if (value.back() == '.') {
-        value.remove_suffix(1);
-      }
-      if (value.empty() || value.back() == '-') {
-        return false;
-      }
-      std::size_t label_start = 0;
-      for (std::size_t index = 0; index <= value.size(); ++index) {
-        if (index == value.size() || value[index] == '.') {
-          if (index == label_start) {
-            return false;
-          }
-          const auto label_size = index - label_start;
-          if (label_size > 63 || value[label_start] == '-' ||
-              value[index - 1] == '-') {
-            return false;
-          }
-          label_start = index + 1;
-          continue;
-        }
-        const auto byte = static_cast<unsigned char>(value[index]);
-        if (!(std::isalnum(byte) || byte == '-' || byte == '_')) {
-          return false;
-        }
-      }
-      return true;
-    }
-
-    bool
-    remote_usb_unspecified_literal(std::string_view host) noexcept {
-      boost::system::error_code error;
-      const auto address = boost::asio::ip::make_address(host, error);
-      return !error && address.is_unspecified();
-    }
-
-    /** Parse an HTTP authority and return a host without brackets or port. */
-    std::string
-    remote_usb_parse_authority(std::string_view authority) {
-      if (authority.empty() || authority.size() > 512) {
-        return {};
-      }
-      for (const auto byte : authority) {
-        const auto value = static_cast<unsigned char>(byte);
-        if (value <= 0x20u || value >= 0x7fu) {
-          return {};
-        }
-      }
-
-      std::string_view host = authority;
-      if (authority.front() == '[') {
-        const auto closing = authority.find(']');
-        if (closing == std::string_view::npos || closing <= 1 ||
-            authority.find('[', 1) != std::string_view::npos ||
-            authority.find(']', closing + 1) != std::string_view::npos) {
-          return {};
-        }
-        host = authority.substr(1, closing - 1);
-        boost::system::error_code error;
-        const auto address = boost::asio::ip::make_address(host, error);
-        if (error || !address.is_v6() || address.is_unspecified()) {
-          return {};
-        }
-        if (closing + 1 < authority.size()) {
-          if (authority[closing + 1] != ':' ||
-              !remote_usb_valid_port(authority.substr(closing + 2))) {
-            return {};
-          }
-        }
-        return std::string { host };
-      }
-
-      if (authority.find('[') != std::string_view::npos ||
-          authority.find(']') != std::string_view::npos) {
-        return {};
-      }
-      const auto first_colon = authority.find(':');
-      if (first_colon != std::string_view::npos) {
-        /* IPv6 literals must use the bracketed authority form. */
-        if (first_colon != authority.rfind(':') ||
-            !remote_usb_valid_port(authority.substr(first_colon + 1))) {
-          return {};
-        }
-        host = authority.substr(0, first_colon);
-      }
-      if (!remote_usb_valid_reg_name(host) || remote_usb_unspecified_literal(host)) {
-        return {};
-      }
-      return std::string { host };
-    }
-
-    /**
-     * Return the concrete local address selected for the authenticated TLS
-     * socket.  A valid Host header is parsed as a fallback, but is never used
-     * when the kernel can report the actual destination interface; this keeps
-     * a client-controlled Host value from redirecting the broker endpoint.
-     */
-    std::string
-    remote_usb_request_host(const req_https_t &request) {
-      if (!request) {
-        return {};
-      }
-
-      std::string parsed_host;
-      const auto it = request->header.find("host");
-      if (it != request->header.end()) {
-        if (request->header.count("host") != 1) {
-          /* Multiple Host fields are ambiguous and should have been rejected
-           * by the HTTP parser; fail closed if one reaches the route. */
-          return {};
-        }
-        parsed_host = remote_usb_parse_authority(it->second);
-        if (parsed_host.empty()) {
-          return {};
-        }
-      }
-
-      try {
-        const auto local = request->local_endpoint();
-        if (local.port() != 0 && !local.address().is_unspecified()) {
-          return local.address().to_string();
-        }
-      }
-      catch (const std::exception &) {
-        /* Fall back to the already validated Host authority below. */
-      }
-      return parsed_host;
-    }
-
-    /**
-     * Canonicalize the current Moonlight uniqueid for the optional wire
-     * identity binding.  The fixed-width HELLO can carry either the legacy
-     * 16-byte ASCII hex identity or an opaque 16-byte identity represented by
-     * its 32-character uppercase hex rendering (used for UUID/hashed IDs).
-     */
-    std::string
-    remote_usb_wire_identity(const std::string &value) {
-      if ((value.size() != 16 && value.size() != 32) ||
-          !std::all_of(value.begin(), value.end(), [](unsigned char byte) {
-            return std::isxdigit(byte) != 0;
-          })) {
-        return {};
-      }
-
-      std::string normalized = value;
-      std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char byte) {
-        return static_cast<char>(std::toupper(byte));
-      });
-      return normalized;
-    }
-
-    std::string
-    remote_usb_wire_identity(const std::array<std::uint8_t, 16> &value) {
-      const bool printable = std::all_of(value.begin(), value.end(), [](std::uint8_t byte) {
-        return std::isprint(static_cast<unsigned char>(byte)) != 0;
-      });
-      if (printable) {
-        std::string text(reinterpret_cast<const char *>(value.data()), value.size());
-        if (const auto normalized = remote_usb_wire_identity(text); !normalized.empty()) {
-          return normalized;
-        }
-      }
-
-      static constexpr char hex[] = "0123456789ABCDEF";
-      std::string encoded;
-      encoded.reserve(value.size() * 2);
-      for (const auto byte : value) {
-        encoded.push_back(hex[(byte >> 4) & 0x0Fu]);
-        encoded.push_back(hex[byte & 0x0Fu]);
-      }
-      return encoded;
-    }
-
-  }  // namespace
 
   // Get the client certificate UUID authenticated on this request's TLS connection.
   std::string
@@ -1266,29 +1071,39 @@ namespace nvhttp {
     file_mapping_config.authorize_client = is_file_mapping_client_paired;
     file_mapping_service.start(std::move(file_mapping_config));
 
-    remote_usb::remote_usb_service remote_usb_service;
-    const auto remote_usb_start_result = remote_usb_service.start(
-      remote_usb::service_config {
-        .bind_address = bind_address.empty() ? "0.0.0.0" : bind_address,
-        .certificate_file = config::nvhttp.cert,
-        .private_key_file = config::nvhttp.pkey,
-        .client_certificate_uuid = [](SSL *ssl) {
-          if (ssl == nullptr) {
-            return std::string {};
-          }
-          crypto::x509_t peer {
-#if OPENSSL_VERSION_MAJOR >= 3
-            SSL_get1_peer_certificate(ssl)
-#else
-            SSL_get_peer_certificate(ssl)
-#endif
-          };
-          return peer ? pairing::client_uuid_for_cert(peer.get()) : std::string {};
-        },
-      });
-    if (!remote_usb_start_result) {
-      BOOST_LOG(warning) << "Remote USB broker is unavailable: "
-                         << remote_usb_start_result.error;
+    /* Reverse USB/IP tunnel (docs/remote-usb-reverse-tunnel.md in moonlight-qt).
+     * Transition contract until RTSP negotiates the USB stream: the client
+     * presents SUNSHINE_USB_TUNNEL_TOKEN as the shared session token and
+     * connects to SUNSHINE_USB_TUNNEL_PORT. */
+    remote_usb::reverse_tunnel_service reverse_tunnel_service;
+    {
+      remote_usb::reverse_tunnel_config reverse_tunnel_config;
+      bool valid_usb_port = true;
+      reverse_tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
+      if (const char *port_env = std::getenv("SUNSHINE_USB_TUNNEL_PORT")) {
+        unsigned int port = 0;
+        const std::string_view port_text(port_env);
+        const auto [end, error] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+        valid_usb_port = error == std::errc {} && end == port_text.data() + port_text.size() &&
+                         port > 0 && port <= std::numeric_limits<std::uint16_t>::max();
+        if (valid_usb_port) {
+          reverse_tunnel_config.port = static_cast<std::uint16_t>(port);
+        } else {
+          BOOST_LOG(warning) << "Remote USB tunnel disabled: invalid port configuration";
+        }
+      }
+      if (const char *token_env = std::getenv("SUNSHINE_USB_TUNNEL_TOKEN")) {
+        reverse_tunnel_config.session_token = token_env;
+      }
+      reverse_tunnel_config.certificate_file = config::nvhttp.cert;
+      reverse_tunnel_config.private_key_file = config::nvhttp.pkey;
+      reverse_tunnel_config.verify_client_cert =
+        [](X509 *cert) {
+          return pairing::verify_client_certificate(cert, false) == nullptr;
+        };
+      if (!valid_usb_port || !reverse_tunnel_service.start(reverse_tunnel_config)) {
+        BOOST_LOG(info) << "Remote USB tunnel is not active";
+      }
     }
 
     network_probe::service_t network_probe_service;
@@ -1394,168 +1209,6 @@ namespace nvhttp {
         resp->write(out.status, out.body, out.headers);
       };
 
-    /*
-     * Issue a short-lived, one-shot capability for the independent Remote
-     * USB broker.  The HTTPS connection has already passed the paired-client
-     * certificate verifier above; the certificate UUID is therefore the
-     * authenticated identity, while the 16-byte client uniqueid and the three
-     * lease tokens are retained as independent HELLO bindings (the identities
-     * are intentionally distinct in Sunshine's pairing state).
-     */
-    https_server.resource["^/api/v1/remote-usb/capability$"]["GET"] =
-      [&](resp_https_t resp, req_https_t req) {
-        const auto args = req->parse_query_string();
-        const auto generation_it = args.find("stream_generation");
-        if (generation_it == args.end() || args.count("stream_generation") != 1) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::client_error_bad_request,
-            "invalid_generation");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        /*
-         * Lease tokens are bearer material. New clients send them in
-         * dedicated HTTPS headers so they never appear in request URLs or
-         * the access logs of a reverse proxy. Keep a query fallback for older
-         * clients during the protocol migration, but reject a partial or
-         * ambiguous header tuple instead of silently mixing sources.
-         */
-        std::string session_token;
-        std::string attachment_token;
-        std::string lease_token;
-        const auto read_unique_header = [&](const std::string &name,
-                                             std::string &value) {
-          if (req->header.count(name) != 1) {
-            return false;
-          }
-          const auto it = req->header.find(name);
-          if (it == req->header.end()) {
-            return false;
-          }
-          value = it->second;
-          return true;
-        };
-        const bool has_token_header =
-          req->header.count("X-Remote-USB-Session-Token") != 0 ||
-          req->header.count("X-Remote-USB-Attachment-Token") != 0 ||
-          req->header.count("X-Remote-USB-Lease-Token") != 0;
-        if (has_token_header) {
-          if (!read_unique_header("X-Remote-USB-Session-Token", session_token) ||
-              !read_unique_header("X-Remote-USB-Attachment-Token", attachment_token) ||
-              !read_unique_header("X-Remote-USB-Lease-Token", lease_token) ||
-              args.count("session_token") != 0 ||
-              args.count("attachment_token") != 0 ||
-              args.count("lease_token") != 0) {
-            const auto out = remote_usb_http::make_error_response(
-              SimpleWeb::StatusCode::client_error_bad_request,
-              "ambiguous_token_binding");
-            resp->write(out.status, out.body, out.headers);
-            return;
-          }
-        }
-        else {
-          const auto session_it = args.find("session_token");
-          const auto attachment_it = args.find("attachment_token");
-          const auto lease_it = args.find("lease_token");
-          if (session_it == args.end() || attachment_it == args.end() ||
-              lease_it == args.end() || args.count("session_token") != 1 ||
-              args.count("attachment_token") != 1 || args.count("lease_token") != 1) {
-            const auto out = remote_usb_http::make_error_response(
-              SimpleWeb::StatusCode::client_error_bad_request,
-              "missing_token");
-            resp->write(out.status, out.body, out.headers);
-            return;
-          }
-          session_token = session_it->second;
-          attachment_token = attachment_it->second;
-          lease_token = lease_it->second;
-        }
-
-        std::string parse_error;
-        const auto request = remote_usb_http::parse_capability_request(
-          generation_it->second,
-          session_token,
-          attachment_token,
-          lease_token,
-          parse_error);
-        if (!request) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::client_error_bad_request,
-            "invalid_token_binding", parse_error);
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        const auto client_uuid = get_client_cert_uuid_from_request(req);
-        if (client_uuid.empty()) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::client_error_unauthorized,
-            "client_not_paired");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        const auto uniqueid_it = args.find("uniqueid");
-        if (uniqueid_it == args.end() || args.count("uniqueid") != 1) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::client_error_bad_request,
-            "missing_uniqueid");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        const auto wire_identity = remote_usb_wire_identity(uniqueid_it->second);
-        if (wire_identity.empty()) {
-          /* The v1 Android/native exporter uses a 16-byte ASCII hex ID.  Do
-           * not issue a capability that cannot be bound to that HELLO. */
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::client_error_bad_request,
-            "invalid_uniqueid");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        const auto endpoint_host = remote_usb_request_host(req);
-        if (endpoint_host.empty()) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::server_error_service_unavailable,
-            "broker_unavailable");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        const auto issued = remote_usb_service.issue_capability(
-          remote_usb::capability_issue_request {
-            .client_uuid = client_uuid,
-            .stream_generation = request->stream_generation,
-            .endpoint_host = endpoint_host,
-            .wire_client_uuid = wire_identity,
-            .session_token = request->session_token,
-            .attachment_token = request->attachment_token,
-            .lease_token = request->lease_token,
-          });
-        if (issued.status == remote_usb::capability_issue_status::unavailable ||
-            issued.status == remote_usb::capability_issue_status::unsupported) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::server_error_service_unavailable,
-            issued.status == remote_usb::capability_issue_status::unsupported
-              ? "unsupported_platform" : "broker_unavailable");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-        if (!issued) {
-          const auto out = remote_usb_http::make_error_response(
-            SimpleWeb::StatusCode::client_error_too_many_requests,
-            "capability_limit");
-          resp->write(out.status, out.body, out.headers);
-          return;
-        }
-
-        const auto out = remote_usb_http::make_capability_response(*issued.value);
-        resp->write(out.status, out.body, out.headers);
-      };
-
     // ABR (Adaptive Bitrate) API routes - client-facing with cert auth
     https_server.resource["^/api/abr/capabilities$"]["GET"] = abr_api::capabilities;
     https_server.resource["^/api/abr$"]["POST"] = abr_api::configure;
@@ -1646,7 +1299,7 @@ namespace nvhttp {
     ssl.join();
     tcp.join();
 
-    remote_usb_service.stop();
+    reverse_tunnel_service.stop();
     file_mapping_service.stop();
   }
 

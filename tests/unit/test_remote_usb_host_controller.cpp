@@ -96,15 +96,11 @@ struct result_harness {
 };
 
 remote_usb::usbip_host_request
-make_request(std::uint64_t seed = 1, std::uint64_t generation = 0) {
+make_request(std::string busid = "usbip-test") {
   remote_usb::usbip_host_request request;
   request.server_endpoint.address = "127.0.0.1";
   request.server_endpoint.port = 41234;
-  request.server_endpoint.busid = "rusb-test";
-  request.stream_generation = generation;
-  request.identity.session_token = seed;
-  request.identity.attachment_token = seed + 10;
-  request.identity.lease_token = seed + 20;
+  request.server_endpoint.busid = std::move(busid);
   return request;
 }
 
@@ -195,7 +191,7 @@ TEST(RemoteUsbHostController, ReaderThreadCreationFailureReturnsTerminalResult) 
   controller.stop();
 }
 
-TEST(RemoteUsbHostController, SameTokensDifferentGenerationsCanRunConcurrently) {
+TEST(RemoteUsbHostController, DifferentEndpointsCanRunConcurrently) {
   command_harness commands;
   result_harness results;
   std::mutex behavior_mutex;
@@ -236,16 +232,16 @@ TEST(RemoteUsbHostController, SameTokensDifferentGenerationsCanRunConcurrently) 
   };
 
   remote_usb::usbip_host_controller controller(make_config(commands));
-  const auto first_id = controller.attach(make_request(1, 100), results.callback());
+  const auto first_id = controller.attach(make_request("bus-1"), results.callback());
   ASSERT_NE(first_id, 0U);
   {
     std::unique_lock lock(behavior_mutex);
     ASSERT_TRUE(behavior_condition.wait_for(lock, 2s, [&]() { return first_started; }));
   }
 
-  /* The first operation is still active.  A new stream generation is a new
-   * lease incarnation and must not be rejected as the old operation's twin. */
-  const auto second_id = controller.attach(make_request(1, 200), results.callback());
+  /* The first operation is still active.  A different busid is a different
+   * device and must not be rejected as the old device's twin. */
+  const auto second_id = controller.attach(make_request("bus-2"), results.callback());
   ASSERT_NE(second_id, 0U);
   ASSERT_TRUE(commands.wait_calls(2));
   {
@@ -262,15 +258,15 @@ TEST(RemoteUsbHostController, SameTokensDifferentGenerationsCanRunConcurrently) 
     for (const auto &result : results.results) {
       ASSERT_TRUE(result.ok()) << result.detail;
       ASSERT_TRUE(result.binding.has_value());
-      if (result.binding->stream_generation == 100) {
+      if (result.binding->server_endpoint.busid == "bus-1") {
         first_binding = *result.binding;
-      } else if (result.binding->stream_generation == 200) {
+      } else if (result.binding->server_endpoint.busid == "bus-2") {
         second_binding = *result.binding;
       }
     }
   }
-  ASSERT_EQ(first_binding.stream_generation, 100U);
-  ASSERT_EQ(second_binding.stream_generation, 200U);
+  ASSERT_EQ(first_binding.server_endpoint.busid, "bus-1");
+  ASSERT_EQ(second_binding.server_endpoint.busid, "bus-2");
   ASSERT_NE(controller.detach(first_binding, results.callback()), 0U);
   ASSERT_NE(controller.detach(second_binding, results.callback()), 0U);
   ASSERT_TRUE(results.wait_results(4));
@@ -279,24 +275,24 @@ TEST(RemoteUsbHostController, SameTokensDifferentGenerationsCanRunConcurrently) 
   controller.stop();
 }
 
-TEST(RemoteUsbHostController, SameTokensDifferentGenerationCanBeAccepted) {
+TEST(RemoteUsbHostController, DifferentEndpointsCanBeAccepted) {
   command_harness commands;
   result_harness results;
   remote_usb::usbip_host_controller controller(make_config(commands));
 
-  ASSERT_NE(controller.attach(make_request(1, 300), results.callback()), 0U);
+  ASSERT_NE(controller.attach(make_request("bus-3"), results.callback()), 0U);
   ASSERT_TRUE(results.wait_results(1));
   ASSERT_TRUE(results.result_at(0).ok());
   ASSERT_TRUE(results.result_at(0).binding.has_value());
 
-  /* The first binding is already accepted.  The generation distinguishes a
-   * reconnect even though all three lease tokens are reused. */
-  ASSERT_NE(controller.attach(make_request(1, 400), results.callback()), 0U);
+  /* The first binding is already accepted.  A different busid is a different
+   * device and must be accepted. */
+  ASSERT_NE(controller.attach(make_request("bus-4"), results.callback()), 0U);
   ASSERT_TRUE(results.wait_results(2));
   EXPECT_TRUE(results.result_at(1).ok());
   ASSERT_TRUE(results.result_at(1).binding.has_value());
-  EXPECT_EQ(results.result_at(0).binding->stream_generation, 300U);
-  EXPECT_EQ(results.result_at(1).binding->stream_generation, 400U);
+  EXPECT_EQ(results.result_at(0).binding->server_endpoint.busid, "bus-3");
+  EXPECT_EQ(results.result_at(1).binding->server_endpoint.busid, "bus-4");
 
   ASSERT_NE(controller.detach(*results.result_at(0).binding, results.callback()), 0U);
   ASSERT_NE(controller.detach(*results.result_at(1).binding, results.callback()), 0U);
@@ -327,8 +323,7 @@ TEST(RemoteUsbHostController, UsesUsbipWin2ArgumentContractAndTracksBinding) {
     ASSERT_EQ(commands.calls.front().executable, "usbip-test");
     const std::vector<std::string> expected {
       "--tcp-port", "41234", "attach", "--remote", "127.0.0.1",
-      "--bus-id", "rusb-test", "--once", "--terse",
-      "--receive-mode", "zero-copy"
+      "--bus-id", "usbip-test", "--once", "--terse"
     };
     EXPECT_EQ(commands.calls.front().arguments, expected);
   }
@@ -346,7 +341,7 @@ TEST(RemoteUsbHostController, UsesUsbipWin2ArgumentContractAndTracksBinding) {
   controller.stop();
 }
 
-TEST(RemoteUsbHostController, RejectsDuplicateLeaseAndUnknownBinding) {
+TEST(RemoteUsbHostController, RejectsDuplicateEndpointAndUnknownBinding) {
   command_harness commands;
   result_harness results;
   remote_usb::usbip_host_controller controller(make_config(commands));
@@ -360,15 +355,48 @@ TEST(RemoteUsbHostController, RejectsDuplicateLeaseAndUnknownBinding) {
   ASSERT_TRUE(results.wait_results(2));
   EXPECT_EQ(results.result_at(1).status, remote_usb::usbip_host_status::busy);
 
-  auto unknown = remote_usb::usbip_host_binding {
-    request.server_endpoint,
-    request.identity,
-    8,
-  };
+  auto unknown = *results.result_at(0).binding;
+  unknown.hub_port = 8;
   EXPECT_EQ(controller.detach(unknown, results.callback()), 0U);
   ASSERT_TRUE(results.wait_results(3));
   EXPECT_EQ(results.result_at(2).status,
             remote_usb::usbip_host_status::invalid_argument);
+  controller.stop();
+}
+
+TEST(RemoteUsbHostController, RejectsStaleBindingAfterEndpointAndHubPortReuse) {
+  command_harness commands;
+  result_harness results;
+  remote_usb::usbip_host_controller controller(make_config(commands));
+  const auto request = make_request();
+
+  ASSERT_NE(controller.attach(request, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  ASSERT_TRUE(results.result_at(0).ok());
+  ASSERT_TRUE(results.result_at(0).binding.has_value());
+  const auto old_binding = *results.result_at(0).binding;
+  ASSERT_NE(controller.detach(old_binding, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(2));
+  ASSERT_TRUE(results.result_at(1).ok());
+
+  ASSERT_NE(controller.attach(request, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(3));
+  ASSERT_TRUE(results.result_at(2).ok());
+  ASSERT_TRUE(results.result_at(2).binding.has_value());
+  const auto new_binding = *results.result_at(2).binding;
+  ASSERT_EQ(old_binding.server_endpoint, new_binding.server_endpoint);
+  ASSERT_EQ(old_binding.hub_port, new_binding.hub_port);
+  EXPECT_NE(old_binding.binding_id, new_binding.binding_id);
+  EXPECT_EQ(controller.detach(old_binding, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(4));
+  EXPECT_EQ(results.result_at(3).status, remote_usb::usbip_host_status::invalid_argument);
+  {
+    std::lock_guard lock(commands.mutex);
+    EXPECT_EQ(commands.calls.size(), 3U);
+  }
+  ASSERT_NE(controller.detach(new_binding, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(5));
+  EXPECT_TRUE(results.result_at(4).ok());
   controller.stop();
 }
 
