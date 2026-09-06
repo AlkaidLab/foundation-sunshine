@@ -419,6 +419,7 @@
 <script>
 import { trackEvents } from '../config/firebase.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
+import { saveSetupWizardLocale } from '../services/setupWizardService.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
 import { SETUP_WIZARD_LANGUAGE_SAVED_KEY } from '../composables/useSetupWizard.js'
@@ -670,12 +671,7 @@ export default {
     },
     async saveLanguage() {
       try {
-        const response = await apiFetch('/api/config', {
-          method: 'POST',
-          body: {
-            locale: this.selectedLocale
-          },
-        })
+        const response = await saveSetupWizardLocale(this.selectedLocale)
         if (!response.ok) {
           throw new Error(`Failed to save language: HTTP ${response.status}`)
         }
