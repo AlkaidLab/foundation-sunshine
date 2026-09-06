@@ -471,7 +471,8 @@ namespace nvhttp {
   template <class T>
   void
   print_request_warning_ip(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request, const std::string &message) {
-    BOOST_LOG(warning) << message << " [" << request->query_string << "] from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
+    // Query strings may contain launch keys, so warnings only include routing context.
+    BOOST_LOG(warning) << message << " from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
   }
 
   template <class T>

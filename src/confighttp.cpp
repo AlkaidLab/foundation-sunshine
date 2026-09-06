@@ -114,6 +114,9 @@ namespace confighttp {
                << ", METHOD: " << request->method
                << ", PATH: " << request->path;
     
+    // Disabled until request logging has an explicit field allowlist and
+    // redaction policy. Headers and query parameters may contain credentials.
+    /*
     // Headers
     if (!request->header.empty()) {
       log_stream << ", HEADERS: ";
@@ -136,6 +139,7 @@ namespace confighttp {
         first = false;
       }
     }
+    */
     
     BOOST_LOG(verbose) << log_stream.str();
   }
