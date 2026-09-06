@@ -7,7 +7,6 @@
 
 // standard includes
 #include <algorithm>
-#include <array>
 #include <charconv>
 #include <chrono>
 #include <cctype>
@@ -391,28 +390,6 @@ namespace nvhttp {
       return normalized;
     }
 
-    std::string
-    remote_usb_wire_identity(const std::array<std::uint8_t, 16> &value) {
-      const bool printable = std::all_of(value.begin(), value.end(), [](std::uint8_t byte) {
-        return std::isprint(static_cast<unsigned char>(byte)) != 0;
-      });
-      if (printable) {
-        std::string text(reinterpret_cast<const char *>(value.data()), value.size());
-        if (const auto normalized = remote_usb_wire_identity(text); !normalized.empty()) {
-          return normalized;
-        }
-      }
-
-      static constexpr char hex[] = "0123456789ABCDEF";
-      std::string encoded;
-      encoded.reserve(value.size() * 2);
-      for (const auto byte : value) {
-        encoded.push_back(hex[(byte >> 4) & 0x0Fu]);
-        encoded.push_back(hex[byte & 0x0Fu]);
-      }
-      return encoded;
-    }
-
   }  // namespace
 
   // Get the client certificate UUID authenticated on this request's TLS connection.
@@ -628,6 +605,9 @@ namespace nvhttp {
                << ", METHOD: " << request->method
                << ", PATH: " << request->path;
 
+    // Disabled until request logging has an explicit field allowlist and
+    // redaction policy. Launch and Resume query parameters contain rikey.
+    /*
     if (verbose_flag) {
       // Headers
       if (!request->header.empty()) {
@@ -652,6 +632,7 @@ namespace nvhttp {
         }
       }
     }
+    */
     BOOST_LOG(debug) << log_stream.str();
   }
 
