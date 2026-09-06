@@ -492,6 +492,8 @@ namespace platf::dxgi {
       rtx_hdr::backend_loader_t loader;
       if (!loader.load(backend_path)) {
         BOOST_LOG(warning) << "TrueHDR backend unavailable: " << loader.error();
+        BOOST_LOG(info) << "Build foundation_truehdr_backend.dll with scripts/build-rtx-hdr-backend.ps1, "
+                           "keep the user-provided nvngx_truehdr.dll beside it, and configure the backend's absolute path";
         if (!fallback) {
           BOOST_LOG(error) << "TrueHDR backend and built-in SDR-in-HDR fallback are both unavailable";
           return {};
