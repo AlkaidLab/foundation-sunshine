@@ -113,22 +113,19 @@ function(_driver_download_with_retries url output_path)
   get_filename_component(_dir "${output_path}" DIRECTORY)
   file(MAKE_DIRECTORY "${_dir}")
 
+  set(_header_arguments)
+  foreach(_header IN LISTS ARGN)
+    list(APPEND _header_arguments HTTPHEADER "${_header}")
+  endforeach()
+
   foreach(_attempt RANGE 1 ${_DRIVER_DOWNLOAD_ATTEMPTS})
     file(REMOVE "${output_path}")
-    if(ARGN)
-      file(DOWNLOAD "${url}" "${output_path}"
-        STATUS _status
-        TLS_VERIFY ON
-        TIMEOUT ${_DRIVER_DOWNLOAD_TIMEOUT_SECONDS}
-        INACTIVITY_TIMEOUT ${_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS}
-        HTTPHEADER ${ARGN})
-    else()
-      file(DOWNLOAD "${url}" "${output_path}"
-        STATUS _status
-        TLS_VERIFY ON
-        TIMEOUT ${_DRIVER_DOWNLOAD_TIMEOUT_SECONDS}
-        INACTIVITY_TIMEOUT ${_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS})
-    endif()
+    file(DOWNLOAD "${url}" "${output_path}"
+      STATUS _status
+      TLS_VERIFY ON
+      TIMEOUT ${_DRIVER_DOWNLOAD_TIMEOUT_SECONDS}
+      INACTIVITY_TIMEOUT ${_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS}
+      ${_header_arguments})
 
     list(GET _status 0 _code)
     if(_code EQUAL 0 AND EXISTS "${output_path}")
@@ -228,9 +225,13 @@ function(_github_release_asset_sha256 metadata_path asset_name output_variable)
     endif()
 
     string(JSON _digest ERROR_VARIABLE _digest_error GET "${_release_json}" assets ${_asset_index} digest)
-    if(_digest_error STREQUAL "NOTFOUND" AND _digest MATCHES "^sha256:([0-9A-Fa-f]{64})$")
-      string(TOLOWER "${CMAKE_MATCH_1}" _sha256)
-      set(${output_variable} "${_sha256}" PARENT_SCOPE)
+    if(_digest_error STREQUAL "NOTFOUND" AND _digest MATCHES "^sha256:([0-9A-Fa-f]+)$")
+      set(_sha256 "${CMAKE_MATCH_1}")
+      string(LENGTH "${_sha256}" _sha256_length)
+      if(_sha256_length EQUAL 64)
+        string(TOLOWER "${_sha256}" _sha256)
+        set(${output_variable} "${_sha256}" PARENT_SCOPE)
+      endif()
     endif()
     return()
   endforeach()
