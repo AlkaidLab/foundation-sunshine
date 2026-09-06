@@ -34,7 +34,7 @@ This test temporarily exports/imports the selected device and restarts the local
 - Real-device loopback: TLS forwarding and usbip-win2 attach succeeded at virtual hub port 1. The imported node bound to `VirtualBox USB Driver`, and ADB did not find the imported phone within 30 seconds. This is a failed hardware E2E, not a full pass.
 - After the failed test, `usbip port` was empty and the physical phone reappeared as an authorized device in local ADB.
 
-The same-OS loopback result above is superseded for the separate-OS hardware case by the VM test below. The full Moonlight UI/video-session flow remains unverified.
+The same-OS loopback result above is superseded for the separate-OS hardware case by the VM tests below.
 
 ## Hyper-V Windows 10 result: 2026-09-06
 
@@ -61,3 +61,27 @@ python tests/tools/run_usb_control_vm_e2e.py --ssh-target <user@importer> --iden
 ```
 
 The script refuses pre-existing imports and forwards a local SSH port to the importer's loopback TLS listener. Both the local output directory and the unique remote `control-*` directory contain temporary test credentials; keep them private and out of version control. The control probe is an Android WinUSB smoke test, not a generic device-class test.
+
+## Combined video-session and USB result: 2026-09-06
+
+**Passed two real Moonlight streaming sessions**, using the full Sunshine executable in the Windows 10 VM and the full Moonlight Qt application on the exporter. The USB connection went directly to the same VM as video, using the paired client identity and the temporary tunnel environment variables. Neither standalone tunnel probe participated in these runs.
+
+- Visible Windows desktop and a Notepad test marker at 1024x768, H.264, 30 FPS. Client statistics at exit reported receive/decode/render rates of 30.0/30.0/30.0 and 30.1/30.1/30.0 FPS. The observed overlay showed 0% network loss.
+- In each session, selected the shared phone through the actual streaming overlay's USB menu. The VM imported it at hub port 1, validated its VID/PID and serial, and completed 20 WinUSB `GET_STATUS` requests while video remained visible.
+- Ended each session with Moonlight's normal quit-stream shortcut, without manually releasing USB first. Both exits automatically emptied `usbip port`; the second session successfully imported the device again. The physical phone returned to authorized local ADB afterward.
+- Host encoder logs recorded 5,126 and 2,638 frames for the two successful sessions. Temporary VM streaming tasks/processes were stopped afterward; temporary automatic-logon settings were restored, with no stored logon password remaining.
+
+The successful configuration used WGC capture in a signed-in Windows session, Sunshine's software encoder, and Moonlight's software decoder. The hardware decoder in this test environment failed to initialize its hwframes context (`-22`) and displayed black video, so that path is not validated. The VM has no audio endpoint: audio, gamepads, ADB shell authorization and sustained USB bulk/isochronous throughput remain outside this pass.
+
+Deployment prerequisites found during testing:
+
+- Use the usbip-win2 executable and accompanying DLLs matching the installed driver. A missing `resources.dll` and then an older 0.9.7.7 helper against the VM's 0.9.7.8 driver failed import; the installed 0.9.7.8 tool/DLL set passed.
+- Initial CLI pairing registered the client on Sunshine but left an empty client-side server pin in this run. Before the successful sessions, the VM's server certificate was retrieved through authenticated SSH and pinned for that test host. Fresh pairing/pin persistence is therefore not established by this test.
+
+To reproduce after normal pairing, enable USB forwarding, share the Android device, release the exporter's ADB handle, configure matching tunnel environment variables, and start the full client:
+
+```powershell
+Moonlight.exe stream <vm-address> Desktop --resolution 1024x768 --fps 30 --bitrate 3000 --display-mode windowed --video-codec H.264 --video-decoder software --no-hdr --no-yuv444 --performance-overlay
+```
+
+Use `Ctrl+Alt+Shift+O` to open the streaming menu and select the USB device. Run `usb_control_probe.exe <vid> <pid> <serial>` on the VM, then use `Ctrl+Alt+Shift+Q` to end streaming and verify `usbip port` is empty. Repeat in a new video session.
