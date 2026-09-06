@@ -169,7 +169,7 @@ private:
     usbip_host_request request;
     usbip_host_binding binding;
     std::shared_ptr<std::atomic_bool> cancel { std::make_shared<std::atomic_bool>(false) };
-    /* The helper process and lease bookkeeping can finish before the user
+    /* The helper process and binding bookkeeping can finish before the user
      * completion returns.  Keep this separate from `finished`: dispatch uses
      * command_finished to permit a completion callback to schedule a
      * compensating detach, while reaping/joining waits for the callback stack

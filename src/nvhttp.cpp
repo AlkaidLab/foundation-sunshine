@@ -1078,11 +1078,18 @@ namespace nvhttp {
     remote_usb::reverse_tunnel_service reverse_tunnel_service;
     {
       remote_usb::reverse_tunnel_config reverse_tunnel_config;
+      bool valid_usb_port = true;
       reverse_tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
       if (const char *port_env = std::getenv("SUNSHINE_USB_TUNNEL_PORT")) {
-        const int port = std::atoi(port_env);
-        if (port > 0 && port <= std::numeric_limits<std::uint16_t>::max()) {
+        unsigned int port = 0;
+        const std::string_view port_text(port_env);
+        const auto [end, error] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+        valid_usb_port = error == std::errc {} && end == port_text.data() + port_text.size() &&
+                         port > 0 && port <= std::numeric_limits<std::uint16_t>::max();
+        if (valid_usb_port) {
           reverse_tunnel_config.port = static_cast<std::uint16_t>(port);
+        } else {
+          BOOST_LOG(warning) << "Remote USB tunnel disabled: invalid port configuration";
         }
       }
       if (const char *token_env = std::getenv("SUNSHINE_USB_TUNNEL_TOKEN")) {
@@ -1094,7 +1101,7 @@ namespace nvhttp {
         [](X509 *cert) {
           return pairing::verify_client_certificate(cert, false) == nullptr;
         };
-      if (!reverse_tunnel_service.start(reverse_tunnel_config)) {
+      if (!valid_usb_port || !reverse_tunnel_service.start(reverse_tunnel_config)) {
         BOOST_LOG(info) << "Remote USB tunnel is not active";
       }
     }

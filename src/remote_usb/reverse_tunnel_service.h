@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -31,6 +32,8 @@ namespace remote_usb {
   struct reverse_tunnel_config {
     std::string bind_address { "0.0.0.0" };
     std::uint16_t port { 47996 };
+    /** Includes unauthenticated connections; checked before allocating buffers. */
+    std::size_t max_sessions { 16 };
     std::string certificate_file;
     std::string private_key_file;
     /** Shared secret presented by the client in the JSON handshake. */
@@ -65,9 +68,6 @@ namespace remote_usb {
 
     void
     stop() noexcept;
-
-    bool
-    available() const noexcept;
 
     std::uint16_t
     bound_port() const noexcept;

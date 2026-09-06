@@ -8,7 +8,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cstring>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -20,7 +19,6 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
-
 
 #include <nlohmann/json.hpp>
 
@@ -358,7 +356,7 @@ namespace remote_usb {
           return;
         }
         error_pending_ = true;
-        startup_timer_.cancel();
+        // Keep the deadline until the error write finishes: the peer may stop reading.
         auto self = shared_from_this();
         // The buffer must outlive async_write, which does not own it.
         const auto line = std::make_shared<const std::string>(
@@ -491,10 +489,15 @@ namespace remote_usb {
               std::remove_if(sessions.begin(), sessions.end(),
                 [](const session_ptr &session) { return session->done(); }),
               sessions.end());
-            const auto session = std::make_shared<tunnel_session>(
-              std::move(socket), *ssl_context, controller);
-            sessions.push_back(session);
-            session->start(config);
+            if (sessions.size() < config.max_sessions) {
+              const auto session = std::make_shared<tunnel_session>(
+                std::move(socket), *ssl_context, controller);
+              sessions.push_back(session);
+              session->start(config);
+            }
+            // Otherwise socket destruction rejects this connection before TLS
+            // and per-session buffers are allocated. Reaping above makes a
+            // finished session's capacity available to the very next accept.
           }
           if (!stopping.load()) {
             accept_next();
@@ -514,6 +517,10 @@ namespace remote_usb {
 
   bool
   reverse_tunnel_service::start(reverse_tunnel_config config) {
+    if (!config.verify_client_cert || config.max_sessions == 0) {
+      BOOST_LOG(warning) << "Remote USB tunnel requires a verifier and a positive session limit";
+      return false;
+    }
     if (config.session_token.empty()) {
       BOOST_LOG(info) << "Remote USB tunnel disabled: no session token configured";
       return false;
@@ -536,6 +543,11 @@ namespace remote_usb {
       };
 
     impl_->ssl_context = std::make_unique<ssl::context>(ssl::context::tls_server);
+    if (SSL_CTX_set_min_proto_version(impl_->ssl_context->native_handle(), TLS1_2_VERSION) != 1) {
+      BOOST_LOG(warning) << "Remote USB tunnel cannot set minimum TLS version";
+      impl_->ssl_context.reset();
+      return false;
+    }
     boost::system::error_code error;
     impl_->ssl_context->use_certificate_chain_file(config.certificate_file, error);
     if (!error) {
@@ -556,11 +568,12 @@ namespace remote_usb {
         return peer != nullptr && verify && verify(peer);
       });
 
-    const tcp::endpoint bound(
-      asio::ip::make_address(
-        config.bind_address.empty() ? "0.0.0.0" : config.bind_address),
-      config.port);
-    impl_->acceptor.open(bound.protocol(), error);
+    const auto address = asio::ip::make_address(
+      config.bind_address.empty() ? "0.0.0.0" : config.bind_address, error);
+    const tcp::endpoint bound(address, config.port);
+    if (!error) {
+      impl_->acceptor.open(bound.protocol(), error);
+    }
     if (!error) {
       impl_->acceptor.set_option(tcp::acceptor::reuse_address(true), error);
     }
@@ -573,7 +586,8 @@ namespace remote_usb {
     if (error) {
       BOOST_LOG(warning) << "Remote USB tunnel cannot bind " << config.bind_address
                          << ':' << config.port << " — " << error.message();
-      impl_->acceptor.close();
+      boost::system::error_code ignored;
+      impl_->acceptor.close(ignored);
       impl_->ssl_context.reset();
       return false;
     }
@@ -594,11 +608,6 @@ namespace remote_usb {
     if (impl_) {
       impl_->stop();
     }
-  }
-
-  bool
-  reverse_tunnel_service::available() const noexcept {
-    return impl_ && impl_->acceptor.is_open() && !impl_->stopping.load();
   }
 
   std::uint16_t

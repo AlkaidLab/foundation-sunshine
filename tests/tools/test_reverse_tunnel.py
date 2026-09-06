@@ -64,6 +64,14 @@ def main():
         (root / "wrong-token").write_text("wrong")
         sequence = 0
 
+        for mode in ("invalid-address", "missing-verifier", "zero-limit"):
+            result = subprocess.run([args.server_probe, str(root / "server.crt"),
+                str(root / "server.key"), str(root / "client.crt"), str(root / "token"),
+                "0", "synthetic", str(root / "unused.stop"), mode],
+                capture_output=True, timeout=10)
+            assert result.returncode == 1, (mode, result.stdout, result.stderr)
+        print("PASS host: invalid configuration returns failure without throwing")
+
         @contextlib.contextmanager
         def server(mode="ok"):
             nonlocal sequence
@@ -98,6 +106,26 @@ def main():
         def handshake(sock, supplied_token=token, tail=b""):
             sock.sendall(json.dumps({"op": "forward", "token": supplied_token,
                                      "busid": "1-1"}).encode() + b"\n" + tail)
+
+        with server("limited") as (port, log), contextlib.ExitStack() as sockets:
+            for _ in range(2):
+                sockets.enter_context(socket.create_connection(("127.0.0.1", port), timeout=5))
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as rejected:
+                try:
+                    assert rejected.recv(1) == b"", "session limit was not enforced"
+                except ConnectionResetError:
+                    pass
+            sockets.close()
+            # EOF handlers reclaim capacity; retry until a valid client fits.
+            def recovered():
+                try:
+                    with connect(port) as client:
+                        handshake(client, "wrong")
+                        return json.loads(line(client))["reason"] == "unauthorized"
+                except (OSError, ssl.SSLError):
+                    return False
+            wait_for(recovered)
+        print("PASS host: pre-TLS session cap rejects excess connections and recovers")
 
         with server() as (port, log):
             for supplied_token in ("", "wrong"):
@@ -154,6 +182,36 @@ def main():
         print("PASS host: stop cancels pending import and drains TLS callbacks")
 
         if args.client_probe:
+            with socket.socket() as remote, socket.socket() as exporter:
+                remote.bind(("127.0.0.1", 0))
+                remote.listen(1)
+                remote.settimeout(12)
+                exporter.bind(("127.0.0.1", 0))
+                exporter.listen(1)
+                exporter.settimeout(12)
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(root / "server.crt", root / "server.key")
+                log = root / "qt-early-close.log"
+                with log.open("w") as output:
+                    process = subprocess.Popen([args.client_probe, "127.0.0.1",
+                        str(remote.getsockname()[1]), str(root / "server.crt"),
+                        str(root / "client.crt"), str(root / "client.key"),
+                        str(root / "token"), "1-1", str(exporter.getsockname()[1]),
+                        str(root / "never.stop")], stdout=output, stderr=subprocess.STDOUT)
+                    try:
+                        with exporter.accept()[0] as local:
+                            with ctx.wrap_socket(remote.accept()[0], server_side=True) as peer:
+                                assert json.loads(line(peer))["op"] == "forward"
+                                # Complete TLS, then close before the JSON ready response.
+                            process.wait(timeout=12)
+                        assert process.returncode == 1, log.read_text()
+                        assert "FORWARDING" not in log.read_text(), log.read_text()
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait()
+            print("PASS client: peer close before ready reports failure")
+
             for name, pin, secret in (("valid", "server", "token"),
                                       ("bad-pin", "wrong", "token"),
                                       ("bad-token", "server", "wrong-token")):

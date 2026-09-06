@@ -80,6 +80,10 @@ int main(int argc, char **argv) {
   std::unique_ptr<X509, decltype(&X509_free)> peer(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr), X509_free);
   if (!peer) return 2;
   config.verify_client_cert = [&](X509 *cert) { return X509_cmp(cert, peer.get()) == 0; };
+  if (mode == "limited") config.max_sessions = 2;
+  if (mode == "invalid-address") config.bind_address = "invalid-address";
+  if (mode == "missing-verifier") config.verify_client_cert = {};
+  if (mode == "zero-limit") config.max_sessions = 0;
   remote_usb::reverse_tunnel_service service(std::move(host));
   if (!service.start(std::move(config))) return 1;
   std::cout << "LISTENING " << service.bound_port() << std::endl;
