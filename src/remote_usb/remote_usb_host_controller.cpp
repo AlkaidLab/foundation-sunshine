@@ -75,10 +75,15 @@ run_process(const std::string &executable,
   bp::ipstream standard_error;
   std::error_code launch_error;
   bp::child child;
+  // usbip-win2 may launch a worker process that inherits our output pipes.
+  // Keep the complete helper tree in a process group so timeout/cancel also
+  // closes those inherited handles and the reader threads can finish.
+  bp::group process_group;
 
   try {
     child = bp::child(executable,
                       bp::args(arguments),
+                      process_group,
                       bp::std_in < bp::null,
                       bp::std_out > standard_output,
                       bp::std_err > standard_error,
@@ -117,7 +122,7 @@ run_process(const std::string &executable,
   }
   catch (const std::exception &exception) {
     std::error_code ignored;
-    child.terminate(ignored);
+    process_group.terminate(ignored);
     child.wait(ignored);
     if (output_reader.joinable()) {
       output_reader.join();
@@ -131,7 +136,7 @@ run_process(const std::string &executable,
   }
   catch (...) {
     std::error_code ignored;
-    child.terminate(ignored);
+    process_group.terminate(ignored);
     child.wait(ignored);
     if (output_reader.joinable()) {
       output_reader.join();
@@ -152,14 +157,14 @@ run_process(const std::string &executable,
       result.cancelled = true;
       terminated = true;
       std::error_code ignored;
-      child.terminate(ignored);
+      process_group.terminate(ignored);
       break;
     }
     if (std::chrono::steady_clock::now() >= deadline) {
       result.timed_out = true;
       terminated = true;
       std::error_code ignored;
-      child.terminate(ignored);
+      process_group.terminate(ignored);
       break;
     }
     std::this_thread::sleep_for(5ms);
