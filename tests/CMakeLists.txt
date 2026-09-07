@@ -223,6 +223,13 @@ set_target_properties(virtual_touchscreen_unit_tests PROPERTIES
         CXX_STANDARD_REQUIRED ON)
 add_test(NAME virtual_touchscreen_unit_tests COMMAND virtual_touchscreen_unit_tests)
 
+add_executable(remote_usb_process_tree_helper
+        ${CMAKE_SOURCE_DIR}/tests/tools/remote_usb_process_tree_helper.cpp)
+target_link_libraries(remote_usb_process_tree_helper PRIVATE
+        Boost::process Boost::system ${CMAKE_THREAD_LIBS_INIT})
+set_target_properties(remote_usb_process_tree_helper PROPERTIES
+        CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+
 add_executable(remote_usb_host_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp)
@@ -237,6 +244,9 @@ target_link_libraries(remote_usb_host_controller_unit_tests
         gtest_main)
 target_compile_options(remote_usb_host_controller_unit_tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+target_compile_definitions(remote_usb_host_controller_unit_tests PRIVATE
+        REMOTE_USB_PROCESS_TREE_HELPER="$<TARGET_FILE:remote_usb_process_tree_helper>")
+add_dependencies(remote_usb_host_controller_unit_tests remote_usb_process_tree_helper)
 set_target_properties(remote_usb_host_controller_unit_tests PROPERTIES
         CXX_STANDARD 23
         CXX_STANDARD_REQUIRED ON)
