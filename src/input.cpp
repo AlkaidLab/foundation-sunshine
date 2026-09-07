@@ -174,7 +174,7 @@ namespace input {
         input_activity_event { std::move(input_activity_event) },
         session_id {session_id},
         mouse_left_button_timeout {},
-        touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
+        touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
         accumulated_hscroll_delta {} {}
 
@@ -687,8 +687,13 @@ namespace input {
         text_context::bridge_t::instance().record_mouse_button(
           input->session_id, release, point.x, point.y,
           input->touch_port.offset_x, input->touch_port.offset_y,
-          input->touch_port.env_width, input->touch_port.env_height);
+          input->touch_port.display_width, input->touch_port.display_height);
       }
+    }
+    else if (button == BUTTON_RIGHT && !release) {
+      // A remote right-click cancels a pending left-button candidate so a
+      // press-drag-release sequence can't be mistaken for a text activation.
+      text_context::bridge_t::instance().cancel_mouse(input->session_id);
     }
     /**
      * When Moonlight sends mouse input through absolute coordinates,
@@ -915,6 +920,9 @@ namespace input {
       return;
     }
 
+    // Scrolling invalidates any pending left-button click candidate.
+    text_context::bridge_t::instance().cancel_mouse(input->session_id);
+
     if (config::input.high_resolution_scrolling) {
       platf::scroll(platf_input, util::endian::big(packet->scrollAmt1));
     }
@@ -939,6 +947,9 @@ namespace input {
     if (!config::input.mouse) {
       return;
     }
+
+    // Scrolling invalidates any pending left-button click candidate.
+    text_context::bridge_t::instance().cancel_mouse(input->session_id);
 
     if (config::input.high_resolution_scrolling) {
       platf::hscroll(platf_input, util::endian::big(packet->scrollAmount));
@@ -1065,12 +1076,15 @@ namespace input {
         touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
       BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
                       << ", x=" << screen_x << ", y=" << screen_y
-                      << ", viewport=" << abs_port.width << 'x' << abs_port.height;
+                      << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
     }
+    // Capture geometry is the selected display's size, not the whole virtual
+    // desktop: UIA/caret rectangles are reported desktop-global and the bridge
+    // subtracts this port's offset before the client divides by these extents.
     text_context::bridge_t::instance().record_touch(
       input->session_id, touch.eventType, touch.pointerId, screen_x, screen_y,
       abs_port.offset_x, abs_port.offset_y,
-      static_cast<std::uint32_t>(abs_port.width), static_cast<std::uint32_t>(abs_port.height));
+      static_cast<std::uint32_t>(touch_port.display_width), static_cast<std::uint32_t>(touch_port.display_height));
 
     platf::touch_update(input->client_context.get(), abs_port, touch);
   }

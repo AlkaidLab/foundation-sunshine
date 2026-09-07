@@ -70,6 +70,9 @@ namespace text_context {
                              std::int32_t capture_left, std::int32_t capture_top,
                              std::uint32_t capture_width, std::uint32_t capture_height);
 
+    /// Drops any in-flight mouse candidate for the session (right-click/scroll).
+    void cancel_mouse(session_id sid);
+
     /// Returns true when the observation consumed a matching remote input.
     bool observe(const observation_t &observation);
     void drain_outbound(std::deque<outbound_msg_t> &out);

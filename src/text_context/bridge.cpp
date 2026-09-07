@@ -209,10 +209,6 @@ namespace text_context {
         screen_x, screen_y, screen_x, screen_y, capture_left, capture_top,
         capture_width, capture_height, false, false,
       });
-      if (_impl->current_uia && _impl->uia &&
-          now - _impl->last_gui_alive < kGuiAliveWindow) {
-        correlate_locked(*_impl->current_uia);
-      }
       return;
     }
     auto it = _impl->active_touches.find(key);
@@ -225,8 +221,18 @@ namespace text_context {
     candidate.moved |= dx * dx + dy * dy > kDragSlopSquared;
     if (event_type == kUp) {
       if (!candidate.moved && !candidate.consumed) {
+        // The match window is measured from gesture completion so a long
+        // press still gets its full post-up observation window.
+        candidate.created = now;
         _impl->recent.push_back(candidate);
         if (_impl->recent.size() > kMaxRecentCandidates) _impl->recent.pop_front();
+        // A click into an already-focused editor produces no fresh GUI
+        // observation (no focus change), so correlate the completed gesture
+        // against the last trusted UIA snapshot right away.
+        if (_impl->current_uia && _impl->uia &&
+            now - _impl->last_gui_alive < kGuiAliveWindow) {
+          correlate_locked(*_impl->current_uia);
+        }
       }
       _impl->active_touches.erase(it);
     }
@@ -251,10 +257,6 @@ namespace text_context {
         screen_x, screen_y, screen_x, screen_y, capture_left, capture_top,
         capture_width, capture_height, false, false,
       };
-      if (_impl->current_uia && _impl->uia &&
-          clock_t::now() - _impl->last_gui_alive < kGuiAliveWindow) {
-        correlate_locked(*_impl->current_uia);
-      }
     }
     else if (auto it = _impl->active_mice.find(sid); it != _impl->active_mice.end()) {
       auto &candidate = it->second;
@@ -264,11 +266,25 @@ namespace text_context {
       const auto dy = static_cast<std::int64_t>(screen_y) - candidate.down_y;
       candidate.moved |= dx * dx + dy * dy > kDragSlopSquared;
       if (!candidate.moved && !candidate.consumed) {
+        // Same as touch: window anchored at gesture completion, then
+        // correlated against the last trusted UIA snapshot (see kUp above).
+        candidate.created = clock_t::now();
         _impl->recent.push_back(candidate);
         if (_impl->recent.size() > kMaxRecentCandidates) _impl->recent.pop_front();
+        if (_impl->current_uia && _impl->uia &&
+            clock_t::now() - _impl->last_gui_alive < kGuiAliveWindow) {
+          correlate_locked(*_impl->current_uia);
+        }
       }
       _impl->active_mice.erase(it);
     }
+  }
+
+  void bridge_t::cancel_mouse(session_id sid) {
+    std::lock_guard lock(_impl->mu);
+    // Drop the in-flight candidate without finalizing it: a right-click or
+    // scroll during a left-button gesture must never become a text activation.
+    _impl->active_mice.erase(sid);
   }
 
   bool bridge_t::observe(const observation_t &observation) {
@@ -319,12 +335,9 @@ namespace text_context {
       matched_session = candidate.sid;
       if (!match || candidate.created > match->created) match = &candidate;
     };
-    for (auto &[_, candidate] : _impl->active_touches) {
-      consider(candidate);
-    }
-    for (auto &[_, candidate] : _impl->active_mice) {
-      consider(candidate);
-    }
+    // Only completed gestures are eligible. In-flight touches/mice are not
+    // scanned: an observation between down and a later move/cancel would
+    // otherwise consume a candidate that the gesture can no longer retract.
     for (auto &candidate : _impl->recent) {
       consider(candidate);
     }
@@ -395,7 +408,16 @@ namespace text_context {
 
   void bridge_t::notify_gui_alive(bool input_pane, bool uia) {
     std::lock_guard lock(_impl->mu);
-    _impl->last_gui_alive = clock_t::now();
+    const auto now = clock_t::now();
+    // A cached focused rectangle belongs to a specific GUI instance and only
+    // stays trustworthy while that instance keeps heartbeating. Drop it when
+    // UIA is reported unavailable or the previous heartbeat already expired
+    // (GUI restart): a fresh instance may report a different focused element.
+    const bool uia_was_available = _impl->uia && now - _impl->last_gui_alive < kGuiAliveWindow;
+    if (!uia || !uia_was_available) {
+      _impl->current_uia.reset();
+    }
+    _impl->last_gui_alive = now;
     _impl->input_pane = input_pane;
     _impl->uia = uia;
   }

@@ -4331,13 +4331,18 @@ namespace stream {
         BOOST_LOG(debug) << "Expecting incoming session connections from "sv << addr_string;
       }
 
+      // Register with the text-context bridge before publishing the session:
+      // once the pointer is in the shared list the control thread may dispatch
+      // input immediately, and an unregistered launch ID would silently drop
+      // that first click/touch candidate.
+      text_context::bridge_t::instance().session_started(session.launch_session_id);
+
       // 将完成初始化的会话加入共享列表。
       {
         auto lg = session.broadcast_ref->control_server._sessions.lock();
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
       clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
-      text_context::bridge_t::instance().session_started(session.launch_session_id);
 
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {

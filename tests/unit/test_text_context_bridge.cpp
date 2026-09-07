@@ -35,6 +35,7 @@ TEST(TextContextBridge, UiaRequiresEditableHitAndEncodesCaptureCoordinates) {
   auto &bridge = text_context::bridge_t::instance();
   bridge.session_started(sid);
   bridge.record_mouse_button(sid, false, 250, 180, 100, 50, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 250, 180, 100, 50, 1920, 1080);
 
   text_context::observation_t miss;
   miss.source = text_context::source_e::uia;
@@ -69,7 +70,6 @@ TEST(TextContextBridge, UiaRequiresEditableHitAndEncodesCaptureCoordinates) {
   EXPECT_EQ(read_u32(message.bytes, 68), 1920u);
   EXPECT_EQ(read_u32(message.bytes, 72), 1080u);
 
-  bridge.record_mouse_button(sid, true, 250, 180, 100, 50, 1920, 1080);
   bridge.session_stopped(sid);
 }
 
@@ -78,6 +78,7 @@ TEST(TextContextBridge, InputPaneRequiresRemoteTouchAutoShowTransition) {
   auto &bridge = text_context::bridge_t::instance();
   bridge.session_started(sid);
   bridge.record_touch(sid, 1, 7, 300, 400, 0, 0, 1280, 720);
+  bridge.record_touch(sid, 2, 7, 300, 400, 0, 0, 1280, 720);
 
   text_context::observation_t pane;
   pane.source = text_context::source_e::input_pane;
@@ -88,7 +89,6 @@ TEST(TextContextBridge, InputPaneRequiresRemoteTouchAutoShowTransition) {
 
   pane.auto_show = true;
   EXPECT_TRUE(bridge.observe(pane));
-  bridge.record_touch(sid, 2, 7, 300, 400, 0, 0, 1280, 720);
   bridge.session_stopped(sid);
 }
 
@@ -162,8 +162,8 @@ TEST(TextContextBridge, SequenceCountersAreIndependentPerSession) {
   observation.element_rect = text_context::screen_rect_t {50, 50, 150, 150};
 
   bridge.record_mouse_button(sid_a, false, 100, 100, 0, 0, 1920, 1080);
-  ASSERT_TRUE(bridge.observe(observation));
   bridge.record_mouse_button(sid_a, true, 100, 100, 0, 0, 1920, 1080);
+  ASSERT_TRUE(bridge.observe(observation));
 
   std::deque<text_context::outbound_msg_t> messages;
   bridge.drain_outbound(messages);
@@ -174,8 +174,8 @@ TEST(TextContextBridge, SequenceCountersAreIndependentPerSession) {
   bridge.session_stopped(sid_a);
 
   bridge.record_mouse_button(sid_b, false, 100, 100, 0, 0, 1920, 1080);
-  ASSERT_TRUE(bridge.observe(observation));
   bridge.record_mouse_button(sid_b, true, 100, 100, 0, 0, 1920, 1080);
+  ASSERT_TRUE(bridge.observe(observation));
 
   messages.clear();
   bridge.drain_outbound(messages);
@@ -200,8 +200,8 @@ TEST(TextContextBridge, FocusTransferDeactivatesThePreviousSession) {
   first.editable = true;
   first.element_rect = text_context::screen_rect_t {50, 50, 150, 150};
   bridge.record_mouse_button(sid_a, false, 100, 100, 0, 0, 1920, 1080);
-  ASSERT_TRUE(bridge.observe(first));
   bridge.record_mouse_button(sid_a, true, 100, 100, 0, 0, 1920, 1080);
+  ASSERT_TRUE(bridge.observe(first));
 
   std::deque<text_context::outbound_msg_t> messages;
   bridge.drain_outbound(messages);
@@ -212,6 +212,7 @@ TEST(TextContextBridge, FocusTransferDeactivatesThePreviousSession) {
   auto second = first;
   second.element_rect = text_context::screen_rect_t {450, 450, 550, 550};
   bridge.record_mouse_button(sid_b, false, 500, 500, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid_b, true, 500, 500, 0, 0, 1920, 1080);
   ASSERT_TRUE(bridge.observe(second));
   bridge.drain_outbound(messages);
   ASSERT_EQ(messages.size(), 2);
@@ -221,7 +222,6 @@ TEST(TextContextBridge, FocusTransferDeactivatesThePreviousSession) {
   EXPECT_EQ(messages[1].target, sid_b);
   EXPECT_NE(read_u16(messages[1].bytes, 2) & 0x0003, 0);
 
-  bridge.record_mouse_button(sid_b, true, 500, 500, 0, 0, 1920, 1080);
   bridge.session_stopped(sid_a);
   bridge.session_stopped(sid_b);
 }
@@ -258,6 +258,9 @@ TEST(TextContextBridge, RepeatedTouchDownKeepsTheOriginalCandidate) {
   bridge.session_started(sid);
   bridge.record_touch(sid, 1, 7, 100, 100, 0, 0, 1920, 1080);
   bridge.record_touch(sid, 1, 7, 500, 500, 0, 0, 1920, 1080);
+  // The repeated down is idempotent; the up still finalizes the original
+  // candidate at its original position.
+  bridge.record_touch(sid, 2, 7, 100, 100, 0, 0, 1920, 1080);
 
   text_context::observation_t observation;
   observation.source = text_context::source_e::uia;
@@ -266,7 +269,6 @@ TEST(TextContextBridge, RepeatedTouchDownKeepsTheOriginalCandidate) {
   observation.element_rect = text_context::screen_rect_t {50, 50, 150, 150};
   EXPECT_TRUE(bridge.observe(observation));
 
-  bridge.record_touch(sid, 7, 0, 0, 0, 0, 0, 1920, 1080);
   bridge.session_stopped(sid);
 }
 
@@ -320,13 +322,13 @@ TEST(TextContextBridge, CachedUiaFocusMatchesClickIntoAlreadyFocusedEditor) {
   EXPECT_FALSE(bridge.observe(observation));
 
   bridge.record_mouse_button(sid, false, 250, 180, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 250, 180, 0, 0, 1920, 1080);
   std::deque<text_context::outbound_msg_t> messages;
   bridge.drain_outbound(messages);
   ASSERT_EQ(messages.size(), 1);
   EXPECT_EQ(messages.front().target, sid);
   EXPECT_EQ(messages.front().bytes[25], static_cast<std::uint8_t>(text_context::cause_e::remote_mouse));
 
-  bridge.record_mouse_button(sid, true, 250, 180, 0, 0, 1920, 1080);
   bridge.session_stopped(sid);
 }
 
@@ -366,8 +368,8 @@ TEST(TextContextBridge, RemoteClickOnNonEditableElementDeactivatesTheActiveConte
   editable.editable = true;
   editable.element_rect = text_context::screen_rect_t {100, 100, 500, 300};
   bridge.record_touch(sid, 1, 1, 200, 180, 0, 0, 1920, 1080);
-  ASSERT_TRUE(bridge.observe(editable));
   bridge.record_touch(sid, 2, 1, 200, 180, 0, 0, 1920, 1080);
+  ASSERT_TRUE(bridge.observe(editable));
 
   std::deque<text_context::outbound_msg_t> messages;
   bridge.drain_outbound(messages);
@@ -376,6 +378,7 @@ TEST(TextContextBridge, RemoteClickOnNonEditableElementDeactivatesTheActiveConte
   messages.clear();
 
   bridge.record_touch(sid, 1, 2, 800, 500, 0, 0, 1920, 1080);
+  bridge.record_touch(sid, 2, 2, 800, 500, 0, 0, 1920, 1080);
   auto non_editable = editable;
   non_editable.editable = false;
   non_editable.element_rect = text_context::screen_rect_t {700, 450, 900, 550};
@@ -387,7 +390,6 @@ TEST(TextContextBridge, RemoteClickOnNonEditableElementDeactivatesTheActiveConte
   EXPECT_NE(flags & 0x0080, 0);
   EXPECT_EQ(flags & 0x0002, 0);
 
-  bridge.record_touch(sid, 2, 2, 800, 500, 0, 0, 1920, 1080);
   bridge.session_stopped(sid);
 }
 
@@ -402,13 +404,14 @@ TEST(TextContextBridge, TransientDeactivationDoesNotConsumeTheNextEditorActivati
   first.editable = true;
   first.element_rect = text_context::screen_rect_t {100, 100, 300, 200};
   bridge.record_mouse_button(sid, false, 150, 150, 0, 0, 1920, 1080);
-  ASSERT_TRUE(bridge.observe(first));
   bridge.record_mouse_button(sid, true, 150, 150, 0, 0, 1920, 1080);
+  ASSERT_TRUE(bridge.observe(first));
   std::deque<text_context::outbound_msg_t> messages;
   bridge.drain_outbound(messages);
   messages.clear();
 
   bridge.record_mouse_button(sid, false, 450, 150, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 450, 150, 0, 0, 1920, 1080);
   auto transient = first;
   transient.active = false;
   transient.editable = false;
@@ -423,6 +426,115 @@ TEST(TextContextBridge, TransientDeactivationDoesNotConsumeTheNextEditorActivati
   EXPECT_EQ(read_u16(messages[0].bytes, 2) & 0x0002, 0);
   EXPECT_NE(read_u16(messages[1].bytes, 2) & 0x0002, 0);
 
-  bridge.record_mouse_button(sid, true, 450, 150, 0, 0, 1920, 1080);
+  bridge.session_stopped(sid);
+}
+
+TEST(TextContextBridge, ObservationBeforeGestureCompletionDoesNotActivate) {
+  constexpr text_context::session_id sid = 0x5445585450524f44ULL;
+  auto &bridge = text_context::bridge_t::instance();
+  bridge.session_started(sid);
+  bridge.notify_gui_alive(false, true);
+
+  text_context::observation_t observation;
+  observation.source = text_context::source_e::uia;
+  observation.active = true;
+  observation.editable = true;
+  observation.element_rect = text_context::screen_rect_t {100, 100, 500, 300};
+
+  // The observation and the cached UIA snapshot both arrive while the finger
+  // is still down; neither may consume a gesture that can still turn into a
+  // drag or a cancel.
+  bridge.record_touch(sid, 1, 5, 250, 180, 0, 0, 1920, 1080);
+  EXPECT_FALSE(bridge.observe(observation));
+
+  // The gesture completes as a clean tap: now it may be consumed.
+  bridge.record_touch(sid, 2, 5, 250, 180, 0, 0, 1920, 1080);
+  std::deque<text_context::outbound_msg_t> messages;
+  bridge.drain_outbound(messages);
+  ASSERT_EQ(messages.size(), 1);
+  EXPECT_EQ(messages.front().target, sid);
+  bridge.session_stopped(sid);
+}
+
+TEST(TextContextBridge, GestureFinalizedAsDragStaysIneligible) {
+  constexpr text_context::session_id sid = 0x5445585447524147ULL;
+  auto &bridge = text_context::bridge_t::instance();
+  bridge.session_started(sid);
+  bridge.notify_gui_alive(false, true);
+
+  text_context::observation_t observation;
+  observation.source = text_context::source_e::uia;
+  observation.active = true;
+  observation.editable = true;
+  observation.element_rect = text_context::screen_rect_t {50, 50, 550, 350};
+
+  bridge.record_touch(sid, 1, 6, 250, 180, 0, 0, 1920, 1080);
+  bridge.record_touch(sid, 3, 6, 450, 180, 0, 0, 1920, 1080);
+  bridge.record_touch(sid, 2, 6, 450, 180, 0, 0, 1920, 1080);
+  EXPECT_FALSE(bridge.observe(observation));
+
+  std::deque<text_context::outbound_msg_t> messages;
+  bridge.drain_outbound(messages);
+  EXPECT_TRUE(messages.empty());
+  bridge.session_stopped(sid);
+}
+
+TEST(TextContextBridge, DisablingUiAClearsTheCachedFocusedRectangle) {
+  constexpr text_context::session_id sid = 0x5445585354414c45ULL;
+  auto &bridge = text_context::bridge_t::instance();
+  bridge.session_started(sid);
+  bridge.notify_gui_alive(false, true);
+
+  text_context::observation_t observation;
+  observation.source = text_context::source_e::uia;
+  observation.active = true;
+  observation.editable = true;
+  observation.element_rect = text_context::screen_rect_t {100, 100, 500, 300};
+  EXPECT_FALSE(bridge.observe(observation));
+
+  bridge.record_mouse_button(sid, false, 250, 180, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 250, 180, 0, 0, 1920, 1080);
+  std::deque<text_context::outbound_msg_t> messages;
+  bridge.drain_outbound(messages);
+  ASSERT_EQ(messages.size(), 1);
+  messages.clear();
+
+  // The GUI reports UIA unavailable (and later recovers): the rectangle
+  // cached from the previous instance must not survive either transition.
+  bridge.notify_gui_alive(false, false);
+  bridge.record_mouse_button(sid, false, 250, 180, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 250, 180, 0, 0, 1920, 1080);
+  bridge.drain_outbound(messages);
+  EXPECT_TRUE(messages.empty());
+
+  bridge.notify_gui_alive(false, true);
+  bridge.record_mouse_button(sid, false, 250, 180, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 250, 180, 0, 0, 1920, 1080);
+  bridge.drain_outbound(messages);
+  EXPECT_TRUE(messages.empty());
+
+  bridge.session_stopped(sid);
+}
+
+TEST(TextContextBridge, RightClickAndScrollCancelThePendingMouseCandidate) {
+  constexpr text_context::session_id sid = 0x5445585249474854ULL;
+  auto &bridge = text_context::bridge_t::instance();
+  bridge.session_started(sid);
+  bridge.notify_gui_alive(false, true);
+
+  text_context::observation_t observation;
+  observation.source = text_context::source_e::uia;
+  observation.active = true;
+  observation.editable = true;
+  observation.element_rect = text_context::screen_rect_t {100, 100, 500, 300};
+  EXPECT_FALSE(bridge.observe(observation));
+
+  bridge.record_mouse_button(sid, false, 250, 180, 0, 0, 1920, 1080);
+  bridge.cancel_mouse(sid);
+  bridge.record_mouse_button(sid, true, 250, 180, 0, 0, 1920, 1080);
+
+  std::deque<text_context::outbound_msg_t> messages;
+  bridge.drain_outbound(messages);
+  EXPECT_TRUE(messages.empty());
   bridge.session_stopped(sid);
 }

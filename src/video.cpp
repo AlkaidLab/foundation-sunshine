@@ -3573,6 +3573,8 @@ namespace video {
       },
       display->env_width,
       display->env_height,
+      display->width,
+      display->height,
       offsetX,
       offsetY,
       1.0f / scalar,
