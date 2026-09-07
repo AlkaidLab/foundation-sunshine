@@ -6,6 +6,7 @@
 #include "remote_usb_host_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cctype>
 #include <chrono>
@@ -17,6 +18,7 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/process/v1.hpp>
+#include <boost/process/v1/async_pipe.hpp>
 #include <boost/process/v1/pipe.hpp>
 
 namespace remote_usb {
@@ -92,6 +94,31 @@ append_bounded(std::string &destination,
   destination.append(value.data(), std::min(remaining, value.size()));
 }
 
+void
+drain_pipe(bp::async_pipe &pipe,
+           asio::io_context &context,
+           std::string &destination,
+           std::size_t maximum) noexcept {
+  try {
+    std::array<char, 4096> buffer {};
+    std::function<void()> read_next;
+    read_next = [&]() {
+      pipe.async_read_some(asio::buffer(buffer), [&](const auto &error, std::size_t count) {
+        if (count != 0) {
+          append_bounded(destination, std::string_view(buffer.data(), count), maximum);
+        }
+        if (!error) {
+          read_next();
+        }
+      });
+    };
+    read_next();
+    context.run();
+  }
+  catch (...) {
+  }
+}
+
 /*
  * Drain both child pipes concurrently.  usbip-win2 normally prints a single
  * line, but draining rather than relying on a fixed pipe buffer keeps a broken
@@ -105,8 +132,10 @@ run_process(const std::string &executable,
             std::size_t max_output_bytes,
             const usbip_reader_thread_factory &reader_thread_factory) {
   usbip_command_result result;
-  bp::ipstream standard_output;
-  bp::ipstream standard_error;
+  asio::io_context output_context;
+  asio::io_context error_context;
+  bp::async_pipe standard_output(output_context);
+  bp::async_pipe standard_error(error_context);
   std::error_code launch_error;
   bp::child child;
   // usbip-win2 may launch a worker process that inherits our output pipes.
@@ -142,44 +171,35 @@ run_process(const std::string &executable,
     }
 
     /* A failed group termination must not leave a descendant holding either
-     * output pipe open forever. Terminate the direct child as a best effort,
-     * then close our pipe handles so the reader joins have a bounded exit. */
+     * output pipe open forever. Terminate the direct child as a best effort;
+     * the caller cancels the asynchronous reads before joining them. */
     std::error_code child_error;
     child.terminate(child_error);
-    try {
-      standard_output.pipe().close();
-    }
-    catch (...) {
-    }
-    try {
-      standard_error.pipe().close();
-    }
-    catch (...) {
-    }
     return group_error;
+  };
+  const auto cancel_readers = [&]() noexcept {
+    try {
+      standard_output.cancel();
+    }
+    catch (...) {
+    }
+    try {
+      standard_error.cancel();
+    }
+    catch (...) {
+    }
   };
   try {
     output_reader = reader_thread_factory([&]() {
-      std::string line;
-      while (std::getline(standard_output, line)) {
-        append_bounded(result.standard_output, line, max_output_bytes);
-        if (result.standard_output.size() < max_output_bytes) {
-          append_bounded(result.standard_output, "\n", max_output_bytes);
-        }
-      }
+      drain_pipe(standard_output, output_context, result.standard_output, max_output_bytes);
     });
     error_reader = reader_thread_factory([&]() {
-      std::string line;
-      while (std::getline(standard_error, line)) {
-        append_bounded(result.standard_error, line, max_output_bytes);
-        if (result.standard_error.size() < max_output_bytes) {
-          append_bounded(result.standard_error, "\n", max_output_bytes);
-        }
-      }
+      drain_pipe(standard_error, error_context, result.standard_error, max_output_bytes);
     });
   }
   catch (const std::exception &exception) {
     terminate_tree();
+    cancel_readers();
     std::error_code ignored;
     child.wait(ignored);
     if (output_reader.joinable()) {
@@ -194,6 +214,7 @@ run_process(const std::string &executable,
   }
   catch (...) {
     terminate_tree();
+    cancel_readers();
     std::error_code ignored;
     child.wait(ignored);
     if (output_reader.joinable()) {
@@ -232,6 +253,9 @@ run_process(const std::string &executable,
    * inherited pipe handles. Terminate the remaining group before joining the
    * readers so normal-exit, cancellation, and timeout all use the same path. */
   const auto group_error = terminate_tree();
+  if (group_error) {
+    cancel_readers();
+  }
   output_reader.join();
   error_reader.join();
   if (wait_error && !terminated) {
