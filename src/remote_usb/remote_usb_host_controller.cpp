@@ -9,6 +9,8 @@
 #include <charconv>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <system_error>
 #include <utility>
@@ -25,6 +27,38 @@ namespace bp = boost::process::v1;
 using namespace std::chrono_literals;
 
 constexpr std::uint16_t kMaxHubPort = 255;
+
+std::string
+resolve_executable(std::string executable) {
+  const std::filesystem::path requested(executable);
+  if (requested.has_parent_path()) {
+    return executable;
+  }
+
+  const auto discovered = bp::search_path(executable);
+  if (!discovered.empty()) {
+    return discovered.string();
+  }
+
+#ifdef _WIN32
+  /* usbip-win2's installer does not add its directory to the service account's
+   * PATH. Sunshine normally runs as LocalSystem, so also probe the standard
+   * machine-wide install directory. */
+  for (const char *variable: {"ProgramW6432", "ProgramFiles"}) {
+    const auto *program_files = std::getenv(variable);
+    if (!program_files || !*program_files) {
+      continue;
+    }
+    const auto candidate = std::filesystem::path(program_files) / "USBip" / requested;
+    std::error_code error;
+    if (std::filesystem::is_regular_file(candidate, error)) {
+      return candidate.string();
+    }
+  }
+#endif
+
+  return executable;
+}
 
 std::string
 platform_default_executable() {
@@ -81,7 +115,7 @@ run_process(const std::string &executable,
   bp::group process_group;
 
   try {
-    child = bp::child(executable,
+    child = bp::child(resolve_executable(executable),
                       bp::args(arguments),
                       process_group,
                       bp::std_in < bp::null,
