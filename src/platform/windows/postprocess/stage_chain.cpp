@@ -226,6 +226,7 @@ namespace platf::dxgi::postprocess {
 
       ~dll_stage_filter_t() override {
         destroy_instance();
+        release_outputs();
       }
 
       bool
@@ -271,9 +272,16 @@ namespace platf::dxgi::postprocess {
 
         // Single-output consumption: the pre_encode_filter_t contract carries
         // one frame. Temporal stages are refused at make time, so the first
-        // output must be the real frame.
+        // output must be the real frame, at the host-allocated size. The
+        // domain/encoding/texture/srv fields were prefilled by the host — a
+        // DLL that overwrites any of them (unknown domain value, foreign
+        // texture pointer) is rejected rather than propagated downstream.
         if (outputs_[0].frame_type != FOUNDATION_STAGE_FRAME_REAL ||
-            outputs_[0].width != output_width_ || outputs_[0].height != output_height_) {
+            outputs_[0].width != output_width_ || outputs_[0].height != output_height_ ||
+            outputs_[0].domain != caps->output_domain ||
+            outputs_[0].encoding != caps->output_encoding ||
+            outputs_[0].texture != static_cast<void *>(textures_.front()) ||
+            outputs_[0].srv != static_cast<void *>(srvs_.front())) {
           return { .status = filter_status_e::failed, .frame = {}, .reason = "stage_output_metadata_mismatch" };
         }
         return make_stage_result(outputs_[0]);
@@ -464,9 +472,24 @@ namespace platf::dxgi::postprocess {
                          << "' declares temporal output; multi-frame batches are not driven yet (docs Phase 3)";
       return {};
     }
+    // The ABI pins non-temporal stages to exactly one output frame; anything
+    // else would allocate unbounded output textures for no drivable purpose.
+    if (caps->max_frames_out != 1) {
+      BOOST_LOG(warning) << "Post-process stage '" << (caps->name ? caps->name : "?")
+                         << "' is non-temporal but declares max_frames_out=" << caps->max_frames_out
+                         << "; the ABI requires exactly 1";
+      return {};
+    }
     if (caps->resolution_behavior == FOUNDATION_STAGE_RESOLUTION_ARBITRARY) {
       BOOST_LOG(warning) << "Post-process stage '" << (caps->name ? caps->name : "?")
                          << "' declares arbitrary resolution; not drivable yet";
+      return {};
+    }
+    if (caps->resolution_behavior == FOUNDATION_STAGE_RESOLUTION_SCALE &&
+        !(caps->min_scale <= scale_hint && scale_hint <= caps->max_scale)) {
+      BOOST_LOG(warning) << "Post-process stage '" << (caps->name ? caps->name : "?")
+                         << "' declares scale [" << caps->min_scale << ", " << caps->max_scale
+                         << "] which does not include the requested " << scale_hint;
       return {};
     }
     return std::make_unique<dll_stage_filter_t>(

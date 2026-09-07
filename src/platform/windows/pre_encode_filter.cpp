@@ -416,6 +416,9 @@ namespace platf::dxgi {
           }
           failure_reason_.assign(result.reason);
           primary_->flush();
+          // Snapshot the per-slot chain report before the primary is destroyed:
+          // /api/runtime/hdr must keep showing which stage bypassed and why.
+          last_primary_states_ = primary_->postprocess_stage_states();
           primary_.reset();
           degraded_ = true;
         }
@@ -447,9 +450,9 @@ namespace platf::dxgi {
 
       std::vector<stage_state_t>
       postprocess_stage_states() const override {
-        // Forward to the live primary; once degraded, the per-slot detail is
-        // gone with it and the session-level degraded state carries the report.
-        return primary_ ? primary_->postprocess_stage_states() : std::vector<stage_state_t> {};
+        // Forward to the live primary; once degraded, report the snapshot
+        // captured before the primary was destroyed.
+        return primary_ ? primary_->postprocess_stage_states() : last_primary_states_;
       }
 
     private:
@@ -457,6 +460,7 @@ namespace platf::dxgi {
       std::unique_ptr<pre_encode_filter_t> fallback_;
       bool degraded_ = false;
       std::string failure_reason_;
+      std::vector<stage_state_t> last_primary_states_;
     };
 
     std::unique_ptr<pre_encode_filter_t>

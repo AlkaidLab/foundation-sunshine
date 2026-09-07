@@ -512,4 +512,30 @@ namespace {
     ASSERT_EQ(states.size(), 1u);
     EXPECT_EQ(states[0].name, "fake.v2stage");
   }
+  TEST(PostprocessChain, FailoverSnapshotsStageStatesWhenPrimaryDies) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+
+    // make(external, failing) wraps failover(chain([external]), mock). The
+    // first frame empties the chain (the external stage bypasses) and the
+    // failover destroys it; the per-slot report must survive as a snapshot
+    // so /api/runtime/hdr keeps explaining the degradation.
+    auto filter = make_pre_encode_filter(
+      platf::pre_encode_filter_e::external_sdr_to_hdr,
+      d3d.device.get(),
+      d3d.context.get(),
+      std::filesystem::path(FAKE_TRUEHDR_FAILING_BACKEND_PATH));
+    ASSERT_TRUE(filter);
+
+    auto input = make_white_input(d3d.device.get(), 4, 4);
+    const auto first = filter->process(sdr_view(input, 4, 4, 5));
+    ASSERT_EQ(first.status, filter_status_e::ready);  // mock fallback served it
+    EXPECT_TRUE(filter->degraded());
+
+    const auto states = filter->postprocess_stage_states();
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_EQ(states[0].name, "external_sdr_to_hdr");
+    EXPECT_EQ(states[0].state, "bypassed");
+    EXPECT_EQ(states[0].failure_reason, "backend_process_internal_error");
+  }
 }  // namespace

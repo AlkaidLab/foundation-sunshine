@@ -1747,6 +1747,8 @@ namespace platf::dxgi {
         runtime_status.synthetic_hdr_backend = "none";
         runtime_status.synthetic_hdr_state = "disabled";
         runtime_status.synthetic_hdr_failure_reason.clear();
+        runtime_status.postprocess_stages.clear();
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
 
