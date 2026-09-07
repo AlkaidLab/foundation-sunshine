@@ -166,8 +166,8 @@ make_opaque_busid() {
   constexpr char hex[] = "0123456789abcdef";
   static std::atomic<std::uint64_t> serial { 0 };
   std::random_device random;
-  std::string value = "rusb-";
-  value.reserve(29);
+  std::string value = "usbip-";
+  value.reserve(30);
   for (std::size_t i = 0; i < 16; ++i) {
     value.push_back(hex[random() & 0x0fu]);
   }

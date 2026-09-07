@@ -31,7 +31,7 @@ namespace {
   }
 }  // namespace
 
-TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndPreservesSingletonFallback) {
+TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndRejectsCrossAddressClaim) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
 
@@ -50,9 +50,12 @@ TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndPreservesSingleton
   rtsp_stream::launch_session_manager_t singleton_manager;
   ASSERT_EQ(singleton_manager.register_session(make_session(3, "cert-c", "198.51.100.10"), 10s, now),
             rtsp_stream::launch_ticket_register_e::accepted);
-  auto fallback = singleton_manager.claim_plaintext("198.51.100.20", now);
-  ASSERT_TRUE(fallback);
-  EXPECT_EQ(fallback->id, 3U);
+  EXPECT_FALSE(singleton_manager.claim_plaintext({}, now));
+  EXPECT_FALSE(singleton_manager.claim_plaintext("198.51.100.20", now));
+
+  auto same_address = singleton_manager.claim_plaintext("198.51.100.10", now);
+  ASSERT_TRUE(same_address);
+  EXPECT_EQ(same_address->id, 3U);
 }
 
 TEST(LaunchSessionManager, ReplacesPendingRetryButDoesNotReplaceClaimedHandshake) {

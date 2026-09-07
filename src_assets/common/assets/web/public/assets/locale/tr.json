@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "Web kullanıcı arayüzünü internete açmak bir güvenlik riskidir! Kendi sorumluluğunuzda devam edin!",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "Web UI için ters proxy kullanıyorsanız upstream adresi olarak Sunshine ana makinesinin gerçek ağ arabirimi IP adresini kullanın. Proxy hedefi olarak localhost, 127.0.0.0/8 veya IPv6 geri döngü adresi ::1 kullanmayın.",
     "qp": "Kuantizasyon Parametresi",
     "qp_desc": "Bazı cihazlar Sabit Bit Hızını desteklemeyebilir. Bu cihazlar için bunun yerine QP kullanılır. Daha yüksek değer daha fazla sıkıştırma, ancak daha az kalite anlamına gelir.",
     "qsv_coder": "QuickSync Kodlayıcı (H264)",

@@ -198,7 +198,6 @@ jobs:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
-          GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
           # ccache.exe is a native binary, so it reads the Windows-style path
           # straight out of the environment even under the msys2 shell.
           CCACHE_DIR: ${{ github.workspace }}\.ccache
@@ -207,10 +206,9 @@ jobs:
           # Hashing the compiler binary instead of its mtime keeps the cache
           # valid across runs that did not actually change gcc.
           CCACHE_COMPILERCHECK: content
-          # Fork PRs cannot access org-scoped secrets, so private-repo driver
-          # downloads (vmouse) may fail. Downgrade missing drivers from
-          # FATAL_ERROR to WARNING so the build/configure still succeeds; the
-          # affected drivers are simply excluded from the installer.
+          # Fork PRs still try every public dependency. Keep the build usable
+          # when a release asset is temporarily unavailable; official builds
+          # continue to require the complete driver set.
           DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
           mkdir -p build

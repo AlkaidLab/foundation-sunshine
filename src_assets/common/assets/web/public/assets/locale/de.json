@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "Das Web-Interface dem Internet zu übergeben, ist ein Sicherheitsrisiko! Fahren Sie auf eigene Gefahr!",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "Wenn Sie einen Reverse-Proxy für die Web UI verwenden, nutzen Sie als Upstream-Adresse die tatsächliche IP-Adresse einer Netzwerkschnittstelle des Sunshine-Hosts. Verwenden Sie nicht localhost, 127.0.0.0/8 oder die IPv6-Loopback-Adresse ::1 als Proxy-Ziel.",
     "qp": "Quantifizierungsparameter",
     "qp_desc": "Einige Geräte unterstützen möglicherweise keine Constant Bit-Rate. Für diese Geräte wird stattdessen QP verwendet. Höhere Werte bedeuten mehr Kompression, aber weniger Qualität.",
     "qsv_coder": "QuickSync-Encoder (H264)",

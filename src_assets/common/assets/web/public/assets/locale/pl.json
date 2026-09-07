@@ -574,6 +574,7 @@
     "port_udp": "UDP",
     "port_warning": "Wystawienie interfejsu użytkownika na Internet stanowi zagrożenie dla bezpieczeństwa! Postępuj na własne ryzyko!",
     "port_web_ui": "Web UI",
+    "port_web_ui_proxy_warning": "Jeśli używasz odwrotnego proxy dla Web UI, ustaw jako adres upstream rzeczywisty adres IP interfejsu sieciowego hosta Sunshine. Nie używaj localhost, 127.0.0.0/8 ani adresu pętli zwrotnej IPv6 ::1 jako celu proxy.",
     "qp": "Parametr kwantyzacji",
     "qp_desc": "Niektóre urządzenia mogą nie obsługiwać stałej szybkości transmisji. W przypadku tych urządzeń zamiast tego używana jest wartość QP. Wyższa wartość oznacza większą kompresję, ale niższą jakość.",
     "qsv_coder": "Koder QuickSync (H264)",
