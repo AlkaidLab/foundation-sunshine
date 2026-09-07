@@ -8,7 +8,7 @@
 #include <mutex>
 #include <utility>
 
-#include "src/logging.h"
+#include "src/logging_severity.h"
 #include "src/platform/frame_contract.h"
 
 namespace platf::dxgi::postprocess {
