@@ -373,11 +373,9 @@ namespace {
     EXPECT_TRUE(chain->degraded());
     EXPECT_EQ(chain->failure_reason(), "stage_process_internal_error");
 
-    // Per-slot reporting for /api/runtime/postprocess: the bypassed slot
-    // keeps its name and reason, the surviving slot stays active.
-    const auto *chain_impl = dynamic_cast<platf::dxgi::postprocess::chain_filter_t *>(chain.get());
-    ASSERT_NE(chain_impl, nullptr);
-    const auto states = chain_impl->stage_states();
+    // Per-slot reporting for /api/runtime/hdr: the bypassed slot keeps its
+    // name and reason, the surviving slot stays active.
+    const auto states = chain->postprocess_stage_states();
     ASSERT_EQ(states.size(), 2u);
     EXPECT_EQ(states[0].state, "bypassed");
     EXPECT_EQ(states[0].failure_reason, "stage_process_internal_error");
@@ -425,5 +423,93 @@ namespace {
     auto chain = make_stage_chain(std::move(stages));
     ASSERT_TRUE(chain);
     EXPECT_EQ(chain->backend_name(), "external_sdr_to_hdr");
+  }
+
+  // ------------------------------------------------------------------
+  // Configured chain factory (apps.json postprocess node end-to-end)
+  // ------------------------------------------------------------------
+  platf::postprocess_stage_entry_t
+  chain_entry(const char *dll) {
+    return { .dll = dll, .params_json = {} };
+  }
+
+  TEST(PostprocessConfiguredChain, RunsValidatedV2Chain) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+
+    // One v2 stage (sdr -> scRGB) against the SDR capture leg and the HDR
+    // encoder leg: directly reachable, no conversions needed.
+    const std::vector<platf::postprocess_stage_entry_t> entries { chain_entry(FAKE_STAGE_BACKEND_PATH) };
+    auto filter = platf::dxgi::make_configured_postprocess_chain(
+      entries, d3d.device.get(), d3d.context.get(),
+      platf::frame_domain_e::sdr_rec709, platf::pixel_encoding_class_e::unorm8,
+      true, {});
+    ASSERT_TRUE(filter);
+    EXPECT_FALSE(filter->degraded());
+
+    auto input = make_white_input(d3d.device.get(), 4, 4);
+    const auto result = filter->process(sdr_view(input, 4, 4, 7));
+    ASSERT_EQ(result.status, filter_status_e::ready);
+    EXPECT_EQ(result.frame.semantic.domain, platf::frame_domain_e::linear_scrgb);
+
+    // The failover wrapper forwards per-slot states from the live chain.
+    const auto states = filter->postprocess_stage_states();
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_EQ(states[0].name, "fake.v2stage");
+    EXPECT_EQ(states[0].state, "active");
+  }
+
+  TEST(PostprocessConfiguredChain, UnreachablePlanDegradesToFallbackWithRuleError) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+
+    // Two sdr->scRGB stages: the second needs scRGB input but the first
+    // outputs scRGB feeding an scRGB-in stage... both consume sdr, so the
+    // second rejects (sdr->scRGB boundary mismatch) -> R2 rejection, and the
+    // factory degrades to the mock fallback carrying the rule error.
+    const std::vector<platf::postprocess_stage_entry_t> entries {
+      chain_entry(FAKE_STAGE_BACKEND_PATH),
+      chain_entry(FAKE_STAGE_BACKEND_PATH),
+    };
+    auto filter = platf::dxgi::make_configured_postprocess_chain(
+      entries, d3d.device.get(), d3d.context.get(),
+      platf::frame_domain_e::sdr_rec709, platf::pixel_encoding_class_e::unorm8,
+      true, {});
+    ASSERT_TRUE(filter);
+    EXPECT_TRUE(filter->degraded());
+    EXPECT_NE(filter->failure_reason().find("R2_conversion_unavailable"), std::string_view::npos);
+
+    // The fallback keeps the HDR wire: frames still come out as scRGB.
+    auto input = make_white_input(d3d.device.get(), 4, 4);
+    const auto result = filter->process(sdr_view(input, 4, 4, 8));
+    ASSERT_EQ(result.status, filter_status_e::ready);
+    EXPECT_EQ(result.frame.semantic.domain, platf::frame_domain_e::linear_scrgb);
+  }
+
+  TEST(PostprocessConfiguredChain, MissingDllExcludedButChainSurvives) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+
+    // A missing DLL is excluded at load; the remaining stage still builds a
+    // valid chain (no degradation — the exclusion is by design, not failure).
+    const std::vector<platf::postprocess_stage_entry_t> entries {
+      chain_entry("definitely_missing_stage.dll"),
+      chain_entry(FAKE_STAGE_BACKEND_PATH),
+    };
+    auto filter = platf::dxgi::make_configured_postprocess_chain(
+      entries, d3d.device.get(), d3d.context.get(),
+      platf::frame_domain_e::sdr_rec709, platf::pixel_encoding_class_e::unorm8,
+      true, {});
+    ASSERT_TRUE(filter);
+    EXPECT_FALSE(filter->degraded());
+
+    auto input = make_white_input(d3d.device.get(), 4, 4);
+    const auto result = filter->process(sdr_view(input, 4, 4, 9));
+    ASSERT_EQ(result.status, filter_status_e::ready);
+    EXPECT_EQ(result.frame.semantic.domain, platf::frame_domain_e::linear_scrgb);
+
+    const auto states = filter->postprocess_stage_states();
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_EQ(states[0].name, "fake.v2stage");
   }
 }  // namespace

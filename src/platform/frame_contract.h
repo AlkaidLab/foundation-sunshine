@@ -5,6 +5,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace platf {
   enum class frame_domain_e : std::uint8_t {
@@ -44,6 +46,13 @@ namespace platf {
     float saturation = 0.0f;
     float middle_gray_nits = 50.0f;
     float peak_nits = 1000.0f;
+  };
+
+  /// One user-configured post-process chain entry (per-app `postprocess`
+  /// node). `params_json` is passed through to the stage DLL verbatim.
+  struct postprocess_stage_entry_t {
+    std::string dll;
+    std::string params_json;
   };
 
   struct capture_contract_t {

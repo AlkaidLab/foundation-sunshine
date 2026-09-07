@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <boost/function.hpp>
 #include <boost/process/v1.hpp>
@@ -73,6 +74,10 @@ namespace rtsp_stream {
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
     synthetic_hdr_config_t synthetic_hdr;
+
+    /// User-configured post-process chain (per-app `postprocess` node,
+    /// docs/postprocess_chain.md §7). Empty = no explicit chain.
+    std::vector<platf::postprocess_stage_entry_t> postprocess_chain;
 
     // Resolved frame-pipeline policy for this session, published by RTSP SETUP
     // so display preparation consumes the same decision as the capture/encode

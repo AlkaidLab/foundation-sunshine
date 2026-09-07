@@ -117,8 +117,8 @@ namespace platf::dxgi::postprocess {
     return failure_reason_;
   }
 
-  const std::vector<stage_state_t>
-  chain_filter_t::stage_states() const {
+  std::vector<stage_state_t>
+  chain_filter_t::postprocess_stage_states() const {
     std::vector<stage_state_t> states;
     states.reserve(slots_.size());
     for (const auto &slot: slots_) {

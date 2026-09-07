@@ -2482,7 +2482,15 @@ namespace confighttp {
         { "pipelines", json::array() },
       };
 
-      for (const auto &status : statuses) {
+      for (const auto &status: statuses) {
+        json stages = json::array();
+        for (const auto &stage: status.postprocess_stages) {
+          stages.push_back({
+            { "name", stage.name },
+            { "state", stage.state },
+            { "failure_reason", stage.failure_reason },
+          });
+        }
         response_json["pipelines"].push_back({
           { "id", status.id },
           { "hdr_mode", status.hdr_mode },
@@ -2496,6 +2504,7 @@ namespace confighttp {
           { "synthetic_hdr_backend", status.synthetic_hdr_backend },
           { "synthetic_hdr_state", status.synthetic_hdr_state },
           { "synthetic_hdr_failure_reason", status.synthetic_hdr_failure_reason },
+          { "postprocess_stages", stages },
         });
       }
 

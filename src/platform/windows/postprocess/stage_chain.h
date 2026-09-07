@@ -26,13 +26,8 @@
 
 namespace platf::dxgi::postprocess {
 
-  /// Runtime state of one chain slot, for status reporting
-  /// (/api/runtime/postprocess) and tests.
-  struct stage_state_t {
-    std::string name;
-    std::string state { "active" };  // active | bypassed
-    std::string failure_reason;
-  };
+  // stage_state_t lives on the shared filter contract
+  // (pre_encode_filter.h): composite and leaf filters report through it.
 
   /**
    * Composite pre-encode filter running child filters in order. Construction
@@ -64,8 +59,8 @@ namespace platf::dxgi::postprocess {
 
     /// Per-slot snapshot in chain order; bypassed slots keep their name and
     /// last failure reason for the session.
-    const std::vector<stage_state_t>
-    stage_states() const;
+    std::vector<stage_state_t>
+    postprocess_stage_states() const override;
 
     const std::vector<pre_encode_filter_t *>  // test/inspection access
     active_stages() const;

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <d3d11.h>
 
@@ -36,6 +37,13 @@ namespace platf::dxgi {
     std::string_view reason;
   };
 
+  /// Runtime state of one post-process chain slot (status reporting).
+  struct stage_state_t {
+    std::string name;
+    std::string state { "active" };  // active | bypassed
+    std::string failure_reason;
+  };
+
   class pre_encode_filter_t {
   public:
     virtual ~pre_encode_filter_t() = default;
@@ -61,6 +69,14 @@ namespace platf::dxgi {
     failure_reason() const {
       return {};
     }
+
+    /// Per-slot chain states for /api/runtime/hdr. Composite filters
+    /// (chain, failover) forward to their live children; leaf filters keep
+    /// the default empty report.
+    virtual std::vector<stage_state_t>
+    postprocess_stage_states() const {
+      return {};
+    }
   };
 
   std::unique_ptr<pre_encode_filter_t>
@@ -70,4 +86,23 @@ namespace platf::dxgi {
     ID3D11DeviceContext *device_context,
     const std::filesystem::path &backend_path = {},
     const pre_encode_filter_config_t &config = {});
+
+  /**
+   * Build the user-configured post-process chain from per-app entries:
+   * load each DLL (v2 stage or legacy v1 backend), validate the whole chain
+   * against the capture/encoder legs (docs/postprocess_chain.md §5), insert
+   * builtin conversions, and wrap the result with the SDR-in-HDR fallback
+   * floor. Load failures exclude their stage (logged); a structurally
+   * invalid plan degrades to the fallback with the first rule error as the
+   * reason. Returns a filter even when no DLL survived (fallback-only).
+   */
+  std::unique_ptr<pre_encode_filter_t>
+  make_configured_postprocess_chain(
+    const std::vector<platf::postprocess_stage_entry_t> &entries,
+    ID3D11Device *device,
+    ID3D11DeviceContext *device_context,
+    frame_domain_e capture_domain,
+    pixel_encoding_class_e capture_encoding,
+    bool hdr_wire,
+    const pre_encode_filter_config_t &v1_config);
 }  // namespace platf::dxgi

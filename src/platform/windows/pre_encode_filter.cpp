@@ -16,6 +16,7 @@
 #include "src/logging_severity.h"
 #include "rtx_hdr/backend_loader.h"
 #include "src/platform/windows/postprocess/stage_chain.h"
+#include "src/platform/windows/postprocess/chain_validator.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)
   #define SUNSHINE_SHADERS_DIR SUNSHINE_ASSETS_DIR "/shaders/directx"
@@ -444,6 +445,13 @@ namespace platf::dxgi {
         return failure_reason_;
       }
 
+      std::vector<stage_state_t>
+      postprocess_stage_states() const override {
+        // Forward to the live primary; once degraded, the per-slot detail is
+        // gone with it and the session-level degraded state carries the report.
+        return primary_ ? primary_->postprocess_stage_states() : std::vector<stage_state_t> {};
+      }
+
     private:
       std::unique_ptr<pre_encode_filter_t> primary_;
       std::unique_ptr<pre_encode_filter_t> fallback_;
@@ -552,5 +560,101 @@ namespace platf::dxgi {
     }
     BOOST_LOG(error) << "Unknown pre-encode filter kind: " << static_cast<int>(kind);
     return {};
+  }
+
+  std::unique_ptr<pre_encode_filter_t>
+  make_configured_postprocess_chain(
+    const std::vector<platf::postprocess_stage_entry_t> &entries,
+    ID3D11Device *device,
+    ID3D11DeviceContext *device_context,
+    frame_domain_e capture_domain,
+    pixel_encoding_class_e capture_encoding,
+    bool hdr_wire,
+    const pre_encode_filter_config_t &v1_config) {
+    auto fallback = make_mock_filter(device, device_context);
+
+    // DLL stages in declaration order; load failures exclude their stage.
+    std::vector<std::unique_ptr<pre_encode_filter_t>> built;
+    std::vector<postprocess::stage_declaration_t> declarations;
+    for (const auto &entry: entries) {
+      rtx_hdr::backend_loader_t loader;
+      if (!loader.load(entry.dll)) {
+        BOOST_LOG(warning) << "Post-process stage excluded (" << loader.error() << "): " << entry.dll;
+        continue;
+      }
+      if (loader.stage_v2()) {
+        const auto *caps = loader.stage_api()->caps();
+        postprocess::stage_declaration_t declaration;
+        declaration.name = caps->name;
+        declaration.input_domain = caps->input_domain;
+        declaration.input_encoding = caps->input_encoding;
+        declaration.output_domain = caps->output_domain;
+        declaration.output_encoding = caps->output_encoding;
+        declaration.resolution_behavior = caps->resolution_behavior;
+        declaration.min_scale = caps->min_scale;
+        declaration.max_scale = caps->max_scale;
+        declaration.temporal = caps->temporal != 0;
+        declaration.max_frames_out = caps->max_frames_out;
+        auto filter = postprocess::make_dll_stage_filter(
+          std::move(loader), device, device_context, 1.0f, entry.params_json);
+        if (!filter) {
+          BOOST_LOG(warning) << "Post-process stage excluded (undrivable caps): " << entry.dll;
+          continue;
+        }
+        built.push_back(std::move(filter));
+        declarations.push_back(std::move(declaration));
+      }
+      else {
+        declarations.push_back(postprocess::synthesize_v1_declaration(
+          std::filesystem::path(entry.dll).filename().string()));
+        built.push_back(std::make_unique<external_sdr_to_hdr_filter_t>(
+          device, device_context, std::move(loader), v1_config));
+      }
+    }
+
+    const auto plan = postprocess::validate_chain(
+      declarations,
+      static_cast<std::uint32_t>(capture_domain),
+      static_cast<std::uint32_t>(capture_encoding),
+      hdr_wire ? FOUNDATION_STAGE_DOMAIN_LINEAR_SCRGB : FOUNDATION_STAGE_DOMAIN_SDR_REC709,
+      hdr_wire ? FOUNDATION_STAGE_ENCODING_FLOAT16 : FOUNDATION_STAGE_ENCODING_UNORM8);
+    for (const auto &rule: plan.warnings) {
+      BOOST_LOG(info) << "Post-process chain: " << rule;
+    }
+    if (!plan.ok) {
+      for (const auto &rule: plan.errors) {
+        BOOST_LOG(error) << "Post-process chain rejected: " << rule;
+      }
+      if (!fallback) {
+        return {};
+      }
+      return std::make_unique<failover_filter_t>(nullptr, std::move(fallback), plan.errors.front());
+    }
+
+    // Interleave dll stages with the plan's auto-inserted builtin
+    // conversions; the mock shader is the builtin linearize pass.
+    std::vector<std::unique_ptr<pre_encode_filter_t>> stages;
+    std::size_t next_built = 0;
+    for (const auto &plan_entry: plan.entries) {
+      if (plan_entry.builtin_conversion) {
+        stages.push_back(make_mock_filter(device, device_context));
+      }
+      else if (next_built < built.size()) {
+        stages.push_back(std::move(built[next_built++]));
+      }
+    }
+    auto chain = postprocess::make_stage_chain(std::move(stages));
+    if (!chain) {
+      if (!fallback) {
+        return {};
+      }
+      return std::make_unique<failover_filter_t>(nullptr, std::move(fallback), "chain_empty");
+    }
+    BOOST_LOG(info) << "Post-process chain active: " << built.size() << " dll stage(s), "
+                    << plan.entries.size() - built.size() << " builtin conversion(s)";
+    if (!fallback) {
+      return chain;
+    }
+    return std::make_unique<failover_filter_t>(std::move(chain), std::move(fallback));
   }
 }  // namespace platf::dxgi
