@@ -19,6 +19,7 @@ extern "C" {
 #include "config.h"
 #include "globals.h"
 #include "input.h"
+#include "text_context/bridge.h"
 #include "input_activity.h"
 #include "logging.h"
 #include "platform/common.h"
@@ -163,15 +164,17 @@ namespace input {
     input_t(
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
       platf::feedback_queue_t feedback_queue,
-      safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event):
+      safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
+      std::uint64_t session_id):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
+        session_id {session_id},
         mouse_left_button_timeout {},
-        touch_port { { 0, 0, 0, 0 }, 0, 0, 1.0f },
+        touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
         accumulated_hscroll_delta {} {}
 
@@ -185,6 +188,7 @@ namespace input {
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
     platf::feedback_queue_t feedback_queue;
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
+    std::uint64_t session_id;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -670,6 +674,27 @@ namespace input {
 
       mouse_press[button] = !release;
     }
+
+    if (button == BUTTON_LEFT) {
+      if (input->touch_port_event->peek()) {
+        input->touch_port = *input->touch_port_event->pop();
+      }
+      const auto point = platf::get_mouse_loc(platf_input);
+      BOOST_LOG(debug) << "Remote text context mouse input: release=" << release
+                      << ", x=" << point.x << ", y=" << point.y
+                      << ", has_viewport=" << static_cast<bool>(input->touch_port);
+      if (input->touch_port) {
+        text_context::bridge_t::instance().record_mouse_button(
+          input->session_id, release, point.x, point.y,
+          input->touch_port.offset_x, input->touch_port.offset_y,
+          input->touch_port.display_width, input->touch_port.display_height);
+      }
+    }
+    else if (button == BUTTON_RIGHT && !release) {
+      // A remote right-click cancels a pending left-button candidate so a
+      // press-drag-release sequence can't be mistaken for a text activation.
+      text_context::bridge_t::instance().cancel_mouse(input->session_id);
+    }
     /**
      * When Moonlight sends mouse input through absolute coordinates,
      * it's possible that BUTTON_RIGHT is pressed down immediately after releasing BUTTON_LEFT.
@@ -895,6 +920,9 @@ namespace input {
       return;
     }
 
+    // Scrolling invalidates any pending left-button click candidate.
+    text_context::bridge_t::instance().cancel_mouse(input->session_id);
+
     if (config::input.high_resolution_scrolling) {
       platf::scroll(platf_input, util::endian::big(packet->scrollAmt1));
     }
@@ -919,6 +947,9 @@ namespace input {
     if (!config::input.mouse) {
       return;
     }
+
+    // Scrolling invalidates any pending left-button click candidate.
+    text_context::bridge_t::instance().cancel_mouse(input->session_id);
 
     if (config::input.high_resolution_scrolling) {
       platf::hscroll(platf_input, util::endian::big(packet->scrollAmount));
@@ -1038,6 +1069,22 @@ namespace input {
       contact_area.first,
       contact_area.second,
     };
+
+    const auto screen_x = abs_port.offset_x + static_cast<std::int32_t>(std::lround(touch.x * abs_port.width));
+    const auto screen_y = abs_port.offset_y + static_cast<std::int32_t>(std::lround(touch.y * abs_port.height));
+    if (touch.eventType != LI_TOUCH_EVENT_MOVE && touch.eventType != LI_TOUCH_EVENT_HOVER &&
+        touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
+      BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
+                      << ", x=" << screen_x << ", y=" << screen_y
+                      << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
+    }
+    // Capture geometry is the selected display's size, not the whole virtual
+    // desktop: UIA/caret rectangles are reported desktop-global and the bridge
+    // subtracts this port's offset before the client divides by these extents.
+    text_context::bridge_t::instance().record_touch(
+      input->session_id, touch.eventType, touch.pointerId, screen_x, screen_y,
+      abs_port.offset_x, abs_port.offset_y,
+      static_cast<std::uint32_t>(touch_port.display_width), static_cast<std::uint32_t>(touch_port.display_height));
 
     platf::touch_update(input->client_context.get(), abs_port, touch);
   }
@@ -1977,11 +2024,12 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail) {
+  alloc(safe::mail_t mail, std::uint64_t session_id) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
-      mail->event<std::chrono::steady_clock::time_point>(mail::input_activity));
+      mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
+      session_id);
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

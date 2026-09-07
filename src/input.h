@@ -26,10 +26,16 @@ namespace input {
   probe_gamepads();
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail);
+  alloc(safe::mail_t mail, std::uint64_t session_id);
 
   struct touch_port_t: public platf::touch_port_t {
     int env_width, env_height;
+
+    // Physical size of the selected display in desktop pixels. UIA and caret
+    // rectangles are reported in this coordinate frame, so remote text context
+    // capture geometry must use these extents, not width/height (stream
+    // resolution) or env_* (whole virtual desktop).
+    int display_width, display_height;
 
     // Offset x and y coordinates of the client
     float client_offsetX, client_offsetY;
@@ -38,7 +44,8 @@ namespace input {
 
     explicit
     operator bool() const {
-      return width != 0 && height != 0 && env_width != 0 && env_height != 0;
+      return width != 0 && height != 0 && env_width != 0 && env_height != 0 &&
+             display_width != 0 && display_height != 0;
     }
   };
 
