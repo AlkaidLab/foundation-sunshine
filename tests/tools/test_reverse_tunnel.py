@@ -147,6 +147,8 @@ def main():
                     if not tail:
                         client.sendall(b"REPLY\0\r\n")
                     wait_for(lambda: log.read_text().count("attached busid") > attached_before)
+                    if busid == "1-9:0":
+                        wait_for(lambda: "ATTACH_BUSID 1-9:0" in log.read_text())
                 wait_for(lambda: log.read_text().count("DETACHED") > before)
             try:
                 with connect(port, "wrong") as client:

@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
         result.exit_code = 0;
         return result;
       }
+      std::cout << "ATTACH_BUSID " << args[6] << std::endl;
       auto socket = std::make_shared<tcp::socket>(helper_io);
       socket->connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), std::stoi(args[1])));
       const std::string request("\0IMPORT\n", 8);

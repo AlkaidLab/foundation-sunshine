@@ -134,6 +134,30 @@ run_process(const std::string &executable,
 
   std::thread output_reader;
   std::thread error_reader;
+  const auto terminate_tree = [&]() noexcept {
+    std::error_code group_error;
+    process_group.terminate(group_error);
+    if (!group_error) {
+      return group_error;
+    }
+
+    /* A failed group termination must not leave a descendant holding either
+     * output pipe open forever. Terminate the direct child as a best effort,
+     * then close our pipe handles so the reader joins have a bounded exit. */
+    std::error_code child_error;
+    child.terminate(child_error);
+    try {
+      standard_output.pipe().close();
+    }
+    catch (...) {
+    }
+    try {
+      standard_error.pipe().close();
+    }
+    catch (...) {
+    }
+    return group_error;
+  };
   try {
     output_reader = reader_thread_factory([&]() {
       std::string line;
@@ -155,8 +179,8 @@ run_process(const std::string &executable,
     });
   }
   catch (const std::exception &exception) {
+    terminate_tree();
     std::error_code ignored;
-    process_group.terminate(ignored);
     child.wait(ignored);
     if (output_reader.joinable()) {
       output_reader.join();
@@ -169,8 +193,8 @@ run_process(const std::string &executable,
     return result;
   }
   catch (...) {
+    terminate_tree();
     std::error_code ignored;
-    process_group.terminate(ignored);
     child.wait(ignored);
     if (output_reader.joinable()) {
       output_reader.join();
@@ -190,15 +214,13 @@ run_process(const std::string &executable,
     if (cancel && cancel->load(std::memory_order_acquire)) {
       result.cancelled = true;
       terminated = true;
-      std::error_code ignored;
-      process_group.terminate(ignored);
+      terminate_tree();
       break;
     }
     if (std::chrono::steady_clock::now() >= deadline) {
       result.timed_out = true;
       terminated = true;
-      std::error_code ignored;
-      process_group.terminate(ignored);
+      terminate_tree();
       break;
     }
     std::this_thread::sleep_for(5ms);
@@ -206,10 +228,17 @@ run_process(const std::string &executable,
 
   std::error_code wait_error;
   child.wait(wait_error);
+  /* The direct helper may exit while one of its descendants still owns the
+   * inherited pipe handles. Terminate the remaining group before joining the
+   * readers so normal-exit, cancellation, and timeout all use the same path. */
+  const auto group_error = terminate_tree();
   output_reader.join();
   error_reader.join();
   if (wait_error && !terminated) {
     result.standard_error = wait_error.message();
+  }
+  else if (group_error && !terminated) {
+    append_bounded(result.standard_error, group_error.message(), max_output_bytes);
   }
   result.exit_code = child.exit_code();
   return result;
