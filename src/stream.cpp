@@ -2391,7 +2391,6 @@ namespace stream {
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
       bool has_ds5_haptics_session = false;
-      bool has_text_context_session = false;
 
       {
         auto lg = server->_sessions.lock();
@@ -2442,8 +2441,6 @@ namespace stream {
             has_ds5_haptics_session |=
               (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
               (ds5_settings.enabled && ds5_settings.audio_haptics);
-            has_text_context_session |=
-              (session->config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0;
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -2580,8 +2577,12 @@ namespace stream {
       // Cursor shapes are low-frequency, but pointer role transitions should
       // still feel immediate. Poll the latest-value bridge once per frame while
       // local cursor mode is active without adding another control thread.
+      // Text-context sends ride the same wakeups instead of raising the cadence
+      // permanently: every observation is preceded by that client's touch/mouse
+      // packets, and enet_host_service returns per incoming event, so the drain
+      // runs on traffic; the idle timeout bounds delivery on a quiet socket.
       server->iterate(has_ds5_haptics_session ? 5ms :
-                      (has_text_context_session || cursor_channel::local_mode_active()) ? 16ms : 150ms);
+                      cursor_channel::local_mode_active() ? 16ms : 150ms);
     }
 
     // Let all remaining connections know the server is shutting down
