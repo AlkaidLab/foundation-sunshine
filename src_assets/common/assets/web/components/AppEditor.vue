@@ -253,17 +253,19 @@
                         type="text"
                         class="form-control form-control-enhanced"
                         :placeholder="t('apps.postprocess_chain_dll')"
+                        :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' DLL'"
                         v-model="stage.dll"
                         spellcheck="false"
                       />
-                      <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="index === 0" @click="movePostprocessStage(index, -1)">↑</button>
-                      <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="index === formData['postprocess'].chain.length - 1" @click="movePostprocessStage(index, 1)">↓</button>
-                      <button type="button" class="btn btn-sm btn-outline-danger" @click="removePostprocessStage(index)">✕</button>
+                      <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="index === 0" :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_move_up')" @click="movePostprocessStage(index, -1)">↑</button>
+                      <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="index === formData['postprocess'].chain.length - 1" :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_move_down')" @click="movePostprocessStage(index, 1)">↓</button>
+                      <button type="button" class="btn btn-sm btn-outline-danger" :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_remove')" @click="removePostprocessStage(index)">✕</button>
                     </div>
                     <textarea
                       class="form-control form-control-enhanced mt-2"
                       rows="3"
                       :placeholder="t('apps.postprocess_chain_params')"
+                      :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_chain_params')"
                       v-model="stage.paramsJson"
                       spellcheck="false"
                     ></textarea>
