@@ -126,3 +126,32 @@ test('formatAppData normalizes per-app RTX HDR settings', () => {
     'peak-nits': 850,
   })
 })
+
+test('formatAppData normalizes the post-process chain entries', () => {
+  const result = AppService.formatAppData({
+    name: 'Game',
+    postprocess: {
+      chain: [
+        { dll: '  C:\backends\nvidia_vsr.dll  ', params: { quality: 'high' } },
+        { dll: '' },
+        { dll: 'C:\backends\truehdr.dll', params: [1, 2] },
+        'not-an-object',
+      ],
+    },
+  })
+
+  // Empty dlls and non-object entries are dropped; params must be a JSON
+  // object to pass through; dll paths are trimmed.
+  assert.deepEqual(result.postprocess.chain, [
+    { dll: 'C:\backends\nvidia_vsr.dll', params: { quality: 'high' } },
+    { dll: 'C:\backends\truehdr.dll' },
+  ])
+})
+
+test('formatAppData defaults the post-process chain to empty', () => {
+  const result = AppService.formatAppData({ name: 'Game' })
+  assert.deepEqual(result.postprocess, { chain: [] })
+
+  const malformed = AppService.formatAppData({ name: 'Game', postprocess: 'nope' })
+  assert.deepEqual(malformed.postprocess, { chain: [] })
+})
