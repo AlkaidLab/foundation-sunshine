@@ -8,12 +8,14 @@
 #include <filesystem>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 #include <d3dcompiler.h>
 #include <dxgi.h>
 
 #include "src/logging_severity.h"
 #include "rtx_hdr/backend_loader.h"
+#include "src/platform/windows/postprocess/stage_chain.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)
   #define SUNSHINE_SHADERS_DIR SUNSHINE_ASSETS_DIR "/shaders/directx"
@@ -501,19 +503,52 @@ namespace platf::dxgi {
           std::move(fallback),
           loader.error());
       }
-      BOOST_LOG(info) << "Loaded external SDR-to-HDR backend; feature creation is deferred until the first frame";
-      auto primary = std::make_unique<external_sdr_to_hdr_filter_t>(
-        device,
-        device_context,
-        std::move(loader),
-        config);
+
+      std::unique_ptr<pre_encode_filter_t> primary;
+      if (loader.stage_v2()) {
+        // A stage-ABI v2 DLL configured as the rtx_hdr backend: drive it
+        // through the chain engine. Its caps must produce the scRGB output
+        // the HDR wire path consumes; anything else is refused by the driver.
+        primary = postprocess::make_dll_stage_filter(
+          std::move(loader),
+          device,
+          device_context,
+          1.0f,
+          std::string {});
+        if (!primary) {
+          BOOST_LOG(warning) << "Configured backend is a v2 stage Sunshine cannot drive for RTX HDR";
+          if (!fallback) {
+            return {};
+          }
+          return std::make_unique<failover_filter_t>(
+            nullptr,
+            std::move(fallback),
+            "stage_undrivable_for_rtx_hdr");
+        }
+      }
+      else {
+        primary = std::make_unique<external_sdr_to_hdr_filter_t>(
+          device,
+          device_context,
+          std::move(loader),
+          config);
+      }
+
+      // rtx_hdr is the single-element-chain migration of the generic chain
+      // model (docs/postprocess_chain.md §2.5): the filter runs through the
+      // chain executor so the legacy path and future user chains share one
+      // engine and its bypass semantics.
+      std::vector<std::unique_ptr<pre_encode_filter_t>> stages;
+      stages.push_back(std::move(primary));
+      auto chain = postprocess::make_stage_chain(std::move(stages));
+
       // The optional fallback must never gate the vendor backend. A missing
       // fallback asset reduces resilience for this session, but the primary
       // backend can still process frames normally.
       if (!fallback) {
-        return primary;
+        return chain;
       }
-      return std::make_unique<failover_filter_t>(std::move(primary), std::move(fallback));
+      return std::make_unique<failover_filter_t>(std::move(chain), std::move(fallback));
     }
     BOOST_LOG(error) << "Unknown pre-encode filter kind: " << static_cast<int>(kind);
     return {};

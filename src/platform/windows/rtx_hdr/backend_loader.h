@@ -10,6 +10,7 @@
 #include <windows.h>
 
 #include "backend_abi.h"
+#include "src/platform/windows/postprocess/stage_abi.h"
 
 namespace platf::dxgi::rtx_hdr {
   class backend_loader_t {
@@ -34,18 +35,31 @@ namespace platf::dxgi::rtx_hdr {
       return api_;
     }
 
+    /// Stage ABI v2 table when the loaded DLL is a v2 stage (probed before
+    /// the v1 export); null for legacy v1 backends.
+    const foundation_stage_api_t *
+    stage_api() const {
+      return stage_api_;
+    }
+
+    bool
+    stage_v2() const {
+      return stage_api_ != nullptr;
+    }
+
     const std::string &
     error() const {
       return error_;
     }
 
     explicit operator bool() const {
-      return module_ != nullptr && api_ != nullptr;
+      return module_ != nullptr && (api_ != nullptr || stage_api_ != nullptr);
     }
 
   private:
     HMODULE module_ = nullptr;
     const foundation_truehdr_api_t *api_ = nullptr;
+    const foundation_stage_api_t *stage_api_ = nullptr;
     std::string error_;
   };
 }  // namespace platf::dxgi::rtx_hdr

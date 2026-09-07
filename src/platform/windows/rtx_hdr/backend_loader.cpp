@@ -7,10 +7,13 @@
 
 #include <utility>
 
+#include "src/platform/windows/postprocess/stage_abi.h"
+
 namespace platf::dxgi::rtx_hdr {
   backend_loader_t::backend_loader_t(backend_loader_t &&other) noexcept:
       module_ { std::exchange(other.module_, nullptr) },
       api_ { std::exchange(other.api_, nullptr) },
+      stage_api_ { std::exchange(other.stage_api_, nullptr) },
       error_ { std::move(other.error_) } {}
 
   backend_loader_t &
@@ -19,6 +22,7 @@ namespace platf::dxgi::rtx_hdr {
       unload();
       module_ = std::exchange(other.module_, nullptr);
       api_ = std::exchange(other.api_, nullptr);
+      stage_api_ = std::exchange(other.stage_api_, nullptr);
       error_ = std::move(other.error_);
     }
     return *this;
@@ -47,6 +51,36 @@ namespace platf::dxgi::rtx_hdr {
       return false;
     }
 
+    // Stage ABI v2 is probed first: a v2 DLL never exports the v1 symbol, and
+    // a v1 DLL never exports the v2 one, so probe order decides cleanly.
+    if (const auto get_stage_api = reinterpret_cast<foundation_stage_get_api_fn>(
+          GetProcAddress(module_, FOUNDATION_STAGE_GET_API_EXPORT))) {
+      stage_api_ = get_stage_api(FOUNDATION_STAGE_ABI_VERSION);
+      if (!stage_api_ || stage_api_->abi_version != FOUNDATION_STAGE_ABI_VERSION ||
+          stage_api_->struct_size < sizeof(foundation_stage_api_t)) {
+        stage_api_ = nullptr;
+        error_ = "stage_abi_mismatch";
+        unload();
+        return false;
+      }
+      if (!stage_api_->caps || !stage_api_->create || !stage_api_->process ||
+          !stage_api_->flush || !stage_api_->destroy) {
+        stage_api_ = nullptr;
+        error_ = "stage_api_incomplete";
+        unload();
+        return false;
+      }
+      const auto *caps = stage_api_->caps();
+      if (!caps || caps->struct_size < sizeof(foundation_stage_caps_t) ||
+          !caps->name || caps->max_frames_out == 0) {
+        stage_api_ = nullptr;
+        error_ = "stage_caps_invalid";
+        unload();
+        return false;
+      }
+      return true;
+    }
+
     const auto get_api = reinterpret_cast<foundation_truehdr_get_api_fn>(
       GetProcAddress(module_, FOUNDATION_TRUEHDR_GET_API_EXPORT));
     if (!get_api) {
@@ -73,6 +107,7 @@ namespace platf::dxgi::rtx_hdr {
   void
   backend_loader_t::unload() {
     api_ = nullptr;
+    stage_api_ = nullptr;
     if (module_) {
       FreeLibrary(module_);
       module_ = nullptr;
