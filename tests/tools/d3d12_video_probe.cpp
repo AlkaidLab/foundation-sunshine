@@ -233,7 +233,7 @@ namespace {
         64,
         64,
         10000.0f,
-        1);
+        1, true);
       hdr_analysis_stage = hdr_init.stage;
       hdr_analysis_hresult = hdr_init.hresult;
       if (hdr_init.success) {
@@ -243,7 +243,7 @@ namespace {
           const FLOAT pq_average[4] { 0.5f, 0.0f, 0.0f, 0.0f };
           d3d11_context->ClearUnorderedAccessViewFloat(snapshot->uav, cell_statistics);
           d3d11_context->ClearUnorderedAccessViewFloat(snapshot->pq_uav, pq_average);
-          if (hdr_analysis.submit(*snapshot, 7)) {
+          if (hdr_analysis.submit(*snapshot, 7, true)) {
             const auto deadline =
               std::chrono::steady_clock::now() +
               std::chrono::seconds(2);
@@ -254,7 +254,9 @@ namespace {
                   platf::dxgi::d3d12::summarize_hdr_result(
                     completed->result);
                 hdr_analysis_ready =
-                  summary.valid &&
+                  summary.valid && completed->timing.has_value() &&
+                  std::isfinite(completed->timing->gpu_total_ms) &&
+                  completed->timing->gpu_total_ms > 0 &&
                   completed->source_frame == 7 &&
                   completed->result.pixel_count == 64 * 64 &&
                   std::abs(summary.min_maxrgb - 100.0f) < 0.01f &&

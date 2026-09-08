@@ -27,7 +27,8 @@ namespace platf::dxgi::d3d12 {
     std::uint32_t source_width,
     std::uint32_t source_height,
     float max_analysis_nits,
-    std::uint64_t generation) {
+    std::uint64_t generation,
+    bool timing_enabled) {
     release_resources();
     impl_ = std::make_unique<impl_t>();
     if (!foundation.available() || !d3d11_device || !d3d11_context ||
@@ -83,6 +84,18 @@ namespace platf::dxgi::d3d12 {
         if (FAILED(status)) {
           impl_->fail(status, "hdr_clear_descriptor_heap_create");
         }
+      }
+    }
+    if (SUCCEEDED(status) && timing_enabled) {
+      D3D12_QUERY_HEAP_DESC desc {};
+      desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+      desc.Count = resource_ring_t::slot_count * timing_query_count;
+      LARGE_INTEGER qpc_frequency {};
+      if (SUCCEEDED(foundation.compute_queue()->GetTimestampFrequency(&impl_->timestamp_frequency)) &&
+          impl_->timestamp_frequency != 0 && QueryPerformanceFrequency(&qpc_frequency)) {
+        impl_->qpc_frequency = qpc_frequency.QuadPart;
+        // Telemetry is optional and must never make a stream unavailable.
+        foundation.device()->CreateQueryHeap(&desc, IID_PPV_ARGS(&impl_->timing_queries));
       }
     }
     for (std::size_t index = 0;
@@ -151,13 +164,18 @@ namespace platf::dxgi::d3d12 {
   bool
   hdr_analysis_t::submit(
     const writable_snapshot_t &snapshot,
-    std::uint64_t source_frame) {
+    std::uint64_t source_frame,
+    bool measure_timing) {
     if (!available() || snapshot.slot >= resource_ring_t::slot_count ||
         snapshot.generation !=
           impl_->ring.generation()) {
       return false;
     }
     auto &ring = impl_->ring;
+    auto &submitted_slot = impl_->slots[snapshot.slot];
+    submitted_slot.measured = measure_timing && impl_->timing_queries;
+    submitted_slot.calibrated = false;
+    if (submitted_slot.measured) submitted_slot.submitted_at = std::chrono::steady_clock::now();
     auto submission_lock = impl_->foundation->lock_submission();
     const auto capture_ready = impl_->foundation->next_fence_value();
     const auto compute_done = impl_->foundation->next_fence_value();
@@ -184,6 +202,13 @@ namespace platf::dxgi::d3d12 {
       status = impl_->record_commands(snapshot.slot);
     }
     if (SUCCEEDED(status)) {
+      if (submitted_slot.measured) {
+        submitted_slot.calibrated = SUCCEEDED(impl_->foundation->compute_queue()->GetClockCalibration(
+          &submitted_slot.calibration_gpu, &submitted_slot.calibration_cpu));
+        LARGE_INTEGER now {};
+        QueryPerformanceCounter(&now);
+        submitted_slot.submit_cpu = now.QuadPart;
+      }
       status = impl_->foundation->compute_queue()->Wait(
         impl_->capture_fence.Get(),
         capture_ready);
@@ -251,7 +276,7 @@ namespace platf::dxgi::d3d12 {
       void *mapped = nullptr;
       const D3D12_RANGE read_range {
         0,
-        sizeof(hdr_final_result_t),
+        slot.measured ? timing_readback_offset + timing_query_count * sizeof(std::uint64_t) : sizeof(hdr_final_result_t),
       };
       const auto status = slot.readback->Map(0, &read_range, &mapped);
       if (FAILED(status)) {
@@ -262,11 +287,32 @@ namespace platf::dxgi::d3d12 {
         {},
         slot.source_frame,
         slot.generation,
+        {},
       };
       std::memcpy(
         &candidate.result,
         mapped,
         sizeof(candidate.result));
+      if (slot.measured) {
+        std::array<std::uint64_t, timing_query_count> ticks {};
+        std::memcpy(ticks.data(), static_cast<const std::byte *>(mapped) + timing_readback_offset, sizeof(ticks));
+        if (ticks[0] <= ticks[1] && ticks[1] <= ticks[2] && ticks[2] <= ticks[3]) {
+          auto ms = [&](std::uint64_t delta) { return delta * 1000.0 / impl_->timestamp_frequency; };
+          completed_hdr_result_t::timing_t timing;
+          timing.pass1_ms = ms(ticks[1] - ticks[0]);
+          timing.pass2_ms = ms(ticks[2] - ticks[1]);
+          timing.readback_ms = ms(ticks[3] - ticks[2]);
+          timing.gpu_total_ms = ms(ticks[3] - ticks[0]);
+          if (slot.calibrated) {
+            const auto delta = (static_cast<long double>(ticks[0]) - slot.calibration_gpu) * 1000.0L / impl_->timestamp_frequency -
+                               (static_cast<long double>(slot.submit_cpu) - slot.calibration_cpu) * 1000.0L / impl_->qpc_frequency;
+            // Calibration is approximate; do not report a negative queue delay.
+            if (delta >= 0) timing.submit_to_start_ms = static_cast<double>(delta);
+          }
+          timing.poll_latency_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - slot.submitted_at).count();
+          candidate.timing = timing;
+        }
+      }
       const D3D12_RANGE no_write { 0, 0 };
       slot.readback->Unmap(0, &no_write);
       if (!ring.release_analysis_readback(index, slot.generation)) {

@@ -143,7 +143,8 @@ namespace platf::dxgi {
       source_width,
       source_height,
       max_analysis_nits,
-      next_generation);
+      next_generation,
+      env_flag_enabled("SUNSHINE_VRAM_TIMING"));
     if (!init_result.success) {
       video_backend_stage = init_result.stage;
       video_backend_hresult = init_result.hresult;

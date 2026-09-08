@@ -172,7 +172,7 @@ namespace platf::dxgi::d3d12 {
 
     D3D12_HEAP_PROPERTIES readback_heap {};
     readback_heap.Type = D3D12_HEAP_TYPE_READBACK;
-    auto readback_desc = buffer_desc(sizeof(hdr_final_result_t));
+    auto readback_desc = buffer_desc(timing_queries ? timing_readback_offset + timing_query_count * sizeof(std::uint64_t) : sizeof(hdr_final_result_t));
     status = foundation->device()->CreateCommittedResource(
       &readback_heap,
       D3D12_HEAP_FLAG_NONE,

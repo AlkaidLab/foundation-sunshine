@@ -101,7 +101,7 @@ Backend-selection unit tests cover ordinary D3D11 fallback and strict failures.
 - Windows 11 build 26200; AMD Radeon 780M, driver 32.0.31041.1004.
 - Full Sunshine configure, compile, and link passed with the default warning
   policy; the resulting executable successfully reported its version.
-- 31/31 backend, ring, statistics, and telemetry unit tests passed.
+- 32/32 backend, ring, statistics, and telemetry unit tests passed.
 - All four selected CTest targets passed: the above suite, frame contract,
   pre-encode filter, and TrueHDR backend loader.
 - All 20 CTest targets also passed before and after the structural extraction.
@@ -170,6 +170,89 @@ disabled state afterward. The installed Sunshine service processes remained
 running with their original process IDs. The separate capture harness, build
 script, runner, logs and JSON summaries remain local validation artifacts.
 
+## Controlled local performance check (2026-09-08)
+
+**No stable performance advantage was demonstrated on this AMD Radeon 780M.**
+The uninstrumented D3D12 host-call P95 median was 0.094 ms (0.78%) higher
+than D3D11, within the observed run-to-run variation. DXGI local process
+usage increased by 117.65 MiB. This result does not justify changing `auto`
+or passing the G1 gate.
+
+A Release diagnostic linked the production converter and standalone AMF HEVC
+encoder, using two pre-uploaded deterministic 3840x2160 scRGB FP16 tiled
+textures. The textures alternated every 60 frames and had the same fixture
+checksum in every run. Output requested 4K60 PQ at 30 Mbps. The harness excluded
+desktop capture, transport and client presentation; it did not display or
+capture user content. D3D12 strict mode reported active hybrid analysis in
+every D3D12 case. The GPU debug layer was disabled for performance runs.
+
+Each case used 300 warm-up frames and 2,000 measured frames. Analysis off,
+D3D11 analysis and D3D12 analysis were each repeated three times in rotating
+order, first with diagnostic timing and then with production timing disabled.
+Two preliminary timing-off controls were also retained. All 40,000 measured
+frames across these 20 cases produced encoded packets; this is not a stream
+dropped-frame or decode-equivalence test.
+
+The primary comparison below disables all production GPU queries and raw
+telemetry. Harness clocks and CSV output remain identical across modes.
+Values are medians of the three per-run statistics. Host call covers conversion
+and the encoder call; packet-ready measures time from entering conversion
+until the encoded packet is returned. Neither includes network/display latency.
+
+| Analysis | Host mean / P95 / P99 (ms) | Packet-ready P95 (ms) | Convert mean (ms) | DXGI local usage (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Off | 9.513 / 11.382 / 13.233 | 11.435 | 0.233 | 500.50 |
+| D3D11 | 9.794 / 12.096 / 13.186 | 12.137 | 0.214 | 523.50 |
+| D3D12 | 9.891 / 12.189 / 13.414 | 12.240 | 0.284 | 641.15 |
+
+Uninstrumented host P95 repeats were 12.0955 / 11.6430 / 12.1348 ms for
+D3D11 and 12.2363 / 12.1894 / 11.7275 ms for D3D12. The direction changed
+in the third repeat. Process CPU consumption medians were 4.55% and 4.78%
+of one CPU core respectively. DXGI usage is process allocation/accounting
+on this integrated GPU, not dedicated physical VRAM or a peak-memory bound.
+
+The separate instrumented matrix sampled every five frames, yielding 100
+completed analysis GPU samples per run (300 per backend). D3D11 analysis
+elapsed mean/P95 medians were 0.458/0.512 ms; D3D12 was 2.772/5.602 ms.
+The D3D12 first-stage span accounted for most of this tail (P95 5.579 ms);
+readback copy P95 was 0.032 ms. These queue timestamp spans include scheduling
+and preemption, and cannot establish that the shader alone is that much slower.
+The final D3D12 span also includes resource restoration. Query resolution is
+outside the final timestamp. The old D3D11-only `total_gpu_ms` excludes D3D12
+queue work and is now explicitly labeled `timing_scope=d3d11_queue_only`.
+
+Dense timing plus raw logging increased mean host-call time by approximately
+0.56 ms for D3D11 and 0.57 ms for D3D12 versus the uninstrumented matrix.
+This includes queries, formatting, logging and scheduling effects; it is not
+isolated CPU timestamp overhead. Consequently these instrumented host times
+are not the primary performance result, and the plan's low-overhead timing
+gate remains unproven. Default diagnostic sampling is much sparser (31 frames)
+and raw logging is off. The odd default avoids phase locking against the
+four-frame HDR analysis cadence, which could previously omit every analysis
+sample with the 30-frame interval.
+
+D3D12 timing is opt-in with `SUNSHINE_VRAM_TIMING=1`, using a query heap and
+per-slot timestamps resolved into the existing asynchronous readback buffer.
+No extra flush or CPU fence wait is introduced for timing. Query-heap creation
+failure leaves analysis available without timing. `SUNSHINE_VRAM_TIMING_RAW=1`
+adds per-sample logs, and `SUNSHINE_VRAM_TIMING_SAMPLE_INTERVAL` accepts 1–1000
+(default 31; use an interval coprime with four to sample analysis frames).
+Clock-calibrated submit-to-start estimates include producer waits and queue
+scheduling; submit-to-poll includes polling cadence. They are diagnostics, not
+proof of pure fence delay or a cross-queue critical path.
+
+Pacing used `sleep_until` without forcing Windows timer resolution; recorded
+start lateness P95 medians were about 18.5–19.3 ms for the enabled backends.
+The test therefore does not establish smooth 60 fps delivery. It also excludes
+game contention, NVIDIA/Intel, HLG and Dolby Vision RPU generation/injection.
+HDR was restored to its original disabled state after both matrices. The
+separate local harness, runner, raw CSV/logs, JSON summaries and full report
+remain in the validation worktree under `benchmark-results/` and its parent.
+
+After adding timing, the full build and all 20 CTest targets passed again.
+The 32-test backend/ring/statistics/telemetry suite includes a regression for
+classifying D3D12 analysis frames without reading D3D11 analysis queries.
+
 ## Outstanding acceptance evidence
 
 - Full client/server HDR streaming, transport and client presentation, including
@@ -179,7 +262,8 @@ script, runner, logs and JSON summaries remain local validation artifacts.
 - D3D11/D3D12 comparison on the same real captured sequences, including PQ,
   HLG, scaling, bars, and bitstream metadata fields.
 - 24-hour streaming, 500 stream reconfigurations, and injected device loss.
-- Repeatable P95/P99, dropped-frame, game frame-time, and memory comparisons.
+- Broader P95/P99, dropped-frame, game frame-time, and peak-memory comparisons;
+  the fixed-input 4K60 result above is one local case and shows no stable gain.
 
 The synthetic probe covers resource handoff and analysis output. It cannot
 replace these end-to-end, stability, and performance checks.

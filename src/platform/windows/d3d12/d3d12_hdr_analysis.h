@@ -32,6 +32,17 @@ namespace platf::dxgi::d3d12 {
     hdr_final_result_t result;
     std::uint64_t source_frame = 0;
     std::uint64_t generation = 0;
+    // Queue timestamp spans include preemption. Clock calibration only estimates
+    // submission-to-start latency; polling also includes the caller's cadence.
+    struct timing_t {
+      double pass1_ms = 0;
+      double pass2_ms = 0;
+      double readback_ms = 0;
+      double gpu_total_ms = 0;
+      std::optional<double> submit_to_start_ms;
+      double poll_latency_ms = 0;
+    };
+    std::optional<timing_t> timing;
   };
 
   struct hdr_analysis_init_result_t {
@@ -65,7 +76,8 @@ namespace platf::dxgi::d3d12 {
       std::uint32_t source_width,
       std::uint32_t source_height,
       float max_analysis_nits,
-      std::uint64_t generation);
+      std::uint64_t generation,
+      bool timing_enabled = false);
 
     [[nodiscard]] bool
     available() const;
@@ -79,7 +91,8 @@ namespace platf::dxgi::d3d12 {
     [[nodiscard]] bool
     submit(
       const writable_snapshot_t &snapshot,
-      std::uint64_t source_frame);
+      std::uint64_t source_frame,
+      bool measure_timing = false);
 
     [[nodiscard]] std::optional<completed_hdr_result_t>
     poll();

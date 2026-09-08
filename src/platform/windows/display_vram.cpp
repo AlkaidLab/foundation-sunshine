@@ -65,7 +65,17 @@ namespace platf::dxgi {
     constexpr auto quality_vbr_rate_control = 4;
     constexpr DWORD vdd_borrow_encoder_acquire_timeout_ms = 16;
     constexpr auto vram_timing_telemetry_interval = std::chrono::seconds(5);
-    constexpr uint64_t vram_gpu_timing_sample_interval = 30;
+    // Coprime with the four-frame analysis cadence, so sampling cannot miss
+    // every analysis frame because the two counters start at different phases.
+    constexpr uint64_t vram_gpu_timing_sample_interval = 31;
+    uint64_t
+    timing_sample_interval() {
+      const char *raw = std::getenv("SUNSHINE_VRAM_TIMING_SAMPLE_INTERVAL");
+      if (!raw) return vram_gpu_timing_sample_interval;
+      char *end = nullptr;
+      const auto value = std::strtoul(raw, &end, 10);
+      return end != raw && *end == '\0' && value >= 1 && value <= 1000 ? value : vram_gpu_timing_sample_interval;
+    }
     constexpr size_t vram_gpu_timing_max_pending = 8;
 
     using timing_bucket_t = telemetry::sample_window_t;
@@ -159,6 +169,7 @@ namespace platf::dxgi {
       query_t after_copy;
       telemetry::d3d11_stage_sample_t<query_t> m0;
       query_t end;
+      uint64_t source_frame = 0;
       bool cs_used = false;
       bool scratch_copy = false;
       bool direct_uav = false;
@@ -306,6 +317,7 @@ namespace platf::dxgi {
         gpu_timing_sample_t *gpu_timing = nullptr;
         if (vram_timing_enabled && begin_gpu_timing_sample(gpu_timing_sample)) {
           gpu_timing = &gpu_timing_sample;
+          gpu_timing->source_frame = video_frame_index;
           gpu_timing->borrowed_vdd = img.borrowed_vdd_texture;
         }
 
@@ -454,6 +466,7 @@ namespace platf::dxgi {
           (use_d3d12_hdr_analysis ?
              d3d12_snapshot.has_value() :
              !hdr_analysis_pending);
+        if (gpu_timing && hdr_analysis_due) gpu_timing->m0.mark_analysis_frame();
         if (vram_timing_enabled) {
           gpu_timing_stats.m0.analysis_due += hdr_analysis_cadence_due;
           analysis_skipped_busy +=
@@ -537,7 +550,8 @@ namespace platf::dxgi {
           if (d3d12_snapshot) {
             if (!d3d12_hdr_analysis->submit(
                   *d3d12_snapshot,
-                  video_frame_index)) {
+                  video_frame_index,
+                  gpu_timing != nullptr)) {
               if (auto display_vram =
                     std::dynamic_pointer_cast<display_vram_t>(
                       display)) {
@@ -1436,7 +1450,7 @@ namespace platf::dxgi {
         return false;
       }
       ++gpu_timing_frame_counter;
-      if ((gpu_timing_frame_counter % vram_gpu_timing_sample_interval) != 0 ||
+      if ((gpu_timing_frame_counter % gpu_timing_sample_interval) != 0 ||
           gpu_timing_pending.size() >= vram_gpu_timing_max_pending) {
         return false;
       }
@@ -1525,6 +1539,13 @@ namespace platf::dxgi {
             before_copy,
             after_copy,
             sample.scratch_copy);
+          if (vram_timing_raw_enabled) {
+            telemetry::m0_pipeline_metrics_t one;
+            sample.m0.accumulate(one, m0_values, disjoint.Frequency, start, before_copy, after_copy, sample.scratch_copy);
+            BOOST_LOG(info) << "[vram] gpu_sample source_frame=" << sample.source_frame
+                            << " timing_scope=d3d11_queue_only total_gpu_ms="
+                            << gpu_delta_ms(start, end, disjoint.Frequency) << telemetry::m0_metric_fields(one);
+          }
           if (sample.cs_used) {
             ++gpu_timing_stats.cs_samples;
             if (sample.direct_uav) {
@@ -1582,7 +1603,7 @@ namespace platf::dxgi {
       const auto dispatch = gpu_timing_stats.dispatch.summary();
       const auto unbind = gpu_timing_stats.unbind.summary();
       const auto scratch_copy = gpu_timing_stats.scratch_copy.summary();
-      BOOST_LOG(info) << "[vram] gpu_metrics samples="sv << total.samples
+      BOOST_LOG(info) << "[vram] gpu_metrics timing_scope=d3d11_queue_only samples="sv << total.samples
                       << " cs="sv << gpu_timing_stats.cs_samples
                       << " draw="sv << gpu_timing_stats.draw_samples
                       << " direct_uav="sv << gpu_timing_stats.direct_uav_samples
@@ -1803,6 +1824,8 @@ namespace platf::dxgi {
     uint64_t video_frame_counter = 0;
     uint64_t analysis_skipped_busy = 0;
     bool vram_timing_enabled = env_flag_enabled("SUNSHINE_VRAM_TIMING");
+    bool vram_timing_raw_enabled = env_flag_enabled("SUNSHINE_VRAM_TIMING_RAW");
+    uint64_t gpu_timing_sample_interval = timing_sample_interval();
     bool gpu_timing_disabled = false;
 
     // ===== HDR Luminance Analyzer (Two-Pass GPU Reduction) =====
@@ -2337,6 +2360,21 @@ namespace platf::dxgi {
           }
         }
         return;
+      }
+      if (completed->timing) {
+        const auto &timing = *completed->timing;
+        gpu_timing_stats.m0.analysis_pass1.add(timing.pass1_ms);
+        gpu_timing_stats.m0.analysis_pass2.add(timing.pass2_ms);
+        gpu_timing_stats.m0.analysis_readback_copy.add(timing.readback_ms);
+        if (vram_timing_raw_enabled) {
+          BOOST_LOG(info) << "[vram] d3d12_gpu_sample source_frame=" << completed->source_frame
+                          << " analysis_gpu_total_ms=" << timing.gpu_total_ms
+                          << " analysis_pass1_gpu_ms=" << timing.pass1_ms
+                          << " analysis_pass2_gpu_ms=" << timing.pass2_ms
+                          << " analysis_readback_copy_gpu_ms=" << timing.readback_ms
+                          << " submit_to_gpu_start_ms=" << timing.submit_to_start_ms.value_or(-1)
+                          << " submit_to_poll_ms=" << timing.poll_latency_ms;
+        }
       }
       publish_hdr_analysis_result(&completed->result, completed->source_frame, current_frame_index);
     }

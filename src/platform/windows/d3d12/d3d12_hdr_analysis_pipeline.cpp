@@ -118,6 +118,11 @@ namespace platf::dxgi::d3d12 {
     }
 
     auto *list = slot.command_list.Get();
+    const auto query_base = static_cast<UINT>(slot_index * timing_query_count);
+    auto timestamp = [&](UINT offset) {
+      if (slot.measured) list->EndQuery(timing_queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, query_base + offset);
+    };
+    timestamp(0);
     ID3D12DescriptorHeap *heaps[] { descriptor_heap.Get() };
     list->SetDescriptorHeaps(1, heaps);
     list->SetComputeRootSignature(root_signature.Get());
@@ -168,6 +173,7 @@ namespace platf::dxgi::d3d12 {
       1);
 
     D3D12_RESOURCE_BARRIER pass1_barriers[2] {};
+    timestamp(1);
     pass1_barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     pass1_barriers[0].UAV.pResource = slot.histogram.Get();
     pass1_barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -194,6 +200,7 @@ namespace platf::dxgi::d3d12 {
     list->Dispatch(1, 1, 1);
 
     D3D12_RESOURCE_BARRIER final_barrier {};
+    timestamp(2);
     final_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     final_barrier.Transition.pResource = slot.final_result.Get();
     final_barrier.Transition.Subresource =
@@ -225,6 +232,11 @@ namespace platf::dxgi::d3d12 {
     restore[3] = pq_to_srv;
     std::swap(restore[3].Transition.StateBefore, restore[3].Transition.StateAfter);
     list->ResourceBarrier(4, restore);
+    timestamp(3);
+    if (slot.measured) {
+      list->ResolveQueryData(timing_queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, query_base,
+        timing_query_count, slot.readback.Get(), timing_readback_offset);
+    }
     status = list->Close();
     return FAILED(status) ?
              fail(status, "hdr_command_list_close") :

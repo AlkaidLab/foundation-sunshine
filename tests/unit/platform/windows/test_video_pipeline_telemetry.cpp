@@ -5,8 +5,20 @@
 #include "src/platform/windows/video_pipeline_telemetry.h"
 
 #include <gtest/gtest.h>
+#include <memory>
 
 namespace {
+  struct unused_query_context_t {
+    int reads = 0;
+    unused_query_context_t *
+    operator->() { return this; }
+    template <class... Args>
+    int
+    GetData(Args...) {
+      ++reads;
+      return 0;
+    }
+  };
   using platf::dxgi::telemetry::m0_metric_fields;
   using platf::dxgi::telemetry::m0_pipeline_metrics_t;
   using platf::dxgi::telemetry::metric_fields;
@@ -19,6 +31,22 @@ namespace {
     EXPECT_DOUBLE_EQ(summary.p50, 0.0);
     EXPECT_DOUBLE_EQ(summary.p95, 0.0);
     EXPECT_DOUBLE_EQ(summary.p99, 0.0);
+  }
+
+  TEST(VideoPipelineTelemetry, ExternalAnalysisClassifiesConversionWithoutReadingD3D11AnalysisQueries) {
+    platf::dxgi::telemetry::d3d11_stage_sample_t<std::shared_ptr<int>> sample;
+    ASSERT_TRUE(sample.initialize([] { return std::make_shared<int>(1); }));
+    sample.mark_analysis_frame();
+    unused_query_context_t context;
+    platf::dxgi::telemetry::d3d11_stage_values_t values {};
+    EXPECT_TRUE(sample.read(context, values));
+    EXPECT_EQ(context.reads, 0);
+    m0_pipeline_metrics_t metrics;
+    sample.accumulate(metrics, values, 1000, 10, 12, 13, false);
+    EXPECT_EQ(metrics.convert_analysis.size(), 1);
+    EXPECT_TRUE(metrics.convert_regular.empty());
+    EXPECT_TRUE(metrics.analysis_pass1.empty());
+    EXPECT_TRUE(metrics.analysis_pass2.empty());
   }
 
   TEST(VideoPipelineTelemetry, ReportsNearestRankPercentiles) {

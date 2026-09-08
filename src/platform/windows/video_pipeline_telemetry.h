@@ -183,10 +183,16 @@ namespace platf::dxgi::telemetry {
       mark(context, d3d11_stage_point_t::capture_copy_end);
     }
 
+    void
+    mark_analysis_frame() {
+      analysis_frame_ = true;
+    }
+
     template <class Context>
     void
     begin_analysis(Context &context) {
       analysis_dispatched_ = true;
+      analysis_frame_ = true;
       mark(context, d3d11_stage_point_t::analysis_start);
     }
 
@@ -235,12 +241,12 @@ namespace platf::dxgi::telemetry {
       std::uint64_t convert_end,
       std::uint64_t copy_end,
       bool surface_copy) const {
-      auto &convert = analysis_dispatched_ ?
+      auto &convert = analysis_frame_ ?
                         metrics.convert_analysis :
                         metrics.convert_regular;
       convert.add(delta_ms(convert_start, convert_end, frequency));
       if (surface_copy) {
-        auto &copy = analysis_dispatched_ ?
+        auto &copy = analysis_frame_ ?
                        metrics.surface_copy_analysis :
                        metrics.surface_copy_regular;
         copy.add(delta_ms(convert_end, copy_end, frequency));
@@ -304,6 +310,7 @@ namespace platf::dxgi::telemetry {
     std::array<Query, static_cast<std::size_t>(d3d11_stage_point_t::count)> queries_;
     bool capture_copy_ = false;
     bool analysis_dispatched_ = false;
+    bool analysis_frame_ = false;
   };
 
   inline std::string

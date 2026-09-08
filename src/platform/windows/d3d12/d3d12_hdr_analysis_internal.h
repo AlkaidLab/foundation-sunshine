@@ -5,6 +5,7 @@
 #pragma once
 
 #include "d3d12_hdr_analysis.h"
+#include <chrono>
 
 namespace platf::dxgi::d3d12 {
   using Microsoft::WRL::ComPtr;
@@ -12,6 +13,8 @@ namespace platf::dxgi::d3d12 {
   namespace hdr_analysis_detail {
     constexpr std::size_t descriptors_per_slot = 8;
     constexpr std::size_t constant_buffer_alignment = 256;
+    constexpr std::size_t timing_query_count = 4;
+    constexpr std::size_t timing_readback_offset = (sizeof(hdr_final_result_t) + 7) & ~std::size_t { 7 };
 
     struct group_result_t {
       float min_maxrgb;
@@ -94,6 +97,12 @@ namespace platf::dxgi::d3d12 {
       ComPtr<ID3D12GraphicsCommandList> command_list;
       std::uint64_t source_frame = 0;
       std::uint64_t generation = 0;
+      bool measured = false;
+      bool calibrated = false;
+      std::uint64_t calibration_gpu = 0;
+      std::uint64_t calibration_cpu = 0;
+      std::uint64_t submit_cpu = 0;
+      std::chrono::steady_clock::time_point submitted_at;
     };
 
     device_t *foundation = nullptr;
@@ -113,6 +122,9 @@ namespace platf::dxgi::d3d12 {
     ComPtr<ID3D12PipelineState> pass2_pipeline;
     ComPtr<ID3D12DescriptorHeap> descriptor_heap;
     ComPtr<ID3D12DescriptorHeap> clear_descriptor_heap;
+    ComPtr<ID3D12QueryHeap> timing_queries;
+    std::uint64_t timestamp_frequency = 0;
+    std::uint64_t qpc_frequency = 0;
     std::array<slot_t, resource_ring_t::slot_count> slots;
     // Slots describe these resources, not every analyzer on the shared device.
     resource_ring_t ring;
