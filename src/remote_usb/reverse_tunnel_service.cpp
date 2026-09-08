@@ -50,7 +50,8 @@ namespace remote_usb {
         const bool allowed = (c >= '0' && c <= '9') ||
                              (c >= 'a' && c <= 'z') ||
                              (c >= 'A' && c <= 'Z') ||
-                             c == '-' || c == '.';
+                             // libusb-backed Android exporters use IDs such as "1-9:0".
+                             c == '-' || c == '.' || c == ':';
         if (!allowed) {
           return false;
         }

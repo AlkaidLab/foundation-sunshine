@@ -127,6 +127,24 @@ TEST(RemoteUsbHostController, StopIsDestructorSafeBoundary) {
   static_assert(noexcept(std::declval<remote_usb::usbip_host_controller &>().stop()));
 }
 
+#ifdef REMOTE_USB_PROCESS_TREE_HELPER
+TEST(RemoteUsbHostController, DefaultRunnerTerminatesDescendantPipeHolders) {
+  remote_usb::usbip_host_controller_config config;
+  config.executable = REMOTE_USB_PROCESS_TREE_HELPER;
+  config.backend = remote_usb::usbip_host_backend::usbip_win2;
+  config.attach_timeout = 5s;
+  config.detach_timeout = 5s;
+  remote_usb::usbip_host_controller controller(std::move(config));
+  result_harness results;
+
+  const auto started = std::chrono::steady_clock::now();
+  ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  EXPECT_EQ(results.result_at(0).status, remote_usb::usbip_host_status::ok);
+  EXPECT_LT(std::chrono::steady_clock::now() - started, 2s);
+}
+#endif
+
 TEST(RemoteUsbHostController, ExplicitlyUnsupportedBackendDoesNotLaunchHelper) {
   command_harness commands;
   result_harness results;

@@ -103,9 +103,9 @@ def main():
             ctx.load_cert_chain(root / f"{identity}.crt", root / f"{identity}.key")
             return ctx.wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=5))
 
-        def handshake(sock, supplied_token=token, tail=b""):
+        def handshake(sock, supplied_token=token, tail=b"", busid="1-1"):
             sock.sendall(json.dumps({"op": "forward", "token": supplied_token,
-                                     "busid": "1-1"}).encode() + b"\n" + tail)
+                                     "busid": busid}).encode() + b"\n" + tail)
 
         with server("limited") as (port, log), contextlib.ExitStack() as sockets:
             for _ in range(2):
@@ -133,16 +133,22 @@ def main():
                     handshake(client, supplied_token)
                     assert json.loads(line(client))["reason"] == "unauthorized"
             assert "IMPORT_EXCHANGED" not in log.read_text()
-            for tail in (b"", b"REPLY\0\r\n"):
+            for invalid_busid in ("", "1/9", "1 9", "x" * 32):
+                with connect(port) as client:
+                    handshake(client, busid=invalid_busid)
+                    assert json.loads(line(client))["reason"] == "invalid busid"
+            for busid, tail in (("1-1", b""), ("1-1", b"REPLY\0\r\n"), ("1-9:0", b"")):
                 before = log.read_text().count("DETACHED")
                 attached_before = log.read_text().count("attached busid")
                 with connect(port) as client:
-                    handshake(client, tail=tail)
+                    handshake(client, tail=tail, busid=busid)
                     assert json.loads(line(client))["op"] == "ready"
                     assert receive(client, 8) == b"\0IMPORT\n"
                     if not tail:
                         client.sendall(b"REPLY\0\r\n")
                     wait_for(lambda: log.read_text().count("attached busid") > attached_before)
+                    if busid == "1-9:0":
+                        wait_for(lambda: "ATTACH_BUSID 1-9:0" in log.read_text())
                 wait_for(lambda: log.read_text().count("DETACHED") > before)
             try:
                 with connect(port, "wrong") as client:
