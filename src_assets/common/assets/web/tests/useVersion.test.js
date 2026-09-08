@@ -3,10 +3,10 @@ import test from 'node:test'
 
 import { VERSION_CHECK_STATUS, useVersion } from '../composables/useVersion.js'
 
-const createRelease = (tagName, prerelease = false) => ({
+const createRelease = (tagName, prerelease = false, body = '') => ({
   tag_name: tagName,
   name: tagName,
-  body: '',
+  body,
   html_url: `https://example.com/${tagName}`,
   prerelease,
 })
@@ -58,6 +58,22 @@ test('version check loads prereleases only when subscribed', async (t) => {
   assert.equal(state.versionCheckStatus.value, VERSION_CHECK_STATUS.READY)
   assert.equal(state.preReleaseBuildAvailable.value, true)
   assert.equal(requests.length, 2)
+})
+
+test('version check renders release Markdown with GFM line breaks', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  globalThis.fetch = async () =>
+    createResponse(createRelease('v2.0.0', false, '## Highlights\r\nFirst line\r\nSecond line'))
+
+  const state = useVersion()
+  await state.fetchVersions({ version: 'v1.0.0', notify_pre_releases: false })
+
+  assert.match(state.parsedStableBody.value, /<h2>Highlights<\/h2>/)
+  assert.match(state.parsedStableBody.value, /First line<br>Second line/)
 })
 
 test('version check reports an error instead of treating a failed request as latest', async (t) => {

@@ -8,7 +8,10 @@
 
 #include "process.h"
 
+#include <array>
 #include <cstdint>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -18,13 +21,16 @@
 #include <stdexcept>
 #include <random>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <cstdio>
 #include <ctime>
 #include <thread>
 #include <utility>
+
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 #include <openssl/sha.h>
 
 #include <boost/property_tree/json_parser.hpp>
@@ -37,16 +43,21 @@
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
 #include <Simple-Web-Server/server_https.hpp>
+#include <Simple-Web-Server/utility.hpp>
 #include <boost/asio/ssl/context_base.hpp>
 
 #include "config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
+#include "text_context/http.h"
+#include "ai/credential_store.h"
 #include "crypto.h"
+#include "display_device/color_profile.h"
 #include "display_device/session.h"
 #include "file_mapping/file_mapping_store.h"
 #include "file_handler.h"
 #include "globals.h"
+#include "hdr/client_display_capabilities.h"
 #include "http_util.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -67,8 +78,10 @@
 #include "webhook/webhook_api.h"
 
 #ifdef _WIN32
+  #include "ds5/config_api.h"
   #include <iphlpapi.h>
   #include "display_device/vdd_utils.h"
+  #include "platform/windows/display_device/color_profile.h"
   #include "platform/windows/mic_write.h"
   #include "platform/windows/vulkan_hdr_bridge_session.h"
 #endif
@@ -103,6 +116,9 @@ namespace confighttp {
                << ", METHOD: " << request->method
                << ", PATH: " << request->path;
     
+    // Headers stay disabled because authentication and proxy headers may
+    // contain credentials.
+    /*
     // Headers
     if (!request->header.empty()) {
       log_stream << ", HEADERS: ";
@@ -114,17 +130,20 @@ namespace confighttp {
       }
     }
     
-    // Query parameters
+    */
+
+    static constexpr std::array safe_query_parameters {
+      "bitrate"sv,
+      "clientname"sv,
+    };
     auto query_params = request->parse_query_string();
-    if (!query_params.empty()) {
-      log_stream << ", PARAMS: ";
-      bool first = true;
-      for (auto &[name, val] : query_params) {
-        if (!first) log_stream << "&";
-        log_stream << name << "=" << val;
-        first = false;
-      }
-    }
+    http_util::append_allowed_request_log_fields(
+      log_stream,
+      ", PARAMS: "sv,
+      query_params,
+      safe_query_parameters,
+      "&"sv
+    );
     
     BOOST_LOG(verbose) << log_stream.str();
   }
@@ -175,6 +194,70 @@ namespace confighttp {
     return true;
   }
 
+  namespace {
+    struct request_header_value_t {
+      bool valid;
+      std::optional<std::string_view> value;
+    };
+
+    request_header_value_t
+    get_single_request_header(const req_https_t &request, const std::string_view name) {
+      const auto range = request->header.equal_range(std::string { name });
+      if (range.first == range.second) {
+        return { true, std::nullopt };
+      }
+
+      auto first = range.first;
+      const auto value = std::string_view { first->second };
+      if (++first != range.second) {
+        return { false, std::nullopt };
+      }
+      return { true, value };
+    }
+
+    void
+    send_cross_site_forbidden(resp_https_t response) {
+      const nlohmann::json body {
+        { "status", false },
+        { "error", "Cross-site request denied" },
+      };
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/json");
+      headers.emplace("X-Frame-Options", "DENY");
+      headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+      response->write(SimpleWeb::StatusCode::client_error_forbidden, body.dump(), headers);
+    }
+
+    bool
+    authorize_browser_request(resp_https_t response, req_https_t request) {
+      const auto path = std::string_view { request->path };
+      if (!path.starts_with("/api/") &&
+          !path.starts_with("/steam-api/") &&
+          !path.starts_with("/steam-store/")) {
+        return true;
+      }
+
+      const auto origin = get_single_request_header(request, "origin");
+      const auto referer = get_single_request_header(request, "referer");
+      const auto fetch_site = get_single_request_header(request, "sec-fetch-site");
+      const auto host = get_single_request_header(request, "host");
+      const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
+      if (!origin.valid || !referer.valid || !fetch_site.valid || !host.valid ||
+          !http_util::browser_request_source_allowed(
+            origin.value,
+            referer.value,
+            fetch_site.value,
+            host.value.value_or(std::string_view {}),
+            net::from_address(address) == net::PC
+          )) {
+        BOOST_LOG(debug) << "Web UI: rejected cross-site browser request to ["sv << request->path << ']';
+        send_cross_site_forbidden(std::move(response));
+        return false;
+      }
+      return true;
+    }
+  }  // namespace
+
   void
   send_unauthorized(resp_https_t response, req_https_t request) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
@@ -192,6 +275,8 @@ namespace confighttp {
    */
   void
   handleLogout(resp_https_t response, req_https_t request) {
+    if (!authorize_browser_request(response, request)) return;
+
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     auto ip_type = net::from_address(address);
 
@@ -223,6 +308,8 @@ namespace confighttp {
 
   bool
   authenticate(resp_https_t response, req_https_t request) {
+    if (!authorize_browser_request(response, request)) return false;
+
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     auto ip_type = net::from_address(address);
 
@@ -378,7 +465,12 @@ namespace confighttp {
   getStaticResource(resp_https_t response, req_https_t request, const std::string& path, const std::string& contentType) {
     // print_req(request);
 
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(file_handler::path_from_utf8(path), std::ios::binary);
+    if (!in.is_open()) {
+      BOOST_LOG(error) << "Failed to open Web UI resource: " << path;
+      response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
+      return;
+    }
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", contentType);
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
@@ -424,14 +516,16 @@ namespace confighttp {
     if (path.find("/boxart/") == 0) {
       path = path.substr(8); // Remove "/boxart/" prefix
     }
+    path = SimpleWeb::Percent::decode(path);
 
     BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
-    static const fs::path assetsRoot = fs::weakly_canonical(fs::path(SUNSHINE_ASSETS_DIR));
+    static const fs::path assetsRoot = fs::weakly_canonical(file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR));
     static const fs::path coversRoot = fs::weakly_canonical(platf::appdata() / "covers");
 
     // First try to find in SUNSHINE_ASSETS_DIR
-    fs::path targetPath = fs::weakly_canonical(assetsRoot / path);
+    const auto requestedPath = file_handler::path_from_utf8(path);
+    fs::path targetPath = fs::weakly_canonical(assetsRoot / requestedPath);
     fs::path finalPath;
     bool found = false;
 
@@ -439,17 +533,17 @@ namespace confighttp {
     if (targetPath.parent_path() == assetsRoot && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
       finalPath = targetPath;
       found = true;
-      BOOST_LOG(debug) << "Found in boxart: " << finalPath.string();
+      BOOST_LOG(debug) << "Found in boxart: " << file_handler::path_to_utf8(finalPath);
     }
     
     // If not found in boxart, try covers directory
     if (!found) {
-      targetPath = fs::weakly_canonical(coversRoot / path);
+      targetPath = fs::weakly_canonical(coversRoot / requestedPath);
       // For covers, we use isChildPath which allows subdirectories but prevents traversal out of root
       if (isChildPath(targetPath, coversRoot) && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
         finalPath = targetPath;
         found = true;
-        BOOST_LOG(debug) << "Found in covers: " << finalPath.string();
+        BOOST_LOG(debug) << "Found in covers: " << file_handler::path_to_utf8(finalPath);
       }
     }
 
@@ -459,17 +553,17 @@ namespace confighttp {
       finalPath = assetsRoot / "box.png";
       // Ensure default file exists, otherwise we might fail later
       if (!fs::exists(finalPath)) {
-        BOOST_LOG(warning) << "Default box.png not found at: " << finalPath.string();
+        BOOST_LOG(warning) << "Default box.png not found at: " << file_handler::path_to_utf8(finalPath);
         response->write(SimpleWeb::StatusCode::client_error_not_found, "Image not found");
         return;
       }
     }
 
-    std::string imagePath = finalPath.string();
+    const auto imagePath = file_handler::path_to_utf8(finalPath);
 
     // Get file size
     std::error_code ec;
-    auto fileSize = fs::file_size(imagePath, ec);
+    auto fileSize = fs::file_size(finalPath, ec);
     if (ec) {
       BOOST_LOG(warning) << "Failed to get file size for: " << imagePath;
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read image file");
@@ -477,7 +571,7 @@ namespace confighttp {
     }
 
     // Determine Content-Type from file extension
-    std::string ext = fs::path(imagePath).extension().string();
+    std::string ext = finalPath.extension().string();
     if (!ext.empty() && ext[0] == '.') {
       ext = ext.substr(1);
     }
@@ -492,7 +586,7 @@ namespace confighttp {
     BOOST_LOG(debug) << "Serving boxart: " << imagePath << " (Content-Type: " << contentType << ", Size: " << fileSize << " bytes)";
 
     // Return image resource
-    std::ifstream in(imagePath, std::ios::binary);
+    std::ifstream in(finalPath, std::ios::binary);
     if (!in.is_open()) {
       BOOST_LOG(warning) << "Failed to open image file: " << imagePath;
       response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open image file");
@@ -510,18 +604,19 @@ namespace confighttp {
   void
   getNodeModules(resp_https_t response, req_https_t request) {
     // print_req(request);
-    fs::path webDirPath(WEB_DIR);
+    fs::path webDirPath = file_handler::path_from_utf8(WEB_DIR);
     fs::path nodeModulesPath(webDirPath / "assets");
 
     // .relative_path is needed to shed any leading slash that might exist in the request path
-    auto filePath = fs::weakly_canonical(webDirPath / fs::path(request->path).relative_path());
+    const auto decodedRequestPath = SimpleWeb::Percent::decode(request->path);
+    auto filePath = fs::weakly_canonical(webDirPath / file_handler::path_from_utf8(decodedRequestPath).relative_path());
 
     // Don't do anything if file does not exist or is outside the assets directory
     if (!isChildPath(filePath, nodeModulesPath)) {
       BOOST_LOG(warning) << "Someone requested a path " << filePath << " that is outside the assets folder";
       response->write(SimpleWeb::StatusCode::client_error_bad_request, "Bad Request");
     }
-    else if (!fs::exists(filePath)) {
+    else if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
       response->write(SimpleWeb::StatusCode::client_error_not_found);
     }
     else {
@@ -534,7 +629,12 @@ namespace confighttp {
         // if it is, set the content type to the mime type
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", mimeType->second);
-        std::ifstream in(filePath.string(), std::ios::binary);
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in.is_open()) {
+          BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(filePath);
+          response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
+          return;
+        }
         response->write(SimpleWeb::StatusCode::success_ok, in, headers);
       }
       // do not return any file if the type is not in the map
@@ -575,7 +675,7 @@ namespace confighttp {
     if (current_size <= prev_size || prev_size == 0 || !old_content) {
       return nullptr;
     }
-    std::ifstream in(log_path.string(), std::ios::binary);
+    std::ifstream in(log_path, std::ios::binary);
     if (!in || !in.seekg(static_cast<std::streamoff>(prev_size))) {
       return nullptr;
     }
@@ -593,7 +693,7 @@ namespace confighttp {
    */
   static std::shared_ptr<const std::string>
   read_file_range(const std::filesystem::path &path, std::uintmax_t offset, std::uintmax_t length) {
-    std::ifstream in(path.string(), std::ios::binary);
+    std::ifstream in(path, std::ios::binary);
     if (!in || !in.seekg(static_cast<std::streamoff>(offset))) {
       return nullptr;
     }
@@ -627,12 +727,12 @@ namespace confighttp {
 
     //print_req(request);
 
-    const std::filesystem::path log_path(config::sunshine.log_file);
+    const auto log_path = file_handler::path_from_utf8(config::sunshine.log_file);
 
     // --- Mode 1: No X-Log-Offset header → stream full file from disk (download) ---
     auto offset_it = request->header.find("X-Log-Offset");
     if (offset_it == request->header.end()) {
-      std::ifstream in(log_path.string(), std::ios::binary);
+      std::ifstream in(log_path, std::ios::binary);
       if (!in.is_open()) {
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open log file");
         return;
@@ -815,11 +915,31 @@ namespace confighttp {
 
     try {
       pt::read_json(ss, inputTree);
-      pt::read_json(config::stream.file_apps, fileTree);
+      file_handler::read_json(config::stream.file_apps, fileTree);
 
       auto &apps_node = fileTree.get_child("apps"s);
       auto &input_apps_node = inputTree.get_child("apps"s);
       auto &input_edit_node = inputTree.get_child("editApp"s);
+
+      const auto normalize_gamepad = [&](pt::ptree &app_node) {
+        auto gamepad = app_node.get_optional<std::string>("gamepad");
+        if (gamepad && gamepad->empty()) {
+          app_node.erase("gamepad");
+        }
+        else if (gamepad && *gamepad != "auto"sv && *gamepad != "x360"sv && *gamepad != "ds4"sv && *gamepad != "ds5"sv) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid per-app gamepad type");
+          return false;
+        }
+
+        return true;
+      };
+
+      for (auto &[_, app_node] : input_apps_node) {
+        if (!normalize_gamepad(app_node)) {
+          return;
+        }
+      }
 
       // Validate app name when editing a specific app
       if (!input_edit_node.empty()) {
@@ -846,6 +966,10 @@ namespace confighttp {
           input_edit_node.erase("detached");
         }
 
+        if (!normalize_gamepad(input_edit_node)) {
+          return;
+        }
+
         int index = input_edit_node.get<int>("index");
         input_edit_node.erase("index");
 
@@ -865,7 +989,7 @@ namespace confighttp {
         }
       }
 
-      pt::write_json(config::stream.file_apps, fileTree);
+      file_handler::write_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SaveApp: "sv << e.what();
@@ -908,7 +1032,7 @@ namespace confighttp {
     });
     pt::ptree fileTree;
     try {
-      pt::read_json(config::stream.file_apps, fileTree);
+      file_handler::read_json(config::stream.file_apps, fileTree);
       auto &apps_node = fileTree.get_child("apps"s);
       int index = stoi(request->path_match[1]);
 
@@ -930,7 +1054,7 @@ namespace confighttp {
         fileTree.erase("apps");
         fileTree.push_back(std::make_pair("apps", newApps));
       }
-      pt::write_json(config::stream.file_apps, fileTree);
+      file_handler::write_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "DeleteApp: "sv << e.what();
@@ -1038,7 +1162,7 @@ namespace confighttp {
 
     pt::ptree fileTree;
     try {
-      pt::read_json(config::stream.file_apps, fileTree);
+      file_handler::read_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
@@ -1086,7 +1210,7 @@ namespace confighttp {
       fileTree.erase("apps");
       fileTree.push_back(std::make_pair("apps", newApps));
 
-      pt::write_json(config::stream.file_apps, fileTree);
+      file_handler::write_json(config::stream.file_apps, fileTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
@@ -1141,10 +1265,11 @@ namespace confighttp {
     }
     auto url = inputTree.get("url", "");
 
-    const std::string coverdir = platf::appdata().string() + "/covers/";
+    const std::string coverdir = file_handler::path_to_utf8(platf::appdata() / "covers");
     file_handler::make_directory(coverdir);
 
-    std::basic_string path = coverdir + http::url_escape(key) + ".png";
+    const auto cover_path = file_handler::path_from_utf8(coverdir) / (http::url_escape(key) + ".png");
+    const std::string path = file_handler::path_to_utf8(cover_path);
     if (!url.empty()) {
       if (!http::download_public_cover_image(url, path)) {
         outputTree.put("error", "Failed to download public HTTPS cover");
@@ -1162,7 +1287,7 @@ namespace confighttp {
       }
       auto data = SimpleWeb::Crypto::Base64::decode(base64_str);
 
-      std::ofstream imgfile(path, std::ios::binary);
+      std::ofstream imgfile(file_handler::path_from_utf8(path), std::ios::binary);
       if (!imgfile.is_open()) {
         outputTree.put("error", "Failed to create file");
         return;
@@ -1285,7 +1410,7 @@ namespace confighttp {
     // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
     std::filesystem::path idd_option_path = platf::appdata() / "vdd_settings.xml";
 
-    BOOST_LOG(info) << "VDD配置文件路径: " << idd_option_path.string();
+    BOOST_LOG(info) << "VDD配置文件路径: " << file_handler::path_to_utf8(idd_option_path);
 
     if (!fs::exists(idd_option_path)) {
         return false;
@@ -1296,7 +1421,13 @@ namespace confighttp {
     pt::ptree root;
 
     try {
-      pt::read_xml(idd_option_path.string(), existing_root);
+      {
+        std::ifstream input(idd_option_path, std::ios::binary);
+        if (!input.is_open()) {
+          throw std::runtime_error("Unable to open VDD configuration file");
+        }
+        pt::read_xml(input, existing_root);
+      }
       // 如果现有配置文件中已有vdd_settings节点
       if (existing_root.get_child_optional("vdd_settings")) {
         // 复制现有配置
@@ -1355,9 +1486,15 @@ namespace confighttp {
       boost::regex empty_lines_regex("\\n\\s*\\n");
       xml_content = boost::regex_replace(xml_content, empty_lines_regex, "\n");
 
-      std::ofstream file(idd_option_path.string());
+      std::ofstream file(idd_option_path);
+      if (!file.is_open()) {
+        throw std::runtime_error("Unable to open VDD configuration file");
+      }
       file << xml_content;
-      file.close();
+      file.flush();
+      if (!file) {
+        throw std::runtime_error("Unable to write VDD configuration file");
+      }
 
       return true;
     }
@@ -1415,7 +1552,11 @@ namespace confighttp {
       }
 
       // 更新配置
-      config::update_full_config(fullConfig);
+      if (!config::update_full_config(fullConfig)) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "failed to persist configuration");
+        return;
+      }
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "SaveConfig: "sv << e.what();
@@ -1425,6 +1566,116 @@ namespace confighttp {
     }
 
     outputTree.put("status", "true");
+  }
+
+  void
+  saveClients(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    nlohmann::json output {
+      {"status", false},
+    };
+
+    try {
+      std::stringstream body;
+      body << request->content.rdbuf();
+      const auto input = nlohmann::json::parse(body.str());
+      if (!input.is_object()) {
+        throw std::invalid_argument("clients must be a serialized JSON array");
+      }
+      const auto clients_it = input.find("clients");
+      if (clients_it == input.end() || !clients_it->is_string()) {
+        throw std::invalid_argument("clients must be a serialized JSON array");
+      }
+
+      const auto serialized_clients = clients_it->get<std::string>();
+      constexpr std::size_t max_clients_config_size { 1024 * 1024 };
+      if (serialized_clients.size() > max_clients_config_size) {
+        throw std::invalid_argument("clients configuration is too large");
+      }
+
+      const auto clients = nlohmann::json::parse(serialized_clients);
+      if (!clients.is_array()) {
+        throw std::invalid_argument("clients must contain a JSON array");
+      }
+      if (clients.size() > 1024) {
+        throw std::invalid_argument("too many client settings");
+      }
+
+      std::set<std::string> uuids;
+      for (const auto &client : clients) {
+        if (!client.is_object()) {
+          throw std::invalid_argument("each client setting must be an object");
+        }
+
+        if (const auto uuid_it = client.find("uuid"); uuid_it != client.end()) {
+          if (!uuid_it->is_string() || uuid_it->get_ref<const std::string &>().size() > 128) {
+            throw std::invalid_argument("client uuid must be a string of at most 128 bytes");
+          }
+          const auto &uuid = uuid_it->get_ref<const std::string &>();
+          if (!uuid.empty() && !uuids.insert(uuid).second) {
+            throw std::invalid_argument("client uuid must be unique");
+          }
+        }
+
+        if (const auto name_it = client.find("name"); name_it != client.end() &&
+            (!name_it->is_string() || name_it->get_ref<const std::string &>().size() > 256)) {
+          throw std::invalid_argument("client name must be a string of at most 256 bytes");
+        }
+
+        if (const auto profile_it = client.find("hdrProfile"); profile_it != client.end()) {
+          if (!profile_it->is_string()) {
+            throw std::invalid_argument("HDR profile must be a string");
+          }
+          const auto &profile = profile_it->get_ref<const std::string &>();
+          if (!profile.empty() && !display_device::color_profile::is_valid_profile_basename(profile)) {
+            throw std::invalid_argument("HDR profile must be an installed .icc or .icm filename");
+          }
+        }
+
+        const auto brightness_mode = client.value("hdrBrightnessMode", "auto");
+        if (brightness_mode != "auto" && brightness_mode != "manual") {
+          throw std::invalid_argument("HDR brightness mode must be auto or manual");
+        }
+        if (brightness_mode == "manual") {
+          const auto read_brightness = [&](const char *field) -> float {
+            const auto value = client.find(field);
+            if (value == client.end() || !value->is_number()) {
+              throw std::invalid_argument(std::string { "manual HDR brightness requires numeric " } + field);
+            }
+            const float number = value->get<float>();
+            if (!std::isfinite(number)) {
+              throw std::invalid_argument(std::string { field } + " must be finite");
+            }
+            return number;
+          };
+
+          const auto validated = hdr::validate_client_display_capabilities(
+            read_brightness("hdrBrightnessMaxNits"),
+            read_brightness("hdrBrightnessMinNits"),
+            read_brightness("hdrBrightnessMaxFullFrameNits"));
+          if (!validated.capabilities.reported) {
+            throw std::invalid_argument(validated.fallback_reason);
+          }
+        }
+      }
+
+      if (!config::save_clients_config(serialized_clients)) {
+        output["error"] = "failed to persist client settings";
+      }
+      else {
+        output["status"] = true;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "SaveClients: "sv << e.what();
+      output["error"] = e.what();
+    }
+
+    send_response(response, output);
   }
 
   void
@@ -1453,6 +1704,25 @@ namespace confighttp {
 
     webhook::api::test_delivery(std::move(response), std::move(request));
   }
+
+#ifdef _WIN32
+  void
+  getDualSenseConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    ds5_config::api::get_config(std::move(response), config::sunshine.config_file);
+  }
+
+  void
+  saveDualSenseConfig(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    ds5_config::api::save_config(
+      std::move(response),
+      std::move(request),
+      config::sunshine.config_file
+    );
+  }
+#endif
 
   void
   restart(resp_https_t response, req_https_t request) {
@@ -1502,11 +1772,47 @@ namespace confighttp {
     send_response(response, nlohmann::json {
       {"success", result.success},
       {"error_code", result.error_code},
+      {"backend", result.backend},
     });
 #else
     send_response(response, nlohmann::json {
       {"success", false},
       {"error_code", "MIC_TEST_UNSUPPORTED"},
+    });
+#endif
+  }
+
+  void
+  getMicrophoneStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+#ifdef _WIN32
+    const auto status = platf::audio::mic_redirect_status();
+    send_response(response, nlohmann::json {
+      {"success", true},
+      {"configured_backend", status.configured_backend},
+      {"active_backend", status.active_backend},
+      {"fallback_reason", status.fallback_reason},
+      {"component_available", status.component_available},
+      {"online", status.online},
+      {"device_created", status.device_created},
+      {"host_streaming", status.host_streaming},
+      {"generation", status.generation},
+      {"state", status.state},
+      {"buffered_bytes", status.buffered_bytes},
+      {"underruns", status.underruns},
+      {"dropped_frames", status.dropped_frames},
+      {"submit_errors", status.submit_errors},
+      {"last_error", status.last_error},
+      {"error_code", status.error_code},
+    });
+#else
+    send_response(response, nlohmann::json {
+      {"success", true},
+      {"configured_backend", "disabled"},
+      {"active_backend", ""},
+      {"state", "unsupported"},
+      {"component_available", false},
     });
 #endif
   }
@@ -1559,6 +1865,7 @@ namespace confighttp {
 
   void
   savePassword(resp_https_t response, req_https_t request) {
+    if (!authorize_browser_request(response, request)) return;
     if (!check_content_type(response, request, "application/json")) return;
     if (!config::sunshine.username.empty() && !authenticate(response, request)) return;
 
@@ -1908,6 +2215,7 @@ namespace confighttp {
 
   void
   renameClient(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
 
     print_req(request);
@@ -1952,11 +2260,88 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
-    const nlohmann::json named_certs = nvhttp::get_all_clients();
+    nlohmann::json named_certs = nvhttp::get_all_clients();
+    const auto sessions = stream::session::get_all_sessions_info();
+    for (auto &client : named_certs) {
+      if (!client.is_object()) continue;
+      const auto uuid = client.value("uuid", std::string {});
+      const auto name = client.value("name", std::string {});
+      const auto session = std::find_if(sessions.begin(), sessions.end(), [&](const auto &candidate) {
+        return (!uuid.empty() && candidate.client_uuid == uuid) ||
+               (uuid.empty() && !name.empty() && candidate.client_name == name);
+      });
+      if (session == sessions.end()) continue;
+
+      client["hdrBrightnessRuntime"] = {
+        { "active", true },
+        { "reported", session->hdr_brightness_reported },
+        { "source", session->hdr_brightness_source },
+        { "maxNits", session->hdr_max_nits },
+        { "minNits", session->hdr_min_nits },
+        { "maxFullFrameNits", session->hdr_max_full_frame_nits },
+      };
+    }
     nlohmann::json output_tree;
     output_tree["named_certs"] = named_certs;
     output_tree["status"] = "true";
     send_response(response, output_tree);
+  }
+
+  void
+  listColorProfiles(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+#ifdef _WIN32
+    const auto windows_directory = []() -> std::filesystem::path {
+      if (const char *windir = std::getenv("WINDIR"); windir && *windir) {
+        return windir;
+      }
+      return R"(C:\Windows)";
+    }();
+    const auto color_directory = windows_directory / "System32" / "spool" / "drivers" / "color";
+
+    std::error_code error;
+    std::vector<std::string> profiles;
+    std::filesystem::directory_iterator entry { color_directory, std::filesystem::directory_options::skip_permission_denied, error };
+    const std::filesystem::directory_iterator end;
+    while (!error && entry != end) {
+      std::error_code entry_error;
+      if (entry->is_regular_file(entry_error) && !entry_error) {
+        const auto utf8_name = entry->path().filename().u8string();
+        const std::string profile_name {
+          reinterpret_cast<const char *>(utf8_name.data()),
+          utf8_name.size()
+        };
+        if (display_device::color_profile::is_valid_profile_basename(profile_name)) {
+          profiles.push_back(profile_name);
+        }
+      }
+      entry.increment(error);
+    }
+
+    if (error) {
+      send_response(response, nlohmann::json {
+        {"status", false},
+        {"supported", true},
+        {"profiles", nlohmann::json::array()},
+        {"error", "failed to enumerate installed color profiles"},
+      });
+      return;
+    }
+
+    std::sort(profiles.begin(), profiles.end());
+    send_response(response, nlohmann::json {
+      {"status", true},
+      {"supported", true},
+      {"profiles", profiles},
+    });
+#else
+    send_response(response, nlohmann::json {
+      {"status", true},
+      {"supported", false},
+      {"profiles", nlohmann::json::array()},
+    });
+#endif
   }
 
   void
@@ -2030,6 +2415,7 @@ namespace confighttp {
       for (const auto &session_info : sessions_info) {
         json session_obj;
         session_obj["client_name"] = session_info.client_name;
+        session_obj["client_uuid"] = session_info.client_uuid;
         session_obj["client_address"] = session_info.client_address;
         session_obj["state"] = session_info.state;
         session_obj["session_id"] = session_info.session_id;
@@ -2040,6 +2426,12 @@ namespace confighttp {
         session_obj["host_audio"] = session_info.host_audio;
         session_obj["enable_hdr"] = session_info.enable_hdr;
         session_obj["enable_mic"] = session_info.enable_mic;
+        session_obj["use_vdd"] = session_info.use_vdd;
+        session_obj["hdr_brightness_reported"] = session_info.hdr_brightness_reported;
+        session_obj["hdr_brightness_source"] = session_info.hdr_brightness_source;
+        session_obj["hdr_max_nits"] = session_info.hdr_max_nits;
+        session_obj["hdr_min_nits"] = session_info.hdr_min_nits;
+        session_obj["hdr_max_full_frame_nits"] = session_info.hdr_max_full_frame_nits;
         session_obj["app_name"] = session_info.app_name;
         session_obj["app_id"] = session_info.app_id;
         
@@ -2086,6 +2478,7 @@ namespace confighttp {
 #endif
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
+        { "configured_rtx_hdr_mode", config::video.rtx_hdr },
         { "pipelines", json::array() },
       };
 
@@ -2100,6 +2493,9 @@ namespace confighttp {
           { "conversion_path", status.conversion_path },
           { "conversion_fallback_reason", status.conversion_fallback_reason },
           { "analysis_failure_reason", status.analysis_failure_reason },
+          { "synthetic_hdr_backend", status.synthetic_hdr_backend },
+          { "synthetic_hdr_state", status.synthetic_hdr_state },
+          { "synthetic_hdr_failure_reason", status.synthetic_hdr_failure_reason },
         });
       }
 
@@ -2112,6 +2508,75 @@ namespace confighttp {
     }
     catch (...) {
       BOOST_LOG(error) << "getRuntimeHdrStatus: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
+  getRuntimeHdrCalibration(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    if (!require_localhost(response, request, "getting HDR calibration status")) return;
+
+    try {
+      json output {
+        { "success", true },
+        { "supported", false },
+        { "vddActive", false },
+        { "hdrEnabled", false },
+        { "calibrated", false },
+        { "profileName", nullptr },
+        { "maxNits", nullptr },
+        { "minNits", nullptr },
+        { "maxFullFrameNits", nullptr },
+        { "state", "unsupported" },
+        { "sharedVdd", config::video.vdd_reuse },
+        { "activeClients", json::array() },
+      };
+
+      for (const auto &session : stream::session::get_all_sessions_info()) {
+        if (session.state == "RUNNING" && session.enable_hdr && session.use_vdd) {
+          output["activeClients"].push_back({
+            { "uuid", session.client_uuid },
+            { "name", session.client_name },
+          });
+        }
+      }
+
+#ifdef _WIN32
+      output["supported"] = true;
+      const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      if (!vdd_id.empty()) {
+        output["vddActive"] = true;
+        const auto hdr_states = display_device::get_current_hdr_states({ vdd_id });
+        const auto hdr_state = hdr_states.find(vdd_id);
+        const bool hdr_enabled = hdr_state != hdr_states.end() &&
+                                 hdr_state->second == display_device::hdr_state_e::enabled;
+        output["hdrEnabled"] = hdr_enabled;
+        output["state"] = hdr_enabled ? "ready" : "waiting_hdr";
+
+        if (const auto calibration = display_device::win_color_profile::current_hdr_calibration(vdd_id)) {
+          output["calibrated"] = true;
+          output["profileName"] = calibration->profile_name;
+          output["maxNits"] = calibration->max_nits;
+          output["minNits"] = calibration->min_nits;
+          output["maxFullFrameNits"] = calibration->max_full_frame_nits;
+          output["state"] = "calibrated";
+        }
+      }
+      else {
+        output["state"] = "waiting_vdd";
+      }
+#endif
+
+      send_response(response, output);
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "getRuntimeHdrCalibration: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+    }
+    catch (...) {
+      BOOST_LOG(error) << "getRuntimeHdrCalibration: Unknown exception";
       write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
     }
   }
@@ -2282,7 +2747,7 @@ namespace confighttp {
       targetUrl += "?" + request->query_string;
     }
 
-    BOOST_LOG(info) << "Steam API proxy request: " << targetUrl;
+    BOOST_LOG(info) << "Steam API proxy request path: " << http_util::sanitize_request_log_value(path);
 
     // 安全检查：防止SSRF，确保目标主机确实是api.steampowered.com
     if (http::url_get_host(targetUrl) != "api.steampowered.com") {
@@ -2299,13 +2764,10 @@ namespace confighttp {
         // 设置响应头
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
-        headers.emplace("Access-Control-Allow-Origin", "*");
-        headers.emplace("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization");
         
         response->write(SimpleWeb::StatusCode::success_ok, content, headers);
       } else {
-        BOOST_LOG(error) << "Steam API request failed: " << targetUrl;
+        BOOST_LOG(error) << "Steam API request failed for path: " << http_util::sanitize_request_log_value(path);
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API request failed");
       }
     } catch (const std::exception& e) {
@@ -2333,7 +2795,7 @@ namespace confighttp {
       targetUrl += "?" + request->query_string;
     }
 
-    BOOST_LOG(info) << "Steam Store proxy request: " << targetUrl;
+    BOOST_LOG(info) << "Steam Store proxy request path: " << http_util::sanitize_request_log_value(path);
 
     // 安全检查：防止SSRF，确保目标主机确实是store.steampowered.com
     if (http::url_get_host(targetUrl) != "store.steampowered.com") {
@@ -2350,13 +2812,10 @@ namespace confighttp {
         // 设置响应头
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
-        headers.emplace("Access-Control-Allow-Origin", "*");
-        headers.emplace("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization");
         
         response->write(SimpleWeb::StatusCode::success_ok, content, headers);
       } else {
-        BOOST_LOG(error) << "Steam Store request failed: " << targetUrl;
+        BOOST_LOG(error) << "Steam Store request failed for path: " << http_util::sanitize_request_log_value(path);
         response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store request failed");
       }
     } catch (const std::exception& e) {
@@ -2375,10 +2834,66 @@ namespace confighttp {
   /**
    * @brief 获取 AI 配置文件路径（与 sunshine.conf 同目录）
    */
-  static std::string
+  static fs::path
   getAiConfigPath() {
-    auto config_dir = fs::path(config::sunshine.config_file).parent_path();
-    return (config_dir / "ai_config.json").string();
+    auto config_dir = file_handler::path_from_utf8(config::sunshine.config_file).parent_path();
+    return config_dir / "ai_config.json";
+  }
+
+  static fs::path
+  getAiCredentialPath() {
+    auto config_dir = file_handler::path_from_utf8(config::sunshine.config_file).parent_path();
+    return config_dir / "ai_llm_credential.bin";
+  }
+
+  static void
+  applyStoredCredentialLocked(nlohmann::json &cfg) {
+    auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
+    if (credential.status == credential_store::read_status_e::success) {
+      cfg["apiKey"] = std::move(credential.secret);
+    } else {
+      cfg["apiKey"] = "";
+      if (credential.status == credential_store::read_status_e::error) {
+        BOOST_LOG(error) << "Could not load the LLM API key from secure storage: " << credential.error;
+      }
+    }
+    cfg["apiKeyConfigured"] = !cfg.value("apiKey", "").empty();
+  }
+
+  static bool
+  writeAiConfigFile(const nlohmann::json &cfg) {
+    const fs::path path = getAiConfigPath();
+    auto temp = path;
+    temp += ".tmp";
+    try {
+      {
+        std::ofstream file(temp, std::ios::trunc);
+        if (!file.is_open()) return false;
+        file << cfg.dump(2);
+        file.flush();
+        if (!file.good()) throw std::runtime_error("Failed to flush AI config");
+      }
+#ifdef _WIN32
+      if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        return false;
+      }
+#else
+      std::error_code ec;
+      fs::rename(temp, path, ec);
+      if (ec) {
+        fs::remove(temp, ec);
+        return false;
+      }
+#endif
+      return true;
+    } catch (const std::exception &e) {
+      std::error_code ignored;
+      fs::remove(temp, ignored);
+      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
+      return false;
+    }
   }
 
   /**
@@ -2392,9 +2907,35 @@ namespace confighttp {
 
     auto path = getAiConfigPath();
     try {
-      std::string content = file_handler::read_file(path.c_str());
+      const auto utf8_path = file_handler::path_to_utf8(path);
+      std::string content = file_handler::read_file(utf8_path.c_str());
       if (!content.empty()) {
-        ai_config_cache = nlohmann::json::parse(content);
+        auto persisted = nlohmann::json::parse(content);
+        ai_config_cache = persisted;
+
+        // Migrate legacy plaintext credentials before exposing the runtime
+        // configuration. Never remove the old value until both secure storage
+        // and the sanitized config rewrite have succeeded.
+        const std::string legacy_key = persisted.value("apiKey", "");
+        if (!legacy_key.empty()) {
+          auto migration = credential_store::write_llm_api_key(getAiCredentialPath(), legacy_key);
+          if (migration.success) {
+            auto sanitized = persisted;
+            sanitized.erase("apiKey");
+            if (writeAiConfigFile(sanitized)) {
+              ai_config_cache = std::move(sanitized);
+              BOOST_LOG(info) << "Migrated the LLM API key out of ai_config.json";
+            } else {
+              BOOST_LOG(error) << "The LLM API key was secured, but ai_config.json could not be sanitized; migration will retry";
+            }
+          } else {
+            BOOST_LOG(error) << "Could not migrate the plaintext LLM API key: " << migration.error;
+          }
+          ai_config_cache["apiKey"] = legacy_key;
+        } else {
+          applyStoredCredentialLocked(ai_config_cache);
+        }
+        ai_config_cache["apiKeyConfigured"] = !ai_config_cache.value("apiKey", "").empty();
         ai_config_loaded = true;
         return ai_config_cache;
       }
@@ -2405,11 +2946,13 @@ namespace confighttp {
       {"provider", "openai"},
       {"apiBase", "https://api.openai.com/v1"},
       {"apiKey", ""},
+      {"apiKeyConfigured", false},
       {"model", "gpt-4.1-mini"},
       {"compatibility", "openai-chat"},
       {"temperature", 0.3},
       {"max_tokens", 2048}
     };
+    applyStoredCredentialLocked(ai_config_cache);
     ai_config_loaded = true;
     return ai_config_cache;
   }
@@ -2428,19 +2971,14 @@ namespace confighttp {
    */
   static bool
   saveAiConfigLocked(const nlohmann::json &cfg) {
-    auto path = getAiConfigPath();
-    try {
-      std::ofstream file(path);
-      if (file.is_open()) {
-        file << cfg.dump(2);
-        ai_config_cache = cfg;
-        ai_config_loaded = true;
-        return true;
-      }
-    } catch (const std::exception &e) {
-      BOOST_LOG(error) << "Failed to save AI config: " << e.what();
-    }
-    return false;
+    auto persisted = cfg;
+    persisted.erase("apiKey");
+    persisted.erase("apiKeyConfigured");
+    persisted.erase("apiKeyHint");
+    if (!writeAiConfigFile(persisted)) return false;
+    ai_config_cache = cfg;
+    ai_config_loaded = true;
+    return true;
   }
 
   /**
@@ -2739,15 +3277,10 @@ namespace confighttp {
 
     auto cfg = loadAiConfig();
 
-    // 掩码 API key：仅显示前4+后4字符
-    if (cfg.contains("apiKey") && cfg["apiKey"].is_string()) {
-      std::string key = cfg["apiKey"].get<std::string>();
-      if (key.length() > 8) {
-        cfg["apiKey"] = key.substr(0, 4) + "****" + key.substr(key.length() - 4);
-      } else if (!key.empty()) {
-        cfg["apiKey"] = "****";
-      }
-    }
+    // Never expose the key; only report whether one is configured.
+    const std::string key = cfg.value("apiKey", "");
+    cfg.erase("apiKey");
+    cfg["apiKeyConfigured"] = !key.empty();
 
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
@@ -2759,6 +3292,7 @@ namespace confighttp {
    */
   void
   saveAiConfigEndpoint(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
     print_req(request);
 
@@ -2780,28 +3314,102 @@ namespace confighttp {
       if (input.contains("system_prompt")) current["system_prompt"] = input["system_prompt"].get<std::string>();
       if (input.contains("temperature")) current["temperature"] = input["temperature"].get<double>();
       if (input.contains("max_tokens")) current["max_tokens"] = input["max_tokens"].get<int>();
-      if (input.contains("apiKey")) {
-        std::string key = input["apiKey"].get<std::string>();
-        // 如果前端发来的是掩码（包含****），不覆盖
-        if (key.find("****") == std::string::npos) {
-          current["apiKey"] = key;
+      std::string key_action = input.value("apiKeyAction", "keep");
+      // Backward compatibility for older clients that only send apiKey.
+      if (input.contains("apiKey") && key_action == "keep") {
+        const std::string candidate = input["apiKey"].get<std::string>();
+        if (!candidate.empty() && candidate.find("****") == std::string::npos) {
+          key_action = "replace";
         }
       }
 
+      if (key_action == "replace") {
+        if (!input.contains("apiKey") || !input["apiKey"].is_string() || input["apiKey"].get_ref<const std::string &>().empty()) {
+          throw std::invalid_argument("apiKeyAction=replace requires a non-empty apiKey");
+        }
+        const std::string key = input["apiKey"].get<std::string>();
+        auto stored = credential_store::write_llm_api_key(getAiCredentialPath(), key);
+        if (!stored.success) throw std::runtime_error("Failed to secure API key: " + stored.error);
+        current["apiKey"] = key;
+      } else if (key_action == "clear") {
+        auto erased = credential_store::erase_llm_api_key(getAiCredentialPath());
+        if (!erased.success) throw std::runtime_error("Failed to clear API key: " + erased.error);
+        current["apiKey"] = "";
+      } else if (key_action != "keep") {
+        throw std::invalid_argument("apiKeyAction must be keep, replace, or clear");
+      }
+      current["apiKeyConfigured"] = !current.value("apiKey", "").empty();
+
       if (saveAiConfigLocked(current)) {
         output["status"] = "ok";
+        output["apiKeyConfigured"] = current["apiKeyConfigured"];
       } else {
         output["status"] = "error";
         output["error"] = "Failed to write config file";
+        // Credential mutations have already completed. Keep runtime behavior
+        // consistent with secure storage even if the non-secret JSON write
+        // failed; the caller still receives an error and can retry.
+        ai_config_cache = current;
+        ai_config_loaded = true;
       }
     } catch (const std::exception &e) {
       output["status"] = "error";
-      output["error"] = std::string("Invalid JSON: ") + e.what();
+      output["error"] = e.what();
     }
 
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
     response->write(SimpleWeb::StatusCode::success_ok, output.dump(), headers);
+  }
+
+  void
+  proxyAiModels(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+
+    const auto cfg = loadAiConfig();
+    if (!cfg.value("enabled", false)) {
+      response->write(
+        SimpleWeb::StatusCode::client_error_forbidden,
+        R"({"error":{"message":"AI proxy is not enabled","type":"invalid_request_error"}})",
+        json_headers());
+      return;
+    }
+    const std::string api_key = cfg.value("apiKey", "");
+    std::string api_base = cfg.value("apiBase", "");
+    if (api_base.empty() || (api_key.empty() && isApiKeyRequired(cfg))) {
+      response->write(
+        SimpleWeb::StatusCode::client_error_bad_request,
+        R"({"error":{"message":"AI proxy not configured","type":"invalid_request_error"}})",
+        json_headers());
+      return;
+    }
+    if (isAnthropicProvider(cfg)) {
+      response->write(SimpleWeb::StatusCode::success_ok, R"({"data":[]})", json_headers());
+      return;
+    }
+
+    while (!api_base.empty() && api_base.back() == '/') api_base.pop_back();
+    if (hasSuffix(api_base, "/chat/completions")) {
+      api_base.resize(api_base.size() - std::string_view { "/chat/completions" }.size());
+    }
+    const std::string target_url = api_base + "/models";
+    std::map<std::string, std::string> headers;
+    if (!api_key.empty()) headers["Authorization"] = "Bearer " + api_key;
+
+    std::string body;
+    long http_code = 0;
+    if (!http::get_json(target_url, headers, body, http_code)) {
+      response->write(
+        SimpleWeb::StatusCode::server_error_bad_gateway,
+        R"({"error":{"message":"Failed to connect to upstream LLM API","type":"upstream_error"}})",
+        json_headers());
+      return;
+    }
+    const auto status = http_code >= 200 && http_code < 300
+                          ? SimpleWeb::StatusCode::success_ok
+                          : SimpleWeb::StatusCode::server_error_bad_gateway;
+    response->write(status, body, json_headers());
   }
 
   /**
@@ -2813,6 +3421,7 @@ namespace confighttp {
    */
   void
   proxyAiChat(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
     print_req(request);
 
@@ -3070,11 +3679,12 @@ namespace confighttp {
    */
   std::string
   calculate_file_hash(const std::string &filepath) {
-    if (filepath.empty() || !boost::filesystem::exists(filepath)) {
+    const auto native_path = file_handler::path_from_utf8(filepath);
+    if (filepath.empty() || !fs::exists(native_path)) {
       return "";
     }
 
-    std::ifstream file(filepath, std::ios::binary);
+    std::ifstream file(native_path, std::ios::binary);
     if (!file.is_open()) {
       return "";
     }
@@ -3155,7 +3765,21 @@ namespace confighttp {
 
   void
   testMenuCmd(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
+
+    constexpr bool test_command_enabled = false;
+    if (!test_command_enabled) {
+      const nlohmann::json body {
+        { "status", false },
+        { "error", "Test command execution is temporarily disabled" },
+        { "error_code", "TEST_COMMAND_DISABLED" },
+      };
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/json");
+      response->write(SimpleWeb::StatusCode::server_error_service_unavailable, body.dump(), headers);
+      return;
+    }
 
     // 安全限制：只允许局域网访问测试命令功能
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
@@ -3214,18 +3838,18 @@ namespace confighttp {
       
       if (!executable_path.empty()) {
         // 如果是相对路径，尝试解析为绝对路径
-        boost::filesystem::path exec_path(executable_path);
+        auto exec_path = file_handler::path_from_utf8(executable_path);
         if (!exec_path.is_absolute()) {
           // 在PATH中查找或使用工作目录
           if (!working_dir.empty()) {
-            exec_path = boost::filesystem::path(working_dir) / exec_path;
+            exec_path = file_handler::path_from_utf8(working_dir) / exec_path;
           }
         }
         
-        file_hash = calculate_file_hash(exec_path.string());
+        file_hash = calculate_file_hash(file_handler::path_to_utf8(exec_path));
         
-        if (file_hash.empty() && boost::filesystem::exists(exec_path)) {
-          BOOST_LOG(warning) << "TestMenuCmd: Failed to calculate hash for executable: " << exec_path;
+        if (file_hash.empty() && fs::exists(exec_path)) {
+          BOOST_LOG(warning) << "TestMenuCmd: Failed to calculate hash for executable: " << file_handler::path_to_utf8(exec_path);
         }
       }
 
@@ -3242,14 +3866,19 @@ namespace confighttp {
       boost::filesystem::path work_dir;
       
       if (!working_dir.empty()) {
+        const auto native_working_dir = file_handler::path_from_utf8(working_dir);
         // 验证工作目录是否存在
-        if (!boost::filesystem::exists(working_dir) || !boost::filesystem::is_directory(working_dir)) {
+        if (!fs::exists(native_working_dir) || !fs::is_directory(native_working_dir)) {
           BOOST_LOG(warning) << "TestMenuCmd: Invalid working directory: " << working_dir;
           outputTree.put("status", false);
           outputTree.put("error", "Invalid working directory");
           return;
         }
-        work_dir = boost::filesystem::path(working_dir);
+#ifdef _WIN32
+        work_dir = boost::filesystem::path(native_working_dir.wstring());
+#else
+        work_dir = boost::filesystem::path(native_working_dir.string());
+#endif
       } else {
         work_dir = boost::filesystem::current_path();
       }
@@ -3306,6 +3935,10 @@ namespace confighttp {
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
     server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
+#ifdef _WIN32
+    server.resource["^/api/dualsense/config$"]["GET"] = getDualSenseConfig;
+    server.resource["^/api/dualsense/config$"]["POST"] = saveDualSenseConfig;
+#endif
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
     server.resource["^/api/logout$"]["GET"] = handleLogout;
     server.resource["^/api/logout$"]["POST"] = handleLogout;
@@ -3314,6 +3947,7 @@ namespace confighttp {
     server.resource["^/api/boom$"]["GET"] = boom;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
+    server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
 #ifdef _WIN32
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
@@ -3324,7 +3958,8 @@ namespace confighttp {
     server.resource["^/api/apps/batch-delete$"]["POST"] = batchDeleteApps;
     server.resource["^/api/clients/unpair-all$"]["POST"] = unpairAll;
     server.resource["^/api/clients/list$"]["GET"] = listClients;
-    server.resource["^/api/clients/list$"]["POST"] = saveConfig;
+    server.resource["^/api/clients/list$"]["POST"] = saveClients;
+    server.resource["^/api/color-profiles$"]["GET"] = listColorProfiles;
     server.resource["^/api/clients/unpair$"]["POST"] = unpair;
     server.resource["^/api/clients/rename$"]["POST"] = renameClient;
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
@@ -3332,12 +3967,14 @@ namespace confighttp {
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
+    server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/api/ai/config$"]["GET"] = getAiConfig;
     server.resource["^/api/ai/config$"]["POST"] = saveAiConfigEndpoint;
+    server.resource["^/api/ai/models$"]["GET"] = proxyAiModels;
     server.resource["^/api/ai/chat/completions$"]["POST"] = proxyAiChat;
     server.resource["^/api/ai/chat/completions$"]["OPTIONS"] = handleAiCors;
     server.resource["^/api/v1/file-mapping/mappings$"]["GET"] = listFileMappings;
@@ -3357,13 +3994,22 @@ namespace confighttp {
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
       });
-    tray_http::auth_fn tray_local_auth = [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
+    text_context::http::register_routes(server,
+      [](text_context::http::resp_https_t resp, text_context::http::req_https_t req) {
         const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
-        if (config::sunshine.username.empty() && net::from_address(address) == net::PC) {
-          return true;
+        if (net::from_address(address) != net::PC) {
+          resp->write(SimpleWeb::StatusCode::client_error_forbidden);
+          return false;
         }
         return authenticate(std::move(resp), std::move(req));
-      };
+      });
+    tray_http::auth_fn tray_local_auth = [](tray_http::resp_https_t resp, tray_http::req_https_t req) {
+      const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
+      if (config::sunshine.username.empty() && net::from_address(address) == net::PC) {
+        return authorize_browser_request(std::move(resp), std::move(req));
+      }
+      return authenticate(std::move(resp), std::move(req));
+    };
     tray_http::register_routes(server, tray_local_auth, tray_local_auth);
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
@@ -3373,6 +4019,10 @@ namespace confighttp {
     // file upload, etc.) doesn't block other web UI requests on the same
     // single-threaded io_service.
     server.config.thread_pool_size = 2;
+    // Enforce the limit while Simple-Web-Server is buffering the request, before
+    // individual handlers parse it. This still leaves headroom for the 10 MiB
+    // base64 cover-upload endpoint.
+    server.config.max_request_streambuf_size = 16 * 1024 * 1024;
 
     auto accept_and_run = [&](https_server_t *server) {
       try {

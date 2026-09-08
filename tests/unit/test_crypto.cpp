@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -15,6 +17,7 @@
 
 #include "src/crypto.h"
 #include "src/config.h"
+#include "src/file_handler.h"
 #include "src/httpcommon.h"
 #include "src/nvhttp.h"
 #include "src/nvhttp/pairing.h"
@@ -46,10 +49,17 @@ namespace {
 
   class PairingStateGuard {
   public:
-    PairingStateGuard(const std::string &cert, const std::string &uuid):
-        state_file_(fs::temp_directory_path() / ("sunshine_pairing_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json")),
+    PairingStateGuard(
+      const std::string &cert,
+      const std::string &uuid,
+      const fs::path &directory = fs::temp_directory_path(),
+      bool remove_directory = false):
+        state_file_(directory / ("sunshine_pairing_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json")),
         previous_state_file_(config::nvhttp.file_state),
-        previous_unique_id_(http::unique_id) {
+        previous_unique_id_(http::unique_id),
+        remove_directory_(remove_directory) {
+      fs::create_directories(state_file_.parent_path());
+
       pt::ptree device;
       device.put("name", "test-client");
       device.put("cert", cert);
@@ -60,9 +70,18 @@ namespace {
       pt::ptree devices;
       devices.push_back({ "", device });
       state.add_child("root.named_devices", devices);
-      pt::write_json(state_file_.string(), state);
+      std::ofstream state_stream { state_file_ };
+      if (!state_stream.is_open()) {
+        throw std::runtime_error("unable to open pairing state fixture");
+      }
+      pt::write_json(state_stream, state);
+      state_stream.flush();
+      state_stream.close();
+      if (!state_stream) {
+        throw std::runtime_error("unable to write pairing state fixture");
+      }
 
-      config::nvhttp.file_state = state_file_.string();
+      config::nvhttp.file_state = file_handler::path_to_utf8(state_file_);
       nvhttp::pairing::load_state();
     }
 
@@ -73,12 +92,21 @@ namespace {
 
       std::error_code ec;
       fs::remove(state_file_, ec);
+      if (remove_directory_) {
+        fs::remove(state_file_.parent_path(), ec);
+      }
+    }
+
+    const fs::path &
+    state_file() const noexcept {
+      return state_file_;
     }
 
   private:
     fs::path state_file_;
     std::string previous_state_file_;
     std::string previous_unique_id_;
+    bool remove_directory_;
   };
 }  // namespace
 
@@ -120,4 +148,30 @@ TEST(NvhttpPairing, ResolvesUuidForVerifiedPeerCertificate) {
   // This mirrors the X509 pointer passed from the TLS handshake callback.
   EXPECT_EQ(nvhttp::pairing::verify_client_certificate(certificate.get(), true), nullptr);
   EXPECT_EQ(nvhttp::pairing::client_uuid_for_cert(certificate.get()), expected_uuid);
+}
+
+TEST(NvhttpPairing, ReadsAndWritesStateFromUnicodePath) {
+#ifdef _WIN32
+  const auto credentials = crypto::gen_creds("unicode-path-client", 2048);
+  auto certificate = crypto::x509(credentials.x509);
+  ASSERT_TRUE(certificate);
+
+  const auto directory = fs::temp_directory_path() /
+                         (fs::path { L"sunshine_配对_路径_" } /
+                          std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const std::string expected_uuid = "unicode-path-client-uuid";
+  PairingStateGuard state { credentials.x509, expected_uuid, directory, true };
+
+  EXPECT_EQ(nvhttp::pairing::client_uuid_for_cert(certificate.get()), expected_uuid);
+
+  nvhttp::erase_all_clients();
+  pt::ptree saved_state;
+  std::ifstream state_stream { state.state_file() };
+  ASSERT_TRUE(state_stream.is_open());
+  ASSERT_NO_THROW(pt::read_json(state_stream, saved_state));
+  EXPECT_EQ(saved_state.get<std::string>("root.uniqueid"), "test-host");
+  EXPECT_TRUE(saved_state.get_child("root.named_devices").empty());
+#else
+  GTEST_SKIP() << "Unicode native-path behavior is Windows-specific";
+#endif
 }

@@ -16,6 +16,46 @@ namespace nvenc {
 #endif
 
   /**
+   * @brief Function pointers from nvcuda.dll used by the CUDA interop path.
+   */
+  struct cuda_function_table {
+    tcuInit *cuInit;
+    tcuD3D11GetDevice *cuD3D11GetDevice;
+    tcuCtxCreate_v2 *cuCtxCreate;
+    tcuCtxDestroy_v2 *cuCtxDestroy;
+    tcuCtxPushCurrent_v2 *cuCtxPushCurrent;
+    tcuCtxPopCurrent_v2 *cuCtxPopCurrent;
+    tcuMemAllocPitch_v2 *cuMemAllocPitch;
+    tcuMemFree_v2 *cuMemFree;
+    tcuGraphicsD3D11RegisterResource *cuGraphicsD3D11RegisterResource;
+    tcuGraphicsUnregisterResource *cuGraphicsUnregisterResource;
+    tcuGraphicsMapResources *cuGraphicsMapResources;
+    tcuGraphicsUnmapResources *cuGraphicsUnmapResources;
+    tcuGraphicsSubResourceGetMappedArray *cuGraphicsSubResourceGetMappedArray;
+    tcuMemcpy2D_v2 *cuMemcpy2D;
+#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
+    tcuArray3DCreate *cuArray3DCreate;
+    tcuArrayDestroy *cuArrayDestroy;
+    tcuArrayGetPlane *cuArrayGetPlane;
+#endif
+    shared_dll dll;
+  };
+
+  /**
+   * @brief CUDA interop context shared by every 4:4:4 encoder on one adapter.
+   *        Creating and destroying a CUDA context per encoder object exercised
+   *        the driver lifecycle several times per probe/session start for no
+   *        benefit, so contexts are cached per adapter for the lifetime of the
+   *        process instead.
+   */
+  struct cuda_interop_context {
+    ~cuda_interop_context();
+
+    cuda_function_table functions = {};
+    CUcontext context = nullptr;
+  };
+
+  /**
    * @brief Interop Direct3D11 on CUDA NVENC encoder.
    *        Input surface is Direct3D11, encoding is performed by CUDA.
    */
@@ -88,28 +128,11 @@ namespace nvenc {
     const ID3D11DevicePtr d3d_device;
     ID3D11Texture2DPtr d3d_input_texture;
 
-    struct {
-      tcuInit *cuInit;
-      tcuD3D11GetDevice *cuD3D11GetDevice;
-      tcuCtxCreate_v2 *cuCtxCreate;
-      tcuCtxDestroy_v2 *cuCtxDestroy;
-      tcuCtxPushCurrent_v2 *cuCtxPushCurrent;
-      tcuCtxPopCurrent_v2 *cuCtxPopCurrent;
-      tcuMemAllocPitch_v2 *cuMemAllocPitch;
-      tcuMemFree_v2 *cuMemFree;
-      tcuGraphicsD3D11RegisterResource *cuGraphicsD3D11RegisterResource;
-      tcuGraphicsUnregisterResource *cuGraphicsUnregisterResource;
-      tcuGraphicsMapResources *cuGraphicsMapResources;
-      tcuGraphicsUnmapResources *cuGraphicsUnmapResources;
-      tcuGraphicsSubResourceGetMappedArray *cuGraphicsSubResourceGetMappedArray;
-      tcuMemcpy2D_v2 *cuMemcpy2D;
-#if NVENCAPI_MAJOR_VERSION * 100 + NVENCAPI_MINOR_VERSION >= 1301
-      tcuArray3DCreate *cuArray3DCreate;
-      tcuArrayDestroy *cuArrayDestroy;
-      tcuArrayGetPlane *cuArrayGetPlane;
-#endif
-      shared_dll dll;
-    } cuda_functions = {};
+    // Keeps the per-adapter shared CUDA context alive for as long as this
+    // encoder object lives. `cuda_functions` is a copy of the holder's table;
+    // its `shared_dll` member carries its own library reference.
+    std::shared_ptr<cuda_interop_context> interop_context;
+    cuda_function_table cuda_functions = {};
 
     CUresult last_cuda_error = CUDA_SUCCESS;
     CUcontext cuda_context = nullptr;

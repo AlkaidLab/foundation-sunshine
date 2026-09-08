@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -147,6 +146,12 @@ namespace stream {
     bool host_audio;
     bool enable_hdr;
     bool enable_mic;
+    bool use_vdd;
+    bool hdr_brightness_reported;
+    std::string hdr_brightness_source;
+    float hdr_max_nits;
+    float hdr_min_nits;
+    float hdr_max_full_frame_nits;
     std::string app_name;
     int app_id;
   };
@@ -158,8 +163,6 @@ namespace stream {
     start(session_t &session, const std::string &addr_string);
     void
     stop(session_t &session, stop_reason_e reason = stop_reason_e::none);
-    bool
-    stop_client_session(session_t &session, std::string_view client_cert_uuid);
     void
     join(session_t &session);
     state_e

@@ -44,6 +44,10 @@ namespace platf {
 namespace platf::dxgi {
   namespace bp = boost::process::v1;
 
+  namespace {
+    std::atomic<std::uint64_t> next_capture_source_generation { 1 };
+  }
+
   /**
    * DDAPI-specific initialization goes here.
    */
@@ -586,6 +590,13 @@ namespace platf::dxgi {
   display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
     static std::once_flag windows_cpp_once_flag;
 
+    capture_contract = config.effective_frame_pipeline_policy().capture;
+    pre_encode_filter = config.pre_encode_filter;
+    pre_encode_filter_config = config.pre_encode_filter_config;
+    pre_encode_filter_backend_path = config.pre_encode_filter_backend_path;
+    capture_source_generation =
+      next_capture_source_generation.fetch_add(1, std::memory_order_relaxed);
+
     std::call_once(windows_cpp_once_flag, []() {
       if (auto user32 = LoadLibraryA("user32.dll")) {
         if (auto f = (BOOL(*)(HANDLE)) GetProcAddress(user32, "SetProcessDpiAwarenessContext")) {
@@ -613,6 +624,7 @@ namespace platf::dxgi {
     auto adapter_name = from_utf8(config::video.adapter_name);
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
+    display_device_name.clear();
 
     if (is_rdp_session) {
       BOOST_LOG(info) << "[Display Init] RDP session detected - using first available RDP virtual display";
@@ -669,6 +681,7 @@ namespace platf::dxgi {
             BOOST_LOG(is_rdp_session ? info : debug) << "[Display Init] Selected display: " << to_utf8(desc.DeviceName);
 
             output = std::move(output_tmp);
+            display_device_name = desc.DeviceName;
             offset_x = desc.DesktopCoordinates.left;
             offset_y = desc.DesktopCoordinates.top;
             width = desc.DesktopCoordinates.right - offset_x;
@@ -738,6 +751,9 @@ namespace platf::dxgi {
 
     DXGI_ADAPTER_DESC adapter_desc;
     adapter->GetDesc(&adapter_desc);
+    capture_adapter_luid =
+      (static_cast<std::uint64_t>(static_cast<std::uint32_t>(adapter_desc.AdapterLuid.HighPart)) << 32) |
+      static_cast<std::uint32_t>(adapter_desc.AdapterLuid.LowPart);
 
     BOOST_LOG(info)
       << "Device Description : " << to_utf8(adapter_desc.Description)
@@ -896,8 +912,20 @@ namespace platf::dxgi {
     // Initialize HDR metadata cache for change detection
     cached_hdr_metadata.reset();
     last_hdr_check_time = std::chrono::steady_clock::now();
+    cached_sdr_white_nits.reset();
+    last_sdr_white_check_time = {};
 
     return 0;
+  }
+
+  captured_frame_desc_t
+  display_base_t::describe_captured_frame(DXGI_FORMAT format, bool borrowed) const {
+    return describe_dxgi_captured_frame(
+      format,
+      capture_linear_gamma,
+      borrowed,
+      capture_adapter_luid,
+      capture_source_generation);
   }
 
   bool
@@ -914,6 +942,86 @@ namespace platf::dxgi {
     output6->GetDesc1(&desc1);
 
     return desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+  }
+
+  std::optional<float>
+  display_base_t::sdr_white_nits() const {
+    const auto now = std::chrono::steady_clock::now();
+    if (last_sdr_white_check_time.time_since_epoch().count() != 0 &&
+        now - last_sdr_white_check_time < sdr_white_check_interval) {
+      return cached_sdr_white_nits;
+    }
+    last_sdr_white_check_time = now;
+
+    if (display_device_name.empty()) {
+      return cached_sdr_white_nits;
+    }
+
+    UINT32 path_count = 0;
+    UINT32 mode_count = 0;
+    LONG status = GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count);
+    if (status != ERROR_SUCCESS) {
+      return cached_sdr_white_nits;
+    }
+
+    // Display topology can change between sizing and querying. Retry once with
+    // refreshed sizes if QueryDisplayConfig reports an insufficient buffer.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+      std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+      UINT32 queried_path_count = path_count;
+      UINT32 queried_mode_count = mode_count;
+      status = QueryDisplayConfig(
+        QDC_ONLY_ACTIVE_PATHS,
+        &queried_path_count,
+        paths.data(),
+        &queried_mode_count,
+        modes.data(),
+        nullptr);
+      if (status == ERROR_INSUFFICIENT_BUFFER) {
+        status = GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count);
+        if (status == ERROR_SUCCESS) {
+          continue;
+        }
+      }
+      if (status != ERROR_SUCCESS) {
+        return cached_sdr_white_nits;
+      }
+
+      paths.resize(queried_path_count);
+      for (const auto &path : paths) {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME source_name {};
+        source_name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+        source_name.header.size = sizeof(source_name);
+        source_name.header.adapterId = path.sourceInfo.adapterId;
+        source_name.header.id = path.sourceInfo.id;
+        if (DisplayConfigGetDeviceInfo(&source_name.header) != ERROR_SUCCESS ||
+            _wcsicmp(display_device_name.c_str(), source_name.viewGdiDeviceName) != 0) {
+          continue;
+        }
+
+        DISPLAYCONFIG_SDR_WHITE_LEVEL white_level {};
+        white_level.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+        white_level.header.size = sizeof(white_level);
+        white_level.header.adapterId = path.targetInfo.adapterId;
+        white_level.header.id = path.targetInfo.id;
+        if (DisplayConfigGetDeviceInfo(&white_level.header) != ERROR_SUCCESS) {
+          return cached_sdr_white_nits;
+        }
+
+        // DISPLAYCONFIG_SDR_WHITE_LEVEL is an x1000 multiplier of the nominal
+        // 80-nit scRGB reference white.
+        const float nits = static_cast<float>(white_level.SDRWhiteLevel) * 80.0f / 1000.0f;
+        if (std::isfinite(nits) && nits >= 1.0f && nits <= 10000.0f) {
+          cached_sdr_white_nits = nits;
+        }
+        return cached_sdr_white_nits;
+      }
+
+      return cached_sdr_white_nits;
+    }
+
+    return cached_sdr_white_nits;
   }
 
   bool

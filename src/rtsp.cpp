@@ -10,6 +10,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
+
 // standard includes
 #include <algorithm>
 #include <array>
@@ -26,9 +27,11 @@ extern "C" {
 
 // local includes
 #include "clipboard_bridge.h"
+#include "text_context/bridge.h"
 #include "config.h"
 #include "cursor_channel.h"
 #include "globals.h"
+#include "hdr/dynamic_hdr_selection.h"
 #include "input.h"
 #include "logging.h"
 #include "network.h"
@@ -45,6 +48,24 @@ using asio::ip::udp;
 using namespace std::literals;
 
 namespace rtsp_stream {
+  void
+  launch_session_t::set_hdr_target(
+    const hdr::client_display_capabilities_t &capabilities,
+    hdr::target_source_e source) {
+    hdr_capabilities = capabilities;
+    hdr_target_source = source;
+    sync_hdr_environment();
+  }
+
+  void
+  launch_session_t::sync_hdr_environment() {
+    env["SUNSHINE_CLIENT_HDR_BRIGHTNESS_REPORTED"] = reported_hdr_capabilities.reported ? "true" : "false";
+    env["SUNSHINE_CLIENT_HDR_BRIGHTNESS_SOURCE"] = std::string { hdr::to_string(hdr_target_source) };
+    env["SUNSHINE_CLIENT_HDR_MAX_NITS"] = std::to_string(hdr_capabilities.max_nits);
+    env["SUNSHINE_CLIENT_HDR_MIN_NITS"] = std::to_string(hdr_capabilities.min_nits);
+    env["SUNSHINE_CLIENT_HDR_MAX_FULL_FRAME_NITS"] = std::to_string(hdr_capabilities.max_full_frame_nits);
+  }
+
   namespace {
     bool
     parse_legacy_surround_params(std::string_view params, int requested_channels, audio::stream_params_t &result) {
@@ -786,38 +807,6 @@ namespace rtsp_stream {
       return static_cast<int>(_launch_sessions.size());
     }
 
-    client_session_cancel_result_t
-    cancel_client_sessions(std::string_view client_cert_uuid) {
-      client_session_cancel_result_t result;
-      result.cancelled_sessions = _launch_sessions.erase_client_sessions(client_cert_uuid);
-      std::vector<std::shared_ptr<stream::session_t>> sessions_to_join;
-
-      {
-        auto lg = _session_slots.lock();
-        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-          auto &slot = *(*i);
-          if (stream::session::stop_client_session(slot, client_cert_uuid)) {
-            sessions_to_join.push_back(*i);
-            i = _session_slots->erase(i);
-            ++result.cancelled_sessions;
-          }
-          else {
-            if (stream::session::state(slot) != stream::session::state_e::STOPPING) {
-              ++result.remaining_sessions;
-            }
-            ++i;
-          }
-        }
-      }
-
-      for (const auto &session : sessions_to_join) {
-        stream::session::join(*session);
-      }
-
-      result.remaining_sessions += _launch_sessions.size();
-      return result;
-    }
-
     bool
     activate_launch_session(std::uint32_t launch_session_id) {
       return _launch_sessions.activate(launch_session_id);
@@ -851,7 +840,7 @@ namespace rtsp_stream {
      * @examples_end
      */
     void
-    clear(bool all = true) {
+    clear(bool all = true, stream::session::stop_reason_e reason = stream::session::stop_reason_e::host_terminate) {
       if (all) {
         _launch_sessions.clear();
       }
@@ -859,20 +848,55 @@ namespace rtsp_stream {
         _launch_sessions.prune();
       }
 
-      auto lg = _session_slots.lock();
+      std::vector<std::shared_ptr<stream::session_t>> sessions_to_join;
+      {
+        auto lg = _session_slots.lock();
 
-      for (auto i = _session_slots->begin(); i != _session_slots->end();) {
-        auto &slot = *(*i);
-        if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
-          stream::session::stop(slot, stream::session::stop_reason_e::host_terminate);
-          stream::session::join(slot);
-
-          i = _session_slots->erase(i);
-        }
-        else {
-          i++;
+        for (auto i = _session_slots->begin(); i != _session_slots->end();) {
+          auto &slot = *(*i);
+          if (all || stream::session::state(slot) == stream::session::state_e::STOPPING) {
+            stream::session::stop(slot, reason);
+            sessions_to_join.push_back(*i);
+            i = _session_slots->erase(i);
+          }
+          else {
+            i++;
+          }
         }
       }
+
+      // join 可能等待编码和网络线程，等待期间不能持有会话表锁，
+      // 否则其他 RTSP/NVHTTP 请求也会被一起堵住。
+      for (const auto &session : sessions_to_join) {
+        stream::session::join(*session);
+      }
+    }
+
+    void
+    terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion) {
+      boost::asio::post(io_context, [this, reason, completion = std::move(completion)]() mutable {
+        try {
+          clear(true, reason);
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Failed to terminate streaming sessions asynchronously: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Failed to terminate streaming sessions asynchronously"sv;
+        }
+
+        try {
+          if (completion) {
+            completion();
+          }
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Streaming session termination callback failed: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Streaming session termination callback failed"sv;
+        }
+      });
     }
 
     /**
@@ -959,13 +983,8 @@ namespace rtsp_stream {
   }
 
   void
-  terminate_sessions() {
-    server.clear(true);
-  }
-
-  client_session_cancel_result_t
-  cancel_client_sessions(std::string_view client_cert_uuid) {
-    return server.cancel_client_sessions(client_cert_uuid);
+  terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion) {
+    server.terminate_sessions_async(reason, std::move(completion));
   }
 
   int
@@ -1105,6 +1124,12 @@ namespace rtsp_stream {
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;
       }
+      if (video::active_encoder_supports_dynamic_sdr_white()) {
+        caps |= platf::platform_caps::dynamic_sdr_white;
+      }
+      if (text_context::bridge_t::instance().gui_alive()) {
+        caps |= platf::platform_caps::remote_text_context;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
     }
 
@@ -1163,7 +1188,9 @@ namespace rtsp_stream {
     if (config::audio.stream_mic) {
       ss << "m=audio " << net::map_port(stream::MIC_STREAM_PORT) << " RTP/AVP 96" << std::endl;
       ss << "a=rtpmap:96 opus/48000/2" << std::endl;
-      ss << "a=fmtp:96 minptime=10;useinbandfec=1" << std::endl;
+      ss << "a=fmtp:96 minptime=20;useinbandfec=1" << std::endl;
+      ss << "a=ptime:20" << std::endl;
+      ss << "a=maxptime:20" << std::endl;
     }
 
     for (int x = 0; x < audio::MAX_STREAM_CONFIG; ++x) {
@@ -1243,9 +1270,17 @@ namespace rtsp_stream {
       port = net::map_port(stream::CONTROL_PORT);
     }
     else if (type == "mic"sv) {
-      session.enable_mic = true;
-      session.setup_mic = true;
       port = net::map_port(stream::MIC_STREAM_PORT);
+      if (config::audio.stream_mic) {
+        session.enable_mic = true;
+        session.setup_mic = true;
+      }
+      else {
+        // 兼容未检查 SDP 仍请求麦克风的客户端，但不授权接收麦克风数据。
+        session.enable_mic = false;
+        session.setup_mic = false;
+        BOOST_LOG(info) << "Ignoring microphone SETUP while microphone streaming is disabled"sv;
+      }
     }
     else {
       cmd_not_found(sock, session, std::move(req));
@@ -1282,6 +1317,37 @@ namespace rtsp_stream {
     respond(sock, session, &seqn, 200, "OK", req->sequenceNumber, {});
   }
 
+  /**
+   * The X-SS-Dynamic-HDR response option chain. Both the first ANNOUNCE and
+   * its idempotent retry must return the same headers — a retrying client
+   * has no other way to learn the host's selection — so the chain is built
+   * from the result stored on the launch session. The strings live in this
+   * object, which must outlive the respond() call it is attached to.
+   */
+  struct dynamic_hdr_response_headers_t {
+    std::string format_value;
+    std::string fallback_value;
+    OPTION_ITEM format_item {};
+    OPTION_ITEM fallback_item {};
+
+    dynamic_hdr_response_headers_t(int format, std::string_view fallback_reason):
+        format_value(std::to_string(format)),
+        fallback_value(fallback_reason) {
+      format_item.option = const_cast<char *>("X-SS-Dynamic-HDR");
+      format_item.content = format_value.data();
+      if (!fallback_value.empty()) {
+        fallback_item.option = const_cast<char *>("X-SS-Dynamic-HDR-Fallback");
+        fallback_item.content = fallback_value.data();
+        format_item.next = &fallback_item;
+      }
+    }
+
+    void
+    attach(OPTION_ITEM &head) {
+      head.next = &format_item;
+    }
+  };
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
@@ -1293,6 +1359,25 @@ namespace rtsp_stream {
     option.content = const_cast<char *>(seqn_str.c_str());
 
     std::string_view payload { req->payload, (size_t) req->payloadLength };
+
+    // GameStream 的 DESCRIBE、SETUP、ANNOUNCE 和 PLAY 会使用不同连接，
+    // 因此启动票据需要在握手期间保持可认领。重复 ANNOUNCE 只作为幂等重试，
+    // 不能再次创建媒体会话。RTSP 命令由服务器 io_context 串行处理。
+    if (session.stream_session_started) {
+      if (payload == session.stream_announce_payload) {
+        BOOST_LOG(debug) << "Ignoring duplicate ANNOUNCE for launch session "sv << session.id;
+        dynamic_hdr_response_headers_t dynamic_hdr_headers(
+          session.negotiated_dynamic_hdr_format,
+          session.negotiated_dynamic_hdr_fallback);
+        dynamic_hdr_headers.attach(option);
+        respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
+      }
+      else {
+        BOOST_LOG(warning) << "Rejecting ANNOUNCE reconfiguration for active launch session "sv << session.id;
+        respond(sock, session, &option, 455, "Method Not Valid in This State", req->sequenceNumber, {});
+      }
+      return;
+    }
 
     std::vector<std::string_view> lines;
 
@@ -1353,6 +1438,13 @@ namespace rtsp_stream {
     args.try_emplace("x-ss-video[0].intraRefresh"sv, "0"sv);
     args.try_emplace("x-nv-video[0].clientRefreshRateX100"sv, "0"sv);  // NTSC framerate support (e.g., 5994 = 59.94fps)
 
+    // Dynamic HDR negotiation (Sunshine extension, opt-in by client).
+    // Deliberately NO try_emplace defaults here: an absent attribute must
+    // reach the parser as absent, not as "0" — a defaulted "0" would look
+    // like a client that reported "no capabilities" and get it downgraded
+    // from the unconditional HDR10+ of previous versions (see
+    // parse_dynamic_hdr_request()'s caps_reported contract).
+
     // Audio codec selection (Sunshine extension, opt-in by client).
     // 0 = Opus (default, backward compatible)
     // 1 = AC3 passthrough
@@ -1364,6 +1456,8 @@ namespace rtsp_stream {
 
     std::int64_t configuredBitrateKbps;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
+    // Set inside the SDP parse below; consumed by the dynamic HDR selection.
+    bool post_process_hdr_active = false;
     auto getArg = [&args](std::string_view key) {
       return util::from_view(args.at(key));
     };
@@ -1440,6 +1534,9 @@ namespace rtsp_stream {
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
+      BOOST_LOG(debug) << "Moonlight feature flags: 0x" << std::hex << config.mlFeatureFlags
+                      << std::dec << ", remote_text_context="
+                      << ((config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0);
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
@@ -1460,8 +1557,38 @@ namespace rtsp_stream {
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
       monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
+#ifdef _WIN32
+      // The TrueHDR chain (filter output, synthetic metadata, wire colorspace)
+      // is specified for PQ only; HLG sessions must keep the legacy capture
+      // path. Docs §5.4 of rtx_hdr_stream_implementation.md.
+      post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange == 1;
+      if (session.synthetic_hdr.enabled && monitor.dynamicRange == 2) {
+        BOOST_LOG(warning) << "RTX HDR requires PQ (dynamicRangeMode=1); ignoring it for this HLG session"sv;
+      }
+      if (post_process_hdr_active) {
+        monitor.pre_encode_filter = platf::pre_encode_filter_e::external_sdr_to_hdr;
+        monitor.pre_encode_filter_config = {
+          .contrast = static_cast<float>(session.synthetic_hdr.contrast),
+          .saturation = static_cast<float>(session.synthetic_hdr.saturation),
+          .middle_gray_nits = static_cast<float>(session.synthetic_hdr.middle_gray),
+          .peak_nits = static_cast<float>(session.synthetic_hdr.peak_nits),
+        };
+        monitor.pre_encode_filter_backend_path = config::video.rtx_hdr_backend_path;
+      }
+#endif
+      monitor.frame_pipeline_policy =
+        platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active);
+      monitor.frame_pipeline_policy_resolved = true;
+#ifdef _WIN32
+      // Publish the resolved policy on the launch session so display
+      // preparation consumes the same decision as the capture/encode side
+      // instead of re-deriving it from raw flags.
+      session.frame_pipeline_policy = monitor.frame_pipeline_policy;
+      session.frame_pipeline_policy_resolved = true;
+#endif
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
+      monitor.hdr_capabilities = session.hdr_capabilities;
 
       int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
 
@@ -1570,6 +1697,42 @@ namespace rtsp_stream {
       return;
     }
 
+    // One-shot dynamic HDR selection (docs/dolby_vision_profile81.md §4). The
+    // client's report arrived with this ANNOUNCE; the verdict rides back in
+    // the response headers and config.monitor carries it to the encode path.
+    const auto find_arg = [&args](std::string_view key) -> std::optional<std::string_view> {
+      const auto entry = args.find(key);
+      if (entry == args.end()) {
+        return std::nullopt;
+      }
+      return entry->second;
+    };
+    const auto dynamic_hdr_request = hdr::parse_dynamic_hdr_request(
+      find_arg("x-ss-video[0].dynamicHdrCaps"sv),
+      find_arg("x-ss-video[0].dolbyVisionDirectSurface"sv),
+      find_arg("x-ss-video[0].dynamicHdrPreference"sv));
+    const hdr::dynamic_hdr_selection_t dynamic_hdr_selection = hdr::select_dynamic_hdr(
+      dynamic_hdr_request,
+      {
+        .video_format = config.monitor.videoFormat,
+        .dynamic_range_mode = config.monitor.dynamicRange,
+        .synthetic_hdr_enabled = session.synthetic_hdr.enabled,
+      });
+    config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
+    session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;
+    session.negotiated_dynamic_hdr_fallback =
+      dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none
+        ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
+        : std::string {};
+    if (dynamic_hdr_selection.dolby_vision_active()) {
+      BOOST_LOG(info) << "Dynamic HDR negotiated: "sv << hdr::to_string(dynamic_hdr_selection.format);
+    }
+    else if (dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none) {
+      BOOST_LOG(info) << "Dynamic HDR negotiated: "sv << hdr::to_string(dynamic_hdr_selection.format)
+                      << " (dolby vision fallback: "sv
+                      << hdr::to_string(dynamic_hdr_selection.fallback_reason) << ')';
+    }
+
     // 检测是否仅控制流会话（只有 control 流被设置，没有 video 和 audio）
     session.control_only = session.setup_control && !session.setup_video && !session.setup_audio;
     if (session.control_only) {
@@ -1589,6 +1752,7 @@ namespace rtsp_stream {
       }
     }
 
+    std::string announce_payload { payload };
     auto stream_session = stream::session::alloc(config, session);
     server->insert(stream_session);
 
@@ -1599,6 +1763,14 @@ namespace rtsp_stream {
       respond(sock, session, &option, 500, "Internal Server Error", req->sequenceNumber, {});
       return;
     }
+
+    session.stream_announce_payload = std::move(announce_payload);
+    session.stream_session_started = true;
+
+    dynamic_hdr_response_headers_t dynamic_hdr_headers(
+      session.negotiated_dynamic_hdr_format,
+      session.negotiated_dynamic_hdr_fallback);
+    dynamic_hdr_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

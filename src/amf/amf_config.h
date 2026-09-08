@@ -23,8 +23,9 @@ namespace amf {
       uint16_t y;  // Normalized to 50,000
     } whitePoint;
 
-    uint16_t maxDisplayLuminance;        // Nits
+    uint16_t maxDisplayLuminance;        // Mastering peak in nits
     uint16_t minDisplayLuminance;        // 1/10000th of a nit
+    uint16_t targetDisplayLuminance;     // Client target peak for dynamic metadata
     uint16_t maxContentLightLevel;       // Nits
     uint16_t maxFrameAverageLightLevel;  // Nits
   };
@@ -88,7 +89,7 @@ namespace amf {
     std::optional<int> pa_activity_type;
 
     // --- QVBR quality level ---
-    // For QVBR rate control mode: quality level 1-51 (lower=better)
+    // For QVBR rate control mode: quality level 1-51 (higher=better)
     std::optional<int> qvbr_quality_level;
 
     // --- Multi-HW instance encode / Smart Access Video ---
@@ -134,11 +135,14 @@ namespace amf {
     std::optional<bool> lowlatency_mode;
 
     // --- Input Queue Size / async_depth ---
-    // Standalone path: optional AMF INPUT_QUEUE_SIZE property.
+    // Standalone H.264/HEVC: optional AMF INPUT_QUEUE_SIZE property.
+    // Standalone AV1: defaults to 1 for interactive streaming, but leaves the
+    // property unset for explicit pre-analysis or multi-HW modes. Any explicit
+    // value overrides these codec-specific defaults.
     // AVCodec compatibility path: FFmpeg-style async_depth / in-flight surface
     // cap, default 16, with no AMF INPUT_QUEUE_SIZE property set. Sunshine
-    // historically forced AMF INPUT_QUEUE_SIZE=1 for minimum latency, but that
-    // is the most fragile code path inside the driver.
+    // historically forced AMF INPUT_QUEUE_SIZE=1 for minimum latency; #666
+    // showed that restoring it broadly on H.264/HEVC is driver-sensitive.
     std::optional<int> input_queue_size;
   };
 

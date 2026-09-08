@@ -360,6 +360,8 @@ namespace platf::dxgi {
       img->data = new std::uint8_t[img->row_pitch * img->height];
     }
 
+    img->frame_desc = dummy ? captured_frame_desc_t {} : describe_captured_frame(capture_format, false);
+
     return 0;
   }
 

@@ -202,6 +202,8 @@ class d3d12_video_compute {
 
 所有 fence value 单调递增。slot 只有在 `encode_done` 和分析 readback ownership 都已释放后才能复用。
 
+每条 fence 只允许一个队列发布完成值。当前 analysis-only 实现使用独立的 D3D11 capture fence 和 D3D12 completion fence；不能让 D3D11 后续帧的 signal 提前满足 D3D12 前序帧的完成条件。CPU readback 和 slot 回收只检查 D3D12 completion fence。
+
 ### 6.2 单帧时序
 
 ```text

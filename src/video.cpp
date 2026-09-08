@@ -5,6 +5,7 @@
 // standard includes
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <atomic>
 #include <bitset>
 #include <functional>
@@ -31,6 +32,7 @@ extern "C" {
 #include "config.h"
 #include "display_device/display_device.h"
 #include "globals.h"
+#include "hdr/dynamic_hdr_selection.h"
 #include "input.h"
 #include "logging.h"
 #include "nvenc/nvenc_encoder.h"
@@ -38,7 +40,9 @@ extern "C" {
 #include "platform/common.h"
 #include "sync.h"
 #include "video.h"
+#include "video_dolby_vision.h"
 #include "video_hdr_metadata.h"
+#include "video_probe.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -523,68 +527,18 @@ namespace video {
     std::array<entry_t, 256> entries {};
   };
 
-  /**
-   * @brief Temporal EMA (Exponential Moving Average) state for HDR luminance stats.
-   * Prevents frame-to-frame brightness jitter/flicker in tone mapping by smoothing
-   * the raw per-frame GPU statistics over time.
-   *
-   * This state is owned by the encode session. It must not be shared across sessions:
-   * carrying a previous stream's converged luminance into a new one biases the first
-   * frames of dynamic metadata until the EMA re-converges.
-   */
-  struct hdr_luminance_ema_t {
-    float min_maxrgb = 0.0f;
-    float max_maxrgb = 0.0f;
-    float avg_maxrgb = 0.0f;
-    float percentile_95 = 0.0f;
-    float percentile_99 = 0.0f;
-    bool initialized = false;
-
-    /// EMA smoothing factor: 0.15 = responsive to changes while avoiding flicker.
-    /// Lower α = more smoothing (less flicker, slower adaptation).
-    /// Scene cuts are handled by fast-tracking when the change exceeds a threshold.
-    static constexpr float ALPHA = 0.15f;
-    static constexpr float SCENE_CUT_THRESHOLD = 3.0f;  // Ratio threshold for scene cut detection
-
-    /**
-     * @brief Apply EMA smoothing to raw per-frame stats.
-     * On first frame or scene cuts (>3x luminance change), snaps to current value.
-     * Otherwise applies exponential smoothing: smoothed = α·current + (1-α)·previous.
-     */
-    void
-    update(const platf::hdr_frame_luminance_stats_t &raw) {
-      if (!raw.valid) return;
-
-      if (!initialized) {
-        // First frame: snap to current values
-        min_maxrgb = raw.min_maxrgb;
-        max_maxrgb = raw.max_maxrgb;
-        avg_maxrgb = raw.avg_maxrgb;
-        percentile_95 = raw.percentile_95;
-        percentile_99 = raw.percentile_99;
-        initialized = true;
-        return;
-      }
-
-      // Scene cut detection: if peak luminance changes dramatically, snap immediately
-      float ratio = (max_maxrgb > 1.0f) ? raw.max_maxrgb / max_maxrgb : SCENE_CUT_THRESHOLD + 1.0f;
-      float alpha = (ratio > SCENE_CUT_THRESHOLD || ratio < 1.0f / SCENE_CUT_THRESHOLD)
-                    ? 1.0f  // Scene cut: snap to new values
-                    : ALPHA; // Normal: smooth transition
-
-      min_maxrgb = alpha * raw.min_maxrgb + (1.0f - alpha) * min_maxrgb;
-      max_maxrgb = alpha * raw.max_maxrgb + (1.0f - alpha) * max_maxrgb;
-      avg_maxrgb = alpha * raw.avg_maxrgb + (1.0f - alpha) * avg_maxrgb;
-      percentile_95 = alpha * raw.percentile_95 + (1.0f - alpha) * percentile_95;
-      percentile_99 = alpha * raw.percentile_99 + (1.0f - alpha) * percentile_99;
-    }
-  };
-
   class avcodec_encode_session_t: public encode_session_t {
   public:
     avcodec_encode_session_t() = default;
-    avcodec_encode_session_t(avcodec_ctx_t &&avcodec_ctx, std::unique_ptr<platf::avcodec_encode_device_t> encode_device, int inject):
-        avcodec_ctx { std::move(avcodec_ctx) }, device { std::move(encode_device) }, inject { inject } {}
+    avcodec_encode_session_t(
+      avcodec_ctx_t &&avcodec_ctx,
+      std::unique_ptr<platf::avcodec_encode_device_t> encode_device,
+      uint16_t dynamic_metadata_target_peak_nits,
+      int inject):
+        avcodec_ctx { std::move(avcodec_ctx) },
+        device { std::move(encode_device) },
+        dynamic_metadata_target_peak_nits { dynamic_metadata_target_peak_nits },
+        inject { inject } {}
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
     ~avcodec_encode_session_t() {
@@ -606,7 +560,8 @@ namespace video {
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
       frame_timestamps = std::move(other.frame_timestamps);
-      hdr_ema = other.hdr_ema;
+      dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
+      dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -709,6 +664,9 @@ namespace video {
           }
           break;
         }
+        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
+          device->set_client_sdr_white_nits(param.value.float_value);
+          break;
         default:
           BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -721,10 +679,10 @@ namespace video {
     std::vector<packet_raw_t::replace_t> replacements;
     frame_timestamp_ring_t frame_timestamps;
 
-    // Temporal filters are session-local so a new stream cannot inherit metadata
-    // history from the previous stream.
-    hdr_luminance_ema_t hdr_ema;
-    hdr_metadata::vivid_temporal_filter_t vivid_filter;
+    // Scene-aware temporal state is session-local so a new stream cannot inherit
+    // metadata history from the previous stream.
+    hdr_metadata::dynamic_metadata_temporal_state_t dynamic_metadata_temporal;
+    uint16_t dynamic_metadata_target_peak_nits = 1000;
 
     cbs::nal_t sps;
     cbs::nal_t vps;
@@ -733,23 +691,84 @@ namespace video {
     int inject;
   };
 
+  /**
+   * Whether the HDR luminance analyzer can be trusted to produce samples for this
+   * encode device: the user has not turned it off and the capture backend actually
+   * implements it.
+   */
+  inline bool
+  hdr_luminance_analysis_usable(bool device_supports_analysis) {
+    return config::video.hdr_luminance_analysis != "off" && device_supports_analysis;
+  }
+
+  /**
+   * Report a vivid_startup_gate_t transition. Shared so the two native encoder
+   * paths cannot drift into describing the same decision differently in the log.
+   */
+  void
+  log_vivid_gate_transition(
+    const char *encoder_name,
+    hdr_metadata::vivid_startup_gate_t::transition_e transition,
+    const hdr_metadata::vivid_startup_gate_t &gate,
+    const platf::hdr_frame_luminance_stats_t &stats) {
+    using transition_e = hdr_metadata::vivid_startup_gate_t::transition_e;
+
+    switch (transition) {
+      case transition_e::ready:
+        BOOST_LOG(info) << encoder_name << ": HDR Vivid startup guard ready after "
+                        << gate.consecutive_samples()
+                        << " independent samples; first encoded HLG frame will be IDR with Vivid"
+                        << " (avg=" << stats.avg_maxrgb
+                        << " nits, max=" << stats.max_maxrgb
+                        << " nits, P10=" << stats.percentile_10_pq
+                        << ", P90=" << stats.percentile_90_pq << ')';
+        break;
+      case transition_e::timed_out:
+        BOOST_LOG(warning) << encoder_name << ": HDR Vivid startup guard timed out after "
+                           << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
+                           << " ms; temporarily starting as plain HLG while analysis continues"
+                           << " (samples=" << gate.consecutive_samples()
+                           << '/' << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                           << ", sequence=" << stats.sample_sequence
+                           << ", valid=" << stats.valid
+                           << ", avg=" << stats.avg_maxrgb
+                           << " nits, max=" << stats.max_maxrgb << " nits)";
+        break;
+      case transition_e::recovered:
+        BOOST_LOG(info) << encoder_name << ": HDR Vivid startup guard recovered after plain-HLG fallback; "
+                        << "switching to Vivid at IDR"
+                        << " (samples=" << gate.consecutive_samples()
+                        << '/' << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                        << ", sequence=" << stats.sample_sequence
+                        << ", valid=" << stats.valid
+                        << ", avg=" << stats.avg_maxrgb
+                        << " nits, max=" << stats.max_maxrgb << " nits)";
+        break;
+      case transition_e::none:
+        break;
+    }
+  }
+
   class nvenc_encode_session_t: public encode_session_t {
   public:
-    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device):
-        device(std::move(encode_device)) {
-      const bool use_hlg = device && colorspace_is_hlg(device->colorspace);
-      if (use_hlg) {
-        const bool analysis_available =
-          config::video.hdr_luminance_analysis != "off" &&
-          device->hdr_luminance_analysis_available;
-        vivid_metadata_mode = analysis_available ?
-                                vivid_metadata_mode_e::preroll :
-                                vivid_metadata_mode_e::disabled;
-      }
-      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
-        BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata (3 independent samples, 500 ms timeout)";
+    nvenc_encode_session_t(std::unique_ptr<platf::nvenc_encode_device_t> encode_device, int video_format):
+        device(std::move(encode_device)),
+        vivid_gate(
+          device ? device->colorspace : sunshine_colorspace_t {},
+          video_format,
+          device && hdr_luminance_analysis_usable(device->hdr_luminance_analysis_available)) {
+      if (vivid_gate.prerolling()) {
+        BOOST_LOG(info) << "NVENC: holding HLG startup for stable HDR Vivid metadata ("
+                        << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                        << " independent samples, "
+                        << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
+                        << " ms timeout)";
       }
     }
+
+    /// Session-level Dolby Vision state; inert until the negotiated session
+    /// enables it in make_nvenc_encode_session().
+    dolby_vision::rpu_injector_t dolby_vision_;
 
     int
     convert(platf::img_t &img) override {
@@ -834,6 +853,9 @@ namespace video {
           BOOST_LOG(info) << "NVENC encoder VBV buffer size change requested: " << param.value.int_value << " Kbps";
           break;
         }
+        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
+          device->set_client_sdr_white_nits(param.value.float_value);
+          break;
         default:
           BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -844,42 +866,29 @@ namespace video {
     encode_frame(uint64_t frame_index) {
       if (!device || !device->nvenc) return {};
 
-      if (vivid_metadata_mode == vivid_metadata_mode_e::preroll) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!vivid_preroll_started) {
-          vivid_preroll_started = now;
-        }
-
-        if (vivid_startup_guard.observe(device->hdr_luminance_stats)) {
-          vivid_metadata_mode = vivid_metadata_mode_e::enabled;
-          force_idr = true;
-          const auto &stats = device->hdr_luminance_stats;
-          BOOST_LOG(info) << "NVENC: HDR Vivid startup guard ready after "
-                          << vivid_startup_guard.consecutive_samples()
-                          << " independent samples; first encoded HLG frame will be IDR with Vivid"
-                          << " (avg=" << stats.avg_maxrgb
-                          << " nits, max=" << stats.max_maxrgb
-                          << " nits, P10=" << stats.percentile_10_pq
-                          << ", P90=" << stats.percentile_90_pq << ')';
-        }
-        else if (now - *vivid_preroll_started >= VIVID_PREROLL_TIMEOUT) {
-          vivid_metadata_mode = vivid_metadata_mode_e::disabled;
-          force_idr = true;
-          BOOST_LOG(warning) << "NVENC: HDR Vivid startup guard timed out after 500 ms; "
-                                "starting this session as pure HLG without dynamic metadata";
-        }
-        else {
-          // Keep converting capture frames so the asynchronous GPU analyzer can
-          // produce independent samples, but do not let the client see a plain-HLG
-          // IDR followed by a mid-stream transition into HDR Vivid.
-          return { {}, frame_index, false, false };
-        }
+      using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
+      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, std::chrono::steady_clock::now());
+      if (gated.transition != hdr_metadata::vivid_startup_gate_t::transition_e::none) {
+        // The stream's metadata content changes here, so the client needs a fresh
+        // IDR rather than a P frame that references pre-transition pictures.
+        force_idr = true;
+        log_vivid_gate_transition("NVENC", gated.transition, vivid_gate, device->hdr_luminance_stats);
+      }
+      if (gated.decision == decision_e::hold) {
+        // Keep converting capture frames so the asynchronous GPU analyzer can
+        // produce independent samples, but do not let the client see a plain-HLG
+        // IDR followed by a mid-stream transition into HDR Vivid.
+        return { {}, frame_index, false, false };
       }
 
       // Pass per-frame HDR luminance stats to NVENC for dynamic metadata injection
-      if (vivid_metadata_mode != vivid_metadata_mode_e::disabled && device->hdr_luminance_stats.valid) {
+      if (gated.decision == decision_e::emit && device->hdr_luminance_stats.valid) {
         device->nvenc->set_luminance_stats(device->hdr_luminance_stats);
       }
+
+      // Stage this frame's Dolby Vision RPU keyed by the submitted index; the
+      // splice happens when the encoded access unit surfaces.
+      dolby_vision_.stage(frame_index, device->hdr_luminance_stats);
 
       auto result = device->nvenc->encode_frame(frame_index, force_idr);
       force_idr = false;
@@ -905,27 +914,32 @@ namespace video {
     }
 
   private:
-    static constexpr auto VIVID_PREROLL_TIMEOUT = std::chrono::milliseconds { 500 };
-
-    enum class vivid_metadata_mode_e {
-      enabled,
-      preroll,
-      disabled,
-    };
-
     std::unique_ptr<platf::nvenc_encode_device_t> device;
     frame_timestamp_ring_t frame_timestamps;
-    hdr_metadata::vivid_startup_guard_t vivid_startup_guard;
-    std::optional<std::chrono::steady_clock::time_point> vivid_preroll_started;
-    vivid_metadata_mode_e vivid_metadata_mode = vivid_metadata_mode_e::enabled;
+    hdr_metadata::vivid_startup_gate_t vivid_gate;
     bool force_idr = false;
   };
 
   class amf_encode_session_t: public encode_session_t {
   public:
-    amf_encode_session_t(std::unique_ptr<platf::amf_encode_device_t> encode_device):
-        device(std::move(encode_device)) {
+    amf_encode_session_t(std::unique_ptr<platf::amf_encode_device_t> encode_device, int video_format):
+        device(std::move(encode_device)),
+        vivid_gate(
+          device ? device->colorspace : sunshine_colorspace_t {},
+          video_format,
+          device && hdr_luminance_analysis_usable(device->hdr_luminance_analysis_available)) {
+      if (vivid_gate.prerolling()) {
+        BOOST_LOG(info) << "AMF: holding HLG startup for stable HDR Vivid metadata ("
+                        << hdr_metadata::vivid_startup_guard_t::REQUIRED_SAMPLES
+                        << " independent samples, "
+                        << hdr_metadata::vivid_startup_gate_t::PREROLL_TIMEOUT.count()
+                        << " ms timeout)";
+      }
     }
+
+    /// Session-level Dolby Vision state; inert until the negotiated session
+    /// enables it in make_amf_encode_session().
+    dolby_vision::rpu_injector_t dolby_vision_;
 
     int
     convert(platf::img_t &img) override {
@@ -976,6 +990,9 @@ namespace video {
         case dynamic_param_type_e::BITRATE:
           set_bitrate(param.value.int_value);
           break;
+        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
+          device->set_client_sdr_white_nits(param.value.float_value);
+          break;
         default:
           break;
       }
@@ -984,6 +1001,28 @@ namespace video {
     amf::amf_encoded_frame
     encode_frame(uint64_t frame_index) {
       if (!device || !device->amf) return {};
+
+      using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
+      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, std::chrono::steady_clock::now());
+      if (gated.transition != hdr_metadata::vivid_startup_gate_t::transition_e::none) {
+        force_idr = true;
+        log_vivid_gate_transition("AMF", gated.transition, vivid_gate, device->hdr_luminance_stats);
+      }
+      if (gated.decision == decision_e::hold) {
+        // Same reasoning as NVENC: keep converting so the analyzer converges, but
+        // do not let the client see plain HLG before the switch into Vivid.
+        amf::amf_encoded_frame held;
+        held.frame_index = frame_index;
+        return held;
+      }
+
+      if (gated.decision == decision_e::emit && device->hdr_luminance_stats.valid) {
+        device->amf->set_luminance_stats(device->hdr_luminance_stats);
+      }
+
+      // Stage this frame's Dolby Vision RPU keyed by the submitted index; the
+      // splice happens when the encoded access unit surfaces.
+      dolby_vision_.stage(frame_index, device->hdr_luminance_stats);
 
       auto result = device->amf->encode_frame(frame_index, force_idr);
       force_idr = false;
@@ -1011,6 +1050,7 @@ namespace video {
   private:
     std::unique_ptr<platf::amf_encode_device_t> device;
     frame_timestamp_ring_t frame_timestamps;
+    hdr_metadata::vivid_startup_gate_t vivid_gate;
     bool force_idr = false;
   };
 
@@ -1035,8 +1075,15 @@ namespace video {
   using encode_session_ctx_queue_t = safe::queue_t<sync_session_ctx_t>;
   using encode_e = platf::capture_e;
 
+  struct captured_frame_t {
+    std::shared_ptr<platf::img_t> image;
+    bool is_replay {false};
+  };
+
+  using captured_frame_event_t = std::shared_ptr<safe::event_t<captured_frame_t>>;
+
   struct capture_ctx_t {
-    img_event_t images;
+    captured_frame_event_t images;
     config_t config;
   };
 
@@ -1618,6 +1665,22 @@ namespace video {
     return encoder ? std::string { encoder->name } : std::string {};
   }
 
+  bool
+  active_encoder_supports_dynamic_sdr_white() {
+    const auto *encoder = active_encoder_for_status.load(std::memory_order_acquire);
+    if (!encoder) {
+      return false;
+    }
+
+    return dynamic_cast<const encoder_platform_formats_nvenc *>(encoder->platform_formats.get()) != nullptr ||
+           dynamic_cast<const encoder_platform_formats_amf *>(encoder->platform_formats.get()) != nullptr;
+  }
+
+  bool
+  is_valid_client_sdr_white_nits(float nits) {
+    return std::isfinite(nits) && nits >= 50.0f && nits <= 1000.0f;
+  }
+
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
     // We try this twice, in case we still get an error on reinitialization
@@ -1712,6 +1775,7 @@ namespace video {
     });
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    auto active_display_event = mail::man->event<std::string>(mail::active_display);
 
     // Wait for the initial capture context or a request to stop the queue
     auto initial_capture_ctx = capture_ctx_queue->pop();
@@ -1762,10 +1826,38 @@ namespace video {
     if (!disp) {
       return;
     }
+    active_display_event->raise(target_display_name);
     display_wp = disp;
 
     constexpr auto capture_buffer_size = 12;
     std::list<std::shared_ptr<platf::img_t>> imgs(capture_buffer_size);
+    std::shared_ptr<platf::img_t> latest_captured_img;
+
+    auto append_pending_capture_contexts = [&](const std::shared_ptr<platf::img_t> &initial_img = {}) -> bool {
+      while (capture_ctx_queue->peek()) {
+        auto capture_ctx = capture_ctx_queue->pop();
+        if (!capture_ctx) {
+          return false;
+        }
+
+        // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
+        // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
+        capture_ctx->config.display_name = target_display_name;
+        if (initial_img) {
+          // 锁屏或静态桌面可能长时间没有新的 Desktop Duplication 帧。
+          // 新会话必须先取得当前画面，不能一直编码初始化用的黑色占位帧。
+          capture_ctx->images->raise(captured_frame_t {
+            .image = initial_img,
+            .is_replay = true,
+          });
+        }
+        BOOST_LOG(debug) << "Attached streaming session to shared capture display ["sv << target_display_name
+                         << "], reused latest frame: "sv << (initial_img ? "yes"sv : "no"sv);
+        capture_ctxs.emplace_back(std::move(*capture_ctx));
+      }
+
+      return true;
+    };
 
     std::vector<std::optional<std::chrono::steady_clock::time_point>> imgs_used_timestamps;
     const std::chrono::seconds trim_timeot = 3s;
@@ -1874,11 +1966,6 @@ namespace video {
 
             continue;
           }
-
-          if (frame_captured) {
-            capture_ctx->images->raise(img);
-          }
-
           ++capture_ctx;
         })
 
@@ -1886,8 +1973,19 @@ namespace video {
           return false;
         }
 
-        while (capture_ctx_queue->peek()) {
-          capture_ctxs.emplace_back(std::move(*capture_ctx_queue->pop()));
+        // 先接入新会话，再分发本次真实画面。若本次只是捕获超时，则给新会话
+        // 补发上一张真实画面，保证它与现有会话看到同一个活动显示器内容。
+        if (!append_pending_capture_contexts(frame_captured ? std::shared_ptr<platf::img_t> {} : latest_captured_img)) {
+          return false;
+        }
+
+        if (frame_captured) {
+          latest_captured_img = img;
+          for (auto &capture_ctx : capture_ctxs) {
+            capture_ctx.images->raise(captured_frame_t {
+              .image = img,
+            });
+          }
         }
 
         if (switch_display_event->peek()) {
@@ -1911,6 +2009,7 @@ namespace video {
           reinit_event.raise(true);
 
           // Some classes of images contain references to the display --> display won't delete unless img is deleted
+          latest_captured_img.reset();
           for (auto &img : imgs) {
             img.reset();
           }
@@ -1939,6 +2038,12 @@ namespace video {
             std::this_thread::sleep_for(20ms);
           }
 
+          // 等待旧显示器释放期间，最后一个旧会话可能退出，同时新会话已经加入队列。
+          // 先接入新上下文；若仍无会话则安全结束捕获线程，不能访问空容器的 front()。
+          if (!append_pending_capture_contexts() || capture_ctxs.empty()) {
+            return;
+          }
+
           while (capture_ctx_queue->running()) {
             // Release the display before reenumerating displays, since some capture backends
             // only support a single display session per device/application.
@@ -1955,8 +2060,8 @@ namespace video {
             }
 
             // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
-            const auto &config = capture_ctxs.front().config;
-            std::string target_display_name = display_names[display_p];
+            auto &config = capture_ctxs.front().config;
+            target_display_name = display_names[display_p];
             if (!user_switched && !config.display_name.empty()) {
               // config.display_name may be a device ID - convert to display name
               std::string resolved_display_name = display_device::get_display_name(config.display_name);
@@ -1979,9 +2084,16 @@ namespace video {
               }
             }
 
+            if (user_switched) {
+              for (auto &capture_ctx : capture_ctxs) {
+                capture_ctx.config.display_name = target_display_name;
+              }
+            }
+
             // reset_display() will sleep between retries
             reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
             if (disp) {
+              active_display_event->raise(target_display_name);
               break;
             }
           }
@@ -2013,14 +2125,14 @@ namespace video {
    * the recommended 32-frame mean. HDR10+ keeps its independent EMA path.
    *
    * @param frame The AVFrame with pre-allocated dynamic HDR side data
-   * @param ema Temporally-smoothed HDR10+ luminance statistics
+   * @param hdr10plus_stats Temporally-smoothed HDR10+ luminance statistics
    * @param vivid_metadata Filtered HDR Vivid statistics in normalized PQ space
    * @param max_display_luminance Mapped client display peak luminance in nits
    */
   void
   update_hdr_dynamic_metadata(
     AVFrame *frame,
-    const hdr_luminance_ema_t &ema,
+    const platf::hdr_frame_luminance_stats_t &hdr10plus_stats,
     const hdr_metadata::vivid_metadata_t &vivid_metadata,
     uint16_t max_display_luminance) {
     if (!frame) return;
@@ -2048,26 +2160,103 @@ namespace video {
 
     // Update HDR10+ dynamic metadata
     auto hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
-    if (hdr10plus_sd && ema.initialized) {
+    if (hdr10plus_sd && hdr10plus_stats.valid) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
-        auto &params = hdr10plus->params[0];
-        const float peak_nits =
-          max_display_luminance > 0 ? static_cast<float>(max_display_luminance) : 1000.0f;
-        const float effective_max = ema.percentile_95;
-
-        // HDR10+ maxscl: use P95 for stability
-        float max_norm = std::clamp(effective_max / peak_nits, 0.0f, 1.0f);
-        float avg_norm = std::clamp(ema.avg_maxrgb / peak_nits, 0.0f, 1.0f);
-
-        params.maxscl[0] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.maxscl[1] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.maxscl[2] = av_make_q(static_cast<int>(max_norm * 100000), 100000);
-        params.average_maxrgb = av_make_q(static_cast<int>(avg_norm * 100000), 100000);
-
-        hdr10plus->targeted_system_display_maximum_luminance = av_make_q(max_display_luminance, 1);
+        // The 99th percentile is what maxSCL reports; see hdr10plus_from_luminance().
+        const auto frame_metadata = hdr_metadata::hdr10plus_from_luminance(
+          hdr10plus_stats.percentile_99,
+          hdr10plus_stats.avg_maxrgb,
+          max_display_luminance,
+          hdr10plus_stats.distribution_maxrgb);
+        if (frame_metadata.valid) {
+          auto &params = hdr10plus->params[0];
+          const auto maxscl = av_make_q(
+            frame_metadata.maxscl, hdr_metadata::hdr10plus_normalized_scale);
+          params.maxscl[0] = maxscl;
+          params.maxscl[1] = maxscl;
+          params.maxscl[2] = maxscl;
+          params.average_maxrgb = av_make_q(
+            frame_metadata.average_maxrgb, hdr_metadata::hdr10plus_normalized_scale);
+          hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
+            frame_metadata.targeted_system_display_maximum_luminance, 1);
+          params.num_distribution_maxrgb_percentiles =
+            static_cast<uint8_t>(hdr_metadata::hdr10plus_percentages.size());
+          for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
+            params.distribution_maxrgb[i].percentage = hdr_metadata::hdr10plus_percentages[i];
+            params.distribution_maxrgb[i].percentile = av_make_q(
+              frame_metadata.distribution_maxrgb[i], hdr_metadata::hdr10plus_normalized_scale);
+          }
+        }
       }
     }
+  }
+
+  void
+  apply_client_target_luminance(SS_HDR_METADATA &metadata, const config_t &client_config) {
+    const auto pipeline = client_config.effective_frame_pipeline_policy();
+    if (platf::postprocess_produces_hdr_output(pipeline, client_config.pre_encode_filter)) {
+      // The synthetic backend has already rendered against this session's
+      // fixed mastering peak. Replacing it with the client's panel peak would
+      // make the signalled mastering metadata disagree with the actual pixels.
+      return;
+    }
+
+    const auto &capabilities = client_config.hdr_capabilities;
+    if (!capabilities.reported) {
+      return;
+    }
+
+    metadata.maxDisplayLuminance = static_cast<std::uint16_t>(std::lround(capabilities.max_nits));
+    // The field is uint16_t in 1/10000-nit units: clamp before the cast so a
+    // client reporting min_nits >= 6.5536 cannot wrap into a bogus floor.
+    metadata.minDisplayLuminance = static_cast<std::uint16_t>(std::clamp(
+      static_cast<std::uint32_t>(std::lround(static_cast<double>(capabilities.min_nits) * 10000.0)),
+      0u, 0xFFFFu));
+  }
+
+  bool
+  synthetic_hdr_source_active(const config_t &config) {
+    const auto pipeline = config.effective_frame_pipeline_policy();
+    return platf::postprocess_produces_hdr_output(
+      pipeline,
+      config.pre_encode_filter);
+  }
+
+  bool
+  get_effective_hdr_metadata(
+    platf::display_t *display,
+    const config_t &config,
+    SS_HDR_METADATA &metadata) {
+    if (!synthetic_hdr_source_active(config)) {
+      return display->get_hdr_metadata(metadata);
+    }
+
+    std::memset(&metadata, 0, sizeof(metadata));
+    // Synthetic HDR is mastered in Rec. 2020 with D65. Its mastering peak is
+    // the same session-stable peak passed to the vendor backend, not a value
+    // queried from the deliberately SDR source display.
+    metadata.displayPrimaries[0].x = static_cast<std::uint16_t>(0.708f * 50000.0f);
+    metadata.displayPrimaries[0].y = static_cast<std::uint16_t>(0.292f * 50000.0f);
+    metadata.displayPrimaries[1].x = static_cast<std::uint16_t>(0.170f * 50000.0f);
+    metadata.displayPrimaries[1].y = static_cast<std::uint16_t>(0.797f * 50000.0f);
+    metadata.displayPrimaries[2].x = static_cast<std::uint16_t>(0.131f * 50000.0f);
+    metadata.displayPrimaries[2].y = static_cast<std::uint16_t>(0.046f * 50000.0f);
+    metadata.whitePoint.x = static_cast<std::uint16_t>(0.3127f * 50000.0f);
+    metadata.whitePoint.y = static_cast<std::uint16_t>(0.3290f * 50000.0f);
+
+    const auto peak_nits = static_cast<std::uint16_t>(std::lround(std::clamp(
+      config.pre_encode_filter_config.peak_nits,
+      1.0f,
+      10000.0f)));
+    metadata.maxDisplayLuminance = peak_nits;
+    metadata.minDisplayLuminance = 1;  // 0.0001 nit units
+    metadata.maxFullFrameLuminance = peak_nits;
+    metadata.maxContentLightLevel = peak_nits;
+    // TrueHDR's frame-average luminance is not known at session setup. Zero is
+    // the HDR10 "unknown" value and avoids suggesting a full frame at MaxCLL.
+    metadata.maxFrameAverageLightLevel = 0;
+    return true;
   }
 
   int
@@ -2097,18 +2286,13 @@ namespace video {
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
-        session.hdr_ema.update(raw_stats);
-        const auto vivid_metadata = session.vivid_filter.update(raw_stats);
+        const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
 
-        uint16_t max_lum = 1000;
-        auto mdm_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
-        if (mdm_sd) {
-          auto *mdm = reinterpret_cast<AVMasteringDisplayMetadata *>(mdm_sd->data);
-          if (mdm && mdm->has_luminance) {
-            max_lum = static_cast<uint16_t>(av_q2d(mdm->max_luminance));
-          }
-        }
-        update_hdr_dynamic_metadata(frame, session.hdr_ema, vivid_metadata, max_lum);
+        update_hdr_dynamic_metadata(
+          frame,
+          filtered.hdr10plus_stats,
+          filtered.vivid,
+          session.dynamic_metadata_target_peak_nits);
       }
     }
 
@@ -2213,6 +2397,10 @@ namespace video {
       BOOST_LOG(error) << "NvENC frame index mismatch " << frame_nr << " " << encoded_frame.frame_index;
     }
 
+    // The RPU rides with the access unit it was generated for, matched by the
+    // encoder's own frame index round trip — never by callback order.
+    session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
@@ -2266,6 +2454,10 @@ namespace video {
       // Normal pipeline latency: encoder buffered one frame and is returning a previous frame
       BOOST_LOG(debug) << "AMF pipeline lag: submitted " << frame_nr << ", got " << encoded_frame.frame_index;
     }
+
+    // AMF may return an older frame than the one submitted; the RPU splice
+    // keys on the encoder's own output index, so pipeline lag cannot mismatch.
+    session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
@@ -2621,20 +2813,29 @@ namespace video {
     frame->colorspace = ctx->colorspace;
     frame->chroma_location = ctx->chroma_sample_location;
 
+    uint16_t dynamic_metadata_target_peak_nits = 1000;
+
     // Attach HDR metadata to the AVFrame
     // Both PQ (ST 2084) and HLG (ARIB STD-B67) can carry HDR metadata.
     // PQ uses absolute luminance and requires static metadata (MDCV, CLL).
     // HLG uses scene-referred relative luminance but benefits from HDR Vivid (CUVA)
-    // dynamic metadata for enhanced tone mapping on capable displays.
+    // dynamic metadata for enhanced tone mapping on capable displays, where the
+    // codec defines a carriage for it.
     if (colorspace_is_hdr(colorspace)) {
-      // Single source of truth for which dynamic formats this transfer function allows,
-      // shared with the native NVENC path so the two cannot drift apart.
-      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace);
+      // Single source of truth for which dynamic formats this transfer function allows
+      // and this codec can actually carry, shared with the native NVENC path so the two
+      // cannot drift apart.
+      const auto dynamic_hdr_formats = hdr_metadata::formats_for(colorspace, config.videoFormat);
 
       SS_HDR_METADATA hdr_metadata;
-      bool has_metadata = disp->get_hdr_metadata(hdr_metadata);
+      bool has_metadata = get_effective_hdr_metadata(disp, config, hdr_metadata);
 
       if (has_metadata) {
+        apply_client_target_luminance(hdr_metadata, config);
+        dynamic_metadata_target_peak_nits = hdr_metadata::resolve_target_display_luminance(
+          config.hdr_capabilities.reported,
+          config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         // Attach static HDR metadata (Mastering Display Color Volume + Content Light Level)
         // Required for PQ, optional but beneficial for HLG with HDR Vivid
         auto mdm = av_mastering_display_metadata_create_side_data(frame.get());
@@ -2668,7 +2869,7 @@ namespace video {
           if (hdr10plus) {
             // Set default values for HDR10+
             hdr10plus->itu_t_t35_country_code = 0xB5;  // USA
-            hdr10plus->application_version = 0;
+            hdr10plus->application_version = hdr_metadata::hdr10plus_application_version;
             hdr10plus->num_windows = 1;  // Single processing window covering entire frame
 
             // Initialize the first (and only) processing window
@@ -2707,8 +2908,9 @@ namespace video {
             params.knee_point_y = av_make_q(0, 1);
             params.num_bezier_curve_anchors = 0;
 
-            // Set targeted system display maximum luminance from static metadata
-            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(hdr_metadata.maxDisplayLuminance, 1);
+            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
+              dynamic_metadata_target_peak_nits,
+              1);
             hdr10plus->targeted_system_display_actual_peak_luminance_flag = 0;
             hdr10plus->mastering_display_actual_peak_luminance_flag = 0;
 
@@ -2748,7 +2950,7 @@ namespace video {
             params.color_saturation_num = 0;
 
             const auto target_display_pq =
-              hdr_metadata::target_display_pq_u12(static_cast<float>(hdr_metadata.maxDisplayLuminance));
+              hdr_metadata::target_display_pq_u12(static_cast<float>(dynamic_metadata_target_peak_nits));
             for (int i = 0; i < 2; i++) {
               auto &tm_params = params.tm_params[i];
               tm_params.targeted_system_display_maximum_luminance =
@@ -2776,6 +2978,7 @@ namespace video {
         return nullptr;
       }
       software_encode_device->colorspace = colorspace;
+      software_encode_device->video_format = config.videoFormat;
 
       encode_device_final = std::move(software_encode_device);
     }
@@ -2792,11 +2995,37 @@ namespace video {
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
+      dynamic_metadata_target_peak_nits,
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
 
     return session;
+  }
+
+  /**
+   * The L6 the RPU carries mirrors the host display's RAW mastering metadata,
+   * deliberately not run through apply_client_target_luminance(): the RPU
+   * describes the content, and the client display's peak belongs to display
+   * adaptation, which the terminal Dolby engine already knows (docs §3.3).
+   */
+  std::optional<dolby_vision::session_config_t>
+  dolby_vision_config_for_session(platf::display_t *disp, const config_t &client_config) {
+    SS_HDR_METADATA raw;
+    if (!get_effective_hdr_metadata(disp, client_config, raw)) {
+      return std::nullopt;
+    }
+
+    const auto clamp_u16 = [](uint16_t value, uint16_t low, uint16_t high) {
+      return std::clamp(value, low, high);
+    };
+
+    dolby_vision::session_config_t config;
+    config.source_mastering_peak_nits = clamp_u16(raw.maxDisplayLuminance, 1, 10000);
+    config.mastering_min_nits_x10000 = clamp_u16(raw.minDisplayLuminance, 1, 10000);
+    config.max_cll_nits = clamp_u16(raw.maxContentLightLevel, 0, 10000);
+    config.max_fall_nits = clamp_u16(raw.maxFrameAverageLightLevel, 0, 10000);
+    return config;
   }
 
   std::unique_ptr<nvenc_encode_session_t>
@@ -2810,7 +3039,8 @@ namespace video {
     // HLG benefits from these SEI for HDR Vivid tone mapping on the decoder side.
     if (colorspace_is_hdr(encode_device->colorspace) && encode_device->nvenc) {
       SS_HDR_METADATA hdr_metadata;
-      if (disp->get_hdr_metadata(hdr_metadata)) {
+      if (get_effective_hdr_metadata(disp, client_config, hdr_metadata)) {
+        apply_client_target_luminance(hdr_metadata, client_config);
         nvenc::nvenc_hdr_metadata nvenc_metadata;
         // Copy display primaries (RGB order)
         for (int i = 0; i < 3; i++) {
@@ -2821,6 +3051,10 @@ namespace video {
         nvenc_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
         nvenc_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
         nvenc_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        nvenc_metadata.targetDisplayLuminance = hdr_metadata::resolve_target_display_luminance(
+          client_config.hdr_capabilities.reported,
+          client_config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         nvenc_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
         nvenc_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
         encode_device->nvenc->set_hdr_metadata(nvenc_metadata);
@@ -2829,7 +3063,50 @@ namespace video {
       }
     }
 
-    return std::make_unique<nvenc_encode_session_t>(std::move(encode_device));
+    // The device moves into the session; sample its gates beforehand.
+    const bool dv_analysis_usable = encode_device && hdr_luminance_analysis_usable(encode_device->hdr_luminance_analysis_available);
+    const auto dv_format = static_cast<hdr::dynamic_hdr_format_e>(client_config.dynamic_hdr_format);
+    const bool dv_negotiated = dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ||
+                               dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84;
+    // 8.1 rides PQ, 8.4 rides HLG: the RPU metadata domain is the same
+    // (profile84.md Phase 0), only the required base-layer transfer differs.
+    const bool dv_transfer_ok =
+      encode_device &&
+      ((dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 && colorspace_is_pq(encode_device->colorspace)) ||
+        (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84 && colorspace_is_hlg(encode_device->colorspace)));
+    auto session = std::make_unique<nvenc_encode_session_t>(std::move(encode_device), client_config.videoFormat);
+
+    // Contract note: a negotiated-DV session that cannot carry the RPU still
+    // serves a valid HDR10-compatible HEVC base layer; the client's decoder
+    // routing must tolerate RPU absence and fall back. These warnings are the
+    // diagnostics for exactly that path -- do not promise the RPU here.
+    if (dv_negotiated && !is_probe) {
+      // Dynamic L1 is the whole point of the pipeline; without analyzer
+      // output the stream would carry nothing but a static template.
+      if (!dv_analysis_usable) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but luminance analysis is unavailable; "
+                              "streaming without RPU"sv;
+      }
+      else if (!dv_transfer_ok) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but the final colorspace does not match the "
+                              "negotiated profile; streaming without RPU"sv;
+      }
+      else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
+               !dv_config || !session->dolby_vision_.configure(*dv_config)) {
+        BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but no usable mastering metadata; "
+                              "streaming without RPU"sv;
+      }
+      else if (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84) {
+        BOOST_LOG(info) << "NVENC: Dolby Vision Profile 8.4 active (HLG base layer, mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+      else {
+        BOOST_LOG(info) << "NVENC: Dolby Vision Profile 8.1 active (mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+    }
+
+    return session;
   }
 
   std::unique_ptr<amf_encode_session_t>
@@ -2841,7 +3118,8 @@ namespace video {
     // Set HDR metadata for AMF encoder if HDR is enabled
     if (colorspace_is_hdr(encode_device->colorspace) && encode_device->amf) {
       SS_HDR_METADATA hdr_metadata;
-      if (disp->get_hdr_metadata(hdr_metadata)) {
+      if (get_effective_hdr_metadata(disp, client_config, hdr_metadata)) {
+        apply_client_target_luminance(hdr_metadata, client_config);
         amf::amf_hdr_metadata amf_metadata;
         for (int i = 0; i < 3; i++) {
           amf_metadata.displayPrimaries[i].x = hdr_metadata.displayPrimaries[i].x;
@@ -2851,6 +3129,10 @@ namespace video {
         amf_metadata.whitePoint.y = hdr_metadata.whitePoint.y;
         amf_metadata.maxDisplayLuminance = hdr_metadata.maxDisplayLuminance;
         amf_metadata.minDisplayLuminance = hdr_metadata.minDisplayLuminance;
+        amf_metadata.targetDisplayLuminance = hdr_metadata::resolve_target_display_luminance(
+          client_config.hdr_capabilities.reported,
+          client_config.hdr_capabilities.max_nits,
+          hdr_metadata.maxDisplayLuminance);
         amf_metadata.maxContentLightLevel = hdr_metadata.maxContentLightLevel;
         amf_metadata.maxFrameAverageLightLevel = hdr_metadata.maxFrameAverageLightLevel;
         encode_device->amf->set_hdr_metadata(amf_metadata);
@@ -2859,11 +3141,62 @@ namespace video {
       }
     }
 
-    return std::make_unique<amf_encode_session_t>(std::move(encode_device));
+    // The device moves into the session; sample its gates beforehand.
+    const bool dv_analysis_usable = encode_device && hdr_luminance_analysis_usable(encode_device->hdr_luminance_analysis_available);
+    const auto dv_format = static_cast<hdr::dynamic_hdr_format_e>(client_config.dynamic_hdr_format);
+    const bool dv_negotiated = dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ||
+                               dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84;
+    // 8.1 rides PQ, 8.4 rides HLG: the RPU metadata domain is the same
+    // (profile84.md Phase 0), only the required base-layer transfer differs.
+    const bool dv_transfer_ok =
+      encode_device &&
+      ((dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 && colorspace_is_pq(encode_device->colorspace)) ||
+        (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84 && colorspace_is_hlg(encode_device->colorspace)));
+    auto session = std::make_unique<amf_encode_session_t>(std::move(encode_device), client_config.videoFormat);
+
+    // Contract note: a negotiated-DV session that cannot carry the RPU still
+    // serves a valid HDR10-compatible HEVC base layer; the client's decoder
+    // routing must tolerate RPU absence and fall back (docs dolby_vision_
+    // profile81.md SS 5.3). These warnings are the diagnostics for exactly
+    // that path -- do not promise the RPU here.
+    if (dv_negotiated && !is_probe) {
+      if (!dv_analysis_usable) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but luminance analysis is unavailable; "
+                              "streaming without RPU"sv;
+      }
+      else if (!dv_transfer_ok) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but the final colorspace does not match the "
+                              "negotiated profile; streaming without RPU"sv;
+      }
+      else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
+               !dv_config || !session->dolby_vision_.configure(*dv_config)) {
+        BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but no usable mastering metadata; "
+                              "streaming without RPU"sv;
+      }
+      else if (dv_format == hdr::dynamic_hdr_format_e::dolby_vision_profile_84) {
+        BOOST_LOG(info) << "AMF: Dolby Vision Profile 8.4 active (HLG base layer, mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+      else {
+        BOOST_LOG(info) << "AMF: Dolby Vision Profile 8.1 active (mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+    }
+
+    return session;
   }
 
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+    // init_encoder()/set_frame() selects the analysis backend. Report only
+    // after a real session succeeds, so probes and pre-init D3D11 defaults do
+    // not hide the effective hybrid path or its fallback reason.
+    const auto report_session = [&](std::unique_ptr<encode_session_t> session, std::string_view backend) {
+      if (session && !is_probe) {
+        disp->report_video_backend_selection(backend);
+      }
+      return session;
+    };
     auto effective_config = config;
     effective_config.bitrate = cap_initial_encoder_bitrate(
       config.bitrate,
@@ -2878,16 +3211,26 @@ namespace video {
     }
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
+      // The RPU splice needs to grow the encoded access unit, which only the
+      // native NVENC/AMF paths own end to end; an AVPacket cannot be resized
+      // in place. The stream stays a valid HDR10-compatible HEVC base layer,
+      // so the client is served — just without the Dolby Vision metadata.
+      if (!is_probe &&
+          (effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) ||
+            effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_84))) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but an avcodec-family encoder was selected; "
+                              "streaming HDR10 without RPU"sv;
+      }
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
+      return report_session(make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device)), "avcodec_d3d11");
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
+      return report_session(make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe), "nvenc_d3d11");
     }
     else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
       auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
-      return make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
+      return report_session(make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe), "amf_d3d11");
     }
 
     return nullptr;
@@ -2990,8 +3333,8 @@ namespace video {
   encode_run(
     int &frame_nr,  // Store progress of the frame number
     safe::mail_t mail,
-    img_event_t images,
-    config_t config,
+    captured_frame_event_t images,
+    config_t &config,
     std::shared_ptr<platf::display_t> disp,
     std::unique_ptr<platf::encode_device_t> encode_device,
     safe::signal_t &reinit_event,
@@ -3130,6 +3473,12 @@ namespace video {
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
+          if (param->type == dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+            // Keep the latest value in the video-thread-owned config. If the
+            // encoder is recreated after a display/capture reinit, device
+            // construction will apply this value again.
+            config.hdr_capabilities.sdr_white_nits = param->value.float_value;
+          }
           session->set_dynamic_param(*param);
         }
       }
@@ -3153,19 +3502,24 @@ namespace video {
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
-        if (auto img = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
-          frame_timestamp = img->frame_timestamp;
-          pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
-          if (!pipeline_trace->capture_ready) {
-            pipeline_trace->capture_ready = frame_timestamp;
+        if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
+          auto &img = frame->image;
+          if (!frame->is_replay) {
+            frame_timestamp = img->frame_timestamp;
+            pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
+            if (!pipeline_trace->capture_ready) {
+              pipeline_trace->capture_ready = frame_timestamp;
+            }
+            pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           }
-          pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
-          pipeline_trace->convert_end = std::chrono::steady_clock::now();
+          if (pipeline_trace) {
+            pipeline_trace->convert_end = std::chrono::steady_clock::now();
+          }
           has_new_frame = true;
         }
         else if (!images->running()) {
@@ -3228,20 +3582,42 @@ namespace video {
       },
       display->env_width,
       display->env_height,
+      display->width,
+      display->height,
       offsetX,
       offsetY,
       1.0f / scalar,
     };
   }
 
+  /**
+   * @brief Disable the pre-encode filter when the opened display cannot satisfy
+   *        its preconditions, keeping the wire signal consistent with the pixels
+   *        actually produced (rtx_hdr_stream_implementation.md §5.3
+   *        source_display_not_sdr / §6.3 capability-probe degradation).
+   */
+  void
+  strip_unusable_pre_encode_filter(platf::display_t &disp, config_t &config) {
+    if (config.pre_encode_filter == platf::pre_encode_filter_e::none) {
+      return;
+    }
+    if (!disp.supports_pre_encode_filter()) {
+      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling RTX HDR for this session"sv;
+    }
+    else if (disp.is_hdr()) {
+      BOOST_LOG(warning) << "Source display is already in HDR mode (source_display_not_sdr); disabling RTX HDR for this session"sv;
+    }
+    else {
+      return;
+    }
+    config.pre_encode_filter = platf::pre_encode_filter_e::none;
+    config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(config.dynamicRange, false);
+    config.frame_pipeline_policy_resolved = true;
+  }
+
   std::unique_ptr<platf::encode_device_t>
-  make_encode_device(
-    platf::display_t &disp,
-    const encoder_t &encoder,
-    const config_t &config,
-    bool is_probe = false) {
+  make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config) {
     std::unique_ptr<platf::encode_device_t> result;
-    std::string_view encoder_backend;
 
     auto colorspace = colorspace_from_client_config(config, disp.is_hdr());
 
@@ -3280,23 +3656,18 @@ namespace video {
     }
 
     if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
-      encoder_backend = "avcodec_d3d11";
       result = disp.make_avcodec_encode_device(pix_fmt);
     }
     else if (dynamic_cast<const encoder_platform_formats_nvenc *>(encoder.platform_formats.get())) {
-      encoder_backend = "nvenc_d3d11";
       result = disp.make_nvenc_encode_device(pix_fmt);
     }
     else if (dynamic_cast<const encoder_platform_formats_amf *>(encoder.platform_formats.get())) {
-      encoder_backend = "amf_d3d11";
       result = disp.make_amf_encode_device(pix_fmt);
     }
 
     if (result) {
       result->colorspace = colorspace;
-      if (!is_probe) {
-        disp.report_video_backend_selection(encoder_backend);
-      }
+      result->video_format = config.videoFormat;
     }
 
     return result;
@@ -3312,6 +3683,7 @@ namespace video {
     ctx.touch_port_events->raise(make_port(disp, ctx.config));
 
     // Create encode device with NTSC framerate fallback support
+    strip_unusable_pre_encode_filter(*disp, ctx.config);
     auto make_encode_device_func = [&]() {
       return make_encode_device(*disp, encoder, ctx.config);
     };
@@ -3322,16 +3694,16 @@ namespace video {
       return std::nullopt;
     }
 
-    // Get encode device colorspace for HDR metadata (need to create a temporary device)
-    auto encode_device = make_encode_device(*disp, encoder, ctx.config);
-    if (!encode_device) {
-      return std::nullopt;
-    }
+    // The encode colorspace is fully determined by the client config and the
+    // display's HDR state — building a throwaway encode device here used to
+    // spin up a whole encoder pipeline (including a CUDA interop context for
+    // 4:4:4) just to read that value back.
+    const auto colorspace = colorspace_from_client_config(ctx.config, disp->is_hdr());
 
     // Update client with our current HDR display state
     hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-    if (colorspace_is_hdr(encode_device->colorspace)) {
-      if (disp->get_hdr_metadata(hdr_info->metadata)) {
+    if (colorspace_is_hdr(colorspace)) {
+      if (get_effective_hdr_metadata(disp, ctx.config, hdr_info->metadata)) {
         hdr_info->enabled = true;
       }
       else {
@@ -3362,6 +3734,8 @@ namespace video {
     std::shared_ptr<platf::display_t> disp;
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
+    auto active_display_event = mail::man->event<std::string>(mail::active_display);
+    std::string active_display_name;
 
     if (synced_session_ctxs.empty()) {
       auto ctx = encode_session_ctx_queue.pop();
@@ -3384,7 +3758,7 @@ namespace video {
       }
 
       // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
-      const auto &config = synced_session_ctxs.front()->config;
+      auto &config = synced_session_ctxs.front()->config;
       std::string target_display_name = display_names[display_p];
       if (!user_switched && !config.display_name.empty()) {
         // config.display_name may be a device ID - convert to display name
@@ -3408,9 +3782,17 @@ namespace video {
         }
       }
 
+      if (user_switched) {
+        for (auto &ctx : synced_session_ctxs) {
+          ctx->config.display_name = target_display_name;
+        }
+      }
+
       // reset_display() will sleep between retries
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
+        active_display_name = target_display_name;
+        active_display_event->raise(target_display_name);
         break;
       }
     }
@@ -3443,6 +3825,10 @@ namespace video {
             return false;
           }
 
+          // Synchronous sessions share the display opened above. Keep the
+          // active target in newly joined contexts so the next reinit does not
+          // restore their stale launch-time display selection.
+          encode_session_ctx->config.display_name = active_display_name;
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
           auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
@@ -3580,7 +3966,7 @@ namespace video {
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
-    auto images = std::make_shared<img_event_t::element_type>();
+    auto images = std::make_shared<captured_frame_event_t::element_type>();
     auto lg = util::fail_guard([&]() {
       images->stop();
       shutdown_event->raise(true);
@@ -3729,6 +4115,7 @@ namespace video {
 
       auto &encoder = *chosen_encoder;
 
+      strip_unusable_pre_encode_filter(*display, config);
       auto encode_device = make_encode_device(*display, encoder, config);
       if (!encode_device) {
         return;
@@ -3740,7 +4127,7 @@ namespace video {
       // Update client with our current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
       if (colorspace_is_hdr(encode_device->colorspace)) {
-        if (display->get_hdr_metadata(hdr_info->metadata)) {
+        if (get_effective_hdr_metadata(display.get(), config, hdr_info->metadata)) {
           hdr_info->enabled = true;
         }
         else {
@@ -3797,7 +4184,7 @@ namespace video {
 
   int
   validate_config(std::shared_ptr<platf::display_t> disp, const encoder_t &encoder, const config_t &config) {
-    auto encode_device = make_encode_device(*disp, encoder, config, true);
+    auto encode_device = make_encode_device(*disp, encoder, config);
     if (!encode_device) {
       return -1;
     }
@@ -3899,10 +4286,13 @@ namespace video {
   }
 
   bool
-  validate_encoder(encoder_t &encoder, bool expect_failure) {
+  validate_encoder(
+    encoder_t &encoder,
+    bool expect_failure,
+    const std::optional<std::string> &probe_capture_override,
+    const std::string &probe_display_name) {
     std::shared_ptr<platf::display_t> disp;
     const auto configured_capture_backend = config::video.capture;
-    auto probe_capture_override = capture_override_for_encoder_probe();
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
     auto fg = util::fail_guard([&]() {
@@ -3944,8 +4334,7 @@ namespace video {
     }
 
     // If the encoder isn't supported at all (not even H.264), bail early
-    const auto output_display_name { display_device::get_display_name(config::video.output_name) };
-    reset_display(disp, encoder.platform_formats->dev_type, output_display_name, config_autoselect);
+    reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, config_autoselect);
     if (!disp) {
       return false;
     }
@@ -4072,7 +4461,7 @@ namespace video {
         }
 
         // Reset the display since we're switching from SDR to HDR
-        reset_display(disp, encoder.platform_formats->dev_type, output_display_name, generic_hdr_config);
+        reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, generic_hdr_config);
         if (!disp) {
           return false;
         }
@@ -4126,7 +4515,7 @@ namespace video {
   }
 
   int
-  probe_encoders() {
+  probe_encoders(std::optional<probe_target_t> target) {
     last_encoder_probe_result = {
       probe_error_e::none,
       "Encoder probe succeeded.",
@@ -4141,10 +4530,71 @@ namespace video {
     auto encoder_list = encoders;
 
     // If we already have a good encoder, check to see if another probe is required
-    if (chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
+    if (!target && chosen_encoder && !(chosen_encoder->flags & ALWAYS_REPROBE) && !platf::needs_encoder_reenumeration()) {
       BOOST_LOG(info) << "Using cached encoder validation results";
       active_encoder_for_status.store(chosen_encoder, std::memory_order_release);
       return 0;
+    }
+
+    const auto probe_capture_override = capture_override_for_encoder_probe();
+    const auto configured_output_name = target ? target->output_name : config::video.output_name;
+    const bool target_requires_exact_resolution = target && target->policy == probe_target_policy_e::exact;
+    const auto configured_display_name = display_device::get_display_name(configured_output_name);
+    if (target_requires_exact_resolution && configured_display_name.empty()) {
+      last_encoder_probe_result = {
+        probe_error_e::no_active_display,
+        "The requested display is not connected or active for encoder probing.",
+        "Connect or enable the selected display, then try again."
+      };
+      BOOST_LOG(error) << "Requested output ["sv << configured_output_name
+                       << "] could not be resolved for encoder probing"sv;
+      return -1;
+    }
+    auto probe_display_name = configured_display_name;
+    if (probe_capture_override) {
+      // The Windows implementation enumerates all DXGI capture-ready outputs
+      // regardless of memory type, so one pass serves every encoder candidate.
+      const auto capture_ready_displays = encoder_list.empty() ?
+                                            std::vector<std::string> {} :
+                                            platf::display_names(encoder_list.front()->platform_formats->dev_type);
+      const bool exact_target_unavailable = target_requires_exact_resolution &&
+                                            std::ranges::find(capture_ready_displays, configured_display_name) == capture_ready_displays.end();
+      if (exact_target_unavailable) {
+        last_encoder_probe_result = {
+          probe_error_e::no_active_display,
+          "The requested display is not available to the encoder probe capture backend.",
+          "Connect or enable the selected display, then try again."
+        };
+        BOOST_LOG(error) << "Requested output ["sv << configured_output_name
+                         << "] is unavailable to temporary capture backend ["sv
+                         << *probe_capture_override << "]"sv;
+        return -1;
+      }
+      probe_display_name = select_encoder_probe_display(configured_display_name, capture_ready_displays);
+      if (target && target->policy != probe_target_policy_e::backend_autoselect &&
+          !configured_output_name.empty() && configured_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << configured_output_name
+                           << "] could not be resolved for temporary capture backend ["sv
+                           << *probe_capture_override
+                           << "]; encoder probing will use backend display auto-selection"sv;
+      }
+      else if (target && target->policy != probe_target_policy_e::backend_autoselect &&
+               !configured_display_name.empty() && probe_display_name.empty()) {
+        BOOST_LOG(warning) << "Configured output ["sv << configured_display_name
+                           << "] is unavailable to temporary capture backend ["sv
+                           << *probe_capture_override
+                           << "]; encoder probing will use backend display auto-selection"sv;
+      }
+    }
+    else if (target && target->policy == probe_target_policy_e::vdd_compatible && configured_display_name.empty()) {
+      last_encoder_probe_result = {
+        probe_error_e::no_active_display,
+        "The requested display is not connected or active for encoder probing.",
+        "Connect or enable the selected display, then try again."
+      };
+      BOOST_LOG(error) << "Requested output ["sv << configured_output_name
+                       << "] could not be resolved for encoder probing"sv;
+      return -1;
     }
 
     // Restart encoder selection
@@ -4183,7 +4633,11 @@ namespace video {
 
         if (encoder->name == config::video.encoder) {
           // Remove the encoder from the list entirely if it fails validation
-          if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+          if (!validate_encoder(
+                *encoder,
+                previous_encoder && previous_encoder != encoder,
+                probe_capture_override,
+                probe_display_name)) {
             pos = encoder_list.erase(pos);
             break;
           }
@@ -4211,7 +4665,11 @@ namespace video {
         auto encoder = *pos;
 
         // Remove the encoder from the list entirely if it fails validation
-        if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+        if (!validate_encoder(
+              *encoder,
+              previous_encoder && previous_encoder != encoder,
+              probe_capture_override,
+              probe_display_name)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4248,7 +4706,11 @@ namespace video {
         // If we've used a previous encoder and it's not this one, we expect this encoder to
         // fail to validate. It will use a slightly different order of checks to more quickly
         // eliminate failing encoders.
-        if (!validate_encoder(*encoder, previous_encoder && previous_encoder != encoder)) {
+        if (!validate_encoder(
+              *encoder,
+              previous_encoder && previous_encoder != encoder,
+              probe_capture_override,
+              probe_display_name)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4262,7 +4724,7 @@ namespace video {
     }
 
     if (chosen_encoder == nullptr) {
-      const auto output_display_name { display_device::get_display_name(config::video.output_name) };
+      const auto output_display_name { display_device::get_display_name(configured_output_name) };
       BOOST_LOG(error) << "Unable to find display or encoder during startup."sv;
       if (!config::video.encoder.empty()) {
         last_encoder_probe_result = {

@@ -14,6 +14,22 @@ list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
 # can remove after https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120495 is available in mingw-w64
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-template-body)
 
+# Template-heavy translation units (confighttp.cpp in particular) exceed the
+# 32767-section COFF limit. Without big-obj the assembler silently writes a
+# corrupt symbol table whose COMDAT entries (typeinfo, inline members) then
+# resolve as undefined at link time.
+#
+# Gated on GNU unlike the -Wno-* flags above: clang only warns about an unknown
+# -Wno-*, but rejects an unknown -Wa, argument outright, so an unconditional
+# flag here would hard-fail a clang-based MinGW build (e.g. MSYS2 CLANG64).
+# A plain if() rather than a COMPILE_LANG_AND_ID genex, because
+# cmake/targets/common.cmake wraps every SUNSHINE_COMPILE_OPTIONS entry as
+# --compiler-options=<flag> for CUDA, and a genex there would degrade to a bare
+# --compiler-options= for CUDA translation units.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    list(APPEND SUNSHINE_COMPILE_OPTIONS -Wa,-mbig-obj)
+endif()
+
 # see gcc bug 98723
 add_definitions(-DUSE_BOOST_REGEX)
 
@@ -253,7 +269,14 @@ add_custom_command(
                 "${CMAKE_SOURCE_DIR}/cmake/embed_dxil.cmake"
                 ${D3D12_HDR_SHADER_SOURCES}
                 "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/include/common.hlsl"
+                "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders/directx/include/hdr_pre_encode_transform.hlsl"
         VERBATIM)
+
+# A single owner generates the header for consumers in both this directory and
+# tests/. Do not list its OUTPUT as an ordinary source in a different CMake
+# directory: tests supports CMake 3.13 policies, where GENERATED is directory-local.
+add_custom_target(d3d12_hdr_shaders DEPENDS "${D3D12_HDR_SHADER_HEADER}")
+list(APPEND SUNSHINE_TARGET_DEPENDENCIES d3d12_hdr_shaders)
 
 set(PLATFORM_TARGET_FILES
         "${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
@@ -264,11 +287,24 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
+
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_abi.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_cursor.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_cursor.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_internal.h"
@@ -286,7 +322,6 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp"
-        "${D3D12_HDR_SHADER_HEADER}"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_ram.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_wgc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_amd.cpp"
@@ -296,6 +331,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_write.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/color_profile.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/color_profile.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/device_hdr_states.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/device_modes.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/device_topology.cpp"
@@ -322,6 +359,7 @@ set(OPENSSL_LIBRARIES
 
 list(PREPEND PLATFORM_LIBRARIES
         ${CURL_STATIC_LIBRARIES}
+        advapi32
         avrt
         crypt32
         d3d11
@@ -346,6 +384,7 @@ list(PREPEND PLATFORM_LIBRARIES
         userenv
         ws2_32
         wsock32
+        wtsapi32
 )
 
 if(SUNSHINE_ENABLE_TRAY AND SUNSHINE_ENABLE_LEGACY_TRAY)

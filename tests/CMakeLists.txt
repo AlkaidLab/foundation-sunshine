@@ -60,7 +60,116 @@ if (WIN32)
 endif ()
 add_test(NAME video_pipeline_telemetry_unit_tests COMMAND video_pipeline_telemetry_unit_tests)
 
+add_executable(sunshinesvc_state_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
+target_include_directories(sunshinesvc_state_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(sunshinesvc_state_unit_tests gtest_main)
+target_compile_options(sunshinesvc_state_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(sunshinesvc_state_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
+    set_target_properties(sunshinesvc_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME sunshinesvc_state_unit_tests COMMAND sunshinesvc_state_unit_tests)
+
+add_executable(video_probe_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp)
+target_include_directories(video_probe_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(video_probe_unit_tests gtest_main)
+target_compile_options(video_probe_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(video_probe_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(video_probe_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
+
+add_executable(frame_contract_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/platform/frame_contract.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp)
+if (WIN32)
+    target_sources(frame_contract_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.cpp)
+endif ()
+target_include_directories(frame_contract_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(frame_contract_unit_tests gtest_main)
+target_compile_options(frame_contract_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(frame_contract_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(frame_contract_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
+
+if (WIN32)
+    set(PRE_ENCODE_FILTER_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
+    set(TRUEHDR_BACKEND_LOADER_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_backend_loader.cpp)
+
+    add_executable(pre_encode_filter_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/pre_encode_filter_test_stubs.cpp
+            ${PRE_ENCODE_FILTER_TEST_SOURCE})
+    target_include_directories(pre_encode_filter_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(pre_encode_filter_unit_tests
+            Boost::log
+            d3d11
+            d3dcompiler
+            dxgi
+            gtest_main)
+    target_compile_definitions(pre_encode_filter_unit_tests PRIVATE
+            SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
+    target_compile_options(pre_encode_filter_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(pre_encode_filter_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_test(NAME pre_encode_filter_unit_tests COMMAND pre_encode_filter_unit_tests)
+
+    add_library(fake_truehdr_backend SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
+    target_include_directories(fake_truehdr_backend PRIVATE "${CMAKE_SOURCE_DIR}")
+    set_target_properties(fake_truehdr_backend PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+
+    add_library(fake_truehdr_bad_backend SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
+    target_include_directories(fake_truehdr_bad_backend PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_bad_backend PRIVATE FAKE_TRUEHDR_BAD_ABI)
+    set_target_properties(fake_truehdr_bad_backend PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+
+    add_library(fake_truehdr_failing_backend SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
+    target_include_directories(fake_truehdr_failing_backend PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_failing_backend PRIVATE FAKE_TRUEHDR_PROCESS_FAILS)
+    set_target_properties(fake_truehdr_failing_backend PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+
+    add_executable(truehdr_backend_loader_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
+            ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
+    target_include_directories(truehdr_backend_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(truehdr_backend_loader_unit_tests gtest_main)
+    target_compile_definitions(truehdr_backend_loader_unit_tests PRIVATE
+            FAKE_TRUEHDR_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_backend>"
+            FAKE_TRUEHDR_BAD_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_bad_backend>")
+    target_compile_options(truehdr_backend_loader_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(truehdr_backend_loader_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(truehdr_backend_loader_unit_tests
+            fake_truehdr_backend
+            fake_truehdr_bad_backend)
+    add_dependencies(pre_encode_filter_unit_tests
+            fake_truehdr_backend
+            fake_truehdr_failing_backend)
+    target_compile_definitions(pre_encode_filter_unit_tests PRIVATE
+            FAKE_TRUEHDR_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_backend>"
+            FAKE_TRUEHDR_FAILING_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_failing_backend>")
+    add_test(NAME truehdr_backend_loader_unit_tests COMMAND truehdr_backend_loader_unit_tests)
+
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
     target_include_directories(vdd_prerequisite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -78,8 +187,8 @@ if (WIN32)
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_device.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp
-            ${D3D12_HDR_SHADER_HEADER})
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp)
+    add_dependencies(d3d12_video_probe d3d12_hdr_shaders)
     target_include_directories(d3d12_video_probe PRIVATE
             "${CMAKE_SOURCE_DIR}"
             "${CMAKE_BINARY_DIR}")
@@ -91,10 +200,115 @@ if (WIN32)
     set_target_properties(d3d12_video_probe PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
+
+    add_executable(credential_store_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/ai/credential_store.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_credential_store.cpp)
+    target_include_directories(credential_store_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(credential_store_unit_tests
+            advapi32
+            crypt32
+            gtest_main)
+    target_compile_options(credential_store_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(credential_store_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_test(NAME credential_store_unit_tests COMMAND credential_store_unit_tests)
 endif ()
 
 if (NOT BUILD_TESTS)
     return()
+endif ()
+
+set(REMOTE_USB_SOCKET_LIBRARIES)
+if (WIN32)
+    list(APPEND REMOTE_USB_SOCKET_LIBRARIES mswsock ws2_32)
+endif ()
+
+add_executable(loopback_usbip_bridge_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
+target_include_directories(loopback_usbip_bridge_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(loopback_usbip_bridge_unit_tests
+        Boost::asio
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
+        gtest_main)
+target_compile_options(loopback_usbip_bridge_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(loopback_usbip_bridge_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME loopback_usbip_bridge_unit_tests COMMAND loopback_usbip_bridge_unit_tests)
+
+add_executable(virtual_touchscreen_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
+target_include_directories(virtual_touchscreen_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(virtual_touchscreen_unit_tests
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        gtest_main)
+target_compile_options(virtual_touchscreen_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(virtual_touchscreen_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME virtual_touchscreen_unit_tests COMMAND virtual_touchscreen_unit_tests)
+
+add_executable(remote_usb_process_tree_helper
+        ${CMAKE_SOURCE_DIR}/tests/tools/remote_usb_process_tree_helper.cpp)
+target_link_libraries(remote_usb_process_tree_helper PRIVATE
+        Boost::process Boost::system ${CMAKE_THREAD_LIBS_INIT})
+set_target_properties(remote_usb_process_tree_helper PROPERTIES
+        CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+
+add_executable(remote_usb_host_controller_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp)
+target_include_directories(remote_usb_host_controller_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_usb_host_controller_unit_tests
+        Boost::asio
+        Boost::process
+        Boost::system
+        ${CMAKE_THREAD_LIBS_INIT}
+        ${REMOTE_USB_SOCKET_LIBRARIES}
+        gtest_main)
+target_compile_options(remote_usb_host_controller_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+target_compile_definitions(remote_usb_host_controller_unit_tests PRIVATE
+        REMOTE_USB_PROCESS_TREE_HELPER="$<TARGET_FILE:remote_usb_process_tree_helper>")
+add_dependencies(remote_usb_host_controller_unit_tests remote_usb_process_tree_helper)
+set_target_properties(remote_usb_host_controller_unit_tests PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+add_test(NAME remote_usb_host_controller_unit_tests COMMAND remote_usb_host_controller_unit_tests)
+
+# Drives the production TLS service for tests/tools/test_reverse_tunnel.py and
+# paired Moonlight probe runs, including real usbip-win2 device imports.
+add_executable(reverse_tunnel_probe
+        ${CMAKE_SOURCE_DIR}/tests/tools/reverse_tunnel_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/reverse_tunnel_service.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp)
+target_include_directories(reverse_tunnel_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(reverse_tunnel_probe PRIVATE
+        Boost::asio Boost::process Boost::system Boost::log
+        OpenSSL::SSL OpenSSL::Crypto nlohmann_json::nlohmann_json
+        ${CMAKE_THREAD_LIBS_INIT} ${REMOTE_USB_SOCKET_LIBRARIES})
+set_target_properties(reverse_tunnel_probe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+find_package(Python3 QUIET COMPONENTS Interpreter)
+find_program(REVERSE_TUNNEL_OPENSSL_EXECUTABLE openssl)
+if (Python3_Interpreter_FOUND AND REVERSE_TUNNEL_OPENSSL_EXECUTABLE)
+    add_test(NAME reverse_tunnel_transport_tests
+            COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/tools/test_reverse_tunnel.py"
+            "$<TARGET_FILE:reverse_tunnel_probe>"
+            --openssl "${REVERSE_TUNNEL_OPENSSL_EXECUTABLE}")
+    set_tests_properties(reverse_tunnel_transport_tests PROPERTIES TIMEOUT 60)
 endif ()
 
 # modify SUNSHINE_DEFINITIONS
@@ -117,12 +331,23 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+# The touchscreen device test has a dedicated target that links the device
+# implementation; do not compile a second copy into the aggregate suite.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
+if (WIN32)
+    # These tests depend on generated fake backend paths and run in dedicated
+    # targets above; do not compile a second copy into the aggregate suite.
+    list(REMOVE_ITEM TEST_SOURCES
+            ${PRE_ENCODE_FILTER_TEST_SOURCE}
+            ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
+endif ()
 
 set(SUNSHINE_SOURCES
-        ${SUNSHINE_TARGET_FILES})
+        ${SUNSHINE_TARGET_FILES}
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
 
 # remove main.cpp from the list of sources
 list(REMOVE_ITEM SUNSHINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
@@ -142,9 +367,24 @@ target_link_libraries(${PROJECT_NAME}
         ${SUNSHINE_EXTERNAL_LIBRARIES}
         gtest
         ${PLATFORM_LIBRARIES})
-target_compile_definitions(${PROJECT_NAME} PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+        ${SUNSHINE_DEFINITIONS}
+        ${TEST_DEFINITIONS})
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 target_link_options(${PROJECT_NAME} PRIVATE)
+
+# The aggregate suite had an executable but no ctest registration, so every
+# assertion globbed into it was dead weight. The timeout is a guard, not a
+# target: nothing in here has ever run on a headless runner, so a test that
+# waits on a display or a socket should fail the job rather than hang it.
+#
+# DownloadFileTests fetches from httpbin.org, so as a gate it reports on a third
+# party's uptime rather than on this repository. It stays in the binary — run it
+# deliberately with --gtest_filter when changing http::download_file — but it
+# does not get a vote on whether a pull request is mergeable.
+add_test(NAME ${PROJECT_NAME}
+        COMMAND ${PROJECT_NAME} --gtest_filter=-DownloadFileTests/*)
+set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
         ${CMAKE_SOURCE_DIR}/src/abr.cpp
@@ -214,6 +454,63 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 
 if (WIN32)
+    add_executable(ds5_fake_sidecar
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_fake_sidecar.cpp)
+    set_target_properties(ds5_fake_sidecar PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(${PROJECT_NAME} ds5_fake_sidecar)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
+            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
+
+    add_executable(ds5_sidecar_client_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
+            ${CMAKE_SOURCE_DIR}/src/ds5/config.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp)
+    target_include_directories(ds5_sidecar_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(ds5_sidecar_client_unit_tests
+            Boost::log
+            Boost::format
+            Boost::property_tree
+            nlohmann_json::nlohmann_json
+            gtest_main)
+    target_compile_definitions(ds5_sidecar_client_unit_tests PRIVATE
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
+            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
+    target_compile_options(ds5_sidecar_client_unit_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(ds5_sidecar_client_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(ds5_sidecar_client_unit_tests ds5_fake_sidecar)
+    add_test(NAME ds5_sidecar_client_unit_tests COMMAND ds5_sidecar_client_unit_tests)
+
+    add_executable(microphone_client_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_microphone_client.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
+            ${CMAKE_SOURCE_DIR}/src/ds5/config.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp)
+    target_include_directories(microphone_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(microphone_client_unit_tests
+            Boost::log
+            Boost::format
+            Boost::property_tree
+            nlohmann_json::nlohmann_json
+            gtest_main)
+    target_compile_definitions(microphone_client_unit_tests PRIVATE
+            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
+            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
+    target_compile_options(microphone_client_unit_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(microphone_client_unit_tests PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_dependencies(microphone_client_unit_tests ds5_fake_sidecar)
+    add_test(NAME microphone_client_unit_tests COMMAND microphone_client_unit_tests)
+
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
@@ -273,4 +570,3 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
-

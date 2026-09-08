@@ -3,7 +3,7 @@
 #
 include_guard(GLOBAL)
 
-set(LIBEVDEV_VERSION libevdev-1.13.6)
+set(LIBEVDEV_VERSION libevdev-1.13.7)
 
 pkg_check_modules(PC_EVDEV libevdev)
 if(PC_EVDEV_FOUND)
@@ -16,7 +16,7 @@ else()
 
     ExternalProject_Add(libevdev
             URL https://www.freedesktop.org/software/libevdev/${LIBEVDEV_VERSION}.tar.xz
-            URL_HASH SHA256=73f215eccbd8233f414737ac06bca2687e67c44b97d2d7576091aa9718551110
+            URL_HASH SHA256=0caf824971108f15bb2ad356433bae198d7d3bf1e82d43f63626e069e060bfa6
             PREFIX ${LIBEVDEV_VERSION}
             CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR>
             BUILD_COMMAND "make"

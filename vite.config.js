@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
-import { ViteEjsPlugin } from './vite-plugin-ejs-v7.js'
+import { ViteEjsPlugin } from './vite-plugin-ejs.js'
 import vue from '@vitejs/plugin-vue'
 import process from 'process'
 
@@ -10,7 +10,7 @@ import process from 'process'
  * Importing this separately and joining them using ejs
  * allows us to split some repeating HTML that cannot be added
  * by Vue itself (e.g. style/script loading, common meta head tags, Widgetbot)
- * The vite-plugin-ejs handles this automatically
+ * The local EJS transform handles this automatically.
  */
 let assetsSrcPath = 'src_assets/common/assets/web'
 let assetsDstPath = 'build/assets/web'

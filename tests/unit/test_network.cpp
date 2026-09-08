@@ -138,3 +138,20 @@ TEST_F(BindAddressTest, WildcardAddressFunction) {
   ASSERT_EQ(net::af_to_any_address_string(net::af_e::IPV4), "0.0.0.0");
   ASSERT_EQ(net::af_to_any_address_string(net::af_e::BOTH), "::");
 }
+
+TEST(AddressNormalizationTest, ConvertsIpv4MappedIpv6ToIpv4) {
+  const auto mapped = boost::asio::ip::make_address("::ffff:192.0.2.10");
+  const auto normalized = net::normalize_address(mapped);
+
+  ASSERT_TRUE(normalized.is_v4());
+  EXPECT_EQ(normalized.to_string(), "192.0.2.10");
+  EXPECT_EQ(net::addr_to_normalized_string(mapped), "192.0.2.10");
+}
+
+TEST(AddressNormalizationTest, PreservesNativeIpv4AndIpv6) {
+  const auto ipv4 = boost::asio::ip::make_address("192.0.2.10");
+  const auto ipv6 = boost::asio::ip::make_address("2001:db8::10");
+
+  EXPECT_EQ(net::normalize_address(ipv4), ipv4);
+  EXPECT_EQ(net::normalize_address(ipv6), ipv6);
+}

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <mmdeviceapi.h>
 #include <mutex>
+#include <numbers>
 #include <roapi.h>
 #include <synchapi.h>
 #include <urlmon.h>
@@ -22,9 +23,7 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-
-// Lib includes
-#include <opus/opus.h>
+#include "src/platform/windows/virtual_device_host/microphone_client.h"
 
 // Must be the last included file
 // clang-format off
@@ -37,6 +36,15 @@ DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0
 DEFINE_PROPERTYKEY(PKEY_DeviceInterface_FriendlyName, 0x026e516e, 0xb814, 0x414b, 0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22, 2);
 
 namespace platf::audio {
+
+  namespace {
+    bool
+    is_mic_device_lost(HRESULT status) noexcept {
+      return status == AUDCLNT_E_DEVICE_INVALIDATED ||
+             status == AUDCLNT_E_RESOURCES_INVALIDATED ||
+             status == AUDCLNT_E_SERVICE_NOT_RUNNING;
+    }
+  }  // namespace
 
   template <class T>
   void
@@ -76,22 +84,10 @@ namespace platf::audio {
   mic_write_wasapi_t::cleanup() {
     is_cleaning_up.store(true);
 
-    // 等待音频处理完成
+    // 停止音频客户端，不在清理路径等待尾部数据。
     if (audio_client) {
-      // 停止音频客户端
+      // 停止后 endpoint 不再消费已排队帧，因此不能在这里轮询 padding 等待清空。
       audio_client->Stop();
-
-      // 等待缓冲区清空
-      UINT32 bufferFrameCount = 0;
-      UINT32 padding = 0;
-      HRESULT status = audio_client->GetBufferSize(&bufferFrameCount);
-      if (SUCCEEDED(status)) {
-        // 等待缓冲区完全清空，最多等待 500ms
-        int max_wait = 50;
-        while (SUCCEEDED(audio_client->GetCurrentPadding(&padding)) && padding > 0 && max_wait-- > 0) {
-          Sleep(10);
-        }
-      }
     }
 
     // COM 接口释放顺序很重要：
@@ -106,11 +102,8 @@ namespace platf::audio {
     // 显式释放 audio_client 和 device_enum，确保正确的释放顺序
     audio_client.reset();
     device_enum.reset();
-
-    if (opus_decoder) {
-      opus_decoder_destroy(opus_decoder);
-      opus_decoder = nullptr;
-    }
+    buffer_frame_count = 0;
+    pcm_output_buffer.clear();
 
     if (mmcss_task_handle) {
       AvRevertMmThreadCharacteristics(mmcss_task_handle);
@@ -128,20 +121,6 @@ namespace platf::audio {
 
   int
   mic_write_wasapi_t::init(bool test_mode) {
-    last_seq = 0;
-    first_packet = true;
-    total_packets = 0;
-    packet_loss_count = 0;
-    fec_recovered_packets = 0;
-
-    // 初始化OPUS解码器
-    int opus_error;
-    opus_decoder = opus_decoder_create(48000, 1, &opus_error);  // 48kHz, 单声道
-    if (opus_error != OPUS_OK) {
-      BOOST_LOG(error) << "Failed to create OPUS decoder: " << opus_strerror(opus_error);
-      return -1;
-    }
-
     // 初始化设备枚举器
     HRESULT hr = CoCreateInstance(
       CLSID_MMDeviceEnumerator,
@@ -227,12 +206,8 @@ namespace platf::audio {
     std::vector<WAVEFORMATEX> formats_to_try = {
       // 16位单声道，48kHz
       { WAVE_FORMAT_PCM, 1, 48000, 96000, 2, 16, 0 },
-      // 16位单声道，44.1kHz
-      { WAVE_FORMAT_PCM, 1, 44100, 88200, 2, 16, 0 },
       // 16位立体声，48kHz
       { WAVE_FORMAT_PCM, 2, 48000, 192000, 4, 16, 0 },
-      // 16位立体声，44.1kHz
-      { WAVE_FORMAT_PCM, 2, 44100, 176400, 4, 16, 0 },
     };
 
     HRESULT init_status = E_FAIL;
@@ -244,7 +219,7 @@ namespace platf::audio {
 
       init_status = audio_client->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        0,  // 不使用特殊标志
+        AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
         1000000,  // 100ms buffer (10000000 was 10 seconds)
         0,
         &format,
@@ -269,6 +244,13 @@ namespace platf::audio {
 
     // 保存使用的格式信息
     current_format = *used_format;
+
+    status = audio_client->GetBufferSize(&buffer_frame_count);
+    if (FAILED(status) || buffer_frame_count == 0) {
+      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      cleanup();
+      return -1;
+    }
 
     // 启动音频客户端
     status = audio_client->Start();
@@ -296,122 +278,24 @@ namespace platf::audio {
       }
     }
 
-    BOOST_LOG(info) << "Successfully initialized mic write device with OPUS decoder";
+    BOOST_LOG(info) << "Successfully initialized mic write device";
     return 0;
   }
 
   int
-  mic_write_wasapi_t::write_data(const char *data, size_t len, uint16_t seq) {
-    if (!audio_client || !audio_render || !opus_decoder) {
+  mic_write_wasapi_t::write_pcm(const std::int16_t *samples, std::size_t frame_count) {
+    if (!audio_client || !audio_render || !samples) {
       BOOST_LOG(error) << "Mic write device not initialized";
       return -1;
     }
 
-    std::vector<int16_t> pcm_mono_buffer;
-    ++total_packets;
-    // FEC recovery: check for packet loss using sequence number
-    if (seq != 0 && !first_packet) {
-      uint16_t expected_seq = last_seq + 1;
-      if (seq != expected_seq && seq > expected_seq) {
-        // Packet loss detected, try to recover using FEC from current packet
-        uint16_t lost_count = seq - expected_seq;
-        packet_loss_count += lost_count;
-        BOOST_LOG(verbose) << "Mic packet loss detected: expected " << expected_seq << ", got " << seq << " (lost " << lost_count << ")";
-        
-        // Use FEC to recover the previous lost packet from current packet's redundancy data
-        // FEC can only recover one packet (the immediately preceding one)
-        if (lost_count == 1) {
-          int fec_frame_size = opus_decoder_get_nb_samples(opus_decoder, (const unsigned char *) data, len);
-          if (fec_frame_size > 0) {
-            std::vector<int16_t> fec_buffer(fec_frame_size);
-            int fec_samples = opus_decode(
-              opus_decoder,
-              (const unsigned char *) data,
-              len,
-              fec_buffer.data(),
-              fec_frame_size,
-              1  // FEC recovery mode
-            );
-            if (fec_samples > 0) {
-              BOOST_LOG(verbose) << "FEC recovered " << fec_samples << " samples for lost packet";
-              ++fec_recovered_packets;
-              // Write recovered audio (will be done together with current packet below)
-              pcm_mono_buffer = std::move(fec_buffer);
-            }
-          }
-        }
-      }
-    }
+    const auto framesToWrite = static_cast<UINT32>(frame_count);
 
-    // Update sequence tracking
-    if (seq != 0) {
-      last_seq = seq;
-      first_packet = false;
-    }
-
-    // 解码OPUS数据
-    int frame_size = opus_decoder_get_nb_samples(opus_decoder, (const unsigned char *) data, len);
-    if (frame_size < 0) {
-      BOOST_LOG(error) << "Failed to get OPUS frame size: " << opus_strerror(frame_size);
-      return -1;
-    }
-
-    // If we recovered FEC data, append current frame; otherwise just decode current
-    size_t fec_offset = pcm_mono_buffer.size();
-    pcm_mono_buffer.resize(fec_offset + frame_size);
-
-    int samples_decoded = opus_decode(
-      opus_decoder,
-      (const unsigned char *) data,
-      len,
-      pcm_mono_buffer.data() + fec_offset,
-      frame_size,
-      0  // Normal decode
-    );
-
-    if (samples_decoded < 0) {
-      BOOST_LOG(error) << "Failed to decode OPUS data: " << opus_strerror(samples_decoded);
-      return -1;
-    }
-
-    // Handle channel conversion if necessary
-    std::vector<int16_t> pcm_output_buffer;
-    UINT32 framesToWrite;
-
-    if (current_format.nChannels == 1) {
-      // Mono output, direct copy
-      pcm_output_buffer = std::move(pcm_mono_buffer);
-      framesToWrite = samples_decoded;
-    }
-    else if (current_format.nChannels == 2) {
-      // Stereo output, duplicate mono samples
-      pcm_output_buffer.resize(samples_decoded * 2);
-      for (int i = 0; i < samples_decoded; ++i) {
-        pcm_output_buffer[i * 2] = pcm_mono_buffer[i];  // Left channel
-        pcm_output_buffer[i * 2 + 1] = pcm_mono_buffer[i];  // Right channel
-      }
-      framesToWrite = samples_decoded;  // Each original mono sample becomes one stereo frame
-    }
-    else {
-      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
-      return -1;
-    }
-
-    // 获取缓冲区大小和当前填充的帧数
-    UINT32 bufferFrameCount = 0;
+    // 共享模式下可用空间等于初始化时的固定 buffer size 减当前 padding。
     UINT32 padding = 0;
-    auto status = audio_client->GetBufferSize(&bufferFrameCount);
+    auto status = audio_client->GetCurrentPadding(&padding);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
-        BOOST_LOG(warning) << "Audio device invalidated during mic write (GetBufferSize)";
-        return -2;  // Special return value indicating device invalidated
-      }
-      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
-      return -1;
-    }
-    status = audio_client->GetCurrentPadding(&padding);
-    if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (GetCurrentPadding)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -419,64 +303,42 @@ namespace platf::audio {
       return -1;
     }
 
-    // 确保padding不超过缓冲区大小
-    if (padding > bufferFrameCount) {
-      BOOST_LOG(warning) << "Invalid padding value: " << padding << " > " << bufferFrameCount << ", using 0";
-      padding = 0;
-    }
-
-    UINT32 availableFrames = bufferFrameCount - padding;
-
-    // 如果缓冲区空间不足，进行多次等待尝试
-    if (framesToWrite > availableFrames) {
-      BOOST_LOG(verbose) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
-
-      // 最多尝试3次，每次等待时间递增
-      const int max_retries = 3;
-      for (int retry = 0; retry < max_retries && framesToWrite > availableFrames; ++retry) {
-        // 根据需要的帧数计算等待时间：帧数 / 48000 * 1000 (ms)
-        // 保守估计，等待所需时间的 80%
-        DWORD wait_ms = static_cast<DWORD>((framesToWrite - availableFrames) * 1000 / 48000 * 0.8);
-        wait_ms = std::max(wait_ms, 5ul);  // 最少等待 5ms
-        wait_ms = std::min(wait_ms, 50ul); // 最多等待 50ms
-        
-        Sleep(wait_ms);
-
-        // 重新检查可用空间
-        status = audio_client->GetCurrentPadding(&padding);
-        if (FAILED(status)) {
-          BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
-          return -1;
-        }
-
-        if (padding > bufferFrameCount) {
-          padding = 0;
-        }
-
-        availableFrames = bufferFrameCount - padding;
-        
-        if (framesToWrite <= availableFrames) {
-          BOOST_LOG(verbose) << "Buffer space available after " << (retry + 1) << " retries";
-          break;
-        }
-      }
-
-      // 如果仍然没有足够空间，降级为 debug 日志并截断
-      if (framesToWrite > availableFrames) {
-        BOOST_LOG(warning) << "Mic write buffer still full after retries: " << framesToWrite << " frames requested, " << availableFrames << " available. Truncating.";
-        framesToWrite = availableFrames;
-      }
-    }
-
-    if (framesToWrite == 0) {
+    if (padding > buffer_frame_count) {
+      BOOST_LOG(warning) << "Invalid mic write padding value: " << padding << " > " << buffer_frame_count;
       return 0;
+    }
+
+    const auto availableFrames = buffer_frame_count - padding;
+    if (framesToWrite == 0 || framesToWrite > availableFrames) {
+      // 麦克风 UDP、混音和设备写入共用一个线程。空间不足时整帧丢弃，
+      // 不能在这里等待，否则会同时阻塞所有客户端的收包。
+      return 0;
+    }
+
+    // 确认端点有空间后再转换声道，避免背压丢帧路径做无效拷贝。
+    if (current_format.nChannels == 1) {
+      pcm_output_buffer.assign(samples, samples + frame_count);
+    }
+    else if (current_format.nChannels == 2) {
+      pcm_output_buffer.resize(frame_count * 2);
+      for (std::size_t i = 0; i < frame_count; ++i) {
+        pcm_output_buffer[i * 2] = samples[i];
+        pcm_output_buffer[i * 2 + 1] = samples[i];
+      }
+    }
+    else {
+      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
+      return -1;
     }
 
     // 获取渲染缓冲区
     BYTE *pData = nullptr;
     status = audio_render->GetBuffer(framesToWrite, &pData);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (status == AUDCLNT_E_BUFFER_TOO_LARGE) {
+        return 0;
+      }
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (GetBuffer)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -490,7 +352,7 @@ namespace platf::audio {
     // 释放缓冲区
     status = audio_render->ReleaseBuffer(framesToWrite, 0);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (ReleaseBuffer)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -503,18 +365,8 @@ namespace platf::audio {
 
   int
   mic_write_wasapi_t::test_write() {
-    if (!audio_client || !audio_render || !opus_decoder) {
+    if (!audio_client || !audio_render) {
       BOOST_LOG(error) << "Mic write device not initialized for test";
-      return -1;
-    }
-
-    int opus_error = OPUS_OK;
-    auto encoder = std::unique_ptr<OpusEncoder, decltype(&opus_encoder_destroy)> {
-      opus_encoder_create(48000, 1, OPUS_APPLICATION_VOIP, &opus_error),
-      opus_encoder_destroy,
-    };
-    if (!encoder || opus_error != OPUS_OK) {
-      BOOST_LOG(error) << "Failed to create OPUS encoder for microphone test";
       return -1;
     }
 
@@ -524,7 +376,6 @@ namespace platf::audio {
     constexpr int frame_samples = 960;  // 20 ms at 48 kHz
     constexpr int packet_count = 40;  // 800 ms
     std::vector<int16_t> pcm(frame_samples);
-    std::vector<unsigned char> packet(4000);
     int total_bytes_written = 0;
 
     BOOST_LOG(info) << "Testing client mic redirection with an 800 ms tone";
@@ -537,28 +388,13 @@ namespace platf::audio {
         pcm[sample_index] = static_cast<int16_t>(std::sin(phase) * amplitude * 32767.0);
       }
 
-      const int encoded_bytes = opus_encode(
-        encoder.get(),
-        pcm.data(),
-        frame_samples,
-        packet.data(),
-        static_cast<opus_int32>(packet.size()));
-      if (encoded_bytes <= 0) {
-        return -1;
-      }
-
-      const int bytes_written = write_data(
-        reinterpret_cast<const char *>(packet.data()),
-        static_cast<size_t>(encoded_bytes));
+      const int bytes_written = write_pcm(pcm.data(), pcm.size());
       if (bytes_written < 0) {
         return -1;
       }
       total_bytes_written += bytes_written;
-      // Stay ahead of playback so the render buffer never drains mid-tone. The
-      // default Windows timer granularity is ~15.6 ms, so any requested delay is
-      // rounded up to a whole tick: Sleep(18) really costs ~31 ms and starves a
-      // 20 ms packet. One tick is comfortably shorter than the packet, and
-      // write_data() backs off on its own once the buffer is full.
+      // 测试音保持较短的写入间隔；缓冲区已满时 write_pcm() 会丢弃当前帧，
+      // 不会把测试路径的等待逻辑带回实时写入函数。
       Sleep(10);
     }
 
@@ -583,9 +419,63 @@ namespace platf::audio {
     static std::mutex test_mutex;
     const std::lock_guard lock(test_mutex);
 
+    const auto backend = config::audio.microphone_redirect_backend;
+    if (!try_begin_mic_redirect_test()) {
+      return { false, "MIC_TEST_BUSY", mic_redirect_status().active_backend };
+    }
+    struct test_reservation_t {
+      ~test_reservation_t() {
+        end_mic_redirect_test();
+      }
+    } test_reservation;
+    if (backend == "disabled") {
+      report_mic_redirect_backend({}, "MIC_BACKEND_DISABLED");
+      return { false, "MIC_BACKEND_DISABLED", "disabled" };
+    }
+
+    std::string usbip_fallback_reason;
+    if (backend == "usbip_experimental" || backend == "auto") {
+      auto &client = virtual_device_host::persistent_microphone_client();
+      if (client.start()) {
+        report_mic_redirect_backend("usbip_experimental");
+        constexpr auto sample_rate = 48'000u;
+        constexpr auto frames_per_packet = 480u;
+        constexpr auto packet_count = 100u;
+        std::array<std::int16_t, frames_per_packet> pcm {};
+        for (std::uint32_t packet = 0; packet < packet_count; ++packet) {
+          for (std::uint32_t frame = 0; frame < frames_per_packet; ++frame) {
+            const auto sample = packet * frames_per_packet + frame;
+            pcm[frame] = static_cast<std::int16_t>(
+              std::sin(sample * 2.0 * std::numbers::pi * 440.0 / sample_rate) * 4096.0);
+          }
+          if (client.write_pcm(pcm.data(), pcm.size()) < 0) {
+            report_mic_redirect_backend({}, "MIC_USBIP_WRITE_FAILED");
+            return { false, "MIC_USBIP_WRITE_FAILED", "usbip_experimental" };
+          }
+          Sleep(10);
+        }
+        if (!client.flush()) {
+          report_mic_redirect_backend({}, "MIC_USBIP_FLUSH_FAILED");
+          return { false, "MIC_USBIP_FLUSH_FAILED", "usbip_experimental" };
+        }
+        return { true, {}, "usbip_experimental" };
+      }
+      const auto status = virtual_device_host::microphone_status();
+      usbip_fallback_reason = status.error_code.empty() ?
+                                "MIC_USBIP_DEVICE_UNAVAILABLE" :
+                                status.error_code;
+      if (backend == "usbip_experimental") {
+        report_mic_redirect_backend({}, usbip_fallback_reason);
+        return { false,
+                 usbip_fallback_reason,
+                 "usbip_experimental" };
+      }
+    }
+
     const auto com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(com_status) && com_status != RPC_E_CHANGED_MODE) {
-      return { false, "MIC_TEST_COM_FAILED" };
+      report_mic_redirect_backend({}, "MIC_TEST_COM_FAILED");
+      return { false, "MIC_TEST_COM_FAILED", "vb_cable" };
     }
 
     mic_redirect_test_result_t result;
@@ -600,6 +490,9 @@ namespace platf::audio {
       else {
         result.success = true;
       }
+      result.backend = "vb_cable";
+      report_mic_redirect_backend(result.success ? "vb_cable" : "",
+                                  result.success ? usbip_fallback_reason : result.error_code);
     }
 
     if (SUCCEEDED(com_status)) {
@@ -965,14 +858,6 @@ namespace platf::audio {
     }
 
     BOOST_LOG(info) << "Restoring audio devices to original state";
-
-    // Log FEC statistics
-    if (total_packets > 0) {
-      double loss_rate = (double)packet_loss_count / (total_packets + packet_loss_count) * 100.0;
-      BOOST_LOG(info) << "Microphone Audio Stats, Total Audio Packets: " << total_packets
-                      << ", Packet Loss: " << packet_loss_count << " (" << std::fixed << std::setprecision(1) << loss_rate << "%)"
-                      << ", FEC Recovered: " << fec_recovered_packets;
-    }
 
     int result = 0;
 

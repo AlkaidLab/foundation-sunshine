@@ -15,15 +15,19 @@ namespace platf::dxgi::d3d12 {
     float min_maxrgb = 0.0f;
     float max_maxrgb = 0.0f;
     float sum_maxrgb = 0.0f;
+    float sum_maxrgb_pq = 0.0f;
     std::uint32_t pixel_count = 0;
     std::array<std::uint32_t, hdr_histogram_bins> histogram {};
   };
-  static_assert(sizeof(hdr_final_result_t) == 1040);
+  static_assert(sizeof(hdr_final_result_t) == 1044);
+  static_assert(offsetof(hdr_final_result_t, pixel_count) == 16);
+  static_assert(offsetof(hdr_final_result_t, histogram) == 20);
 
   struct hdr_percentiles_t {
     float min_maxrgb = 0.0f;
     float max_maxrgb = 0.0f;
     float avg_maxrgb = 0.0f;
+    float avg_maxrgb_pq = 0.0f;
     float percentile_10_pq = 0.0f;
     float percentile_90_pq = 0.0f;
     float percentile_95_pq = 0.0f;

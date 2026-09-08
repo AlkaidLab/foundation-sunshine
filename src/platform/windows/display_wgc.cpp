@@ -632,7 +632,8 @@ namespace platf::dxgi {
       }
     }
 
-    display->capture_format = config.dynamicRange ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+    display->capture_format =
+      select_wgc_capture_format(config.effective_frame_pipeline_policy().capture);
 
     // Use the actual capture item size for frame pool creation
     auto item_size = item.Size();

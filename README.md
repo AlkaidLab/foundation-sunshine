@@ -166,6 +166,13 @@ GPU 兼容性：[NVENC](https://developer.nvidia.com/video-encode-and-decode-gpu
 
 [![加入QQ群](https://pub.idqqimg.com/wpa/images/group.png '加入QQ群')](https://qm.qq.com/cgi-bin/qm/qr?k=WC2PSZ3Q6Hk6j8U_DG9S7522GPtItk0m&jump_from=webapi&authKey=zVDLFrS83s/0Xg3hMbkMeAqI7xoHXaM3sxZIF/u9JW7qO/D8xd0npytVBC2lOS+z)
 
-[![Star History Chart](https://api.star-history.com/chart?repos=AlkaidLab/foundation-sunshine&type=date&legend=top-left&sealed_token=8GzivsLWTBiHWFj-MfIXqxD6tKYaPkTgNvC2q8IjHD2nbEypOWmB3bwOGTGtsCNg-ZKW0uy10gX845qiIMElcA4v_qbJh8OUYhiWtI0aSCvempCz97-OcUeWNrYRPz_rZ0hy7mb8Hfj8qnuVAOZ-p04lzSPXNOyVbm4U-acAHIqyQTdm8FXY-jrXzArQ)](https://www.star-history.com/?repos=AlkaidLab%2Ffoundation-sunshine&type=date&legend=top-left)
+## Star History
 
+<a href="https://www.star-history.com/?type=date&legend=top-left&repos=AlkaidLab%2Ffoundation-sunshine">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=AlkaidLab/foundation-sunshine&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=AlkaidLab/foundation-sunshine&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=AlkaidLab/foundation-sunshine&type=date&legend=top-left" />
+ </picture>
+</a>
 </div>

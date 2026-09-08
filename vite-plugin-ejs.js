@@ -1,8 +1,7 @@
 import ejs from 'ejs'
 
 /**
- * Vite EJS Plugin for Vite 7
- * Compatible replacement for vite-plugin-ejs that works with Vite 7's new transformIndexHtml API
+ * Local EJS transform for Vite HTML entry points.
  * @param {Record<string, any> | ((config: any) => Record<string, any>)} data - Data to pass to EJS template
  * @param {object} options - Optional EJS options
  * @returns {import('vite').Plugin}
@@ -11,7 +10,7 @@ export function ViteEjsPlugin(data = {}, options = {}) {
   let config
   
   return {
-    name: 'vite-plugin-ejs-v7',
+    name: 'sunshine-ejs-transform',
     // Get Resolved config
     configResolved(resolvedConfig) {
       config = resolvedConfig
@@ -19,7 +18,6 @@ export function ViteEjsPlugin(data = {}, options = {}) {
     transformIndexHtml: {
       // Use 'pre' order to ensure EJS is processed before other HTML transformations
       order: 'pre',
-      // Vite 7 uses 'handler' instead of 'transform'
       handler(html) {
         // Resolve data if it's a function
         const resolvedData = typeof data === 'function' ? data(config) : data

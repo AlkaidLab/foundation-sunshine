@@ -52,13 +52,18 @@ namespace video {
   colorspace_from_client_config(const config_t &config, bool hdr_display) {
     sunshine_colorspace_t colorspace;
 
+    const auto pipeline = config.effective_frame_pipeline_policy();
+    const bool synthetic_hdr_source = platf::postprocess_produces_hdr_output(
+      pipeline,
+      config.pre_encode_filter);
+
     /* See video::config_t declaration for details */
     /* dynamicRange values:
        0 = SDR 8-bit
        1 = HDR 10-bit with PQ (ST 2084)
        2 = HDR 10-bit with HLG (ARIB STD-B67) */
 
-    if (config.dynamicRange > 0 && hdr_display) {
+    if (config.dynamicRange > 0 && (hdr_display || synthetic_hdr_source)) {
       if (config.dynamicRange == 2) {
         // Rec. 2020 with Hybrid Log-Gamma (HLG)
         colorspace.colorspace = colorspace_e::bt2020hlg;

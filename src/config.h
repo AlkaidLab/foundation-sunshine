@@ -76,7 +76,7 @@ namespace config {
       std::optional<int> amd_preanalysis;
       std::optional<int> amd_vbaq;
       int amd_coder;
-      int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (lower=better, default=23)
+      int amd_qvbr_quality = 23;  // QVBR quality level 1-51 (higher=better, default=23)
       int amd_ltr_frames = 0;  // LTR frames for RFI (0=disabled by default; matches FFmpeg amfenc behavior to avoid static-region color blocks)
       int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
       bool amd_avcodec_compat = false;  // Optional AVCodec-like AMF adapter; false keeps the clean standalone path.
@@ -139,12 +139,17 @@ namespace config {
     std::string capture_compute_shader;  // GPU frame conversion: "auto", "on", "off"
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
+    // Experimental Windows pre-encode SDR -> HDR post-processing. The capture
+    // backend remains SDR; the external backend owns only the private GPU copy.
+    std::string rtx_hdr;
+    std::string rtx_hdr_backend_path;
     std::string windows_video_backend = "auto";  // Windows video processing backend: "auto", "d3d11", or "d3d12"
   };
 
   struct audio_t {
     std::string sink;
     std::string virtual_sink;
+    std::string microphone_redirect_backend;
     bool stream;
     bool stream_mic;
     bool install_steam_drivers;
@@ -300,4 +305,25 @@ namespace config {
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);
+
+  /**
+   * Return a synchronized snapshot of the serialized per-client settings.
+   */
+  std::string
+  get_clients_config();
+
+  /**
+   * Return the per-client touch-keyboard preference: true when the client
+   * entry exists and its touch.enabled is true.  Unknown clients and
+   * entries without a touch object default to false.
+   */
+  bool
+  get_client_touch_keyboard_enabled(const std::string &uuid);
+
+  /**
+   * Persist per-client settings and publish them to the running process.
+   * Unlike update_config(), an unchanged value is still a successful save.
+   */
+  bool
+  save_clients_config(const std::string &clients);
 }  // namespace config

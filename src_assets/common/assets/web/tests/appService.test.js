@@ -59,6 +59,7 @@ test('formatAppData trims scalar fields and removes empty prep commands', () => 
     elevated: 1,
     'auto-detach': false,
     'wait-all': true,
+    gamepad: 'x360',
     'exit-timeout': '12',
     'prep-cmd': [
       { do: '  ', undo: '' },
@@ -76,6 +77,7 @@ test('formatAppData trims scalar fields and removes empty prep commands', () => 
   assert.equal(result.cmd, 'game.exe')
   assert.equal(result.elevated, true)
   assert.equal(result['exit-timeout'], 12)
+  assert.equal(result.gamepad, 'x360')
   assert.deepEqual(result['prep-cmd'], [
     { do: 'start-service', undo: '' },
     { do: '', undo: 'stop-service' },
@@ -84,4 +86,43 @@ test('formatAppData trims scalar fields and removes empty prep commands', () => 
   assert.deepEqual(result.detached, ['helper.exe'])
   assert.equal(result['image-path'], 'cover.png')
   assert.equal(result['working-dir'], 'C:/Games/Game')
+})
+
+test('formatAppData rejects unknown per-app gamepad values', () => {
+  const result = AppService.formatAppData({
+    name: 'Game',
+    gamepad: 'invalid',
+  })
+
+  assert.equal(result.gamepad, '')
+})
+
+test('formatAppData preserves a per-app DualSense override', () => {
+  const result = AppService.formatAppData({
+    name: 'Game',
+    gamepad: 'ds5',
+  })
+
+  assert.equal(result.gamepad, 'ds5')
+})
+
+test('formatAppData normalizes per-app RTX HDR settings', () => {
+  const result = AppService.formatAppData({
+    name: 'Game',
+    'rtx-hdr': {
+      mode: 'on',
+      contrast: 140,
+      saturation: -120,
+      'middle-gray': 70,
+      'peak-nits': 850,
+    },
+  })
+
+  assert.deepEqual(result['rtx-hdr'], {
+    mode: 'on',
+    contrast: 100,
+    saturation: -100,
+    'middle-gray': 70,
+    'peak-nits': 850,
+  })
 })

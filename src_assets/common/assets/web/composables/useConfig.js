@@ -60,6 +60,8 @@ const DEFAULT_TABS = [
     options: {
       audio_sink: '',
       virtual_sink: '',
+      microphone_redirect_backend: 'vb_cable',
+      stream_mic: true,
       install_steam_audio_drivers: 'enabled',
       output_name: '',
       hdr_luminance_analysis: 'auto',
@@ -123,6 +125,8 @@ const DEFAULT_TABS = [
       av1_mode: 0,
       capture: '',
       encoder: '',
+      rtx_hdr: 'off',
+      rtx_hdr_backend_path: '',
     },
   },
   {
@@ -149,6 +153,7 @@ const DEFAULT_TABS = [
           nvenc_latency_over_power: 'enabled',
           nvenc_opengl_vulkan_on_dxgi: 'enabled',
           nvenc_h264_cavlc: 'disabled',
+          nvenc_cuda_array_input: 'disabled',
         },
       },
       {

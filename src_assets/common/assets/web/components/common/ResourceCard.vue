@@ -7,15 +7,17 @@ import {
   HARMONY_CLIENT_URL,
   HOME_RESOURCE_GROUPS,
   LEGAL_RESOURCES,
+  resolveResourceHref,
   resolveResourceText,
 } from '../../config/resources.js'
 import { openExternalUrl } from '../../utils/helpers.js'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const showHarmonyModal = ref(false)
 
 const resourceTitle = (resource) => resolveResourceText(t, resource, 'title')
 const resourceDescription = (resource) => resolveResourceText(t, resource, 'description')
+const resourceHref = (resource) => resolveResourceHref(resource, locale.value)
 
 const handleResourceActivate = (resource, event) => {
   if (resource.action !== 'harmony') return
@@ -53,7 +55,7 @@ const confirmHarmonyLink = async () => {
           <div v-for="resource in group.items" :key="resource.id" class="resource-item">
             <ResourceLink
               compact
-              :href="resource.href"
+              :href="resourceHref(resource)"
               :target="resource.action ? '' : '_blank'"
               :action="resource.action === 'harmony'"
               :title="resourceTitle(resource)"

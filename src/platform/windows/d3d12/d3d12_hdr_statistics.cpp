@@ -4,6 +4,7 @@
  */
 #include "d3d12_hdr_statistics.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace platf::dxgi::d3d12 {
@@ -18,6 +19,11 @@ namespace platf::dxgi::d3d12 {
     summary.max_maxrgb = result.max_maxrgb;
     summary.avg_maxrgb =
       result.sum_maxrgb / static_cast<float>(result.pixel_count);
+    const float mean_pq = result.sum_maxrgb_pq / static_cast<float>(result.pixel_count);
+    summary.avg_maxrgb_pq =
+      (std::isfinite(mean_pq) && mean_pq >= -0.001f && mean_pq <= 1.001f) ?
+        std::clamp(mean_pq, 0.0f, 1.0f) :
+        0.0f;
 
     const auto target = [&](float percentile) {
       return static_cast<std::uint32_t>(

@@ -10,6 +10,7 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
 
+#include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/process.h"
 #include "src/utility.h"
@@ -97,7 +98,7 @@ namespace nvhttp::apps {
       auto args = request->parse_query_string();
       auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
 
-      std::ifstream in(app_image, std::ios::binary);
+      std::ifstream in(file_handler::path_from_utf8(app_image), std::ios::binary);
       if (!in.is_open()) {
         response->write(SimpleWeb::StatusCode::client_error_not_found, "App asset not found");
         return;

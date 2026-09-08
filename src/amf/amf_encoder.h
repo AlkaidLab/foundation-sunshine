@@ -73,6 +73,19 @@ namespace amf {
     set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) = 0;
 
     /**
+     * @brief Provide this frame's HDR luminance analysis for dynamic metadata.
+     *
+     * Called before encode_frame() for the frame the stats describe. AMF has no
+     * dynamic-metadata API, so the encoder serializes the payloads itself and
+     * splices them into the output bitstream; stats for a frame that is never
+     * submitted are simply superseded by the next call.
+     *
+     * @param stats Per-frame luminance analysis; an invalid one emits nothing.
+     */
+    virtual void
+    set_luminance_stats(const platf::hdr_frame_luminance_stats_t &stats) = 0;
+
+    /**
      * @brief Get the D3D11 input texture the encoder reads from.
      * @return Pointer to ID3D11Texture2D, or nullptr.
      */

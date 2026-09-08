@@ -31,7 +31,7 @@ namespace {
   }
 }  // namespace
 
-TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndPreservesSingletonFallback) {
+TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndRejectsCrossAddressClaim) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
 
@@ -50,9 +50,12 @@ TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndPreservesSingleton
   rtsp_stream::launch_session_manager_t singleton_manager;
   ASSERT_EQ(singleton_manager.register_session(make_session(3, "cert-c", "198.51.100.10"), 10s, now),
             rtsp_stream::launch_ticket_register_e::accepted);
-  auto fallback = singleton_manager.claim_plaintext("198.51.100.20", now);
-  ASSERT_TRUE(fallback);
-  EXPECT_EQ(fallback->id, 3U);
+  EXPECT_FALSE(singleton_manager.claim_plaintext({}, now));
+  EXPECT_FALSE(singleton_manager.claim_plaintext("198.51.100.20", now));
+
+  auto same_address = singleton_manager.claim_plaintext("198.51.100.10", now);
+  ASSERT_TRUE(same_address);
+  EXPECT_EQ(same_address->id, 3U);
 }
 
 TEST(LaunchSessionManager, ReplacesPendingRetryButDoesNotReplaceClaimedHandshake) {
@@ -133,27 +136,6 @@ TEST(LaunchSessionManager, PreservesClaimedTicketsPastPendingExpiry) {
   EXPECT_TRUE(manager.release(30, 1s, now + 2s));
   EXPECT_EQ(manager.prune(now + 4s), 1U);
   EXPECT_EQ(manager.size(now + 4s), 0U);
-}
-
-TEST(LaunchSessionManager, ErasesOnlyTicketsOwnedByAuthenticatedClient) {
-  rtsp_stream::launch_session_manager_t manager;
-  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
-
-  ASSERT_EQ(manager.register_session(make_session(40, "cert-a", "192.0.2.40"), 10s, now),
-            rtsp_stream::launch_ticket_register_e::accepted);
-  ASSERT_EQ(manager.register_session(make_session(41, "cert-b", "192.0.2.41"), 10s, now),
-            rtsp_stream::launch_ticket_register_e::accepted);
-  ASSERT_EQ(manager.register_session(make_session(42, {}, "192.0.2.42"), 10s, now),
-            rtsp_stream::launch_ticket_register_e::accepted);
-
-  EXPECT_EQ(manager.erase_client_sessions({}), 0U);
-  EXPECT_EQ(manager.erase_client_sessions("cert-a"), 1U);
-  EXPECT_EQ(manager.size(now), 2U);
-
-  EXPECT_FALSE(manager.claim_plaintext("192.0.2.40", now));
-  auto other_client = manager.claim_plaintext("192.0.2.41", now);
-  ASSERT_TRUE(other_client);
-  EXPECT_EQ(other_client->id, 41U);
 }
 
 TEST(LaunchSessionManager, SupportsOverlappingRtspConnectionsForOneLaunch) {

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <d3d11.h>
@@ -24,6 +25,7 @@
 #include <AMF/core/CurrentTime.h>
 
 #include "src/platform/common.h"
+#include "src/platform/windows/frame_contract.h"
 #include "src/utility.h"
 #include "src/video.h"
 #include "d3d12/d3d12_device.h"
@@ -214,6 +216,13 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+    capture_contract_t capture_contract;
+    pre_encode_filter_e pre_encode_filter = pre_encode_filter_e::none;
+    pre_encode_filter_config_t pre_encode_filter_config;
+    std::filesystem::path pre_encode_filter_backend_path;
+
+    captured_frame_desc_t
+    describe_captured_frame(DXGI_FORMAT format, bool borrowed) const;
 
     /**
      * @brief Indicates whether the display's output colorspace uses linear gamma.
@@ -289,6 +298,13 @@ namespace platf::dxgi {
     virtual bool
     get_hdr_metadata(SS_HDR_METADATA &metadata) override;
 
+    /**
+     * @brief Current Windows SDR reference white for this DXGI output.
+     *        The DisplayConfig query is cached for one second.
+     */
+    std::optional<float>
+    sdr_white_nits() const;
+
     const char *
     dxgi_format_to_string(DXGI_FORMAT format);
     const char *
@@ -297,12 +313,21 @@ namespace platf::dxgi {
     get_supported_capture_formats() = 0;
 
   private:
+    std::wstring display_device_name;
+
     // Cached HDR metadata for change detection
     std::optional<SS_HDR_METADATA> cached_hdr_metadata;
     std::chrono::steady_clock::time_point last_hdr_check_time;
     static constexpr std::chrono::milliseconds hdr_check_interval { 1000 };  // Check every 1 second
 
+    mutable std::optional<float> cached_sdr_white_nits;
+    mutable std::chrono::steady_clock::time_point last_sdr_white_check_time;
+    static constexpr std::chrono::milliseconds sdr_white_check_interval { 1000 };
+
   protected:
+    std::uint64_t capture_adapter_luid = 0;
+    std::uint64_t capture_source_generation = 0;
+
     int
     get_pixel_pitch() {
       return (capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT) ? 8 : 4;
@@ -354,6 +379,12 @@ namespace platf::dxgi {
     bool
     is_codec_supported(std::string_view name, const ::video::config_t &config) override;
 
+    // Only the D3D11 VRAM capture path constructs the pre-encode filter.
+    bool
+    supports_pre_encode_filter() override {
+      return true;
+    }
+
     std::unique_ptr<avcodec_encode_device_t>
     make_avcodec_encode_device(pix_fmt_e pix_fmt) override;
 
@@ -385,6 +416,14 @@ namespace platf::dxgi {
     void
     report_video_backend_selection(std::string_view encoder_backend) override;
 
+    /**
+     * @brief Current captured SDR white level in nits. Prefer producer metadata
+     *        when VDD supplies it, otherwise query the selected Windows output.
+     *        The legacy 300-nit value is used only if neither source is available.
+     */
+    std::optional<float>
+    capture_sdr_white_nits() const;
+
     std::atomic<uint32_t> next_image_id;
     std::optional<video_backend::selection_t> video_backend_selection;
     std::unique_ptr<d3d12::device_t> d3d12_video_device;
@@ -411,7 +450,11 @@ namespace platf::dxgi {
 
     gpu_cursor_t cursor_alpha;
     gpu_cursor_t cursor_xor;
-    float cursor_white_multiplier_value = 300.0f / 80.0f;
+    // Written from the capture/cursor thread and used by cursor rendering.
+    std::atomic<float> cursor_white_multiplier_value { 300.0f / 80.0f };
+    // Producer-reported capture white is independent of cursor rendering. Keep
+    // it separate so a cursor constant-buffer failure cannot corrupt encoding.
+    std::atomic<float> producer_sdr_white_nits { 0.0f };
     bool cursor_white_normalization_enabled = false;
     bool cursor_pipeline_ready = false;
 

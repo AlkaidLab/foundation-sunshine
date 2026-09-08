@@ -17,16 +17,17 @@ namespace platf::dxgi::d3d12 {
   using Microsoft::WRL::ComPtr;
 
   namespace {
-    constexpr std::size_t descriptors_per_slot = 6;
+    constexpr std::size_t descriptors_per_slot = 8;
     constexpr std::size_t constant_buffer_alignment = 256;
 
     struct group_result_t {
       float min_maxrgb;
       float max_maxrgb;
       float sum_maxrgb;
+      float sum_maxrgb_pq;
       std::uint32_t pixel_count;
     };
-    static_assert(sizeof(group_result_t) == 16);
+    static_assert(sizeof(group_result_t) == 20);
 
     struct analysis_params_t {
       std::uint32_t analysis_width;
@@ -88,6 +89,9 @@ namespace platf::dxgi::d3d12 {
       ComPtr<ID3D12Resource> snapshot;
       ComPtr<ID3D11Texture2D> d3d11_snapshot;
       ComPtr<ID3D11UnorderedAccessView> d3d11_snapshot_uav;
+      ComPtr<ID3D12Resource> pq_snapshot;
+      ComPtr<ID3D11Texture2D> d3d11_pq_snapshot;
+      ComPtr<ID3D11UnorderedAccessView> d3d11_pq_snapshot_uav;
       ComPtr<ID3D12Resource> group_results;
       ComPtr<ID3D12Resource> histogram;
       ComPtr<ID3D12Resource> final_result;
@@ -102,10 +106,14 @@ namespace platf::dxgi::d3d12 {
     device_t *foundation = nullptr;
     ComPtr<ID3D11DeviceContext4> d3d11_context4;
     ComPtr<ID3D11Fence> d3d11_fence;
+    // Each fence has one signaling queue. A later D3D11 signal must never
+    // make an earlier D3D12 result appear complete before compute finishes.
+    ComPtr<ID3D12Fence> capture_fence;
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pass1_pipeline;
     ComPtr<ID3D12PipelineState> pass2_pipeline;
     ComPtr<ID3D12DescriptorHeap> descriptor_heap;
+    ComPtr<ID3D12DescriptorHeap> clear_descriptor_heap;
     std::array<slot_t, resource_ring_t::slot_count> slots;
     std::uint32_t analysis_width = 0;
     std::uint32_t analysis_height = 0;
@@ -139,7 +147,7 @@ namespace platf::dxgi::d3d12 {
 
       D3D12_DESCRIPTOR_RANGE ranges[2] {};
       ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-      ranges[0].NumDescriptors = 1;
+      ranges[0].NumDescriptors = 2;
       ranges[0].BaseShaderRegister = 0;
       ranges[0].OffsetInDescriptorsFromTableStart =
         D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -149,7 +157,7 @@ namespace platf::dxgi::d3d12 {
       ranges[1].OffsetInDescriptorsFromTableStart =
         D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-      D3D12_ROOT_PARAMETER parameters[3] {};
+      D3D12_ROOT_PARAMETER parameters[4] {};
       parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
       parameters[0].Descriptor.ShaderRegister = 0;
       parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -163,9 +171,12 @@ namespace platf::dxgi::d3d12 {
       parameters[2].DescriptorTable.NumDescriptorRanges = 1;
       parameters[2].DescriptorTable.pDescriptorRanges = &ranges[1];
       parameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      parameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+      parameters[3].Descriptor.ShaderRegister = 3;
+      parameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
       D3D12_ROOT_SIGNATURE_DESC signature_desc {};
-      signature_desc.NumParameters = 3;
+      signature_desc.NumParameters = 4;
       signature_desc.pParameters = parameters;
       ComPtr<ID3DBlob> signature;
       ComPtr<ID3DBlob> errors;
@@ -213,9 +224,14 @@ namespace platf::dxgi::d3d12 {
     HRESULT
     create_shared_fence_view(
       ID3D11Device *d3d11_device) {
+      auto status = foundation->device()->CreateFence(
+        0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&capture_fence));
+      if (FAILED(status)) {
+        return fail(status, "hdr_capture_fence_create");
+      }
       HANDLE shared_handle = nullptr;
-      auto status = foundation->device()->CreateSharedHandle(
-        foundation->shared_fence(),
+      status = foundation->device()->CreateSharedHandle(
+        capture_fence.Get(),
         nullptr,
         GENERIC_ALL,
         nullptr,
@@ -244,68 +260,82 @@ namespace platf::dxgi::d3d12 {
       auto &slot = slots[slot_index];
       D3D12_HEAP_PROPERTIES default_heap {};
       default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-      D3D12_RESOURCE_DESC snapshot_desc {};
-      snapshot_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-      snapshot_desc.Width = analysis_width;
-      snapshot_desc.Height = analysis_height;
-      snapshot_desc.DepthOrArraySize = 1;
-      snapshot_desc.MipLevels = 1;
-      snapshot_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-      snapshot_desc.SampleDesc.Count = 1;
-      snapshot_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-      // ALLOW_UNORDERED_ACCESS so the D3D11 conversion shader can write the
-      // cell-statistics snapshot directly into this shared resource.
-      // ALLOW_SIMULTANEOUS_ACCESS keeps it usable from both devices while it
-      // stays in the COMMON state; the shared fence orders the two accesses.
-      snapshot_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(
-        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
-        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS |
-        D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
-      auto status = foundation->device()->CreateCommittedResource(
-        &default_heap,
-        D3D12_HEAP_FLAG_SHARED,
-        &snapshot_desc,
-        D3D12_RESOURCE_STATE_COMMON,
-        nullptr,
-        IID_PPV_ARGS(&slot.snapshot));
-      if (FAILED(status)) {
-        return fail(status, "hdr_snapshot_create");
-      }
+      const auto create_snapshot = [&](DXGI_FORMAT format,
+                                     ComPtr<ID3D12Resource> &resource,
+                                     ComPtr<ID3D11Texture2D> &d3d11_texture,
+                                     ComPtr<ID3D11UnorderedAccessView> &d3d11_uav) -> HRESULT {
+        D3D12_RESOURCE_DESC snapshot_desc {};
+        snapshot_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        snapshot_desc.Width = analysis_width;
+        snapshot_desc.Height = analysis_height;
+        snapshot_desc.DepthOrArraySize = 1;
+        snapshot_desc.MipLevels = 1;
+        snapshot_desc.Format = format;
+        snapshot_desc.SampleDesc.Count = 1;
+        snapshot_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        // ALLOW_UNORDERED_ACCESS so the D3D11 conversion shader can write the
+        // cell-statistics snapshot directly into this shared resource.
+        // ALLOW_SIMULTANEOUS_ACCESS keeps it usable from both devices while it
+        // stays in the COMMON state; the shared fence orders the two accesses.
+        snapshot_desc.Flags = static_cast<D3D12_RESOURCE_FLAGS>(
+          D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+          D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS |
+          D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
+        auto status = foundation->device()->CreateCommittedResource(
+          &default_heap,
+          D3D12_HEAP_FLAG_SHARED,
+          &snapshot_desc,
+          D3D12_RESOURCE_STATE_COMMON,
+          nullptr,
+          IID_PPV_ARGS(&resource));
+        if (FAILED(status)) {
+          return fail(status, "hdr_snapshot_create");
+        }
 
-      HANDLE shared_handle = nullptr;
-      status = foundation->device()->CreateSharedHandle(
-        slot.snapshot.Get(),
-        nullptr,
-        GENERIC_ALL,
-        nullptr,
-        &shared_handle);
-      ComPtr<ID3D11Device1> device1;
+        HANDLE shared_handle = nullptr;
+        status = foundation->device()->CreateSharedHandle(
+          resource.Get(),
+          nullptr,
+          GENERIC_ALL,
+          nullptr,
+          &shared_handle);
+        ComPtr<ID3D11Device1> device1;
+        if (SUCCEEDED(status)) {
+          status = d3d11_device->QueryInterface(IID_PPV_ARGS(&device1));
+        }
+        if (SUCCEEDED(status)) {
+          status = device1->OpenSharedResource1(
+            shared_handle,
+            IID_PPV_ARGS(&d3d11_texture));
+        }
+        if (shared_handle) {
+          CloseHandle(shared_handle);
+        }
+        if (FAILED(status)) {
+          return fail(status, "hdr_snapshot_open_d3d11");
+        }
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC snapshot_uav_desc {};
+        snapshot_uav_desc.Format = format;
+        snapshot_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+        status = d3d11_device->CreateUnorderedAccessView(
+          d3d11_texture.Get(),
+          &snapshot_uav_desc,
+          &d3d11_uav);
+        if (FAILED(status)) {
+          return fail(status, "hdr_snapshot_uav_create");
+        }
+        return S_OK;
+      };
+      auto status = create_snapshot(DXGI_FORMAT_R16G16B16A16_FLOAT,
+        slot.snapshot, slot.d3d11_snapshot, slot.d3d11_snapshot_uav);
       if (SUCCEEDED(status)) {
-        status = d3d11_device->QueryInterface(IID_PPV_ARGS(&device1));
-      }
-      if (SUCCEEDED(status)) {
-        status = device1->OpenSharedResource1(
-          shared_handle,
-          IID_PPV_ARGS(&slot.d3d11_snapshot));
-      }
-      if (shared_handle) {
-        CloseHandle(shared_handle);
+        status = create_snapshot(DXGI_FORMAT_R16_FLOAT,
+          slot.pq_snapshot, slot.d3d11_pq_snapshot, slot.d3d11_pq_snapshot_uav);
       }
       if (FAILED(status)) {
-        return fail(status, "hdr_snapshot_open_d3d11");
+        return status;
       }
-
-      D3D11_UNORDERED_ACCESS_VIEW_DESC snapshot_uav_desc {};
-      snapshot_uav_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-      snapshot_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-      status = d3d11_device->CreateUnorderedAccessView(
-        slot.d3d11_snapshot.Get(),
-        &snapshot_uav_desc,
-        &slot.d3d11_snapshot_uav);
-      if (FAILED(status)) {
-        return fail(status, "hdr_snapshot_uav_create");
-      }
-
       auto group_desc = buffer_desc(
         static_cast<std::uint64_t>(num_groups) * sizeof(group_result_t),
         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
@@ -364,7 +394,7 @@ namespace platf::dxgi::d3d12 {
 
       D3D12_HEAP_PROPERTIES upload_heap {};
       upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
-      auto constant_desc = buffer_desc(constant_buffer_alignment * 2);
+      auto constant_desc = buffer_desc(constant_buffer_alignment * 3);
       status = foundation->device()->CreateCommittedResource(
         &upload_heap,
         D3D12_HEAP_FLAG_NONE,
@@ -391,6 +421,10 @@ namespace platf::dxgi::d3d12 {
         {},
       };
       const reduce_params_t reduce_params { num_groups, {} };
+      // Snapshot pixels already include the pre-encode transform. The common
+      // shader still declares b3 for its full-frame branch, so bind a disabled
+      // transform rather than leaving a root argument uninitialized.
+      std::memset(mapped, 0, constant_buffer_alignment * 3);
       std::memcpy(mapped, &analysis_params, sizeof(analysis_params));
       std::memcpy(
         static_cast<std::byte *>(mapped) + constant_buffer_alignment,
@@ -427,6 +461,10 @@ namespace platf::dxgi::d3d12 {
         slot.snapshot.Get(),
         &snapshot_srv,
         cpu_handle(descriptor_heap.Get(), descriptor_increment, base));
+      snapshot_srv.Format = DXGI_FORMAT_R16_FLOAT;
+      foundation->device()->CreateShaderResourceView(
+        slot.pq_snapshot.Get(), &snapshot_srv,
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 1));
 
       D3D12_UNORDERED_ACCESS_VIEW_DESC group_uav {};
       group_uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
@@ -437,17 +475,22 @@ namespace platf::dxgi::d3d12 {
         slot.group_results.Get(),
         nullptr,
         &group_uav,
-        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 1));
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 2));
 
       D3D12_UNORDERED_ACCESS_VIEW_DESC histogram_uav {};
       histogram_uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
       histogram_uav.Format = DXGI_FORMAT_R32_UINT;
       histogram_uav.Buffer.NumElements = hdr_histogram_bins;
+      // ClearUnorderedAccessViewUint requires a CPU-readable descriptor in a
+      // non-shader-visible heap, alongside the matching GPU-visible view.
+      foundation->device()->CreateUnorderedAccessView(
+        slot.histogram.Get(), nullptr, &histogram_uav,
+        cpu_handle(clear_descriptor_heap.Get(), descriptor_increment, slot_index));
       foundation->device()->CreateUnorderedAccessView(
         slot.histogram.Get(),
         nullptr,
         &histogram_uav,
-        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 2));
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 3));
 
       D3D12_SHADER_RESOURCE_VIEW_DESC group_srv {};
       group_srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -459,7 +502,11 @@ namespace platf::dxgi::d3d12 {
       foundation->device()->CreateShaderResourceView(
         slot.group_results.Get(),
         &group_srv,
-        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 3));
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 4));
+      // Pass 2 only reads t0, but its table shares the two-SRV root layout.
+      foundation->device()->CreateShaderResourceView(
+        nullptr, &snapshot_srv,
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 5));
 
       D3D12_UNORDERED_ACCESS_VIEW_DESC final_uav {};
       final_uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
@@ -470,12 +517,12 @@ namespace platf::dxgi::d3d12 {
         slot.final_result.Get(),
         nullptr,
         &final_uav,
-        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 4));
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 6));
       foundation->device()->CreateUnorderedAccessView(
         slot.histogram.Get(),
         nullptr,
         &histogram_uav,
-        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 5));
+        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 7));
       return S_OK;
     }
 
@@ -506,11 +553,14 @@ namespace platf::dxgi::d3d12 {
       snapshot_to_srv.Transition.StateAfter =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
       list->ResourceBarrier(1, &snapshot_to_srv);
+      auto pq_to_srv = snapshot_to_srv;
+      pq_to_srv.Transition.pResource = slot.pq_snapshot.Get();
+      list->ResourceBarrier(1, &pq_to_srv);
 
       const UINT clear_values[4] {};
       list->ClearUnorderedAccessViewUint(
-        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 2),
-        cpu_handle(descriptor_heap.Get(), descriptor_increment, base + 2),
+        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 3),
+        cpu_handle(clear_descriptor_heap.Get(), descriptor_increment, slot_index),
         slot.histogram.Get(),
         clear_values,
         0,
@@ -526,12 +576,14 @@ namespace platf::dxgi::d3d12 {
       list->SetComputeRootConstantBufferView(
         0,
         slot.constants->GetGPUVirtualAddress());
+      list->SetComputeRootConstantBufferView(
+        3, slot.constants->GetGPUVirtualAddress() + constant_buffer_alignment * 2);
       list->SetComputeRootDescriptorTable(
         1,
         gpu_handle(descriptor_heap.Get(), descriptor_increment, base));
       list->SetComputeRootDescriptorTable(
         2,
-        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 1));
+        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 2));
       list->Dispatch(
         (analysis_width + 15) / 16,
         (analysis_height + 15) / 16,
@@ -557,10 +609,10 @@ namespace platf::dxgi::d3d12 {
           constant_buffer_alignment);
       list->SetComputeRootDescriptorTable(
         1,
-        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 3));
+        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 4));
       list->SetComputeRootDescriptorTable(
         2,
-        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 4));
+        gpu_handle(descriptor_heap.Get(), descriptor_increment, base + 6));
       list->Dispatch(1, 1, 1);
 
       D3D12_RESOURCE_BARRIER final_barrier {};
@@ -579,7 +631,7 @@ namespace platf::dxgi::d3d12 {
         0,
         sizeof(hdr_final_result_t));
 
-      D3D12_RESOURCE_BARRIER restore[3] {};
+      D3D12_RESOURCE_BARRIER restore[4] {};
       restore[0] = final_barrier;
       std::swap(
         restore[0].Transition.StateBefore,
@@ -592,7 +644,9 @@ namespace platf::dxgi::d3d12 {
       std::swap(
         restore[2].Transition.StateBefore,
         restore[2].Transition.StateAfter);
-      list->ResourceBarrier(3, restore);
+      restore[3] = pq_to_srv;
+      std::swap(restore[3].Transition.StateBefore, restore[3].Transition.StateAfter);
+      list->ResourceBarrier(4, restore);
       status = list->Close();
       return FAILED(status) ?
                fail(status, "hdr_command_list_close") :
@@ -663,6 +717,13 @@ namespace platf::dxgi::d3d12 {
         impl_->descriptor_increment =
           foundation.device()->GetDescriptorHandleIncrementSize(
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        heap_desc.NumDescriptors = resource_ring_t::slot_count;
+        heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        status = foundation.device()->CreateDescriptorHeap(
+          &heap_desc, IID_PPV_ARGS(&impl_->clear_descriptor_heap));
+        if (FAILED(status)) {
+          impl_->fail(status, "hdr_clear_descriptor_heap_create");
+        }
       }
     }
     for (std::size_t index = 0;
@@ -717,6 +778,7 @@ namespace platf::dxgi::d3d12 {
       slot.generation,
       slot.d3d11_snapshot.Get(),
       slot.d3d11_snapshot_uav.Get(),
+      slot.d3d11_pq_snapshot_uav.Get(),
     };
   }
 
@@ -757,7 +819,7 @@ namespace platf::dxgi::d3d12 {
     }
     if (SUCCEEDED(status)) {
       status = impl_->foundation->compute_queue()->Wait(
-        impl_->foundation->shared_fence(),
+        impl_->capture_fence.Get(),
         capture_ready);
     }
     if (SUCCEEDED(status)) {
@@ -783,9 +845,6 @@ namespace platf::dxgi::d3d12 {
       status = E_UNEXPECTED;
     }
     if (FAILED(status)) {
-      (void) impl_->foundation->compute_queue()->Wait(
-        impl_->foundation->shared_fence(),
-        capture_ready);
       (void) impl_->foundation->wait_idle();
       impl_->fail(status, "hdr_submit");
       return false;

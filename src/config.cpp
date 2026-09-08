@@ -48,7 +48,7 @@ using namespace std::literals;
 #define PRIVATE_KEY_FILE CA_DIR "/cakey.pem"
 #define CERTIFICATE_FILE CA_DIR "/cacert.pem"
 
-#define APPS_JSON_PATH platf::appdata().string() + "/apps.json"
+#define APPS_JSON_PATH file_handler::path_to_utf8(platf::appdata() / "apps.json")
 namespace config {
 
   namespace {
@@ -479,11 +479,14 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
+    "off"s,  // rtx_hdr: off | per_app
+    {},  // rtx_hdr_backend_path (absolute path to the versioned backend DLL)
   };
 
   audio_t audio {
     {},  // audio_sink
     {},  // virtual_sink
+    "vb_cable"s,  // microphone_redirect_backend
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
@@ -578,12 +581,12 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
-    platf::appdata().string() + "/sunshine.conf",  // config file
+    file_handler::path_to_utf8(platf::appdata() / "sunshine.conf"),  // config file
     {},  // cmd args
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
-    platf::appdata().string() + "/sunshine.log",  // log file
+    file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
@@ -606,12 +609,39 @@ namespace config {
     return space_tab(ch) || endline(ch);
   }
 
+  template <class It>
+  It
+  find_comment(It begin, It end) {
+    bool quoted = false;
+    bool escaped = false;
+    for (auto pos = begin; pos != end; ++pos) {
+      if (quoted) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (*pos == '\\') {
+          escaped = true;
+        }
+        else if (*pos == '"') {
+          quoted = false;
+        }
+      }
+      else if (*pos == '"') {
+        quoted = true;
+      }
+      else if (*pos == '#') {
+        return pos;
+      }
+    }
+    return end;
+  }
+
   std::string
   to_string(const char *begin, const char *end) {
     std::string result;
 
     KITTY_WHILE_LOOP(auto pos = begin, pos != end, {
-      auto comment = std::find(pos, end, '#');
+      auto comment = find_comment(pos, end);
       auto endl = std::find_if(comment, end, endline);
 
       result.append(pos, comment);
@@ -626,11 +656,34 @@ namespace config {
   It
   skip_list(It skipper, It end) {
     int stack = 1;
+    bool quoted = false;
+    bool escaped = false;
+    bool comment = false;
     while (skipper != end && stack) {
-      if (*skipper == '[') {
+      if (comment) {
+        comment = !endline(*skipper);
+      }
+      else if (quoted) {
+        if (escaped) {
+          escaped = false;
+        }
+        else if (*skipper == '\\') {
+          escaped = true;
+        }
+        else if (*skipper == '"') {
+          quoted = false;
+        }
+      }
+      else if (*skipper == '"') {
+        quoted = true;
+      }
+      else if (*skipper == '#') {
+        comment = true;
+      }
+      else if (*skipper == '[') {
         ++stack;
       }
-      if (*skipper == ']') {
+      else if (*skipper == ']') {
         --stack;
       }
 
@@ -646,7 +699,7 @@ namespace config {
   parse_option(std::string_view::const_iterator begin, std::string_view::const_iterator end) {
     begin = std::find_if_not(begin, end, whitespace);
     auto endl = std::find_if(begin, end, endline);
-    auto endc = std::find(begin, endl, '#');
+    auto endc = find_comment(begin, endl);
     endc = std::find_if(std::make_reverse_iterator(endc), std::make_reverse_iterator(begin), std::not_fn(whitespace)).base();
 
     auto eq = std::find(begin, endc, '=');
@@ -750,7 +803,7 @@ namespace config {
     string_f(vars, name, temp);
 
     if (!temp.empty()) {
-      input = temp;
+      input = file_handler::path_from_utf8(temp);
     }
 
     if (input.is_relative()) {
@@ -768,11 +821,11 @@ namespace config {
 
   void
   path_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input) {
-    fs::path temp = input;
+    fs::path temp = file_handler::path_from_utf8(input);
 
     path_f(vars, name, temp);
 
-    input = temp.string();
+    input = file_handler::path_to_utf8(temp);
   }
 
   void
@@ -1168,6 +1221,7 @@ namespace config {
     generic_f(vars, "nvenc_temporal_filter", video.nv.temporal_filter_level, nv::temporal_filter_level_from_view);
     generic_f(vars, "nvenc_rate_control", video.nv.rate_control_mode, nv::rate_control_mode_from_view);
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
+    bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
@@ -1358,6 +1412,19 @@ namespace config {
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
+    string_f(vars, "rtx_hdr", video.rtx_hdr);
+    if (video.rtx_hdr == "true" || video.rtx_hdr == "on" || video.rtx_hdr == "enabled" || video.rtx_hdr == "1") {
+      video.rtx_hdr = "per_app";
+    }
+    if (video.rtx_hdr.empty()) {
+      video.rtx_hdr = "off";
+    }
+    if (video.rtx_hdr != "off" && video.rtx_hdr != "per_app") {
+      BOOST_LOG(warning) << "Invalid rtx_hdr mode: ["sv << video.rtx_hdr
+                         << "], valid options are: off, per_app. Defaulting to 'off'"sv;
+      video.rtx_hdr = "off";
+    }
+    string_f(vars, "rtx_hdr_backend_path", video.rtx_hdr_backend_path);
 
     // Whether to composite the host mouse cursor into the captured frames.
     // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
@@ -1427,11 +1494,11 @@ namespace config {
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
     string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
     if (!nvhttp.client_fingerprint_rules_certificate.empty()) {
-      fs::path certificate_path = nvhttp.client_fingerprint_rules_certificate;
+      auto certificate_path = file_handler::path_from_utf8(nvhttp.client_fingerprint_rules_certificate);
       if (certificate_path.is_relative()) {
         certificate_path = platf::appdata() / certificate_path;
       }
-      nvhttp.client_fingerprint_rules_certificate = certificate_path.string();
+      nvhttp.client_fingerprint_rules_certificate = file_handler::path_to_utf8(certificate_path);
     }
     int_between_f(
       vars,
@@ -1443,6 +1510,12 @@ namespace config {
 
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
+    string_restricted_f(
+      vars,
+      "microphone_redirect_backend",
+      audio.microphone_redirect_backend,
+      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv }
+    );
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
@@ -1461,10 +1534,12 @@ namespace config {
     path_f(vars, "file_apps", stream.file_apps);
 #ifndef __ANDROID__
     // TODO: Android can possibly support this
-    if (!fs::exists(stream.file_apps.c_str())) {
-      fs::copy_file(SUNSHINE_ASSETS_DIR "/apps.json", stream.file_apps);
+    const auto file_apps_path = file_handler::path_from_utf8(stream.file_apps);
+    if (!fs::exists(file_apps_path)) {
+      const auto bundled_apps_path = file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR "/apps.json");
+      fs::copy_file(bundled_apps_path, file_apps_path);
       fs::permissions(
-        stream.file_apps,
+        file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,
         fs::perm_options::add
       );
@@ -1704,11 +1779,12 @@ namespace config {
     bool config_loaded = false;
     try {
       // Create appdata folder if it does not exist
-      file_handler::make_directory(platf::appdata().string());
+      file_handler::make_directory(file_handler::path_to_utf8(platf::appdata()));
 
       // Create empty config file if it does not exist
-      if (!fs::exists(sunshine.config_file)) {
-        std::ofstream { sunshine.config_file };
+      const auto config_path = file_handler::path_from_utf8(sunshine.config_file);
+      if (!fs::exists(config_path)) {
+        std::ofstream { config_path };
       }
 
       // Read config file
@@ -1845,7 +1921,10 @@ namespace config {
         }
       }
 
-      file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+      if (file_handler::write_file(sunshine.config_file.c_str(), configStream.str()) != 0) {
+        BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
+        return false;
+      }
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -1923,17 +2002,90 @@ namespace config {
         for (const auto &[key, value] : resultMap) {
           configStream << key << " = " << value << std::endl;
         }
-        file_handler::write_file(sunshine.config_file.c_str(), configStream.str());
+        if (file_handler::write_file(sunshine.config_file.c_str(), configStream.str()) != 0) {
+          BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
+          return false;
+        }
         BOOST_LOG(info) << "Config saved successfully";
-        return true;
       }
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
-        return false;
       }
+
+      return true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save config: " << e.what();
+      return false;
+    }
+  }
+
+  std::string
+  get_clients_config() {
+    std::lock_guard lock { config_file_mutex };
+    return nvhttp.clients;
+  }
+
+  bool
+  get_client_touch_keyboard_enabled(const std::string &uuid) {
+    if (uuid.empty()) {
+      return false;
+    }
+    try {
+      const auto clients = nlohmann::json::parse(get_clients_config());
+      if (!clients.is_array()) {
+        return false;
+      }
+      for (const auto &entry : clients) {
+        if (!entry.is_object() || !entry.contains("uuid")) {
+          continue;
+        }
+        if (entry["uuid"] != uuid) {
+          continue;
+        }
+        return entry.contains("touch") &&
+               entry["touch"].is_object() &&
+               entry["touch"].value("enabled", false) == true;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read touch profile for client: " << e.what();
+    }
+    return false;
+  }
+
+  bool
+  save_clients_config(const std::string &clients) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto normalized_clients = nlohmann::json::parse(clients).dump();
+      std::map<std::string, std::string> config_map;
+      const auto file_content = file_handler::read_file(sunshine.config_file.c_str());
+      const auto existing_config = parse_config(file_content);
+      config_map.insert(existing_config.begin(), existing_config.end());
+
+      const auto existing = config_map.find("clients");
+      if (existing == config_map.end() || existing->second != normalized_clients) {
+        config_map["clients"] = normalized_clients;
+
+        std::stringstream config_stream;
+        for (const auto &[key, value] : config_map) {
+          if (!value.empty() && value != "null") {
+            config_stream << key << " = " << value << std::endl;
+          }
+        }
+
+        if (file_handler::write_file(sunshine.config_file.c_str(), config_stream.str()) != 0) {
+          BOOST_LOG(warning) << "Failed to write client settings to config file: " << sunshine.config_file;
+          return false;
+        }
+      }
+
+      nvhttp.clients = normalized_clients;
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
       return false;
     }
   }

@@ -1,6 +1,7 @@
 import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
 import { deepClone, formatError } from '../utils/helpers.js';
+import { normalizePerAppGamepadMode } from '../utils/gamepadModes.js';
 
 const cloneData = deepClone;
 const normalizeAppName = (name) => String(name || '').trim().toLowerCase();
@@ -207,10 +208,18 @@ export class AppService {
       elevated: Boolean(app.elevated),
       'auto-detach': Boolean(app['auto-detach']),
       'wait-all': Boolean(app['wait-all']),
+      gamepad: normalizePerAppGamepadMode(app.gamepad),
       'exit-timeout': parseInt(app['exit-timeout']) || 5,
       'prep-cmd': filteredPrepCmd,
       'menu-cmd': Array.isArray(app['menu-cmd']) ? app['menu-cmd'] : [],
       detached: Array.isArray(app.detached) ? app.detached : [],
+      'rtx-hdr': {
+        mode: ['inherit', 'on', 'off'].includes(app['rtx-hdr']?.mode) ? app['rtx-hdr'].mode : 'inherit',
+        contrast: Math.max(-100, Math.min(100, Number(app['rtx-hdr']?.contrast) || 0)),
+        saturation: Math.max(-100, Math.min(100, Number(app['rtx-hdr']?.saturation) || 0)),
+        'middle-gray': Math.max(10, Math.min(100, Number(app['rtx-hdr']?.['middle-gray']) || 50)),
+        'peak-nits': Math.max(400, Math.min(1000, Number(app['rtx-hdr']?.['peak-nits']) || 1000)),
+      },
       'image-path': app['image-path']?.trim() || '',
       'working-dir': app['working-dir']?.trim() || ''
     };

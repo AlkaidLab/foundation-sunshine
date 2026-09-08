@@ -106,6 +106,7 @@ namespace nvenc {
       NV_ENC_BUFFER_FORMAT buffer_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
       uint32_t ref_frames_in_dpb = 0;
       bool rfi = false;
+      bool cuda_array_input = false;  ///< Mirrors `nvenc_config::cuda_array_input` for `create_and_register_input_buffer()`.
     } encoder_params;
 
     std::string last_nvenc_error_string;
@@ -139,21 +140,7 @@ namespace nvenc {
 
     // Per-frame HDR luminance stats for dynamic metadata
     platf::hdr_frame_luminance_stats_t luminance_stats;
-    video::hdr_metadata::formats_t dynamic_hdr_formats;
-    video::hdr_metadata::vivid_temporal_filter_t vivid_filter;
-
-    /**
-     * @brief Serialize HDR10+ dynamic metadata into ITU-T T.35 SEI payload.
-     *        Format follows ST 2094-40 (Samsung HDR10+).
-     * @param stats Per-frame luminance statistics.
-     * @param max_display_luminance Display peak luminance in nits.
-     * @param[out] payload Output buffer for serialized payload.
-     * @return Size of serialized payload in bytes, or 0 on failure.
-     */
-    size_t
-    serialize_hdr10plus_sei(const platf::hdr_frame_luminance_stats_t &stats,
-      uint16_t max_display_luminance,
-      std::vector<uint8_t> &payload);
+    video::hdr_metadata::dynamic_metadata_builder_t dynamic_metadata;
 
   };
 }

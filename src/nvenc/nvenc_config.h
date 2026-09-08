@@ -25,8 +25,9 @@ namespace nvenc {
       uint16_t y;  // Normalized to 50,000
     } whitePoint;
 
-    uint16_t maxDisplayLuminance;       // Nits
+    uint16_t maxDisplayLuminance;       // Mastering peak in nits
     uint16_t minDisplayLuminance;       // 1/10000th of a nit
+    uint16_t targetDisplayLuminance;    // Client target peak for dynamic metadata
 
     // Content-specific values
     uint16_t maxContentLightLevel;      // Nits
@@ -124,6 +125,12 @@ namespace nvenc {
     // Target quality for VBR mode (0-51 for H.264/HEVC, 0-63 for AV1, 0=auto). Lower value = higher quality
     // Only used when rate_control_mode is VBR
     int target_quality = 0;  // 0 = automatic
+
+    // Feed 10-bit 4:4:4 to NVENC through a block-linear CUDA array instead of the
+    // pitch-linear device pointer. Off by default: the array path has produced
+    // ghosted/garbled output and stalls on some drivers, and the device-pointer
+    // path is the known-good fallback.
+    bool cuda_array_input = false;
   };
 
 }  // namespace nvenc

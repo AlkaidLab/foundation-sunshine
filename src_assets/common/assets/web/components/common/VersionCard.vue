@@ -1,10 +1,17 @@
 <template>
-  <div id="version-details" class="card shadow-sm mb-4" v-if="version">
+  <div id="version-details" class="card version-card shadow-sm mb-4" v-if="version">
     <div class="card-header version-card-header">
-      <h5 class="card-title mb-0">
-        <i class="fas fa-code-branch me-2"></i>
-        Version {{ version.version }}
-      </h5>
+      <div class="version-card-heading">
+        <span class="version-card-icon" aria-hidden="true">
+          <i class="fas fa-download"></i>
+        </span>
+        <h5 class="card-title mb-0">{{ $t('index.check_updates') }}</h5>
+      </div>
+      <div class="current-version" :title="version.version">
+        <span class="current-version-label">{{ $t('index.current_version') }}</span>
+        <span class="current-version-value">{{ version.version }}</span>
+        <span class="current-version-dot" aria-hidden="true"></span>
+      </div>
     </div>
     <div class="card-body">
       <!-- 加载状态 -->
@@ -34,51 +41,69 @@
         {{ $t('index.version_latest') }}
       </div>
 
-      <!-- 预发布版本可用 -->
-      <div v-if="notifyPreReleases && preReleaseBuildAvailable" class="version-update">
-        <div class="version-update-header">
-          <div class="version-update-title">
-            <i class="fas fa-rocket text-warning me-2"></i>
-            <span>{{ $t('index.new_pre_release') }}</span>
+      <!-- 可用更新：用排版和分隔线组织内容，避免卡片层层嵌套 -->
+      <section
+        v-for="update in availableUpdates"
+        :key="update.channel"
+        class="version-update"
+        :aria-labelledby="`version-update-${update.channel}`"
+      >
+        <div class="version-update-summary">
+          <div class="version-update-copy">
+            <span class="release-channel">{{ update.channelLabel }}</span>
+            <h2 :id="`version-update-${update.channel}`" class="version-update-title">
+              {{ $t('index.update_available') }}
+            </h2>
+            <h3 class="version-release-name">{{ update.release.name }}</h3>
+            <p class="version-update-description">{{ $t(update.descriptionKey) }}</p>
           </div>
-          <button
-            type="button"
-            class="btn btn-primary btn-download"
-            :disabled="pendingNativeChannel !== ''"
-            :aria-busy="pendingNativeChannel === 'prerelease'"
-            @click="handleDownloadClick(preReleaseVersion.release.html_url, 'prerelease')"
-          >
-            <i :class="pendingNativeChannel === 'prerelease' ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
-            {{ $t('index.download') }}
-            <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
-          </button>
-        </div>
-        <h3 class="version-release-name">{{ preReleaseVersion.release.name }}</h3>
-        <div class="markdown-content" v-html="parsedPreReleaseBody"></div>
-      </div>
-
-      <!-- 稳定版本可用 -->
-      <div v-if="stableBuildAvailable" class="version-update">
-        <div class="version-update-header">
-          <div class="version-update-title">
-            <i class="fas fa-star text-warning me-2"></i>
-            <span>{{ $t('index.new_stable') }}</span>
+          <div class="version-update-actions">
+            <button
+              type="button"
+              class="btn btn-primary btn-download"
+              :disabled="pendingNativeChannel !== '' || (!nativeUpdaterAvailable && !update.release.html_url)"
+              :aria-busy="pendingNativeChannel === update.channel"
+              @click="handleDownloadClick(update.release.html_url, update.channel)"
+            >
+              <i :class="pendingNativeChannel === update.channel ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
+              {{ $t('index.download') }}
+              <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
+            </button>
+            <button
+              v-if="update.release.html_url"
+              type="button"
+              class="release-page-link"
+              @click="handleReleasePageClick(update.release.html_url)"
+            >
+              {{ $t('index.view_release') }}
+              <i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>
+            </button>
           </div>
-          <button
-            type="button"
-            class="btn btn-primary btn-download"
-            :disabled="pendingNativeChannel !== ''"
-            :aria-busy="pendingNativeChannel === 'stable'"
-            @click="handleDownloadClick(githubVersion.release.html_url, 'stable')"
-          >
-            <i :class="pendingNativeChannel === 'stable' ? 'fas fa-spinner fa-spin me-2' : 'fas fa-download me-2'"></i>
-            {{ $t('index.download') }}
-            <span v-if="nativeUpdaterAvailable" class="native-updater-badge">Control Panel</span>
-          </button>
         </div>
-        <h3 class="version-release-name">{{ githubVersion.release.name }}</h3>
-        <div class="markdown-content" v-html="parsedStableBody"></div>
-      </div>
+        <div v-if="update.details.notes" class="version-notes">
+          <h3 class="version-notes-title">{{ $t('index.update_details') }}</h3>
+          <div class="markdown-content" v-html="update.details.notes"></div>
+        </div>
+        <div
+          v-if="update.details.fullChangelog || update.details.contributors"
+          class="version-update-footer"
+        >
+          <button
+            v-if="update.details.fullChangelog"
+            type="button"
+            class="full-changelog"
+            @click="handleReleasePageClick(update.details.fullChangelog)"
+          >
+            <i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i>
+            <span>{{ $t('index.full_changelog') }}</span>
+            <i class="fas fa-chevron-right" aria-hidden="true"></i>
+          </button>
+          <div v-if="update.details.contributors" class="release-contributors">
+            <span class="release-footer-label">{{ $t('index.contributors') }}</span>
+            <div class="contributors-content" v-html="update.details.contributors"></div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- 下载确认弹窗（与配置页虚拟麦克风下载相同方式，确认后打开下载页） -->
@@ -102,11 +127,12 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { openExternalUrl } from '../../utils/helpers.js'
+import { extractReleaseDetails } from '../../utils/releaseDetails.js'
 
-defineProps({
+const props = defineProps({
   version: Object,
   githubVersion: Object,
   preReleaseVersion: Object,
@@ -118,6 +144,32 @@ defineProps({
   buildVersionIsDirty: Boolean,
   parsedStableBody: String,
   parsedPreReleaseBody: String,
+})
+
+const availableUpdates = computed(() => {
+  const updates = []
+
+  if (props.notifyPreReleases && props.preReleaseBuildAvailable && props.preReleaseVersion?.release) {
+    updates.push({
+      channel: 'prerelease',
+      channelLabel: 'Beta',
+      descriptionKey: 'index.new_pre_release',
+      release: props.preReleaseVersion.release,
+      details: extractReleaseDetails(props.parsedPreReleaseBody),
+    })
+  }
+
+  if (props.stableBuildAvailable && props.githubVersion?.release) {
+    updates.push({
+      channel: 'stable',
+      channelLabel: 'Stable',
+      descriptionKey: 'index.new_stable',
+      release: props.githubVersion.release,
+      details: extractReleaseDetails(props.parsedStableBody),
+    })
+  }
+
+  return updates
 })
 
 const showDownloadConfirm = ref(false)
@@ -214,8 +266,19 @@ const handleDownloadClick = (url, channel) => {
     return
   }
 
+  if (!url) return
+
   pendingDownloadUrl.value = url
   showDownloadConfirm.value = true
+}
+
+const handleReleasePageClick = async (url) => {
+  if (!url) return
+  try {
+    await openExternalUrl(url)
+  } catch (error) {
+    console.error('Failed to open release URL:', error)
+  }
 }
 
 const confirmDownload = async () => {
@@ -250,11 +313,87 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.version-card {
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  backdrop-filter: blur(24px) saturate(115%);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.version-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.5rem;
+  border-bottom: 1px solid var(--ui-border);
+  background: transparent;
+}
+
+.version-card-heading,
+.current-version {
+  display: flex;
+  align-items: center;
+}
+
+.version-card-heading {
+  gap: 0.75rem;
+}
+
+.version-card-icon {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.version-card-header .card-title {
+  color: var(--ui-text-primary);
+  font-size: 1.1rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.current-version {
+  min-width: 0;
+  gap: 0.55rem;
+  color: var(--ui-text-secondary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.current-version-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-version-label {
+  color: var(--ui-text-primary);
+}
+
+.current-version-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 0.55rem;
+  border-radius: 50%;
+  background: var(--ui-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ui-success) 14%, transparent);
+}
+
+.version-card > .card-body {
+  padding: 0 1.75rem 1.25rem;
+}
+
 /* Loading State */
 .version-loading {
   display: flex;
   align-items: center;
-  padding: 1rem;
+  padding: 1.25rem 0 0;
   color: var(--ui-text-secondary);
   font-size: 0.95rem;
 }
@@ -264,7 +403,7 @@ onBeforeUnmount(() => {
   border-radius: var(--ui-radius-sm);
   font-size: 0.9rem;
   padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
+  margin: 1.25rem 0 0;
   display: flex;
   align-items: center;
   border: 1px solid transparent;
@@ -284,41 +423,63 @@ onBeforeUnmount(() => {
   border-left: 4px solid var(--ui-accent);
 }
 
-.version-card-header .card-title i {
-  color: var(--ui-accent);
-}
-
 /* Version Update Section */
 .version-update {
-  background: color-mix(in srgb, var(--ui-warning) 10%, var(--ui-surface));
-  border: 1px solid color-mix(in srgb, var(--ui-warning) 30%, transparent);
-  border-radius: var(--ui-radius-md);
-  padding: 1.25rem;
-  margin-top: 1rem;
+  padding: 1.55rem 0.25rem 0;
 }
 
-.version-update-header {
-  display: flex;
-  justify-content: space-between;
+.version-update + .version-update {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--ui-border);
+}
+
+.version-update-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 1.5rem 2rem;
 }
 
 .version-update-title {
-  display: flex;
-  align-items: center;
-  font-size: 1rem;
-  font-weight: 600;
+  margin: 0.8rem 0 0;
   color: var(--ui-text-primary);
-  flex: 1;
-  min-width: 200px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.release-channel {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  padding: 0.22rem 0.78rem;
+  border-radius: 999px;
+  background: var(--ui-accent);
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.version-update-description {
+  margin: 0.85rem 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.version-update-actions {
+  display: flex;
+  min-width: 10rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.7rem;
 }
 
 .btn-download {
-  border-radius: 8px;
-  padding: 0.5rem 1.25rem;
+  min-height: 2.75rem;
+  border-radius: var(--ui-radius-sm);
+  padding: 0.65rem 1.25rem;
   font-weight: 600;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   white-space: nowrap;
@@ -342,71 +503,97 @@ onBeforeUnmount(() => {
 }
 
 .version-release-name {
-  font-size: 1.3rem;
+  margin: 0.45rem 0 0;
+  color: var(--ui-accent);
+  font-size: clamp(1.45rem, 2.4vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.release-page-link {
+  align-self: center;
+  padding: 0.1rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font-size: 0.88rem;
   font-weight: 600;
-  margin: 1rem 0 0.75rem 0;
+}
+
+.release-page-link i {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.release-page-link:hover {
+  text-decoration: underline;
+}
+
+/* Release notes */
+.version-notes {
+  margin-top: 1.75rem;
+}
+
+.version-notes-title {
+  margin: 0;
   color: var(--ui-text-primary);
+  font-size: 1.16rem;
+  font-weight: 700;
 }
 
-/* Markdown Content */
 .markdown-content {
-  background: var(--ui-surface);
-  border-radius: var(--ui-radius-sm);
-  padding: 1.25rem;
-  margin-top: 1rem;
+  margin-top: 0.9rem;
   line-height: 1.6;
-  border: 1px solid var(--ui-border);
 }
 
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3,
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
-  margin-top: 1.25rem;
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4),
+.markdown-content :deep(h5),
+.markdown-content :deep(h6) {
+  margin-top: 1.4rem;
   margin-bottom: 0.75rem;
   font-weight: 600;
   line-height: 1.25;
   color: var(--ui-text-primary);
 }
 
-.markdown-content h1:first-child,
-.markdown-content h2:first-child,
-.markdown-content h3:first-child {
-  margin-top: 0;
+.markdown-content :deep(h1) {
+  font-size: 1.35em;
 }
 
-.markdown-content h1 {
-  font-size: 1.5em;
+.markdown-content :deep(h2) {
+  font-size: 1.2em;
 }
 
-.markdown-content h2 {
-  font-size: 1.3em;
-}
-
-.markdown-content h3 {
+.markdown-content :deep(h3) {
   font-size: 1.1em;
 }
 
-.markdown-content p {
+.markdown-content :deep(p) {
   margin-bottom: 0.75rem;
   white-space: pre-line;
   color: var(--ui-text-secondary);
 }
 
-.markdown-content ul,
-.markdown-content ol {
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
   margin-bottom: 0.75rem;
   padding-left: 1.5rem;
 }
 
-.markdown-content li {
-  margin-bottom: 0.5rem;
+.markdown-content :deep(li) {
+  margin-bottom: 0.42rem;
   color: var(--ui-text-secondary);
 }
 
-.markdown-content code {
+.markdown-content :deep(li::marker) {
+  color: var(--ui-accent);
+}
+
+.markdown-content :deep(code) {
   background: var(--ui-accent-soft);
   padding: 0.2em 0.4em;
   border-radius: 4px;
@@ -415,7 +602,7 @@ onBeforeUnmount(() => {
   color: var(--ui-accent);
 }
 
-.markdown-content pre {
+.markdown-content :deep(pre) {
   background: var(--ui-surface-strong);
   padding: 1rem;
   border-radius: 8px;
@@ -424,13 +611,13 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ui-border);
 }
 
-.markdown-content pre code {
+.markdown-content :deep(pre code) {
   background: none;
   padding: 0;
   color: inherit;
 }
 
-.markdown-content blockquote {
+.markdown-content :deep(blockquote) {
   border-left: 4px solid var(--ui-accent);
   margin: 1rem 0;
   padding-left: 1rem;
@@ -438,19 +625,19 @@ onBeforeUnmount(() => {
   font-style: italic;
 }
 
-.markdown-content a {
+.markdown-content :deep(a) {
   color: var(--ui-accent);
   text-decoration: none;
   font-weight: 500;
   transition: color 0.2s ease;
 }
 
-.markdown-content a:hover {
+.markdown-content :deep(a:hover) {
   color: var(--ui-accent);
   text-decoration: underline;
 }
 
-.markdown-content table {
+.markdown-content :deep(table) {
   border-collapse: collapse;
   width: 100%;
   margin: 1rem 0;
@@ -458,16 +645,147 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.markdown-content th,
-.markdown-content td {
+.markdown-content :deep(img) {
+  border-radius: 50%;
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
   border: 1px solid var(--ui-border);
   padding: 0.75rem 1rem;
   text-align: left;
 }
 
-.markdown-content th {
+.markdown-content :deep(th) {
   background: var(--ui-surface-strong);
   font-weight: 600;
+}
+
+.version-update-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-top: 1.35rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--ui-border);
+}
+
+.full-changelog {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.full-changelog:hover {
+  text-decoration: underline;
+}
+
+.full-changelog .fa-chevron-right {
+  font-size: 0.68rem;
+}
+
+.release-contributors {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-left: auto;
+  color: var(--ui-text-secondary);
+}
+
+.release-footer-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.contributors-content {
+  display: flex;
+  align-items: center;
+}
+
+.contributors-content :deep(p) {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.contributors-content :deep(ul) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.contributors-content :deep(img) {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 2px solid color-mix(in srgb, var(--ui-surface-strong) 90%, transparent);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.contributors-content :deep(a) {
+  color: var(--ui-accent);
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .version-card-header {
+    align-items: flex-start;
+    padding: 1rem;
+  }
+
+  .version-card > .card-body {
+    padding: 0 1rem 1rem;
+  }
+
+  .current-version {
+    max-width: 62%;
+    padding-top: 0.38rem;
+    font-size: 0.8rem;
+  }
+
+  .current-version-label {
+    display: none;
+  }
+
+  .version-update-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .version-update-actions {
+    min-width: 0;
+  }
+
+  .btn-download {
+    width: 100%;
+  }
+
+  .markdown-content {
+    overflow-x: auto;
+  }
+
+  .version-update-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .release-contributors {
+    align-self: flex-end;
+  }
 }
 
 </style>

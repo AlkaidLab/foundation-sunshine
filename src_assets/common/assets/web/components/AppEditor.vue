@@ -206,6 +206,37 @@
                 </div>
               </AccordionItem>
 
+              <AccordionItem
+                v-if="isWindows"
+                id="rtxHdr"
+                icon="fa-sun"
+                :title="t('apps.rtx_hdr')"
+                parent-id="appFormAccordion"
+              >
+                <FormField id="appRtxHdrMode" :label="t('apps.rtx_hdr_mode')" :hint="t('apps.rtx_hdr_desc')">
+                  <select id="appRtxHdrMode" class="form-select form-control-enhanced" v-model="formData['rtx-hdr'].mode">
+                    <option value="inherit">{{ t('apps.rtx_hdr_inherit') }}</option>
+                    <option value="on">{{ t('apps.rtx_hdr_on') }}</option>
+                    <option value="off">{{ t('apps.rtx_hdr_off') }}</option>
+                  </select>
+                </FormField>
+
+                <template v-if="formData['rtx-hdr'].mode === 'on'">
+                  <FormField id="appRtxHdrContrast" :label="t('apps.rtx_hdr_contrast')">
+                    <input id="appRtxHdrContrast" type="number" min="-100" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr'].contrast" />
+                  </FormField>
+                  <FormField id="appRtxHdrSaturation" :label="t('apps.rtx_hdr_saturation')">
+                    <input id="appRtxHdrSaturation" type="number" min="-100" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr'].saturation" />
+                  </FormField>
+                  <FormField id="appRtxHdrMiddleGray" :label="t('apps.rtx_hdr_middle_gray')">
+                    <input id="appRtxHdrMiddleGray" type="number" min="10" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['middle-gray']" />
+                  </FormField>
+                  <FormField id="appRtxHdrPeakNits" :label="t('apps.rtx_hdr_peak_nits')">
+                    <input id="appRtxHdrPeakNits" type="number" min="400" max="1000" step="50" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['peak-nits']" />
+                  </FormField>
+                </template>
+              </AccordionItem>
+
               <AccordionItem id="advanced" icon="fa-cogs" :title="t('apps.advanced_options')" parent-id="appFormAccordion">
                 <CheckboxField
                   v-if="isWindows"
@@ -214,6 +245,27 @@
                   :label="t('_common.run_as')"
                   :hint="t('apps.run_as_desc')"
                 />
+
+                <FormField
+                  v-if="isWindows"
+                  id="gamepadMode"
+                  :label="t('apps.gamepad_mode')"
+                  :hint="t('apps.gamepad_mode_desc')"
+                >
+                  <select
+                    id="gamepadMode"
+                    class="form-select form-control-enhanced"
+                    v-model="formData.gamepad"
+                  >
+                    <option
+                      v-for="mode in PER_APP_GAMEPAD_MODES"
+                      :key="mode.value"
+                      :value="mode.value"
+                    >
+                      {{ t(mode.labelKey) }}
+                    </option>
+                  </select>
+                </FormField>
 
                 <FormField
                   v-if="isWindows"
@@ -310,6 +362,7 @@ import CheckboxField from './CheckboxField.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
+import { PER_APP_GAMEPAD_MODES } from '../utils/gamepadModes.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   name: '',
@@ -322,11 +375,19 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'wait-all': true,
   'exit-timeout': 5,
   'mouse-mode': 0,
+  gamepad: '',
   'prep-cmd': [],
   'menu-cmd': [],
   detached: [],
   'image-path': '',
   'working-dir': '',
+  'rtx-hdr': {
+    mode: 'inherit',
+    contrast: 0,
+    saturation: 0,
+    'middle-gray': 50,
+    'peak-nits': 1000,
+  },
 })
 
 const FIELD_VALIDATION_MAP = Object.freeze({
@@ -435,6 +496,14 @@ const ensureDefaultValues = () => {
   }
   if (isWindows.value && formData.value['mouse-mode'] === undefined) {
     formData.value['mouse-mode'] = 0
+  }
+  if (isWindows.value && formData.value.gamepad === undefined) {
+    formData.value.gamepad = ''
+  }
+  const rtxHdr = formData.value['rtx-hdr']
+  formData.value['rtx-hdr'] = {
+    ...DEFAULT_FORM_DATA['rtx-hdr'],
+    ...(rtxHdr && typeof rtxHdr === 'object' ? rtxHdr : {}),
   }
 }
 

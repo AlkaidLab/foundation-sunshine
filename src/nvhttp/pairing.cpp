@@ -4,11 +4,13 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -22,6 +24,7 @@
 
 #include "src/config.h"
 #include "src/crypto.h"
+#include "src/file_handler.h"
 #include "src/globals.h"
 #include "src/httpcommon.h"
 #include "src/logging.h"
@@ -57,6 +60,11 @@ namespace nvhttp {
 
     namespace fs = std::filesystem;
     namespace pt = boost::property_tree;
+
+    fs::path
+    state_file_path() {
+      return file_handler::path_from_utf8(config::nvhttp.file_state);
+    }
 
     struct named_cert_t {
       std::string name;
@@ -172,10 +180,17 @@ namespace nvhttp {
     void
     save_state(bool preserve_existing = true) {
       pt::ptree root;
+      const auto state_path = state_file_path();
 
-      if (preserve_existing && fs::exists(config::nvhttp.file_state)) {
+      if (preserve_existing) {
         try {
-          pt::read_json(config::nvhttp.file_state, root);
+          if (fs::exists(state_path)) {
+            std::ifstream state_file { state_path };
+            if (!state_file.is_open()) {
+              throw std::runtime_error("unable to open state file for reading");
+            }
+            pt::read_json(state_file, root);
+          }
         }
         catch (std::exception &e) {
           BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
@@ -200,7 +215,15 @@ namespace nvhttp {
       root.add_child("root.named_devices"s, named_cert_nodes);
 
       try {
-        pt::write_json(config::nvhttp.file_state, root);
+        std::ofstream state_file { state_path };
+        if (!state_file.is_open()) {
+          throw std::runtime_error("unable to open state file for writing");
+        }
+        pt::write_json(state_file, root);
+        state_file.flush();
+        if (!state_file) {
+          throw std::runtime_error("unable to write state file");
+        }
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't write "sv << config::nvhttp.file_state << ": "sv << e.what();
@@ -395,15 +418,19 @@ namespace nvhttp {
 
     void
     load_state() {
-      if (!fs::exists(config::nvhttp.file_state)) {
-        BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
-        http::unique_id = uuid_util::uuid_t::generate().string();
-        return;
-      }
-
+      const auto state_path = state_file_path();
       pt::ptree tree;
       try {
-        pt::read_json(config::nvhttp.file_state, tree);
+        if (!fs::exists(state_path)) {
+          BOOST_LOG(debug) << "File "sv << config::nvhttp.file_state << " doesn't exist"sv;
+          http::unique_id = uuid_util::uuid_t::generate().string();
+          return;
+        }
+        std::ifstream state_file { state_path };
+        if (!state_file.is_open()) {
+          throw std::runtime_error("unable to open state file for reading");
+        }
+        pt::read_json(state_file, tree);
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();

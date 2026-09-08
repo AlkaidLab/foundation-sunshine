@@ -25,6 +25,7 @@ namespace platf::dxgi::d3d12 {
     // resource, so no staging copy is needed before the D3D12 compute pass.
     ID3D11Texture2D *texture = nullptr;
     ID3D11UnorderedAccessView *uav = nullptr;
+    ID3D11UnorderedAccessView *pq_uav = nullptr;
   };
 
   struct completed_hdr_result_t {

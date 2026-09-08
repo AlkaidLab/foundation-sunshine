@@ -180,6 +180,16 @@ const config = ref(props.config)
               <div class="form-text">{{ $t('config.nvenc_opengl_vulkan_on_dxgi_desc') }}</div>
             </div>
 
+            <!-- 10-bit 4:4:4 CUDA array input -->
+            <div class="mb-3" v-if="platform === 'windows'">
+              <label for="nvenc_cuda_array_input" class="form-label">{{ $t('config.nvenc_cuda_array_input') }}</label>
+              <select id="nvenc_cuda_array_input" class="form-select" v-model="config.nvenc_cuda_array_input">
+                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+                <option value="enabled">{{ $t('_common.enabled') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.nvenc_cuda_array_input_desc') }}</div>
+            </div>
+
             <!-- NVENC H264 CAVLC -->
             <div>
               <label for="nvenc_h264_cavlc" class="form-label">{{ $t('config.nvenc_h264_cavlc') }}</label>

@@ -60,6 +60,7 @@ namespace display_device {
         primary_display_fail,
         modes_fail,
         hdr_states_fail,
+        color_profile_fail,
         file_save_fail,
         revert_fail
       };

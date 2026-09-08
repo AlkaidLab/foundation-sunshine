@@ -16,13 +16,29 @@
 #include <mmdeviceapi.h>
 #include <windows.h>
 
-// Forward declarations
-struct OpusDecoder;
-
 namespace platf::audio {
 
   struct mic_redirect_test_result_t {
     bool success = false;
+    std::string error_code;
+    std::string backend;
+  };
+
+  struct mic_redirect_status_t {
+    std::string configured_backend;
+    std::string active_backend;
+    std::string fallback_reason;
+    bool component_available = false;
+    bool online = false;
+    bool device_created = false;
+    bool host_streaming = false;
+    std::uint32_t generation = 0;
+    std::uint32_t buffered_bytes = 0;
+    std::uint32_t underruns = 0;
+    std::uint32_t dropped_frames = 0;
+    std::uint32_t submit_errors = 0;
+    std::int32_t last_error = 0;
+    std::string state = "absent";
     std::string error_code;
   };
 
@@ -31,6 +47,22 @@ namespace platf::audio {
    */
   mic_redirect_test_result_t
   test_mic_redirect();
+
+  /** Runtime state consumed by the authenticated Web UI status endpoint. */
+  mic_redirect_status_t
+  mic_redirect_status();
+
+  /** Update the selected backend after initialization or fallback. */
+  void
+  report_mic_redirect_backend(std::string active_backend, std::string fallback_reason = {});
+
+  /** Atomically reserve the redirect path for a UI test. */
+  bool
+  try_begin_mic_redirect_test();
+
+  /** Release a redirect-path reservation obtained by try_begin_mic_redirect_test(). */
+  void
+  end_mic_redirect_test();
   
   // COM interface Release helper for safe_ptr
   template<typename T>
@@ -55,8 +87,7 @@ namespace platf::audio {
   /**
    * @brief Windows WASAPI microphone write class for client mic redirection
    * 
-   * This class handles writing client microphone data to virtual audio devices
-   * for redirection purposes. It supports OPUS decoding and various audio formats.
+   * This class handles writing mixed client microphone PCM to virtual audio devices.
    */
   class mic_write_wasapi_t: public mic_t {
   public:
@@ -77,14 +108,14 @@ namespace platf::audio {
     init(bool test_mode = false);
 
     /**
-     * @brief Write audio data to the virtual audio device
-     * @param data Pointer to the audio data (OPUS encoded)
-     * @param len Length of the audio data in bytes
-     * @param seq Sequence number for FEC recovery (0 = unknown)
-     * @return Number of bytes written, or -1 on error
+     * @brief Write mono 48 kHz signed 16-bit PCM to the virtual audio device.
+     * @param samples Pointer to the PCM samples.
+     * @param frame_count Number of mono frames to write.
+     * @return Number of bytes written, 0 when the current frame was dropped due to backpressure,
+     *         -1 on a generic error, or -2 when the device was invalidated.
      */
     int
-    write_data(const char *data, size_t len, uint16_t seq = 0);
+    write_pcm(const std::int16_t *samples, std::size_t frame_count);
 
     /**
      * @brief Write a short audible tone to the initialized render endpoint.
@@ -198,9 +229,10 @@ namespace platf::audio {
     device_enum_t device_enum;
     audio_client_t audio_client;
     IAudioRenderClient *audio_render = nullptr;
-    OpusDecoder *opus_decoder = nullptr;
     HANDLE mmcss_task_handle = nullptr;
     WAVEFORMATEX current_format = {};
+    UINT32 buffer_frame_count = 0;
+    std::vector<std::int16_t> pcm_output_buffer;
     VirtualDeviceType virtual_device_type = VirtualDeviceType::NONE;
 
     // Audio device restoration state
@@ -209,15 +241,6 @@ namespace platf::audio {
       bool input_device_changed = false;
       bool settings_stored = false;
     } restoration_state;
-
-    // FEC recovery state
-    uint16_t last_seq = 0;
-    bool first_packet = true;
-    
-    // Statistics
-    uint64_t total_packets = 0;
-    uint64_t packet_loss_count = 0;
-    uint64_t fec_recovered_packets = 0;
   };
 
   extern std::unique_ptr<mic_write_wasapi_t> mic_redirect_device;

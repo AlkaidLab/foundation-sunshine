@@ -52,11 +52,16 @@ if(WIN32)
         set(_local_gui_timestamp "")
         foreach(_candidate_gui_dir IN LISTS _candidate_gui_dirs)
             set(_candidate_gui_exe "${_candidate_gui_dir}/sunshine-gui.exe")
-            if(EXISTS "${_candidate_gui_exe}")
-                file(TIMESTAMP "${_candidate_gui_exe}" _candidate_gui_timestamp "%Y%m%d%H%M%S" UTC)
-                if(NOT _local_gui_dir OR _candidate_gui_timestamp STRGREATER _local_gui_timestamp)
-                    set(_local_gui_dir "${_candidate_gui_dir}")
-                    set(_local_gui_timestamp "${_candidate_gui_timestamp}")
+            set(_candidate_stylus_plugin "${_candidate_gui_dir}/alkaidlab-plugin-stylus.dll")
+            if(EXISTS "${_candidate_gui_exe}" AND EXISTS "${_candidate_stylus_plugin}")
+                file(SIZE "${_candidate_gui_exe}" _candidate_gui_size)
+                file(SIZE "${_candidate_stylus_plugin}" _candidate_stylus_plugin_size)
+                if(_candidate_gui_size GREATER 0 AND _candidate_stylus_plugin_size GREATER 0)
+                    file(TIMESTAMP "${_candidate_gui_exe}" _candidate_gui_timestamp "%Y%m%d%H%M%S" UTC)
+                    if(NOT _local_gui_dir OR _candidate_gui_timestamp STRGREATER _local_gui_timestamp)
+                        set(_local_gui_dir "${_candidate_gui_dir}")
+                        set(_local_gui_timestamp "${_candidate_gui_timestamp}")
+                    endif()
                 endif()
             endif()
         endforeach()
@@ -70,20 +75,24 @@ if(WIN32)
         include(${CMAKE_MODULE_PATH}/packaging/FetchGUI.cmake)
     endif()
 
-    if(EXISTS "${GUI_DIR}/sunshine-gui.exe")
+    if(EXISTS "${GUI_DIR}/sunshine-gui.exe" AND
+       EXISTS "${GUI_DIR}/alkaidlab-plugin-stylus.dll")
         install(PROGRAMS "${GUI_DIR}/sunshine-gui.exe"
             DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
             COMPONENT gui)
-        # WebView2Loader.dll (optional — Tauri 2 may embed it)
-        if(EXISTS "${GUI_DIR}/WebView2Loader.dll")
-            install(FILES "${GUI_DIR}/WebView2Loader.dll"
-                DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
-                COMPONENT gui)
-        endif()
+        install(FILES "${GUI_DIR}/alkaidlab-plugin-stylus.dll"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            COMPONENT gui)
+        # Tauri may generate this file after CMake configure time. Register an
+        # optional install rule now so clean local builds can still include it.
+        install(FILES "${GUI_DIR}/WebView2Loader.dll"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/gui"
+            COMPONENT gui
+            OPTIONAL)
     else()
         if(SUNSHINE_ENABLE_TRAY AND NOT SUNSHINE_ENABLE_LEGACY_TRAY)
             message(FATAL_ERROR
-                "Sunshine GUI is required by the Windows GUI tray build, but sunshine-gui.exe is unavailable. "
+                "The complete Sunshine GUI bundle is required by the Windows GUI tray build. "
                 "Build the local GUI or configure an explicit GUI release before packaging.")
         endif()
         message(WARNING "Sunshine GUI binary is unavailable; continuing only because the GUI tray is disabled")

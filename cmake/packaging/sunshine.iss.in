@@ -62,9 +62,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; 重启管理器
 CloseApplications=yes
 RestartApplications=yes
-; Driver/helper installers may return a reboot-required exit code. Do not show
-; Inno's final reboot prompt; users can reboot later if a driver needs it.
+; Driver installation is executed from [Code], where its exit status is
+; validated. NeedRestart() requests the reboot only after a staged VDD reports
+; that its device/control interface cannot become ready in the current boot.
 RestartIfNeededByRun=no
+; Always write %TEMP%\Setup Log*.txt. Support reports for "service did not
+; install" / "files disappeared" are unanswerable without the per-file and
+; per-[Run] results, and users cannot be expected to re-run with /LOG.
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -106,7 +111,8 @@ english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nI
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
 english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
-english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%nPlease check the installer log and run the installer as administrator.
+english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
 english.StatusStoppingService=Stopping Sunshine service...
@@ -147,7 +153,8 @@ chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
-chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n请检查安装日志，并确认以管理员身份运行安装程序。
+chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgVDDInstallFailed=无法安装或验证虚拟显示驱动。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
@@ -176,6 +183,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [InstallDelete]
 ; Remove old hashed Web UI bundles before installing the freshly built frontend.
 Type: filesandordirs; Name: "{app}\assets\web"
+; The native GUI plugin replaces the legacy standalone diagnostic executable.
+Type: files; Name: "{app}\tools\stylus-input-probe.exe"
 
 [Files]
 ; Main application
@@ -186,6 +195,9 @@ Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Comp
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+
+; Pinned manifest for the separately distributed first-party DualSense runtime.
+Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
 ; Portable scripts (will be deleted during install, but needed for layout)
 Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -212,6 +224,7 @@ Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*"; F
 
 ; Required GUI and user-session tray agent
 Source: "{#MySourceDir}\assets\gui\{#MyAppGUIExeName}"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui
+Source: "{#MySourceDir}\assets\gui\alkaidlab-plugin-stylus.dll"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui
 Source: "{#MySourceDir}\assets\gui\WebView2Loader.dll"; DestDir: "{app}\assets\gui"; Flags: ignoreversion skipifsourcedoesntexist; Components: gui
 
 ; Helper tools
@@ -281,18 +294,27 @@ Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunsh
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
 Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
-; Upgrade older VDDs, but never silently replace a healthy newer/custom driver.
-Filename: "{app}\scripts\install-vdd.bat"; Parameters: "--preserve-healthy-existing"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Components: vdd
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
 Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
-Filename: "{app}\scripts\install-service.bat"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart
 
 ; Finish page actions - user selectable
 Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
 ; Launch the user-session agent with the original desktop token. The GUI then
 ; owns and reconciles its HKCU autostart entry from the correct user context.
-Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait skipifsilent runasoriginaluser; Components: gui
+;
+; Go through `cmd /c start` instead of pointing Filename at the GUI directly:
+; sunshine-gui.exe carries no requestedExecutionLevel manifest, so Windows
+; treats it as a legacy app and the Program Compatibility Assistant may stamp
+; a RUNASADMIN layer on its path after an earlier crash. CreateProcessAsUser
+; then fails with 740 (ERROR_ELEVATION_REQUIRED) and Inno shows a red
+; "无法执行文件 ... 错误代码 740" box on the finish page, which reads like the
+; whole install failed. cmd.exe never requires elevation, and `start` uses
+; ShellExecute, so a layered GUI just gets a normal UAC prompt instead.
+; WorkingDir has to be spelled out now: Inno derives it from Filename when it
+; is blank, which would hand the GUI {sys} instead of its own directory.
+Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeName}"""; WorkingDir: "{app}\assets\gui"; Description: "{cm:FinishLaunchGUI}"; Flags: postinstall nowait runhidden skipifsilent runasoriginaluser; Components: gui
 
 [UninstallRun]
 ; Remove the per-user GUI startup entry before terminating the agent.
@@ -344,6 +366,71 @@ var
   BrandSubtitle: TNewStaticText;
   AccentBar: TBevel;
   ExistingInnoInstall: Boolean;
+  // Set when VerifyServiceInstalled() could not confirm the SunshineService
+  // registration. Surfaced through GetCustomSetupExitCode() so unattended
+  // callers still see a failure — the GUI updater runs us with /VERYSILENT
+  // and treats exit code 0 as "update installed successfully".
+  ServiceVerifyFailed: Boolean;
+  // 0 = ready/not selected, 101 = failed, 3010 = reboot required.
+  VDDResultCode: Integer;
+
+function VDDComponentSelected(): Boolean;
+begin
+  Result := WizardIsComponentSelected('vdd');
+end;
+
+function GetServiceInstallParameters(Param: String): String;
+begin
+  if VDDResultCode = 0 then
+    Result := ''
+  else
+    Result := '--no-start';
+end;
+
+function ShouldConfigureServiceAutostart(): Boolean;
+begin
+  Result := VDDResultCode <> 101;
+end;
+
+procedure InstallAndVerifyVDD();
+var
+  ResultCode: Integer;
+  Params, Detail: String;
+begin
+  if not VDDComponentSelected() then
+    Exit;
+
+  WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
+  Params := '--preserve-healthy-existing';
+  ResultCode := -1;
+  if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
+              SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    VDDResultCode := 101;
+    Log('Could not launch the VDD installer helper.');
+  end
+  else if ResultCode = 0 then
+  begin
+    Log('VDD installation and control-interface verification succeeded.');
+  end
+  else if ResultCode = 3010 then
+  begin
+    VDDResultCode := 3010;
+    Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
+  end
+  else
+  begin
+    VDDResultCode := 101;
+    Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
+  end;
+
+  if (VDDResultCode = 101) and (not WizardSilent) then
+  begin
+    Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
+              'Exit code: ' + IntToStr(ResultCode);
+    MsgBox(Detail, mbError, MB_OK);
+  end;
+end;
 
 procedure InitializeWizard();
 var
@@ -713,8 +800,40 @@ begin
     Detail := 'ImagePath: ' + ImagePath;
   Detail := Detail + #13#10 + 'Expected: ' + ExpectedPath;
   Detail := Detail + #13#10 + 'sc qc exit: ' + IntToStr(ResultCode);
-  MsgBox(CustomMessage('MsgServiceInstallFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK);
-  Abort();
+  // Warn, but do NOT Abort(). Aborting here rolls the whole installation back
+  // and leaves {app} holding nothing but the preserved `config` directory —
+  // a total loss for what is usually a recoverable condition (SunshineService
+  // still "marked for deletion" from the previous uninstall, a stale binPath
+  // pointing at an old install drive, SCM being slow to publish ImagePath).
+  // The files are fine; only the service registration needs another attempt,
+  // which scripts\install-service.bat, the GUI's repair action, or a reboot
+  // can all do. Keep the install and tell the user how to retry.
+  //
+  // The exit code still reports the failure — see GetCustomSetupExitCode().
+  ServiceVerifyFailed := True;
+  Log('Service verification failed. ' + Detail);
+  // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
+  // unattended install without that switch would sit here forever now that we
+  // no longer abort. The log line above carries the same information.
+  // CustomMessage() returns the string verbatim, so {app} needs ExpandConstant.
+  if not WizardSilent then
+    MsgBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK);
+end;
+
+// Report a nonzero exit code when the service could not be verified. Inno
+// returns 0 on a completed install, and callers such as the GUI's auto-updater
+// (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`, success := code = 0) would
+// otherwise report a broken install as successful. Codes 100/101 are outside
+// Inno's own range (1-8), while 3010 is the standard Windows reboot-required
+// result consumed by unattended updaters.
+function GetCustomSetupExitCode(): Integer;
+begin
+  if VDDResultCode <> 0 then
+    Result := VDDResultCode
+  else if ServiceVerifyFailed then
+    Result := 100
+  else
+    Result := 0;
 end;
 
 // Initialization: handle old NSIS upgrade
@@ -830,10 +949,19 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    // Upgrade older VDDs and make driver readiness a hard gate before the
+    // Sunshine service is allowed to start. A bound-but-not-ready device is
+    // kept for Windows to finish during the requested reboot.
+    InstallAndVerifyVDD();
     // Delete portable scripts in installed version
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
   end;
+end;
+
+function NeedRestart(): Boolean;
+begin
+  Result := VDDResultCode = 3010;
 end;
 
 // Custom uninstall: ask about gamepad and data removal

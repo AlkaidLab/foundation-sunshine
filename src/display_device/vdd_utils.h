@@ -2,7 +2,9 @@
 
 #define WIN32_LEAN_AND_MEAN
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -10,6 +12,8 @@
 #include <thread>
 #include <vector>
 #include <windows.h>
+
+#include <boost/optional.hpp>
 
 #include "parsed_config.h"
 
@@ -29,6 +33,20 @@ namespace display_device::vdd_utils {
     float max_nits = 1000.0f;
     float min_nits = 0.001f;
     float max_full_nits = 1000.0f;
+
+    bool operator==(const hdr_brightness_t &) const = default;
+
+    // 实测上报的亮度逐会话存在小抖动;容差内视为能力未变,避免无谓重建 VDD
+    bool
+    nearly_equal(const hdr_brightness_t &other) const {
+      constexpr auto close = [](float a, float b) {
+        const float scale = std::min(std::abs(a), std::abs(b));
+        return std::abs(a - b) <= std::max(25.0f, 0.05f * scale);
+      };
+      return close(max_nits, other.max_nits) &&
+             close(min_nits, other.min_nits) &&
+             close(max_full_nits, other.max_full_nits);
+    }
   };
 
   // 物理尺寸结构（厘米）
@@ -175,14 +193,6 @@ namespace display_device::vdd_utils {
   vdd_status_t
   get_vdd_status();
 
-  // 指数退避计算
-  std::chrono::milliseconds
-  calculate_exponential_backoff(int attempt);
-
-  // VDD命令执行
-  bool
-  execute_vdd_command(const std::string &action);
-
   /**
    * @brief Parse the persisted VDD HardwareCursor value.
    */
@@ -274,12 +284,6 @@ namespace display_device::vdd_utils {
   destroy_vdd_monitor_nolog();
 
   void
-  enable_vdd();
-
-  void
-  disable_vdd();
-
-  void
   disable_enable_vdd();
 
   bool
@@ -298,16 +302,16 @@ namespace display_device::vdd_utils {
    * @brief Apply VDD prep settings to handle physical displays.
    * @param vdd_device_id The VDD device ID.
    * @param vdd_prep The vdd_prep_e value specifying how to handle physical displays.
-   * @param pre_vdd_devices Physical device info captured BEFORE VDD creation.
-   *        Used to reliably identify physical displays even if VDD creation
-   *        caused them to become inactive. If empty, falls back to current device enumeration.
+   * @param pre_vdd_devices Physical device info captured before VDD creation.
+   *        An engaged empty map represents a headless host. An unengaged value
+   *        falls back to current device enumeration.
    * @returns True if the operation succeeded.
    * @note This operation modifies topology without saving/restoring state,
    *       as Windows automatically handles topology memory when displays change.
    */
   bool
   apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
-    const device_info_map_t &pre_vdd_devices = {});
+    const boost::optional<device_info_map_t> &pre_vdd_devices);
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);

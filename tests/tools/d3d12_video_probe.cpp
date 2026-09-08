@@ -9,15 +9,87 @@
 #include <cmath>
 #include <iostream>
 #include <iterator>
+#include <numeric>
 #include <thread>
+#include <vector>
 
 #include <d3d11.h>
+#include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 
 namespace {
   using Microsoft::WRL::ComPtr;
   namespace backend = platf::dxgi::video_backend;
+
+  // Stall compute while the producer fills every slot. Capture signals must
+  // not advance the completion fence or permit an early readback/reuse.
+  bool
+  probe_ring(platf::dxgi::d3d12::device_t &device,
+    platf::dxgi::d3d12::hdr_analysis_t &analysis,
+    ID3D11DeviceContext *context) {
+    if (FAILED(device.wait_idle())) {
+      return false;
+    }
+    ComPtr<ID3D12Fence> gate;
+    if (FAILED(device.device()->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gate)))) {
+      return false;
+    }
+    const auto before = device.shared_fence()->GetCompletedValue();
+    if (FAILED(device.compute_queue()->Wait(gate.Get(), 1))) {
+      return false;
+    }
+    const auto submit = [&](std::uint64_t frame) {
+      const auto snapshot = analysis.try_acquire_snapshot();
+      if (!snapshot) return false;
+      const FLOAT base = 100.0f + static_cast<FLOAT>(frame % 17);
+      const FLOAT values[4] { base, base + 300.0f, base + 100.0f, base + 200.0f };
+      const FLOAT pq[4] { 0.25f + static_cast<FLOAT>(frame % 5) * 0.125f, 0, 0, 0 };
+      context->ClearUnorderedAccessViewFloat(snapshot->uav, values);
+      context->ClearUnorderedAccessViewFloat(snapshot->pq_uav, pq);
+      return analysis.submit(*snapshot, frame);
+    };
+    bool ready = true;
+    for (std::uint64_t frame = 10; frame < 13; ++frame) {
+      ready = submit(frame) && ready;
+    }
+    // The standalone probe has no encoder to submit D3D11 work for us.
+    context->Flush();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ready = !analysis.poll() && ready;
+    ready = !analysis.try_acquire_snapshot() && ready;
+    ready = device.shared_fence()->GetCompletedValue() == before && ready;
+    // Always release the gate, including failure paths, before destroying GPU resources.
+    gate->Signal(1);
+    if (!ready) return false;
+
+    const auto validate = [](const platf::dxgi::d3d12::completed_hdr_result_t &completed) {
+      const auto summary = platf::dxgi::d3d12::summarize_hdr_result(completed.result);
+      const float base = 100.0f + static_cast<float>(completed.source_frame % 17);
+      const float pq = 0.25f + static_cast<float>(completed.source_frame % 5) * 0.125f;
+      return summary.valid && completed.result.pixel_count == 4096 &&
+             std::abs(summary.min_maxrgb - base) < 0.01f &&
+             std::abs(summary.max_maxrgb - (base + 300.0f)) < 0.01f &&
+             std::abs(summary.avg_maxrgb - (base + 100.0f)) < 0.01f &&
+             std::abs(summary.avg_maxrgb_pq - pq) < 0.0001f &&
+             std::accumulate(completed.result.histogram.begin(), completed.result.histogram.end(), std::uint64_t { 0 }) == 4096;
+    };
+    std::uint64_t next_frame = 13;
+    std::uint64_t newest_frame = 0;
+    constexpr std::uint64_t last_frame = 521;  // 512 submissions, reusing all three slots.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (auto result = analysis.poll()) {
+        if (!validate(*result) || result->source_frame <= newest_frame) return false;
+        newest_frame = result->source_frame;
+      }
+      if (newest_frame == last_frame) return true;
+      while (next_frame <= last_frame && submit(next_frame)) ++next_frame;
+      context->Flush();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+  }
 
   bool
   probe_adapter(IDXGIAdapter1 *adapter, const DXGI_ADAPTER_DESC1 &desc) {
@@ -54,6 +126,11 @@ namespace {
       adapter,
       d3d11_device.Get(),
       d3d11_context.Get());
+    ComPtr<ID3D12InfoQueue> debug_queue;
+    if (result.success && SUCCEEDED(d3d12_device.device()->QueryInterface(IID_PPV_ARGS(&debug_queue)))) {
+      // Capability probes may intentionally attempt unsupported formats.
+      debug_queue->ClearStoredMessages();
+    }
     bool hdr_analysis_ready = false;
     std::string_view hdr_analysis_stage = "foundation_unavailable";
     HRESULT hdr_analysis_hresult = S_OK;
@@ -75,37 +152,12 @@ namespace {
       if (hdr_init.success) {
         const auto snapshot = hdr_analysis.try_acquire_snapshot();
         if (snapshot) {
-          D3D11_TEXTURE2D_DESC source_desc {};
-          source_desc.Width = 64;
-          source_desc.Height = 64;
-          source_desc.MipLevels = 1;
-          source_desc.ArraySize = 1;
-          source_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-          source_desc.SampleDesc.Count = 1;
-          source_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-          ComPtr<ID3D11Texture2D> source;
-          d3d11_device->CreateTexture2D(
-            &source_desc,
-            nullptr,
-            &source);
-          ComPtr<ID3D11UnorderedAccessView> source_uav;
-          d3d11_device->CreateUnorderedAccessView(
-            source.Get(),
-            nullptr,
-            &source_uav);
-          const FLOAT cell_statistics[4] {
-            100.0f,
-            400.0f,
-            200.0f,
-            300.0f,
-          };
-          d3d11_context->ClearUnorderedAccessViewFloat(
-            source_uav.Get(),
-            cell_statistics);
-          d3d11_context->CopyResource(
-            snapshot->texture,
-            source.Get());
+          const FLOAT cell_statistics[4] { 100.0f, 400.0f, 200.0f, 300.0f };
+          const FLOAT pq_average[4] { 0.5f, 0.0f, 0.0f, 0.0f };
+          d3d11_context->ClearUnorderedAccessViewFloat(snapshot->uav, cell_statistics);
+          d3d11_context->ClearUnorderedAccessViewFloat(snapshot->pq_uav, pq_average);
           if (hdr_analysis.submit(*snapshot, 7)) {
+            d3d11_context->Flush();
             const auto deadline =
               std::chrono::steady_clock::now() +
               std::chrono::seconds(2);
@@ -121,12 +173,18 @@ namespace {
                   completed->result.pixel_count == 64 * 64 &&
                   std::abs(summary.min_maxrgb - 100.0f) < 0.01f &&
                   std::abs(summary.max_maxrgb - 400.0f) < 0.01f &&
-                  std::abs(summary.avg_maxrgb - 200.0f) < 0.01f;
+                  std::abs(summary.avg_maxrgb - 200.0f) < 0.01f &&
+                  std::abs(summary.avg_maxrgb_pq - 0.5f) < 0.0001f &&
+                  std::accumulate(completed->result.histogram.begin(), completed->result.histogram.end(), std::uint64_t { 0 }) == 64 * 64;
                 hdr_analysis_stage =
                   hdr_analysis_ready ? "ready" : "result_mismatch";
                 break;
               }
               std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (hdr_analysis_ready && !probe_ring(d3d12_device, hdr_analysis, d3d11_context.Get())) {
+              hdr_analysis_ready = false;
+              hdr_analysis_stage = "ring_stress_failed";
             }
             if (!hdr_analysis_ready && hdr_analysis_stage == "ready") {
               hdr_analysis_stage = "timeout";
@@ -139,6 +197,20 @@ namespace {
         }
         else {
           hdr_analysis_stage = "snapshot_busy";
+        }
+      }
+    }
+    if (debug_queue) {
+      for (UINT64 index = 0; index < debug_queue->GetNumStoredMessages(); ++index) {
+        SIZE_T size = 0;
+        debug_queue->GetMessage(index, nullptr, &size);
+        std::vector<std::byte> storage(size);
+        auto *message = reinterpret_cast<D3D12_MESSAGE *>(storage.data());
+        if (SUCCEEDED(debug_queue->GetMessage(index, message, &size)) &&
+            message->Severity <= D3D12_MESSAGE_SEVERITY_ERROR) {
+          std::cerr << "d3d12_debug_error=" << message->pDescription << '\n';
+          hdr_analysis_ready = false;
+          hdr_analysis_stage = "debug_validation_failed";
         }
       }
     }
@@ -171,6 +243,7 @@ namespace {
               << " hdr_min=" << observed_hdr_result.min_maxrgb
               << " hdr_max=" << observed_hdr_result.max_maxrgb
               << " hdr_sum=" << observed_hdr_result.sum_maxrgb
+              << " hdr_sum_pq=" << observed_hdr_result.sum_maxrgb_pq
               << " hdr_pixels=" << observed_hdr_result.pixel_count
               << " hresult=0x" << std::hex
               << static_cast<std::uint32_t>(result.hresult)
@@ -180,7 +253,15 @@ namespace {
 }  // namespace
 
 int
-main() {
+main(int argc, char **argv) {
+  if (argc > 1 && std::string_view(argv[1]) == "--debug") {
+    ComPtr<ID3D12Debug> debug;
+    if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
+      std::cerr << "D3D12 debug layer unavailable\n";
+      return 1;
+    }
+    debug->EnableDebugLayer();
+  }
   ComPtr<IDXGIFactory1> factory;
   const auto factory_status = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
   if (FAILED(factory_status)) {

@@ -12,6 +12,7 @@
 // lib includes
 #include <boost/core/null_deleter.hpp>
 #include <boost/format.hpp>
+#include <boost/filesystem/path.hpp>
 #include <boost/log/attributes/clock.hpp>
 #include <boost/log/common.hpp>
 #include <boost/log/expressions.hpp>
@@ -23,6 +24,7 @@
 
 // local includes
 #include "logging.h"
+#include "file_handler.h"
 
 extern "C" {
 #include <libavutil/log.h>
@@ -31,6 +33,17 @@ extern "C" {
 using namespace std::literals;
 
 namespace bl = boost::log;
+
+namespace {
+  boost::filesystem::path
+  boost_path_from_native(const std::filesystem::path &path) {
+#ifdef _WIN32
+    return boost::filesystem::path { path.wstring() };
+#else
+    return boost::filesystem::path { path.string() };
+#endif
+  }
+}
 
 boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> console_sink;
 boost::shared_ptr<boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>> file_sink_ptr;
@@ -90,13 +103,16 @@ namespace logging {
   void
   archive_existing_log(const std::string &log_file) {
     namespace fs = std::filesystem;
-    
-    // 检查日志文件是否存在
-    if (!fs::exists(log_file)) {
-      return;
-    }
-    
     try {
+      const auto log_path = file_handler::path_from_utf8(log_file);
+      std::error_code status_error;
+      if (!fs::exists(log_path, status_error)) {
+        if (status_error) {
+          BOOST_LOG(warning) << "Failed to inspect existing log file: " << status_error.message();
+        }
+        return;
+      }
+
       // 获取当前时间
       auto now = std::chrono::system_clock::now();
       auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -109,12 +125,11 @@ namespace logging {
                   << ".log";
       
       // 构建备份文件路径
-      fs::path log_path(log_file);
       fs::path backup_path = log_path.parent_path() / backup_name.str();
       
       // 如果备份文件已存在，则追加到文件尾部
       if (fs::exists(backup_path)) {
-        std::ifstream source(log_file, std::ios::binary);
+        std::ifstream source(log_path, std::ios::binary);
         std::ofstream dest(backup_path, std::ios::binary | std::ios::app);
         
         if (source && dest) {
@@ -123,9 +138,9 @@ namespace logging {
           source.close();
           
           // 删除原日志文件
-          fs::remove(log_file);
+          fs::remove(log_path);
           
-          BOOST_LOG(info) << "Appended log file to: " << backup_path.string();
+          BOOST_LOG(info) << "Appended log file to: " << file_handler::path_to_utf8(backup_path);
         }
         else {
           BOOST_LOG(warning) << "Failed to open files for append operation";
@@ -133,8 +148,8 @@ namespace logging {
       }
       else {
         // 备份文件不存在，直接重命名
-        fs::rename(log_file, backup_path);
-        BOOST_LOG(info) << "Archived log file to: " << backup_path.string();
+        fs::rename(log_path, backup_path);
+        BOOST_LOG(info) << "Archived log file to: " << file_handler::path_to_utf8(backup_path);
       }
     }
     catch (const std::exception &e) {
@@ -226,26 +241,41 @@ namespace logging {
     // File sink with rotation support
     namespace fs = std::filesystem;
     const auto max_log_size_mb = config::sunshine.max_log_size_mb;
-    const auto log_dir = fs::path(log_file).parent_path();
-    const auto log_filename = fs::path(log_file).filename().string();
+    const auto log_path = file_handler::path_from_utf8(log_file);
+    const auto log_dir = log_path.parent_path();
+    const auto boost_log_path = boost_path_from_native(log_path);
+    const auto boost_archive_path = boost_path_from_native(log_dir / "logs_archive");
 
     if (max_log_size_mb > 0) {
       // When restore_log is false, truncate the existing log file before starting rotation
-      if (!config::sunshine.restore_log && fs::exists(log_file)) {
-        std::error_code ec;
-        fs::remove(log_file, ec);
+      if (!config::sunshine.restore_log) {
+        std::error_code status_error;
+        const bool log_exists = fs::exists(log_path, status_error);
+        if (status_error) {
+          BOOST_LOG(warning) << "Failed to inspect log file before initialization: " << status_error.message();
+        }
+        else if (log_exists) {
+          std::error_code remove_error;
+          fs::remove(log_path, remove_error);
+          if (remove_error) {
+            BOOST_LOG(warning) << "Failed to remove existing log file before initialization: " << remove_error.message();
+          }
+        }
       }
+
+      const auto open_mode = std::ios_base::out |
+                             (config::sunshine.restore_log ? std::ios_base::app : std::ios_base::trunc);
 
       // Use text_file_backend with automatic size-based rotation
       auto file_backend = boost::make_shared<bl::sinks::text_file_backend>(
-        bl::keywords::file_name = log_file,
+        bl::keywords::file_name = boost_log_path,
         bl::keywords::rotation_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024,
-        bl::keywords::open_mode = std::ios_base::out | std::ios_base::app
+        bl::keywords::open_mode = open_mode
       );
 
       // Set up file collector to manage rotated log files
       file_backend->set_file_collector(bl::sinks::file::make_collector(
-        bl::keywords::target = (log_dir / "logs_archive").string(),
+        bl::keywords::target = boost_archive_path,
         bl::keywords::max_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024 * 5,  // Keep up to 5x max_size total
         bl::keywords::max_files = 10
       ));
@@ -263,7 +293,7 @@ namespace logging {
     else {
       // No rotation: use simple text_ostream_backend (original behavior)
       file_ostream_sink = boost::make_shared<text_sink>();
-      file_ostream_sink->locked_backend()->add_stream(boost::make_shared<std::ofstream>(log_file, std::ios_base::out));
+      file_ostream_sink->locked_backend()->add_stream(boost::make_shared<std::ofstream>(log_path, std::ios_base::out));
       file_ostream_sink->locked_backend()->auto_flush(true);
       file_ostream_sink->set_filter(severity >= min_log_level);
       file_ostream_sink->set_formatter(&formatter);

@@ -1,5 +1,5 @@
 <template>
-  <Teleport to="body">
+  <Teleport :to="teleportTarget">
     <Transition name="finder-fade">
       <div v-if="visible" class="cover-finder-overlay" @click.self="closeFinder">
         <div
@@ -139,7 +139,7 @@
 <script>
 import { searchAllCovers } from '../utils/coverSearch.js'
 import { apiPostJson } from '../utils/apiFetch.js'
-import { getFocusableElements } from '../utils/focus.js'
+import { getFocusableElements, resolveDialogTeleportTarget } from '../utils/focus.js'
 
 const createPlaceholderImage = (label) =>
   'data:image/svg+xml,' +
@@ -178,6 +178,7 @@ export default {
       localSearchTerm: '',
       searchAbortController: null,
       previousFocus: null,
+      teleportTarget: 'body',
     }
   },
   computed: {
@@ -228,8 +229,12 @@ export default {
       return countMap[key] || 0
     },
 
+    /**
+     * Resolve the nested Teleport target before moving focus into the cover finder.
+     */
     onOpen() {
       this.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      this.teleportTarget = resolveDialogTeleportTarget(this.previousFocus)
       this.localSearchTerm = this.searchTerm
       this.$nextTick(() => {
         this.$refs.searchInput?.focus()

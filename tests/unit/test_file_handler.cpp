@@ -2,6 +2,11 @@
  * @file tests/unit/test_file_handler.cpp
  * @brief Test src/file_handler.*.
  */
+#include <chrono>
+
+#include <boost/property_tree/ptree.hpp>
+#include <Simple-Web-Server/utility.hpp>
+
 #include <src/file_handler.h>
 
 #include "../tests_common.h"
@@ -25,11 +30,11 @@ struct FileHandlerMakeDirectoryTest: testing::TestWithParam<std::tuple<std::stri
 
 TEST_P(FileHandlerMakeDirectoryTest, Run) {
   auto [input, expected, remove] = GetParam();
-  const std::string test_dir = platf::appdata().string() + "/tests/path/";
-  input = test_dir + input;
+  const auto test_dir = platf::appdata() / "tests/path";
+  input = file_handler::path_to_utf8(test_dir / file_handler::path_from_utf8(input));
 
   EXPECT_EQ(file_handler::make_directory(input), expected);
-  EXPECT_TRUE(std::filesystem::exists(input));
+  EXPECT_TRUE(std::filesystem::exists(file_handler::path_from_utf8(input)));
 
   // remove test directory
   if (remove) {
@@ -88,3 +93,53 @@ TEST(FileHandlerTests, ReadMissingFileTest) {
   // read missing file
   EXPECT_EQ(file_handler::read_file("non-existing-file.txt"), "");
 }
+
+#ifdef _WIN32
+TEST(FileHandlerTests, ReadsAndWritesUnicodePath) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    (std::filesystem::path { L"sunshine_文件路径_" } /
+                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto file = root / L"配置文件.txt";
+  const auto utf8_root = file_handler::path_to_utf8(root);
+  const auto utf8_file = file_handler::path_to_utf8(file);
+
+  ASSERT_TRUE(file_handler::make_directory(utf8_root));
+  ASSERT_EQ(file_handler::write_file(utf8_file.c_str(), "unicode-path"), 0);
+  EXPECT_EQ(file_handler::read_file(utf8_file.c_str()), "unicode-path");
+
+  std::error_code ignored;
+  std::filesystem::remove_all(root, ignored);
+}
+
+TEST(FileHandlerTests, ReadsAndWritesJsonInUnicodePath) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    (std::filesystem::path { L"sunshine_JSON路径_" } /
+                     std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto file = root / L"应用配置.json";
+  const auto utf8_root = file_handler::path_to_utf8(root);
+  const auto utf8_file = file_handler::path_to_utf8(file);
+
+  ASSERT_TRUE(file_handler::make_directory(utf8_root));
+
+  boost::property_tree::ptree expected;
+  expected.put("name", "Sunshine");
+  expected.put("enabled", true);
+  ASSERT_NO_THROW(file_handler::write_json(utf8_file, expected));
+
+  boost::property_tree::ptree actual;
+  ASSERT_NO_THROW(file_handler::read_json(utf8_file, actual));
+  EXPECT_EQ(actual.get<std::string>("name"), "Sunshine");
+  EXPECT_TRUE(actual.get<bool>("enabled"));
+
+  std::error_code ignored;
+  std::filesystem::remove_all(root, ignored);
+}
+
+TEST(FileHandlerTests, ConvertsPercentEncodedUnicodeFilename) {
+  const std::filesystem::path expected { L"中文封面.png" };
+  const auto encoded = SimpleWeb::Percent::encode(file_handler::path_to_utf8(expected));
+  const auto actual = file_handler::path_from_utf8(SimpleWeb::Percent::decode(encoded));
+
+  EXPECT_EQ(actual, expected);
+}
+#endif

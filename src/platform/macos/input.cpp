@@ -386,6 +386,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void
+  set_gamepad_mode(int mode) {
+    // Per-app virtual gamepad selection is currently Windows-only.
+  }
+
+  void
   move_mouse(
     input_t &input,
     const int deltaX,

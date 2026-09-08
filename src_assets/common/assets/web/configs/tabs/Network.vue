@@ -53,6 +53,11 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
       </div>
       <div class="port-table-shell">
       <table class="table port-table">
+        <colgroup>
+          <col class="port-protocol-column" />
+          <col class="port-number-column" />
+          <col />
+        </colgroup>
         <thead>
         <tr>
           <th scope="col">{{ $t('config.port_protocol') }}</th>
@@ -81,7 +86,13 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
           <!-- Web UI -->
           <td>{{ $t('config.port_tcp') }}</td>
           <td>{{+effectivePort + 1}}</td>
-          <td>{{ $t('config.port_web_ui') }}</td>
+          <td>
+            <div>{{ $t('config.port_web_ui') }}</div>
+            <div class="alert alert-warning mt-2" role="alert">
+              <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+              {{ $t('config.port_web_ui_proxy_warning') }}
+            </div>
+          </td>
         </tr>
         <tr>
           <!-- RTSP -->
@@ -216,6 +227,7 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
 
 .port-table {
   min-width: 540px;
+  table-layout: fixed;
   margin: 0;
   color: var(--ui-text-secondary);
   --bs-table-bg: transparent;
@@ -223,6 +235,14 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
   --bs-table-border-color: var(--ui-border);
   --bs-table-hover-bg: var(--ui-surface-hover);
   --bs-table-hover-color: var(--ui-text-primary);
+}
+
+.port-protocol-column {
+  width: 7rem;
+}
+
+.port-number-column {
+  width: 10rem;
 }
 
 .port-table thead th {
@@ -236,6 +256,11 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
 .port-table td {
   padding: 0.75rem 1rem;
   vertical-align: middle;
+}
+
+.port-table th:nth-child(-n + 2),
+.port-table td:nth-child(-n + 2) {
+  white-space: nowrap;
 }
 
 .port-table .alert {

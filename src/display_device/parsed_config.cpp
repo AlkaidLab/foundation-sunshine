@@ -479,7 +479,10 @@ namespace display_device {
       const auto hdr_prep_option { static_cast<parsed_config_t::hdr_prep_e>(config.hdr_prep) };
       switch (hdr_prep_option) {
         case parsed_config_t::hdr_prep_e::automatic:
-          return session.enable_hdr;
+          // An SDR-to-HDR pre-encode filter needs the source desktop to stay
+          // SDR even though the client-facing stream is HDR. This decision is
+          // made during display preparation, before capture is constructed.
+          return display_prepared_for_hdr(config, session);
         case parsed_config_t::hdr_prep_e::no_operation:
         default:
           return boost::none;
@@ -504,35 +507,129 @@ namespace display_device {
       }
       return default_val;
     }
+
+    /**
+     * @brief The device preparation the launch actually runs with.
+     *
+     * The client's custom screen mode, when it names a known value, replaces the
+     * configured one for this stream only.
+     */
+    parsed_config_t::device_prep_e
+    resolve_device_prep(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+      using device_prep_e = parsed_config_t::device_prep_e;
+
+      const auto configured = static_cast<device_prep_e>(config.display_device_prep);
+      if (session.custom_screen_mode < 0) {
+        return configured;
+      }
+
+      switch (static_cast<device_prep_e>(session.custom_screen_mode)) {
+        case device_prep_e::no_operation:
+        case device_prep_e::ensure_active:
+        case device_prep_e::ensure_primary:
+        case device_prep_e::ensure_only_display:
+        case device_prep_e::ensure_secondary:
+          BOOST_LOG(debug) << "客户端自定义屏幕模式: "sv << session.custom_screen_mode;
+          return static_cast<device_prep_e>(session.custom_screen_mode);
+        default:
+          return configured;
+      }
+    }
   }  // namespace
 
   bool
-  display_request_t::is_client_physical_display() const {
-    return source == source_e::client && !use_vdd;
+  display_prepared_for_hdr(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+    if (session.frame_pipeline_policy_resolved) {
+      switch (session.frame_pipeline_policy.source_display) {
+        case platf::source_display_intent_e::require_hdr:
+          return true;
+        case platf::source_display_intent_e::require_sdr:
+          return false;
+        case platf::source_display_intent_e::unchanged:
+        default:
+          break;
+      }
+    }
+    return session.enable_hdr && !session.synthetic_hdr.enabled;
   }
 
-  bool
-  display_request_t::allows_vdd_fallback() const {
-    return !is_client_physical_display();
-  }
-
-  display_request_t
-  resolve_display_request(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
-    display_request_t request {
-      config.output_name,
-      display_request_t::source_e::config,
-      session.use_vdd
-    };
-
+  display_intent_t
+  resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+    // The client may pick a display for its own stream; otherwise the host config decides.
+    std::string device_id = config.output_name;
+    bool client_named_it = false;
     if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
-      const std::string client_display_name = it->to_string();
-      if (!client_display_name.empty()) {
-        request.device_id = client_display_name;
-        request.source = display_request_t::source_e::client;
+      if (std::string client_display_name = it->to_string(); !client_display_name.empty()) {
+        device_id = std::move(client_display_name);
+        client_named_it = true;
+        BOOST_LOG(debug) << "使用客户端指定的显示器: "sv << device_id;
       }
     }
 
-    return request;
+    display_intent_t intent {
+      display_intent_t::target_e::physical,
+      device_id,
+      !device_id.empty(),
+      resolve_device_prep(config, session)
+    };
+
+    // An explicit VDD request does not depend on CCD being available.
+    bool explicit_vdd = session.use_vdd;
+#ifdef _WIN32
+    // VDD_NAME is the stable alias exposed by the Windows host configuration UI.
+    explicit_vdd = explicit_vdd || intent.device_id == VDD_NAME;
+#endif
+    if (explicit_vdd) {
+      intent.target = display_intent_t::target_e::vdd;
+      return intent;
+    }
+
+    if (intent.device_id.empty()) {
+      return intent;
+    }
+
+    bool requested_device_exists = false;
+    bool requested_device_is_vdd = false;
+#ifdef _WIN32
+    const auto available_devices = enum_available_devices_checked();
+    if (!available_devices) {
+      // A locked desktop and other transient CCD failures do not prove that a
+      // selected display was disconnected. Keep the intent so configure_display
+      // can take its normal deferred-retry path.
+      BOOST_LOG(warning) << "Could not verify the selected display; preserving the requested display intent: "sv << intent.device_id;
+      return intent;
+    }
+
+    if (const auto device = available_devices->find(intent.device_id); device != available_devices->end()) {
+      requested_device_exists = true;
+      requested_device_is_vdd = device->second.friendly_name == ZAKO_NAME;
+    }
+#else
+    requested_device_exists = !find_one_of_the_available_devices(intent.device_id).empty();
+#endif
+
+    if (requested_device_is_vdd) {
+      intent.target = display_intent_t::target_e::vdd;
+      return intent;
+    }
+
+    if (!requested_device_exists) {
+      if (client_named_it) {
+        // The client picked this display for this stream, so quietly streaming a
+        // different one is worse than telling it the display is gone.
+        BOOST_LOG(error) << "客户端指定的物理显示器不存在，拒绝回退到其他显示器: "sv << intent.device_id;
+        intent.target = display_intent_t::target_e::unavailable;
+        return intent;
+      }
+
+      // A stale entry in the host config. Aim at the primary display; whether a
+      // virtual display is a better answer is decided during stream startup.
+      BOOST_LOG(warning) << "配置的显示器不存在，改用主显示器: "sv << intent.device_id;
+      intent.device_id.clear();
+      intent.user_named_display = false;
+    }
+
+    return intent;
   }
 
   int
@@ -626,45 +723,26 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
     parsed_config_t parsed_config;
-    
-    // 优先使用客户端指定的显示器名称，如果没有则使用全局配置
-    const auto display_request = resolve_display_request(config, session);
-    if (display_request.source == display_request_t::source_e::client) {
-      BOOST_LOG(debug) << "使用客户端指定的显示器: " << display_request.device_id;
+
+    // 显示器目标、是否为VDD、以及device_prep统一在此解析
+    const auto intent = resolve_display_intent(config, session);
+    if (intent.target == display_intent_t::target_e::unavailable) {
+      return boost::none;
     }
-    
-    parsed_config.device_id = display_request.device_id;
-    parsed_config.device_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
+
+    parsed_config.device_id = intent.device_id;
+    parsed_config.device_prep = intent.device_prep;
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
-    const int custom_screen_mode = session.custom_screen_mode;
-    
-    // 客户端自定义屏幕模式（统一覆盖 display_device_prep）
-    if (custom_screen_mode != -1) {
-      BOOST_LOG(debug) << "客户端自定义屏幕模式: "sv << custom_screen_mode;
-      if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::no_operation)) {
-        parsed_config.device_prep = parsed_config_t::device_prep_e::no_operation;
-      }
-      else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_active)) {
-        parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_active;
-      }
-      else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_primary)) {
-        parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_primary;
-      }
-      else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_only_display)) {
-        parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_only_display;
-      }
-      else if (custom_screen_mode == static_cast<int>(parsed_config_t::device_prep_e::ensure_secondary)) {
-        parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_secondary;
-      }
-    }
-
+    // Resume 的任意零值模式都不能用于显示配置；保持现有分辨率和刷新率。
+    const bool resume_mode_invalid = !is_reconfigure && (session.width <= 0 || session.height <= 0 || session.fps <= 0);
     // 解析分辨率和刷新率配置
-    if (!parse_resolution_option(config, session, parsed_config) ||
-        !parse_refresh_rate_option(config, session, parsed_config) ||
-        !remap_display_modes_if_needed(config, session, parsed_config)) {
+    if (!resume_mode_invalid &&
+        (!parse_resolution_option(config, session, parsed_config) ||
+         !parse_refresh_rate_option(config, session, parsed_config) ||
+         !remap_display_modes_if_needed(config, session, parsed_config))) {
       // 任何一步失败都返回空值
       return boost::none;
     }
@@ -678,29 +756,9 @@ namespace display_device {
                      << "\n刷新率: "sv << (parsed_config.refresh_rate ? to_string(*parsed_config.refresh_rate) : "不变")
                      << "\n"sv;
 
-    // 检查是否需要使用VDD
-    const auto requested_device_id = display_device::find_one_of_the_available_devices(parsed_config.device_id);
-    const bool requested_device_exists = !requested_device_id.empty();
-    const bool is_vdd_device = (display_device::get_display_friendly_name(parsed_config.device_id) == ZAKO_NAME);
-    if (!requested_device_exists && !display_request.allows_vdd_fallback()) {
-      BOOST_LOG(error) << "客户端指定的物理显示器不存在，拒绝回退到VDD: " << parsed_config.device_id;
-      return boost::none;
-    }
-
-    const bool explicit_vdd_request = display_request.use_vdd || is_vdd_device;
-    const bool automatic_vdd_fallback =
-      !requested_device_exists && display_request.allows_vdd_fallback() && !explicit_vdd_request;
-    if (parsed_config.device_prep == parsed_config_t::device_prep_e::no_operation &&
-        automatic_vdd_fallback) {
-      BOOST_LOG(error) << "Requested display is unavailable and no_operation forbids automatic VDD fallback: " << parsed_config.device_id;
-      return boost::none;
-    }
-
-    const bool needs_vdd = explicit_vdd_request || automatic_vdd_fallback;
-
     // 不需要VDD时，使用物理模式映射
-    if (!needs_vdd) {
-      BOOST_LOG(debug) << "输出设备已存在，跳过VDD准备"sv;
+    if (intent.target != display_intent_t::target_e::vdd) {
+      BOOST_LOG(debug) << "使用物理显示器，跳过VDD准备"sv;
       parsed_config.use_vdd = false;
       parsed_config.device_prep = parsed_config_t::to_physical_device_prep(parsed_config.device_prep);
       parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::no_operation;

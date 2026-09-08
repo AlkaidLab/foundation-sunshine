@@ -11,7 +11,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
+
+#include "hdr/client_display_capabilities.h"
 #include <vector>
 
 extern "C" {
@@ -38,6 +41,9 @@ namespace video {
     std::string conversion_path { "pixel_shader" };
     std::string conversion_fallback_reason;
     std::string analysis_failure_reason;
+    std::string synthetic_hdr_backend { "none" };
+    std::string synthetic_hdr_state { "disabled" };
+    std::string synthetic_hdr_failure_reason;
   };
 
   std::uint64_t
@@ -63,8 +69,13 @@ namespace video {
     ADAPTIVE_QUANTIZATION, // 自适应量化 - 值：1个bool
     MULTI_PASS,        // 多遍编码 - 值：1个int
     VBV_BUFFER_SIZE,   // VBV缓冲区大小 - 值：1个int
+    // Wire value 9; keep this explicit because the enum ordinal is part of the
+    // Sunshine dynamic-parameter control protocol.
+    CLIENT_SDR_WHITE_NITS = 9, // 客户端 SDR reference white - 值：1个float (nits)
     MAX_PARAM_TYPE
   };
+
+  static_assert(static_cast<int>(dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) == 9);
 
   // 动态参数值联合体
   union dynamic_param_value_t {
@@ -107,6 +118,12 @@ namespace video {
        HDR encoding activates when dynamicRange > 0 and the display is operating in HDR mode */
     int dynamicRange;
 
+    /* Selected dynamic HDR format for this session, as hdr::dynamic_hdr_format_e
+       (0 none, 1 HDR10+, 2 vivid PQ, 3 vivid HLG, 4 Dolby Vision Profile 8.1).
+       Negotiated once in the RTSP ANNOUNCE from the client's reported capabilities;
+       the encode path gates Dolby Vision RPU injection on it. */
+    int dynamic_hdr_format = 0;
+
     int chromaSamplingType;  // 0 - 4:2:0, 1 - 4:4:4
 
     int enableIntraRefresh;  // 0 - disabled, 1 - enabled
@@ -125,6 +142,29 @@ namespace video {
     // This is intentionally scoped to a single platf::display() call so encoder
     // probing can avoid mutating the global config::video.capture string.
     std::string capture_backend_override;
+
+    // Remote display target. This adjusts only metadata sent to the client;
+    // it must never mutate a physical host display's EDID, HDR state, or ICC.
+    hdr::client_display_capabilities_t hdr_capabilities;
+
+    // Orthogonal session contracts. Keep these defaulted fields after the
+    // legacy aggregate-initialized fields above. During migration, callers
+    // that have not resolved them explicitly retain legacy behavior through
+    // effective_frame_pipeline_policy(). Capture backends must consume the
+    // effective capture contract instead of reading dynamicRange directly.
+    platf::frame_pipeline_policy_t frame_pipeline_policy;
+    bool frame_pipeline_policy_resolved = false;
+    platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
+    platf::pre_encode_filter_config_t pre_encode_filter_config;
+    std::string pre_encode_filter_backend_path;
+
+    platf::frame_pipeline_policy_t
+    effective_frame_pipeline_policy() const {
+      if (frame_pipeline_policy_resolved) {
+        return frame_pipeline_policy;
+      }
+      return platf::resolve_frame_pipeline_policy(dynamicRange, false);
+    }
 
     // Helper to get effective framerate as double
     double get_effective_framerate() const {
@@ -192,8 +232,6 @@ namespace video {
   using avcodec_frame_t = util::safe_ptr<AVFrame, free_frame>;
   using avcodec_buffer_t = util::safe_ptr<AVBufferRef, free_buffer>;
   using sws_t = util::safe_ptr<SwsContext, sws_freeContext>;
-  using img_event_t = std::shared_ptr<safe::event_t<std::shared_ptr<platf::img_t>>>;
-
   struct encoder_platform_formats_t {
     virtual ~encoder_platform_formats_t() = default;
     platf::mem_type_e dev_type;
@@ -523,12 +561,35 @@ namespace video {
 
   extern probe_result_t last_encoder_probe_result;
 
+  enum class probe_target_policy_e {
+    backend_autoselect,
+    exact,
+    vdd_compatible
+  };
+
+  struct probe_target_t {
+    std::string output_name; /**< Device selector in the same domain as config::video.output_name. */
+    probe_target_policy_e policy { probe_target_policy_e::backend_autoselect };
+  };
+
   /**
    * @brief Return the encoder selected by the latest successful probe.
    * @return Encoder identifier, or an empty string when no encoder is active.
    */
   std::string
   active_encoder_name();
+
+  /**
+   * @brief Whether the selected encoder path can apply runtime SDR white updates.
+   */
+  bool
+  active_encoder_supports_dynamic_sdr_white();
+
+  /**
+   * @brief Validate a client SDR reference white value from the control stream.
+   */
+  bool
+  is_valid_client_sdr_white_nits(float nits);
 
   void
   capture(
@@ -538,7 +599,11 @@ namespace video {
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt);
 
   bool
-  validate_encoder(encoder_t &encoder, bool expect_failure);
+  validate_encoder(
+    encoder_t &encoder,
+    bool expect_failure,
+    const std::optional<std::string> &probe_capture_override,
+    const std::string &probe_display_name);
 
   /**
    * @brief Probe encoders and select the preferred encoder.
@@ -549,5 +614,5 @@ namespace video {
    * @warning This is only safe to call when there is no client actively streaming.
    */
   int
-  probe_encoders();
+  probe_encoders(std::optional<probe_target_t> target = std::nullopt);
 }  // namespace video

@@ -25,6 +25,7 @@
 #include "config.h"
 #include "crypto.h"
 #include "display_device/session.h"
+#include "file_handler.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "platform/common.h"
@@ -175,6 +176,9 @@ namespace proc {
 
     // Apply per-app mouse mode
     platf::set_mouse_mode(_app.mouse_mode);
+    // Apply the app override before the input session creates virtual pads.
+    // The global Sunshine setting remains unchanged.
+    platf::set_gamepad_mode(_app.gamepad_mode);
 
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
@@ -416,6 +420,8 @@ namespace proc {
 
     // Reset mouse mode to auto when app terminates
     platf::set_mouse_mode(0);
+    // Return to the global gamepad setting for the next application.
+    platf::set_gamepad_mode(0);
   }
 
   const std::vector<ctx_t> &
@@ -492,6 +498,18 @@ namespace proc {
   std::string
   proc_t::get_last_run_app_name() {
     return _app.name;
+  }
+
+  std::optional<rtsp_stream::synthetic_hdr_config_t>
+  proc_t::get_app_rtx_hdr_config(int app_id) const {
+    if (_app_id == app_id && _app_id > 0) {
+      return _app.rtx_hdr;
+    }
+    const auto app_id_string = std::to_string(app_id);
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id_string](const auto &app) {
+      return app.id == app_id_string;
+    });
+    return iter == _apps.end() ? std::nullopt : iter->rtx_hdr;
   }
 
   void
@@ -642,18 +660,18 @@ namespace proc {
         std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
         
         // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
-        auto local_path = std::filesystem::path(platf::appdata().string()) / "covers" / filename;
+        auto local_path = platf::appdata() / "covers" / filename;
         
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
-          if (!http::download_public_cover_image(original_url, local_path.string())) {
+          if (!http::download_public_cover_image(original_url, file_handler::path_to_utf8(local_path))) {
             BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }
         }
         
-        app_image_path = local_path.string();
+        app_image_path = file_handler::path_to_utf8(local_path);
       } catch (const std::exception& e) {
         BOOST_LOG(warning) << "Error processing image URL: " << e.what();
         return DEFAULT_APP_IMAGE_PATH;
@@ -675,7 +693,7 @@ namespace proc {
     }
 
     // 检查图像扩展名是否支持
-    auto image_extension = std::filesystem::path(app_image_path).extension().string();
+    auto image_extension = file_handler::path_from_utf8(app_image_path).extension().string();
     boost::to_lower(image_extension);
     if (image_extension != ".png" && image_extension != ".jpg" && image_extension != ".jpeg") {
       BOOST_LOG(warning) << "Unsupported image extension: " << image_extension;
@@ -685,9 +703,9 @@ namespace proc {
     // 检查各种可能的图像路径
     std::vector<std::string> paths_to_check = {
       // 1. 检查assets目录中的相对路径
-      (std::filesystem::path(SUNSHINE_ASSETS_DIR) / app_image_path).string(),
+      file_handler::path_to_utf8(file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / file_handler::path_from_utf8(app_image_path)),
       // 2. 检查covers目录中的相对路径
-      (std::filesystem::path(platf::appdata().string()) / "covers" / app_image_path).string(),
+      file_handler::path_to_utf8(platf::appdata() / "covers" / file_handler::path_from_utf8(app_image_path)),
       // 2. 处理旧的steam默认图像定义
       app_image_path == "./assets/steam.png" ? SUNSHINE_ASSETS_DIR "/steam.png" : "",
       // 3. 检查绝对路径
@@ -695,7 +713,7 @@ namespace proc {
     };
     
     for (const auto& path : paths_to_check) {
-      if (!path.empty() && std::filesystem::exists(path)) {
+      if (!path.empty() && std::filesystem::exists(file_handler::path_from_utf8(path))) {
         return path;
       }
     }
@@ -718,7 +736,7 @@ namespace proc {
 
     // Read file and update calculated SHA
     char buf[1024 * 16];
-    std::ifstream file(filename, std::ifstream::binary);
+    std::ifstream file(file_handler::path_from_utf8(filename), std::ifstream::binary);
     while (file.good()) {
       file.read(buf, sizeof(buf));
       if (!EVP_DigestUpdate(ctx.get(), buf, file.gcount())) {
@@ -794,7 +812,7 @@ namespace proc {
     pt::ptree tree;
 
     try {
-      pt::read_json(file_name, tree);
+      file_handler::read_json(file_name, tree);
 
       auto &apps_node = tree.get_child("apps"s);
       auto &env_vars = tree.get_child("env"s);
@@ -825,6 +843,8 @@ namespace proc {
         auto wait_all = app_node.get_optional<bool>("wait-all"s);
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
+        auto gamepad = app_node.get_optional<std::string>("gamepad"s);
+        auto rtx_hdr_node = app_node.get_child_optional("rtx-hdr"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -906,7 +926,39 @@ namespace proc {
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
+        if (!gamepad || gamepad->empty()) {
+          ctx.gamepad_mode = 0;
+        }
+        else if (*gamepad == "auto"sv) {
+          ctx.gamepad_mode = 1;
+        }
+        else if (*gamepad == "x360"sv) {
+          ctx.gamepad_mode = 2;
+        }
+        else if (*gamepad == "ds4"sv) {
+          ctx.gamepad_mode = 3;
+        }
+        else if (*gamepad == "ds5"sv) {
+          ctx.gamepad_mode = 4;
+        }
+        else {
+          BOOST_LOG(warning) << "Ignoring invalid per-app gamepad setting ["sv << *gamepad << "] for app ["sv << name << ']';
+          ctx.gamepad_mode = 0;
+        }
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
+        if (rtx_hdr_node) {
+          const auto mode = rtx_hdr_node->get<std::string>("mode", "inherit");
+          if (mode != "on" && mode != "off" && mode != "inherit") {
+            BOOST_LOG(warning) << "Ignoring invalid RTX HDR mode ["sv << mode << "] for app ["sv << name << ']';
+          }
+          ctx.rtx_hdr = rtsp_stream::synthetic_hdr_config_t {
+            .enabled = mode == "on",
+            .contrast = std::clamp(rtx_hdr_node->get<int>("contrast", 0), -100, 100),
+            .saturation = std::clamp(rtx_hdr_node->get<int>("saturation", 0), -100, 100),
+            .middle_gray = std::clamp(rtx_hdr_node->get<int>("middle-gray", 50), 10, 100),
+            .peak_nits = std::clamp(rtx_hdr_node->get<int>("peak-nits", 1000), 400, 1000),
+          };
+        }
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {

@@ -1,5 +1,6 @@
 import i18n from './config/i18n.js'
 import { markWebUiReady } from './utils/appReady.js'
+import { installExternalLinkHandler } from './utils/helpers.js'
 
 // must import even if not implicitly using here
 // https://github.com/aurelia/skeleton-navigation/issues/894
@@ -14,6 +15,7 @@ if (typeof window !== 'undefined') {
 
 export async function initApp(app, config) {
     try {
+        installExternalLinkHandler()
         const i18nInstance = await i18n()
 
         app.use(i18nInstance)

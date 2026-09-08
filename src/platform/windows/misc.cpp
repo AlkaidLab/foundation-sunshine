@@ -1041,7 +1041,7 @@ namespace platf {
    */
   bp::child
   run_command(bool elevated, bool interactive, const std::string &cmd, boost::filesystem::path &working_dir, const bp::environment &env, FILE *file, std::error_code &ec, bp::group *group) {
-    std::wstring start_dir = from_utf8(working_dir.string());
+    std::wstring start_dir = working_dir.wstring();
     HANDLE job = group ? group->native_handle() : nullptr;
     STARTUPINFOEXW startup_info = create_startup_info(file, job ? &job : nullptr, ec);
     PROCESS_INFORMATION process_info;

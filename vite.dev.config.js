@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
-import { ViteEjsPlugin } from './vite-plugin-ejs-v7.js'
+import { ViteEjsPlugin } from './vite-plugin-ejs.js'
 import vue from '@vitejs/plugin-vue'
 import mkcert from 'vite-plugin-mkcert'
 
