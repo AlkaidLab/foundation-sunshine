@@ -43,6 +43,23 @@ if (WIN32)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
 
+add_executable(video_pipeline_telemetry_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_video_pipeline_telemetry.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_video_backend.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_d3d12_resource_ring.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_d3d12_hdr_statistics.cpp
+        ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp
+        ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp)
+target_include_directories(video_pipeline_telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(video_pipeline_telemetry_unit_tests
+        gtest_main)
+target_compile_options(video_pipeline_telemetry_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(video_pipeline_telemetry_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(video_pipeline_telemetry_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME video_pipeline_telemetry_unit_tests COMMAND video_pipeline_telemetry_unit_tests)
+
 add_executable(sunshinesvc_state_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
 target_include_directories(sunshinesvc_state_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -164,6 +181,28 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
     add_test(NAME vdd_prerequisite_unit_tests COMMAND vdd_prerequisite_unit_tests)
+
+    add_executable(d3d12_video_probe
+            ${CMAKE_SOURCE_DIR}/tests/tools/d3d12_video_probe.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_device.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_resources.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_pipeline.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_retirement.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp)
+    add_dependencies(d3d12_video_probe d3d12_hdr_shaders)
+    target_include_directories(d3d12_video_probe PRIVATE
+            "${CMAKE_SOURCE_DIR}"
+            "${CMAKE_BINARY_DIR}")
+    target_link_libraries(d3d12_video_probe
+            d3d11
+            d3d12
+            dxgi)
+    target_compile_options(d3d12_video_probe PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(d3d12_video_probe PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
 
     add_executable(credential_store_unit_tests
             ${CMAKE_SOURCE_DIR}/src/ai/credential_store.cpp

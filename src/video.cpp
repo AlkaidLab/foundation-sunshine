@@ -3188,6 +3188,15 @@ namespace video {
 
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+    // init_encoder()/set_frame() selects the analysis backend. Report only
+    // after a real session succeeds, so probes and pre-init D3D11 defaults do
+    // not hide the effective hybrid path or its fallback reason.
+    const auto report_session = [&](std::unique_ptr<encode_session_t> session, std::string_view backend) {
+      if (session && !is_probe) {
+        disp->report_video_backend_selection(backend);
+      }
+      return session;
+    };
     auto effective_config = config;
     effective_config.bitrate = cap_initial_encoder_bitrate(
       config.bitrate,
@@ -3213,15 +3222,15 @@ namespace video {
                               "streaming HDR10 without RPU"sv;
       }
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
+      return report_session(make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device)), "avcodec_d3d11");
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
+      return report_session(make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe), "nvenc_d3d11");
     }
     else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
       auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
-      return make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
+      return report_session(make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe), "amf_d3d11");
     }
 
     return nullptr;

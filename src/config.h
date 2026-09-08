@@ -143,6 +143,7 @@ namespace config {
     // backend remains SDR; the external backend owns only the private GPU copy.
     std::string rtx_hdr;
     std::string rtx_hdr_backend_path;
+    std::string windows_video_backend = "auto";  // Windows video processing backend: "auto", "d3d11", or "d3d12"
   };
 
   struct audio_t {

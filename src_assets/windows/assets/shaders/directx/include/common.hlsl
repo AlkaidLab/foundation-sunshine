@@ -1,7 +1,11 @@
 // This is a fast sRGB approximation from Microsoft's ColorSpaceUtility.hlsli
 float3 ApplySRGBCurve(float3 x)
 {
-    return x < 0.0031308 ? 12.92 * x : 1.13005 * sqrt(x - 0.00228) - 0.13448 * x + 0.005719;
+    float3 result;
+    result.r = x.r < 0.0031308 ? 12.92 * x.r : 1.13005 * sqrt(x.r - 0.00228) - 0.13448 * x.r + 0.005719;
+    result.g = x.g < 0.0031308 ? 12.92 * x.g : 1.13005 * sqrt(x.g - 0.00228) - 0.13448 * x.g + 0.005719;
+    result.b = x.b < 0.0031308 ? 12.92 * x.b : 1.13005 * sqrt(x.b - 0.00228) - 0.13448 * x.b + 0.005719;
+    return result;
 }
 
 float3 NitsToPQ(float3 L)
