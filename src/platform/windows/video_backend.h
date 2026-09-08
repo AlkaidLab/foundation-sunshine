@@ -33,6 +33,7 @@ namespace platf::dxgi::video_backend {
     encoder_resource_registration_failed,
     device_removed,
     runtime_fence_failed,
+    analysis_path_unavailable,
   };
 
   struct selection_t {
@@ -116,6 +117,8 @@ namespace platf::dxgi::video_backend {
         return "device_removed";
       case fallback_reason_e::runtime_fence_failed:
         return "runtime_fence_failed";
+      case fallback_reason_e::analysis_path_unavailable:
+        return "analysis_path_unavailable";
     }
     return "none";
   }

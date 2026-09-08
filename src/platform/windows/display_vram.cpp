@@ -1111,6 +1111,18 @@ namespace platf::dxgi {
           is_probe);
       }
 
+      // D3D12 analysis needs the converter's shared cell-statistics snapshot.
+      // A skipped compute path must not silently satisfy an explicit strict
+      // request with D3D11 analysis. Preserve any more specific failure reason.
+      if (!is_probe && hdr_analysis_enabled && !d3d12_hdr_analysis) {
+        if (auto vram = std::dynamic_pointer_cast<display_vram_t>(display);
+            vram && vram->video_backend_selection &&
+            vram->video_backend_selection->requested == video_backend::windows_video_backend_e::d3d12 &&
+            vram->video_backend_selection->fallback == video_backend::fallback_reason_e::none) {
+          vram->disable_d3d12_analysis("hdr_snapshot_path_unavailable", E_NOTIMPL,
+            video_backend::fallback_reason_e::analysis_path_unavailable);
+        }
+      }
       if (!video_backend_available()) return -1;
       publish_runtime_status(colorspace, is_probe);
       return 0;

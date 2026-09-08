@@ -175,15 +175,16 @@ namespace platf::dxgi {
   void
   display_vram_t::disable_d3d12_analysis(
     std::string_view stage,
-    HRESULT hresult) {
+    HRESULT hresult,
+    video_backend::fallback_reason_e reason) {
     video_backend_stage = stage;
     video_backend_hresult = hresult;
     if (video_backend_selection) {
       video_backend::apply_d3d12_analysis(*video_backend_selection, false,
-        video_backend::fallback_reason_e::runtime_fence_failed);
+        reason);
     }
     BOOST_LOG(warning)
-      << "[video_backend] runtime_fallback from=d3d12_analysis"
+      << "[video_backend] fallback from=d3d12_analysis"
       << (video_backend_selection && video_backend_selection->strict ?
              " to=unavailable stage=" :
              " to=d3d11_analysis stage=")

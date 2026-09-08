@@ -411,7 +411,8 @@ namespace platf::dxgi {
     void
     disable_d3d12_analysis(
       std::string_view stage,
-      HRESULT hresult);
+      HRESULT hresult,
+      video_backend::fallback_reason_e reason = video_backend::fallback_reason_e::runtime_fence_failed);
 
     void
     report_video_backend_selection(std::string_view encoder_backend) override;

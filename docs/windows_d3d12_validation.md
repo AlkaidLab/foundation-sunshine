@@ -124,10 +124,57 @@ Enabling `BUILD_WERROR` across the entire project encountered a GCC 15.2
 Full application builds use the project's default `BUILD_WERROR=OFF`; the
 targeted checks above retain `-Werror`. No project warning policy was relaxed.
 
+## Real desktop capture and encode check (2026-09-08)
+
+A local diagnostic linked the current production objects and called
+`video::probe_encoders()` and `video::capture()` directly. It did not replace
+the installed Sunshine service or use a Moonlight client. The active Zako
+virtual output was 3840x2160 at 120 Hz, rendered by the AMD Radeon 780M.
+Each successful case captured for about 15 seconds, scaled to 1920x1080,
+requested 30 fps / 12 Mbps HEVC through standalone AMF, and decoded every
+output frame with FFmpeg 8.0.1. Frame counts are smoke-test evidence, not a
+performance comparison; these were live desktop sequences, not identical
+recorded inputs. Temporary bitstreams were deleted after inspection.
+
+| Requested backend | Capture | Transfer / conversion | Decoded frames | Result |
+| --- | --- | --- | ---: | --- |
+| D3D11 | DDAPI | SDR / compute | 439 | Pass, 8-bit BT.709 |
+| D3D11 | DDAPI | PQ / compute | 437 | Pass, 10-bit BT.2020 + PQ |
+| D3D12 strict | DDAPI | PQ / compute | 428 | Pass, hybrid analysis, no fallback |
+| D3D12 strict | WGC | PQ / compute | 418 | Pass, hybrid analysis, no fallback |
+| D3D12 strict | DDAPI | HLG / compute | 408 | Pass, 10-bit BT.2020 + HLG |
+| D3D12 ordinary | DDAPI | PQ / pixel shader | 429 | Pass, explicit D3D11 analysis fallback |
+| D3D12 strict | DDAPI | SDR / compute | 431 | Pass, D3D11 as intended for SDR |
+| D3D12 strict | DDAPI | PQ / pixel shader | 0 | Expected refusal, `analysis_path_unavailable` |
+
+Every successful case exited cleanly and had zero decoder errors. PQ streams
+contained HDR10+ and HDR Vivid side data after the first frame; all 408 HLG
+frames contained Vivid, with no HDR10+ side data. The HLG startup guard logged
+three independent GPU samples before releasing its first Vivid-bearing IDR.
+Runtime status reported active HDR analysis and scene metadata. This verifies
+metadata presence and transfer/depth signaling, not numerical equivalence of
+all metadata fields or visual fidelity on a receiving HDR display.
+
+This check found and fixed a skipped-path bug: with compute conversion disabled,
+strict D3D12 previously emitted 430 valid PQ frames while silently using D3D11
+analysis. Output initialization now records `hdr_snapshot_path_unavailable`
+when an enabled analysis path cannot create the shared statistics snapshot.
+Ordinary mode continues on D3D11 with an explicit reason; strict mode rejects
+the session with zero encoded frames. Capability probes and SDR sessions retain
+their existing behavior. The normal D3D12 PQ case, ordinary fallback, strict
+refusal, and SDR case above were rerun after this fix. Full build and all 20
+CTest targets passed again. WGC and HLG cases were run immediately before it.
+
+HDR was temporarily enabled for these tests and restored to its original
+disabled state afterward. The installed Sunshine service processes remained
+running with their original process IDs. The separate capture harness, build
+script, runner, logs and JSON summaries remain local validation artifacts.
+
 ## Outstanding acceptance evidence
 
-- Real capture-to-encode HDR streaming and runtime fallback across WGC, DDAPI,
-  and VDD, including RTX HDR and resolution/HDR changes.
+- Full client/server HDR streaming, transport and client presentation, including
+  the native VDD capture backend, RTX HDR and resolution/HDR changes. The local
+  DDAPI/WGC capture-to-encode smoke checks above do not cover these stages.
 - NVIDIA/Intel hardware and the Windows-version matrix.
 - D3D11/D3D12 comparison on the same real captured sequences, including PQ,
   HLG, scaling, bars, and bitstream metadata fields.
