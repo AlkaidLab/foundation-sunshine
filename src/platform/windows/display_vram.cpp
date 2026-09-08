@@ -371,8 +371,16 @@ namespace platf::dxgi {
       return hdr_analysis_enabled;
     }
 
+    bool
+    video_backend_available() const {
+      const auto vram = std::dynamic_pointer_cast<display_vram_t>(display);
+      return !vram || !vram->video_backend_selection ||
+             vram->video_backend_selection->pipeline_available();
+    }
+
     int
     convert(platf::img_t &img_base) {
+      if (!video_backend_available()) return -1;
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
       }
@@ -405,6 +413,7 @@ namespace platf::dxgi {
         if (d3d12_hdr_analysis && d3d12_hdr_analysis->available()) {
           read_d3d12_hdr_analysis_results(video_frame_index);
         }
+        if (!video_backend_available()) return -1;
         if (hdr_analysis_pending) {
           read_hdr_analysis_results(video_frame_index);
         }
@@ -594,6 +603,12 @@ namespace platf::dxgi {
         if (hdr_analysis_cadence_due && use_d3d12_hdr_analysis) {
           d3d12_snapshot =
             d3d12_hdr_analysis->try_acquire_snapshot();
+          if (!d3d12_hdr_analysis->available()) {
+            if (auto vram = std::dynamic_pointer_cast<display_vram_t>(display)) {
+              vram->disable_d3d12_analysis(d3d12_hdr_analysis->failure_stage(),
+                d3d12_hdr_analysis->failure_hresult());
+            }
+          }
         }
         const bool hdr_analysis_due =
           hdr_analysis_cadence_due &&
@@ -619,8 +634,8 @@ namespace platf::dxgi {
                                (cs_is_scaled ? cs_p010_scaled : cs_p010);
               // When a D3D12 slot was acquired, the converter writes the cell
               // statistics straight into the shared snapshot texture. That keeps
-              // the hybrid path copy-free: the only extra work versus D3D11 is
-              // the fence signal in submit().
+              // the hybrid path copy-free. submit() hands the producer batch to
+              // D3D12 with a fence signal and asynchronous flush.
               cs_used = try_dispatch_cs_convert(
                 conversion_input_srv,
                 shader,
@@ -669,6 +684,10 @@ namespace platf::dxgi {
 
         // Release encoder mutex to allow capture code to reuse this image.
         if (!release_capture_mutex()) {
+          if (d3d12_snapshot) {
+            // No compute work has been queued yet, even if D3D11 wrote the slot.
+            (void) d3d12_hdr_analysis->cancel_snapshot(*d3d12_snapshot);
+          }
           finish_gpu_timing_sample(gpu_timing, std::move(gpu_timing_sample));
           return -1;
         }
@@ -708,7 +727,7 @@ namespace platf::dxgi {
         }
       }
 
-      return 0;
+      return video_backend_available() ? 0 : -1;
     }
 
     void apply_colorspace(const ::video::sunshine_colorspace_t &colorspace) {
@@ -1253,6 +1272,7 @@ namespace platf::dxgi {
           is_probe);
       }
 
+      if (!video_backend_available()) return -1;
       publish_runtime_status(colorspace, is_probe);
       return 0;
     }

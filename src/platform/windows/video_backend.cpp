@@ -20,8 +20,6 @@
 
 namespace platf::dxgi {
   namespace {
-    constexpr bool d3d12_stage_available = false;
-
     bool
     env_flag_enabled(const char *name) {
       const char *raw_value = std::getenv(name);
@@ -64,7 +62,7 @@ namespace platf::dxgi {
         config::video.windows_video_backend,
         backend_environment_override(),
         env_flag_enabled("SUNSHINE_WINDOWS_VIDEO_BACKEND_STRICT"),
-        d3d12_stage_available);
+        d3d12::hdr_analysis_t::built());
 
       if (video_backend_selection->invalid_value) {
         static std::once_flag invalid_value_warning;
@@ -150,23 +148,21 @@ namespace platf::dxgi {
       video_backend_stage = init_result.stage;
       video_backend_hresult = init_result.hresult;
       if (video_backend_selection) {
-        // The base device came up but the analysis pipeline did not, so the
-        // selection must not keep advertising a clean D3D12 setup.
-        video_backend_selection->fallback =
-          video_backend::fallback_reason_e::shared_resource_failed;
+        video_backend::apply_d3d12_analysis(*video_backend_selection, false,
+          video_backend::fallback_reason_e::shared_resource_failed);
       }
       BOOST_LOG(info) << "D3D12 HDR analysis unavailable at "
                       << init_result.stage << ": "
                       << util::log_hex(init_result.hresult)
-                      << "; D3D11 analysis remains active";
+                      << (video_backend_selection && video_backend_selection->strict ?
+                             "; strict video pipeline stopped" :
+                             "; D3D11 analysis remains active");
       return nullptr;
     }
 
     if (video_backend_selection) {
-      video_backend_selection->effective =
-        video_backend::effective_backend_e::hybrid;
-      video_backend_selection->fallback =
-        video_backend::fallback_reason_e::none;
+      video_backend::apply_d3d12_analysis(*video_backend_selection, true,
+        video_backend::fallback_reason_e::none);
     }
     video_backend_stage = "hdr_analysis_ready";
     video_backend_hresult = S_OK;
@@ -182,17 +178,15 @@ namespace platf::dxgi {
     HRESULT hresult) {
     video_backend_stage = stage;
     video_backend_hresult = hresult;
-    if (video_backend_selection &&
-        video_backend_selection->effective ==
-          video_backend::effective_backend_e::hybrid) {
-      video_backend_selection->effective =
-        video_backend::effective_backend_e::d3d11;
-      video_backend_selection->fallback =
-        video_backend::fallback_reason_e::runtime_fence_failed;
+    if (video_backend_selection) {
+      video_backend::apply_d3d12_analysis(*video_backend_selection, false,
+        video_backend::fallback_reason_e::runtime_fence_failed);
     }
     BOOST_LOG(warning)
       << "[video_backend] runtime_fallback from=d3d12_analysis"
-         " to=d3d11_analysis stage="
+      << (video_backend_selection && video_backend_selection->strict ?
+             " to=unavailable stage=" :
+             " to=d3d11_analysis stage=")
       << stage << " hresult=0x"
       << util::hex(hresult).to_string_view();
   }

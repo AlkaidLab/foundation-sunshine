@@ -28,6 +28,15 @@ not establish a performance improvement or satisfy the G1 multi-vendor gate.
   now retain all three slots and publish their own generations and statistics.
 - Report the effective backend after successful session initialization,
   when the hybrid analysis selection is known; omit capability-probe summaries.
+- Honor strict failures in analysis initialization and conversion, cancel a
+  captured slot on mutex-release failure, and drain queued GPU work even when
+  an analysis error has already marked the analyzer unavailable.
+- Derive build availability from the generated shader sizes. Device bootstrap
+  stays D3D11; only successful analysis initialization reports hybrid. Auto
+  remains D3D11 even when the shaders are present.
+- Submit the D3D11 producer batch explicitly after its successful fence signal.
+  The asynchronous flush occurs at analysis cadence and its overhead remains
+  part of the outstanding performance gate.
 
 ## Reproducible checks
 
@@ -47,8 +56,10 @@ slot may appear, and the completion fence must not advance until compute is
 released. Subsequent results must match their source frame. Debug-layer errors
 fail the probe. Two simultaneous analyzers then fill separate rings with
 different statistics to check ownership and generation isolation. The
-standalone harness flushes D3D11 submissions because it
-has no encoder; this does not add a per-frame flush to the production path.
+standalone harness does not flush D3D11 or run an encoder: it relies entirely
+on the analyzer's production submission path. Removing the harness flushes
+also passed on this AMD driver before the explicit production flush was added;
+the potential submission stall was not reproduced locally.
 
 To verify the build without shader compilers, configure a separate build with
 explicit non-existent `SUNSHINE_DXC_EXECUTABLE` and `SUNSHINE_FXC_EXECUTABLE`
@@ -61,7 +72,7 @@ Backend-selection unit tests cover ordinary D3D11 fallback and strict failures.
 - Windows 11 build 26200; AMD Radeon 780M, driver 32.0.31041.1004.
 - Full Sunshine configure, compile, and link passed with the default warning
   policy; the resulting executable successfully reported its version.
-- 27/27 backend, ring, statistics, and telemetry unit tests passed.
+- 31/31 backend, ring, statistics, and telemetry unit tests passed.
 - All four selected CTest targets passed: the above suite, frame contract,
   pre-encode filter, and TrueHDR backend loader.
 - DXC SM6 and FXC SM5 compilation passed through the CMake-generated target.
@@ -93,3 +104,13 @@ targeted checks above retain `-Werror`. No project warning policy was relaxed.
 
 The synthetic probe covers resource handoff and analysis output. It cannot
 replace these end-to-end, stability, and performance checks.
+
+## Review decisions
+
+- Base-device initialization deliberately does not report hybrid. The new
+  analysis-state helper and tests mark hybrid only after the analyzer starts;
+  reporting it at device bootstrap would misreport SDR sessions.
+- Removing `ALLOW_RENDER_TARGET` from the NV12/P010 sharing probes was tested
+  and rejected: both previously passing capabilities became unavailable on
+  all three AMD adapter enumerations. The existing flags are retained pending
+  evidence for a compatible alternative on other drivers.

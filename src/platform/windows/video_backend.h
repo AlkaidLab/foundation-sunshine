@@ -123,8 +123,8 @@ namespace platf::dxgi::video_backend {
   /**
    * Resolve and lock the requested backend for one video pipeline.
    *
-   * PR2 deliberately passes d3d12_stage_available=false. Later stages may set it
-   * only after all capability, topology, and performance gates have passed.
+   * Build availability permits an explicit initialization attempt. It does not
+   * select an effective backend before the analysis pipeline is initialized.
    *
    * This never returns `unavailable`: refusing to encode is a decision only a
    * real, failed D3D12 initialization can justify. See
@@ -146,11 +146,10 @@ namespace platf::dxgi::video_backend {
     result.strict =
       strict_requested && result.requested == windows_video_backend_e::d3d12;
 
-    if (result.requested == windows_video_backend_e::d3d11) {
+    if (result.requested != windows_video_backend_e::d3d12) {
       return result;
     }
     if (d3d12_stage_available) {
-      result.effective = effective_backend_e::d3d12;
       return result;
     }
 
@@ -161,11 +160,8 @@ namespace platf::dxgi::video_backend {
   /**
    * Fold the outcome of the real D3D12 initialization attempt into a selection.
    *
-   * Strict mode means "tell me loudly when the D3D12 backend I asked for did not
-   * come up", not "refuse to stream". Only an actual failed attempt may take the
-   * pipeline down, and only when d3d12 was requested explicitly -- otherwise a
-   * strict flag left in the environment would kill every encoder on a build
-   * where the D3D12 stage is simply not wired up yet.
+   * Only a failed explicit D3D12 attempt takes a strict pipeline down. A base
+   * device alone does not move video work to D3D12; SDR remains D3D11.
    */
   inline void
   apply_d3d12_initialization(
@@ -183,6 +179,18 @@ namespace platf::dxgi::video_backend {
     selection.fallback = reason;
     if (selection.strict) {
       selection.effective = effective_backend_e::unavailable;
+    }
+    else {
+      selection.effective = effective_backend_e::d3d11;
+    }
+  }
+
+  /** Publish the outcome of analysis initialization or a runtime failure. */
+  inline void
+  apply_d3d12_analysis(selection_t &selection, bool success, fallback_reason_e reason) {
+    apply_d3d12_initialization(selection, success, reason);
+    if (success && selection.requested == windows_video_backend_e::d3d12) {
+      selection.effective = effective_backend_e::hybrid;
     }
   }
 }  // namespace platf::dxgi::video_backend

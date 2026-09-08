@@ -664,6 +664,12 @@ namespace platf::dxgi::d3d12 {
     disable();
   }
 
+  bool
+  hdr_analysis_t::built() {
+    return shaders::hdr_luminance_analysis_cs_dxil_size != 0 &&
+           shaders::hdr_luminance_reduce_cs_dxil_size != 0;
+  }
+
   hdr_analysis_init_result_t
   hdr_analysis_t::initialize(
     device_t &foundation,
@@ -812,6 +818,11 @@ namespace platf::dxgi::d3d12 {
     auto status = impl_->d3d11_context4->Signal(
       impl_->d3d11_fence.Get(),
       capture_ready);
+    if (SUCCEEDED(status)) {
+      // Submit the producer batch before a different API waits for it. This
+      // asynchronous flush runs only on analysis submissions, not every frame.
+      impl_->d3d11_context4->Flush();
+    }
     if (SUCCEEDED(status) &&
         !ring.mark_capture_ready(snapshot.slot, capture_ready)) {
       status = E_UNEXPECTED;
@@ -934,9 +945,11 @@ namespace platf::dxgi::d3d12 {
     if (!impl_) {
       return;
     }
-    if (impl_->available && impl_->foundation &&
-        impl_->foundation->available()) {
+    // fail() can clear available while other slots still reference GPU resources.
+    if (impl_->foundation && impl_->foundation->available()) {
       (void) impl_->foundation->wait_idle();
+    }
+    if (impl_->available) {
       (void) poll();
     }
     impl_->available = false;

@@ -34,7 +34,7 @@ WGC / Desktop Duplication / VDD
 5. 先接 NVENC D3D12，再接 AMF DX12；
 6. QSV/FFmpeg 是否迁移由实测收益决定，不作为首轮目标。
 
-每个阶段都必须能单独合并、单独关闭。任一能力探测、资源共享、同步或设备恢复失败时，本次会话回退到现有 D3D11 路径，不影响串流可用性。
+每个阶段都必须能单独合并、单独关闭。非严格模式下，能力探测、资源共享、同步或设备恢复失败时，本次会话回退到现有 D3D11 路径。显式请求 `d3d12` 且启用 `STRICT=1` 时，初始化或运行失败会终止视频 pipeline。
 
 上图是逻辑目标，不预设 D3D11 捕获纹理能够被 D3D12 零拷贝打开。M1 必须先确定物理资源交接方式；如果全分辨率 RGBA bridge copy 的成本高于 D3D12 compute 收益，则保留 D3D11 转换，只把 D3D12 用于共享编码表面和原生编码器 fence，停止迁移 compute 热路径。
 
@@ -49,7 +49,7 @@ WGC / Desktop Duplication / VDD
 - FFmpeg/QSV 硬件帧以 `AV_PIX_FMT_D3D11` 为主要交接格式；
 - Windows 构建当前链接 `d3d11`、`D3DCompiler` 和 `dxgi`，尚未引入 `d3d12` 或离线 DXIL 产物。
 
-#869 合并后的 D3D11 快路径已经具备：
+PR #869 合并后的 D3D11 快路径已经具备：
 
 - RGB 到 P010/NV12 的 compute shader 转换；
 - PQ、HLG、缩放和非缩放变体；
@@ -234,7 +234,7 @@ CPU metadata path
   publish newest completed result, otherwise retain previous result
 ```
 
-稳态禁止 `WaitForSingleObject()`、blocking `Map()` 或为同步目的调用 D3D11 `Flush()`。CPU 只允许轮询已完成 fence；关闭、重建和设备恢复属于例外。
+稳态禁止 `WaitForSingleObject()` 和 blocking `Map()`；CPU 只轮询已完成 fence。当前跨 API 分析提交在 D3D11 `Signal()` 成功后异步 `Flush()`，保证 producer 命令批次已提交，再由 D3D12 队列等待 fence；只在分析采样帧执行，不逐帧调用。其 CPU 提交开销必须纳入性能验收。关闭、重建和设备恢复允许有界等待。
 
 ### 6.3 Resource states
 

@@ -53,8 +53,7 @@ namespace {
     for (std::uint64_t frame = 10; frame < 13; ++frame) {
       ready = submit(frame) && ready;
     }
-    // The standalone probe has no encoder to submit D3D11 work for us.
-    context->Flush();
+    // The analyzer must submit its own producer work without encoder assistance.
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     ready = !analysis.poll() && ready;
     ready = !analysis.try_acquire_snapshot() && ready;
@@ -85,7 +84,6 @@ namespace {
       }
       if (newest_frame == last_frame) return true;
       while (next_frame <= last_frame && submit(next_frame)) ++next_frame;
-      context->Flush();
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return false;
@@ -113,7 +111,6 @@ namespace {
       context->ClearUnorderedAccessViewFloat(b->pq_uav, b_pq);
       if (!first.submit(*a, 1000 + frame) || !second.submit(*b, 2000 + frame)) return false;
     }
-    context->Flush();
     std::uint64_t a_frame = 0, b_frame = 0;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -199,7 +196,6 @@ namespace {
           d3d11_context->ClearUnorderedAccessViewFloat(snapshot->uav, cell_statistics);
           d3d11_context->ClearUnorderedAccessViewFloat(snapshot->pq_uav, pq_average);
           if (hdr_analysis.submit(*snapshot, 7)) {
-            d3d11_context->Flush();
             const auto deadline =
               std::chrono::steady_clock::now() +
               std::chrono::seconds(2);

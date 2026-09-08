@@ -48,6 +48,9 @@ namespace platf::dxgi::d3d12 {
     operator=(const hdr_analysis_t &) = delete;
     ~hdr_analysis_t();
 
+    [[nodiscard]] static bool
+    built();
+
     [[nodiscard]] hdr_analysis_init_result_t
     initialize(
       device_t &foundation,

@@ -14,7 +14,7 @@ namespace {
 
     EXPECT_EQ(selection.requested, backend::windows_video_backend_e::automatic);
     EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
-    EXPECT_EQ(selection.fallback, backend::fallback_reason_e::build_stage_unavailable);
+    EXPECT_EQ(selection.fallback, backend::fallback_reason_e::none);
     EXPECT_FALSE(selection.strict);
     EXPECT_TRUE(selection.pipeline_available());
   }
@@ -61,7 +61,47 @@ namespace {
       selection, true, backend::fallback_reason_e::none);
 
     EXPECT_EQ(selection.fallback, backend::fallback_reason_e::none);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
     EXPECT_TRUE(selection.pipeline_available());
+  }
+
+  TEST(WindowsVideoBackend, BuiltAnalysisDoesNotEnableAuto) {
+    const auto selection = backend::resolve("auto", std::nullopt, true, true);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
+    EXPECT_EQ(selection.fallback, backend::fallback_reason_e::none);
+    EXPECT_FALSE(selection.strict);
+  }
+
+  TEST(WindowsVideoBackend, ExplicitD3D12ReportsHybridOnlyAfterAnalysisStarts) {
+    auto selection = backend::resolve("d3d12", std::nullopt, false, true);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
+    EXPECT_EQ(selection.fallback, backend::fallback_reason_e::none);
+    backend::apply_d3d12_initialization(selection, true, backend::fallback_reason_e::none);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::d3d11);
+    backend::apply_d3d12_analysis(selection, true, backend::fallback_reason_e::none);
+    EXPECT_EQ(selection.effective, backend::effective_backend_e::hybrid);
+  }
+
+  TEST(WindowsVideoBackend, AnalysisInitializationFailureHonorsStrictMode) {
+    for (const bool strict : { false, true }) {
+      auto selection = backend::resolve("d3d12", std::nullopt, strict, true);
+      backend::apply_d3d12_initialization(selection, true, backend::fallback_reason_e::none);
+      backend::apply_d3d12_analysis(selection, false, backend::fallback_reason_e::shared_resource_failed);
+      EXPECT_EQ(selection.effective, strict ? backend::effective_backend_e::unavailable : backend::effective_backend_e::d3d11);
+      EXPECT_EQ(selection.pipeline_available(), !strict);
+      EXPECT_EQ(selection.fallback, backend::fallback_reason_e::shared_resource_failed);
+    }
+  }
+
+  TEST(WindowsVideoBackend, RuntimeAnalysisFailureLeavesHybridAndHonorsStrictMode) {
+    for (const bool strict : { false, true }) {
+      auto selection = backend::resolve("d3d12", std::nullopt, strict, true);
+      backend::apply_d3d12_analysis(selection, true, backend::fallback_reason_e::none);
+      backend::apply_d3d12_analysis(selection, false, backend::fallback_reason_e::runtime_fence_failed);
+      EXPECT_EQ(selection.effective, strict ? backend::effective_backend_e::unavailable : backend::effective_backend_e::d3d11);
+      EXPECT_EQ(selection.pipeline_available(), !strict);
+      EXPECT_EQ(selection.fallback, backend::fallback_reason_e::runtime_fence_failed);
+    }
   }
 
   TEST(WindowsVideoBackend, NonStrictD3D12FailureKeepsStreaming) {
