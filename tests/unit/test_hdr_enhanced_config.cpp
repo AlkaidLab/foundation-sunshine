@@ -66,7 +66,9 @@ TEST_F(HdrEnhancedConfigTest, MissingDefaultDoesNotCreateAFileOrLoadAComponent) 
 TEST_F(HdrEnhancedConfigTest, CorruptConfigurationCannotBeOverwrittenBySave) {
   std::ofstream(root / "hdr.json") << "{broken";
   EXPECT_EQ(store->query().status, 500);
-  EXPECT_EQ(store->update({}, std::nullopt).status, 500);
+  const auto result = store->update({}, std::nullopt);
+  EXPECT_EQ(result.status, 500);
+  EXPECT_EQ(result.error, "hdr_config_invalid");
   std::ifstream input(root / "hdr.json");
   std::string content;
   std::getline(input, content);
@@ -170,7 +172,9 @@ TEST_F(HdrEnhancedConfigTest, ReplacedFilesCannotReuseThePreMaintenanceValidatio
   ASSERT_EQ(store->begin_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
   EXPECT_FALSE(store->status()["selection_verified"]);
   std::ofstream(root / "tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll") << "different";
-  EXPECT_EQ(store->update(selected, store->query().etag, operation).status, 400);
+  const auto result = store->update(selected, store->query().etag, operation);
+  EXPECT_EQ(result.status, 400);
+  EXPECT_EQ(result.error, "hdr_component_untrusted");
   EXPECT_EQ(store->finish_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 409);
   EXPECT_TRUE(store->status()["maintenance"]);
   EXPECT_FALSE(store->acquire_selected());

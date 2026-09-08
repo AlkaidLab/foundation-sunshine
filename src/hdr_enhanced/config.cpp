@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
+#include <new>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -34,6 +35,11 @@ namespace hdr_enhanced {
     using json = nlohmann::json;
     namespace fs = std::filesystem;
     constexpr std::size_t MAX_DOCUMENT = 64 * 1024;
+
+    struct config_invalid_t {};
+    struct component_untrusted_t {};
+    struct digest_failed_t {};
+    struct digest_limit_exceeded_t {};
 
     template<typename T, typename... Args>
     boost::shared_ptr<const T>
@@ -93,19 +99,19 @@ namespace hdr_enhanced {
     std::string
     digest(std::istream &stream, std::uintmax_t maximum = MAX_DOCUMENT) {
       const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-      if (!context || EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) throw std::runtime_error("hash_failed");
+      if (!context || EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) throw digest_failed_t {};
       std::array<char, 64 * 1024> buffer {};
       std::uintmax_t consumed = 0;
       while (stream) {
         stream.read(buffer.data(), buffer.size());
         consumed += static_cast<std::uintmax_t>(stream.gcount());
-        if (consumed > maximum) throw std::runtime_error("component_size_invalid");
-        if (stream.gcount() > 0 && EVP_DigestUpdate(context.get(), buffer.data(), stream.gcount()) != 1) throw std::runtime_error("hash_failed");
+        if (consumed > maximum) throw digest_limit_exceeded_t {};
+        if (stream.gcount() > 0 && EVP_DigestUpdate(context.get(), buffer.data(), stream.gcount()) != 1) throw digest_failed_t {};
       }
-      if (stream.bad()) throw std::runtime_error("hash_failed");
+      if (stream.bad()) throw digest_failed_t {};
       std::array<unsigned char, EVP_MAX_MD_SIZE> bytes {};
       unsigned int length = 0;
-      if (EVP_DigestFinal_ex(context.get(), bytes.data(), &length) != 1) throw std::runtime_error("hash_failed");
+      if (EVP_DigestFinal_ex(context.get(), bytes.data(), &length) != 1) throw digest_failed_t {};
       std::ostringstream result;
       result << std::hex << std::setfill('0');
       for (unsigned int i = 0; i < length; ++i) result << std::setw(2) << static_cast<unsigned int>(bytes[i]);
@@ -171,6 +177,9 @@ namespace hdr_enhanced {
       output = std::move(parsed);
       return true;
     }
+    catch (const std::bad_alloc &) {
+      throw;
+    }
     catch (...) {
       return false;
     }
@@ -202,32 +211,55 @@ namespace hdr_enhanced {
       try {
         const auto input = read_document(file, true);
         settings_t value;
-        if (!input.is_discarded() && !parse_settings(input, value)) throw std::runtime_error("hdr_config_invalid");
+        if (!input.is_discarded() && !parse_settings(input, value)) throw config_invalid_t {};
         return value;
       }
+      catch (const std::bad_alloc &) {
+        throw;
+      }
+      catch (const config_invalid_t &) {
+        throw;
+      }
       catch (...) {
-        throw std::runtime_error("hdr_config_invalid");
+        throw config_invalid_t {};
       }
     }
 
     boost::shared_ptr<const backend_use_t>
     validate(const settings_t &value) {
-      if (value.selected_backend.empty()) return {};
-      const auto &version = value.versions.at(value.selected_backend);
-      const auto directory = root / "hdr_enhanced" / "nvidia_rtx_video";
-      const auto catalog = read_document(trust);
-      if (!catalog.is_object() || catalog.value("schema_version", 0) != 1) throw std::runtime_error("component_untrusted");
-      const auto &trusted = catalog.at("components").at(value.selected_backend).at(version);
-      const auto canonical_directory = fs::canonical(directory);
-      if (canonical_directory != fs::canonical(root) / "hdr_enhanced" / "nvidia_rtx_video") throw std::runtime_error("component_path_invalid");
-      for (const auto name : { "foundation_rtx_video_bridge.dll", "nvngx_truehdr.dll" }) {
-        const auto path = fs::canonical(directory / name);
-        if (path.parent_path() != canonical_directory || !fs::is_regular_file(path)) throw std::runtime_error("component_path_invalid");
-        std::ifstream stream(path, std::ios::binary);
-        const auto maximum = std::string_view(name) == "foundation_rtx_video_bridge.dll" ? 64ULL * 1024 * 1024 : 512ULL * 1024 * 1024;
-        if (!stream || digest(stream, maximum) != trusted.at(name).get<std::string>()) throw std::runtime_error("component_untrusted");
+      try {
+        if (value.selected_backend.empty()) return {};
+        const auto &version = value.versions.at(value.selected_backend);
+        const auto directory = root / "hdr_enhanced" / "nvidia_rtx_video";
+        const auto catalog = read_document(trust);
+        if (!catalog.is_object() || catalog.value("schema_version", 0) != 1) throw component_untrusted_t {};
+        const auto &trusted = catalog.at("components").at(value.selected_backend).at(version);
+        const auto canonical_directory = fs::canonical(directory);
+        if (canonical_directory != fs::canonical(root) / "hdr_enhanced" / "nvidia_rtx_video") throw component_untrusted_t {};
+        for (const auto name : { "foundation_rtx_video_bridge.dll", "nvngx_truehdr.dll" }) {
+          const auto path = fs::canonical(directory / name);
+          if (path.parent_path() != canonical_directory || !fs::is_regular_file(path)) throw component_untrusted_t {};
+          std::ifstream stream(path, std::ios::binary);
+          const auto maximum = std::string_view(name) == "foundation_rtx_video_bridge.dll" ? 64ULL * 1024 * 1024 : 512ULL * 1024 * 1024;
+          if (!stream || digest(stream, maximum) != trusted.at(name).get<std::string>()) throw component_untrusted_t {};
+        }
+        return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / "foundation_rtx_video_bridge.dll" });
       }
-      return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / "foundation_rtx_video_bridge.dll" });
+      catch (const std::bad_alloc &) {
+        throw;
+      }
+      catch (const digest_failed_t &) {
+        throw;
+      }
+      catch (const digest_limit_exceeded_t &) {
+        throw component_untrusted_t {};
+      }
+      catch (const component_untrusted_t &) {
+        throw;
+      }
+      catch (...) {
+        throw component_untrusted_t {};
+      }
     }
 
     bool
@@ -325,8 +357,11 @@ namespace hdr_enhanced {
       impl_->active.store(snapshot);
       return { 200, {}, requested, next_tag, changed };
     }
-    catch (const std::exception &exception) {
-      return std::string_view(exception.what()) == "hdr_config_invalid" ? result_t { 500, "hdr_config_invalid" } : result_t { 400, "hdr_component_untrusted" };
+    catch (const config_invalid_t &) {
+      return { 500, "hdr_config_invalid" };
+    }
+    catch (const component_untrusted_t &) {
+      return { 400, "hdr_component_untrusted" };
     }
     catch (...) {
       return { 500, "hdr_save_failed" };
