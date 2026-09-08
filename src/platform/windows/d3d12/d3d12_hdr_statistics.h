@@ -4,24 +4,15 @@
  */
 #pragma once
 
+#include "src/platform/windows/hdr_analysis_result.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 
 namespace platf::dxgi::d3d12 {
-  inline constexpr std::size_t hdr_histogram_bins = 256;
-
-  struct hdr_final_result_t {
-    float min_maxrgb = 0.0f;
-    float max_maxrgb = 0.0f;
-    float sum_maxrgb = 0.0f;
-    float sum_maxrgb_pq = 0.0f;
-    std::uint32_t pixel_count = 0;
-    std::array<std::uint32_t, hdr_histogram_bins> histogram {};
-  };
-  static_assert(sizeof(hdr_final_result_t) == 1044);
-  static_assert(offsetof(hdr_final_result_t, pixel_count) == 16);
-  static_assert(offsetof(hdr_final_result_t, histogram) == 20);
+  inline constexpr auto hdr_histogram_bins = hdr_analysis::histogram_bins;
+  using hdr_final_result_t = hdr_analysis::result_t;
 
   struct hdr_percentiles_t {
     float min_maxrgb = 0.0f;

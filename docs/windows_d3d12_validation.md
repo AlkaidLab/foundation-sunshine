@@ -40,6 +40,16 @@ not establish a performance improvement or satisfy the G1 multi-vendor gate.
 
 ## Reproducible checks
 
+Implementation responsibilities are separated as follows:
+
+- `d3d12_hdr_analysis.cpp`: analyzer lifecycle, ring submission and readback.
+- `d3d12_hdr_analysis_resources.cpp`: shared textures, descriptors and buffers.
+- `d3d12_hdr_analysis_pipeline.cpp`: shader pipelines and command recording.
+- `display_vram_capture.cpp`: capture backends, image lifecycle and cursors.
+- `display_vram_shaders.cpp`: D3D11 shader compilation and shared shader catalog.
+- `hdr_analysis_result.cpp`: common D3D11/D3D12 metadata decoding; its header
+  owns the shared GPU result ABI without depending on either graphics API.
+
 In a Windows UCRT64 development environment with repository dependencies:
 
 ```powershell
@@ -75,6 +85,9 @@ Backend-selection unit tests cover ordinary D3D11 fallback and strict failures.
 - 31/31 backend, ring, statistics, and telemetry unit tests passed.
 - All four selected CTest targets passed: the above suite, frame contract,
   pre-encode filter, and TrueHDR backend loader.
+- All 20 CTest targets also passed before and after the structural extraction.
+- Four decoder golden tests passed for empty results, the nine HDR10+
+  percentiles/near-black coverage, invalid PQ values, and rounding overshoot.
 - DXC SM6 and FXC SM5 compilation passed through the CMake-generated target.
 - The modified analysis/probe code, `display_vram.cpp`, and `video_backend.cpp`
   compiled with GCC 15.2 and `-Werror`.
