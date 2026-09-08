@@ -192,10 +192,10 @@ namespace {
       platf::pre_encode_filter_e::external_sdr_to_hdr,
       d3d.device.get(),
       d3d.context.get(),
-      std::filesystem::path(FAKE_TRUEHDR_BACKEND_PATH));
+      std::filesystem::path(FAKE_TRUEHDR_BRIDGE_PATH), {}, "alkaidlab.nvidia_rtx_video");
     ASSERT_TRUE(filter);
     EXPECT_FALSE(filter->degraded());
-    EXPECT_EQ(filter->backend_name(), "external_sdr_to_hdr");
+    EXPECT_EQ(filter->backend_name(), "alkaidlab.nvidia_rtx_video");
 
     auto input = make_white_input(d3d.device.get(), 4, 4);
     ASSERT_TRUE(input.texture);
@@ -228,7 +228,7 @@ namespace {
       platf::pre_encode_filter_e::external_sdr_to_hdr,
       d3d.device.get(),
       d3d.context.get(),
-      std::filesystem::path(FAKE_TRUEHDR_FAILING_BACKEND_PATH));
+      std::filesystem::path(FAKE_TRUEHDR_FAILING_BRIDGE_PATH), {}, "alkaidlab.nvidia_rtx_video");
     ASSERT_TRUE(filter);
 
     auto input = make_white_input(d3d.device.get(), 4, 4);

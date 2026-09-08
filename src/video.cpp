@@ -3584,8 +3584,8 @@ namespace video {
   /**
    * @brief Disable the pre-encode filter when the opened display cannot satisfy
    *        its preconditions, keeping the wire signal consistent with the pixels
-   *        actually produced (rtx_hdr_stream_implementation.md §5.3
-   *        source_display_not_sdr / §6.3 capability-probe degradation).
+   *        actually produced. An HDR source or unsupported capture path must use
+   *        the normal pipeline instead of advertising synthetic HDR output.
    */
   void
   strip_unusable_pre_encode_filter(platf::display_t &disp, config_t &config) {
@@ -3647,13 +3647,13 @@ namespace video {
     }
 
     if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
-      result = disp.make_avcodec_encode_device(pix_fmt);
+      result = disp.make_avcodec_encode_device(pix_fmt, config);
     }
     else if (dynamic_cast<const encoder_platform_formats_nvenc *>(encoder.platform_formats.get())) {
-      result = disp.make_nvenc_encode_device(pix_fmt);
+      result = disp.make_nvenc_encode_device(pix_fmt, config);
     }
     else if (dynamic_cast<const encoder_platform_formats_amf *>(encoder.platform_formats.get())) {
-      result = disp.make_amf_encode_device(pix_fmt);
+      result = disp.make_amf_encode_device(pix_fmt, config);
     }
 
     if (result) {

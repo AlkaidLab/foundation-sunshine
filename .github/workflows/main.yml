@@ -170,6 +170,86 @@ jobs:
           RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
         run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
+      - name: Build NVIDIA RTX Video bridge
+        id: rtx_video_bridge
+        if: github.repository == 'AlkaidLab/foundation-sunshine' && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          RTX_VIDEO_SDK_URL: ${{ vars.RTX_VIDEO_SDK_URL }}
+          RTX_VIDEO_SDK_SHA256: ${{ vars.RTX_VIDEO_SDK_SHA256 }}
+          RTX_VIDEO_SDK_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
+          RTX_VIDEO_NGX_APPLICATION_ID: ${{ secrets.RTX_VIDEO_NGX_APPLICATION_ID }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RTX_VIDEO_SDK_URL)) {
+            throw 'RTX_VIDEO_SDK_URL is required for protected master builds.'
+          }
+          try {
+            $configuredUrl = [Uri] $env:RTX_VIDEO_SDK_URL
+          } catch {
+            throw 'RTX_VIDEO_SDK_URL must be a valid GitHub Release asset URL.'
+          }
+          $segments = @($configuredUrl.AbsolutePath.Trim('/').Split('/'))
+          if ($configuredUrl.Scheme -cne 'https' -or
+              $configuredUrl.Host -cne 'github.com' -or
+              !$configuredUrl.Query.Equals('') -or
+              !$configuredUrl.Fragment.Equals('') -or
+              $segments.Count -ne 6 -or
+              $segments[2] -cne 'releases' -or
+              $segments[3] -cne 'download') {
+            throw 'RTX_VIDEO_SDK_URL must identify one GitHub Release asset.'
+          }
+          $repository = "$($segments[0])/$($segments[1])"
+          $releaseTag = [Uri]::UnescapeDataString($segments[4])
+          $assetName = [Uri]::UnescapeDataString($segments[5])
+          if ($repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+              [string]::IsNullOrWhiteSpace($releaseTag) -or
+              [System.IO.Path]::GetFileName($assetName) -ne $assetName -or
+              !$assetName.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'RTX_VIDEO_SDK_URL contains an invalid repository, tag or asset name.'
+          }
+          if ($env:RTX_VIDEO_SDK_SHA256 -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'Configure RTX_VIDEO_SDK_SHA256 for the authorized SDK archive.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:RTX_VIDEO_SDK_TOKEN)) {
+            throw 'DRIVER_DOWNLOAD_TOKEN is required to read the private RTX Video SDK release.'
+          }
+          $tag = [Uri]::EscapeDataString($releaseTag)
+          $releaseUri = "https://api.github.com/repos/$repository/releases/tags/$tag"
+          $releaseJson = Join-Path $env:RUNNER_TEMP 'rtx-video-sdk-release.json'
+          & curl.exe -fsSL `
+            -H "Authorization: Bearer $($env:RTX_VIDEO_SDK_TOKEN)" `
+            -H 'Accept: application/vnd.github+json' `
+            -H 'X-GitHub-Api-Version: 2022-11-28' `
+            -o $releaseJson $releaseUri
+          if ($LASTEXITCODE -ne 0) { throw 'RTX Video SDK release lookup failed.' }
+          $release = Get-Content -Raw -LiteralPath $releaseJson | ConvertFrom-Json
+          $assets = @($release.assets | Where-Object { $_.name -ceq $assetName })
+          if ($assets.Count -ne 1) {
+            throw 'The configured RTX Video SDK release asset was not found exactly once.'
+          }
+          $assetUrl = [string] $assets[0].url
+          if ($assetUrl -notmatch '^https://api\.github\.com/repos/.+/releases/assets/[0-9]+$') {
+            throw 'The configured RTX Video SDK release asset URL is invalid.'
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'rtx-video-sdk.zip'
+          & curl.exe -fsSL `
+            -H "Authorization: Bearer $($env:RTX_VIDEO_SDK_TOKEN)" `
+            -H 'Accept: application/octet-stream' `
+            -H 'X-GitHub-Api-Version: 2022-11-28' `
+            -o $archive $assetUrl
+          if ($LASTEXITCODE -ne 0) { throw 'RTX Video SDK download failed.' }
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $env:RTX_VIDEO_SDK_SHA256) {
+            throw 'RTX Video SDK archive integrity check failed.'
+          }
+          Remove-Item Env:RTX_VIDEO_SDK_TOKEN
+          $sdk = Join-Path $env:RUNNER_TEMP 'rtx-video-sdk'
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $sdk)
+          $headers = @(Get-ChildItem -LiteralPath $sdk -Recurse -File -Filter 'nvsdk_ngx_helpers_truehdr.h')
+          if ($headers.Count -ne 1) { throw 'The SDK archive must contain exactly one TrueHDR SDK.' }
+          $sdkRoot = $headers[0].Directory.Parent.FullName
+          & .\scripts\build-nvidia-rtx-video-bridge.ps1 -SdkRoot $sdkRoot -BuildDirectory build
+          "built=true" >> $env:GITHUB_OUTPUT
+
       - name: Build Web UI
         shell: pwsh
         run: |
@@ -262,16 +342,29 @@ jobs:
 
       - name: Package Windows
         shell: msys2 {0}
+        env:
+          RTX_VIDEO_BRIDGE_BUILT: ${{ steps.rtx_video_bridge.outputs.built }}
+          RTX_VIDEO_BRIDGE_REQUIRED: ${{ github.repository == 'AlkaidLab/foundation-sunshine' && github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
         run: |
           set -o pipefail
           mkdir -p artifacts
           cd build
+
+          if [[ "$RTX_VIDEO_BRIDGE_REQUIRED" == "true" && "$RTX_VIDEO_BRIDGE_BUILT" != "true" ]]; then
+            echo "Protected master build did not produce the required NVIDIA RTX Video bridge"
+            exit 1
+          fi
 
           # Package the Inno Setup installer and portable ZIP.
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
           test -f ./inno_staging/tools/ds5-sidecar-package.json
           test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          if [[ "$RTX_VIDEO_BRIDGE_BUILT" == "true" ]]; then
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_bridge.dll
+            test -f ./inno_staging/assets/hdr-components.json
+          fi
+          test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll
           
           # Run the Inno Setup compiler and prove that it consumed only the
           # lightweight package manifest, not the self-contained runtime.
@@ -282,6 +375,14 @@ jobs:
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
+          if [[ "$RTX_VIDEO_BRIDGE_BUILT" == "true" ]]; then
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_bridge.dll" portable-files.txt
+            grep -F "Sunshine/assets/hdr-components.json" portable-files.txt
+          fi
+          if grep -F "nvngx_truehdr.dll" portable-files.txt; then
+            echo "The NVIDIA runtime must not be included in the main portable package"
+            exit 1
+          fi
           if grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe" portable-files.txt; then
             echo "The optional DualSense runtime leaked into the main portable package"
             exit 1

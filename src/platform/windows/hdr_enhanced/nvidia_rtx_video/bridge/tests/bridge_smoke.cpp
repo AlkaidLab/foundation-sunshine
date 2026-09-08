@@ -1,30 +1,49 @@
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <d3d11.h>
 #include <dxgi.h>
 #include <windows.h>
 
-#include "src/platform/windows/rtx_hdr/backend_abi.h"
+#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_abi.h"
 
 namespace {
   template <class T>
-  void release(T *&value) {
+  void
+  release(T *&value) {
     if (value) {
       value->Release();
       value = nullptr;
     }
   }
 
-  int fail(const std::string &message) {
+  int
+  fail(const std::string &message) {
     std::cerr << "FAIL: " << message << '\n';
     return 1;
   }
 
-  std::string adapter_name(ID3D11Device *device) {
+  std::filesystem::path
+  executable_directory() {
+    std::vector<wchar_t> path(512);
+    for (;;) {
+      const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+      if (length == 0) return {};
+      if (static_cast<std::size_t>(length) < path.size()) {
+        return std::filesystem::path(std::wstring_view(path.data(), length)).parent_path();
+      }
+      if (path.size() >= 32768) return {};
+      path.resize(std::min<std::size_t>(path.size() * 2, 32768));
+    }
+  }
+
+  std::string
+  adapter_name(ID3D11Device *device) {
     IDXGIDevice *dxgi_device = nullptr;
     IDXGIAdapter *adapter = nullptr;
     DXGI_ADAPTER_DESC desc {};
@@ -40,30 +59,37 @@ namespace {
     release(dxgi_device);
     return result;
   }
-}
+}  // namespace
 
-int wmain(int argc, wchar_t **argv) {
-  const std::filesystem::path backend_path = argc > 1
-    ? std::filesystem::absolute(argv[1])
-    : std::filesystem::absolute(L"foundation_truehdr_backend.dll");
-  if (!std::filesystem::is_regular_file(backend_path)) {
-    return fail("backend DLL does not exist: " + backend_path.string());
+int
+wmain(int argc, wchar_t **argv) {
+  std::filesystem::path bridge_path;
+  if (argc > 1) {
+    bridge_path = std::filesystem::absolute(argv[1]);
+  }
+  else {
+    const auto directory = executable_directory();
+    if (directory.empty()) return fail("unable to locate the smoke test executable");
+    bridge_path = directory / L"foundation_rtx_video_bridge.dll";
+  }
+  if (!std::filesystem::is_regular_file(bridge_path)) {
+    return fail("bridge DLL does not exist: " + bridge_path.string());
   }
 
   const auto module = LoadLibraryExW(
-    backend_path.c_str(),
+    bridge_path.c_str(),
     nullptr,
     LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
   if (!module) {
     return fail("LoadLibraryExW failed with error " + std::to_string(GetLastError()));
   }
-  const auto get_api = reinterpret_cast<foundation_truehdr_get_api_fn>(
-    GetProcAddress(module, FOUNDATION_TRUEHDR_GET_API_EXPORT));
-  const auto *api = get_api ? get_api(FOUNDATION_TRUEHDR_ABI_VERSION) : nullptr;
-  if (!api || api->abi_version != FOUNDATION_TRUEHDR_ABI_VERSION ||
-      api->struct_size < sizeof(foundation_truehdr_api_t)) {
+  const auto get_api = reinterpret_cast<foundation_truehdr_bridge_get_api_fn>(
+    GetProcAddress(module, FOUNDATION_TRUEHDR_BRIDGE_GET_API_EXPORT));
+  const auto *api = get_api ? get_api(FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION) : nullptr;
+  if (!api || api->abi_version != FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION ||
+      api->struct_size < sizeof(foundation_truehdr_bridge_api_t)) {
     FreeLibrary(module);
-    return fail("backend ABI negotiation failed");
+    return fail("bridge ABI negotiation failed");
   }
 
   ID3D11Device *device = nullptr;
@@ -217,7 +243,7 @@ int wmain(int argc, wchar_t **argv) {
   FreeLibrary(module);
 
   if (status != FOUNDATION_TRUEHDR_STATUS_OK) {
-    return fail("TrueHDR backend returned status " + std::to_string(status) + " on " + gpu);
+    return fail("TrueHDR bridge returned status " + std::to_string(status) + " on " + gpu);
   }
   if (FAILED(hr) || !meaningful_output) {
     return fail("TrueHDR completed but produced no readable HDR pixels on " + gpu);

@@ -35,6 +35,7 @@
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
 #include "ds5/config.h"
+#include "hdr_enhanced/config.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
@@ -425,6 +426,10 @@ main(int argc, char *argv[]) {
 #endif
 
   proc::refresh(config::stream.file_apps);
+
+  if (!hdr_enhanced::manager().initialize()) {
+    BOOST_LOG(warning) << "HDR enhancement configuration or selected component is unavailable; optional processing is disabled";
+  }
 
 #ifdef _WIN32
   ds5_config::load_result_t ds5_settings_result {

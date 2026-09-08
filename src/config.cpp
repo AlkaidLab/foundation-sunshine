@@ -478,8 +478,6 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
-    "off"s,  // rtx_hdr: off | per_app
-    {},  // rtx_hdr_backend_path (absolute path to the versioned backend DLL)
   };
 
   audio_t audio {
@@ -1411,19 +1409,6 @@ namespace config {
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
-    string_f(vars, "rtx_hdr", video.rtx_hdr);
-    if (video.rtx_hdr == "true" || video.rtx_hdr == "on" || video.rtx_hdr == "enabled" || video.rtx_hdr == "1") {
-      video.rtx_hdr = "per_app";
-    }
-    if (video.rtx_hdr.empty()) {
-      video.rtx_hdr = "off";
-    }
-    if (video.rtx_hdr != "off" && video.rtx_hdr != "per_app") {
-      BOOST_LOG(warning) << "Invalid rtx_hdr mode: ["sv << video.rtx_hdr
-                         << "], valid options are: off, per_app. Defaulting to 'off'"sv;
-      video.rtx_hdr = "off";
-    }
-    string_f(vars, "rtx_hdr_backend_path", video.rtx_hdr_backend_path);
 
     // Whether to composite the host mouse cursor into the captured frames.
     // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
@@ -1918,104 +1903,6 @@ namespace config {
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to update config: " << e.what();
       return false;
-    }
-  }
-
-  std::string
-  get_config_value(const std::string &key) {
-    std::lock_guard lock { config_file_mutex };
-    try {
-      const auto values = parse_config(file_handler::read_file(sunshine.config_file.c_str()));
-      const auto value = values.find(key);
-      return value == values.end() ? std::string {} : value->second;
-    }
-    catch (const std::exception &exception) {
-      BOOST_LOG(warning) << "Failed to read config value '" << key << "': " << exception.what();
-      return {};
-    }
-  }
-
-  config_update_e
-  set_rtx_hdr_backend_path(const std::string &backend_path) {
-    std::lock_guard lock { config_file_mutex };
-    try {
-      const auto config_path = file_handler::path_from_utf8(sunshine.config_file);
-      std::ifstream input(config_path, std::ios::binary);
-      if (!input.is_open()) {
-        BOOST_LOG(error) << "Unable to open Sunshine config for RTX HDR update: " << sunshine.config_file;
-        return config_update_e::error;
-      }
-      const std::string content {
-        std::istreambuf_iterator<char> { input },
-        std::istreambuf_iterator<char> {},
-      };
-      if (!input.eof() && input.fail()) {
-        BOOST_LOG(error) << "Unable to read Sunshine config for RTX HDR update: " << sunshine.config_file;
-        return config_update_e::error;
-      }
-      auto parsed = parse_config(content);
-      std::map<std::string, std::string> values { parsed.begin(), parsed.end() };
-      const auto current = values.find("rtx_hdr_backend_path");
-      const std::string current_value = current == values.end() ? std::string {} : current->second;
-      if (current_value == backend_path) {
-        return config_update_e::unchanged;
-      }
-      if (backend_path.empty()) {
-        values.erase("rtx_hdr_backend_path");
-      }
-      else {
-        values["rtx_hdr_backend_path"] = backend_path;
-      }
-
-      std::ostringstream serialized;
-      for (const auto &[key, value] : values) {
-        if (!value.empty() && value != "null") {
-          serialized << key << " = " << value << std::endl;
-        }
-      }
-      const auto temporary = config_path.parent_path() /
-                             (config_path.filename().wstring() + L".rtx-hdr.tmp");
-      {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output.is_open()) {
-          BOOST_LOG(error) << "Unable to create temporary Sunshine config: " << file_handler::path_to_utf8(temporary);
-          return config_update_e::error;
-        }
-        output << serialized.str();
-        output.flush();
-        if (!output) {
-          BOOST_LOG(error) << "Unable to flush temporary Sunshine config: " << file_handler::path_to_utf8(temporary);
-          output.close();
-          std::error_code cleanup_error;
-          std::filesystem::remove(temporary, cleanup_error);
-          return config_update_e::error;
-        }
-      }
-#ifdef _WIN32
-      if (!MoveFileExW(
-            temporary.c_str(),
-            config_path.c_str(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        BOOST_LOG(error) << "Unable to atomically replace Sunshine config: " << GetLastError();
-        std::error_code cleanup_error;
-        std::filesystem::remove(temporary, cleanup_error);
-        return config_update_e::error;
-      }
-#else
-      std::error_code replace_error;
-      std::filesystem::rename(temporary, config_path, replace_error);
-      if (replace_error) {
-        BOOST_LOG(error) << "Unable to atomically replace Sunshine config: " << replace_error.message();
-        std::error_code cleanup_error;
-        std::filesystem::remove(temporary, cleanup_error);
-        return config_update_e::error;
-      }
-#endif
-      return config_update_e::changed;
-    }
-    catch (const std::exception &exception) {
-      BOOST_LOG(error) << "Failed to update RTX HDR backend path: " << exception.what();
-      return config_update_e::error;
     }
   }
 

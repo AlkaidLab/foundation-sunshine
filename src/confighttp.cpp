@@ -47,6 +47,8 @@
 #include <boost/asio/ssl/context_base.hpp>
 
 #include "config.h"
+#include "hdr_enhanced/api.h"
+#include "hdr_enhanced/config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
 #include "text_context/http.h"
@@ -1510,23 +1512,6 @@ namespace confighttp {
   bool
   require_localhost(resp_https_t response, req_https_t request, const std::string &action);
 
-  std::filesystem::path
-  managedRtxHdrVersionsRoot() {
-    return file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR).parent_path() /
-           "tools" / "rtx_hdr" / "versions";
-  }
-
-  bool
-  isManagedRtxHdrBackendPath(const std::string &backend_path) {
-    if (backend_path.empty()) return true;
-    std::error_code error;
-    const auto root = std::filesystem::weakly_canonical(managedRtxHdrVersionsRoot(), error);
-    if (error || !std::filesystem::is_directory(root, error)) return false;
-    const auto candidate = std::filesystem::canonical(file_handler::path_from_utf8(backend_path), error);
-    if (error || !std::filesystem::is_regular_file(candidate, error)) return false;
-    return boost::iequals(file_handler::path_to_utf8(candidate.filename()), "foundation_truehdr_backend.dll") &&
-           candidate.parent_path().parent_path() == root;
-  }
 
   void
   saveConfig(resp_https_t response, req_https_t request) {
@@ -1593,60 +1578,29 @@ namespace confighttp {
   }
 
   void
-  getRtxHdrBackendPath(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) return;
-    if (!require_localhost(response, request, "reading the RTX HDR component path")) return;
-    const auto backend_path = config::get_config_value("rtx_hdr_backend_path");
-    send_response(response, json {
-      { "status", true },
-      { "persisted_path", backend_path },
-      { "active_path", config::video.rtx_hdr_backend_path },
-      { "restart_required", backend_path != config::video.rtx_hdr_backend_path },
-    });
+  getHdrEnhancedConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "HDR configuration")) return;
+    hdr_enhanced::api::get_config(response);
   }
 
   void
-  saveRtxHdrBackendPath(resp_https_t response, req_https_t request) {
+  saveHdrEnhancedConfig(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
-    if (!authenticate(response, request)) return;
-    if (!require_localhost(response, request, "updating the RTX HDR component path")) return;
+    if (!authenticate(response, request) || !require_localhost(response, request, "HDR configuration")) return;
+    hdr_enhanced::api::save_config(response, request);
+  }
 
-    try {
-      std::stringstream body;
-      body << request->content.rdbuf();
-      const auto input = json::parse(body.str());
-      if (!input.is_object() || !input.contains("backend_path") || !input["backend_path"].is_string()) {
-        throw std::invalid_argument("backend_path must be a string");
-      }
-      const auto backend_path = input["backend_path"].get<std::string>();
-      if (backend_path.size() > 4096) {
-        throw std::invalid_argument("backend_path is too long");
-      }
-      if (!isManagedRtxHdrBackendPath(backend_path)) {
-        throw std::invalid_argument(
-          "backend_path must resolve to a regular foundation_truehdr_backend.dll under the managed version store");
-      }
+  void
+  getHdrEnhancedStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "HDR status")) return;
+    hdr_enhanced::api::get_status(response);
+  }
 
-      const auto update = config::set_rtx_hdr_backend_path(backend_path);
-      if (update == config::config_update_e::error) {
-        throw std::runtime_error("failed to persist RTX HDR backend path");
-      }
-      const bool changed = update == config::config_update_e::changed;
-      send_response(response, json {
-        { "status", true },
-        { "persisted_path", backend_path },
-        { "active_path", config::video.rtx_hdr_backend_path },
-        { "restart_required", backend_path != config::video.rtx_hdr_backend_path },
-        { "changed", changed },
-      });
-    }
-    catch (const std::invalid_argument &exception) {
-      write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, exception.what());
-    }
-    catch (const std::exception &exception) {
-      BOOST_LOG(error) << "saveRtxHdrBackendPath: " << exception.what();
-      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, exception.what());
-    }
+  void
+  maintainHdrEnhancedComponent(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request) || !require_localhost(response, request, "HDR maintenance")) return;
+    hdr_enhanced::api::maintenance(response, request);
   }
 
   void
@@ -2548,6 +2502,7 @@ namespace confighttp {
 
     try {
       const auto statuses = video::get_hdr_pipeline_statuses();
+      const auto enhancement_status = hdr_enhanced::manager().status();
       json response_json {
         { "success", true },
         { "status_code", 200 },
@@ -2559,7 +2514,7 @@ namespace confighttp {
 #endif
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
-        { "configured_rtx_hdr_mode", config::video.rtx_hdr },
+        { "configured_hdr_backend", enhancement_status.value("selected_backend", std::string {}) },
         { "pipelines", json::array() },
       };
 
@@ -4013,8 +3968,10 @@ namespace confighttp {
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
-    server.resource["^/api/config/rtx-hdr-backend$"]["GET"] = getRtxHdrBackendPath;
-    server.resource["^/api/config/rtx-hdr-backend$"]["POST"] = saveRtxHdrBackendPath;
+    server.resource["^/api/hdr-enhanced/config$"]["GET"] = getHdrEnhancedConfig;
+    server.resource["^/api/hdr-enhanced/config$"]["POST"] = saveHdrEnhancedConfig;
+    server.resource["^/api/hdr-enhanced/status$"]["GET"] = getHdrEnhancedStatus;
+    server.resource["^/api/hdr-enhanced/components/alkaidlab\\.nvidia_rtx_video/maintenance$"]["POST"] = maintainHdrEnhancedComponent;
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
     server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
@@ -4133,6 +4090,7 @@ namespace confighttp {
     // Wait for any event
     shutdown_event->view();
 
+    hdr_enhanced::api::shutdown();
     server.stop();
 
     tcp.join();

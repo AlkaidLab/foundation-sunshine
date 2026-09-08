@@ -9,13 +9,15 @@
 #include "thread_safe.h"
 #include "video_colorspace.h"
 
+#include <boost/smart_ptr/shared_ptr.hpp>
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "hdr/client_display_capabilities.h"
-#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -23,6 +25,10 @@ extern "C" {
 }
 
 struct AVPacket;
+namespace hdr_enhanced {
+  struct backend_use_t;
+}
+
 namespace video {
 
   /**
@@ -156,7 +162,7 @@ namespace video {
     bool frame_pipeline_policy_resolved = false;
     platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
     platf::pre_encode_filter_config_t pre_encode_filter_config;
-    std::string pre_encode_filter_backend_path;
+    boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {

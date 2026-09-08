@@ -5,6 +5,61 @@ include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 
+# The project-authored RTX Video bridge is built separately with MSVC because
+# the NVIDIA SDK import library is not part of the MinGW Sunshine build. A
+# normal build remains valid when the optional bridge was not produced.
+set(RTX_VIDEO_BRIDGE_BUILD_OUTPUT
+    "${CMAKE_BINARY_DIR}/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_bridge.dll")
+# Validate the paired build artifacts at install time, including bridges built
+# after the main CMake configure step. Never ship an unrecognized bridge.
+string(CONFIGURE [[
+  set(_bridge "@RTX_VIDEO_BRIDGE_BUILD_OUTPUT@")
+  set(_catalog "@CMAKE_BINARY_DIR@/assets/hdr-components.json")
+  if (EXISTS "${_bridge}" OR EXISTS "${_catalog}")
+    if (NOT EXISTS "${_bridge}" OR NOT EXISTS "${_catalog}")
+      message(FATAL_ERROR "RTX Video bridge and hdr-components.json must be produced together")
+    endif ()
+    file(SHA256 "${_bridge}" _actual)
+    file(READ "${_catalog}" _metadata)
+    string(JSON _versions ERROR_VARIABLE _error GET "${_metadata}" components alkaidlab.nvidia_rtx_video)
+    if (_error)
+      message(FATAL_ERROR "Invalid RTX Video component metadata")
+    endif ()
+    string(JSON _count LENGTH "${_versions}")
+    set(_matched FALSE)
+    if (_count GREATER 0)
+      math(EXPR _last "${_count} - 1")
+      foreach (_index RANGE 0 ${_last})
+        string(JSON _version MEMBER "${_versions}" ${_index})
+        string(JSON _expected ERROR_VARIABLE _error GET "${_versions}" "${_version}" foundation_rtx_video_bridge.dll)
+        if (NOT _error AND _actual STREQUAL _expected)
+          set(_matched TRUE)
+        endif ()
+      endforeach ()
+    endif ()
+    if (NOT _matched)
+      message(FATAL_ERROR "RTX Video bridge does not match hdr-components.json; rebuild the bridge")
+    endif ()
+  endif ()
+]] _RTX_VIDEO_INSTALL_CHECK @ONLY)
+install(CODE "${_RTX_VIDEO_INSTALL_CHECK}" COMPONENT application)
+install(FILES "${RTX_VIDEO_BRIDGE_BUILD_OUTPUT}"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        COMPONENT application
+        OPTIONAL)
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge/THIRD_PARTY_NOTICES.md"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        RENAME "RTX_VIDEO_THIRD_PARTY_NOTICES.md"
+        COMPONENT application)
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/README.md"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        COMPONENT application)
+
+# Optional trusted version metadata, never the vendor DLL payload itself.
+install(FILES "${CMAKE_BINARY_DIR}/assets/hdr-components.json"
+        DESTINATION "${SUNSHINE_ASSETS_DIR}"
+        COMPONENT assets OPTIONAL)
+
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)
 install(FILES "${ZLIB}" DESTINATION "." COMPONENT application)
 

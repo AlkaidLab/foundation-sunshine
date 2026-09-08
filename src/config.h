@@ -139,10 +139,6 @@ namespace config {
     std::string capture_compute_shader;  // GPU frame conversion: "auto", "on", "off"
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
-    // Experimental Windows pre-encode SDR -> HDR post-processing. The capture
-    // backend remains SDR; the external backend owns only the private GPU copy.
-    std::string rtx_hdr;
-    std::string rtx_hdr_backend_path;
   };
 
   struct audio_t {
@@ -301,18 +297,6 @@ namespace config {
 
   bool
   update_config(const std::map<std::string, std::string> &updates);
-
-  std::string
-  get_config_value(const std::string &key);
-
-  enum class config_update_e {
-    changed,
-    unchanged,
-    error,
-  };
-
-  config_update_e
-  set_rtx_hdr_backend_path(const std::string &backend_path);
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);

@@ -19,7 +19,7 @@ strip/inject、`dynamic_hdr_selection` 协商框架、NVENC/AMF 注入链路、H
 优先级规则（已确认）：客户端同时报 8.1 与 8.4 时**只协商 8.1**；仅当客户端只报 8.4
 （且请求 HLG）时才协商 8.4。
 
-## 2. 与 RTX HDR（PR #1018）的互斥
+## 2. 与 RTX HDR 的互斥
 
 RTX HDR 管线固定 PQ 编码输出：TrueHDR 滤镜输出 FP16 linear scRGB，由后续
 RGB→PQ/P010 编码阶段产生 PQ 码流（HLG 会话不激活滤镜，rtsp.cpp 守卫
@@ -31,8 +31,8 @@ RGB→PQ/P010 编码阶段产生 PQ 码流（HLG 会话不激活滤镜，rtsp.cp
   HLG 请求下 filter 恒为关闭，用 filter 状态做 gate 会让 RTX HDR 应用在 HLG
   路径漏排除。gate 可在 ANNOUNCE 响应头里给客户端明确 fallback 原因
   （`colorspace_unsupported`）。
-- 术语链（`rtx_hdr` / `synthetic_hdr` / `pre_encode_filter` 三层各自的消费
-  边界）见 rtx_hdr_stream_implementation.md §2.7。
+- `rtx_hdr`、`synthetic_hdr`、`pre_encode_filter` 分别表示应用策略、会话快照和实际
+  编码前处理状态，不用后一个阶段的状态反向改变前一阶段的协商结果。
 
 ## 3. 主机端改动
 

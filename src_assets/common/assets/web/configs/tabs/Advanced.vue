@@ -266,33 +266,17 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
     </div>
 
     <div class="settings-panel mt-3" v-if="platform === 'windows'">
-      <label for="rtx_hdr" class="form-label">{{ $t('config.rtx_hdr') }}</label>
-      <select id="rtx_hdr" class="form-select" v-model="config.rtx_hdr">
-        <option value="off">{{ $t('config.rtx_hdr_off') }}</option>
-        <option value="per_app">{{ $t('config.rtx_hdr_per_app') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.rtx_hdr_desc') }}</div>
-
-      <div class="mt-3" v-if="config.rtx_hdr === 'per_app'">
-        <label for="rtx_hdr_backend_path" class="form-label">{{ $t('config.rtx_hdr_backend_path') }}</label>
-        <input
-          id="rtx_hdr_backend_path"
-          class="form-control"
-          type="text"
-          v-model="config.rtx_hdr_backend_path"
-          placeholder="C:\\Program Files\\Sunshine\\tools\\rtx_hdr\\foundation_truehdr_backend.dll"
-        />
-        <div class="form-text">{{ $t('config.rtx_hdr_backend_path_desc') }}</div>
-        <button
-          v-if="nativeRtxHdrManagerAvailable"
-          type="button"
-          class="btn btn-outline-primary btn-sm mt-2"
-          @click="openNativeRtxHdrManager"
-        >
-          <i class="fas fa-puzzle-piece me-1" aria-hidden="true"></i>
-          Control Panel · RTX HDR
-        </button>
-      </div>
+      <div class="form-label">{{ $t('config.hdr_enhanced') }}</div>
+      <button
+        type="button"
+        class="btn btn-outline-primary btn-sm mt-2"
+        :disabled="!nativeRtxHdrManagerAvailable"
+        @click="openNativeRtxHdrManager"
+      >
+        <i class="fas fa-puzzle-piece me-1" aria-hidden="true"></i>
+        {{ $t('config.hdr_enhanced_open_manager') }}
+      </button>
+      <div v-if="!nativeRtxHdrManagerAvailable" class="form-text">{{ $t('config.wgc_control_panel_only') }}</div>
     </div>
 
     <!-- Capture -->

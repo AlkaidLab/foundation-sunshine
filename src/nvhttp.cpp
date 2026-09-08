@@ -274,17 +274,20 @@ namespace nvhttp {
     launch_session->unique_id = (get_arg(args, "uniqueid", "unknown"));
     launch_session->client_name = (get_arg(args, "clientname", "unknown"));
     launch_session->appid = util::from_view(get_arg(args, "appid", "unknown"));
-    if (config::video.rtx_hdr == "per_app") {
-      if (const auto app_rtx_hdr = proc::proc.get_app_rtx_hdr_config(launch_session->appid)) {
-        launch_session->synthetic_hdr = *app_rtx_hdr;
-      }
-    }
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
     launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
     launch_session->continuous_audio = util::from_view(get_arg(args, "continuousAudio", "0"));
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
+    if (launch_session->enable_hdr) {
+      if (const auto app_rtx_hdr = proc::proc.get_app_rtx_hdr_config(launch_session->appid); app_rtx_hdr && app_rtx_hdr->enabled) {
+        launch_session->hdr_backend = hdr_enhanced::manager().acquire_selected();
+        if (launch_session->hdr_backend && launch_session->hdr_backend->id == hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND) {
+          launch_session->synthetic_hdr = *app_rtx_hdr;
+        }
+      }
+    }
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
     // Client-declared touch-keyboard intent (Sunshine protocol extension).
