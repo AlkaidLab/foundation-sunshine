@@ -51,6 +51,10 @@ namespace platf::dxgi::d3d12 {
     [[nodiscard]] static bool
     built();
 
+    /** Number of timed-out analyzers retaining resources until GPU completion. */
+    [[nodiscard]] static std::uint32_t
+    pending_resource_retirements();
+
     [[nodiscard]] hdr_analysis_init_result_t
     initialize(
       device_t &foundation,
@@ -90,6 +94,9 @@ namespace platf::dxgi::d3d12 {
     disable();
 
   private:
+    void
+    release_resources();
+
     struct impl_t;
     std::unique_ptr<impl_t> impl_;
   };

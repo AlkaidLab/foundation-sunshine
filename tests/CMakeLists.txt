@@ -188,6 +188,7 @@ if (WIN32)
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_resources.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_pipeline.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_retirement.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_statistics.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_resource_ring.cpp)
     add_dependencies(d3d12_video_probe d3d12_hdr_shaders)

@@ -14,7 +14,7 @@ namespace platf::dxgi::d3d12 {
   }
 
   hdr_analysis_t::~hdr_analysis_t() {
-    disable();
+    release_resources();
   }
 
   hdr_analysis_init_result_t
@@ -28,7 +28,7 @@ namespace platf::dxgi::d3d12 {
     std::uint32_t source_height,
     float max_analysis_nits,
     std::uint64_t generation) {
-    disable();
+    release_resources();
     impl_ = std::make_unique<impl_t>();
     if (!foundation.available() || !d3d11_device || !d3d11_context ||
         analysis_width == 0 || analysis_height == 0 ||
@@ -38,6 +38,10 @@ namespace platf::dxgi::d3d12 {
     }
 
     impl_->foundation = &foundation;
+    impl_->retirement_device = foundation.device();
+    impl_->retirement_queue = foundation.compute_queue();
+    impl_->completion_fence = foundation.shared_fence();
+    impl_->producer_device = d3d11_device;
     impl_->analysis_width = analysis_width;
     impl_->analysis_height = analysis_height;
     impl_->source_width = source_width;
@@ -126,6 +130,7 @@ namespace platf::dxgi::d3d12 {
       return std::nullopt;
     }
     auto &slot = impl_->slots[*index];
+    impl_->gpu_resources_exposed = true;
     slot.generation = impl_->ring.generation();
     return writable_snapshot_t {
       *index,
@@ -162,6 +167,7 @@ namespace platf::dxgi::d3d12 {
       return false;
     }
 
+    impl_->last_capture_value = capture_ready;
     auto status = impl_->d3d11_context4->Signal(
       impl_->d3d11_fence.Get(),
       capture_ready);
@@ -206,8 +212,8 @@ namespace platf::dxgi::d3d12 {
     }
     if (FAILED(status)) {
       submission_lock.unlock();
-      (void) impl_->foundation->wait_idle();
       impl_->fail(status, "hdr_submit");
+      disable();
       return false;
     }
     auto &slot = impl_->slots[snapshot.slot];
@@ -287,18 +293,4 @@ namespace platf::dxgi::d3d12 {
     return impl_ ? impl_->failure_stage : "destroyed";
   }
 
-  void
-  hdr_analysis_t::disable() {
-    if (!impl_) {
-      return;
-    }
-    // fail() can clear available while other slots still reference GPU resources.
-    if (impl_->foundation && impl_->foundation->available()) {
-      (void) impl_->foundation->wait_idle();
-    }
-    if (impl_->available) {
-      (void) poll();
-    }
-    impl_->available = false;
-  }
 }  // namespace platf::dxgi::d3d12

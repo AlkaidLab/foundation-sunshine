@@ -47,7 +47,7 @@ WGC / Desktop Duplication / VDD
 - NVENC 使用 D3D11 native 或 D3D11-on-CUDA 路径；
 - AMF 使用 `InitDX11()` 和 `CreateSurfaceFromDX11Native()`；
 - FFmpeg/QSV 硬件帧以 `AV_PIX_FMT_D3D11` 为主要交接格式；
-- Windows 构建当前链接 `d3d11`、`D3DCompiler` 和 `dxgi`，尚未引入 `d3d12` 或离线 DXIL 产物。
+- 本 PR 之前的 Windows 构建链接 `d3d11`、`D3DCompiler` 和 `dxgi`；本 PR 增加 `d3d12` 链接和可选的 DXC 离线 DXIL 产物。
 
 PR #869 合并后的 D3D11 快路径已经具备：
 

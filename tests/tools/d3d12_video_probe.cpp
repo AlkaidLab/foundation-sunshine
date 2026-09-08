@@ -131,6 +131,54 @@ namespace {
   }
 
   bool
+  probe_deferred_retirement(platf::dxgi::d3d12::device_t &device,
+    ID3D11Device *d3d11_device, ID3D11DeviceContext *context, bool block_producer) {
+    using analysis_t = platf::dxgi::d3d12::hdr_analysis_t;
+    const auto pending_before = analysis_t::pending_resource_retirements();
+    auto analysis = std::make_unique<analysis_t>();
+    if (!analysis->initialize(device, d3d11_device, context, 64, 64, 64, 64, 10000.0f, 3).success) return false;
+    const auto snapshot = analysis->try_acquire_snapshot();
+    if (!snapshot || (block_producer && !analysis->cancel_snapshot(*snapshot))) return false;
+
+    ComPtr<ID3D12Fence> gate;
+    if (FAILED(device.device()->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&gate)))) return false;
+    HANDLE shared_handle = nullptr;
+    if (FAILED(device.device()->CreateSharedHandle(gate.Get(), nullptr, GENERIC_ALL, nullptr, &shared_handle))) return false;
+    ComPtr<ID3D11Device5> device5;
+    ComPtr<ID3D11Fence> producer_gate;
+    auto status = d3d11_device->QueryInterface(IID_PPV_ARGS(&device5));
+    if (SUCCEEDED(status)) status = device5->OpenSharedFence(shared_handle, IID_PPV_ARGS(&producer_gate));
+    CloseHandle(shared_handle);
+    if (FAILED(status)) return false;
+    ComPtr<ID3D11DeviceContext4> context4;
+    if (FAILED(context->QueryInterface(IID_PPV_ARGS(&context4)))) return false;
+    struct release_gate_t {
+      ID3D12Fence *fence;
+      ~release_gate_t() { fence->Signal(1); }
+    } release_gate { gate.Get() };
+    status = block_producer ? context4->Wait(producer_gate.Get(), 1) : device.compute_queue()->Wait(gate.Get(), 1);
+    if (FAILED(status)) return false;
+
+    const FLOAT values[4] { 100, 100, 100, 100 };
+    const FLOAT pq[4] { 0.5f, 0, 0, 0 };
+    context->ClearUnorderedAccessViewFloat(snapshot->uav, values);
+    context->ClearUnorderedAccessViewFloat(snapshot->pq_uav, pq);
+    // A cancelled slot fails after producer Signal/Flush but before compute
+    // Wait. A valid slot instead tests retirement while compute is blocked.
+    const bool submitted = analysis->submit(*snapshot, 3000);
+    if (submitted == block_producer || analysis->available() == block_producer) return false;
+    analysis.reset();
+    if (analysis_t::pending_resource_retirements() != pending_before + 1) return false;
+    gate->Signal(1);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (analysis_t::pending_resource_retirements() == pending_before) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+  }
+
+  bool
   probe_adapter(IDXGIAdapter1 *adapter, const DXGI_ADAPTER_DESC1 &desc) {
     constexpr D3D_FEATURE_LEVEL feature_levels[] {
       D3D_FEATURE_LEVEL_11_1,
@@ -227,6 +275,12 @@ namespace {
             if (hdr_analysis_ready && !probe_independent_analyzers(d3d12_device, hdr_analysis, d3d11_device.Get(), d3d11_context.Get())) {
               hdr_analysis_ready = false;
               hdr_analysis_stage = "multi_analyzer_failed";
+            }
+            if (hdr_analysis_ready &&
+                (!probe_deferred_retirement(d3d12_device, d3d11_device.Get(), d3d11_context.Get(), true) ||
+                  !probe_deferred_retirement(d3d12_device, d3d11_device.Get(), d3d11_context.Get(), false))) {
+              hdr_analysis_ready = false;
+              hdr_analysis_stage = "resource_retirement_failed";
             }
             if (!hdr_analysis_ready && hdr_analysis_stage == "ready") {
               hdr_analysis_stage = "timeout";

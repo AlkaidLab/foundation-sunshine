@@ -321,6 +321,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_internal.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_resources.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_pipeline.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/d3d12/d3d12_hdr_analysis_retirement.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_shaders.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_shaders.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_capture.cpp"

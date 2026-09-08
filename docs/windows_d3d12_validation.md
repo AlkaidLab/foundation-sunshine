@@ -45,6 +45,8 @@ Implementation responsibilities are separated as follows:
 - `d3d12_hdr_analysis.cpp`: analyzer lifecycle, ring submission and readback.
 - `d3d12_hdr_analysis_resources.cpp`: shared textures, descriptors and buffers.
 - `d3d12_hdr_analysis_pipeline.cpp`: shader pipelines and command recording.
+- `d3d12_hdr_analysis_retirement.cpp`: producer/compute completion and deferred
+  resource release after an error or timeout.
 - `display_vram_capture.cpp`: capture backends, image lifecycle and cursors.
 - `display_vram_shaders.cpp`: D3D11 shader compilation and shared shader catalog.
 - `hdr_analysis_result.cpp`: common D3D11/D3D12 metadata decoding; its header
@@ -70,6 +72,23 @@ standalone harness does not flush D3D11 or run an encoder: it relies entirely
 on the analyzer's production submission path. Removing the harness flushes
 also passed on this AMD driver before the explicit production flush was added;
 the potential submission stall was not reproduced locally.
+
+The failure probe blocks the D3D11 producer, writes a snapshot, and submits a
+cancelled slot. This fails after producer Signal/Flush and before the compute
+queue Wait. Destroying the analyzer must retain its resources while the producer
+is blocked; releasing the gate must return the pending-retirement count to its
+baseline without debug-layer errors. This passed on all three AMD enumerations.
+The companion case blocks the compute queue after a valid submission and checks
+the same retention/release behavior, independently of producer completion.
+
+Teardown waits up to two seconds for private producer and compute fence markers.
+A timeout transfers ownership to a retirement worker, which retains both devices,
+the queue, fences and resources and does not access the destroyed display or
+submit D3D11 commands. Resources are released only after both queues complete or
+their respective devices report removal. If a producer marker cannot be queued,
+resources remain held until device removal; if the retirement worker cannot be
+created, they remain held until process exit. These rare failure cases prioritize
+valid GPU resource lifetime and remain part of the outstanding fault/memory gate.
 
 To verify the build without shader compilers, configure a separate build with
 explicit non-existent `SUNSHINE_DXC_EXECUTABLE` and `SUNSHINE_FXC_EXECUTABLE`

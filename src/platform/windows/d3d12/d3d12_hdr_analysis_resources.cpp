@@ -37,8 +37,11 @@ namespace platf::dxgi::d3d12 {
         IID_PPV_ARGS(&d3d11_fence));
     }
     CloseHandle(shared_handle);
+    if (FAILED(status)) return fail(status, "hdr_d3d11_open_shared_fence");
+    status = foundation->device()->CreateFence(
+      0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&retirement_fence));
     return FAILED(status) ?
-             fail(status, "hdr_d3d11_open_shared_fence") :
+             fail(status, "hdr_retirement_fence_create") :
              S_OK;
   }
 

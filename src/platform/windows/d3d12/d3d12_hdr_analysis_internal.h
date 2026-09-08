@@ -97,6 +97,12 @@ namespace platf::dxgi::d3d12 {
     };
 
     device_t *foundation = nullptr;
+    // Strong references keep retirement independent of the display's lifetime.
+    ComPtr<ID3D12Device> retirement_device;
+    ComPtr<ID3D12CommandQueue> retirement_queue;
+    ComPtr<ID3D12Fence> completion_fence;
+    ComPtr<ID3D12Fence> retirement_fence;
+    ComPtr<ID3D11Device> producer_device;
     ComPtr<ID3D11DeviceContext4> d3d11_context4;
     ComPtr<ID3D11Fence> d3d11_fence;
     // Each fence has one signaling queue. A later D3D11 signal must never
@@ -120,6 +126,12 @@ namespace platf::dxgi::d3d12 {
     HRESULT failure_hresult = S_OK;
     std::string_view failure_stage = "none";
     bool available = false;
+    bool gpu_resources_exposed = false;
+    bool retirement_started = false;
+    bool producer_retirement_signaled = false;
+    bool compute_retirement_signaled = false;
+    std::uint64_t last_capture_value = 0;
+    std::uint64_t capture_retirement_value = 0;
 
     HRESULT
     fail(HRESULT status, std::string_view stage) {
@@ -137,5 +149,11 @@ namespace platf::dxgi::d3d12 {
     create_slot(std::size_t slot_index, ID3D11Device *d3d11_device);
     HRESULT
     record_commands(std::size_t slot_index);
+
+    bool
+    retirement_complete(bool can_submit_producer);
+
+    static unsigned __stdcall
+    retirement_worker(void *raw);
   };
 }  // namespace platf::dxgi::d3d12
