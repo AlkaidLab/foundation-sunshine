@@ -22,6 +22,10 @@ not establish a performance improvement or satisfy the G1 multi-vendor gate.
 - Separate producer and completion fences, and use a non-shader-visible CPU
   descriptor heap for histogram clears. The debug layer detected the old
   clear-descriptor error even when the numerical result appeared correct.
+- Keep each analyzer's slot state with its own resources, and serialize
+  Wait/Execute/Signal submissions on the shared compute queue. A regression
+  probe reproduced interference between two analyzers before this fix; both
+  now retain all three slots and publish their own generations and statistics.
 - Report the effective backend after successful session initialization,
   when the hybrid analysis selection is known; omit capability-probe summaries.
 
@@ -41,7 +45,9 @@ count, then submits 512 frame-dependent fixtures through the three-slot ring.
 It deliberately stalls compute while D3D11 fills all slots: no result or free
 slot may appear, and the completion fence must not advance until compute is
 released. Subsequent results must match their source frame. Debug-layer errors
-fail the probe. The standalone harness flushes D3D11 submissions because it
+fail the probe. Two simultaneous analyzers then fill separate rings with
+different statistics to check ownership and generation isolation. The
+standalone harness flushes D3D11 submissions because it
 has no encoder; this does not add a per-frame flush to the production path.
 
 To verify the build without shader compilers, configure a separate build with
@@ -53,7 +59,11 @@ Backend-selection unit tests cover ordinary D3D11 fallback and strict failures.
 ## Recorded local evidence
 
 - Windows 11 build 26200; AMD Radeon 780M, driver 32.0.31041.1004.
+- Full Sunshine configure, compile, and link passed with the default warning
+  policy; the resulting executable successfully reported its version.
 - 27/27 backend, ring, statistics, and telemetry unit tests passed.
+- All four selected CTest targets passed: the above suite, frame contract,
+  pre-encode filter, and TrueHDR backend loader.
 - DXC SM6 and FXC SM5 compilation passed through the CMake-generated target.
 - The modified analysis/probe code, `display_vram.cpp`, and `video_backend.cpp`
   compiled with GCC 15.2 and `-Werror`.

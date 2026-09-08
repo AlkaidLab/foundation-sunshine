@@ -135,12 +135,7 @@ namespace platf::dxgi {
     }
 
     auto analyzer = std::make_unique<d3d12::hdr_analysis_t>();
-    const auto current_generation =
-      d3d12_video_device->resource_ring().generation();
-    const auto next_generation =
-      d3d12_video_generation == 0 ?
-        current_generation :
-        current_generation + 1;
+    const auto next_generation = ++d3d12_video_generation;
     const auto init_result = analyzer->initialize(
       *d3d12_video_device,
       d3d11_device,
@@ -167,7 +162,6 @@ namespace platf::dxgi {
       return nullptr;
     }
 
-    d3d12_video_generation = next_generation;
     if (video_backend_selection) {
       video_backend_selection->effective =
         video_backend::effective_backend_e::hybrid;

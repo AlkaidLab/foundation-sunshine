@@ -204,6 +204,8 @@ class d3d12_video_compute {
 
 每条 fence 只允许一个队列发布完成值。当前 analysis-only 实现使用独立的 D3D11 capture fence 和 D3D12 completion fence；不能让 D3D11 后续帧的 signal 提前满足 D3D12 前序帧的完成条件。CPU readback 和 slot 回收只检查 D3D12 completion fence。
 
+每个分析器独立持有 ring、资源和 generation；多个会话可以共享基础 device/compute queue，但不能共享 slot 状态。共享队列的 Wait/Execute/Signal 提交及 fence value 分配需要组成不可交错的 CPU 临界区，避免不同会话的完成信号乱序。
+
 ### 6.2 单帧时序
 
 ```text

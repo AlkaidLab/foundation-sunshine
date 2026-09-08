@@ -430,7 +430,7 @@ namespace platf::dxgi {
     HRESULT video_backend_hresult = S_OK;
     std::string_view video_backend_stage = "build_select";
     bool video_backend_selection_logged = false;
-    std::uint64_t d3d12_video_generation = 0;
+    std::atomic<std::uint64_t> d3d12_video_generation = 0;
 
   protected:
     // Shared cursor blending pipeline used by display backends that need to

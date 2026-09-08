@@ -115,6 +115,8 @@ namespace platf::dxgi::d3d12 {
     ComPtr<ID3D12DescriptorHeap> descriptor_heap;
     ComPtr<ID3D12DescriptorHeap> clear_descriptor_heap;
     std::array<slot_t, resource_ring_t::slot_count> slots;
+    // Slots describe these resources, not every analyzer on the shared device.
+    resource_ring_t ring;
     std::uint32_t analysis_width = 0;
     std::uint32_t analysis_height = 0;
     std::uint32_t source_width = 0;
@@ -731,9 +733,8 @@ namespace platf::dxgi::d3d12 {
       ++index) {
       status = impl_->create_slot(index, d3d11_device);
     }
-    if (SUCCEEDED(status) &&
-        foundation.resource_ring().generation() != generation) {
-      status = foundation.resource_ring().begin_generation(generation) ?
+    if (SUCCEEDED(status)) {
+      status = impl_->ring.begin_generation(generation) ?
                  S_OK :
                  E_UNEXPECTED;
       if (FAILED(status)) {
@@ -767,12 +768,12 @@ namespace platf::dxgi::d3d12 {
     const auto completed =
       impl_->foundation->shared_fence()->GetCompletedValue();
     const auto index =
-      impl_->foundation->resource_ring().try_acquire(completed);
+      impl_->ring.try_acquire(completed);
     if (!index) {
       return std::nullopt;
     }
     auto &slot = impl_->slots[*index];
-    slot.generation = impl_->foundation->resource_ring().generation();
+    slot.generation = impl_->ring.generation();
     return writable_snapshot_t {
       *index,
       slot.generation,
@@ -785,8 +786,8 @@ namespace platf::dxgi::d3d12 {
   bool
   hdr_analysis_t::cancel_snapshot(
     const writable_snapshot_t &snapshot) {
-    return available() && snapshot.generation == impl_->foundation->resource_ring().generation() &&
-           impl_->foundation->resource_ring().cancel_capture(snapshot.slot);
+    return available() && snapshot.generation == impl_->ring.generation() &&
+           impl_->ring.cancel_capture(snapshot.slot);
   }
 
   bool
@@ -795,10 +796,11 @@ namespace platf::dxgi::d3d12 {
     std::uint64_t source_frame) {
     if (!available() || snapshot.slot >= resource_ring_t::slot_count ||
         snapshot.generation !=
-          impl_->foundation->resource_ring().generation()) {
+          impl_->ring.generation()) {
       return false;
     }
-    auto &ring = impl_->foundation->resource_ring();
+    auto &ring = impl_->ring;
+    auto submission_lock = impl_->foundation->lock_submission();
     const auto capture_ready = impl_->foundation->next_fence_value();
     const auto compute_done = impl_->foundation->next_fence_value();
     const auto encode_done = impl_->foundation->next_fence_value();
@@ -845,6 +847,7 @@ namespace platf::dxgi::d3d12 {
       status = E_UNEXPECTED;
     }
     if (FAILED(status)) {
+      submission_lock.unlock();
       (void) impl_->foundation->wait_idle();
       impl_->fail(status, "hdr_submit");
       return false;
@@ -869,7 +872,7 @@ namespace platf::dxgi::d3d12 {
     const auto completed =
       impl_->foundation->shared_fence()->GetCompletedValue();
     std::optional<completed_hdr_result_t> newest;
-    auto &ring = impl_->foundation->resource_ring();
+    auto &ring = impl_->ring;
     for (std::size_t index = 0;
       index < resource_ring_t::slot_count;
       ++index) {

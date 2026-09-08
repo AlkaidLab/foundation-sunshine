@@ -92,6 +92,48 @@ namespace {
   }
 
   bool
+  probe_independent_analyzers(platf::dxgi::d3d12::device_t &device,
+    platf::dxgi::d3d12::hdr_analysis_t &first,
+    ID3D11Device *d3d11_device, ID3D11DeviceContext *context) {
+    platf::dxgi::d3d12::hdr_analysis_t second;
+    if (!second.initialize(device, d3d11_device, context, 64, 64, 64, 64, 10000.0f, 2).success) {
+      return false;
+    }
+    for (std::uint64_t frame = 0; frame < 3; ++frame) {
+      const auto a = first.try_acquire_snapshot();
+      const auto b = second.try_acquire_snapshot();
+      if (!a || !b || a->generation != 1 || b->generation != 2) return false;
+      const FLOAT a_values[4] { 100, 100, 100, 100 };
+      const FLOAT b_values[4] { 1000, 1000, 1000, 1000 };
+      const FLOAT a_pq[4] { 0.25f, 0, 0, 0 };
+      const FLOAT b_pq[4] { 0.75f, 0, 0, 0 };
+      context->ClearUnorderedAccessViewFloat(a->uav, a_values);
+      context->ClearUnorderedAccessViewFloat(a->pq_uav, a_pq);
+      context->ClearUnorderedAccessViewFloat(b->uav, b_values);
+      context->ClearUnorderedAccessViewFloat(b->pq_uav, b_pq);
+      if (!first.submit(*a, 1000 + frame) || !second.submit(*b, 2000 + frame)) return false;
+    }
+    context->Flush();
+    std::uint64_t a_frame = 0, b_frame = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (const auto a = first.poll()) {
+        const auto stats = platf::dxgi::d3d12::summarize_hdr_result(a->result);
+        if (a->generation != 1 || !stats.valid || stats.avg_maxrgb != 100 || stats.avg_maxrgb_pq != 0.25f) return false;
+        a_frame = a->source_frame;
+      }
+      if (const auto b = second.poll()) {
+        const auto stats = platf::dxgi::d3d12::summarize_hdr_result(b->result);
+        if (b->generation != 2 || !stats.valid || stats.avg_maxrgb != 1000 || stats.avg_maxrgb_pq != 0.75f) return false;
+        b_frame = b->source_frame;
+      }
+      if (a_frame == 1002 && b_frame == 2002) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+  }
+
+  bool
   probe_adapter(IDXGIAdapter1 *adapter, const DXGI_ADAPTER_DESC1 &desc) {
     constexpr D3D_FEATURE_LEVEL feature_levels[] {
       D3D_FEATURE_LEVEL_11_1,
@@ -185,6 +227,10 @@ namespace {
             if (hdr_analysis_ready && !probe_ring(d3d12_device, hdr_analysis, d3d11_context.Get())) {
               hdr_analysis_ready = false;
               hdr_analysis_stage = "ring_stress_failed";
+            }
+            if (hdr_analysis_ready && !probe_independent_analyzers(d3d12_device, hdr_analysis, d3d11_device.Get(), d3d11_context.Get())) {
+              hdr_analysis_ready = false;
+              hdr_analysis_stage = "multi_analyzer_failed";
             }
             if (!hdr_analysis_ready && hdr_analysis_stage == "ready") {
               hdr_analysis_stage = "timeout";

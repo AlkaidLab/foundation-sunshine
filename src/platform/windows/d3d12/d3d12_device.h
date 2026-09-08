@@ -1,11 +1,12 @@
 /**
  * @file src/platform/windows/d3d12/d3d12_device.h
- * @brief D3D12 device, compute queue, shared fence, and ring bootstrap.
+ * @brief D3D12 device, compute queue, shared fence, and capability bootstrap.
  */
 #pragma once
 
 #include <array>
 #include <cstdint>
+#include <mutex>
 #include <string_view>
 
 #include <d3d11_4.h>
@@ -73,8 +74,10 @@ namespace platf::dxgi::d3d12 {
     [[nodiscard]] std::uint64_t
     next_fence_value();
 
-    [[nodiscard]] resource_ring_t &
-    resource_ring();
+    // Keep each Wait/Execute/Signal sequence and its fence allocation together
+    // when multiple analyzers submit to the shared queue.
+    [[nodiscard]] std::unique_lock<std::mutex>
+    lock_submission();
 
     void
     drain();
@@ -110,7 +113,7 @@ namespace platf::dxgi::d3d12 {
       Microsoft::WRL::ComPtr<ID3D12CommandAllocator>,
       resource_ring_t::slot_count>
       command_allocators_;
-    resource_ring_t resource_ring_;
+    std::mutex submission_mutex_;
     capabilities_t capabilities_;
     std::uint64_t last_fence_value_ = 0;
     std::string_view self_test_stage_ = "none";

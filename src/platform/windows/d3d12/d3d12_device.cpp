@@ -151,14 +151,6 @@ namespace platf::dxgi::d3d12 {
       return result;
     }
 
-    if (!resource_ring_.begin_generation(1)) {
-      reset();
-      return failure(
-        video_backend::fallback_reason_e::shared_fence_failed,
-        E_UNEXPECTED,
-        "ring_initialize");
-    }
-
     available_ = true;
     return {
       true,
@@ -202,9 +194,9 @@ namespace platf::dxgi::d3d12 {
     return ++last_fence_value_;
   }
 
-  resource_ring_t &
-  device_t::resource_ring() {
-    return resource_ring_;
+  std::unique_lock<std::mutex>
+  device_t::lock_submission() {
+    return std::unique_lock { submission_mutex_ };
   }
 
   void
@@ -218,12 +210,14 @@ namespace platf::dxgi::d3d12 {
     if (!available_ || !compute_queue_ || !shared_fence_) {
       return E_UNEXPECTED;
     }
+    auto submission_lock = lock_submission();
     const auto fence_value = next_fence_value();
     if (fence_value == 0) {
       return E_UNEXPECTED;
     }
     auto status =
       compute_queue_->Signal(shared_fence_.Get(), fence_value);
+    submission_lock.unlock();
     if (FAILED(status)) {
       return status;
     }
@@ -464,7 +458,6 @@ namespace platf::dxgi::d3d12 {
     shared_fence_.Reset();
     compute_queue_.Reset();
     device_.Reset();
-    resource_ring_ = {};
     capabilities_ = {};
     last_fence_value_ = 0;
     self_test_stage_ = "none";
