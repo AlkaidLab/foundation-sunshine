@@ -77,6 +77,8 @@ jobs:
   build_win:
     name: Windows
     needs: setup_release
+    permissions:
+      contents: read
     runs-on: windows-latest
     steps:
       - name: Checkout
