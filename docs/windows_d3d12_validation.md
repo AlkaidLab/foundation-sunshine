@@ -101,7 +101,7 @@ Backend-selection unit tests cover ordinary D3D11 fallback and strict failures.
 - Windows 11 build 26200; AMD Radeon 780M, driver 32.0.31041.1004.
 - Full Sunshine configure, compile, and link passed with the default warning
   policy; the resulting executable successfully reported its version.
-- 32/32 backend, ring, statistics, and telemetry unit tests passed.
+- 33/33 backend, ring, statistics, and telemetry unit tests passed.
 - All four selected CTest targets passed: the above suite, frame contract,
   pre-encode filter, and TrueHDR backend loader.
 - All 20 CTest targets also passed before and after the structural extraction.
@@ -172,6 +172,12 @@ script, runner, logs and JSON summaries remain local validation artifacts.
 
 ## Controlled local performance check (2026-09-08)
 
+**Historical exploratory result.** The harness used for this first check did
+not reproduce production streaming timer-resolution and CPU-priority requests.
+Its host/packet timing must not be used as a production baseline. The corrected
+experiment below supersedes that interpretation; the original measurements
+remain recorded here for auditability.
+
 **No stable performance advantage was demonstrated on this AMD Radeon 780M.**
 The uninstrumented D3D12 host-call P95 median was 0.094 ms (0.78%) higher
 than D3D11, within the observed run-to-run variation. DXGI local process
@@ -233,7 +239,8 @@ sample with the 30-frame interval.
 
 D3D12 timing is opt-in with `SUNSHINE_VRAM_TIMING=1`, using a query heap and
 per-slot timestamps resolved into the existing asynchronous readback buffer.
-No extra flush or CPU fence wait is introduced for timing. Query-heap creation
+No explicit flush or CPU fence wait was added for D3D12 timing. The follow-up
+also forbids implicit flushes in the existing D3D11 timing poll. Query-heap creation
 failure leaves analysis available without timing. `SUNSHINE_VRAM_TIMING_RAW=1`
 adds per-sample logs, and `SUNSHINE_VRAM_TIMING_SAMPLE_INTERVAL` accepts 1–1000
 (default 31; use an interval coprime with four to sample analysis frames).
@@ -252,6 +259,121 @@ remain in the validation worktree under `benchmark-results/` and its parent.
 After adding timing, the full build and all 20 CTest targets passed again.
 The 32-test backend/ring/statistics/telemetry suite includes a regression for
 classifying D3D12 analysis frames without reading D3D11 analysis queries.
+
+## Measurement corrections (2026-09-08)
+
+The corrected harness reproduces the timer and CPU scheduling requests from
+`platf::streaming_will_start()` and the encode thread: maximum supported timer
+resolution (0.5 ms on this host), `HIGH_PRIORITY_CLASS`, and
+`THREAD_PRIORITY_ABOVE_NORMAL`. These settings are verified in each run and
+released/restored afterward. It does not invoke the full streaming callback,
+which also changes unrelated WLAN, mouse and vendor control-panel settings.
+The first follow-up matrix without these requests was stopped and retained as
+diagnostic evidence, separately from the final experiment.
+
+Frame targets use a Windows high-resolution waitable timer, without spinning.
+The predeclared start-lateness P95 gate is 1 ms. CPU/packet rows are preallocated;
+logging sinks buffer records in memory and write after measurement. Twelve
+untimed input frames after the measurement collect pending encoder outputs,
+so a packet still in the asynchronous encoder is not mistaken for a lost frame.
+The second deterministic texture is half as bright, rather than just rearranging
+the same luminance distribution. Both textures remain offscreen.
+
+Production timing queries now reuse completed D3D11 query sets (bounded by the
+existing eight-sample pending limit) and pass `D3D11_ASYNC_GETDATA_DONOTFLUSH`
+to every timing `GetData` call. Recycling clears all stage flags, and a regression
+test verifies inactive stages are not read and the read flags are preserved.
+This removes per-sample query creation and prevents telemetry polling from
+changing command-buffer submission. Queries are never recycled before completion.
+
+Windows HDR statistics now expose their optional producer `source_frame`,
+separately from the readback `sample_sequence`. The benchmark checks monotonic
+publication, coverage of the expected analysis sources, source age, and 18
+scalar/percentile fields by producer frame. The field tolerance is
+`max(1e-5, abs(reference) * 1e-5)`. This is an analyzer-statistics comparison,
+not a bitstream-field or DV RPU equivalence claim.
+
+The final protocol specifies six repeats of analysis off/D3D11/D3D12 in all
+six order permutations, each with 300 warm-up and 2,000 measured frames.
+Primary host timings disable production telemetry. A separate three-repeat
+diagnostic matrix samples every nine frames with raw messages buffered by the
+harness. Statistics compare whole runs; frame samples are not treated as
+independent experiments. GPU timestamps remain elapsed queue spans, with the
+previously documented boundary differences and possible preemption.
+
+WPR GPU tracing was attempted but Windows rejected the profiling policy with
+`0xc5585011`. A subsequent status check confirmed no active recording. The
+GPU tail therefore remains unattributed to shader execution versus scheduling.
+The user-enabled Zako display is retained; HDR is restored to its initial state.
+
+### Corrected local result
+
+All 24 cases returned all 48,000 measured packets. Every case passed the
+predeclared pacing gate, with no harness deadline misses. Each enabled-analysis
+case covered 500 measured producer frames with monotonic source and sequence
+IDs. This does **not** imply that every numerical correctness check passed:
+one D3D12 result failed the percentile comparison described below.
+
+The table contains medians of six complete runs with telemetry disabled:
+
+| Analysis | Host mean / P95 / P99 (ms) | Packet collection P95 (ms) | Start lateness P95 (ms) | DXGI local allocation (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Off | 0.565 / 0.809 / 1.130 | 17.660 | 0.506 | 524.24 |
+| D3D11 | 0.660 / 0.873 / 1.074 | 17.743 | 0.507 | 547.24 |
+| D3D12 | 0.684 / 0.968 / 1.169 | 17.795 | 0.513 | 664.89 |
+
+The six paired D3D12-minus-D3D11 host P95 differences were +0.1369,
++0.0788, -0.0356, +0.5437, +0.2826 and -0.2701 ms. Their mean is
++0.1227 ms; an exploratory run-level paired bootstrap (10,000 resamples,
+seed 872) gives a 95% interval of [-0.0763, +0.3261] ms. This does not
+establish a stable acceleration, regression or equivalence. D3D12 adds
+117.65 MiB of local DXGI allocation in this case.
+
+Published statistics arrived one converted frame earlier with D3D12:
+source-age P95/max was 4/4 frames versus D3D11's 5/5. This is analysis
+freshness, not a demonstrated video-latency or perceptual improvement.
+Packet latency here means observed collection at the production encode-call
+cadence, not hardware completion, network delivery or client presentation.
+
+The separate three-repeat GPU diagnostic has analysis elapsed-span P95
+medians of 0.509 ms for D3D11 and 5.702 ms for D3D12, mostly in pass 1.
+Instrumentation-on/off host and CPU deltas have inconsistent signs and are
+confounded by separate collection periods. Query recycling, DONOTFLUSH and
+buffered output remove known perturbations; they do not establish that the
+remaining observer cost passes a low-overhead gate.
+
+### Unresolved percentile discrepancy
+
+Using one 500-source D3D11 reference, 8,500 cross-run producer-frame comparisons
+across the other 17 enabled-analysis cases found two out-of-tolerance fields in one result: `d3d12-run9-timing1`,
+source frame 392, P25 217.456177 versus 71.3556519 nits and P50 470.033203
+versus 453.286896 nits. The same result was retained for four output frames.
+The input had not switched scenes there. Other fields remained within the
+predeclared tolerance; neighboring sources and the other runs matched.
+The primary timing-off matrix had no such violations.
+
+This is a failed correctness gate, retained without relaxing tolerance or
+silently dropping the sample. The original run did not retain raw histograms,
+so its cause cannot be inferred from the decoded percentiles alone. Follow-up
+raw-histogram diagnostics are kept separate from the performance matrix.
+A dedicated diagnostic binary adds buffered sparse histogram logging to the
+shared decoder without modifying the production binary. One D3D11 reference
+and five D3D12 follow-ups returned 12,000 measured packets. All 2,500 measured
+D3D12 source results matched the reference raw histogram, its pixel-count sum,
+and all 18 decoded fields. The anomaly did not recur; this does not explain
+or clear the original failure. The D3D12 debug probe also passed afterward.
+
+Both fixtures have eight equal-population histogram bins. Their P25 and P50
+lie exactly at cumulative-count boundaries; even a small population change
+can move the reported percentile to the next occupied bin. This explains the
+sensitivity of the comparison, not the cause of the observed population or
+result variation. No speculative barrier or shader change was applied.
+
+The corrected experiment remains a fixed-input conversion/encoding test.
+It excludes actual desktop capture, game contention, other GPU vendors, HLG,
+DV RPU generation/injection and client presentation. No G1 acceptance or
+production enablement is claimed. Local full build and all 20 CTest targets
+passed after the query/provenance changes, including the new recycling test.
 
 ## Outstanding acceptance evidence
 
