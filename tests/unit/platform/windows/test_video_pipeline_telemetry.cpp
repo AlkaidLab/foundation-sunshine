@@ -24,6 +24,43 @@ namespace {
   using platf::dxgi::telemetry::metric_fields;
   using platf::dxgi::telemetry::sample_window_t;
 
+  TEST(VideoPipelineTelemetry, ReusedQueriesClearStageMarkersAndPreserveReadFlags) {
+    struct context_t {
+      unsigned flags_seen = 0;
+      int reads = 0;
+      context_t *
+      operator->() { return this; }
+      void
+      End(int *) {}
+      int
+      GetData(int *, void *, unsigned, unsigned flags) {
+        flags_seen |= flags;
+        ++reads;
+        return 0;
+      }
+    } context;
+    platf::dxgi::telemetry::d3d11_stage_sample_t<std::shared_ptr<int>> sample;
+    int created = 0;
+    ASSERT_TRUE(sample.initialize([&] { ++created; return std::make_shared<int>(1); }));
+    sample.begin_capture_copy(context);
+    sample.begin_analysis(context);
+    platf::dxgi::telemetry::d3d11_stage_values_t values {};
+    ASSERT_TRUE(sample.read(context, values, 1));
+    EXPECT_EQ(context.reads, 6);
+    EXPECT_EQ(context.flags_seen, 1u);
+    sample.reset();
+    ASSERT_TRUE(sample.read(context, values, 1));
+    EXPECT_EQ(context.reads, 6);
+    EXPECT_EQ(created, 6);
+    m0_pipeline_metrics_t metrics;
+    sample.accumulate(metrics, values, 1000, 10, 12, 13, true);
+    EXPECT_EQ(metrics.convert_regular.size(), 1);
+    EXPECT_EQ(metrics.surface_copy_regular.size(), 1);
+    EXPECT_TRUE(metrics.convert_analysis.empty());
+    EXPECT_TRUE(metrics.capture_copy.empty());
+    EXPECT_TRUE(metrics.analysis_pass1.empty());
+  }
+
   TEST(VideoPipelineTelemetry, EmptyWindowProducesZeroSummary) {
     const auto summary = sample_window_t {}.summary();
 
@@ -39,7 +76,7 @@ namespace {
     sample.mark_analysis_frame();
     unused_query_context_t context;
     platf::dxgi::telemetry::d3d11_stage_values_t values {};
-    EXPECT_TRUE(sample.read(context, values));
+    EXPECT_TRUE(sample.read(context, values, 1));
     EXPECT_EQ(context.reads, 0);
     m0_pipeline_metrics_t metrics;
     sample.accumulate(metrics, values, 1000, 10, 12, 13, false);

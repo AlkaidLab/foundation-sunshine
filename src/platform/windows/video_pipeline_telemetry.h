@@ -158,6 +158,13 @@ namespace platf::dxgi::telemetry {
   template <class Query>
   class d3d11_stage_sample_t {
   public:
+    // Reuse completed queries without carrying stage markers into the next frame.
+    void
+    reset() {
+      capture_copy_ = false;
+      analysis_dispatched_ = false;
+      analysis_frame_ = false;
+    }
     template <class Factory>
     bool
     initialize(Factory &&factory) {
@@ -216,17 +223,17 @@ namespace platf::dxgi::telemetry {
 
     template <class Context>
     [[nodiscard]] bool
-    read(Context &context, d3d11_stage_values_t &values) {
+    read(Context &context, d3d11_stage_values_t &values, unsigned flags) {
       if (capture_copy_ &&
-          (!read(context, d3d11_stage_point_t::capture_copy_start, values) ||
-            !read(context, d3d11_stage_point_t::capture_copy_end, values))) {
+          (!read(context, d3d11_stage_point_t::capture_copy_start, values, flags) ||
+            !read(context, d3d11_stage_point_t::capture_copy_end, values, flags))) {
         return false;
       }
       if (analysis_dispatched_ &&
-          (!read(context, d3d11_stage_point_t::analysis_start, values) ||
-            !read(context, d3d11_stage_point_t::analysis_pass1_end, values) ||
-            !read(context, d3d11_stage_point_t::analysis_pass2_end, values) ||
-            !read(context, d3d11_stage_point_t::analysis_readback_end, values))) {
+          (!read(context, d3d11_stage_point_t::analysis_start, values, flags) ||
+            !read(context, d3d11_stage_point_t::analysis_pass1_end, values, flags) ||
+            !read(context, d3d11_stage_point_t::analysis_pass2_end, values, flags) ||
+            !read(context, d3d11_stage_point_t::analysis_readback_end, values, flags))) {
         return false;
       }
       return true;
@@ -298,13 +305,13 @@ namespace platf::dxgi::telemetry {
     read(
       Context &context,
       d3d11_stage_point_t point,
-      d3d11_stage_values_t &values) {
+      d3d11_stage_values_t &values, unsigned flags) {
       auto &result = values[index(point)];
       return context->GetData(
                queries_[index(point)].get(),
                &result,
                sizeof(result),
-               0) == 0;
+               flags) == 0;
     }
 
     std::array<Query, static_cast<std::size_t>(d3d11_stage_point_t::count)> queries_;

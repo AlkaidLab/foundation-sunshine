@@ -503,7 +503,7 @@ namespace platf {
    * @brief Per-frame HDR luminance statistics computed by GPU analysis.
    *
    * These statistics are extracted from the captured scRGB FP16 frame
-   * by a D3D11 compute shader and used to generate accurate per-frame
+   * by GPU compute shaders and used to generate accurate per-frame
    * HDR dynamic metadata (CUVA HDR Vivid / HDR10+).
    *
    * Scalar luminance and HDR10+ percentile values are in nits (cd/m²);
@@ -540,6 +540,7 @@ namespace platf {
     float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
     float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
     uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
+    std::optional<uint64_t> source_frame;  ///< Producer frame index when supplied by the backend; distinct from readback sequence.
     bool valid = false;         ///< Whether stats are available (false on first frame)
   };
 
@@ -570,7 +571,8 @@ namespace platf {
 
     /**
      * @brief Per-frame HDR luminance statistics from GPU analysis.
-     * Updated during convert() with 1-frame delay (async GPU readback).
+     * Updated asynchronously during convert(); source_frame identifies the
+     * result's age when supplied by the backend.
      * Used by video.cpp to generate per-frame HDR dynamic metadata.
      */
     hdr_frame_luminance_stats_t hdr_luminance_stats;

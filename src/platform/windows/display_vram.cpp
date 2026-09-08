@@ -1455,20 +1455,29 @@ namespace platf::dxgi {
         return false;
       }
 
-      sample.disjoint = make_query(D3D11_QUERY_TIMESTAMP_DISJOINT);
-      sample.start = make_query(D3D11_QUERY_TIMESTAMP);
-      sample.after_dispatch = make_query(D3D11_QUERY_TIMESTAMP);
-      sample.before_copy = make_query(D3D11_QUERY_TIMESTAMP);
-      sample.after_copy = make_query(D3D11_QUERY_TIMESTAMP);
-      sample.end = make_query(D3D11_QUERY_TIMESTAMP);
-      if (!sample.disjoint || !sample.start || !sample.after_dispatch ||
-          !sample.before_copy || !sample.after_copy ||
-          !sample.m0.initialize([&]() {
-            return make_query(D3D11_QUERY_TIMESTAMP);
-          }) ||
-          !sample.end) {
-        gpu_timing_disabled = true;
-        return false;
+      if (!gpu_timing_reusable.empty()) {
+        sample = std::move(gpu_timing_reusable.back());
+        gpu_timing_reusable.pop_back();
+        sample.m0.reset();
+        sample.cs_used = sample.scratch_copy = sample.direct_uav = false;
+        sample.p010 = sample.scaled = sample.borrowed_vdd = false;
+      }
+      else {
+        sample.disjoint = make_query(D3D11_QUERY_TIMESTAMP_DISJOINT);
+        sample.start = make_query(D3D11_QUERY_TIMESTAMP);
+        sample.after_dispatch = make_query(D3D11_QUERY_TIMESTAMP);
+        sample.before_copy = make_query(D3D11_QUERY_TIMESTAMP);
+        sample.after_copy = make_query(D3D11_QUERY_TIMESTAMP);
+        sample.end = make_query(D3D11_QUERY_TIMESTAMP);
+        if (!sample.disjoint || !sample.start || !sample.after_dispatch ||
+            !sample.before_copy || !sample.after_copy ||
+            !sample.m0.initialize([&]() {
+              return make_query(D3D11_QUERY_TIMESTAMP);
+            }) ||
+            !sample.end) {
+          gpu_timing_disabled = true;
+          return false;
+        }
       }
 
       device_ctx->Begin(sample.disjoint.get());
@@ -1507,7 +1516,8 @@ namespace platf::dxgi {
       while (!gpu_timing_pending.empty()) {
         auto &sample = gpu_timing_pending.front();
         D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint = {};
-        HRESULT status = device_ctx->GetData(sample.disjoint.get(), &disjoint, sizeof(disjoint), 0);
+        constexpr UINT read_flags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
+        HRESULT status = device_ctx->GetData(sample.disjoint.get(), &disjoint, sizeof(disjoint), read_flags);
         if (status != S_OK) {
           break;
         }
@@ -1519,12 +1529,12 @@ namespace platf::dxgi {
         telemetry::d3d11_stage_values_t m0_values {};
         UINT64 end = 0;
         bool ready =
-          device_ctx->GetData(sample.start.get(), &start, sizeof(start), 0) == S_OK &&
-          device_ctx->GetData(sample.after_dispatch.get(), &after_dispatch, sizeof(after_dispatch), 0) == S_OK &&
-          device_ctx->GetData(sample.before_copy.get(), &before_copy, sizeof(before_copy), 0) == S_OK &&
-          device_ctx->GetData(sample.after_copy.get(), &after_copy, sizeof(after_copy), 0) == S_OK &&
-          device_ctx->GetData(sample.end.get(), &end, sizeof(end), 0) == S_OK &&
-          sample.m0.read(device_ctx, m0_values);
+          device_ctx->GetData(sample.start.get(), &start, sizeof(start), read_flags) == S_OK &&
+          device_ctx->GetData(sample.after_dispatch.get(), &after_dispatch, sizeof(after_dispatch), read_flags) == S_OK &&
+          device_ctx->GetData(sample.before_copy.get(), &before_copy, sizeof(before_copy), read_flags) == S_OK &&
+          device_ctx->GetData(sample.after_copy.get(), &after_copy, sizeof(after_copy), read_flags) == S_OK &&
+          device_ctx->GetData(sample.end.get(), &end, sizeof(end), read_flags) == S_OK &&
+          sample.m0.read(device_ctx, m0_values, read_flags);
         if (!ready) {
           break;
         }
@@ -1577,6 +1587,7 @@ namespace platf::dxgi {
           ++gpu_timing_stats.disjoint_samples;
         }
 
+        gpu_timing_reusable.emplace_back(std::move(sample));
         gpu_timing_pending.pop_front();
       }
 
@@ -1814,6 +1825,7 @@ namespace platf::dxgi {
     texture2d_t output_texture;
 
     std::deque<gpu_timing_sample_t> gpu_timing_pending;
+    std::vector<gpu_timing_sample_t> gpu_timing_reusable;
     gpu_timing_stats_t gpu_timing_stats;
     timing_bucket_t cpu_acquire_timing;
     timing_bucket_t cpu_submit_timing;
@@ -2340,6 +2352,7 @@ namespace platf::dxgi {
       }
       hdr_luminance_stats_out = hdr_analysis::decode_result(
         *result, hdr_analysis_max_nits, ++hdr_analysis_sample_sequence);
+      hdr_luminance_stats_out.source_frame = source_frame_index;
       hdr_analysis_last_completed_frame = std::min(current_frame_index, source_frame_index);
     }
 
