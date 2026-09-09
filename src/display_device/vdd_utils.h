@@ -56,6 +56,15 @@ namespace display_device {
 
 namespace display_device::vdd_utils {
 
+#ifndef _WIN32
+  /**
+   * @brief Name of the live virtual output (e.g. "card1-DP-1") created by the
+   *        external virtual display helper, or empty when none is active.
+   */
+  std::string
+  live_virtual_display_connector();
+#endif
+
   using namespace std::chrono_literals;
 
   // 常量定义

@@ -1,5 +1,7 @@
 // local includes
 #include "src/display_device/settings.h"
+#include "src/display_device/vdd_utils.h"
+#include "src/globals.h"
 
 namespace display_device {
 
@@ -133,15 +135,21 @@ namespace display_device {
   }
 
   std::string
-  find_one_of_the_available_devices(const std::string &) {
-    // Not implemented
-    return {};
+  find_one_of_the_available_devices(const std::string &device_id) {
+    // The external virtual display helper hosts a single output; match it
+    // against the ZakoVDD friendly name the session logic asks for.
+    if (device_id != ZAKO_NAME) {
+      return {};
+    }
+    return vdd_utils::live_virtual_display_connector();
   }
 
   std::string
-  find_device_by_friendlyname(const std::string &) {
-    // Not implemented
-    return {};
+  find_device_by_friendlyname(const std::string &friendly_name) {
+    if (friendly_name != ZAKO_NAME) {
+      return {};
+    }
+    return vdd_utils::live_virtual_display_connector();
   }
 
   bool

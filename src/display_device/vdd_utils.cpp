@@ -1112,31 +1112,158 @@ namespace display_device {
 
 #else  // !_WIN32
 
-// ZakoVDD is a Windows display driver; keep the interface linkable for
-// platform-neutral callers (display session staging, Web status endpoints)
-// with no-op stubs that report the driver as absent or unreachable.
+// Linux virtual display backend.
+//
+// ZakoVDD is a Windows driver. On Linux the virtual display comes from the
+// external sunshineVD daemon (packaged as sunshine-virt-display): it
+// overrides a real connector's EDID and toggles its status, so the
+// compositor gains an extra output that KMS capture can grab. This backend
+// maps the vdd_utils surface onto the daemon's Unix socket protocol
+// (comma-separated argv, no reply):
+//   create_vdd_monitor   -> --connect,--width,W,--height,H,--refresh-rate,F
+//   destroy_vdd_monitor  -> --disconnect
+// Liveness is observed through the daemon state file plus connector status
+// in sysfs, which session staging consumes as the virtual device.
 
 #include "vdd_utils.h"
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <mutex>
 
 #include "src/logging.h"
 
 namespace display_device::vdd_utils {
 
+  namespace {
+    constexpr auto k_daemon_socket = "/tmp/sunshineVD.sock";
+    constexpr auto k_daemon_state_file = "/opt/sunshine-vd/virt_display.state";
+
+    std::mutex state_mutex;
+
+    // Session mode requested by the client. Display request parsing knows the
+    // exact mode before staging, while create_vdd_monitor may also fire for
+    // recovery paths; the cache holds the latest request and a safe default
+    // until then.
+    unsigned int cached_width { 1920 };
+    unsigned int cached_height { 1080 };
+    unsigned int cached_refresh_hz { 60 };
+
+    std::string
+    connect_payload(unsigned int width, unsigned int height, unsigned int refresh_hz) {
+      return "--connect,--width," + std::to_string(width) + ",--height," + std::to_string(height) +
+             ",--refresh-rate," + std::to_string(refresh_hz);
+    }
+
+    /**
+     * @brief Deliver one command to the daemon over its Unix socket.
+     * @details The daemon closes the connection once the command has been
+     *          handled; draining the zero-length reply doubles as a barrier.
+     */
+    bool
+    send_daemon_command(const std::string &payload) {
+      auto fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+      if (fd < 0) {
+        return false;
+      }
+
+      sockaddr_un addr {};
+      addr.sun_family = AF_UNIX;
+      std::strncpy(addr.sun_path, k_daemon_socket, sizeof(addr.sun_path) - 1);
+
+      timeval timeout { 3, 0 };
+      ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+      ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+      bool sent = ::connect(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) == 0;
+      if (sent) {
+        sent = ::write(fd, payload.data(), payload.size()) == static_cast<ssize_t>(payload.size());
+        char drain[64] {};
+        sent = sent && ::read(fd, drain, sizeof(drain)) >= 0;
+      }
+      ::close(fd);
+      return sent;
+    }
+
+    bool
+    connector_connected(const std::string &connector) {
+      std::ifstream status { "/sys/class/drm/" + connector + "/status" };
+      std::string value;
+      status >> value;
+      return value == "connected";
+    }
+
+    unsigned int
+    round_refresh_hz(const refresh_rate_t &refresh_rate) {
+      return std::max(1u, (refresh_rate.numerator + refresh_rate.denominator / 2) / refresh_rate.denominator);
+    }
+  }  // namespace
+
+  std::string
+  live_virtual_display_connector() {
+    std::ifstream in { k_daemon_state_file };
+    if (!in) {
+      return {};
+    }
+
+    std::string card;
+    std::string port;
+    std::getline(in, card);
+    std::getline(in, port);
+    if (card.empty() || port.empty()) {
+      return {};
+    }
+
+    const std::string connector { card + "-" + port };
+    return connector_connected(connector) ? connector : std::string {};
+  }
+
   const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
   bool
-  is_mode_advertised(const std::string &, const display_mode_t &) {
-    return false;
+  is_mode_advertised(const std::string &device_id, const display_mode_t &) {
+    // The daemon's generated EDID advertises exactly the requested mode once
+    // the connector is up; there is no per-mode list to consult.
+    return !device_id.empty() && !live_virtual_display_connector().empty();
   }
 
   bool
-  wait_for_mode_publication(const std::string &, const display_mode_t &) {
-    return false;
+  wait_for_mode_publication(const std::string &, const display_mode_t &requested_mode) {
+    const auto refresh_hz = round_refresh_hz(requested_mode.refresh_rate);
+    {
+      std::lock_guard lock { state_mutex };
+      cached_width = requested_mode.resolution.width;
+      cached_height = requested_mode.resolution.height;
+      cached_refresh_hz = refresh_hz;
+    }
+
+    if (!send_daemon_command(connect_payload(requested_mode.resolution.width, requested_mode.resolution.height, refresh_hz))) {
+      return false;
+    }
+    return retry_with_backoff(
+      []() { return !live_virtual_display_connector().empty(); },
+      { .max_attempts = 5,
+        .initial_delay = 300ms,
+        .max_delay = 1000ms,
+        .context = "Waiting for the virtual display output" });
   }
 
   vdd_status_t
   get_vdd_status() {
-    return {};
+    vdd_status_t status;
+    // The helper counts as "installed" while its control socket exists.
+    status.installed = ::access(k_daemon_socket, F_OK) == 0;
+    status.running = status.installed;
+    status.control_available = status.installed;
+    status.monitor_active = !live_virtual_display_connector().empty();
+    status.problem_code_valid = true;
+    status.problem_code = 0;
+    return status;
   }
 
   bool
@@ -1146,16 +1273,36 @@ namespace display_device::vdd_utils {
 
   bool
   ensure_hardware_cursor_enabled_for_capture(bool *) {
-    return false;
+    // KMS capture reads the cursor plane directly; nothing to enable.
+    return true;
   }
 
   set_vdd_result
-  set_vdd_session_mode(const parsed_config_t &, const VddSettings &) {
-    return set_vdd_result::interface_missing;
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &) {
+    if (!config.resolution || !config.refresh_rate) {
+      return set_vdd_result::invalid_config;
+    }
+
+    const auto refresh_hz = round_refresh_hz(*config.refresh_rate);
+    {
+      std::lock_guard lock { state_mutex };
+      cached_width = config.resolution->width;
+      cached_height = config.resolution->height;
+      cached_refresh_hz = refresh_hz;
+    }
+
+    // A live virtual display switches modes by re-connecting with the new
+    // payload; the daemon replaces the EDID and the compositor follows.
+    if (!send_daemon_command(connect_payload(config.resolution->width, config.resolution->height, refresh_hz))) {
+      return set_vdd_result::interface_missing;
+    }
+    return set_vdd_result::ok;
   }
 
   std::string
   generate_client_guid(const std::string &) {
+    // Per-client GUIDs are a ZakoVDD driver concept; the socket daemon hosts
+    // a single virtual display.
     return {};
   }
 
@@ -1165,27 +1312,44 @@ namespace display_device::vdd_utils {
   }
 
   bool
-  create_vdd_monitor(const std::string &, const hdr_brightness_t &, const physical_size_t &) {
-    BOOST_LOG(warning) << "vdd_utils: ZakoVDD virtual display is not available on Linux";
-    return false;
+  create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &, const physical_size_t &) {
+    unsigned int width;
+    unsigned int height;
+    unsigned int refresh_hz;
+    {
+      std::lock_guard lock { state_mutex };
+      width = cached_width;
+      height = cached_height;
+      refresh_hz = cached_refresh_hz;
+    }
+
+    BOOST_LOG(info) << "Requesting virtual display " << width << "x" << height << "@" << refresh_hz
+                    << "Hz from the virtual display helper"
+                    << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
+
+    // The generated EDID carries a fixed HDR block, so per-session brightness
+    // and physical-size tuning have no socket equivalent yet.
+    return send_daemon_command(connect_payload(width, height, refresh_hz));
   }
 
   bool
   create_vdd_monitor_noninteractive() {
-    return false;
+    return create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {});
   }
 
   bool
   destroy_vdd_monitor() {
-    return true;
+    return send_daemon_command("--disconnect");
   }
 
   void
   destroy_vdd_monitor_nolog() {
+    send_daemon_command("--disconnect");
   }
 
   void
   disable_enable_vdd() {
+    // Driver-level disable/enable has no socket equivalent.
   }
 
   bool
@@ -1195,17 +1359,18 @@ namespace display_device::vdd_utils {
 
   bool
   is_display_on() {
-    return false;
+    return !live_virtual_display_connector().empty();
   }
 
   bool
   set_hdr_state(bool) {
-    return false;
+    // The generated EDID advertises HDR statically; there is no runtime toggle.
+    return true;
   }
 
   bool
   ensure_vdd_extended_mode(const std::string &, const std::vector<std::string> &) {
-    return false;
+    return true;
   }
 
   bool
