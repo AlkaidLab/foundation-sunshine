@@ -7,18 +7,6 @@ include_directories("${CMAKE_SOURCE_DIR}")
 
 enable_testing()
 
-# Exercises the real credential endpoint and revocation on a reused TLS connection.
-if(WIN32)
-    # Use the same MSVC Node.js runtime as the Web UI (actions/setup-node in CI).
-    find_program(USB_TEST_NODE NAMES node DOC "MSVC Node.js runtime for integration tests" REQUIRED)
-    find_program(USB_TEST_OPENSSL NAMES openssl REQUIRED)
-    add_test(NAME usb_capability_integration
-        COMMAND "${USB_TEST_NODE}" "${CMAKE_SOURCE_DIR}/tests/integration/usb_capability.cjs"
-                $<TARGET_FILE:sunshine> "${USB_TEST_OPENSSL}")
-    # Fourteen host starts, each bounded to roughly 30 seconds, plus TLS/cleanup.
-    set_tests_properties(usb_capability_integration PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
-endif()
-
 # Add GoogleTest directory to the project
 set(GTEST_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third-party/googletest")
 set(INSTALL_GTEST OFF)

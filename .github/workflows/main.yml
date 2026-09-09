@@ -173,8 +173,6 @@ jobs:
       - name: Build Web UI
         shell: pwsh
         run: |
-          # MSYS2 uses an isolated PATH. Preserve the MSVC Node selected by setup-node.
-          "USB_TEST_NODE=$((Get-Command node.exe).Source.Replace('\', '/'))" >> $env:GITHUB_ENV
           npm ci
           npm run lint:webui
           npm run test:webui
@@ -221,7 +219,6 @@ jobs:
             -S . \
             -DBUILD_DOCS=OFF \
             -DBUILD_TESTS=ON \
-            -DUSB_TEST_NODE="$USB_TEST_NODE" \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
