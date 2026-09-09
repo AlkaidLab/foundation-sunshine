@@ -1127,6 +1127,7 @@ namespace display_device {
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1215,6 +1216,12 @@ namespace display_device::vdd_utils {
         write_text_file(status_path, "on");
       }
       offlined_physical_status_paths.clear();
+    }
+
+    std::string
+    connector_name_for_status(const std::string &status_path) {
+      const auto file = status_path.substr(status_path.find_last_of('/') + 1);  // card1-DP-2
+      return file.substr(file.find('-') + 1);                                   // DP-2
     }
 
     bool
@@ -1358,6 +1365,7 @@ namespace display_device::vdd_utils {
      */
     bool
     apply_edid_and_enable(const std::string &edid_path, const std::string &status_path, const std::vector<std::uint8_t> &edid) {
+      const std::string connector_name = connector_name_for_status(status_path);
       std::string current;
       {
         std::ifstream in { edid_path, std::ios::binary };
@@ -1395,7 +1403,16 @@ namespace display_device::vdd_utils {
         return false;
       }
 
-      return wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
+      if (!wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 })) {
+        return false;
+      }
+
+      // NVIDIA does not emit a hotplug for a status-forced connector, so the
+      // compositor sees the output but leaves it disabled - ask it to enable
+      // the display (KDE: kscreen-doctor; harmless no-op elsewhere).
+      const std::string enable_cmd = "kscreen-doctor output." + connector_name + ".enable";
+      std::system(enable_cmd.c_str());
+      return true;
     }
   }  // namespace
 
