@@ -436,7 +436,17 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
    排除 Windows 宿主目录等 —— GCC 16 / C++23 下 **`build/sunshine` 与 WebUI 全部构建成功**。
 4. 测试：13 个 ctest 套件 12 个直接通过；聚合套件 **0 个断言失败**，仅 Audio/MouseHID/Encoder
    三个套件因需要真实音频/输入/编码器环境在 SetUp 失败（与上游行为一致，需在图形会话内跑）。
-   剩余：第 5 步 `sudo ninja install` + setcap/udev，然后第 6 步实测串流。
+5. 打包与实测（`b385f83`/`833d523`/`2ff343f`）：本地调试包 `packaging/arch-local/`（装到
+   `/opt/sunshine`，post-install 自动 setcap + udev）；修复托盘菜单越界段错误后实测——端口
+   47984/47989/47990 监听、WebUI 200、托盘创建、**h264/hevc_nvenc 探测通过**（av1 被 Ampere
+   正确拒绝）、KMS 捕获工作。
+6. **P0 虚拟显示器第一步已落地（`1a3110a`）**：`vdd_utils` 的 Linux 后端通过 Unix socket 对接
+   已装的 sunshineVD 守护进程（connect/disconnect、按缓存会话模式重连、状态文件+/sys 判活），
+   `vdd_capability` 改为全平台统一状态映射 —— 守护进程在跑时客户端即可请求虚拟显示器。
+   已知守护进程侧局限：NVIDIA+KWin 下 disconnect 的物理屏 CRTC 恢复会失败（上游仅对 Hyprland
+   做了特殊处理），虚拟输出可能残留，重试断开或重启系统可清理。
+   待办（P0 第二步）：原生 C++ helper（EDID 生成 + sysfs/debugfs + libdrm + pidfd）替换 socket
+   传输，以支持按客户端 HDR 亮度/物理尺寸定制 EDID。
 
 **增强迁移（§十一）**：基础跑通后按 P0（虚拟显示器：先路线 A 零代码验证，再路线 B 代码级）→
 P1（远程麦克风、剪贴板主机侧）→ P2（HDR 注入验证、ABR 前台检测）→ P3 的顺序推进；
