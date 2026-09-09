@@ -578,6 +578,11 @@ namespace display_device {
 #ifdef _WIN32
     // VDD_NAME is the stable alias exposed by the Windows host configuration UI.
     explicit_vdd = explicit_vdd || intent.device_id == VDD_NAME;
+#else
+    // The fork client marks its "virtual display" option with a fixed
+    // placeholder id; treat it (and the ZakoVDD friendly name) as an
+    // explicit VDD request on Linux too.
+    explicit_vdd = explicit_vdd || intent.device_id == "23172" || intent.device_id == ZAKO_NAME;
 #endif
     if (explicit_vdd) {
       intent.target = display_intent_t::target_e::vdd;

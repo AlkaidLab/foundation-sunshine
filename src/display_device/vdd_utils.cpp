@@ -1123,8 +1123,12 @@ namespace display_device {
 
 #include "vdd_utils.h"
 
+#include <fcntl.h>
 #include <sys/capability.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -1222,6 +1226,64 @@ namespace display_device::vdd_utils {
     connector_name_for_status(const std::string &status_path) {
       const auto file = status_path.substr(status_path.find_last_of('/') + 1);  // card1-DP-2
       return file.substr(file.find('-') + 1);                                   // DP-2
+    }
+
+    /**
+     * @brief Run a command, capturing its output into the log.
+     */
+    void
+    run_logged(const std::string &cmd) {
+      std::string output;
+      if (FILE *pipe = popen((cmd + " 2>&1").c_str(), "r")) {
+        char buf[256];
+        while (fgets(buf, sizeof(buf), pipe)) {
+          output += buf;
+        }
+        const int rc = pclose(pipe);
+        BOOST_LOG(info) << "vdd: ["sv << cmd << "] exit="sv << rc << (output.empty() ? "" : " output: " + output);
+      }
+    }
+
+    std::string_view
+    kms_connector_prefix(std::uint32_t type) {
+      switch (type) {
+        case DRM_MODE_CONNECTOR_DisplayPort: return "DP"sv;
+        case DRM_MODE_CONNECTOR_HDMIA: return "HDMI-A"sv;
+        case DRM_MODE_CONNECTOR_HDMIB: return "HDMI-B"sv;
+        case DRM_MODE_CONNECTOR_eDP: return "eDP"sv;
+        case DRM_MODE_CONNECTOR_VGA: return "VGA"sv;
+        default: return "Unknown"sv;
+      }
+    }
+
+    /**
+     * @brief Whether the named connector has been given an encoder/CRTC by
+     *        the compositor. A non-master DRM open is enough to read this.
+     */
+    bool
+    connector_has_crtc(const std::string &card, const std::string &connector) {
+      const int fd = open(("/dev/dri/" + card).c_str(), O_RDWR);
+      if (fd < 0) {
+        return true;  // cannot verify - do not block the caller
+      }
+
+      bool has_crtc = false;
+      if (drmModeResPtr res = drmModeGetResources(fd)) {
+        for (int i = 0; i < res->count_connectors && !has_crtc; ++i) {
+          drmModeConnectorPtr conn = drmModeGetConnector(fd, res->connectors[i]);
+          if (!conn) {
+            continue;
+          }
+          const std::string name = std::string { kms_connector_prefix(conn->connector_type) } + "-" + std::to_string(conn->connector_type_id);
+          if (name == connector && conn->encoder_id) {
+            has_crtc = true;
+          }
+          drmModeFreeConnector(conn);
+        }
+        drmModeFreeResources(res);
+      }
+      close(fd);
+      return has_crtc;
     }
 
     bool
@@ -1403,16 +1465,7 @@ namespace display_device::vdd_utils {
         return false;
       }
 
-      if (!wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 })) {
-        return false;
-      }
-
-      // NVIDIA does not emit a hotplug for a status-forced connector, so the
-      // compositor sees the output but leaves it disabled - ask it to enable
-      // the display (KDE: kscreen-doctor; harmless no-op elsewhere).
-      const std::string enable_cmd = "kscreen-doctor output." + connector_name + ".enable";
-      std::system(enable_cmd.c_str());
-      return true;
+      return wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
     }
   }  // namespace
 
@@ -1450,6 +1503,7 @@ namespace display_device::vdd_utils {
         // Live mode switch: cycle the connector with an EDID for the new mode.
         const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, true, "Foundation VDD");
         applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
+        run_logged("kscreen-doctor output." + connector_name_for_status(active_status_path) + ".enable");
       }
     }
 
@@ -1591,6 +1645,24 @@ namespace display_device::vdd_utils {
     if (!apply_edid_and_enable(edid_path, status_path, edid)) {
       BOOST_LOG(error) << "vdd: failed to bring up "sv << card << '-' << connector;
       return false;
+    }
+
+    // NVIDIA does not emit a hotplug for a status-forced connector, so the
+    // compositor sees the output but leaves it disabled. Ask it to enable
+    // the display and wait until it hands out a CRTC - otherwise the encoder
+    // probe races the compositor and loses.
+    bool crtc_assigned = false;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+      run_logged("kscreen-doctor output." + connector + ".enable");
+      if (connector_has_crtc(card, connector)) {
+        crtc_assigned = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+    }
+
+    if (!crtc_assigned) {
+      BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
     }
 
     active = true;

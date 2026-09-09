@@ -697,7 +697,7 @@ namespace platf {
                   [&](const auto &entry) { return entry.second == target_connector; });
               };
 
-              for (int attempt = 0; attempt < 8 && !target_present(); ++attempt) {
+              for (int attempt = 0; attempt < 2 && !target_present(); ++attempt) {
                 bool still_connected = false;
                 for (auto &status_path : std::filesystem::directory_iterator { "/sys/class/drm" }) {
                   auto n = status_path.path().filename().string();
@@ -714,7 +714,7 @@ namespace platf {
                   BOOST_LOG(debug) << "Connector ["sv << target_connector << "] is gone; not waiting"sv;
                   break;
                 }
-                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/8)"sv;
+                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/2)"sv;
                 std::this_thread::sleep_for(std::chrono::milliseconds { 250 });
                 build_map();
               }
