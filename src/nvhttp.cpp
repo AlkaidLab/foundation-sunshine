@@ -1113,7 +1113,17 @@ namespace nvhttp {
         tunnel_config.verify_client_cert = [](X509 *cert) {
           return pairing::verify_client_certificate(cert, false) == nullptr;
         };
-        usb_forwarding_available = reverse_tunnel_service.start(std::move(tunnel_config));
+        // Optional USB forwarding must never claim a core TCP listener first.
+        const auto tunnel_port = tunnel_config.port;
+        const bool reserved_port = tunnel_port == port_http || tunnel_port == port_https ||
+          tunnel_port == net::map_port(confighttp::PORT_HTTPS) ||
+          tunnel_port == net::map_port(rtsp_stream::RTSP_SETUP_PORT);
+        if (!reserved_port) {
+          usb_forwarding_available = reverse_tunnel_service.start(std::move(tunnel_config));
+        }
+        else {
+          BOOST_LOG(warning) << "Remote USB forwarding port conflicts with a core TCP listener";
+        }
       }
       if (!usb_forwarding_available) {
         usb_forwarding_token.clear();
