@@ -175,28 +175,20 @@ if(NOT ${CUDA_FOUND}
 endif()
 
 # tray icon
+# The pinned third-party/tray implements Linux via Qt + libnotify
+# (src/tray_linux.cpp); link it as its tray::tray target like upstream does.
 if(${SUNSHINE_ENABLE_TRAY})
-    pkg_check_modules(APPINDICATOR ayatana-appindicator3-0.1)
-    if(APPINDICATOR_FOUND)
-        list(APPEND SUNSHINE_DEFINITIONS TRAY_AYATANA_APPINDICATOR=1)
-    else()
-        pkg_check_modules(APPINDICATOR appindicator3-0.1)
-        if(APPINDICATOR_FOUND)
-            list(APPEND SUNSHINE_DEFINITIONS TRAY_LEGACY_APPINDICATOR=1)
-        endif ()
-    endif()
     pkg_check_modules(LIBNOTIFY libnotify)
-    if(NOT APPINDICATOR_FOUND OR NOT LIBNOTIFY_FOUND)
+    if(NOT LIBNOTIFY_FOUND)
         set(SUNSHINE_TRAY 0)
-        message(WARNING "Missing appindicator or libnotify, disabling tray icon")
-        message(STATUS "APPINDICATOR_FOUND: ${APPINDICATOR_FOUND}")
+        message(WARNING "Missing libnotify, disabling tray icon")
         message(STATUS "LIBNOTIFY_FOUND: ${LIBNOTIFY_FOUND}")
     else()
-        include_directories(SYSTEM ${APPINDICATOR_INCLUDE_DIRS} ${LIBNOTIFY_INCLUDE_DIRS})
-        link_directories(${APPINDICATOR_LIBRARY_DIRS} ${LIBNOTIFY_LIBRARY_DIRS})
+        include_directories(SYSTEM ${LIBNOTIFY_INCLUDE_DIRS})
+        link_directories(${LIBNOTIFY_LIBRARY_DIRS})
 
-        list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_linux.c")
-        list(APPEND SUNSHINE_EXTERNAL_LIBRARIES ${APPINDICATOR_LIBRARIES} ${LIBNOTIFY_LIBRARIES})
+        add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/tray")
+        list(APPEND SUNSHINE_EXTERNAL_LIBRARIES tray::tray)
     endif()
 else()
     set(SUNSHINE_TRAY 0)
@@ -234,8 +226,6 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/linux/display_device.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/linux/input.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/display_device.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/gl.c"
