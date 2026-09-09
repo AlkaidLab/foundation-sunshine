@@ -40,6 +40,7 @@ optdepends=(
   'libva-mesa-driver: VAAPI encoding on AMD/Intel'
 )
 options=(!strip)
+install=sunshine-foundation.install
 
 _build_dir="$startdir/../../build"
 

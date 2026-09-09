@@ -1,0 +1,28 @@
+do_setcap() {
+  local target
+  target="$(readlink -f /opt/sunshine/bin/sunshine)"
+  setcap cap_sys_admin+p "$target"
+}
+
+do_udev_reload() {
+  udevadm control --reload-rules
+  udevadm trigger --property-match=DEVNAME=/dev/uinput
+  udevadm trigger --property-match=DEVNAME=/dev/uhid
+  modprobe uinput || true
+  modprobe uhid || true
+}
+
+post_install() {
+  do_setcap
+  do_udev_reload
+
+  echo "Foundation Sunshine installed to /opt/sunshine."
+  echo "Run directly:        /opt/sunshine/bin/sunshine"
+  echo "Or via user service: systemctl --user enable --now sunshine"
+  echo "Web UI: https://localhost:47990  (config in ~/.config/sunshine)"
+}
+
+post_upgrade() {
+  do_setcap
+  do_udev_reload
+}
