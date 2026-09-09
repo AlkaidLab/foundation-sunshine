@@ -30,16 +30,22 @@ extern bool display_cursor;
  */
 extern nvprefs::nvprefs_interface nvprefs_instance;
 
-extern const std::string VDD_NAME;
-extern const std::string ZAKO_NAME;
 extern std::string zako_device_id;
+#endif
 
 /**
- * @brief Cached result of is_running_as_system() check.
+ * @brief Friendly names of the ZakoVDD virtual display, referenced by display
+ *        session logic on every platform (on Linux the device is absent).
+ */
+extern const std::string VDD_NAME;
+extern const std::string ZAKO_NAME;
+
+/**
+ * @brief Cached result of the Windows is_running_as_system() check; always
+ *        false on other platforms.
  * @details This is set once at program startup and never changes during runtime.
  */
 extern bool is_running_as_system_user;
-#endif
 
 /**
  * @brief Handles process-wide communication.

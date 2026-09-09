@@ -98,9 +98,50 @@ namespace display_device {
   }
 
   settings_t::apply_result_t
-  settings_t::apply_config(const parsed_config_t &) {
+  settings_t::apply_config(
+    const parsed_config_t &,
+    const rtsp_stream::launch_session_t &,
+    const boost::optional<active_topology_t> &) {
     // Not implemented
     return { apply_result_t::result_e::success };
+  }
+
+  void
+  settings_t::capture_audio_sink() {
+    // Not implemented
+  }
+
+  void
+  settings_t::release_audio_sink() {
+    // Not implemented
+  }
+
+  bool
+  settings_t::has_persistent_data() const {
+    // Not implemented
+    return false;
+  }
+
+  void
+  settings_t::remove_vdd_from_initial_topology(const std::string &) {
+    // Not implemented
+  }
+
+  void
+  settings_t::replace_vdd_id(const std::string &, const std::string &) {
+    // Not implemented
+  }
+
+  std::string
+  find_one_of_the_available_devices(const std::string &) {
+    // Not implemented
+    return {};
+  }
+
+  std::string
+  find_device_by_friendlyname(const std::string &) {
+    // Not implemented
+    return {};
   }
 
   bool

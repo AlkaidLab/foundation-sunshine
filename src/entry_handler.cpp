@@ -19,7 +19,9 @@
 #include "network.h"
 #include "platform/common.h"
 #include "src/display_device/display_device.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/display_device/windows_utils.h"
+#endif
 #include "version.h"
 
 extern "C" {

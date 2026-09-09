@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,11 +9,50 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 
 #include <boost/optional.hpp>
 
 #include "parsed_config.h"
+
+#ifndef _WIN32
+namespace display_device {
+
+  // Windows-only display session helpers that platform-neutral code still
+  // references; the Linux equivalents are no-ops (no WTS session events,
+  // no RDP session detection).
+  class SessionEventListener {
+  public:
+    template<typename Fn>
+    static void
+    add_unlock_task(Fn &&) {
+    }
+
+    static void
+    init() {
+    }
+
+    static void
+    deinit() {
+    }
+
+    static void
+    clear_unlock_task() {
+    }
+  };
+
+  namespace w_utils {
+    inline bool
+    is_any_rdp_session_active() {
+      return false;
+    }
+  }  // namespace w_utils
+}  // namespace display_device
+#endif
 
 namespace display_device::vdd_utils {
 

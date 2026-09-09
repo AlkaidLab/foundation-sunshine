@@ -92,6 +92,13 @@ namespace dyn {
 namespace platf {
   using ifaddr_t = util::safe_ptr<ifaddrs, freeifaddrs>;
 
+  std::vector<std::string>
+  adapter_names() {
+    // Encoding via GPU adapter enumeration is a Windows-side concern; the
+    // Linux capture paths select devices through DRM/VAAPI instead.
+    return {};
+  }
+
   ifaddr_t
   get_ifaddrs() {
     ifaddrs *p { nullptr };

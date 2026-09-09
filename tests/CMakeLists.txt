@@ -307,6 +307,9 @@ if (WIN32)
     list(REMOVE_ITEM TEST_SOURCES
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
             ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
+else ()
+    # Windows-host test sources must not reach non-Windows builds.
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")
 endif ()
 
 set(SUNSHINE_SOURCES

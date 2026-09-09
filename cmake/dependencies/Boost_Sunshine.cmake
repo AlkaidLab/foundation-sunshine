@@ -15,6 +15,7 @@ set(BOOST_COMPONENTS
         log
         process
         program_options
+        regex
         system
         thread
 )

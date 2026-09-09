@@ -1,3 +1,4 @@
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 
 #include "vdd_utils.h"
@@ -1108,3 +1109,114 @@ namespace display_device {
     }
   }  // namespace vdd_utils
 }  // namespace display_device
+
+#else  // !_WIN32
+
+// ZakoVDD is a Windows display driver; keep the interface linkable for
+// platform-neutral callers (display session staging, Web status endpoints)
+// with no-op stubs that report the driver as absent or unreachable.
+
+#include "vdd_utils.h"
+
+#include "src/logging.h"
+
+namespace display_device::vdd_utils {
+
+  const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
+
+  bool
+  is_mode_advertised(const std::string &, const display_mode_t &) {
+    return false;
+  }
+
+  bool
+  wait_for_mode_publication(const std::string &, const display_mode_t &) {
+    return false;
+  }
+
+  vdd_status_t
+  get_vdd_status() {
+    return {};
+  }
+
+  bool
+  hardware_cursor_export_enabled(std::string value) {
+    return value == "1" || value == "true" || value == "on";
+  }
+
+  bool
+  ensure_hardware_cursor_enabled_for_capture(bool *) {
+    return false;
+  }
+
+  set_vdd_result
+  set_vdd_session_mode(const parsed_config_t &, const VddSettings &) {
+    return set_vdd_result::interface_missing;
+  }
+
+  std::string
+  generate_client_guid(const std::string &) {
+    return {};
+  }
+
+  physical_size_t
+  get_client_physical_size(const std::string &) {
+    return {};
+  }
+
+  bool
+  create_vdd_monitor(const std::string &, const hdr_brightness_t &, const physical_size_t &) {
+    BOOST_LOG(warning) << "vdd_utils: ZakoVDD virtual display is not available on Linux";
+    return false;
+  }
+
+  bool
+  create_vdd_monitor_noninteractive() {
+    return false;
+  }
+
+  bool
+  destroy_vdd_monitor() {
+    return true;
+  }
+
+  void
+  destroy_vdd_monitor_nolog() {
+  }
+
+  void
+  disable_enable_vdd() {
+  }
+
+  bool
+  toggle_display_power() {
+    return false;
+  }
+
+  bool
+  is_display_on() {
+    return false;
+  }
+
+  bool
+  set_hdr_state(bool) {
+    return false;
+  }
+
+  bool
+  ensure_vdd_extended_mode(const std::string &, const std::vector<std::string> &) {
+    return false;
+  }
+
+  bool
+  apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e, const boost::optional<device_info_map_t> &) {
+    return true;
+  }
+
+  VddSettings
+  prepare_vdd_settings(const parsed_config_t &) {
+    return {};
+  }
+
+}  // namespace display_device::vdd_utils
+#endif

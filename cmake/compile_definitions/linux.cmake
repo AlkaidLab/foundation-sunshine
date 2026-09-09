@@ -80,6 +80,16 @@ if(CUDA_FOUND)
     add_compile_definitions(SUNSHINE_BUILD_CUDA)
 endif()
 
+# NVENC SDK headers: the encoder option tables in video.cpp consume their
+# enums on every platform, though only Windows links the SDK itself. Pick the
+# newest pinned API line that is present.
+foreach(_nvenc_sdk IN ITEMS 1301 1300 1200 1100)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/${_nvenc_sdk}/include/ffnvcodec/nvEncodeAPI.h")
+        include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/${_nvenc_sdk}/include")
+        break()
+    endif()
+endforeach()
+
 # drm
 if(${SUNSHINE_ENABLE_DRM})
     find_package(LIBDRM)
