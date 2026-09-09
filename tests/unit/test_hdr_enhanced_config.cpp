@@ -176,6 +176,16 @@ TEST_F(HdrEnhancedConfigTest, MaintenanceMustBeVerifiedByTheRunningManager) {
   EXPECT_EQ(store->verify_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 409);
 }
 
+TEST_F(HdrEnhancedConfigTest, MaintenanceCompletionPreservesConfigurationErrors) {
+  std::string operation;
+  ASSERT_EQ(store->begin_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  std::ofstream(root / "hdr.json") << "{broken";
+  const auto result = store->finish_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, operation);
+  EXPECT_EQ(result.status, 500);
+  EXPECT_EQ(result.error, "hdr_config_invalid");
+  EXPECT_TRUE(store->status()["maintenance"]);
+}
+
 TEST_F(HdrEnhancedConfigTest, ReplacedFilesCannotReuseThePreMaintenanceValidation) {
   const auto selected = trusted_fixture();
   ASSERT_EQ(store->update(selected, store->query().etag).status, 200);

@@ -13,6 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 # This optional standalone build never downloads SDK files.
 Remove-Item Env:RTX_VIDEO_SDK_TOKEN -ErrorAction SilentlyContinue
+Remove-Item Env:DRIVER_DOWNLOAD_TOKEN -ErrorAction SilentlyContinue
 $sourceRoot = Split-Path -Parent $PSScriptRoot
 $outputRoot = if ([System.IO.Path]::IsPathRooted($BuildDirectory)) {
   [System.IO.Path]::GetFullPath($BuildDirectory)

@@ -456,9 +456,17 @@ namespace hdr_enhanced {
       impl_->active.store(make_immutable<settings_t>(value));
       impl_->validated.store(backend);
     }
-    catch (...) {
+    catch (const config_invalid_t &) {
+      impl_->validated.store({});
+      return { 500, "hdr_config_invalid" };
+    }
+    catch (const component_untrusted_t &) {
       impl_->validated.store({});
       return { 409, "hdr_component_untrusted" };
+    }
+    catch (...) {
+      impl_->validated.store({});
+      return { 500, "hdr_maintenance_failed" };
     }
     std::error_code error;
     fs::remove(impl_->maintenance_file, error);
