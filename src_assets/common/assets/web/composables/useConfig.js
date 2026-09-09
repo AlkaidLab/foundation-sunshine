@@ -430,7 +430,7 @@ export function useConfig() {
       platform.value = data.platform || ''
       filterTabsByPlatform(platform.value)
 
-      const { platform: _, status, version, ...configData } = data
+      const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
       config.value = configData
 
