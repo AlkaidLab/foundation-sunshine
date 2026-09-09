@@ -63,6 +63,14 @@ namespace display_device::vdd_utils {
    */
   std::string
   live_virtual_display_connector();
+
+  /**
+   * @brief Names of the physical connectors this backend powered off for an
+   *        exclusive virtual display session (they read as disconnected in
+   *        sysfs while offlined, so callers cannot discover them there).
+   */
+  std::vector<std::string>
+  offlined_physical_connectors();
 #endif
 
   using namespace std::chrono_literals;

@@ -1672,6 +1672,16 @@ namespace display_device::vdd_utils {
     return {};
   }
 
+  std::vector<std::string>
+  offlined_physical_connectors() {
+    std::lock_guard lock { state_mutex };
+    std::vector<std::string> names;
+    for (const auto &status_path : offlined_physical_status_paths) {
+      names.emplace_back(connector_name_for_status(status_path));
+    }
+    return names;
+  }
+
   const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
   bool

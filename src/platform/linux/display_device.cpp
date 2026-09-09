@@ -3,8 +3,11 @@
 #include "src/display_device/vdd_utils.h"
 #include "src/globals.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+
+#include "src/logging.h"
 
 namespace display_device {
 
@@ -32,12 +35,17 @@ namespace display_device {
       std::string status;
       std::getline(status_file, status);
 
-      // "off" is a connector WE powered down for an exclusive virtual display
-      // session. It must stay visible (as inactive) - otherwise the session
-      // teardown's headless-host guard sees only the virtual display and
-      // skips restoring the physical screen.
+      // Physical connectors powered down for an exclusive virtual display
+      // session read as plain "disconnected" in sysfs (NVIDIA does not
+      // distinguish), so the backend is consulted for them: they must stay
+      // visible (as inactive) - otherwise the session teardown's headless
+      // guard sees only the virtual display and skips restoring the screen.
       const bool connected = status == "connected";
-      const bool forced_off = status == "off";
+      bool forced_off = status == "off";
+      if (!connected && !forced_off) {
+        const auto offlined = vdd_utils::offlined_physical_connectors();
+        forced_off = std::find(offlined.begin(), offlined.end(), connector) != offlined.end();
+      }
       if (!connected && !forced_off) {
         continue;
       }
@@ -48,6 +56,17 @@ namespace display_device {
       info.device_state = connected ? device_state_e::active : device_state_e::inactive;
       info.hdr_state = hdr_state_e::unknown;
       devices.emplace(connector, std::move(info));
+    }
+
+    if (devices.empty()) {
+      BOOST_LOG(debug) << "display enumeration found no live connectors";
+    }
+    else {
+      std::string names;
+      for (const auto &[id, info] : devices) {
+        names += id + (info.device_state == device_state_e::active ? "(active) " : "(inactive) ");
+      }
+      BOOST_LOG(debug) << "display enumeration: " << names;
     }
 
     return devices;
