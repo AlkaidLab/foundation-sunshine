@@ -1227,7 +1227,9 @@ namespace display_device::vdd_utils {
 
     std::string
     connector_name_for_status(const std::string &status_path) {
-      const auto file = status_path.substr(status_path.find_last_of('/') + 1);  // card1-DP-2
+      // status_path = /sys/class/drm/card1-DP-2/status
+      const auto dir = status_path.substr(0, status_path.find_last_of('/'));    // /sys/class/drm/card1-DP-2
+      const auto file = dir.substr(dir.find_last_of('/') + 1);                  // card1-DP-2
       return file.substr(file.find('-') + 1);                                   // DP-2
     }
 
