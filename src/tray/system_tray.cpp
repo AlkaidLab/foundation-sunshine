@@ -459,6 +459,10 @@ namespace system_tray {
   #endif
   };
 
+  // Defined further down; wakes the tray event loop from the shutdown path.
+  int
+  end_tray();
+
   auto tray_quit_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Quitting from system tray"sv;
 
@@ -488,8 +492,10 @@ namespace system_tray {
       return;
     }
   #else
-    // For non-Windows platforms, just exit normally
+    // Raise the shutdown event, then wake the tray event loop parked on the
+    // main thread - otherwise the graceful shutdown path never runs.
     lifetime::exit_sunshine(0, true);
+    end_tray();
   #endif
   };
 

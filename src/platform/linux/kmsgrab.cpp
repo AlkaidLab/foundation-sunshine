@@ -674,10 +674,31 @@ namespace platf {
 
           std::map<std::uint32_t, std::string> crtc_to_connector_name;
           {
-            kms::conn_type_count_t conn_type_count;
-            for (auto &conn : card.monitors(conn_type_count)) {
-              if (conn.crtc_id) {
-                crtc_to_connector_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
+            auto build_map = [&]() {
+              crtc_to_connector_name.clear();
+              kms::conn_type_count_t conn_type_count;
+              for (auto &conn : card.monitors(conn_type_count)) {
+                if (conn.crtc_id) {
+                  crtc_to_connector_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
+                }
+              }
+            };
+
+            build_map();
+
+            // A freshly created virtual display may not have its CRTC
+            // assigned by the compositor yet; give it a moment instead of
+            // failing the whole session 200ms after the connector came up.
+            if (!target_connector.empty()) {
+              auto target_present = [&]() {
+                return std::any_of(std::begin(crtc_to_connector_name), std::end(crtc_to_connector_name),
+                  [&](const auto &entry) { return entry.second == target_connector; });
+              };
+
+              for (int attempt = 0; attempt < 10 && !target_present(); ++attempt) {
+                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/10)"sv;
+                std::this_thread::sleep_for(std::chrono::milliseconds { 300 });
+                build_map();
               }
             }
           }
