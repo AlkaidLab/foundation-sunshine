@@ -176,7 +176,7 @@ jobs:
       - name: Configure Windows
         shell: msys2 {0}
         env:
-          RTX_VIDEO_SDK_URL: ${{ steps.hdr_source.outputs.trusted == 'true' && vars.RTX_VIDEO_SDK_URL || '' }}
+          RTX_VIDEO_SDK_URL: ${{ steps.hdr_source.outputs.trusted == 'true' && secrets.RTX_VIDEO_SDK_URL || '' }}
           RTX_VIDEO_SDK_TOKEN: ${{ steps.hdr_source.outputs.trusted == 'true' && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
           RTX_VIDEO_NGX_APPLICATION_ID: ${{ steps.hdr_source.outputs.trusted == 'true' && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
           SUNSHINE_RTX_HDR: ${{ github.repository == 'AlkaidLab/foundation-sunshine' && 'ON' || 'OFF' }}
