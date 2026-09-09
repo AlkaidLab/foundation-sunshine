@@ -185,14 +185,14 @@ namespace {
     d3d.context->Unmap(staging.get(), 0);
   }
 
-  TEST(PreEncodeFilter, ExternalBackendRunsThroughRuntimeLoader) {
+  TEST(PreEncodeFilter, ExternalBackendRunsThroughAdapterLoader) {
     d3d_fixture_t d3d;
     ASSERT_TRUE(d3d.init());
     auto filter = platf::dxgi::make_pre_encode_filter(
       platf::pre_encode_filter_e::external_sdr_to_hdr,
       d3d.device.get(),
       d3d.context.get(),
-      std::filesystem::path(FAKE_TRUEHDR_RUNTIME_PATH), {}, "alkaidlab.nvidia_rtx_video");
+      std::filesystem::path(FAKE_TRUEHDR_ADAPTER_PATH), {}, "alkaidlab.nvidia_rtx_video");
     ASSERT_TRUE(filter);
     EXPECT_FALSE(filter->degraded());
     EXPECT_EQ(filter->backend_name(), "alkaidlab.nvidia_rtx_video");
@@ -221,6 +221,23 @@ namespace {
     EXPECT_FALSE(result.frame.semantic.borrowed);
   }
 
+  TEST(PreEncodeFilter, MissingNvidiaRuntimeUsesGpuFallback) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+    const auto missing_adapter = std::filesystem::temp_directory_path() /
+                                 "sunshine-missing-rtx-runtime" /
+                                 "foundation_rtx_video_adapter.dll";
+    auto filter = platf::dxgi::make_pre_encode_filter(
+      platf::pre_encode_filter_e::external_sdr_to_hdr,
+      d3d.device.get(),
+      d3d.context.get(),
+      missing_adapter, {}, "alkaidlab.nvidia_rtx_video");
+    ASSERT_TRUE(filter);
+    EXPECT_TRUE(filter->degraded());
+    EXPECT_EQ(filter->backend_name(), "gpu_sdr_in_hdr_fallback");
+    EXPECT_EQ(filter->failure_reason(), "runtime_open_failed");
+  }
+
   TEST(PreEncodeFilter, ExternalBackendFailureDegradesToGpuFallback) {
     d3d_fixture_t d3d;
     ASSERT_TRUE(d3d.init());
@@ -228,7 +245,7 @@ namespace {
       platf::pre_encode_filter_e::external_sdr_to_hdr,
       d3d.device.get(),
       d3d.context.get(),
-      std::filesystem::path(FAKE_TRUEHDR_FAILING_RUNTIME_PATH), {}, "alkaidlab.nvidia_rtx_video");
+      std::filesystem::path(FAKE_TRUEHDR_FAILING_ADAPTER_PATH), {}, "alkaidlab.nvidia_rtx_video");
     ASSERT_TRUE(filter);
 
     auto input = make_white_input(d3d.device.get(), 4, 4);

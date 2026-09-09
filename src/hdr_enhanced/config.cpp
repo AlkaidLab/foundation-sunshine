@@ -25,8 +25,8 @@
 
 #include "src/config.h"
 #include "src/file_handler.h"
-#ifdef SUNSHINE_RTX_VIDEO_STATIC
-  #include "rtx_video_runtime.h"
+#ifdef SUNSHINE_RTX_VIDEO_ADAPTER
+  #include "rtx_video_trust.h"
 #endif
 
 #ifdef _WIN32
@@ -237,16 +237,19 @@ namespace hdr_enhanced {
         const auto &catalog = trust;
         if (!catalog.is_object() || catalog.value("schema_version", 0) != 1) throw component_untrusted_t {};
         const auto &trusted = catalog.at("components").at(value.selected_backend).at(version);
+        const auto &trusted_adapter = catalog.at("adapters").at(value.selected_backend);
         const auto canonical_directory = fs::canonical(directory);
         if (canonical_directory != fs::canonical(root) / "hdr_enhanced" / "nvidia_rtx_video") throw component_untrusted_t {};
-        for (const auto name : { "nvngx_truehdr.dll" }) {
+        const auto validate_file = [&](const char *name, const std::string &expected) {
           const auto path = fs::canonical(directory / name);
           if (path.parent_path() != canonical_directory || !fs::is_regular_file(path)) throw component_untrusted_t {};
           std::ifstream stream(path, std::ios::binary);
           constexpr auto maximum = 512ULL * 1024 * 1024;
-          if (!stream || digest(stream, maximum) != trusted.at(name).get<std::string>()) throw component_untrusted_t {};
-        }
-        return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / "nvngx_truehdr.dll" });
+          if (!stream || digest(stream, maximum) != expected) throw component_untrusted_t {};
+        };
+        validate_file(NVIDIA_RTX_VIDEO_ADAPTER, trusted_adapter.at(NVIDIA_RTX_VIDEO_ADAPTER).get<std::string>());
+        validate_file(NVIDIA_RTX_VIDEO_RUNTIME, trusted.at(NVIDIA_RTX_VIDEO_RUNTIME).get<std::string>());
+        return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / NVIDIA_RTX_VIDEO_ADAPTER });
       }
       catch (const std::bad_alloc &) {
         throw;
@@ -386,9 +389,14 @@ namespace hdr_enhanced {
 
   nlohmann::json
   manager_t::status() {
+    std::error_code adapter_error;
+    const bool adapter_present = fs::is_regular_file(
+      impl_->root / "hdr_enhanced" / "nvidia_rtx_video" / NVIDIA_RTX_VIDEO_ADAPTER,
+      adapter_error);
     boost::lock_guard gate(impl_->ownership);
     const auto settings = impl_->active.load();
     return { { "in_use", impl_->used_locked() }, { "maintenance", !impl_->maintenance.empty() || impl_->maintenance_unknown },
+      { "adapter_present", adapter_present && !adapter_error },
       { "selected_backend", settings ? settings->selected_backend : std::string {} },
       { "selection_verified", static_cast<bool>(impl_->validated.load()) },
       { "trusted_components", impl_->trust } };
@@ -508,10 +516,11 @@ namespace hdr_enhanced {
       file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR).parent_path() / "tools",
       [] {
         json catalog { { "schema_version", 1 }, { "components", json::object() } };
-#ifdef SUNSHINE_RTX_VIDEO_STATIC
+#ifdef SUNSHINE_RTX_VIDEO_ADAPTER
+        catalog["adapters"][NVIDIA_RTX_VIDEO_BACKEND][NVIDIA_RTX_VIDEO_ADAPTER] = SUNSHINE_RTX_VIDEO_ADAPTER_SHA256;
         // 运行库版本仅由其完整摘要决定，不与适配器重编译时间绑定。
         catalog["components"][NVIDIA_RTX_VIDEO_BACKEND][SUNSHINE_RTX_VIDEO_RUNTIME_SHA256] = {
-          { "nvngx_truehdr.dll", SUNSHINE_RTX_VIDEO_RUNTIME_SHA256 }
+          { NVIDIA_RTX_VIDEO_RUNTIME, SUNSHINE_RTX_VIDEO_RUNTIME_SHA256 }
         };
 #endif
         return catalog;

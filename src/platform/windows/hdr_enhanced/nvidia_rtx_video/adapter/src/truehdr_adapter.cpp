@@ -9,8 +9,8 @@
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
-#include <mutex>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
 #include <vector>
@@ -340,7 +340,7 @@ namespace {
   }
 }  // namespace
 
-extern "C" const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
+extern "C" FOUNDATION_RTX_VIDEO_EXPORT const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
 foundation_truehdr_adapter_get_api(std::uint32_t requested_abi_version) {
   static const foundation_truehdr_adapter_api_t api {
     FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION,

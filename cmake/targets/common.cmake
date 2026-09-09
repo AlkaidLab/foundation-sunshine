@@ -28,10 +28,9 @@ endif()
 
 target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 if (TARGET sunshine_rtx_video_adapter)
-    target_link_libraries(sunshine sunshine_rtx_video_adapter)
-    add_custom_command(TARGET sunshine POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${RTX_VIDEO_REDIST_FILES} "$<TARGET_FILE_DIR:sunshine>"
-        COMMAND_EXPAND_LISTS VERBATIM)
+    add_dependencies(sunshine sunshine_rtx_video_adapter)
+    target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
+    target_compile_definitions(sunshine PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
 endif ()
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
@@ -88,9 +87,6 @@ endif()
 if(BUILD_TESTS OR BUILD_TRAY_TESTS)
     enable_testing()
     add_subdirectory(tests)
-    if (TARGET sunshine_rtx_video_adapter AND TARGET test_sunshine)
-        target_link_libraries(test_sunshine sunshine_rtx_video_adapter)
-    endif ()
 endif()
 
 # custom compile flags, must be after adding tests

@@ -43,11 +43,10 @@ if ($LASTEXITCODE -ne 0) { throw "RTX Video adapter configure failed." }
 cmake --build $buildRoot --config $Configuration --parallel
 if ($LASTEXITCODE -ne 0) { throw "RTX Video adapter build failed." }
 
-# 适配器静态归入 sunshine.exe；NVIDIA 运行库只供本地测试，不进入安装包。
-$output = Join-Path $buildRoot "$Configuration\foundation_rtx_video_adapter.lib"
-$description = Join-Path $buildRoot "$Configuration\static-adapter.cmake"
-if (!(Test-Path -LiteralPath $output -PathType Leaf) -or !(Test-Path -LiteralPath $description -PathType Leaf)) {
-  throw "Static RTX Video adapter output was not produced."
+# 适配器由 Sunshine 受限加载；NVIDIA 运行库只供本地测试，不进入安装包。
+$output = Join-Path $buildRoot "$Configuration\foundation_rtx_video_adapter.dll"
+if (!(Test-Path -LiteralPath $output -PathType Leaf)) {
+  throw "RTX Video adapter DLL was not produced."
 }
-Write-Output "Static adapter: $output"
+Write-Output "Adapter DLL: $output"
 Write-Output "Standalone adapter build complete. Normal Sunshine builds prepare the SDK through CMake automatically."

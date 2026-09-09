@@ -300,7 +300,7 @@ jobs:
           cd build
 
           if [[ "$RTX_VIDEO_ADAPTER_REQUIRED" == "true" && "$RTX_VIDEO_ADAPTER_BUILT" != "true" ]]; then
-            echo "Protected master build did not produce the required NVIDIA RTX Video static adapter"
+            echo "Protected master build did not produce the required NVIDIA RTX Video adapter"
             exit 1
           fi
 
@@ -310,8 +310,9 @@ jobs:
           test -f ./inno_staging/tools/ds5-sidecar-package.json
           test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
-            test -f ./inno_staging/msvcp140.dll
-            test -f ./inno_staging/vcruntime140.dll
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll
+            test ! -e ./inno_staging/msvcp140.dll
+            test ! -e ./inno_staging/vcruntime140.dll
           fi
           test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll
           test ! -e ./inno_staging/assets/hdr-components.json
@@ -320,14 +321,16 @@ jobs:
           # lightweight package manifest, not the self-contained runtime.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
           grep -F "ds5-sidecar-package.json" inno-build.log
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "foundation_rtx_video_adapter.dll" inno-build.log
+          fi
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
-            grep -F "Sunshine/msvcp140.dll" portable-files.txt
-            grep -F "Sunshine/vcruntime140.dll" portable-files.txt
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
           fi
           if grep -E 'nvngx_truehdr\.dll|hdr-components\.json' portable-files.txt; then
             echo "Side-loaded HDR files and mutable trust metadata must not be included in the main portable package"

@@ -3,7 +3,7 @@
  * Copyright (c) 2026 Foundation Sunshine contributors
  *
  * @file src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h
- * @brief C ABI between the MinGW host and its statically linked MSVC NGX adapter.
+ * @brief C ABI between the MinGW host and the optional MSVC NGX adapter DLL.
  */
 #pragma once
 
@@ -12,8 +12,14 @@
 
 #if defined(_WIN32)
   #define FOUNDATION_RTX_VIDEO_CALL __cdecl
+  #if defined(FOUNDATION_RTX_VIDEO_ADAPTER_EXPORTS)
+    #define FOUNDATION_RTX_VIDEO_EXPORT __declspec(dllexport)
+  #else
+    #define FOUNDATION_RTX_VIDEO_EXPORT
+  #endif
 #else
   #define FOUNDATION_RTX_VIDEO_CALL
+  #define FOUNDATION_RTX_VIDEO_EXPORT
 #endif
 
 #define FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION 1u
@@ -66,7 +72,7 @@ typedef struct foundation_truehdr_adapter_api_t {
 typedef const foundation_truehdr_adapter_api_t *(FOUNDATION_RTX_VIDEO_CALL *foundation_truehdr_adapter_get_api_fn)(
   uint32_t requested_abi_version);
 
-const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
+FOUNDATION_RTX_VIDEO_EXPORT const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
 foundation_truehdr_adapter_get_api(uint32_t requested_abi_version);
 
 #ifdef __cplusplus

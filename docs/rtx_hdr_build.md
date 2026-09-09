@@ -1,7 +1,7 @@
 # RTX HDR build configuration
 
-Sunshine uses CMake to locate or acquire the NVIDIA RTX Video SDK and configure the MSVC static adapter.
-Ninja builds the adapter and links it into Sunshine. Running a separate PowerShell command is not required,
+Sunshine uses CMake to locate or acquire the NVIDIA RTX Video SDK and configure the optional MSVC adapter DLL.
+Ninja builds and fingerprints the adapter before compiling Sunshine. Running a separate PowerShell command is not required,
 including for a new build directory.
 
 ## Build modes
@@ -12,9 +12,9 @@ including for a new build directory.
 | `SUNSHINE_RTX_HDR=ON` | Require the SDK and adapter. Configuration or build failures stop the build. |
 | `SUNSHINE_RTX_HDR=OFF` | Do not locate, download, configure or build the adapter. |
 
-An enabled adapter does not make the NVIDIA runtime a startup dependency. The installed Sunshine can run
-without `nvngx_truehdr.dll`; HDR enhancement loads the supported runtime only when that feature is used.
-The NVIDIA runtime is not added to the Sunshine installation package by this build option.
+The adapter and NVIDIA runtime are not Sunshine startup dependencies. Missing files, an incompatible ABI,
+or a missing Microsoft Visual C++ runtime disable RTX HDR without preventing Sunshine from starting.
+The first-party adapter DLL is added to the Sunshine package; the NVIDIA runtime and Microsoft runtime are not.
 
 ## SDK inputs
 
@@ -41,9 +41,8 @@ configure command rather than permanently exporting it into every build process.
 ## Toolchain
 
 The host remains MinGW UCRT64. The adapter requires Visual Studio 2022 C++ Build Tools and a Windows SDK.
-Install `mingw-w64-ucrt-x86_64-lld` in UCRT64 for linking. `RTX_VIDEO_NGX_APPLICATION_ID` selects the NGX
-application ID; the default is the existing development ID 0. MSVC redistributable runtime files are included
-with the host when this capability is built.
+`RTX_VIDEO_NGX_APPLICATION_ID` selects the NGX application ID; the default is the existing development ID 0.
+The adapter uses the Microsoft Visual C++ 2015-2022 Redistributable (x64) installed on the host system.
 
 Example:
 

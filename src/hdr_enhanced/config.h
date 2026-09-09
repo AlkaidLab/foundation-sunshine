@@ -16,6 +16,8 @@
 
 namespace hdr_enhanced {
   inline constexpr std::string_view NVIDIA_RTX_VIDEO_BACKEND = "alkaidlab.nvidia_rtx_video";
+  inline constexpr char NVIDIA_RTX_VIDEO_ADAPTER[] = "foundation_rtx_video_adapter.dll";
+  inline constexpr char NVIDIA_RTX_VIDEO_RUNTIME[] = "nvngx_truehdr.dll";
 
   struct settings_t {
     std::string selected_backend;

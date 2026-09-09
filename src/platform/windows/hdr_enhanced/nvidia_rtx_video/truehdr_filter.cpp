@@ -7,7 +7,7 @@
  */
 #include "truehdr_filter.h"
 #include "../../pre_encode_filter_helpers.h"
-#include "runtime_loader.h"
+#include "adapter_loader.h"
 
 #include <utility>
 
@@ -44,7 +44,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
       external_sdr_to_hdr_filter_t(
         ID3D11Device *device,
         ID3D11DeviceContext *device_context,
-        runtime_loader_t loader,
+        adapter_loader_t loader,
         pre_encode_filter_config_t config):
           device_ { device },
           device_context_ { device_context },
@@ -176,7 +176,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
 
       ID3D11Device *device_;
       ID3D11DeviceContext *device_context_;
-      runtime_loader_t loader_;
+      adapter_loader_t loader_;
       pre_encode_filter_config_t config_;
       void *instance_ = nullptr;
       std::string_view initialization_failure_ { "backend_initialization_failed" };
@@ -191,8 +191,10 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
   make_filter(ID3D11Device *device, ID3D11DeviceContext *context,
     const std::filesystem::path &path, const pre_encode_filter_config_t &config,
     std::string &error) {
-    runtime_loader_t loader;
-    if (!loader.load(path)) {
+    adapter_loader_t loader;
+    const auto adapter_path = path;
+    const auto runtime_path = path.parent_path() / RUNTIME_FILENAME;
+    if (!loader.load(adapter_path, runtime_path)) {
       error = loader.error();
       return {};
     }

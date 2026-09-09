@@ -14,9 +14,9 @@ unless the exact SDK version's distribution, attribution, end-user terms, and
 notification requirements have been reviewed and satisfied alongside
 Foundation Sunshine's GPL-3.0 obligations.
 
-The internal C ABI is a compiler interoperability mechanism. Static linkage does not
-by itself establish license compatibility or permission to redistribute NVIDIA
-materials.
+The DLL boundary and internal C ABI are compiler-interoperability mechanisms.
+They do not by themselves establish license compatibility or permission to
+redistribute NVIDIA materials.
 
 References:
 

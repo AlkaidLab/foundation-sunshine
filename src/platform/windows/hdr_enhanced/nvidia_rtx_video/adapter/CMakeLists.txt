@@ -40,9 +40,10 @@ if (NOT EXISTS "${RTX_VIDEO_SDK_TRUEHDR_DLL}")
   message(FATAL_ERROR "RTX Video SDK TrueHDR runtime not found: ${RTX_VIDEO_SDK_TRUEHDR_DLL}")
 endif ()
 
-add_library(foundation_rtx_video_adapter STATIC src/truehdr_adapter.cpp)
+add_library(foundation_rtx_video_adapter SHARED src/truehdr_adapter.cpp)
 target_compile_features(foundation_rtx_video_adapter PRIVATE cxx_std_20)
 target_compile_definitions(foundation_rtx_video_adapter PRIVATE
+  FOUNDATION_RTX_VIDEO_ADAPTER_EXPORTS
   FOUNDATION_NGX_APPLICATION_ID=${RTX_VIDEO_NGX_APPLICATION_ID}ULL
   FOUNDATION_RTX_VIDEO_BUILD_UNIX_SECONDS=${RTX_VIDEO_ADAPTER_BUILD_UNIX_SECONDS}LL
   WIN32_LEAN_AND_MEAN
@@ -64,9 +65,6 @@ set_target_properties(foundation_rtx_video_adapter PROPERTIES
 
 add_custom_command(TARGET foundation_rtx_video_adapter POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-    "${RTX_VIDEO_SDK_TRUEHDR_DLL}"
-    "$<TARGET_FILE_DIR:foundation_rtx_video_adapter>/nvngx_truehdr.dll"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
     "${CMAKE_CURRENT_LIST_DIR}/THIRD_PARTY_NOTICES.md"
     "$<TARGET_FILE_DIR:foundation_rtx_video_adapter>/THIRD_PARTY_NOTICES.md"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -81,38 +79,7 @@ target_compile_definitions(foundation_rtx_video_adapter_smoke PRIVATE
 target_compile_options(foundation_rtx_video_adapter_smoke PRIVATE /W4 /WX /permissive- /EHsc /utf-8)
 target_include_directories(foundation_rtx_video_adapter_smoke PRIVATE
   "${SUNSHINE_SOURCE_DIR}")
-target_link_libraries(foundation_rtx_video_adapter_smoke PRIVATE foundation_rtx_video_adapter d3d11 dxgi)
+target_link_libraries(foundation_rtx_video_adapter_smoke PRIVATE d3d11 dxgi)
 set_property(TARGET foundation_rtx_video_adapter_smoke PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 add_dependencies(foundation_rtx_video_adapter_smoke foundation_rtx_video_adapter)
-
-# 为 MinGW 主程序输出构建期链接信息，不向安装目录输出可修改的信任清单。
-file(SHA256 "${RTX_VIDEO_SDK_TRUEHDR_DLL}" RTX_VIDEO_RUNTIME_SHA256)
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rtx_video_runtime.h"
-  "#pragma once\n#define SUNSHINE_RTX_VIDEO_RUNTIME_SHA256 \"${RTX_VIDEO_RUNTIME_SHA256}\"\n")
-get_filename_component(_vc_root "${CMAKE_CXX_COMPILER}/../../../.." ABSOLUTE)
-set(_vc_lib "${_vc_root}/lib/x64")
-get_filename_component(_kits_root "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE)
-set(_ucrt_lib "${_kits_root}/Lib/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/ucrt/x64/ucrt.lib")
-set(_link_support "${CMAKE_CURRENT_BINARY_DIR}/link-support")
-file(MAKE_DIRECTORY "${_link_support}")
-foreach(_lib msvcprt OLDNAMES legacy_stdio_wide_specifiers msvcrt vcruntime legacy_stdio_definitions)
-  if (NOT EXISTS "${_vc_lib}/${_lib}.lib")
-    message(FATAL_ERROR "MSVC runtime link library not found: ${_lib}")
-  endif ()
-  configure_file("${_vc_lib}/${_lib}.lib" "${_link_support}/lib${_lib}.a" COPYONLY)
-endforeach ()
-configure_file("${_ucrt_lib}" "${_link_support}/libucrt.a" COPYONLY)
-configure_file("${RTX_VIDEO_SDK_IMPORT_LIBRARY}" "${_link_support}/libngx_client.a" COPYONLY)
-set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
-include(InstallRequiredSystemLibraries)
-if (NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-  message(FATAL_ERROR "MSVC redistributable runtime files were not found")
-endif ()
-file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/static-adapter.cmake" CONTENT
-"set(RTX_VIDEO_STATIC_LIBRARY [==[$<TARGET_FILE:foundation_rtx_video_adapter>]==])
-set(RTX_VIDEO_ADAPTER_BUILD_DIR [==[${CMAKE_CURRENT_BINARY_DIR}]==])
-set(RTX_VIDEO_LINK_SUPPORT [==[${_link_support}]==])
-set(RTX_VIDEO_GENERATED_INCLUDE [==[${CMAKE_CURRENT_BINARY_DIR}]==])
-set(RTX_VIDEO_REDIST_FILES [==[${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}]==])
-")

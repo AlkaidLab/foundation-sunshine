@@ -11,9 +11,6 @@
 #include <windows.h>
 
 #include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h"
-#ifdef SUNSHINE_RTX_VIDEO_STATIC
-  #include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/runtime_loader.h"
-#endif
 
 namespace {
   template <class T>
@@ -62,6 +59,13 @@ namespace {
     release(dxgi_device);
     return result;
   }
+
+  struct module_guard_t {
+    HMODULE value = nullptr;
+    ~module_guard_t() {
+      if (value) FreeLibrary(value);
+    }
+  };
 }  // namespace
 
 int
@@ -70,14 +74,19 @@ wmain(int argc, wchar_t **argv) {
   if (!std::filesystem::is_regular_file(runtime_directory / L"nvngx_truehdr.dll")) {
     return fail("NVIDIA runtime is missing from the selected directory");
   }
-#ifdef SUNSHINE_RTX_VIDEO_STATIC
-  platf::dxgi::hdr_enhanced::nvidia_rtx_video::runtime_loader_t loader;
-  if (!loader.load(runtime_directory / L"nvngx_truehdr.dll")) return fail(loader.error());
-  const auto *api = loader.api();
-#else
-  const auto *api = foundation_truehdr_adapter_get_api(FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION);
-#endif
-  if (!api) return fail("static adapter ABI negotiation failed");
+  const auto adapter_path = executable_directory() / L"foundation_rtx_video_adapter.dll";
+  module_guard_t module {
+    LoadLibraryExW(adapter_path.c_str(), nullptr,
+      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)
+  };
+  if (!module.value) {
+    return fail("adapter DLL could not be loaded (Win32 error " + std::to_string(GetLastError()) + ")");
+  }
+  const auto get_api = reinterpret_cast<foundation_truehdr_adapter_get_api_fn>(
+    GetProcAddress(module.value, FOUNDATION_TRUEHDR_ADAPTER_GET_API_EXPORT));
+  if (!get_api) return fail("adapter API export is missing");
+  const auto *api = get_api(FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION);
+  if (!api) return fail("adapter ABI negotiation failed");
 
   ID3D11Device *device = nullptr;
   ID3D11DeviceContext *context = nullptr;

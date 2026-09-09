@@ -5,9 +5,13 @@ include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 
-# The adapter is linked into Sunshine. Only its MSVC runtime dependencies are installed.
+# The first-party adapter is optional at process startup. Its MSVC runtime is
+# deliberately not bundled; the Control Panel reports when the system runtime
+# must be installed by the user.
 if (TARGET sunshine_rtx_video_adapter)
-  install(FILES ${RTX_VIDEO_REDIST_FILES} DESTINATION "." COMPONENT application)
+  install(FILES "${RTX_VIDEO_ADAPTER_DLL}"
+          DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+          COMPONENT application)
 endif ()
 install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter/THIRD_PARTY_NOTICES.md"
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"

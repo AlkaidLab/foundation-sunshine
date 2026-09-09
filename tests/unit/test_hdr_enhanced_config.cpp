@@ -37,7 +37,11 @@ namespace {
 
     nlohmann::json
     catalog() {
-      return { { "schema_version", 1 }, { "components", {
+      return { { "schema_version", 1 }, { "adapters", {
+        { "alkaidlab.nvidia_rtx_video", {
+          { "foundation_rtx_video_adapter.dll", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        } }
+      } }, { "components", {
         { "alkaidlab.nvidia_rtx_video", { { "fixture", {
           { "nvngx_truehdr.dll", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
         } } } }
@@ -48,6 +52,7 @@ namespace {
     trusted_fixture() {
       const auto directory = root / "tools" / "hdr_enhanced" / "nvidia_rtx_video";
       std::filesystem::create_directories(directory);
+      std::ofstream(directory / "foundation_rtx_video_adapter.dll") << "abc";
       std::ofstream(directory / "nvngx_truehdr.dll") << "abc";
       return { "alkaidlab.nvidia_rtx_video", { { "alkaidlab.nvidia_rtx_video", "fixture" } } };
     }
@@ -65,13 +70,13 @@ TEST_F(HdrEnhancedConfigTest, MissingDefaultDoesNotCreateAFileOrLoadAComponent) 
   EXPECT_FALSE(std::filesystem::exists(root / "hdr.json"));
 }
 
-TEST_F(HdrEnhancedConfigTest, RuntimeDoesNotRequireAnExternalAdapterOrTrustFile) {
+TEST_F(HdrEnhancedConfigTest, RuntimeUsesThePackagedAdapterAndEmbeddedTrustCatalog) {
   const auto settings = trusted_fixture();
   std::ofstream(root / "trusted.json") << "{forged catalog";
   ASSERT_EQ(store->update(settings, store->query().etag).status, 200);
   auto use = store->acquire_selected();
   ASSERT_TRUE(use);
-  EXPECT_EQ(use->path.filename(), "nvngx_truehdr.dll");
+  EXPECT_EQ(use->path.filename(), "foundation_rtx_video_adapter.dll");
   EXPECT_EQ(store->status()["trusted_components"], catalog());
 }
 

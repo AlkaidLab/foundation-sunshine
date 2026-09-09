@@ -246,6 +246,10 @@ jobs:
             echo "Extracting: $PORTABLE"
             mkdir -p unsigned-files
             7z x "$PORTABLE" -o"unsigned-files" -y -aoa
+            ADAPTER="unsigned-files/Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll"
+            test -f "$ADAPTER"
+            mkdir -p hash-bound-files
+            mv "$ADAPTER" hash-bound-files/foundation_rtx_video_adapter.dll
             mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging
             cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging/
             echo "Extracted files for signing:"
@@ -296,6 +300,16 @@ jobs:
             }
           }
           Write-Host "`n✓ All signatures are VALID!" -ForegroundColor Green
+
+      # The adapter's raw SHA-256 is compiled into Sunshine. Keep that exact
+      # build artifact instead of changing it after the trust header is made.
+      - name: Restore hash-bound RTX adapter
+        shell: pwsh
+        run: |
+          $destination = 'signed-files/Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll'
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+          Copy-Item -LiteralPath 'hash-bound-files/foundation_rtx_video_adapter.dll' `
+            -Destination $destination -Force
 
       - name: Package signed DualSense component
         shell: pwsh
@@ -371,6 +385,8 @@ jobs:
           cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
           cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"
           cp -fv "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" "$STAGING_DIR/assets/gui/alkaidlab-plugin-stylus.dll"
+          cp -fv "$SIGNED_SRC/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" \
+            "$STAGING_DIR/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll"
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
@@ -378,6 +394,7 @@ jobs:
           test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
           grep -F "ds5-sidecar-package.json" build/inno-signed-build.log
+          grep -F "foundation_rtx_video_adapter.dll" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
