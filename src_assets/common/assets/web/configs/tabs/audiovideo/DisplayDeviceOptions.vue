@@ -6,6 +6,7 @@ import Checkbox from '../../../components/Checkbox.vue'
 import DisplayModeRemapping from './DisplayModeRemapping.vue'
 import DisplayPreparationPicker from './DisplayPreparationPicker.vue'
 import DisplayRuleRadioGroup from './DisplayRuleRadioGroup.vue'
+import { getTrueHdrSetupHint } from '../../../utils/trueHdrSetupHint'
 
 const props = defineProps({
   platform: String,
@@ -102,6 +103,13 @@ const hdrRuntimeConversionLabel = computed(() => {
   if (path === 'compute_shader_direct') return 'D3D11 Compute · Direct'
   if (path === 'compute_shader_scratch') return 'D3D11 Compute · Copy'
   return 'D3D11 Pixel Shader'
+})
+
+// Actionable guidance when the TrueHDR backend is missing or failed to load.
+// Technical strings stay in English on purpose: they reference file names and
+// build commands verbatim, matching the rest of this diagnostics panel.
+const truehdrSetupHint = computed(() => {
+  return getTrueHdrSetupHint(activeHdrPipeline.value)
 })
 
 async function handleVisibilityChange() {
@@ -297,6 +305,11 @@ onUnmounted(() => {
 
                 <div v-if="hdrRuntimeConversionLabel" class="form-text mt-2">
                   {{ $t('config.capture_compute_shader') }}: {{ hdrRuntimeConversionLabel }}
+                </div>
+
+                <div v-if="truehdrSetupHint" class="form-text mt-2 text-warning">
+                  <i class="fas fa-triangle-exclamation me-1" aria-hidden="true"></i>
+                  {{ truehdrSetupHint }}
                 </div>
               </div>
             </div>
