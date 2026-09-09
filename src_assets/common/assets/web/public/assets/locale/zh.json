@@ -198,6 +198,10 @@
     "working_dir_desc": "传递给进程的工作目录。某些应用使用工作目录搜索配置文件。未设置时默认使用命令的父目录。"
   },
   "config": {
+    "usb_forwarding_enabled": "USB 设备转发（实验性）",
+    "usb_forwarding_description": "允许已配对客户端转发其明确选择的 USB 设备。需要 Windows USB/IP 驱动。保存并重启 Sunshine 后，客户端自动获取连接凭据。请勿对不可信客户端启用。",
+    "usb_forwarding_port": "USB 转发 TCP 端口",
+    "usb_forwarding_port_hint": "0：自动（主端口 +7，通常为 47996）。填写 1024–65535 可覆盖；客户端从主机获取实际端口。",
     "adapter_name": "适配器名称",
     "adapter_name_desc_linux_1": "手动指定用于捕获的 GPU。",
     "adapter_name_desc_linux_2": "找到所有能够使用 VAAPI 的设备",

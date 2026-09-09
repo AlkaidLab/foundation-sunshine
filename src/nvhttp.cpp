@@ -1071,7 +1071,7 @@ namespace nvhttp {
     bool host_audio {};
 
     auto bind_address = net::get_bind_address(address_family);
-    auto is_file_mapping_client_paired = [](std::string_view client_uuid) {
+    auto is_client_paired = [](std::string_view client_uuid) {
       if (client_uuid.empty()) {
         return false;
       }
@@ -1092,41 +1092,45 @@ namespace nvhttp {
     file_mapping_config.certificate_file = config::nvhttp.cert;
     file_mapping_config.private_key_file = config::nvhttp.pkey;
     file_mapping_config.mappings_json = config::nvhttp.file_mappings;
-    file_mapping_config.authorize_client = is_file_mapping_client_paired;
+    file_mapping_config.authorize_client = is_client_paired;
     file_mapping_service.start(std::move(file_mapping_config));
 
-    /* Reverse USB/IP tunnel (docs/remote-usb-reverse-tunnel.md in moonlight-qt).
-     * Transition contract until RTSP negotiates the USB stream: the client
-     * presents SUNSHINE_USB_TUNNEL_TOKEN as the shared session token and
-     * connects to SUNSHINE_USB_TUNNEL_PORT. */
+    // USB forwarding requires explicit host opt-in. Credentials are generated
+    // per service lifetime and delivered only over the paired HTTPS connection.
     remote_usb::reverse_tunnel_service reverse_tunnel_service;
-    {
-      remote_usb::reverse_tunnel_config reverse_tunnel_config;
-      bool valid_usb_port = true;
-      reverse_tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
-      if (const char *port_env = std::getenv("SUNSHINE_USB_TUNNEL_PORT")) {
-        unsigned int port = 0;
-        const std::string_view port_text(port_env);
-        const auto [end, error] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
-        valid_usb_port = error == std::errc {} && end == port_text.data() + port_text.size() &&
-                         port > 0 && port <= std::numeric_limits<std::uint16_t>::max();
-        if (valid_usb_port) {
-          reverse_tunnel_config.port = static_cast<std::uint16_t>(port);
-        } else {
-          BOOST_LOG(warning) << "Remote USB tunnel disabled: invalid port configuration";
-        }
-      }
-      if (const char *token_env = std::getenv("SUNSHINE_USB_TUNNEL_TOKEN")) {
-        reverse_tunnel_config.session_token = token_env;
-      }
-      reverse_tunnel_config.certificate_file = config::nvhttp.cert;
-      reverse_tunnel_config.private_key_file = config::nvhttp.pkey;
-      reverse_tunnel_config.verify_client_cert =
-        [](X509 *cert) {
+    std::string usb_forwarding_token;
+    bool usb_forwarding_available = false;
+    if (config::nvhttp.usb_forwarding_enabled) {
+      std::array<unsigned char, 32> token_bytes {};
+      if (RAND_bytes(token_bytes.data(), static_cast<int>(token_bytes.size())) == 1) {
+        usb_forwarding_token = util::hex_vec(token_bytes);
+        remote_usb::reverse_tunnel_config tunnel_config;
+        tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
+        // Resolve after the main port has been parsed. Its validated range
+        // reserves +21 for RTSP, so +7 cannot overflow a uint16_t.
+        tunnel_config.port = config::nvhttp.usb_forwarding_port != 0
+          ? config::nvhttp.usb_forwarding_port : net::map_port(7);
+        tunnel_config.session_token = usb_forwarding_token;
+        tunnel_config.certificate_file = config::nvhttp.cert;
+        tunnel_config.private_key_file = config::nvhttp.pkey;
+        tunnel_config.verify_client_cert = [](X509 *cert) {
           return pairing::verify_client_certificate(cert, false) == nullptr;
         };
-      if (!valid_usb_port || !reverse_tunnel_service.start(reverse_tunnel_config)) {
-        BOOST_LOG(info) << "Remote USB tunnel is not active";
+        // Optional USB forwarding must never claim a core TCP listener first.
+        const auto tunnel_port = tunnel_config.port;
+        const bool reserved_port = tunnel_port == port_http || tunnel_port == port_https ||
+          tunnel_port == net::map_port(confighttp::PORT_HTTPS) ||
+          tunnel_port == net::map_port(rtsp_stream::RTSP_SETUP_PORT);
+        if (!reserved_port) {
+          usb_forwarding_available = reverse_tunnel_service.start(std::move(tunnel_config));
+        }
+        else {
+          BOOST_LOG(warning) << "Remote USB forwarding port conflicts with a core TCP listener";
+        }
+      }
+      if (!usb_forwarding_available) {
+        usb_forwarding_token.clear();
+        BOOST_LOG(warning) << "Remote USB forwarding unavailable";
       }
     }
 
@@ -1189,6 +1193,32 @@ namespace nvhttp {
     https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
     https_server.resource["^/pair$"]["GET"] = pairing::pair_https;
     https_server.resource["^/applist$"]["GET"] = apps::list;
+    https_server.resource["^/api/v1/usb-forwarding$"]["GET"] =
+      [&](resp_https_t resp, req_https_t req) {
+        const SimpleWeb::CaseInsensitiveMultimap headers {
+          { "Content-Type", "application/json" },
+          { "Cache-Control", "no-store" },
+        };
+        // Do not trust the caller-supplied uniqueid, or relaxed TLS verification.
+        // Keep-alive identity is cached at handshake; pairing may since be revoked.
+        if (!is_client_paired(get_client_cert_uuid_from_request(req))) {
+          resp->write(SimpleWeb::StatusCode::client_error_unauthorized,
+            "{\"error\":\"pairing_required\"}", headers);
+          return;
+        }
+        nlohmann::json body {
+          { "version", 1 },
+          { "enabled", config::nvhttp.usb_forwarding_enabled },
+          { "available", usb_forwarding_available },
+          { "reason", !config::nvhttp.usb_forwarding_enabled ? "disabled" :
+                        usb_forwarding_available ? "ready" : "unavailable" },
+        };
+        if (usb_forwarding_available) {
+          body["port"] = reverse_tunnel_service.bound_port();
+          body["token"] = usb_forwarding_token;
+        }
+        resp->write(SimpleWeb::StatusCode::success_ok, body.dump(), headers);
+      };
     https_server.resource["^/appasset$"]["GET"] = apps::asset;
     https_server.resource["^/displays$"]["GET"] = display_control::get_displays;
     https_server.resource["^/display-scale-options$"]["GET"] = display_scale::get_options;

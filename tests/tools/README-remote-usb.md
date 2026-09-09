@@ -37,7 +37,27 @@ The script refuses pre-existing imports and forwards a local SSH port to the imp
 
 ## Full video-session flow
 
-To reproduce with the real clients after normal pairing: enable USB forwarding, share the Android device (`usbipd bind`), release the exporter's ADB handle, configure matching `SUNSHINE_USB_TUNNEL_*`/`MOONLIGHT_USB_TUNNEL_*` environment variables, and start the full Moonlight client:
+Sunshine now uses `usb_forwarding_enabled` (default off) and `usb_forwarding_port`
+(default 0 = main port + 7, normally 47996), configurable under Web settings → Input.
+An explicit 1024–65535 overrides the automatic port; an existing explicit 47996
+remains fixed until changed to 0. Clients must use the advertised port, not derive it.
+An isolated runtime check covered main port 58989 -> USB 58996, omitted/zero settings,
+explicit 58997, invalid -1/1023/65536 falling back to automatic, and occupied-port unavailability.
+Save and restart after
+enabling. The host generates an in-memory token and exposes version 1 capability
+JSON at paired-mTLS-only `GET /api/v1/usb-forwarding`; disabled/unavailable replies
+omit credentials. `SUNSHINE_USB_TUNNEL_*` no longer provisions the production host.
+
+On Android 9+ ARM64, pair normally, start a stream, open USB forwarding, enable it
+for this host, select an OTG device, and grant USB permission. The client retrieves
+credentials automatically; no build-time secrets or separate exporter app are
+needed. Verify Windows enumeration, stop sharing, and verify the imported nodes
+disappear; repeat in another stream to check reconnect.
+
+The following desktop-client fixture predates runtime provisioning. It requires
+a Qt client that consumes the capability endpoint (or the standalone probe above
+with explicit test credentials); environment-only clients cannot provision this
+production host. Start the compatible full Moonlight client with:
 
 ```powershell
 Moonlight.exe stream <host-address> Desktop --resolution 1024x768 --fps 30 --bitrate 3000 --display-mode windowed --video-codec H.264 --no-hdr --no-yuv444
