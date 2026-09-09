@@ -1123,6 +1123,7 @@ namespace display_device {
 
 #include "vdd_utils.h"
 
+#include <sys/capability.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -1145,6 +1146,42 @@ namespace display_device::vdd_utils {
     constexpr auto k_debugfs_dri = "/sys/kernel/debug/dri";
 
     std::mutex state_mutex;
+
+    /**
+     * @brief RAII: lift the permitted file capabilities (granted by the
+     *        packaging install hook) into the effective set for the duration
+     *        of the scope, restoring the previous state on destruction.
+     */
+    class elevated_caps {
+    public:
+      elevated_caps() {
+        caps = cap_get_proc();
+        if (!caps) {
+          return;
+        }
+        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH };
+        if (cap_set_flag(caps, CAP_EFFECTIVE, 3, values, CAP_SET) || cap_set_proc(caps)) {
+          BOOST_LOG(debug) << "vdd: failed to raise capabilities (unprivileged build?)"sv;
+        }
+      }
+
+      ~elevated_caps() {
+        if (!caps) {
+          return;
+        }
+        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH };
+        if (cap_set_flag(caps, CAP_EFFECTIVE, 3, values, CAP_CLEAR) || cap_set_proc(caps)) {
+          BOOST_LOG(debug) << "vdd: failed to drop capabilities"sv;
+        }
+        cap_free(caps);
+      }
+
+      elevated_caps(const elevated_caps &) = delete;
+      elevated_caps &
+      operator=(const elevated_caps &) = delete;
+
+      cap_t caps {};
+    };
 
     // Virtual display session state, guarded by state_mutex.
     bool active { false };
@@ -1369,6 +1406,7 @@ namespace display_device::vdd_utils {
 
   bool
   wait_for_mode_publication(const std::string &, const display_mode_t &requested_mode) {
+    elevated_caps caps;
     const auto refresh_hz = std::max(1u, (requested_mode.refresh_rate.numerator + requested_mode.refresh_rate.denominator / 2) / requested_mode.refresh_rate.denominator);
 
     bool applied = true;
@@ -1390,10 +1428,14 @@ namespace display_device::vdd_utils {
 
   vdd_status_t
   get_vdd_status() {
+    elevated_caps caps;
+
     vdd_status_t status;
     // The native path is "installed" when the kernel exposes connector EDID
-    // overrides at all.
-    status.installed = fs::exists(k_debugfs_dri);
+    // overrides at all. Use the error-code overload: stat may fail with
+    // EACCES before the capabilities are proven to work.
+    std::error_code ec;
+    status.installed = fs::exists(k_debugfs_dri, ec) && !ec;
     status.running = status.installed;
     status.control_available = status.installed;
     status.monitor_active = !live_virtual_display_connector().empty();
@@ -1415,6 +1457,7 @@ namespace display_device::vdd_utils {
 
   set_vdd_result
   set_vdd_session_mode(const parsed_config_t &config, const VddSettings &) {
+    elevated_caps caps;
     if (!config.resolution || !config.refresh_rate) {
       return set_vdd_result::invalid_config;
     }
@@ -1447,6 +1490,7 @@ namespace display_device::vdd_utils {
 
   bool
   create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &, const physical_size_t &) {
+    elevated_caps caps;
     BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
                     << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
 
@@ -1501,6 +1545,7 @@ namespace display_device::vdd_utils {
 
   bool
   destroy_vdd_monitor() {
+    elevated_caps caps;
     std::lock_guard lock { state_mutex };
     if (!active) {
       return true;
@@ -1521,6 +1566,7 @@ namespace display_device::vdd_utils {
 
   void
   destroy_vdd_monitor_nolog() {
+    elevated_caps caps;
     std::lock_guard lock { state_mutex };
     if (!active) {
       return;
