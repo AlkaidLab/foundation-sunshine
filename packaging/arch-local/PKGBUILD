@@ -1,0 +1,56 @@
+# Maintainer: local
+#
+# Local debug package: installs the ALREADY-BUILT tree from this repository's
+# build/ directory into /opt/sunshine (no compilation inside makepkg).
+#
+# Build:   (repo root)  ninja -C build          # configure with
+#          -DCMAKE_INSTALL_PREFIX=/opt/sunshine
+# Package: cd packaging/arch-local && makepkg -f
+# Install: sudo pacman -U ./sunshine-foundation-*.pkg.tar.zst
+# Debug:   /opt/sunshine/bin/sunshine           # assets live in /opt/sunshine/share/sunshine
+
+pkgname=sunshine-foundation
+pkgver=2026.0909
+pkgrel=1
+pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
+arch=('x86_64')
+url="https://github.com/qiin2333/Sunshine"
+license=('GPL-3.0-only')
+depends=(
+  'boost-libs'
+  'curl'
+  'libcap'
+  'libdrm'
+  'libevdev'
+  'libnotify'
+  'libpulse'
+  'libva'
+  'libx11'
+  'miniupnpc'
+  'numactl'
+  'openssl'
+  'opus'
+  'qt6-base'
+  'qt6-svg'
+  'systemd'
+  'wayland'
+)
+optdepends=(
+  'nvidia-utils: NVENC hardware encoding'
+  'libva-mesa-driver: VAAPI encoding on AMD/Intel'
+)
+options=(!strip)
+
+_build_dir="$startdir/../../build"
+
+package() {
+  if [ ! -f "$_build_dir/sunshine" ]; then
+    error "build/sunshine not found - build the repository first"
+    return 1
+  fi
+
+  # The build was configured with CMAKE_INSTALL_PREFIX=/opt/sunshine, so the
+  # install rules place bin/ and share/sunshine under /opt and the systemd
+  # user unit + udev rule at their absolute system locations.
+  DESTDIR="$pkgdir" cmake --install "$_build_dir" >/dev/null
+}
