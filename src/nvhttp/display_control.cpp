@@ -108,11 +108,7 @@ namespace nvhttp::display_control {
 
       const auto vdd_state = display_device::vdd_capability::query_state();
       response_json["vdd"] = {
-#ifdef _WIN32
         { "capability_version", display_device::vdd_capability::capability_version },
-#else
-        { "capability_version", 0 },
-#endif
         { "state", display_device::vdd_capability::to_string(vdd_state) }
       };
     }

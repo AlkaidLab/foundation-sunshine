@@ -609,11 +609,9 @@ namespace nvhttp {
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
 
-#ifdef _WIN32
+    // The Linux virtual display backend (sunshineVD helper) implements the
+    // same session semantics, so advertise the real protocol version there.
     tree.put("root.VddCapabilityVersion", display_device::vdd_capability::capability_version);
-#else
-    tree.put("root.VddCapabilityVersion", 0);
-#endif
 
     std::ostringstream data;
 
