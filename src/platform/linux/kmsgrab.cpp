@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "src/config.h"
@@ -689,15 +690,32 @@ namespace platf {
             // A freshly created virtual display may not have its CRTC
             // assigned by the compositor yet; give it a moment instead of
             // failing the whole session 200ms after the connector came up.
+            // If the connector is not even connected anymore, fail fast.
             if (!target_connector.empty()) {
               auto target_present = [&]() {
                 return std::any_of(std::begin(crtc_to_connector_name), std::end(crtc_to_connector_name),
                   [&](const auto &entry) { return entry.second == target_connector; });
               };
 
-              for (int attempt = 0; attempt < 10 && !target_present(); ++attempt) {
-                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/10)"sv;
-                std::this_thread::sleep_for(std::chrono::milliseconds { 300 });
+              for (int attempt = 0; attempt < 8 && !target_present(); ++attempt) {
+                bool still_connected = false;
+                for (auto &status_path : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+                  auto n = status_path.path().filename().string();
+                  if (n.rfind("card", 0) == 0 && n.find('-') != std::string::npos &&
+                      n.substr(n.find('-') + 1) == target_connector) {
+                    std::ifstream sf { status_path.path() / "status" };
+                    std::string v;
+                    std::getline(sf, v);
+                    still_connected = v == "connected";
+                    break;
+                  }
+                }
+                if (!still_connected) {
+                  BOOST_LOG(debug) << "Connector ["sv << target_connector << "] is gone; not waiting"sv;
+                  break;
+                }
+                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/8)"sv;
+                std::this_thread::sleep_for(std::chrono::milliseconds { 250 });
                 build_map();
               }
             }

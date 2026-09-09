@@ -171,12 +171,26 @@ namespace display_device {
 
   std::string
   find_one_of_the_available_devices(const std::string &device_id) {
-    // The external virtual display helper hosts a single output; match it
-    // against the ZakoVDD friendly name the session logic asks for.
-    if (device_id != ZAKO_NAME) {
+    // The session flow may hand us a device id, an OS display name or a
+    // friendly name; resolve all three against the live connector list. The
+    // ZakoVDD friendly name maps to the virtual display when one is live.
+    if (device_id.empty()) {
       return {};
     }
-    return vdd_utils::live_virtual_display_connector();
+    if (device_id == ZAKO_NAME) {
+      return vdd_utils::live_virtual_display_connector();
+    }
+
+    const auto devices = enum_available_devices();
+    if (devices.count(device_id)) {
+      return device_id;
+    }
+    for (const auto &[id, info] : devices) {
+      if (info.display_name == device_id || info.friendly_name == device_id) {
+        return id;
+      }
+    }
+    return {};
   }
 
   std::string
