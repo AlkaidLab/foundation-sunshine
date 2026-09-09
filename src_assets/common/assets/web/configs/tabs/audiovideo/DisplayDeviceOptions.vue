@@ -298,6 +298,26 @@ onUnmounted(() => {
                 <div v-if="hdrRuntimeConversionLabel" class="form-text mt-2">
                   {{ $t('config.capture_compute_shader') }}: {{ hdrRuntimeConversionLabel }}
                 </div>
+
+                <!-- Post-process chain slots; technical strings stay in English
+                     on purpose, matching the rest of this diagnostics panel. -->
+                <div
+                  v-if="activeHdrPipeline?.postprocess_stages?.length"
+                  class="mt-2"
+                >
+                  <div
+                    v-for="(stage, index) in activeHdrPipeline.postprocess_stages"
+                    :key="index"
+                    class="d-flex align-items-center gap-2 form-text"
+                  >
+                    <span class="badge rounded-pill" :class="stage.state === 'active' ? 'text-bg-success' : 'text-bg-warning'">
+                      {{ index + 1 }}
+                    </span>
+                    <span style="word-break: break-all">{{ stage.name }}</span>
+                    <span class="text-secondary">{{ stage.state }}</span>
+                    <span v-if="stage.failure_reason" class="text-warning">{{ stage.failure_reason }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

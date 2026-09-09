@@ -44,6 +44,16 @@ namespace video {
     std::string synthetic_hdr_backend { "none" };
     std::string synthetic_hdr_state { "disabled" };
     std::string synthetic_hdr_failure_reason;
+    /// Per-slot post-process chain states (empty when no chain runs).
+    struct postprocess_stage_status_t {
+      std::string name;
+      std::string state;
+      std::string failure_reason;
+
+      bool
+      operator==(const postprocess_stage_status_t &other) const = default;
+    };
+    std::vector<postprocess_stage_status_t> postprocess_stages;
   };
 
   std::uint64_t
@@ -157,6 +167,7 @@ namespace video {
     platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
     platf::pre_encode_filter_config_t pre_encode_filter_config;
     std::string pre_encode_filter_backend_path;
+    std::vector<platf::postprocess_stage_entry_t> postprocess_chain;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {

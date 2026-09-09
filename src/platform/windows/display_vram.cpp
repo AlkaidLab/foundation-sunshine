@@ -1311,12 +1311,24 @@ namespace platf::dxgi {
           BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
           return -1;
         }
-        pre_encode_filter = make_pre_encode_filter(
-          this->display->pre_encode_filter,
-          device.get(),
-          device_ctx.get(),
-          this->display->pre_encode_filter_backend_path,
-          this->display->pre_encode_filter_config);
+        if (!this->display->postprocess_chain.empty()) {
+          pre_encode_filter = make_configured_postprocess_chain(
+            this->display->postprocess_chain,
+            device.get(),
+            device_ctx.get(),
+            contract.required_domain,
+            contract.preferred_encoding,
+            /*hdr_wire=*/true,
+            this->display->pre_encode_filter_config);
+        }
+        else {
+          pre_encode_filter = make_pre_encode_filter(
+            this->display->pre_encode_filter,
+            device.get(),
+            device_ctx.get(),
+            this->display->pre_encode_filter_backend_path,
+            this->display->pre_encode_filter_config);
+        }
         if (!pre_encode_filter) {
           BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
           return -1;
@@ -1735,6 +1747,8 @@ namespace platf::dxgi {
         runtime_status.synthetic_hdr_backend = "none";
         runtime_status.synthetic_hdr_state = "disabled";
         runtime_status.synthetic_hdr_failure_reason.clear();
+        runtime_status.postprocess_stages.clear();
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
 
@@ -1745,14 +1759,20 @@ namespace platf::dxgi {
       const std::string reason = frame_failure.empty()
                                    ? std::string { pre_encode_filter->failure_reason() }
                                    : std::string { frame_failure };
+      std::vector<::video::hdr_pipeline_status_t::postprocess_stage_status_t> stages;
+      for (const auto &slot: pre_encode_filter->postprocess_stage_states()) {
+        stages.push_back({ slot.name, slot.state, slot.failure_reason });
+      }
       if (runtime_status.synthetic_hdr_backend == backend &&
           runtime_status.synthetic_hdr_state == state &&
-          runtime_status.synthetic_hdr_failure_reason == reason) {
+          runtime_status.synthetic_hdr_failure_reason == reason &&
+          runtime_status.postprocess_stages == stages) {
         return;
       }
       runtime_status.synthetic_hdr_backend = backend;
       runtime_status.synthetic_hdr_state = state;
       runtime_status.synthetic_hdr_failure_reason = reason;
+      runtime_status.postprocess_stages = std::move(stages);
       ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 

@@ -235,6 +235,45 @@
                     <input id="appRtxHdrPeakNits" type="number" min="400" max="1000" step="50" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['peak-nits']" />
                   </FormField>
                 </template>
+
+                <hr class="my-3" />
+                <div>
+                  <label class="form-label">{{ t('apps.postprocess_chain') }}</label>
+                  <div class="form-text mb-2">{{ t('apps.postprocess_chain_desc') }}</div>
+                  <div v-if="!formData['postprocess'].chain.length" class="form-text">
+                    {{ t('apps.postprocess_chain_empty') }}
+                  </div>
+                  <div
+                    v-for="(stage, index) in formData['postprocess'].chain"
+                    :key="index"
+                    class="border rounded p-2 mb-2"
+                  >
+                    <div class="d-flex gap-2 align-items-start">
+                      <input
+                        type="text"
+                        class="form-control form-control-enhanced"
+                        :placeholder="t('apps.postprocess_chain_dll')"
+                        :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' DLL'"
+                        v-model="stage.dll"
+                        spellcheck="false"
+                      />
+                      <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="index === 0" :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_move_up')" @click="movePostprocessStage(index, -1)">↑</button>
+                      <button type="button" class="btn btn-sm btn-outline-secondary" :disabled="index === formData['postprocess'].chain.length - 1" :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_move_down')" @click="movePostprocessStage(index, 1)">↓</button>
+                      <button type="button" class="btn btn-sm btn-outline-danger" :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_remove')" @click="removePostprocessStage(index)">✕</button>
+                    </div>
+                    <textarea
+                      class="form-control form-control-enhanced mt-2"
+                      rows="3"
+                      :placeholder="t('apps.postprocess_chain_params')"
+                      :aria-label="t('apps.postprocess_stage_aria', { n: index + 1 }) + ' — ' + t('apps.postprocess_chain_params')"
+                      v-model="stage.paramsJson"
+                      spellcheck="false"
+                    ></textarea>
+                  </div>
+                  <button type="button" class="btn btn-sm btn-outline-primary" @click="addPostprocessStage">
+                    {{ t('apps.postprocess_chain_add') }}
+                  </button>
+                </div>
               </AccordionItem>
 
               <AccordionItem id="advanced" icon="fa-cogs" :title="t('apps.advanced_options')" parent-id="appFormAccordion">
@@ -388,6 +427,9 @@ const DEFAULT_FORM_DATA = Object.freeze({
     'middle-gray': 50,
     'peak-nits': 1000,
   },
+  'postprocess': {
+    chain: [],
+  },
 })
 
 const FIELD_VALIDATION_MAP = Object.freeze({
@@ -505,6 +547,33 @@ const ensureDefaultValues = () => {
     ...DEFAULT_FORM_DATA['rtx-hdr'],
     ...(rtxHdr && typeof rtxHdr === 'object' ? rtxHdr : {}),
   }
+  const postprocess = formData.value['postprocess']
+  formData.value['postprocess'] = {
+    chain: Array.isArray(postprocess?.chain)
+      ? postprocess.chain.map((entry) => ({
+          dll: typeof entry?.dll === 'string' ? entry.dll : '',
+          paramsJson:
+            entry?.params && typeof entry.params === 'object'
+              ? JSON.stringify(entry.params, null, 2)
+              : '',
+        }))
+      : [],
+  }
+}
+
+const addPostprocessStage = () => {
+  formData.value['postprocess'].chain.push({ dll: '', paramsJson: '' })
+}
+
+const removePostprocessStage = (index) => {
+  formData.value['postprocess'].chain.splice(index, 1)
+}
+
+const movePostprocessStage = (index, offset) => {
+  const chain = formData.value['postprocess'].chain
+  const target = index + offset
+  if (target < 0 || target >= chain.length) return
+  ;[chain[index], chain[target]] = [chain[target], chain[index]]
 }
 
 const initializeForm = (app) => {
@@ -680,6 +749,34 @@ const saveApp = async () => {
   if (!formValidation.isValid) {
     if (formValidation.errors.length) alert(formValidation.errors[0])
     return
+  }
+
+  // Chain params arrive from textareas as JSON strings; the host expects
+  // objects (or no params key at all). Invalid JSON aborts the save.
+  const chain = []
+  for (const [index, entry] of formData.value['postprocess'].chain.entries()) {
+    const stage = { dll: entry.dll.trim() }
+    const paramsJson = (entry.paramsJson || '').trim()
+    if (paramsJson) {
+      try {
+        const params = JSON.parse(paramsJson)
+        if (params && typeof params === 'object' && !Array.isArray(params)) {
+          stage.params = params
+        } else {
+          alert(t('apps.postprocess_params_invalid', { index: index + 1 }))
+          return
+        }
+      } catch {
+        alert(t('apps.postprocess_params_invalid', { index: index + 1 }))
+        return
+      }
+    }
+    chain.push(stage)
+  }
+  if (chain.length) {
+    formData.value['postprocess'] = { chain }
+  } else {
+    delete formData.value['postprocess']
   }
 
   const editedApp = { ...formData.value }

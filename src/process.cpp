@@ -512,6 +512,19 @@ namespace proc {
     return iter == _apps.end() ? std::nullopt : iter->rtx_hdr;
   }
 
+  const std::vector<platf::postprocess_stage_entry_t> &
+  proc_t::get_app_postprocess_chain(int app_id) const {
+    static const std::vector<platf::postprocess_stage_entry_t> kEmpty;
+    if (_app_id == app_id && _app_id > 0) {
+      return _app.postprocess_chain;
+    }
+    const auto app_id_string = std::to_string(app_id);
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id_string](const auto &app) {
+      return app.id == app_id_string;
+    });
+    return iter == _apps.end() ? kEmpty : iter->postprocess_chain;
+  }
+
   void
   proc_t::run_menu_cmd(std::string cmd_id) {
     auto iter = std::find_if(_app.menu_cmds.begin(), _app.menu_cmds.end(), [&cmd_id](const auto menu_cmd) {
@@ -958,6 +971,33 @@ namespace proc {
             .middle_gray = std::clamp(rtx_hdr_node->get<int>("middle-gray", 50), 10, 100),
             .peak_nits = std::clamp(rtx_hdr_node->get<int>("peak-nits", 1000), 400, 1000),
           };
+        }
+
+        if (const auto postprocess_node = app_node.get_child_optional("postprocess"s)) {
+          // Per docs/postprocess_chain.md §7: chain entries carry a DLL path
+          // and a free-form params object passed through to the stage as JSON.
+          // DLL existence is NOT checked here — loading runs DllMain code and
+          // belongs to session start / explicit user action, not app parsing.
+          for (const auto &[key, entry]: *postprocess_node) {
+            if (key != "chain") {
+              continue;
+            }
+            for (const auto &[entry_key, chain_node]: entry) {
+              (void) entry_key;
+              const auto dll = chain_node.get<std::string>("dll", "");
+              if (dll.empty()) {
+                BOOST_LOG(warning) << "Skipping postprocess chain entry without a dll for app ["sv << name << ']';
+                continue;
+              }
+              platf::postprocess_stage_entry_t stage { .dll = dll };
+              if (const auto params = chain_node.get_child_optional("params"s)) {
+                std::ostringstream params_json;
+                boost::property_tree::json_parser::write_json(params_json, *params, false);
+                stage.params_json = params_json.str();
+              }
+              ctx.postprocess_chain.push_back(std::move(stage));
+            }
+          }
         }
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);

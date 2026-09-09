@@ -1560,10 +1560,12 @@ namespace rtsp_stream {
 #ifdef _WIN32
       // The TrueHDR chain (filter output, synthetic metadata, wire colorspace)
       // is specified for PQ only; HLG sessions must keep the legacy capture
-      // path. Docs §5.4 of rtx_hdr_stream_implementation.md.
-      post_process_hdr_active = session.synthetic_hdr.enabled && monitor.dynamicRange == 1;
-      if (session.synthetic_hdr.enabled && monitor.dynamicRange == 2) {
-        BOOST_LOG(warning) << "RTX HDR requires PQ (dynamicRangeMode=1); ignoring it for this HLG session"sv;
+      // path. Docs §5.4 of rtx_hdr_stream_implementation.md. An explicit
+      // post-process chain is PQ-pinned for the same reason.
+      const bool postprocess_configured = session.synthetic_hdr.enabled || !session.postprocess_chain.empty();
+      post_process_hdr_active = postprocess_configured && monitor.dynamicRange == 1;
+      if (postprocess_configured && monitor.dynamicRange == 2) {
+        BOOST_LOG(warning) << "Post-processing requires PQ (dynamicRangeMode=1); ignoring it for this HLG session"sv;
       }
       if (post_process_hdr_active) {
         monitor.pre_encode_filter = platf::pre_encode_filter_e::external_sdr_to_hdr;
@@ -1574,6 +1576,9 @@ namespace rtsp_stream {
           .peak_nits = static_cast<float>(session.synthetic_hdr.peak_nits),
         };
         monitor.pre_encode_filter_backend_path = config::video.rtx_hdr_backend_path;
+        // An explicit user chain replaces the single-backend migration path;
+        // validation and builtin-conversion insertion happen at display init.
+        monitor.postprocess_chain = session.postprocess_chain;
       }
 #endif
       monitor.frame_pipeline_policy =
@@ -1716,7 +1721,7 @@ namespace rtsp_stream {
       {
         .video_format = config.monitor.videoFormat,
         .dynamic_range_mode = config.monitor.dynamicRange,
-        .synthetic_hdr_enabled = session.synthetic_hdr.enabled,
+        .synthetic_hdr_enabled = session.synthetic_hdr.enabled || !session.postprocess_chain.empty(),
       });
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
     session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;

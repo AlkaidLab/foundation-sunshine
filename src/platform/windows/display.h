@@ -214,6 +214,7 @@ namespace platf::dxgi {
     pre_encode_filter_e pre_encode_filter = pre_encode_filter_e::none;
     pre_encode_filter_config_t pre_encode_filter_config;
     std::filesystem::path pre_encode_filter_backend_path;
+    std::vector<platf::postprocess_stage_entry_t> postprocess_chain;
 
     captured_frame_desc_t
     describe_captured_frame(DXGI_FORMAT format, bool borrowed) const;

@@ -220,6 +220,25 @@ export class AppService {
         'middle-gray': Math.max(10, Math.min(100, Number(app['rtx-hdr']?.['middle-gray']) || 50)),
         'peak-nits': Math.max(400, Math.min(1000, Number(app['rtx-hdr']?.['peak-nits']) || 1000)),
       },
+      'postprocess': {
+        // The chain is a plain ordered list of { dll, params }; the host
+        // validates the assembled chain at session start (docs §7).
+        chain: Array.isArray(app['postprocess']?.chain)
+          ? app['postprocess'].chain
+              .filter((entry) => typeof entry?.dll === 'string' && entry.dll.trim() !== '')
+              .map((entry) => {
+                const normalized = { dll: entry.dll.trim() }
+                if (
+                  entry.params &&
+                  typeof entry.params === 'object' &&
+                  !Array.isArray(entry.params)
+                ) {
+                  normalized.params = entry.params
+                }
+                return normalized
+              })
+          : [],
+      },
       'image-path': app['image-path']?.trim() || '',
       'working-dir': app['working-dir']?.trim() || ''
     };

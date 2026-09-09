@@ -278,6 +278,7 @@ namespace nvhttp {
       if (const auto app_rtx_hdr = proc::proc.get_app_rtx_hdr_config(launch_session->appid)) {
         launch_session->synthetic_hdr = *app_rtx_hdr;
       }
+      launch_session->postprocess_chain = proc::proc.get_app_postprocess_chain(launch_session->appid);
     }
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
     launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));

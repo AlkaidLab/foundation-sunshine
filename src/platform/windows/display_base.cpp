@@ -594,6 +594,7 @@ namespace platf::dxgi {
     pre_encode_filter = config.pre_encode_filter;
     pre_encode_filter_config = config.pre_encode_filter_config;
     pre_encode_filter_backend_path = config.pre_encode_filter_backend_path;
+    postprocess_chain = config.postprocess_chain;
     capture_source_generation =
       next_capture_source_generation.fetch_add(1, std::memory_order_relaxed);
 
