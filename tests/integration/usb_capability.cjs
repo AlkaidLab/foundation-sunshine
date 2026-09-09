@@ -65,7 +65,8 @@ async function start(enabled, relaxed = false, usbPort = 0) {
      env: process.env});
   fs.closeSync(log);
   child.on('error', () => {});
-  for (let i = 0; i < 120; i++) {
+  const readyDeadline = performance.now() + 30000;
+  while (performance.now() < readyDeadline) {
     if (child.exitCode !== null) throw Error(`Test host exited ${child.exitCode}; inspect ${root}`);
     try {
       const response = await request();

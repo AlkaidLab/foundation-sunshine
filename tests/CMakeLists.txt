@@ -15,7 +15,8 @@ if(WIN32)
     add_test(NAME usb_capability_integration
         COMMAND "${USB_TEST_NODE}" "${CMAKE_SOURCE_DIR}/tests/integration/usb_capability.cjs"
                 $<TARGET_FILE:sunshine> "${USB_TEST_OPENSSL}")
-    set_tests_properties(usb_capability_integration PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    # Fourteen host starts, each bounded to roughly 30 seconds, plus TLS/cleanup.
+    set_tests_properties(usb_capability_integration PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
 endif()
 
 # Add GoogleTest directory to the project
