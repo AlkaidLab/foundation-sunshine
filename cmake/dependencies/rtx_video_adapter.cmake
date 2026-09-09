@@ -65,7 +65,8 @@ if (NOT _rtx_inputs STREQUAL _rtx_previous OR NOT EXISTS "${RTX_VIDEO_STATIC_CON
         RESULT_VARIABLE _rtx_configured OUTPUT_VARIABLE _rtx_stdout ERROR_VARIABLE _rtx_stderr TIMEOUT 120)
     if (NOT _rtx_configured STREQUAL "0" OR NOT EXISTS "${RTX_VIDEO_STATIC_CONFIG}")
         file(MAKE_DIRECTORY "${_rtx_build}")
-        file(WRITE "${_rtx_build}/configure.log" "${_rtx_stdout}\n${_rtx_stderr}")
+        file(WRITE "${_rtx_build}/configure.log"
+            "result=${_rtx_configured}\nstdout:\n${_rtx_stdout}\nstderr:\n${_rtx_stderr}")
         if (_rtx_mode STREQUAL "ON")
             message(FATAL_ERROR "RTX HDR adapter configuration failed; see ${_rtx_build}/configure.log")
         endif ()

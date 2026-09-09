@@ -9,7 +9,7 @@ install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 if (TARGET sunshine_rtx_video_adapter)
   install(FILES ${RTX_VIDEO_REDIST_FILES} DESTINATION "." COMPONENT application)
 endif ()
-install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge/THIRD_PARTY_NOTICES.md"
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter/THIRD_PARTY_NOTICES.md"
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
         RENAME "RTX_VIDEO_THIRD_PARTY_NOTICES.md"
         COMPONENT application)
