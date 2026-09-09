@@ -1198,6 +1198,7 @@ namespace display_device::vdd_utils {
     std::string active_edid_path;   // e.g. /sys/kernel/debug/dri/0000:01:00.0/DP-1/edid_override
     std::string active_edid_content;  // Last written EDID, for mode-switch dedup
     std::vector<std::string> offlined_physical_status_paths;  // Physicals powered off by display_off prep
+    parsed_config_t::vdd_prep_e last_prep { parsed_config_t::vdd_prep_e::no_operation };
     unsigned int cached_width { 1920 };
     unsigned int cached_height { 1080 };
     unsigned int cached_refresh_hz { 60 };
@@ -1488,6 +1489,24 @@ namespace display_device::vdd_utils {
       std::string current;
       std::getline(in, current);
       return current == value;
+    }
+
+    void
+    for_each_connected_physical(const std::string &vd_connector, const std::function<void(const std::string &status_path, const std::string &connector)> &fn) {
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        const auto status_path = (entry.path() / "status").string();
+        const auto connector = connector_name_for_status(status_path);
+        if (connector == vd_connector) {
+          continue;
+        }
+        if (connector_status_is(status_path, "connected")) {
+          fn(status_path, connector);
+        }
+      }
     }
 
     /**
@@ -1916,6 +1935,12 @@ namespace display_device::vdd_utils {
     }
 
     restore_offlined_physicals();
+    if (last_prep == parsed_config_t::vdd_prep_e::vdd_as_primary || last_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
+      // Give the primary role back to the physical screen.
+      for_each_connected_physical(active_connector, [](const auto &, const auto &connector) {
+        std::system(("kscreen-doctor output." + connector + ".priority.1").c_str());
+      });
+    }
 
     BOOST_LOG(info) << "vdd: virtual display on "sv << active_connector << " destroyed"sv;
     active = false;
@@ -1970,38 +1995,55 @@ namespace display_device::vdd_utils {
 
   bool
   apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e vdd_prep, const boost::optional<device_info_map_t> &) {
-    if (vdd_prep != parsed_config_t::vdd_prep_e::display_off) {
-      // Extend-style modes: the compositor already treats the live virtual
-      // output as an additional display, and DRM offers no primary-order
-      // control - nothing to do.
-      return true;
-    }
-
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
+    last_prep = vdd_prep;
 
-    // Exclusive mode: power off every connected physical connector for the
-    // duration of the session. destroy_vdd_monitor() restores them.
-    offlined_physical_status_paths.clear();
-    for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
-      const auto name = entry.path().filename().string();
-      if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
-        continue;
-      }
-      const auto status_path = (entry.path() / "status").string();
-      std::ifstream status_file { status_path };
-      std::string value;
-      std::getline(status_file, value);
-      if (value != "connected" || status_path == active_status_path) {
-        continue;
+    const std::string vd_connector = active_connector;
+
+    switch (vdd_prep) {
+      case parsed_config_t::vdd_prep_e::vdd_as_primary: {
+        // Mirrors the Windows topology: VDD first (primary), physicals as
+        // extended. KWin models "primary" as the highest kscreen priority.
+        if (!vd_connector.empty()) {
+          run_logged("kscreen-doctor output." + vd_connector + ".priority.1");
+          for_each_connected_physical(vd_connector, [](const auto &, const auto &connector) {
+            std::system(("kscreen-doctor output." + connector + ".priority.2").c_str());
+          });
+        }
+        return true;
       }
 
-      if (write_text_file(status_path, "off")) {
-        offlined_physical_status_paths.emplace_back(status_path);
-        BOOST_LOG(info) << "vdd: display_off prep powered off "sv << name;
+      case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
+        // Physicals stay primary, VDD extends as secondary.
+        if (!vd_connector.empty()) {
+          run_logged("kscreen-doctor output." + vd_connector + ".priority.2");
+          for_each_connected_physical(vd_connector, [](const auto &, const auto &connector) {
+            std::system(("kscreen-doctor output." + connector + ".priority.1").c_str());
+          });
+        }
+        return true;
       }
+
+      case parsed_config_t::vdd_prep_e::display_off: {
+        // Exclusive mode: power off every connected physical connector for
+        // the duration of the session. destroy_vdd_monitor() restores them.
+        offlined_physical_status_paths.clear();
+        for_each_connected_physical(vd_connector, [&](const auto &status_path, const auto &connector) {
+          if (write_text_file(status_path, "off")) {
+            offlined_physical_status_paths.emplace_back(status_path);
+            BOOST_LOG(info) << "vdd: display_off prep powered off card-connector with status path "sv << status_path;
+          }
+        });
+        return true;
+      }
+
+      case parsed_config_t::vdd_prep_e::no_operation:
+      default:
+        // no_operation: keep the current layout untouched. ensure_active is
+        // folded here: the virtual display is enabled as part of creation.
+        return true;
     }
-    return true;
   }
 
 
