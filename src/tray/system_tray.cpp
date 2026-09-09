@@ -181,12 +181,14 @@ namespace system_tray {
   update_menu_texts() {
     init_localized_strings();
     tray_menus[0].text = s_open_sunshine.c_str();
-    tray_menus[2].text = s_vdd_base_display.c_str();
-    update_vdd_submenu_text();  // 更新 VDD 子菜单文本
   #ifdef _WIN32
+    // Windows layout: [2] Foundation Display, [3] Advanced Settings,
+    // [5] Language, [7] Star Project, [8] Visit Project, [10] Restart,
+    // [11] Quit.
+    tray_menus[2].text = s_vdd_base_display.c_str();
+    update_vdd_submenu_text();
     tray_menus[3].text = s_advanced_settings.c_str();
     update_advanced_settings_menu_text();
-  #endif
     tray_menus[5].text = s_language.c_str();
     tray_menus[5].submenu[0].text = s_chinese.c_str();
     tray_menus[5].submenu[1].text = s_english.c_str();
@@ -194,12 +196,20 @@ namespace system_tray {
     tray_menus[7].text = s_star_project.c_str();
     tray_menus[8].text = s_visit_project.c_str();
     tray_visit_project_submenu_text();
-  #ifdef _WIN32
     tray_menus[10].text = s_restart.c_str();
     tray_menus[11].text = s_quit.c_str();
   #else
-    tray_menus[9].text = s_restart.c_str();
-    tray_menus[10].text = s_quit.c_str();
+    // Linux layout omits the two Windows-only menus: [3] Language,
+    // [5] Star Project, [6] Visit Project, [8] Restart, [9] Quit.
+    tray_menus[3].text = s_language.c_str();
+    tray_menus[3].submenu[0].text = s_chinese.c_str();
+    tray_menus[3].submenu[1].text = s_english.c_str();
+    tray_menus[3].submenu[2].text = s_japanese.c_str();
+    tray_menus[5].text = s_star_project.c_str();
+    tray_menus[6].text = s_visit_project.c_str();
+    tray_visit_project_submenu_text();
+    tray_menus[8].text = s_restart.c_str();
+    tray_menus[9].text = s_quit.c_str();
   #endif
   }
 
