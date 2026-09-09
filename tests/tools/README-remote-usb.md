@@ -38,7 +38,12 @@ The script refuses pre-existing imports and forwards a local SSH port to the imp
 ## Full video-session flow
 
 Sunshine now uses `usb_forwarding_enabled` (default off) and `usb_forwarding_port`
-(default 47996), configurable under Web settings → Input. Save and restart after
+(default 0 = main port + 7, normally 47996), configurable under Web settings → Input.
+An explicit 1024–65535 overrides the automatic port; an existing explicit 47996
+remains fixed until changed to 0. Clients must use the advertised port, not derive it.
+An isolated runtime check covered main port 58989 -> USB 58996, omitted/zero settings,
+explicit 58997, invalid -1/1023/65536 falling back to automatic, and occupied-port unavailability.
+Save and restart after
 enabling. The host generates an in-memory token and exposes version 1 capability
 JSON at paired-mTLS-only `GET /api/v1/usb-forwarding`; disabled/unavailable replies
 omit credentials. `SUNSHINE_USB_TUNNEL_*` no longer provisions the production host.

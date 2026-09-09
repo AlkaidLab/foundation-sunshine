@@ -155,8 +155,9 @@ onBeforeUnmount(() => {
       <div class="form-text">{{ $t('config.usb_forwarding_description') }}</div>
       <div v-if="config.usb_forwarding_enabled === 'enabled'" class="mt-2">
         <label for="usb_forwarding_port" class="form-label">{{ $t('config.usb_forwarding_port') }}</label>
-        <input id="usb_forwarding_port" type="number" min="1024" max="65535"
+        <input id="usb_forwarding_port" type="number" :min="Number(config.usb_forwarding_port) === 0 ? 0 : 1024" max="65535"
                class="form-control" v-model.number="config.usb_forwarding_port">
+        <div class="form-text">{{ $t('config.usb_forwarding_port_hint') }}</div>
       </div>
     </div>
     <!-- Enable Gamepad Input -->

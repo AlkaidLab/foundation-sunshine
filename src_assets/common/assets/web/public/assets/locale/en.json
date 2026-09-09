@@ -201,6 +201,7 @@
     "usb_forwarding_enabled": "USB forwarding (experimental)",
     "usb_forwarding_description": "Allow paired clients to forward explicitly selected USB devices. Requires the Windows USB/IP driver. Save and restart Sunshine; clients obtain connection credentials automatically. Do not enable for untrusted clients.",
     "usb_forwarding_port": "USB forwarding TCP port",
+    "usb_forwarding_port_hint": "0: automatic (main port + 7; normally 47996). Set 1024–65535 to override. Clients discover the actual port from the host.",
     "adapter_name": "Adapter Name",
     "adapter_name_desc_linux_1": "Manually specify a GPU to use for capture.",
     "adapter_name_desc_linux_2": "to find all devices capable of VAAPI",

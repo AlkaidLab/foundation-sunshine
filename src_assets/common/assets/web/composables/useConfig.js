@@ -44,7 +44,7 @@ const DEFAULT_TABS = [
       key_rightalt_to_key_win: 'disabled',
       mouse: 'enabled',
       usb_forwarding_enabled: 'disabled',
-      usb_forwarding_port: 47996,
+      usb_forwarding_port: 0,
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
       native_touchpad_optimization: 'enabled',

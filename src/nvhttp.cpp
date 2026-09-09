@@ -1103,7 +1103,10 @@ namespace nvhttp {
         usb_forwarding_token = util::hex_vec(token_bytes);
         remote_usb::reverse_tunnel_config tunnel_config;
         tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
-        tunnel_config.port = config::nvhttp.usb_forwarding_port;
+        // Resolve after the main port has been parsed. Its validated range
+        // reserves +21 for RTSP, so +7 cannot overflow a uint16_t.
+        tunnel_config.port = config::nvhttp.usb_forwarding_port != 0
+          ? config::nvhttp.usb_forwarding_port : net::map_port(7);
         tunnel_config.session_token = usb_forwarding_token;
         tunnel_config.certificate_file = config::nvhttp.cert;
         tunnel_config.private_key_file = config::nvhttp.pkey;

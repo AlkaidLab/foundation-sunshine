@@ -514,7 +514,7 @@ namespace config {
     "[]"s,  // file_mappings
     48020,  // file_mapping_port
     false,  // usb_forwarding_enabled: explicit host opt-in
-    47996,  // usb_forwarding_port
+    0,  // usb_forwarding_port: automatic (main port + 7)
     {},  // external_ip
     {
       "1280x720"s,
@@ -1471,8 +1471,12 @@ namespace config {
     nvhttp.file_mapping_port = static_cast<std::uint16_t>(file_mapping_port);
     bool_f(vars, "usb_forwarding_enabled", nvhttp.usb_forwarding_enabled);
     int usb_forwarding_port = nvhttp.usb_forwarding_port;
-    int_between_f(vars, "usb_forwarding_port", usb_forwarding_port, { 1024, 65535 });
-    nvhttp.usb_forwarding_port = static_cast<std::uint16_t>(usb_forwarding_port);
+    int_f(vars, "usb_forwarding_port", usb_forwarding_port);
+    if (usb_forwarding_port == 0 || (usb_forwarding_port >= 1024 && usb_forwarding_port <= 65535)) {
+      nvhttp.usb_forwarding_port = static_cast<std::uint16_t>(usb_forwarding_port);
+    } else {
+      BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
+    }
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;
