@@ -424,9 +424,19 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
    `vdd_ioctl.cpp` Windows 头文件问题** → 5. `ninja install` + setcap/udev → 6. KDE Wayland 下用
    kmsgrab 实测串流 → 7. 稳定后补 `Arch/PKGBUILD` 恢复，转 makepkg 管理，并考虑加 Linux CI。
 
-**进度（2026-09-09）**：第 2 步已基本完成（仅剩 npm）；第 1 步关联的子模块损坏已修复（§十 风险 9）；
-配置实测通过全部依赖检测，剩余错误 = 打包模板 ×4 + npm 缺失。装上 npm、恢复 4 个模板文件后
-即可进入第 3–4 步。
+**进度（2026-09-09，`linux-migration` 分支）**：基础迁移的第 1–4 步已完成 ——
+
+1. 模板已恢复并提交（`1b15942`）。注意上游 master 已把模板改名为
+   `dev.lizardbyte.app.Sunshine.*` 布局，须取旧布局的最后一版（上游 commit `b2d44f5b`）。
+2. CMake 层修复（`6bb63af`）：托盘改接 `tray::tray` 目标（固定的 tray 新版在 Linux 是
+   **Qt6 + libnotify 实现**，需要 `qt6-base`/`qt6-svg`，KDE 系统已自带）；删除 `input.cpp` 死引用。
+3. 全量编译修复（`b719edf`）：vdd_ioctl/vdd_utils 的 Windows 实现加 `_WIN32` 守卫 + Linux 桩、
+   globals 的 ZAKO_NAME 等移出守卫、config.cpp 补 QVBR/HQVBR 常量（4/5/6）、video.cpp 的 avcodec
+   NVENC 选项表改用 SDK 数值（该分支此前从未在任何平台编译过）、Boost 增加 regex 组件、测试 Glob
+   排除 Windows 宿主目录等 —— GCC 16 / C++23 下 **`build/sunshine` 与 WebUI 全部构建成功**。
+4. 测试：13 个 ctest 套件 12 个直接通过；聚合套件 **0 个断言失败**，仅 Audio/MouseHID/Encoder
+   三个套件因需要真实音频/输入/编码器环境在 SetUp 失败（与上游行为一致，需在图形会话内跑）。
+   剩余：第 5 步 `sudo ninja install` + setcap/udev，然后第 6 步实测串流。
 
 **增强迁移（§十一）**：基础跑通后按 P0（虚拟显示器：先路线 A 零代码验证，再路线 B 代码级）→
 P1（远程麦克风、剪贴板主机侧）→ P2（HDR 注入验证、ABR 前台检测）→ P3 的顺序推进；
