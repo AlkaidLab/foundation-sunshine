@@ -3,7 +3,9 @@ do_setcap() {
   target="$(readlink -f /opt/sunshine/bin/sunshine)"
   # cap_sys_admin: KMS capture. cap_dac_read_search/cap_dac_override:
   # connector EDID overrides and status writes under /sys/kernel/debug.
-  setcap cap_sys_admin,cap_dac_read_search,cap_dac_override+p "$target"
+  # cap_sys_ptrace: borrow the compositor's DRM master (pidfd_getfd) for the
+  # virtual display CRTC assignment.
+  setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p "$target"
 }
 
 do_udev_reload() {

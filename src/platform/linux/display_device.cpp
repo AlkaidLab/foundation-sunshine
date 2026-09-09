@@ -31,14 +31,21 @@ namespace display_device {
       std::ifstream status_file { entry.path() / "status" };
       std::string status;
       std::getline(status_file, status);
-      if (status != "connected") {
+
+      // "off" is a connector WE powered down for an exclusive virtual display
+      // session. It must stay visible (as inactive) - otherwise the session
+      // teardown's headless-host guard sees only the virtual display and
+      // skips restoring the physical screen.
+      const bool connected = status == "connected";
+      const bool forced_off = status == "off";
+      if (!connected && !forced_off) {
         continue;
       }
 
       device_info_t info;
       info.display_name = connector;
       info.friendly_name = connector;
-      info.device_state = device_state_e::active;
+      info.device_state = connected ? device_state_e::active : device_state_e::inactive;
       info.hdr_state = hdr_state_e::unknown;
       devices.emplace(connector, std::move(info));
     }

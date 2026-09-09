@@ -1125,6 +1125,8 @@ namespace display_device {
 
 #include <fcntl.h>
 #include <sys/capability.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <xf86drm.h>
@@ -1164,8 +1166,8 @@ namespace display_device::vdd_utils {
         if (!caps) {
           return;
         }
-        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH };
-        if (cap_set_flag(caps, CAP_EFFECTIVE, 3, values, CAP_SET) || cap_set_proc(caps)) {
+        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_SYS_PTRACE };
+        if (cap_set_flag(caps, CAP_EFFECTIVE, 4, values, CAP_SET) || cap_set_proc(caps)) {
           BOOST_LOG(debug) << "vdd: failed to raise capabilities (unprivileged build?)"sv;
         }
       }
@@ -1174,8 +1176,8 @@ namespace display_device::vdd_utils {
         if (!caps) {
           return;
         }
-        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH };
-        if (cap_set_flag(caps, CAP_EFFECTIVE, 3, values, CAP_CLEAR) || cap_set_proc(caps)) {
+        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_SYS_PTRACE };
+        if (cap_set_flag(caps, CAP_EFFECTIVE, 4, values, CAP_CLEAR) || cap_set_proc(caps)) {
           BOOST_LOG(debug) << "vdd: failed to drop capabilities"sv;
         }
         cap_free(caps);
@@ -1190,6 +1192,7 @@ namespace display_device::vdd_utils {
 
     // Virtual display session state, guarded by state_mutex.
     bool active { false };
+    std::string active_card;        // e.g. "card1"
     std::string active_connector;   // e.g. "DP-1"
     std::string active_status_path; // e.g. /sys/class/drm/card1-DP-1/status
     std::string active_edid_path;   // e.g. /sys/kernel/debug/dri/0000:01:00.0/DP-1/edid_override
@@ -1254,6 +1257,197 @@ namespace display_device::vdd_utils {
         case DRM_MODE_CONNECTOR_VGA: return "VGA"sv;
         default: return "Unknown"sv;
       }
+    }
+
+    drmModeConnectorPtr
+    find_connector_by_name(int fd, drmModeResPtr res, const std::string &connector) {
+      for (int i = 0; i < res->count_connectors; ++i) {
+        drmModeConnectorPtr conn = drmModeGetConnector(fd, res->connectors[i]);
+        if (!conn) {
+          continue;
+        }
+        const std::string name = std::string { kms_connector_prefix(conn->connector_type) } + "-" + std::to_string(conn->connector_type_id);
+        if (name == connector) {
+          return conn;
+        }
+        drmModeFreeConnector(conn);
+      }
+      return nullptr;
+    }
+
+    std::uint32_t
+    find_free_crtc(int fd, drmModeResPtr res, const std::string &connector) {
+      // A CRTC is free when no connected connector's encoder is driving it.
+      (void) connector;
+      for (int i = 0; i < res->count_crtcs; ++i) {
+        const std::uint32_t crtc_id = res->crtcs[i];
+        bool in_use = false;
+        for (int j = 0; j < res->count_connectors && !in_use; ++j) {
+          drmModeConnectorPtr conn = drmModeGetConnector(fd, res->connectors[j]);
+          if (!conn) {
+            continue;
+          }
+          if (conn->encoder_id) {
+            if (drmModeEncoderPtr enc = drmModeGetEncoder(fd, conn->encoder_id)) {
+              in_use = enc->crtc_id == crtc_id;
+              drmModeFreeEncoder(enc);
+            }
+          }
+          drmModeFreeConnector(conn);
+        }
+        if (!in_use) {
+          return crtc_id;
+        }
+      }
+      return 0;
+    }
+
+    bool
+    find_master_holder(const std::string &dev_path, pid_t *out_pid, int *out_fd) {
+      std::vector<std::pair<pid_t, int>> candidates;
+      std::error_code ec;
+      for (const auto &proc : fs::directory_iterator { "/proc", ec }) {
+        const auto name = proc.path().filename().string();
+        if (name.empty() || !std::all_of(name.begin(), name.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+          continue;
+        }
+        const auto pid = static_cast<pid_t>(std::atoi(name.c_str()));
+        if (pid == ::getpid()) {
+          continue;
+        }
+        for (const auto &fd_entry : fs::directory_iterator { proc.path() / "fd", ec }) {
+          std::error_code link_ec;
+          const auto target = fs::read_symlink(fd_entry.path(), link_ec);
+          if (link_ec || target.string() != dev_path) {
+            continue;
+          }
+          candidates.emplace_back(pid, std::atoi(fd_entry.path().filename().c_str()));
+        }
+      }
+
+      // The real DRM master is the candidate on which dropping master works.
+      for (const auto &[pid, target_fd] : candidates) {
+        const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+        if (pidfd < 0) {
+          continue;
+        }
+        const int dup_fd = static_cast<int>(::syscall(SYS_pidfd_getfd, pidfd, target_fd, 0));
+        ::close(pidfd);
+        if (dup_fd < 0) {
+          continue;
+        }
+        if (drmIoctl(dup_fd, DRM_IOCTL_DROP_MASTER, nullptr) == 0) {
+          drmIoctl(dup_fd, DRM_IOCTL_SET_MASTER, nullptr);  // restore while we keep looking
+          BOOST_LOG(debug) << "vdd: DRM master held by pid "sv << pid << " fd "sv << target_fd;
+          *out_pid = pid;
+          *out_fd = target_fd;
+          return true;
+        }
+        ::close(dup_fd);
+      }
+      return false;
+    }
+
+    /**
+     * @brief Assign a CRTC to a connected connector: temporarily take DRM
+     *        master from the compositor (pidfd borrow), create a dumb
+     *        framebuffer in the connector's preferred mode and run the
+     *        modeset. Compositor-agnostic. The dumb fb intentionally outlives
+     *        the call - it backs the scanout of the virtual display.
+     */
+    bool
+    force_crtc_assignment(const std::string &dev_path, const std::string &connector) {
+      const int probe_fd = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
+      if (probe_fd < 0) {
+        return false;
+      }
+
+      std::uint32_t connector_id = 0;
+      std::uint32_t crtc_id = 0;
+      drmModeModeInfo mode {};
+      {
+        drmModeResPtr res = drmModeGetResources(probe_fd);
+        if (res) {
+          if (drmModeConnectorPtr conn = find_connector_by_name(probe_fd, res, connector)) {
+            if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
+              if (conn->encoder_id) {
+                drmModeFreeConnector(conn);
+                drmModeFreeResources(res);
+                ::close(probe_fd);
+                return true;  // already lit
+              }
+              connector_id = conn->connector_id;
+              mode = conn->modes[0];
+              crtc_id = find_free_crtc(probe_fd, res, connector);
+            }
+            drmModeFreeConnector(conn);
+          }
+          drmModeFreeResources(res);
+        }
+        ::close(probe_fd);
+      }
+
+      if (!connector_id || !crtc_id) {
+        return false;
+      }
+
+      pid_t holder_pid = -1;
+      int holder_fd = -1;
+      if (!find_master_holder(dev_path, &holder_pid, &holder_fd)) {
+        BOOST_LOG(warning) << "vdd: no DRM master holder found on "sv << dev_path;
+        return false;
+      }
+
+      const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, holder_pid, 0));
+      if (pidfd < 0) {
+        return false;
+      }
+      const int dup_fd = static_cast<int>(::syscall(SYS_pidfd_getfd, pidfd, holder_fd, 0));
+      ::close(pidfd);
+      if (dup_fd < 0) {
+        return false;
+      }
+
+      // Drop the compositor's master and take over for the modeset.
+      drmIoctl(dup_fd, DRM_IOCTL_DROP_MASTER, nullptr);
+      const int own_fd = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
+      bool assigned = false;
+      if (own_fd >= 0 && drmIoctl(own_fd, DRM_IOCTL_SET_MASTER, nullptr) == 0) {
+        drm_mode_create_dumb create {};
+        create.width = mode.hdisplay;
+        create.height = mode.vdisplay;
+        create.bpp = 32;
+        if (drmIoctl(own_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) == 0) {
+          drm_mode_fb_cmd fb_cmd {};
+          fb_cmd.width = mode.hdisplay;
+          fb_cmd.height = mode.vdisplay;
+          fb_cmd.pitch = create.pitch;
+          fb_cmd.bpp = 32;
+          fb_cmd.depth = 24;
+          fb_cmd.handle = create.handle;
+          if (drmIoctl(own_fd, DRM_IOCTL_MODE_ADDFB, &fb_cmd) == 0) {
+            assigned = drmModeSetCrtc(own_fd, crtc_id, fb_cmd.fb_id, 0, 0, &connector_id, 1, &mode) == 0;
+          } else {
+            drm_mode_destroy_dumb destroy {};
+            destroy.handle = create.handle;
+            drmIoctl(own_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+          }
+        }
+      }
+
+      if (own_fd >= 0) {
+        drmIoctl(own_fd, DRM_IOCTL_DROP_MASTER, nullptr);
+        ::close(own_fd);
+      }
+      drmIoctl(dup_fd, DRM_IOCTL_SET_MASTER, nullptr);  // hand master back to the compositor
+      ::close(dup_fd);
+
+      if (assigned) {
+        BOOST_LOG(info) << "vdd: assigned CRTC "sv << crtc_id << " to "sv << connector;
+      } else {
+        BOOST_LOG(warning) << "vdd: failed to assign a CRTC to "sv << connector;
+      }
+      return assigned;
     }
 
     /**
@@ -1503,7 +1697,13 @@ namespace display_device::vdd_utils {
         // Live mode switch: cycle the connector with an EDID for the new mode.
         const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, true, "Foundation VDD");
         applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
-        run_logged("kscreen-doctor output." + connector_name_for_status(active_status_path) + ".enable");
+        if (applied) {
+          const std::string connector = connector_name_for_status(active_status_path);
+          if (!connector_has_crtc(active_card, connector)) {
+            force_crtc_assignment("/dev/dri/" + active_card, connector);
+          }
+          run_logged("kscreen-doctor output." + connector + ".enable");
+        }
       }
     }
 
@@ -1648,24 +1848,32 @@ namespace display_device::vdd_utils {
     }
 
     // NVIDIA does not emit a hotplug for a status-forced connector, so the
-    // compositor sees the output but leaves it disabled. Ask it to enable
-    // the display and wait until it hands out a CRTC - otherwise the encoder
-    // probe races the compositor and loses.
-    bool crtc_assigned = false;
-    for (int attempt = 0; attempt < 8; ++attempt) {
-      run_logged("kscreen-doctor output." + connector + ".enable");
-      if (connector_has_crtc(card, connector)) {
+    // compositor sees the output but leaves it disabled with no CRTC. Assign
+    // the CRTC ourselves at the DRM level (compositor-agnostic); the KDE
+    // helper is only a fallback. Once the CRTC is up, enable the output so
+    // the compositor starts painting it.
+    bool crtc_assigned = connector_has_crtc(card, connector);
+    for (int attempt = 0; attempt < 4 && !crtc_assigned; ++attempt) {
+      if (force_crtc_assignment("/dev/dri/" + card, connector)) {
         crtc_assigned = true;
         break;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+      run_logged("kscreen-doctor output." + connector + ".enable");
+      crtc_assigned = connector_has_crtc(card, connector);
+      if (!crtc_assigned) {
+        std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+      }
     }
 
     if (!crtc_assigned) {
       BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
     }
+    else {
+      run_logged("kscreen-doctor output." + connector + ".enable");
+    }
 
     active = true;
+    active_card = card;
     active_connector = connector;
     active_status_path = status_path;
     active_edid_path = edid_path;
