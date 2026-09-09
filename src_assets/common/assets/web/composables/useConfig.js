@@ -43,6 +43,8 @@ const DEFAULT_TABS = [
       always_send_scancodes: 'enabled',
       key_rightalt_to_key_win: 'disabled',
       mouse: 'enabled',
+      usb_forwarding_enabled: 'disabled',
+      usb_forwarding_port: 47996,
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
       native_touchpad_optimization: 'enabled',

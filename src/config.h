@@ -189,6 +189,8 @@ namespace config {
     std::string file_state;
     std::string file_mappings;
     std::uint16_t file_mapping_port;
+    bool usb_forwarding_enabled;
+    std::uint16_t usb_forwarding_port;
 
     std::string external_ip;
     std::vector<std::string> resolutions;
