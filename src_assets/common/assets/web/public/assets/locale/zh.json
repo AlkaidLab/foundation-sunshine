@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "对比度（-100 到 100）",
     "rtx_hdr_desc": "在编码前将此应用的 SDR 画面转换为 HDR。客户端需开启 HDR，并在 GUI 的“HDR 增强”面板中启用 NVIDIA RTX HDR。",
-    "rtx_hdr_inherit": "继承（关闭）",
+    "rtx_hdr_inherit": "默认（关闭）",
     "rtx_hdr_middle_gray": "中灰亮度（10 到 100 尼特）",
     "rtx_hdr_mode": "模式",
     "rtx_hdr_off": "强制关闭",

@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "Contraste (-100 a 100)",
     "rtx_hdr_desc": "Converte as imagens SDR deste aplicativo para HDR antes da codificação. O cliente deve solicitar HDR e o NVIDIA RTX HDR deve estar ativado no painel de aprimoramento HDR da interface.",
-    "rtx_hdr_inherit": "Herdar (desativado)",
+    "rtx_hdr_inherit": "Padrão (desativado)",
     "rtx_hdr_middle_gray": "Cinza médio (10 a 100 nits)",
     "rtx_hdr_mode": "Modo",
     "rtx_hdr_off": "Forçar desativado",

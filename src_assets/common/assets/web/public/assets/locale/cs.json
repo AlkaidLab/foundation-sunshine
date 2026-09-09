@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "Kontrast (-100 až 100)",
     "rtx_hdr_desc": "Převede snímky SDR této aplikace na HDR před kódováním. Klient musí požadovat HDR a NVIDIA RTX HDR musí být zapnutý na panelu vylepšení HDR v grafickém rozhraní.",
-    "rtx_hdr_inherit": "Zdědit (vypnuto)",
+    "rtx_hdr_inherit": "Výchozí (vypnuto)",
     "rtx_hdr_middle_gray": "Střední šedá (10 až 100 nitů)",
     "rtx_hdr_mode": "Režim",
     "rtx_hdr_off": "Vynutit vypnutí",

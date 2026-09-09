@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "대비(-100~100)",
     "rtx_hdr_desc": "인코딩 전에 이 앱의 SDR 화면을 HDR로 변환합니다. 클라이언트에서 HDR을 켜고 GUI의 HDR 향상 패널에서 NVIDIA RTX HDR을 활성화해야 합니다.",
-    "rtx_hdr_inherit": "상속(끔)",
+    "rtx_hdr_inherit": "기본값(꺼짐)",
     "rtx_hdr_middle_gray": "중간 회색(10~100니트)",
     "rtx_hdr_mode": "모드",
     "rtx_hdr_off": "강제로 끄기",

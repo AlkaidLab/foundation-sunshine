@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "Kontrast (-100 till 100)",
     "rtx_hdr_desc": "Konverterar appens SDR-bilder till HDR före kodning. Klienten måste begära HDR och NVIDIA RTX HDR måste vara aktiverat i gränssnittets panel för HDR-förbättring.",
-    "rtx_hdr_inherit": "Ärv (av)",
+    "rtx_hdr_inherit": "Standard (av)",
     "rtx_hdr_middle_gray": "Mellangrå (10 till 100 nits)",
     "rtx_hdr_mode": "Läge",
     "rtx_hdr_off": "Tvinga av",

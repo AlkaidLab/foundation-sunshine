@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "Contrast (-100 to 100)",
     "rtx_hdr_desc": "Convert this application's captured SDR frames to HDR before encoding. The client must request HDR, and NVIDIA RTX HDR must be enabled in the GUI's HDR Enhancement panel.",
-    "rtx_hdr_inherit": "Inherit (off)",
+    "rtx_hdr_inherit": "Default (off)",
     "rtx_hdr_middle_gray": "Middle gray (10 to 100 nits)",
     "rtx_hdr_mode": "Mode",
     "rtx_hdr_off": "Force off",

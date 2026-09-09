@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "Kontrast (-100 ile 100)",
     "rtx_hdr_desc": "Bu uygulamanın SDR görüntülerini kodlamadan önce HDR’ye dönüştürür. İstemci HDR istemeli ve arayüzün HDR geliştirme panelinde NVIDIA RTX HDR etkin olmalıdır.",
-    "rtx_hdr_inherit": "Devral (kapalı)",
+    "rtx_hdr_inherit": "Varsayılan (kapalı)",
     "rtx_hdr_middle_gray": "Orta gri (10 ile 100 nit)",
     "rtx_hdr_mode": "Mod",
     "rtx_hdr_off": "Kapalıya zorla",

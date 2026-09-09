@@ -145,7 +145,7 @@
     "rtx_hdr": "RTX HDR",
     "rtx_hdr_contrast": "コントラスト（-100～100）",
     "rtx_hdr_desc": "エンコード前に、このアプリの SDR 映像を HDR に変換します。クライアントで HDR を有効にし、GUI の HDR 拡張パネルで NVIDIA RTX HDR を有効にしてください。",
-    "rtx_hdr_inherit": "継承（オフ）",
+    "rtx_hdr_inherit": "デフォルト（オフ）",
     "rtx_hdr_middle_gray": "中間グレー（10～100 nit）",
     "rtx_hdr_mode": "モード",
     "rtx_hdr_off": "強制オフ",
