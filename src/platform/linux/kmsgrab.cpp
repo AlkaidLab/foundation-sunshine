@@ -12,6 +12,8 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <thread>
 
@@ -151,6 +153,9 @@ namespace platf {
       // Connector attributes
       std::uint32_t type;
       std::uint32_t index;
+
+      // Connector-style name, e.g. "DP-1"
+      std::string name;
 
       // Monitor index in the global list
       std::uint32_t monitor_index;
@@ -576,6 +581,7 @@ namespace platf {
           monitor_t {
             connector.type,
             connector.index,
+            std::string { connector_type_prefix(connector.type) } + '-' + std::to_string(connector.index),
           });
       }
 
@@ -634,9 +640,14 @@ namespace platf {
         int monitor_index = util::from_view(display_name);
         int monitor = 0;
 
-        // When a virtual display session is live, capture the plane backing
-        // the virtual connector instead of following the enumeration order.
+        // Displays are named after their DRM connector ("eDP-1", "DP-1", ...).
+        // When a virtual display session is live, the virtual connector takes
+        // priority; otherwise a non-numeric display_name selects the connector
+        // by name and a numeric one keeps the legacy enumeration index.
         const auto vdd_connector = display_device::vdd_utils::live_virtual_display_connector();
+        const bool name_is_index = !display_name.empty() && std::all_of(display_name.begin(), display_name.end(), ::isdigit);
+        const std::string target_connector = !vdd_connector.empty() ? vdd_connector :
+          (name_is_index ? std::string {} : display_name);
 
         fs::path card_dir { "/dev/dri"sv };
         for (auto &entry : fs::directory_iterator { card_dir }) {
@@ -661,12 +672,12 @@ namespace platf {
             }
           }
 
-          std::map<std::uint32_t, std::string> crtc_to_vdd_name;
-          if (!vdd_connector.empty()) {
+          std::map<std::uint32_t, std::string> crtc_to_connector_name;
+          {
             kms::conn_type_count_t conn_type_count;
             for (auto &conn : card.monitors(conn_type_count)) {
               if (conn.crtc_id) {
-                crtc_to_vdd_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
+                crtc_to_connector_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
               }
             }
           }
@@ -683,11 +694,9 @@ namespace platf {
             }
 
             bool selected;
-            if (!vdd_connector.empty()) {
-              // Virtual display session: ONLY the virtual connector
-              // qualifies, regardless of the configured output name/index.
-              auto pos = crtc_to_vdd_name.find(plane->crtc_id);
-              selected = pos != std::end(crtc_to_vdd_name) && pos->second == vdd_connector;
+            if (!target_connector.empty()) {
+              auto pos = crtc_to_connector_name.find(plane->crtc_id);
+              selected = pos != std::end(crtc_to_connector_name) && pos->second == target_connector;
             }
             else {
               selected = monitor == monitor_index;
@@ -1756,12 +1765,21 @@ namespace platf {
           it->second.monitor_index = count;
         }
 
+        // Name displays after their connector; the session layer and clients
+        // match on these names, and kmsgrab_t::init() resolves them back.
+        if (it != std::end(crtc_to_monitor) && !it->second.name.empty()) {
+          display_names.emplace_back(it->second.name);
+        }
+        else {
+          display_names.emplace_back(std::to_string(count));
+        }
+
         kms::env_width = std::max(kms::env_width, (int) (crtc->x + crtc->width));
         kms::env_height = std::max(kms::env_height, (int) (crtc->y + crtc->height));
 
         kms::print(plane.get(), fb.get(), crtc.get());
 
-        display_names.emplace_back(std::to_string(count++));
+        ++count;
       }
 
       cds.emplace_back(kms::card_descriptor_t {

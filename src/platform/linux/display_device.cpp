@@ -3,12 +3,47 @@
 #include "src/display_device/vdd_utils.h"
 #include "src/globals.h"
 
+#include <filesystem>
+#include <fstream>
+
 namespace display_device {
 
   device_info_map_t
   enum_available_devices() {
-    // Not implemented
-    return {};
+    // Enumerate live DRM connectors from sysfs. The session flow matches
+    // displays by connector name ("DP-1", "eDP-1", ...), and the headless /
+    // stale-VDD checks rely on physical connectors being visible here.
+    namespace fs = std::filesystem;
+
+    device_info_map_t devices;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator { "/sys/class/drm", ec }) {
+      const auto name = entry.path().filename().string();
+      if (name.rfind("card", 0) != 0) {
+        continue;
+      }
+      const auto card_end = name.find('-');
+      if (card_end == std::string::npos) {
+        continue;
+      }
+      const std::string connector = name.substr(card_end + 1);
+
+      std::ifstream status_file { entry.path() / "status" };
+      std::string status;
+      std::getline(status_file, status);
+      if (status != "connected") {
+        continue;
+      }
+
+      device_info_t info;
+      info.display_name = connector;
+      info.friendly_name = connector;
+      info.device_state = device_state_e::active;
+      info.hdr_state = hdr_state_e::unknown;
+      devices.emplace(connector, std::move(info));
+    }
+
+    return devices;
   }
 
   std::string

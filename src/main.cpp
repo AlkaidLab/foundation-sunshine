@@ -404,6 +404,9 @@ main(int argc, char *argv[]) {
     force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
     shutdown_event->raise(true);
+    // The main thread may be parked in the tray event loop; wake it so the
+    // graceful shutdown path can proceed before the forced watchdog fires.
+    system_tray::end_tray();
   });
 
   on_signal(SIGTERM, [&force_shutdown, shutdown_event]() {
@@ -417,6 +420,7 @@ main(int argc, char *argv[]) {
     force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
     shutdown_event->raise(true);
+    system_tray::end_tray();
   });
 
 #ifdef _WIN32

@@ -1189,6 +1189,7 @@ namespace display_device::vdd_utils {
     std::string active_status_path; // e.g. /sys/class/drm/card1-DP-1/status
     std::string active_edid_path;   // e.g. /sys/kernel/debug/dri/0000:01:00.0/DP-1/edid_override
     std::string active_edid_content;  // Last written EDID, for mode-switch dedup
+    std::vector<std::string> offlined_physical_status_paths;  // Physicals powered off by display_off prep
     unsigned int cached_width { 1920 };
     unsigned int cached_height { 1080 };
     unsigned int cached_refresh_hz { 60 };
@@ -1202,6 +1203,18 @@ namespace display_device::vdd_utils {
       out << content;
       out.flush();
       return static_cast<bool>(out);
+    }
+
+    /**
+     * @brief Power the physical connectors back on after an exclusive
+     *        (display_off) session. Safe to call multiple times.
+     */
+    void
+    restore_offlined_physicals() {
+      for (const auto &status_path : offlined_physical_status_paths) {
+        write_text_file(status_path, "on");
+      }
+      offlined_physical_status_paths.clear();
     }
 
     bool
@@ -1501,6 +1514,41 @@ namespace display_device::vdd_utils {
       return true;
     }
 
+    // Sweep virtual connectors left behind by crashed sessions or older
+    // runs: any forced-on connector still carrying our VHD-signature EDID
+    // is cleared so it does not accumulate and consume VRAM.
+    {
+      const std::uint8_t signature[] = { 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x56, 0x24 };
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        const std::string status_path = (entry.path() / "status").string();
+        if (!connector_status_is(status_path, "connected")) {
+          continue;
+        }
+        const std::string connector = name.substr(name.find('-') + 1);
+
+        const auto edid_path = edid_override_path(debugfs_dir_for_card(name.substr(0, name.find('-'))), connector);
+        if (edid_path.empty()) {
+          continue;
+        }
+        std::ifstream in { edid_path, std::ios::binary };
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (content.size() < sizeof(signature) || std::memcmp(content.data(), signature, sizeof(signature)) != 0) {
+          continue;
+        }
+        if (active && status_path == active_status_path) {
+          continue;
+        }
+
+        BOOST_LOG(warning) << "vdd: cleaning stale virtual display on "sv << name;
+        write_text_file(edid_path, "");
+        write_text_file(status_path, "off");
+      }
+    }
+
     const std::string card = pick_card();
     if (card.empty()) {
       BOOST_LOG(error) << "vdd: no DRM card found"sv;
@@ -1558,6 +1606,8 @@ namespace display_device::vdd_utils {
       BOOST_LOG(warning) << "vdd: connector "sv << active_connector << " did not turn off cleanly"sv;
     }
 
+    restore_offlined_physicals();
+
     BOOST_LOG(info) << "vdd: virtual display on "sv << active_connector << " destroyed"sv;
     active = false;
     active_connector.clear();
@@ -1575,6 +1625,7 @@ namespace display_device::vdd_utils {
     write_text_file(active_edid_path, "");
     write_text_file(active_status_path, "off");
     wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+    restore_offlined_physicals();
     active = false;
     active_connector.clear();
   }
@@ -1586,7 +1637,10 @@ namespace display_device::vdd_utils {
 
   bool
   toggle_display_power() {
-    return false;
+    if (is_display_on()) {
+      return destroy_vdd_monitor();
+    }
+    return create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {});
   }
 
   bool
@@ -1606,10 +1660,41 @@ namespace display_device::vdd_utils {
   }
 
   bool
-  apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e, const boost::optional<device_info_map_t> &) {
-    // Physical displays are left untouched on Linux.
+  apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e vdd_prep, const boost::optional<device_info_map_t> &) {
+    if (vdd_prep != parsed_config_t::vdd_prep_e::display_off) {
+      // Extend-style modes: the compositor already treats the live virtual
+      // output as an additional display, and DRM offers no primary-order
+      // control - nothing to do.
+      return true;
+    }
+
+    elevated_caps caps;
+    std::lock_guard lock { state_mutex };
+
+    // Exclusive mode: power off every connected physical connector for the
+    // duration of the session. destroy_vdd_monitor() restores them.
+    offlined_physical_status_paths.clear();
+    for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+      const auto name = entry.path().filename().string();
+      if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+        continue;
+      }
+      const auto status_path = (entry.path() / "status").string();
+      std::ifstream status_file { status_path };
+      std::string value;
+      std::getline(status_file, value);
+      if (value != "connected" || status_path == active_status_path) {
+        continue;
+      }
+
+      if (write_text_file(status_path, "off")) {
+        offlined_physical_status_paths.emplace_back(status_path);
+        BOOST_LOG(info) << "vdd: display_off prep powered off "sv << name;
+      }
+    }
     return true;
   }
+
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &) {

@@ -177,6 +177,9 @@ namespace system_tray {
   }
 
   // 更新所有菜单项的文本
+  static void
+  update_vdd_menu_text();
+
   void
   update_menu_texts() {
     init_localized_strings();
@@ -187,6 +190,7 @@ namespace system_tray {
     // [11] Quit.
     tray_menus[2].text = s_vdd_base_display.c_str();
     update_vdd_submenu_text();
+    update_vdd_menu_text();
     tray_menus[3].text = s_advanced_settings.c_str();
     update_advanced_settings_menu_text();
     tray_menus[5].text = s_language.c_str();
@@ -199,17 +203,21 @@ namespace system_tray {
     tray_menus[10].text = s_restart.c_str();
     tray_menus[11].text = s_quit.c_str();
   #else
-    // Linux layout omits the two Windows-only menus: [3] Language,
-    // [5] Star Project, [6] Visit Project, [8] Restart, [9] Quit.
-    tray_menus[3].text = s_language.c_str();
-    tray_menus[3].submenu[0].text = s_chinese.c_str();
-    tray_menus[3].submenu[1].text = s_english.c_str();
-    tray_menus[3].submenu[2].text = s_japanese.c_str();
-    tray_menus[5].text = s_star_project.c_str();
-    tray_menus[6].text = s_visit_project.c_str();
+    // Linux layout: [2] Foundation Display, [4] Language, [6] Star Project,
+    // [7] Visit Project, [9] Restart, [10] Quit. The Advanced Settings
+    // submenu is Windows-only and is not part of the array.
+    tray_menus[2].text = s_vdd_base_display.c_str();
+    update_vdd_submenu_text();
+    update_vdd_menu_text();
+    tray_menus[4].text = s_language.c_str();
+    tray_menus[4].submenu[0].text = s_chinese.c_str();
+    tray_menus[4].submenu[1].text = s_english.c_str();
+    tray_menus[4].submenu[2].text = s_japanese.c_str();
+    tray_menus[6].text = s_star_project.c_str();
+    tray_menus[7].text = s_visit_project.c_str();
     tray_visit_project_submenu_text();
-    tray_menus[8].text = s_restart.c_str();
-    tray_menus[9].text = s_quit.c_str();
+    tray_menus[9].text = s_restart.c_str();
+    tray_menus[10].text = s_quit.c_str();
   #endif
   }
 
@@ -1105,8 +1113,10 @@ namespace system_tray {
   struct tray_menu tray_menus[] = {
     { .text = "Open Sunshine", .cb = tray_open_ui_cb },
     { .text = "-" },
-  #ifdef _WIN32
+    // Foundation Display is available on Linux too: the vdd_utils backend
+    // (native EDID override) implements the same operations.
     { .text = "Foundation Display", .submenu = vdd_submenu },
+  #ifdef _WIN32
     { .text = "Advanced Settings", .submenu = advanced_settings_submenu },
   #endif
     { .text = "-" },
