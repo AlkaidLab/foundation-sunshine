@@ -66,18 +66,31 @@ if (EXISTS "${_rtx_build}/configure-inputs")
     file(READ "${_rtx_build}/configure-inputs" _rtx_previous)
 endif ()
 if (NOT _rtx_inputs STREQUAL _rtx_previous OR NOT EXISTS "${_rtx_build}/CMakeCache.txt")
-    execute_process(COMMAND "${CMAKE_COMMAND}" -S "${_rtx_source}" -B "${_rtx_build}"
-        -G "Visual Studio 17 2022" -A x64
-        "-DNVIDIA_RTX_VIDEO_SDK_DIR=${_rtx_sdk_root}"
-        "-DRTX_VIDEO_NGX_APPLICATION_ID=${_rtx_app_id}"
-        "-DSUNSHINE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-        RESULT_VARIABLE _rtx_configured OUTPUT_VARIABLE _rtx_stdout ERROR_VARIABLE _rtx_stderr TIMEOUT 120)
+    set(_rtx_configured "1")
+    set(_rtx_configure_log "")
+    foreach (_rtx_generator IN ITEMS "Visual Studio 18 2026" "Visual Studio 17 2022")
+        execute_process(COMMAND "${CMAKE_COMMAND}" -S "${_rtx_source}" -B "${_rtx_build}"
+            -G "${_rtx_generator}" -A x64
+            "-DNVIDIA_RTX_VIDEO_SDK_DIR=${_rtx_sdk_root}"
+            "-DRTX_VIDEO_NGX_APPLICATION_ID=${_rtx_app_id}"
+            "-DSUNSHINE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            RESULT_VARIABLE _rtx_configured OUTPUT_VARIABLE _rtx_stdout ERROR_VARIABLE _rtx_stderr TIMEOUT 120)
+        string(APPEND _rtx_configure_log
+            "generator=${_rtx_generator}\nresult=${_rtx_configured}\nstdout:\n${_rtx_stdout}\nstderr:\n${_rtx_stderr}\n")
+        if (_rtx_configured STREQUAL "0")
+            break()
+        endif ()
+
+        # A failed configure may leave a generator-specific cache behind. Remove
+        # only the generated metadata before trying the older supported toolset.
+        file(REMOVE_RECURSE "${_rtx_build}/CMakeCache.txt" "${_rtx_build}/CMakeFiles")
+    endforeach ()
     if (NOT _rtx_configured STREQUAL "0")
         file(MAKE_DIRECTORY "${_rtx_build}")
-        file(WRITE "${_rtx_build}/configure.log"
-            "result=${_rtx_configured}\nstdout:\n${_rtx_stdout}\nstderr:\n${_rtx_stderr}")
+        file(WRITE "${_rtx_build}/configure.log" "${_rtx_configure_log}")
         if (_rtx_mode STREQUAL "ON")
-            message(FATAL_ERROR "RTX HDR adapter configuration failed; see ${_rtx_build}/configure.log")
+            message(FATAL_ERROR
+                "RTX HDR adapter configuration failed:\n${_rtx_configure_log}")
         endif ()
         message(STATUS "RTX HDR disabled: adapter configuration failed; see ${_rtx_build}/configure.log")
         return()
