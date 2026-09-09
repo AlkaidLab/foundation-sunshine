@@ -16,6 +16,7 @@
 #include <thread>
 
 #include "src/config.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/round_robin.h"
@@ -220,6 +221,29 @@ namespace platf {
 
       BOOST_LOG(error) << "Unknown Monitor connector type ["sv << string << "]: Please report this to the GitHub issue tracker"sv;
       return DRM_MODE_CONNECTOR_Unknown;
+    }
+
+    /**
+     * @brief Inverse of from_view(): the sysfs/wayland-style name prefix for
+     *        a DRM connector type, e.g. DisplayPort -> "DP".
+     */
+    std::string_view
+    connector_type_prefix(std::uint32_t type) {
+#define _PREFIX(x, y) \
+  if (type == DRM_MODE_CONNECTOR_##y) return x##sv
+
+      _PREFIX("DP", DisplayPort);
+      _PREFIX("HDMI-A", HDMIA);
+      _PREFIX("HDMI-B", HDMIB);
+      _PREFIX("eDP", eDP);
+      _PREFIX("VGA", VGA);
+      _PREFIX("DVI-I", DVII);
+      _PREFIX("DVI-D", DVID);
+      _PREFIX("DVI-A", DVIA);
+      _PREFIX("VIRTUAL", VIRTUAL);
+#undef _PREFIX
+
+      return "Unknown"sv;
     }
 
     class plane_it_t: public round_robin_util::it_wrap_t<plane_t::element_type, plane_it_t> {
@@ -610,6 +634,10 @@ namespace platf {
         int monitor_index = util::from_view(display_name);
         int monitor = 0;
 
+        // When a virtual display session is live, capture the plane backing
+        // the virtual connector instead of following the enumeration order.
+        const auto vdd_connector = display_device::vdd_utils::live_virtual_display_connector();
+
         fs::path card_dir { "/dev/dri"sv };
         for (auto &entry : fs::directory_iterator { card_dir }) {
           auto file = entry.path().filename();
@@ -633,6 +661,16 @@ namespace platf {
             }
           }
 
+          std::map<std::uint32_t, std::string> crtc_to_vdd_name;
+          if (!vdd_connector.empty()) {
+            kms::conn_type_count_t conn_type_count;
+            for (auto &conn : card.monitors(conn_type_count)) {
+              if (conn.crtc_id) {
+                crtc_to_vdd_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
+              }
+            }
+          }
+
           auto end = std::end(card);
           for (auto plane = std::begin(card); plane != end; ++plane) {
             // Skip unused planes
@@ -644,7 +682,14 @@ namespace platf {
               continue;
             }
 
-            if (monitor != monitor_index) {
+            bool selected = monitor == monitor_index;
+            if (!selected && !vdd_connector.empty()) {
+              // Match the plane's CRTC against the live virtual connector.
+              auto pos = crtc_to_vdd_name.find(plane->crtc_id);
+              selected = pos != std::end(crtc_to_vdd_name) && pos->second == vdd_connector;
+            }
+
+            if (!selected) {
               ++monitor;
               continue;
             }

@@ -1,7 +1,9 @@
 do_setcap() {
   local target
   target="$(readlink -f /opt/sunshine/bin/sunshine)"
-  setcap cap_sys_admin+p "$target"
+  # cap_sys_admin: KMS capture. cap_dac_read_search/cap_dac_override:
+  # connector EDID overrides and status writes under /sys/kernel/debug.
+  setcap cap_sys_admin,cap_dac_read_search,cap_dac_override+p "$target"
 }
 
 do_udev_reload() {

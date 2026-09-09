@@ -1112,152 +1112,288 @@ namespace display_device {
 
 #else  // !_WIN32
 
-// Linux virtual display backend.
+// Linux virtual display backend (native).
 //
-// ZakoVDD is a Windows driver. On Linux the virtual display comes from the
-// external sunshineVD daemon (packaged as sunshine-virt-display): it
-// overrides a real connector's EDID and toggles its status, so the
-// compositor gains an extra output that KMS capture can grab. This backend
-// maps the vdd_utils surface onto the daemon's Unix socket protocol
-// (comma-separated argv, no reply):
-//   create_vdd_monitor   -> --connect,--width,W,--height,H,--refresh-rate,F
-//   destroy_vdd_monitor  -> --disconnect
-// Liveness is observed through the daemon state file plus connector status
-// in sysfs, which session staging consumes as the virtual device.
+// ZakoVDD is a Windows driver; on Linux the same session semantics are
+// implemented directly: generate an EDID for the requested mode and override
+// a spare connector with it via debugfs, then force the connector on so the
+// compositor gains an extra output that KMS capture can target. Physical
+// displays are never touched. Writing debugfs/sysfs requires elevated file
+// capabilities on the sunshine binary (see the packaging install hook).
 
 #include "vdd_utils.h"
 
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <sstream>
 
 #include "src/logging.h"
+#include "src/platform/linux/vdd_edid.h"
 
 namespace display_device::vdd_utils {
 
+  using namespace std::literals;
+
   namespace {
-    constexpr auto k_daemon_socket = "/tmp/sunshineVD.sock";
-    constexpr auto k_daemon_state_file = "/opt/sunshine-vd/virt_display.state";
+    namespace fs = std::filesystem;
+
+    constexpr auto k_debugfs_dri = "/sys/kernel/debug/dri";
 
     std::mutex state_mutex;
 
-    // Session mode requested by the client. Display request parsing knows the
-    // exact mode before staging, while create_vdd_monitor may also fire for
-    // recovery paths; the cache holds the latest request and a safe default
-    // until then.
+    // Virtual display session state, guarded by state_mutex.
+    bool active { false };
+    std::string active_connector;   // e.g. "DP-1"
+    std::string active_status_path; // e.g. /sys/class/drm/card1-DP-1/status
+    std::string active_edid_path;   // e.g. /sys/kernel/debug/dri/0000:01:00.0/DP-1/edid_override
+    std::string active_edid_content;  // Last written EDID, for mode-switch dedup
     unsigned int cached_width { 1920 };
     unsigned int cached_height { 1080 };
     unsigned int cached_refresh_hz { 60 };
 
-    std::string
-    connect_payload(unsigned int width, unsigned int height, unsigned int refresh_hz) {
-      return "--connect,--width," + std::to_string(width) + ",--height," + std::to_string(height) +
-             ",--refresh-rate," + std::to_string(refresh_hz);
+    bool
+    write_text_file(const std::string &path, const std::string &content) {
+      std::ofstream out { path, std::ios::binary | std::ios::trunc };
+      if (!out) {
+        return false;
+      }
+      out << content;
+      out.flush();
+      return static_cast<bool>(out);
+    }
+
+    bool
+    connector_status_is(const std::string &status_path, const std::string &value) {
+      std::ifstream in { status_path };
+      std::string current;
+      std::getline(in, current);
+      return current == value;
     }
 
     /**
-     * @brief Deliver one command to the daemon over its Unix socket.
-     * @details The daemon closes the connection once the command has been
-     *          handled; draining the zero-length reply doubles as a barrier.
+     * @brief Pick the card to host the virtual display: the one hosting the
+     *        most connected outputs, falling back to the first card.
+     * @return The /sys/class/drm card prefix, e.g. "card1".
+     */
+    std::string
+    pick_card() {
+      std::string best_card;
+      std::size_t best_connected = 0;
+
+      for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+          continue;
+        }
+
+        std::size_t connected = 0;
+        for (const auto &conn : fs::directory_iterator { "/sys/class/drm/" + name }) {
+          auto conn_name = conn.path().filename().string();
+          if (conn_name.rfind(name + "-", 0) != 0) {
+            continue;
+          }
+          std::ifstream status { conn.path() / "status" };
+          std::string value;
+          std::getline(status, value);
+          if (value == "connected") {
+            ++connected;
+          }
+        }
+
+        if (connected > best_connected) {
+          best_connected = connected;
+          best_card = name;
+        }
+      }
+
+      if (best_card.empty() && fs::exists("/sys/class/drm/card0")) {
+        best_card = "card0";
+      }
+      return best_card;
+    }
+
+    /**
+     * @brief Locate the debugfs directory backing a card: the PCI name under
+     *        /sys/kernel/debug/dri that hosts per-connector overrides.
+     */
+    std::string
+    debugfs_dir_for_card(const std::string &card) {
+      std::error_code ec;
+      auto device = fs::canonical("/sys/class/drm/" + card + "/device", ec);
+      if (ec) {
+        return {};
+      }
+
+      const std::string pci_name = device.filename().string();
+      if (fs::exists(fs::path { k_debugfs_dri } / pci_name)) {
+        return std::string { k_debugfs_dri } + "/" + pci_name;
+      }
+
+      // Some kernels number the debugfs dri entries instead; the connector
+      // scan in edid_override_path() covers that layout.
+      return {};
+    }
+
+    std::string
+    edid_override_path(const std::string &debugfs_dir, const std::string &connector) {
+      fs::path direct = fs::path { debugfs_dir } / connector / "edid_override";
+      if (fs::exists(direct)) {
+        return direct.string();
+      }
+
+      // Fallback: scan every debugfs dri entry for a matching connector dir.
+      std::error_code ec;
+      for (const auto &entry : fs::directory_iterator { k_debugfs_dri, ec }) {
+        fs::path candidate = entry.path() / connector / "edid_override";
+        if (fs::exists(candidate)) {
+          return candidate.string();
+        }
+      }
+      return {};
+    }
+
+    /**
+     * @brief First disconnected hotpluggable connector on the card, DP first.
+     */
+    std::string
+    pick_connector(const std::string &card) {
+      static constexpr std::string_view preferred_types[] = { "DP", "HDMI-A", "HDMI", "eDP", "VGA" };
+
+      std::string fallback;
+      for (const auto &type : preferred_types) {
+        for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
+          const auto name = entry.path().filename().string();
+          if (name.rfind(card + "-" + std::string(type) + "-", 0) != 0) {
+            continue;
+          }
+
+          std::ifstream status { entry.path() / "status" };
+          std::string value;
+          std::getline(status, value);
+          if (value != "disconnected") {
+            continue;
+          }
+          const std::string connector = name.substr(card.size() + 1);
+          if (type == "DP") {
+            return connector;
+          }
+          if (fallback.empty()) {
+            fallback = connector;
+          }
+        }
+      }
+      return fallback;
+    }
+
+    bool
+    wait_for_status(const std::string &status_path, const std::string &value, int attempts, std::chrono::milliseconds delay) {
+      for (int attempt = 0; attempt < attempts; ++attempt) {
+        if (connector_status_is(status_path, value)) {
+          return true;
+        }
+        std::this_thread::sleep_for(delay);
+      }
+      return connector_status_is(status_path, value);
+    }
+
+    /**
+     * @brief Apply an EDID to the active connector and force it on. When the
+     *        connector is already live with a different EDID, cycle it off
+     *        first so the kernel re-reads the override.
      */
     bool
-    send_daemon_command(const std::string &payload) {
-      auto fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-      if (fd < 0) {
+    apply_edid_and_enable(const std::string &edid_path, const std::string &status_path, const std::vector<std::uint8_t> &edid) {
+      std::string current;
+      {
+        std::ifstream in { edid_path, std::ios::binary };
+        if (in) {
+          std::ostringstream buffer;
+          buffer << in.rdbuf();
+          current = buffer.str();
+        }
+      }
+
+      const std::string new_content(reinterpret_cast<const char *>(edid.data()), edid.size());
+      const bool needs_cycle = connector_status_is(status_path, "connected") && current != new_content;
+
+      if (needs_cycle) {
+        write_text_file(status_path, "off");
+        wait_for_status(status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+      }
+
+      {
+        std::ofstream out { edid_path, std::ios::binary | std::ios::trunc };
+        if (!out) {
+          BOOST_LOG(error) << "vdd: cannot open EDID override ["sv << edid_path << "]: "sv << strerror(errno);
+          return false;
+        }
+        out.write(reinterpret_cast<const char *>(edid.data()), static_cast<std::streamsize>(edid.size()));
+        out.flush();
+        if (!out) {
+          BOOST_LOG(error) << "vdd: cannot write EDID override ["sv << edid_path << "]"sv;
+          return false;
+        }
+      }
+
+      if (!write_text_file(status_path, "on")) {
+        BOOST_LOG(error) << "vdd: cannot force connector on ["sv << status_path << "]: "sv << strerror(errno);
         return false;
       }
 
-      sockaddr_un addr {};
-      addr.sun_family = AF_UNIX;
-      std::strncpy(addr.sun_path, k_daemon_socket, sizeof(addr.sun_path) - 1);
-
-      timeval timeout { 3, 0 };
-      ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-      ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-      bool sent = ::connect(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) == 0;
-      if (sent) {
-        sent = ::write(fd, payload.data(), payload.size()) == static_cast<ssize_t>(payload.size());
-        char drain[64] {};
-        sent = sent && ::read(fd, drain, sizeof(drain)) >= 0;
-      }
-      ::close(fd);
-      return sent;
-    }
-
-    bool
-    connector_connected(const std::string &connector) {
-      std::ifstream status { "/sys/class/drm/" + connector + "/status" };
-      std::string value;
-      status >> value;
-      return value == "connected";
-    }
-
-    unsigned int
-    round_refresh_hz(const refresh_rate_t &refresh_rate) {
-      return std::max(1u, (refresh_rate.numerator + refresh_rate.denominator / 2) / refresh_rate.denominator);
+      return wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
     }
   }  // namespace
 
   std::string
   live_virtual_display_connector() {
-    std::ifstream in { k_daemon_state_file };
-    if (!in) {
-      return {};
+    std::lock_guard lock { state_mutex };
+    if (active && !active_connector.empty() && connector_status_is(active_status_path, "connected")) {
+      return active_connector;
     }
-
-    std::string card;
-    std::string port;
-    std::getline(in, card);
-    std::getline(in, port);
-    if (card.empty() || port.empty()) {
-      return {};
-    }
-
-    const std::string connector { card + "-" + port };
-    return connector_connected(connector) ? connector : std::string {};
+    return {};
   }
 
   const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
   bool
   is_mode_advertised(const std::string &device_id, const display_mode_t &) {
-    // The daemon's generated EDID advertises exactly the requested mode once
-    // the connector is up; there is no per-mode list to consult.
+    // The generated EDID advertises exactly the requested mode once the
+    // connector is live; there is no per-mode list to consult.
     return !device_id.empty() && !live_virtual_display_connector().empty();
   }
 
   bool
   wait_for_mode_publication(const std::string &, const display_mode_t &requested_mode) {
-    const auto refresh_hz = round_refresh_hz(requested_mode.refresh_rate);
+    const auto refresh_hz = std::max(1u, (requested_mode.refresh_rate.numerator + requested_mode.refresh_rate.denominator / 2) / requested_mode.refresh_rate.denominator);
+
+    bool applied = true;
     {
       std::lock_guard lock { state_mutex };
       cached_width = requested_mode.resolution.width;
       cached_height = requested_mode.resolution.height;
       cached_refresh_hz = refresh_hz;
+
+      if (active) {
+        // Live mode switch: cycle the connector with an EDID for the new mode.
+        const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, true, "Foundation VDD");
+        applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
+      }
     }
 
-    if (!send_daemon_command(connect_payload(requested_mode.resolution.width, requested_mode.resolution.height, refresh_hz))) {
-      return false;
-    }
-    return retry_with_backoff(
-      []() { return !live_virtual_display_connector().empty(); },
-      { .max_attempts = 5,
-        .initial_delay = 300ms,
-        .max_delay = 1000ms,
-        .context = "Waiting for the virtual display output" });
+    return applied && wait_for_status(active_status_path, "connected", 10, std::chrono::milliseconds { 300 });
   }
 
   vdd_status_t
   get_vdd_status() {
     vdd_status_t status;
-    // The helper counts as "installed" while its control socket exists.
-    status.installed = ::access(k_daemon_socket, F_OK) == 0;
+    // The native path is "installed" when the kernel exposes connector EDID
+    // overrides at all.
+    status.installed = fs::exists(k_debugfs_dri);
     status.running = status.installed;
     status.control_available = status.installed;
     status.monitor_active = !live_virtual_display_connector().empty();
@@ -1283,26 +1419,24 @@ namespace display_device::vdd_utils {
       return set_vdd_result::invalid_config;
     }
 
-    const auto refresh_hz = round_refresh_hz(*config.refresh_rate);
-    {
-      std::lock_guard lock { state_mutex };
-      cached_width = config.resolution->width;
-      cached_height = config.resolution->height;
-      cached_refresh_hz = refresh_hz;
+    const auto refresh_hz = std::max(1u, (config.refresh_rate->numerator + config.refresh_rate->denominator / 2) / config.refresh_rate->denominator);
+    std::lock_guard lock { state_mutex };
+    cached_width = config.resolution->width;
+    cached_height = config.resolution->height;
+    cached_refresh_hz = refresh_hz;
+
+    if (!active) {
+      // The EDID is generated from the cached mode when the display is created.
+      return set_vdd_result::ok;
     }
 
-    // A live virtual display switches modes by re-connecting with the new
-    // payload; the daemon replaces the EDID and the compositor follows.
-    if (!send_daemon_command(connect_payload(config.resolution->width, config.resolution->height, refresh_hz))) {
-      return set_vdd_result::interface_missing;
-    }
-    return set_vdd_result::ok;
+    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, true, "Foundation VDD");
+    return apply_edid_and_enable(active_edid_path, active_status_path, edid) ? set_vdd_result::ok : set_vdd_result::failed;
   }
 
   std::string
   generate_client_guid(const std::string &) {
-    // Per-client GUIDs are a ZakoVDD driver concept; the socket daemon hosts
-    // a single virtual display.
+    // Per-client GUIDs are a ZakoVDD driver concept.
     return {};
   }
 
@@ -1313,23 +1447,51 @@ namespace display_device::vdd_utils {
 
   bool
   create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &, const physical_size_t &) {
-    unsigned int width;
-    unsigned int height;
-    unsigned int refresh_hz;
-    {
-      std::lock_guard lock { state_mutex };
-      width = cached_width;
-      height = cached_height;
-      refresh_hz = cached_refresh_hz;
+    BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
+                    << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
+
+    std::lock_guard lock { state_mutex };
+
+    if (active && connector_status_is(active_status_path, "connected")) {
+      BOOST_LOG(debug) << "vdd: virtual display already active on "sv << active_connector;
+      return true;
     }
 
-    BOOST_LOG(info) << "Requesting virtual display " << width << "x" << height << "@" << refresh_hz
-                    << "Hz from the virtual display helper"
-                    << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
+    const std::string card = pick_card();
+    if (card.empty()) {
+      BOOST_LOG(error) << "vdd: no DRM card found"sv;
+      return false;
+    }
 
-    // The generated EDID carries a fixed HDR block, so per-session brightness
-    // and physical-size tuning have no socket equivalent yet.
-    return send_daemon_command(connect_payload(width, height, refresh_hz));
+    const std::string debugfs_dir = debugfs_dir_for_card(card);
+    const std::string connector = pick_connector(card);
+    if (connector.empty()) {
+      BOOST_LOG(error) << "vdd: no spare disconnected connector on "sv << card << " for the virtual display"sv;
+      return false;
+    }
+
+    auto edid_path = edid_override_path(debugfs_dir, connector);
+    if (edid_path.empty()) {
+      BOOST_LOG(error) << "vdd: no EDID override node for "sv << connector << " (debugfs mounted?)"sv;
+      return false;
+    }
+
+    const std::string status_path = "/sys/class/drm/" + card + "-" + connector + "/status";
+    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, true, "Foundation VDD");
+
+    if (!apply_edid_and_enable(edid_path, status_path, edid)) {
+      BOOST_LOG(error) << "vdd: failed to bring up "sv << card << '-' << connector;
+      return false;
+    }
+
+    active = true;
+    active_connector = connector;
+    active_status_path = status_path;
+    active_edid_path = edid_path;
+    active_edid_content.assign(reinterpret_cast<const char *>(edid.data()), edid.size());
+
+    BOOST_LOG(info) << "vdd: virtual display is live on "sv << card << '-' << connector;
+    return true;
   }
 
   bool
@@ -1339,17 +1501,41 @@ namespace display_device::vdd_utils {
 
   bool
   destroy_vdd_monitor() {
-    return send_daemon_command("--disconnect");
+    std::lock_guard lock { state_mutex };
+    if (!active) {
+      return true;
+    }
+
+    write_text_file(active_edid_path, "");
+    write_text_file(active_status_path, "off");
+    const bool gone = wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+    if (!gone) {
+      BOOST_LOG(warning) << "vdd: connector "sv << active_connector << " did not turn off cleanly"sv;
+    }
+
+    BOOST_LOG(info) << "vdd: virtual display on "sv << active_connector << " destroyed"sv;
+    active = false;
+    active_connector.clear();
+    return gone;
   }
 
   void
   destroy_vdd_monitor_nolog() {
-    send_daemon_command("--disconnect");
+    std::lock_guard lock { state_mutex };
+    if (!active) {
+      return;
+    }
+
+    write_text_file(active_edid_path, "");
+    write_text_file(active_status_path, "off");
+    wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+    active = false;
+    active_connector.clear();
   }
 
   void
   disable_enable_vdd() {
-    // Driver-level disable/enable has no socket equivalent.
+    // Driver-level disable/enable has no native equivalent.
   }
 
   bool
@@ -1375,6 +1561,7 @@ namespace display_device::vdd_utils {
 
   bool
   apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e, const boost::optional<device_info_map_t> &) {
+    // Physical displays are left untouched on Linux.
     return true;
   }
 
