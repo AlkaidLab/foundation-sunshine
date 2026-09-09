@@ -682,11 +682,15 @@ namespace platf {
               continue;
             }
 
-            bool selected = monitor == monitor_index;
-            if (!selected && !vdd_connector.empty()) {
-              // Match the plane's CRTC against the live virtual connector.
+            bool selected;
+            if (!vdd_connector.empty()) {
+              // Virtual display session: ONLY the virtual connector
+              // qualifies, regardless of the configured output name/index.
               auto pos = crtc_to_vdd_name.find(plane->crtc_id);
               selected = pos != std::end(crtc_to_vdd_name) && pos->second == vdd_connector;
+            }
+            else {
+              selected = monitor == monitor_index;
             }
 
             if (!selected) {
