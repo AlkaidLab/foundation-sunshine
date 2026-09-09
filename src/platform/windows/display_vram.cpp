@@ -23,6 +23,7 @@ extern "C" {
 }
 
 #include "display.h"
+#include "src/hdr_enhanced/config.h"
 #include "display_cursor.h"
 #include "display_vram_internal.h"
 #include "misc.h"
@@ -390,6 +391,8 @@ namespace platf::dxgi {
 
   public:
     ~d3d_base_encode_device() {
+      // 后端析构仍会调用 DLL；此时会话的版本引用和 D3D 设备必须继续存活。
+      pre_encode_filter.reset();
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
     }
 
@@ -500,7 +503,7 @@ namespace platf::dxgi {
         auto conversion_input_semantic = img.frame_desc;
 
         if (pre_encode_filter) {
-          auto source_contract = display->capture_contract;
+          auto source_contract = filter_capture_contract;
           source_contract.require_private_handoff = false;
           if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {
             release_capture_mutex();
@@ -1211,7 +1214,8 @@ namespace platf::dxgi {
       std::shared_ptr<platf::display_t> display,
       adapter_t::pointer adapter_p,
       pix_fmt_e pix_fmt,
-      ::video::hdr_metadata::formats_t supported_formats) {
+      ::video::hdr_metadata::formats_t supported_formats,
+      const ::video::config_t &config) {
       encoder_metadata_formats = supported_formats;
       switch (pix_fmt) {
         case pix_fmt_e::nv12:
@@ -1297,14 +1301,14 @@ namespace platf::dxgi {
       }
       display = nullptr;
 
-      if (this->display->pre_encode_filter != pre_encode_filter_e::none) {
+      if (config.pre_encode_filter != pre_encode_filter_e::none) {
         const bool hdr_output =
           format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
         if (!hdr_output) {
           BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
           return -1;
         }
-        const auto &contract = this->display->capture_contract;
+        const auto &contract = config.effective_frame_pipeline_policy().capture;
         if (contract.required_domain != frame_domain_e::sdr_rec709 ||
             contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
             !contract.require_private_handoff) {
@@ -1312,15 +1316,18 @@ namespace platf::dxgi {
           return -1;
         }
         pre_encode_filter = make_pre_encode_filter(
-          this->display->pre_encode_filter,
+          config.pre_encode_filter,
           device.get(),
           device_ctx.get(),
-          this->display->pre_encode_filter_backend_path,
-          this->display->pre_encode_filter_config);
+          config.hdr_backend ? config.hdr_backend->path : std::filesystem::path {},
+          config.pre_encode_filter_config,
+          config.hdr_backend ? config.hdr_backend->id : std::string_view {});
         if (!pre_encode_filter) {
           BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
           return -1;
         }
+        hdr_backend = config.hdr_backend;
+        filter_capture_contract = contract;
       }
 
       blend_disable = make_blend(device.get(), false, false);
@@ -1738,7 +1745,7 @@ namespace platf::dxgi {
         return;
       }
 
-      const std::string backend { pre_encode_filter->backend_name() };
+      const std::string backend { hdr_backend ? hdr_backend->id : pre_encode_filter->backend_name() };
       const std::string state = !frame_failure.empty() || pre_encode_filter->degraded()
                                   ? "degraded"
                                   : processed_frame ? "active" : "warming_up";
@@ -1825,6 +1832,8 @@ namespace platf::dxgi {
     // amongst multiple hwdevice_t objects (and therefore multiple ID3D11Devices).
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
+    boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
     texture2d_t filter_handoff_texture;
     shader_res_t filter_handoff_srv;
@@ -2933,11 +2942,11 @@ namespace platf::dxgi {
   class d3d_avcodec_encode_device_t: public avcodec_encode_device_t {
   public:
     int
-    init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
+    init(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt, const ::video::config_t &config) {
       // Encoders reached through avcodec never emit HDR Vivid: FFmpeg has no
       // encoder-side serializer for AV_FRAME_DATA_DYNAMIC_HDR_VIVID, so the side
       // data is attached and dropped. HDR10+ does get written out, so it stays.
-      int result = base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = false });
+      int result = base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = false }, config);
       data = base.device.get();
       return result;
     }
@@ -3038,9 +3047,9 @@ namespace platf::dxgi {
   class d3d_nvenc_encode_device_t: public nvenc_encode_device_t {
   public:
     bool
-    init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
+    init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt, const ::video::config_t &config) {
       // The native NVENC path hand-writes both T.35 payloads (nvenc_base.cpp).
-      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true })) return false;
+      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true }, config)) return false;
 
       auto factory = nvenc::nvenc_dynamic_factory::get();
       if (!factory) return false;
@@ -3104,12 +3113,12 @@ namespace platf::dxgi {
   class d3d_amf_encode_device_t: public amf_encode_device_t {
   public:
     bool
-    init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt) {
+    init_device(std::shared_ptr<platf::display_t> display, adapter_t::pointer adapter_p, pix_fmt_e pix_fmt, const ::video::config_t &config) {
       // The AMF path splices HDR10+ / HDR Vivid into the bitstream itself (#939), so
       // the luminance analyzer that feeds it has to be switched on here. This was off
       // while AMF could only carry static metadata, and running the analyzer then
       // would have burned GPU time for nothing.
-      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true })) return false;
+      if (base.init(display, adapter_p, pix_fmt, { .hdr10plus = true, .vivid = true }, config)) return false;
 
       amf_d3d = ::amf::create_amf_d3d11(base.device.get());
       if (!amf_d3d) return false;
@@ -4307,8 +4316,13 @@ namespace platf::dxgi {
 
   std::unique_ptr<avcodec_encode_device_t>
   display_vram_t::make_avcodec_encode_device(pix_fmt_e pix_fmt) {
+    return make_avcodec_encode_device(pix_fmt, {});
+  }
+
+  std::unique_ptr<avcodec_encode_device_t>
+  display_vram_t::make_avcodec_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
     auto device = std::make_unique<d3d_avcodec_encode_device_t>();
-    if (device->init(shared_from_this(), adapter.get(), pix_fmt) != 0) {
+    if (device->init(shared_from_this(), adapter.get(), pix_fmt, config) != 0) {
       return nullptr;
     }
     return device;
@@ -4316,6 +4330,11 @@ namespace platf::dxgi {
 
   std::unique_ptr<nvenc_encode_device_t>
   display_vram_t::make_nvenc_encode_device(pix_fmt_e pix_fmt) {
+    return make_nvenc_encode_device(pix_fmt, {});
+  }
+
+  std::unique_ptr<nvenc_encode_device_t>
+  display_vram_t::make_nvenc_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
     // For hybrid graphics laptops, NVENC encoder requires NVIDIA GPU,
     // but display capture may use integrated graphics (built-in screen).
     // We need to find the NVIDIA adapter for encoding, not the capture adapter.
@@ -4362,7 +4381,7 @@ namespace platf::dxgi {
     }
     
     auto device = std::make_unique<d3d_nvenc_encode_device_t>();
-    if (!device->init_device(shared_from_this(), nvenc_adapter_p, pix_fmt)) {
+    if (!device->init_device(shared_from_this(), nvenc_adapter_p, pix_fmt, config)) {
       return nullptr;
     }
     
@@ -4371,6 +4390,11 @@ namespace platf::dxgi {
 
   std::unique_ptr<amf_encode_device_t>
   display_vram_t::make_amf_encode_device(pix_fmt_e pix_fmt) {
+    return make_amf_encode_device(pix_fmt, {});
+  }
+
+  std::unique_ptr<amf_encode_device_t>
+  display_vram_t::make_amf_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
     // Find AMD adapter for AMF encoding
     adapter_t::pointer amf_adapter_p = nullptr;
     adapter_t amf_adapter;
@@ -4407,7 +4431,7 @@ namespace platf::dxgi {
     }
 
     auto device = std::make_unique<d3d_amf_encode_device_t>();
-    if (!device->init_device(shared_from_this(), amf_adapter_p, pix_fmt)) {
+    if (!device->init_device(shared_from_this(), amf_adapter_p, pix_fmt, config)) {
       return nullptr;
     }
 

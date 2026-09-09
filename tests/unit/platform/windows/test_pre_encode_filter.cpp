@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <d3d11.h>
@@ -21,6 +23,15 @@ namespace {
 
   template <class T>
   using com_ptr_t = std::unique_ptr<T, com_release_t<T>>;
+
+  struct temporary_directory_t {
+    std::filesystem::path path;
+
+    ~temporary_directory_t() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+  };
 
   struct d3d_fixture_t {
     com_ptr_t<ID3D11Device> device;
@@ -185,17 +196,17 @@ namespace {
     d3d.context->Unmap(staging.get(), 0);
   }
 
-  TEST(PreEncodeFilter, ExternalBackendRunsThroughVersionedDllAbi) {
+  TEST(PreEncodeFilter, ExternalBackendRunsThroughAdapterLoader) {
     d3d_fixture_t d3d;
     ASSERT_TRUE(d3d.init());
     auto filter = platf::dxgi::make_pre_encode_filter(
       platf::pre_encode_filter_e::external_sdr_to_hdr,
       d3d.device.get(),
       d3d.context.get(),
-      std::filesystem::path(FAKE_TRUEHDR_BACKEND_PATH));
+      std::filesystem::path(FAKE_TRUEHDR_ADAPTER_PATH), {}, "alkaidlab.nvidia_rtx_video");
     ASSERT_TRUE(filter);
     EXPECT_FALSE(filter->degraded());
-    EXPECT_EQ(filter->backend_name(), "external_sdr_to_hdr");
+    EXPECT_EQ(filter->backend_name(), "alkaidlab.nvidia_rtx_video");
 
     auto input = make_white_input(d3d.device.get(), 4, 4);
     ASSERT_TRUE(input.texture);
@@ -221,6 +232,36 @@ namespace {
     EXPECT_FALSE(result.frame.semantic.borrowed);
   }
 
+  TEST(PreEncodeFilter, MissingNvidiaRuntimeUsesGpuFallback) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+    temporary_directory_t test_directory {
+      std::filesystem::temp_directory_path() /
+        ("sunshine-missing-rtx-runtime-" + std::to_string(GetCurrentProcessId())),
+    };
+    std::error_code filesystem_error;
+    std::filesystem::remove_all(test_directory.path, filesystem_error);
+    filesystem_error.clear();
+    ASSERT_TRUE(std::filesystem::create_directories(test_directory.path, filesystem_error)) << filesystem_error.message();
+    const auto adapter_path = test_directory.path / "foundation_rtx_video_adapter.dll";
+    filesystem_error.clear();
+    ASSERT_TRUE(std::filesystem::copy_file(
+      std::filesystem::path(FAKE_TRUEHDR_ADAPTER_PATH),
+      adapter_path,
+      std::filesystem::copy_options::overwrite_existing,
+      filesystem_error)) << filesystem_error.message();
+    ASSERT_FALSE(std::filesystem::exists(test_directory.path / "nvngx_truehdr.dll"));
+    auto filter = platf::dxgi::make_pre_encode_filter(
+      platf::pre_encode_filter_e::external_sdr_to_hdr,
+      d3d.device.get(),
+      d3d.context.get(),
+      adapter_path, {}, "alkaidlab.nvidia_rtx_video");
+    ASSERT_TRUE(filter);
+    EXPECT_TRUE(filter->degraded());
+    EXPECT_EQ(filter->backend_name(), "gpu_sdr_in_hdr_fallback");
+    EXPECT_EQ(filter->failure_reason(), "runtime_open_failed");
+  }
+
   TEST(PreEncodeFilter, ExternalBackendFailureDegradesToGpuFallback) {
     d3d_fixture_t d3d;
     ASSERT_TRUE(d3d.init());
@@ -228,7 +269,7 @@ namespace {
       platf::pre_encode_filter_e::external_sdr_to_hdr,
       d3d.device.get(),
       d3d.context.get(),
-      std::filesystem::path(FAKE_TRUEHDR_FAILING_BACKEND_PATH));
+      std::filesystem::path(FAKE_TRUEHDR_FAILING_ADAPTER_PATH), {}, "alkaidlab.nvidia_rtx_video");
     ASSERT_TRUE(filter);
 
     auto input = make_white_input(d3d.device.get(), 4, 4);

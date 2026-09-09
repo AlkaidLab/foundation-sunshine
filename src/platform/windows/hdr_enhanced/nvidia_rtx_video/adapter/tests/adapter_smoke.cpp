@@ -1,30 +1,49 @@
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <d3d11.h>
 #include <dxgi.h>
 #include <windows.h>
 
-#include "src/platform/windows/rtx_hdr/backend_abi.h"
+#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h"
 
 namespace {
   template <class T>
-  void release(T *&value) {
+  void
+  release(T *&value) {
     if (value) {
       value->Release();
       value = nullptr;
     }
   }
 
-  int fail(const std::string &message) {
+  int
+  fail(const std::string &message) {
     std::cerr << "FAIL: " << message << '\n';
     return 1;
   }
 
-  std::string adapter_name(ID3D11Device *device) {
+  std::filesystem::path
+  executable_directory() {
+    std::vector<wchar_t> path(512);
+    for (;;) {
+      const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+      if (length == 0) return {};
+      if (static_cast<std::size_t>(length) < path.size()) {
+        return std::filesystem::path(std::wstring_view(path.data(), length)).parent_path();
+      }
+      if (path.size() >= 32768) return {};
+      path.resize(std::min<std::size_t>(path.size() * 2, 32768));
+    }
+  }
+
+  std::string
+  adapter_name(ID3D11Device *device) {
     IDXGIDevice *dxgi_device = nullptr;
     IDXGIAdapter *adapter = nullptr;
     DXGI_ADAPTER_DESC desc {};
@@ -40,31 +59,34 @@ namespace {
     release(dxgi_device);
     return result;
   }
-}
 
-int wmain(int argc, wchar_t **argv) {
-  const std::filesystem::path backend_path = argc > 1
-    ? std::filesystem::absolute(argv[1])
-    : std::filesystem::absolute(L"foundation_truehdr_backend.dll");
-  if (!std::filesystem::is_regular_file(backend_path)) {
-    return fail("backend DLL does not exist: " + backend_path.string());
-  }
+  struct module_guard_t {
+    HMODULE value = nullptr;
+    ~module_guard_t() {
+      if (value) FreeLibrary(value);
+    }
+  };
+}  // namespace
 
-  const auto module = LoadLibraryExW(
-    backend_path.c_str(),
-    nullptr,
-    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-  if (!module) {
-    return fail("LoadLibraryExW failed with error " + std::to_string(GetLastError()));
+int
+wmain(int argc, wchar_t **argv) {
+  const auto runtime_directory = argc > 1 ? std::filesystem::absolute(argv[1]) : executable_directory();
+  if (!std::filesystem::is_regular_file(runtime_directory / L"nvngx_truehdr.dll")) {
+    return fail("NVIDIA runtime is missing from the selected directory");
   }
-  const auto get_api = reinterpret_cast<foundation_truehdr_get_api_fn>(
-    GetProcAddress(module, FOUNDATION_TRUEHDR_GET_API_EXPORT));
-  const auto *api = get_api ? get_api(FOUNDATION_TRUEHDR_ABI_VERSION) : nullptr;
-  if (!api || api->abi_version != FOUNDATION_TRUEHDR_ABI_VERSION ||
-      api->struct_size < sizeof(foundation_truehdr_api_t)) {
-    FreeLibrary(module);
-    return fail("backend ABI negotiation failed");
+  const auto adapter_path = executable_directory() / L"foundation_rtx_video_adapter.dll";
+  module_guard_t module {
+    LoadLibraryExW(adapter_path.c_str(), nullptr,
+      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)
+  };
+  if (!module.value) {
+    return fail("adapter DLL could not be loaded (Win32 error " + std::to_string(GetLastError()) + ")");
   }
+  const auto get_api = reinterpret_cast<foundation_truehdr_adapter_get_api_fn>(
+    GetProcAddress(module.value, FOUNDATION_TRUEHDR_ADAPTER_GET_API_EXPORT));
+  if (!get_api) return fail("adapter API export is missing");
+  const auto *api = get_api(FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION);
+  if (!api) return fail("adapter ABI negotiation failed");
 
   ID3D11Device *device = nullptr;
   ID3D11DeviceContext *context = nullptr;
@@ -84,9 +106,7 @@ int wmain(int argc, wchar_t **argv) {
     &device,
     &selected_level,
     &context);
-  if (FAILED(device_hr)) {
-    FreeLibrary(module);
-    return fail("D3D11CreateDevice failed with HRESULT " + std::to_string(device_hr));
+  if (FAILED(device_hr)) {    return fail("D3D11CreateDevice failed with HRESULT " + std::to_string(device_hr));
   }
 
   constexpr UINT width = 1920;
@@ -119,9 +139,7 @@ int wmain(int argc, wchar_t **argv) {
   auto hr = device->CreateTexture2D(&input_desc, &initial_data, &input);
   if (FAILED(hr)) {
     release(context);
-    release(device);
-    FreeLibrary(module);
-    return fail("creating the SDR input texture failed");
+    release(device);    return fail("creating the SDR input texture failed");
   }
 
   D3D11_TEXTURE2D_DESC output_desc = input_desc;
@@ -149,15 +167,14 @@ int wmain(int argc, wchar_t **argv) {
     release(output);
     release(input);
     release(context);
-    release(device);
-    FreeLibrary(module);
-    return fail("creating the scRGB output textures failed");
+    release(device);    return fail("creating the scRGB output textures failed");
   }
   constexpr float clear_color[4] { 0.0f, 0.0f, 0.0f, 0.0f };
   context->ClearUnorderedAccessViewFloat(output_uav, clear_color);
   release(output_uav);
 
   foundation_truehdr_config_t config {};
+  config.runtime_directory = runtime_directory.c_str();
   config.struct_size = sizeof(config);
   config.width = width;
   config.height = height;
@@ -214,10 +231,8 @@ int wmain(int argc, wchar_t **argv) {
   release(context);
   const auto gpu = adapter_name(device);
   release(device);
-  FreeLibrary(module);
-
   if (status != FOUNDATION_TRUEHDR_STATUS_OK) {
-    return fail("TrueHDR backend returned status " + std::to_string(status) + " on " + gpu);
+    return fail("TrueHDR adapter returned status " + std::to_string(status) + " on " + gpu);
   }
   if (FAILED(hr) || !meaningful_output) {
     return fail("TrueHDR completed but produced no readable HDR pixels on " + gpu);

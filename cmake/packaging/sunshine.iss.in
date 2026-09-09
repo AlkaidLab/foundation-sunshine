@@ -185,6 +185,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Type: filesandordirs; Name: "{app}\assets\web"
 ; The native GUI plugin replaces the legacy standalone diagnostic executable.
 Type: files; Name: "{app}\tools\stylus-input-probe.exe"
+; Earlier RTX adapter builds placed the complete VC runtime beside Sunshine.
+Type: files; Name: "{app}\msvcp140*.dll"
+Type: files; Name: "{app}\vcruntime140*.dll"
+Type: files; Name: "{app}\concrt140.dll"
 
 [Files]
 ; Main application
@@ -198,6 +202,12 @@ Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignor
 
 ; Pinned manifest for the separately distributed first-party DualSense runtime.
 Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+
+; Optional HDR adapter shipped with Sunshine. List first-party files explicitly
+; so a stale local staging directory cannot add a vendor runtime to the package.
+Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\foundation_rtx_video_adapter.dll"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
+Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\README.md"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
+Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\RTX_VIDEO_THIRD_PARTY_NOTICES.md"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 
 ; Portable scripts (will be deleted during install, but needed for layout)
 Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application

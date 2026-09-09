@@ -15,6 +15,15 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      rtx_hdr:
+        description: 'RTX HDR support for development branches (official master always requires ON)'
+        type: choice
+        default: AUTO
+        options:
+          - 'AUTO'
+          - 'ON'
+          - 'OFF'
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
@@ -77,6 +86,8 @@ jobs:
   build_win:
     name: Windows
     needs: setup_release
+    permissions:
+      contents: read
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -119,6 +130,7 @@ jobs:
             "git"
             "mingw-w64-ucrt-x86_64-ccache"
             "mingw-w64-ucrt-x86_64-cmake"
+            "mingw-w64-ucrt-x86_64-lld"
             "mingw-w64-ucrt-x86_64-ninja"
             "mingw-w64-ucrt-x86_64-cppwinrt"
             "mingw-w64-ucrt-x86_64-curl-winssl"
@@ -192,9 +204,15 @@ jobs:
           restore-keys: |
             ccache-windows-
 
-      - name: Build Windows
+      - name: Configure Windows
+        id: configure_windows
         shell: msys2 {0}
         env:
+          # Same-repository PRs are trusted; fork PRs never receive the private credential.
+          RTX_VIDEO_SDK_URL: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && vars.RTX_VIDEO_SDK_URL || '' }}
+          RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
+          RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
+          SUNSHINE_RTX_HDR: ${{ !(github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && 'OFF' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master') && 'ON' || inputs.rtx_hdr || 'AUTO' }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
@@ -218,6 +236,7 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
@@ -228,10 +247,20 @@ jobs:
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
-          ninja -C build
+          if grep -q '^SUNSHINE_RTX_HDR_AVAILABLE:INTERNAL=TRUE' build/CMakeCache.txt; then
+            echo 'rtx_hdr=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'rtx_hdr=false' >> "$GITHUB_OUTPUT"
+          fi
 
-          # Printed so a run that suddenly gets slow can be diagnosed as a cache
-          # miss rather than guessed at.
+      - name: Build Windows
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+        run: |
+          ninja -C build
           ccache --show-stats
 
       - name: Run native tests
@@ -262,26 +291,51 @@ jobs:
 
       - name: Package Windows
         shell: msys2 {0}
+        env:
+          RTX_VIDEO_ADAPTER_BUILT: ${{ steps.configure_windows.outputs.rtx_hdr }}
+          RTX_VIDEO_ADAPTER_REQUIRED: ${{ github.repository == 'AlkaidLab/foundation-sunshine' && github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
         run: |
           set -o pipefail
           mkdir -p artifacts
           cd build
+
+          if [[ "$RTX_VIDEO_ADAPTER_REQUIRED" == "true" && "$RTX_VIDEO_ADAPTER_BUILT" != "true" ]]; then
+            echo "Protected master build did not produce the required NVIDIA RTX Video adapter"
+            exit 1
+          fi
 
           # Package the Inno Setup installer and portable ZIP.
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
           test -f ./inno_staging/tools/ds5-sidecar-package.json
           test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll
+            test ! -e ./inno_staging/msvcp140.dll
+            test ! -e ./inno_staging/vcruntime140.dll
+          fi
+          test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll
+          test ! -e ./inno_staging/assets/hdr-components.json
           
           # Run the Inno Setup compiler and prove that it consumed only the
           # lightweight package manifest, not the self-contained runtime.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
           grep -F "ds5-sidecar-package.json" inno-build.log
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "foundation_rtx_video_adapter.dll" inno-build.log
+          fi
           
           # Generate the portable ZIP.
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
+          fi
+          if grep -E 'nvngx_truehdr\.dll|hdr-components\.json' portable-files.txt; then
+            echo "Side-loaded HDR files and mutable trust metadata must not be included in the main portable package"
+            exit 1
+          fi
           if grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe" portable-files.txt; then
             echo "The optional DualSense runtime leaked into the main portable package"
             exit 1

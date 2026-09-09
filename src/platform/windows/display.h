@@ -211,9 +211,6 @@ namespace platf::dxgi {
 
     DXGI_FORMAT capture_format;
     capture_contract_t capture_contract;
-    pre_encode_filter_e pre_encode_filter = pre_encode_filter_e::none;
-    pre_encode_filter_config_t pre_encode_filter_config;
-    std::filesystem::path pre_encode_filter_backend_path;
 
     captured_frame_desc_t
     describe_captured_frame(DXGI_FORMAT format, bool borrowed) const;
@@ -387,6 +384,15 @@ namespace platf::dxgi {
 
     std::unique_ptr<amf_encode_device_t>
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
+
+    std::unique_ptr<avcodec_encode_device_t>
+    make_avcodec_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
+
+    std::unique_ptr<nvenc_encode_device_t>
+    make_nvenc_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
+
+    std::unique_ptr<amf_encode_device_t>
+    make_amf_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
 
     /**
      * @brief Current captured SDR white level in nits. Prefer producer metadata

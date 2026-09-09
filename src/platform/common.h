@@ -708,6 +708,22 @@ namespace platf {
       return nullptr;
     }
 
+    // 编码器使用会话自身的配置，不能借用共享采集设备的首个会话配置。
+    virtual std::unique_ptr<avcodec_encode_device_t>
+    make_avcodec_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
+      return make_avcodec_encode_device(pix_fmt);
+    }
+
+    virtual std::unique_ptr<nvenc_encode_device_t>
+    make_nvenc_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
+      return make_nvenc_encode_device(pix_fmt);
+    }
+
+    virtual std::unique_ptr<amf_encode_device_t>
+    make_amf_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
+      return make_amf_encode_device(pix_fmt);
+    }
+
     virtual bool
     is_hdr() {
       return false;

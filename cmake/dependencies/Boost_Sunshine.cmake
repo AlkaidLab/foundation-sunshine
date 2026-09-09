@@ -57,6 +57,13 @@ if(NOT Boost_FOUND)
 
     set(BOOST_ENABLE_CMAKE ON)
 
+    if(WIN32)
+        # The Windows backend already provides the locale services Sunshine uses.
+        # Enabling a host MSYS2 ICU installation makes the portable executable
+        # depend on versioned development-environment DLLs that are not shipped.
+        set(BOOST_LOCALE_ENABLE_ICU OFF CACHE BOOL "Build Boost.Locale without ICU on Windows" FORCE)
+    endif()
+
     # Limit boost to the required libraries only
     set(BOOST_INCLUDE_LIBRARIES ${BOOST_COMPONENTS})
     set(BOOST_URL "https://github.com/boostorg/boost/releases/download/boost-${BOOST_RELEASE_VERSION}/boost-${BOOST_RELEASE_VERSION}-cmake.tar.xz")  # cmake-lint: disable=C0301
