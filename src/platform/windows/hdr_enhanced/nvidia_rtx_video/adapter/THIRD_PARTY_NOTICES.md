@@ -1,20 +1,20 @@
 # Third-party build and distribution notice
 
-The source code in this directory implements the Foundation Sunshine bridge for
+The source code in this directory implements the Foundation Sunshine adapter for
 the NVIDIA RTX Video SDK. NVIDIA SDK headers, import libraries, sample source,
 and `nvngx_truehdr.dll` are not part of this repository.
 
 Project-authored source in this directory is governed by the repository's
 GPL-3.0 license. That license does not grant rights to NVIDIA materials.
 
-Building this bridge requires a separately obtained NVIDIA RTX Video SDK and
+Building this adapter requires a separately obtained NVIDIA RTX Video SDK and
 acceptance of the terms supplied with that SDK. A resulting binary may include
 or link NVIDIA SDK object code. Do not publish or redistribute that binary
 unless the exact SDK version's distribution, attribution, end-user terms, and
 notification requirements have been reviewed and satisfied alongside
 Foundation Sunshine's GPL-3.0 obligations.
 
-An external DLL boundary is a compiler interoperability mechanism. It does not
+The internal C ABI is a compiler interoperability mechanism. Static linkage does not
 by itself establish license compatibility or permission to redistribute NVIDIA
 materials.
 

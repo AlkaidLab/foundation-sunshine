@@ -84,14 +84,14 @@ add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
 if (WIN32)
     set(PRE_ENCODE_FILTER_TEST_SOURCE
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
-    set(TRUEHDR_BRIDGE_LOADER_TEST_SOURCE
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_bridge_loader.cpp)
+    set(TRUEHDR_RUNTIME_LOADER_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_runtime_loader.cpp)
 
     add_executable(pre_encode_filter_unit_tests
             ${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_backend_factory.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/truehdr_filter.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/runtime_loader.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/pre_encode_filter_test_stubs.cpp
             ${PRE_ENCODE_FILTER_TEST_SOURCE})
     target_include_directories(pre_encode_filter_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -110,51 +110,51 @@ if (WIN32)
             LINK_SEARCH_START_STATIC 1)
     add_test(NAME pre_encode_filter_unit_tests COMMAND pre_encode_filter_unit_tests)
 
-    add_library(fake_truehdr_bridge SHARED
-            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_bridge.cpp)
-    target_include_directories(fake_truehdr_bridge PRIVATE "${CMAKE_SOURCE_DIR}")
-    set_target_properties(fake_truehdr_bridge PROPERTIES
+    add_library(fake_truehdr_runtime SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_runtime.cpp)
+    target_include_directories(fake_truehdr_runtime PRIVATE "${CMAKE_SOURCE_DIR}")
+    set_target_properties(fake_truehdr_runtime PROPERTIES
             CXX_STANDARD 23
             PREFIX "")
 
-    add_library(fake_truehdr_bad_bridge SHARED
-            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_bridge.cpp)
-    target_include_directories(fake_truehdr_bad_bridge PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_compile_definitions(fake_truehdr_bad_bridge PRIVATE FAKE_TRUEHDR_BAD_ABI)
-    set_target_properties(fake_truehdr_bad_bridge PROPERTIES
+    add_library(fake_truehdr_bad_runtime SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_runtime.cpp)
+    target_include_directories(fake_truehdr_bad_runtime PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_bad_runtime PRIVATE FAKE_TRUEHDR_BAD_ABI)
+    set_target_properties(fake_truehdr_bad_runtime PROPERTIES
             CXX_STANDARD 23
             PREFIX "")
 
-    add_library(fake_truehdr_failing_bridge SHARED
-            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_bridge.cpp)
-    target_include_directories(fake_truehdr_failing_bridge PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_compile_definitions(fake_truehdr_failing_bridge PRIVATE FAKE_TRUEHDR_PROCESS_FAILS)
-    set_target_properties(fake_truehdr_failing_bridge PROPERTIES
+    add_library(fake_truehdr_failing_runtime SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_runtime.cpp)
+    target_include_directories(fake_truehdr_failing_runtime PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_failing_runtime PRIVATE FAKE_TRUEHDR_PROCESS_FAILS)
+    set_target_properties(fake_truehdr_failing_runtime PROPERTIES
             CXX_STANDARD 23
             PREFIX "")
 
-    add_executable(truehdr_bridge_loader_unit_tests
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_loader.cpp
-            ${TRUEHDR_BRIDGE_LOADER_TEST_SOURCE})
-    target_include_directories(truehdr_bridge_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(truehdr_bridge_loader_unit_tests gtest_main)
-    target_compile_definitions(truehdr_bridge_loader_unit_tests PRIVATE
-            FAKE_TRUEHDR_BRIDGE_PATH="$<TARGET_FILE:fake_truehdr_bridge>"
-            FAKE_TRUEHDR_BAD_BRIDGE_PATH="$<TARGET_FILE:fake_truehdr_bad_bridge>")
-    target_compile_options(truehdr_bridge_loader_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-    set_target_properties(truehdr_bridge_loader_unit_tests PROPERTIES
+    add_executable(truehdr_runtime_loader_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/runtime_loader.cpp
+            ${TRUEHDR_RUNTIME_LOADER_TEST_SOURCE})
+    target_include_directories(truehdr_runtime_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(truehdr_runtime_loader_unit_tests gtest_main)
+    target_compile_definitions(truehdr_runtime_loader_unit_tests PRIVATE
+            FAKE_TRUEHDR_RUNTIME_PATH="$<TARGET_FILE:fake_truehdr_runtime>"
+            FAKE_TRUEHDR_BAD_RUNTIME_PATH="$<TARGET_FILE:fake_truehdr_bad_runtime>")
+    target_compile_options(truehdr_runtime_loader_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(truehdr_runtime_loader_unit_tests PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
-    add_dependencies(truehdr_bridge_loader_unit_tests
-            fake_truehdr_bridge
-            fake_truehdr_bad_bridge)
+    add_dependencies(truehdr_runtime_loader_unit_tests
+            fake_truehdr_runtime
+            fake_truehdr_bad_runtime)
     add_dependencies(pre_encode_filter_unit_tests
-            fake_truehdr_bridge
-            fake_truehdr_failing_bridge)
+            fake_truehdr_runtime
+            fake_truehdr_failing_runtime)
     target_compile_definitions(pre_encode_filter_unit_tests PRIVATE
-            FAKE_TRUEHDR_BRIDGE_PATH="$<TARGET_FILE:fake_truehdr_bridge>"
-            FAKE_TRUEHDR_FAILING_BRIDGE_PATH="$<TARGET_FILE:fake_truehdr_failing_bridge>")
-    add_test(NAME truehdr_bridge_loader_unit_tests COMMAND truehdr_bridge_loader_unit_tests)
+            FAKE_TRUEHDR_RUNTIME_PATH="$<TARGET_FILE:fake_truehdr_runtime>"
+            FAKE_TRUEHDR_FAILING_RUNTIME_PATH="$<TARGET_FILE:fake_truehdr_failing_runtime>")
+    add_test(NAME truehdr_runtime_loader_unit_tests COMMAND truehdr_runtime_loader_unit_tests)
 
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
@@ -309,7 +309,7 @@ if (WIN32)
     # targets above; do not compile a second copy into the aggregate suite.
     list(REMOVE_ITEM TEST_SOURCES
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
-            ${TRUEHDR_BRIDGE_LOADER_TEST_SOURCE})
+            ${TRUEHDR_RUNTIME_LOADER_TEST_SOURCE})
 endif ()
 
 set(SUNSHINE_SOURCES
@@ -322,6 +322,11 @@ list(REMOVE_ITEM SUNSHINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
 add_executable(${PROJECT_NAME}
         ${TEST_SOURCES}
         ${SUNSHINE_SOURCES})
+if (TARGET sunshine_rtx_video_adapter)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${RTX_VIDEO_REDIST_FILES} "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMAND_EXPAND_LISTS VERBATIM)
+endif ()
 
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(${PROJECT_NAME} ${dep})  # compile these before sunshine

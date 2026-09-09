@@ -23,7 +23,7 @@ namespace {
       root = std::filesystem::temp_directory_path() /
              ("sunshine-hdr-" + boost::uuids::to_string(boost::uuids::random_generator()()));
       std::filesystem::create_directories(root);
-      store = std::make_unique<hdr_enhanced::manager_t>(root / "hdr.json", root / "tools", root / "trusted.json");
+      store = std::make_unique<hdr_enhanced::manager_t>(root / "hdr.json", root / "tools", catalog());
       ASSERT_TRUE(store->initialize());
     }
     void
@@ -35,18 +35,20 @@ namespace {
     std::filesystem::path root;
     std::unique_ptr<hdr_enhanced::manager_t> store;
 
+    nlohmann::json
+    catalog() {
+      return { { "schema_version", 1 }, { "components", {
+        { "alkaidlab.nvidia_rtx_video", { { "fixture", {
+          { "nvngx_truehdr.dll", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+        } } } }
+      } } };
+    }
+
     hdr_enhanced::settings_t
     trusted_fixture() {
       const auto directory = root / "tools" / "hdr_enhanced" / "nvidia_rtx_video";
       std::filesystem::create_directories(directory);
-      std::ofstream(directory / "foundation_rtx_video_bridge.dll") << "abc";
       std::ofstream(directory / "nvngx_truehdr.dll") << "abc";
-      const std::string hash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-      nlohmann::json catalog { { "schema_version", 1 }, { "components", nlohmann::json::object() } };
-      catalog["components"]["alkaidlab.nvidia_rtx_video"]["fixture"] = {
-        { "foundation_rtx_video_bridge.dll", hash }, { "nvngx_truehdr.dll", hash }
-      };
-      std::ofstream(root / "trusted.json") << catalog.dump();
       return { "alkaidlab.nvidia_rtx_video", { { "alkaidlab.nvidia_rtx_video", "fixture" } } };
     }
   };
@@ -61,6 +63,16 @@ TEST_F(HdrEnhancedConfigTest, MissingDefaultDoesNotCreateAFileOrLoadAComponent) 
   EXPECT_EQ(saved.status, 200);
   EXPECT_FALSE(saved.changed);
   EXPECT_FALSE(std::filesystem::exists(root / "hdr.json"));
+}
+
+TEST_F(HdrEnhancedConfigTest, RuntimeDoesNotRequireAnExternalAdapterOrTrustFile) {
+  const auto settings = trusted_fixture();
+  std::ofstream(root / "trusted.json") << "{forged catalog";
+  ASSERT_EQ(store->update(settings, store->query().etag).status, 200);
+  auto use = store->acquire_selected();
+  ASSERT_TRUE(use);
+  EXPECT_EQ(use->path.filename(), "nvngx_truehdr.dll");
+  EXPECT_EQ(store->status()["trusted_components"], catalog());
 }
 
 TEST_F(HdrEnhancedConfigTest, CorruptConfigurationCannotBeOverwrittenBySave) {
@@ -103,7 +115,7 @@ TEST_F(HdrEnhancedConfigTest, MaintenanceSurvivesRestartAndRequiresItsOwnerToken
   EXPECT_TRUE(store->status()["maintenance"]);
   EXPECT_EQ(store->finish_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, "wrong").status, 409);
   store.reset();
-  store = std::make_unique<hdr_enhanced::manager_t>(root / "hdr.json", root / "tools", root / "trusted.json");
+  store = std::make_unique<hdr_enhanced::manager_t>(root / "hdr.json", root / "tools", catalog());
   ASSERT_TRUE(store->initialize());
   EXPECT_TRUE(store->status()["maintenance"]);
   EXPECT_EQ(store->finish_maintenance(hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);

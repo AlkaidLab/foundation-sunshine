@@ -25,6 +25,9 @@
 
 #include "src/config.h"
 #include "src/file_handler.h"
+#ifdef SUNSHINE_RTX_VIDEO_STATIC
+  #include "rtx_video_runtime.h"
+#endif
 
 #ifdef _WIN32
   #include <windows.h>
@@ -195,7 +198,7 @@ namespace hdr_enhanced {
   struct manager_t::impl_t {
     fs::path file;
     fs::path root;
-    fs::path trust;
+    json trust;
     fs::path maintenance_file;
     // 事务锁可覆盖文件 I/O；串流只使用独立的短使用权锁。
     boost::mutex transaction;
@@ -231,19 +234,19 @@ namespace hdr_enhanced {
         if (value.selected_backend.empty()) return {};
         const auto &version = value.versions.at(value.selected_backend);
         const auto directory = root / "hdr_enhanced" / "nvidia_rtx_video";
-        const auto catalog = read_document(trust);
+        const auto &catalog = trust;
         if (!catalog.is_object() || catalog.value("schema_version", 0) != 1) throw component_untrusted_t {};
         const auto &trusted = catalog.at("components").at(value.selected_backend).at(version);
         const auto canonical_directory = fs::canonical(directory);
         if (canonical_directory != fs::canonical(root) / "hdr_enhanced" / "nvidia_rtx_video") throw component_untrusted_t {};
-        for (const auto name : { "foundation_rtx_video_bridge.dll", "nvngx_truehdr.dll" }) {
+        for (const auto name : { "nvngx_truehdr.dll" }) {
           const auto path = fs::canonical(directory / name);
           if (path.parent_path() != canonical_directory || !fs::is_regular_file(path)) throw component_untrusted_t {};
           std::ifstream stream(path, std::ios::binary);
-          const auto maximum = std::string_view(name) == "foundation_rtx_video_bridge.dll" ? 64ULL * 1024 * 1024 : 512ULL * 1024 * 1024;
+          constexpr auto maximum = 512ULL * 1024 * 1024;
           if (!stream || digest(stream, maximum) != trusted.at(name).get<std::string>()) throw component_untrusted_t {};
         }
-        return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / "foundation_rtx_video_bridge.dll" });
+        return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / "nvngx_truehdr.dll" });
       }
       catch (const std::bad_alloc &) {
         throw;
@@ -269,7 +272,7 @@ namespace hdr_enhanced {
     }
   };
 
-  manager_t::manager_t(fs::path file, fs::path root, fs::path trust):
+  manager_t::manager_t(fs::path file, fs::path root, json trust):
       impl_(std::make_unique<impl_t>()) {
     impl_->file = std::move(file);
     impl_->root = std::move(root);
@@ -387,7 +390,8 @@ namespace hdr_enhanced {
     const auto settings = impl_->active.load();
     return { { "in_use", impl_->used_locked() }, { "maintenance", !impl_->maintenance.empty() || impl_->maintenance_unknown },
       { "selected_backend", settings ? settings->selected_backend : std::string {} },
-      { "selection_verified", static_cast<bool>(impl_->validated.load()) } };
+      { "selection_verified", static_cast<bool>(impl_->validated.load()) },
+      { "trusted_components", impl_->trust } };
   }
 
   std::filesystem::path
@@ -494,7 +498,16 @@ namespace hdr_enhanced {
   manager() {
     static manager_t instance(file_handler::path_from_utf8(config::sunshine.config_file).parent_path() / "hdr_enhanced.json",
       file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR).parent_path() / "tools",
-      file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / "hdr-components.json");
+      [] {
+        json catalog { { "schema_version", 1 }, { "components", json::object() } };
+#ifdef SUNSHINE_RTX_VIDEO_STATIC
+        // 运行库版本仅由其完整摘要决定，不与适配器重编译时间绑定。
+        catalog["components"][NVIDIA_RTX_VIDEO_BACKEND][SUNSHINE_RTX_VIDEO_RUNTIME_SHA256] = {
+          { "nvngx_truehdr.dll", SUNSHINE_RTX_VIDEO_RUNTIME_SHA256 }
+        };
+#endif
+        return catalog;
+      }());
     return instance;
   }
 }  // namespace hdr_enhanced

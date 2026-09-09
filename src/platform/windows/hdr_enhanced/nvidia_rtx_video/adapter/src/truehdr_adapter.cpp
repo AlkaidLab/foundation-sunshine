@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <vector>
 
 #include <d3d10_1.h>
 #include <d3d11_4.h>
@@ -22,20 +23,23 @@
 #include <nvsdk_ngx_defs_truehdr.h>
 #include <nvsdk_ngx_helpers_truehdr.h>
 
-#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_abi.h"
+#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h"
 
 namespace {
   std::mutex ngx_mutex;
+  // NGX 客户端共享运行库；最后一个实例退出后才能关闭，避免影响其他处理链。
+  std::vector<ID3D11Device *> ngx_devices;
+  size_t ngx_users = 0;
   constexpr unsigned long long ngx_application_id = FOUNDATION_NGX_APPLICATION_ID;
-  constexpr std::time_t bridge_build_time = FOUNDATION_RTX_VIDEO_BUILD_UNIX_SECONDS;
+  constexpr std::time_t adapter_build_time = FOUNDATION_RTX_VIDEO_BUILD_UNIX_SECONDS;
   constexpr std::time_t development_lifetime = 14 * 24 * 60 * 60;
 
   bool
   development_build_expired() noexcept {
     if constexpr (ngx_application_id != 0) return false;
     const auto now = std::time(nullptr);
-    return now != static_cast<std::time_t>(-1) && now >= bridge_build_time &&
-           now - bridge_build_time > development_lifetime;
+    return now != static_cast<std::time_t>(-1) && now >= adapter_build_time &&
+           now - adapter_build_time > development_lifetime;
   }
 
   template <class T>
@@ -117,11 +121,31 @@ namespace {
 
       std::lock_guard lock { ngx_mutex };
       multithread_scope_t multithread_scope { multithread };
-      const auto data_path = ngx_data_path();
-      auto status = NVSDK_NGX_D3D11_Init(ngx_application_id, data_path.c_str(), device);
-      if (NVSDK_NGX_FAILED(status)) {
-        return FOUNDATION_TRUEHDR_STATUS_RUNTIME_UNAVAILABLE;
+      auto status = NVSDK_NGX_Result_Success;
+      if (std::find(ngx_devices.begin(), ngx_devices.end(), device) == ngx_devices.end()) {
+        // 先完成可能分配内存的操作，再初始化 SDK，保证失败路径可清理。
+        const auto data_path = ngx_data_path();
+        ngx_devices.push_back(device);
+        NVSDK_NGX_FeatureCommonInfo info {};
+        const wchar_t *paths[] { input_config.runtime_directory };
+        if (paths[0]) {
+          info.PathListInfo.Path = paths;
+          info.PathListInfo.Length = 1;
+        }
+        try {
+          status = NVSDK_NGX_D3D11_Init(ngx_application_id, data_path.c_str(), device, &info);
+        }
+        catch (...) {
+          ngx_devices.pop_back();
+          throw;
+        }
+        if (NVSDK_NGX_FAILED(status)) {
+          ngx_devices.pop_back();
+          return FOUNDATION_TRUEHDR_STATUS_RUNTIME_UNAVAILABLE;
+        }
+        device->AddRef();
       }
+      ++ngx_users;
       ngx_initialized = true;
 
       status = NVSDK_NGX_D3D11_GetCapabilityParameters(&parameters);
@@ -228,16 +252,17 @@ namespace {
           NVSDK_NGX_D3D11_ReleaseFeature(feature);
           feature = nullptr;
         }
-        // Preserve the teardown order used by the RTX Video SDK 1.1 DX11
-        // TrueHDR samples: release feature, shut down NGX, then destroy the
-        // capability parameters returned during initialization.
-        if (ngx_initialized) {
-          NVSDK_NGX_D3D11_Shutdown1(device);
-          ngx_initialized = false;
-        }
         if (parameters) {
           NVSDK_NGX_D3D11_DestroyParameters(parameters);
           parameters = nullptr;
+        }
+        if (ngx_initialized) {
+          ngx_initialized = false;
+          if (--ngx_users == 0) {
+            NVSDK_NGX_D3D11_Shutdown1(nullptr);
+            for (auto *registered_device : ngx_devices) registered_device->Release();
+            ngx_devices.clear();
+          }
         }
       }
       release(multithread);
@@ -257,7 +282,7 @@ namespace {
         config->width == 0 || config->height == 0) {
       return FOUNDATION_TRUEHDR_STATUS_INVALID_ARGUMENT;
     }
-    // Application ID 0 is permitted for development. Keep those bridge builds
+    // Application ID 0 is permitted for development. Keep those adapter builds
     // time-limited so published evaluation artifacts do not become permanent releases.
     if (development_build_expired()) {
       return FOUNDATION_TRUEHDR_STATUS_DEVELOPMENT_BUILD_EXPIRED;
@@ -315,15 +340,15 @@ namespace {
   }
 }  // namespace
 
-extern "C" __declspec(dllexport) const foundation_truehdr_bridge_api_t *FOUNDATION_RTX_VIDEO_CALL
-foundation_truehdr_bridge_get_api(std::uint32_t requested_abi_version) {
-  static const foundation_truehdr_bridge_api_t api {
-    FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION,
-    sizeof(foundation_truehdr_bridge_api_t),
+extern "C" const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
+foundation_truehdr_adapter_get_api(std::uint32_t requested_abi_version) {
+  static const foundation_truehdr_adapter_api_t api {
+    FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION,
+    sizeof(foundation_truehdr_adapter_api_t),
     create_truehdr,
     process_truehdr,
     flush_truehdr,
     destroy_truehdr,
   };
-  return requested_abi_version == FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION ? &api : nullptr;
+  return requested_abi_version == FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION ? &api : nullptr;
 }

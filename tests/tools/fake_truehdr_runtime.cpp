@@ -1,4 +1,4 @@
-#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_abi.h"
+#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h"
 
 namespace {
   foundation_truehdr_status_e FOUNDATION_RTX_VIDEO_CALL
@@ -26,15 +26,15 @@ namespace {
   destroy_truehdr(void *) {}
 }
 
-extern "C" __declspec(dllexport) const foundation_truehdr_bridge_api_t *FOUNDATION_RTX_VIDEO_CALL
-foundation_truehdr_bridge_get_api(uint32_t) {
-  static const foundation_truehdr_bridge_api_t api {
+extern "C" __declspec(dllexport) const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
+foundation_truehdr_adapter_get_api(uint32_t) {
+  static const foundation_truehdr_adapter_api_t api {
 #ifdef FAKE_TRUEHDR_BAD_ABI
-    FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION + 1,
+    FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION + 1,
 #else
-    FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION,
+    FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION,
 #endif
-    sizeof(foundation_truehdr_bridge_api_t),
+    sizeof(foundation_truehdr_adapter_api_t),
     create_truehdr,
     process_frame,
     flush_truehdr,

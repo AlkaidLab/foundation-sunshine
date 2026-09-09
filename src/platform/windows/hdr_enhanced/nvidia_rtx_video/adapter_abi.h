@@ -2,12 +2,13 @@
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (c) 2026 Foundation Sunshine contributors
  *
- * @file src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_abi.h
- * @brief Stable C ABI between Sunshine and the MSVC RTX Video bridge.
+ * @file src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h
+ * @brief C ABI between the MinGW host and its statically linked MSVC NGX adapter.
  */
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 #if defined(_WIN32)
   #define FOUNDATION_RTX_VIDEO_CALL __cdecl
@@ -15,8 +16,8 @@
   #define FOUNDATION_RTX_VIDEO_CALL
 #endif
 
-#define FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION 1u
-#define FOUNDATION_TRUEHDR_BRIDGE_GET_API_EXPORT "foundation_truehdr_bridge_get_api"
+#define FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION 1u
+#define FOUNDATION_TRUEHDR_ADAPTER_GET_API_EXPORT "foundation_truehdr_adapter_get_api"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,9 +41,10 @@ typedef struct foundation_truehdr_config_t {
   float saturation;
   float middle_gray_nits;
   float peak_nits;
+  const wchar_t *runtime_directory;
 } foundation_truehdr_config_t;
 
-typedef struct foundation_truehdr_bridge_api_t {
+typedef struct foundation_truehdr_adapter_api_t {
   uint32_t abi_version;
   uint32_t struct_size;
 
@@ -59,10 +61,13 @@ typedef struct foundation_truehdr_bridge_api_t {
 
   void(FOUNDATION_RTX_VIDEO_CALL *flush)(void *instance);
   void(FOUNDATION_RTX_VIDEO_CALL *destroy)(void *instance);
-} foundation_truehdr_bridge_api_t;
+} foundation_truehdr_adapter_api_t;
 
-typedef const foundation_truehdr_bridge_api_t *(FOUNDATION_RTX_VIDEO_CALL *foundation_truehdr_bridge_get_api_fn)(
+typedef const foundation_truehdr_adapter_api_t *(FOUNDATION_RTX_VIDEO_CALL *foundation_truehdr_adapter_get_api_fn)(
   uint32_t requested_abi_version);
+
+const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
+foundation_truehdr_adapter_get_api(uint32_t requested_abi_version);
 
 #ifdef __cplusplus
 }

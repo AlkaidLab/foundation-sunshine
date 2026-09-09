@@ -2,6 +2,7 @@
 # this file will also load platform specific macros
 
 add_executable(sunshine ${SUNSHINE_TARGET_FILES})
+include(${CMAKE_MODULE_PATH}/dependencies/rtx_video_adapter.cmake)
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(sunshine ${dep})  # compile these before sunshine
 endforeach()
@@ -26,6 +27,12 @@ if(NOT DEFINED CMAKE_CUDA_STANDARD)
 endif()
 
 target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
+if (TARGET sunshine_rtx_video_adapter)
+    target_link_libraries(sunshine sunshine_rtx_video_adapter)
+    add_custom_command(TARGET sunshine POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${RTX_VIDEO_REDIST_FILES} "$<TARGET_FILE_DIR:sunshine>"
+        COMMAND_EXPAND_LISTS VERBATIM)
+endif ()
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
         VERSION ${PROJECT_VERSION}
@@ -81,6 +88,9 @@ endif()
 if(BUILD_TESTS OR BUILD_TRAY_TESTS)
     enable_testing()
     add_subdirectory(tests)
+    if (TARGET sunshine_rtx_video_adapter AND TARGET test_sunshine)
+        target_link_libraries(test_sunshine sunshine_rtx_video_adapter)
+    endif ()
 endif()
 
 # custom compile flags, must be after adding tests

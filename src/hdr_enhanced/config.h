@@ -50,7 +50,7 @@ namespace hdr_enhanced {
   class manager_t {
   public:
     manager_t(std::filesystem::path config_file, std::filesystem::path component_root,
-      std::filesystem::path trust_file);
+      nlohmann::json trusted_components);
     ~manager_t();
     manager_t(const manager_t &) = delete;
     manager_t &

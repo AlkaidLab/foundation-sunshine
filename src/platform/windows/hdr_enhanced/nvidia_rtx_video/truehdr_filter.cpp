@@ -7,7 +7,7 @@
  */
 #include "truehdr_filter.h"
 #include "../../pre_encode_filter_helpers.h"
-#include "bridge_loader.h"
+#include "runtime_loader.h"
 
 #include <utility>
 
@@ -17,7 +17,7 @@
 namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
   namespace {
     using namespace filter_detail;
-    boost::mutex external_bridge_mutex;
+    boost::mutex adapter_mutex;
     std::string_view
     truehdr_failure_reason(foundation_truehdr_status_e status, bool during_create) {
       switch (status) {
@@ -44,7 +44,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
       external_sdr_to_hdr_filter_t(
         ID3D11Device *device,
         ID3D11DeviceContext *device_context,
-        bridge_loader_t loader,
+        runtime_loader_t loader,
         pre_encode_filter_config_t config):
           device_ { device },
           device_context_ { device_context },
@@ -71,7 +71,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
 
         foundation_truehdr_status_e status;
         {
-          boost::lock_guard lock { external_bridge_mutex };
+          boost::lock_guard lock { adapter_mutex };
           status = loader_.api()->process(
             instance_,
             device_context_,
@@ -91,7 +91,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
       void
       flush() override {
         if (instance_) {
-          boost::lock_guard lock { external_bridge_mutex };
+          boost::lock_guard lock { adapter_mutex };
           loader_.api()->flush(instance_);
         }
       }
@@ -143,10 +143,11 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
           .saturation = config_.saturation,
           .middle_gray_nits = config_.middle_gray_nits,
           .peak_nits = config_.peak_nits,
+          .runtime_directory = loader_.runtime_directory(),
         };
         foundation_truehdr_status_e status;
         {
-          boost::lock_guard lock { external_bridge_mutex };
+          boost::lock_guard lock { adapter_mutex };
           status = loader_.api()->create(device_, &config, &instance_);
         }
         if (status != FOUNDATION_TRUEHDR_STATUS_OK || !instance_) {
@@ -165,7 +166,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
       void
       destroy_instance() {
         if (instance_) {
-          boost::lock_guard lock { external_bridge_mutex };
+          boost::lock_guard lock { adapter_mutex };
           loader_.api()->destroy(instance_);
           instance_ = nullptr;
         }
@@ -175,7 +176,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
 
       ID3D11Device *device_;
       ID3D11DeviceContext *device_context_;
-      bridge_loader_t loader_;
+      runtime_loader_t loader_;
       pre_encode_filter_config_t config_;
       void *instance_ = nullptr;
       std::string_view initialization_failure_ { "backend_initialization_failed" };
@@ -190,7 +191,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_rtx_video::truehdr {
   make_filter(ID3D11Device *device, ID3D11DeviceContext *context,
     const std::filesystem::path &path, const pre_encode_filter_config_t &config,
     std::string &error) {
-    bridge_loader_t loader;
+    runtime_loader_t loader;
     if (!loader.load(path)) {
       error = loader.error();
       return {};

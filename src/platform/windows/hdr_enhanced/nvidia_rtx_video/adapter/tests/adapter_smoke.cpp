@@ -10,7 +10,10 @@
 #include <dxgi.h>
 #include <windows.h>
 
-#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/bridge_abi.h"
+#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h"
+#ifdef SUNSHINE_RTX_VIDEO_STATIC
+  #include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/runtime_loader.h"
+#endif
 
 namespace {
   template <class T>
@@ -63,34 +66,18 @@ namespace {
 
 int
 wmain(int argc, wchar_t **argv) {
-  std::filesystem::path bridge_path;
-  if (argc > 1) {
-    bridge_path = std::filesystem::absolute(argv[1]);
+  const auto runtime_directory = argc > 1 ? std::filesystem::absolute(argv[1]) : executable_directory();
+  if (!std::filesystem::is_regular_file(runtime_directory / L"nvngx_truehdr.dll")) {
+    return fail("NVIDIA runtime is missing from the selected directory");
   }
-  else {
-    const auto directory = executable_directory();
-    if (directory.empty()) return fail("unable to locate the smoke test executable");
-    bridge_path = directory / L"foundation_rtx_video_bridge.dll";
-  }
-  if (!std::filesystem::is_regular_file(bridge_path)) {
-    return fail("bridge DLL does not exist: " + bridge_path.string());
-  }
-
-  const auto module = LoadLibraryExW(
-    bridge_path.c_str(),
-    nullptr,
-    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-  if (!module) {
-    return fail("LoadLibraryExW failed with error " + std::to_string(GetLastError()));
-  }
-  const auto get_api = reinterpret_cast<foundation_truehdr_bridge_get_api_fn>(
-    GetProcAddress(module, FOUNDATION_TRUEHDR_BRIDGE_GET_API_EXPORT));
-  const auto *api = get_api ? get_api(FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION) : nullptr;
-  if (!api || api->abi_version != FOUNDATION_TRUEHDR_BRIDGE_ABI_VERSION ||
-      api->struct_size < sizeof(foundation_truehdr_bridge_api_t)) {
-    FreeLibrary(module);
-    return fail("bridge ABI negotiation failed");
-  }
+#ifdef SUNSHINE_RTX_VIDEO_STATIC
+  platf::dxgi::hdr_enhanced::nvidia_rtx_video::runtime_loader_t loader;
+  if (!loader.load(runtime_directory / L"nvngx_truehdr.dll")) return fail(loader.error());
+  const auto *api = loader.api();
+#else
+  const auto *api = foundation_truehdr_adapter_get_api(FOUNDATION_TRUEHDR_ADAPTER_ABI_VERSION);
+#endif
+  if (!api) return fail("static adapter ABI negotiation failed");
 
   ID3D11Device *device = nullptr;
   ID3D11DeviceContext *context = nullptr;
@@ -110,9 +97,7 @@ wmain(int argc, wchar_t **argv) {
     &device,
     &selected_level,
     &context);
-  if (FAILED(device_hr)) {
-    FreeLibrary(module);
-    return fail("D3D11CreateDevice failed with HRESULT " + std::to_string(device_hr));
+  if (FAILED(device_hr)) {    return fail("D3D11CreateDevice failed with HRESULT " + std::to_string(device_hr));
   }
 
   constexpr UINT width = 1920;
@@ -145,9 +130,7 @@ wmain(int argc, wchar_t **argv) {
   auto hr = device->CreateTexture2D(&input_desc, &initial_data, &input);
   if (FAILED(hr)) {
     release(context);
-    release(device);
-    FreeLibrary(module);
-    return fail("creating the SDR input texture failed");
+    release(device);    return fail("creating the SDR input texture failed");
   }
 
   D3D11_TEXTURE2D_DESC output_desc = input_desc;
@@ -175,15 +158,14 @@ wmain(int argc, wchar_t **argv) {
     release(output);
     release(input);
     release(context);
-    release(device);
-    FreeLibrary(module);
-    return fail("creating the scRGB output textures failed");
+    release(device);    return fail("creating the scRGB output textures failed");
   }
   constexpr float clear_color[4] { 0.0f, 0.0f, 0.0f, 0.0f };
   context->ClearUnorderedAccessViewFloat(output_uav, clear_color);
   release(output_uav);
 
   foundation_truehdr_config_t config {};
+  config.runtime_directory = runtime_directory.c_str();
   config.struct_size = sizeof(config);
   config.width = width;
   config.height = height;
@@ -240,10 +222,8 @@ wmain(int argc, wchar_t **argv) {
   release(context);
   const auto gpu = adapter_name(device);
   release(device);
-  FreeLibrary(module);
-
   if (status != FOUNDATION_TRUEHDR_STATUS_OK) {
-    return fail("TrueHDR bridge returned status " + std::to_string(status) + " on " + gpu);
+    return fail("TrueHDR adapter returned status " + std::to_string(status) + " on " + gpu);
   }
   if (FAILED(hr) || !meaningful_output) {
     return fail("TrueHDR completed but produced no readable HDR pixels on " + gpu);
