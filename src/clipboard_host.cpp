@@ -35,6 +35,7 @@
 #include "clipboard_bridge.h"
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/linux/sdbus_session.h"
 
 namespace clipboard_host {
   using namespace std::string_view_literals;
@@ -66,29 +67,10 @@ namespace clipboard_host {
      * @brief Open a dedicated user-session bus. Each thread that talks to
      *        klipper owns its own connection; sd_bus objects are not
      *        thread-safe.
-     * @details The address is built explicitly: Sunshine runs with file
-     *          capabilities, which sets AT_SECURE and makes sd-bus's
-     *          secure_getenv() hide XDG_RUNTIME_DIR from it, so
-     *          sd_bus_open_user() would always fail in this process.
      */
     sd_bus *
     open_bus() {
-      const char *runtime_dir = ::getenv("XDG_RUNTIME_DIR");
-      if (!runtime_dir || !*runtime_dir) {
-        return nullptr;
-      }
-
-      sd_bus *bus = nullptr;
-      if (sd_bus_new(&bus) < 0) {
-        return nullptr;
-      }
-
-      const std::string address = std::string { "unix:path=" } + runtime_dir + "/bus";
-      if (sd_bus_set_address(bus, address.c_str()) < 0 || sd_bus_start(bus) < 0) {
-        sd_bus_unref(bus);
-        return nullptr;
-      }
-      return bus;
+      return platf::sdbus::open_user_bus();
     }
 
     bool

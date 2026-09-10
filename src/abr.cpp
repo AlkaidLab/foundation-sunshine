@@ -17,6 +17,10 @@
 #include "confighttp.h"
 #include "logging.h"
 
+#ifndef _WIN32
+  #include "src/platform/linux/foreground_app.h"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -128,7 +132,8 @@ namespace abr {
 
     return { window_title, exe_name, pid };
 #else
-    return {};
+    const auto fg = platf::foreground_app::detect();
+    return { fg.window_title, fg.exe_name, fg.pid };
 #endif
   }
 
