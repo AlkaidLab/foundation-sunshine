@@ -11,7 +11,7 @@
 
 pkgname=sunshine-foundation
 pkgver=2026.0909
-pkgrel=21
+pkgrel=22
 pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
 arch=('x86_64')
 url="https://github.com/qiin2333/Sunshine"
@@ -50,8 +50,8 @@ package() {
     return 1
   fi
 
-  # The build was configured with CMAKE_INSTALL_PREFIX=/opt/sunshine, so the
-  # install rules place bin/ and share/sunshine under /opt and the systemd
-  # user unit + udev rule at their absolute system locations.
+  # The build was configured with CMAKE_INSTALL_PREFIX=/usr, so the install
+  # rules place bin/ and share/sunshine under /usr and the systemd user unit
+  # + udev rule at their absolute system locations.
   DESTDIR="$pkgdir" cmake --install "$_build_dir" >/dev/null
 }
