@@ -115,3 +115,4 @@ tools/sunshine-ds5-sidecar/obj/
 packaging/arch-local/pkg/
 packaging/arch-local/src/
 packaging/arch-local/*.pkg.tar.zst
+logs_archive/
