@@ -396,8 +396,11 @@ sd-bus 对话 KDE klipper（`org.kde.klipper` setClipboardContents/getClipboardC
    配置 + 客户端协商了 HDR10+。近似性：以亮度代替 maxRGB（Windows 是 scRGB 逐像素 RGB，
    消费端本就把 99 分位当 maxSCL 的近似）。**实测中纠正了两个 ST2084 常量错误**（m2 应为
    ×128、c3 应为 2392/4096×32=18.6875，对照参考表 100/1000/10000 nits 逐点验证）。
-   **DV L1 RPU 在 avcodec 路径仍未接**：`dolby_vision_` 注入器只在 NVENC/AMF 直连包路径调用，
-   avcodec 会话没有 DV 配置/注入/stage——这是 HDR 剩余的最后一小块，需独立实现并带客户端实测。
+   **DV L1 RPU 在 avcodec 路径也已接入（2026-09-10，`24817d1a`，tag `v0.8-linux-dv-rpu`，pkgrel 29）**：
+   跨平台注入器此前只挂在 NVENC/AMF 直连路径；avcodec 会话现按 NVENC 同款门控（分析可用 + 掌握
+   元数据 + P8.1 需 PQ 基层；P8.4 需 HLG 在 KMS 路径明确拒绝）configure 注入器，encode_avcodec
+   按提交帧序 stage L1，输出包按 pts 回程 splice RPU NAL（AVPacket 按需扩容）；分析器使能随之
+   覆盖 DV 协商标识。分析器统计为亮度近似，RPU 的 L1 语义（min/avg/max PQ）与之天然匹配。
 2. **HDR Vivid T.35 序列化器**：avcodec 路径没有 CUVA 序列化器，但分支已有自研比特流工具层
    （`src/cbs.cpp`/`video_hdr_bitstream.cpp`，DV RPU 写入器就是同模式自研的），照搬 `nvenc_base.cpp`
    的手写 T.35 逻辑到 cbs 层即可。工作量：中。
