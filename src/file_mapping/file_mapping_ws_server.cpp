@@ -4,6 +4,7 @@
  */
 #include "file_mapping_ws_server.h"
 
+#include <fcntl.h>
 #include <utility>
 
 #ifdef _WIN32
@@ -162,6 +163,10 @@ namespace file_mapping_ws {
     if (ec) {
       return fail_and_close(ec);
     }
+
+    // Spawned helper processes must not inherit the listening socket — a
+    // lingering child would keep the port bound after we release it.
+    ::fcntl(acceptor_.native_handle(), F_SETFD, FD_CLOEXEC);
 #endif
 
     acceptor_.bind(endpoint, ec);

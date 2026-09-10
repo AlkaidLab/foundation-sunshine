@@ -119,20 +119,11 @@ namespace display_device {
 
     exec_result_t
     run_kscreen(const std::string &args) {
-      exec_result_t result;
-      std::string output;
-      if (FILE *pipe = popen(("kscreen-doctor " + args + " 2>&1").c_str(), "r")) {
-        char buf[512];
-        while (fgets(buf, sizeof(buf), pipe)) {
-          output += buf;
-        }
-        const int status = pclose(pipe);
-        if (WIFEXITED(status)) {
-          result.exit_code = WEXITSTATUS(status);
-        }
-      }
-      result.output = strip_ansi(output);
-      return result;
+      // vdd_utils::run_logged bounds the child (kscreen-doctor can block
+      // indefinitely on a wedged Wayland connection) and keeps inherited
+      // sockets out of it.
+      auto result = vdd_utils::run_logged("kscreen-doctor " + args);
+      return { result.exit_code, strip_ansi(result.output) };
     }
 
     /**

@@ -1124,6 +1124,8 @@ namespace display_device {
 #include "vdd_utils.h"
 
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/capability.h>
 #include <sys/stat.h>
 
@@ -1241,22 +1243,6 @@ namespace display_device::vdd_utils {
       const auto dir = status_path.substr(0, status_path.find_last_of('/'));    // /sys/class/drm/card1-DP-2
       const auto file = dir.substr(dir.find_last_of('/') + 1);                  // card1-DP-2
       return file.substr(file.find('-') + 1);                                   // DP-2
-    }
-
-    /**
-     * @brief Run a command, capturing its output into the log.
-     */
-    void
-    run_logged(const std::string &cmd) {
-      std::string output;
-      if (FILE *pipe = popen((cmd + " 2>&1").c_str(), "r")) {
-        char buf[256];
-        while (fgets(buf, sizeof(buf), pipe)) {
-          output += buf;
-        }
-        const int rc = pclose(pipe);
-        BOOST_LOG(info) << "vdd: ["sv << cmd << "] exit="sv << rc << (output.empty() ? "" : " output: " + output);
-      }
     }
 
     std::string_view
@@ -1778,6 +1764,95 @@ namespace display_device::vdd_utils {
       names.emplace_back(connector_name_for_status(status_path));
     }
     return names;
+  }
+
+  exec_output_t
+  run_logged(const std::string &cmd, std::chrono::milliseconds timeout) {
+    exec_output_t result;
+
+    int pipe_fd[2];
+    if (pipe(pipe_fd) != 0) {
+      BOOST_LOG(error) << "vdd: pipe() failed for ["sv << cmd << "]";
+      return result;
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+      const auto saved_errno = errno;
+      close(pipe_fd[0]);
+      close(pipe_fd[1]);
+      BOOST_LOG(error) << "vdd: fork() failed for ["sv << cmd << "]: "sv << strerror(saved_errno);
+      return result;
+    }
+
+    if (pid == 0) {
+      // Child: never inherit Sunshine's sockets or files into helper
+      // processes — a lingering child would keep ports bound after we
+      // release them (seen live: a stuck kscreen-doctor pinned port 48020).
+      close(pipe_fd[0]);
+      dup2(pipe_fd[1], STDOUT_FILENO);
+      dup2(pipe_fd[1], STDERR_FILENO);
+      close(pipe_fd[1]);
+
+      const int openmax = static_cast<int>(sysconf(_SC_OPEN_MAX));
+      for (int fd = STDERR_FILENO + 1; fd < openmax; ++fd) {
+        close(fd);
+      }
+
+      execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char *>(nullptr));
+      _exit(127);
+    }
+
+    close(pipe_fd[1]);
+
+    // Read with an overall deadline; a compositor helper can block
+    // indefinitely on a wedged Wayland connection.
+    constexpr std::size_t kMaxCapturedOutput = 64 * 1024;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    bool timed_out = false;
+    char buf[512];
+    while (true) {
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+      if (remaining.count() <= 0) {
+        timed_out = true;
+        break;
+      }
+
+      pollfd pfd { pipe_fd[0], POLLIN, 0 };
+      const int pr = poll(&pfd, 1, static_cast<int>(remaining.count()));
+      if (pr < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        break;
+      }
+      if (pr == 0) {
+        timed_out = true;
+        break;
+      }
+
+      const auto n = read(pipe_fd[0], buf, sizeof(buf));
+      if (n <= 0) {
+        break;
+      }
+      if (result.output.size() < kMaxCapturedOutput) {
+        result.output.append(buf, static_cast<std::size_t>(n));
+      }
+    }
+    close(pipe_fd[0]);
+
+    if (timed_out) {
+      BOOST_LOG(warning) << "vdd: ["sv << cmd << "] timed out after "sv << timeout.count() << "ms; killing"sv;
+      kill(pid, SIGKILL);
+    }
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    result.exit_code = !timed_out && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+    BOOST_LOG(info) << "vdd: ["sv << cmd << "] exit="sv << result.exit_code
+                    << (result.output.empty() ? std::string {} : " output: " + result.output);
+    return result;
   }
 
   const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };

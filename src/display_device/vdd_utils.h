@@ -71,6 +71,21 @@ namespace display_device::vdd_utils {
    */
   std::vector<std::string>
   offlined_physical_connectors();
+
+  struct exec_output_t {
+    int exit_code = -1;
+    std::string output;
+  };
+
+  /**
+   * @brief Run a command via /bin/sh, capturing its combined output.
+   * @details The child inherits none of our file descriptors, and it is
+   *          killed once @p timeout has elapsed — compositor helpers can
+   *          block indefinitely on a wedged session, which must not wedge
+   *          the calling thread or pin our listening sockets.
+   */
+  exec_output_t
+  run_logged(const std::string &cmd, std::chrono::milliseconds timeout = std::chrono::milliseconds { 10'000 });
 #endif
 
   using namespace std::chrono_literals;

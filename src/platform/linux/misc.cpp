@@ -9,6 +9,9 @@
 #endif
 
 // standard includes
+#include <cstdlib>
+#include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 
@@ -388,6 +391,20 @@ namespace platf {
     }
     executable[len] = '\0';
 
+    // A package upgrade replaces the versioned binary file we were started
+    // from; exec the stable launcher path (argv[0]) instead so a restart
+    // picks up the new build rather than failing on the deleted inode.
+    if (access(executable, X_OK) != 0) {
+      char **argv = lifetime::get_argv();
+      const char *fallback = (argv && argv[0]) ? argv[0] : nullptr;
+      if (!fallback || std::strchr(fallback, '/') == nullptr || access(fallback, X_OK) != 0) {
+        BOOST_LOG(fatal) << "Cannot restart: executable ["sv << executable << "] is gone and no usable fallback path"sv;
+        _exit(EXIT_FAILURE);
+      }
+      BOOST_LOG(warning) << "Executable ["sv << executable << "] was replaced by an upgrade; restarting via ["sv << fallback << "]"sv;
+      std::snprintf(executable, sizeof(executable), "%s", fallback);
+    }
+
     // ASIO doesn't use O_CLOEXEC, so we have to close all fds ourselves
     int openmax = (int) sysconf(_SC_OPEN_MAX);
     for (int fd = STDERR_FILENO + 1; fd < openmax; fd++) {
@@ -397,7 +414,9 @@ namespace platf {
     // Re-exec ourselves with the same arguments
     if (execv(executable, lifetime::get_argv()) < 0) {
       BOOST_LOG(fatal) << "execv() failed: "sv << errno;
-      return;
+      // Returning would unwind through static destruction, which hangs;
+      // exit immediately and let the service manager restart us.
+      _exit(errno);
     }
   }
 
