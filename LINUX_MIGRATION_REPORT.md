@@ -1,6 +1,6 @@
 # Foundation Sunshine Linux（Arch Linux）迁移报告
 
-- **日期**：2026-09-08
+- **日期**：2026-09-08（**更新**：2026-09-10 —— 基础迁移完成并实测；P0 虚拟显示器已用原生 C++ 后端落地，进度见 §十二）
 - **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支，commit `3e142f7`）
 - **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland + PipeWire，NVIDIA RTX 3050 Mobile）
 
@@ -17,10 +17,11 @@ NVENC/VAAPI/软件编码、evdev 输入、WebUI）是上游成熟代码。但工
 > 而 CMake 在 UNIX 分支会无条件 `configure_file()` 这些文件 —— **任何 Linux 配置路径（原生 cmake、
 > PKGBUILD、docker、flatpak）都会直接报错退出**。迁移第一步必须从上游恢复这批模板（见 §三）。
 
-此外要建立正确的预期：本分支的卖点（ZakoVDD 虚拟显示器、NVENC SDK 13 直连 / AMF QVBR、Tauri 控制
-面板、远程麦克风写主机、USB/IP 主机、WGC 捕获、vmouse 虚拟鼠标）**在 Linux 上均不可用**（Windows
-专属或不完整 stub）。Linux 上能得到的是"上游 Sunshine 功能集 + 分支的部分纯逻辑增强"
-（见 §八功能矩阵）。CI 目前只有 Windows 构建（`.github/workflows/main.yml` 仅有 `build_win`、
+此外要建立正确的预期：迁移开始时本分支的卖点（ZakoVDD 虚拟显示器、NVENC SDK 13 直连 / AMF QVBR、
+Tauri 控制面板、远程麦克风写主机、USB/IP 主机、WGC 捕获、vmouse 虚拟鼠标）在 Linux 上均不可用
+（Windows 专属或不完整 stub）。**截至 2026-09-10：ZakoVDD 虚拟显示器已用原生 C++ 后端完整移植**
+（个性化 EDID + 连接器强制 + CRTC 抢占，见 §十一 P0 与 §十二进度）；其余项仍不可用或降级。
+Linux 现状 = "上游 Sunshine 功能集 + 分支纯逻辑增强 + 已移植的虚拟显示器"（见 §八功能矩阵）。CI 目前只有 Windows 构建（`.github/workflows/main.yml` 仅有 `build_win`、
 `vdd_smoke` 两个 Windows job），Linux 编译在主干上长期无人验证，首次构建可能遇到零星的编译错误。
 
 ---
@@ -202,7 +203,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 的编译期特性检测（`src/audio.cpp:398-403`，Arch opus 1.6.1 ✅）；12ch 有 Linux null-sink 实现（`platform/linux/audio.cpp:406-408`）；持续音频为平台无关逻辑 |
 | HDR 静态元数据透传（MDCV/CLL） | 跨平台：kmsgrab 读 DRM `HDR_OUTPUT_METADATA`（`kmsgrab.cpp:850-862`）→ avcodec side data（`video.cpp:2839-2862`），不依赖编码器 SDK |
 | 编码器探测缓存（README"260x"） | 位于 `video.cpp` 探测层的跨平台缓存（`video.cpp:4534-4537`）；注意实现是内存缓存，README 的"持久化"表述与代码不符 |
-| 增强托盘（fork 新增，上游无 src/tray） | 打开 UI/语言/项目链接/重启/退出 + 通知，Linux 可用；仅 VDD 子菜单与高级设置菜单在 `#ifdef _WIN32` 内（`system_tray.cpp:1095-1099`） |
+| 增强托盘（fork 新增，上游无 src/tray） | 打开 UI/语言/项目链接/重启/退出 + 通知，Linux 可用；VDD 子菜单（Foundation Display）已随虚拟屏移植在 Linux 解禁 |
 | nvhttp 扩展 API：dynamic_params / network_probe / sessions / abr_api / ai_api / pairing | 纯 HTTP 协议层，零平台守卫，跨平台 |
 | perf_recorder / input_activity / video_probe / cursor_channel | 全部跨平台；cursor_channel 在 Linux 因无光标生产者而干净禁用（`stream.cpp:2270-2273` 拒绝并告警，不影响流） |
 
@@ -212,20 +213,20 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 |---|---|
 | Dolby Vision P8.1 / P8.4 | RPU 写入器是纯比特流层（`video_dolby_vision.h:2-21`，0 平台守卫），挂在通用 avcodec 编码路径（`video.cpp:3069-3100`）；但 L1 亮度分析输入仅 Windows NVAPI 产出（`display_vram.cpp:2341-2422`），Linux 无 stats → 不生成 RPU，会话退化为普通 HDR10（基层兼容层保证回退，不崩） |
 | HDR10+ 动态元数据 | Linux 只发预挂的占位 SEI（`video.cpp:2867+`），真实值刷新依赖 Windows-only 亮度分析器（`video.cpp:2288-2296`） |
-| display_control / display_scale API | HTTP 层可用；Linux 返回 unsupported 字段，VDD 能力协商明确报 `unsupported_platform`（`vdd_capability.cpp:10-12`） |
+| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配；物理显示器的分辨率/HDR/拓扑切换仍为 stub（见 ❌ 表与 §十二"下一个目标"） |
 | frame_contract（帧管线契约） | 策略层跨平台（`platform/frame_contract.cpp`），但只有 Windows 采集端消费，Linux 侧策略存在、执行为空 |
 
 ### ❌ Windows 专属 / Linux 不可用
 
 | 功能 | 原因 |
 |---|---|
-| ZakoVDD 虚拟显示器（含 5 种屏幕模式、零拷贝借帧） | 仅 `src/platform/windows/`，Linux 不编译 |
+| ~~ZakoVDD 虚拟显示器~~ → **✅ 已移植（2026-09-10）** | 原生 Linux 后端：个性化 EDID（debugfs override）+ 连接器状态强制 + pidfd 借 DRM master 做 CRTC 指派 + 独占模式物理屏还原；5 种 prep 模式全适配。已知偏差：per-client GUID 未实现（单虚拟屏共享）、EDID 模式表为主屏+梯子非全表。详见 §十一 P0、§十二进度 7 |
 | NVENC SDK 13 直连 / AMF QVBR / 多硬件实例 | `src/nvenc/`、`src/amf/` 仅进 Windows 构建（`compile_definitions/windows.cmake:114-120`）；Linux NVENC 为上游同款 FFmpeg 路径（注：探测缓存是跨平台的，见 ✅ 表） |
 | HLG 编码（Linux 侧） | 会话框架跨平台，但 kmsgrab 不支持 HLG EOTF 输入（`kmsgrab.cpp:840-841`）→ Linux 无原生 HLG 源 |
 | HDR Vivid 动态元数据 | avcodec 路径没有 CUVA T.35 序列化器（`video.cpp:2925-2937` 注释明示），仅 Windows NVENC 直连路径手写产出 |
 | 虚拟扬声器位深匹配 | Windows PolicyConfig COM（`platform/windows/audio.cpp:1316-1319`）；Linux 固定 `PA_SAMPLE_FLOAT32`（`platform/linux/audio.cpp:81`） |
 | 触摸键盘自动唤起（touch_keyboard_session） | Windows 注册表机制，头文件自述非 Windows 为 no-op（`touch_keyboard_session.h:11-12`） |
-| Linux 分辨率/HDR 运行时切换 | `src/platform/linux/display_device.cpp` 全 stub（119 行）——上游同款状态；虚拟屏工作流依赖 §十一 的 VDD 移植 |
+| Linux 物理显示器分辨率/HDR/拓扑运行时切换 | `src/platform/linux/display_device.cpp` 的 `set_display_modes`/`set_hdr_states`/`set_topology` 等仍为上游同款 stub；虚拟屏工作流本身已完整接入（枚举/解析/prep）。**下一个移植目标**：kscreen-doctor（KDE）+ DRM 回退，见 §十二 |
 | Tauri 控制面板 | 分发链 Windows 化（`FetchGUI.cmake:24`）；面板本体评估见 §十一 P3 |
 | 远程麦克风写主机 | `src/platform/linux/audio.cpp:543-556` 是返回 -1 的空实现（"not implemented on Linux yet"） |
 | USB/IP 主机（remote_usb） | 非 Windows 显式禁用：`remote_usb_host_controller.cpp:71-82` 返回 `unsupported` |
@@ -278,7 +279,13 @@ TODO、DPMS 关屏未实现（`misc.cpp:320`）等，均为上游 Sunshine 既�
 数增强功能的协议/会话/配置层本来就随主目标在 Linux 编译），缺的只是平台后端；个别功能（零拷贝
 借帧）在 Linux 没有对等机制，明确放弃。
 
-### P0 · 虚拟显示器 —— 已装 `sunshine-virt-display`，可先行落地
+### P0 · 虚拟显示器 —— ✅ 已完成（2026-09-10，原生 C++ 后端）
+
+> **完成情况**：最终实现比本节当初的调研更进一步——既没用 socket 守护进程（用户实测 NVIDIA+KWin
+> 下黑屏，已弃用），也没走独立的 helper 二进制，而是 **in-process 原生后端 + 文件能力**：包
+> postinstall `setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p`，
+> 进程内用 libcap RAII 把 permitted 提升为 effective，直接完成 EDID 生成/override、连接器强制、
+> pidfd 借 DRM master、CRTC 指派与独占还原。实现明细见 §十二进度 7。以下保留当初的调研记录备查。
 
 本机已装 `sunshine-virt-display-git r73`（frostplexx/sunshine_virt_display，位于 `/opt/sunshine-vd/`）：
 root 守护进程（`sunshineVD.service`）监听 **Unix socket `/tmp/sunshineVD.sock`**，通过 EDID 覆盖 +
@@ -361,13 +368,13 @@ master fd 需要 `CAP_SYS_PTRACE`（绕过 yama）；CRTC 强制指派需要 `CA
 4. **移植不是研发**：`/opt/sunshine-vd` 源码在手、机制经上游社区验证，Python 逻辑可 1:1 翻译
    （动手前先确认其 LICENSE 与 GPL-3.0 的兼容性，`/opt/sunshine-vd/LICENSE`）。
 
-### P1 · 远程麦克风写主机（补一个 stub）
+### P1 · 远程麦克风写主机（补一个 stub）—— 待实施
 
 钩子位置现成：`src/platform/linux/audio.cpp:543-556` 的 `write_mic_pcm()` 返回 -1 空实现，注释明说
 "not implemented on Linux yet"。实现：经 PipeWire 建虚拟麦克风源（pw_stream / `module-loopback` /
 null-sink monitor），把混音后的 PCM 写入。逻辑层（Opus 解码/混音）已跨平台在跑。工作量：中。
 
-### P1 · 剪贴板主机侧集成（体验提升最大的一项）
+### P1 · 剪贴板主机侧集成（体验提升最大的一项）—— 待实施
 
 分支剪贴板是"内存中继 + 可插拔 sink"架构（`src/clipboard_bridge.h:46` 的 `inbound_sink_fn`），目前
 Linux 只有客户端↔客户端/浏览器中继，缺主机 OS 读写。实现两个 provider 即可接入现有总线：
@@ -446,11 +453,48 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
    已知守护进程侧局限：NVIDIA+KWin 下 disconnect 的物理屏 CRTC 恢复会失败（上游仅对 Hyprland
    做了特殊处理），虚拟输出可能残留，重试断开或重启系统可清理。
    待办（P0 第二步）：原生 C++ helper（EDID 生成 + sysfs/debugfs + libdrm + pidfd）替换 socket
-   传输，以支持按客户端 HDR 亮度/物理尺寸定制 EDID。
+   传输，以支持按客户端 HDR 亮度/物理尺寸定制 EDID。——（此待办已在下一步完成，但走的是
+   in-process 后端而非 helper 二进制，socket 路线整体弃用。）
+7. **P0 第二步落地：原生虚拟显示器后端（pkgrel 17–19，`c0988e87`/`e277996b`/`52329f9d`/
+   `3257b18e`/`9f9c271a` 等）**。用户实测 socket 路线在 NVIDIA+KWin 下黑屏后整体弃用，改为
+   in-process 原生后端，对齐 fork 的 ZakoVDD 语义：
+   - **个性化 EDID**：`src/platform/linux/vdd_edid.*`（由 sunshine_vd 的 Python 生成器 1:1 移植），
+     显示名 "Foundation Display"、按客户端物理尺寸、可选 HDR 静态元数据块（CTA-861 亮度编码）、
+     主屏模式表 + 兜底梯子；`tests/unit/test_vdd_edid.cpp` 与 Python 参考逐字节对照（7 用例全过）。
+   - **连接器操控**（`src/display_device/vdd_utils.cpp` Linux 段）：debugfs `edid_override` 写入、
+     sysfs `status` 强制 on/off、`offlined_physical_status_paths` 跟踪与 `restore_offlined_physicals()`
+     （独占模式退出还原，用户已实测确认）、残留 VHD 连接器清扫（EDID 签名 `00FF...005624`）。
+   - **CRTC 强制指派**：`SYS_pidfd_open`/`SYS_pidfd_getfd` 从合成器借 DRM master + dumb buffer +
+     `drmModeSetCrtc`，保证虚拟输出实际点亮并被捕获。
+   - **权限模型**：包 postinstall `setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p`，
+     进程内 libcap RAII（permitted→effective）按需提升——比原计划的 helper 二进制更简单直接。
+   - **6 种 prep 模式**：`vdd_prep_e` 全量对齐（独占=物理屏下电+退出还原；扩展类=kscreen priority
+     排布）；`parsed_config` 对 `23172`/`ZAKO_NAME` 设备 id 特判 `explicit_vdd`。
+   - **桌面环境感知**：主屏语义经 `XDG_CURRENT_DESKTOP` 分发（KDE → kscreen-doctor），不绑死 KDE，
+     其他 DE 记录日志并降级。
+   - **会话周边**：capability_version 真实上报（客户端可见虚拟屏选项）、托盘 Foundation Display
+     菜单解禁、SIGINT/SIGTERM 唤醒托盘事件循环、kmsgrab 按连接器名定向捕获虚拟屏（VD 优先级 >
+     名字匹配 > 数字索引回退）、AMF 常量表补 QVBR/HQVBR/HQCBR。
+8. **向导与状态面**（`52329f9d`/`3257b18e`/`9f9c271a`）：WebUI 初始化向导 Linux 平台化文案（去掉
+   ZakoVDD/Win10 22H2 硬性提示）、GPU 选择接通捕获、`/api/vdd/status` 真实状态、`adapter_names()`
+   返回真实 DRM 驱动名（nvidia/amdgpu/i915）。
+9. **历史治理**：误提交的 makepkg 缓存/产物用 filter-branch 清除并 gc（pack 31.71 MiB）；重写导致
+   上游基线哈希级联漂移，从 fork master 嫁接原版 rebase 修复。
+10. **打包（pkgrel 21，`48b7c4bf`）**：安装前缀改为全局 `/usr`（`SUNSHINE_ASSETS_DIR` 编译期路径
+    随之固化，全量重编）；图标对齐 fork（fork 的 PNG 套装装入 hicolor 16/256，apps+status）；
+    桌面文件 `--u`→`--user` 笔误修正；appdata 移除上游截图 URL。产物
+    `sunshine-foundation-2026.0909-21-x86_64.pkg.tar.zst`（独占/还原/实体屏/虚拟屏串流用户已实测）。
 
-**增强迁移（§十一）**：基础跑通后按 P0（虚拟显示器：先路线 A 零代码验证，再路线 B 代码级）→
-P1（远程麦克风、剪贴板主机侧）→ P2（HDR 注入验证、ABR 前台检测）→ P3 的顺序推进；
-每步独立成 commit，便于对照上游 rebase。
+**标签**：`v0.1-linux-base`（虚拟屏工作开始前的基线）→ `v0.2-linux-vdd`（虚拟显示器原生后端完成，
+随 `48b7c4bf`）。此后每完成一个功能里程碑继续打 tag。
+
+**下一个目标（2026-09-10 起）**：物理显示器的 display_device 后端（分辨率/HDR/拓扑，kscreen-doctor
++ DRM 路径，对齐 Windows 版行为）→ P1 剪贴板主机侧 → P1 远程麦克风 → P2 HDR 动态元数据/ABR
+前台检测。
+
+**增强迁移（§十一）**：P0 虚拟显示器已完成（见进度 7）。后续按 物理 display_device 后端 →
+P1（剪贴板主机侧、远程麦克风）→ P2（HDR 动态元数据、ABR 前台检测）→ P3 的顺序推进；
+每步独立成 commit，里程碑处打 tag，便于对照上游 rebase。
 
 ---
 
