@@ -47,6 +47,11 @@ namespace platf {
   }
 
   void
+  set_client_gamepad_pref(std::string pref) {
+    // Client-declared gamepad selection only overrides the Windows ViGEm backend.
+  }
+
+  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     platf::mouse::move(raw, deltaX, deltaY);

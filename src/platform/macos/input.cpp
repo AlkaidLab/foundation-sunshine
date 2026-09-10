@@ -391,6 +391,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void
+  set_client_gamepad_pref(std::string pref) {
+    // Client-declared gamepad selection is currently Windows-only.
+  }
+
+  void
   move_mouse(
     input_t &input,
     const int deltaX,
