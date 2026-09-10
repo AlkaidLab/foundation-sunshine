@@ -206,6 +206,11 @@ namespace platf {
         std::uint32_t surround714 = PA_INVALID_INDEX;
       } index;
 
+      // Virtual microphone for client -> host redirection: a null-sink whose
+      // monitor source host applications can record from.
+      std::uint32_t mic_sink_index = PA_INVALID_INDEX;
+      util::safe_ptr<pa_simple, pa_simple_free> mic_play;
+
       std::unique_ptr<safe::event_t<ctx_event_e>> events;
       std::unique_ptr<std::function<void(ctx_t::pointer)>> events_cb;
 
@@ -542,21 +547,94 @@ namespace platf {
 
       int
       write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
-        // Microphone redirect to the host is not implemented on Linux yet.
-        (void) samples;
-        (void) frame_count;
-        return -1;
+        if (!mic_play) {
+          return -1;
+        }
+        if (!samples || frame_count == 0) {
+          return 0;
+        }
+
+        int status;
+        const auto bytes = static_cast<int>(frame_count * sizeof(std::int16_t));
+        if (pa_simple_write(mic_play.get(), samples, bytes, &status)) {
+          BOOST_LOG(error) << "pa_simple_write() to the virtual microphone failed: "sv << pa_strerror(status);
+          release_mic_redirect_device();
+          return -2;  // Device lost; mirrors the Windows reinitialize path.
+        }
+
+        // Matches the Windows backend: report the number of bytes handed to
+        // the device. The null-sink consumes steadily, so the stream buffer
+        // stays bounded without flushing.
+        return bytes;
       }
 
       int
       init_mic_redirect_device() override {
-        // No host-side virtual mic on Linux.
-        return -1;
+        if (mic_sink_index != PA_INVALID_INDEX && mic_play) {
+          return 0;
+        }
+
+        release_mic_redirect_device();
+
+        // A null-sink doubles as the virtual microphone: host applications
+        // record from its monitor source, and whatever this process plays
+        // into the sink shows up there.
+        const std::string args =
+          "rate=48000 sink_name=sink-sunshine-virtual-mic format=float channels=1 channel_map=mono "
+          "sink_properties=device.description=Sunshine-Virtual-Microphone";
+        auto alarm = safe::make_alarm<int>();
+
+        op_t op {
+          pa_context_load_module(
+            ctx.get(),
+            "module-null-sink",
+            args.c_str(),
+            cb_i,
+            alarm.get()),
+        };
+
+        alarm->wait();
+        mic_sink_index = static_cast<std::uint32_t>(*alarm->status());
+        if (mic_sink_index == PA_INVALID_INDEX) {
+          BOOST_LOG(error) << "Couldn't load the virtual microphone null-sink: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return -1;
+        }
+
+        pa_sample_spec ss { PA_SAMPLE_S16LE, 48000, 1 };
+        pa_channel_map pa_map;
+        pa_channel_map_init_mono(&pa_map);
+
+        pa_buffer_attr pa_attr = {
+          .maxlength = uint32_t(-1),
+          .tlength = uint32_t(-1),
+          .prebuf = uint32_t(-1),
+          .minreq = uint32_t(-1),
+          .fragsize = uint32_t(-1)
+        };
+
+        int status;
+        mic_play.reset(
+          pa_simple_new(nullptr, "sunshine", pa_stream_direction_t::PA_STREAM_PLAYBACK, "sink-sunshine-virtual-mic", "sunshine-mic-write", &ss, &pa_map, &pa_attr, &status));
+
+        if (!mic_play) {
+          BOOST_LOG(error) << "Couldn't open the virtual microphone playback stream: "sv << pa_strerror(status);
+          unload_null(mic_sink_index);
+          mic_sink_index = PA_INVALID_INDEX;
+          return -1;
+        }
+
+        BOOST_LOG(info) << "Virtual microphone ready (sink-sunshine-virtual-mic)"sv;
+        return 0;
       }
 
       void
       release_mic_redirect_device() override {
-        // Nothing to release.
+        mic_play.reset();
+
+        if (mic_sink_index != PA_INVALID_INDEX) {
+          unload_null(mic_sink_index);
+          mic_sink_index = PA_INVALID_INDEX;
+        }
       }
 
       ~server_t() override {
@@ -564,6 +642,7 @@ namespace platf {
         unload_null(index.surround51);
         unload_null(index.surround71);
         unload_null(index.surround714);
+        unload_null(mic_sink_index);
 
         if (worker.joinable()) {
           pa_context_disconnect(ctx.get());
