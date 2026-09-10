@@ -296,6 +296,131 @@ namespace video {
   util::Either<avcodec_buffer_t, int>
   vulkan_init_avcodec_hardware_input_buffer(platf::avcodec_encode_device_t *);
 
+  namespace {
+    /**
+     * @brief Per-frame luminance statistics for HDR10+ dynamic metadata,
+     *        analyzed on the CPU from the converted 10-bit luma plane.
+     *
+     * The Windows analyzer runs a compute shader over scRGB frames and sees
+     * true per-pixel max(R,G,B); the KMS capture path is PQ YUV, so luma
+     * stands in for maxRGB here. Saturated primaries can exceed luma, which
+     * the HDR10+ consumer already treats as approximate - it reports the 99th
+     * percentile as maxSCL rather than the frame maximum.
+     */
+    void
+    analyze_pq_luma_frame(AVFrame *sw_frame, platf::hdr_frame_luminance_stats_t &stats, std::uint64_t &sequence) {
+      const auto fmt = (AVPixelFormat) sw_frame->format;
+      if (fmt != AV_PIX_FMT_P010LE && fmt != AV_PIX_FMT_YUV444P10LE) {
+        return;
+      }
+      if (!sw_frame->data[0] || sw_frame->linesize[0] <= 0 || sw_frame->width <= 0 || sw_frame->height <= 0) {
+        return;
+      }
+
+      // 10-bit codes live in the high bits of each 16-bit little-endian word.
+      constexpr int kShift = 6;
+      constexpr int kCodeMax = 1023;
+      // 10-bit limited-range luma spans [64, 940]; remap onto the PQ signal.
+      const bool limited_range = sw_frame->color_range != AVCOL_RANGE_JPEG;
+      constexpr int kLimitedLow = 64;
+      constexpr int kLimitedSpan = 940 - 64;
+
+      float signal_lut[kCodeMax + 1];
+      float nits_lut[kCodeMax + 1];
+      for (int code = 0; code <= kCodeMax; ++code) {
+        auto c = code;
+        if (limited_range) {
+          c = ((code - kLimitedLow) * kCodeMax) / kLimitedSpan;
+        }
+        signal_lut[code] = std::clamp(c, 0, kCodeMax) / float(kCodeMax);
+        nits_lut[code] = hdr_metadata::pq_to_nits(signal_lut[code]);
+      }
+
+      std::vector<std::uint32_t> histogram(kCodeMax + 1, 0);
+      const auto *base = reinterpret_cast<const std::uint16_t *>(sw_frame->data[0]);
+      const auto stride = sw_frame->linesize[0] / sizeof(std::uint16_t);
+      for (int row = 0; row < sw_frame->height; ++row) {
+        const auto *line = base + (size_t) row * stride;
+        for (int col = 0; col < sw_frame->width; ++col) {
+          ++histogram[line[col] >> kShift];
+        }
+      }
+
+      const auto total = (std::uint64_t) sw_frame->width * sw_frame->height;
+      if (!total) {
+        return;
+      }
+
+      auto code_at_percentile = [&](int pct) {
+        const auto target = (std::uint64_t) std::ceil(total * pct / 100.0);
+        std::uint64_t acc = 0;
+        for (int code = 0; code <= kCodeMax; ++code) {
+          acc += histogram[code];
+          if (acc >= target) {
+            return code;
+          }
+        }
+        return kCodeMax;
+      };
+
+      double nits_sum = 0.0;
+      double signal_sum = 0.0;
+      std::uint64_t near_black = 0;
+      int min_code = -1;
+      int max_code = 0;
+      for (int code = 0; code <= kCodeMax; ++code) {
+        const auto count = histogram[code];
+        if (!count) {
+          continue;
+        }
+        if (min_code < 0) {
+          min_code = code;
+        }
+        max_code = code;
+        nits_sum += (double) count * nits_lut[code];
+        signal_sum += (double) count * signal_lut[code];
+        if (signal_lut[code] < 1.0f / 256.0f) {
+          near_black += count;
+        }
+      }
+      if (min_code < 0) {
+        return;
+      }
+
+      stats.min_maxrgb = nits_lut[min_code];
+      stats.max_maxrgb = nits_lut[max_code];
+      stats.avg_maxrgb = (float) (nits_sum / total);
+      stats.avg_maxrgb_pq = (float) (signal_sum / total);
+      stats.near_black_fraction = (float) ((double) near_black / total);
+      stats.near_black_stats_valid = true;
+      stats.analysis_max_nits = 10000.0f;
+      stats.sample_sequence = ++sequence;
+      stats.valid = true;
+
+      for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
+        const auto pct = hdr_metadata::hdr10plus_percentages[i];
+        const auto code = code_at_percentile(pct);
+        stats.distribution_maxrgb[i] = nits_lut[code];
+        switch (pct) {
+          case 1:
+            stats.percentile_1_pq = signal_lut[code];
+            break;
+          case 10:
+            stats.percentile_10_pq = signal_lut[code];
+            break;
+          case 90:
+            stats.percentile_90_pq = signal_lut[code];
+            break;
+          case 99:
+            stats.percentile_99 = nits_lut[code];
+            break;
+          default:
+            break;
+        }
+      }
+    }
+  }  // namespace
+
   class avcodec_software_encode_device_t: public platf::avcodec_encode_device_t {
   public:
     int
@@ -342,6 +467,11 @@ namespace video {
           BOOST_LOG(error) << "Failed to transfer image data to hardware frame: "sv << av_make_error_string(string, AV_ERROR_MAX_STRING_SIZE, status);
           return -1;
         }
+      }
+
+      if (luminance_analysis_enabled && frame &&
+          av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS)) {
+        analyze_pq_luma_frame(sw_frame.get(), hdr_luminance_stats, luminance_sequence);
       }
 
       return 0;
@@ -464,6 +594,11 @@ namespace video {
     avcodec_frame_t sws_input_frame;
     avcodec_frame_t sws_output_frame;
     sws_t sws;
+
+    // Set alongside colorspace when HDR10+ dynamic metadata is enabled and
+    // this device can feed the analyzer (see make_avcodec_encode_session).
+    bool luminance_analysis_enabled = false;
+    std::uint64_t luminance_sequence = 0;
 
     // Offset of input image to output frame in pixels
     int offsetW;
@@ -2979,6 +3114,10 @@ namespace video {
       }
       software_encode_device->colorspace = colorspace;
       software_encode_device->video_format = config.videoFormat;
+      software_encode_device->luminance_analysis_enabled =
+        colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv;
+      software_encode_device->hdr_luminance_analysis_available =
+        software_encode_device->luminance_analysis_enabled;
 
       encode_device_final = std::move(software_encode_device);
     }
