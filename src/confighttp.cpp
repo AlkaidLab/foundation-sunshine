@@ -1823,7 +1823,8 @@ namespace confighttp {
 #endif
   }
 
-#ifdef _WIN32
+  // Cross-platform: on Linux the virtual display backend reports its own
+  // readiness through the same status surface.
   void
   getVddStatus(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
@@ -1842,6 +1843,7 @@ namespace confighttp {
     });
   }
 
+#ifdef _WIN32
   void
   writeVulkanHdrBridgeStatus(resp_https_t response, bool operation_status) {
     const auto bridge_status = platf::vulkan_hdr_bridge::status();
@@ -3954,8 +3956,10 @@ namespace confighttp {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
-#ifdef _WIN32
+    // Virtual display status is cross-platform (the Linux backend reports
+    // its own readiness); the Vulkan HDR bridge stays Windows-only.
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
+#ifdef _WIN32
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
     server.resource["^/api/vulkan-hdr-bridge/validate$"]["POST"] = validateVulkanHdrBridge;
 #endif

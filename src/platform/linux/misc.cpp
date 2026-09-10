@@ -94,9 +94,27 @@ namespace platf {
 
   std::vector<std::string>
   adapter_names() {
-    // Encoding via GPU adapter enumeration is a Windows-side concern; the
-    // Linux capture paths select devices through DRM/VAAPI instead.
-    return {};
+    // One entry per GPU model, keyed by the kernel driver backing the DRM
+    // card (nvidia / amdgpu / i915 / ...). The Windows implementation lists
+    // DXGI adapters at the same granularity.
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator { "/sys/class/drm", ec }) {
+      const auto name = entry.path().filename().string();
+      if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+        continue;
+      }
+      std::error_code link_ec;
+      const auto driver = fs::read_symlink(entry.path() / "device" / "driver", link_ec);
+      if (link_ec) {
+        continue;
+      }
+      const std::string adapter = driver.filename().string();
+      if (std::find(names.begin(), names.end(), adapter) == names.end()) {
+        names.emplace_back(adapter);
+      }
+    }
+    return names;
   }
 
   ifaddr_t
