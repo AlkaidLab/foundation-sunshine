@@ -43,6 +43,15 @@
   // lib includes
   #include "tray/src/tray.h"
 
+#ifndef _WIN32
+  // The Linux tray is the Qt implementation (QApplication lives on the main
+  // thread), so menu callbacks can raise modal message boxes directly.
+  // NB: avoid QCoreApplication::instance() here - the inline access to the
+  // protected `self` symbol needs a copy relocation that a non-PIE link
+  // cannot satisfy against libQt6Core.
+  #include <QMessageBox>
+#endif
+
   // local includes
   #include "src/confighttp.h"
   #include "src/display_device/session.h"
@@ -66,6 +75,32 @@ using namespace std::literals;
 // system_tray namespace
 namespace system_tray {
   static std::atomic<bool> tray_initialized = false;
+
+#ifndef _WIN32
+  /**
+   * @brief Modal Qt message box, the Linux counterpart of MessageBoxW.
+   * @details Menu callbacks run on the tray's QApplication thread, so a
+   *          nested dialog event loop is the standard Qt pattern here.
+   * @returns true for YES, false for NO or dismissal. OK-style boxes return true.
+   */
+  bool
+  show_message_box(const std::string &title, const std::string &text, const bool yesno, const bool as_warning = false) {
+    const auto qtitle = QString::fromUtf8(title.c_str());
+    const auto qtext = QString::fromUtf8(text.c_str());
+    if (yesno) {
+      const auto choice = QMessageBox::question(nullptr, qtitle, qtext, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+      return choice == QMessageBox::Yes;
+    }
+    if (as_warning) {
+      QMessageBox::warning(nullptr, qtitle, qtext);
+    }
+    else {
+      QMessageBox::information(nullptr, qtitle, qtext);
+    }
+    return true;
+  }
+#endif
+
 
   // Threading variables for all platforms
   static std::thread tray_thread;
@@ -248,6 +283,11 @@ namespace system_tray {
     const auto message = system_tray_i18n::utf8_to_wstring(
       system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_MSG));
     MessageBoxW(nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING);
+#else
+    show_message_box(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_TITLE),
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_MSG),
+      false, true);
 #endif
     launch_ui();
     return false;
@@ -327,6 +367,14 @@ namespace system_tray {
         BOOST_LOG(info) << "User cancelled enabling VDD keep-enabled mode";
         return;
       }
+#else
+      if (!show_message_box(
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_TITLE),
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_MSG),
+            true)) {
+        BOOST_LOG(info) << "User cancelled enabling VDD keep-enabled mode";
+        return;
+      }
 #endif
       config::video.vdd_keep_enabled = true;
       BOOST_LOG(info) << "Enabled VDD keep-enabled mode (Auto-creation removed)";
@@ -353,6 +401,14 @@ namespace system_tray {
       std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE));
       std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG));
       if (MessageBoxW(NULL, message.c_str(), title.c_str(), MB_YESNO | MB_ICONQUESTION) != IDYES) {
+        BOOST_LOG(info) << "User cancelled enabling headless VDD create";
+        return;
+      }
+#else
+      if (!show_message_box(
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE),
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG),
+            true)) {
         BOOST_LOG(info) << "User cancelled enabling headless VDD create";
         return;
       }
@@ -412,7 +468,13 @@ namespace system_tray {
       BOOST_LOG(info) << "User cancelled resetting display device config"sv;
     }
   #else
-    // 非 Windows 平台，直接重置
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_CONFIRM_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_CONFIRM_MSG),
+          true, true)) {
+      BOOST_LOG(info) << "User cancelled resetting display device config"sv;
+      return;
+    }
     BOOST_LOG(info) << "Resetting display device config from system tray"sv;
     display_device::session_t::get().reset_persistence();
   #endif
@@ -492,6 +554,13 @@ namespace system_tray {
       return;
     }
   #else
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_MESSAGE),
+          true)) {
+      BOOST_LOG(info) << "User cancelled quitting from system tray"sv;
+      return;
+    }
     // Raise the shutdown event, then wake the tray event loop parked on the
     // main thread - otherwise the graceful shutdown path never runs.
     lifetime::exit_sunshine(0, true);

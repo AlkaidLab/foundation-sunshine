@@ -197,6 +197,16 @@ if(${SUNSHINE_ENABLE_TRAY})
         include_directories(SYSTEM ${LIBNOTIFY_INCLUDE_DIRS})
         link_directories(${LIBNOTIFY_LIBRARY_DIRS})
 
+        # Tray message boxes (QMessageBox) need Widgets linked into sunshine,
+        # but the tray target links Qt PRIVATE and a second find_package(Qt6)
+        # in any scope breaks Qt6's config file - resolve Qt6Widgets through
+        # pkg-config instead.
+        pkg_check_modules(QT6WIDGETS QUIET Qt6Widgets)
+        if(QT6WIDGETS_FOUND)
+            include_directories(SYSTEM ${QT6WIDGETS_INCLUDE_DIRS})
+            link_directories(${QT6WIDGETS_LIBRARY_DIRS})
+            list(APPEND PLATFORM_LIBRARIES ${QT6WIDGETS_LIBRARIES})
+        endif()
         add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/tray")
         list(APPEND SUNSHINE_EXTERNAL_LIBRARIES tray::tray)
     endif()
