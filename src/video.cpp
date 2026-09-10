@@ -469,8 +469,7 @@ namespace video {
         }
       }
 
-      if (luminance_analysis_enabled && frame &&
-          av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS)) {
+      if (luminance_analysis_enabled) {
         analyze_pq_luma_frame(sw_frame.get(), hdr_luminance_stats, luminance_sequence);
       }
 
@@ -824,6 +823,10 @@ namespace video {
 
     // inject sps/vps data into idr pictures
     int inject;
+
+    // Dolby Vision P8.1 RPU state; inert unless the session negotiated it and
+    // the analyzer can feed L1 (see make_avcodec_encode_session).
+    dolby_vision::rpu_injector_t dolby_vision_;
   };
 
   /**
@@ -2432,6 +2435,12 @@ namespace video {
     }
 
     // send the frame to the encoder
+    // Stage the RPU for this frame index before submitting; the packet that
+    // surfaces below carries the same pts back and gets the NAL spliced in.
+    if (session.dolby_vision_.enabled()) {
+      session.dolby_vision_.stage(submitted_frame_index, session.device->hdr_luminance_stats);
+    }
+
     auto ret = avcodec_send_frame(ctx.get(), frame);
     if (ret < 0) {
       char err_str[AV_ERROR_MAX_STRING_SIZE] { 0 };
@@ -2454,6 +2463,25 @@ namespace video {
 
       if (av_packet->flags & AV_PKT_FLAG_KEY) {
         BOOST_LOG(debug) << "Frame "sv << frame_nr << ": IDR Keyframe (AV_FRAME_FLAG_KEY)"sv;
+      }
+
+      if (session.dolby_vision_.enabled() && av_packet->data && av_packet->size > 0) {
+        // The injector appends the RPU NAL (with its start code) to the
+        // access unit; round-trip through a buffer since AVPacket owns a
+        // fixed allocation API.
+        std::vector<uint8_t> bitstream(av_packet->data, av_packet->data + av_packet->size);
+        session.dolby_vision_.inject(av_packet->pts, bitstream);
+        const auto injected_size = (int) bitstream.size();
+        if (injected_size != av_packet->size) {
+          if (injected_size > av_packet->size &&
+              av_grow_packet(av_packet, injected_size - av_packet->size) < 0) {
+            BOOST_LOG(warning) << "Dolby Vision: cannot grow the packet for the RPU; skipping"sv;
+          }
+          else {
+            memcpy(av_packet->data, bitstream.data(), injected_size);
+            av_packet->size = injected_size;
+          }
+        }
       }
 
       if ((frame->flags & AV_FRAME_FLAG_KEY) && !(av_packet->flags & AV_PKT_FLAG_KEY)) {
@@ -2628,6 +2656,9 @@ namespace video {
 
     return -1;
   }
+
+  std::optional<dolby_vision::session_config_t>
+  dolby_vision_config_for_session(platf::display_t *disp, const config_t &client_config);
 
   std::unique_ptr<avcodec_encode_session_t>
   make_avcodec_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::avcodec_encode_device_t> encode_device) {
@@ -3114,10 +3145,13 @@ namespace video {
       }
       software_encode_device->colorspace = colorspace;
       software_encode_device->video_format = config.videoFormat;
+      const auto negotiated_dynamic = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
       software_encode_device->luminance_analysis_enabled =
-        colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv;
+        colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv &&
+        (hdr_metadata::formats_for(colorspace, config.videoFormat).hdr10plus ||
+         negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81);
       software_encode_device->hdr_luminance_analysis_available =
-        software_encode_device->luminance_analysis_enabled;
+        colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv;
 
       encode_device_final = std::move(software_encode_device);
     }
@@ -3131,6 +3165,18 @@ namespace video {
 
     encode_device_final->apply_colorspace();
 
+    // Dolby Vision P8.1 rides PQ; the RPU's L1 needs the luminance analyzer,
+    // so a negotiated session without analysis streams an HDR10 base layer
+    // only (the client decoder falls back by design). P8.4 needs HLG, which
+    // the KMS capture path cannot produce.
+    const auto negotiated_dynamic = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+    const bool dv_negotiated = negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ||
+                               negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_84;
+    const bool dv_transfer_ok =
+      negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 &&
+      colorspace_is_pq(encode_device_final->colorspace);
+    const bool dv_analysis_usable = hdr_luminance_analysis_usable(encode_device_final->hdr_luminance_analysis_available);
+
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
@@ -3138,6 +3184,31 @@ namespace video {
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
+
+    if (dv_negotiated) {
+      if (!dv_analysis_usable) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but luminance analysis is unavailable; "
+                              "streaming without RPU"sv;
+      }
+      else if (!dv_transfer_ok) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but the base layer does not match the "
+                              "negotiated profile (P8.4 needs HLG, unavailable on this capture path); "
+                              "streaming without RPU"sv;
+      }
+      else if (const auto dv_config = dolby_vision_config_for_session(disp, config);
+               !dv_config) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but no usable mastering metadata; "
+                              "streaming without RPU"sv;
+      }
+      else if (!session->dolby_vision_.configure(*dv_config)) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but the RPU config is out of range; "
+                              "streaming without RPU"sv;
+      }
+      else {
+        BOOST_LOG(info) << "Dolby Vision Profile 8.1 active (mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+    }
 
     return session;
   }
