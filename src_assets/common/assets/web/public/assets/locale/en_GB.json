@@ -861,7 +861,8 @@
     "wgc_user_mode_available": "Currently running in user mode. WGC capture is available.",
     "window_title": "Window Title",
     "window_title_desc": "The title of the window to capture (partial match, case-insensitive). If left empty, the current running application name will be used automatically.",
-    "window_title_placeholder": "e.g., Application Name"
+    "window_title_placeholder": "e.g., Application Name",
+    "vdd_driver_state_ready": "Ready for the virtual display."
   },
   "index": {
     "check_updates": "Check for updates",

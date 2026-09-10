@@ -641,6 +641,11 @@ namespace platf {
         int monitor_index = util::from_view(display_name);
         int monitor = 0;
 
+        // The wizard's GPU selection (adapter_name holds a kernel driver
+        // name like "nvidia") narrows the capture to matching cards.
+        std::string preferred_adapter = config::video.adapter_name;
+        boost::algorithm::trim(preferred_adapter);
+
         // Displays are named after their DRM connector ("eDP-1", "DP-1", ...).
         // When a virtual display session is live, the virtual connector takes
         // priority; otherwise a non-numeric display_name selects the connector
@@ -669,6 +674,15 @@ namespace platf {
           if (mem_type == mem_type_e::cuda && !card.is_nvidia()) {
             BOOST_LOG(debug) << file << " is not a CUDA device"sv;
             if (config::video.encoder != "nvenc") {
+              continue;
+            }
+          }
+
+          if (!preferred_adapter.empty()) {
+            std::error_code driver_ec;
+            const auto driver = fs::read_symlink(entry.path() / "device" / "driver", driver_ec);
+            if (!driver_ec && driver.filename().string() != preferred_adapter) {
+              BOOST_LOG(debug) << file << " does not match the configured adapter ["sv << preferred_adapter << ']';
               continue;
             }
           }

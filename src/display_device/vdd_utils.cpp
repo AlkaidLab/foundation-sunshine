@@ -1563,13 +1563,42 @@ namespace display_device::vdd_utils {
      * @return The /sys/class/drm card prefix, e.g. "card1".
      */
     std::string
+    card_driver(const std::string &card) {
+      std::error_code link_ec;
+      const auto driver = fs::read_symlink(fs::path { "/sys/class/drm" } / card / "device" / "driver", link_ec);
+      return link_ec ? std::string {} : driver.filename().string();
+    }
+
+    std::string
     pick_card() {
       std::string best_card;
       std::size_t best_connected = 0;
 
+      // The wizard's GPU selection (config adapter_name, a kernel driver
+      // name like "nvidia") narrows the candidates when it matches a card.
+      std::string preferred_driver = config::video.adapter_name;
+      preferred_driver.erase(preferred_driver.begin(), std::find_if(preferred_driver.begin(), preferred_driver.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+      preferred_driver.erase(std::find_if(preferred_driver.rbegin(), preferred_driver.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), preferred_driver.end());
+      std::string preferred_card;
+      if (!preferred_driver.empty()) {
+        for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
+          const auto name = entry.path().filename().string();
+          if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+            continue;
+          }
+          if (card_driver(name) == preferred_driver) {
+            preferred_card = name;
+            break;
+          }
+        }
+      }
+
       for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
         const auto name = entry.path().filename().string();
         if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+          continue;
+        }
+        if (!preferred_card.empty() && name != preferred_card) {
           continue;
         }
 
@@ -1804,6 +1833,7 @@ namespace display_device::vdd_utils {
     status.monitor_active = !live_virtual_display_connector().empty();
     status.problem_code_valid = true;
     status.problem_code = 0;
+    status.state = std::string { classify_vdd_state(status.installed, status.running, status.control_available, status.problem_code_valid, status.problem_code) };
     return status;
   }
 

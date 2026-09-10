@@ -865,7 +865,8 @@
     "wgc_user_mode_available": "当前以用户模式运行，WGC 捕获可用。",
     "window_title": "窗口标题",
     "window_title_desc": "要捕获的窗口标题（部分匹配，不区分大小写）。如果留空，将自动使用当前运行的应用名称。",
-    "window_title_placeholder": "例如：yuanshen"
+    "window_title_placeholder": "例如：yuanshen",
+    "vdd_driver_state_ready": "虚拟显示器就绪。"
   },
   "index": {
     "check_updates": "检查更新",
