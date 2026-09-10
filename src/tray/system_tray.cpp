@@ -1273,6 +1273,18 @@ namespace system_tray {
     tray_visit_project_submenu_text();
     tray_update(&tray);
 
+#ifndef _WIN32
+    // A shutdown or restart raised off the main thread (tray restart, WebUI
+    // restart, ...) would never wake the tray event loop parked on the main
+    // thread, leaving the process hung here instead of shutting down. Watch
+    // the shutdown event and wake the loop, exactly like the quit menu does.
+    int end_tray();  // defined below this file
+    std::thread([]() {
+      mail::man->event<bool>(mail::shutdown)->view();
+      end_tray();
+    }).detach();
+#endif
+
     tray_initialized = true;
     return 0;
   }
