@@ -19,9 +19,9 @@ NVENC/VAAPI/软件编码、evdev 输入、WebUI）是上游成熟代码。但工
 
 此外要建立正确的预期：迁移开始时本分支的卖点（ZakoVDD 虚拟显示器、NVENC SDK 13 直连 / AMF QVBR、
 Tauri 控制面板、远程麦克风写主机、USB/IP 主机、WGC 捕获、vmouse 虚拟鼠标）在 Linux 上均不可用
-（Windows 专属或不完整 stub）。**截至 2026-09-10：ZakoVDD 虚拟显示器已用原生 C++ 后端完整移植**
-（个性化 EDID + 连接器强制 + CRTC 抢占，见 §十一 P0 与 §十二进度）；其余项仍不可用或降级。
-Linux 现状 = "上游 Sunshine 功能集 + 分支纯逻辑增强 + 已移植的虚拟显示器"（见 §八功能矩阵）。CI 目前只有 Windows 构建（`.github/workflows/main.yml` 仅有 `build_win`、
+（Windows 专属或不完整 stub）。**截至 2026-09-10 已移植**：ZakoVDD 虚拟显示器（原生 C++ 后端，
+§十一 P0 / §十二进度 7）、物理显示器 display_device 后端（进度 11）、主机侧剪贴板同步（进度 12）、
+远程麦克风写主机（进度 13）；其余项仍不可用或降级。Linux 现状见 §八功能矩阵。CI 目前只有 Windows 构建（`.github/workflows/main.yml` 仅有 `build_win`、
 `vdd_smoke` 两个 Windows job），Linux 编译在主干上长期无人验证，首次构建可能遇到零星的编译错误。
 
 ---
@@ -198,7 +198,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | 文本输入通道 text_context | 纯数据通道（`src/text_context/`，挂接 `src/stream.cpp`） |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；但"资源管理器右键共享"入口是 Windows 专属，Linux 只能经 API/WebUI 操作 |
 | Webhook / client_fingerprint / launch_session_manager / ABR* | 纯逻辑层，均有 Linux 分支（`*` ABR 的前台应用检测仅 Windows，Linux 返回空 → 相关自适应决策失效，`src/abr.cpp:86-132`） |
-| 剪贴板（客户端↔客户端 / 客户端↔WebUI 中继） | 内存中继 + SSE 跨平台；**无主机 OS 剪贴板同步**（全库没有 X11/Wayland 剪贴板集成代码，宿主侧 provider 本是 Windows GUI 面板） |
+| 剪贴板（客户端↔客户端 / 客户端↔WebUI 中继） | 内存中继 + SSE 跨平台；**主机侧同步已移植（2026-09-10）**：`src/clipboard_host.cpp` 对话 KDE klipper（sd-bus），双向同步 + 回声抑制，复用 GUI 代理的文本帧协议（§十二进度 12） |
 | AI API Key 凭据 | Linux 降级为明文环境变量 `SUNSHINE_LLM_API_KEY`（Windows 用 DPAPI，`src/ai/credential_store.cpp:117-124`） |
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 的编译期特性检测（`src/audio.cpp:398-403`，Arch opus 1.6.1 ✅）；12ch 有 Linux null-sink 实现（`platform/linux/audio.cpp:406-408`）；持续音频为平台无关逻辑 |
 | HDR 静态元数据透传（MDCV/CLL） | 跨平台：kmsgrab 读 DRM `HDR_OUTPUT_METADATA`（`kmsgrab.cpp:850-862`）→ avcodec side data（`video.cpp:2839-2862`），不依赖编码器 SDK |
@@ -213,7 +213,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 |---|---|
 | Dolby Vision P8.1 / P8.4 | RPU 写入器是纯比特流层（`video_dolby_vision.h:2-21`，0 平台守卫），挂在通用 avcodec 编码路径（`video.cpp:3069-3100`）；但 L1 亮度分析输入仅 Windows NVAPI 产出（`display_vram.cpp:2341-2422`），Linux 无 stats → 不生成 RPU，会话退化为普通 HDR10（基层兼容层保证回退，不崩） |
 | HDR10+ 动态元数据 | Linux 只发预挂的占位 SEI（`video.cpp:2867+`），真实值刷新依赖 Windows-only 亮度分析器（`video.cpp:2288-2296`） |
-| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配；物理显示器的分辨率/HDR/拓扑切换仍为 stub（见 ❌ 表与 §十二"下一个目标"） |
+| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配；物理显示器的分辨率/HDR/拓扑已实现（kscreen-doctor，见 ❌ 表已移植行） |
 | frame_contract（帧管线契约） | 策略层跨平台（`platform/frame_contract.cpp`），但只有 Windows 采集端消费，Linux 侧策略存在、执行为空 |
 
 ### ❌ Windows 专属 / Linux 不可用
@@ -226,9 +226,9 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | HDR Vivid 动态元数据 | avcodec 路径没有 CUVA T.35 序列化器（`video.cpp:2925-2937` 注释明示），仅 Windows NVENC 直连路径手写产出 |
 | 虚拟扬声器位深匹配 | Windows PolicyConfig COM（`platform/windows/audio.cpp:1316-1319`）；Linux 固定 `PA_SAMPLE_FLOAT32`（`platform/linux/audio.cpp:81`） |
 | 触摸键盘自动唤起（touch_keyboard_session） | Windows 注册表机制，头文件自述非 Windows 为 no-op（`touch_keyboard_session.h:11-12`） |
-| Linux 物理显示器分辨率/HDR/拓扑运行时切换 | `src/platform/linux/display_device.cpp` 的 `set_display_modes`/`set_hdr_states`/`set_topology` 等仍为上游同款 stub；虚拟屏工作流本身已完整接入（枚举/解析/prep）。**下一个移植目标**：kscreen-doctor（KDE）+ DRM 回退，见 §十二 |
+| ~~Linux 物理显示器分辨率/HDR/拓扑切换~~ → **✅ 已移植（2026-09-10）** | `src/platform/linux/display_device.cpp` 重写：kscreen-doctor（KDE/compositor）读写模式、HDR、主屏、拓扑 + JSON 持久化还原，对齐 Windows settings.cpp 的 apply/revert 流程；VDD 拓扑仍由会话 VDD 阶段控制；kscreen 不可用时退化为历史 no-op 行为（§十二进度 11） |
 | Tauri 控制面板 | 分发链 Windows 化（`FetchGUI.cmake:24`）；面板本体评估见 §十一 P3 |
-| 远程麦克风写主机 | `src/platform/linux/audio.cpp:543-556` 是返回 -1 的空实现（"not implemented on Linux yet"） |
+| ~~远程麦克风写主机~~ → **✅ 已移植（2026-09-10）** | 虚拟 null-sink 方案：`sink-sunshine-virtual-mic` 的 monitor 源供主机应用录音，`write_mic_pcm` 写入混音后的单声道 PCM，返回码契约与 Windows VB-Cable 路径一致（§十二进度 13） |
 | USB/IP 主机（remote_usb） | 非 Windows 显式禁用：`remote_usb_host_controller.cpp:71-82` 返回 `unsupported` |
 | vmouse 虚拟鼠标 / WGC 捕获 / rtx_hdr / pre_encode_filter / DS5 sidecar | 全在 `src/platform/windows/` |
 
@@ -368,18 +368,21 @@ master fd 需要 `CAP_SYS_PTRACE`（绕过 yama）；CRTC 强制指派需要 `CA
 4. **移植不是研发**：`/opt/sunshine-vd` 源码在手、机制经上游社区验证，Python 逻辑可 1:1 翻译
    （动手前先确认其 LICENSE 与 GPL-3.0 的兼容性，`/opt/sunshine-vd/LICENSE`）。
 
-### P1 · 远程麦克风写主机（补一个 stub）—— 待实施
+### P1 · 远程麦克风写主机 —— ✅ 已完成（2026-09-10）
 
-钩子位置现成：`src/platform/linux/audio.cpp:543-556` 的 `write_mic_pcm()` 返回 -1 空实现，注释明说
-"not implemented on Linux yet"。实现：经 PipeWire 建虚拟麦克风源（pw_stream / `module-loopback` /
-null-sink monitor），把混音后的 PCM 写入。逻辑层（Opus 解码/混音）已跨平台在跑。工作量：中。
+`src/platform/linux/audio.cpp` 的 `write_mic_pcm()`/`init_mic_redirect_device()` 已实现：装载命名
+null-sink `sink-sunshine-virtual-mic`（monitor 源即虚拟麦克风，主机应用直接选择录音），混音后的
+48 kHz 单声道 PCM 经 pa_simple 写入，返回码契约对齐 Windows（正=字节/0=背压丢帧/负=设备丢失触发
+重初始化）。模块参数已用 PipeWire 的 pulse 兼容层实测验证。
 
-### P1 · 剪贴板主机侧集成（体验提升最大的一项）—— 待实施
+### P1 · 剪贴板主机侧集成 —— ✅ 已完成（2026-09-10，文本类）
 
-分支剪贴板是"内存中继 + 可插拔 sink"架构（`src/clipboard_bridge.h:46` 的 `inbound_sink_fn`），目前
-Linux 只有客户端↔客户端/浏览器中继，缺主机 OS 读写。实现两个 provider 即可接入现有总线：
-X11（XFixes selection 事件）+ Wayland（wlr-data-control 协议，KWin 支持，即 `wl-clipboard` 依赖的
-机制）。工作量：中。
+`src/clipboard_host.cpp` 填补了 Windows 上由 GUI 代理（Tauri 面板 clipboard.rs）扮演的角色：
+sd-bus 对话 KDE klipper（`org.kde.klipper` setClipboardContents/getClipboardContents），经
+`clipboard_bridge` 与客户端双向同步，说与 GUI 代理相同的 10 字节文本帧协议（版本/kind/token/长度），
+带 5 秒回声抑制与基线快照；`bridge_t` 新增 listener 列表使 GUI SSE sink 与主机 provider 共存，
+`gui_alive()` 计入 listener 以便无 GUI 时仍广播剪贴板能力。**剩余**：图片（PNG/blob REF 类帧）写入
+主机剪贴板、非 KDE 桌面的 provider（wlr-data-control / X11 XFixes）。
 
 ### P2 · HDR 动态元数据与 DV 亮度分析（复查后的修订版）
 
@@ -484,13 +487,25 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     随之固化，全量重编）；图标对齐 fork（fork 的 PNG 套装装入 hicolor 16/256，apps+status）；
     桌面文件 `--u`→`--user` 笔误修正；appdata 移除上游截图 URL。产物
     `sunshine-foundation-2026.0909-21-x86_64.pkg.tar.zst`（独占/还原/实体屏/虚拟屏串流用户已实测）。
+11. **物理显示器 display_device 后端（pkgrel 22，`09a49cf1`，tag `v0.3-linux-display-device`）**：
+    `src/platform/linux/display_device.cpp` 从全 stub 重写为真实实现——kscreen-doctor 作为合成器
+    中介读写模式/HDR/主屏/拓扑（含 `output.N.mode.WxH@refresh` 语法坑：小数刷新率须回退模式 id）、
+    JSON 持久化（`original_display_settings.json`）与 apply/revert 流程对齐 Windows settings.cpp；
+    VDD 拓扑保持由会话 VDD 阶段控制；kscreen 不可用的环境自动退化为原 no-op 行为。解析器用真实
+    `kscreen-doctor -o` 输出（含 ANSI 码）单独验证。
+12. **主机侧剪贴板同步（pkgrel 23，`a926876d`，tag `v0.4-linux-clipboard-host`）**：
+    `src/clipboard_host.cpp`（libsystemd sd-bus ↔ klipper，可选编译）+ `bridge_t` listener 机制；
+    文本双向同步，回声抑制 5s TTL，会话开始时基线快照；复用 GUI 代理的 10 字节文本帧协议。
+13. **远程麦克风写主机（pkgrel 24，`db4e2f40`，tag `v0.5-linux-mic-redirect`）**：
+    命名 null-sink `sink-sunshine-virtual-mic`（monitor 源即虚拟麦克风）+ pa_simple 写入，
+    返回码契约对齐 Windows VB-Cable 路径；模块参数经 PipeWire pulse 兼容层实测。
+
+**下一个目标（2026-09-10 起）**：P2 HDR 动态元数据（亮度分析器 + HDR Vivid T.35 序列化器）、
+ABR 前台应用检测；剪贴板补图片类帧与非 KDE provider；display_device 的 GNOME Mutter D-Bus 后端。
 
 **标签**：`v0.1-linux-base`（虚拟屏工作开始前的基线）→ `v0.2-linux-vdd`（虚拟显示器原生后端完成，
-随 `48b7c4bf`）。此后每完成一个功能里程碑继续打 tag。
-
-**下一个目标（2026-09-10 起）**：物理显示器的 display_device 后端（分辨率/HDR/拓扑，kscreen-doctor
-+ DRM 路径，对齐 Windows 版行为）→ P1 剪贴板主机侧 → P1 远程麦克风 → P2 HDR 动态元数据/ABR
-前台检测。
+随 `48b7c4bf`）→ `v0.3-linux-display-device`（物理显示器后端）→ `v0.4-linux-clipboard-host`
+（主机侧剪贴板）→ `v0.5-linux-mic-redirect`（远程麦克风）。此后每完成一个功能里程碑继续打 tag。
 
 **增强迁移（§十一）**：P0 虚拟显示器已完成（见进度 7）。后续按 物理 display_device 后端 →
 P1（剪贴板主机侧、远程麦克风）→ P2（HDR 动态元数据、ABR 前台检测）→ P3 的顺序推进；
