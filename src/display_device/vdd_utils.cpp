@@ -1126,6 +1126,9 @@ namespace display_device {
 #include <fcntl.h>
 #include <sys/capability.h>
 #include <sys/stat.h>
+
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -1139,9 +1142,14 @@ namespace display_device {
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <tuple>
+#include <unordered_map>
 
+#include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/linux/vdd_edid.h"
+
+namespace pt = boost::property_tree;
 
 namespace display_device::vdd_utils {
 
@@ -1199,6 +1207,7 @@ namespace display_device::vdd_utils {
     std::string active_edid_content;  // Last written EDID, for mode-switch dedup
     std::vector<std::string> offlined_physical_status_paths;  // Physicals powered off by display_off prep
     parsed_config_t::vdd_prep_e last_prep { parsed_config_t::vdd_prep_e::no_operation };
+    vdd_edid::edid_options active_edid_opts;  // Personalization captured at create
     unsigned int cached_width { 1920 };
     unsigned int cached_height { 1080 };
     unsigned int cached_refresh_hz { 60 };
@@ -1726,7 +1735,7 @@ namespace display_device::vdd_utils {
 
       if (active) {
         // Live mode switch: cycle the connector with an EDID for the new mode.
-        const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, true, "Foundation VDD");
+        const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
         applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
         if (applied) {
           const std::string connector = connector_name_for_status(active_status_path);
@@ -1788,7 +1797,7 @@ namespace display_device::vdd_utils {
       return set_vdd_result::ok;
     }
 
-    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, true, "Foundation VDD");
+    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
     return apply_edid_and_enable(active_edid_path, active_status_path, edid) ? set_vdd_result::ok : set_vdd_result::failed;
   }
 
@@ -1799,7 +1808,35 @@ namespace display_device::vdd_utils {
   }
 
   physical_size_t
-  get_client_physical_size(const std::string &) {
+  get_client_physical_size(const std::string &client_name) {
+    if (client_name.empty()) {
+      return {};
+    }
+
+    // Same per-client size classes as the Windows implementation.
+    static const std::unordered_map<std::string, physical_size_t> size_map = {
+      { "small", { 13.3f, 7.5f } },   // ~6 inch, 16:9
+      { "medium", { 34.5f, 19.4f } }, // ~15.6 inch, 16:9
+      { "large", { 70.8f, 39.8f } },  // ~32 inch, 16:9
+    };
+
+    try {
+      pt::ptree clientArray;
+      std::stringstream ss(config::get_clients_config());
+      pt::read_json(ss, clientArray);
+
+      for (const auto &client : clientArray) {
+        if (client.second.get<std::string>("name", "") == client_name) {
+          const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
+          const auto it = size_map.find(device_size);
+          return it != size_map.end() ? it->second : size_map.at("medium");
+        }
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(debug) << "Failed to get client physical size: "sv << e.what();
+    }
+
     return {};
   }
 
@@ -1871,7 +1908,7 @@ namespace display_device::vdd_utils {
     }
 
     const std::string status_path = "/sys/class/drm/" + card + "-" + connector + "/status";
-    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, true, "Foundation VDD");
+    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, active_edid_opts);
 
     if (!apply_edid_and_enable(edid_path, status_path, edid)) {
       BOOST_LOG(error) << "vdd: failed to bring up "sv << card << '-' << connector;

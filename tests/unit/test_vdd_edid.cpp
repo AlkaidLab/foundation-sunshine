@@ -101,3 +101,55 @@ TEST(VddEdid, HdrBlockPresenceFollowsFlag) {
 }
 
 #endif  // !_WIN32
+
+#ifndef _WIN32
+TEST(VddEdid, PersonalizedHdrLuminanceFollowsCtaEncoding) {
+  vdd_edid::edid_options opts;
+  opts.width_mm = 700;
+  opts.height_mm = 400;
+  opts.hdr_max_nits = 1200;
+  opts.hdr_max_full_nits = 601;
+  opts.hdr_min_nits = 1;
+  const auto edid = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, opts);
+
+  // CTA-861-H: max/full = nits*100/1499, min = 255*sqrt(nits/1499)
+  EXPECT_EQ(edid[140], 0x50);  // 1200 nits -> 80
+  EXPECT_EQ(edid[141], 0x28);  // 601 nits -> 40
+  EXPECT_EQ(edid[142], 0x06);  // 1 nit -> round(255*sqrt(1/1499)) = 6
+}
+
+TEST(VddEdid, ExtraModesFillDtdSlotsWithValidChecksums) {
+  vdd_edid::edid_options opts;
+  opts.extra_modes = {
+    { 1920, 1080, 60 },
+    { 1280, 720, 60 },
+  };
+  const auto edid = vdd_edid::generate_virtual_display_edid(2560, 1440, 120, opts);
+
+  int sum = 0;
+  for (std::size_t i = 0; i < 128; ++i) sum += edid[i];
+  EXPECT_EQ(sum % 256, 0);
+
+  // Base block dummy slot now carries the 1920x1080@60 DTD
+  const auto pixel_clock = static_cast<int>(edid[108] | (edid[109] << 8));
+  const unsigned int h_active = edid[110] | ((edid[112] >> 4) << 8);
+  EXPECT_EQ(h_active, 1920u);
+  EXPECT_GT(pixel_clock, 0);
+}
+
+TEST(VddEdid, PhysicalSizeOverrideLandsInDescriptors) {
+  vdd_edid::edid_options opts;
+  opts.width_mm = 700;
+  opts.height_mm = 400;
+  vdd_edid::edid_options size_opts;
+  size_opts.width_mm = 700;
+  size_opts.height_mm = 400;
+  const auto edid = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, size_opts);
+
+  EXPECT_EQ(edid[21], 70);   // width cm
+  EXPECT_EQ(edid[22], 40);   // height cm
+  EXPECT_EQ(edid[66], 188);  // 700 mm low byte (0x2BC)
+  EXPECT_EQ(edid[67], 144);  // 400 mm low byte (0x190)
+  EXPECT_EQ(edid[68], 0x21); // (700>>8)<<4 | (400>>8) = 0x21
+}
+#endif
