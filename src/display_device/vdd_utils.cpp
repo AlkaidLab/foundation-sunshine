@@ -1745,11 +1745,90 @@ namespace display_device::vdd_utils {
 
       return wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
     }
+
+    /**
+     * @brief Adopt a virtual display left live by a previous process.
+     *
+     * The EDID override and forced connector state survive Sunshine's exit,
+     * but the in-memory bookkeeping does not: after a restart nothing
+     * remembered the virtual display was ours, so the tray offered "create"
+     * while one was already on screen and session teardown skipped it. Scan
+     * once for a connected connector carrying our VHD-signature EDID and
+     * restore the tracked state (preferred mode parsed back from the EDID).
+     * Caller holds state_mutex.
+     */
+    void
+    adopt_orphan_vdd_locked() {
+      static bool adoption_attempted = false;
+      if (adoption_attempted) {
+        return;
+      }
+      adoption_attempted = true;
+
+      // Reading debugfs needs the file capabilities raised to effective.
+      elevated_caps caps;
+
+      const std::uint8_t signature[] = { 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x56, 0x24 };
+      std::error_code ec;
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm", ec }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        const std::string status_path = (entry.path() / "status").string();
+        if (!connector_status_is(status_path, "connected")) {
+          continue;
+        }
+        const std::string connector = name.substr(name.find('-') + 1);
+        const auto edid_path = edid_override_path(debugfs_dir_for_card(name.substr(0, name.find('-'))), connector);
+        if (edid_path.empty()) {
+          continue;
+        }
+
+        std::ifstream in { edid_path, std::ios::binary };
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (content.size() < 72 || std::memcmp(content.data(), signature, sizeof(signature)) != 0) {
+          continue;
+        }
+
+        active = true;
+        active_connector = connector;
+        active_status_path = status_path;
+        active_edid_path = edid_path;
+
+        // Preferred timing descriptor: first DTD at EDID offset 54. Recover
+        // the mode so logging and any later regeneration see real values.
+        const auto byte = [&content](std::size_t i) { return (unsigned int) (std::uint8_t) content[i]; };
+        const unsigned int pixel_clock_10khz = byte(54) | (byte(55) << 8);
+        const unsigned int hactive = byte(56) | ((byte(58) >> 4) << 8);
+        const unsigned int hblank = byte(57) | ((byte(58) & 0x0F) << 8);
+        const unsigned int vactive = byte(59) | ((byte(60) >> 4) << 8);
+        const unsigned int vblank = byte(61) | ((byte(60) & 0x0F) << 8);
+        const unsigned int total = (hactive + hblank) * (vactive + vblank);
+        if (pixel_clock_10khz > 0 && total > 0) {
+          const auto refresh = (pixel_clock_10khz * 10000u + total / 2u) / total;
+          if (hactive >= 64 && hactive <= 8192 &&
+              vactive >= 64 && vactive <= 8192 &&
+              refresh >= 20 && refresh <= 250) {
+            cached_width = hactive;
+            cached_height = vactive;
+            cached_refresh_hz = refresh;
+          }
+        }
+
+        BOOST_LOG(info) << "vdd: adopted live virtual display on "sv << name << " ("sv
+                        << cached_width << "x"sv << cached_height << "@"sv << cached_refresh_hz << "Hz)"sv;
+        return;
+      }
+    }
   }  // namespace
 
   std::string
   live_virtual_display_connector() {
     std::lock_guard lock { state_mutex };
+    if (!active) {
+      adopt_orphan_vdd_locked();
+    }
     if (active && !active_connector.empty() && connector_status_is(active_status_path, "connected")) {
       return active_connector;
     }

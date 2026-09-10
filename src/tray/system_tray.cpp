@@ -1234,10 +1234,12 @@ namespace system_tray {
   #endif
 
     // 初始化 VDD 子菜单 (创建, 关闭, 保持启用, 无显示器时自动创建)
-    vdd_submenu[0] = { .text = s_vdd_create.c_str(), .cb = tray_vdd_create_cb };
-    vdd_submenu[1] = { .text = s_vdd_close.c_str(), .cb = tray_vdd_destroy_cb };
-    vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .cb = tray_vdd_persistent_cb };
-    vdd_submenu[3] = { .text = s_vdd_headless_create.c_str(), .checked = 0, .cb = tray_vdd_headless_create_cb };
+    // checkbox=1 makes the checked flag render on the Qt tray (Windows draws
+    // MFS_CHECKED from `checked` alone, Linux needs the explicit flag).
+    vdd_submenu[0] = { .text = s_vdd_create.c_str(), .checkbox = 1, .cb = tray_vdd_create_cb };
+    vdd_submenu[1] = { .text = s_vdd_close.c_str(), .checkbox = 1, .cb = tray_vdd_destroy_cb };
+    vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .checkbox = 1, .cb = tray_vdd_persistent_cb };
+    vdd_submenu[3] = { .text = s_vdd_headless_create.c_str(), .checked = 0, .checkbox = 1, .cb = tray_vdd_headless_create_cb };
     vdd_submenu[4] = { .text = nullptr };
 
   #ifdef _WIN32
@@ -1282,6 +1284,28 @@ namespace system_tray {
     std::thread([]() {
       mail::man->event<bool>(mail::shutdown)->view();
       end_tray();
+    }).detach();
+
+    // Streaming sessions create/destroy the virtual display outside this
+    // thread's control, and a VDD left live by a previous process only gets
+    // adopted lazily; poll so the create/close items reflect reality.
+    std::thread([]() {
+      bool last_active = is_vdd_active();
+      bool last_keep_enabled = config::video.vdd_keep_enabled;
+      while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds { 2 });
+        if (!tray_initialized) {
+          continue;
+        }
+        const bool active = is_vdd_active();
+        const bool keep_enabled = config::video.vdd_keep_enabled;
+        if (active != last_active || keep_enabled != last_keep_enabled) {
+          last_active = active;
+          last_keep_enabled = keep_enabled;
+          update_vdd_menu_text();
+          tray_update(&tray);
+        }
+      }
     }).detach();
 #endif
 
