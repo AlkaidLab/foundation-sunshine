@@ -399,10 +399,11 @@ sd-bus 对话 KDE klipper（`org.kde.klipper` setClipboardContents/getClipboardC
 3. **HLG 捕获源**：kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:840-841`），属上游内核/DRM blob 能力
    限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR），短期放弃；P8.4（HLG 基层）随 HLG 一起搁置。
 
-### P2 · ABR 前台应用检测
+### P2 · ABR 前台应用检测 —— ✅ 已完成（2026-09-10）
 
-`src/abr.cpp:86-132` 的 `detect_foreground_app()` 仅 Windows。Linux 实现：KWin Scripting/D-Bus
-或 wlr-foreign-toplevel-management（KWin 均支持）。工作量：低-中。
+`src/platform/linux/foreground_app.cpp`：KWin 脚本经 D-Bus 把活动窗口（pid/resourceClass/caption）
+事件推送到进程内 `org.sunshine.Abr` 服务，`detect_foreground_app()` 返回缓存；脚本静默（KWin 重启）
+自动重装。Plasma 6 实测全链路通过；非 KDE 桌面维持空结果降级。
 
 ### P3 · NVENC SDK 直连（收益重估后再做）
 
@@ -499,9 +500,18 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
 13. **远程麦克风写主机（pkgrel 24，`db4e2f40`，tag `v0.5-linux-mic-redirect`）**：
     命名 null-sink `sink-sunshine-virtual-mic`（monitor 源即虚拟麦克风）+ pa_simple 写入，
     返回码契约对齐 Windows VB-Cable 路径；模块参数经 PipeWire pulse 兼容层实测。
+14. **重启问题两轮修复（pkgrel 25–26，`26f826e1`/`c203f020`，tag `v0.5.1-linux-restart-fixes`/
+    `v0.5.2-linux-tray-restart`）**：托盘重启三重缺陷——升级后 `/proc/self/exe` 失效（回退
+    argv[0]）、AT_SECURE 下 sd-bus `secure_getenv` 失效（显式构造 bus 地址）、popen 子进程继承
+    监听 socket（有界 fork/exec + acceptor CLOEXEC）；第二轮找到真正根因：非主线程的重启入口
+    从不唤醒停在托盘事件循环的主线程，init_tray 现挂 shutdown 监视线程。
+15. **ABR 前台应用检测（pkgrel 27，`d504fa11`，tag `v0.6-linux-abr-foreground`）**：
+    KWin 脚本（D-Bus 加载、静默自动重装）把活动窗口变化推送到进程内 `org.sunshine.Abr` 服务，
+    ABR 轮询读缓存（pid/resourceClass/caption）；Plasma 6 上 loadScript/run/windowActivated
+    信号与回传链路实测通过；非 KDE 桌面保持原有空结果降级。
 
 **下一个目标（2026-09-10 起）**：P2 HDR 动态元数据（亮度分析器 + HDR Vivid T.35 序列化器）、
-ABR 前台应用检测；剪贴板补图片类帧与非 KDE provider；display_device 的 GNOME Mutter D-Bus 后端。
+剪贴板补图片类帧与非 KDE provider；display_device 的 GNOME Mutter D-Bus 后端。
 
 **标签**：`v0.1-linux-base`（虚拟屏工作开始前的基线）→ `v0.2-linux-vdd`（虚拟显示器原生后端完成，
 随 `48b7c4bf`）→ `v0.3-linux-display-device`（物理显示器后端）→ `v0.4-linux-clipboard-host`

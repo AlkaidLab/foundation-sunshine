@@ -11,7 +11,7 @@
 
 pkgname=sunshine-foundation
 pkgver=2026.0909
-pkgrel=26
+pkgrel=27
 pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
 arch=('x86_64')
 url="https://github.com/qiin2333/Sunshine"
