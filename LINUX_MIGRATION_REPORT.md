@@ -386,13 +386,18 @@ sd-bus 对话 KDE klipper（`org.kde.klipper` setClipboardContents/getClipboardC
 
 ### P2 · HDR 动态元数据与 DV 亮度分析（复查后的修订版）
 
-静态透传已确认跨平台可用（见 §八 ✅ 表），无需移植。动态元数据在 Linux 有**三个缺口**，均已有
-明确的移植路径：
+静态透传已确认跨平台可用（见 §八 ✅ 表），无需移植。动态元数据在 Linux 有**三个缺口**：
 
-1. **逐帧亮度分析器**（HDR10+ 真实刷新与 DV L1 RPU 的共同前置）：Windows 用 D3D11 Compute
-   Shader/NVAPI（`display_vram.cpp:2341-2422`）。Linux 可用 CUDA kernel（nvenc 会话本就有 CUDA
-   hwdevice）或 VA-API/Vulkan compute 实现，产出到 `platf::hdr_frame_luminance_stats_t` 即可同时
-   点亮 HDR10+ 刷新与 DV RPU。工作量：高（但收益覆盖两个特性）。
+1. **逐帧亮度分析器** —— ✅ **HDR10+ 部分已完成（2026-09-10，`e49ae499`，tag
+   `v0.7-linux-hdr10plus`，pkgrel 28）**：avcodec 路径的 HDR10+ 管线（side data 预挂、时间域
+   滤波、`update_hdr_dynamic_metadata`）本来就是跨平台的，只缺统计生产端。软件设备 convert()
+   现以 CPU 直方图遍历转换后的 P010/YUV444P10 亮度面产出全部统计字段（限幅范围重映射，
+   PQ→nits 复用 `hdr_metadata::pq_to_nits`），门控 = PQ 会话 + `hdr_luminance_analysis`
+   配置 + 客户端协商了 HDR10+。近似性：以亮度代替 maxRGB（Windows 是 scRGB 逐像素 RGB，
+   消费端本就把 99 分位当 maxSCL 的近似）。**实测中纠正了两个 ST2084 常量错误**（m2 应为
+   ×128、c3 应为 2392/4096×32=18.6875，对照参考表 100/1000/10000 nits 逐点验证）。
+   **DV L1 RPU 在 avcodec 路径仍未接**：`dolby_vision_` 注入器只在 NVENC/AMF 直连包路径调用，
+   avcodec 会话没有 DV 配置/注入/stage——这是 HDR 剩余的最后一小块，需独立实现并带客户端实测。
 2. **HDR Vivid T.35 序列化器**：avcodec 路径没有 CUVA 序列化器，但分支已有自研比特流工具层
    （`src/cbs.cpp`/`video_hdr_bitstream.cpp`，DV RPU 写入器就是同模式自研的），照搬 `nvenc_base.cpp`
    的手写 T.35 逻辑到 cbs 层即可。工作量：中。
