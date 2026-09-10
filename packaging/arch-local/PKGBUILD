@@ -1,17 +1,17 @@
 # Maintainer: local
 #
 # Local debug package: installs the ALREADY-BUILT tree from this repository's
-# build/ directory into /opt/sunshine (no compilation inside makepkg).
+# build/ directory to the global prefix /usr (no compilation inside makepkg).
 #
 # Build:   (repo root)  ninja -C build          # configure with
-#          -DCMAKE_INSTALL_PREFIX=/opt/sunshine
+#          -DCMAKE_INSTALL_PREFIX=/usr
 # Package: cd packaging/arch-local && makepkg -f
 # Install: sudo pacman -U ./sunshine-foundation-*.pkg.tar.zst
-# Debug:   /opt/sunshine/bin/sunshine           # assets live in /opt/sunshine/share/sunshine
+# Run:     sunshine   # assets live in /usr/share/sunshine
 
 pkgname=sunshine-foundation
 pkgver=2026.0909
-pkgrel=20
+pkgrel=21
 pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
 arch=('x86_64')
 url="https://github.com/qiin2333/Sunshine"

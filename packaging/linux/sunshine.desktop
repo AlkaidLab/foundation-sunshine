@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=@PROJECT_NAME@
-Exec=/usr/bin/env systemctl start --u sunshine
+Exec=systemctl --user start sunshine
 Version=1.0
 Comment=@PROJECT_DESCRIPTION@
 Icon=@SUNSHINE_DESKTOP_ICON@

@@ -1,6 +1,6 @@
 do_setcap() {
   local target
-  target="$(readlink -f /opt/sunshine/bin/sunshine)"
+  target="$(readlink -f /usr/bin/sunshine)"
   # cap_sys_admin: KMS capture. cap_dac_read_search/cap_dac_override:
   # connector EDID overrides and status writes under /sys/kernel/debug.
   # cap_sys_ptrace: borrow the compositor's DRM master (pidfd_getfd) for the
@@ -20,8 +20,8 @@ post_install() {
   do_setcap
   do_udev_reload
 
-  echo "Foundation Sunshine installed to /opt/sunshine."
-  echo "Run directly:        /opt/sunshine/bin/sunshine"
+  echo "Foundation Sunshine installed."
+  echo "Run directly:        sunshine"
   echo "Or via user service: systemctl --user enable --now sunshine"
   echo "Web UI: https://localhost:47990  (config in ~/.config/sunshine)"
 }

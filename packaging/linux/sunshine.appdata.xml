@@ -12,10 +12,4 @@
         </p>
     </description>
     <launchable type="desktop-id">sunshine.desktop</launchable>
-    <screenshots>
-        <screenshot type="default">
-            <image>https://app.lizardbyte.dev/Sunshine/assets/images/AdobeStock_305732536_1920x1280.jpg</image>
-            <caption>Sunshine</caption>
-        </screenshot>
-    </screenshots>
 </component>
