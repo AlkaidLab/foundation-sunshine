@@ -1120,7 +1120,10 @@
     "vdd_recheck_continue": "重新检查并继续",
     "virtual_display": "基地显示器",
     "virtual_display_desc": "使用基地显示器进行串流（需要安装 ZakoVDD 驱动）",
-    "welcome": "欢迎使用 Foundation Sunshine"
+    "welcome": "欢迎使用 Foundation Sunshine",
+    "vdd_backend_required_linux": "主机虚拟显示器后端未就绪。Linux 使用 Sunshine 内置 EDID 后端：请通过发行版包安装（附带提权能力），确认 debugfs 已挂载后点击重试。",
+    "vdd_backend_hint_linux": "后端就绪后虚拟显示器选项会自动解锁。Linux 下不涉及 ZakoVDD 驱动。",
+    "virtual_display_desc_linux": "使用 Sunshine 内置 EDID 后端创建的虚拟显示器进行串流（Linux 无需额外驱动）。"
   },
   "tabs": {
     "advanced": "高级",

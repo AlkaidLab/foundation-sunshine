@@ -1361,6 +1361,45 @@ namespace display_device::vdd_utils {
     }
 
     /**
+     * @brief Best-effort "make this output the primary display" hint, keyed
+     *        by desktop environment. There is no DRM-level primary concept,
+     *        so each desktop gets its native mechanism; unsupported desktops
+     *        degrade to an extended-only layout (logged).
+     */
+    void
+    hint_primary_output(const std::string &connector, int priority) {
+      // KDE: kscreen priority, 1 = primary
+      const char *xdg_desktop = ::getenv("XDG_CURRENT_DESKTOP");
+      const std::string desktop = xdg_desktop ? xdg_desktop : "";
+
+      auto kde_hint = [&]() {
+        if (priority == 1) {
+          run_logged("kscreen-doctor output." + connector + ".priority.1");
+        } else {
+          run_logged("kscreen-doctor output." + connector + ".priority.2");
+        }
+      };
+
+      if (desktop.find("KDE") != std::string::npos || desktop.find("plasma") != std::string::npos) {
+        kde_hint();
+        return;
+      }
+
+      if (desktop.find("GNOME") != std::string::npos || desktop.find("ubuntu:GNOME") != std::string::npos) {
+        // Mutter picks the primary from its DisplayConfig state; there is no
+        // simple one-shot setter, so only note the limitation.
+        BOOST_LOG(info) << "vdd: GNOME has no simple primary-output setter; "sv << connector
+                        << " stays in the extended layout"sv;
+        return;
+      }
+
+      BOOST_LOG(info) << "vdd: desktop environment ["sv << desktop << "] has no primary-output hint; "
+                      << connector << " remains part of the extended layout"sv;
+      (void) kde_hint;
+      (void) priority;
+    }
+
+    /**
      * @brief Assign a CRTC to a connected connector: temporarily take DRM
      *        master from the compositor (pidfd borrow), create a dumb
      *        framebuffer in the connector's preferred mode and run the
@@ -1974,8 +2013,8 @@ namespace display_device::vdd_utils {
     restore_offlined_physicals();
     if (last_prep == parsed_config_t::vdd_prep_e::vdd_as_primary || last_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
       // Give the primary role back to the physical screen.
-      for_each_connected_physical(active_connector, [](const auto &, const auto &connector) {
-        std::system(("kscreen-doctor output." + connector + ".priority.1").c_str());
+      for_each_connected_physical(active_connector, [](const auto &, const auto &physical) {
+        hint_primary_output(physical, 1);
       });
     }
 
@@ -2041,11 +2080,13 @@ namespace display_device::vdd_utils {
     switch (vdd_prep) {
       case parsed_config_t::vdd_prep_e::vdd_as_primary: {
         // Mirrors the Windows topology: VDD first (primary), physicals as
-        // extended. KWin models "primary" as the highest kscreen priority.
+        // extended. The primary hint is desktop-specific (KWin models it as
+        // the kscreen priority); unsupported desktops keep the extended
+        // layout.
         if (!vd_connector.empty()) {
-          run_logged("kscreen-doctor output." + vd_connector + ".priority.1");
-          for_each_connected_physical(vd_connector, [](const auto &, const auto &connector) {
-            std::system(("kscreen-doctor output." + connector + ".priority.2").c_str());
+          hint_primary_output(vd_connector, 1);
+          for_each_connected_physical(vd_connector, [](const auto &, const auto &physical) {
+            hint_primary_output(physical, 2);
           });
         }
         return true;
@@ -2054,9 +2095,9 @@ namespace display_device::vdd_utils {
       case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
         // Physicals stay primary, VDD extends as secondary.
         if (!vd_connector.empty()) {
-          run_logged("kscreen-doctor output." + vd_connector + ".priority.2");
-          for_each_connected_physical(vd_connector, [](const auto &, const auto &connector) {
-            std::system(("kscreen-doctor output." + connector + ".priority.1").c_str());
+          hint_primary_output(vd_connector, 2);
+          for_each_connected_physical(vd_connector, [](const auto &, const auto &physical) {
+            hint_primary_output(physical, 1);
           });
         }
         return true;

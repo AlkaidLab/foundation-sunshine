@@ -1116,7 +1116,10 @@
     "vdd_recheck_continue": "Recheck and continue",
     "virtual_display": "Virtual Display (ZakoHDR)",
     "virtual_display_desc": "Stream using a virtual display device (requires ZakoVDD driver installation)",
-    "welcome": "Welcome to Foundation Sunshine"
+    "welcome": "Welcome to Foundation Sunshine",
+    "vdd_backend_required_linux": "The virtual display backend is not ready on this host. Linux uses Sunshine's native EDID backend: install the host package with its bundled file capabilities, make sure debugfs is mounted, then recheck.",
+    "vdd_backend_hint_linux": "Once the backend is ready the virtual display option unlocks automatically. No ZakoVDD driver is involved on Linux.",
+    "virtual_display_desc_linux": "Stream on a virtual display created by Sunshine's native EDID backend (no extra driver needed on Linux)."
   },
   "tabs": {
     "advanced": "Advanced",

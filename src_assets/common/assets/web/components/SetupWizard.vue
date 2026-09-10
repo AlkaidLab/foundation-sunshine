@@ -144,15 +144,15 @@
                 </div>
                 <div class="flex-grow-1">
                   <h4>{{ $t('setup.virtual_display') }}</h4>
-                  <p>{{ $t('setup.virtual_display_desc') }}</p>
+                  <p>{{ virtualDisplayDesc }}</p>
                 </div>
               </div>
             </div>
 
             <div v-if="!vddReady" class="alert alert-warning vdd-wizard-prerequisite">
-              <strong>{{ $t('setup.vdd_driver_required') }}</strong>
+              <strong>{{ vddPrerequisiteTitle }}</strong>
               <p class="mb-2 mt-1">
-                {{ canManageVdd ? $t('setup.vdd_driver_desktop_hint') : $t('setup.vdd_driver_browser_hint') }}
+                {{ vddPrerequisiteHint }}
               </p>
               <small v-if="vddStatusError" class="d-block">{{ vddStatusError }}</small>
               <small v-else-if="vddStatus.state !== 'unknown'" class="d-block">
@@ -419,6 +419,7 @@
 <script>
 import { trackEvents } from '../config/firebase.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
+import { AppService } from '../services/appService.js'
 import { saveSetupWizardLocale } from '../services/setupWizardService.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { detectSystemLocale } from '../config/i18n.js'
@@ -516,6 +517,7 @@ export default {
       // 首次进入向导时依然按系统 / 浏览器语言预选 zh / en
       selectedLocale: this.hasLocale ? null : detectInitialWizardLocale(),
       selectedDisplay: 'ZakoHDR', // 默认选择基地显示器
+      serverPlatform: 'windows',
       selectedAdapter: '',
       displayDevicePrep: 'ensure_only_display', // 默认选择：确保唯一显示器（VDD 和普通模式通用）
       saveError: null,
@@ -535,7 +537,34 @@ export default {
   setup() {
     return { FEATURED_RESOURCES, ...useVddStatus() }
   },
+  computed: {
+    isWindowsHost() {
+      return this.serverPlatform === 'windows'
+    },
+    vddPrerequisiteTitle() {
+      if (this.isWindowsHost) {
+        return this.$t('setup.vdd_driver_required')
+      }
+      // Linux/macOS use Sunshine's native virtual display backend (no ZakoVDD)
+      return this.$t('setup.vdd_backend_required_linux')
+    },
+    virtualDisplayDesc() {
+      return this.isWindowsHost ? this.$t('setup.virtual_display_desc') : this.$t('setup.virtual_display_desc_linux')
+    },
+    vddPrerequisiteHint() {
+      if (this.isWindowsHost) {
+        return this.canManageVdd ? this.$t('setup.vdd_driver_desktop_hint') : this.$t('setup.vdd_driver_browser_hint')
+      }
+      return this.$t('setup.vdd_backend_hint_linux')
+    },
+  },
   mounted() {
+    // 服务器平台决定虚拟显示器前置条件的文案（Windows: ZakoVDD；Linux: 原生后端）
+    apiJson('/api/config').then((data) => {
+      if (data && typeof data.platform === 'string') {
+        this.serverPlatform = data.platform
+      }
+    }).catch(() => {})
     // 记录进入设置向导
     trackEvents.pageView('setup_wizard')
     trackEvents.userAction('setup_wizard_started', {
