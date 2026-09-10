@@ -39,6 +39,10 @@
 #ifdef _WIN32
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
+#else
+  #ifdef SUNSHINE_CLIPBOARD_HOST
+    #include "clipboard_host.h"
+  #endif
 #endif
 
 #ifdef _WIN32
@@ -589,9 +593,17 @@ main(int argc, char *argv[]) {
   }
 #endif
 
+#ifdef SUNSHINE_CLIPBOARD_HOST
+  clipboard_host::start();
+#endif
+
   mainThreadLoop(shutdown_event);
 
   client_fingerprint_deinit_guard.reset();
+
+#ifdef SUNSHINE_CLIPBOARD_HOST
+  clipboard_host::stop();
+#endif
 
   // Stop outbound callbacks before joining inbound servers. This cancels
   // queued tests while their response objects are still valid.

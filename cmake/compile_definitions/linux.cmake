@@ -246,6 +246,19 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/gl.h"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/egl.h")
 
+# host-side clipboard provider (klipper D-Bus); optional, needs libsystemd
+pkg_check_modules(LIBSYSTEMD libsystemd)
+if(LIBSYSTEMD_FOUND)
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/clipboard_host.h"
+            "${CMAKE_SOURCE_DIR}/src/clipboard_host.cpp")
+    list(APPEND PLATFORM_LIBRARIES ${LIBSYSTEMD_LIBRARIES})
+    include_directories(SYSTEM ${LIBSYSTEMD_INCLUDE_DIRS})
+    add_compile_definitions(SUNSHINE_CLIPBOARD_HOST)
+else()
+    message(STATUS "libsystemd not found - host clipboard sync disabled")
+endif()
+
 list(APPEND PLATFORM_LIBRARIES
         dl
         pulse

@@ -57,6 +57,10 @@ namespace clipboard_bridge {
     // ---- Inbound: stream.cpp -> GUI ----
     void on_inbound(session_id sid, payload_t bytes);
     void set_inbound_sink(inbound_sink_fn cb);
+    /// Register an additional inbound consumer (e.g. the Linux host-side
+    /// clipboard provider). Listeners stay installed until process shutdown;
+    /// the GUI sink above remains the single dynamically-swapped consumer.
+    void add_inbound_listener(inbound_sink_fn cb);
 
     // ---- Outbound: GUI -> stream sessions ----
     /// Enqueue a payload to be sent on the next controlBroadcastThread tick.
