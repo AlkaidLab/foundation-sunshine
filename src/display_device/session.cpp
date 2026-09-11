@@ -535,18 +535,26 @@ namespace display_device {
                            should_prepare_vdd,
                            vulkan_hdr_bridge_requested]() {
         if (settings.is_changing_settings_going_to_fail()) {
-          BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
+          BOOST_LOG(warning) << "[Display Deferred Retry] CCD access is still unavailable; retrying later";
           return false;
+        }
+
+        // 延迟任务不能在会话准备或采集期间重建显示路径。NVHTTP 准备计数覆盖
+        // configure_display 返回到 RTSP ticket 发布之间的窗口；ticket 和活跃
+        // 会话计数覆盖后续握手及串流生命周期。之后才进入的请求会阻塞在本锁上。
+        if (rtsp_stream::session_starting_or_active()) {
+          BOOST_LOG(warning) << "[Display Deferred Retry] Active-session guard triggered; skipping display changes and deferring them to the next session start";
+          return true;
         }
 
         if (should_prepare_vdd) {
           const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
           if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
-            BOOST_LOG(warning) << "The rebuilt VDD has not published the requested mode yet; retrying the deferred display configuration";
+            BOOST_LOG(warning) << "[Display Deferred Retry] The rebuilt VDD has not published the requested mode yet; retrying later";
             return false;
           }
           if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
-            BOOST_LOG(warning) << "The deferred VDD topology change is still unavailable; retrying without tearing down the active monitor";
+            BOOST_LOG(warning) << "[Display Deferred Retry] The VDD topology change is still unavailable; retrying without tearing down the active monitor";
             return false;
           }
         }
@@ -561,7 +569,7 @@ namespace display_device {
         }
         retry_session.hdr_capabilities = hdr_capabilities;
         if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
-          BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
+          BOOST_LOG(warning) << "[Display Deferred Retry] Applying display settings failed; stopping retries while allowing the stream to continue";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
           restore_state_impl(revert_reason_e::config_cleanup);
@@ -577,11 +585,12 @@ namespace display_device {
           platf::vulkan_hdr_bridge::disable();
         }
 #endif
+        BOOST_LOG(info) << "[Display Deferred Retry] Display settings applied successfully";
         pending_vdd_.reset();
         return true;
       });
 
-      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
+      BOOST_LOG(warning) << "[Display Deferred Retry] CCD access is unavailable; allowing the stream to start and scheduling a display-settings retry";
       return {
         configure_result_t::result_e::deferred_retry,
         "Display settings cannot be changed yet; Sunshine will retry while the stream starts.",

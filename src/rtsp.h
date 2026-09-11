@@ -119,6 +119,19 @@ namespace rtsp_stream {
   launch_session_raise(std::shared_ptr<launch_session_t> launch_session);
 
   /**
+   * @brief Track an NVHTTP launch while it prepares the display and publishes its RTSP ticket.
+   */
+  class launch_preparation_guard_t {
+  public:
+    launch_preparation_guard_t() noexcept;
+    ~launch_preparation_guard_t() noexcept;
+
+    launch_preparation_guard_t(const launch_preparation_guard_t &) = delete;
+    launch_preparation_guard_t &
+    operator=(const launch_preparation_guard_t &) = delete;
+  };
+
+  /**
    * @brief Clear state for the specified launch session.
    * @param launch_session_id The ID of the session to clear.
    */
@@ -137,6 +150,12 @@ namespace rtsp_stream {
    */
   int
   pending_session_count();
+
+  /**
+   * @brief Check whether an NVHTTP launch, RTSP handshake, or stream session is active.
+   */
+  bool
+  session_starting_or_active();
 
   /**
    * @brief Terminates all streaming sessions on the RTSP execution context.

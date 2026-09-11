@@ -703,6 +703,7 @@ namespace nvhttp {
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
+    const rtsp_stream::launch_preparation_guard_t launch_preparation;
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
     const auto fingerprint_match = client_fingerprint::match_client(args);
     launch_session->highly_suspected_unknown_client = fingerprint_match.suspicious;
@@ -871,6 +872,7 @@ namespace nvhttp {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
     const auto launch_session = make_launch_session(host_audio, args);
+    const rtsp_stream::launch_preparation_guard_t launch_preparation;
     if (launch_session->width <= 0 || launch_session->height <= 0 || launch_session->fps <= 0) {
       BOOST_LOG(warning) << "Resume request has no usable mode; keeping the current display resolution and refresh rate for compatibility. "sv
                             "Update Moonlight-Switch to a version that sends mode on Resume when one is available."sv;
