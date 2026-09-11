@@ -308,7 +308,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **中**
 
-- **C4 60 KB–1 MiB 文本无 blob 回退**：Windows 走 KIND_REF + blob store，Linux 直接丢弃（= §1.4）。
 - **F2 前台缓存无失效机制**：KWin 脚本失联最长 5 分钟（重载间隔）后才恢复，期间 ABR 用陈旧 exe。
 - **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
 - **F5 统计无效时仍发送占位 HDR10+ SEI**（`maxscl=1.0`/`average=1.0`）；Windows 原生路径无有效统计
@@ -444,3 +443,14 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 | R15 | **C3 klipper 写操作在 enet 控制线程同步阻塞** | 客户端→主机的剪贴板写入改为**入队**（上限 8 条，溢出丢最旧并告警），由 provider 自己的 poll 线程在两次读取之间用它的 bus 执行 `klipper_set`；poll 线程的 1 s 等待改为条件变量 `wait_for`（有写入立即唤醒），`stop()` 也会唤醒它。enet 控制线程不再做同步 D-Bus 调用，klipper 僵死不会阻塞控制包处理；回声抑制仍在**入队时**记录（保持原有语义），写入成功后同步 `last_seen` 以免把自己写的内容当成主机侧变更回发 |
 
 **测试基线**：12/13 套件通过、聚合套件 503 用例 491 通过 / 12 跳过 / 0 断言失败。
+
+### 5.10 第八轮修复（剪贴板大文本 blob 回退，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R16 | **C4 60 KB 以上文本无 blob 回退（Linux 直接丢弃）** | 主机→客户端：超过 `kInlineThresholdBytes` 的文本改为 `clipboard_blob_store::put()` 后发 `kKindRef` 描述符帧（与 GUI agent 同路线，对端从本机 blob HTTP 端点取字节）；客户端→主机：新增 `kKindRef` 入站处理——按 agent 语义解析 `{"id","mime","size"}`、校验 id（非空且 ≤128）、只接受 `text/*`（图片/文件投递仍归 GUI agent）、从本地 blob store 取回后走既有回声抑制与 klipper 写入队列 |
+| R17 | **线协议编解码散落在 provider 内、无法测试** | 新增 `src/clipboard_wire.h`：帧编解码（`encode`/`encode_text`/`encode_ref`/`parse_header`/`payload_of`）与 REF 描述符解析（`parse_ref_descriptor`），语义逐条对照 Rust agent 的 `encode_frame`/`decode_frame`/`RefMeta`（含未知版本/未知 kind/负载截断/超长 id 的拒绝）。MIME 常量（`kMimeText`/`kMimePng`）与 id 上限进 `clipboard_bridge.h` 共享；新增 6 个**跨平台**单元测试（Windows CI 同样会跑） |
+
+**仍未覆盖**：图片类（KIND_PNG）双向与文件投递（KIND_FILE_OFFER）在 Linux 主机侧仍不支持（= §1.4/§2.2）。
+
+**测试基线**：12/13 套件通过、聚合套件 509 用例 497 通过 / 12 跳过 / 0 断言失败。

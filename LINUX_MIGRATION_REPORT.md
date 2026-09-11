@@ -685,8 +685,16 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       enet 控制线程因此不再做同步 D-Bus 调用，klipper 僵死不会拖住控制包处理；回声抑制仍在入队时
       记录，写成功后同步 `last_seen` 避免回发自己写的内容。
 
-**测试基线复核（2026-09-11，pkgrel 45 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面与枚举/剪贴板之后）**：`ctest` 13 个套件
-12 个通过。聚合套件 `test_sunshine` 共 503 个用例：491 通过、12 跳过（1 个 Unicode 路径用例 +
+30. **第八轮：剪贴板大文本 blob 回退（2026-09-11）**：主机侧 provider 此前对超过 60 KB 的文本
+    直接丢弃。现补齐两条方向——主机→客户端改为存入 blob store 并发送 `kKindRef` 描述符帧（对端从
+    本机 blob HTTP 端点取字节）；客户端→主机的 `kKindRef` 按 GUI agent 语义解析描述符、校验 id、
+    只接受 `text/*`、从本地 blob store 取回后走既有的回声抑制与写入队列。同时把线协议编解码抽成
+    `src/clipboard_wire.h`（逐条对照 Rust agent 的 `encode_frame`/`decode_frame`/`RefMeta`，MIME 与
+    id 上限放 `clipboard_bridge.h` 共享），并补 6 个跨平台单元测试。图片（KIND_PNG）与文件投递
+    （KIND_FILE_OFFER）在 Linux 主机侧仍不支持（§1.4/§2.2）。
+
+**测试基线复核（2026-09-11，pkgrel 46 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义与剪贴板 blob 之后）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 509 个用例：497 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧
