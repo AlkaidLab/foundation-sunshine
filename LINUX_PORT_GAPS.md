@@ -333,9 +333,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
   "VB-Audio Virtual Cable"），无共享常量。
 - **F3' 前台 exe 语义**：Linux 报 Wayland app class，Windows 报进程映像名（含 `.exe`），ABR 提示词
   按 `.exe` 措辞。
-- **T1 托盘缺 Advanced Settings 子菜单**（导入/导出/重置配置、清缓存、重置显示配置）：WebUI 有等价
-  HTTP 动作；Linux 侧已有的两处实现（`proc::proc.terminate()`、reset 显示配置）是**不可达死代码**。
-- **T4 退出确认文案仍提"关闭 Sunshine GUI 应用"**（Linux 无此组件）。
 - **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false
   （Linux 的还原路径以"空 map = 无需还原"为由保留 true，见 §5.6）。
 - **D17 friendly name 仅为连接器名**（如 `DP-1`），`get_display_name` 直通、非 VDD 的 friendly-name
@@ -461,3 +458,14 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 | R19 | **C7 1 秒轮询 vs klipper 变更信号** | 订阅 `org.kde.klipper.klipper` 的 `clipboardHistoryUpdated` 信号（`sd_bus_add_match`），每轮先 `sd_bus_process` 排空总线；等待从 1 s 改为 200 ms（有排队写入立即唤醒），读到变更信号即刻读取剪贴板，**1 s 周期读仍作兜底**（信号不可用时仅记 debug 并退回原行为）。已用独立小程序在**真实会话总线**上验证：匹配规则被总线接受、`sd_bus_get_fd`/`sd_bus_process` 行为符合循环预期（klipper 正在运行） |
 
 **测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败。
+
+### 5.12 第十轮修复（托盘高级设置与文案，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R20 | **T1 托盘缺 Advanced Settings 子菜单（Linux）** | 子菜单在 Linux 打开，且**两平台布局完全一致**（导入配置 / 导出配置 / 重置为默认 / 分隔线 / 清理缓存 / 重置显示器）——顺带把 `update_menu_texts()` 的平台分叉合并成一份索引表，避免再出现索引漂移。三个原本是 Linux 桩的功能按 Windows 语义实现：**导入**（Qt 文件对话框 → `is_safe_config_path`/`is_safe_config_content` 校验 → 备份 `.backup` → 写 `.tmp` 后 `rename` 原子替换 → 询问是否重启应用）；**导出**（保存对话框 → 仅允许常规 `.conf`、拒绝符号链接 → 读当前配置 → `.tmp`+`rename` → 成功提示）；**重置为默认**（确认框 → 备份 → 清空配置文件 → 成功/失败提示）。原本不可达的两处 Linux 实现（重置显示器、清理缓存）现在都被菜单引用，且清理缓存补齐了 Windows 同款确认框 |
+| R21 | **T4 退出确认文案提到不存在的 GUI** | 新增 Linux 专用键 `KEY_QUIT_MESSAGE_NO_GUI`（EN/ZH/JA 三语，去掉"(This will also close the Sunshine GUI application.)"一句），Windows 仍用原键与原文案。另新增 `KEY_IMPORT_SUCCESS_MSG`、`KEY_EXPORT_ERROR_PATH` 两个键（同样三语），供上面的对话框使用 |
+
+**Windows 影响**：菜单数组与索引在两平台本就相同，Windows 的初始化语句、回调与文案**逐字未变**；
+新增的 i18n 键 Windows 不使用。**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 /
+0 断言失败（本轮无新增用例；托盘交互需图形会话，未做自动化）。
