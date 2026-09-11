@@ -556,7 +556,42 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 **结论**：除"HDR10+ 元数据时序"这一处经论证的修正外，**Windows 行为保持不变**；未新增 Windows 源文件、
 未改动 `SUNSHINE_TARGET_FILES`，共享头改动均为增量。
 
-### 5.20 仍未完成（诚实清单）
+### 5.20 第十六轮修复（托盘创建虚拟显示器崩溃，2026-09-11）
+
+**现象**：KDE 下托盘"创建虚拟显示器"必崩。`journalctl --user -u sunshine.service` 里有三份
+`Main process exited, code=dumped, status=11/SEGV`，systemd-coredump 的栈顶是
+`display_device::vdd_utils::(anonymous)::enable_output_via_compositor`，且 `#1`–`#12` 为**同一个地址**
+——典型的自递归栈溢出，不是空指针。
+
+**根因**：`ff16fdeb` 把三处 `run_logged("kscreen-doctor output." + connector + ".enable")` 换成新的
+`enable_output_via_compositor()` 时，KDE 分支被误写成**调用自己**（`enable_output_via_compositor(connector);`），
+而该提交信息声称"KDE 路径逐字未变"——与事实不符，这条声明本身也是错误。该函数的三个调用点位于
+`create_vdd_monitor()`（创建）与 `wait_for_mode_publication()`（模式切换），因此 Plasma 下**任何**
+创建/切换 VDD 的路径都会在第一次 `enable` 时爆栈；启动时复用残留 VDD（`adopt_orphan_vdd_locked()`）
+不经过该调用，所以"重启后看起来正常"，掩盖了问题。
+
+**修复**：
+- 桌面 → 命令的映射抽成**纯函数** `platf::compositor_output::enable_command()`（新文件
+  `src/platform/linux/compositor_output.{h,cpp}`）：KDE/plasma → `kscreen-doctor output.<c>.enable`
+  （与 `ff16fdeb` 之前逐字一致，且刻意**不**gate `tool_available("kscreen-doctor")`，保持历史行为——
+  工具缺失只花一条失败命令），niri → `niri msg output <c> on`，其后 `wlr-randr --output <c> --on`、
+  `xrandr --output <c> --auto`，未知会话返回空串。`enable_output_via_compositor()` 现在只做
+  "取探针 → 拼命令 → `run_logged`"，分支里不再有可递归的调用目标。
+- 探针 `niri_session()` / `tool_available()` 从 `vdd_utils.cpp` 的匿名命名空间移入该模块，只留一份实现
+  （`hint_primary_output()` 改为调用它）。
+- 新增 `tests/unit/test_compositor_output.cpp`（7 个用例：锁死每个桌面分支的命令字符串、
+  "未知会话必须为空"、`NIRI_SOCKET` 探针语义、bin 目录探针），Windows 下排除；`enable_command()` 无任何
+  依赖，测试不需要合成器在场。
+
+**验证**：`ctest` 13 个套件中 12 通过；`test_sunshine` 528 用例 515 通过 / 12 跳过 / **0 断言失败**，
+唯一失败是上游 `DownloadFileTests/DownloadFileTest.Run/1`（沙箱内 `httpbin.org` 被解析成黑洞地址
+`fdfe:dcba:9876::ec`，与本轮改动无关）。`git diff -U0` 确认 `vdd_utils.cpp` 的改动 hunk 全部落在
+`#else  // !_WIN32` 之后，Windows 半个文件逐字未动。
+
+**教训（已加固）**：把"某个桌面分支"从直呼命令改成走 dispatcher 时，dispatcher 的分支必须能被单元测试
+直接断言；本轮起该映射是纯函数并被测试锁死，同类自递归不可能再静默复发。
+
+### 5.21 仍未完成（诚实清单）
 
 1. **F4 HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
    拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；本机

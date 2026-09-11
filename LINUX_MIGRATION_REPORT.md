@@ -629,10 +629,12 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       `org.kde.KWin` 是否在会话总线上（NameHasOwner），KDE 保持原 KWin 路径；无 KWin 且 niri 查询
       可用才启用 niri。解析器带 4 个单元测试（正常 / `null` / 字段缺失或类型错误 / 畸形 JSON）。
     - **VDD 输出启用的合成器无关化**：新增 `enable_output_via_compositor()`——KDE 仍是
-      kscreen-doctor（行为不变），niri 走 `niri msg output <name> on`，其他 Wayland 走
+      kscreen-doctor，niri 走 `niri msg output <name> on`，其他 Wayland 走
       `wlr-randr --output <name> --on`（wlr-output-management，覆盖 sway/Hyprland/river…），
       X11 走 `xrandr`；都没有则只记一次 info 并依赖合成器自动启用。`hint_primary_output` 对 niri
       明确记录"niri 无主屏概念"。DRM 层 CRTC 指派仍是点亮输出的主路径，这些命令失败不影响现状。
+      ⚠️ **本条的"KDE 行为不变"当时是错的**：KDE 分支被误写成调用自己，Plasma 下创建/切换 VDD 必崩，
+      已在进度 39 修复（映射抽为纯函数并加单元测试）。
     - **仍待做**：display_device 的 niri / wlr-output-management 输出后端（模式/HDR/拓扑），
       以及 wlroots/X11 的前台 producer——见 `LINUX_PORT_GAPS.md` §2.11 待做项与 §2.6。
 26. **第四轮：display_device 失败处理对齐 Windows（2026-09-11）**：审计项 D5/D8/D9/D10/D14 落地，
@@ -762,8 +764,20 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     `display_vram.cpp` 的三个采样常量数值不变、托盘菜单的 Windows 语句与文案逐字未变、其余共享头均为
     增量新增。**唯一 Windows 可见行为变化**是 HDR10+ 元数据改为首帧有效统计才挂载（消除伪造 SEI，与
     该平台原生路径一致）。同时把 C5（跨语言常量同步）转为决策记录（不引入代码生成，靠线协议测试守
-    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.20：F4（HLG 域分析源）、
+    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.21：F4（HLG 域分析源）、
     niri/wlr-output-management 输出后端、D15（复制拓扑），外加 §5.18 的有意保留差异清单。
+
+39. **第十六轮：托盘"创建虚拟显示器"崩溃修复（2026-09-11）**：用户在 KDE 下点托盘"创建虚拟显示器"
+     必崩，`journalctl --user -u sunshine.service` 给出三份 `status=11/SEGV`，systemd-coredump 栈顶为
+     `vdd_utils::(anonymous)::enable_output_via_compositor`，`#1`–`#12` 同一地址 → **自递归栈溢出**。
+     根因是进度 25 那次改动里 KDE 分支写成了"调用自己"（三处 `kscreen-doctor` 直呼被替换成 dispatcher
+     时漏改分支体），而该提交信息还声称 KDE 路径逐字未变。三个调用点在 `create_vdd_monitor()` 与
+     `wait_for_mode_publication()`，所以 Plasma 下创建与模式切换都会崩；启动时复用残留 VDD 不经过它，
+     因此"重启后看似正常"。修复：桌面→命令映射抽为纯函数
+     `platf::compositor_output::enable_command()`（新文件 `compositor_output.{h,cpp}`，KDE 命令与改动前
+     逐字一致），dispatcher 只做探针取值 + `run_logged`；`niri_session()`/`tool_available()` 一并移入该
+     模块（`hint_primary_output` 改用共享实现），新增 7 个单元测试锁死每个分支的命令字符串。详见
+     `LINUX_PORT_GAPS.md` §5.20。
 
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
@@ -776,6 +790,11 @@ Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90`
 注：`ctest` 直跑需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），只读
 `$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归；且必须重建 `test_sunshine`
 （增量构建只编译 `sunshine` 时，ctest 会跑旧二进制并掩盖新失败）。
+
+**测试基线更新（2026-09-11，第十六轮之后）**：聚合套件 528 个用例：**515 通过、12 跳过、0 断言失败**
+（新增 7 个 `CompositorOutput` 用例锁死合成器命令映射）。本轮唯一失败是上游网络用例
+`DownloadFileTests/DownloadFileTest.Run/1`（`https://httpbin.org/redirect-to?...`）：沙箱把 `httpbin.org`
+解析成黑洞地址 `fdfe:dcba:9876::ec`，握手后拿不到重定向目标，属环境限制而非代码回归。
 
 **下一个目标（2026-09-11 起）**：**niri 支持**（`LINUX_PORT_GAPS.md` §2.11：前台检测 producer、
 通用输出后端 wlr-output-management、niri 输出控制）、剪贴板补图片类帧与大文件 blob 回退
