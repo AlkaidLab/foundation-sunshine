@@ -327,9 +327,10 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 - **F7 分析节奏/分辨率差异**：Linux 每帧全分辨率同步分析 vs Windows 1/4 帧、≤1080p、异步陈旧；
   同一内容的元数据动态（EMA/场景切换/Vivid 窗口按帧推进）在两侧不一致，Linux 4K120 的 CPU 开销约为
   Windows 采样预算的 8 倍。
-- **D5/D7/D8/D9/D13/D14 display_device 的失败处理与顺序**：模式缺失无严格重试/回滚、新启用显示器缺
-  "blank HDR toggle"、HDR 前无稳定性等待、HDR 部分失败无回滚、还原顺序与还原后 HDR 复核缺失、
-  拓扑 set 未校验（Windows 均有一一对应实现）。
+- **D7 "blank HDR toggle" 有意不移植**：Windows 在切换 HDR 前把新启用显示器先切到相反状态、等
+  2333 ms 再设最终值，是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段。Linux 的 VDD 是真实
+  DRM 连接器、无对应症状，移植只会给每次新启用显示器加 2.3 s 延迟和一次多余 HDR 翻转；如实测
+  出现同样症状再补（§5.6 已记录该判断）。
 - **D15/D16 复制拓扑不可表示 + 校验边界不一致**：KDE 镜像会话读回为多个扩展屏，请求复制组被拒绝
   （= §1.5）；`is_topology_valid` 比自身 setter 宽松。
 - **D18 compositor 不可用时静默返回成功**（= §1.5）：非 KDE/旧合成器下客户端的模式/HDR 请求被忽略。
@@ -349,8 +350,8 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 - **T1 托盘缺 Advanced Settings 子菜单**（导入/导出/重置配置、清缓存、重置显示配置）：WebUI 有等价
   HTTP 动作；Linux 侧已有的两处实现（`proc::proc.terminate()`、reset 显示配置）是**不可达死代码**。
 - **T4 退出确认文案仍提"关闭 Sunshine GUI 应用"**（Linux 无此组件）。
-- **D10 未知 HDR 状态应快速失败**（Windows 立即报错返回 false，Linux 先重试 3 次再给笼统错误）。
-- **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false。
+- **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false
+  （Linux 的还原路径以"空 map = 无需还原"为由保留 true，见 §5.6）。
 - **D17 friendly name 仅为连接器名**（如 `DP-1`），`get_display_name` 直通、非 VDD 的 friendly-name
   查找不可用；WebUI 设备列表显示连接器名且 HDR 状态恒 unknown。
 - **D19 日志文案差异**：同一事件 Linux 英文 / Windows 中文（"串流结束"等）。
@@ -397,3 +398,18 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **下一轮**：§2.11 待做第 1 项（display_device 的 niri / wlr-output-management 输出后端）、
 剪贴板图片与大文件（§2.2）、display_device 失败处理补齐（§5.2 D5/D7/D8/D9/D13/D14）。
+
+### 5.6 第四轮修复（display_device 失败处理，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R7 | **D5 模式无严格重试、部分失败不回滚** | `set_display_modes()` 重写为 Windows 的三段式：先按 1 Hz 模糊+最近模式应用 → 校验全部匹配 → 不匹配则以**精确刷新率**重试一次（对应去掉 `SDC_ALLOW_CHANGES`，让用户自定义模式也能选中）→ 仍失败则把进入时的快照 `original_modes` 整体回滚并返回 false |
+| R8 | **D9 HDR 部分失败不回滚** | `set_hdr_states()` 先快照 `original_states`，任一设备失败即回滚到快照并返回 false（Windows `device_hdr_states.cpp` 同构） |
+| R9 | **D10 未知 HDR 状态应快速失败** | 请求的设备在读回里没有 HDR 信息时，立即以明确日志返回 false，不再对注定失败的命令重试 3 次 |
+| R10 | **D14 拓扑 set 未校验** | `set_topology()` 拆出 `apply()`，应用后经 `wait_for_topology(3 s)` 收敛再复核；确实不一致则回滚到进入时的拓扑并返回 false（合成器完全无响应时保持历史容忍，不误判） |
+| R11 | **D8 HDR 前无稳定性等待** | 新增 `wait_for_display_stability()`（10 × 500 ms，上限 5 s）：本调用改过拓扑/模式时，等到目标设备都有可读的模式与 HDR 状态再切 HDR；超时只告警继续（与 Windows 一致），同时避免 R9 的快速失败被"读回滞后"误触发 |
+| — | **D13 还原顺序 + 还原后 HDR 复核** | **经复核 Linux 已由构造覆盖**：还原是"先恢复初始拓扑、再按当前已启用设备过滤后还原 HDR/模式"，被重新启用的显示器天然包含在过滤后的集合里，等价于 Windows 的"还原后再修 HDR"，无需改顺序（改动反而会动到用户已实测的还原路径） |
+| — | **D7 blank HDR toggle** | 有意不移植，理由见 §5.2 |
+
+**测试基线**：12/13 套件通过、聚合套件 0 断言失败。这些路径需要真实合成器才能端到端验证
+（本机 agent 会话无 WAYLAND_DISPLAY/bus），逻辑对照 Windows 实现逐条核对。

@@ -635,8 +635,27 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       明确记录"niri 无主屏概念"。DRM 层 CRTC 指派仍是点亮输出的主路径，这些命令失败不影响现状。
     - **仍待做**：display_device 的 niri / wlr-output-management 输出后端（模式/HDR/拓扑），
       以及 wlroots/X11 的前台 producer——见 `LINUX_PORT_GAPS.md` §2.11 待做项与 §2.6。
+26. **第四轮：display_device 失败处理对齐 Windows（2026-09-11）**：审计项 D5/D8/D9/D10/D14 落地，
+    D13 复核为已由构造覆盖，D7 判定不移植：
+    - **模式（D5）**：`set_display_modes()` 改为 Windows 的三段式——模糊（1 Hz）+ 最近模式应用 →
+      复核全部匹配 → 仍不匹配则以**精确刷新率**重试一次（等价于去掉 `SDC_ALLOW_CHANGES`，让用户
+      自定义模式也能选中）→ 再失败则把进入时的 `original_modes` 整体回滚并返回 false（不再留下
+      半套模式）。
+    - **HDR（D9/D10）**：`set_hdr_states()` 先快照 `original_states`，任一设备失败即回滚；请求的
+      设备在读回中没有任何 HDR 信息时立即以明确日志返回 false（Windows `device_hdr_states.cpp`
+      语义），不再对注定失败的命令重试 3 次。
+    - **拓扑（D14）**：`set_topology()` 把 enable/disable 循环拆成 `apply()`，应用后经
+      `wait_for_topology(3 s)` 收敛再复核，确实不一致则回滚到进入时的拓扑并返回失败；合成器完全
+      无响应（读回为空）时保持历史容忍，避免误判。
+    - **稳定性等待（D8）**：新增 `wait_for_display_stability()`（10 × 500 ms，上限 5 s）——本调用
+      改过拓扑/模式时，先等目标设备的模式与 HDR 状态都可读再切 HDR；超时只告警继续（与 Windows
+      一致），同时防止"读回滞后"把上面的快速失败变成硬失败。
+    - **复核结论**：D13（还原顺序 + 还原后 HDR 复核）在 Linux 已由"先恢复初始拓扑、再按当前启用
+      设备过滤后还原 HDR/模式"的构造覆盖，无需改顺序，避免动到用户已实测的还原路径；D7
+      （blank HDR toggle）是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段，Linux 的 VDD 是真实
+      DRM 连接器、无该症状，**有意不移植**（如实测出现同症状再补）。
 
-**测试基线复核（2026-09-11，pkgrel 40 构建树 + 对齐审计与 niri 起步之后）**：`ctest` 13 个套件
+**测试基线复核（2026-09-11，pkgrel 42 构建树 + 对齐审计、niri 起步与 display_device 失败处理之后）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 494 个用例：482 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
