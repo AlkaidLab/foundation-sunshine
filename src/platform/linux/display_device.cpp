@@ -526,6 +526,13 @@ namespace display_device {
 
     device_info_map_t devices;
     std::error_code ec;
+
+    // The virtual display's CRTC is assigned by this backend (pidfd DRM-master
+    // borrow), not by the desktop, so it keeps the connected-based state the
+    // enumeration always used for it. Resolved once here because
+    // is_vdd_connector() itself enumerates and would recurse.
+    const std::string live_vdd_connector = vdd_utils::live_virtual_display_connector();
+
     for (const auto &entry : fs::directory_iterator { "/sys/class/drm", ec }) {
       const auto name = entry.path().filename().string();
       if (name.rfind("card", 0) != 0) {
@@ -559,7 +566,22 @@ namespace display_device {
       device_info_t info;
       info.display_name = connector;
       info.friendly_name = connector;
-      info.device_state = connected ? device_state_e::active : device_state_e::inactive;
+      // "active" must mean *enabled*, not merely plugged in: Windows reports
+      // DISPLAYCONFIG_PATH_ACTIVE, and the VDD preservation logic treats an
+      // active device as one the user wants lit. DRM's sysfs `enabled`
+      // attribute is exactly the CRTC-bound state, so a monitor the user
+      // disabled in the desktop is reported inactive instead of being switched
+      // back on. Kernels without the attribute keep the old connected-based
+      // view, as do connectors whose state cannot be read.
+      bool enabled = connected;
+      if (connected && connector != live_vdd_connector) {
+        std::ifstream enabled_file { entry.path() / "enabled" };
+        std::string enabled_str;
+        if (std::getline(enabled_file, enabled_str) && !enabled_str.empty()) {
+          enabled = enabled_str == "enabled";
+        }
+      }
+      info.device_state = enabled ? device_state_e::active : device_state_e::inactive;
       info.hdr_state = hdr_state_e::unknown;
       devices.emplace(connector, std::move(info));
     }
