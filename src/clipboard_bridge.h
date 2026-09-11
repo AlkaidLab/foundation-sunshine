@@ -23,6 +23,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -42,6 +43,30 @@ namespace clipboard_bridge {
   /// 16-bit control-frame length after adding control_header_v2, AES padding,
   /// GCM tag, and sequence number overhead.
   constexpr std::size_t kMaxPayloadBytes = 65500;
+
+  // ---------------------------------------------------------------------------
+  // Wire format of one clipboard frame: version, kind, token (LE32), length
+  // (LE32), then the payload. The user-session GUI agent is the reference
+  // implementation of this layout (sunshine-control-panel,
+  // src-tauri/src/clipboard.rs); these constants are the C++ mirror so no
+  // provider re-spells the numbers.
+  // ---------------------------------------------------------------------------
+  constexpr std::uint8_t kWireVersion = 1;
+  constexpr std::uint8_t kKindText = 1;
+  constexpr std::uint8_t kKindPng = 2;
+  constexpr std::uint8_t kKindRef = 3;
+  constexpr std::uint8_t kKindFileOffer = 4;
+
+  /// Header size of the frame above.
+  constexpr std::size_t kFrameHeaderBytes = 10;
+
+  /// Payloads up to this size travel inline; larger ones go through the blob
+  /// store as a kKindRef frame (the agent's INLINE_THRESHOLD).
+  constexpr std::size_t kInlineThresholdBytes = 60'000;
+
+  /// How long a value written by a peer is remembered to suppress its echo
+  /// (the agent's ECHO_TTL).
+  constexpr auto kEchoTtl = std::chrono::seconds { 5 };
 
   using inbound_sink_fn = std::function<void(session_id, const payload_t &)>;
 

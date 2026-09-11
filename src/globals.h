@@ -41,6 +41,14 @@ extern const std::string VDD_NAME;
 extern const std::string ZAKO_NAME;
 
 /**
+ * @brief The fork client's fixed placeholder device id for "virtual display".
+ * @details It is not a real device id on any platform; the session treats it as
+ *          an explicit virtual-display request. Kept next to the ZakoVDD names
+ *          so no platform has to spell the number itself.
+ */
+extern const std::string ZAKO_DEVICE_ID;
+
+/**
  * @brief Cached result of the Windows is_running_as_system() check; always
  *        false on other platforms.
  * @details This is set once at program startup and never changes during runtime.

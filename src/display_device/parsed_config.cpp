@@ -582,7 +582,7 @@ namespace display_device {
     // The fork client marks its "virtual display" option with a fixed
     // placeholder id; treat it (and the ZakoVDD friendly name) as an
     // explicit VDD request on Linux too.
-    explicit_vdd = explicit_vdd || intent.device_id == "23172" || intent.device_id == ZAKO_NAME;
+    explicit_vdd = explicit_vdd || intent.device_id == ZAKO_DEVICE_ID || intent.device_id == ZAKO_NAME;
 #endif
     if (explicit_vdd) {
       intent.target = display_intent_t::target_e::vdd;

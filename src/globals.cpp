@@ -15,4 +15,5 @@ std::string zako_device_id;
 
 const std::string VDD_NAME = "ZakoHDR";
 const std::string ZAKO_NAME = "Zako HDR";
+const std::string ZAKO_DEVICE_ID = "23172";
 bool is_running_as_system_user = false;

@@ -42,14 +42,16 @@ namespace clipboard_host {
   namespace {
     using payload_t = clipboard_bridge::payload_t;
 
-    constexpr std::uint8_t kWireVersion = 1;
-    constexpr std::uint8_t kKindText = 1;
-    // Matches the GUI agent's inline threshold: larger payloads travel via
-    // the blob store, which this provider does not implement.
-    constexpr std::size_t kMaxInlineTextBytes = 60'000;
+    // Wire format constants live in the shared bridge header (canonical C++
+    // mirror of the GUI agent's clipboard.rs).
+    using clipboard_bridge::kEchoTtl;
+    using clipboard_bridge::kFrameHeaderBytes;
+    using clipboard_bridge::kInlineThresholdBytes;
+    using clipboard_bridge::kKindText;
+    using clipboard_bridge::kWireVersion;
+
     constexpr auto kPollInterval = std::chrono::milliseconds { 1000 };
     constexpr auto kKlipperRetryInterval = std::chrono::milliseconds { 10'000 };
-    constexpr auto kEchoTtl = std::chrono::seconds { 5 };
 
     constexpr const char *kKlipperService = "org.kde.klipper";
     constexpr const char *kKlipperPath = "/klipper";
@@ -119,7 +121,7 @@ namespace clipboard_host {
       const auto len = static_cast<std::uint32_t>(text.size());
 
       payload_t frame;
-      frame.reserve(10 + text.size());
+      frame.reserve(kFrameHeaderBytes + text.size());
       frame.push_back(kWireVersion);
       frame.push_back(kKindText);
       for (int i = 0; i < 4; ++i) {
@@ -134,7 +136,7 @@ namespace clipboard_host {
 
     void
     on_inbound(clipboard_bridge::session_id, const payload_t &bytes) {
-      if (!config::input.clipboard_sync || bytes.size() < 10 || bytes[0] != kWireVersion || bytes[1] != kKindText) {
+      if (!config::input.clipboard_sync || bytes.size() < kFrameHeaderBytes || bytes[0] != kWireVersion || bytes[1] != kKindText) {
         return;
       }
 
@@ -142,11 +144,11 @@ namespace clipboard_host {
                        (static_cast<std::uint32_t>(bytes[7]) << 8) |
                        (static_cast<std::uint32_t>(bytes[8]) << 16) |
                        (static_cast<std::uint32_t>(bytes[9]) << 24);
-      if (bytes.size() < 10 + static_cast<std::size_t>(len)) {
+      if (bytes.size() < kFrameHeaderBytes + static_cast<std::size_t>(len)) {
         return;
       }
 
-      const std::string text { bytes.begin() + 10, bytes.begin() + 10 + len };
+      const std::string text { bytes.begin() + kFrameHeaderBytes, bytes.begin() + kFrameHeaderBytes + len };
 
       {
         std::lock_guard<std::mutex> lk(echo_mu);
@@ -224,7 +226,7 @@ namespace clipboard_host {
           if (is_echo) {
             BOOST_LOG(debug) << "Clipboard change matches content written from a client; skipping"sv;
           }
-          else if (content.size() > kMaxInlineTextBytes) {
+          else if (content.size() > kInlineThresholdBytes) {
             BOOST_LOG(debug) << "Host clipboard content too large for inline sync ("sv << content.size()
                              << " bytes); skipping"sv;
           }
