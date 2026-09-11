@@ -298,6 +298,25 @@ namespace video {
 
   namespace {
     /**
+     * @brief Whether the analyzer can read this pixel format.
+     * @details All of them are 10-bit; P010 keeps its codes in the high bits of
+     *          each little-endian 16-bit word, while FFmpeg's planar formats
+     *          (what the software encoder converts to, and what VAAPI/CUDA
+     *          download to) are LSB-aligned. Unpacking both with the same shift
+     *          would read bits 15..6 of the planar formats, i.e. a black frame.
+     */
+    bool
+    luminance_analysis_format_supported(AVPixelFormat fmt) {
+      return fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV420P10LE || fmt == AV_PIX_FMT_YUV444P10LE;
+    }
+
+    /// Whether the format needs a 6-bit shift before the histogram counts it.
+    bool
+    luminance_analysis_format_is_msb_aligned(AVPixelFormat fmt) {
+      return fmt == AV_PIX_FMT_P010LE;
+    }
+
+    /**
      * @brief Per-frame luminance statistics for HDR10+ dynamic metadata,
      *        analyzed on the CPU from the converted 10-bit luma plane.
      *
@@ -310,19 +329,14 @@ namespace video {
     void
     analyze_pq_luma_frame(AVFrame *sw_frame, platf::hdr_frame_luminance_stats_t &stats, std::uint64_t &sequence) {
       const auto fmt = (AVPixelFormat) sw_frame->format;
-      // P010LE keeps the 10-bit codes in the high bits of each little-endian
-      // 16-bit word; FFmpeg's planar 10-bit formats (what the software encoder
-      // converts to) are LSB-aligned. Unpacking both with the same shift read
-      // bits 15..6 of the planar formats, i.e. an all-zero (black) frame.
-      const bool msb_aligned = fmt == AV_PIX_FMT_P010LE;
-      const bool lsb_planar = fmt == AV_PIX_FMT_YUV420P10LE || fmt == AV_PIX_FMT_YUV444P10LE;
-      if (!msb_aligned && !lsb_planar) {
+      if (!luminance_analysis_format_supported(fmt)) {
         return;
       }
       if (!sw_frame->data[0] || sw_frame->linesize[0] <= 0 || sw_frame->width <= 0 || sw_frame->height <= 0) {
         return;
       }
 
+      const bool msb_aligned = luminance_analysis_format_is_msb_aligned(fmt);
       const int shift = msb_aligned ? 6 : 0;
       constexpr std::uint16_t kCodeMask = 0x3FF;
       constexpr int kCodeMax = 1023;
@@ -706,6 +720,10 @@ namespace video {
       vivid_splice_enabled = other.vivid_splice_enabled;
       vivid_codec = other.vivid_codec;
       staged_vivid_units = std::move(other.staged_vivid_units);
+      hw_analysis_enabled = other.hw_analysis_enabled;
+      hw_analysis_counter = other.hw_analysis_counter;
+      hw_analysis_sequence = other.hw_analysis_sequence;
+      hw_analysis_frame = std::move(other.hw_analysis_frame);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -847,6 +865,72 @@ namespace video {
     hdr_bitstream::codec_e vivid_codec {};
     // Keyed by the submitted frame index, which comes back as the packet pts.
     std::unordered_map<std::uint64_t, std::vector<std::uint8_t>> staged_vivid_units;
+
+    // Linux hardware encode devices (VAAPI/CUDA) convert inside the platform
+    // device, so the software device's CPU analyzer never sees a frame and
+    // those sessions would ship no dynamic HDR metadata at all. When that is
+    // the case the session samples the hardware frame and reuses the analyzer;
+    // any failure disables the path for the session (see
+    // analyze_hw_frame_if_due).
+    bool hw_analysis_enabled = false;
+    int hw_analysis_counter = 0;
+    std::uint64_t hw_analysis_sequence = 0;
+    avcodec_frame_t hw_analysis_frame;
+
+    /**
+     * @brief Feed the analyzer from a hardware frame.
+     * @details Downloads one in four frames - the interval the Windows capture
+     *          analysis uses - into a cached software frame and runs the same
+     *          CPU analyzer as the software device. The first failure disables
+     *          the path for this session, so the stream simply carries no
+     *          dynamic metadata instead of failing.
+     */
+    void
+    analyze_hw_frame_if_due() {
+      static constexpr int k_analysis_interval = 4;
+      if (!hw_analysis_enabled || !device || !device->frame) {
+        return;
+      }
+      if (++hw_analysis_counter < k_analysis_interval) {
+        return;
+      }
+      hw_analysis_counter = 0;
+
+      if (!hw_analysis_frame) {
+        hw_analysis_frame.reset(av_frame_alloc());
+        if (!hw_analysis_frame) {
+          disable_hw_analysis("cannot allocate the sampling frame"sv);
+          return;
+        }
+      }
+
+      // An empty frame is allocated by the transfer itself, using the hardware
+      // frames context' sw_format; the buffers are then reused.
+      const int status = av_hwframe_transfer_data(hw_analysis_frame.get(), device->frame, 0);
+      if (status < 0) {
+        char error[AV_ERROR_MAX_STRING_SIZE] { 0 };
+        disable_hw_analysis(av_make_error_string(error, sizeof(error), status));
+        return;
+      }
+
+      const auto format = static_cast<AVPixelFormat>(hw_analysis_frame->format);
+      if (!luminance_analysis_format_supported(format)) {
+        // 8-bit hardware frames carry no PQ signal worth analyzing.
+        disable_hw_analysis("the hardware frame samples as a format without 10-bit luma"sv);
+        return;
+      }
+
+      analyze_pq_luma_frame(hw_analysis_frame.get(), device->hdr_luminance_stats, hw_analysis_sequence);
+    }
+
+    void
+    disable_hw_analysis(std::string_view reason) {
+      hw_analysis_enabled = false;
+      if (device) {
+        device->hdr_luminance_analysis_available = false;
+      }
+      BOOST_LOG(warning) << "HDR luminance analysis disabled for this session: "sv << reason;
+    }
   };
 
   /**
@@ -2439,6 +2523,11 @@ namespace video {
     auto &sps = session.sps;
     auto &vps = session.vps;
 
+    // Linux hardware devices convert in the platform device, so refresh the
+    // analyzer from a sampled download before the metadata block below reads
+    // the statistics. Inert unless the session enabled the path.
+    session.analyze_hw_frame_if_due();
+
     // Update per-frame dynamic metadata. HDR10+ and HDR Vivid intentionally use
     // their own temporal models because their standards define different fields.
     std::vector<std::uint8_t> vivid_units;
@@ -3229,6 +3318,29 @@ namespace video {
 
     encode_device_final->apply_colorspace();
 
+    // Linux hardware encode devices (VAAPI/CUDA) convert inside the platform
+    // device, so the software device's CPU analyzer never sees a frame and the
+    // session would ship no dynamic HDR metadata at all. Mark such a session
+    // for the sampled-download producer instead (encode_avcodec ->
+    // analyze_hw_frame_if_due), which is also what makes the Dolby Vision gate
+    // below usable. Windows is left alone: its capture device produces the
+    // statistics itself and reports the capability.
+    bool hw_download_analysis = false;
+#if !defined(_WIN32)
+    if (encode_device_final->data &&
+        !encode_device_final->hdr_luminance_analysis_available &&
+        colorspace_is_pq(encode_device_final->colorspace) &&
+        config::video.hdr_luminance_analysis != "off"sv) {
+      const auto negotiated = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+      hw_download_analysis =
+        hdr_metadata::formats_for(encode_device_final->colorspace, config.videoFormat).hdr10plus ||
+        negotiated == hdr::dynamic_hdr_format_e::dolby_vision_profile_81;
+      if (hw_download_analysis) {
+        encode_device_final->hdr_luminance_analysis_available = true;
+      }
+    }
+#endif
+
     // Dolby Vision P8.1 rides PQ; the RPU's L1 needs the luminance analyzer,
     // so a negotiated session without analysis streams an HDR10 base layer
     // only (the client decoder falls back by design). P8.4 needs HLG, which
@@ -3267,6 +3379,11 @@ namespace video {
       session->vivid_splice_enabled = true;
       session->vivid_codec = *vivid_codec;
       BOOST_LOG(info) << "HDR Vivid dynamic metadata: CUVA T.35 will be spliced on the avcodec path"sv;
+    }
+
+    if (hw_download_analysis) {
+      session->hw_analysis_enabled = true;
+      BOOST_LOG(info) << "HDR luminance analysis: sampling the hardware frame (1 in 4) for dynamic metadata"sv;
     }
 
     if (dv_negotiated) {
