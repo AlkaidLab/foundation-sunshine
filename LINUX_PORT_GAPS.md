@@ -308,10 +308,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **中**
 
-- **D12 枚举 `active` 语义 = "已连接"而非"已启用"**：KDE 中被禁用的显示器仍报 active，会被 VDD
-  保活逻辑重新打开（Windows 用 `DISPLAYCONFIG_PATH_ACTIVE`）。修需 kscreen 感知枚举（注意
-  `enum_available_devices` 目前是 sysfs-only、无缓存，直接加 kscreen 查询会给每次枚举加一次进程开销）。
-- **C3 klipper 写操作在 enet 控制线程同步阻塞**（无超时）：klipper 卡住会阻塞控制包处理。
 - **C4 60 KB–1 MiB 文本无 blob 回退**：Windows 走 KIND_REF + blob store，Linux 直接丢弃（= §1.4）。
 - **F2 前台缓存无失效机制**：KWin 脚本失联最长 5 分钟（重载间隔）后才恢复，期间 ABR 用陈旧 exe。
 - **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
@@ -439,3 +435,12 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
   shader 分析。
 - 软件设备路径仍是**每帧**分析（Windows 为 1/4 帧、≤1080p），因此两侧的时间滤波推进节奏不同
   （§5.2 F7，仍开着）。
+
+### 5.9 第七轮修复（枚举语义与剪贴板写入，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R14 | **D12 枚举 `active` = "已连接"而非"已启用"** | `enum_available_devices()` 现在读 DRM sysfs 的 `enabled`（CRTC 已绑定的状态，语义等同 Windows 的 `DISPLAYCONFIG_PATH_ACTIVE`）：连上但被桌面禁用的显示器报 **inactive**，VDD 保活/断电列表不再把它重新点亮。属性不可读（老内核）时回退到原来的"已连接即 active"；**虚拟屏例外**——它的通路由本后端（pidfd 借 DRM master + CRTC 指派）管理，不由桌面决定，仍按"live 即 active"处理（`live_virtual_display_connector()` 在循环外解析一次，避免 `is_vdd_connector()` 递归枚举）。新增 2 个单元测试：sysfs 非 enabled 的连接器不得报 active；非 enabled 的连接器必须仍被枚举到（inactive） |
+| R15 | **C3 klipper 写操作在 enet 控制线程同步阻塞** | 客户端→主机的剪贴板写入改为**入队**（上限 8 条，溢出丢最旧并告警），由 provider 自己的 poll 线程在两次读取之间用它的 bus 执行 `klipper_set`；poll 线程的 1 s 等待改为条件变量 `wait_for`（有写入立即唤醒），`stop()` 也会唤醒它。enet 控制线程不再做同步 D-Bus 调用，klipper 僵死不会阻塞控制包处理；回声抑制仍在**入队时**记录（保持原有语义），写入成功后同步 `last_seen` 以免把自己写的内容当成主机侧变更回发 |
+
+**测试基线**：12/13 套件通过、聚合套件 503 用例 491 通过 / 12 跳过 / 0 断言失败。

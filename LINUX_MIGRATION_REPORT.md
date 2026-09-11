@@ -675,8 +675,18 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     设备路径同样不受影响。**未在 VAAPI/CUDA 硬件上实测**（本机 NVIDIA + `SUNSHINE_ENABLE_CUDA=OFF`），
     代价是全分辨率下载约 90 MB/s@1080p60（详见 `LINUX_PORT_GAPS.md` §5.8）。
 
-**测试基线复核（2026-09-11，pkgrel 44 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压与分析覆盖面之后）**：`ctest` 13 个套件
-12 个通过。聚合套件 `test_sunshine` 共 501 个用例：489 通过、12 跳过（1 个 Unicode 路径用例 +
+29. **第七轮：枚举语义与剪贴板写入（2026-09-11）**：
+    - **设备 active 语义对齐 Windows（D12）**：`enum_available_devices()` 改为读 DRM sysfs 的
+      `enabled` 属性（CRTC 已绑定，等价 Windows `DISPLAYCONFIG_PATH_ACTIVE`），因此**连上但被桌面
+      禁用**的显示器报 inactive，不再被 VDD 保活逻辑重新点亮；属性不可读时回退旧的"已连接即 active"，
+      虚拟屏保持"live 即 active"（其通路由本后端管理）。带 2 个基于真实 sysfs 的规则测试。
+    - **剪贴板写入不再阻塞控制线程（C3）**：客户端→主机的写入改为有界队列（8 条，溢出丢最旧），
+      由 provider 的 poll 线程用同一个 bus 执行；等待改为条件变量（写入即唤醒，`stop()` 也唤醒）。
+      enet 控制线程因此不再做同步 D-Bus 调用，klipper 僵死不会拖住控制包处理；回声抑制仍在入队时
+      记录，写成功后同步 `last_seen` 避免回发自己写的内容。
+
+**测试基线复核（2026-09-11，pkgrel 45 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面与枚举/剪贴板之后）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 503 个用例：491 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧
