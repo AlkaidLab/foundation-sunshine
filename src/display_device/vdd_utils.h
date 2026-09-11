@@ -385,6 +385,57 @@ namespace display_device::vdd_utils {
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
 
+  // ---------------------------------------------------------------------------
+  // Shared (platform-neutral) mode-list helpers — defined once in vdd_utils.cpp
+  // outside the platform guards.
+  //
+  // The Windows backend forwards this list to the ZakoVDD driver via SETMODES;
+  // the Linux backend builds the virtual display's EDID mode ladder from it.
+  // Both must accept the exact same configuration syntax, so the parsing and
+  // de-duplication live here instead of being re-implemented per platform.
+  // ---------------------------------------------------------------------------
+
+  bool
+  same_resolution(const resolution_t &a, const resolution_t &b);
+
+  void
+  append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution);
+
+  void
+  append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz);
+
+  boost::optional<unsigned int>
+  rounded_vdd_refresh_hz(double refresh_hz);
+
+  boost::optional<unsigned int>
+  rounded_refresh_hz(const refresh_rate_t &refresh_rate);
+
+  /**
+   * @brief Parse a configured resolution entry ("1920x1080").
+   * @details Acceptance matches the Windows driver path exactly: surrounding
+   *          whitespace is trimmed, the separator must be 'x' or 'X', both
+   *          dimensions must be positive and no trailing characters allowed.
+   */
+  boost::optional<resolution_t>
+  parse_vdd_resolution(const std::string &value);
+
+  /**
+   * @brief Parse a configured refresh-rate entry ("60", "59.94").
+   * @details Acceptance matches the Windows driver path exactly: the whole
+   *          entry must be a positive number; fractional rates are rounded to
+   *          the nearest integer (the driver mode list is integral).
+   */
+  boost::optional<unsigned int>
+  parse_vdd_refresh_hz(const std::string &value);
+
+  /**
+   * @brief Physical size of a configured client device-size class.
+   * @details Canonical per-client size classes shared by both backends;
+   *          unknown classes fall back to "medium".
+   */
+  physical_size_t
+  client_physical_size_for_class(const std::string &device_size);
+
   // 重试函数模板
   template <typename Func>
   bool

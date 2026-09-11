@@ -1,3 +1,21 @@
+// Shared includes for the platform-neutral mode-list helpers defined at the
+// end of this file (outside the platform guards), plus headers both platform
+// halves need. Platform-only includes stay inside their own half.
+#include "vdd_utils.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <boost/algorithm/string/trim.hpp>
+
+#include "src/config.h"
+#include "src/logging.h"
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 
@@ -306,105 +324,9 @@ namespace display_device {
       return true;
     }
 
-    bool
-    same_resolution(const resolution_t &a, const resolution_t &b) {
-      return a.width == b.width && a.height == b.height;
-    }
-
-    void
-    append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution) {
-      if (std::find_if(resolutions.begin(), resolutions.end(), [&](const auto &cached) {
-            return same_resolution(cached, resolution);
-          }) == resolutions.end()) {
-        resolutions.push_back(resolution);
-      }
-    }
-
-    void
-    append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz) {
-      if (refresh_hz > 0 && std::find(refresh_rates_hz.begin(), refresh_rates_hz.end(), refresh_hz) == refresh_rates_hz.end()) {
-        refresh_rates_hz.push_back(refresh_hz);
-      }
-    }
-
-    boost::optional<resolution_t>
-    parse_vdd_resolution(const std::string &value) {
-      std::string trimmed = value;
-      boost::algorithm::trim(trimmed);
-      if (trimmed.empty()) {
-        return {};
-      }
-
-      std::stringstream input(trimmed);
-      unsigned int width = 0;
-      unsigned int height = 0;
-      char separator = '\0';
-      input >> width >> separator >> height;
-
-      if (!input || !input.eof() || (separator != 'x' && separator != 'X') || width == 0 || height == 0) {
-        BOOST_LOG(warning) << "Skipping invalid VDD resolution entry: " << value;
-        return {};
-      }
-
-      return resolution_t { width, height };
-    }
-
-    boost::optional<unsigned int>
-    rounded_vdd_refresh_hz(double refresh_hz) {
-      constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
-      constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
-
-      if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
-        return {};
-      }
-
-      const auto rounded = std::lround(refresh_hz);
-      if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
-        return {};
-      }
-
-      return static_cast<unsigned int>(rounded);
-    }
-
-    boost::optional<unsigned int>
-    rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
-      if (refresh_rate.denominator == 0) {
-        return {};
-      }
-
-      const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
-      return rounded_vdd_refresh_hz(refresh_hz);
-    }
-
-    boost::optional<unsigned int>
-    parse_vdd_refresh_hz(const std::string &value) {
-      std::string trimmed = value;
-      boost::algorithm::trim(trimmed);
-      if (trimmed.empty()) {
-        return {};
-      }
-
-      try {
-        std::size_t parsed_len = 0;
-        const double refresh_hz = std::stod(trimmed, &parsed_len);
-        if (parsed_len != trimmed.size()) {
-          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
-          return {};
-        }
-
-        const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
-        if (!rounded) {
-          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
-          return {};
-        }
-
-        return *rounded;
-      }
-      catch (const std::exception &) {
-        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
-        return {};
-      }
-    }
+    // The mode-list parsing helpers (same_resolution, append_unique_*,
+    // parse_vdd_resolution/parse_vdd_refresh_hz, rounded_*) are shared with the
+    // Linux backend and defined at the end of this file.
 
     set_vdd_result
     set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
@@ -492,13 +414,6 @@ namespace display_device {
         return {};
       }
 
-      // 预定义尺寸映射表
-      static const std::unordered_map<std::string, physical_size_t> size_map = {
-        { "small", { 13.3f, 7.5f } },  // 小型设备：约6英寸，16:9比例
-        { "medium", { 34.5f, 19.4f } },  // 中型设备：约15.6英寸，16:9比例
-        { "large", { 70.8f, 39.8f } }  // 大型设备：约32英寸，16:9比例
-      };
-
       try {
         pt::ptree clientArray;
         std::stringstream ss(config::get_clients_config());
@@ -507,8 +422,8 @@ namespace display_device {
         for (const auto &client : clientArray) {
           if (client.second.get<std::string>("name", "") == client_name) {
             const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
-            auto it = size_map.find(device_size);
-            return (it != size_map.end()) ? it->second : size_map.at("medium");
+            // Size classes come from the canonical shared table.
+            return client_physical_size_for_class(device_size);
           }
         }
       }
@@ -755,34 +670,8 @@ namespace display_device {
       return true;
     }
 
-    VddSettings
-    prepare_vdd_settings(const parsed_config_t &config) {
-      std::vector<resolution_t> resolution_modes;
-      std::vector<unsigned int> refresh_rates_hz;
-
-      for (const auto &res : config::nvhttp.resolutions) {
-        if (const auto parsed_resolution = parse_vdd_resolution(res)) {
-          append_unique_resolution(resolution_modes, *parsed_resolution);
-        }
-      }
-
-      for (const auto &fps : config::nvhttp.fps) {
-        if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
-          append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
-        }
-      }
-
-      if (config.resolution) {
-        append_unique_resolution(resolution_modes, *config.resolution);
-      }
-      if (config.refresh_rate) {
-        if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
-          append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
-        }
-      }
-
-      return { std::move(resolution_modes), std::move(refresh_rates_hz) };
-    }
+    // prepare_vdd_settings() is shared with the Linux backend and defined at
+    // the end of this file.
 
     bool
     is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode) {
@@ -1830,44 +1719,25 @@ namespace display_device::vdd_utils {
      *        advertised ladder, letting the compositor switch among every
      *        combination without an EDID rewrite. The preferred resolution's
      *        rates land first for slot priority; chained CTA blocks make the
-     *        space effectively unbounded. Caller holds state_mutex.
+     *        space effectively unbounded.
+     * @param settings Mode lists parsed by the shared prepare_vdd_settings()
+     *        (same acceptance as the Windows SETMODES list, including the
+     *        session mode when one is known).
+     * @note Caller holds state_mutex.
      */
     void
-    refresh_config_mode_ladder_locked() {
+    refresh_config_mode_ladder_locked(const VddSettings &settings) {
       active_edid_opts.extra_modes.clear();
 
-      // Configured refresh rates, highest first (Windows acceptance: any
-      // positive value).
-      std::vector<unsigned int> rates;
-      for (const auto &entry : config::nvhttp.fps) {
-        unsigned int fps = 0;
-        std::stringstream input(entry);
-        input >> fps;
-        if (fps > 0 && std::find(rates.begin(), rates.end(), fps) == rates.end()) {
-          rates.push_back(fps);
-        }
-      }
+      // Highest configured refresh rate first, so the preferred resolution's
+      // slots carry the rates a client is most likely to request.
+      std::vector<unsigned int> rates = settings.refresh_rates_hz;
       std::sort(rates.begin(), rates.end(), [](unsigned int a, unsigned int b) { return a > b; });
 
-      // Configured resolutions, largest area first (Windows acceptance: any
-      // positive dimensions with an x/X separator).
-      struct configured_res_t {
-        unsigned int w;
-        unsigned int h;
-      };
-      std::vector<configured_res_t> resolutions;
-      for (const auto &res : config::nvhttp.resolutions) {
-        unsigned int w = 0;
-        unsigned int h = 0;
-        std::stringstream input(res);
-        char separator = '\0';
-        input >> w >> separator >> h;
-        if ((separator == 'x' || separator == 'X') && w > 0 && h > 0) {
-          resolutions.push_back({ w, h });
-        }
-      }
+      // Configured resolutions, largest area first.
+      std::vector<resolution_t> resolutions = settings.resolution_modes;
       std::stable_sort(resolutions.begin(), resolutions.end(), [](const auto &a, const auto &b) {
-        return (unsigned long long) a.w * a.h > (unsigned long long) b.w * b.h;
+        return (unsigned long long) a.width * a.height > (unsigned long long) b.width * b.height;
       });
 
       std::vector<std::tuple<unsigned int, unsigned int, unsigned int>> ladder;
@@ -1890,11 +1760,11 @@ namespace display_device::vdd_utils {
       }
       // Every other resolution contributes every configured refresh rate too.
       for (const auto &res : resolutions) {
-        if (res.w == cached_width && res.h == cached_height) {
+        if (res.width == cached_width && res.height == cached_height) {
           continue;
         }
         for (const auto &fps : rates) {
-          push_unique(res.w, res.h, fps);
+          push_unique(res.width, res.height, fps);
         }
       }
       // Chained CTA blocks scale with the mode list; the cap only guards
@@ -1911,54 +1781,44 @@ namespace display_device::vdd_utils {
      *        lists that drive the Windows SETMODES mode table: the largest
      *        resolution whose highest configured refresh rate fits the EDID
      *        pixel-clock limit. Falls back to the 1920x1080@60 defaults when
-     *        the lists carry nothing usable. Caller holds state_mutex.
+     *        the lists carry nothing usable.
+     * @param settings Mode lists parsed by the shared prepare_vdd_settings().
+     * @note Caller holds state_mutex.
      */
     void
-    apply_configured_preferred_mode_locked() {
+    apply_configured_preferred_mode_locked(const VddSettings &settings) {
       if (cached_from_session) {
         return;
       }
 
-      std::vector<unsigned int> rates;
-      for (const auto &entry : config::nvhttp.fps) {
-        unsigned int fps = 0;
-        std::stringstream input(entry);
-        input >> fps;
-        if (fps > 0) {
-          rates.push_back(fps);
-        }
-      }
+      std::vector<unsigned int> rates = settings.refresh_rates_hz;
       std::sort(rates.begin(), rates.end(), [](unsigned int a, unsigned int b) { return a > b; });
 
-      struct configured_res_t {
-        unsigned int w;
-        unsigned int h;
-      };
-      std::vector<configured_res_t> resolutions;
-      for (const auto &res : config::nvhttp.resolutions) {
-        unsigned int w = 0;
-        unsigned int h = 0;
-        std::stringstream input(res);
-        char separator = '\0';
-        input >> w >> separator >> h;
-        if ((separator == 'x' || separator == 'X') && w > 0 && h > 0) {
-          resolutions.push_back({ w, h });
-        }
-      }
+      std::vector<resolution_t> resolutions = settings.resolution_modes;
       std::stable_sort(resolutions.begin(), resolutions.end(), [](const auto &a, const auto &b) {
-        return (unsigned long long) a.w * a.h > (unsigned long long) b.w * b.h;
+        return (unsigned long long) a.width * a.height > (unsigned long long) b.width * b.height;
       });
 
       for (const auto &res : resolutions) {
         for (const auto &fps : rates) {
-          if (vdd_edid::mode_fits_pixel_clock_limit(res.w, res.h, fps)) {
-            cached_width = res.w;
-            cached_height = res.h;
+          if (vdd_edid::mode_fits_pixel_clock_limit(res.width, res.height, fps)) {
+            cached_width = res.width;
+            cached_height = res.height;
             cached_refresh_hz = fps;
             return;
           }
         }
       }
+    }
+
+    /**
+     * @brief Mode lists for the configured resolutions/refresh rates only.
+     * @details Used where no session mode is known (creation, live mode
+     *          switch); session-aware callers pass their prepared settings.
+     */
+    VddSettings
+    configured_mode_settings() {
+      return prepare_vdd_settings(parsed_config_t {});
     }
   }  // namespace
 
@@ -2142,7 +2002,7 @@ namespace display_device::vdd_utils {
   }
 
   set_vdd_result
-  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &) {
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
     elevated_caps caps;
     if (!config.resolution || !config.refresh_rate) {
       return set_vdd_result::invalid_config;
@@ -2160,7 +2020,7 @@ namespace display_device::vdd_utils {
       return set_vdd_result::ok;
     }
 
-    refresh_config_mode_ladder_locked();
+    refresh_config_mode_ladder_locked(settings);
     const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
     return apply_edid_and_enable(active_edid_path, active_status_path, edid) ? set_vdd_result::ok : set_vdd_result::failed;
   }
@@ -2177,13 +2037,7 @@ namespace display_device::vdd_utils {
       return {};
     }
 
-    // Same per-client size classes as the Windows implementation.
-    static const std::unordered_map<std::string, physical_size_t> size_map = {
-      { "small", { 13.3f, 7.5f } },   // ~6 inch, 16:9
-      { "medium", { 34.5f, 19.4f } }, // ~15.6 inch, 16:9
-      { "large", { 70.8f, 39.8f } },  // ~32 inch, 16:9
-    };
-
+    // Size classes come from the canonical shared table (vdd_utils.cpp).
     try {
       pt::ptree clientArray;
       std::stringstream ss(config::get_clients_config());
@@ -2192,8 +2046,7 @@ namespace display_device::vdd_utils {
       for (const auto &client : clientArray) {
         if (client.second.get<std::string>("name", "") == client_name) {
           const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
-          const auto it = size_map.find(device_size);
-          return it != size_map.end() ? it->second : size_map.at("medium");
+          return client_physical_size_for_class(device_size);
         }
       }
     }
@@ -2205,14 +2058,41 @@ namespace display_device::vdd_utils {
   }
 
   bool
-  create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &, const physical_size_t &) {
+  create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
 
-    apply_configured_preferred_mode_locked();
+    // Personalization captured at creation, mirroring the Windows
+    // CREATEMONITOR payload [max_nits,min_nits,maxFALL][widthCm,heightCm]:
+    // the client's reported luminance and physical size are written into the
+    // EDID's HDR static metadata and screen-size descriptors. Non-positive
+    // values keep the generator's reference defaults; a minimum luminance that
+    // would encode to code 0 (undefined) also stays at the default, since the
+    // CTA-861-H minimum-luminance field cannot represent sub-0.02 nit values.
+    active_edid_opts.width_mm = physical_size.width_cm > 0.0f
+                                  ? static_cast<unsigned int>(std::lround(physical_size.width_cm * 10.0f))
+                                  : 0;
+    active_edid_opts.height_mm = physical_size.height_cm > 0.0f
+                                   ? static_cast<unsigned int>(std::lround(physical_size.height_cm * 10.0f))
+                                   : 0;
+    active_edid_opts.hdr_max_nits = hdr_brightness.max_nits > 0.0f
+                                      ? static_cast<int>(std::lround(hdr_brightness.max_nits))
+                                      : -1;
+    active_edid_opts.hdr_max_full_nits = hdr_brightness.max_full_nits > 0.0f
+                                           ? static_cast<int>(std::lround(hdr_brightness.max_full_nits))
+                                           : -1;
+    active_edid_opts.hdr_min_nits = hdr_brightness.min_nits >= 1.0f
+                                      ? static_cast<int>(std::lround(hdr_brightness.min_nits))
+                                      : -1;
+
+    const auto settings = configured_mode_settings();
+    apply_configured_preferred_mode_locked(settings);
 
     BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
-                    << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
+                    << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")")
+                    << ", EDID personalization: " << active_edid_opts.width_mm << "x" << active_edid_opts.height_mm
+                    << "mm, HDR [" << active_edid_opts.hdr_max_nits << "," << active_edid_opts.hdr_min_nits << ","
+                    << active_edid_opts.hdr_max_full_nits << "] nits";
 
     if (active && connector_status_is(active_status_path, "connected")) {
       BOOST_LOG(debug) << "vdd: virtual display already active on "sv << active_connector;
@@ -2274,7 +2154,7 @@ namespace display_device::vdd_utils {
     }
 
     const std::string status_path = "/sys/class/drm/" + card + "-" + connector + "/status";
-    refresh_config_mode_ladder_locked();
+    refresh_config_mode_ladder_locked(settings);
     const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, active_edid_opts);
 
     if (!apply_edid_and_enable(edid_path, status_path, edid)) {
@@ -2453,10 +2333,156 @@ namespace display_device::vdd_utils {
   }
 
 
+}  // namespace display_device::vdd_utils
+#endif
+
+// ---------------------------------------------------------------------------
+// Platform-neutral mode-list helpers: one implementation for both the Windows
+// SETMODES path and the Linux EDID mode ladder. Kept outside the platform
+// guards so the two backends can never drift apart.
+// ---------------------------------------------------------------------------
+namespace display_device::vdd_utils {
+
+  bool
+  same_resolution(const resolution_t &a, const resolution_t &b) {
+    return a.width == b.width && a.height == b.height;
+  }
+
+  void
+  append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution) {
+    if (std::find_if(resolutions.begin(), resolutions.end(), [&](const auto &cached) {
+          return same_resolution(cached, resolution);
+        }) == resolutions.end()) {
+      resolutions.push_back(resolution);
+    }
+  }
+
+  void
+  append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz) {
+    if (refresh_hz > 0 && std::find(refresh_rates_hz.begin(), refresh_rates_hz.end(), refresh_hz) == refresh_rates_hz.end()) {
+      refresh_rates_hz.push_back(refresh_hz);
+    }
+  }
+
+  boost::optional<unsigned int>
+  rounded_vdd_refresh_hz(double refresh_hz) {
+    constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
+    constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
+
+    if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
+      return {};
+    }
+
+    const auto rounded = std::lround(refresh_hz);
+    if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
+      return {};
+    }
+
+    return static_cast<unsigned int>(rounded);
+  }
+
+  boost::optional<unsigned int>
+  rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
+    if (refresh_rate.denominator == 0) {
+      return {};
+    }
+
+    const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
+    return rounded_vdd_refresh_hz(refresh_hz);
+  }
+
+  boost::optional<resolution_t>
+  parse_vdd_resolution(const std::string &value) {
+    std::string trimmed = value;
+    boost::algorithm::trim(trimmed);
+    if (trimmed.empty()) {
+      return {};
+    }
+
+    std::stringstream input(trimmed);
+    unsigned int width = 0;
+    unsigned int height = 0;
+    char separator = '\0';
+    input >> width >> separator >> height;
+
+    if (!input || !input.eof() || (separator != 'x' && separator != 'X') || width == 0 || height == 0) {
+      BOOST_LOG(warning) << "Skipping invalid VDD resolution entry: " << value;
+      return {};
+    }
+
+    return resolution_t { width, height };
+  }
+
+  boost::optional<unsigned int>
+  parse_vdd_refresh_hz(const std::string &value) {
+    std::string trimmed = value;
+    boost::algorithm::trim(trimmed);
+    if (trimmed.empty()) {
+      return {};
+    }
+
+    try {
+      std::size_t parsed_len = 0;
+      const double refresh_hz = std::stod(trimmed, &parsed_len);
+      if (parsed_len != trimmed.size()) {
+        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+        return {};
+      }
+
+      const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
+      if (!rounded) {
+        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+        return {};
+      }
+
+      return *rounded;
+    }
+    catch (const std::exception &) {
+      BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+      return {};
+    }
+  }
+
+  physical_size_t
+  client_physical_size_for_class(const std::string &device_size) {
+    // Canonical per-client size classes (~6" / ~15.6" / ~32", 16:9).
+    static const std::unordered_map<std::string, physical_size_t> size_map = {
+      { "small", { 13.3f, 7.5f } },
+      { "medium", { 34.5f, 19.4f } },
+      { "large", { 70.8f, 39.8f } },
+    };
+
+    const auto it = size_map.find(device_size);
+    return it != size_map.end() ? it->second : size_map.at("medium");
+  }
+
   VddSettings
-  prepare_vdd_settings(const parsed_config_t &) {
-    return {};
+  prepare_vdd_settings(const parsed_config_t &config) {
+    std::vector<resolution_t> resolution_modes;
+    std::vector<unsigned int> refresh_rates_hz;
+
+    for (const auto &res : config::nvhttp.resolutions) {
+      if (const auto parsed_resolution = parse_vdd_resolution(res)) {
+        append_unique_resolution(resolution_modes, *parsed_resolution);
+      }
+    }
+
+    for (const auto &fps : config::nvhttp.fps) {
+      if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
+        append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
+      }
+    }
+
+    if (config.resolution) {
+      append_unique_resolution(resolution_modes, *config.resolution);
+    }
+    if (config.refresh_rate) {
+      if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
+        append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
+      }
+    }
+
+    return { std::move(resolution_modes), std::move(refresh_rates_hz) };
   }
 
 }  // namespace display_device::vdd_utils
-#endif
