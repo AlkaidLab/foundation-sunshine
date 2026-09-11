@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支，tag `v0.8-linux-dv-rpu`（pkgrel 29，2026-09-10）
+- **基线**：`linux-migration` 分支，tag `v0.9.1-linux-full-cross-product`（pkgrel 38，2026-09-11）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
 - **约定**：🔶 部分实现（有偏差）｜○ 未实现但可行｜⛔ 本质不可移植
@@ -9,11 +9,12 @@
 
 ## 总览
 
-核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 6 模式 prep + 独占还原）、物理显示器
-display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 三件套（静态透传 / HDR10+
-动态 / DV P8.1 RPU）、剪贴板文本双向、远程麦克风、ABR 前台检测、托盘/向导/打包。
+核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 配置全组合模式表 + 6 模式 prep + 独占还原 +
+残留 adopt）、物理显示器 display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 三件套
+（静态透传 / HDR10+ 动态 / DV P8.1 RPU）、剪贴板文本双向、远程麦克风、ABR 前台检测、
+托盘（状态实时化 + 消息框）/向导/打包。
 
-剩余：**8 项部分实现、10 项可行未做、9 项本质不可移植**。
+剩余：**7 项部分实现（1.2 已解决，不再计入）、10 项可行未做、9 项本质不可移植**。
 
 ---
 
@@ -28,26 +29,42 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
   连接器），`create_vdd_monitor` 带 GUID 参数化显示名。受限于机器上的空闲连接器数量。
 - **工作量**：高。**验收**：两客户端同时各串各的虚拟屏互不干扰。
 
-### 1.2 VDD EDID 模式表 —— ✅ 已完全解决（2026-09-11，`4ad74c90`，tag `v0.9.0-linux-full-mode-table`，pkgrel 37）
+### 1.2 VDD EDID 模式表 —— ✅ 已完全解决（2026-09-11，tag `v0.9.1-linux-full-cross-product`，pkgrel 38）
 
-**链式 CTA 扩展块**突破单扩展块 6 模式上限：块 1 承载数据块 + 首选时序副本 + 4 个附加模式，
-后续 DTD-only 块各承载 6 个——配置分辨率 × 刷新率的全部可行组合（像素时钟可行性过滤）都能
-进 EDID。用用户真实配置验证：384 字节 / 2 扩展块 / 10 模式 / edid-decode 零告警，1080p 的
-60/90/120/144 全档可见。Range Limits 描述符同步覆盖全部通告刷新率（此前写死 preferred±20
-导致 40-80Hz 与 144Hz 模式矛盾）。**全组合达成（`fbb1b911`，tag `v0.9.1`，pkgrel 38）**：非首选分辨率同样携带全部配置
-  刷新率（先前每分辨率仅最高可行档）。用户配置验证：640 字节 / 4 扩展块 / 24 DTD /
-  edid-decode 零告警——4K@60 首选（144/120/90 超像素时钟上限被可行性过滤）+ 3440x1440@90/60
-  + 其余分辨率 @144/120/90/60 全档。
-**剩余小项**：生成器空白模型（8%/2.5%）比 CVT-R 保守，
-个别真实模式（如 3440x1440@120）被排除——校准后可再放宽。
+**链式 CTA 扩展块**突破单个扩展块 6 模式的上限：块 1 承载数据块 + 首选时序副本 + 4 个附加模式，
+后续 DTD-only 块各承载 6 个（`vdd_edid.cpp:256-275`，逐块校验和与 DTD 起始指针），
+**配置分辨率 × 刷新率的全部可行组合**（`vdd_edid::mode_fits_pixel_clock_limit()` 像素时钟可行性
+过滤）都能进 EDID，与 Windows SETMODES 的"全组合"语义等价；阶梯只剩一个防病态配置的 40 项保护
+（`vdd_utils.cpp:1900-1904`）。Range Limits 描述符同步覆盖全部通告刷新率（此前写死 preferred±20，
+与 144 Hz 模式自相矛盾）。
 
-- **已完成**：手动创建参数化——首选模式从 WebUI 可编辑的 `resolutions`/`fps` 列表推导
-  （最高分辨率×最高刷新率），EDID 阶梯携带全部配置档位供合成器免重写热切；客户端会话
-  模式仍优先（`cached_from_session`）。无新增配置键。
-- **剩余小项**：阶梯上限 6 个模式（EDID 空间限制，Windows SETMODES 无此限；策略 = 首选
-  分辨率保留全部配置刷新率，其余分辨率各取最高可行档，`49800f6c`，tag `v0.8.7`，pkgrel 36）；
-  会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口；生成器的空白模型比 CVT-RB 保守
-  （如 3440x1440@120 被可行过滤器排除，实际该模式合法）——校准空白模型可再放宽。
+演进三步（详见报告 §十二进度 21）：
+
+- `49800f6c`（v0.8.7）：阶梯从"每分辨率只配最高刷新率"改为可行组合叉积（首选分辨率保留全部配置
+  刷新率），并修掉首选模式选到 3840x2160@144 后像素时钟溢出、被静默回绕成 71.38 Hz 的 bug。
+- `4ad74c90`（v0.9.0）：链式 CTA 块——块 1 + 后续 DTD-only 块，模式空间实际不再受限。
+- `fbb1b911`（v0.9.1）：非首选分辨率也携带全部配置刷新率。
+
+**用户真实配置验证**（fps 60/90/120/144，720p…4K）：640 字节 / 4 扩展块 / 24 DTD / edid-decode
+零告警——4K@60 首选（144/120/90 超像素时钟上限被可行性过滤）+ 3440x1440@90/60 + 其余分辨率
+@144/120/90/60 全档。
+
+**配套已完成项**：
+
+- 手动创建参数化（`4e186f4b`/`2ce99874`，v0.8.3/v0.8.4）：偏好模式从 WebUI 可编辑的
+  `resolutions`/`fps` 列表推导（面积最大分辨率 × 其最高可行刷新率），客户端会话模式仍优先
+  （`cached_from_session`）；中途引入的 `vdd_manual_*` 键已删除，**无新增配置键**。
+- 显示名对齐 Windows（`89cd047c`/`e3d11b37`，v0.8.5/v0.8.6）：EDID 名描述符用共享常量
+  `ZAKO_NAME`（"Zako HDR"）；KDE 前缀的 "UQD" 是厂商 ID 字节的固有解码（该字节同时充当残留 VHD
+  清扫/adopt 签名）。配置解析撤掉自创夹取，对齐 Windows `parse_vdd_resolution`/
+  `parse_vdd_refresh_hz` 的宽松接受。
+- 残留虚拟屏 adopt（`387a97fd`，v0.8.1）：EDID override 与强制连接器状态是 DRM 持久的，新进程
+  首次查询时扫描 VHD 签名连接器、还原跟踪路径、从 DTD 解析回偏好模式。
+
+**剩余小项**：生成器空白模型（8% / 2.5%）比 CVT-R 保守，个别真实模式（如 3440x1440@120）被
+可行性过滤器排除——校准空白模型可再放宽；会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口；
+`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量仍是旧的 40–80 Hz Range Limits，需按新语义
+重生成（差异仅 2 字节 `0x28,0x50`→`0x37,0x41`，其余 6 个 EDID 用例通过）。
 
 ### 1.3 HDR 亮度分析精度
 
@@ -111,7 +128,7 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
 
 ### 2.1 HDR Vivid T.35 序列化器（中）⭐ 推荐下一个
 
-- **现状**：avcodec 路径的 Vivid side data 已预挂并被逐帧更新（`video.cpp:3073` 起），
+- **现状**：avcodec 路径的 Vivid side data 已预挂并被逐帧更新（`video.cpp:3104-3105` 起），
   但 FFmpeg 没有 CUVA 序列化器（`dynamic_hdr_vivid.c` 只有解析），元数据到不了码流。
   Windows 端由 `nvenc_base.cpp` 手写 T.35 载荷（仅 NVENC 直连路径可用）。
 - **路径**：照 `nvenc_base.cpp` 的 T.35 手写逻辑 + fork 自研比特流层
@@ -170,7 +187,7 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
 
 ### 2.9 NVENC SDK 直连（高，建议重估后可能降级/放弃）
 
-- HDR10+/DV 完成后，avcodec 路径功能面已齐。直连的剩余增益：fork 的细粒度码控、
+- HDR10+/DV 已完成，avcodec 路径功能面已齐。直连的剩余增益：fork 的细粒度码控、
   lookahed、多硬件实例。若 2.1 Vivid 也完成，T.35 手写序列化器反而是直连的*负资产*
   （avcodec 不需要它）。
 - **建议**：搁置，等实际画质/延迟瓶颈出现再评估。
@@ -209,3 +226,14 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
   提前移除（幂等、线程安全）。
 - `main.cpp` 信号处理器、`vdd_capability` 的"真实版本上报"在 Windows 上均为行为恒等
   或良性变化（审计详见 2026-09-10 提交 `3756caf6` 前后的分支审计记录）。
+- 托盘 VDD 子菜单项新增 `checkbox=1`（Qt 渲染勾选态所需）——Windows 托盘仅凭 `checked` 画
+  MFS_CHECKED，该字段在 Windows 上被忽略，行为恒等；VDD 菜单消息框（`QMessageBox`）整体在
+  `#ifndef _WIN32` 内，Windows 仍走 `MessageBoxW`。
+- 虚拟屏 EDID 名由 "Foundation VDD" 改为共享常量 `ZAKO_NAME`（"Zako HDR"）——用户可见命名对齐
+  Windows（KDE 显示的 "UQD" 前缀是厂商 ID 字节的固有解码，非命名分歧）。
+- **约定沉淀**：`AGENTS.md` 新增 Windows parity 三条（共享头文件提供规范常量、移植语义含边界与
+  默认值、用户可见命名与 Windows 一致），后续移植按此自查；报告侧证据见
+  `LINUX_MIGRATION_REPORT.md` §十二进度 20。
+- **测试基线（2026-09-11，pkgrel 38 构建树复核）**：`ctest` 13 套件 12 通过，聚合套件
+  `test_sunshine` 仅 AudioTest / MouseHIDTest / EncoderTest 的 `SetUpTestSuite` 失败
+  （0 个断言失败，需真实音频/输入/编码器环境），与既有基线一致。

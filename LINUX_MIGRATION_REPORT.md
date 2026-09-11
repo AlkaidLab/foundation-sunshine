@@ -1,6 +1,7 @@
 # Foundation Sunshine Linux（Arch Linux）迁移报告
 
-- **日期**：2026-09-08（**更新**：2026-09-10 —— 基础迁移完成并实测；P0 虚拟显示器已用原生 C++ 后端落地，进度见 §十二）
+- **日期**：2026-09-08（**更新**：2026-09-11 —— 虚拟显示器模式表补全为配置全组合（链式 CTA 块，tag
+  `v0.9.1`，pkgrel 38）；HDR10+ 与 DV P8.1 在 avcodec 路径接通；托盘 VDD 状态/消息框落地，进度见 §十二）
 - **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支，commit `3e142f7`）
 - **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland + PipeWire，NVIDIA RTX 3050 Mobile）
 
@@ -19,10 +20,13 @@ NVENC/VAAPI/软件编码、evdev 输入、WebUI）是上游成熟代码。但工
 
 此外要建立正确的预期：迁移开始时本分支的卖点（ZakoVDD 虚拟显示器、NVENC SDK 13 直连 / AMF QVBR、
 Tauri 控制面板、远程麦克风写主机、USB/IP 主机、WGC 捕获、vmouse 虚拟鼠标）在 Linux 上均不可用
-（Windows 专属或不完整 stub）。**截至 2026-09-10 已移植**：ZakoVDD 虚拟显示器（原生 C++ 后端，
-§十一 P0 / §十二进度 7）、物理显示器 display_device 后端（进度 11）、主机侧剪贴板同步（进度 12）、
-远程麦克风写主机（进度 13）；其余项仍不可用或降级。Linux 现状见 §八功能矩阵。CI 目前只有 Windows 构建（`.github/workflows/main.yml` 仅有 `build_win`、
-`vdd_smoke` 两个 Windows job），Linux 编译在主干上长期无人验证，首次构建可能遇到零星的编译错误。
+（Windows 专属或不完整 stub）。**截至 2026-09-11 已移植**：ZakoVDD 虚拟显示器（原生 C++ 后端 +
+配置驱动的全组合模式表，§十二进度 7/19–21）、物理显示器 display_device 后端（进度 11）、主机侧
+剪贴板同步（进度 12）、远程麦克风写主机（进度 13）、ABR 前台检测（进度 15）、HDR10+ 亮度分析器
+（进度 16）、DV P8.1 RPU（avcodec 路径，进度 17）、托盘 VDD 状态与消息框（进度 18）；其余项仍
+不可用或降级，逐项清单见 §八功能矩阵与 `LINUX_PORT_GAPS.md`。CI 目前只有 Windows 构建
+（`.github/workflows/main.yml` 仅有 `build_win`、`vdd_smoke` 两个 Windows job），Linux 编译在
+主干上长期无人验证，首次构建可能遇到零星的编译错误。
 
 ---
 
@@ -37,11 +41,14 @@ Tauri 控制面板、远程麦克风写主机、USB/IP 主机、WGC 捕获、vmo
 | 托盘图标 | 需要 `libayatana-appindicator` + `libnotify`；且 `SUNSHINE_REQUIRE_TRAY` **默认 ON**，缺失时直接 FATAL（`cmake/compile_definitions/linux.cmake:206`） |
 | CUDA | 实际可选（`CUDA_FAIL_ON_MISSING` 选项声明了但从未被使用）；CUDA 工具包只编译 `cuda.cu`（NvFBC/CUDA 捕获路径） |
 | CI | **无任何 Linux 构建/测试 job**（`.github/workflows/main.yml`） |
-| 打包模板 | **全部缺失**（见 §三） |
+| 打包模板 | **初始全部缺失**（见 §三）；**已修复**——模板自上游恢复，`packaging/arch-local/` 为本地打包入口（§十二进度 1、10） |
 
 ---
 
-## 三、硬阻塞：Linux 打包模板缺失（必须先修）
+## 三、硬阻塞：Linux 打包模板缺失（必须先修）—— ✅ 已修复（2026-09-09）
+
+> **状态**：该阻塞已解决——上游旧布局的模板已拷回并提交（`1b15942`，§十二进度 1），
+> 后续打包走 `packaging/arch-local/`（pkgrel 38）。以下保留问题记录与当时的实测输出备查。
 
 `cmake/prep/special_package_configuration.cmake` 在 UNIX 下引用的以下文件**均不存在于仓库**
 （`packaging/linux/` 下实际只剩 `flatpak/deps/` 两个子模块）：
@@ -197,13 +204,13 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成（`src/stream.cpp:1463-1500`）；仅"在主机直连 DualSense 上播放"的 sidecar 是 Windows 专属 |
 | 文本输入通道 text_context | 纯数据通道（`src/text_context/`，挂接 `src/stream.cpp`） |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；但"资源管理器右键共享"入口是 Windows 专属，Linux 只能经 API/WebUI 操作 |
-| Webhook / client_fingerprint / launch_session_manager / ABR* | 纯逻辑层，均有 Linux 分支（`*` ABR 的前台应用检测仅 Windows，Linux 返回空 → 相关自适应决策失效，`src/abr.cpp:86-132`） |
+| Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层，均有 Linux 分支；**ABR 前台应用检测已移植（2026-09-10，`d504fa11`）**：KWin 脚本经 D-Bus 把活动窗口推送到进程内 `org.sunshine.Abr` 服务，非 KDE 桌面维持空结果降级（§十二进度 15） |
 | 剪贴板（客户端↔客户端 / 客户端↔WebUI 中继） | 内存中继 + SSE 跨平台；**主机侧同步已移植（2026-09-10）**：`src/clipboard_host.cpp` 对话 KDE klipper（sd-bus），双向同步 + 回声抑制，复用 GUI 代理的文本帧协议（§十二进度 12） |
 | AI API Key 凭据 | Linux 降级为明文环境变量 `SUNSHINE_LLM_API_KEY`（Windows 用 DPAPI，`src/ai/credential_store.cpp:117-124`） |
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 的编译期特性检测（`src/audio.cpp:398-403`，Arch opus 1.6.1 ✅）；12ch 有 Linux null-sink 实现（`platform/linux/audio.cpp:406-408`）；持续音频为平台无关逻辑 |
 | HDR 静态元数据透传（MDCV/CLL） | 跨平台：kmsgrab 读 DRM `HDR_OUTPUT_METADATA`（`kmsgrab.cpp:850-862`）→ avcodec side data（`video.cpp:2839-2862`），不依赖编码器 SDK |
 | 编码器探测缓存（README"260x"） | 位于 `video.cpp` 探测层的跨平台缓存（`video.cpp:4534-4537`）；注意实现是内存缓存，README 的"持久化"表述与代码不符 |
-| 增强托盘（fork 新增，上游无 src/tray） | 打开 UI/语言/项目链接/重启/退出 + 通知，Linux 可用；VDD 子菜单（Foundation Display）已随虚拟屏移植在 Linux 解禁 |
+| 增强托盘（fork 新增，上游无 src/tray） | 打开 UI/语言/项目链接/重启/退出 + 通知，Linux 可用；VDD 子菜单（"Zako HDR"）已随虚拟屏解禁，勾选态在 Qt 托盘正确渲染（需 `checkbox=1`，Windows 只看 `checked`），状态每 2s 轮询刷新且能 adopt 进程外残留的虚拟屏，危险操作走 QMessageBox 确认（§十二进度 18） |
 | nvhttp 扩展 API：dynamic_params / network_probe / sessions / abr_api / ai_api / pairing | 纯 HTTP 协议层，零平台守卫，跨平台 |
 | perf_recorder / input_activity / video_probe / cursor_channel | 全部跨平台；cursor_channel 在 Linux 因无光标生产者而干净禁用（`stream.cpp:2270-2273` 拒绝并告警，不影响流） |
 
@@ -211,16 +218,16 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 
 | 功能 | Linux 状态 |
 |---|---|
-| Dolby Vision P8.1 / P8.4 | RPU 写入器是纯比特流层（`video_dolby_vision.h:2-21`，0 平台守卫），挂在通用 avcodec 编码路径（`video.cpp:3069-3100`）；但 L1 亮度分析输入仅 Windows NVAPI 产出（`display_vram.cpp:2341-2422`），Linux 无 stats → 不生成 RPU，会话退化为普通 HDR10（基层兼容层保证回退，不崩） |
-| HDR10+ 动态元数据 | Linux 只发预挂的占位 SEI（`video.cpp:2867+`），真实值刷新依赖 Windows-only 亮度分析器（`video.cpp:2288-2296`） |
-| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配；物理显示器的分辨率/HDR/拓扑已实现（kscreen-doctor，见 ❌ 表已移植行） |
+| Dolby Vision P8.1 / P8.4 | **P8.1 已接通 avcodec 路径（2026-09-10，`24817d1a`）**：RPU 写入器是纯比特流层（`video_dolby_vision.h:2-21`，0 平台守卫），avcodec 会话现按 NVENC 同款门控 configure 注入器、按提交帧序 stage L1、输出包按 pts splice RPU NAL，L1 亮度输入由 Linux 分析器产出；P8.4 需 HLG 基层，随 HLG 源一起搁置（⛔ 表） |
+| HDR10+ 动态元数据 | **已完成（2026-09-10，`e49ae499`）**：side data 预挂与时间域滤波管线本为跨平台，缺的统计生产端已由 CPU 亮度直方图补齐（`analyze_pq_luma_frame`，限幅范围重映射，PQ→nits 复用 `hdr_metadata::pq_to_nits`），门控 = PQ 会话 + `hdr_luminance_analysis` + 客户端协商 HDR10+；近似性见 §十一 P2 |
+| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配、EDID 通告配置列表的全部可行分辨率×刷新率组合（2026-09-11，§十二进度 21）；物理显示器的分辨率/HDR/拓扑已实现（kscreen-doctor，见 ❌ 表已移植行） |
 | frame_contract（帧管线契约） | 策略层跨平台（`platform/frame_contract.cpp`），但只有 Windows 采集端消费，Linux 侧策略存在、执行为空 |
 
 ### ❌ Windows 专属 / Linux 不可用
 
 | 功能 | 原因 |
 |---|---|
-| ~~ZakoVDD 虚拟显示器~~ → **✅ 已移植（2026-09-10）** | 原生 Linux 后端：个性化 EDID（debugfs override）+ 连接器状态强制 + pidfd 借 DRM master 做 CRTC 指派 + 独占模式物理屏还原；5 种 prep 模式全适配。已知偏差：per-client GUID 未实现（单虚拟屏共享）、EDID 模式表为主屏+梯子非全表。详见 §十一 P0、§十二进度 7 |
+| ~~ZakoVDD 虚拟显示器~~ → **✅ 已移植（2026-09-10，模式表 2026-09-11 补全）** | 原生 Linux 后端：个性化 EDID（debugfs override）+ 连接器状态强制 + pidfd 借 DRM master 做 CRTC 指派 + 独占模式物理屏还原；5 种 prep 模式全适配；EDID 经**链式 CTA 扩展块**通告配置列表的全部可行分辨率×刷新率组合，显示名对齐 Windows `ZAKO_NAME`（"Zako HDR"）。已知偏差：per-client GUID 未实现（单虚拟屏共享）。详见 §十一 P0、§十二进度 7/19–21 |
 | NVENC SDK 13 直连 / AMF QVBR / 多硬件实例 | `src/nvenc/`、`src/amf/` 仅进 Windows 构建（`compile_definitions/windows.cmake:114-120`）；Linux NVENC 为上游同款 FFmpeg 路径（注：探测缓存是跨平台的，见 ✅ 表） |
 | HLG 编码（Linux 侧） | 会话框架跨平台，但 kmsgrab 不支持 HLG EOTF 输入（`kmsgrab.cpp:840-841`）→ Linux 无原生 HLG 源 |
 | HDR Vivid 动态元数据 | avcodec 路径没有 CUVA T.35 序列化器（`video.cpp:2925-2937` 注释明示），仅 Windows NVENC 直连路径手写产出 |
@@ -286,6 +293,10 @@ TODO、DPMS 关屏未实现（`misc.cpp:320`）等，均为上游 Sunshine 既�
 > postinstall `setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p`，
 > 进程内用 libcap RAII 把 permitted 提升为 effective，直接完成 EDID 生成/override、连接器强制、
 > pidfd 借 DRM master、CRTC 指派与独占还原。实现明细见 §十二进度 7。以下保留当初的调研记录备查。
+>
+> **后续补强（2026-09-11）**：EDID 模式表从"主屏 + 5 档梯子"升级为配置列表的全组合（链式 CTA 块）、
+> 显示名对齐 Windows、会话外创建的偏好模式改由 WebUI 配置列表推导、托盘 VDD 状态实时化并可 adopt
+> 残留虚拟屏——见 §十二进度 18–21。
 
 本机已装 `sunshine-virt-display-git r73`（frostplexx/sunshine_virt_display，位于 `/opt/sunshine-vd/`）：
 root 守护进程（`sunshineVD.service`）监听 **Unix socket `/tmp/sunshineVD.sock`**，通过 EDID 覆盖 +
@@ -517,13 +528,86 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     KWin 脚本（D-Bus 加载、静默自动重装）把活动窗口变化推送到进程内 `org.sunshine.Abr` 服务，
     ABR 轮询读缓存（pid/resourceClass/caption）；Plasma 6 上 loadScript/run/windowActivated
     信号与回传链路实测通过；非 KDE 桌面保持原有空结果降级。
+16. **HDR10+ 逐帧亮度分析器（pkgrel 28，`5376dff7`，tag `v0.7-linux-hdr10plus`）**：
+    avcodec 路径的 HDR10+ 管线（side data 预挂、时间域滤波、`update_hdr_dynamic_metadata`）本就是
+    跨平台的，缺的只是统计生产端。软件设备 convert() 现以 CPU 直方图遍历转换后的 P010/YUV444P10
+    亮度面产出全部统计字段（限幅范围重映射，PQ→nits 复用 `hdr_metadata::pq_to_nits`），门控 =
+    PQ 会话 + `hdr_luminance_analysis` 配置 + 客户端协商 HDR10+。**实测中纠正两个 ST2084 常量错误**
+    （m2 应为 ×128、c3 应为 2392/4096×32=18.6875，按参考表 100/1000/10000 nits 逐点验证），常量现
+    收敛在 `video_hdr_metadata.h` 的 `detail::st2084_*`。
+17. **DV P8.1 RPU 接入 avcodec 路径（pkgrel 29，`24817d1a`，tag `v0.8-linux-dv-rpu`）**：
+    跨平台注入器此前只挂 NVENC/AMF 直连路径；avcodec 会话现按 NVENC 同款门控 configure（P8.1 需
+    PQ 基层；P8.4 的 HLG 在 KMS 路径明确拒绝），按提交帧序 stage L1、输出包按 pts 回程 splice RPU
+    NAL（AVPacket 按需扩容）；分析器使能随之覆盖 DV 协商标识。分析器为亮度近似，与 L1 的
+    min/avg/max PQ 语义天然匹配。
+18. **托盘 VDD 状态与消息框（pkgrel 30–31，`387a97fd`/`a2c2deef`，tag `v0.8.1-linux-tray-vdd-state`/
+    `v0.8.2-linux-tray-msgbox`）**：修两处用户可见缺陷——Qt 托盘需 `checkbox=1` 才渲染勾选态
+    （Windows 仅凭 `checked` 画 MFS_CHECKED），且菜单状态只在 init/托盘动作时计算；现每 2s 轮询
+    `is_vdd_active()` 并变化即刷新，首次查询时 **adopt** 进程外残留的虚拟屏（扫描带 VHD 签名 EDID
+    的连接器、还原跟踪的连接器路径、从 DTD 解析回偏好模式——EDID override 与强制连接器状态是
+    DRM 持久的，进程内簿记却随进程消失）。危险操作（保持启用 / 无显示器自动创建 / 重置显示配置 /
+    退出）改走 Qt `QMessageBox` 确认，语义对齐 Windows `MessageBoxW`；构建面用 pkg-config 解析
+    Qt6Widgets（二次 `find_package(Qt6)` 会破坏 Qt6 的 config 文件）。
+19. **手动虚拟屏模式参数化（pkgrel 32–33，`4e186f4b`/`2ce99874`，tag `v0.8.3-linux-manual-vdd`/
+    `v0.8.4-linux-vdd-mode-list`）**：会话外创建（托盘创建、无显示器自动创建）不再固定
+    1920x1080@60。先引入 `vdd_manual_resolution`/`vdd_manual_fps` 两个键，随即删除——直接取 WebUI 的
+    `config::nvhttp.resolutions`/`fps`（Windows SETMODES 的同一数据源）中面积最大分辨率 × 其最高
+    可行刷新率，无效配置回退 1920x1080@60；客户端会话配置过模式后仍优先（`cached_from_session`，
+    等价于驱动保留上次模式）。无新增配置键。
+20. **虚拟屏命名与解析边界对齐 Windows（pkgrel 34–35，`89cd047c`/`e3d11b37`，tag
+    `v0.8.5-linux-vdd-name`/`v0.8.6-linux-parity-audit`）**：EDID 名描述符原为 "Foundation VDD"，
+    被 13 字节描述符上限截成 "Foundation VD"，KDE 再前缀 PnP 厂商字母，渲染为 "UQD Foundation VD"；
+    改用共享常量 `ZAKO_NAME`（"Zako HDR"），UQD 前缀是厂商 ID 字节的固有解码（该字节同时充当残留
+    VHD 清扫/adopt 签名）。随后消除一处重新拼写的字面量，并撤掉自创的配置解析夹取
+    （640–8192 / 480–8192 / fps 24–480），对齐 Windows `parse_vdd_resolution`/`parse_vdd_refresh_hz`
+    的宽松接受（任意正值 + x/X 分隔符），可行性过滤留给 EDID 生成器（对应 Windows 侧留给驱动）。
+    规则沉淀进 `AGENTS.md` 的 Windows parity 一节（共享常量、语义含边界、用户可见命名三条）。
+21. **完整模式表：配置全组合 × 链式 CTA 块（pkgrel 36–38，`49800f6c`/`4ad74c90`/`fbb1b911`，tag
+    `v0.8.7-linux-vdd-refresh-ladder`/`v0.9.0-linux-full-mode-table`/`v0.9.1-linux-full-cross-product`）**：
+    三步收敛——
+    ① 阶梯原为"每个分辨率只配最高配置刷新率"，导致 1080p 客户端只见 144 Hz，且首选模式选到
+    3840x2160@144（像素时钟溢出 CEA-861 上限，被静默回绕成 71.38 Hz 的垃圾时序）；改为**可行组合
+    的叉积**，首选分辨率保留全部配置刷新率，首选选择跳过不可行组合。
+    ② 单个 CTA 扩展块上限 6 个模式，改为**链式扩展块**：块 1 = 数据块 + 首选时序副本 + 4 个附加，
+    后续 DTD-only 块各 6 个，每块独立校验和与 DTD 起始指针；Range Limits 描述符同步覆盖全部通告
+    刷新率（此前写死 preferred±20，与 144 Hz 模式自相矛盾；此变更使旧的逐字节参考向量失效，
+    见下方测试基线）。
+    ③ 非首选分辨率同样携带全部配置刷新率，达成与 Windows SETMODES 等价的全组合。
+    像素时钟模型收敛为 `vdd_edid::dtd_pixel_clock_hz()` 单一来源（DTD 生成、首选模式编码、导出的
+    `mode_fits_pixel_clock_limit()` 过滤共用）。用户真实配置实测（fps 60/90/120/144，720p…4K）：
+    640 字节 / 4 扩展块 / 24 DTD / edid-decode 零告警——4K@60 首选（144/120/90 超像素时钟上限被
+    过滤）+ 3440x1440@90/60 + 其余分辨率 @144/120/90/60 全档。
+22. **Windows 构建面保持绿色（`3756caf6`）**：`vdd_edid` 是 Linux-only 目标文件，其逐字节对照测试
+    在 `tests/CMakeLists.txt` 的 `if (WIN32)` 分支按文件名排除；本轮未向 `SUNSHINE_TARGET_FILES`
+    新增任何 Linux 源，共享代码改动均保持在 Windows 行为恒等（`ZAKO_NAME` 引用、托盘 `checkbox`
+    字段是 tray 结构体的既有成员）。
 
-**下一个目标（2026-09-10 起）**：P2 HDR 动态元数据（亮度分析器 + HDR Vivid T.35 序列化器）、
-剪贴板补图片类帧与非 KDE provider；display_device 的 GNOME Mutter D-Bus 后端。
+**测试基线复核（2026-09-11，pkgrel 38 构建树，重建 `test_sunshine` 后实测）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 489 个用例：476 通过、12 跳过（1 个 Unicode 路径用例 +
+Audio/MouseHID/Encoder 三个环境套件的用例）、**1 个失败**——`VddEdid.MatchesReference1080p60Hdr`
+的字节参考向量钉的是旧 Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90` 起该
+描述符由通告模式推导（无附加模式时 1920x1080@60 → 55–65 Hz），差异仅此 2 字节
+（`0x28,0x50` → `0x37,0x41`）——属**测试期望未随新语义更新**，非生成器缺陷（该 2 字节正是
+`4ad74c90` 有意修正的"40–80 Hz 与 144 Hz 模式自相矛盾"）。其余 6 个 `VddEdid` 用例（校验和、
+首选时序、HDR 块、个性化亮度、附加模式填充 DTD 槽位、物理尺寸）全过；AudioTest / MouseHIDTest /
+EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
+注：`ctest` 直跑需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），只读
+`$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归。
+
+**下一个目标（2026-09-11 起）**：HDR Vivid T.35 序列化器（`LINUX_PORT_GAPS.md` §2.1，⭐ 推荐下一项）、
+剪贴板补图片类帧与非 KDE provider（§1.4/§2.2）；其后是 display_device 的复制拓扑与 GNOME Mutter
+D-Bus 后端（§1.5/§2.4）。HDR 动态元数据（HDR10+ / DV P8.1）与虚拟屏模式表两项已收官。
 
 **标签**：`v0.1-linux-base`（虚拟屏工作开始前的基线）→ `v0.2-linux-vdd`（虚拟显示器原生后端完成，
 随 `48b7c4bf`）→ `v0.3-linux-display-device`（物理显示器后端）→ `v0.4-linux-clipboard-host`
-（主机侧剪贴板）→ `v0.5-linux-mic-redirect`（远程麦克风）。此后每完成一个功能里程碑继续打 tag。
+（主机侧剪贴板）→ `v0.5-linux-mic-redirect`（远程麦克风）→ `v0.5.1-linux-restart-fixes` /
+`v0.5.2-linux-tray-restart`（重启两轮修复）→ `v0.6-linux-abr-foreground`（ABR 前台检测）→
+`v0.7-linux-hdr10plus`（HDR10+ 亮度分析器）→ `v0.8-linux-dv-rpu`（DV P8.1 RPU）→
+`v0.8.1-linux-tray-vdd-state` / `v0.8.2-linux-tray-msgbox`（托盘 VDD 状态、消息框）→
+`v0.8.3-linux-manual-vdd` / `v0.8.4-linux-vdd-mode-list`（手动模式参数化）→
+`v0.8.5-linux-vdd-name` / `v0.8.6-linux-parity-audit`（命名与边界对齐）→
+`v0.8.7-linux-vdd-refresh-ladder`（刷新率阶梯）→ `v0.9.0-linux-full-mode-table`（链式 CTA 全模式表）→
+`v0.9.1-linux-full-cross-product`（**当前**，pkgrel 38）。此后每完成一个功能里程碑继续打 tag。
 
 **增强迁移（§十一）**：P0 虚拟显示器已完成（见进度 7）。后续按 物理 display_device 后端 →
 P1（剪贴板主机侧、远程麦克风）→ P2（HDR 动态元数据、ABR 前台检测）→ P3 的顺序推进；
@@ -559,3 +643,17 @@ P1（剪贴板主机侧、远程麦克风）→ P2（HDR 动态元数据、ABR �
 - 控制面板子模块（`src_assets/common/sunshine-control-panel`，本机工作树曾处于空置状态，
   已用 `git checkout HEAD -- .` 恢复）：依赖分层 `src-tauri/Cargo.toml`
   （`[target.'cfg(windows)'.dependencies]`），模块清单 `src-tauri/src/main.rs:4-47`
+- 虚拟屏模式表与 EDID 链式 CTA 块：`src/platform/linux/vdd_edid.h`（`edid_options.extra_modes`、
+  `mode_fits_pixel_clock_limit`）、`vdd_edid.cpp:54-63`（空白模型单一来源）、`:244-253`（Range Limits
+  覆盖全部通告刷新率）、`:256-275`（块 1 布局、链式块数与逐块校验和）；配置列表推导与可行性过滤
+  `src/display_device/vdd_utils.cpp:1835-1906`（阶梯 = 全组合叉积）、`:1916-1962`（会话外偏好模式）、
+  `:1764+`（`adopt_orphan_vdd_locked`，从 EDID DTD 解析回偏好模式）
+- 托盘 VDD 状态与消息框：`src/tray/system_tray.cpp:87-101`（`show_message_box`，QMessageBox）、
+  `:1358-1378`（2s 状态轮询线程）、`:1306-1311`（`checkbox=1` 渲染勾选态）；
+  构建面 `cmake/compile_definitions/linux.cmake:200-208`（pkg-config 解析 Qt6Widgets）
+- Windows parity 规则沉淀：`AGENTS.md`（共享常量 / 语义含边界 / 用户可见命名）；EDID 单元测试
+  `tests/unit/test_vdd_edid.cpp`（7 用例），Windows 侧排除 `tests/CMakeLists.txt:307-313`
+- 亮度分析器与 DV RPU（avcodec 路径）：`src/video.cpp:311`（`analyze_pq_luma_frame`）、
+  `:473`（convert 中调用）、`:2440-2473`（stage L1 + 按 pts splice RPU NAL）、`:3203` 起（sessions
+  的 `dolby_vision_.configure` 门控）；ST2084 常量 `src/video_hdr_metadata.h:24-28`；Vivid 序列化缺口
+  `video.cpp:3091-3105`
