@@ -205,7 +205,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成（`src/stream.cpp:1463-1500`）；仅"在主机直连 DualSense 上播放"的 sidecar 是 Windows 专属 |
 | 文本输入通道 text_context | 纯数据通道（`src/text_context/`，挂接 `src/stream.cpp`） |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；但"资源管理器右键共享"入口是 Windows 专属，Linux 只能经 API/WebUI 操作 |
-| Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层，均有 Linux 分支；**ABR 前台应用检测已移植（2026-09-10，`d504fa11`）**：KWin 脚本经 D-Bus 把活动窗口推送到进程内 `org.sunshine.Abr` 服务，非 KDE 桌面维持空结果降级（§十二进度 15） |
+| Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层，均有 Linux 分支；**ABR 前台应用检测已移植**：KDE 用 KWin 脚本经 D-Bus 推送活动窗口到进程内 `org.sunshine.Abr` 服务（2026-09-10，`d504fa11`）；**niri 用 `niri msg --json focused-window` 轮询**（2026-09-11，§十二进度 25），后端选择 KWin 优先、niri 兜底；其余桌面（wlroots/X11）维持空结果降级（`LINUX_PORT_GAPS.md` §2.6） |
 | 剪贴板（客户端↔客户端 / 客户端↔WebUI 中继） | 内存中继 + SSE 跨平台；**主机侧同步已移植（2026-09-10）**：`src/clipboard_host.cpp` 对话 KDE klipper（sd-bus），双向同步 + 回声抑制，复用 GUI 代理的文本帧协议（§十二进度 12）。**文本类**：Linux 通告 `clipboard_text` 而不再通告 `clipboard_image`（provider 仅文本，对齐审计 §五 P4）；图片/大文件与 blob 回退仍缺（`LINUX_PORT_GAPS.md` §1.4） |
 | AI API Key 凭据 | Linux 降级为明文环境变量 `SUNSHINE_LLM_API_KEY`（Windows 用 DPAPI，`src/ai/credential_store.cpp:117-124`） |
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 的编译期特性检测（`src/audio.cpp:398-403`，Arch opus 1.6.1 ✅）；12ch 有 Linux null-sink 实现（`platform/linux/audio.cpp:406-408`）；持续音频为平台无关逻辑 |
@@ -621,9 +621,23 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     - **目标环境（约束）**：`AGENTS.md` 写明 **KDE + niri** 双目标、通用方案优先、后端必须探测并
       优雅降级；niri 的具体差距（前台检测 producer、通用输出后端 wlr-output-management、niri 输出
       控制）立项为 `LINUX_PORT_GAPS.md` §2.11。本机未装 niri，相关命令需在 niri 环境实测。
+25. **第三轮：niri 起步（2026-09-11）**：
+    - **ABR 前台检测的 niri producer**：`foreground_app` 新增 niri 路径——轮询
+      `niri msg --json focused-window`（2 s，`run_logged` 有界执行），JSON 逐字段、带类型检查地
+      映射到 `info_t`（title/app_id/pid）；`null`（无焦点窗口）不更新缓存，与 KWin 脚本"只在
+      切换时上报"及 Windows 空前台窗口的语义一致。**后端选择在启动时决定**：先探测
+      `org.kde.KWin` 是否在会话总线上（NameHasOwner），KDE 保持原 KWin 路径；无 KWin 且 niri 查询
+      可用才启用 niri。解析器带 4 个单元测试（正常 / `null` / 字段缺失或类型错误 / 畸形 JSON）。
+    - **VDD 输出启用的合成器无关化**：新增 `enable_output_via_compositor()`——KDE 仍是
+      kscreen-doctor（行为不变），niri 走 `niri msg output <name> on`，其他 Wayland 走
+      `wlr-randr --output <name> --on`（wlr-output-management，覆盖 sway/Hyprland/river…），
+      X11 走 `xrandr`；都没有则只记一次 info 并依赖合成器自动启用。`hint_primary_output` 对 niri
+      明确记录"niri 无主屏概念"。DRM 层 CRTC 指派仍是点亮输出的主路径，这些命令失败不影响现状。
+    - **仍待做**：display_device 的 niri / wlr-output-management 输出后端（模式/HDR/拓扑），
+      以及 wlroots/X11 的前台 producer——见 `LINUX_PORT_GAPS.md` §2.11 待做项与 §2.6。
 
-**测试基线复核（2026-09-11，pkgrel 38 构建树 + 对齐审计修复后）**：`ctest` 13 个套件 12 个通过。
-聚合套件 `test_sunshine` 共 490 个用例：477 通过、12 跳过（1 个 Unicode 路径用例 +
+**测试基线复核（2026-09-11，pkgrel 40 构建树 + 对齐审计与 niri 起步之后）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 494 个用例：482 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧

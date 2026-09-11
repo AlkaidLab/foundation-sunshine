@@ -169,11 +169,12 @@ Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧�
 - **路径**：inputtino 的 DS5 (uhid) 有加速度/陀螺仪数据源；照协议（UDP 26760）实现广播。
 - **验收**：Cemu/模拟器识别到运动输入。
 
-### 2.6 非 KDE 前台检测（低）
+### 2.6 非 KDE 前台检测（低）—— niri 已覆盖（2026-09-11），其余待做
 
-- X11：XFixes + `_NET_ACTIVE_WINDOW`/`_NET_WM_PID`（X11 库已链接）；
-  wlroots 系：wlr-foreign-toplevel-management。接入 `foreground_app.cpp` 的缓存即可，
-  KWin 脚本路径保持优先。
+- **已完成**：niri（§2.11 / §5.5 R5）——轮询 `niri msg --json focused-window`，KWin 优先、niri 兜底。
+- **仍缺**：X11：XFixes + `_NET_ACTIVE_WINDOW`/`_NET_WM_PID`（X11 库已链接）；
+  wlroots 系（sway/Hyprland）：`ext-foreign-toplevel-list` / wlr-foreign-toplevel-management。
+  两者都只需接入 `foreground_app.cpp` 的同一 producer 选择与缓存。
 - **验收**：Hyprland/X11 会话下 ABR 日志出现前台切换。
 
 ### 2.7 AI Key libsecret 后端（低）
@@ -204,23 +205,33 @@ Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧�
 
 ### 2.11 niri 支持（中）— 第二目标环境（2026-09-11 立项）
 
-- **背景**：目标是 **KDE + niri** 双环境、通用方案优先，而当前实现基本是 KDE 专属：
+- **背景**：目标是 **KDE + niri** 双环境、通用方案优先，而原实现基本是 KDE 专属：
   - **物理显示器 display_device**：全部经 kscreen-doctor → niri 下 `query_outputs()` 为空，
     `apply_config` 走"合成器不可用"分支静默成功（§5.2 D18），客户端的模式/HDR 请求被忽略。
   - **VDD**：DRM 层（EDID override、强制连接、pidfd 借 master 指派 CRTC）与合成器无关，且 niri
     默认自动启用新输出，虚拟屏本身可用；但 `kscreen-doctor output.X.enable` 与主屏 hint 在 niri
-    下无效（仅日志噪音），`hint_primary_output` 无对应语义（niri 无主屏概念）。
+    下无效（仅日志噪音）。
   - **ABR 前台检测**：KWin 脚本在 niri 下不可用 → 降级为空结果（§5.2 F4）。
-- **路径**（按性价比）：
-  1. **前台检测（低-中）**：niri IPC 有 `niri msg --json focused-window` 与
-     `niri msg --json event-stream`（`WindowFocusChanged`），字段 id/title/app_id/pid 与现有
-     `info_t` 几乎一一对应；用 `$NIRI_SOCKET` 环境变量探测，作为 `foreground_app` 的第二
-     producer（KWin 路径保持优先）。
-  2. **通用输出后端（中）**：wlr-output-management（`wlr-randr`）覆盖 sway/Hyprland/river 等
-     合成器，作为 kscreen 之外的第二后端接入 `platform/linux/display_device.cpp` 的查询/应用
-     抽象——这是"通用兜底"的正解，niri 之外的通用性收益同样可观。
-  3. **niri 输出控制（中）**：`niri msg outputs` / `niri msg output <name> …`（on/off/mode/
-     scale/position）映射模式与启用；HDR 是否有 IPC 需在 niri 上确认，无则报 unknown 而不是猜。
+- **已完成（2026-09-11，第三轮）**：
+  1. **前台检测 producer —— ✅**（`src/platform/linux/foreground_app.cpp`）：新增 niri 路径，
+     轮询 `niri msg --json focused-window`（2s，`run_logged` 有界执行），JSON 逐字段、带类型检查
+     地映射到 `info_t`（title/app_id/pid；`null` = 无焦点窗口，不更新缓存，与 KWin/Windows 语义
+     一致）；后端选择在启动时决定——**先探测 KWin（`org.kde.KWin` 的 NameHasOwner），KDE 保持
+     原路径**，无 KWin 且 niri 查询可用才启用 niri；解析器有 4 个单元测试（正常/`null`/字段缺失
+     或类型错误/畸形 JSON）。
+  2. **VDD 输出的合成器无关启用 —— ✅**：新增 `enable_output_via_compositor()`，
+     KDE → kscreen-doctor（行为不变）、niri → `niri msg output <name> on`、其他 Wayland →
+     `wlr-randr --output <name> --on`（wlr-output-management，覆盖 sway/Hyprland/river…）、
+     X11 → `xrandr --output <name> --auto`；都没有则只记一次 info 并依赖合成器自动启用。
+     `hint_primary_output` 对 niri 明确记录"niri 无主屏概念"。DRM 层的 CRTC 指派仍是真正点亮
+     输出的手段，这些命令只是合成器侧的推力，失败不影响现状。
+- **待做**：
+  1. **display_device 的 niri / 通用输出后端（中）**：`query_outputs()`/模式应用/HDR 目前只有
+     kscreen 实现。niri 需用其 IPC（`niri msg outputs` / `output <name> mode|on|off|scale|position`），
+     通用兜底用 wlr-output-management（`wlr-randr`，覆盖 sway/Hyprland 等）。注意 HDR 是否有
+     IPC/配置项需在 niri 上确认，无则报 unknown 而不是猜。
+  2. **前台检测的 wlroots/X11 兜底（低-中）**：`ext-foreign-toplevel` / X11 XFixes，接入同一
+     producer 选择。
 - **验收**：niri 会话下 ABR 前台 exe 正确切换；客户端分辨率请求能作用到目标输出；VDD 创建无
   kscreen 报错噪音。**注意**：本机未装 niri，命令语法必须在 niri 环境实测；一律先做能力探测，
   探测失败必须保持现有降级路径（不得影响 KDE 与非 KDE 现状）。
@@ -374,3 +385,15 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **测试基线**：本轮结束仍为 12/13 套件通过、聚合套件 0 断言失败（新增 1 个位流回归用例，
 `HdrBitstream` 共 21 个用例）。
+
+### 5.5 第三轮修复（niri 起步，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R5 | **niri 会话下 ABR 前台检测缺失**（§2.11 / F4） | `foreground_app` 新增 niri producer：轮询 `niri msg --json focused-window`，JSON 逐字段类型检查映射；后端选择"KWin 优先、niri 兜底"（探测 `org.kde.KWin` 的 NameHasOwner）；解析器 4 个单元测试 |
+| R6 | **VDD 输出启用与主屏 hint 硬绑 kscreen**（§2.11） | 新增 `enable_output_via_compositor()`：KDE 保持 kscreen-doctor，niri → `niri msg output <name> on`，其他 Wayland → `wlr-randr`，X11 → `xrandr`；`hint_primary_output` 对 niri 记录其无主屏概念；DRM CRTC 指派仍是主路径，命令失败不影响现状 |
+
+**测试基线**：12/13 套件通过、聚合套件 0 断言失败（新增 `ForegroundApp` 4 例）。
+
+**下一轮**：§2.11 待做第 1 项（display_device 的 niri / wlr-output-management 输出后端）、
+剪贴板图片与大文件（§2.2）、display_device 失败处理补齐（§5.2 D5/D7/D8/D9/D13/D14）。
