@@ -1825,13 +1825,12 @@ namespace display_device::vdd_utils {
       }
     }
     /**
-     * @brief Mirror the Windows mode list: configured resolutions × refresh
-     *        rates become the EDID's advertised ladder (feasibility-filtered
-     *        against the EDID pixel-clock limit), letting the compositor
-     *        switch modes without an EDID rewrite. The preferred resolution
-     *        keeps all its configured refresh rates; every other resolution
-     *        contributes its highest feasible one. EDID space caps the ladder.
-     *        Caller holds state_mutex.
+     * @brief Mirror the Windows mode list: the full feasible cross product of
+     *        the configured resolutions and refresh rates becomes the EDID's
+     *        advertised ladder, letting the compositor switch among every
+     *        combination without an EDID rewrite. The preferred resolution's
+     *        rates land first for slot priority; chained CTA blocks make the
+     *        space effectively unbounded. Caller holds state_mutex.
      */
     void
     refresh_config_mode_ladder_locked() {
@@ -1889,20 +1888,17 @@ namespace display_device::vdd_utils {
       for (const auto &fps : rates) {
         push_unique(cached_width, cached_height, fps);
       }
-      // Every other resolution contributes its highest feasible rate.
+      // Every other resolution contributes every configured refresh rate too.
       for (const auto &res : resolutions) {
         if (res.w == cached_width && res.h == cached_height) {
           continue;
         }
         for (const auto &fps : rates) {
-          if (vdd_edid::mode_fits_pixel_clock_limit(res.w, res.h, fps)) {
-            push_unique(res.w, res.h, fps);
-            break;
-          }
+          push_unique(res.w, res.h, fps);
         }
       }
-      // Chained CTA extension blocks scale the EDID with the mode list; the
-      // cap only guards against pathological config lists.
+      // Chained CTA blocks scale with the mode list; the cap only guards
+      // against pathological config lists.
       if (ladder.size() > 40) {
         ladder.resize(40);
       }
