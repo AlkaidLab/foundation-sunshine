@@ -22,12 +22,15 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <systemd/sd-bus.h>
@@ -53,6 +56,10 @@ namespace clipboard_host {
     constexpr auto kPollInterval = std::chrono::milliseconds { 1000 };
     constexpr auto kKlipperRetryInterval = std::chrono::milliseconds { 10'000 };
 
+    /// Bound on queued client-side writes; the newest clipboard content wins,
+    /// so the oldest entry is dropped when a burst overflows.
+    constexpr std::size_t kMaxPendingWrites = 8;
+
     constexpr const char *kKlipperService = "org.kde.klipper";
     constexpr const char *kKlipperPath = "/klipper";
     constexpr const char *kKlipperInterface = "org.kde.klipper.klipper";
@@ -64,6 +71,29 @@ namespace clipboard_host {
     std::mutex echo_mu;
     std::string last_client_written;
     std::chrono::steady_clock::time_point last_client_written_at {};
+
+    // Client-side changes waiting to be written to klipper. The enet control
+    // thread only enqueues; the poll thread owns the provider's bus and applies
+    // them, so a wedged klipper cannot stall control-packet processing.
+    std::mutex write_mu;
+    std::condition_variable write_cv;
+    std::deque<std::string> pending_writes;
+
+    /**
+     * @brief Hand a client-side clipboard change to the poll thread.
+     */
+    void
+    queue_klipper_write(std::string text) {
+      {
+        std::lock_guard<std::mutex> lk { write_mu };
+        if (pending_writes.size() >= kMaxPendingWrites) {
+          BOOST_LOG(warning) << "Host clipboard write queue is full; dropping the oldest entry"sv;
+          pending_writes.pop_front();
+        }
+        pending_writes.push_back(std::move(text));
+      }
+      write_cv.notify_one();
+    }
 
     /**
      * @brief Open a dedicated user-session bus. Each thread that talks to
@@ -156,12 +186,9 @@ namespace clipboard_host {
         last_client_written_at = std::chrono::steady_clock::now();
       }
 
-      sd_bus *bus = open_bus();
-      if (!bus) {
-        return;
-      }
-      klipper_set(bus, text);
-      sd_bus_unref(bus);
+      // Recorded before the write (as before) so the echo of our own change is
+      // suppressed even though the poll thread applies it slightly later.
+      queue_klipper_write(text);
     }
 
     /**
@@ -194,6 +221,25 @@ namespace clipboard_host {
         }
 
         clipboard_bridge::bridge_t::instance().notify_gui_alive();
+
+        // Apply client-side changes here rather than on the enet control
+        // thread, which only enqueues them.
+        {
+          std::deque<std::string> writes;
+          {
+            std::lock_guard<std::mutex> lk { write_mu };
+            writes.swap(pending_writes);
+          }
+          for (const auto &text : writes) {
+            if (!klipper_set(bus, text)) {
+              // The bus may be gone; remaining entries are dropped (the queue
+              // is bounded and the content is best-effort anyway).
+              break;
+            }
+            // Do not re-post what we just wrote as a host-side change.
+            last_seen = text;
+          }
+        }
 
         std::string content;
         if (!klipper_get(bus, content)) {
@@ -237,7 +283,14 @@ namespace clipboard_host {
           }
         }
 
-        std::this_thread::sleep_for(kPollInterval);
+        // Sleep, but wake immediately when a client-side write arrives so the
+        // clipboard hand-off stays responsive.
+        {
+          std::unique_lock<std::mutex> lk { write_mu };
+          write_cv.wait_for(lk, kPollInterval, [&] {
+            return !pending_writes.empty() || !running.load(std::memory_order_acquire);
+          });
+        }
       }
 
       if (bus) {
@@ -264,6 +317,9 @@ namespace clipboard_host {
     if (!running.exchange(false)) {
       return;
     }
+
+    // Wake the poll thread out of its wait instead of letting it time out.
+    write_cv.notify_all();
 
     if (poll_thread.joinable()) {
       poll_thread.join();
