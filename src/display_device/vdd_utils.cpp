@@ -1213,6 +1213,9 @@ namespace display_device::vdd_utils {
     unsigned int cached_width { 1920 };
     unsigned int cached_height { 1080 };
     unsigned int cached_refresh_hz { 60 };
+    // Set once a client session has configured the cached mode; before that,
+    // manual creation (tray/headless) applies config::video.vdd_manual_*.
+    bool cached_from_session { false };
 
     bool
     write_text_file(const std::string &path, const std::string &content) {
@@ -1821,6 +1824,80 @@ namespace display_device::vdd_utils {
         return;
       }
     }
+    /**
+     * @brief Mirror the Windows mode list: the configured resolutions and
+     *        refresh rates become the EDID's advertised ladder, letting the
+     *        compositor switch modes without an EDID rewrite. Each configured
+     *        resolution is paired with the highest configured refresh rate;
+     *        the generator drops what does not fit the EDID.
+     *        Caller holds state_mutex.
+     */
+    void
+    refresh_config_mode_ladder_locked() {
+      active_edid_opts.extra_modes.clear();
+
+      unsigned int max_fps = cached_refresh_hz;
+      for (const auto &entry : config::nvhttp.fps) {
+        unsigned int fps = 0;
+        std::stringstream input(entry);
+        input >> fps;
+        if (fps >= 24 && fps <= 480) {
+          max_fps = std::max(max_fps, fps);
+        }
+      }
+
+      std::vector<std::tuple<unsigned int, unsigned int, unsigned int>> ladder;
+      for (const auto &res : config::nvhttp.resolutions) {
+        unsigned int width = 0;
+        unsigned int height = 0;
+        std::stringstream input(res);
+        char separator = '\0';
+        input >> width >> separator >> height;
+        if (separator != 'x' && separator != 'X') {
+          continue;
+        }
+        const auto mode = std::make_tuple(width, height, max_fps);
+        if (width == cached_width && height == cached_height && max_fps == cached_refresh_hz) {
+          continue;  // the preferred timing already carries it
+        }
+        if (std::find(ladder.begin(), ladder.end(), mode) == ladder.end()) {
+          ladder.push_back(std::move(mode));
+        }
+      }
+      if (ladder.size() > 6) {
+        ladder.resize(6);  // EDID space; the generator also drops overflow
+      }
+      active_edid_opts.extra_modes = std::move(ladder);
+    }
+
+    /**
+     * @brief Apply the manual virtual display mode when no client session has
+     *        configured one (tray create, headless auto-create). Caller holds
+     *        state_mutex.
+     */
+    void
+    apply_manual_mode_locked() {
+      if (cached_from_session) {
+        return;
+      }
+
+      unsigned int width = 0;
+      unsigned int height = 0;
+      std::stringstream input(config::video.vdd_manual_resolution);
+      char separator = '\0';
+      input >> width >> separator >> height;
+      if (separator == 'x' && width >= 640 && width <= 8192 && height >= 480 && height <= 8192) {
+        cached_width = width;
+        cached_height = height;
+      }
+      else if (!config::video.vdd_manual_resolution.empty()) {
+        BOOST_LOG(warning) << "vdd: invalid vdd_manual_resolution ["sv << config::video.vdd_manual_resolution
+                           << "]; expected WxH"sv;
+      }
+      if (config::video.vdd_manual_fps >= 24 && config::video.vdd_manual_fps <= 480) {
+        cached_refresh_hz = static_cast<unsigned int>(config::video.vdd_manual_fps);
+      }
+    }
   }  // namespace
 
   std::string
@@ -2014,12 +2091,14 @@ namespace display_device::vdd_utils {
     cached_width = config.resolution->width;
     cached_height = config.resolution->height;
     cached_refresh_hz = refresh_hz;
+    cached_from_session = true;
 
     if (!active) {
       // The EDID is generated from the cached mode when the display is created.
       return set_vdd_result::ok;
     }
 
+    refresh_config_mode_ladder_locked();
     const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
     return apply_edid_and_enable(active_edid_path, active_status_path, edid) ? set_vdd_result::ok : set_vdd_result::failed;
   }
@@ -2066,10 +2145,12 @@ namespace display_device::vdd_utils {
   bool
   create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &, const physical_size_t &) {
     elevated_caps caps;
+    std::lock_guard lock { state_mutex };
+
+    apply_manual_mode_locked();
+
     BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
                     << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
-
-    std::lock_guard lock { state_mutex };
 
     if (active && connector_status_is(active_status_path, "connected")) {
       BOOST_LOG(debug) << "vdd: virtual display already active on "sv << active_connector;
@@ -2131,6 +2212,7 @@ namespace display_device::vdd_utils {
     }
 
     const std::string status_path = "/sys/class/drm/" + card + "-" + connector + "/status";
+    refresh_config_mode_ladder_locked();
     const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, active_edid_opts);
 
     if (!apply_edid_and_enable(edid_path, status_path, edid)) {

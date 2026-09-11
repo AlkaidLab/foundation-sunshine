@@ -424,6 +424,8 @@ namespace config {
     false,  // vdd_reuse (default: recreate VDD for each client)
     true,  // vdd_borrowed_texture
     true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
+    "1920x1080",  // vdd_manual_resolution
+    60,  // vdd_manual_fps
     {},  // nv_legacy
 
     {
@@ -1422,6 +1424,8 @@ namespace config {
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
+    string_f(vars, "vdd_manual_resolution"s, video.vdd_manual_resolution);
+    int_f(vars, "vdd_manual_fps"s, video.vdd_manual_fps);
     string_f(vars, "rtx_hdr", video.rtx_hdr);
     if (video.rtx_hdr == "true" || video.rtx_hdr == "on" || video.rtx_hdr == "enabled" || video.rtx_hdr == "1") {
       video.rtx_hdr = "per_app";

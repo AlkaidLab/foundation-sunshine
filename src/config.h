@@ -47,6 +47,13 @@ namespace config {
     bool vdd_borrowed_texture;
     /** Automatically validate and expose Vulkan HDR colorspaces for HDR VDD sessions. */
     bool vdd_vulkan_hdr_bridge;
+    /** Manual virtual display mode, used when a VDD is created outside a client
+     * session (tray create, headless auto-create). "WxH"; invalid values fall
+     * back to 1920x1080. */
+    std::string vdd_manual_resolution;
+    /** Refresh rate in Hz for the manual virtual display mode; clamped to
+     * [24, 480] with 60 as the fallback. */
+    int vdd_manual_fps;
 
     struct {
       int preset;
