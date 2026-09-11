@@ -126,21 +126,23 @@
 
 ## 二、○ 未实现但可行（按性价比排序）
 
-### 2.1 HDR Vivid T.35 序列化器（中）⭐ 推荐下一个
+### 2.1 HDR Vivid T.35 序列化器 —— ✅ 已完成（2026-09-11，`4595e349`）
 
-- **现状**：avcodec 路径的 Vivid side data 已预挂并被逐帧更新（`video.cpp:3104-3105` 起），
-  但 FFmpeg 没有 CUVA 序列化器（`dynamic_hdr_vivid.c` 只有解析），元数据到不了码流。
-  Windows 端由 `nvenc_base.cpp` 手写 T.35 载荷（仅 NVENC 直连路径可用）。
-- **路径**：照 `nvenc_base.cpp` 的 T.35 手写逻辑 + fork 自研比特流层
-  （`src/cbs.cpp` / `video_hdr_bitstream.cpp`，DV RPU 写入器同模式），写一个
-  `av_dynamic_hdr_vivid → SEI(NAL type 39/40 prefix)` 序列化器，在 encode_avcodec 的
-  输出包上拼接（同 DV RPU 注入的管线位置）。
-- **验收**：Vivid 客户端（支持 GB/T 46269 的播放器/电视盒子）能解出逐帧 Vivid 元数据；
-  主机日志无 Vivid 相关警告。
+avcodec 路径的 Vivid side data 本来就逐帧更新，但 FFmpeg 只有 CUVA 解析器、没有序列化器
+（已用 bundled `libavutil.a` 符号核实：有 `av_dynamic_hdr_plus_to_t35`，无 Vivid 对应物）。
+现改为在 `encode_avcodec()` 里用共享的 `serialize_vivid_t35()` 构建 T.35 载荷，按提交帧序号
+暂存、在输出包按 pts 用 `hdr_bitstream::append_t35_unit()` + `insert()` 拼到首个 VCL NAL 之前，
+与 DV RPU 共用一次 AVPacket 扩容；暂存队列有上限并带告警。
 
-### 2.2 剪贴板图片 + 大文件（中）⭐ 与 2.1 二选一起步
+**Windows 不受影响**：Windows 的 avcodec 家族被显式标记为不能承载 Vivid
+（`display_vram.cpp`），Vivid 走 NVENC/AMF 直连；因此该拼接在 `#if !defined(_WIN32)` 内编译，
+Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧元数据——回归测试覆盖
+"序列化 → 包装 → 插到图像数据之前（prefix SEI type 39、CUVA T.35 头完整）"。
 
-- 见 1.4 的路径。拆两步：先 wlr-data-control 图片双向（PNG），再 blob store 的 KIND_REF。
+### 2.2 剪贴板图片 + 大文件（中）⭐ 推荐下一个
+
+- 见 1.4 的路径。拆两步：先 wlr-data-control 图片双向（PNG），再 blob store 的 KIND_REF
+  （大文本的 KIND_REF 回退同样适用，见 §5.2 C4）。
 - **验收**：手机复制截图 → 主机 Ctrl+V 得到图片；主机复制图片 → 手机粘贴。
 
 ### 2.3 USB/IP 主机（中高）
@@ -199,6 +201,29 @@
 - **若有需求**，只值得挑：QR 配对、实时监控（hwinfo/RTSS → Linux 对应物是
   `nvidia-smi`/`amdgpu_top`/`_PIPEWIRE` 统计）、文件右键共享（KDE ServiceMenu 更自然）。
 - **建议**：搁置；文件右键共享若想要，走 KDE ServiceMenu（低工作量）单独立项。
+
+### 2.11 niri 支持（中）— 第二目标环境（2026-09-11 立项）
+
+- **背景**：目标是 **KDE + niri** 双环境、通用方案优先，而当前实现基本是 KDE 专属：
+  - **物理显示器 display_device**：全部经 kscreen-doctor → niri 下 `query_outputs()` 为空，
+    `apply_config` 走"合成器不可用"分支静默成功（§5.2 D18），客户端的模式/HDR 请求被忽略。
+  - **VDD**：DRM 层（EDID override、强制连接、pidfd 借 master 指派 CRTC）与合成器无关，且 niri
+    默认自动启用新输出，虚拟屏本身可用；但 `kscreen-doctor output.X.enable` 与主屏 hint 在 niri
+    下无效（仅日志噪音），`hint_primary_output` 无对应语义（niri 无主屏概念）。
+  - **ABR 前台检测**：KWin 脚本在 niri 下不可用 → 降级为空结果（§5.2 F4）。
+- **路径**（按性价比）：
+  1. **前台检测（低-中）**：niri IPC 有 `niri msg --json focused-window` 与
+     `niri msg --json event-stream`（`WindowFocusChanged`），字段 id/title/app_id/pid 与现有
+     `info_t` 几乎一一对应；用 `$NIRI_SOCKET` 环境变量探测，作为 `foreground_app` 的第二
+     producer（KWin 路径保持优先）。
+  2. **通用输出后端（中）**：wlr-output-management（`wlr-randr`）覆盖 sway/Hyprland/river 等
+     合成器，作为 kscreen 之外的第二后端接入 `platform/linux/display_device.cpp` 的查询/应用
+     抽象——这是"通用兜底"的正解，niri 之外的通用性收益同样可观。
+  3. **niri 输出控制（中）**：`niri msg outputs` / `niri msg output <name> …`（on/off/mode/
+     scale/position）映射模式与启用；HDR 是否有 IPC 需在 niri 上确认，无则报 unknown 而不是猜。
+- **验收**：niri 会话下 ABR 前台 exe 正确切换；客户端分辨率请求能作用到目标输出；VDD 创建无
+  kscreen 报错噪音。**注意**：本机未装 niri，命令语法必须在 niri 环境实测；一律先做能力探测，
+  探测失败必须保持现有降级路径（不得影响 KDE 与非 KDE 现状）。
 
 ---
 
@@ -273,14 +298,9 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 - **A1 麦克风背压契约在 Linux 无生产者**：`pa_simple_write` 阻塞且未设缓冲属性，卡住的 sink 会阻塞
   共享混音线程；`stream.cpp` 的 `wasapi_backpressure_drops` 恒为 0（Windows 用 padding 预检非阻塞返回 0）。
   修需改用 `pa_stream` 可写字节反馈或带界限的等待。
-- **A3 未切换/恢复默认录音设备**：Windows 把 VB-Cable 设为所有角色的默认录音设备并在结束时还原；
-  Linux 只建 null-sink，主机应用需**手动**选 monitor 源（否则"看起来没生效"）。修可用
-  `pa_context_set_default_source` + 还原。
 - **F1 亮度分析器只挂在 avcodec 软件设备**：VAAPI（始终 `data != nullptr`）与 CUDA 开启的会话既无统计，
   `hdr_luminance_analysis_available` 也保持 false → 这些平台没有 HDR10+/DV/Vivid。本机
   （`SUNSHINE_ENABLE_CUDA=OFF` + nvenc）与 software 编码器不受影响。
-- **F3 HDR Vivid T.35 序列化器缺失**：= §2.1（⭐ 推荐下一项）。序列化器与 splice 助手都在树内，
-  DV RPU 已用同款 splice，差的是在 encode_avcodec 里按 pts 注入。
 
 **中**
 
@@ -305,8 +325,8 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **低**
 
-- **C5 剪贴板线协议常量无共享来源**：Rust 侧（GUI agent）是事实标准，Linux 复写字面量；跨语言需要
-  生成或共享头文件机制，需决策。
+- **C5 剪贴板线协议常量跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
+  TTL），但 Rust agent（`clipboard.rs`）仍是独立副本，值变动需人工同步；代码生成机制待决策。
 - **C6 回声抑制单槽 vs 16 项环形**（TTL 相同）：连续两次客户端写入后，主机复制旧值会被多广播一次。
 - **C7 1 秒轮询 vs 事件驱动监听**（klipper 变更信号）：同一 tick 内两次复制只保留最后一次。
 - **A5 麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数
@@ -342,3 +362,15 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 - HDR：ST2084/PQ 常量全树唯一来源（无 `2399/4096×32`、无 m2×32 的再推导，HLSL 副本数值一致）；
   统计字段完整；10-bit 限幅重映射；HDR10+ 字段推导；EMA/场景切换/32 帧 Vivid 窗口等时间策略共享；
   DV L1 与 RPU 注入在三条编码路径共用同一实现。
+
+### 5.4 第二轮修复（2026-09-11，KDE + niri 目标立项后）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R1 | **HDR Vivid T.35 在 avcodec 路径缺失**（= §2.1，原"推荐下一项"） | `encode_avcodec()` 内构建 CUVA T.35、按 pts 拼接（与 DV RPU 共用一次 AVPacket 扩容），仅在 Linux 编译；新增回归测试 |
+| R2 | **麦克风未切换默认录音设备**（A3） | 复用文件内 pa_context helper：记住当前默认源 → 指向 null-sink monitor → 释放时还原；对 PulseAudio/PipeWire 通用 |
+| R3 | **规范标识符仍被重新硬编码**（AGENTS.md 约定） | `ZAKO_DEVICE_ID`（原先 Linux 分支裸写 `"23172"`）入 globals；剪贴板线协议常量入 `clipboard_bridge.h`，`clipboard_host.cpp` 全面改用 |
+| R4 | **目标环境只按 KDE 实现** | `AGENTS.md` 写明 KDE + niri 双目标与"通用兜底优先、后端必须探测并优雅降级"；niri 具体差距立项为 §2.11 |
+
+**测试基线**：本轮结束仍为 12/13 套件通过、聚合套件 0 断言失败（新增 1 个位流回归用例，
+`HdrBitstream` 共 21 个用例）。

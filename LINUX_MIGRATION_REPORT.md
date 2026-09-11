@@ -23,7 +23,8 @@ Tauri 控制面板、远程麦克风写主机、USB/IP 主机、WGC 捕获、vmo
 （Windows 专属或不完整 stub）。**截至 2026-09-11 已移植**：ZakoVDD 虚拟显示器（原生 C++ 后端 +
 配置驱动的全组合模式表，§十二进度 7/19–21）、物理显示器 display_device 后端（进度 11）、主机侧
 剪贴板同步（进度 12）、远程麦克风写主机（进度 13）、ABR 前台检测（进度 15）、HDR10+ 亮度分析器
-（进度 16）、DV P8.1 RPU（avcodec 路径，进度 17）、托盘 VDD 状态与消息框（进度 18）；其余项仍
+（进度 16）、DV P8.1 RPU（avcodec 路径，进度 17）、HDR Vivid（avcodec 路径，进度 24）、托盘 VDD
+状态与消息框（进度 18）；其余项仍
 不可用或降级，逐项清单见 §八功能矩阵与 `LINUX_PORT_GAPS.md`。CI 目前只有 Windows 构建
 （`.github/workflows/main.yml` 仅有 `build_win`、`vdd_smoke` 两个 Windows job），Linux 编译在
 主干上长期无人验证，首次构建可能遇到零星的编译错误。
@@ -230,7 +231,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | ~~ZakoVDD 虚拟显示器~~ → **✅ 已移植（2026-09-10，模式表 2026-09-11 补全）** | 原生 Linux 后端：个性化 EDID（debugfs override）+ 连接器状态强制 + pidfd 借 DRM master 做 CRTC 指派 + 独占模式物理屏还原；5 种 prep 模式全适配；EDID 经**链式 CTA 扩展块**通告配置列表的全部可行分辨率×刷新率组合，显示名对齐 Windows `ZAKO_NAME`（"Zako HDR"）。已知偏差：per-client GUID 未实现（单虚拟屏共享）。详见 §十一 P0、§十二进度 7/19–21 |
 | NVENC SDK 13 直连 / AMF QVBR / 多硬件实例 | `src/nvenc/`、`src/amf/` 仅进 Windows 构建（`compile_definitions/windows.cmake:114-120`）；Linux NVENC 为上游同款 FFmpeg 路径（注：探测缓存是跨平台的，见 ✅ 表） |
 | HLG 编码（Linux 侧） | 会话框架跨平台，但 kmsgrab 不支持 HLG EOTF 输入（`kmsgrab.cpp:840-841`）→ Linux 无原生 HLG 源 |
-| HDR Vivid 动态元数据 | avcodec 路径没有 CUVA T.35 序列化器（`video.cpp:2925-2937` 注释明示），仅 Windows NVENC 直连路径手写产出 |
+| ~~HDR Vivid 动态元数据~~ → **✅ 已移植（2026-09-11，仅 Linux avcodec 路径）** | FFmpeg 只有 CUVA 解析器、无序列化器（bundled `libavutil.a` 已核实），故在 `encode_avcodec()` 内用共享 `serialize_vivid_t35()` 构建 T.35、按 pts 拼到首个 VCL NAL 之前（与 DV RPU 共用一次扩容）。Windows 的 avcodec 家族仍显式标记为不能承载 Vivid、走 NVENC/AMF 直连，故该拼接只在 Linux 编译（§十二进度 24） |
 | 虚拟扬声器位深匹配 | Windows PolicyConfig COM（`platform/windows/audio.cpp:1316-1319`）；Linux 固定 `PA_SAMPLE_FLOAT32`（`platform/linux/audio.cpp:81`） |
 | 触摸键盘自动唤起（touch_keyboard_session） | Windows 注册表机制，头文件自述非 Windows 为 no-op（`touch_keyboard_session.h:11-12`） |
 | ~~Linux 物理显示器分辨率/HDR/拓扑切换~~ → **✅ 已移植（2026-09-10）** | `src/platform/linux/display_device.cpp` 重写：kscreen-doctor（KDE/compositor）读写模式、HDR、主屏、拓扑 + JSON 持久化还原，对齐 Windows settings.cpp 的 apply/revert 流程；VDD 拓扑仍由会话 VDD 阶段控制；kscreen 不可用时退化为历史 no-op 行为（§十二进度 11） |
@@ -412,9 +413,12 @@ sd-bus 对话 KDE klipper（`org.kde.klipper` setClipboardContents/getClipboardC
    元数据 + P8.1 需 PQ 基层；P8.4 需 HLG 在 KMS 路径明确拒绝）configure 注入器，encode_avcodec
    按提交帧序 stage L1，输出包按 pts 回程 splice RPU NAL（AVPacket 按需扩容）；分析器使能随之
    覆盖 DV 协商标识。分析器统计为亮度近似，RPU 的 L1 语义（min/avg/max PQ）与之天然匹配。
-2. **HDR Vivid T.35 序列化器**：avcodec 路径没有 CUVA 序列化器，但分支已有自研比特流工具层
-   （`src/cbs.cpp`/`video_hdr_bitstream.cpp`，DV RPU 写入器就是同模式自研的），照搬 `nvenc_base.cpp`
-   的手写 T.35 逻辑到 cbs 层即可。工作量：中。
+2. **HDR Vivid T.35 序列化器 —— ✅ 已完成（2026-09-11，`4595e349`）**：FFmpeg 只有 CUVA 解析器
+   （bundled `libavutil.a` 符号核实：有 `av_dynamic_hdr_plus_to_t35`、无 Vivid 对应物），于是不再
+   依赖 FFmpeg：`encode_avcodec()` 用共享 `serialize_vivid_t35()` 构建载荷，按提交帧序号暂存、
+   输出包按 pts 经 `hdr_bitstream::append_t35_unit()` + `insert()` 插到首个 VCL NAL 之前，与 DV RPU
+   共用一次 AVPacket 扩容；暂存队列有上限并带告警。**仅 Linux 编译**——Windows 的 avcodec 家族仍
+   显式标记不能承载 Vivid，Vivid 走 NVENC/AMF 直连，行为不变。
 3. **HLG 捕获源**：kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:840-841`），属上游内核/DRM blob 能力
    限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR），短期放弃；P8.4（HLG 基层）随 HLG 一起搁置。
 
@@ -603,9 +607,23 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       托盘菜单结构、display_device 持久化 schema 与 apply/revert 编排、ST2084 常量全树唯一来源），
       并列出待决策项（如 VAAPI/CUDA 会话缺亮度分析源、HLG 无分析源、麦克风背压与默认录音设备切换、
       复制拓扑、枚举 active 语义等）——见 `LINUX_PORT_GAPS.md` §5.2。
+24. **第二轮：niri 目标立项 + Vivid 收官 + 规范标识符收敛（2026-09-11）**：
+    - **HDR Vivid 上 avcodec 路径（`4595e349`）**：FFmpeg 无 CUVA 序列化器（bundled `libavutil.a`
+      符号核实），改为在 `encode_avcodec()` 内构建 T.35 并按 pts 拼接（与 DV RPU 共用一次 AVPacket
+      扩容），新增位流回归用例；**仅 Linux 编译**，Windows 的 avcodec 家族仍标记为不能承载 Vivid。
+      至此 Linux 的动态 HDR 三件套（HDR10+ / DV P8.1 / Vivid）齐备（§十一 P2 第 2 条）。
+    - **麦克风默认录音设备（`e7392d98`）**：Windows 会切换默认录音设备并在结束时还原，Linux 原先只
+      建 null-sink，主机应用需手动选 monitor 源。现复用文件内 pa_context helper：读当前默认源 →
+      指向 null-sink monitor → 释放时还原；对 PulseAudio/PipeWire 通用，不是 KDE 专属。
+    - **规范标识符收敛（`e4563139`）**：客户端"虚拟屏"占位 id 由 Linux 分支裸写的 `"23172"` 改为共享
+      `ZAKO_DEVICE_ID`（globals，Windows 分支行为不变）；剪贴板线协议常量（版本/kind/帧头/内联阈值/
+      TTL）移入 `clipboard_bridge.h`，`clipboard_host.cpp` 全面改用（Rust agent 仍是跨语言参考）。
+    - **目标环境（约束）**：`AGENTS.md` 写明 **KDE + niri** 双目标、通用方案优先、后端必须探测并
+      优雅降级；niri 的具体差距（前台检测 producer、通用输出后端 wlr-output-management、niri 输出
+      控制）立项为 `LINUX_PORT_GAPS.md` §2.11。本机未装 niri，相关命令需在 niri 环境实测。
 
 **测试基线复核（2026-09-11，pkgrel 38 构建树 + 对齐审计修复后）**：`ctest` 13 个套件 12 个通过。
-聚合套件 `test_sunshine` 共 489 个用例：476 通过、12 跳过（1 个 Unicode 路径用例 +
+聚合套件 `test_sunshine` 共 490 个用例：477 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧
@@ -616,9 +634,11 @@ Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90`
 `$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归；且必须重建 `test_sunshine`
 （增量构建只编译 `sunshine` 时，ctest 会跑旧二进制并掩盖新失败）。
 
-**下一个目标（2026-09-11 起）**：HDR Vivid T.35 序列化器（`LINUX_PORT_GAPS.md` §2.1，⭐ 推荐下一项）、
-剪贴板补图片类帧与非 KDE provider（§1.4/§2.2）；其后是 display_device 的复制拓扑与 GNOME Mutter
-D-Bus 后端（§1.5/§2.4）。HDR 动态元数据（HDR10+ / DV P8.1）与虚拟屏模式表两项已收官。
+**下一个目标（2026-09-11 起）**：**niri 支持**（`LINUX_PORT_GAPS.md` §2.11：前台检测 producer、
+通用输出后端 wlr-output-management、niri 输出控制）、剪贴板补图片类帧与大文件 blob 回退
+（§1.4/§2.2）；其后是 display_device 的失败处理与顺序补齐（§5.2 D5/D7/D8/D9/D13/D14）、麦克风
+背压契约（A1）、亮度分析器覆盖面（VAAPI/CUDA，F1）。HDR 三件套（HDR10+ / DV P8.1 / Vivid）与
+虚拟屏完整模式表两项已收官。
 
 **标签**：`v0.1-linux-base`（虚拟屏工作开始前的基线）→ `v0.2-linux-vdd`（虚拟显示器原生后端完成，
 随 `48b7c4bf`）→ `v0.3-linux-display-device`（物理显示器后端）→ `v0.4-linux-clipboard-host`

@@ -4,6 +4,12 @@ AlkaidLab/qiin2333 fork of LizardByte/Sunshine (Windows streaming enhancements).
 This workspace ports those enhancements to Arch Linux on the `linux-migration` branch.
 Remote: `mine` = user's fork (QiE2035, push target), `origin` = AlkaidLab upstream.
 
+**Target environments:** Arch Linux with **KDE Plasma (Wayland)** and **niri** are the
+primary desktops; a generic path is preferred over a desktop-specific one whenever both
+exist (PipeWire/PulseAudio for audio, wlr-output-management / X11 / niri IPC before
+anything KDE-only). Compositor-specific backends must probe for their tool and degrade
+gracefully when it is absent — never assume kscreen-doctor exists.
+
 **Read before touching sensitive areas:**
 - `LINUX_MIGRATION_REPORT.md` — what was ported, how, with file/line evidence
 - `LINUX_PORT_GAPS.md` — remaining gap backlog (partial / feasible / non-portable)
