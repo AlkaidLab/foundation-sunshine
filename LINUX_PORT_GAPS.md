@@ -315,7 +315,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
   出现同样症状再补（§5.6 已记录该判断）。
 - **D15/D16 复制拓扑不可表示 + 校验边界不一致**：KDE 镜像会话读回为多个扩展屏，请求复制组被拒绝
   （= §1.5）；`is_topology_valid` 比自身 setter 宽松。
-- **D18 compositor 不可用时静默返回成功**（= §1.5）：非 KDE/旧合成器下客户端的模式/HDR 请求被忽略。
 
 **低**
 
@@ -329,8 +328,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
   按 `.exe` 措辞。
 - **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false
   （Linux 的还原路径以"空 map = 无需还原"为由保留 true，见 §5.6）。
-- **D17 friendly name 仅为连接器名**（如 `DP-1`），`get_display_name` 直通、非 VDD 的 friendly-name
-  查找不可用；WebUI 设备列表显示连接器名且 HDR 状态恒 unknown。
 - **D19 日志文案差异**：同一事件 Linux 英文 / Windows 中文（"串流结束"等）。
 - **F11 WebUI HDR 状态端点硬编码 `available=false`**：Linux 无生产者上报（即使分析器在本机可用）。
 - **F9 直方图估计器差异**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
@@ -491,3 +488,12 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 这一差异保留（Linux 的元数据更"新"）。
 
 **测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败。
+
+### 5.15 第十三轮修复（friendly name 与合成器降级语义，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R26 | **D17 friendly name 只是连接器名** | 新增 Linux 专用 EDID 读取器 `src/platform/linux/edid.h`（校验头 + 解析基块四个描述符槽里的 Display Product Name（tag 0xFC），按 NUL/0x0A 截断并去除填充空格；纯字节变换、可单测）。`enum_available_devices()` 的 `friendly_name` 改为 EDID 名（无名字描述符时退回连接器名），`get_display_friendly_name()` 对物理屏同样返回 EDID 名，`find_device_by_friendlyname()` 改为**遍历所有设备**匹配（Windows 同语义），虚拟屏仍走 ZAKO_NAME 快路径。于是：WebUI 设备列表显示显示器型号而非 `DP-1`，配置里的"显示器"字段可用型号名解析（此前只有 VDD 能用 friendly name）。**本机实测**：内建面板的 EDID 是合法基块但**没有**名字描述符（真实世界的常见情况）→ 正确退回 `eDP-1`；断开连接器 EDID 为 0 字节 → 同样退回。带 5 个单元测试（含用自家生成器产出的 EDID 做往返、任意描述符槽、截断/填充、缺描述符、畸形 blob） |
+| R27 | **D18 合成器不可用时静默成功** | **判定为有意保留 + 提高可见性**：Linux 上"没有 kscreen-doctor"是**会话的持久属性**（非 KDE/无头），不是 Windows 那种"锁屏后重试"的暂时状态；返回失败会把每个非 KDE 会话推入 deferred-retry 并让客户端看到无法修复的报错。因此结果仍为 success，但日志从 info 提升为 **warning**，并明确写出"客户端的显示设置（分辨率/HDR/拓扑/主屏）**未被应用**，串流按当前桌面布局继续"——不再像成功那样含糊 |
+
+**测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。

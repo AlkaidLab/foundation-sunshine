@@ -729,8 +729,19 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     残留：CPU 仍读整帧（Windows 在 GPU 端缩到 ≤1080p），4K 下采样量约为其 4 倍；Windows 分析异步
     陈旧、Linux 同步当帧的差异保留。
 
-**测试基线复核（2026-09-11，pkgrel 50 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘、元数据修正与分析节奏之后）**：`ctest` 13 个套件
-12 个通过。聚合套件 `test_sunshine` 共 514 个用例：502 通过、12 跳过（1 个 Unicode 路径用例 +
+35. **第十三轮：friendly name 与合成器降级语义（2026-09-11）**：
+    - **显示器 friendly name（D17）**：新增 `src/platform/linux/edid.h`（解析 EDID 基块的 Display
+      Product Name 描述符，纯字节变换、可单测）；枚举的 `friendly_name`、`get_display_friendly_name()`
+      改用 EDID 名（无该描述符时退回连接器名），`find_device_by_friendlyname()` 改为遍历所有设备匹配
+      （Windows 同语义，虚拟屏保留 ZAKO_NAME 快路径）。WebUI 设备列表因此显示型号而非 `DP-1`，配置里
+      的显示器字段也能用型号解析。本机内建面板的 EDID 恰好没有名字描述符（真实常见），已验证会正确
+      退回连接器名。5 个单元测试（含用自家 EDID 生成器做往返）。
+    - **合成器不可用（D18）**：复核后**有意保留 success 结果**（Linux 上这是会话的持久属性，返回失败会
+      让所有非 KDE 会话进入 deferred-retry 并给客户端一个无法修复的报错），但把日志从 info 提到
+      **warning** 并明确说明"显示设置未被应用、串流按当前布局继续"，消除"静默假装成功"的含糊。
+
+**测试基线复核（2026-09-11，pkgrel 51 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘、元数据、分析节奏与 friendly name 之后）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧
