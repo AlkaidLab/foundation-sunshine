@@ -861,6 +861,12 @@ namespace video {
     // it is built from the filtered analyzer output and spliced into the
     // access unit, exactly like the Dolby Vision RPU above. Inert unless the
     // negotiated colorspace/format can carry Vivid.
+    // Whether an HDR10+ side data block may be attached at all: without a
+    // usable analyzer there is nothing to carry, and attaching the block would
+    // ship its placeholder values as real metadata (see
+    // update_hdr_dynamic_metadata).
+    bool hdr10plus_side_data_wanted = false;
+
     bool vivid_splice_enabled = false;
     hdr_bitstream::codec_e vivid_codec {};
     // Keyed by the submitted frame index, which comes back as the packet pts.
@@ -2371,12 +2377,56 @@ namespace video {
    * @param vivid_metadata Filtered HDR Vivid statistics in normalized PQ space
    * @param max_display_luminance Mapped client display peak luminance in nits
    */
+  /**
+   * @brief Fill the HDR10+ fields that do not depend on the frame's analysis.
+   * @details The per-frame values (maxscl, average, percentile distribution,
+   *          targeted display luminance) are written by
+   *          update_hdr_dynamic_metadata() from real statistics; this only
+   *          establishes the window, ellipse and tone-mapping defaults the
+   *          metadata standard leaves fixed for a single full-frame window.
+   */
+  void
+  init_hdr10plus_side_data(AVDynamicHDRPlus &hdr10plus, int width, int height, uint16_t target_display_peak_nits) {
+    hdr10plus.itu_t_t35_country_code = 0xB5;  // USA
+    hdr10plus.application_version = hdr_metadata::hdr10plus_application_version;
+    hdr10plus.num_windows = 1;  // Single processing window covering the frame
+
+    auto &params = hdr10plus.params[0];
+    params.window_upper_left_corner_x = av_make_q(0, 1);
+    params.window_upper_left_corner_y = av_make_q(0, 1);
+    params.window_lower_right_corner_x = av_make_q(1, 1);
+    params.window_lower_right_corner_y = av_make_q(1, 1);
+
+    params.center_of_ellipse_x = static_cast<uint16_t>(width / 2);
+    params.center_of_ellipse_y = static_cast<uint16_t>(height / 2);
+    params.rotation_angle = 0;
+    params.semimajor_axis_internal_ellipse = static_cast<uint16_t>(width / 2);
+    params.semimajor_axis_external_ellipse = static_cast<uint16_t>(width / 2);
+    params.semiminor_axis_external_ellipse = static_cast<uint16_t>(height / 2);
+    params.overlap_process_option = AV_HDR_PLUS_OVERLAP_PROCESS_WEIGHTED_AVERAGING;
+
+    // No percentiles until real statistics arrive; the per-frame update sets the
+    // distribution along with maxscl and average_maxrgb.
+    params.num_distribution_maxrgb_percentiles = 0;
+    params.fraction_bright_pixels = av_make_q(0, 1);
+
+    params.tone_mapping_flag = 0;
+    params.knee_point_x = av_make_q(0, 1);
+    params.knee_point_y = av_make_q(0, 1);
+    params.num_bezier_curve_anchors = 0;
+
+    hdr10plus.targeted_system_display_maximum_luminance = av_make_q(target_display_peak_nits, 1);
+    hdr10plus.targeted_system_display_actual_peak_luminance_flag = 0;
+    hdr10plus.mastering_display_actual_peak_luminance_flag = 0;
+  }
+
   void
   update_hdr_dynamic_metadata(
     AVFrame *frame,
     const platf::hdr_frame_luminance_stats_t &hdr10plus_stats,
     const hdr_metadata::vivid_metadata_t &vivid_metadata,
-    uint16_t max_display_luminance) {
+    uint16_t max_display_luminance,
+    bool attach_hdr10plus) {
     if (!frame) return;
 
     // Update HDR Vivid (CUVA) dynamic metadata
@@ -2400,8 +2450,20 @@ namespace video {
       }
     }
 
-    // Update HDR10+ dynamic metadata
+    // Update HDR10+ dynamic metadata. The side data is attached on the first
+    // frame that actually has statistics: creating it at session setup shipped
+    // its fabricated "full brightness" defaults as a real SEI on every frame
+    // before the first analysis - and on every frame of a session whose encoder
+    // never produces statistics at all. The Windows native paths only build
+    // metadata from valid statistics for the same reason.
     auto hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
+    if (!hdr10plus_sd && attach_hdr10plus && hdr10plus_stats.valid) {
+      if (auto *added = av_dynamic_hdr_plus_create_side_data(frame)) {
+        init_hdr10plus_side_data(*added, frame->width, frame->height, max_display_luminance);
+        hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
+      }
+    }
+
     if (hdr10plus_sd && hdr10plus_stats.valid) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
@@ -2540,7 +2602,8 @@ namespace video {
           frame,
           filtered.hdr10plus_stats,
           filtered.vivid,
-          session.dynamic_metadata_target_peak_nits);
+          session.dynamic_metadata_target_peak_nits,
+          session.hdr10plus_side_data_wanted);
 
         // HDR Vivid cannot ride the side data: FFmpeg ships a Vivid parser but
         // no serializer, so build the registered T.35 payload here and stage it
@@ -3182,61 +3245,10 @@ namespace video {
           clm->MaxFALL = hdr_metadata.maxFrameAverageLightLevel;
         }
 
-        // HDR10+ dynamic metadata - PQ only (Samsung ST 2094-40, uses absolute luminance)
-        if (dynamic_hdr_formats.hdr10plus) {
-          auto hdr10plus = av_dynamic_hdr_plus_create_side_data(frame.get());
-          if (hdr10plus) {
-            // Set default values for HDR10+
-            hdr10plus->itu_t_t35_country_code = 0xB5;  // USA
-            hdr10plus->application_version = hdr_metadata::hdr10plus_application_version;
-            hdr10plus->num_windows = 1;  // Single processing window covering entire frame
-
-            // Initialize the first (and only) processing window
-            auto &params = hdr10plus->params[0];
-            params.window_upper_left_corner_x = av_make_q(0, 1);
-            params.window_upper_left_corner_y = av_make_q(0, 1);
-            params.window_lower_right_corner_x = av_make_q(1, 1);
-            params.window_lower_right_corner_y = av_make_q(1, 1);
-
-            // Set center of elliptical pixel selector to center of frame
-            params.center_of_ellipse_x = static_cast<uint16_t>(config.width / 2);
-            params.center_of_ellipse_y = static_cast<uint16_t>(config.height / 2);
-            params.rotation_angle = 0;  // 0 degrees
-            params.semimajor_axis_internal_ellipse = static_cast<uint16_t>(config.width / 2);
-            params.semimajor_axis_external_ellipse = static_cast<uint16_t>(config.width / 2);
-            params.semiminor_axis_external_ellipse = static_cast<uint16_t>(config.height / 2);
-            params.overlap_process_option = AV_HDR_PLUS_OVERLAP_PROCESS_WEIGHTED_AVERAGING;
-
-            // Set maxscl (maximum of R, G, B) to 1.0 (full brightness)
-            params.maxscl[0] = av_make_q(1, 1);
-            params.maxscl[1] = av_make_q(1, 1);
-            params.maxscl[2] = av_make_q(1, 1);
-
-            // Set average maxRGB to 1.0
-            params.average_maxrgb = av_make_q(1, 1);
-
-            // Initialize percentile distribution (simplified)
-            params.num_distribution_maxrgb_percentiles = 0;  // No percentiles for simplified metadata
-
-            // Set fraction brightness to 0 (no bright pixels)
-            params.fraction_bright_pixels = av_make_q(0, 1);
-
-            // Set tone mapping curve to linear (no adjustment)
-            params.tone_mapping_flag = 0;
-            params.knee_point_x = av_make_q(0, 1);
-            params.knee_point_y = av_make_q(0, 1);
-            params.num_bezier_curve_anchors = 0;
-
-            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
-              dynamic_metadata_target_peak_nits,
-              1);
-            hdr10plus->targeted_system_display_actual_peak_luminance_flag = 0;
-            hdr10plus->mastering_display_actual_peak_luminance_flag = 0;
-
-            BOOST_LOG(debug) << "Added HDR10+ dynamic metadata to frame";
-          }
-        }
-
+        // HDR10+ dynamic metadata is attached lazily, on the first frame with
+        // real analyzer output (see update_hdr_dynamic_metadata): there is
+        // nothing to carry before that, and the block's placeholder values must
+        // not reach the bitstream as if they were measurements.
         // HDR Vivid dynamic metadata (GB/T 46269.1-2025) - both PQ and HLG.
         //
         // FFmpeg ships a serializer for HDR10+ (av_dynamic_hdr_plus_to_t35) but has no
@@ -3374,6 +3386,15 @@ namespace video {
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
+
+    // HDR10+ carriage needs both a codec/transfer-function carriage and an
+    // analyzer that can actually produce statistics. The side data is attached
+    // on the first frame with valid output (see update_hdr_dynamic_metadata),
+    // so a session without analysis carries no HDR10+ block at all instead of
+    // one holding placeholder values.
+    const bool session_analysis_usable = hdr_luminance_analysis_usable(session->device->hdr_luminance_analysis_available);
+    session->hdr10plus_side_data_wanted =
+      hdr_metadata::formats_for(session->device->colorspace, config.videoFormat).hdr10plus && session_analysis_usable;
 
     if (vivid_formats.vivid && vivid_codec) {
       session->vivid_splice_enabled = true;

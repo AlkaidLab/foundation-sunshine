@@ -74,6 +74,23 @@ namespace platf::foreground_app {
      *          pid reports 0, which the consumer handles through its exe-name
      *          comparison.
      */
+    /**
+     * @brief Forget the cached window because its producer is gone.
+     * @details The cache is otherwise deliberately long-lived: a foreground app
+     *          that never changes is normal. When the producer itself dies (the
+     *          compositor dropped our script, the niri query stopped working),
+     *          the cached window may be long closed, so ABR must fall back to
+     *          its launcher-based classification instead of acting on it.
+     */
+    void
+    clear_cache() {
+      auto &state = cache();
+      std::lock_guard lock { state.mutex };
+      state.info = {};
+      state.updated = std::chrono::steady_clock::now();
+      state.ever_reported = false;
+    }
+
     void
     store_report(std::uint32_t pid, const std::string &exe_name, const std::string &window_title) {
       auto &state = cache();
@@ -261,7 +278,9 @@ try {
           }
           if (now - last_report > kReloadInterval) {
             BOOST_LOG(debug) << "foreground: KWin script silent; reloading"sv;
-            install_kwin_script(bus);
+            if (!install_kwin_script(bus)) {
+              clear_cache();
+            }
             last_setup_attempt = now;
           }
         }
@@ -345,10 +364,15 @@ try {
             store_report(info.pid, info.exe_name, info.window_title);
           }
         }
-        else if (!failure_logged) {
-          failure_logged = true;
-          BOOST_LOG(warning) << "foreground: `niri msg --json focused-window` failed (exit "sv
-                             << result.exit_code << "); ABR app classification degraded"sv;
+        else {
+          // The query stopped working (niri restarted, socket gone): drop the
+          // cached window so ABR does not keep classifying a closed app.
+          clear_cache();
+          if (!failure_logged) {
+            failure_logged = true;
+            BOOST_LOG(warning) << "foreground: `niri msg --json focused-window` failed (exit "sv
+                               << result.exit_code << "); ABR app classification degraded"sv;
+          }
         }
 
         // Sleep in small slices so a shutdown is observed promptly.
