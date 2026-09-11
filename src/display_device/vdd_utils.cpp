@@ -1871,31 +1871,52 @@ namespace display_device::vdd_utils {
     }
 
     /**
-     * @brief Apply the manual virtual display mode when no client session has
-     *        configured one (tray create, headless auto-create). Caller holds
-     *        state_mutex.
+     * @brief Derive the preferred mode for out-of-session creation from the
+     *        configured resolution/refresh lists - the same WebUI-editable
+     *        lists that drive the Windows SETMODES mode table: the highest
+     *        resolution at the highest configured refresh rate. Falls back to
+     *        the 1920x1080@60 defaults when the lists carry nothing usable.
+     *        Caller holds state_mutex.
      */
     void
-    apply_manual_mode_locked() {
+    apply_configured_preferred_mode_locked() {
       if (cached_from_session) {
         return;
       }
 
       unsigned int width = 0;
       unsigned int height = 0;
-      std::stringstream input(config::video.vdd_manual_resolution);
-      char separator = '\0';
-      input >> width >> separator >> height;
-      if (separator == 'x' && width >= 640 && width <= 8192 && height >= 480 && height <= 8192) {
+      for (const auto &res : config::nvhttp.resolutions) {
+        unsigned int w = 0;
+        unsigned int h = 0;
+        std::stringstream input(res);
+        char separator = '\0';
+        input >> w >> separator >> h;
+        if (separator != 'x' || w < 640 || w > 8192 || h < 480 || h > 8192) {
+          continue;
+        }
+        if ((unsigned long long) w * h > (unsigned long long) width * height) {
+          width = w;
+          height = h;
+        }
+      }
+
+      unsigned int fps = 0;
+      for (const auto &entry : config::nvhttp.fps) {
+        unsigned int value = 0;
+        std::stringstream input(entry);
+        input >> value;
+        if (value >= 24 && value <= 480) {
+          fps = std::max(fps, value);
+        }
+      }
+
+      if (width > 0 && height > 0) {
         cached_width = width;
         cached_height = height;
       }
-      else if (!config::video.vdd_manual_resolution.empty()) {
-        BOOST_LOG(warning) << "vdd: invalid vdd_manual_resolution ["sv << config::video.vdd_manual_resolution
-                           << "]; expected WxH"sv;
-      }
-      if (config::video.vdd_manual_fps >= 24 && config::video.vdd_manual_fps <= 480) {
-        cached_refresh_hz = static_cast<unsigned int>(config::video.vdd_manual_fps);
+      if (fps > 0) {
+        cached_refresh_hz = fps;
       }
     }
   }  // namespace
@@ -2147,7 +2168,7 @@ namespace display_device::vdd_utils {
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
 
-    apply_manual_mode_locked();
+    apply_configured_preferred_mode_locked();
 
     BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
                     << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")");
