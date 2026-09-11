@@ -315,6 +315,7 @@ if (WIN32)
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mic_queue\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_display_device_enum\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_edid\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_compositor_output\.cpp")
 else ()
     # Windows-host test sources must not reach non-Windows builds.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")

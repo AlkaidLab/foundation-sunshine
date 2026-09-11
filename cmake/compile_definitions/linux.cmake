@@ -249,6 +249,8 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/display_device.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/foreground_app.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/foreground_app.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/compositor_output.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/compositor_output.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"

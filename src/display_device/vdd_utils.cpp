@@ -1038,6 +1038,7 @@ namespace display_device {
 
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/linux/compositor_output.h"
 #include "src/platform/linux/vdd_edid.h"
 
 namespace pt = boost::property_tree;
@@ -1239,65 +1240,31 @@ namespace display_device::vdd_utils {
     }
 
     /**
-     * @brief Whether this process runs inside a niri session.
-     * @details niri exports NIRI_SOCKET to every child, so its presence is the
-     *          cheapest reliable discriminator (plain getenv: the AT_SECURE
-     *          file capabilities only affect libc's secure_getenv users).
-     */
-    bool
-    niri_session() {
-      const char *socket = ::getenv("NIRI_SOCKET");
-      return socket && *socket;
-    }
-
-    /**
-     * @brief Whether an executable exists in the usual bin directories.
-     * @details Used to pick a compositor control tool without spawning a shell
-     *          probe per call; a wrong guess only costs one failed command.
-     */
-    bool
-    tool_available(const char *name) {
-      for (const char *dir : { "/usr/bin", "/usr/local/bin", "/bin" }) {
-        if (::access((std::string { dir } + "/" + name).c_str(), X_OK) == 0) {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    /**
      * @brief Ask the compositor to light up a connector.
      * @details The DRM-level CRTC assignment is what actually brings the output
-     *          up; this is the compositor-side nudge that makes it paint. KDE
-     *          keeps the tested kscreen-doctor path, niri is reached through its
-     *          own IPC, and other Wayland compositors through wlr-randr
-     *          (wlr-output-management, covering sway/Hyprland/river/...); X11
-     *          sessions fall back to xrandr. Unknown sessions are a no-op:
-     *          compositors normally enable a newly connected output themselves,
-     *          so this must never be treated as a failure.
+     *          up; this is the compositor-side nudge that makes it paint. Which
+     *          command that is per desktop lives in
+     *          platf::compositor_output::enable_command() (pure, unit-tested --
+     *          a self-recursive dispatch here already cost one field crash).
+     *          Unknown sessions are a no-op: compositors normally enable a
+     *          newly connected output themselves, so this must never be treated
+     *          as a failure.
      */
     void
     enable_output_via_compositor(const std::string &connector) {
       const char *xdg_desktop = ::getenv("XDG_CURRENT_DESKTOP");
       const std::string desktop = xdg_desktop ? xdg_desktop : "";
 
-      if (desktop.find("KDE") != std::string::npos || desktop.find("plasma") != std::string::npos) {
-        enable_output_via_compositor(connector);
-        return;
-      }
+      const auto command = platf::compositor_output::enable_command(
+        desktop,
+        connector,
+        platf::compositor_output::niri_session(),
+        platf::compositor_output::tool_available("wlr-randr"),
+        ::getenv("DISPLAY") != nullptr,
+        platf::compositor_output::tool_available("xrandr"));
 
-      if (niri_session()) {
-        run_logged("niri msg output " + connector + " on");
-        return;
-      }
-
-      if (tool_available("wlr-randr")) {
-        run_logged("wlr-randr --output " + connector + " --on");
-        return;
-      }
-
-      if (::getenv("DISPLAY") && tool_available("xrandr")) {
-        run_logged("xrandr --output " + connector + " --auto");
+      if (!command.empty()) {
+        run_logged(command);
         return;
       }
 
@@ -1341,7 +1308,7 @@ namespace display_device::vdd_utils {
         return;
       }
 
-      if (niri_session()) {
+      if (platf::compositor_output::niri_session()) {
         // niri has no primary-output concept at all: every output is part of
         // one scrollable layout, so there is nothing to hint.
         BOOST_LOG(info) << "vdd: niri has no primary-output concept; "sv << connector
