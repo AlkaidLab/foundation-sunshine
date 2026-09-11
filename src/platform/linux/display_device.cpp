@@ -601,6 +601,12 @@ namespace display_device {
       const double target_refresh = static_cast<double>(mode.refresh_rate.numerator) /
                                     static_cast<double>(mode.refresh_rate.denominator);
 
+      // Windows compares refresh rates with a 1 Hz fuzz (fuzzy_compare_refresh_rates)
+      // and lets the OS pick the closest available mode (SDC_ALLOW_CHANGES), so
+      // 60 fps against a 59.94 Hz panel is already a match. Match that
+      // acceptance instead of demanding an exact rate.
+      constexpr double k_refresh_tolerance_hz = 1.0;
+
       const auto current_matches = [&]() {
         const auto fresh = query_outputs();
         const auto *fresh_output = find_output(fresh, device_id);
@@ -613,23 +619,28 @@ namespace display_device {
         return current_mode != fresh_output->modes.end() &&
                current_mode->width == mode.resolution.width &&
                current_mode->height == mode.resolution.height &&
-               std::fabs(current_mode->refresh - target_refresh) <= 0.051;
+               std::fabs(current_mode->refresh - target_refresh) <= k_refresh_tolerance_hz;
       };
 
       if (current_matches()) {
         continue;
       }
 
+      // Nearest candidate within tolerance, mirroring SDC_ALLOW_CHANGES.
       const kscreen_mode_t *best = nullptr;
+      double best_delta = 0.0;
       for (const auto &candidate : output->modes) {
         if (candidate.width != mode.resolution.width || candidate.height != mode.resolution.height) {
           continue;
         }
-        if (std::fabs(candidate.refresh - target_refresh) > 0.051) {
+        const double delta = std::fabs(candidate.refresh - target_refresh);
+        if (delta > k_refresh_tolerance_hz) {
           continue;
         }
-        best = &candidate;
-        break;
+        if (!best || delta < best_delta) {
+          best = &candidate;
+          best_delta = delta;
+        }
       }
 
       if (!best) {
@@ -734,7 +745,12 @@ namespace display_device {
         return it != fresh.end() && it->second == state;
       };
 
-      if (state_matches()) {
+      // Only "disable an already-disabled output" is skipped: Windows always
+      // re-issues HDR-on because the read-back can be stale after virtual
+      // display/topology changes (device_hdr_states.cpp skips disabled==disabled
+      // only). Trusting an "enabled" read-back left the host in SDR while
+      // Sunshine believed HDR was on.
+      if (state == hdr_state_e::disabled && state_matches()) {
         continue;
       }
 
@@ -1289,7 +1305,21 @@ namespace display_device {
     // friendly name; resolve all three against the live connector list. The
     // ZakoVDD friendly name maps to the virtual display when one is live.
     if (device_id.empty()) {
-      return {};
+      // Windows treats an unspecified id as "the current primary display"
+      // (settings_topology.cpp: any of the primary devices if id is
+      // unspecified). Resolve it the same way here: without this, every
+      // downstream "no device named" branch fell back to *all* outputs, so a
+      // client using Display: Auto re-moded and HDR-toggled every monitor
+      // instead of the primary, and ensure_only_display became a no-op.
+      const auto outputs = query_outputs();
+      const auto primary = std::find_if(outputs.begin(), outputs.end(), [](const auto &output) {
+        return output.enabled && output.priority == 1;
+      });
+      if (primary == outputs.end()) {
+        BOOST_LOG(debug) << "Find one of the available devices: no enabled primary output found";
+        return {};
+      }
+      return primary->name;
     }
     if (device_id == ZAKO_NAME) {
       return vdd_utils::live_virtual_display_connector();
