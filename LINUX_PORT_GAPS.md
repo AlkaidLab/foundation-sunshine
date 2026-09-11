@@ -603,3 +603,8 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
    libkscreen 后端，属独立特性。
 4. §5.18 中记录的**有意保留差异**（空容器契约、麦克风契约边界与缓冲属性、日志语言、前台 exe 语义、
    直方图估计器、blank HDR toggle）如需翻转，按各条给出的理由逐项决策即可。
+5. **`wait_for_mode_publication()` 持锁执行外部命令**（低）：它在 `state_mutex` 内调用
+   `enable_output_via_compositor()` → `run_logged()`，最长可持锁 10 s（子进程超时才被杀）。这是移植时
+   就有的结构（本轮只改被调用者），不会死锁（`run_logged` 不再申请该锁），但并发 VDD 调用/托盘操作
+   最长会等待这么久。若后续出现"托盘卡顿"类报告，这里应是第一个嫌疑点；修法是锁内只取路径快照、
+   锁外再执行命令。
