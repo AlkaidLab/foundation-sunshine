@@ -705,6 +705,11 @@ namespace video {
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
     ~avcodec_encode_session_t() {
+      if (hdr_status_id != 0) {
+        unregister_hdr_pipeline_status(hdr_status_id);
+        hdr_status_id = 0;
+      }
+
       // Flush any remaining frames in the encoder
       if (avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
         packet_raw_avcodec pkt;
@@ -729,6 +734,9 @@ namespace video {
       vivid_splice_enabled = other.vivid_splice_enabled;
       vivid_codec = other.vivid_codec;
       staged_vivid_units = std::move(other.staged_vivid_units);
+      hdr_status = std::move(other.hdr_status);
+      hdr_status_id = other.hdr_status_id;
+      other.hdr_status_id = 0;
       hw_analysis_enabled = other.hw_analysis_enabled;
       hw_analysis_counter = other.hw_analysis_counter;
       hw_analysis_sequence = other.hw_analysis_sequence;
@@ -935,6 +943,29 @@ namespace video {
       }
 
       analyze_pq_luma_frame(hw_analysis_frame.get(), device->hdr_luminance_stats, hw_analysis_sequence);
+    }
+
+    // Runtime HDR status published to the WebUI (GET /api/runtime/hdr). Only
+    // used on Linux, where the session - not a capture device - owns the
+    // analysis; Windows registers from its capture path instead.
+    hdr_pipeline_status_t hdr_status;
+    std::uint64_t hdr_status_id = 0;
+
+    /**
+     * @brief Register (first call) or refresh this session's runtime status.
+     */
+    void
+    publish_hdr_status() {
+      if (hdr_status.hdr_mode.empty() || hdr_status.hdr_mode == "sdr") {
+        return;
+      }
+
+      if (hdr_status_id == 0) {
+        hdr_status_id = register_hdr_pipeline_status(hdr_status);
+      }
+      else {
+        update_hdr_pipeline_status(hdr_status_id, hdr_status);
+      }
     }
 
     void
@@ -2613,6 +2644,15 @@ namespace video {
           session.dynamic_metadata_target_peak_nits,
           session.hdr10plus_side_data_wanted);
 
+        // The first usable statistics are when dynamic metadata actually starts
+        // flowing; the WebUI runtime status reports that transition. Windows
+        // publishes its own status from the capture path, so the helper no-ops
+        // there (its hdr_mode stays "sdr").
+        if (!session.hdr_status.scene_metadata_active && filtered.hdr10plus_stats.valid) {
+          session.hdr_status.scene_metadata_active = true;
+          session.publish_hdr_status();
+        }
+
         // HDR Vivid cannot ride the side data: FFmpeg ships a Vivid parser but
         // no serializer, so build the registered T.35 payload here and stage it
         // for the access unit that carries this frame's pts back. The temporal
@@ -3309,6 +3349,9 @@ namespace video {
     }
 
     std::unique_ptr<platf::avcodec_encode_device_t> encode_device_final;
+    // Whether this session has a producer for the luminance statistics, needed
+    // for the runtime status below because the device is moved into the session.
+    bool software_analysis_enabled = false;
 
     if (!encode_device->data) {
       auto software_encode_device = std::make_unique<avcodec_software_encode_device_t>();
@@ -3325,6 +3368,7 @@ namespace video {
          negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81);
       software_encode_device->hdr_luminance_analysis_available =
         colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv;
+      software_analysis_enabled = software_encode_device->luminance_analysis_enabled;
 
       encode_device_final = std::move(software_encode_device);
     }
@@ -3414,6 +3458,43 @@ namespace video {
       session->hw_analysis_enabled = true;
       BOOST_LOG(info) << "HDR luminance analysis: sampling the hardware frame (1 in 4) for dynamic metadata"sv;
     }
+
+#if !defined(_WIN32)
+    // Publish what this stream can actually carry, so the WebUI runtime HDR
+    // panel (GET /api/runtime/hdr) has something truthful to show on Linux; the
+    // Windows capture device registers its own pipeline. SDR sessions register
+    // nothing, which leaves the endpoint with an empty pipeline list.
+    if (session->device && colorspace_is_hdr(session->device->colorspace)) {
+      hdr_pipeline_status_t runtime_status;
+      const bool use_pq = colorspace_is_pq(session->device->colorspace);
+      const bool use_hlg = colorspace_is_hlg(session->device->colorspace);
+      runtime_status.hdr_mode = use_pq ? "pq" : use_hlg ? "hlg" : "sdr";
+      runtime_status.analysis_mode = config::video.hdr_luminance_analysis;
+      runtime_status.analysis_active =
+        (use_pq || use_hlg) && (software_analysis_enabled || session->hw_analysis_enabled);
+      runtime_status.scene_metadata_active = false;
+      if (runtime_status.analysis_active) {
+        // Same rule as Windows: report the formats the stream can carry, not
+        // everything the transfer function would allow.
+        if (session->hdr10plus_side_data_wanted) {
+          runtime_status.metadata_formats.emplace_back("hdr10_plus");
+        }
+        if (session->vivid_splice_enabled) {
+          runtime_status.metadata_formats.emplace_back("hdr_vivid");
+        }
+      }
+      else if (config::video.hdr_luminance_analysis != "off"sv) {
+        runtime_status.analysis_failure_reason =
+          "no luminance statistics are available on this capture/encode path";
+      }
+      // Linux does not convert HDR with a shader: KMS capture already delivers
+      // PQ/HLG, so the conversion fields stay empty and the UI hides that line.
+      runtime_status.conversion_path.clear();
+
+      session->hdr_status = std::move(runtime_status);
+      session->publish_hdr_status();
+    }
+#endif
 
     if (dv_negotiated) {
       if (!dv_analysis_usable) {

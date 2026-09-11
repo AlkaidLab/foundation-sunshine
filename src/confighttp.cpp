@@ -2479,11 +2479,10 @@ namespace confighttp {
         { "success", true },
         { "status_code", 200 },
         { "status_message", "Success" },
-#ifdef _WIN32
+        // Both platforms can report it: Windows from its capture pipeline, and
+        // Linux from the avcodec session (an empty pipeline list means no HDR
+        // session is active rather than "unsupported").
         { "available", true },
-#else
-        { "available", false },
-#endif
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
         { "configured_rtx_hdr_mode", config::video.rtx_hdr },
