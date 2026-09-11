@@ -33,9 +33,12 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
 #include <systemd/sd-bus.h>
 
+#include "clipboard_blob_store.h"
 #include "clipboard_bridge.h"
+#include "clipboard_wire.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/linux/sdbus_session.h"
@@ -48,10 +51,7 @@ namespace clipboard_host {
     // Wire format constants live in the shared bridge header (canonical C++
     // mirror of the GUI agent's clipboard.rs).
     using clipboard_bridge::kEchoTtl;
-    using clipboard_bridge::kFrameHeaderBytes;
     using clipboard_bridge::kInlineThresholdBytes;
-    using clipboard_bridge::kKindText;
-    using clipboard_bridge::kWireVersion;
 
     constexpr auto kPollInterval = std::chrono::milliseconds { 1000 };
     constexpr auto kKlipperRetryInterval = std::chrono::milliseconds { 10'000 };
@@ -147,39 +147,14 @@ namespace clipboard_host {
       // Single-flavor changes carry token 0, matching the GUI agent's wire
       // contract: a non-zero token marks a compound burst that the peer may
       // coalesce, which must not apply to a standalone text copy.
-      constexpr std::uint32_t token = 0;
-      const auto len = static_cast<std::uint32_t>(text.size());
-
-      payload_t frame;
-      frame.reserve(kFrameHeaderBytes + text.size());
-      frame.push_back(kWireVersion);
-      frame.push_back(kKindText);
-      for (int i = 0; i < 4; ++i) {
-        frame.push_back(static_cast<std::uint8_t>((token >> (8 * i)) & 0xFF));
-      }
-      for (int i = 0; i < 4; ++i) {
-        frame.push_back(static_cast<std::uint8_t>((len >> (8 * i)) & 0xFF));
-      }
-      frame.insert(frame.end(), text.begin(), text.end());
-      return frame;
+      return clipboard_wire::encode_text(text);
     }
 
+    /**
+     * @brief Record and hand a peer-side text change to the klipper writer.
+     */
     void
-    on_inbound(clipboard_bridge::session_id, const payload_t &bytes) {
-      if (!config::input.clipboard_sync || bytes.size() < kFrameHeaderBytes || bytes[0] != kWireVersion || bytes[1] != kKindText) {
-        return;
-      }
-
-      const auto len = static_cast<std::uint32_t>(bytes[6]) |
-                       (static_cast<std::uint32_t>(bytes[7]) << 8) |
-                       (static_cast<std::uint32_t>(bytes[8]) << 16) |
-                       (static_cast<std::uint32_t>(bytes[9]) << 24);
-      if (bytes.size() < kFrameHeaderBytes + static_cast<std::size_t>(len)) {
-        return;
-      }
-
-      const std::string text { bytes.begin() + kFrameHeaderBytes, bytes.begin() + kFrameHeaderBytes + len };
-
+    apply_inbound_text(const std::string &text) {
       {
         std::lock_guard<std::mutex> lk(echo_mu);
         last_client_written = text;
@@ -189,6 +164,68 @@ namespace clipboard_host {
       // Recorded before the write (as before) so the echo of our own change is
       // suppressed even though the poll thread applies it slightly later.
       queue_klipper_write(text);
+    }
+
+    /**
+     * @brief Resolve a kKindRef frame against the local blob store.
+     * @details Only text is applied on this provider (images and file offers
+     *          still belong to the GUI agent); the mime decides, exactly as the
+     *          agent's inbound handler does.
+     */
+    void
+    on_inbound_ref(const payload_t &bytes) {
+      const auto header = clipboard_wire::parse_header(bytes);
+      if (!header) {
+        return;
+      }
+
+      const auto descriptor = clipboard_wire::parse_ref_descriptor(
+        std::string_view {
+          reinterpret_cast<const char *>(clipboard_wire::payload_of(bytes, *header).data()),
+          header->length });
+      if (!descriptor) {
+        BOOST_LOG(warning) << "Inbound clipboard REF: unusable descriptor"sv;
+        return;
+      }
+
+      if (!clipboard_wire::is_text_mime(descriptor->mime)) {
+        BOOST_LOG(info) << "Inbound clipboard REF: mime '"sv << descriptor->mime
+                        << "' is not handled by the host provider; ignoring"sv;
+        return;
+      }
+
+      const auto blob = clipboard_blob_store::get(descriptor->id);
+      if (!blob.found) {
+        BOOST_LOG(warning) << "Inbound clipboard REF: blob "sv << descriptor->id
+                           << " is missing or expired; ignoring"sv;
+        return;
+      }
+
+      apply_inbound_text(std::string { blob.bytes.begin(), blob.bytes.end() });
+    }
+
+    void
+    on_inbound(clipboard_bridge::session_id, const payload_t &bytes) {
+      if (!config::input.clipboard_sync) {
+        return;
+      }
+
+      const auto header = clipboard_wire::parse_header(bytes);
+      if (!header) {
+        return;
+      }
+
+      if (header->kind == clipboard_bridge::kKindRef) {
+        on_inbound_ref(bytes);
+        return;
+      }
+
+      if (header->kind != clipboard_bridge::kKindText) {
+        return;
+      }
+
+      const auto payload = clipboard_wire::payload_of(bytes, *header);
+      apply_inbound_text(std::string { payload.begin(), payload.end() });
     }
 
     /**
@@ -273,8 +310,22 @@ namespace clipboard_host {
             BOOST_LOG(debug) << "Clipboard change matches content written from a client; skipping"sv;
           }
           else if (content.size() > kInlineThresholdBytes) {
-            BOOST_LOG(debug) << "Host clipboard content too large for inline sync ("sv << content.size()
-                             << " bytes); skipping"sv;
+            // Too big for one wire frame: store it out of band and post the
+            // descriptor, the same route the GUI agent takes. The peer fetches
+            // the bytes from this host's blob endpoint.
+            auto stored = clipboard_blob_store::put(
+              payload_t { content.begin(), content.end() }, clipboard_bridge::kMimeText);
+            if (!stored.ok) {
+              BOOST_LOG(warning) << "Host clipboard content could not be stored for out-of-band sync ("sv
+                                 << content.size() << " bytes): "sv << stored.err;
+            }
+            else {
+              BOOST_LOG(debug) << "Posting host clipboard as an out-of-band blob ("sv << content.size()
+                               << " bytes, id "sv << stored.id << ")"sv;
+              clipboard_bridge::bridge_t::instance().enqueue_outbound(
+                clipboard_bridge::kBroadcast,
+                clipboard_wire::encode_ref(stored.id, clipboard_bridge::kMimeText, content.size()));
+            }
           }
           else {
             BOOST_LOG(debug) << "Posting host clipboard to clients ("sv << content.size() << " bytes)"sv;

@@ -64,6 +64,16 @@ namespace clipboard_bridge {
   /// store as a kKindRef frame (the agent's INLINE_THRESHOLD).
   constexpr std::size_t kInlineThresholdBytes = 60'000;
 
+  /// MIME strings used for out-of-band blobs. They are part of the wire
+  /// contract - a peer maps the descriptor's mime onto how the payload is
+  /// applied (the agent's MIME_TEXT/MIME_PNG) - so they are spelled once here.
+  constexpr auto kMimeText = "text/plain; charset=utf-8";
+  constexpr auto kMimePng = "image/png";
+
+  /// A kKindRef payload is a JSON descriptor {id, mime, size}; the agent
+  /// rejects ids outside these bounds.
+  constexpr std::size_t kMaxRefIdLength = 128;
+
   /// How long a value written by a peer is remembered to suppress its echo
   /// (the agent's ECHO_TTL).
   constexpr auto kEchoTtl = std::chrono::seconds { 5 };
