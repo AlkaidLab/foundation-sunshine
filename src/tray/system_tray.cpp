@@ -88,8 +88,16 @@ namespace system_tray {
     const auto qtitle = QString::fromUtf8(title.c_str());
     const auto qtext = QString::fromUtf8(text.c_str());
     if (yesno) {
-      const auto choice = QMessageBox::question(nullptr, qtitle, qtext, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-      return choice == QMessageBox::Yes;
+      // Windows uses MB_YESNO without MB_DEFBUTTON2, i.e. the default button is
+      // Yes; QMessageBox::question defaults to No, so both the button order and
+      // the default are set explicitly here. The warning icon is honoured for
+      // yes/no boxes too (the Windows reset-display prompt uses MB_ICONWARNING).
+      QMessageBox box { QMessageBox::Question, qtitle, qtext, QMessageBox::Yes | QMessageBox::No, nullptr };
+      if (as_warning) {
+        box.setIcon(QMessageBox::Warning);
+      }
+      box.setDefaultButton(QMessageBox::Yes);
+      return box.exec() == QMessageBox::Yes;
     }
     if (as_warning) {
       QMessageBox::warning(nullptr, qtitle, qtext);

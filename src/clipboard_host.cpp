@@ -112,7 +112,10 @@ namespace clipboard_host {
 
     payload_t
     encode_text_frame(const std::string &text) {
-      const auto token = next_token.fetch_add(1, std::memory_order_relaxed);
+      // Single-flavor changes carry token 0, matching the GUI agent's wire
+      // contract: a non-zero token marks a compound burst that the peer may
+      // coalesce, which must not apply to a standalone text copy.
+      constexpr std::uint32_t token = 0;
       const auto len = static_cast<std::uint32_t>(text.size());
 
       payload_t frame;

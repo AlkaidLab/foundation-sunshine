@@ -710,6 +710,17 @@ namespace abr {
         BOOST_LOG(info) << "ABR: foreground changed to '" << fg.window_title
                         << "' (" << fg.exe_name << ") pid=" << fg.pid;
       }
+      else if (fg.pid == 0 && !fg.exe_name.empty() && fg.exe_name != state.foreground_exe) {
+        // Producers that cannot always supply a pid (the Linux KWin script)
+        // still signal an app switch through the exe/class name. Windows always
+        // reports a pid, so this branch is inert there.
+        state.foreground_title = fg.window_title;
+        state.foreground_exe = fg.exe_name;
+        state.last_fg_pid = fg.pid;
+        state.app_changed = true;
+        BOOST_LOG(info) << "ABR: foreground changed to '" << fg.window_title
+                        << "' (" << fg.exe_name << ") pid=unknown";
+      }
       else if (fg.pid == state.last_fg_pid && !fg.window_title.empty()) {
         state.foreground_title = fg.window_title;
       }

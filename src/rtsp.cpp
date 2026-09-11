@@ -1119,7 +1119,13 @@ namespace rtsp_stream {
       // GUI agent is currently subscribed; otherwise the client would attempt
       // sync into a black hole.
       if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
-        caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+        caps |= platf::platform_caps::clipboard_text;
+#if defined(_WIN32)
+        // Only the Windows GUI agent implements image capture/apply; the Linux
+        // host provider (klipper) is text-only, so advertising image sync there
+        // would invite frames that nothing can service.
+        caps |= platf::platform_caps::clipboard_image;
+#endif
       }
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;

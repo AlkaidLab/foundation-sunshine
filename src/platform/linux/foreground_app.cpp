@@ -64,8 +64,19 @@ namespace platf::foreground_app {
 
       auto &state = cache();
       std::lock_guard lock { state.mutex };
-      state.info.pid = pid > 0 ? static_cast<std::uint32_t>(pid) : 0;
-      state.info.exe_name = resource_class ? resource_class : "";
+      const std::string exe_name = resource_class ? resource_class : "";
+      // KWin omits the pid for some windows (XWayland clients, transient
+      // dialogs). Keep the last known pid while the app class is unchanged so
+      // the shared ABR consumer still sees pid > 0 and can detect app switches;
+      // a different class without a pid reports 0, which the consumer handles
+      // through its exe-name comparison.
+      if (pid > 0) {
+        state.info.pid = static_cast<std::uint32_t>(pid);
+      }
+      else if (exe_name.empty() || exe_name != state.info.exe_name) {
+        state.info.pid = 0;
+      }
+      state.info.exe_name = exe_name;
       state.info.window_title = caption ? caption : "";
       state.updated = std::chrono::steady_clock::now();
       state.ever_reported = true;

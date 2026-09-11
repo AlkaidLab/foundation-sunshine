@@ -557,9 +557,22 @@ namespace platf {
         int status;
         const auto bytes = static_cast<int>(frame_count * sizeof(std::int16_t));
         if (pa_simple_write(mic_play.get(), samples, bytes, &status)) {
+          // Mirror the Windows return-code contract: a terminated/killed
+          // device asks the caller to reinitialize (-2, sink released), an
+          // oversized request is a dropped frame (0, like
+          // AUDCLNT_E_BUFFER_TOO_LARGE), anything else is a generic error (-1)
+          // that keeps the stream in place.
+          if (status == PA_ERR_TOOLARGE) {
+            BOOST_LOG(warning) << "pa_simple_write() dropped an oversized virtual microphone frame"sv;
+            return 0;
+          }
+          if (status == PA_ERR_CONNECTIONTERMINATED || status == PA_ERR_KILLED) {
+            BOOST_LOG(info) << "Virtual microphone device became unavailable: "sv << pa_strerror(status);
+            release_mic_redirect_device();
+            return -2;
+          }
           BOOST_LOG(error) << "pa_simple_write() to the virtual microphone failed: "sv << pa_strerror(status);
-          release_mic_redirect_device();
-          return -2;  // Device lost; mirrors the Windows reinitialize path.
+          return -1;
         }
 
         // Matches the Windows backend: report the number of bytes handed to
@@ -570,6 +583,15 @@ namespace platf {
 
       int
       init_mic_redirect_device() override {
+        // Honour the shared key exactly as the Windows backend does:
+        // "disabled" refuses the redirect. The USB/IP backend has no Linux
+        // counterpart, so "auto"/"usbip_experimental" fall back to this
+        // null-sink path (the Linux equivalent of the VB-Cable backend).
+        if (config::audio.microphone_redirect_backend == "disabled") {
+          BOOST_LOG(info) << "Client microphone redirection backend is disabled"sv;
+          return -1;
+        }
+
         if (mic_sink_index != PA_INVALID_INDEX && mic_play) {
           return 0;
         }
