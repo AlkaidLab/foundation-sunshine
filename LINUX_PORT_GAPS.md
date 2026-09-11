@@ -28,15 +28,13 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
   连接器），`create_vdd_monitor` 带 GUID 参数化显示名。受限于机器上的空闲连接器数量。
 - **工作量**：高。**验收**：两客户端同时各串各的虚拟屏互不干扰。
 
-### 1.2 VDD EDID 模式表
+### 1.2 VDD EDID 模式表 —— 🔶 大部分已解决（2026-09-11，`4e186f4b`，tag `v0.8.3`，pkgrel 32）
 
-- **现状**：个性化 EDID = 主屏模式表 + 兜底梯子（`vdd_edid.cpp` 的 `extra_modes`）。
-- **差距**：Windows SETMODES IOCTL 可下发任意完整自定义表；Linux 换模式需要连接器
-  循环闪断（重写 EDID → 下电 → 上电）。
-- **若要做**：把完整会话模式表一次性编入 EDID 的 CTA/DTD 区（EDID 块空间有限，需筛选）；
-  或运行时经 kscreen-doctor 热切已存在的模式（免闪断，`vdd_utils.cpp` 现有 `run_logged`
-  即可调 `output.<name>.mode.*`）。
-- **工作量**：中。**验收**：客户端请求非当前分辨率时不闪断、2 秒内切好。
+- **已完成**：手动创建参数化——`vdd_manual_resolution`/`vdd_manual_fps` 配置键控制托盘/
+  headless 创建的首选模式；EDID 阶梯改为从 `config::nvhttp.resolutions`×`fps` 构建（对齐
+  Windows SETMODES 的配置源），合成器可免重写 EDID 热切配置内的模式。
+- **剩余小项**：阶梯上限 6 个模式（EDID 空间限制，Windows SETMODES 无此限）；会话外
+  kscreen-doctor 热切已可用但未在 UI 暴露入口。
 
 ### 1.3 HDR 亮度分析精度
 
