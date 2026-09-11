@@ -313,22 +313,13 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
   2333 ms 再设最终值，是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段。Linux 的 VDD 是真实
   DRM 连接器、无对应症状，移植只会给每次新启用显示器加 2.3 s 延迟和一次多余 HDR 翻转；如实测
   出现同样症状再补（§5.6 已记录该判断）。
-- **D15/D16 复制拓扑不可表示 + 校验边界不一致**：KDE 镜像会话读回为多个扩展屏，请求复制组被拒绝
-  （= §1.5）；`is_topology_valid` 比自身 setter 宽松。
 
 **低**
 
 - **C5 剪贴板线协议常量跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
   TTL），但 Rust agent（`clipboard.rs`）仍是独立副本，值变动需人工同步；代码生成机制待决策。
-- **A5 麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数
-  2 B/帧（Windows 端点相关 4 B）、缓冲属性服务端默认（Windows 显式 100 ms）。
-- **A6 虚拟麦克风命名** `Sunshine-Virtual-Microphone` 为 Linux 自创（Windows 是驱动提供的
-  "VB-Audio Virtual Cable"），无共享常量。
 - **F3' 前台 exe 语义**：Linux 报 Wayland app class，Windows 报进程映像名（含 `.exe`），ABR 提示词
   按 `.exe` 措辞。
-- **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false
-  （Linux 的还原路径以"空 map = 无需还原"为由保留 true，见 §5.6）。
-- **D19 日志文案差异**：同一事件 Linux 英文 / Windows 中文（"串流结束"等）。
 - **F9 直方图估计器差异**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
   不建议改（信息性）。
 
@@ -506,5 +497,40 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 **Windows 影响**：注册逻辑整段在 `#if !defined(_WIN32)` 内，Windows 仍由采集端注册自己的管线；`available`
 在 Windows 本就是 true（文案与结构未变）。共享的状态注册表**已有** `test_video.cpp` 的
 `HdrPipelineStatus.RegistersUpdatesAndRemovesPipelineState` 覆盖（本轮先新增了一个重复用例，发现后删除）。
+
+**测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
+
+### 5.17 第十五轮修复（拓扑校验一致性，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R29 | **D16 `is_topology_valid` 比自身 setter 宽松** | Linux 的校验器现在**拒绝多设备组**（与 `set_topology` 的既有拒绝一致）：调用方不会再"通过校验、然后在 setter 里以另一条消息失败"；Windows 允许每组 ≤2 台，Linux 在有合成器侧后端之前根本无法表达一个镜像组。VDD prep 构造的都是单设备组，因此行为不变 |
+| R30 | **A6 虚拟麦克风命名常量** | `Sunshine-Virtual-Microphone` 从内联字面量提为 `k_mic_sink_description`（与已收敛的 `k_mic_sink_name` 并列），并注明 Windows 侧没有可对齐的常量——它的录音设备名由 VB-Cable 驱动提供 |
+
+### 5.18 有意保留的差异（决策记录，2026-09-11）
+
+以下项经复核判定**保持现状**，理由记录在此，便于日后按需推翻：
+
+- **D11 空容器契约**：Linux 的 `get_current_*` 以"空集合 = 全部已启用输出"、setter 以"空 map = 无需
+  处理（true）"为准；Windows 分别返回 `{}`/false。复核结论：树内**没有任何调用方**传空集合查询
+  （`get_current_display_modes`/`get_current_hdr_states` 的调用点都传明确集合），而 setter 的空 map
+  语义被还原路径依赖（"没有要还原的" → 不能算失败）。改成 Windows 语义只会把无操作变成失败。
+- **A5 麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数
+  2 B/帧（Windows 端点相关 4 B）、缓冲属性留服务端默认（Windows 显式 100 ms）。复核结论：消费者
+  `stream.cpp` 只区分 `==0`（丢帧计数）与 `<0`（重初始化），实际调用点不会传 null、不会重复 init；
+  若把 null/重复 init 改成 -1，反而会触发**无意义的重初始化循环**；改缓冲属性会影响丢帧时机，而本机
+  无法做音频端到端验证，收益（多一次转换）与风险不成比例。**设备命名**见 R30。
+- **D19 日志文案**：同一事件 Windows 中文 / Linux 英文。复核结论：Linux 端整个日志面是英文，混语种
+  更差；**面向用户的 UI 文案走托盘 i18n（中/英/日）**，中文用户看到的对话框仍是中文。日志字符串不
+  参与行为或线协议契约。若希望 Linux 日志也中文化，这是一次独立的、纯文案的改动。
+- **F3' 前台 exe 语义**：Linux 报 Wayland app class、Windows 报进程映像名（含 `.exe`）。复核结论：
+  Wayland 下没有等价的"进程映像名"来源（合成器只暴露 app_id/class），ABR 提示词里的 `.exe` 措辞是
+  共享资产；改成"猜进程名"会引入不可靠映射，保持现状。
+- **F9 直方图估计器**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
+  且 Linux 更精确；不建议改（信息性）。
+- **D15 复制拓扑**：**已核实 `kscreen-doctor` 没有任何 replication 设置命令**（只有 enable/disable/
+  mode/position/scale/rotation/hdr/brightness/wcg/icc/priority/custom mode 与 `--dpms`；`-o` 只能
+  *读出* "replication source: N"）。因此在 KDE 上实现镜像需要 **KWin 脚本**（与 ABR 前台检测同一套
+  D-Bus 加载模式）或 libkscreen/D-Bus。这是独立特性（工作量中-高），当前后端继续"复制组不可表示"。
 
 **测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。

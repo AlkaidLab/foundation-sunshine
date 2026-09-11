@@ -747,7 +747,16 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     注册。`conversion_path` 在 Linux 留空（KMS 直出 PQ/HLG，不做转换），前端因此不显示该行，避免被
     误标为 D3D11 路径。Windows 注册路径与文案未变（Linux 部分整段平台门控）。
 
-**测试基线复核（2026-09-11，pkgrel 52 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘、元数据、分析节奏、friendly name 与 HDR 状态之后）**：`ctest` 13 个套件
+37. **第十五轮：拓扑校验一致性与差异决策记录（2026-09-11）**：`is_topology_valid` 现在与自身 setter
+    一致地**拒绝多设备组**（此前会"通过校验、再在 setter 里以另一条消息失败"；Windows 允许每组 ≤2，
+    Linux 在有合成器侧后端前无法表达镜像组）。另外把 `Sunshine-Virtual-Microphone` 提为具名常量，并把
+    复核后**有意保留**的差异写入 `LINUX_PORT_GAPS.md` §5.18：D11 空容器契约（树内无空集合调用方，
+    setter 的空 map 语义被还原路径依赖）、A5 麦克风契约边界（改成 Windows 语义会触发无意义的重初始化，
+    缓冲属性改动无法在本机验证）、D19 日志文案（Linux 日志统一英文，用户可见 UI 走托盘 i18n 中/英/日）、
+    F3' 前台 exe 语义（Wayland 无进程映像名来源）、F9 直方图估计器（Linux 更精确）、D15 复制拓扑
+    （**已核实 kscreen-doctor 无 replication 设置命令**，需 KWin 脚本或 libkscreen，属独立特性）。
+
+**测试基线复核（2026-09-11，pkgrel 53 构建树 + 全部对齐轮次之后）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
