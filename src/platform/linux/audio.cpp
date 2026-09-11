@@ -214,6 +214,10 @@ namespace platf {
       // here so the module args, the playback stream and the monitor lookup
       // cannot drift apart.
       static constexpr auto k_mic_sink_name = "sink-sunshine-virtual-mic";
+      // User-visible sink description. Windows has no counterpart to match: its
+      // capture device is named by the VB-Cable driver, so this stays the
+      // Linux-side label for the same role.
+      static constexpr auto k_mic_sink_description = "Sunshine-Virtual-Microphone";
       std::uint32_t mic_sink_index = PA_INVALID_INDEX;
       util::safe_ptr<pa_simple, pa_simple_free> mic_play;
       // Default source in effect before the redirect switched it, restored on
@@ -692,7 +696,7 @@ namespace platf {
           std::string { "rate=" } + std::to_string(mic_mixer::sample_rate) +
           " sink_name=" + k_mic_sink_name +
           " format=float channels=1 channel_map=mono "
-          "sink_properties=device.description=Sunshine-Virtual-Microphone";
+          "sink_properties=device.description=" + std::string { k_mic_sink_description };
         auto alarm = safe::make_alarm<int>();
 
         op_t op {

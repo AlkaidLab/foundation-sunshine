@@ -1001,6 +1001,14 @@ namespace display_device {
       if (group.empty()) {
         return false;
       }
+      // Duplicated (mirrored) groups are not representable in this backend, so
+      // the validator rejects them exactly like set_topology does: callers must
+      // not pass validation only to fail inside the setter with a different
+      // message. Windows accepts up to two devices per group; Linux cannot
+      // express a group at all until a compositor-side backend exists.
+      if (group.size() > 1) {
+        return false;
+      }
       for (const auto &device_id : group) {
         if (device_id.empty() || !seen.insert(device_id).second) {
           return false;
