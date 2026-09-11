@@ -6,6 +6,8 @@ namespace system_tray_i18n {
   // String key constants
   extern const std::string KEY_QUIT_TITLE;
   extern const std::string KEY_QUIT_MESSAGE;
+  /// Linux variant of KEY_QUIT_MESSAGE: no GUI companion process is closed.
+  extern const std::string KEY_QUIT_MESSAGE_NO_GUI;
   
   // Menu item keys
   extern const std::string KEY_OPEN_SUNSHINE;
@@ -61,12 +63,14 @@ namespace system_tray_i18n {
   extern const std::string KEY_IMPORT_ERROR_TITLE;
   extern const std::string KEY_IMPORT_ERROR_WRITE;
   extern const std::string KEY_IMPORT_ERROR_EXCEPTION;
+  extern const std::string KEY_IMPORT_SUCCESS_MSG;
   extern const std::string KEY_EXPORT_SUCCESS_TITLE;
   extern const std::string KEY_EXPORT_SUCCESS_MSG;
   extern const std::string KEY_EXPORT_ERROR_TITLE;
   extern const std::string KEY_EXPORT_ERROR_WRITE;
   extern const std::string KEY_EXPORT_ERROR_NO_CONFIG;
   extern const std::string KEY_EXPORT_ERROR_EXCEPTION;
+  extern const std::string KEY_EXPORT_ERROR_PATH;
   extern const std::string KEY_RESET_CONFIRM_TITLE;
   extern const std::string KEY_RESET_CONFIRM_MSG;
   extern const std::string KEY_RESET_SUCCESS_TITLE;

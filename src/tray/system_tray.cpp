@@ -49,6 +49,8 @@
   // NB: avoid QCoreApplication::instance() here - the inline access to the
   // protected `self` symbol needs a copy relocation that a non-PIE link
   // cannot satisfy against libQt6Core.
+  #include <QDir>
+  #include <QFileDialog>
   #include <QMessageBox>
 #endif
 
@@ -226,11 +228,13 @@ namespace system_tray {
   void
   update_menu_texts() {
     init_localized_strings();
+
+    // One layout for both platforms: [0] Open, [1] separator, [2] Foundation
+    // Display, [3] Advanced Settings, [4] separator, [5] Language, [6]
+    // separator, [7] Star Project, [8] Visit Project, [9] separator,
+    // [10] Restart, [11] Quit. The Advanced Settings submenu is present on
+    // Linux now that its configuration operations are implemented there.
     tray_menus[0].text = s_open_sunshine.c_str();
-  #ifdef _WIN32
-    // Windows layout: [2] Foundation Display, [3] Advanced Settings,
-    // [5] Language, [7] Star Project, [8] Visit Project, [10] Restart,
-    // [11] Quit.
     tray_menus[2].text = s_vdd_base_display.c_str();
     update_vdd_submenu_text();
     update_vdd_menu_text();
@@ -245,23 +249,6 @@ namespace system_tray {
     tray_visit_project_submenu_text();
     tray_menus[10].text = s_restart.c_str();
     tray_menus[11].text = s_quit.c_str();
-  #else
-    // Linux layout: [2] Foundation Display, [4] Language, [6] Star Project,
-    // [7] Visit Project, [9] Restart, [10] Quit. The Advanced Settings
-    // submenu is Windows-only and is not part of the array.
-    tray_menus[2].text = s_vdd_base_display.c_str();
-    update_vdd_submenu_text();
-    update_vdd_menu_text();
-    tray_menus[4].text = s_language.c_str();
-    tray_menus[4].submenu[0].text = s_chinese.c_str();
-    tray_menus[4].submenu[1].text = s_english.c_str();
-    tray_menus[4].submenu[2].text = s_japanese.c_str();
-    tray_menus[6].text = s_star_project.c_str();
-    tray_menus[7].text = s_visit_project.c_str();
-    tray_visit_project_submenu_text();
-    tray_menus[9].text = s_restart.c_str();
-    tray_menus[10].text = s_quit.c_str();
-  #endif
   }
 
   auto tray_open_ui_cb = [](struct tray_menu *item) {
@@ -449,8 +436,14 @@ namespace system_tray {
       BOOST_LOG(info) << "User cancelled clearing cache"sv;
     }
   #else
-    // 非 Windows 平台，直接关闭
-    BOOST_LOG(info) << "Closing application from system tray"sv;
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP_CONFIRM_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP_CONFIRM_MSG),
+          true)) {
+      BOOST_LOG(info) << "User cancelled clearing cache"sv;
+      return;
+    }
+    BOOST_LOG(info) << "Clearing cache (terminating application) from system tray"sv;
     proc::proc.terminate();
   #endif
   };
@@ -562,9 +555,11 @@ namespace system_tray {
       return;
     }
   #else
+    // Linux has no GUI companion process, so the shared quit message's
+    // "(This will also close the Sunshine GUI application.)" would be wrong.
     if (!show_message_box(
           system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_TITLE),
-          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_MESSAGE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_MESSAGE_NO_GUI),
           true)) {
       BOOST_LOG(info) << "User cancelled quitting from system tray"sv;
       return;
@@ -885,8 +880,77 @@ namespace system_tray {
       }
     }
   #else
-    // 非Windows平台的实现（可以后续添加）
-    BOOST_LOG(info) << "[tray_import_config] Config import not implemented for this platform yet";
+    // Qt file dialog on the tray's QApplication thread. Same flow as Windows:
+    // validate the path and the contents, back the current configuration up,
+    // replace it atomically, then offer a restart so it takes effect.
+    const auto dialog_title = QString::fromUtf8(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SELECT_IMPORT).c_str());
+    const std::string filter_utf8 =
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES) + " (*.conf);;*";
+
+    const auto selected = QFileDialog::getOpenFileName(
+      nullptr, dialog_title, QDir::homePath(), QString::fromUtf8(filter_utf8.c_str()));
+    if (selected.isEmpty()) {
+      BOOST_LOG(info) << "[tray_import_config] No file selected"sv;
+      return;
+    }
+
+    const std::string file_path = selected.toStdString();
+    const auto show_import_error = [](const std::string &message) {
+      show_message_box(
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE),
+        message, false, true);
+    };
+
+    if (!is_safe_config_path(file_path)) {
+      BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe file path: " << file_path;
+      show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+      return;
+    }
+
+    try {
+      const std::string config_content = file_handler::read_file(file_path.c_str());
+      if (!is_safe_config_content(config_content)) {
+        BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe content: " << file_path;
+        show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+        return;
+      }
+
+      // Back up the current configuration before touching it.
+      const std::string backup_path = config::sunshine.config_file + ".backup";
+      const std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+      if (!current_config.empty() && file_handler::write_file(backup_path.c_str(), current_config) != 0) {
+        BOOST_LOG(error) << "[tray_import_config] Failed to create a backup, aborting the import"sv;
+        show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
+        return;
+      }
+
+      // Write a temporary file first so the replacement is atomic.
+      const std::string temp_path = config::sunshine.config_file + ".tmp";
+      if (file_handler::write_file(temp_path.c_str(), config_content) != 0) {
+        BOOST_LOG(error) << "[tray_import_config] Failed to write the temporary configuration"sv;
+        show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
+        return;
+      }
+
+      std::filesystem::rename(
+        file_handler::path_from_utf8(temp_path), file_handler::path_from_utf8(config::sunshine.config_file));
+      BOOST_LOG(info) << "[tray_import_config] Configuration imported from: " << file_path;
+
+      if (show_message_box(
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_TITLE),
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_MSG),
+            true)) {
+        BOOST_LOG(info) << "[tray_import_config] Restarting to apply the imported configuration"sv;
+        platf::restart();
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_import_config] Exception during config import: " << e.what();
+      std::error_code ec;
+      std::filesystem::remove(file_handler::path_from_utf8(config::sunshine.config_file + ".tmp"), ec);
+      show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+    }
   #endif
   };
 
@@ -1113,7 +1177,76 @@ namespace system_tray {
       }
     }
   #else
-    BOOST_LOG(info) << "[tray_export_config] Config export not implemented for this platform yet";
+    const auto dialog_title = QString::fromUtf8(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SAVE_EXPORT).c_str());
+    const std::string filter_utf8 =
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES) + " (*.conf)";
+    const std::string default_name =
+      config::sunshine.config_file.empty()
+        ? "sunshine.conf"
+        : std::filesystem::path(config::sunshine.config_file).filename().string();
+
+    const auto selected = QFileDialog::getSaveFileName(
+      nullptr, dialog_title, QDir::homePath() + "/" + QString::fromStdString(default_name),
+      QString::fromUtf8(filter_utf8.c_str()));
+    if (selected.isEmpty()) {
+      BOOST_LOG(info) << "[tray_export_config] No file selected"sv;
+      return;
+    }
+
+    const std::string file_path = selected.toStdString();
+    const auto show_export_error = [](const std::string &message) {
+      show_message_box(
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE),
+        message, false, true);
+    };
+
+    // Same guard rails as Windows: a regular .conf file, never a symlink.
+    try {
+      const auto target = file_handler::path_from_utf8(file_path);
+      if (target.extension() != ".conf" ||
+          (std::filesystem::exists(target) && std::filesystem::is_symlink(target))) {
+        BOOST_LOG(warning) << "[tray_export_config] Config export rejected: " << file_path;
+        show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_PATH));
+        return;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_export_config] Path validation error during export: " << e.what();
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_PATH));
+      return;
+    }
+
+    const std::string config_content = file_handler::read_file(config::sunshine.config_file.c_str());
+    if (config_content.empty()) {
+      BOOST_LOG(error) << "[tray_export_config] No configuration to export"sv;
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_NO_CONFIG));
+      return;
+    }
+
+    const std::string temp_path = file_path + ".tmp";
+    if (file_handler::write_file(temp_path.c_str(), config_content) != 0) {
+      BOOST_LOG(error) << "[tray_export_config] Failed to write the temporary configuration"sv;
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
+      return;
+    }
+
+    try {
+      std::filesystem::rename(file_handler::path_from_utf8(temp_path), file_handler::path_from_utf8(file_path));
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_export_config] Failed to move the temporary file: " << e.what();
+      std::error_code ec;
+      std::filesystem::remove(file_handler::path_from_utf8(temp_path), ec);
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
+      return;
+    }
+
+    BOOST_LOG(info) << "[tray_export_config] Configuration exported to: " << file_path;
+    show_message_box(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_TITLE),
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_MSG),
+      false);
   #endif
   };
 
@@ -1188,7 +1321,46 @@ namespace system_tray {
       }
     }
   #else
-    BOOST_LOG(info) << "Config reset not implemented for this platform yet";
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_CONFIRM_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_CONFIRM_MSG),
+          true, true)) {
+      BOOST_LOG(info) << "User cancelled resetting the configuration"sv;
+      return;
+    }
+
+    try {
+      // Back up first, then truncate: an empty configuration means defaults.
+      const std::string backup_path = config::sunshine.config_file + ".backup";
+      const std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+      if (!current_config.empty()) {
+        file_handler::write_file(backup_path.c_str(), current_config);
+      }
+
+      std::ofstream config_file(file_handler::path_from_utf8(config::sunshine.config_file));
+      if (config_file.is_open()) {
+        config_file.close();
+        BOOST_LOG(info) << "[tray_reset_config] Configuration reset successfully"sv;
+        show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_SUCCESS_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_SUCCESS_MSG),
+          false);
+      }
+      else {
+        BOOST_LOG(error) << "[tray_reset_config] Failed to reset the configuration file"sv;
+        show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_MSG),
+          false, true);
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_reset_config] Exception during config reset: " << e.what();
+      show_message_box(
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_TITLE),
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_EXCEPTION),
+        false, true);
+    }
   #endif
   };
 
@@ -1199,9 +1371,7 @@ namespace system_tray {
     // Foundation Display is available on Linux too: the vdd_utils backend
     // (native EDID override) implements the same operations.
     { .text = "Foundation Display", .submenu = vdd_submenu },
-  #ifdef _WIN32
     { .text = "Advanced Settings", .submenu = advanced_settings_submenu },
-  #endif
     { .text = "-" },
     { .text = "Language",
       .submenu =
@@ -1319,7 +1489,6 @@ namespace system_tray {
     vdd_submenu[3] = { .text = s_vdd_headless_create.c_str(), .checked = 0, .checkbox = 1, .cb = tray_vdd_headless_create_cb };
     vdd_submenu[4] = { .text = nullptr };
 
-  #ifdef _WIN32
     advanced_settings_submenu[0] = { .text = s_import_config.c_str(), .cb = tray_import_config_cb };
     advanced_settings_submenu[1] = { .text = s_export_config.c_str(), .cb = tray_export_config_cb };
     advanced_settings_submenu[2] = { .text = s_reset_to_default.c_str(), .cb = tray_reset_config_cb };
@@ -1327,7 +1496,6 @@ namespace system_tray {
     advanced_settings_submenu[4] = { .text = s_close_app.c_str(), .cb = tray_close_app_cb };
     advanced_settings_submenu[5] = { .text = s_reset_display_device_config.c_str(), .cb = tray_reset_display_device_config_cb };
     advanced_settings_submenu[6] = { .text = nullptr };
-  #endif
 
     // 初始化访问项目地址子菜单
     visit_project_submenu[0] = { .text = s_visit_project_sunshine.c_str(), .cb = tray_visit_project_sunshine_cb };
