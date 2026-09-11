@@ -38,6 +38,7 @@
 
 #include "clipboard_blob_store.h"
 #include "clipboard_bridge.h"
+#include "clipboard_echo.h"
 #include "clipboard_wire.h"
 #include "src/config.h"
 #include "src/logging.h"
@@ -55,6 +56,9 @@ namespace clipboard_host {
 
     constexpr auto kPollInterval = std::chrono::milliseconds { 1000 };
     constexpr auto kKlipperRetryInterval = std::chrono::milliseconds { 10'000 };
+    /// How long the poll thread waits before checking the bus for klipper's
+    /// change signal again; a queued client write wakes it immediately.
+    constexpr auto kBusWaitInterval = std::chrono::milliseconds { 200 };
 
     /// Bound on queued client-side writes; the newest clipboard content wins,
     /// so the oldest entry is dropped when a burst overflows.
@@ -63,14 +67,28 @@ namespace clipboard_host {
     constexpr const char *kKlipperService = "org.kde.klipper";
     constexpr const char *kKlipperPath = "/klipper";
     constexpr const char *kKlipperInterface = "org.kde.klipper.klipper";
+    /// klipper's change notification; the 1 s poll stays as a fallback for
+    /// builds without it.
+    constexpr const char *kKlipperChangeMatch =
+      "type='signal',interface='org.kde.klipper.klipper',member='clipboardHistoryUpdated'";
 
     std::atomic<bool> running { false };
     std::thread poll_thread;
     std::atomic<std::uint32_t> next_token { 1 };
 
+    // What this host last wrote towards klipper, in the agent's 16-entry ring
+    // form (a single slot missed the older of two consecutive client copies).
     std::mutex echo_mu;
-    std::string last_client_written;
-    std::chrono::steady_clock::time_point last_client_written_at {};
+    clipboard_echo::ring_t echo_ring;
+
+    /// Set by klipper's change signal, cleared when the clipboard is read.
+    std::atomic<bool> clipboard_dirty { false };
+
+    int
+    on_clipboard_changed(sd_bus_message *, void *, sd_bus_error *) {
+      clipboard_dirty.store(true, std::memory_order_release);
+      return 1;
+    }
 
     // Client-side changes waiting to be written to klipper. The enet control
     // thread only enqueues; the poll thread owns the provider's bus and applies
@@ -155,10 +173,11 @@ namespace clipboard_host {
      */
     void
     apply_inbound_text(const std::string &text) {
+      const auto bytes = std::span<const std::uint8_t> {
+        reinterpret_cast<const std::uint8_t *>(text.data()), text.size() };
       {
         std::lock_guard<std::mutex> lk(echo_mu);
-        last_client_written = text;
-        last_client_written_at = std::chrono::steady_clock::now();
+        echo_ring.record(clipboard_bridge::kKindText, bytes);
       }
 
       // Recorded before the write (as before) so the echo of our own change is
@@ -236,13 +255,16 @@ namespace clipboard_host {
       sd_bus *bus = open_bus();
       std::string last_seen;
       bool klipper_available = bus != nullptr;
+      bool change_signal_subscribed = false;
       bool had_sessions = false;
       bool logged_unavailable = false;
+      auto last_read = std::chrono::steady_clock::now() - kPollInterval;  // read immediately
 
       while (running.load(std::memory_order_acquire)) {
         if (!klipper_available) {
           bus = open_bus();
           klipper_available = bus != nullptr;
+          change_signal_subscribed = false;
           if (!klipper_available) {
             if (!logged_unavailable) {
               BOOST_LOG(info) << "Host clipboard sync unavailable (no session bus); will keep retrying"sv;
@@ -258,6 +280,31 @@ namespace clipboard_host {
         }
 
         clipboard_bridge::bridge_t::instance().notify_gui_alive();
+
+        // Ask klipper to tell us when the clipboard changes; the periodic read
+        // below stays as a fallback for builds without the signal.
+        if (!change_signal_subscribed) {
+          change_signal_subscribed =
+            sd_bus_add_match(bus, nullptr, kKlipperChangeMatch, on_clipboard_changed, nullptr) >= 0;
+          if (!change_signal_subscribed) {
+            BOOST_LOG(debug) << "Host clipboard: klipper change signal unavailable; polling only"sv;
+          }
+        }
+
+        // Observe queued bus traffic first, so a change signal that arrived
+        // while we waited is acted on now instead of up to a second later.
+        int processed = 0;
+        while ((processed = sd_bus_process(bus, nullptr)) > 0) {
+        }
+        if (processed < 0) {
+          BOOST_LOG(debug) << "Host clipboard: session bus lost; reconnecting"sv;
+          sd_bus_unref(bus);
+          bus = nullptr;
+          klipper_available = false;
+          change_signal_subscribed = false;
+          std::this_thread::sleep_for(kKlipperRetryInterval);
+          continue;
+        }
 
         // Apply client-side changes here rather than on the enet control
         // thread, which only enqueues them.
@@ -278,12 +325,26 @@ namespace clipboard_host {
           }
         }
 
+        const auto now = std::chrono::steady_clock::now();
+        const bool due = clipboard_dirty.exchange(false, std::memory_order_acq_rel) ||
+                         (now - last_read) >= kPollInterval;
+        if (!due) {
+          // Nothing to do: wait for a queued write or the next bus check.
+          std::unique_lock<std::mutex> lk { write_mu };
+          write_cv.wait_for(lk, kBusWaitInterval, [&] {
+            return !pending_writes.empty() || !running.load(std::memory_order_acquire);
+          });
+          continue;
+        }
+        last_read = now;
+
         std::string content;
         if (!klipper_get(bus, content)) {
           // klipper may have gone away (session teardown); reopen on the next pass.
           sd_bus_unref(bus);
           bus = nullptr;
           klipper_available = false;
+          change_signal_subscribed = false;
           std::this_thread::sleep_for(kKlipperRetryInterval);
           continue;
         }
@@ -302,8 +363,9 @@ namespace clipboard_host {
           bool is_echo = false;
           {
             std::lock_guard<std::mutex> lk(echo_mu);
-            const auto age = std::chrono::steady_clock::now() - last_client_written_at;
-            is_echo = content == last_client_written && age < kEchoTtl;
+            const auto bytes = std::span<const std::uint8_t> {
+              reinterpret_cast<const std::uint8_t *>(content.data()), content.size() };
+            is_echo = echo_ring.is_echo(clipboard_bridge::kKindText, bytes);
           }
 
           if (is_echo) {
@@ -334,11 +396,12 @@ namespace clipboard_host {
           }
         }
 
-        // Sleep, but wake immediately when a client-side write arrives so the
-        // clipboard hand-off stays responsive.
+        // Wait briefly: a queued client write wakes this immediately, and the
+        // short timeout keeps the bus check (and therefore klipper's change
+        // signal) responsive while the 1 s fallback read stays the safety net.
         {
           std::unique_lock<std::mutex> lk { write_mu };
-          write_cv.wait_for(lk, kPollInterval, [&] {
+          write_cv.wait_for(lk, kBusWaitInterval, [&] {
             return !pending_writes.empty() || !running.load(std::memory_order_acquire);
           });
         }
