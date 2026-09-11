@@ -1239,6 +1239,76 @@ namespace display_device::vdd_utils {
     }
 
     /**
+     * @brief Whether this process runs inside a niri session.
+     * @details niri exports NIRI_SOCKET to every child, so its presence is the
+     *          cheapest reliable discriminator (plain getenv: the AT_SECURE
+     *          file capabilities only affect libc's secure_getenv users).
+     */
+    bool
+    niri_session() {
+      const char *socket = ::getenv("NIRI_SOCKET");
+      return socket && *socket;
+    }
+
+    /**
+     * @brief Whether an executable exists in the usual bin directories.
+     * @details Used to pick a compositor control tool without spawning a shell
+     *          probe per call; a wrong guess only costs one failed command.
+     */
+    bool
+    tool_available(const char *name) {
+      for (const char *dir : { "/usr/bin", "/usr/local/bin", "/bin" }) {
+        if (::access((std::string { dir } + "/" + name).c_str(), X_OK) == 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * @brief Ask the compositor to light up a connector.
+     * @details The DRM-level CRTC assignment is what actually brings the output
+     *          up; this is the compositor-side nudge that makes it paint. KDE
+     *          keeps the tested kscreen-doctor path, niri is reached through its
+     *          own IPC, and other Wayland compositors through wlr-randr
+     *          (wlr-output-management, covering sway/Hyprland/river/...); X11
+     *          sessions fall back to xrandr. Unknown sessions are a no-op:
+     *          compositors normally enable a newly connected output themselves,
+     *          so this must never be treated as a failure.
+     */
+    void
+    enable_output_via_compositor(const std::string &connector) {
+      const char *xdg_desktop = ::getenv("XDG_CURRENT_DESKTOP");
+      const std::string desktop = xdg_desktop ? xdg_desktop : "";
+
+      if (desktop.find("KDE") != std::string::npos || desktop.find("plasma") != std::string::npos) {
+        enable_output_via_compositor(connector);
+        return;
+      }
+
+      if (niri_session()) {
+        run_logged("niri msg output " + connector + " on");
+        return;
+      }
+
+      if (tool_available("wlr-randr")) {
+        run_logged("wlr-randr --output " + connector + " --on");
+        return;
+      }
+
+      if (::getenv("DISPLAY") && tool_available("xrandr")) {
+        run_logged("xrandr --output " + connector + " --auto");
+        return;
+      }
+
+      static std::atomic<bool> logged { false };
+      if (!logged.exchange(true)) {
+        BOOST_LOG(info) << "vdd: no compositor output control for ["sv << desktop
+                        << "]; relying on the compositor to auto-enable new outputs"sv;
+      }
+    }
+
+    /**
      * @brief Best-effort "make this output the primary display" hint, keyed
      *        by desktop environment. There is no DRM-level primary concept,
      *        so each desktop gets its native mechanism; unsupported desktops
@@ -1268,6 +1338,14 @@ namespace display_device::vdd_utils {
         // simple one-shot setter, so only note the limitation.
         BOOST_LOG(info) << "vdd: GNOME has no simple primary-output setter; "sv << connector
                         << " stays in the extended layout"sv;
+        return;
+      }
+
+      if (niri_session()) {
+        // niri has no primary-output concept at all: every output is part of
+        // one scrollable layout, so there is nothing to hint.
+        BOOST_LOG(info) << "vdd: niri has no primary-output concept; "sv << connector
+                        << " joins the layout"sv;
         return;
       }
 
@@ -1963,7 +2041,7 @@ namespace display_device::vdd_utils {
           if (!connector_has_crtc(active_card, connector)) {
             force_crtc_assignment("/dev/dri/" + active_card, connector);
           }
-          run_logged("kscreen-doctor output." + connector + ".enable");
+          enable_output_via_compositor(connector);
         }
       }
     }
@@ -2173,7 +2251,7 @@ namespace display_device::vdd_utils {
         crtc_assigned = true;
         break;
       }
-      run_logged("kscreen-doctor output." + connector + ".enable");
+      enable_output_via_compositor(connector);
       crtc_assigned = connector_has_crtc(card, connector);
       if (!crtc_assigned) {
         std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
@@ -2184,7 +2262,7 @@ namespace display_device::vdd_utils {
       BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
     }
     else {
-      run_logged("kscreen-doctor output." + connector + ".enable");
+      enable_output_via_compositor(connector);
     }
 
     active = true;

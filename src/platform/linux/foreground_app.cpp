@@ -3,11 +3,16 @@
  * @brief Foreground window tracking for ABR, Linux side.
  *
  * The Windows backend reads GetForegroundWindow() on demand. A Wayland
- * compositor does not let regular clients query focus, so on KDE Plasma we
- * load a tiny KWin script once and let it push active-window changes to a
- * private D-Bus service hosted here; detect() serves the cached report.
- * Desktops without KWin keep returning empty info and ABR degrades the same
- * way it does today.
+ * compositor does not let regular clients query focus, so focus is taken from
+ * whichever control interface the running session offers:
+ *
+ *   KDE Plasma - a tiny KWin script pushes active-window changes to a private
+ *                D-Bus service hosted here (the tested path).
+ *   niri       - `niri msg --json focused-window` is polled through niri's own
+ *                IPC CLI (niri has no KWin, and its socket is per-session).
+ *
+ * detect() serves the cached report. Desktops with neither keep returning
+ * empty info and ABR degrades the same way it does today.
  */
 #include "foreground_app.h"
 
@@ -15,15 +20,18 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <poll.h>
 #include <thread>
 
+#include <nlohmann/json.hpp>
 #include <systemd/sd-bus.h>
 
 #include "sdbus_session.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/logging.h"
 
 namespace platf::foreground_app {
@@ -36,6 +44,10 @@ namespace platf::foreground_app {
     constexpr const char *kPluginName = "sunshine_foreground_report";
     constexpr auto kSetupRetryInterval = std::chrono::seconds { 30 };
     constexpr auto kReloadInterval = std::chrono::seconds { 300 };
+    // niri pushes focus changes over its event stream, but a polled query keeps
+    // this path simple and matches ABR's own 10 s detection interval.
+    constexpr auto kNiriPollInterval = std::chrono::seconds { 2 };
+    constexpr auto kNiriCommandTimeout = std::chrono::milliseconds { 3000 };
 
     struct cache_t {
       std::mutex mutex;
@@ -53,6 +65,31 @@ namespace platf::foreground_app {
     std::atomic<bool> worker_started { false };
     std::atomic<bool> worker_running { false };
 
+    /**
+     * @brief Record one report, whichever producer supplied it.
+     * @details KWin omits the pid for some windows (XWayland clients, transient
+     *          dialogs) and niri can as well. Keep the last known pid while the
+     *          app class is unchanged so the shared ABR consumer still sees
+     *          pid > 0 and can detect app switches; a different class without a
+     *          pid reports 0, which the consumer handles through its exe-name
+     *          comparison.
+     */
+    void
+    store_report(std::uint32_t pid, const std::string &exe_name, const std::string &window_title) {
+      auto &state = cache();
+      std::lock_guard lock { state.mutex };
+      if (pid > 0) {
+        state.info.pid = pid;
+      }
+      else if (exe_name.empty() || exe_name != state.info.exe_name) {
+        state.info.pid = 0;
+      }
+      state.info.exe_name = exe_name;
+      state.info.window_title = window_title;
+      state.updated = std::chrono::steady_clock::now();
+      state.ever_reported = true;
+    }
+
     int
     on_report(sd_bus_message *m, void *, sd_bus_error *) {
       std::int32_t pid = 0;
@@ -62,24 +99,10 @@ namespace platf::foreground_app {
         return 0;
       }
 
-      auto &state = cache();
-      std::lock_guard lock { state.mutex };
-      const std::string exe_name = resource_class ? resource_class : "";
-      // KWin omits the pid for some windows (XWayland clients, transient
-      // dialogs). Keep the last known pid while the app class is unchanged so
-      // the shared ABR consumer still sees pid > 0 and can detect app switches;
-      // a different class without a pid reports 0, which the consumer handles
-      // through its exe-name comparison.
-      if (pid > 0) {
-        state.info.pid = static_cast<std::uint32_t>(pid);
-      }
-      else if (exe_name.empty() || exe_name != state.info.exe_name) {
-        state.info.pid = 0;
-      }
-      state.info.exe_name = exe_name;
-      state.info.window_title = caption ? caption : "";
-      state.updated = std::chrono::steady_clock::now();
-      state.ever_reported = true;
+      store_report(
+        pid > 0 ? static_cast<std::uint32_t>(pid) : 0,
+        resource_class ? resource_class : "",
+        caption ? caption : "");
       return 1;
     }
 
@@ -249,16 +272,154 @@ try {
       }
     }
 
+    /**
+     * @brief Whether a D-Bus name currently has an owner.
+     * @details Asked of the bus daemon rather than sd_bus_get_name_owner(),
+     *          which the systemd headers do not expose on every version.
+     */
+    bool
+    name_has_owner(const char *name) {
+      sd_bus *bus = sdbus::open_user_bus();
+      if (!bus) {
+        return false;
+      }
+
+      sd_bus_error err = SD_BUS_ERROR_NULL;
+      sd_bus_message *reply = nullptr;
+      bool has_owner = false;
+
+      const int rc = sd_bus_call_method(
+        bus,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        &err,
+        &reply,
+        "s",
+        name);
+      if (rc >= 0 && reply) {
+        int value = 0;
+        if (sd_bus_message_read(reply, "b", &value) >= 0) {
+          has_owner = value != 0;
+        }
+      }
+
+      if (reply) {
+        sd_bus_message_unref(reply);
+      }
+      sd_bus_error_free(&err);
+      sd_bus_unref(bus);
+      return has_owner;
+    }
+
+    /**
+     * @brief Whether a KWin instance owns the session-bus name.
+     * @details Used only to pick the producer: KDE sessions keep the tested
+     *          KWin path even if niri happens to be installed.
+     */
+    bool
+    kwin_is_running() {
+      return name_has_owner("org.kde.KWin");
+    }
+
+    /**
+     * @brief Poll niri for the focused window.
+     * @details niri exposes focus through its IPC CLI; the command prints a
+     *          JSON object, or `null` when nothing is focused (which leaves the
+     *          cache untouched, matching how the KWin script only reports on
+     *          activations and how the Windows query keeps the last app on an
+     *          empty foreground window).
+     */
+    void
+    niri_worker() {
+      BOOST_LOG(info) << "foreground: niri focused-window tracking enabled"sv;
+
+      bool failure_logged = false;
+      while (worker_running.load(std::memory_order_acquire)) {
+        const auto result = display_device::vdd_utils::run_logged("niri msg --json focused-window", kNiriCommandTimeout);
+        if (result.exit_code == 0) {
+          failure_logged = false;
+          info_t info;
+          if (parse_niri_focused_window(result.output, info)) {
+            store_report(info.pid, info.exe_name, info.window_title);
+          }
+        }
+        else if (!failure_logged) {
+          failure_logged = true;
+          BOOST_LOG(warning) << "foreground: `niri msg --json focused-window` failed (exit "sv
+                             << result.exit_code << "); ABR app classification degraded"sv;
+        }
+
+        // Sleep in small slices so a shutdown is observed promptly.
+        const auto deadline = std::chrono::steady_clock::now() + kNiriPollInterval;
+        while (worker_running.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+          std::this_thread::sleep_for(std::chrono::milliseconds { 100 });
+        }
+      }
+    }
+
     void
     start_worker() {
       if (worker_started.exchange(true)) {
         return;
       }
       worker_running.store(true, std::memory_order_release);
+
+      // KDE first (the long-tested path); otherwise niri's IPC, probed with the
+      // very query the poller uses so an installed-but-not-running niri does
+      // not steal the KWin path.
+      if (!kwin_is_running() &&
+          display_device::vdd_utils::run_logged("niri msg --json focused-window", kNiriCommandTimeout).exit_code == 0) {
+        std::thread(niri_worker).detach();
+        return;
+      }
+
       std::thread(worker).detach();
     }
 
   }  // namespace
+
+  bool
+  parse_niri_focused_window(const std::string &json_text, info_t &out) {
+    if (json_text.empty()) {
+      return false;
+    }
+
+    nlohmann::json doc;
+    try {
+      doc = nlohmann::json::parse(json_text);
+    }
+    catch (const std::exception &e) {
+      static std::atomic<bool> logged { false };
+      if (!logged.exchange(true)) {
+        BOOST_LOG(debug) << "foreground: cannot parse niri window JSON: "sv << e.what();
+      }
+      return false;
+    }
+
+    if (!doc.is_object()) {
+      // niri prints `null` when no window is focused.
+      return false;
+    }
+
+    // Field-by-field and type-checked: a renamed or retyped field must cost that
+    // field only, not the whole report.
+    const auto string_field = [&doc](const char *key) {
+      const auto it = doc.find(key);
+      return it != doc.end() && it->is_string() ? it->get<std::string>() : std::string {};
+    };
+    const auto integer_field = [&doc](const char *key) {
+      const auto it = doc.find(key);
+      return it != doc.end() && it->is_number() ? it->get<std::int64_t>() : std::int64_t { 0 };
+    };
+
+    out.window_title = string_field("title");
+    out.exe_name = string_field("app_id");
+    const auto pid = integer_field("pid");
+    out.pid = pid > 0 ? static_cast<std::uint32_t>(pid) : 0;
+    return !out.window_title.empty() || !out.exe_name.empty();
+  }
 
   info_t
   detect() {
@@ -269,7 +430,7 @@ try {
     if (!state.ever_reported) {
       static std::atomic<bool> logged { false };
       if (!logged.exchange(true)) {
-        BOOST_LOG(info) << "foreground: no KWin report yet; ABR app classification degraded"sv;
+        BOOST_LOG(info) << "foreground: no active-window report yet; ABR app classification degraded"sv;
       }
     }
     return state.info;

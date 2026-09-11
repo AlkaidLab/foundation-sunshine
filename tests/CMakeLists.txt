@@ -307,9 +307,11 @@ if (WIN32)
     list(REMOVE_ITEM TEST_SOURCES
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
             ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
-    # vdd_edid is a Linux-only target file (EDID synthesis for the KMS virtual
-    # display); its byte-compare test has nothing to link against on Windows.
+    # vdd_edid and foreground_app are Linux-only target files (EDID synthesis
+    # for the KMS virtual display, compositor focus producers); their tests
+    # have nothing to link against on Windows.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_edid\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_foreground_app\.cpp")
 else ()
     # Windows-host test sources must not reach non-Windows builds.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")
