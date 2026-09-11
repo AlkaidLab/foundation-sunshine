@@ -306,9 +306,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **高**
 
-- **A1 麦克风背压契约在 Linux 无生产者**：`pa_simple_write` 阻塞且未设缓冲属性，卡住的 sink 会阻塞
-  共享混音线程；`stream.cpp` 的 `wasapi_backpressure_drops` 恒为 0（Windows 用 padding 预检非阻塞返回 0）。
-  修需改用 `pa_stream` 可写字节反馈或带界限的等待。
 - **F1 亮度分析器只挂在 avcodec 软件设备**：VAAPI（始终 `data != nullptr`）与 CUDA 开启的会话既无统计，
   `hdr_luminance_analysis_available` 也保持 false → 这些平台没有 HDR10+/DV/Vivid。本机
   （`SUNSHINE_ENABLE_CUDA=OFF` + nvenc）与 software 编码器不受影响。
@@ -413,3 +410,16 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 **测试基线**：12/13 套件通过、聚合套件 0 断言失败。这些路径需要真实合成器才能端到端验证
 （本机 agent 会话无 WAYLAND_DISPLAY/bus），逻辑对照 Windows 实现逐条核对。
+
+### 5.7 第五轮修复（麦克风背压，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R12 | **A1 麦克风背压契约在 Linux 无生产者** | 新增 `src/platform/linux/mic_queue.h`（有界帧队列：容量 5 帧 = 100 ms，与 Windows 端点缓冲同量级）+ `audio.cpp` 内的 writer 线程：`write_mic_pcm()` 只入队（**永不阻塞共享混音线程**），队列满即返回文档约定的 `0`（丢帧，等价 Windows 的 padding 预检），`stream.cpp` 的 `wasapi_backpressure_drops` 因此变为真实计数；`pa_simple_write` 的阻塞写与错误码映射（-2 设备丢失 / -1 一般错误）移到 writer 线程，错误在下一次 `write_mic_pcm()` 上报，调用方的重初始化契约不变 |
+| — | 7 个队列单元测试 | FIFO 顺序与载荷、满队列报背压、空帧不算背压、stop 唤醒空队列等待者、stop 丢弃待发帧、pop 被 push 唤醒、reset 重新武装（全部有界，不会挂住测试） |
+
+**说明**：`release_mic_redirect_device()` 与析构都会先 stop+join writer 再销毁 `pa_simple`
+（顺序受控）；若 PipeWire/PulseAudio 服务端彻底僵死，`join` 仍可能被阻塞中的写卡住——这与改造前
+"写调用直接卡在会话线程上"的暴露面相同，未加重也未消除（无 timeout 版 pa_simple API 可用）。
+
+**测试基线**：12/13 套件通过、聚合套件 501 用例 489 通过 / 12 跳过 / 0 断言失败。

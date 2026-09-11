@@ -655,8 +655,18 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       （blank HDR toggle）是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段，Linux 的 VDD 是真实
       DRM 连接器、无该症状，**有意不移植**（如实测出现同症状再补）。
 
-**测试基线复核（2026-09-11，pkgrel 42 构建树 + 对齐审计、niri 起步与 display_device 失败处理之后）**：`ctest` 13 个套件
-12 个通过。聚合套件 `test_sunshine` 共 494 个用例：482 通过、12 跳过（1 个 Unicode 路径用例 +
+27. **第五轮：麦克风背压契约落地（2026-09-11）**：Windows 后端从不阻塞共享麦克风线程（查端点
+    剩余缓冲，满则返回 0 丢帧），Linux 原先直接 `pa_simple_write` 阻塞写——卡住的 sink 会拖住混音
+    线程（并推迟 mix 定时器），且 `stream.cpp` 的 `wasapi_backpressure_drops` 恒为 0。现改为
+    **有界队列 + writer 线程**（`src/platform/linux/mic_queue.h`，容量 5 帧 = 100 ms，与 Windows
+    端点缓冲同量级）：`write_mic_pcm()` 只入队，永不阻塞；队列满返回 0（文档约定的背压丢帧），
+    阻塞写与错误码映射（-2 设备丢失 / -1 一般错误）移到 writer 线程并在下一次调用上报，调用方的
+    重初始化契约不变。队列逻辑带 7 个单元测试（FIFO/满队列/stop 唤醒与丢弃/reset 重武装等）。
+    说明：析构与 release 先 stop+join writer 再销毁流；若音频服务端彻底僵死，join 仍可能被写阻塞
+    ——与改造前"写卡在会话线程"的暴露面相同，未加重。
+
+**测试基线复核（2026-09-11，pkgrel 43 构建树 + 对齐审计、niri 起步、失败处理与麦克风背压之后）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 501 个用例：489 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧
