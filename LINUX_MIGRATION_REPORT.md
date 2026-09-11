@@ -740,7 +740,14 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       让所有非 KDE 会话进入 deferred-retry 并给客户端一个无法修复的报错），但把日志从 info 提到
       **warning** 并明确说明"显示设置未被应用、串流按当前布局继续"，消除"静默假装成功"的含糊。
 
-**测试基线复核（2026-09-11，pkgrel 51 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘、元数据、分析节奏与 friendly name 之后）**：`ctest` 13 个套件
+36. **第十四轮：WebUI HDR 运行时状态（2026-09-11）**：`GET /api/runtime/hdr` 此前在 Linux 恒报
+    `available=false`（Windows 由采集端注册状态）。现由 **avcodec 会话**注册同一套共享状态：会话建立时
+    按"实际能承载什么"填写（pq/hlg/sdr、分析模式、分析是否活跃、**确实能发**的元数据格式
+    hdr10_plus/hdr_vivid），首帧有效统计时置 `scene_metadata_active` 并刷新，析构时注销；SDR 会话不
+    注册。`conversion_path` 在 Linux 留空（KMS 直出 PQ/HLG，不做转换），前端因此不显示该行，避免被
+    误标为 D3D11 路径。Windows 注册路径与文案未变（Linux 部分整段平台门控）。
+
+**测试基线复核（2026-09-11，pkgrel 52 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘、元数据、分析节奏、friendly name 与 HDR 状态之后）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。

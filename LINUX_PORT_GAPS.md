@@ -329,7 +329,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 - **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false
   （Linux 的还原路径以"空 map = 无需还原"为由保留 true，见 §5.6）。
 - **D19 日志文案差异**：同一事件 Linux 英文 / Windows 中文（"串流结束"等）。
-- **F11 WebUI HDR 状态端点硬编码 `available=false`**：Linux 无生产者上报（即使分析器在本机可用）。
 - **F9 直方图估计器差异**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
   不建议改（信息性）。
 
@@ -495,5 +494,17 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 |---|---|---|
 | R26 | **D17 friendly name 只是连接器名** | 新增 Linux 专用 EDID 读取器 `src/platform/linux/edid.h`（校验头 + 解析基块四个描述符槽里的 Display Product Name（tag 0xFC），按 NUL/0x0A 截断并去除填充空格；纯字节变换、可单测）。`enum_available_devices()` 的 `friendly_name` 改为 EDID 名（无名字描述符时退回连接器名），`get_display_friendly_name()` 对物理屏同样返回 EDID 名，`find_device_by_friendlyname()` 改为**遍历所有设备**匹配（Windows 同语义），虚拟屏仍走 ZAKO_NAME 快路径。于是：WebUI 设备列表显示显示器型号而非 `DP-1`，配置里的"显示器"字段可用型号名解析（此前只有 VDD 能用 friendly name）。**本机实测**：内建面板的 EDID 是合法基块但**没有**名字描述符（真实世界的常见情况）→ 正确退回 `eDP-1`；断开连接器 EDID 为 0 字节 → 同样退回。带 5 个单元测试（含用自家生成器产出的 EDID 做往返、任意描述符槽、截断/填充、缺描述符、畸形 blob） |
 | R27 | **D18 合成器不可用时静默成功** | **判定为有意保留 + 提高可见性**：Linux 上"没有 kscreen-doctor"是**会话的持久属性**（非 KDE/无头），不是 Windows 那种"锁屏后重试"的暂时状态；返回失败会把每个非 KDE 会话推入 deferred-retry 并让客户端看到无法修复的报错。因此结果仍为 success，但日志从 info 提升为 **warning**，并明确写出"客户端的显示设置（分辨率/HDR/拓扑/主屏）**未被应用**，串流按当前桌面布局继续"——不再像成功那样含糊 |
+
+**测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
+
+### 5.16 第十四轮修复（WebUI HDR 运行时状态，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R28 | **F11 WebUI HDR 状态在 Linux 恒为不可用** | `GET /api/runtime/hdr` 的 `available` 不再按平台写死：Linux 由 **avcodec 会话**注册同一套共享状态（`video::hdr_pipeline_status_t`）——会话建立时按"实际能承载什么"填写（`hdr_mode` = pq/hlg/sdr、`analysis_mode` 取配置值、`analysis_active` = 本会话确有分析生产者、`metadata_formats` 只在分析激活时列出程序**确实能发**的格式 `hdr10_plus`/`hdr_vivid`），首帧有效统计到达时把 `scene_metadata_active` 置真并刷新，会话析构时注销；SDR 会话不注册（`pipelines` 为空即"当前无 HDR 会话"）。`conversion_path` 在 Linux 显式留空——Linux 不做 HDR 转换（KMS 直出 PQ/HLG），前端对空值不显示该行，避免误标成 "D3D11 Pixel Shader"；分析不可用且非用户关闭时填 `analysis_failure_reason` |
+
+**Windows 影响**：注册逻辑整段在 `#if !defined(_WIN32)` 内，Windows 仍由采集端注册自己的管线；`available`
+在 Windows 本就是 true（文案与结构未变）。共享的状态注册表**已有** `test_video.cpp` 的
+`HdrPipelineStatus.RegistersUpdatesAndRemovesPipelineState` 覆盖（本轮先新增了一个重复用例，发现后删除）。
 
 **测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
