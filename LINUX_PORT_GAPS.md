@@ -309,19 +309,11 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 **中**
 
 - **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
-- **D7 "blank HDR toggle" 有意不移植**：Windows 在切换 HDR 前把新启用显示器先切到相反状态、等
-  2333 ms 再设最终值，是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段。Linux 的 VDD 是真实
-  DRM 连接器、无对应症状，移植只会给每次新启用显示器加 2.3 s 延迟和一次多余 HDR 翻转；如实测
-  出现同样症状再补（§5.6 已记录该判断）。
 
 **低**
 
 - **C5 剪贴板线协议常量跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
   TTL），但 Rust agent（`clipboard.rs`）仍是独立副本，值变动需人工同步；代码生成机制待决策。
-- **F3' 前台 exe 语义**：Linux 报 Wayland app class，Windows 报进程映像名（含 `.exe`），ABR 提示词
-  按 `.exe` 措辞。
-- **F9 直方图估计器差异**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
-  不建议改（信息性）。
 
 ### 5.3 审计确认无差异（抽样）
 
@@ -523,6 +515,9 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 - **D19 日志文案**：同一事件 Windows 中文 / Linux 英文。复核结论：Linux 端整个日志面是英文，混语种
   更差；**面向用户的 UI 文案走托盘 i18n（中/英/日）**，中文用户看到的对话框仍是中文。日志字符串不
   参与行为或线协议契约。若希望 Linux 日志也中文化，这是一次独立的、纯文案的改动。
+- **D7 "blank HDR toggle"**：Windows 在切换 HDR 前把新启用显示器先切到相反状态、等 2333 ms 再设最终值，
+  是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段；Linux 的 VDD 是真实 DRM 连接器、无对应症状，
+  移植只会给每次新启用显示器加 2.3 s 延迟与一次多余 HDR 翻转。如实测出现同症状再补。
 - **F3' 前台 exe 语义**：Linux 报 Wayland app class、Windows 报进程映像名（含 `.exe`）。复核结论：
   Wayland 下没有等价的"进程映像名"来源（合成器只暴露 app_id/class），ABR 提示词里的 `.exe` 措辞是
   共享资产；改成"猜进程名"会引入不可靠映射，保持现状。
