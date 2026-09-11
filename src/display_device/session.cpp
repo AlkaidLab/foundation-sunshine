@@ -539,6 +539,15 @@ namespace display_device {
           return false;
         }
 
+        // 流已在采集时应用显示设置，会在 sealed frame channel 之下重建 VDD 的
+        // 拓扑/模式/HDR，生产端被杀后没有任何通知采集管线重置的通道，视频线程
+        // 将永远等不到新帧（与静态桌面不可区分），造成黑屏+僵尸会话并污染后续
+        // 会话。放弃本次延迟应用，由下一个会话在 launch 阶段应用（安全路径）。
+        if (rtsp_stream::session_count() > 0) {
+          BOOST_LOG(warning) << "Skipping deferred display settings: a stream is active and applying them mid-stream would invalidate the capture pipeline. They will be applied at the next session start.";
+          return true;
+        }
+
         if (should_prepare_vdd) {
           const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
           if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
