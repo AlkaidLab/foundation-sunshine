@@ -43,6 +43,8 @@
 #include "src/logging.h"
 #include "src/utility.h"
 
+#include "edid.h"
+
 namespace display_device {
 
   struct settings_t::persistent_data_t {
@@ -517,6 +519,25 @@ namespace display_device {
 
   }  // namespace
 
+  /**
+   * @brief The monitor name a connector's EDID advertises, if any.
+   * @details Windows resolves the display friendly name through the display
+   *          API, which reads the same EDID bytes; Linux reads the kernel's
+   *          sysfs blob. Panels without a name descriptor (some laptop panels)
+   *          yield an empty string and callers fall back to the connector id.
+   */
+  std::string
+  connector_edid_name(const std::filesystem::path &sysfs_dir) {
+    std::ifstream edid_file { sysfs_dir / "edid", std::ios::binary };
+    if (!edid_file) {
+      return {};
+    }
+
+    std::vector<std::uint8_t> blob((std::istreambuf_iterator<char>(edid_file)), std::istreambuf_iterator<char>());
+    const auto name = edid::monitor_name(blob);
+    return name.value_or(std::string {});
+  }
+
   device_info_map_t
   enum_available_devices() {
     // Enumerate live DRM connectors from sysfs. The session flow matches
@@ -565,7 +586,14 @@ namespace display_device {
 
       device_info_t info;
       info.display_name = connector;
-      info.friendly_name = connector;
+      // The friendly name is what the EDID calls the monitor, matching Windows
+      // (which resolves it from the same bytes); the connector id stays the
+      // display name because that is what this backend needs for capture and
+      // mode changes. Panels without a name descriptor keep the id.
+      info.friendly_name = connector_edid_name(entry.path());
+      if (info.friendly_name.empty()) {
+        info.friendly_name = connector;
+      }
       // "active" must mean *enabled*, not merely plugged in: Windows reports
       // DISPLAYCONFIG_PATH_ACTIVE, and the VDD preservation logic treats an
       // active device as one the user wants lit. DRM's sysfs `enabled`
@@ -611,6 +639,22 @@ namespace display_device {
     if (device_id == vdd_utils::live_virtual_display_connector()) {
       return std::string { ZAKO_NAME };
     }
+
+    // Physical displays: the EDID name, which is also what an enumerating
+    // caller sees. Unknown connectors keep their id, as before.
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm", ec }) {
+      const auto name = entry.path().filename().string();
+      const auto dash = name.find('-');
+      if (dash == std::string::npos || name.compare(0, 4, "card") != 0) {
+        continue;
+      }
+      if (name.substr(dash + 1) == device_id) {
+        const auto edid_name = connector_edid_name(entry.path());
+        return edid_name.empty() ? device_id : edid_name;
+      }
+    }
+
     return device_id;
   }
 
@@ -1075,9 +1119,17 @@ namespace display_device {
     const auto current_topology = get_current_topology();
     if (current_topology.empty()) {
       // Nothing the compositor layer can manage (kscreen-doctor missing or no
-      // enabled outputs): keep the historical no-op behavior so streaming
-      // does not regress on setups where this backend cannot operate.
-      BOOST_LOG(info) << "Compositor display management unavailable; skipping display configuration.";
+      // enabled outputs). The result stays a success on purpose: on Linux this
+      // is a persistent property of the session (no compositor tool at all, or
+      // a headless setup), not the transient lock/unlock condition Windows
+      // retries on, so reporting a failure would put every non-KDE session into
+      // the deferred-retry path with a client-visible error for something the
+      // host cannot fix. The stream continues and the request is simply not
+      // applied - which the warning below states explicitly rather than
+      // pretending the settings were changed.
+      BOOST_LOG(warning) << "Compositor display management unavailable (kscreen-doctor missing or no enabled "
+                            "output): the client's display settings (resolution, HDR, topology, primary) "
+                            "were NOT applied; the stream continues with the current desktop layout.";
       return { apply_result_t::result_e::success };
     }
 
@@ -1537,10 +1589,28 @@ namespace display_device {
 
   std::string
   find_device_by_friendlyname(const std::string &friendly_name) {
-    if (friendly_name != ZAKO_NAME) {
+    if (friendly_name.empty()) {
       return {};
     }
-    return vdd_utils::live_virtual_display_connector();
+
+    // The virtual display answers to the shared friendly name directly; its
+    // EDID carries the same name, so the general search below would find it too
+    // (this path just avoids depending on the read).
+    if (friendly_name == ZAKO_NAME) {
+      if (const auto vdd = vdd_utils::live_virtual_display_connector(); !vdd.empty()) {
+        return vdd;
+      }
+    }
+
+    // Physical displays are matched by the name their EDID advertises, the same
+    // way Windows searches its enumerated devices.
+    for (const auto &[device_id, info] : enum_available_devices()) {
+      if (info.friendly_name == friendly_name) {
+        return device_id;
+      }
+    }
+
+    return {};
   }
 
 }  // namespace display_device
