@@ -3,6 +3,7 @@
  * @brief Tests for HEVC prefix SEI and AV1 metadata OBU carriage of T.35 payloads.
  */
 #include <src/video_hdr_bitstream.h>
+#include <src/video_hdr_metadata.h>
 
 #include "../tests_common.h"
 
@@ -412,4 +413,40 @@ TEST(HdrBitstream, StripsDolbyVisionRpus) {
   // Stripping is idempotent.
   EXPECT_FALSE(strip_hevc_dolby_vision_rpus(frame));
   EXPECT_EQ(count_rpu_nals(frame), 0u);
+}
+
+TEST(HdrBitstream, SplicesASerializedVividPayloadAheadOfPictureData) {
+  // Mirrors what the avcodec path does for HDR Vivid: FFmpeg has no CUVA
+  // serializer, so the payload is built here, wrapped as a prefix SEI unit, and
+  // spliced into the access unit before the first VCL NAL.
+  video::hdr_metadata::vivid_metadata_t vivid;
+  vivid.valid = true;
+  vivid.minimum_maxrgb_pq = 1;
+  vivid.average_maxrgb_pq = 100;
+  vivid.variance_maxrgb_pq = 7;
+  vivid.maximum_maxrgb_pq = 200;
+
+  bytes_t payload;
+  ASSERT_GT(video::hdr_metadata::serialize_vivid_t35(vivid, payload), 0u);
+  // Registered ITU-T T.35 header: China, CUVA provider, system_start_code 1.
+  const bytes_t t35_prefix { 0x26, 0x00, 0x04, 0x00, 0x05, 0x01 };
+  ASSERT_GE(payload.size(), t35_prefix.size());
+  EXPECT_TRUE(std::equal(t35_prefix.begin(), t35_prefix.end(), payload.begin()));
+
+  bytes_t units;
+  ASSERT_TRUE(append_t35_unit(codec_e::hevc, payload, units));
+
+  const bytes_t au {
+    0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0C,  // VPS
+    0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF,  // IDR_W_RADL slice
+  };
+
+  bytes_t frame = au;
+  ASSERT_TRUE(insert(codec_e::hevc, units, frame));
+  ASSERT_EQ(frame.size(), au.size() + units.size());
+
+  // The unit lands one byte past the slice's leading zero and is a prefix SEI.
+  EXPECT_TRUE(std::equal(units.begin(), units.end(), frame.begin() + 8));
+  EXPECT_EQ(frame[8 + 4] >> 1, 39) << "expected a prefix SEI NAL (type 39)";
+  EXPECT_EQ(frame.back(), 0xAF) << "picture data must stay intact and last";
 }

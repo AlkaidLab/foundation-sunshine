@@ -702,6 +702,10 @@ namespace video {
       frame_timestamps = std::move(other.frame_timestamps);
       dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
       dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
+      dolby_vision_ = std::move(other.dolby_vision_);
+      vivid_splice_enabled = other.vivid_splice_enabled;
+      vivid_codec = other.vivid_codec;
+      staged_vivid_units = std::move(other.staged_vivid_units);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -833,6 +837,16 @@ namespace video {
     // Dolby Vision P8.1 RPU state; inert unless the session negotiated it and
     // the analyzer can feed L1 (see make_avcodec_encode_session).
     dolby_vision::rpu_injector_t dolby_vision_;
+
+    // HDR Vivid (CUVA) carriage. FFmpeg has no Vivid T.35 serializer (only a
+    // parser), so unlike HDR10+ the payload cannot ride the frame side data;
+    // it is built from the filtered analyzer output and spliced into the
+    // access unit, exactly like the Dolby Vision RPU above. Inert unless the
+    // negotiated colorspace/format can carry Vivid.
+    bool vivid_splice_enabled = false;
+    hdr_bitstream::codec_e vivid_codec {};
+    // Keyed by the submitted frame index, which comes back as the packet pts.
+    std::unordered_map<std::uint64_t, std::vector<std::uint8_t>> staged_vivid_units;
   };
 
   /**
@@ -2427,6 +2441,7 @@ namespace video {
 
     // Update per-frame dynamic metadata. HDR10+ and HDR Vivid intentionally use
     // their own temporal models because their standards define different fields.
+    std::vector<std::uint8_t> vivid_units;
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
@@ -2437,7 +2452,34 @@ namespace video {
           filtered.hdr10plus_stats,
           filtered.vivid,
           session.dynamic_metadata_target_peak_nits);
+
+        // HDR Vivid cannot ride the side data: FFmpeg ships a Vivid parser but
+        // no serializer, so build the registered T.35 payload here and stage it
+        // for the access unit that carries this frame's pts back. The temporal
+        // filtering above is shared with the side-data path, so both formats
+        // stay frame-aligned. HLG would additionally need the Vivid startup
+        // preroll gate the native paths use, but the analyzer is PQ-only, so
+        // HLG never yields valid stats here.
+        if (session.vivid_splice_enabled && filtered.vivid.valid) {
+          std::vector<std::uint8_t> payload;
+          if (hdr_metadata::serialize_vivid_t35(filtered.vivid, payload) > 0) {
+            if (!hdr_bitstream::append_t35_unit(session.vivid_codec, payload, vivid_units)) {
+              vivid_units.clear();
+            }
+          }
+        }
       }
+    }
+
+    if (!vivid_units.empty()) {
+      // Bound the in-flight map: entries are consumed by pts when the encoder
+      // surfaces the packet, but a dropped frame would otherwise leak one.
+      constexpr std::uint64_t kMaxVividInFlight = 64;
+      if (session.staged_vivid_units.size() >= kMaxVividInFlight) {
+        session.staged_vivid_units.clear();
+        BOOST_LOG(warning) << "HDR Vivid: staged metadata queue overflowed; dropping pending units"sv;
+      }
+      session.staged_vivid_units[submitted_frame_index] = std::move(vivid_units);
     }
 
     // send the frame to the encoder
@@ -2471,17 +2513,33 @@ namespace video {
         BOOST_LOG(debug) << "Frame "sv << frame_nr << ": IDR Keyframe (AV_FRAME_FLAG_KEY)"sv;
       }
 
-      if (session.dolby_vision_.enabled() && av_packet->data && av_packet->size > 0) {
-        // The injector appends the RPU NAL (with its start code) to the
-        // access unit; round-trip through a buffer since AVPacket owns a
-        // fixed allocation API.
+      // Both dynamic-metadata carriages splice into the same access unit, so
+      // collect them into one buffer and grow the packet once.
+      std::vector<std::uint8_t> vivid_units;
+      if (session.vivid_splice_enabled && av_packet->pts >= 0) {
+        if (const auto it = session.staged_vivid_units.find(static_cast<std::uint64_t>(av_packet->pts));
+            it != session.staged_vivid_units.end()) {
+          vivid_units = std::move(it->second);
+          session.staged_vivid_units.erase(it);
+        }
+      }
+
+      if ((session.dolby_vision_.enabled() || !vivid_units.empty()) && av_packet->data && av_packet->size > 0) {
+        // The injectors append to the access unit; round-trip through a buffer
+        // since AVPacket owns a fixed allocation API.
         std::vector<uint8_t> bitstream(av_packet->data, av_packet->data + av_packet->size);
-        session.dolby_vision_.inject(av_packet->pts, bitstream);
+        if (session.dolby_vision_.enabled()) {
+          session.dolby_vision_.inject(av_packet->pts, bitstream);
+        }
+        if (!vivid_units.empty() &&
+            !hdr_bitstream::insert(session.vivid_codec, vivid_units, bitstream)) {
+          BOOST_LOG(debug) << "HDR Vivid: no SEI insertion point in this access unit; skipping"sv;
+        }
         const auto injected_size = (int) bitstream.size();
         if (injected_size != av_packet->size) {
           if (injected_size > av_packet->size &&
               av_grow_packet(av_packet, injected_size - av_packet->size) < 0) {
-            BOOST_LOG(warning) << "Dolby Vision: cannot grow the packet for the RPU; skipping"sv;
+            BOOST_LOG(warning) << "Dynamic metadata: cannot grow the packet; skipping"sv;
           }
           else {
             memcpy(av_packet->data, bitstream.data(), injected_size);
@@ -3092,19 +3150,19 @@ namespace video {
 
         // HDR Vivid dynamic metadata (GB/T 46269.1-2025) - both PQ and HLG.
         //
-        // NOTE: this side data currently cannot reach the bitstream on the avcodec path.
         // FFmpeg ships a serializer for HDR10+ (av_dynamic_hdr_plus_to_t35) but has no
         // CUVA counterpart: libavcodec/dynamic_hdr_vivid.c defines only
         // ff_parse_itu_t_t35_to_dynamic_hdr_vivid, i.e. parsing for decode. So no FFmpeg
-        // encoder turns AV_FRAME_DATA_DYNAMIC_HDR_VIVID into an SEI/OBU today.
+        // encoder turns AV_FRAME_DATA_DYNAMIC_HDR_VIVID into an SEI/OBU, and on the
+        // avcodec path the payload is built and spliced by encode_avcodec() instead
+        // (Linux only: on Windows the avcodec family stays declared Vivid-incapable
+        // and the native NVENC/AMF paths hand-write the T.35 payload themselves).
         //
-        // We still attach and maintain it so the metadata is correct the moment a
-        // serializer exists, but HDR Vivid output is in practice only produced by the
-        // native NVENC path (see nvenc_base.cpp, which hand-writes the T.35 payload).
-        // Encoders routed through avcodec (QSV, AMF, software) will not emit it.
-        //
-        // Field values are deliberately left zero-initialized rather than filled with
-        // invented defaults: update_hdr_dynamic_metadata() populates them from real
+        // The side data is still attached and maintained: it keeps the frame's
+        // declared metadata correct, and is what a future FFmpeg serializer would
+        // consume. Field values are deliberately left zero-initialized rather than
+        // filled with invented defaults: update_hdr_dynamic_metadata() populates them
+        // from real
         // analyzer statistics once the 32-frame filter reports valid output, and a
         // fabricated "average 0.5 / maximum 1.0" frame is worse than an absent one.
         if (dynamic_hdr_formats.vivid) {
@@ -3183,6 +3241,20 @@ namespace video {
       colorspace_is_pq(encode_device_final->colorspace);
     const bool dv_analysis_usable = hdr_luminance_analysis_usable(encode_device_final->hdr_luminance_analysis_available);
 
+    // HDR Vivid carriage on the avcodec path. FFmpeg ships a Vivid parser but no
+    // serializer, so the CUVA T.35 payload is built in encode_avcodec() and
+    // spliced into the access unit. Linux is avcodec-only, so this is what makes
+    // Vivid reachable there at all; on Windows the avcodec family is deliberately
+    // declared Vivid-incapable (display_vram.cpp) and Vivid rides the native
+    // NVENC/AMF paths, so the behaviour there is left untouched.
+#if !defined(_WIN32)
+    const auto vivid_formats = hdr_metadata::formats_for(encode_device_final->colorspace, config.videoFormat);
+    const auto vivid_codec = hdr_bitstream::codec_for(config.videoFormat);
+#else
+    const hdr_metadata::formats_t vivid_formats {};
+    const std::optional<hdr_bitstream::codec_e> vivid_codec;
+#endif
+
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
@@ -3190,6 +3262,12 @@ namespace video {
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
+
+    if (vivid_formats.vivid && vivid_codec) {
+      session->vivid_splice_enabled = true;
+      session->vivid_codec = *vivid_codec;
+      BOOST_LOG(info) << "HDR Vivid dynamic metadata: CUVA T.35 will be spliced on the avcodec path"sv;
+    }
 
     if (dv_negotiated) {
       if (!dv_analysis_usable) {
