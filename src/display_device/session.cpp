@@ -543,8 +543,15 @@ namespace display_device {
         // 拓扑/模式/HDR，生产端被杀后没有任何通知采集管线重置的通道，视频线程
         // 将永远等不到新帧（与静态桌面不可区分），造成黑屏+僵尸会话并污染后续
         // 会话。放弃本次延迟应用，由下一个会话在 launch 阶段应用（安全路径）。
-        if (rtsp_stream::session_count() > 0) {
-          BOOST_LOG(warning) << "Skipping deferred display settings: a stream is active and applying them mid-stream would invalidate the capture pipeline. They will be applied at the next session start.";
+        //
+        // 已注册 launch ticket 但尚未完成 RTSP PLAY 的在途启动同样要排除：
+        // 其 configure_display 已经执行完毕，慢客户端可能在应用中途打开采集。
+        // ticket 从 /launch 注册存活到 PLAY 之后，与 _session_slots 无缝衔接，
+        // 因此「活跃流或在途启动」恒可覆盖每一个即将插入的会话。检查之后才
+        // 发起的 /launch 无此风险：其 configure_display 会阻塞在 session_t::mutex
+        // 上（本重试持锁运行），采集必然晚于本次应用。
+        if (rtsp_stream::session_count() > 0 || rtsp_stream::pending_session_count() > 0) {
+          BOOST_LOG(warning) << "Skipping deferred display settings: a stream is active or a session launch is in progress. They will be applied at the next session start.";
           return true;
         }
 
