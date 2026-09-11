@@ -693,8 +693,17 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     id 上限放 `clipboard_bridge.h` 共享），并补 6 个跨平台单元测试。图片（KIND_PNG）与文件投递
     （KIND_FILE_OFFER）在 Linux 主机侧仍不支持（§1.4/§2.2）。
 
-**测试基线复核（2026-09-11，pkgrel 46 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义与剪贴板 blob 之后）**：`ctest` 13 个套件
-12 个通过。聚合套件 `test_sunshine` 共 509 个用例：497 通过、12 跳过（1 个 Unicode 路径用例 +
+31. **第九轮：剪贴板回声环形与事件驱动（2026-09-11）**：
+    - **回声抑制改为 agent 同款环形（C6）**：新增 `src/clipboard_echo.h`（16 项 `(kind, payload-hash)`
+      + TTL，满则丢最旧、检查前剪枝），provider 换用它；连续两次客户端写入后，主机复制较早那个值
+      不再被回广播。5 个跨平台单元测试。
+    - **klipper 变更事件驱动（C7）**：订阅 `clipboardHistoryUpdated` 信号（`sd_bus_add_match`）并每轮
+      `sd_bus_process` 排空总线，等待缩短到 200 ms（排队写入仍即时唤醒）；1 s 周期读保留为兜底，
+      信号不可用时行为与之前完全一致。新 sd-bus 用法已在真实会话总线上用独立程序验证（规则被接受、
+      fd/process 行为符合预期）。
+
+**测试基线复核（2026-09-11，pkgrel 47 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板 blob 与事件驱动之后）**：`ctest` 13 个套件
+12 个通过。聚合套件 `test_sunshine` 共 514 个用例：502 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
 本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧

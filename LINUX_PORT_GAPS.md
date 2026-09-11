@@ -327,8 +327,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 - **C5 剪贴板线协议常量跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
   TTL），但 Rust agent（`clipboard.rs`）仍是独立副本，值变动需人工同步；代码生成机制待决策。
-- **C6 回声抑制单槽 vs 16 项环形**（TTL 相同）：连续两次客户端写入后，主机复制旧值会被多广播一次。
-- **C7 1 秒轮询 vs 事件驱动监听**（klipper 变更信号）：同一 tick 内两次复制只保留最后一次。
 - **A5 麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数
   2 B/帧（Windows 端点相关 4 B）、缓冲属性服务端默认（Windows 显式 100 ms）。
 - **A6 虚拟麦克风命名** `Sunshine-Virtual-Microphone` 为 Linux 自创（Windows 是驱动提供的
@@ -454,3 +452,12 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 **仍未覆盖**：图片类（KIND_PNG）双向与文件投递（KIND_FILE_OFFER）在 Linux 主机侧仍不支持（= §1.4/§2.2）。
 
 **测试基线**：12/13 套件通过、聚合套件 509 用例 497 通过 / 12 跳过 / 0 断言失败。
+
+### 5.11 第九轮修复（剪贴板回声与事件驱动，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R18 | **C6 回声抑制单槽 vs agent 的 16 项环形** | 新增 `src/clipboard_echo.h`：16 项 `(kind, payload-hash)` 环形 + TTL（默认取共享 `kEchoTtl`），语义逐条对照 Rust agent 的 `EchoState`（record 满则丢最旧、is_echo 先剪枝再按 kind+hash 比对；用 kind 字段合并 agent 的文本/图片两条环）。provider 的 echo 状态换成该环形并加锁使用；「连续两次客户端写入后主机复制旧值会被多广播一次」的问题消失。5 个跨平台单元测试（匹配/多写入/过期/容量淘汰与环绕/clear） |
+| R19 | **C7 1 秒轮询 vs klipper 变更信号** | 订阅 `org.kde.klipper.klipper` 的 `clipboardHistoryUpdated` 信号（`sd_bus_add_match`），每轮先 `sd_bus_process` 排空总线；等待从 1 s 改为 200 ms（有排队写入立即唤醒），读到变更信号即刻读取剪贴板，**1 s 周期读仍作兜底**（信号不可用时仅记 debug 并退回原行为）。已用独立小程序在**真实会话总线**上验证：匹配规则被总线接受、`sd_bus_get_fd`/`sd_bus_process` 行为符合循环预期（klipper 正在运行） |
+
+**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败。
