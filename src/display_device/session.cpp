@@ -535,34 +535,26 @@ namespace display_device {
                            should_prepare_vdd,
                            vulkan_hdr_bridge_requested]() {
         if (settings.is_changing_settings_going_to_fail()) {
-          BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
+          BOOST_LOG(warning) << "[Display Deferred Retry] CCD access is still unavailable; retrying later";
           return false;
         }
 
-        // 流已在采集时应用显示设置，会在 sealed frame channel 之下重建 VDD 的
-        // 拓扑/模式/HDR，生产端被杀后没有任何通知采集管线重置的通道，视频线程
-        // 将永远等不到新帧（与静态桌面不可区分），造成黑屏+僵尸会话并污染后续
-        // 会话。放弃本次延迟应用，由下一个会话在 launch 阶段应用（安全路径）。
-        //
-        // 已注册 launch ticket 但尚未完成 RTSP PLAY 的在途启动同样要排除：
-        // 其 configure_display 已经执行完毕，慢客户端可能在应用中途打开采集。
-        // ticket 从 /launch 注册存活到 PLAY 之后，与 _session_slots 无缝衔接，
-        // 因此「活跃流或在途启动」恒可覆盖每一个即将插入的会话。检查之后才
-        // 发起的 /launch 无此风险：其 configure_display 会阻塞在 session_t::mutex
-        // 上（本重试持锁运行），采集必然晚于本次应用。
-        if (rtsp_stream::session_count() > 0 || rtsp_stream::pending_session_count() > 0) {
-          BOOST_LOG(warning) << "Skipping deferred display settings: a stream is active or a session launch is in progress. They will be applied at the next session start.";
+        // 延迟任务不能在会话准备或采集期间重建显示路径。NVHTTP 准备计数覆盖
+        // configure_display 返回到 RTSP ticket 发布之间的窗口；ticket 和活跃
+        // 会话计数覆盖后续握手及串流生命周期。之后才进入的请求会阻塞在本锁上。
+        if (rtsp_stream::session_starting_or_active()) {
+          BOOST_LOG(warning) << "[Display Deferred Retry] Active-session guard triggered; skipping display changes and deferring them to the next session start";
           return true;
         }
 
         if (should_prepare_vdd) {
           const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
           if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
-            BOOST_LOG(warning) << "The rebuilt VDD has not published the requested mode yet; retrying the deferred display configuration";
+            BOOST_LOG(warning) << "[Display Deferred Retry] The rebuilt VDD has not published the requested mode yet; retrying later";
             return false;
           }
           if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
-            BOOST_LOG(warning) << "The deferred VDD topology change is still unavailable; retrying without tearing down the active monitor";
+            BOOST_LOG(warning) << "[Display Deferred Retry] The VDD topology change is still unavailable; retrying without tearing down the active monitor";
             return false;
           }
         }
@@ -577,7 +569,7 @@ namespace display_device {
         }
         retry_session.hdr_capabilities = hdr_capabilities;
         if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
-          BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
+          BOOST_LOG(warning) << "[Display Deferred Retry] Applying display settings failed; stopping retries while allowing the stream to continue";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
           restore_state_impl(revert_reason_e::config_cleanup);
@@ -593,11 +585,12 @@ namespace display_device {
           platf::vulkan_hdr_bridge::disable();
         }
 #endif
+        BOOST_LOG(info) << "[Display Deferred Retry] Display settings applied successfully";
         pending_vdd_.reset();
         return true;
       });
 
-      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
+      BOOST_LOG(warning) << "[Display Deferred Retry] CCD access is unavailable; allowing the stream to start and scheduling a display-settings retry";
       return {
         configure_result_t::result_e::deferred_retry,
         "Display settings cannot be changed yet; Sunshine will retry while the stream starts.",
