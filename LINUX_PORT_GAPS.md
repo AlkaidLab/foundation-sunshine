@@ -14,7 +14,8 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU）、剪贴板文本双向、远程麦克风、ABR 前台检测、
 托盘（状态实时化 + 消息框）/向导/打包。
 
-剩余：**7 项部分实现（1.2 已解决，不再计入）、10 项可行未做、9 项本质不可移植**。
+剩余：**7 项部分实现（1.2 已解决，不再计入）、10 项可行未做、9 项本质不可移植**。另完成一轮
+**已移植部分的 Windows 对齐审计（§五）**：修复 15 项偏差，其余按影响排序待决策。
 
 ---
 
@@ -62,9 +63,8 @@
   首次查询时扫描 VHD 签名连接器、还原跟踪路径、从 DTD 解析回偏好模式。
 
 **剩余小项**：生成器空白模型（8% / 2.5%）比 CVT-R 保守，个别真实模式（如 3440x1440@120）被
-可行性过滤器排除——校准空白模型可再放宽；会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口；
-`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量仍是旧的 40–80 Hz Range Limits，需按新语义
-重生成（差异仅 2 字节 `0x28,0x50`→`0x37,0x41`，其余 6 个 EDID 用例通过）。
+可行性过滤器排除——校准空白模型可再放宽；会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口。
+（EDID 参考向量已随派生 Range Limits 更新，见 §5.1 P15。）
 
 ### 1.3 HDR 亮度分析精度
 
@@ -237,3 +237,108 @@
 - **测试基线（2026-09-11，pkgrel 38 构建树复核）**：`ctest` 13 套件 12 通过，聚合套件
   `test_sunshine` 仅 AudioTest / MouseHIDTest / EncoderTest 的 `SetUpTestSuite` 失败
   （0 个断言失败，需真实音频/输入/编码器环境），与既有基线一致。
+
+---
+
+## 五、Windows 对齐审计（2026-09-11）
+
+对**已移植部分**做了逐行 Windows 对照审计（VDD / display_device / 剪贴板 / 麦克风 / ABR / 托盘 /
+HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过程提交：`f0f13e60`（VDD）、
+`b5e83d0e`（display_device）、`45e09e6a`（HDR 分析）、`89a588d6`（剪贴板/麦克风/ABR/托盘）。
+
+### 5.1 本轮已修复
+
+| # | 差距（审计证据） | 处置 |
+|---|---|---|
+| P1 | VDD 模式表解析自创语义：不 trim、不查尾随字符、小数刷新率被整型截断（59.94→59） | 8 个 helper 移入共享段（与 Windows 逐字一致）；Linux 阶梯改用 `prepare_vdd_settings()`（原为返回 `{}` 的桩），会话模式并入列表 |
+| P2 | per-client 尺寸类表在 Linux 重复硬编码（违反 AGENTS.md 规范常量约定） | 收敛为共享 `client_physical_size_for_class()`，两平台共用 |
+| P3 | `create_vdd_monitor` 丢弃客户端物理尺寸与 HDR 亮度，EDID 从未个性化 | 写入 EDID（cm→mm；max/min/maxFALL nits；非正值与 <0.02 nit 最小值保留参考默认） |
+| P4 | 剪贴板 SDP 在 Linux 通告 `clipboard_image`，而唯一 provider 只支持文本 | 仅 Windows 通告 image 位 |
+| P5 | 单口味文本帧 token 非零（GUI agent 契约：单口味 = 0，非零表示可合并突发） | 文本帧固定 token 0 |
+| P6 | `microphone_redirect_backend=disabled` 被忽略 | 生效（返回 -1，与 Windows 同） |
+| P7 | 麦克风写失败一律 -2 且释放设备 | 区分 -2（连接终止/被杀，释放）/ 0（超大帧，等同 `AUDCLNT_E_BUFFER_TOO_LARGE`）/ -1（其他，不释放） |
+| P8 | KWin 缺 pid 时 `foreground_exe` 冻结、`app_changed` 不触发 | 同类别保留上次 pid；共享消费端在 exe 变化且 pid=0 时也判定切换（Windows 中性） |
+| P9 | 托盘确认框默认按钮 No（Windows `MB_YESNO` 默认 Yes）；reset 提示的 warning 图标被忽略 | 默认 Yes；yes/no 框也按 `as_warning` 设图标 |
+| P10 | 模式匹配容差 0.051 Hz（Windows 1 Hz 模糊比较 + 取最近模式） | 1 Hz + 最近候选（59.94 面板 + 60 fps 不再配置失败） |
+| P11 | HDR 读回 enabled 即跳过（Windows 仅 disabled==disabled 跳过，使能总重发） | 对齐 Windows 条件 |
+| P12 | 空 device_id（Display: Auto）未解析为主屏 → 模式/HDR 作用于**所有**输出，`ensure_only_display` 空转 | `find_one_of_the_available_devices("")` 解析为 kscreen priority 1 的输出 |
+| P13 | 亮度分析器对平面 10-bit 用 P010 的 `>>6` 解包：YUV444P10LE 读成全黑却标记 valid；YUV420P10LE 被直接拒绝 | 平面格式改掩码 `&0x3FF`，接受 YUV420P10LE |
+| P14 | avcodec 路径仍打"DV 协商但无 RPU"的过时告警 | 删除（P8.1 RPU 已注入，门控在 session configure 内自报） |
+| P15 | VDD EDID 参考向量钉在旧 Range Limits（40–80 Hz） | 更新为派生值（55–65 Hz），并注明与 sunshineVD `generator.py` 的有意偏差 |
+
+### 5.2 待决策 / 未修（按影响排序）
+
+**高**
+
+- **A1 麦克风背压契约在 Linux 无生产者**：`pa_simple_write` 阻塞且未设缓冲属性，卡住的 sink 会阻塞
+  共享混音线程；`stream.cpp` 的 `wasapi_backpressure_drops` 恒为 0（Windows 用 padding 预检非阻塞返回 0）。
+  修需改用 `pa_stream` 可写字节反馈或带界限的等待。
+- **A3 未切换/恢复默认录音设备**：Windows 把 VB-Cable 设为所有角色的默认录音设备并在结束时还原；
+  Linux 只建 null-sink，主机应用需**手动**选 monitor 源（否则"看起来没生效"）。修可用
+  `pa_context_set_default_source` + 还原。
+- **F1 亮度分析器只挂在 avcodec 软件设备**：VAAPI（始终 `data != nullptr`）与 CUDA 开启的会话既无统计，
+  `hdr_luminance_analysis_available` 也保持 false → 这些平台没有 HDR10+/DV/Vivid。本机
+  （`SUNSHINE_ENABLE_CUDA=OFF` + nvenc）与 software 编码器不受影响。
+- **F3 HDR Vivid T.35 序列化器缺失**：= §2.1（⭐ 推荐下一项）。序列化器与 splice 助手都在树内，
+  DV RPU 已用同款 splice，差的是在 encode_avcodec 里按 pts 注入。
+
+**中**
+
+- **D12 枚举 `active` 语义 = "已连接"而非"已启用"**：KDE 中被禁用的显示器仍报 active，会被 VDD
+  保活逻辑重新打开（Windows 用 `DISPLAYCONFIG_PATH_ACTIVE`）。修需 kscreen 感知枚举（注意
+  `enum_available_devices` 目前是 sysfs-only、无缓存，直接加 kscreen 查询会给每次枚举加一次进程开销）。
+- **C3 klipper 写操作在 enet 控制线程同步阻塞**（无超时）：klipper 卡住会阻塞控制包处理。
+- **C4 60 KB–1 MiB 文本无 blob 回退**：Windows 走 KIND_REF + blob store，Linux 直接丢弃（= §1.4）。
+- **F2 前台缓存无失效机制**：KWin 脚本失联最长 5 分钟（重载间隔）后才恢复，期间 ABR 用陈旧 exe。
+- **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
+- **F5 统计无效时仍发送占位 HDR10+ SEI**（`maxscl=1.0`/`average=1.0`）；Windows 原生路径无有效统计
+  就完全不发。修需改共享 avcodec 代码 → 影响 Windows（分析关闭时行为变化），需决策。
+- **F7 分析节奏/分辨率差异**：Linux 每帧全分辨率同步分析 vs Windows 1/4 帧、≤1080p、异步陈旧；
+  同一内容的元数据动态（EMA/场景切换/Vivid 窗口按帧推进）在两侧不一致，Linux 4K120 的 CPU 开销约为
+  Windows 采样预算的 8 倍。
+- **D5/D7/D8/D9/D13/D14 display_device 的失败处理与顺序**：模式缺失无严格重试/回滚、新启用显示器缺
+  "blank HDR toggle"、HDR 前无稳定性等待、HDR 部分失败无回滚、还原顺序与还原后 HDR 复核缺失、
+  拓扑 set 未校验（Windows 均有一一对应实现）。
+- **D15/D16 复制拓扑不可表示 + 校验边界不一致**：KDE 镜像会话读回为多个扩展屏，请求复制组被拒绝
+  （= §1.5）；`is_topology_valid` 比自身 setter 宽松。
+- **D18 compositor 不可用时静默返回成功**（= §1.5）：非 KDE/旧合成器下客户端的模式/HDR 请求被忽略。
+
+**低**
+
+- **C5 剪贴板线协议常量无共享来源**：Rust 侧（GUI agent）是事实标准，Linux 复写字面量；跨语言需要
+  生成或共享头文件机制，需决策。
+- **C6 回声抑制单槽 vs 16 项环形**（TTL 相同）：连续两次客户端写入后，主机复制旧值会被多广播一次。
+- **C7 1 秒轮询 vs 事件驱动监听**（klipper 变更信号）：同一 tick 内两次复制只保留最后一次。
+- **A5 麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数
+  2 B/帧（Windows 端点相关 4 B）、缓冲属性服务端默认（Windows 显式 100 ms）。
+- **A6 虚拟麦克风命名** `Sunshine-Virtual-Microphone` 为 Linux 自创（Windows 是驱动提供的
+  "VB-Audio Virtual Cable"），无共享常量。
+- **F3' 前台 exe 语义**：Linux 报 Wayland app class，Windows 报进程映像名（含 `.exe`），ABR 提示词
+  按 `.exe` 措辞。
+- **T1 托盘缺 Advanced Settings 子菜单**（导入/导出/重置配置、清缓存、重置显示配置）：WebUI 有等价
+  HTTP 动作；Linux 侧已有的两处实现（`proc::proc.terminate()`、reset 显示配置）是**不可达死代码**。
+- **T4 退出确认文案仍提"关闭 Sunshine GUI 应用"**（Linux 无此组件）。
+- **D10 未知 HDR 状态应快速失败**（Windows 立即报错返回 false，Linux 先重试 3 次再给笼统错误）。
+- **D11 空容器契约相反**：Linux 空 device_ids = 全部输出、空 map 返回 true；Windows 分别返回 `{}`/false。
+- **D17 friendly name 仅为连接器名**（如 `DP-1`），`get_display_name` 直通、非 VDD 的 friendly-name
+  查找不可用；WebUI 设备列表显示连接器名且 HDR 状态恒 unknown。
+- **D19 日志文案差异**：同一事件 Linux 英文 / Windows 中文（"串流结束"等）。
+- **F8 `analysis_max_nits` 硬编码 10000**（现仅 PQ 可达故等价，HLG 落地后需 plumb 真实上限）。
+- **F11 WebUI HDR 状态端点硬编码 `available=false`**：Linux 无生产者上报（即使分析器在本机可用）。
+- **F9 直方图估计器差异**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
+  不建议改（信息性）。
+
+### 5.3 审计确认无差异（抽样）
+
+- 剪贴板：帧布局/版本与 kind 常量/短帧丢弃、60 KB 内联阈值、5 s 回声 TTL、30 s `gui_alive` 窗口、
+  会话起始基线行为。
+- 麦克风：mono 48 kHz S16LE、960 帧（20 ms）块、无部分写、返回码形状（0/-1/-2 语义）。
+- 前台：`info_t` 字段形状与默认值、消费端 10 s 限流、缓存加锁返回副本。
+- 托盘：菜单索引/文案/i18n key/回调、VDD 子菜单结构与共享 `ZAKO_NAME`、重启路径，
+  `checkbox` 字段在 Windows 被忽略（行为恒等）。
+- display_device：持久化文件名与 JSON schema（跨平台可互读）、apply/revert 编排与 fail_guard、
+  VDD destroy 决策、主屏检测（priority 1 ≡ 位置 (0,0)）、HDR 通用标志、SDR 会话还原、
+  `unknown` 状态跳过。
+- HDR：ST2084/PQ 常量全树唯一来源（无 `2399/4096×32`、无 m2×32 的再推导，HLSL 副本数值一致）；
+  统计字段完整；10-bit 限幅重映射；HDR10+ 字段推导；EMA/场景切换/32 帧 Vivid 窗口等时间策略共享；
+  DV L1 与 RPU 注入在三条编码路径共用同一实现。

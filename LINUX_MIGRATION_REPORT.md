@@ -205,7 +205,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | 文本输入通道 text_context | 纯数据通道（`src/text_context/`，挂接 `src/stream.cpp`） |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；但"资源管理器右键共享"入口是 Windows 专属，Linux 只能经 API/WebUI 操作 |
 | Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层，均有 Linux 分支；**ABR 前台应用检测已移植（2026-09-10，`d504fa11`）**：KWin 脚本经 D-Bus 把活动窗口推送到进程内 `org.sunshine.Abr` 服务，非 KDE 桌面维持空结果降级（§十二进度 15） |
-| 剪贴板（客户端↔客户端 / 客户端↔WebUI 中继） | 内存中继 + SSE 跨平台；**主机侧同步已移植（2026-09-10）**：`src/clipboard_host.cpp` 对话 KDE klipper（sd-bus），双向同步 + 回声抑制，复用 GUI 代理的文本帧协议（§十二进度 12） |
+| 剪贴板（客户端↔客户端 / 客户端↔WebUI 中继） | 内存中继 + SSE 跨平台；**主机侧同步已移植（2026-09-10）**：`src/clipboard_host.cpp` 对话 KDE klipper（sd-bus），双向同步 + 回声抑制，复用 GUI 代理的文本帧协议（§十二进度 12）。**文本类**：Linux 通告 `clipboard_text` 而不再通告 `clipboard_image`（provider 仅文本，对齐审计 §五 P4）；图片/大文件与 blob 回退仍缺（`LINUX_PORT_GAPS.md` §1.4） |
 | AI API Key 凭据 | Linux 降级为明文环境变量 `SUNSHINE_LLM_API_KEY`（Windows 用 DPAPI，`src/ai/credential_store.cpp:117-124`） |
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 的编译期特性检测（`src/audio.cpp:398-403`，Arch opus 1.6.1 ✅）；12ch 有 Linux null-sink 实现（`platform/linux/audio.cpp:406-408`）；持续音频为平台无关逻辑 |
 | HDR 静态元数据透传（MDCV/CLL） | 跨平台：kmsgrab 读 DRM `HDR_OUTPUT_METADATA`（`kmsgrab.cpp:850-862`）→ avcodec side data（`video.cpp:2839-2862`），不依赖编码器 SDK |
@@ -219,8 +219,8 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 | 功能 | Linux 状态 |
 |---|---|
 | Dolby Vision P8.1 / P8.4 | **P8.1 已接通 avcodec 路径（2026-09-10，`24817d1a`）**：RPU 写入器是纯比特流层（`video_dolby_vision.h:2-21`，0 平台守卫），avcodec 会话现按 NVENC 同款门控 configure 注入器、按提交帧序 stage L1、输出包按 pts splice RPU NAL，L1 亮度输入由 Linux 分析器产出；P8.4 需 HLG 基层，随 HLG 源一起搁置（⛔ 表） |
-| HDR10+ 动态元数据 | **已完成（2026-09-10，`e49ae499`）**：side data 预挂与时间域滤波管线本为跨平台，缺的统计生产端已由 CPU 亮度直方图补齐（`analyze_pq_luma_frame`，限幅范围重映射，PQ→nits 复用 `hdr_metadata::pq_to_nits`），门控 = PQ 会话 + `hdr_luminance_analysis` + 客户端协商 HDR10+；近似性见 §十一 P2 |
-| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配、EDID 通告配置列表的全部可行分辨率×刷新率组合（2026-09-11，§十二进度 21）；物理显示器的分辨率/HDR/拓扑已实现（kscreen-doctor，见 ❌ 表已移植行） |
+| HDR10+ 动态元数据 | **已完成（2026-09-10，`e49ae499`）**：side data 预挂与时间域滤波管线本为跨平台，缺的统计生产端已由 CPU 亮度直方图补齐（`analyze_pq_luma_frame`，限幅范围重映射，PQ→nits 复用 `hdr_metadata::pq_to_nits`），门控 = PQ 会话 + `hdr_luminance_analysis` + 客户端协商 HDR10+；近似性见 §十一 P2。**2026-09-11 修**：平面 10-bit 格式原按 P010 的 `>>6` 解包会读成全黑（仍标记 valid），现按格式掩码并接受 `YUV420P10LE`（§十二进度 23） |
+| display_control / display_scale API | **虚拟屏路径已通**（2026-09-10）：设备枚举走 sysfs 连接器、capability_version 真实上报、prep 模式全量适配、EDID 通告配置列表的全部可行分辨率×刷新率组合（2026-09-11，§十二进度 21）；物理显示器的分辨率/HDR/拓扑已实现（kscreen-doctor，见 ❌ 表已移植行）。**2026-09-11 修**：Display: Auto（空 device_id）现解析为主屏（kscreen priority 1），模式/HDR 不再作用于所有输出 |
 | frame_contract（帧管线契约） | 策略层跨平台（`platform/frame_contract.cpp`），但只有 Windows 采集端消费，Linux 侧策略存在、执行为空 |
 
 ### ❌ Windows 专属 / Linux 不可用
@@ -581,18 +581,40 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     在 `tests/CMakeLists.txt` 的 `if (WIN32)` 分支按文件名排除；本轮未向 `SUNSHINE_TARGET_FILES`
     新增任何 Linux 源，共享代码改动均保持在 Windows 行为恒等（`ZAKO_NAME` 引用、托盘 `checkbox`
     字段是 tray 结构体的既有成员）。
+23. **已移植部分的 Windows 对齐审计（2026-09-11）**：对 VDD / display_device / 剪贴板 / 麦克风 /
+    ABR / 托盘 / HDR 编码七块做逐行对照审计，修复 15 项真实偏差，完整清单与证据见
+    `LINUX_PORT_GAPS.md` §五。要点：
+    - **VDD**：模式表 8 个 helper 从 `_WIN32` 段提到共享段（逐字搬移），Linux 阶梯改用
+      `prepare_vdd_settings()`（原为返回 `{}` 的桩），解析语义对齐 Windows（trim、拒绝尾随字符、
+      小数刷新率四舍五入 59.94→60）；per-client 尺寸类表收敛为共享
+      `client_physical_size_for_class()`；`create_vdd_monitor` 不再丢弃客户端物理尺寸与 HDR 亮度
+      ——EDID 的尺寸描述符与 HDR 静态元数据块现按 CREATEMONITOR 载荷同源写入。
+    - **display_device**：空 device_id（Display: Auto）解析为主屏（kscreen priority 1），模式/HDR
+      不再作用于所有输出、`ensure_only_display` 不再空转；刷新率容差 0.051 Hz → Windows 的 1 Hz
+      模糊比较并取最近候选（59.94 面板 + 60 fps 不再配置失败）；HDR 使能对齐 Windows 的"仅
+      disabled==disabled 跳过"（读回 enabled 可能是陈旧值）。
+    - **HDR 分析**：修正亮度分析器的 10-bit 解包——平面格式（YUV444P10LE/YUV420P10LE）是低位对齐，
+      原先套用 P010 的 `>>6` 会读成全黑并仍标记 valid（输出近零亮度元数据），现按格式掩码并接受
+      YUV420P10LE；删除 avcodec 路径上"Dolby Vision 协商但无 RPU"的过时告警（P8.1 现已注入）。
+    - **剪贴板/麦克风/ABR/托盘**：Linux 不再通告 `clipboard_image`（provider 仅文本）；单口味文本帧
+      token 固定 0；`microphone_redirect_backend=disabled` 生效、写错误码区分设备丢失与一般错误；
+      KWin 缺 pid 时不再冻结 `foreground_exe`；托盘确认框默认按钮与 warning 图标对齐 Windows。
+    - 审计同时确认若干块**无差异**（剪贴板帧布局/阈值/TTL、麦克风采样与返回码形状、前台字段形状、
+      托盘菜单结构、display_device 持久化 schema 与 apply/revert 编排、ST2084 常量全树唯一来源），
+      并列出待决策项（如 VAAPI/CUDA 会话缺亮度分析源、HLG 无分析源、麦克风背压与默认录音设备切换、
+      复制拓扑、枚举 active 语义等）——见 `LINUX_PORT_GAPS.md` §5.2。
 
-**测试基线复核（2026-09-11，pkgrel 38 构建树，重建 `test_sunshine` 后实测）**：`ctest` 13 个套件
-12 个通过。聚合套件 `test_sunshine` 共 489 个用例：476 通过、12 跳过（1 个 Unicode 路径用例 +
-Audio/MouseHID/Encoder 三个环境套件的用例）、**1 个失败**——`VddEdid.MatchesReference1080p60Hdr`
-的字节参考向量钉的是旧 Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90` 起该
-描述符由通告模式推导（无附加模式时 1920x1080@60 → 55–65 Hz），差异仅此 2 字节
-（`0x28,0x50` → `0x37,0x41`）——属**测试期望未随新语义更新**，非生成器缺陷（该 2 字节正是
-`4ad74c90` 有意修正的"40–80 Hz 与 144 Hz 模式自相矛盾"）。其余 6 个 `VddEdid` 用例（校验和、
-首选时序、HDR 块、个性化亮度、附加模式填充 DTD 槽位、物理尺寸）全过；AudioTest / MouseHIDTest /
+**测试基线复核（2026-09-11，pkgrel 38 构建树 + 对齐审计修复后）**：`ctest` 13 个套件 12 个通过。
+聚合套件 `test_sunshine` 共 489 个用例：476 通过、12 跳过（1 个 Unicode 路径用例 +
+Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。
+本轮曾暴露并修掉一个真实测试失败：`VddEdid.MatchesReference1080p60Hdr` 的字节参考向量钉的是旧
+Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90` 起该描述符由通告模式推导
+（无附加模式时 1920x1080@60 → 55–65 Hz，差异仅 2 字节 `0x28,0x50`→`0x37,0x41`）——属测试期望未随
+新语义更新；向量已更新并在用例内注明与 sunshineVD `generator.py` 的有意偏差。
 注：`ctest` 直跑需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），只读
-`$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归。
+`$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归；且必须重建 `test_sunshine`
+（增量构建只编译 `sunshine` 时，ctest 会跑旧二进制并掩盖新失败）。
 
 **下一个目标（2026-09-11 起）**：HDR Vivid T.35 序列化器（`LINUX_PORT_GAPS.md` §2.1，⭐ 推荐下一项）、
 剪贴板补图片类帧与非 KDE provider（§1.4/§2.2）；其后是 display_device 的复制拓扑与 GNOME Mutter
