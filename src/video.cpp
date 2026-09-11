@@ -310,15 +310,21 @@ namespace video {
     void
     analyze_pq_luma_frame(AVFrame *sw_frame, platf::hdr_frame_luminance_stats_t &stats, std::uint64_t &sequence) {
       const auto fmt = (AVPixelFormat) sw_frame->format;
-      if (fmt != AV_PIX_FMT_P010LE && fmt != AV_PIX_FMT_YUV444P10LE) {
+      // P010LE keeps the 10-bit codes in the high bits of each little-endian
+      // 16-bit word; FFmpeg's planar 10-bit formats (what the software encoder
+      // converts to) are LSB-aligned. Unpacking both with the same shift read
+      // bits 15..6 of the planar formats, i.e. an all-zero (black) frame.
+      const bool msb_aligned = fmt == AV_PIX_FMT_P010LE;
+      const bool lsb_planar = fmt == AV_PIX_FMT_YUV420P10LE || fmt == AV_PIX_FMT_YUV444P10LE;
+      if (!msb_aligned && !lsb_planar) {
         return;
       }
       if (!sw_frame->data[0] || sw_frame->linesize[0] <= 0 || sw_frame->width <= 0 || sw_frame->height <= 0) {
         return;
       }
 
-      // 10-bit codes live in the high bits of each 16-bit little-endian word.
-      constexpr int kShift = 6;
+      const int shift = msb_aligned ? 6 : 0;
+      constexpr std::uint16_t kCodeMask = 0x3FF;
       constexpr int kCodeMax = 1023;
       // 10-bit limited-range luma spans [64, 940]; remap onto the PQ signal.
       const bool limited_range = sw_frame->color_range != AVCOL_RANGE_JPEG;
@@ -342,7 +348,7 @@ namespace video {
       for (int row = 0; row < sw_frame->height; ++row) {
         const auto *line = base + (size_t) row * stride;
         for (int col = 0; col < sw_frame->width; ++col) {
-          ++histogram[line[col] >> kShift];
+          ++histogram[(line[col] >> shift) & kCodeMask];
         }
       }
 
@@ -3412,16 +3418,12 @@ namespace video {
     }
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
-      // The RPU splice needs to grow the encoded access unit, which only the
-      // native NVENC/AMF paths own end to end; an AVPacket cannot be resized
-      // in place. The stream stays a valid HDR10-compatible HEVC base layer,
-      // so the client is served — just without the Dolby Vision metadata.
-      if (!is_probe &&
-          (effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) ||
-            effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_84))) {
-        BOOST_LOG(warning) << "Dolby Vision negotiated but an avcodec-family encoder was selected; "
-                              "streaming HDR10 without RPU"sv;
-      }
+      // The avcodec path injects the Dolby Vision RPU itself (by pts, growing
+      // the AVPacket) and logs the outcome of every gate - analysis
+      // availability, profile/transfer match, mastering metadata - inside the
+      // session's configure step. No pre-session warning is emitted here: it
+      // used to claim avcodec cannot carry an RPU at all, which the P8.1
+      // splice above made untrue.
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
       return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }
