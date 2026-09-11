@@ -720,7 +720,16 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       清空缓存，ABR 退回基于启动器的分类，不再按已关闭的游戏调码率；长时间不变的前台窗口不会被
       误清（有意保留）。
 
-**测试基线复核（2026-09-11，pkgrel 49 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘与元数据修正之后）**：`ctest` 13 个套件
+34. **第十二轮：分析节奏与上限对齐（2026-09-11）**：Linux 的 CPU 亮度分析此前**每帧全分辨率**运行，
+    而 Windows 是 1/4 帧采样——共享时间滤波（EMA、场景检测、Vivid 启动门）以 `sample_sequence`
+    识别新样本，因此两侧对同一内容的元数据动态差异达 4 倍，Linux 的 CPU 开销也偏高。现把采样间隔
+    抽成共享常量 `hdr_metadata::hdr_analysis_interval`（Windows `display_vram.cpp` 与 Linux 软件路径、
+    硬件下载路径统一引用），Linux 改为与 Windows 同节奏采样，开销降到 1/4，元数据动态一致；
+    `analysis_max_nits` 的裸 10000 也换成共享 `st2084_peak_nits` 并注明 HLG 应有的取值规则。
+    残留：CPU 仍读整帧（Windows 在 GPU 端缩到 ≤1080p），4K 下采样量约为其 4 倍；Windows 分析异步
+    陈旧、Linux 同步当帧的差异保留。
+
+**测试基线复核（2026-09-11，pkgrel 50 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压、分析覆盖面、枚举语义、剪贴板、托盘、元数据修正与分析节奏之后）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 514 个用例：502 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。

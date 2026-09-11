@@ -309,9 +309,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 **中**
 
 - **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
-- **F7 分析节奏/分辨率差异**：Linux 每帧全分辨率同步分析 vs Windows 1/4 帧、≤1080p、异步陈旧；
-  同一内容的元数据动态（EMA/场景切换/Vivid 窗口按帧推进）在两侧不一致，Linux 4K120 的 CPU 开销约为
-  Windows 采样预算的 8 倍。
 - **D7 "blank HDR toggle" 有意不移植**：Windows 在切换 HDR 前把新启用显示器先切到相反状态、等
   2333 ms 再设最终值，是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段。Linux 的 VDD 是真实
   DRM 连接器、无对应症状，移植只会给每次新启用显示器加 2.3 s 延迟和一次多余 HDR 翻转；如实测
@@ -335,7 +332,6 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 - **D17 friendly name 仅为连接器名**（如 `DP-1`），`get_display_name` 直通、非 VDD 的 friendly-name
   查找不可用；WebUI 设备列表显示连接器名且 HDR 状态恒 unknown。
 - **D19 日志文案差异**：同一事件 Linux 英文 / Windows 中文（"串流结束"等）。
-- **F8 `analysis_max_nits` 硬编码 10000**（现仅 PQ 可达故等价，HLG 落地后需 plumb 真实上限）。
 - **F11 WebUI HDR 状态端点硬编码 `available=false`**：Linux 无生产者上报（即使分析器在本机可用）。
 - **F9 直方图估计器差异**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
   不建议改（信息性）。
@@ -481,3 +477,17 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 
 **测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败（本轮改动位于
 会话/编码路径，需真实编码器与合成器才能端到端验证）。
+
+### 5.14 第十二轮修复（分析节奏与上限，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R24 | **F7 分析节奏与 Windows 不一致** | 共享头新增 `hdr_analysis_interval = 4`（以及 Windows 采样上限 `hdr_analysis_max_width/height`），Windows 的 `display_vram.cpp` 与 Linux 的 CPU 分析器、硬件下载路径**统一引用同一常量**。CPU 路径因此从"每帧全分辨率"改为**每 4 帧一次**：共享时间滤波以 `sample_sequence` 识别新样本（`video_hdr_metadata.h` 明确写着"分析运行在帧率之下，只有新 sequence 才推进状态"），所以此前 Linux 的 EMA/场景检测/Vivid 启动门按帧推进得比 Windows 快 4 倍，现在两侧一致；帧间沿用上一次统计（这些滤波本就会忽略重复样本）。CPU 直方图开销随之降到 1/4 |
+| R25 | **F8 `analysis_max_nits` 硬编码** | 改为引用新的共享常量 `st2084_peak_nits`（PQ 的分析上限），并注明 HLG 落地时须按 Windows 规则取 `min(display peak, 该上限)`；数值不变，消除魔法数字 |
+
+**残留（如实记录）**：Linux CPU 路径仍读**整帧**（Windows 会在 GPU 端缩到 ≤1080p 再回读），
+所以 4K 下采样像素量仍约为 Windows 的 4 倍——CPU 端的缩放开销与直方图本身相当，故未加缩放；
+节奏对齐后开销已降为原来的 1/4。另外 Windows 的分析是**异步且陈旧一帧以上**，Linux 是同步当帧，
+这一差异保留（Linux 的元数据更"新"）。
+
+**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败。
