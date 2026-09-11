@@ -16,6 +16,7 @@
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/mic_mixer.h"
 #include "src/platform/common.h"
 #include "src/thread_safe.h"
 
@@ -207,9 +208,16 @@ namespace platf {
       } index;
 
       // Virtual microphone for client -> host redirection: a null-sink whose
-      // monitor source host applications can record from.
+      // monitor source host applications can record from. The name is canonical
+      // here so the module args, the playback stream and the monitor lookup
+      // cannot drift apart.
+      static constexpr auto k_mic_sink_name = "sink-sunshine-virtual-mic";
       std::uint32_t mic_sink_index = PA_INVALID_INDEX;
       util::safe_ptr<pa_simple, pa_simple_free> mic_play;
+      // Default source in effect before the redirect switched it, restored on
+      // release (the Linux counterpart of the Windows default-capture-device
+      // swap).
+      std::string mic_previous_default_source;
 
       std::unique_ptr<safe::event_t<ctx_event_e>> events;
       std::unique_ptr<std::function<void(ctx_t::pointer)>> events_cb;
@@ -458,6 +466,52 @@ namespace platf {
       }
 
       std::string
+      get_default_source_name() {
+        std::string source_name;
+        auto alarm = safe::make_alarm<int>();
+
+        cb_simple_t<pa_server_info *> server_f = [&](ctx_t::pointer ctx, const pa_server_info *server_info) {
+          if (!server_info) {
+            BOOST_LOG(error) << "Couldn't get pulseaudio server info: "sv << pa_strerror(pa_context_errno(ctx));
+            alarm->ring(-1);
+            return;
+          }
+
+          if (server_info->default_source_name) {
+            source_name = server_info->default_source_name;
+          }
+          alarm->ring(0);
+        };
+
+        op_t server_op { pa_context_get_server_info(ctx.get(), cb<pa_server_info *>, &server_f) };
+        alarm->wait();
+        return source_name;
+      }
+
+      bool
+      set_default_source_name(const std::string &source_name) {
+        if (source_name.empty()) {
+          return false;
+        }
+
+        auto alarm = safe::make_alarm<int>();
+
+        op_t op {
+          pa_context_set_default_source(ctx.get(), source_name.c_str(), success_cb, alarm.get())
+        };
+
+        alarm->wait();
+
+        if (*alarm->status()) {
+          BOOST_LOG(warning) << "Couldn't set the default pulseaudio source to ["sv << source_name
+                             << "]: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return false;
+        }
+
+        return true;
+      }
+
+      std::string
       get_monitor_name(const std::string &sink_name) {
         std::string monitor_name;
         auto alarm = safe::make_alarm<int>();
@@ -602,7 +656,9 @@ namespace platf {
         // record from its monitor source, and whatever this process plays
         // into the sink shows up there.
         const std::string args =
-          "rate=48000 sink_name=sink-sunshine-virtual-mic format=float channels=1 channel_map=mono "
+          std::string { "rate=" } + std::to_string(mic_mixer::sample_rate) +
+          " sink_name=" + k_mic_sink_name +
+          " format=float channels=1 channel_map=mono "
           "sink_properties=device.description=Sunshine-Virtual-Microphone";
         auto alarm = safe::make_alarm<int>();
 
@@ -622,7 +678,7 @@ namespace platf {
           return -1;
         }
 
-        pa_sample_spec ss { PA_SAMPLE_S16LE, 48000, 1 };
+        pa_sample_spec ss { PA_SAMPLE_S16LE, mic_mixer::sample_rate, 1 };
         pa_channel_map pa_map;
         pa_channel_map_init_mono(&pa_map);
 
@@ -636,7 +692,7 @@ namespace platf {
 
         int status;
         mic_play.reset(
-          pa_simple_new(nullptr, "sunshine", pa_stream_direction_t::PA_STREAM_PLAYBACK, "sink-sunshine-virtual-mic", "sunshine-mic-write", &ss, &pa_map, &pa_attr, &status));
+          pa_simple_new(nullptr, "sunshine", pa_stream_direction_t::PA_STREAM_PLAYBACK, k_mic_sink_name, "sunshine-mic-write", &ss, &pa_map, &pa_attr, &status));
 
         if (!mic_play) {
           BOOST_LOG(error) << "Couldn't open the virtual microphone playback stream: "sv << pa_strerror(status);
@@ -645,7 +701,32 @@ namespace platf {
           return -1;
         }
 
-        BOOST_LOG(info) << "Virtual microphone ready (sink-sunshine-virtual-mic)"sv;
+        // Host applications record from the default source unless the user picks
+        // one explicitly, so point the default at our monitor source while the
+        // redirect is active and put the previous one back on release - the
+        // Linux counterpart of the Windows backend switching the default capture
+        // device to VB-Cable and restoring it. Any PulseAudio/PipeWire session
+        // supports this, so it is not desktop-specific.
+        const auto monitor_name = get_monitor_name(k_mic_sink_name);
+        if (!monitor_name.empty()) {
+          const auto previous = get_default_source_name();
+          if (previous != monitor_name && set_default_source_name(monitor_name)) {
+            mic_previous_default_source = previous;
+            if (previous.empty()) {
+              BOOST_LOG(info) << "Client microphone redirect: default source is now "sv << monitor_name;
+            }
+            else {
+              BOOST_LOG(info) << "Client microphone redirect: default source is now "sv << monitor_name
+                              << " (was "sv << previous << ")"sv;
+            }
+          }
+          else if (previous == monitor_name) {
+            // Already ours (e.g. a previous run left it); nothing to restore.
+            mic_previous_default_source.clear();
+          }
+        }
+
+        BOOST_LOG(info) << "Virtual microphone ready ("sv << k_mic_sink_name << ")"sv;
         return 0;
       }
 
@@ -656,6 +737,14 @@ namespace platf {
         if (mic_sink_index != PA_INVALID_INDEX) {
           unload_null(mic_sink_index);
           mic_sink_index = PA_INVALID_INDEX;
+        }
+
+        if (!mic_previous_default_source.empty()) {
+          if (set_default_source_name(mic_previous_default_source)) {
+            BOOST_LOG(info) << "Client microphone redirect: default source restored to "sv
+                            << mic_previous_default_source;
+          }
+          mic_previous_default_source.clear();
         }
       }
 
