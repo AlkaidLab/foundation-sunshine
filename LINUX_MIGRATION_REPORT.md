@@ -665,7 +665,17 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     说明：析构与 release 先 stop+join writer 再销毁流；若音频服务端彻底僵死，join 仍可能被写阻塞
     ——与改造前"写卡在会话线程"的暴露面相同，未加重。
 
-**测试基线复核（2026-09-11，pkgrel 43 构建树 + 对齐审计、niri 起步、失败处理与麦克风背压之后）**：`ctest` 13 个套件
+28. **第六轮：HDR 亮度分析覆盖面补齐（2026-09-11）**：此前亮度分析器只挂在 avcodec 软件设备上
+    （`convert()` 内），而 Linux 的 VAAPI/CUDA 采集内存类型会走各自的硬件编码设备（`data != nullptr`），
+    这些会话既无统计、`hdr_luminance_analysis_available` 也保持 false → AMD/Intel（VAAPI）与开启 CUDA
+    的构建拿不到 HDR10+/DV/Vivid。现新增**采样下载**生产者：PQ + 请求 HDR10+/DV P8.1 时，每 4 帧用
+    `av_hwframe_transfer_data()` 下载一帧到缓存软件帧并复用同一 CPU 分析器（采样间隔对齐 Windows 的
+    1/4）；下载格式非 10-bit 或传输失败即关闭本会话分析并告警，退化为"无动态元数据"。能力判定与采样
+    整体在 `#if !defined(_WIN32)` 内，Windows 由采集设备自产统计、标志恒 false，行为不变；Linux 软件
+    设备路径同样不受影响。**未在 VAAPI/CUDA 硬件上实测**（本机 NVIDIA + `SUNSHINE_ENABLE_CUDA=OFF`），
+    代价是全分辨率下载约 90 MB/s@1080p60（详见 `LINUX_PORT_GAPS.md` §5.8）。
+
+**测试基线复核（2026-09-11，pkgrel 44 构建树 + 对齐审计、niri 起步、失败处理、麦克风背压与分析覆盖面之后）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 501 个用例：489 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。

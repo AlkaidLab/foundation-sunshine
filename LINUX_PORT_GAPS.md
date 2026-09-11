@@ -304,11 +304,7 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 ### 5.2 待决策 / 未修（按影响排序）
 
-**高**
-
-- **F1 亮度分析器只挂在 avcodec 软件设备**：VAAPI（始终 `data != nullptr`）与 CUDA 开启的会话既无统计，
-  `hdr_luminance_analysis_available` 也保持 false → 这些平台没有 HDR10+/DV/Vivid。本机
-  （`SUNSHINE_ENABLE_CUDA=OFF` + nvenc）与 software 编码器不受影响。
+**高 —— 已清零**（A1 麦克风背压 §5.7、F1 分析覆盖面 §5.8、F3 Vivid §2.1 均已落地；余下为中/低）
 
 **中**
 
@@ -423,3 +419,23 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 "写调用直接卡在会话线程上"的暴露面相同，未加重也未消除（无 timeout 版 pa_simple API 可用）。
 
 **测试基线**：12/13 套件通过、聚合套件 501 用例 489 通过 / 12 跳过 / 0 断言失败。
+
+### 5.8 第六轮修复（HDR 分析覆盖面，2026-09-11）
+
+| # | 项 | 处置 |
+|---|---|---|
+| R13 | **F1 亮度分析器只挂在 avcodec 软件设备** | 新增"采样下载"生产者：Linux 的硬件编码设备（VAAPI/CUDA，`data != nullptr` 且自报无分析能力）在 PQ + 请求了 HDR10+/DV P8.1 且 `hdr_luminance_analysis != off` 时，session 里用 `av_hwframe_transfer_data()` **每 4 帧下载一帧**到缓存的软件帧，复用同一个 CPU 分析器（Windows 的采样间隔也是 1/4）；下载格式不支持 10-bit 或传输失败时**关闭本会话的分析**并告警（退化到"无动态元数据"，不影响串流）。同时把分析器的格式判定抽成 `luminance_analysis_format_supported()` / `..._is_msb_aligned()`，避免新代码重复格式清单 |
+
+**Windows 中性**：整段能力判定与采样都在 `#if !defined(_WIN32)` 内；Windows 的采集设备自己产出统计并
+自报能力（`display_vram.cpp`），标志恒为 false，路径不会触发。Linux 软件设备路径（`data == nullptr`）
+也不受影响——它本来就在 `convert()` 里分析，且 `hdr_luminance_analysis_available` 为真。
+
+**残留与代价（如实记录）**：
+
+- 该路径**未在 VAAPI/CUDA 硬件上实测**（本机 NVIDIA 且按文档 `SUNSHINE_ENABLE_CUDA=OFF`，走的是软件
+  设备路径）——已按"失败即降级"设计，最坏情况回到改动前的行为。
+- 每 4 帧一次**全分辨率**显存→内存下载（1080p60 P010 约 6 MB/帧、约 90 MB/s），比 Windows 的 GPU
+  端分析 + 小缓冲回读重；如后续在 AMD/Intel 上觉得开销明显，可加采样降分辨率（swscale）或改用
+  shader 分析。
+- 软件设备路径仍是**每帧**分析（Windows 为 1/4 帧、≤1080p），因此两侧的时间滤波推进节奏不同
+  （§5.2 F7，仍开着）。
