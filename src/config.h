@@ -230,6 +230,7 @@ namespace config {
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
     bool clipboard_sync;  ///< Bidirectional clipboard sync (text + single image). On by default; effective only when the user-session GUI agent is alive. Set to false to force-disable.
+    bool client_gamepad_override;  ///< Honor the client-declared controller type carried on the /launch query (Sunshine extension). On by default; set false to keep host-side selection authoritative.
   };
 
   namespace flag {

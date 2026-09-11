@@ -1097,6 +1097,14 @@ namespace platf {
    */
   void
   set_gamepad_mode(int mode);
+  /**
+   * @brief Publish the client-declared controller type for the upcoming session.
+   * @param pref Empty = undeclared (host-side selection chain applies),
+   *             otherwise one of: auto, x360, ds4, ds5. Consumed per gamepad
+   *             allocation while the session streams; re-set on every launch.
+   */
+  void
+  set_client_gamepad_pref(std::string pref);
   void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void

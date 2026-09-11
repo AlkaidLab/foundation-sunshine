@@ -569,6 +569,7 @@ namespace config {
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
+    true,  // client_gamepad_override (client-declared type wins; no official client sends it today)
   };
 
   sunshine_t sunshine {
@@ -1566,6 +1567,7 @@ namespace config {
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
+    bool_f(vars, "client_gamepad_override", input.client_gamepad_override);
     
     int temp_port = static_cast<int>(input.dsu_server_port);
     int_between_f(vars, "dsu_server_port", temp_port, { 1024, 65535 });

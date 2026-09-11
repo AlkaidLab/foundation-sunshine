@@ -498,6 +498,23 @@ namespace platf {
     BOOST_LOG(info) << "Gamepad mode set to: "sv << names[mode];
   }
 
+  // Client-declared gamepad type for the in-flight session, published at
+  // /launch time (see nvhttp.cpp). Empty = undeclared.
+  static std::mutex client_gamepad_pref_mutex;
+  static std::string client_gamepad_pref;
+
+  void
+  set_client_gamepad_pref(std::string pref) {
+    std::lock_guard lock(client_gamepad_pref_mutex);
+    client_gamepad_pref = std::move(pref);
+  }
+
+  static std::string
+  get_client_gamepad_pref() {
+    std::lock_guard lock(client_gamepad_pref_mutex);
+    return client_gamepad_pref;
+  }
+
   static int
   effective_gamepad_mode() {
     const auto app_mode = current_gamepad_mode.load(std::memory_order_relaxed);
@@ -1915,12 +1932,25 @@ namespace platf {
     // Component files may have been installed while Sunshine stayed running.
     // Refresh once per allocation; the input packet hot path reads only the cache.
     ds5::refresh_component_availability();
-    const auto gamepad_mode = effective_gamepad_mode();
-    const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
+    // Client-declared preference (Sunshine /launch extension) outranks the
+    // per-app and global host-side selection while client_gamepad_override is on.
+    const auto client_pref = get_client_gamepad_pref();
+    const bool client_declared = !client_pref.empty() && config::input.client_gamepad_override;
+    auto gamepad_mode = client_declared
+      ? (client_pref == "x360"sv ? 2 : client_pref == "ds4"sv ? 3 : client_pref == "ds5"sv ? 4 : 1)
+      : effective_gamepad_mode();
+    const auto per_app_override = !client_declared && current_gamepad_mode.load(std::memory_order_relaxed) != 0;
+    const char *selection_source = client_declared ? "client selection" : (per_app_override ? "per-app selection" : "global selection");
+
+    if (gamepad_mode == 4 && client_declared && (!raw->ds5_sidecar || !raw->ds5_sidecar->configured())) {
+      // The client cannot know the host component state; degrade instead of failing.
+      BOOST_LOG(warning) << "Client declared DualSense but the sidecar component is unavailable; falling back to DualShock 4"sv;
+      gamepad_mode = 3;
+    }
 
     if (gamepad_mode == 4) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
-                      << (per_app_override ? "per-app selection" : "global selection") << ')';
+                      << selection_source << ')';
       if (!raw->ds5_sidecar || !raw->ds5_sidecar->configured()) {
         BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
         return -1;
@@ -1946,11 +1976,11 @@ namespace platf {
     VIGEM_TARGET_TYPE selectedGamepadType;
 
     if (gamepad_mode == 2) {
-      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << selection_source << ')';
       selectedGamepadType = Xbox360Wired;
     }
     else if (gamepad_mode == 3) {
-      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller ("sv << selection_source << ')';
       selectedGamepadType = DualShock4Wired;
     }
     else if (metadata.type == LI_CTYPE_PS) {
