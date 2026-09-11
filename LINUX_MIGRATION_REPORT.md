@@ -756,7 +756,16 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     F3' 前台 exe 语义（Wayland 无进程映像名来源）、F9 直方图估计器（Linux 更精确）、D15 复制拓扑
     （**已核实 kscreen-doctor 无 replication 设置命令**，需 KWin 脚本或 libkscreen，属独立特性）。
 
-**测试基线复核（2026-09-11，pkgrel 53 构建树 + 全部对齐轮次之后）**：`ctest` 13 个套件
+38. **终局核验与 Windows 影响面审计（2026-09-11）**：对工作区 54 个提交逐项核对"在 Windows 上编译"
+    的文件（详见 `LINUX_PORT_GAPS.md` §5.19）：8 个 VDD helper 为逐字搬移（脚本验证）、Windows 采集设备
+    恒设置 `data` 故 CPU 分析器相关改动在 Windows 上不可达、硬件下载/Vivid/状态上报整段平台门控、
+    `display_vram.cpp` 的三个采样常量数值不变、托盘菜单的 Windows 语句与文案逐字未变、其余共享头均为
+    增量新增。**唯一 Windows 可见行为变化**是 HDR10+ 元数据改为首帧有效统计才挂载（消除伪造 SEI，与
+    该平台原生路径一致）。同时把 C5（跨语言常量同步）转为决策记录（不引入代码生成，靠线协议测试守
+    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.20：F4（HLG 域分析源）、
+    niri/wlr-output-management 输出后端、D15（复制拓扑），外加 §5.18 的有意保留差异清单。
+
+**测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
 EncoderTest 仍仅 `SetUpTestSuite` 失败（需真实音频/输入/编码器环境，图形会话内可跑）。

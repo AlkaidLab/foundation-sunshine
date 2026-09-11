@@ -311,10 +311,7 @@ HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过�
 
 - **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
 
-**低**
-
-- **C5 剪贴板线协议常量跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
-  TTL），但 Rust agent（`clipboard.rs`）仍是独立副本，值变动需人工同步；代码生成机制待决策。
+**低 —— 已清零**（C5 转为 §5.18 的决策记录）
 
 ### 5.3 审计确认无差异（抽样）
 
@@ -524,9 +521,50 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
   共享资产；改成"猜进程名"会引入不可靠映射，保持现状。
 - **F9 直方图估计器**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
   且 Linux 更精确；不建议改（信息性）。
+- **C5 剪贴板线协议常量的跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
+  TTL），Rust agent（`clipboard.rs`）是权威参考且无法包含 C++ 头文件。复核结论：为 5 个协议常量引入
+  代码生成步骤（跨语言、需要构建期工具链）不划算，且这些值属于线协议契约、极少变动；C++ 镜像由
+  `test_clipboard_wire.cpp` 的编解码测试守住。若线协议将来扩张，再考虑从单一 IDL 生成两侧。
 - **D15 复制拓扑**：**已核实 `kscreen-doctor` 没有任何 replication 设置命令**（只有 enable/disable/
   mode/position/scale/rotation/hdr/brightness/wcg/icc/priority/custom mode 与 `--dpms`；`-o` 只能
   *读出* "replication source: N"）。因此在 KDE 上实现镜像需要 **KWin 脚本**（与 ABR 前台检测同一套
   D-Bus 加载模式）或 libkscreen/D-Bus。这是独立特性（工作量中-高），当前后端继续"复制组不可表示"。
 
 **测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
+
+### 5.19 Windows 影响面审计（本轮全部改动的逐项核对）
+
+工作区共 54 个提交（`c4f36395..HEAD`）。**在 Windows 上编译**的文件逐项核对影响面：
+
+| 共享文件 | 改动 | Windows 影响 |
+|---|---|---|
+| `display_device/vdd_utils.cpp` | 8 个模式解析/去重 helper 从 `_WIN32` 段移入共享段；per-client 尺寸表改共享函数 | **行为恒等**：8 个函数体做过逐字比对（脚本 `verbatim_body_present=True`）；尺寸类数值与回退相同 |
+| `display_device/vdd_utils.h` | 新增共享 helper 声明 | 纯增量 |
+| `display_device/parsed_config.cpp` | Linux 分支 `"23172"` → 共享 `ZAKO_DEVICE_ID` | Windows 分支未动（仍只接受 `VDD_NAME`） |
+| `globals.{h,cpp}` | 新增 `ZAKO_DEVICE_ID` | 纯增量 |
+| `clipboard_bridge.h` / `clipboard_wire.h` / `clipboard_echo.h` | 线协议常量、编解码、回声环 | 纯增量（Windows 侧不使用这些 C++ 工具；Rust agent 仍是权威参考） |
+| `rtsp.cpp` | `clipboard_image` 能力位改为 `#if defined(_WIN32)` 门控 | Windows 仍通告该位（不变） |
+| `abr.cpp` | 新增 `pid == 0 且 exe 变化` 的切换判定 | **恒不触发**：Windows 对有效窗口的 pid 恒 > 0 |
+| `video.cpp` | 分析器格式判定抽函数、平面 10-bit 解包修正、软件路径采样间隔、硬件下载、Vivid 拼接、HDR10+ 懒挂载、运行状态上报 | 除 HDR10+ 懒挂载外全部只在 Linux 生效——Windows 采集设备恒设置 `data`（`display_vram.cpp:2943`），故 `!data` 的软件设备分支与其 CPU 分析器/采样间隔在 Windows 上不可达；硬件下载、Vivid、状态上报整段 `#if !defined(_WIN32)`。**唯一可见变化**：HDR10+ side data 改为首帧有效统计时才挂载（默认配置仅少了"首个统计前的伪造 SEI"；分析关闭时不再发占位块，与原生路径一致，判定为修正） |
+| `video_hdr_metadata.h` | 新增 `hdr_analysis_interval` / `hdr_analysis_max_*` / `st2084_peak_nits` | 纯增量，数值与原字面量一致 |
+| `platform/windows/display_vram.cpp` | 三个采样常量改为引用共享常量 | **数值不变**（4/1920/1080），只是定义收敛 |
+| `confighttp.cpp` | HDR 状态端点 `available` 不再按平台写死 | Windows 原本即 true，结构与文案未变 |
+| `tray/system_tray.cpp` | 高级设置子菜单两平台统一布局、三个配置回调补齐 Linux、退出文案 Linux 专用键 | Windows 的菜单语句、回调与文案逐字未变（仅去掉包裹同一批语句的 `#ifdef`）；新增 i18n 键 Windows 不使用 |
+| `tray/system_tray_i18n.{h,cpp}` | 新增 3 个键（三语） | 纯增量 |
+| Linux-only（`platform/linux/*`、`clipboard_host.cpp`、`mic_queue.h`、`edid.h`） | 各轮修复 | 不进 Windows 构建 |
+
+**结论**：除"HDR10+ 元数据时序"这一处经论证的修正外，**Windows 行为保持不变**；未新增 Windows 源文件、
+未改动 `SUNSHINE_TARGET_FILES`，共享头改动均为增量。
+
+### 5.20 仍未完成（诚实清单）
+
+1. **F4 HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
+   拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；本机
+   （PQ + NVIDIA）也无法端到端验证。
+2. **niri / wlr-output-management 输出后端**（§2.11 待做 1）：模式/HDR/拓扑在 niri 下仍走"合成器不可用"
+   降级。实现需要 niri IPC 的真实 JSON 结构（本机未装 niri，沙箱内也取不到 `niri-ipc` 源码/文档），
+   拿到 `niri msg --json outputs` 与 `niri msg --help` 的实测输出即可落地并配测试。
+3. **D15 复制拓扑**：kscreen-doctor 无 replication 命令（已实测确认），KDE 上实现镜像需 KWin 脚本或
+   libkscreen 后端，属独立特性。
+4. §5.18 中记录的**有意保留差异**（空容器契约、麦克风契约边界与缓冲属性、日志语言、前台 exe 语义、
+   直方图估计器、blank HDR toggle）如需翻转，按各条给出的理由逐项决策即可。
