@@ -49,18 +49,27 @@ namespace vdd_edid {
       return static_cast<std::uint8_t>(std::clamp(code, 0.0, 255.0));
     }
 
+    // Pixel clock (Hz) under the generator's blanking model — the single
+    // source of truth for DTD encoding and the feasibility check.
+    double
+    dtd_pixel_clock_hz(unsigned int width, unsigned int height, unsigned int refresh_hz) {
+      const unsigned int h_blank = std::max(80u, static_cast<unsigned int>(width * 0.08));
+      const unsigned int h_total = width + h_blank;
+
+      unsigned int v_blank = std::max(23u, static_cast<unsigned int>(height * 0.025));
+      auto pixel_clock_hz = static_cast<double>(h_total) * (height + v_blank) * refresh_hz;
+      v_blank = std::max(23u, static_cast<unsigned int>(pixel_clock_hz / (h_total * refresh_hz) - height));
+      return static_cast<double>(h_total) * (height + v_blank) * refresh_hz;
+    }
+
     std::vector<std::uint8_t>
     build_dtd(unsigned int width, unsigned int height, unsigned int refresh_hz, unsigned int h_size_mm, unsigned int v_size_mm) {
       const unsigned int h_active = width;
       const unsigned int v_active = height;
       const unsigned int h_blank = std::max(80u, static_cast<unsigned int>(width * 0.08));
-      const unsigned int h_total = h_active + h_blank;
+      const unsigned int v_blank = std::max(23u, static_cast<unsigned int>(height * 0.025));
 
-      unsigned int v_blank = std::max(23u, static_cast<unsigned int>(height * 0.025));
-      auto pixel_clock_hz = static_cast<double>(h_total) * (v_active + v_blank) * refresh_hz;
-      v_blank = std::max(23u, static_cast<unsigned int>(pixel_clock_hz / (h_total * refresh_hz) - v_active));
-      pixel_clock_hz = static_cast<double>(h_total) * (v_active + v_blank) * refresh_hz;
-
+      const auto pixel_clock_hz = dtd_pixel_clock_hz(width, height, refresh_hz);
       const auto pixel_clock = static_cast<std::uint16_t>(std::min<double>(pixel_clock_hz / 10000, 65535));
 
       const unsigned int h_sync_offset = static_cast<unsigned int>(h_blank * 0.2);
@@ -89,6 +98,11 @@ namespace vdd_edid {
       return dtd;
     }
   }  // namespace
+
+  bool
+  mode_fits_pixel_clock_limit(unsigned int width, unsigned int height, unsigned int refresh_hz) {
+    return dtd_pixel_clock_hz(width, height, refresh_hz) <= 655350000.0;
+  }
 
   std::vector<std::uint8_t>
   generate_virtual_display_edid(unsigned int width, unsigned int height, unsigned int refresh_hz, const edid_options &opts) {
@@ -159,16 +173,10 @@ namespace vdd_edid {
     const unsigned int h_active = width;
     const unsigned int v_active = height;
     const unsigned int h_blank = std::max(80u, static_cast<unsigned int>(width * 0.08));
-    const unsigned int h_total = h_active + h_blank;
+    const unsigned int v_blank = std::max(23u, static_cast<unsigned int>(height * 0.025));
 
-    unsigned int v_blank = std::max(23u, static_cast<unsigned int>(height * 0.025));
-    auto pixel_clock_hz = static_cast<double>(h_total) * (v_active + v_blank) * refresh_hz;
-    v_blank = std::max(23u, static_cast<unsigned int>(pixel_clock_hz / (h_total * refresh_hz) - v_active));
-    pixel_clock_hz = static_cast<double>(h_total) * (v_active + v_blank) * refresh_hz;
-
-    const auto pixel_clock = static_cast<std::uint16_t>(std::min<double>(pixel_clock_hz / 10000, 65535));
+    const auto pixel_clock = static_cast<std::uint16_t>(std::min<double>(dtd_pixel_clock_hz(width, height, refresh_hz) / 10000, 65535));
     put16_le(edid, 54, pixel_clock);
-
     edid[56] = h_active & 0xFF;
     edid[57] = h_blank & 0xFF;
     edid[58] = static_cast<std::uint8_t>(((h_active >> 8) << 4) | (h_blank >> 8));

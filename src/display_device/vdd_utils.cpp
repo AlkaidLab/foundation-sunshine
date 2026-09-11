@@ -1825,49 +1825,85 @@ namespace display_device::vdd_utils {
       }
     }
     /**
-     * @brief Mirror the Windows mode list: the configured resolutions and
-     *        refresh rates become the EDID's advertised ladder, letting the
-     *        compositor switch modes without an EDID rewrite. Each configured
-     *        resolution is paired with the highest configured refresh rate;
-     *        the generator drops what does not fit the EDID.
+     * @brief Mirror the Windows mode list: configured resolutions × refresh
+     *        rates become the EDID's advertised ladder (feasibility-filtered
+     *        against the EDID pixel-clock limit), letting the compositor
+     *        switch modes without an EDID rewrite. The preferred resolution
+     *        keeps all its configured refresh rates; every other resolution
+     *        contributes its highest feasible one. EDID space caps the ladder.
      *        Caller holds state_mutex.
      */
     void
     refresh_config_mode_ladder_locked() {
       active_edid_opts.extra_modes.clear();
 
-      unsigned int max_fps = cached_refresh_hz;
+      // Configured refresh rates, highest first (Windows acceptance: any
+      // positive value).
+      std::vector<unsigned int> rates;
       for (const auto &entry : config::nvhttp.fps) {
         unsigned int fps = 0;
         std::stringstream input(entry);
         input >> fps;
-        // Windows acceptance: any positive refresh rate.
-        if (fps > 0) {
-          max_fps = std::max(max_fps, fps);
+        if (fps > 0 && std::find(rates.begin(), rates.end(), fps) == rates.end()) {
+          rates.push_back(fps);
         }
       }
+      std::sort(rates.begin(), rates.end(), [](unsigned int a, unsigned int b) { return a > b; });
 
-      std::vector<std::tuple<unsigned int, unsigned int, unsigned int>> ladder;
+      // Configured resolutions, largest area first (Windows acceptance: any
+      // positive dimensions with an x/X separator).
+      struct configured_res_t {
+        unsigned int w;
+        unsigned int h;
+      };
+      std::vector<configured_res_t> resolutions;
       for (const auto &res : config::nvhttp.resolutions) {
-        unsigned int width = 0;
-        unsigned int height = 0;
+        unsigned int w = 0;
+        unsigned int h = 0;
         std::stringstream input(res);
         char separator = '\0';
-        input >> width >> separator >> height;
-        // Windows acceptance: any positive dimensions with an 'x'/'X' separator.
-        if (separator != 'x' && separator != 'X' || width == 0 || height == 0) {
-          continue;
-        }
-        const auto mode = std::make_tuple(width, height, max_fps);
-        if (width == cached_width && height == cached_height && max_fps == cached_refresh_hz) {
-          continue;  // the preferred timing already carries it
-        }
-        if (std::find(ladder.begin(), ladder.end(), mode) == ladder.end()) {
-          ladder.push_back(std::move(mode));
+        input >> w >> separator >> h;
+        if ((separator == 'x' || separator == 'X') && w > 0 && h > 0) {
+          resolutions.push_back({ w, h });
         }
       }
-      if (ladder.size() > 6) {
-        ladder.resize(6);  // EDID space; the generator also drops overflow
+      std::stable_sort(resolutions.begin(), resolutions.end(), [](const auto &a, const auto &b) {
+        return (unsigned long long) a.w * a.h > (unsigned long long) b.w * b.h;
+      });
+
+      std::vector<std::tuple<unsigned int, unsigned int, unsigned int>> ladder;
+      const auto push_unique = [&](unsigned int w, unsigned int h, unsigned int fps) {
+        if (fps == 0 || !vdd_edid::mode_fits_pixel_clock_limit(w, h, fps)) {
+          return;
+        }
+        if (w == cached_width && h == cached_height && fps == cached_refresh_hz) {
+          return;  // the preferred timing already carries it
+        }
+        const auto mode = std::make_tuple(w, h, fps);
+        if (std::find(ladder.begin(), ladder.end(), mode) == ladder.end()) {
+          ladder.push_back(mode);
+        }
+      };
+
+      // The preferred resolution keeps every configured refresh rate.
+      for (const auto &fps : rates) {
+        push_unique(cached_width, cached_height, fps);
+      }
+      // Every other resolution contributes its highest feasible rate.
+      for (const auto &res : resolutions) {
+        if (res.w == cached_width && res.h == cached_height) {
+          continue;
+        }
+        for (const auto &fps : rates) {
+          if (vdd_edid::mode_fits_pixel_clock_limit(res.w, res.h, fps)) {
+            push_unique(res.w, res.h, fps);
+            break;
+          }
+        }
+      }
+      // The EDID carries the preferred DTD plus at most five extras.
+      if (ladder.size() > 5) {
+        ladder.resize(5);
       }
       active_edid_opts.extra_modes = std::move(ladder);
     }
@@ -1875,10 +1911,10 @@ namespace display_device::vdd_utils {
     /**
      * @brief Derive the preferred mode for out-of-session creation from the
      *        configured resolution/refresh lists - the same WebUI-editable
-     *        lists that drive the Windows SETMODES mode table: the highest
-     *        resolution at the highest configured refresh rate. Falls back to
-     *        the 1920x1080@60 defaults when the lists carry nothing usable.
-     *        Caller holds state_mutex.
+     *        lists that drive the Windows SETMODES mode table: the largest
+     *        resolution whose highest configured refresh rate fits the EDID
+     *        pixel-clock limit. Falls back to the 1920x1080@60 defaults when
+     *        the lists carry nothing usable. Caller holds state_mutex.
      */
     void
     apply_configured_preferred_mode_locked() {
@@ -1886,39 +1922,45 @@ namespace display_device::vdd_utils {
         return;
       }
 
-      // Acceptance matches the Windows parse_vdd_resolution/parse_vdd_refresh_hz:
-      // positive width/height and refresh rates, 'x'/'X' separator.
-      unsigned int width = 0;
-      unsigned int height = 0;
+      std::vector<unsigned int> rates;
+      for (const auto &entry : config::nvhttp.fps) {
+        unsigned int fps = 0;
+        std::stringstream input(entry);
+        input >> fps;
+        if (fps > 0) {
+          rates.push_back(fps);
+        }
+      }
+      std::sort(rates.begin(), rates.end(), [](unsigned int a, unsigned int b) { return a > b; });
+
+      struct configured_res_t {
+        unsigned int w;
+        unsigned int h;
+      };
+      std::vector<configured_res_t> resolutions;
       for (const auto &res : config::nvhttp.resolutions) {
         unsigned int w = 0;
         unsigned int h = 0;
         std::stringstream input(res);
         char separator = '\0';
         input >> w >> separator >> h;
-        if (separator != 'x' && separator != 'X') {
-          continue;
-        }
-        if (w > 0 && h > 0 && (unsigned long long) w * h > (unsigned long long) width * height) {
-          width = w;
-          height = h;
+        if ((separator == 'x' || separator == 'X') && w > 0 && h > 0) {
+          resolutions.push_back({ w, h });
         }
       }
+      std::stable_sort(resolutions.begin(), resolutions.end(), [](const auto &a, const auto &b) {
+        return (unsigned long long) a.w * a.h > (unsigned long long) b.w * b.h;
+      });
 
-      unsigned int fps = 0;
-      for (const auto &entry : config::nvhttp.fps) {
-        unsigned int value = 0;
-        std::stringstream input(entry);
-        input >> value;
-        fps = std::max(fps, value);
-      }
-
-      if (width > 0 && height > 0) {
-        cached_width = width;
-        cached_height = height;
-      }
-      if (fps > 0) {
-        cached_refresh_hz = fps;
+      for (const auto &res : resolutions) {
+        for (const auto &fps : rates) {
+          if (vdd_edid::mode_fits_pixel_clock_limit(res.w, res.h, fps)) {
+            cached_width = res.w;
+            cached_height = res.h;
+            cached_refresh_hz = fps;
+            return;
+          }
+        }
       }
     }
   }  // namespace

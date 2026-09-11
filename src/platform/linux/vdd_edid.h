@@ -47,6 +47,15 @@ namespace vdd_edid {
   generate_virtual_display_edid(unsigned int width, unsigned int height, unsigned int refresh_hz, const edid_options &opts = {});
 
   /**
+   * @brief Whether a mode's pixel clock fits the CEA-861 limit the generator
+   *        encodes (655.35 MHz). Uses the same blanking model as the DTD
+   *        builder, so anything passing this is encodable without the
+   *        silent pixel-clock wraparound the builder applies on overflow.
+   */
+  bool
+  mode_fits_pixel_clock_limit(unsigned int width, unsigned int height, unsigned int refresh_hz);
+
+  /**
    * @brief Convenience overload matching the historical call signature.
    */
   inline std::vector<std::uint8_t>
