@@ -16,7 +16,9 @@ namespace vdd_edid {
    */
   struct edid_options {
     bool enable_hdr { true };
-    std::string display_name { "Foundation VDD" };
+    // Matches the Windows ZakoVDD monitor friendly name (globals ZAKO_NAME);
+    // KDE prepends the PnP vendor letters ("UQD") from the manufacturer ID.
+    std::string display_name { "Zako HDR" };
 
     // Physical size override in millimetres for the screen size descriptors;
     // 0 = derive from the resolution assuming a 96 dpi panel.
