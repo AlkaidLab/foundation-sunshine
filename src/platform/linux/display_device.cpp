@@ -373,6 +373,53 @@ namespace display_device {
       return false;
     }
 
+    /**
+     * @brief Bounded wait for the compositor to settle after topology/mode
+     *        changes, before HDR is switched.
+     * @details Windows does the same (10 x 500 ms, at most 5 s): a display that
+     *          was just enabled can still be missing from a read-back, and
+     *          switching HDR against that stale view fails or targets the wrong
+     *          output. Timing out is not fatal - the caller proceeds anyway,
+     *          exactly like the Windows implementation.
+     * @returns true when every expected device has a readable mode and HDR state.
+     */
+    bool
+    wait_for_display_stability(const std::unordered_set<std::string> &expected_devices) {
+      constexpr int max_attempts = 10;
+      constexpr auto interval = std::chrono::milliseconds { 500 };
+      constexpr auto max_wait = std::chrono::milliseconds { 5000 };
+
+      if (expected_devices.empty()) {
+        return true;
+      }
+
+      const auto start = std::chrono::steady_clock::now();
+      for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        if (std::chrono::steady_clock::now() - start > max_wait) {
+          break;
+        }
+
+        const auto modes = get_current_display_modes(expected_devices);
+        const auto hdr_states = get_current_hdr_states(expected_devices);
+
+        bool stable = true;
+        for (const auto &device_id : expected_devices) {
+          if (!modes.count(device_id) || !hdr_states.count(device_id)) {
+            stable = false;
+            break;
+          }
+        }
+        if (stable) {
+          return true;
+        }
+
+        std::this_thread::sleep_for(interval);
+      }
+
+      BOOST_LOG(warning) << "Timed out waiting for the displays to stabilize; applying HDR anyway";
+      return false;
+    }
+
     bool
     save_settings(const std::filesystem::path &filepath, const settings_t::persistent_data_t &data) {
       if (filepath.empty()) {
@@ -588,24 +635,44 @@ namespace display_device {
       return true;
     }
 
-    bool all_ok = true;
-    for (const auto &[device_id, mode] : modes) {
+    std::unordered_set<std::string> device_ids;
+    for (const auto &[device_id, _] : modes) {
+      device_ids.insert(device_id);
+    }
+
+    // Snapshot before touching anything: a partially applied multi-output change
+    // must be undone. Windows keeps original_modes for exactly this rollback.
+    const auto original_modes = get_current_display_modes(device_ids);
+    if (original_modes.empty()) {
+      BOOST_LOG(error) << "Cannot read the current display modes; refusing to change them";
+      return false;
+    }
+
+    // Windows compares refresh rates with a 1 Hz fuzz (fuzzy_compare_refresh_rates)
+    // and lets the OS pick the closest available mode (SDC_ALLOW_CHANGES), so
+    // 60 fps against a 59.94 Hz panel is already a match. Match that
+    // acceptance instead of demanding an exact rate.
+    constexpr double k_refresh_tolerance_hz = 1.0;
+    // What "the requested mode, no substitution" means for the strict retry.
+    constexpr double k_exact_refresh_tolerance_hz = 0.001;
+
+    const auto refresh_hz_of = [](const refresh_rate_t &rate) {
+      return rate.denominator == 0 ? 0.0 : static_cast<double>(rate.numerator) / static_cast<double>(rate.denominator);
+    };
+
+    // Apply one output's mode, choosing the nearest candidate inside the
+    // tolerance (exact = no substitution, the analogue of dropping
+    // SDC_ALLOW_CHANGES so a custom mode the desktop does not offer still works).
+    const auto apply_one = [&](const std::string &device_id, const display_mode_t &mode, bool exact) {
+      const double tolerance = exact ? k_exact_refresh_tolerance_hz : k_refresh_tolerance_hz;
       const auto outputs = query_outputs();
       const auto *output = find_output(outputs, device_id);
       if (!output) {
         BOOST_LOG(error) << "Cannot set display mode for unknown output: " << device_id;
-        all_ok = false;
-        continue;
+        return false;
       }
 
-      const double target_refresh = static_cast<double>(mode.refresh_rate.numerator) /
-                                    static_cast<double>(mode.refresh_rate.denominator);
-
-      // Windows compares refresh rates with a 1 Hz fuzz (fuzzy_compare_refresh_rates)
-      // and lets the OS pick the closest available mode (SDC_ALLOW_CHANGES), so
-      // 60 fps against a 59.94 Hz panel is already a match. Match that
-      // acceptance instead of demanding an exact rate.
-      constexpr double k_refresh_tolerance_hz = 1.0;
+      const double target_refresh = refresh_hz_of(mode.refresh_rate);
 
       const auto current_matches = [&]() {
         const auto fresh = query_outputs();
@@ -619,11 +686,11 @@ namespace display_device {
         return current_mode != fresh_output->modes.end() &&
                current_mode->width == mode.resolution.width &&
                current_mode->height == mode.resolution.height &&
-               std::fabs(current_mode->refresh - target_refresh) <= k_refresh_tolerance_hz;
+               std::fabs(current_mode->refresh - target_refresh) <= tolerance;
       };
 
       if (current_matches()) {
-        continue;
+        return true;
       }
 
       // Nearest candidate within tolerance, mirroring SDC_ALLOW_CHANGES.
@@ -634,7 +701,7 @@ namespace display_device {
           continue;
         }
         const double delta = std::fabs(candidate.refresh - target_refresh);
-        if (delta > k_refresh_tolerance_hz) {
+        if (delta > tolerance) {
           continue;
         }
         if (!best || delta < best_delta) {
@@ -649,11 +716,10 @@ namespace display_device {
           available += candidate.id + ":" + std::to_string(candidate.width) + "x" +
                        std::to_string(candidate.height) + "@" + candidate.refresh_str + " ";
         }
-        BOOST_LOG(error) << "Output " << device_id << " has no mode "
+        BOOST_LOG(error) << "Output " << device_id << " has no " << (exact ? "exact " : "") << "mode "
                          << mode.resolution.width << "x" << mode.resolution.height << "@"
                          << target_refresh << " (available: " << available << ")";
-        all_ok = false;
-        continue;
+        return false;
       }
 
       const std::string base_args = "output." + device_id + ".mode.";
@@ -661,27 +727,70 @@ namespace display_device {
       // form, so integral refreshes go by rate and fractional ones (e.g.
       // 59.94) only by their mode id.
       std::vector<std::string> attempts;
-      if (std::fabs(best->refresh - std::round(best->refresh)) < 0.001) {
+      if (std::fabs(best->refresh - std::round(best->refresh)) < k_exact_refresh_tolerance_hz) {
         attempts.push_back(std::to_string(best->width) + "x" + std::to_string(best->height) + "@" +
                            std::to_string(static_cast<long long>(std::llround(best->refresh))));
       }
       attempts.push_back(best->id);
 
-      bool applied = false;
       for (const auto &attempt : attempts) {
         BOOST_LOG(info) << "Changing display mode: " << base_args << attempt;
         if (kscreen_change(base_args + attempt, current_matches)) {
-          applied = true;
-          break;
+          return true;
         }
       }
-      if (!applied) {
-        BOOST_LOG(error) << "Failed to apply display mode for output " << device_id;
-        all_ok = false;
+
+      BOOST_LOG(error) << "Failed to apply display mode for output " << device_id;
+      return false;
+    };
+
+    const auto apply_all = [&](const device_display_mode_map_t &wanted, bool exact) {
+      bool all_ok = true;
+      for (const auto &[device_id, mode] : wanted) {
+        if (!apply_one(device_id, mode, exact)) {
+          all_ok = false;
+        }
       }
+      return all_ok;
+    };
+
+    // The same fuzzy comparison Windows uses to decide whether a change is
+    // still needed after the compositor had its say.
+    const auto all_modes_match = [&](const device_display_mode_map_t &wanted) {
+      const auto current = get_current_display_modes(device_ids);
+      for (const auto &[device_id, requested_mode] : wanted) {
+        const auto it = current.find(device_id);
+        if (it == current.end()) {
+          return false;
+        }
+        if (it->second.resolution.width != requested_mode.resolution.width ||
+            it->second.resolution.height != requested_mode.resolution.height ||
+            std::fabs(refresh_hz_of(it->second.refresh_rate) - refresh_hz_of(requested_mode.refresh_rate)) > k_refresh_tolerance_hz) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    if (all_modes_match(modes)) {
+      return true;
     }
 
-    return all_ok;
+    if (apply_all(modes, /*exact=*/false) && all_modes_match(modes)) {
+      return true;
+    }
+
+    // Windows retries without SDC_ALLOW_CHANGES so a user-created custom mode
+    // that the desktop does not offer can still be selected.
+    BOOST_LOG(info) << "Failed to change display modes with the nearest mode, retrying strictly";
+    if (apply_all(modes, /*exact=*/true) && all_modes_match(modes)) {
+      return true;
+    }
+
+    // Undo whatever did apply; the result does not matter, we are failing anyway.
+    BOOST_LOG(error) << "Failed to set display mode(-s) completely; restoring the previous modes";
+    apply_all(original_modes, /*exact=*/false);
+    return false;
   }
 
   bool
@@ -730,39 +839,73 @@ namespace display_device {
   bool
   set_hdr_states(const hdr_state_map_t &states) {
     if (states.empty()) {
+      // Kept a no-op on purpose: the revert paths hand an empty map meaning
+      // "nothing to restore" (Windows rejects an empty map here instead).
       return true;
     }
 
-    bool all_ok = true;
+    std::unordered_set<std::string> device_ids;
+    for (const auto &[device_id, _] : states) {
+      device_ids.insert(device_id);
+    }
+
+    // Snapshot for the rollback, exactly as Windows keeps original_states: a
+    // change that fails halfway must not leave some displays switched over.
+    const auto original_states = get_current_hdr_states(device_ids);
+
+    // Windows refuses the request when a device's current state is unknown
+    // rather than retrying a command that cannot succeed; report it precisely.
     for (const auto &[device_id, state] : states) {
       if (state == hdr_state_e::unknown) {
         continue;
       }
-
-      const auto state_matches = [&]() {
-        const auto fresh = get_current_hdr_states({ device_id });
-        const auto it = fresh.find(device_id);
-        return it != fresh.end() && it->second == state;
-      };
-
-      // Only "disable an already-disabled output" is skipped: Windows always
-      // re-issues HDR-on because the read-back can be stale after virtual
-      // display/topology changes (device_hdr_states.cpp skips disabled==disabled
-      // only). Trusting an "enabled" read-back left the host in SDR while
-      // Sunshine believed HDR was on.
-      if (state == hdr_state_e::disabled && state_matches()) {
-        continue;
-      }
-
-      const std::string args = "output." + device_id + (state == hdr_state_e::enabled ? ".hdr.enable" : ".hdr.disable");
-      BOOST_LOG(info) << "Changing HDR state: " << args;
-      if (!kscreen_change(args, state_matches)) {
-        BOOST_LOG(error) << "Failed to set HDR state for output " << device_id;
-        all_ok = false;
+      if (!original_states.count(device_id)) {
+        BOOST_LOG(error) << "HDR state cannot be changed for " << device_id
+                         << ": the compositor reports no HDR information for it";
+        return false;
       }
     }
 
-    return all_ok;
+    const auto apply_states = [&](const hdr_state_map_t &wanted) {
+      bool all_ok = true;
+      for (const auto &[device_id, state] : wanted) {
+        if (state == hdr_state_e::unknown) {
+          continue;
+        }
+
+        const auto state_matches = [&]() {
+          const auto fresh = get_current_hdr_states({ device_id });
+          const auto it = fresh.find(device_id);
+          return it != fresh.end() && it->second == state;
+        };
+
+        // Only "disable an already-disabled output" is skipped: Windows always
+        // re-issues HDR-on because the read-back can be stale after virtual
+        // display/topology changes (device_hdr_states.cpp skips disabled==disabled
+        // only). Trusting an "enabled" read-back left the host in SDR while
+        // Sunshine believed HDR was on.
+        if (state == hdr_state_e::disabled && state_matches()) {
+          continue;
+        }
+
+        const std::string args = "output." + device_id + (state == hdr_state_e::enabled ? ".hdr.enable" : ".hdr.disable");
+        BOOST_LOG(info) << "Changing HDR state: " << args;
+        if (!kscreen_change(args, state_matches)) {
+          BOOST_LOG(error) << "Failed to set HDR state for output " << device_id;
+          all_ok = false;
+        }
+      }
+
+      return all_ok;
+    };
+
+    if (!apply_states(states)) {
+      BOOST_LOG(warning) << "Failed to set HDR state(-s) completely; restoring the previous states";
+      apply_states(original_states);  // Best effort, we are already failing.
+      return false;
+    }
+
+    return true;
   }
 
   active_topology_t
@@ -822,29 +965,54 @@ namespace display_device {
     }
 
     const auto current = get_current_topology();
-    const auto current_ids = topology_device_ids(current);
-    const auto target_ids = topology_device_ids(new_topology);
 
-    for (const auto &device_id : target_ids) {
-      if (!current_ids.count(device_id)) {
-        BOOST_LOG(info) << "Enabling output: " << device_id;
-        const auto result = run_kscreen("output." + device_id + ".enable");
-        if (result.exit_code != 0) {
-          BOOST_LOG(error) << "Failed to enable output " << device_id << ": " << result.output;
-          return false;
+    // Enable/disable the outputs that differ. Factored out so the verification
+    // below can put the previous layout back without recursing into it.
+    const auto apply = [&](const active_topology_t &wanted) {
+      const auto current_ids = topology_device_ids(get_current_topology());
+      const auto target_ids = topology_device_ids(wanted);
+
+      for (const auto &device_id : target_ids) {
+        if (!current_ids.count(device_id)) {
+          BOOST_LOG(info) << "Enabling output: " << device_id;
+          const auto result = run_kscreen("output." + device_id + ".enable");
+          if (result.exit_code != 0) {
+            BOOST_LOG(error) << "Failed to enable output " << device_id << ": " << result.output;
+            return false;
+          }
         }
       }
+
+      for (const auto &device_id : current_ids) {
+        if (!target_ids.count(device_id)) {
+          BOOST_LOG(info) << "Disabling output: " << device_id;
+          const auto result = run_kscreen("output." + device_id + ".disable");
+          if (result.exit_code != 0) {
+            BOOST_LOG(error) << "Failed to disable output " << device_id << ": " << result.output;
+            return false;
+          }
+        }
+      }
+
+      return true;
+    };
+
+    if (!apply(new_topology)) {
+      return false;
     }
 
-    for (const auto &device_id : current_ids) {
-      if (!target_ids.count(device_id)) {
-        BOOST_LOG(info) << "Disabling output: " << device_id;
-        const auto result = run_kscreen("output." + device_id + ".disable");
-        if (result.exit_code != 0) {
-          BOOST_LOG(error) << "Failed to disable output " << device_id << ": " << result.output;
-          return false;
-        }
-      }
+    // A compositor can accept a request it does not fully apply, so let it
+    // settle and then verify rather than trusting the exit codes (Windows
+    // re-reads and reverts for the same reason). If the compositor stopped
+    // answering entirely, keep the historical tolerance instead of reverting
+    // based on an empty read.
+    const bool settled = wait_for_topology(new_topology, std::chrono::milliseconds { 3000 });
+    const auto updated = get_current_topology();
+    if (!settled && !updated.empty() && !is_topology_the_same(new_topology, updated)) {
+      BOOST_LOG(error) << "Failed to change topology: requested " << to_string(new_topology)
+                       << " but the compositor reports " << to_string(updated) << "; reverting";
+      apply(current);  // Best effort, we are already failing.
+      return false;
     }
 
     return true;
@@ -1069,6 +1237,14 @@ namespace display_device {
       }
 
       filter_stale_devices(new_hdr_states, topology_ids, "HDR states");
+
+      // Let the compositor settle after this call's topology/mode changes before
+      // switching HDR; a lagging read would otherwise look like a permanent
+      // failure (or, with the fail-fast below, a hard one).
+      if (!is_vdd_mode &&
+          (config.resolution || config.refresh_rate || !is_topology_the_same(current_topology, modified_topology))) {
+        wait_for_display_stability(targets);
+      }
 
       BOOST_LOG(info) << "Changing HDR states to: " << to_string(new_hdr_states);
       if (!set_hdr_states(new_hdr_states)) {
