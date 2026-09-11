@@ -30,9 +30,9 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
 
 ### 1.2 VDD EDID 模式表 —— 🔶 大部分已解决（2026-09-11，`4e186f4b`，tag `v0.8.3`，pkgrel 32）
 
-- **已完成**：手动创建参数化——`vdd_manual_resolution`/`vdd_manual_fps` 配置键控制托盘/
-  headless 创建的首选模式；EDID 阶梯改为从 `config::nvhttp.resolutions`×`fps` 构建（对齐
-  Windows SETMODES 的配置源），合成器可免重写 EDID 热切配置内的模式。
+- **已完成**：手动创建参数化——首选模式从 WebUI 可编辑的 `resolutions`/`fps` 列表推导
+  （最高分辨率×最高刷新率），EDID 阶梯携带全部配置档位供合成器免重写热切；客户端会话
+  模式仍优先（`cached_from_session`）。无新增配置键。
 - **剩余小项**：阶梯上限 6 个模式（EDID 空间限制，Windows SETMODES 无此限）；会话外
   kscreen-doctor 热切已可用但未在 UI 暴露入口。
 
