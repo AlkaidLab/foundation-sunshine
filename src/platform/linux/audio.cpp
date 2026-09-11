@@ -20,6 +20,8 @@
 #include "src/platform/common.h"
 #include "src/thread_safe.h"
 
+#include "mic_queue.h"
+
 namespace platf {
   using namespace std::literals;
 
@@ -218,6 +220,44 @@ namespace platf {
       // release (the Linux counterpart of the Windows default-capture-device
       // swap).
       std::string mic_previous_default_source;
+      // Staging queue plus writer thread: write_mic_pcm() must not block on the
+      // sink (see mic_queue.h), and the writer reports a fatal error for the
+      // next write_mic_pcm() call to hand back to the session.
+      mic_queue::queue_t mic_queue;
+      std::thread mic_writer;
+      std::atomic<int> mic_write_error { 0 };
+
+      /**
+       * @brief Absorb the blocking pa_simple_write() off the shared mic thread.
+       * @details Exits when the queue is stopped (device release) or when a
+       *          write fails; the failure is recorded for write_mic_pcm() to
+       *          report with the documented return code.
+       */
+      void
+      mic_writer_loop() {
+        std::vector<std::int16_t> frame;
+        while (mic_queue.pop(frame)) {
+          if (!mic_play || frame.empty()) {
+            continue;
+          }
+
+          int status = 0;
+          if (pa_simple_write(mic_play.get(), frame.data(), frame.size() * sizeof(std::int16_t), &status)) {
+            // A terminated/killed device asks the caller to reinitialize (-2);
+            // anything else is a generic error (-1). Oversized frames cannot
+            // come from the mixer, and are reported as a drop if they ever do.
+            if (status == PA_ERR_TOOLARGE) {
+              BOOST_LOG(warning) << "pa_simple_write() dropped an oversized virtual microphone frame"sv;
+              continue;
+            }
+
+            const int code = (status == PA_ERR_CONNECTIONTERMINATED || status == PA_ERR_KILLED) ? -2 : -1;
+            BOOST_LOG(error) << "pa_simple_write() to the virtual microphone failed: "sv << pa_strerror(status);
+            mic_write_error.store(code);
+            return;
+          }
+        }
+      }
 
       std::unique_ptr<safe::event_t<ctx_event_e>> events;
       std::unique_ptr<std::function<void(ctx_t::pointer)>> events_cb;
@@ -608,31 +648,24 @@ namespace platf {
           return 0;
         }
 
-        int status;
-        const auto bytes = static_cast<int>(frame_count * sizeof(std::int16_t));
-        if (pa_simple_write(mic_play.get(), samples, bytes, &status)) {
-          // Mirror the Windows return-code contract: a terminated/killed
-          // device asks the caller to reinitialize (-2, sink released), an
-          // oversized request is a dropped frame (0, like
-          // AUDCLNT_E_BUFFER_TOO_LARGE), anything else is a generic error (-1)
-          // that keeps the stream in place.
-          if (status == PA_ERR_TOOLARGE) {
-            BOOST_LOG(warning) << "pa_simple_write() dropped an oversized virtual microphone frame"sv;
-            return 0;
-          }
-          if (status == PA_ERR_CONNECTIONTERMINATED || status == PA_ERR_KILLED) {
-            BOOST_LOG(info) << "Virtual microphone device became unavailable: "sv << pa_strerror(status);
+        // A fatal writer error is surfaced here so the caller keeps its
+        // reinitialize contract (and -2 still releases the sink).
+        if (const int error = mic_write_error.exchange(0); error != 0) {
+          if (error == -2) {
             release_mic_redirect_device();
-            return -2;
           }
-          BOOST_LOG(error) << "pa_simple_write() to the virtual microphone failed: "sv << pa_strerror(status);
-          return -1;
+          return error;
         }
 
-        // Matches the Windows backend: report the number of bytes handed to
-        // the device. The null-sink consumes steadily, so the stream buffer
-        // stays bounded without flushing.
-        return bytes;
+        // Never block the shared mixer thread on the sink: the writer thread
+        // owns the blocking write and a full queue is the documented drop
+        // (the Linux equivalent of the Windows endpoint padding check).
+        if (!mic_queue.push(samples, frame_count)) {
+          return 0;
+        }
+
+        // Matches the Windows backend: report the number of bytes handed over.
+        return static_cast<int>(frame_count * sizeof(std::int16_t));
       }
 
       int
@@ -727,11 +760,24 @@ namespace platf {
         }
 
         BOOST_LOG(info) << "Virtual microphone ready ("sv << k_mic_sink_name << ")"sv;
+
+        // Start the staging writer last: it takes over the blocking writes that
+        // write_mic_pcm() must not perform on the shared mixer thread.
+        mic_queue.reset();
+        mic_write_error.store(0);
+        mic_writer = std::thread([this] { mic_writer_loop(); });
         return 0;
       }
 
       void
       release_mic_redirect_device() override {
+        // Stop and join the writer before the stream it writes to goes away.
+        mic_queue.stop();
+        if (mic_writer.joinable()) {
+          mic_writer.join();
+        }
+        mic_write_error.store(0);
+
         mic_play.reset();
 
         if (mic_sink_index != PA_INVALID_INDEX) {
@@ -749,6 +795,11 @@ namespace platf {
       }
 
       ~server_t() override {
+        mic_queue.stop();
+        if (mic_writer.joinable()) {
+          mic_writer.join();
+        }
+
         unload_null(index.stereo);
         unload_null(index.surround51);
         unload_null(index.surround71);
