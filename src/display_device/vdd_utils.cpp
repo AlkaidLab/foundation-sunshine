@@ -1901,9 +1901,10 @@ namespace display_device::vdd_utils {
           }
         }
       }
-      // The EDID carries the preferred DTD plus at most five extras.
-      if (ladder.size() > 5) {
-        ladder.resize(5);
+      // Chained CTA extension blocks scale the EDID with the mode list; the
+      // cap only guards against pathological config lists.
+      if (ladder.size() > 40) {
+        ladder.resize(40);
       }
       active_edid_opts.extra_modes = std::move(ladder);
     }

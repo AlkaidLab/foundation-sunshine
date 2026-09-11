@@ -213,9 +213,36 @@ namespace vdd_edid {
     const std::uint8_t name_descriptor[5] = { 0x00, 0x00, 0x00, 0xFC, 0x00 };
     std::copy(std::begin(name_descriptor), std::end(name_descriptor), edid.begin() + 72);
 
-    // Display range limits
-    const auto min_v_rate = static_cast<std::uint8_t>(std::max(24u, refresh_hz - 20));
-    const auto max_v_rate = static_cast<std::uint8_t>(refresh_hz + 20);
+    // Secondary detailed timings: the base block's last descriptor slot
+    // takes the first extra mode; the rest spill into chained CTA-861
+    // extension blocks. Chaining is what makes the full configured-combination
+    // mode list (the Windows SETMODES equivalent) representable on Linux —
+    // a single extension block would cap the EDID at six modes.
+    auto extras = opts.extra_modes;
+    extras.erase(std::remove_if(extras.begin(), extras.end(), [&](const auto &m) {
+      return std::get<0>(m) == width && std::get<1>(m) == height && std::get<2>(m) == refresh_hz;
+    }), extras.end());
+
+    std::size_t cursor = 0;
+    if (!extras.empty()) {
+      const auto dtd = build_dtd(std::get<0>(extras.front()), std::get<1>(extras.front()), std::get<2>(extras.front()), h_size_mm, v_size_mm);
+      std::copy(dtd.begin(), dtd.end(), edid.begin() + 108);
+      cursor = 1;
+    } else {
+      const std::uint8_t dummy[5] = { 0x00, 0x00, 0x00, 0x10, 0x00 };
+      std::copy(std::begin(dummy), std::end(dummy), edid.begin() + 108);
+    }
+
+    // Display range limits — must cover every advertised mode, not just the
+    // preferred one, or the descriptor contradicts the mode list.
+    unsigned int min_advertised_hz = refresh_hz;
+    unsigned int max_advertised_hz = refresh_hz;
+    for (const auto &m : extras) {
+      min_advertised_hz = std::min(min_advertised_hz, std::get<2>(m));
+      max_advertised_hz = std::max(max_advertised_hz, std::get<2>(m));
+    }
+    const auto min_v_rate = static_cast<std::uint8_t>(std::clamp(min_advertised_hz - std::min(5u, min_advertised_hz - 1u), 24u, 255u));
+    const auto max_v_rate = static_cast<std::uint8_t>(std::min(max_advertised_hz + 5u, 255u));
     const std::uint8_t range_limits[18] = {
       0x00, 0x00, 0x00, 0xFD, 0x00,
       min_v_rate, max_v_rate,
@@ -226,85 +253,86 @@ namespace vdd_edid {
     };
     std::copy(std::begin(range_limits), std::end(range_limits), edid.begin() + 90);
 
-    // Secondary detailed timings: the dummy descriptor slot takes the first
-    // extra mode; the remaining ones fill the CEA DTD area after the
-    // preferred-mode copy.
-    auto extras = opts.extra_modes;
-    extras.erase(std::remove_if(extras.begin(), extras.end(), [&](const auto &m) {
-      return std::get<0>(m) == width && std::get<1>(m) == height && std::get<2>(m) == refresh_hz;
-    }), extras.end());
+    // Extension block 1: the data blocks below plus a copy of the preferred
+    // timing and up to four extras; every further block is DTD-only and
+    // carries up to six extras.
+    const std::size_t block1_extras = std::min<std::size_t>(extras.size() - cursor, 4);
+    const std::size_t chained_remaining = extras.size() - cursor - block1_extras;
+    const std::size_t extension_blocks = 1 + (chained_remaining + 5) / 6;
 
-    std::size_t extra_index = 0;
-    if (!extras.empty()) {
-      const auto dtd = build_dtd(std::get<0>(extras[extra_index]), std::get<1>(extras[extra_index]), std::get<2>(extras[extra_index]), h_size_mm, v_size_mm);
-      std::copy(dtd.begin(), dtd.end(), edid.begin() + 108);
-      ++extra_index;
-    } else {
-      const std::uint8_t dummy[5] = { 0x00, 0x00, 0x00, 0x10, 0x00 };
-      std::copy(std::begin(dummy), std::end(dummy), edid.begin() + 108);
-    }
-
-    edid[126] = 1;  // One extension block
+    edid.resize(128 * (1 + extension_blocks));
+    edid[126] = static_cast<std::uint8_t>(extension_blocks);
     edid[127] = checksum(edid, 127);
 
-    // CEA-861 extension block
-    const std::size_t cea = 128;
-    edid[cea] = 0x02;      // CEA tag
-    edid[cea + 1] = 0x03;  // Revision 3
+    const auto block_checksum = [&](std::size_t block_offset) {
+      unsigned int sum = 0;
+      for (std::size_t i = block_offset; i < block_offset + 127; ++i) {
+        sum += edid[i];
+      }
+      return static_cast<std::uint8_t>(256 - (sum % 256));
+    };
 
-    std::size_t offset = cea + 4;
+    for (std::size_t b = 1; b <= extension_blocks; ++b) {
+      const std::size_t block = 128 * b;
+      edid[block] = 0x02;      // CEA tag
+      edid[block + 1] = 0x03;  // Revision 3
 
-    if (enable_hdr) {
-      // Colorimetry Data Block: BT2020RGB, BT2020YCC, BT2020cYCC
-      edid[offset] = 0xE3;
-      edid[offset + 1] = 0x05;
-      edid[offset + 2] = 0xE0;
-      edid[offset + 3] = 0x00;
-      offset += 4;
+      std::size_t offset = block + 4;
+      if (b == 1) {
+        if (enable_hdr) {
+          // Colorimetry Data Block: BT2020RGB, BT2020YCC, BT2020cYCC
+          edid[offset] = 0xE3;
+          edid[offset + 1] = 0x05;
+          edid[offset + 2] = 0xE0;
+          edid[offset + 3] = 0x00;
+          offset += 4;
 
-      // HDR Static Metadata Data Block: SDR+HDR+PQ, type 1. Luminance bytes
-      // follow the CTA-861-H encoding; personalized when the client reports
-      // its capabilities, otherwise the reference defaults.
-      edid[offset] = 0xE6;
-      edid[offset + 1] = 0x06;
-      edid[offset + 2] = 0x07;
-      edid[offset + 3] = 0x01;
-      edid[offset + 4] = opts.hdr_max_nits >= 0 ? encode_hdr_luminance_nits(opts.hdr_max_nits) : 0x78;
-      edid[offset + 5] = opts.hdr_max_full_nits >= 0 ? encode_hdr_luminance_nits(opts.hdr_max_full_nits) : 0x5A;
-      edid[offset + 6] = opts.hdr_min_nits >= 0 ? encode_hdr_min_luminance_nits(opts.hdr_min_nits) : 0x32;
-      offset += 7;
+          // HDR Static Metadata Data Block: SDR+HDR+PQ, type 1. Luminance bytes
+          // follow the CTA-861-H encoding; personalized when the client reports
+          // its capabilities, otherwise the reference defaults.
+          edid[offset] = 0xE6;
+          edid[offset + 1] = 0x06;
+          edid[offset + 2] = 0x07;
+          edid[offset + 3] = 0x01;
+          edid[offset + 4] = opts.hdr_max_nits >= 0 ? encode_hdr_luminance_nits(opts.hdr_max_nits) : 0x78;
+          edid[offset + 5] = opts.hdr_max_full_nits >= 0 ? encode_hdr_luminance_nits(opts.hdr_max_full_nits) : 0x5A;
+          edid[offset + 6] = opts.hdr_min_nits >= 0 ? encode_hdr_min_luminance_nits(opts.hdr_min_nits) : 0x32;
+          offset += 7;
+        }
+
+        // Video Capability Data Block
+        edid[offset] = 0xE2;
+        edid[offset + 1] = 0x00;
+        edid[offset + 2] = 0x00;
+        offset += 3;
+
+        // HDMI Forum Vendor Specific Data Block
+        const std::uint8_t hdmi_forum[8] = { 0x67, 0xD8, 0x5D, 0xC4, 0x01, 0x78, 0x00, 0x00 };
+        std::copy(std::begin(hdmi_forum), std::end(hdmi_forum), edid.begin() + offset);
+        offset += 8;
+
+        edid[block + 2] = static_cast<std::uint8_t>(offset - block);  // DTD start offset
+        edid[block + 3] = 0x70;                                       // Underscan, Basic Audio, YCbCr 4:4:4
+
+        // Duplicate the base DTD (the preferred mode), then append extras
+        if (offset + 18 <= block + 126) {
+          std::copy_n(edid.begin() + 54, 18, edid.begin() + offset);
+          offset += 18;
+        }
+      } else {
+        edid[block + 2] = 0x04;  // DTD start offset
+        edid[block + 3] = 0x40;  // Underscan supported
+      }
+
+      while (cursor < extras.size() && offset + 18 <= block + 126) {
+        const auto &m = extras[cursor++];
+        const auto dtd = build_dtd(std::get<0>(m), std::get<1>(m), std::get<2>(m), h_size_mm, v_size_mm);
+        std::copy(dtd.begin(), dtd.end(), edid.begin() + offset);
+        offset += 18;
+      }
+
+      edid[block + 127] = block_checksum(block);
     }
-
-    // Video Capability Data Block
-    edid[offset] = 0xE2;
-    edid[offset + 1] = 0x00;
-    edid[offset + 2] = 0x00;
-    offset += 3;
-
-    // HDMI Forum Vendor Specific Data Block
-    const std::uint8_t hdmi_forum[8] = { 0x67, 0xD8, 0x5D, 0xC4, 0x01, 0x78, 0x00, 0x00 };
-    std::copy(std::begin(hdmi_forum), std::end(hdmi_forum), edid.begin() + offset);
-    offset += 8;
-
-    edid[cea + 2] = static_cast<std::uint8_t>(offset - cea);  // DTD start offset
-    edid[cea + 3] = 0x70;                                     // Underscan, Basic Audio, YCbCr 4:4:4
-
-    // Duplicate the base DTD, then append the remaining extra modes
-    if (offset + 18 <= 255) {
-      std::copy_n(edid.begin() + 54, 18, edid.begin() + offset);
-      offset += 18;
-    }
-    if (extra_index > 0) {
-      --extra_index;  // the first extra went into the base block
-    }
-    while (extra_index < extras.size() && offset + 18 <= 255) {
-      const auto &m = extras[extra_index++];
-      const auto dtd = build_dtd(std::get<0>(m), std::get<1>(m), std::get<2>(m), h_size_mm, v_size_mm);
-      std::copy(dtd.begin(), dtd.end(), edid.begin() + offset);
-      offset += 18;
-    }
-
-    edid[255] = checksum(edid, 255);
 
     return edid;
   }
