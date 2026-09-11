@@ -1841,7 +1841,8 @@ namespace display_device::vdd_utils {
         unsigned int fps = 0;
         std::stringstream input(entry);
         input >> fps;
-        if (fps >= 24 && fps <= 480) {
+        // Windows acceptance: any positive refresh rate.
+        if (fps > 0) {
           max_fps = std::max(max_fps, fps);
         }
       }
@@ -1853,7 +1854,8 @@ namespace display_device::vdd_utils {
         std::stringstream input(res);
         char separator = '\0';
         input >> width >> separator >> height;
-        if (separator != 'x' && separator != 'X') {
+        // Windows acceptance: any positive dimensions with an 'x'/'X' separator.
+        if (separator != 'x' && separator != 'X' || width == 0 || height == 0) {
           continue;
         }
         const auto mode = std::make_tuple(width, height, max_fps);
@@ -1884,6 +1886,8 @@ namespace display_device::vdd_utils {
         return;
       }
 
+      // Acceptance matches the Windows parse_vdd_resolution/parse_vdd_refresh_hz:
+      // positive width/height and refresh rates, 'x'/'X' separator.
       unsigned int width = 0;
       unsigned int height = 0;
       for (const auto &res : config::nvhttp.resolutions) {
@@ -1892,10 +1896,10 @@ namespace display_device::vdd_utils {
         std::stringstream input(res);
         char separator = '\0';
         input >> w >> separator >> h;
-        if (separator != 'x' || w < 640 || w > 8192 || h < 480 || h > 8192) {
+        if (separator != 'x' && separator != 'X') {
           continue;
         }
-        if ((unsigned long long) w * h > (unsigned long long) width * height) {
+        if (w > 0 && h > 0 && (unsigned long long) w * h > (unsigned long long) width * height) {
           width = w;
           height = h;
         }
@@ -1906,9 +1910,7 @@ namespace display_device::vdd_utils {
         unsigned int value = 0;
         std::stringstream input(entry);
         input >> value;
-        if (value >= 24 && value <= 480) {
-          fps = std::max(fps, value);
-        }
+        fps = std::max(fps, value);
       }
 
       if (width > 0 && height > 0) {

@@ -68,6 +68,26 @@ User installs packages themselves (sudo needs a password).
 - `BOOST_LOG` `"...sv"` literals need `using namespace std::string_view_literals`.
 - Only one sunshine instance at a time (ports 47984/47989/47990/48010).
 
+## Windows parity conventions (enforced — the user audits these)
+
+- **Canonical identifiers live in shared headers; never re-hardcode them.**
+  `ZAKO_NAME`/`VDD_NAME` (globals.h), ST2084 constants (`video_hdr_metadata.h`
+  `detail::st2084_*`; the fractions "c3=2399/4096×32" and "m2=×32" found in the wild
+  are wrong), per-client physical-size classes, VDD state strings
+  (`classify_vdd_state`), clipboard wire constants. If a Linux file spells one of
+  these as a literal, that is a bug.
+- **Port semantics, not just the happy path.** When mirroring a Windows behavior,
+  diff the Windows implementation's acceptance bounds, defaults, and tolerances and
+  reproduce them (e.g. `parse_vdd_resolution` accepts any positive WxH with an
+  x/X separator — do not invent extra clamps). Feasibility filtering belongs where
+  the Windows side has it (driver / EDID generator).
+- **User-visible naming must match Windows.** The virtual display's EDID name is
+  `ZAKO_NAME` ("Zako HDR"); anything Linux renames differently is a divergence.
+  Note KDE prepends the PnP vendor letters ("UQD") decoded from the EDID
+  manufacturer ID — inherent to EDID, not a naming mismatch.
+- After porting, grep the touched Linux files for literals duplicating shared
+  constants and for leftover divergences; the user spot-checks names and numbers.
+
 ## Conventions
 
 - Commit per logical step; tag each feature milestone (`v0.1-linux-base` …
