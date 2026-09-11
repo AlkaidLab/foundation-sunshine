@@ -33,8 +33,10 @@ display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 
 - **已完成**：手动创建参数化——首选模式从 WebUI 可编辑的 `resolutions`/`fps` 列表推导
   （最高分辨率×最高刷新率），EDID 阶梯携带全部配置档位供合成器免重写热切；客户端会话
   模式仍优先（`cached_from_session`）。无新增配置键。
-- **剩余小项**：阶梯上限 6 个模式（EDID 空间限制，Windows SETMODES 无此限）；会话外
-  kscreen-doctor 热切已可用但未在 UI 暴露入口。
+- **剩余小项**：阶梯上限 6 个模式（EDID 空间限制，Windows SETMODES 无此限；策略 = 首选
+  分辨率保留全部配置刷新率，其余分辨率各取最高可行档，`49800f6c`，tag `v0.8.7`，pkgrel 36）；
+  会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口；生成器的空白模型比 CVT-RB 保守
+  （如 3440x1440@120 被可行过滤器排除，实际该模式合法）——校准空白模型可再放宽。
 
 ### 1.3 HDR 亮度分析精度
 
