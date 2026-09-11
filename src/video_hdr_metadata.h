@@ -265,6 +265,32 @@ namespace video::hdr_metadata {
            formats_for(colorspace, video_format).vivid;
   }
   /**
+   * One luminance analysis per this many frames.
+   *
+   * Windows samples its capture analysis this way, and the shared temporal
+   * state (EMA, scene detector, Vivid startup gate) identifies new samples by
+   * `sample_sequence`, so a producer that ran on every frame would advance
+   * those filters several times faster than Windows for identical content.
+   * Every producer therefore samples at this cadence; the frames in between
+   * simply carry the previous sample, which the sequence check ignores.
+   */
+  constexpr int hdr_analysis_interval = 4;
+
+  /**
+   * Analysis sample ceiling Windows applies before reading the statistics back.
+   * The CPU analyzer reads whole frames, so this is documentation of the
+   * remaining cost difference rather than a bound it enforces.
+   */
+  constexpr int hdr_analysis_max_width = 1920;
+  constexpr int hdr_analysis_max_height = 1080;
+
+  /**
+   * The ST 2084 maximum representable luminance: the analysis clamp for a PQ
+   * source (Windows uses the display peak instead when the source is HLG).
+   */
+  constexpr float st2084_peak_nits = 10000.0f;
+
+  /**
    * Convert absolute display luminance to the normalized SMPTE ST 2084 signal
    * used by GB/T 46269.1-2025 (equivalent to T/UWA 005.1-2024).
    */

@@ -1937,9 +1937,11 @@ namespace platf::dxgi {
 
     // Must match HLSL GroupResult layout exactly
     static constexpr uint32_t HISTOGRAM_BINS = 256;
-    static constexpr uint32_t HDR_ANALYSIS_INTERVAL = 4;
-    static constexpr uint32_t HDR_ANALYSIS_MAX_WIDTH = 1920;
-    static constexpr uint32_t HDR_ANALYSIS_MAX_HEIGHT = 1080;
+    // Shared with the Linux analyzer so both platforms sample, and therefore
+    // advance the shared temporal filters, at the same cadence.
+    static constexpr uint32_t HDR_ANALYSIS_INTERVAL = ::video::hdr_metadata::hdr_analysis_interval;
+    static constexpr uint32_t HDR_ANALYSIS_MAX_WIDTH = ::video::hdr_metadata::hdr_analysis_max_width;
+    static constexpr uint32_t HDR_ANALYSIS_MAX_HEIGHT = ::video::hdr_metadata::hdr_analysis_max_height;
 
     // Pass 1 per-tile output. Deliberately scalars only: the PQ histogram is
     // accumulated straight into a single global buffer by sparse atomics in pass 1,

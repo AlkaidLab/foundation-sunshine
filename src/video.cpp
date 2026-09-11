@@ -413,7 +413,9 @@ namespace video {
       stats.avg_maxrgb_pq = (float) (signal_sum / total);
       stats.near_black_fraction = (float) ((double) near_black / total);
       stats.near_black_stats_valid = true;
-      stats.analysis_max_nits = 10000.0f;
+      // PQ's analysis clamp is the ST 2084 peak; when HLG analysis lands it
+      // must follow the Windows rule instead (min(display peak, this peak)).
+      stats.analysis_max_nits = hdr_metadata::st2084_peak_nits;
       stats.sample_sequence = ++sequence;
       stats.valid = true;
 
@@ -489,7 +491,13 @@ namespace video {
         }
       }
 
-      if (luminance_analysis_enabled) {
+      if (luminance_analysis_enabled &&
+          ++luminance_analysis_counter >= hdr_metadata::hdr_analysis_interval) {
+        // Sample at the Windows cadence: the shared temporal filters key off
+        // sample_sequence, so analyzing every frame would advance them (and the
+        // Vivid startup gate) four times faster for the same content. The frames
+        // in between keep the previous statistics, which those filters ignore.
+        luminance_analysis_counter = 0;
         analyze_pq_luma_frame(sw_frame.get(), hdr_luminance_stats, luminance_sequence);
       }
 
@@ -618,6 +626,7 @@ namespace video {
     // this device can feed the analyzer (see make_avcodec_encode_session).
     bool luminance_analysis_enabled = false;
     std::uint64_t luminance_sequence = 0;
+    int luminance_analysis_counter = 0;
 
     // Offset of input image to output frame in pixels
     int offsetW;
@@ -893,11 +902,10 @@ namespace video {
      */
     void
     analyze_hw_frame_if_due() {
-      static constexpr int k_analysis_interval = 4;
       if (!hw_analysis_enabled || !device || !device->frame) {
         return;
       }
-      if (++hw_analysis_counter < k_analysis_interval) {
+      if (++hw_analysis_counter < hdr_metadata::hdr_analysis_interval) {
         return;
       }
       hw_analysis_counter = 0;
