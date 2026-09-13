@@ -764,7 +764,7 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     `display_vram.cpp` 的三个采样常量数值不变、托盘菜单的 Windows 语句与文案逐字未变、其余共享头均为
     增量新增。**唯一 Windows 可见行为变化**是 HDR10+ 元数据改为首帧有效统计才挂载（消除伪造 SEI，与
     该平台原生路径一致）。同时把 C5（跨语言常量同步）转为决策记录（不引入代码生成，靠线协议测试守
-    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.21：F4（HLG 域分析源）、
+    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.22：F4（HLG 域分析源）、
     niri/wlr-output-management 输出后端、D15（复制拓扑），外加 §5.18 的有意保留差异清单。
 
 39. **第十六轮：托盘"创建虚拟显示器"崩溃修复（2026-09-11）**：用户在 KDE 下点托盘"创建虚拟显示器"
@@ -779,6 +779,30 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
      模块（`hint_primary_output` 改用共享实现），新增 7 个单元测试锁死每个分支的命令字符串。详见
      `LINUX_PORT_GAPS.md` §5.20。
 
+40. **第十七轮：虚拟屏模式/HDR 下发与 EDID 发布校验（2026-09-13）**：用户报告"客户端虚拟屏（独占）
+     连接时申请的分辨率没生效，与 Windows 不一致"。复核结论是三个独立缺陷叠加，详见
+     `LINUX_PORT_GAPS.md` §5.21：
+     - **目标指错（主因）**：`make_parsed_config()` 早于 `prepare_vdd()` 运行，`config.device_id`
+       解析成客户端看的物理屏；`apply_config()` 用它做 modes/HDR 唯一目标，又被 VDD-only 拓扑的
+       `filter_stale_devices()` 丢掉 → 两张 map 皆空 → `set_display_modes({})` 直接返回 true，客户端
+       申请的分辨率与 HDR 状态**从未下发**，容忍分支只留一句"EDID 保证"。现场证据是日志里 VDD 会话的
+       `Changing display modes to:` / `Changing HDR states to:` 内容为空。修复：VDD 模式以
+       `live_virtual_display_connector()` 为目标。
+     - **发布校验是桩**：Linux `is_mode_advertised()` 只要 VDD 活着就返回 true，`wait_for_mode_publication()`
+       只等 sysfs `connected`。现在改为查询合成器真实模式表（新增 `platf::kscreen::advertised_modes()`，
+       复用既有 kscreen 解析器 + 共享 ±1 Hz 语义），按 `kModePublicationTimeout` 轮询，失败时打印实际
+       发布的模式列表并按 Windows 语义返回 `modes_fail`；查询不可用（niri/wlroots/X11）视为"未知"。
+     - **EDID 无法表达的模式被静默写坏**：DTD 像素时钟是 16 位 ×10 kHz，> 655.35 MHz 的模式被饱和成
+       0xFFFF —— 4K120 实测写成 `3840x2160@71.4 Hz`。`49800f6c` 只修了"配置选首选模式"这条路径，
+       客户端申请走 `set_vdd_session_mode()` 绕过了检查；现在三处都先判可行性、不通过就明确报错并保留
+       原 EDID，上限提为 `vdd_edid::kMaxDtdPixelClockHz`。另外创建时的模式表改用会话设置（等价 Windows
+       SETMODES 的"配置组合 + 客户端模式"叉积），并清掉会串到托盘创建的 `cached_from_session` 陈旧态。
+     - **顺带修崩溃级缺陷**：debugfs 探测用会抛异常的 `std::filesystem` 重载，无文件能力的调用者一遇到
+       已连接连接器即抛 `filesystem_error` 终止（聚合测试套件因此 abort），全部改用 error_code 重载。
+     - **验证**：`cvt -r` 交叉核对确认可行性判断不是模型保守（3440x1440@120 = 658.25 MHz > DTD 上限）；
+       真实生成器对配置矩阵逐个生成 EDID 并反算内核视角刷新率，23 个可行模式偏差均 ≤1 Hz；新探测在
+       实机 KDE 会话实测 `eDP-1` = `1920x1080@60` 且匹配判定正确。
+
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
@@ -791,10 +815,12 @@ Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90`
 `$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归；且必须重建 `test_sunshine`
 （增量构建只编译 `sunshine` 时，ctest 会跑旧二进制并掩盖新失败）。
 
-**测试基线更新（2026-09-11，第十六轮之后）**：聚合套件 528 个用例：**515 通过、12 跳过、0 断言失败**
-（新增 7 个 `CompositorOutput` 用例锁死合成器命令映射）。本轮唯一失败是上游网络用例
-`DownloadFileTests/DownloadFileTest.Run/1`（`https://httpbin.org/redirect-to?...`）：沙箱把 `httpbin.org`
-解析成黑洞地址 `fdfe:dcba:9876::ec`，握手后拿不到重定向目标，属环境限制而非代码回归。
+**测试基线更新（2026-09-13，第十七轮之后）**：聚合套件 532 个用例：**519 通过、12 跳过、0 断言失败**
+（新增 `CompositorOutput` 7 个、`KscreenModes` 2 个、`VddEdid` 可行性/饱和边界 2 个）。本轮修掉一个
+真实 abort：`DisplayDeviceEnum.ActiveRequiresAnEnabledConnector` 曾因 debugfs 探测抛 `filesystem_error`
+终止整个套件。唯一失败仍是上游网络用例 `DownloadFileTests/DownloadFileTest.Run/1`
+（`https://httpbin.org/redirect-to?...`）：沙箱把 `httpbin.org` 解析成黑洞地址 `fdfe:dcba:9876::ec`，
+握手后拿不到重定向目标，属环境限制而非代码回归。
 
 **下一个目标（2026-09-11 起）**：**niri 支持**（`LINUX_PORT_GAPS.md` §2.11：前台检测 producer、
 通用输出后端 wlr-output-management、niri 输出控制）、剪贴板补图片类帧与大文件 blob 回退

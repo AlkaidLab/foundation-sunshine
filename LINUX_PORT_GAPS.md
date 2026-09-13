@@ -63,8 +63,11 @@
 - 残留虚拟屏 adopt（`387a97fd`，v0.8.1）：EDID override 与强制连接器状态是 DRM 持久的，新进程
   首次查询时扫描 VHD 签名连接器、还原跟踪路径、从 DTD 解析回偏好模式。
 
-**剩余小项**：生成器空白模型（8% / 2.5%）比 CVT-R 保守，个别真实模式（如 3440x1440@120）被
-可行性过滤器排除——校准空白模型可再放宽；会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口。
+**剩余小项**：**已复核，原判断有误**——生成器空白模型并不比 CVT-R 保守：参考实现 `cvt -r` 对
+3440x1440@120 给出 658.25 MHz，本生成器给出 658.0 MHz（更紧），两者都超过 base block DTD 的
+16 位像素时钟上限 655.35 MHz。所以 3440x1440@120/144、3840x2160@90/120/144 这类模式**无法用
+一个 DTD 表达**（要表达需 DisplayID 扩展块，属独立特性，见 §5.21 第 3 条），不是校准问题。
+会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口。
 （EDID 参考向量已随派生 Range Limits 更新，见 §5.1 P15。）
 
 ### 1.3 HDR 亮度分析精度
@@ -591,7 +594,55 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
 **教训（已加固）**：把"某个桌面分支"从直呼命令改成走 dispatcher 时，dispatcher 的分支必须能被单元测试
 直接断言；本轮起该映射是纯函数并被测试锁死，同类自递归不可能再静默复发。
 
-### 5.21 仍未完成（诚实清单）
+### 5.21 第十七轮修复（虚拟屏分辨率/HDR 未生效与 EDID 假设，2026-09-13）
+
+用户报告："客户端虚拟屏（独占）连接，客户端申请的分辨率似乎没有自动追加到 EDID，导致分辨率设置
+没生效，与 Windows 实现不一致。" 复核确认**不是"没追加"，而是三个各自独立的真实缺陷**，其中一个
+让申请的模式根本没被应用：
+
+1. **模式/HDR 目标指向物理屏（主因，`display_device.cpp`）**：`make_parsed_config()` 在
+   `prepare_vdd()` **之前**运行，此时 VDD 还不存在，`config.device_id` 解析出的是客户端看的物理屏
+   （或空）。`apply_config()` 用它做 modes/HDR 的唯一目标，而 VDD 会话的拓扑里只有虚拟屏，于是
+   `filter_stale_devices()` 把目标整条丢掉 → 两张 map 都为**空** → `set_display_modes({})` 直接
+   `return true`（空 map 视为无事可做）→ 客户端申请的分辨率与 HDR 状态**从未下发**到虚拟屏，而
+   容忍分支只记一句 "mode is guaranteed by the EDID" 把失败吞掉。
+   现场证据：`sunshine.log` 里 VDD 会话连续两行 `Changing display modes to:` / `Changing HDR states
+   to:` **内容为空**，而物理屏会话是 `eDP-1 -> 2400x1080x60`。
+   修复：VDD 模式下目标解析为 `vdd_utils::live_virtual_display_connector()`（会话的 VDD stage 本来
+   就负责拓扑），并在替换时记一行 info。
+2. **"EDID 保证模式"是错误假设（`vdd_utils.cpp`）**：Linux 的 `is_mode_advertised()` 原本是桩
+   （只要 VDD 活着就返回 true），`wait_for_mode_publication()` 也只等 sysfs `connected`，从不校验
+   模式是否真的发布。改为向合成器查询真实模式表（新增 `platf::kscreen::advertised_modes()`，复用
+   已有 kscreen-doctor 解析器），用共享的 ±1 Hz 语义匹配，按 `kModePublicationTimeout` 轮询，失败时
+   把"实际发布了哪些模式"打进日志并让会话以 `modes_fail` 收尾（Windows 语义）。非 KDE 会话查询为空
+   → 视为"未知"而非"未发布"，保持既有降级。
+3. **EDID 无法表达的模式被静默写坏**：DTD 的像素时钟字段是 16 位 ×10 kHz，> 655.35 MHz 的模式会被
+   `build_dtd()` **饱和**成 0xFFFF —— 4K120 于是被写成 3840x2160@**71.4 Hz**（`edid-decode` 实测），
+   请求的模式在系统里根本不存在。`49800f6c` 曾修过"配置选择首选模式"时的同一问题，但**客户端申请
+   的模式走的是另一条路**（`set_vdd_session_mode()` 直接写 `cached_*`），绕过了可行性检查。
+   现在三处（创建、live 更新、发布校验）都先判 `mode_fits_pixel_clock_limit()`，不通过就明确报错并
+   保留原 EDID（不写坏、不假装成功）。上限提为具名常量 `vdd_edid::kMaxDtdPixelClockHz`。
+4. **创建时的模式表缺少会话模式（真正的"没追加"）**：创建路径用 `configured_mode_settings()`（仅配置
+   列表），而 Windows 的 SETMODES 列表是"配置组合 **+ 客户端的分辨率/刷新率**"的叉积。现在
+   `set_vdd_session_mode()` 保存的会话设置会一直留到 `create_vdd_monitor()`，创建出的 EDID 与 Windows
+   的 SETMODES 列表等价；同时修掉 `cached_from_session` 从不清零导致"会话结束后托盘创建沿用上一次
+   会话模式"的陈旧状态。
+5. **顺带修掉一个崩溃级健壮性缺陷**：debugfs 探测用了会抛异常的 `std::filesystem` 重载，没有文件能力
+   的调用者（直接跑 `./sunshine`、能力被剥离的发行版）一遇到已连接连接器就抛
+   `filesystem_error` 终止进程——聚合测试套件即因此 abort（`DisplayDeviceEnum`）。四处探测改为
+   error_code 重载，读不到就当"没有 override 节点"。
+
+**验证**：`cvt -r` 交叉核对（3440x1440@120 = 658.25 MHz vs 本生成器 658.0 MHz，均超 DTD 上限）→
+确认第 3 条是**格式限制**而非模型保守；用真实生成器对配置矩阵逐个生成 EDID、解析首选 DTD 反算刷新率，
+23 个可行模式的内核视角刷新率与请求值偏差均 ≤1 Hz（新校验不会误杀）；新探测在实机 KDE 会话里
+实测 `advertised_modes("eDP-1")` = `1920x1080@60`，匹配判定 1080p60 ✔ / 2560x1440@144 ✘ /
+4K120 ✘。`ctest`：532 用例 **519 通过 / 12 跳过 / 0 断言失败**（唯一失败仍是沙箱网络用例）。
+
+**仍存疑（待用户实测确认）**：若客户端申请的模式**可行**但仍未生效，剩余嫌疑是"EDID 已改写、合成器
+没重新探测"（NVIDIA 对 debugfs 强制连接的连接器不发 hotplug）。此时新校验会给出明确失败日志而不是
+静默——若真出现，再补一次合成器侧重探测（kscreen 重查/udev change）。
+
+### 5.22 仍未完成（诚实清单）
 
 1. **F4 HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
    拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；本机
@@ -603,8 +654,10 @@ Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉�
    libkscreen 后端，属独立特性。
 4. §5.18 中记录的**有意保留差异**（空容器契约、麦克风契约边界与缓冲属性、日志语言、前台 exe 语义、
    直方图估计器、blank HDR toggle）如需翻转，按各条给出的理由逐项决策即可。
-5. **`wait_for_mode_publication()` 持锁执行外部命令**（低）：它在 `state_mutex` 内调用
-   `enable_output_via_compositor()` → `run_logged()`，最长可持锁 10 s（子进程超时才被杀）。这是移植时
-   就有的结构（本轮只改被调用者），不会死锁（`run_logged` 不再申请该锁），但并发 VDD 调用/托盘操作
-   最长会等待这么久。若后续出现"托盘卡顿"类报告，这里应是第一个嫌疑点；修法是锁内只取路径快照、
-   锁外再执行命令。
+5. **DisplayID 扩展块（中，可选）**：> 655.35 MHz 的模式（3440x1440@120/144、3840x2160@90/120/144）
+   目前只能明确拒绝。要真正支持，需要在 EDID 里追加 DisplayID 扩展块（24 位像素时钟），并让 base
+   block 的首选 DTD 退回一个可行模式、由会话显式切到该模式；成败取决于内核 DRM 与 KWin 是否把
+   DisplayID timing 纳入模式表，需实机验证。
+6. **`wait_for_mode_publication()` 的锁粒度已修**（原第 5 条 hazard 已消除）：锁内只取路径与模式快照，
+   CRTC 强制指派、合成器命令与发布轮询都在锁外执行，因此不再有"持 `state_mutex` 最长 10 s"的窗口。
+7. **合成器未重探测 EDID 改写的可能**（低）：若实机出现"模式可行但始终未生效"，即为此因（见 §5.21 末）。
