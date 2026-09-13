@@ -1141,7 +1141,25 @@ namespace display_device {
       return { apply_result_t::result_e::success };
     }
 
-    const std::string device_id = find_one_of_the_available_devices(config.device_id);
+    // The mode and HDR targets below are keyed by this id, and
+    // filter_stale_devices() drops anything outside the current topology.
+    // In VDD mode the streamed display is the virtual one, while
+    // config.device_id was resolved before that display existed (or names the
+    // physical screen the client was looking at): keeping it would filter the
+    // target out of the VDD-only topology and silently apply no mode and no HDR
+    // state at all. The session stage already owns the topology in this mode.
+    const std::string device_id = [&]() -> std::string {
+      if (is_vdd_mode) {
+        if (const auto live_vdd = vdd_utils::live_virtual_display_connector(); !live_vdd.empty()) {
+          if (live_vdd != config.device_id) {
+            BOOST_LOG(info) << "Virtual display mode target: " << live_vdd
+                            << " (requested device id was \"" << config.device_id << "\")";
+          }
+          return live_vdd;
+        }
+      }
+      return find_one_of_the_available_devices(config.device_id);
+    }();
 
     active_topology_t initial_topology = current_topology;
     if (pre_saved_initial_topology && !pre_saved_initial_topology->empty()) {
