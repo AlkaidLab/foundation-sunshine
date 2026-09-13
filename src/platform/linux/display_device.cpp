@@ -478,11 +478,24 @@ namespace display_device {
       }
     }
 
+    /**
+     * @brief Drop entries that are outside the topology (or belong to a virtual
+     *        display this call is not targeting).
+     * @param keep_id Entry to preserve even if it is a virtual display: the
+     *        apply paths pass the VDD they are configuring, because Windows
+     *        applies the client's requested mode and HDR state to the virtual
+     *        display through CCD. Without this the VDD entry was stripped and
+     *        KDE kept whatever mode it picked when the connector came up (it
+     *        prefers the highest refresh rate, so a 60 Hz request could end up
+     *        running at 144 Hz).
+     */
     template<typename MapT>
     void
-    filter_stale_devices(MapT &map, const std::unordered_set<std::string> &valid_ids, const char *label) {
+    filter_stale_devices(MapT &map, const std::unordered_set<std::string> &valid_ids, const char *label,
+      const std::string &keep_id = {}) {
       for (auto it = map.begin(); it != map.end();) {
-        if (!valid_ids.count(it->first) || is_vdd_connector(it->first)) {
+        const bool is_kept_target = !keep_id.empty() && it->first == keep_id;
+        if (!is_kept_target && (!valid_ids.count(it->first) || is_vdd_connector(it->first))) {
           BOOST_LOG(debug) << "Removing stale/vdd device from " << label << ": " << it->first;
           it = map.erase(it);
         }
@@ -1162,6 +1175,11 @@ namespace display_device {
       return find_one_of_the_available_devices(config.device_id);
     }();
 
+    // The virtual display this call configures, if any: Windows applies the
+    // client's mode and HDR state to the VDD itself, so this backend must not
+    // filter it out of those maps either.
+    const std::string vdd_target = is_vdd_mode && is_vdd_connector(device_id) ? device_id : std::string {};
+
     active_topology_t initial_topology = current_topology;
     if (pre_saved_initial_topology && !pre_saved_initial_topology->empty()) {
       initial_topology = *pre_saved_initial_topology;
@@ -1274,7 +1292,7 @@ namespace display_device {
         }
       }
 
-      filter_stale_devices(new_modes, topology_ids, "display modes");
+      filter_stale_devices(new_modes, topology_ids, "display modes", vdd_target);
 
       BOOST_LOG(info) << "Changing display modes to: " << to_string(new_modes);
       if (!set_display_modes(new_modes)) {
@@ -1283,30 +1301,28 @@ namespace display_device {
         }
 
         // A compositor hiccup on the virtual display must not fail the stream
-        // while the session mode is really there -- but "the EDID guarantees
-        // it" is not a guarantee: the connector may advertise something else
-        // (an unencodable mode is written with the EDID's pixel-clock limit),
-        // in which case the client's resolution did not take effect and the
-        // session has to say so.
+        // while the session mode is really in effect. "Advertised" is not
+        // enough: KDE defaults to the highest refresh rate the EDID offers, so
+        // a request it merely lists (60 Hz next to a 144 Hz mode) can be
+        // running at the wrong rate. Only the *current* mode counts.
         const display_mode_t requested_mode {
           config.resolution.value_or(resolution_t { 0, 0 }),
           config.refresh_rate.value_or(refresh_rate_t { 0, 1 })
         };
-        const auto advertised = platf::kscreen::advertised_modes(device_id);
-        const bool mode_is_there = std::any_of(advertised.begin(), advertised.end(), [&](const auto &mode) {
-          return vdd_utils::advertised_mode_matches(mode.width, mode.height, mode.refresh_hz, requested_mode);
+        const auto current_modes = get_current_display_modes(device_id.empty() ? targets : std::unordered_set<std::string> { device_id });
+        const bool mode_is_current = std::any_of(current_modes.begin(), current_modes.end(), [&](const auto &entry) {
+          return vdd_utils::advertised_mode_matches(entry.second.resolution.width, entry.second.resolution.height,
+            static_cast<unsigned int>(std::llround(static_cast<double>(entry.second.refresh_rate.numerator) / static_cast<double>(entry.second.refresh_rate.denominator))),
+            requested_mode);
         });
 
-        if (!mode_is_there && !advertised.empty()) {
-          BOOST_LOG(error) << "Virtual display does not advertise the session mode "
+        if (!mode_is_current) {
+          BOOST_LOG(error) << "The virtual display is not running the session mode "
                            << to_string(requested_mode) << "; the mode change did not take effect";
           return { apply_result_t::result_e::modes_fail };
         }
 
-        BOOST_LOG(warning) << "Display mode change failed for the virtual display; continuing ("
-                           << (advertised.empty() ? "no compositor mode list available" :
-                                                    "the session mode is already advertised")
-                           << ")";
+        BOOST_LOG(warning) << "Display mode change failed for the virtual display; continuing (it already runs the session mode)";
       }
 
       current_settings.original_modes = original_modes;
@@ -1358,7 +1374,7 @@ namespace display_device {
         it->second = final_state;
       }
 
-      filter_stale_devices(new_hdr_states, topology_ids, "HDR states");
+      filter_stale_devices(new_hdr_states, topology_ids, "HDR states", vdd_target);
 
       // Let the compositor settle after this call's topology/mode changes before
       // switching HDR; a lagging read would otherwise look like a permanent
