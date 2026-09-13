@@ -72,9 +72,6 @@ namespace display_device {
     static std::string last_used_client_uuid;
 
     namespace {
-      constexpr auto kModePublicationTimeout = 3s;
-      constexpr auto kModePublicationInitialPoll = 50ms;
-      constexpr auto kModePublicationMaxPoll = 500ms;
       std::atomic_bool hardware_cursor_live_enable_confirmed { false };
 
       bool
@@ -1039,6 +1036,7 @@ namespace display_device {
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/linux/compositor_output.h"
+#include "src/platform/linux/kscreen_modes.h"
 #include "src/platform/linux/vdd_edid.h"
 
 namespace pt = boost::property_tree;
@@ -1106,6 +1104,12 @@ namespace display_device::vdd_utils {
     // Set once a client session has configured the cached mode; before that,
     // manual creation (tray/headless) applies config::video.vdd_manual_*.
     bool cached_from_session { false };
+    // Mode lists the session prepared, including the resolution and refresh
+    // rate the client asked for. Windows keeps the equivalent list in the
+    // driver (SETMODES) and the created monitor advertises it; on Linux the
+    // EDID built at creation must use the same cross product, so the settings
+    // have to survive from set_vdd_session_mode() to create_vdd_monitor().
+    std::optional<VddSettings> session_mode_settings;
 
     bool
     write_text_file(const std::string &path, const std::string &content) {
@@ -1986,39 +1990,123 @@ namespace display_device::vdd_utils {
   const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
 
   bool
-  is_mode_advertised(const std::string &device_id, const display_mode_t &) {
-    // The generated EDID advertises exactly the requested mode once the
-    // connector is live; there is no per-mode list to consult.
-    return !device_id.empty() && !live_virtual_display_connector().empty();
+  is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode) {
+    // The publication being verified belongs to the virtual display: the id the
+    // session passes was resolved before the VDD existed (or names the physical
+    // screen the client was looking at), so prefer the live VDD connector.
+    const std::string vdd_connector = live_virtual_display_connector();
+    const std::string output = vdd_connector.empty() ? device_id : vdd_connector;
+
+    // Windows asks the OS for the display's mode list (EnumDisplaySettings).
+    // The Wayland analogue is the compositor's list: on KDE it is the display
+    // server, so its answer decides whether the mode can be applied at all.
+    // An empty list means "no compositor query here" (niri/wlroots/X11), which
+    // must not be read as "not advertised" -- those sessions keep the previous
+    // answer based on the live connector.
+    const auto advertised = platf::kscreen::advertised_modes(output);
+    if (advertised.empty()) {
+      return !output.empty() && !vdd_connector.empty();
+    }
+
+    return std::any_of(advertised.begin(), advertised.end(), [&](const auto &mode) {
+      return advertised_mode_matches(mode.width, mode.height, mode.refresh_hz, requested_mode);
+    });
   }
 
   bool
-  wait_for_mode_publication(const std::string &, const display_mode_t &requested_mode) {
+  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode) {
     elevated_caps caps;
     const auto refresh_hz = std::max(1u, (requested_mode.refresh_rate.numerator + requested_mode.refresh_rate.denominator / 2) / requested_mode.refresh_rate.denominator);
 
     bool applied = true;
+    std::string status_path;
+    std::string card;
+    std::string connector;
     {
+      // Only state is touched under the lock; the connector work below spawns
+      // processes (kscreen-doctor) and must not hold it.
       std::lock_guard lock { state_mutex };
       cached_width = requested_mode.resolution.width;
       cached_height = requested_mode.resolution.height;
       cached_refresh_hz = refresh_hz;
 
       if (active) {
+        status_path = active_status_path;
+        card = active_card;
+        connector = connector_name_for_status(active_status_path);
+
+        if (!vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, refresh_hz)) {
+          // The EDID's detailed-timing field is 16 bits of 10 kHz, so a faster
+          // mode would be written with a saturated clock and advertise a
+          // different refresh than the client asked for. Keep the previous,
+          // valid EDID and report the failure instead.
+          BOOST_LOG(error) << "vdd: requested mode "sv << cached_width << 'x' << cached_height << '@' << refresh_hz
+                           << "Hz needs more than the EDID detailed-timing limit ("sv
+                           << static_cast<unsigned int>(vdd_edid::kMaxDtdPixelClockHz / 1000000.0)
+                           << "MHz); the virtual display cannot advertise it"sv;
+          return false;
+        }
+
         // Live mode switch: cycle the connector with an EDID for the new mode.
         const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
         applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
-        if (applied) {
-          const std::string connector = connector_name_for_status(active_status_path);
-          if (!connector_has_crtc(active_card, connector)) {
-            force_crtc_assignment("/dev/dri/" + active_card, connector);
-          }
-          enable_output_via_compositor(connector);
-        }
       }
     }
 
-    return applied && wait_for_status(active_status_path, "connected", 10, std::chrono::milliseconds { 300 });
+    if (!applied) {
+      return false;
+    }
+    if (connector.empty()) {
+      // No live connector to publish into (creation handles its own EDID).
+      return true;
+    }
+
+    if (!connector_has_crtc(card, connector)) {
+      force_crtc_assignment("/dev/dri/" + card, connector);
+    }
+    enable_output_via_compositor(connector);
+
+    if (!wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 })) {
+      return false;
+    }
+
+    // Windows semantics: the mode list update is asynchronous, so poll until
+    // the OS publishes the requested mode and fail the session if it never
+    // does. Previously this returned success unconditionally, which turned a
+    // missing mode into a silently wrong stream resolution.
+    if (is_mode_advertised(device_id, requested_mode)) {
+      return true;
+    }
+
+    auto poll_delay = kModePublicationInitialPoll;
+    const auto deadline = std::chrono::steady_clock::now() + kModePublicationTimeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::min(poll_delay, std::chrono::milliseconds { 100 }));
+      if (is_mode_advertised(device_id, requested_mode)) {
+        return true;
+      }
+      poll_delay = std::min(kModePublicationMaxPoll, poll_delay * 2);
+    }
+
+    const auto advertised = platf::kscreen::advertised_modes(device_id);
+    if (!advertised.empty()) {
+      std::string list;
+      for (const auto &mode : advertised) {
+        if (!list.empty()) {
+          list += ", ";
+        }
+        list += std::to_string(mode.width) + "x" + std::to_string(mode.height) + "@" + std::to_string(mode.refresh_hz);
+      }
+      BOOST_LOG(error) << "vdd: " << connector << " does not advertise "sv
+                       << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                       << '@' << refresh_hz << "Hz; published modes: "sv << list;
+    }
+    else {
+      BOOST_LOG(error) << "vdd: " << connector << " did not publish "sv
+                       << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                       << '@' << refresh_hz << "Hz"sv;
+    }
+    return false;
   }
 
   vdd_status_t
@@ -2064,10 +2152,24 @@ namespace display_device::vdd_utils {
     cached_height = config.resolution->height;
     cached_refresh_hz = refresh_hz;
     cached_from_session = true;
+    // Keep the session list for a creation that happens later in this session
+    // (Windows SETMODES has the same lifetime: the driver holds it until the
+    // monitor is created or updated).
+    session_mode_settings = settings;
 
     if (!active) {
-      // The EDID is generated from the cached mode when the display is created.
+      // The EDID is generated from the cached mode when the display is created
+      // (create_vdd_monitor falls back to the configured mode if this one is
+      // too fast for a detailed timing to express).
       return set_vdd_result::ok;
+    }
+
+    if (!vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, refresh_hz)) {
+      BOOST_LOG(error) << "vdd: session mode "sv << cached_width << 'x' << cached_height << '@' << refresh_hz
+                       << "Hz needs more than the EDID detailed-timing limit ("sv
+                       << static_cast<unsigned int>(vdd_edid::kMaxDtdPixelClockHz / 1000000.0)
+                       << "MHz); the live mode list keeps the modes it already advertises"sv;
+      return set_vdd_result::failed;
     }
 
     refresh_config_mode_ladder_locked(settings);
@@ -2135,7 +2237,19 @@ namespace display_device::vdd_utils {
                                       ? static_cast<int>(std::lround(hdr_brightness.min_nits))
                                       : -1;
 
-    const auto settings = configured_mode_settings();
+    const auto settings = session_mode_settings ? *session_mode_settings : configured_mode_settings();
+    if (cached_from_session && !vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, cached_refresh_hz)) {
+      // A session mode faster than a detailed timing can express must not
+      // become the EDID's preferred timing: the field would saturate and the
+      // display would advertise a different refresh than the client asked for.
+      // Fall back to the configured preferred mode and let the session's mode
+      // publication check report the failure.
+      BOOST_LOG(error) << "vdd: session mode "sv << cached_width << 'x' << cached_height << '@' << cached_refresh_hz
+                       << "Hz needs more than the EDID detailed-timing limit ("sv
+                       << static_cast<unsigned int>(vdd_edid::kMaxDtdPixelClockHz / 1000000.0)
+                       << "MHz); creating the virtual display with the configured preferred mode instead"sv;
+      cached_from_session = false;
+    }
     apply_configured_preferred_mode_locked(settings);
 
     BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
@@ -2279,6 +2393,11 @@ namespace display_device::vdd_utils {
     BOOST_LOG(info) << "vdd: virtual display on "sv << active_connector << " destroyed"sv;
     active = false;
     active_connector.clear();
+    // The session that owned this mode list is over: a later tray/headless
+    // creation must go back to deriving the preferred mode from the config
+    // instead of reusing the finished session's mode.
+    cached_from_session = false;
+    session_mode_settings.reset();
     return gone;
   }
 
@@ -2296,6 +2415,8 @@ namespace display_device::vdd_utils {
     restore_offlined_physicals();
     active = false;
     active_connector.clear();
+    cached_from_session = false;
+    session_mode_settings.reset();
   }
 
   void

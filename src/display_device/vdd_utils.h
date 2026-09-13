@@ -97,6 +97,14 @@ namespace display_device::vdd_utils {
 
   extern const std::chrono::milliseconds kDefaultDebounceInterval;
 
+  // The OS publishes a mode list asynchronously after the mode list is set
+  // (Windows: SETMODES / IddCxMonitorUpdateModes2; Linux: the kernel re-reading
+  // the EDID override). Both platforms poll for the requested mode with the
+  // same bounds, so they live here instead of in one platform half.
+  inline constexpr auto kModePublicationTimeout = std::chrono::seconds { 3 };
+  inline constexpr auto kModePublicationInitialPoll = std::chrono::milliseconds { 50 };
+  inline constexpr auto kModePublicationMaxPoll = std::chrono::milliseconds { 500 };
+
   // HDR亮度范围结构
   struct hdr_brightness_t {
     float max_nits = 1000.0f;

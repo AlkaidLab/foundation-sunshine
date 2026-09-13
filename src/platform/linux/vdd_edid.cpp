@@ -101,7 +101,7 @@ namespace vdd_edid {
 
   bool
   mode_fits_pixel_clock_limit(unsigned int width, unsigned int height, unsigned int refresh_hz) {
-    return dtd_pixel_clock_hz(width, height, refresh_hz) <= 655350000.0;
+    return dtd_pixel_clock_hz(width, height, refresh_hz) <= kMaxDtdPixelClockHz;
   }
 
   std::vector<std::uint8_t>

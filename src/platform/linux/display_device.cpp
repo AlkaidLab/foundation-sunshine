@@ -18,6 +18,7 @@
 #include "src/display_device/to_string.h"
 #include "src/display_device/vdd_utils.h"
 #include "src/globals.h"
+#include "src/platform/linux/kscreen_modes.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1277,14 +1278,35 @@ namespace display_device {
 
       BOOST_LOG(info) << "Changing display modes to: " << to_string(new_modes);
       if (!set_display_modes(new_modes)) {
-        if (is_vdd_mode) {
-          // The VDD backend already guarantees the session mode through the
-          // personalized EDID; a compositor hiccup here must not fail the stream.
-          BOOST_LOG(warning) << "Display mode change failed for the virtual display; continuing (mode is guaranteed by the EDID).";
-        }
-        else {
+        if (!is_vdd_mode) {
           return { apply_result_t::result_e::modes_fail };
         }
+
+        // A compositor hiccup on the virtual display must not fail the stream
+        // while the session mode is really there -- but "the EDID guarantees
+        // it" is not a guarantee: the connector may advertise something else
+        // (an unencodable mode is written with the EDID's pixel-clock limit),
+        // in which case the client's resolution did not take effect and the
+        // session has to say so.
+        const display_mode_t requested_mode {
+          config.resolution.value_or(resolution_t { 0, 0 }),
+          config.refresh_rate.value_or(refresh_rate_t { 0, 1 })
+        };
+        const auto advertised = platf::kscreen::advertised_modes(device_id);
+        const bool mode_is_there = std::any_of(advertised.begin(), advertised.end(), [&](const auto &mode) {
+          return vdd_utils::advertised_mode_matches(mode.width, mode.height, mode.refresh_hz, requested_mode);
+        });
+
+        if (!mode_is_there && !advertised.empty()) {
+          BOOST_LOG(error) << "Virtual display does not advertise the session mode "
+                           << to_string(requested_mode) << "; the mode change did not take effect";
+          return { apply_result_t::result_e::modes_fail };
+        }
+
+        BOOST_LOG(warning) << "Display mode change failed for the virtual display; continuing ("
+                           << (advertised.empty() ? "no compositor mode list available" :
+                                                    "the session mode is already advertised")
+                           << ")";
       }
 
       current_settings.original_modes = original_modes;
@@ -1640,3 +1662,33 @@ namespace display_device {
   }
 
 }  // namespace display_device
+
+namespace platf::kscreen {
+  std::vector<advertised_mode_t>
+  advertised_modes(const std::string &output_name) {
+    std::vector<advertised_mode_t> modes;
+
+    // query_outputs() lives in display_device's unnamed namespace; qualified
+    // lookup reaches it through the implicit using-directive.
+    for (const auto &output : display_device::query_outputs()) {
+      if (output.name != output_name) {
+        continue;
+      }
+
+      // The full advertised list, whether or not the output is enabled: the
+      // VDD backend asks right after forcing a connector on, when the
+      // compositor may still be reporting its previous state.
+      modes.reserve(output.modes.size());
+      for (const auto &mode : output.modes) {
+        modes.push_back(advertised_mode_t {
+          mode.width,
+          mode.height,
+          static_cast<unsigned int>(std::llround(mode.refresh))
+        });
+      }
+      break;
+    }
+
+    return modes;
+  }
+}  // namespace platf::kscreen

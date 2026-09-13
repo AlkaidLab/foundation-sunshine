@@ -14,6 +14,16 @@
 namespace vdd_edid {
 
   /**
+   * @brief Largest pixel clock a base-block detailed timing can encode.
+   * @details The DTD pixel-clock field is 16 bits in 10 kHz units, so 65535
+   *          units = 655.35 MHz. A mode above it cannot be advertised by a DTD
+   *          at all (that would need a DisplayID extension); the generator
+   *          must never silently saturate the field, because the timing would
+   *          then advertise a different refresh rate than the one requested.
+   */
+  inline constexpr double kMaxDtdPixelClockHz = 655350000.0;
+
+  /**
    * @brief Optional personalization for the generated EDID.
    */
   struct edid_options {

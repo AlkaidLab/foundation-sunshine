@@ -161,3 +161,44 @@ TEST(VddEdid, PhysicalSizeOverrideLandsInDescriptors) {
   EXPECT_EQ(edid[68], 0x21); // (700>>8)<<4 | (400>>8) = 0x21
 }
 #endif
+
+#ifndef _WIN32
+TEST(VddEdid, DetailedTimingLimitSeparatesFeasibleFromUnencodableModes) {
+  // The DTD pixel-clock field is 16 bits of 10 kHz. Everything above 655.35 MHz
+  // cannot be advertised by a detailed timing, and the builder would saturate
+  // the field -- which silently advertises a *different* refresh rate, so the
+  // client's requested mode never appears (3840x2160@120 comes out as
+  // 3840x2160@71.4). These are the boundaries the VDD backend relies on when it
+  // refuses to make such a mode the preferred timing.
+  EXPECT_DOUBLE_EQ(vdd_edid::kMaxDtdPixelClockHz, 655350000.0);
+
+  EXPECT_TRUE(vdd_edid::mode_fits_pixel_clock_limit(1920, 1080, 144));
+  EXPECT_TRUE(vdd_edid::mode_fits_pixel_clock_limit(2560, 1440, 144));
+  EXPECT_TRUE(vdd_edid::mode_fits_pixel_clock_limit(3840, 2160, 60));
+
+  // Even the reference CVT reduced-blanking timing needs 658.25 MHz for
+  // 3440x1440@120, so this is a real limit, not a conservative model.
+  EXPECT_FALSE(vdd_edid::mode_fits_pixel_clock_limit(3440, 1440, 120));
+  EXPECT_FALSE(vdd_edid::mode_fits_pixel_clock_limit(3440, 1440, 144));
+  EXPECT_FALSE(vdd_edid::mode_fits_pixel_clock_limit(3840, 2160, 90));
+  EXPECT_FALSE(vdd_edid::mode_fits_pixel_clock_limit(3840, 2160, 120));
+  EXPECT_FALSE(vdd_edid::mode_fits_pixel_clock_limit(3840, 2160, 144));
+}
+
+TEST(VddEdid, SaturatedClockIsWhyUnencodableModesMustBeRejected) {
+  // Guard for the failure mode itself: the generator saturates the field, so
+  // such an EDID advertises a refresh nobody asked for. If a real timing model
+  // ever replaces the saturation, this test should be updated together with the
+  // VDD backend's feasibility check.
+  const auto edid = vdd_edid::generate_virtual_display_edid(3840, 2160, 120, false, "Zako HDR");
+  const auto pixel_clock = static_cast<std::uint16_t>(edid[54] | (edid[55] << 8));
+  EXPECT_EQ(pixel_clock, 0xFFFF);
+
+  const unsigned int h_active = edid[56] | ((edid[58] >> 4) << 8);
+  const unsigned int h_blank = edid[57] | ((edid[58] & 0x0F) << 8);
+  const unsigned int v_active = edid[59] | ((edid[61] >> 4) << 8);
+  const unsigned int v_blank = edid[60] | ((edid[61] & 0x0F) << 8);
+  const double advertised_hz = 655350000.0 / (static_cast<double>(h_active + h_blank) * (v_active + v_blank));
+  EXPECT_NEAR(advertised_hz, 71.4, 0.1);
+}
+#endif
