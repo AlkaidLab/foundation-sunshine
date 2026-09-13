@@ -1545,7 +1545,8 @@ namespace display_device::vdd_utils {
         }
       }
 
-      if (best_card.empty() && fs::exists("/sys/class/drm/card0")) {
+      std::error_code card_ec;
+      if (best_card.empty() && fs::exists("/sys/class/drm/card0", card_ec) && !card_ec) {
         best_card = "card0";
       }
       return best_card;
@@ -1563,8 +1564,12 @@ namespace display_device::vdd_utils {
         return {};
       }
 
+      // Every probe here must use the error_code overloads: without the file
+      // capabilities (a plain `./sunshine` run, or a distro that drops them)
+      // /sys/kernel/debug is unreadable and the throwing overload would take
+      // the whole display backend down with an uncaught filesystem_error.
       const std::string pci_name = device.filename().string();
-      if (fs::exists(fs::path { k_debugfs_dri } / pci_name)) {
+      if (fs::exists(fs::path { k_debugfs_dri } / pci_name, ec) && !ec) {
         return std::string { k_debugfs_dri } + "/" + pci_name;
       }
 
@@ -1575,16 +1580,16 @@ namespace display_device::vdd_utils {
 
     std::string
     edid_override_path(const std::string &debugfs_dir, const std::string &connector) {
+      std::error_code ec;
       fs::path direct = fs::path { debugfs_dir } / connector / "edid_override";
-      if (fs::exists(direct)) {
+      if (fs::exists(direct, ec) && !ec) {
         return direct.string();
       }
 
       // Fallback: scan every debugfs dri entry for a matching connector dir.
-      std::error_code ec;
       for (const auto &entry : fs::directory_iterator { k_debugfs_dri, ec }) {
         fs::path candidate = entry.path() / connector / "edid_override";
-        if (fs::exists(candidate)) {
+        if (fs::exists(candidate, ec) && !ec) {
           return candidate.string();
         }
       }
