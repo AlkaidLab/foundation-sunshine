@@ -1,0 +1,72 @@
+post_install() {
+  _sunshine_setcap
+  _sunshine_udev_reload
+
+  echo ":: Foundation Sunshine (linux-migration) installed."
+  echo "   Start:    systemctl --user enable --now sunshine"
+  echo "   Or run:   sunshine"
+  echo "   Web UI:   https://localhost:47990   (settings live in ~/.config/sunshine)"
+  echo
+  echo "NOTE: KDE Plasma / niri on Wayland and the virtual display need the"
+  echo "      file capabilities set below. Re-run this hook after reinstalling"
+  echo "      or if the binary is ever replaced without them:"
+  echo "        setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p /usr/bin/sunshine"
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  :
+}
+
+post_remove() {
+  # Nothing to undo: capabilities live on the (now deleted) file.
+  :
+}
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+_sunshine_binary() {
+  # /usr/bin/sunshine is a symlink to sunshine-<version>; resolve it so the
+  # capabilities land on the real inode.
+  readlink -f /usr/bin/sunshine 2>/dev/null || printf '/usr/bin/sunshine'
+}
+
+_sunshine_setcap() {
+  local binary
+  binary="$(_sunshine_binary)"
+
+  # cap_sys_admin:        KMS/DRM capture
+  # cap_dac_read_search:  read connector EDID overrides under /sys/kernel/debug
+  # cap_dac_override:     write DRM connector status (virtual display)
+  # cap_sys_ptrace:       borrow the compositor's DRM master (pidfd_getfd) so the
+  #                       VDD CRTC can be assigned
+  if ! command -v setcap >/dev/null 2>&1; then
+    echo "WARNING: setcap not found (install libcap) - Sunshine will not be able to capture the screen." >&2
+    return 0
+  fi
+
+  if [ ! -e "$binary" ]; then
+    echo "WARNING: $binary not found - skipping setcap." >&2
+    return 0
+  fi
+
+  setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p "$binary" || \
+    echo "WARNING: setcap failed on $binary." >&2
+}
+
+_sunshine_udev_reload() {
+  # The packaged udev rule tags /dev/uinput and /dev/uhid with uaccess; reload
+  # it and make sure the modules are loaded before the first virtual gamepad.
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules
+    udevadm trigger --property-match=DEVNAME=/dev/uinput
+    udevadm trigger --property-match=DEVNAME=/dev/uhid
+  fi
+  modprobe uinput 2>/dev/null || :
+  modprobe uhid 2>/dev/null || :
+}
