@@ -34,6 +34,14 @@ ending the sidecar.
 Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
+HID-only attaches actually serve the derived `dualsense-hidonly` profile:
+its top-level collection usage is Joystick (0x04) instead of Game Pad
+(0x05), because the root-enumerated device never gets the native DualSense
+decoder and Windows' generic gamepad template reads the Sony byte layout as
+a half-pressed right trigger plus a full-up right stick at rest, which
+win32k turns into perpetual desktop navigation (issue #1056). As a
+Joystick the device is only exposed through RawGameController/generic HID,
+where every usage decodes correctly.
 The optional Genshin compatibility attach flag derives a third profile from
 `dualsense-composite` at runtime. It preserves the Sony VID/PID, descriptors,
 and four-channel layout while changing only the USB product string from

@@ -260,7 +260,14 @@ internal sealed class DeviceRegistry : IDisposable
 
         return profileMode switch
         {
-            0 => "dualsense",
+            // HID-only must not use the native Game Pad profile: the root device
+            // is off the USB bus, so GameInput reads it with the generic gamepad
+            // template, which decodes the Sony byte layout as a half-pressed
+            // right trigger and a full-up right stick at rest and win32k turns
+            // that into perpetual desktop navigation (issue #1056). The
+            // Joystick-usage copy keeps every byte correct for generic
+            // consumers while staying out of the gamepad template.
+            0 => "dualsense-hidonly",
             1 when genshinCompatibility && genshinCompatibilityAvailable =>
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
             1 when genshinCompatibility =>
@@ -344,7 +351,7 @@ internal sealed class DeviceRegistry : IDisposable
             var assembly = typeof(DeviceRegistry).Assembly;
             var directory = Path.Combine(Path.GetTempPath(), "sunshine-ds5-profiles");
             Directory.CreateDirectory(directory);
-            foreach (var id in new[] { "dualsense", "dualsense-composite" })
+            foreach (var id in new[] { "dualsense", "dualsense-composite", "dualsense-hidonly" })
             {
                 var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
                 using var stream = assembly.GetManifestResourceStream(resourceName)
@@ -364,7 +371,7 @@ internal sealed class DeviceRegistry : IDisposable
                         compatibilityProfile);
                 }
             }
-            if (_context.LoadProfilesFromDirectory(directory) < 3)
+            if (_context.LoadProfilesFromDirectory(directory) < 4)
                 throw new InvalidOperationException("Patched DualSense profiles did not fully register");
             return true;
         }
