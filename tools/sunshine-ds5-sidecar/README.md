@@ -7,7 +7,7 @@ process now uses a `VirtualDeviceHostServer` and `DeviceRegistry` internally.
 It owns virtual devices and exposes the versioned `SDS5` named-pipe protocol.
 The helper does not contain HIDMaestro binaries.
 
-Build against the pinned upstream v1.6.2 runtime:
+Build against the pinned upstream v1.7.3 runtime:
 
 ```powershell
 dotnet build -c Release `
@@ -58,7 +58,7 @@ virtual microphone. Normal startup intentionally does not advertise them;
 only the explicit development prototype can enable those capabilities.
 
 The Phase 2 composite-profile microphone path is development-only and requires
-both the exact HIDMaestro 1.6.2.0 runtime and an explicit opt-in. Its elevated
+both the exact HIDMaestro 1.7.3.0 runtime and an explicit opt-in. Its elevated
 attach/PCM/flush/destroy smoke test is:
 
 ```powershell

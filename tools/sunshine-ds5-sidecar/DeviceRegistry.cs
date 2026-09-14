@@ -60,7 +60,7 @@ internal sealed class DeviceRegistry : IDisposable
         {
             var text = typeof(HMContext).Assembly
                 .GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
-            return Version.TryParse(text, out var version) && version == new Version(1, 6, 2, 0);
+            return Version.TryParse(text, out var version) && version == new Version(1, 7, 3, 0);
         }
     }
 

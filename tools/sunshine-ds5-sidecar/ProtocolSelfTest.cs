@@ -74,7 +74,7 @@ internal static class ProtocolSelfTest
     {
         if (!DeviceRegistry.HasPinnedMicrophoneRuntime)
             throw new InvalidOperationException(
-                "The composite microphone prototype requires the pinned HIDMaestro 1.6.2.0 runtime");
+                "The composite microphone prototype requires the pinned HIDMaestro 1.7.3.0 runtime");
 
         var pipeName = $"sunshine-microphone-prototype-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(45));
