@@ -1,24 +1,65 @@
+# sunshine.install
+# Arch Linux pacman 安装脚本钩子
+# 负责 setcap、udev 规则重载，并将安装用户添加到 input 组。
+
 do_setcap() {
   local target
   target="$(readlink -f /usr/bin/sunshine)"
-  # cap_sys_admin: KMS capture. cap_dac_read_search/cap_dac_override:
-  # connector EDID overrides and status writes under /sys/kernel/debug.
+  # cap_sys_admin: KMS capture.
+  # cap_dac_read_search/cap_dac_override: connector EDID overrides and
+  #   status writes under /sys/kernel/debug.
   # cap_sys_ptrace: borrow the compositor's DRM master (pidfd_getfd) for the
-  # virtual display CRTC assignment.
+  #   virtual display CRTC assignment.
   setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p "$target"
 }
 
 do_udev_reload() {
-  udevadm control --reload-rules
-  udevadm trigger --property-match=DEVNAME=/dev/uinput
-  udevadm trigger --property-match=DEVNAME=/dev/uhid
+  # 先加载模块，确保设备节点存在
   modprobe uinput || true
   modprobe uhid || true
+
+  # 重新加载 udev 规则并触发设备事件
+  udevadm control --reload-rules
+  udevadm trigger --sysname-match=uinput
+  udevadm trigger --sysname-match=uhid
+}
+
+do_add_user_to_input() {
+  # 尝试获取调用 pacman 的原始用户（通过 sudo 或 makepkg -si 安装时）
+  local target_user="${SUDO_USER:-}"
+
+  if [ -z "$target_user" ]; then
+    # 如果无法确定用户，给出提示
+    echo "提示: 请手动将需要使用 Sunshine 的用户添加到 'input' 组:"
+    echo "  sudo usermod -aG input <你的用户名>"
+    echo "添加后需要重新登录（或重启）才能使组权限生效。"
+    return 0
+  fi
+
+  # 检查用户是否存在
+  if ! id "$target_user" &>/dev/null; then
+    echo "警告: 用户 '$target_user' 不存在，跳过添加到 input 组。"
+    return 0
+  fi
+
+  # 检查用户是否已经在 input 组中
+  if id -nG "$target_user" | grep -qw "input"; then
+    echo "用户 '$target_user' 已在 'input' 组中，无需修改。"
+  else
+    echo "正在将用户 '$target_user' 添加到 'input' 组..."
+    if usermod -aG input "$target_user"; then
+      echo "完成。请重新登录（或重启）以使权限生效。"
+    else
+      echo "错误: 无法将用户 '$target_user' 添加到 'input' 组。"
+      echo "请手动执行: sudo usermod -aG input $target_user"
+    fi
+  fi
 }
 
 post_install() {
   do_setcap
   do_udev_reload
+  do_add_user_to_input
 
   echo "Foundation Sunshine installed."
   echo "Run directly:        sunshine"
@@ -29,4 +70,11 @@ post_install() {
 post_upgrade() {
   do_setcap
   do_udev_reload
+  do_add_user_to_input
+}
+
+post_remove() {
+  echo "Sunshine 已移除。"
+  echo "注意: 用户可能仍在 'input' 组中。如果需要，可手动移除:"
+  echo "  sudo gpasswd -d <用户名> input"
 }

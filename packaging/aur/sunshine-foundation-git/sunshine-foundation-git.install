@@ -1,6 +1,7 @@
 post_install() {
   _sunshine_setcap
   _sunshine_udev_reload
+  _sunshine_add_user_to_input
 
   echo ":: Foundation Sunshine (linux-migration) installed."
   echo "   Start:    systemctl --user enable --now sunshine"
@@ -22,8 +23,9 @@ pre_remove() {
 }
 
 post_remove() {
-  # Nothing to undo: capabilities live on the (now deleted) file.
-  :
+  echo ":: Sunshine removed."
+  echo "   Note: the user may still be a member of the 'input' group."
+  echo "   To remove them manually: sudo gpasswd -d <username> input"
 }
 
 # ---------------------------------------------------------------------------
@@ -60,13 +62,48 @@ _sunshine_setcap() {
 }
 
 _sunshine_udev_reload() {
-  # The packaged udev rule tags /dev/uinput and /dev/uhid with uaccess; reload
-  # it and make sure the modules are loaded before the first virtual gamepad.
+  # The packaged udev rule tags /dev/uinput and /dev/uhid with uaccess AND
+  # assigns them to the 'input' group with mode 0660. This covers both local
+  # sessions (uaccess ACL) and SSH-started user services (static group perms).
+  # Load the modules first so the device nodes exist before triggering.
+  modprobe uinput 2>/dev/null || :
+  modprobe uhid 2>/dev/null || :
+
   if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules
     udevadm trigger --property-match=DEVNAME=/dev/uinput
     udevadm trigger --property-match=DEVNAME=/dev/uhid
   fi
-  modprobe uinput 2>/dev/null || :
-  modprobe uhid 2>/dev/null || :
+}
+
+_sunshine_add_user_to_input() {
+  # Try to determine the user who invoked pacman (via sudo or makepkg -si).
+  local target_user="${SUDO_USER:-}"
+
+  if [ -z "$target_user" ]; then
+    echo "NOTE: Could not detect the installing user."
+    echo "      Please add your user to the 'input' group manually:"
+    echo "        sudo usermod -aG input <your-username>"
+    echo "      Then log out and back in (or reboot) for it to take effect."
+    return 0
+  fi
+
+  # Ensure the user actually exists.
+  if ! id "$target_user" &>/dev/null; then
+    echo "WARNING: User '$target_user' does not exist - skipping input group setup." >&2
+    return 0
+  fi
+
+  # Check if already a member of 'input'.
+  if id -nG "$target_user" | grep -qw "input"; then
+    echo ":: User '$target_user' is already in the 'input' group."
+  else
+    echo ":: Adding user '$target_user' to the 'input' group..."
+    if usermod -aG input "$target_user"; then
+      echo "   Done. Please log out and back in (or reboot) for the change to apply."
+    else
+      echo "WARNING: Failed to add '$target_user' to 'input'." >&2
+      echo "         Please run manually: sudo usermod -aG input $target_user" >&2
+    fi
+  fi
 }
