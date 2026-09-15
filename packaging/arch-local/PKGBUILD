@@ -44,6 +44,43 @@ install=sunshine-foundation.install
 
 _build_dir="$startdir/../../build"
 
+# The executable carries a version stamp made of the configure timestamp plus the
+# current commit (cmake/prep/build_version.cmake), and cmake bakes that name into
+# cmake_install.cmake. Re-running cmake without relinking -- the usual slip after
+# a pkgrel-only commit -- therefore leaves the install rules pointing at a binary
+# that was never created, and `cmake --install` dies with a bare
+# "file INSTALL cannot find .../sunshine-<stamp>" error. Finish the job here
+# instead of failing the package build.
+_built_stamp() {
+  local binary
+  binary="$(readlink -f "$_build_dir/sunshine" 2>/dev/null)" || return 0
+  [ -n "$binary" ] && basename "$binary"
+}
+
+_wanted_stamp() {
+  grep -oE 'sunshine-[^"/]+' "$_build_dir/cmake_install.cmake" 2>/dev/null | head -n1
+}
+
+prepare() {
+  local wanted built
+  wanted="$(_wanted_stamp)"
+  built="$(_built_stamp)"
+  [ -n "$wanted" ] && [ "$wanted" = "$built" ] && return 0
+
+  if [ ! -f "$_build_dir/CMakeCache.txt" ]; then
+    error "build/ is not configured; run this from the repository root first:"
+    error "  cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \\"
+    error "    -DSUNSHINE_ASSETS_DIR=share/sunshine -DSUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine \\"
+    error "    -DSUNSHINE_ENABLE_CUDA=OFF && ninja -C build sunshine"
+    return 1
+  fi
+
+  msg "build/ is stale (install rules want ${wanted:-nothing}, built: ${built:-nothing})"
+  msg2 "re-configuring and relinking so the package matches the build tree"
+  cmake -B "$_build_dir" -S "$startdir/../.." || return 1
+  ninja -C "$_build_dir" sunshine || return 1
+}
+
 package() {
   if [ ! -f "$_build_dir/sunshine" ]; then
     error "build/sunshine not found - build the repository first"
@@ -53,5 +90,27 @@ package() {
   # The build was configured with CMAKE_INSTALL_PREFIX=/usr, so the install
   # rules place bin/ and share/sunshine under /usr and the systemd user unit
   # + udev rule at their absolute system locations.
-  DESTDIR="$pkgdir" cmake --install "$_build_dir" >/dev/null
+  if ! DESTDIR="$pkgdir" cmake --install "$_build_dir"; then
+    error "cmake --install failed; if the message names a missing sunshine-<stamp> binary,"
+    error "the build tree changed after the last link - rebuild it with: ninja -C build sunshine"
+    return 1
+  fi
+
+  # A dirty working tree appends the "杂鱼" marker to the version stamp
+  # (cmake/prep/build_version.cmake). A non-ASCII executable name trips
+  # libarchive's charset translation ("bsdtar: Can't translate ... to UTF-8") and
+  # leaves pacman with a path it cannot reliably match, so stage the same binary
+  # under an ASCII stamp. The version string compiled into the binary is
+  # untouched; only the file name changes.
+  local binary base ascii
+  for binary in "$pkgdir"/usr/bin/sunshine-*; do
+    [ -e "$binary" ] || continue
+    base="$(basename "$binary")"
+    ascii="$(printf '%s' "$base" | sed -E 's/[^A-Za-z0-9._+-]+/dirty/g')"
+    [ "$ascii" = "$base" ] && continue
+
+    mv -f -- "$binary" "$pkgdir/usr/bin/$ascii"
+    ln -sfn -- "$ascii" "$pkgdir/usr/bin/sunshine"
+    msg2 "staged dirty build as $ascii (was $base)"
+  done
 }

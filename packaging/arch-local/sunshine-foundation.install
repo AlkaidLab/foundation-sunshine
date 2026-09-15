@@ -5,6 +5,11 @@
 do_setcap() {
   local target
   target="$(readlink -f /usr/bin/sunshine)"
+  if [ ! -x "$target" ]; then
+    echo "错误: $target 不存在，包可能不完整（/usr/bin/sunshine 指向的带版本号二进制缺失）。" >&2
+    echo "请重新打包后安装: cd packaging/arch-local && makepkg -f && sudo pacman -U ./sunshine-foundation-*.pkg.tar.zst" >&2
+    return 1
+  fi
   # cap_sys_admin: KMS capture.
   # cap_dac_read_search/cap_dac_override: connector EDID overrides and
   #   status writes under /sys/kernel/debug.
