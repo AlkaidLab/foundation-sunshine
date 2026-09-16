@@ -18,6 +18,7 @@
 #include "src/display_device/to_string.h"
 #include "src/display_device/vdd_utils.h"
 #include "src/globals.h"
+#include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
 
 #include <algorithm>
@@ -109,30 +110,13 @@ namespace display_device {
       std::string hdr_state_str;  // "enabled" / "disabled" / "incapable"; empty = not reported
     };
 
-    std::string
-    strip_ansi(const std::string &text) {
-      static const std::regex ansi_re { "\x1b\\[[0-9;]*[A-Za-z]" };
-      return std::regex_replace(text, ansi_re, "");
-    }
-
-    struct exec_result_t {
-      int exit_code = -1;
-      std::string output;
-    };
-
-    exec_result_t
-    run_kscreen(const std::string &args) {
-      // vdd_utils::run_logged bounds the child (kscreen-doctor can block
-      // indefinitely on a wedged Wayland connection) and keeps inherited
-      // sockets out of it.
-      auto result = vdd_utils::run_logged("kscreen-doctor " + args);
-      return { result.exit_code, strip_ansi(result.output) };
-    }
-
     /**
      * @brief Run a kscreen-doctor change command and verify that it took
      *        effect, retrying a bounded number of times (the compositor
      *        applies changes asynchronously).
+     * @details Only reached after a successful query, so the session really has
+     *          a KScreen backend; the kProbeTimeout used for queries would be
+     *          too tight for a change that waits for the compositor.
      */
     template<typename ConfirmedFn>
     bool
@@ -142,7 +126,7 @@ namespace display_device {
           return true;
         }
 
-        const auto result = run_kscreen(args);
+        const auto result = platf::kscreen::run(args, std::chrono::milliseconds { 10'000 });
         BOOST_LOG(debug) << "kscreen-doctor [" << args << "] exit=" << result.exit_code
                          << (result.output.empty() ? "" : " output: " + result.output);
 
@@ -157,15 +141,24 @@ namespace display_device {
 
     std::vector<kscreen_output_t>
     query_outputs() {
-      const auto result = run_kscreen("-o");
-      if (result.exit_code != 0) {
-        static std::atomic<bool> failure_logged { false };
-        if (!failure_logged.exchange(true)) {
-          BOOST_LOG(info) << "kscreen-doctor unavailable (exit " << result.exit_code
-                          << "); compositor display management is disabled" ;
-        }
+      if (!platf::kscreen::session_supports_kscreen()) {
+        // No KScreen here (niri, wlroots, X11, or a service started before the
+        // desktop). Probing would D-Bus-activate a KScreen that waits for a
+        // Plasma session and only end at the 10 s timeout, once per query.
+        platf::kscreen::note_unavailable("no Plasma session (kscreen-doctor is Plasma-only)");
         return {};
       }
+
+      if (!platf::kscreen::probe_allowed()) {
+        return {};
+      }
+
+      const auto result = platf::kscreen::run("-o", platf::kscreen::kProbeTimeout);
+      if (result.exit_code != 0) {
+        platf::kscreen::note_unavailable(result.exit_code < 0 ? "kscreen-doctor did not respond" : "kscreen-doctor failed");
+        return {};
+      }
+      platf::kscreen::note_available();
 
       std::vector<kscreen_output_t> outputs;
 
@@ -1063,7 +1056,7 @@ namespace display_device {
       for (const auto &device_id : target_ids) {
         if (!current_ids.count(device_id)) {
           BOOST_LOG(info) << "Enabling output: " << device_id;
-          const auto result = run_kscreen("output." + device_id + ".enable");
+          const auto result = platf::kscreen::run("output." + device_id + ".enable", std::chrono::milliseconds { 10'000 });
           if (result.exit_code != 0) {
             BOOST_LOG(error) << "Failed to enable output " << device_id << ": " << result.output;
             return false;
@@ -1074,7 +1067,7 @@ namespace display_device {
       for (const auto &device_id : current_ids) {
         if (!target_ids.count(device_id)) {
           BOOST_LOG(info) << "Disabling output: " << device_id;
-          const auto result = run_kscreen("output." + device_id + ".disable");
+          const auto result = platf::kscreen::run("output." + device_id + ".disable", std::chrono::milliseconds { 10'000 });
           if (result.exit_code != 0) {
             BOOST_LOG(error) << "Failed to disable output " << device_id << ": " << result.output;
             return false;

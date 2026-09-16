@@ -1036,6 +1036,7 @@ namespace display_device {
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/linux/compositor_output.h"
+#include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
 #include "src/platform/linux/vdd_edid.h"
 
@@ -1258,11 +1259,15 @@ namespace display_device::vdd_utils {
     enable_output_via_compositor(const std::string &connector) {
       const char *xdg_desktop = ::getenv("XDG_CURRENT_DESKTOP");
       const std::string desktop = xdg_desktop ? xdg_desktop : "";
+      const bool niri = platf::compositor_output::niri_session();
 
+      // A session with NIRI_SOCKET is niri even when the desktop string claims
+      // KDE for toolkit compatibility; kscreen-doctor does not exist there and
+      // would block until the 10 s timeout.
       const auto command = platf::compositor_output::enable_command(
-        desktop,
+        niri ? std::string {} : desktop,
         connector,
-        platf::compositor_output::niri_session(),
+        niri,
         platf::compositor_output::tool_available("wlr-randr"),
         ::getenv("DISPLAY") != nullptr,
         platf::compositor_output::tool_available("xrandr"));
@@ -1292,6 +1297,11 @@ namespace display_device::vdd_utils {
       const std::string desktop = xdg_desktop ? xdg_desktop : "";
 
       auto kde_hint = [&]() {
+        if (!platf::kscreen::session_supports_kscreen()) {
+          // No KScreen here (niri/wlroots/X11, or started before the desktop):
+          // the command would only hang for 10 s and then fail.
+          return;
+        }
         if (priority == 1) {
           run_logged("kscreen-doctor output." + connector + ".priority.1");
         } else {

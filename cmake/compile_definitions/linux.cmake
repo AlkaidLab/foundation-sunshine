@@ -252,6 +252,8 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/compositor_output.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/compositor_output.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_modes.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_backend.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_backend.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
