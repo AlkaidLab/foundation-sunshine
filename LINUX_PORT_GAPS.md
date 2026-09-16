@@ -663,7 +663,44 @@ Linux 被整段跳过——这是**真正的 windows 不一致**，而不是模�
 容忍条件从"广告里有这个模式"改成"**当前**就是这个模式"——KDE 会把 EDID 里所有刷新率都列出来，只看
 广告会把"请求 60 却跑 144"当成成功放过。
 
-### 5.22 仍未完成（诚实清单）
+### 5.22 第十八轮修复（非 Plasma 会话被 kscreen-doctor 阻塞，2026-09-15）
+
+**现象**（测试机）：plasmalogin + 实际登录 niri；Sunshine 通过 SSH 登录后 `systemctl --user start
+sunshine` 启动。在 plasmalogin 界面和 niri 里，客户端建立连接都要阻塞很久，日志里是 kscreen-doctor
+命中 `run_logged` 的 10000 ms 超时。
+
+**根因**：`kscreen-doctor` 是通过会话总线驱动 `org.kde.KScreen` 的 Plasma 工具。没有 KScreen 的会话里
+去问它，D-Bus 会**激活**一个 KScreen 服务，而该服务在等 Plasma 会话出现，于是进程自己永不返回，只能等
+`run_logged` 在 10 s 时杀掉。而旧实现**每次显示查询都 spawn 一次**（设备枚举、拓扑、模式、HDR……一次
+会话开始有几十次查询），原先那个 `failure_logged` 静态量只抑制了日志，**没有阻止 spawn** —— 于是每次
+连接都要等 N × 10 s。
+
+**修复**（`b15ba676`，新模块 `src/platform/linux/kscreen_backend.{h,cpp}`）：
+
+1. **会话判定**：`session_supports_kscreen()` 先看 `NIRI_SOCKET`（niri 没有 KScreen，即使
+   `XDG_CURRENT_DESKTOP` 被某些配置伪装成 KDE），否则要求 desktop 串里含 Plasma/KDE。**每次调用重新
+   判定、不缓存**，所以"先于桌面启动的服务"在用户登录后仍能自动接上。判定为不支持时**根本不 spawn**。
+2. **短探测 + 冷却**：查询用 1.5 s 探测超时；探测失败/超时则武装 20 s 冷却，期间查询立即返回空；
+   成功一次即清除冷却。于是"KScreen 存在但不应答"最坏是每 20 s 花 1.5 s，而不是每次查询 10 s。
+3. 变更类命令仍用 10 s 上限，且只在探测成功（或会话确实支持 KScreen）之后才会发出。
+4. VDD 层的 kscreen 命令同样加了这道闸：带 `NIRI_SOCKET` 的会话直接走 niri IPC，不再发一条只会挂 10 s
+   的命令。
+
+**实测**（真实代码，`platf::kscreen::advertised_modes("eDP-1")`）：
+
+| 场景 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 正常 KDE 会话 | ~700 ms，1 个模式 | **699 ms / 1 个模式（不变）** |
+| niri 会话（`NIRI_SOCKET`） | 每次查询 10 s | **0 ms（不再 spawn）** |
+| 无桌面（SSH/开机服务） | 每次查询 10 s | **0 ms** |
+| 声称 KDE 但合成器不应答 | 每次查询 10 s | **首次 807 ms，随后 0 ms（冷却内）** |
+
+`tests/unit/test_kscreen_backend.cpp` 钉住判定（环境组合）与冷却状态迁移；模块本身 Linux-only。
+
+**说明**：niri 的**显示后端**仍缺（§2.11 待做 1 / §5.23 第 2 条）——本轮只保证"不因缺少后端而阻塞"，
+分辨率/HDR 在 niri 下依旧是"合成器不可用"的既有降级（该降级有一行明确 warning）。
+
+### 5.23 仍未完成（诚实清单）
 
 1. **F4 HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
    拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；本机

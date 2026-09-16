@@ -764,7 +764,7 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
     `display_vram.cpp` 的三个采样常量数值不变、托盘菜单的 Windows 语句与文案逐字未变、其余共享头均为
     增量新增。**唯一 Windows 可见行为变化**是 HDR10+ 元数据改为首帧有效统计才挂载（消除伪造 SEI，与
     该平台原生路径一致）。同时把 C5（跨语言常量同步）转为决策记录（不引入代码生成，靠线协议测试守
-    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.22：F4（HLG 域分析源）、
+    住 C++ 镜像），并把**仍未完成**的三件事写入 `LINUX_PORT_GAPS.md` §5.23：F4（HLG 域分析源）、
     niri/wlr-output-management 输出后端、D15（复制拓扑），外加 §5.18 的有意保留差异清单。
 
 39. **第十六轮：托盘"创建虚拟显示器"崩溃修复（2026-09-11）**：用户在 KDE 下点托盘"创建虚拟显示器"
@@ -812,6 +812,16 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
        模式"，避免 KDE 列出全部刷新率时把"请求 60 跑 144"当成功放过。
 
 
+41. **第十八轮：非 Plasma 会话不再被 kscreen-doctor 阻塞（2026-09-15）**：测试机（plasmalogin +
+     niri，SSH 后 `systemctl --user start sunshine`）上客户端连接长时间阻塞，日志为 kscreen-doctor 命中
+     10000 ms 超时。根因：无 KScreen 的会话里问 kscreen-doctor 会让 D-Bus 激活一个等待 Plasma 的 KScreen
+     服务，进程永不自行返回，只能等 `run_logged` 杀；而每次显示查询都会 spawn 一次（一次会话几十次），
+     旧的 `failure_logged` 只抑制日志。修复（`b15ba676`）新增 `platf::kscreen` 模块：会话判定
+     （`NIRI_SOCKET` 优先，其次 desktop 串，每次重新判定不缓存）→ 不支持则完全不 spawn；查询用 1.5 s
+     探测超时 + 失败后 20 s 冷却（成功即清除）；变更命令仍 10 s 且只在探测成功后发出；VDD 层的 kscreen
+     命令同样加闸（niri 走自身 IPC）。实测：KDE 699 ms 不变 / niri 0 ms / 无桌面 0 ms / KDE 但合成器不应答
+     首次 807 ms 后续 0 ms。详见 `LINUX_PORT_GAPS.md` §5.22。
+
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
@@ -824,7 +834,7 @@ Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90`
 `$HOME` 会让聚合套件提前 abort，属环境差异而非代码回归；且必须重建 `test_sunshine`
 （增量构建只编译 `sunshine` 时，ctest 会跑旧二进制并掩盖新失败）。
 
-**测试基线更新（2026-09-13，第十七轮之后）**：聚合套件 532 个用例：**519 通过、12 跳过、0 断言失败**
+**测试基线更新（2026-09-15，第十八轮之后）**：聚合套件 535 个用例：**522 通过、12 跳过、0 断言失败**
 （新增 `CompositorOutput` 7 个、`KscreenModes` 2 个、`VddEdid` 可行性/饱和边界 2 个）。本轮修掉一个
 真实 abort：`DisplayDeviceEnum.ActiveRequiresAnEnabledConnector` 曾因 debugfs 探测抛 `filesystem_error`
 终止整个套件。唯一失败仍是上游网络用例 `DownloadFileTests/DownloadFileTest.Run/1`
