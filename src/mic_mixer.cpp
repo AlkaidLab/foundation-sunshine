@@ -101,7 +101,13 @@ namespace mic_mixer {
     }
 
     bool
-    queue_packet(source_t &source, stats_t &stats, std::int64_t playout_slot, const std::uint8_t *data, std::size_t size) {
+    queue_packet(
+      source_t &source,
+      stats_t &stats,
+      std::int64_t playout_slot,
+      std::int64_t current_playout_slot,
+      const std::uint8_t *data,
+      std::size_t size) {
       auto [packet_it, inserted] = source.packets.emplace(
         playout_slot,
         queued_packet_t {std::vector<std::uint8_t> {data, data + size}}
@@ -119,6 +125,9 @@ namespace mic_mixer {
 
       // 实时输入优先保留最接近播放时钟的数据，最远的未来包先丢弃。
       ++stats.buffer_overflow_packets;
+      if (source.overflow_events == 0) {
+        source.overflow_window_start_slot = current_playout_slot;
+      }
       ++source.overflow_events;
       auto furthest = std::prev(source.packets.end());
       const auto kept = furthest != packet_it;
@@ -214,7 +223,7 @@ namespace mic_mixer {
         timestamp_ms,
         impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
       );
-      return queue_packet(source, impl_->stats, source.anchor_playout_slot, data, size);
+      return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
     }
 
     const auto distance = sequence_distance(sequence_number, *source.max_sequence);
@@ -242,7 +251,7 @@ namespace mic_mixer {
         timestamp_ms,
         impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
       );
-      return queue_packet(source, impl_->stats, source.anchor_playout_slot, data, size);
+      return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
     }
 
     if (distance > 0) {
@@ -269,7 +278,7 @@ namespace mic_mixer {
           timestamp_ms,
           impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
         );
-        return queue_packet(source, impl_->stats, source.anchor_playout_slot, data, size);
+        return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
       }
 
       source.max_sequence = sequence_number;
@@ -303,9 +312,10 @@ namespace mic_mixer {
         impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
       );
       source.last_reanchor_slot = impl_->next_playout_slot;
+      return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
     }
 
-    return queue_packet(source, impl_->stats, target_slot, data, size);
+    return queue_packet(source, impl_->stats, target_slot, impl_->next_playout_slot, data, size);
   }
 
   std::optional<std::vector<std::int16_t>>
