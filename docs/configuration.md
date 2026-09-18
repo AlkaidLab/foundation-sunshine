@@ -243,7 +243,9 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>Description</td>
         <td colspan="2">
             When enabled, Sunshine ends the application and restores the display when all clients disconnect.
-            Save and apply the setting for it to take effect. When disabled, the existing Resume behavior is kept.
+            Internally, the action is triggered when the last video session ends; any remaining control-only
+            sessions are closed as part of the same cleanup. Save and apply the setting for it to take effect.
+            When disabled, the existing Resume behavior is kept.
         </td>
     </tr>
     <tr>
