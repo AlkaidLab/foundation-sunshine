@@ -176,14 +176,12 @@ namespace rtsp_stream {
    * @param reason Reason recorded for sessions that are still running.
    * @param predicate Checked on the RTSP execution context before clearing sessions.
    * @param completion Called with true when clearing started, or false when skipped.
-   * @param reject_if_launch_preparing Whether an active launch preparation blocks the cancellation.
    */
   void
   terminate_sessions_async_if(
     stream::session::stop_reason_e reason,
     boost::function<bool()> predicate,
-    boost::function<void(bool)> completion,
-    bool reject_if_launch_preparing);
+    boost::function<void(bool)> completion);
 
   /**
    * @brief Runs the RTSP server loop.

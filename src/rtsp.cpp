@@ -16,7 +16,6 @@ extern "C" {
 #include <array>
 #include <cctype>
 #include <cstring>
-#include <exception>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -51,63 +50,15 @@ using namespace std::literals;
 
 namespace rtsp_stream {
   namespace {
-    constexpr std::uint32_t LAUNCH_CANCELLATION_RESERVED = std::uint32_t {1} << 31;
-    constexpr std::uint32_t LAUNCH_PREPARATION_COUNT_MASK = ~LAUNCH_CANCELLATION_RESERVED;
-    boost::atomic<std::uint32_t> launch_state { 0 };
-
-    bool
-    reserve_launch_cancellation(bool reject_if_preparing) {
-      auto state = launch_state.load(boost::memory_order_acquire);
-      for (;;) {
-        if ((state & LAUNCH_CANCELLATION_RESERVED) != 0) {
-          return false;
-        }
-        if (reject_if_preparing && (state & LAUNCH_PREPARATION_COUNT_MASK) != 0) {
-          return false;
-        }
-
-        if (launch_state.compare_exchange_weak(
-              state,
-              state | LAUNCH_CANCELLATION_RESERVED,
-              boost::memory_order_acq_rel,
-              boost::memory_order_acquire)) {
-          return true;
-        }
-      }
-    }
-
-    void
-    release_launch_cancellation() {
-      launch_state.fetch_and(LAUNCH_PREPARATION_COUNT_MASK, boost::memory_order_release);
-      launch_state.notify_all();
-    }
+    boost::atomic_uint32_t launch_preparations { 0 };
   }
 
   launch_preparation_guard_t::launch_preparation_guard_t() noexcept {
-    auto state = launch_state.load(boost::memory_order_acquire);
-    for (;;) {
-      if ((state & LAUNCH_CANCELLATION_RESERVED) != 0) {
-        state = launch_state.wait(state, boost::memory_order_acquire);
-        continue;
-      }
-
-      const auto count = state & LAUNCH_PREPARATION_COUNT_MASK;
-      if (count == LAUNCH_PREPARATION_COUNT_MASK) {
-        std::terminate();
-      }
-
-      if (launch_state.compare_exchange_weak(
-            state,
-            state + 1,
-            boost::memory_order_acq_rel,
-            boost::memory_order_acquire)) {
-        return;
-      }
-    }
+    ++launch_preparations;
   }
 
   launch_preparation_guard_t::~launch_preparation_guard_t() noexcept {
-    launch_state.fetch_sub(1, boost::memory_order_release);
+    --launch_preparations;
   }
 
   void
@@ -965,14 +916,11 @@ namespace rtsp_stream {
     terminate_sessions_async_if(
       stream::session::stop_reason_e reason,
       boost::function<bool()> predicate,
-      boost::function<void(bool)> completion,
-      bool reject_if_launch_preparing) {
-      boost::asio::post(io_context, [this, reason, predicate = std::move(predicate), completion = std::move(completion), reject_if_launch_preparing]() mutable {
+      boost::function<void(bool)> completion) {
+      boost::asio::post(io_context, [this, reason, predicate = std::move(predicate), completion = std::move(completion)]() mutable {
         bool termination_started { false };
-        bool launch_cancellation_reserved { false };
         try {
-          if ((!predicate || predicate()) &&
-              (launch_cancellation_reserved = reserve_launch_cancellation(reject_if_launch_preparing))) {
+          if (!predicate || predicate()) {
             termination_started = true;
             clear(true, reason);
           }
@@ -997,10 +945,6 @@ namespace rtsp_stream {
         }
         catch (...) {
           BOOST_LOG(error) << "Streaming session termination callback failed"sv;
-        }
-
-        if (launch_cancellation_reserved) {
-          release_launch_cancellation();
         }
       });
     }
@@ -1090,12 +1034,12 @@ namespace rtsp_stream {
 
   bool
   launch_preparation_active() {
-    return (launch_state.load(boost::memory_order_acquire) & LAUNCH_PREPARATION_COUNT_MASK) != 0;
+    return launch_preparations.load(boost::memory_order_acquire) != 0;
   }
 
   bool
   session_starting_or_active() {
-    return launch_preparation_active() ||
+    return launch_preparations.load() != 0 ||
            server.pending_session_count() != 0 ||
            server.session_count() != 0;
   }
@@ -1109,13 +1053,8 @@ namespace rtsp_stream {
   terminate_sessions_async_if(
     stream::session::stop_reason_e reason,
     boost::function<bool()> predicate,
-    boost::function<void(bool)> completion,
-    bool reject_if_launch_preparing) {
-    server.terminate_sessions_async_if(
-      reason,
-      std::move(predicate),
-      std::move(completion),
-      reject_if_launch_preparing);
+    boost::function<void(bool)> completion) {
+    server.terminate_sessions_async_if(reason, std::move(predicate), std::move(completion));
   }
 
   int
