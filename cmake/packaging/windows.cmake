@@ -21,6 +21,14 @@ install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
         COMPONENT application)
 
+# The DLSS NR adapter ships first-party; the NVIDIA runtime DLL must be
+# imported by the user and is never part of the package.
+if (TARGET sunshine_dlssnr_adapter)
+  install(FILES "${DLSSNR_ADAPTER_DLL}"
+          DESTINATION "tools/hdr_enhanced/nvidia_dlssnr"
+          COMPONENT application)
+endif ()
+
 
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)
 install(FILES "${ZLIB}" DESTINATION "." COMPONENT application)
