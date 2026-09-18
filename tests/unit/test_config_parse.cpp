@@ -59,13 +59,29 @@ encoder = nvenc# ordinary comment
 }
 
 TEST(ConfigParse, ReadsStopOnLastVideoSession) {
-  const auto enabled = config::parse_config("stop_on_last_video_session = enabled\n");
-  const auto disabled = config::parse_config("stop_on_last_video_session = disabled\n");
+  const auto original = config::stream.stop_on_last_video_session;
+  const auto original_file_apps = config::stream.file_apps;
+  const auto temporary_apps_path = std::filesystem::temp_directory_path() /
+                                   ("sunshine_stop_on_last_video_session_" +
+                                    std::to_string(reinterpret_cast<std::uintptr_t>(&original)) + ".json");
+  std::ofstream(temporary_apps_path) << "{\"apps\": []}\n";
+  config::stream.file_apps = temporary_apps_path.string();
 
-  ASSERT_TRUE(enabled.contains("stop_on_last_video_session"));
-  EXPECT_EQ(enabled.at("stop_on_last_video_session"), "enabled");
-  ASSERT_TRUE(disabled.contains("stop_on_last_video_session"));
-  EXPECT_EQ(disabled.at("stop_on_last_video_session"), "disabled");
+  config::stream.stop_on_last_video_session = false;
+  config::apply_config({{"stop_on_last_video_session", "enabled"}});
+  EXPECT_TRUE(config::stream.stop_on_last_video_session);
+
+  config::apply_config({{"stop_on_last_video_session", "disabled"}});
+  EXPECT_FALSE(config::stream.stop_on_last_video_session);
+
+  config::stream.stop_on_last_video_session = true;
+  config::apply_config({});
+  EXPECT_TRUE(config::stream.stop_on_last_video_session);
+
+  config::stream.stop_on_last_video_session = original;
+  config::stream.file_apps = original_file_apps;
+  std::error_code ignored;
+  std::filesystem::remove(temporary_apps_path, ignored);
 }
 
 TEST(ConfigParse, ClientSettingsAreNormalizedBeforePersistence) {

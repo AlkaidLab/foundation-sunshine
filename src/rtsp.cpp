@@ -1033,6 +1033,11 @@ namespace rtsp_stream {
   }
 
   bool
+  launch_preparation_active() {
+    return launch_preparations.load(boost::memory_order_acquire) != 0;
+  }
+
+  bool
   session_starting_or_active() {
     return launch_preparations.load() != 0 ||
            server.pending_session_count() != 0 ||

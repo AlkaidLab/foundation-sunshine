@@ -299,6 +299,9 @@ namespace config {
   std::unordered_map<std::string, std::string>
   parse_config(const std::string_view &file_content);
 
+  void
+  apply_config(std::unordered_map<std::string, std::string> &&vars);
+
   bool
   update_config(const std::map<std::string, std::string> &updates);
 

@@ -31,6 +31,15 @@ namespace {
   }
 }  // namespace
 
+TEST(RtspLaunchPreparation, ReportsActivePreparation) {
+  EXPECT_FALSE(rtsp_stream::launch_preparation_active());
+  {
+    rtsp_stream::launch_preparation_guard_t guard;
+    EXPECT_TRUE(rtsp_stream::launch_preparation_active());
+  }
+  EXPECT_FALSE(rtsp_stream::launch_preparation_active());
+}
+
 TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndRejectsCrossAddressClaim) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();

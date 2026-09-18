@@ -4155,7 +4155,9 @@ namespace stream {
           stop_reason_e::client_cancel,
           [require_no_video_session]() {
             return !require_no_video_session ||
-                   (video_session_count() == 0 && rtsp_stream::pending_session_count() == 0);
+                   (!rtsp_stream::launch_preparation_active() &&
+                    video_session_count() == 0 &&
+                    rtsp_stream::pending_session_count() == 0);
           },
           [](bool termination_started) {
             auto clear_pending = util::fail_guard([]() {
