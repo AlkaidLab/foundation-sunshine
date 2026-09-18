@@ -152,12 +152,6 @@ namespace rtsp_stream {
   pending_session_count();
 
   /**
-   * @brief Check whether a launch or resume is preparing its display and RTSP ticket.
-   */
-  bool
-  launch_preparation_active();
-
-  /**
    * @brief Check whether an NVHTTP launch, RTSP handshake, or stream session is active.
    */
   bool
