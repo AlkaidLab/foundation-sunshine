@@ -46,7 +46,7 @@ const frameBudget = computed(() => {
         <option value="1">P1 {{ $t('config.nvenc_preset_1') }}</option>
         <option value="2">P2</option>
         <option value="3">P3</option>
-        <option value="4">P4</option>
+        <option value="4">P4 {{ $t('config.nvenc_preset_4') }}</option>
         <option value="5">P5</option>
         <option value="6">P6</option>
         <option value="7">P7 {{ $t('config.nvenc_preset_7') }}</option>
@@ -84,16 +84,6 @@ const frameBudget = computed(() => {
       </select>
       <div class="form-text">{{ $t('config.nvenc_spatial_aq_desc') }}</div>
     </div>
-
-    <!-- Temporal AQ -->
-    <!-- <div class="mb-3">
-      <label for="nvenc_temporal_aq" class="form-label">{{ $t('config.nvenc_temporal_aq') }}</label>
-      <select id="nvenc_temporal_aq" class="form-select" v-model="config.nvenc_temporal_aq">
-        <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-        <option value="enabled">{{ $t('_common.enabled') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_temporal_aq_desc') }}</div>
-    </div> -->
 
     <!-- Lookahead depth -->
     <!-- <div class="mb-3">

@@ -426,19 +426,12 @@ namespace nvenc {
       }
     }
 
+    // Spatial AQ: enabled by default. Supported on all Maxwell-generation (2014)
+    // and newer NVENC hardware; the API exposes no capability bit for it. On the
+    // (pre-Maxwell) hardware without it the driver rejects the rate-control
+    // params at init, which simply deselects this encoder during probing.
     enc_config.rcParams.enableAQ = config.adaptive_quantization;
-    
-    // Enable temporal AQ if supported and lookahead is enabled
-    if (config.enable_temporal_aq && lookahead_enabled) {
-      if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_TEMPORAL_AQ) != 0) {
-        // Temporal AQ is enabled through enableAQ when lookahead is active
-        // The encoder will use temporal AQ automatically if supported
-        BOOST_LOG(debug) << "NvEnc: Temporal AQ enabled (requires lookahead)";
-      }
-      else {
-        BOOST_LOG(warning) << "NvEnc: Temporal AQ requested but not supported by GPU";
-      }
-    }
+
     enc_config.rcParams.averageBitRate = client_config.bitrate * 1000;
 
     if (get_encoder_cap(NV_ENC_CAPS_SUPPORT_CUSTOM_VBV_BUF_SIZE)) {
