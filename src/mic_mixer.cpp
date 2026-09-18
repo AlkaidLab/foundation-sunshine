@@ -404,6 +404,8 @@ namespace mic_mixer {
       reset_decoder(source);
       source.playout_started = false;
       source.consecutive_plc_frames = 0;
+      source.overflow_events = 0;
+      source.overflow_window_start_slot = -1;
     }
   }
 
