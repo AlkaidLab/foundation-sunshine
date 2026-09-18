@@ -261,6 +261,7 @@ namespace nvenc {
       // Guard disabled: report the configured preset untouched.
       budget_verdict.clamped = false;
       budget_verdict.effective_preset = budget_verdict.configured_preset;
+      budget_verdict.estimated_ms = budget_verdict.configured_estimated_ms;
       effective_quality_preset = budget_verdict.effective_preset;
     }
     pending_frame_budget_verdict = budget_verdict;
