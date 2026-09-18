@@ -24,6 +24,7 @@ namespace mic_mixer {
     constexpr std::int64_t timestamp_discontinuity_ms = 200;
     constexpr std::size_t max_consecutive_plc_frames = jitter_buffer_frames;
     constexpr std::int64_t overflow_recovery_window_frames = 250;
+    constexpr std::int64_t overflow_reanchor_cooldown_frames = 100;
     constexpr std::size_t overflow_recovery_threshold = 10;
 
     struct opus_decoder_deleter_t {
@@ -298,13 +299,19 @@ namespace mic_mixer {
       return false;
     }
 
+    if (source.overflow_window_start_slot >= 0 &&
+        impl_->next_playout_slot - source.overflow_window_start_slot > overflow_recovery_window_frames) {
+      source.overflow_events = 0;
+      source.overflow_window_start_slot = -1;
+    }
+
     const auto overflow_window_active =
       source.overflow_window_start_slot >= 0 &&
       impl_->next_playout_slot - source.overflow_window_start_slot <= overflow_recovery_window_frames;
     if (source.overflow_events >= overflow_recovery_threshold &&
         overflow_window_active &&
         (source.last_reanchor_slot < 0 ||
-         impl_->next_playout_slot - source.last_reanchor_slot > overflow_recovery_window_frames)) {
+         impl_->next_playout_slot - source.last_reanchor_slot > overflow_reanchor_cooldown_frames)) {
       ++impl_->stats.timeline_reanchors;
       reset_timeline(
         source,
