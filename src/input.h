@@ -26,7 +26,10 @@ namespace input {
   probe_gamepads();
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id);
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad = {}, bool per_controller_haptics = false);
+
+  bool
+  pcm_haptics_ready(const std::shared_ptr<input_t> &input, std::uint16_t controller);
 
   struct touch_port_t: public platf::touch_port_t {
     int env_width, env_height;

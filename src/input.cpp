@@ -19,6 +19,7 @@ extern "C" {
 #include "config.h"
 #include "globals.h"
 #include "input.h"
+#include <moonlight-common-c/src/ControllerHaptics.h>
 #include "text_context/bridge.h"
 #include "input_activity.h"
 #include "logging.h"
@@ -165,7 +166,7 @@ namespace input {
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
-      std::uint64_t session_id):
+      std::uint64_t session_id, std::string client_gamepad, bool per_controller_haptics):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
@@ -173,6 +174,8 @@ namespace input {
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
         session_id {session_id},
+        client_gamepad {std::move(client_gamepad)},
+        per_controller_haptics {per_controller_haptics},
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
@@ -189,6 +192,9 @@ namespace input {
     platf::feedback_queue_t feedback_queue;
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
+    const std::string client_gamepad;
+    const bool per_controller_haptics;
+    std::array<std::atomic<bool>, MAX_GAMEPADS> pcm_ready {};
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -1000,6 +1006,7 @@ namespace input {
       packet->type,
       util::endian::little(packet->capabilities),
       util::endian::little(packet->supportedButtonFlags),
+      input->client_gamepad,
     };
 
     auto id = alloc_id(gamepadMask);
@@ -1352,7 +1359,7 @@ namespace input {
         return;
       }
 
-      if (platf::alloc_gamepad(platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue)) {
+      if (platf::alloc_gamepad(platf_input, { id, (uint8_t) packet->controllerNumber }, {0, 0, 0, input->client_gamepad}, input->feedback_queue)) {
         free_id(gamepadMask, id);
         return;
       }
@@ -1361,6 +1368,7 @@ namespace input {
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
+      input->pcm_ready[packet->controllerNumber].store(false);
       free_gamepad(platf_input, gamepad.id);
       gamepad.id = -1;
       return;
@@ -1939,6 +1947,16 @@ namespace input {
       case SS_PEN_MAGIC:
         passthrough(input, (PSS_PEN_PACKET) payload);
         break;
+      case SS_CONTROLLER_HAPTICS_MAGIC: {
+        std::uint8_t player;
+        bool ready;
+        if (input->per_controller_haptics && config::input.controller &&
+            LiParseControllerHapticsState(payload, entry.size(), &player, &ready) &&
+            input->gamepads[player].id >= 0) {
+          input->pcm_ready[player].store(ready);
+        }
+        break;
+      }
       case SS_CONTROLLER_ARRIVAL_MAGIC:
         passthrough(input, (PSS_CONTROLLER_ARRIVAL_PACKET) payload);
         break;
@@ -2023,13 +2041,18 @@ namespace input {
     return true;
   }
 
+  bool
+  pcm_haptics_ready(const std::shared_ptr<input_t> &input, std::uint16_t controller) {
+    return input && controller < input->pcm_ready.size() && input->pcm_ready[controller].load();
+  }
+
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad, bool per_controller_haptics) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
-      session_id);
+      session_id, std::move(client_gamepad), per_controller_haptics);
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

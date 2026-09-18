@@ -546,3 +546,16 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
+
+
+add_executable(gamepad_selection_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_gamepad_selection.cpp)
+target_include_directories(gamepad_selection_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(gamepad_selection_unit_tests gtest_main)
+set_target_properties(gamepad_selection_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME gamepad_selection_unit_tests COMMAND gamepad_selection_unit_tests)
+
+add_executable(controller_haptics_protocol_tests
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/tests/ControllerHapticsTest.c)
+target_include_directories(controller_haptics_protocol_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src")
+add_test(NAME controller_haptics_protocol_tests COMMAND controller_haptics_protocol_tests)

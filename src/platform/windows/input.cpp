@@ -22,6 +22,7 @@
 #include "misc.h"
 #include "virtual_mouse.h"
 #include "src/config.h"
+#include "src/gamepad_selection.h"
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -496,23 +497,6 @@ namespace platf {
     current_gamepad_mode.store(mode, std::memory_order_relaxed);
     constexpr std::array<std::string_view, 5> names { "global", "auto", "Xbox 360", "DualShock 4", "DualSense" };
     BOOST_LOG(info) << "Gamepad mode set to: "sv << names[mode];
-  }
-
-  // Client-declared gamepad type for the in-flight session, published at
-  // /launch time (see nvhttp.cpp). Empty = undeclared.
-  static std::mutex client_gamepad_pref_mutex;
-  static std::string client_gamepad_pref;
-
-  void
-  set_client_gamepad_pref(std::string pref) {
-    std::lock_guard lock(client_gamepad_pref_mutex);
-    client_gamepad_pref = std::move(pref);
-  }
-
-  static std::string
-  get_client_gamepad_pref() {
-    std::lock_guard lock(client_gamepad_pref_mutex);
-    return client_gamepad_pref;
   }
 
   static int
@@ -1934,15 +1918,21 @@ namespace platf {
     ds5::refresh_component_availability();
     // Client-declared preference (Sunshine /launch extension) outranks the
     // per-app and global host-side selection while client_gamepad_override is on.
-    const auto client_pref = get_client_gamepad_pref();
+    const auto &client_pref = metadata.client_gamepad;
     const bool client_declared = !client_pref.empty() && config::input.client_gamepad_override;
-    auto gamepad_mode = client_declared
-      ? (client_pref == "x360"sv ? 2 : client_pref == "ds4"sv ? 3 : client_pref == "ds5"sv ? 4 : 1)
-      : effective_gamepad_mode();
+    const auto base_mode = ::input::select_gamepad_mode(client_pref, config::input.client_gamepad_override,
+      effective_gamepad_mode(), false);
+    auto gamepad_mode = ::input::select_gamepad_mode(client_pref, config::input.client_gamepad_override,
+      base_mode, (metadata.capabilities & LI_CCAP_PREFER_DS5) != 0);
     const auto per_app_override = !client_declared && current_gamepad_mode.load(std::memory_order_relaxed) != 0;
     const char *selection_source = client_declared ? "client selection" : (per_app_override ? "per-app selection" : "global selection");
 
-    if (gamepad_mode == 4 && client_declared && (!raw->ds5_sidecar || !raw->ds5_sidecar->configured())) {
+    const bool prefers_ds5 = base_mode == 1 && gamepad_mode == 4;
+    if (prefers_ds5) {
+      selection_source = "controller preference";
+    }
+
+    if (gamepad_mode == 4 && (client_declared || prefers_ds5) && (!raw->ds5_sidecar || !raw->ds5_sidecar->configured())) {
       // The client cannot know the host component state; degrade instead of failing.
       BOOST_LOG(warning) << "Client declared DualSense but the sidecar component is unavailable; falling back to DualShock 4"sv;
       gamepad_mode = 3;

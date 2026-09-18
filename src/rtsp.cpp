@@ -1135,6 +1135,7 @@ namespace rtsp_stream {
     // Tell the client about our supported features
     {
       auto caps = (uint32_t) platf::get_capabilities();
+      caps |= LI_FF_CONTROLLER_HAPTICS;
       // Advertise clipboard sync only when the user opted in AND a user-session
       // GUI agent is currently subscribed; otherwise the client would attempt
       // sync into a black hole.

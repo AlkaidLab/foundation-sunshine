@@ -678,6 +678,7 @@ namespace stream {
     } control;
 
     std::uint32_t launch_session_id;
+    std::string client_gamepad;
 
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
@@ -1461,9 +1462,15 @@ namespace stream {
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
-      const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
+      const bool sends_raw_pcm = LiShouldSendControllerPcm(session->config.mlFeatureFlags,
+        input::pcm_haptics_ready(session->input, msg.id));
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
 
+      // Discard the old reducer and synthesized output when switching to PCM.
+      if (sends_raw_pcm && session->control.legacy_haptics.erase(msg.id)) {
+        auto stop = platf::gamepad_feedback_msg_t::make_rumble(msg.id, 0, 0);
+        send_feedback_msg(session, stop, true);
+      }
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
       auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
@@ -4285,7 +4292,8 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
-      session.input = input::alloc(session.mail, session.launch_session_id);
+      session.input = input::alloc(session.mail, session.launch_session_id, session.client_gamepad,
+        (session.config.mlFeatureFlags & ML_FF_CONTROLLER_HAPTICS) != 0);
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
@@ -4456,6 +4464,7 @@ namespace stream {
       session->synthetic_hdr = launch_session.synthetic_hdr;
       session->frame_pipeline_policy = launch_session.frame_pipeline_policy;
       session->frame_pipeline_policy_resolved = launch_session.frame_pipeline_policy_resolved;
+      session->client_gamepad = launch_session.client_gamepad;
       session->hdr_capabilities = launch_session.hdr_capabilities;
       session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
       session->dynamic_sdr_white_nits.store(
