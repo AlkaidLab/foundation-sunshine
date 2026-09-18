@@ -3081,6 +3081,14 @@ namespace platf::dxgi {
       nvenc_config.cuda_array_input = nvenc_config.cuda_array_input && !is_probe;
       if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format)) return false;
 
+      // Surface the frame budget guard result of real sessions to the config API.
+      // Probe sessions would only overwrite it with test-pattern data.
+      if (!is_probe) {
+        if (auto verdict = nvenc_d3d->take_frame_budget_verdict()) {
+          nvenc::publish_frame_budget_report(*verdict);
+        }
+      }
+
       base.apply_colorspace(colorspace);
       base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);
       if (base.init_output(nvenc_d3d->get_input_texture(), client_config.width, client_config.height, colorspace, client_config.videoFormat, is_probe)) {

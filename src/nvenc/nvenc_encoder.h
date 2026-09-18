@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include "frame_budget.h"
 #include "nvenc_config.h"
 #include "nvenc_encoded_frame.h"
 
@@ -36,6 +37,14 @@ namespace nvenc {
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &colorspace,
       platf::pix_fmt_e buffer_format) = 0;
+
+    /**
+     * @brief Fetch and clear the frame budget evaluation recorded by the last
+     *        `create_encoder()` call.
+     * @return Evaluation result, or nullopt if no evaluation is pending.
+     */
+    virtual std::optional<frame_budget_verdict>
+    take_frame_budget_verdict() = 0;
 
     /**
      * @brief Destroy the encoder.

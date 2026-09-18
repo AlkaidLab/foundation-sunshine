@@ -232,7 +232,40 @@ namespace nvenc {
 
     encoder_params.rfi = get_encoder_cap(NV_ENC_CAPS_SUPPORT_REF_PIC_INVALIDATION);
 
-    init_params.presetGUID = quality_preset_guid_from_number(config.quality_preset);
+    // Frame budget guard: presets trade per-frame encode time for compression
+    // efficiency. When the configured preset cannot fit within a fixed fraction
+    // of the frame interval, lower it so encoding keeps up with the stream
+    // (e.g. 4K120 clamps P4 down to P2/P1 on a single-NVENC GPU).
+    const int num_nvenc_engines = std::max(1, get_encoder_cap(NV_ENC_CAPS_NUM_ENCODER_ENGINES));
+    auto budget_verdict = nvenc::evaluate_frame_budget(config.quality_preset,
+      encoder_params.width,
+      encoder_params.height,
+      client_config.get_effective_framerate(),
+      num_nvenc_engines);
+    int effective_quality_preset = budget_verdict.effective_preset;
+    if (config.frame_budget_guard) {
+      if (budget_verdict.clamped) {
+        auto f = stat_trackers::two_digits_after_decimal();
+        BOOST_LOG(warning) << "NvEnc: frame budget guard clamped preset P" << budget_verdict.configured_preset
+                           << " -> P" << budget_verdict.effective_preset
+                           << " (" << budget_verdict.width << "x" << budget_verdict.height << "@"
+                           << budget_verdict.fps << "fps"
+                           << ", budget " << f % budget_verdict.budget_ms << "ms"
+                           << ", P" << budget_verdict.configured_preset << " est " << f % budget_verdict.configured_estimated_ms << "ms"
+                           << (budget_verdict.num_engines > 1 ? ", multi-NVENC" : "")
+                           << (budget_verdict.budget_exceeded_at_floor ? ", even P1 exceeds budget" : "")
+                           << "). Disable nvenc_frame_budget_guard to override";
+      }
+    }
+    else {
+      // Guard disabled: report the configured preset untouched.
+      budget_verdict.clamped = false;
+      budget_verdict.effective_preset = budget_verdict.configured_preset;
+      effective_quality_preset = budget_verdict.effective_preset;
+    }
+    pending_frame_budget_verdict = budget_verdict;
+
+    init_params.presetGUID = quality_preset_guid_from_number(effective_quality_preset);
     init_params.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
     init_params.enablePTD = 1;
     init_params.enableEncodeAsync = async_event_handle ? 1 : 0;
@@ -716,6 +749,7 @@ namespace nvenc {
       if (enc_config.rcParams.enableAQ) extra += " spatial-aq";
       if (enc_config.rcParams.enableMinQP) extra += " qpmin=" + std::to_string(enc_config.rcParams.minQP.qpInterP);
       if (config.insert_filler_data) extra += " filler-data";
+      if (budget_verdict.clamped) extra += " frame-budget:P" + std::to_string(budget_verdict.configured_preset);
 
       BOOST_LOG(info) << "NvEnc: created encoder v" << NVENC_INT_VERSION << " "
                       << video_format_string << quality_preset_string_from_guid(init_params.presetGUID) << extra;

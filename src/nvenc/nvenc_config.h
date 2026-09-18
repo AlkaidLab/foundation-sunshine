@@ -131,6 +131,11 @@ namespace nvenc {
     // ghosted/garbled output and stalls on some drivers, and the device-pointer
     // path is the known-good fallback.
     bool cuda_array_input = false;
+
+    // Lower the quality preset automatically when its estimated encode time would
+    // not fit within a fixed fraction of the frame interval (e.g. 4K120 clamps P4
+    // down to P2/P1). Applies to the configured preset whatever its origin.
+    bool frame_budget_guard = true;
   };
 
 }  // namespace nvenc

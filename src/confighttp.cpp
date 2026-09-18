@@ -65,6 +65,7 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "nvenc/frame_budget.h"
 #include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -1348,6 +1349,20 @@ namespace confighttp {
     }
 
     outputTree.put("active_encoder", video::active_encoder_name());
+    if (auto frame_budget = nvenc::get_frame_budget_report()) {
+      pt::ptree budget_node;
+      budget_node.put("clamped", frame_budget->clamped);
+      budget_node.put("configured_preset", frame_budget->configured_preset);
+      budget_node.put("effective_preset", frame_budget->effective_preset);
+      budget_node.put("width", frame_budget->width);
+      budget_node.put("height", frame_budget->height);
+      budget_node.put("fps", frame_budget->fps);
+      budget_node.put("budget_ms", frame_budget->budget_ms);
+      budget_node.put("estimated_ms", frame_budget->estimated_ms);
+      budget_node.put("configured_estimated_ms", frame_budget->configured_estimated_ms);
+      budget_node.put("num_engines", frame_budget->num_engines);
+      outputTree.add_child("active_nvenc_frame_budget", budget_node);
+    }
     // Configuration capability only; never expose the paired-client tunnel token here.
     outputTree.put("usb_forwarding_config_version", "1");
     outputTree.put("pair_name", nvhttp::get_pair_name());
