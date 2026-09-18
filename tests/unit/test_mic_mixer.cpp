@@ -157,7 +157,7 @@ TEST(MicMixerTest, MixesIndependentSourcesIntoOneFrame) {
 TEST(MicMixerTest, KeepsOnlyNearestFuturePackets) {
   auto encoder = make_encoder();
   std::vector<std::vector<std::uint8_t>> packets;
-  for (const auto sample_value : {1000, 2000, 3000, 4000, 5000}) {
+  for (const auto sample_value : {1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000}) {
     packets.emplace_back(encode_frame(encoder.get(), mic_mixer::frame_samples, sample_value));
     ASSERT_FALSE(packets.back().empty());
   }
@@ -172,7 +172,7 @@ TEST(MicMixerTest, KeepsOnlyNearestFuturePackets) {
       packet.size(),
       static_cast<std::uint16_t>(packet_index + 1),
       static_cast<std::uint32_t>((packet_index + 1) * 20));
-    EXPECT_EQ(queued, packet_index < 4);
+    EXPECT_EQ(queued, packet_index < 8);
   }
 }
 
@@ -416,11 +416,11 @@ TEST(MicMixerTest, ReportsAndResetsQueueDiagnostics) {
 
   mic_mixer::mixer_t mixer;
   ASSERT_TRUE(mixer.add_source(1));
-  for (std::uint16_t sequence = 1; sequence <= 4; ++sequence) {
+  for (std::uint16_t sequence = 1; sequence <= 8; ++sequence) {
     ASSERT_TRUE(mixer.push_packet(1, packet.data(), packet.size(), sequence, sequence * 20));
   }
-  EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 5, 100));
-  EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 5, 100));
+  EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 9, 180));
+  EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 9, 180));
   mixer.skip_playout_frames(3);
 
   const auto stats = mixer.take_stats();
@@ -438,7 +438,7 @@ TEST(MicMixerTest, ReanchorsAfterPersistentQueueOverflow) {
   constexpr std::size_t recovery_threshold = 10;
   auto encoder = make_encoder();
   std::vector<std::vector<std::uint8_t>> packets;
-  for (const auto sample_value : {1000, 2000, 3000, 4000, 5000, 6000}) {
+  for (const auto sample_value : {1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000}) {
     packets.emplace_back(encode_frame(encoder.get(), mic_mixer::frame_samples, sample_value));
     ASSERT_FALSE(packets.back().empty());
   }
@@ -446,18 +446,19 @@ TEST(MicMixerTest, ReanchorsAfterPersistentQueueOverflow) {
 
   mic_mixer::mixer_t mixer;
   ASSERT_TRUE(mixer.add_source(1));
-  for (std::uint16_t sequence = 1; sequence <= 6; ++sequence) {
+  for (std::uint16_t sequence = 1; sequence <= 8; ++sequence) {
     const auto &packet = packets[sequence - 1];
     mixer.push_packet(1, packet.data(), packet.size(), sequence, sequence * 20);
   }
-  for (std::size_t overflow = 2; overflow < recovery_threshold; ++overflow) {
+  EXPECT_FALSE(mixer.push_packet(1, packets[4].data(), packets[4].size(), 10, 200));
+  for (std::size_t overflow = 1; overflow < recovery_threshold; ++overflow) {
     EXPECT_FALSE(mixer.push_packet(1,
       packets[4].data(),
       packets[4].size(),
-      5,
-      100));
+      9,
+      180));
   }
-  EXPECT_TRUE(mixer.push_packet(1, packets[4].data(), packets[4].size(), 5, 100));
+  EXPECT_TRUE(mixer.push_packet(1, packets[4].data(), packets[4].size(), 9, 180));
 
   const auto stats = mixer.take_stats();
   EXPECT_EQ(stats.buffer_overflow_packets, recovery_threshold);
@@ -481,17 +482,18 @@ TEST(MicMixerTest, SkippingHostFramesExpiresOverflowRecoveryWindow) {
 
   mic_mixer::mixer_t mixer;
   ASSERT_TRUE(mixer.add_source(1));
-  for (std::uint16_t sequence = 1; sequence <= 6; ++sequence) {
+  for (std::uint16_t sequence = 1; sequence <= 8; ++sequence) {
     EXPECT_EQ(mixer.push_packet(
       1,
       packet.data(),
       packet.size(),
       sequence,
       static_cast<std::uint32_t>(sequence * 20)
-    ), sequence <= 4);
+    ), sequence <= 8);
   }
-  for (std::size_t overflow = 2; overflow < recovery_threshold; ++overflow) {
-    EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 5, 100));
+  EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 10, 200));
+  for (std::size_t overflow = 1; overflow < recovery_threshold; ++overflow) {
+    EXPECT_FALSE(mixer.push_packet(1, packet.data(), packet.size(), 9, 180));
   }
   const auto before_skip = mixer.take_stats();
   EXPECT_EQ(before_skip.buffer_overflow_packets, recovery_threshold);
@@ -500,7 +502,7 @@ TEST(MicMixerTest, SkippingHostFramesExpiresOverflowRecoveryWindow) {
   mixer.skip_playout_frames(250);
 
   // 序列 251 映射到新播放时钟两帧 jitter buffer 后的第一个槽位。
-  // 旧溢出窗口在这个边界仍会被判定为有效，并错误触发重锚。
+  // 跳过播放时钟后，旧溢出窗口应当过期，不应触发重锚。
   ASSERT_TRUE(mixer.push_packet(1, packet.data(), packet.size(), 251, 5020));
   const auto after_skip = mixer.take_stats();
   EXPECT_EQ(after_skip.timeline_reanchors, 0);
