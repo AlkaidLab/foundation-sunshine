@@ -1206,6 +1206,14 @@ namespace platf {
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue);
   void
   free_gamepad(input_t &input, int nr);
+  /**
+   * @brief Check whether an allocated gamepad is backed by the DualSense path.
+   * @param input The global platform input context.
+   * @param nr The global gamepad index.
+   * @return true only when the platform allocated a DualSense for this index.
+   */
+  bool
+  gamepad_is_ds5(input_t &input, int nr);
 
   /**
    * @brief Get the supported platform capabilities to advertise to the client.

@@ -132,6 +132,11 @@ namespace platf {
     platf::gamepad::free(raw, nr);
   }
 
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     auto raw = (input_raw_t *) input.get();

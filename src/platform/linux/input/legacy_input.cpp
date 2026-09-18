@@ -1600,6 +1600,11 @@ namespace platf {
     ((input_raw_t *) input.get())->clear_gamepad(nr);
   }
 
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     TUPLE_2D_REF(uinput, gamepad_state_old, ((input_raw_t *) input.get())->gamepads[nr]);

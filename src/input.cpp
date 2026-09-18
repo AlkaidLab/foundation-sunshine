@@ -10,6 +10,7 @@ extern "C" {
 }
 
 #include <bitset>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <list>
@@ -132,12 +133,15 @@ namespace input {
     gamepad_t():
         gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
     ~gamepad_t() {
+      ds5 = false;
       if (id >= 0) {
         task_pool.push([id = this->id]() {
           free_gamepad(platf_input, id);
         });
       }
     }
+
+    std::atomic_bool ds5 { false };
 
     platf::gamepad_state_t gamepad_state;
 
@@ -200,6 +204,20 @@ namespace input {
     int32_t accumulated_vscroll_delta;
     int32_t accumulated_hscroll_delta;
   };
+
+  bool
+  has_ds5_gamepad(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /**
    * @brief Apply shortcut based on VKEY
@@ -1013,6 +1031,8 @@ namespace input {
       return;
     }
 
+    input->gamepads[packet->controllerNumber].ds5.store(
+      platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
     input->gamepads[packet->controllerNumber].id = id;
   }
 
@@ -1357,11 +1377,13 @@ namespace input {
         return;
       }
 
+      gamepad.ds5.store(platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
       gamepad.id = id;
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
       free_gamepad(platf_input, gamepad.id);
+      gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
       return;
     }

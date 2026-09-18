@@ -28,6 +28,14 @@ namespace input {
   std::shared_ptr<input_t>
   alloc(safe::mail_t mail, std::uint64_t session_id);
 
+  /**
+   * @brief Check whether this session currently owns an allocated DualSense.
+   * @param input The per-session input context.
+   * @return true when at least one DualSense gamepad was allocated successfully.
+   */
+  bool
+  has_ds5_gamepad(const std::shared_ptr<input_t> &input);
+
   struct touch_port_t: public platf::touch_port_t {
     int env_width, env_height;
 

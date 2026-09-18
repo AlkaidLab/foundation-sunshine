@@ -2076,6 +2076,12 @@ namespace platf {
     raw->vigem->free_target(nr);
   }
 
+  bool
+  gamepad_is_ds5(input_t &input, int nr) {
+    auto raw = (input_raw_t *) input.get();
+    return raw->ds5_sidecar && raw->ds5_sidecar->owns(nr);
+  }
+
   /**
    * @brief Converts the standard button flags into X360 format.
    * @param gamepad_state The gamepad button/axis state sent from the client.

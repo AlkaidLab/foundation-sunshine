@@ -308,6 +308,11 @@ const KeyCodeMap kKeyCodesMap[] = {
     BOOST_LOG(info) << "free_gamepad: Gamepad not yet implemented for MacOS."sv;
   }
 
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     BOOST_LOG(info) << "gamepad: Gamepad not yet implemented for MacOS."sv;

@@ -2442,6 +2442,7 @@ namespace stream {
             const auto ds5_settings = ds5_config::current();
             has_ds5_haptics_session |=
               ds5_settings.audio_haptics &&
+              input::has_ds5_gamepad(session->input) &&
               (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0;
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
