@@ -42,7 +42,9 @@ namespace nvenc {
 
     std::optional<frame_budget_verdict>
     take_frame_budget_verdict() override {
-      return std::move(pending_frame_budget_verdict);
+      auto verdict = std::move(pending_frame_budget_verdict);
+      pending_frame_budget_verdict.reset();
+      return verdict;
     }
 
     void
