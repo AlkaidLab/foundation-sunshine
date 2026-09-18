@@ -139,6 +139,7 @@ const DEFAULT_TABS = [
         name: 'NVIDIA NVENC Encoder',
         options: {
           nvenc_preset: 1,
+          nvenc_frame_budget_guard: 'enabled',
           nvenc_twopass: 'quarter_res',
           nvenc_spatial_aq: 'disabled',
           nvenc_temporal_aq: 'disabled',

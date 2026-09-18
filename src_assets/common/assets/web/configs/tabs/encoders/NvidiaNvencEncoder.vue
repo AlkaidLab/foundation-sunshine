@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps([
   'platform',
@@ -7,10 +7,38 @@ const props = defineProps([
 ])
 
 const config = ref(props.config)
+
+// Runtime report of the last real session's frame budget guard evaluation
+// (read-only field injected by the backend into /api/config).
+const frameBudget = computed(() => {
+  const report = config.value?.active_nvenc_frame_budget
+  if (!report || report.effective_preset === undefined) return null
+  return {
+    ...report,
+    fpsText: Math.round(report.fps),
+    budgetText: Number(report.budget_ms).toFixed(1),
+    estimatedText: Number(report.configured_estimated_ms).toFixed(1),
+  }
+})
 </script>
 
 <template>
   <div id="nvidia-nvenc-encoder" class="config-page">
+    <!-- Frame budget guard notice for the current session -->
+    <div v-if="frameBudget && frameBudget.clamped" class="alert alert-warning py-2" role="alert">
+      {{
+        $t('config.nvenc_frame_budget_clamped', {
+          configured: frameBudget.configured_preset,
+          effective: frameBudget.effective_preset,
+          width: frameBudget.width,
+          height: frameBudget.height,
+          fps: frameBudget.fpsText,
+          budget: frameBudget.budgetText,
+          estimated: frameBudget.estimatedText,
+        })
+      }}
+    </div>
+
     <!-- Performance preset -->
     <div class="mb-3">
       <label for="nvenc_preset" class="form-label">{{ $t('config.nvenc_preset') }}</label>
@@ -24,6 +52,16 @@ const config = ref(props.config)
         <option value="7">P7 {{ $t('config.nvenc_preset_7') }}</option>
       </select>
       <div class="form-text">{{ $t('config.nvenc_preset_desc') }}</div>
+    </div>
+
+    <!-- Frame budget guard -->
+    <div class="mb-3">
+      <label for="nvenc_frame_budget_guard" class="form-label">{{ $t('config.nvenc_frame_budget_guard') }}</label>
+      <select id="nvenc_frame_budget_guard" class="form-select" v-model="config.nvenc_frame_budget_guard">
+        <option value="enabled">{{ $t('config.nvenc_frame_budget_guard_enabled') }}</option>
+        <option value="disabled">{{ $t('config.nvenc_frame_budget_guard_disabled') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.nvenc_frame_budget_guard_desc') }}</div>
     </div>
 
     <!-- Two-pass mode -->
