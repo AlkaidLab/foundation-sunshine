@@ -2083,13 +2083,13 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            1
+            4
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            nvenc_preset = 1
+            nvenc_preset = 4
             @endcode</td>
     </tr>
     <tr>
@@ -2107,7 +2107,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>4</td>
-        <td>P4</td>
+        <td>P4 (default)</td>
     </tr>
     <tr>
         <td>5</td>
@@ -2163,28 +2163,56 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [nvenc_frame_budget_guard](https://localhost:47990/config/#nvenc_frame_budget_guard)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Automatically lowers the performance preset when its estimated encode time would not fit within a fixed
+            fraction of the frame interval (for example, 4K 120fps clamps the default P4 down to P1 on a single-NVENC
+            GPU). This keeps encoding from falling behind the stream regardless of the configured preset.
+            Estimates are calibrated on recent high-end GPUs with a conservative margin.
+            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
+            @note{The effective preset of the latest session is reported in the @code{active_nvenc_frame_budget}@endcode
+            field of the config API, and clamping is logged at warning level.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_frame_budget_guard = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### [nvenc_spatial_aq](https://localhost:47990/config/#nvenc_spatial_aq)
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Assign higher QP values to flat regions of the video.
-            Recommended to enable when streaming at lower bitrates.
+            Enabled by default. Assigns higher QP values to flat regions of the video, improving perceived quality at
+            constrained bitrates.
             @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
-            @warning{Enabling this option may reduce performance.}
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            disabled
+            enabled
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            nvenc_spatial_aq = disabled
+            nvenc_spatial_aq = enabled
             @endcode</td>
     </tr>
 </table>
@@ -2483,34 +2511,6 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>4</td>
         <td>Level 4 (maximum strength)</td>
-    </tr>
-</table>
-
-### [nvenc_temporal_aq](https://localhost:47990/config/#nvenc_temporal_aq)
-
-<table>
-    <tr>
-        <td>Description</td>
-        <td colspan="2">
-            Enable temporal adaptive quantization.
-            Temporal AQ optimizes quantization across time, providing better bitrate distribution
-            and improved quality in motion scenes. This feature works in conjunction with spatial AQ
-            and requires lookahead to be enabled (lookahead_depth > 0).
-            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
-            @note{Requires NVENC SDK 13.0 (1202) or newer.}
-        </td>
-    </tr>
-    <tr>
-        <td>Default</td>
-        <td colspan="2">@code{}
-            disabled
-            @endcode</td>
-    </tr>
-    <tr>
-        <td>Example</td>
-        <td colspan="2">@code{}
-            nvenc_temporal_aq = enabled
-            @endcode</td>
     </tr>
 </table>
 
