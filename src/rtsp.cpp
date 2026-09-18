@@ -912,6 +912,43 @@ namespace rtsp_stream {
       });
     }
 
+    void
+    terminate_sessions_async_if(
+      stream::session::stop_reason_e reason,
+      boost::function<bool()> predicate,
+      boost::function<void(bool)> completion) {
+      boost::asio::post(io_context, [this, reason, predicate = std::move(predicate), completion = std::move(completion)]() mutable {
+        bool termination_started { false };
+        try {
+          if (!predicate || predicate()) {
+            termination_started = true;
+            clear(true, reason);
+          }
+          else {
+            BOOST_LOG(debug) << "Skipped asynchronous streaming termination because its precondition changed"sv;
+          }
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Failed to terminate streaming sessions asynchronously: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Failed to terminate streaming sessions asynchronously"sv;
+        }
+
+        try {
+          if (completion) {
+            completion(termination_started);
+          }
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(error) << "Streaming session termination callback failed: "sv << e.what();
+        }
+        catch (...) {
+          BOOST_LOG(error) << "Streaming session termination callback failed"sv;
+        }
+      });
+    }
+
     /**
      * @brief Removes the provided session from the set of sessions.
      * @param session The session to remove.
@@ -1005,6 +1042,14 @@ namespace rtsp_stream {
   void
   terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion) {
     server.terminate_sessions_async(reason, std::move(completion));
+  }
+
+  void
+  terminate_sessions_async_if(
+    stream::session::stop_reason_e reason,
+    boost::function<bool()> predicate,
+    boost::function<void(bool)> completion) {
+    server.terminate_sessions_async_if(reason, std::move(predicate), std::move(completion));
   }
 
   int

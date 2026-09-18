@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -170,6 +171,14 @@ namespace stream {
 
     bool
     has_active_video_sessions();
+
+    /**
+     * @brief Request the shared asynchronous application cancellation path.
+     * @param source Short log label describing why cancellation was requested.
+     * @param require_no_video_session Only cancel if no video session is active when the task runs.
+     */
+    void
+    request_global_cancel(std::string_view source, bool require_no_video_session = false);
     
 
 

@@ -236,6 +236,30 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [stop_on_last_video_session](https://localhost:47990/config/#stop_on_last_video_session)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            When enabled, Sunshine ends the application and restores the display when all clients disconnect.
+            Save and apply the setting for it to take effect. When disabled, the existing Resume behavior is kept.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            stop_on_last_video_session = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ## [Input](https://localhost:47990/config/#input)
 
 ### [controller](https://localhost:47990/config/#controller)
