@@ -64,4 +64,27 @@ namespace platf::dxgi::filter_detail {
     };
   }
 
+  inline filter_result_t
+  make_sdr_result(
+    const gpu_frame_view_t &input,
+    ID3D11Texture2D *texture,
+    ID3D11ShaderResourceView *srv) {
+    auto output_semantic = input.semantic;
+    output_semantic.domain = frame_domain_e::sdr_rec709;
+    output_semantic.encoding = pixel_encoding_class_e::unorm8;
+    output_semantic.borrowed = false;
+    return {
+      .status = filter_status_e::ready,
+      .frame = {
+        .texture = texture,
+        .srv = srv,
+        .format = DXGI_FORMAT_B8G8R8A8_UNORM,
+        .semantic = output_semantic,
+        .width = input.width,
+        .height = input.height,
+      },
+      .reason = {},
+    };
+  }
+
 }  // namespace platf::dxgi::filter_detail

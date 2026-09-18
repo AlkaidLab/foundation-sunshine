@@ -1302,17 +1302,23 @@ namespace platf::dxgi {
       display = nullptr;
 
       if (config.pre_encode_filter != pre_encode_filter_e::none) {
-        const bool hdr_output =
-          format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
-        if (!hdr_output) {
-          BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
-          return -1;
+        // Only the SDR-to-HDR kind feeds the synthetic-HDR wire, which is
+        // defined for 10-bit HDR encoder surfaces. The SDR-to-SDR neural kind
+        // writes back into the regular SDR color pipeline and accepts any
+        // encoder surface.
+        if (config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_hdr) {
+          const bool hdr_output =
+            format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+          if (!hdr_output) {
+            BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
+            return -1;
+          }
         }
         const auto &contract = config.effective_frame_pipeline_policy().capture;
         if (contract.required_domain != frame_domain_e::sdr_rec709 ||
             contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
             !contract.require_private_handoff) {
-          BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
+          BOOST_LOG(error) << "Pre-encode filter requires a private SDR UNORM capture contract"sv;
           return -1;
         }
         pre_encode_filter = make_pre_encode_filter(
@@ -1321,7 +1327,8 @@ namespace platf::dxgi {
           device_ctx.get(),
           config.hdr_backend ? config.hdr_backend->path : std::filesystem::path {},
           config.pre_encode_filter_config,
-          config.hdr_backend ? config.hdr_backend->id : std::string_view {});
+          config.hdr_backend ? config.hdr_backend->id : std::string_view {},
+          config.hdr_backend ? config.hdr_backend->runtime_digest : std::string_view {});
         if (!pre_encode_filter) {
           BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
           return -1;

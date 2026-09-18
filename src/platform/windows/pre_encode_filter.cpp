@@ -161,6 +161,38 @@ namespace platf::dxgi {
       std::uint32_t height_ = 0;
     };
 
+    /**
+     * Zero-copy passthrough used as the neural filter's fallback: the input
+     * view is returned as-is, so a degraded session keeps encoding captured
+     * frames untouched instead of allocating GPU copies per frame.
+     */
+    class identity_sdr_filter_t final: public pre_encode_filter_t {
+    public:
+      bool
+      requires_detached_input() const override {
+        // The unconditional handoff copy upstream already satisfies the
+        // isolation the vendor backend needs; the passthrough itself reads
+        // the input in place.
+        return false;
+      }
+
+      filter_result_t
+      process(const gpu_frame_view_t &input) override {
+        if (const auto reason = validate_sdr_input(input); !reason.empty()) {
+          return { .status = filter_status_e::failed, .frame = {}, .reason = reason };
+        }
+        return { .status = filter_status_e::ready, .frame = input, .reason = {} };
+      }
+
+      void
+      flush() override {}
+
+      std::string_view
+      backend_name() const override {
+        return "identity_sdr_passthrough";
+      }
+    };
+
     class failover_filter_t final: public pre_encode_filter_t {
     public:
       failover_filter_t(
@@ -250,7 +282,8 @@ namespace platf::dxgi {
     ID3D11DeviceContext *device_context,
     const std::filesystem::path &backend_path,
     const pre_encode_filter_config_t &config,
-    std::string_view backend_id) {
+    std::string_view backend_id,
+    std::string_view runtime_digest) {
     if (kind == pre_encode_filter_e::none) {
       return {};
     }
@@ -261,10 +294,24 @@ namespace platf::dxgi {
     if (kind == pre_encode_filter_e::mock_sdr_to_scrgb) {
       return make_mock_filter(device, device_context);
     }
+    if (kind == pre_encode_filter_e::external_sdr_to_sdr_nr) {
+      std::string failure;
+      auto primary = make_hdr_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
+      auto fallback = std::make_unique<identity_sdr_filter_t>();
+      if (!primary) {
+        BOOST_LOG(warning) << "Neural enhancement backend unavailable: " << failure;
+        return std::make_unique<failover_filter_t>(
+          nullptr,
+          std::move(fallback),
+          failure);
+      }
+      BOOST_LOG(info) << "Loaded external SDR-to-SDR neural backend; feature creation is deferred until the first frame";
+      return std::make_unique<failover_filter_t>(std::move(primary), std::move(fallback));
+    }
     if (kind == pre_encode_filter_e::external_sdr_to_hdr) {
       auto fallback = make_mock_filter(device, device_context);
       std::string failure;
-      auto primary = make_hdr_backend(backend_id, device, device_context, backend_path, config, failure);
+      auto primary = make_hdr_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
       if (!primary) {
         BOOST_LOG(warning) << "HDR enhancement backend unavailable: " << failure;
         if (!fallback) {

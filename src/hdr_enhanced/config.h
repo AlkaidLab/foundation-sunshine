@@ -1,9 +1,11 @@
 /**
  * @file src/hdr_enhanced/config.h
- * @brief Independent HDR backend configuration and version ownership.
+ * @brief Independent enhancement backend configuration and version ownership.
  */
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -19,9 +21,30 @@ namespace hdr_enhanced {
   inline constexpr char NVIDIA_RTX_VIDEO_ADAPTER[] = "foundation_rtx_video_adapter.dll";
   inline constexpr char NVIDIA_RTX_VIDEO_RUNTIME[] = "nvngx_truehdr.dll";
 
+  inline constexpr std::string_view NVIDIA_DLSSNR_BACKEND = "alkaidlab.nvidia_dlssnr";
+  inline constexpr char NVIDIA_DLSSNR_ADAPTER[] = "foundation_dlssnr_adapter.dll";
+  inline constexpr char NVIDIA_DLSSNR_RUNTIME[] = "nvngx_dlssnr.dll";
+
+  /** Which pipeline slot a backend feeds. */
+  enum class backend_capability_e : std::uint8_t {
+    hdr,
+    nr,
+  };
+
+  /** Known backend ids mapped to their capability slot; unknown ids are rejected on parse. */
+  std::optional<backend_capability_e>
+  backend_capability(std::string_view id);
+
   struct settings_t {
+    // HDR capability slot. The legacy field name is kept: schema v1's
+    // selected_backend migrates into it.
     std::string selected_backend;
+    // SDR neural-enhancement capability slot.
+    std::string selected_nr_backend;
     std::unordered_map<std::string, std::string> versions;
+    // Per-backend pinned runtime digest; an absent entry accepts the runtime
+    // unpinned (its digest is computed and logged at load time).
+    std::unordered_map<std::string, std::string> runtime_pins;
     bool
     operator==(const settings_t &) const = default;
   };
@@ -30,6 +53,9 @@ namespace hdr_enhanced {
     std::string id;
     std::string version;
     std::filesystem::path path;
+    // Pinned runtime digest carried from the persisted settings; empty means
+    // the runtime is accepted unpinned (validated and logged at acquire time).
+    std::string runtime_digest;
   };
 
   struct result_t {
@@ -66,7 +92,7 @@ namespace hdr_enhanced {
     update(const settings_t &requested, std::optional<std::string_view> if_match,
       std::string_view operation_id = {});
     boost::shared_ptr<const backend_use_t>
-    acquire_selected();
+    acquire_selected(backend_capability_e capability);
     nlohmann::json
     status();
     std::filesystem::path

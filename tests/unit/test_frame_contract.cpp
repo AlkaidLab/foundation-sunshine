@@ -57,6 +57,32 @@ namespace {
     EXPECT_FALSE(policy.capture.require_private_handoff);
   }
 
+  TEST(FrameContract, ResolvesNrFilterAsPrivateSdrCaptureOnSdrWire) {
+    const auto policy = platf::resolve_frame_pipeline_policy(0, false, true);
+
+    EXPECT_EQ(policy.output.transfer, platf::wire_transfer_e::sdr);
+    EXPECT_FALSE(policy.output.require_10bit);
+    EXPECT_EQ(policy.source_display, platf::source_display_intent_e::unchanged);
+    EXPECT_EQ(policy.capture.required_domain, platf::frame_domain_e::sdr_rec709);
+    EXPECT_EQ(policy.capture.preferred_encoding, platf::pixel_encoding_class_e::unorm8);
+    EXPECT_TRUE(policy.capture.require_private_handoff);
+  }
+
+  TEST(FrameContract, NrFilterNeverClaimsTheHdrSource) {
+    const auto nr = platf::resolve_frame_pipeline_policy(0, false, true);
+    EXPECT_FALSE(platf::postprocess_produces_hdr_output(
+      nr,
+      platf::pre_encode_filter_e::external_sdr_to_sdr_nr));
+  }
+
+  TEST(FrameContract, NrFilterIsIgnoredForHdrWireOutput) {
+    const auto policy = platf::resolve_frame_pipeline_policy(1, false, true);
+
+    EXPECT_EQ(policy.output.transfer, platf::wire_transfer_e::pq);
+    EXPECT_EQ(policy.capture.required_domain, platf::frame_domain_e::linear_scrgb);
+    EXPECT_FALSE(policy.capture.require_private_handoff);
+  }
+
   TEST(FrameContract, PostprocessOutputOwnsHdrSignalIndependentlyOfCapture) {
     const auto post_process_hdr = platf::resolve_frame_pipeline_policy(1, true);
     EXPECT_EQ(post_process_hdr.capture.required_domain, platf::frame_domain_e::sdr_rec709);

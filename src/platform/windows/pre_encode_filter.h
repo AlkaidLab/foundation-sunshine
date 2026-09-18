@@ -70,5 +70,6 @@ namespace platf::dxgi {
     ID3D11DeviceContext *device_context,
     const std::filesystem::path &backend_path = {},
     const pre_encode_filter_config_t &config = {},
-    std::string_view backend_id = {});
+    std::string_view backend_id = {},
+    std::string_view runtime_digest = {});
 }  // namespace platf::dxgi
