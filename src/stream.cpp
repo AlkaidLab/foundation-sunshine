@@ -140,6 +140,8 @@ namespace stream {
   }
 
   namespace {
+    boost::atomic_flag global_cancel_pending = BOOST_ATOMIC_FLAG_INIT;
+
     std::uint32_t
     read_dynamic_param_u32(std::string_view payload, std::size_t offset) {
       return static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset])) |
@@ -4146,6 +4148,56 @@ namespace stream {
     }
 
     void
+    request_global_cancel(std::string_view source, bool require_no_video_session) {
+      if (!global_cancel_pending.test_and_set(boost::memory_order_acq_rel)) {
+        BOOST_LOG(info) << source << " accepted; stopping all streaming sessions asynchronously"sv;
+        rtsp_stream::terminate_sessions_async_if(
+          stop_reason_e::client_cancel,
+          [require_no_video_session]() {
+            return !require_no_video_session ||
+                   (video_session_count() == 0 && rtsp_stream::pending_session_count() == 0);
+          },
+          [](bool termination_started) {
+            auto clear_pending = util::fail_guard([]() {
+              global_cancel_pending.clear(boost::memory_order_release);
+            });
+
+            if (!termination_started) {
+              return;
+            }
+
+            try {
+              if (proc::proc.running() > 0) {
+                proc::proc.terminate();
+              }
+            }
+            catch (const std::exception &e) {
+              BOOST_LOG(error) << "Failed to terminate the running application during app cancel: "sv << e.what();
+            }
+            catch (...) {
+              BOOST_LOG(error) << "Failed to terminate the running application during app cancel"sv;
+            }
+
+            try {
+              display_device::session_t::get().restore_state();
+            }
+            catch (const std::exception &e) {
+              BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
+            }
+            catch (...) {
+              BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
+            }
+
+            BOOST_LOG(info) << "Global app cancel cleanup finished"sv;
+          }
+        );
+      }
+      else {
+        BOOST_LOG(debug) << "Global app cancel is already in progress"sv;
+      }
+    }
+
+    void
     stop(session_t &session, stop_reason_e reason) {
       while_starting_do_nothing(session.lifecycle);
       if (!session.lifecycle.request_stop(reason)) {
@@ -4210,6 +4262,8 @@ namespace stream {
                            << (was_registered ? " released"sv : " was already absent"sv);
         }
 
+        const auto stop_reason = session.lifecycle.snapshot().stop_reason;
+
         // If this is the last non-control-only session, invoke the platform callbacks
         if (unregister_video_session() == 0) {
           bool restore_display_state { true };
@@ -4240,6 +4294,12 @@ namespace stream {
 #endif
 
           platf::streaming_will_stop();
+
+          if (config::stream.stop_on_last_video_session &&
+              stop_reason != stop_reason_e::client_cancel &&
+              stop_reason != stop_reason_e::host_terminate) {
+            request_global_cancel("Automatic cancel after the last video session ended"sv, true);
+          }
         }
       }
 

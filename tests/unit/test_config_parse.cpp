@@ -58,6 +58,16 @@ encoder = nvenc# ordinary comment
   EXPECT_EQ(parsed.at("encoder"), "nvenc");
 }
 
+TEST(ConfigParse, ReadsStopOnLastVideoSession) {
+  const auto enabled = config::parse_config("stop_on_last_video_session = enabled\n");
+  const auto disabled = config::parse_config("stop_on_last_video_session = disabled\n");
+
+  ASSERT_TRUE(enabled.contains("stop_on_last_video_session"));
+  EXPECT_EQ(enabled.at("stop_on_last_video_session"), "enabled");
+  ASSERT_TRUE(disabled.contains("stop_on_last_video_session"));
+  EXPECT_EQ(disabled.at("stop_on_last_video_session"), "disabled");
+}
+
 TEST(ConfigParse, ClientSettingsAreNormalizedBeforePersistence) {
   temporary_clients_config_t temporary_config;
   constexpr auto expected = R"([{"name":"Display #1","uuid":"client-1"}])";
