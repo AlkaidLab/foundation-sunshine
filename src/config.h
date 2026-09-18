@@ -156,6 +156,7 @@ namespace config {
 
   struct stream_t {
     std::chrono::milliseconds ping_timeout;
+    bool stop_on_last_video_session;
 
     std::string file_apps;
 
@@ -297,6 +298,9 @@ namespace config {
   parse(int argc, char *argv[]);
   std::unordered_map<std::string, std::string>
   parse_config(const std::string_view &file_content);
+
+  void
+  apply_config(std::unordered_map<std::string, std::string> &&vars);
 
   bool
   update_config(const std::map<std::string, std::string> &updates);

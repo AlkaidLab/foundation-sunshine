@@ -58,6 +58,32 @@ encoder = nvenc# ordinary comment
   EXPECT_EQ(parsed.at("encoder"), "nvenc");
 }
 
+TEST(ConfigParse, ReadsStopOnLastVideoSession) {
+  const auto original = config::stream.stop_on_last_video_session;
+  const auto original_file_apps = config::stream.file_apps;
+  const auto temporary_apps_path = std::filesystem::temp_directory_path() /
+                                   ("sunshine_stop_on_last_video_session_" +
+                                    std::to_string(reinterpret_cast<std::uintptr_t>(&original)) + ".json");
+  std::ofstream(temporary_apps_path) << "{\"apps\": []}\n";
+  config::stream.file_apps = temporary_apps_path.string();
+
+  config::stream.stop_on_last_video_session = false;
+  config::apply_config({{"stop_on_last_video_session", "enabled"}});
+  EXPECT_TRUE(config::stream.stop_on_last_video_session);
+
+  config::apply_config({{"stop_on_last_video_session", "disabled"}});
+  EXPECT_FALSE(config::stream.stop_on_last_video_session);
+
+  config::stream.stop_on_last_video_session = true;
+  config::apply_config({});
+  EXPECT_TRUE(config::stream.stop_on_last_video_session);
+
+  config::stream.stop_on_last_video_session = original;
+  config::stream.file_apps = original_file_apps;
+  std::error_code ignored;
+  std::filesystem::remove(temporary_apps_path, ignored);
+}
+
 TEST(ConfigParse, ClientSettingsAreNormalizedBeforePersistence) {
   temporary_clients_config_t temporary_config;
   constexpr auto expected = R"([{"name":"Display #1","uuid":"client-1"}])";
