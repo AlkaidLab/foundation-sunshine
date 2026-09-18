@@ -522,6 +522,7 @@ namespace config {
 
   stream_t stream {
     10s,  // ping_timeout
+    false,  // stop_on_last_video_session
 
     APPS_JSON_PATH,
 
@@ -1541,6 +1542,7 @@ namespace config {
     if (to != -1) {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
+    bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });

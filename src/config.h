@@ -156,6 +156,7 @@ namespace config {
 
   struct stream_t {
     std::chrono::milliseconds ping_timeout;
+    bool stop_on_last_video_session;
 
     std::string file_apps;
 
