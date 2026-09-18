@@ -23,6 +23,9 @@ namespace mic_mixer {
     constexpr std::int64_t max_future_frames = 8;
     constexpr std::int64_t timestamp_discontinuity_ms = 200;
     constexpr std::size_t max_consecutive_plc_frames = jitter_buffer_frames;
+    constexpr std::int64_t overflow_recovery_window_frames = 250;
+    constexpr std::int64_t overflow_reanchor_cooldown_frames = 100;
+    constexpr std::size_t overflow_recovery_threshold = 10;
 
     struct opus_decoder_deleter_t {
       void
@@ -52,6 +55,9 @@ namespace mic_mixer {
       std::vector<std::int16_t> decode_buffer = std::vector<std::int16_t>(frame_samples);
       bool playout_started {false};
       std::size_t consecutive_plc_frames {0};
+      std::size_t overflow_events {0};
+      std::int64_t overflow_window_start_slot {-1};
+      std::int64_t last_reanchor_slot {-1};
     };
 
     std::int32_t
@@ -91,10 +97,19 @@ namespace mic_mixer {
       source.packets.clear();
       source.playout_started = false;
       source.consecutive_plc_frames = 0;
+      source.overflow_events = 0;
+      source.overflow_window_start_slot = -1;
+      source.last_reanchor_slot = -1;
     }
 
     bool
-    queue_packet(source_t &source, stats_t &stats, std::int64_t playout_slot, const std::uint8_t *data, std::size_t size) {
+    queue_packet(
+      source_t &source,
+      stats_t &stats,
+      std::int64_t playout_slot,
+      std::int64_t current_playout_slot,
+      const std::uint8_t *data,
+      std::size_t size) {
       auto [packet_it, inserted] = source.packets.emplace(
         playout_slot,
         queued_packet_t {std::vector<std::uint8_t> {data, data + size}}
@@ -105,11 +120,17 @@ namespace mic_mixer {
       }
 
       if (source.packets.size() <= max_buffered_packets) {
+        source.overflow_events = 0;
+        source.overflow_window_start_slot = -1;
         return true;
       }
 
       // 实时输入优先保留最接近播放时钟的数据，最远的未来包先丢弃。
       ++stats.buffer_overflow_packets;
+      if (source.overflow_events == 0) {
+        source.overflow_window_start_slot = current_playout_slot;
+      }
+      ++source.overflow_events;
       auto furthest = std::prev(source.packets.end());
       const auto kept = furthest != packet_it;
       source.packets.erase(furthest);
@@ -204,7 +225,7 @@ namespace mic_mixer {
         timestamp_ms,
         impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
       );
-      return queue_packet(source, impl_->stats, source.anchor_playout_slot, data, size);
+      return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
     }
 
     const auto distance = sequence_distance(sequence_number, *source.max_sequence);
@@ -232,7 +253,7 @@ namespace mic_mixer {
         timestamp_ms,
         impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
       );
-      return queue_packet(source, impl_->stats, source.anchor_playout_slot, data, size);
+      return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
     }
 
     if (distance > 0) {
@@ -259,7 +280,7 @@ namespace mic_mixer {
           timestamp_ms,
           impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
         );
-        return queue_packet(source, impl_->stats, source.anchor_playout_slot, data, size);
+        return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
       }
 
       source.max_sequence = sequence_number;
@@ -278,7 +299,31 @@ namespace mic_mixer {
       return false;
     }
 
-    return queue_packet(source, impl_->stats, target_slot, data, size);
+    if (source.overflow_window_start_slot >= 0 &&
+        impl_->next_playout_slot - source.overflow_window_start_slot > overflow_recovery_window_frames) {
+      source.overflow_events = 0;
+      source.overflow_window_start_slot = -1;
+    }
+
+    const auto overflow_window_active =
+      source.overflow_window_start_slot >= 0 &&
+      impl_->next_playout_slot - source.overflow_window_start_slot <= overflow_recovery_window_frames;
+    if (source.overflow_events >= overflow_recovery_threshold &&
+        overflow_window_active &&
+        (source.last_reanchor_slot < 0 ||
+         impl_->next_playout_slot - source.last_reanchor_slot > overflow_reanchor_cooldown_frames)) {
+      ++impl_->stats.timeline_reanchors;
+      reset_timeline(
+        source,
+        sequence_number,
+        timestamp_ms,
+        impl_->next_playout_slot + static_cast<std::int64_t>(jitter_buffer_frames)
+      );
+      source.last_reanchor_slot = impl_->next_playout_slot;
+      return queue_packet(source, impl_->stats, source.anchor_playout_slot, impl_->next_playout_slot, data, size);
+    }
+
+    return queue_packet(source, impl_->stats, target_slot, impl_->next_playout_slot, data, size);
   }
 
   std::optional<std::vector<std::int16_t>>
@@ -367,6 +412,9 @@ namespace mic_mixer {
       reset_decoder(source);
       source.playout_started = false;
       source.consecutive_plc_frames = 0;
+      source.overflow_events = 0;
+      source.overflow_window_start_slot = -1;
+      source.last_reanchor_slot = -1;
     }
   }
 
