@@ -98,6 +98,7 @@ namespace mic_mixer {
       source.consecutive_plc_frames = 0;
       source.overflow_events = 0;
       source.overflow_window_start_slot = -1;
+      source.last_reanchor_slot = -1;
     }
 
     bool
@@ -406,6 +407,7 @@ namespace mic_mixer {
       source.consecutive_plc_frames = 0;
       source.overflow_events = 0;
       source.overflow_window_start_slot = -1;
+      source.last_reanchor_slot = -1;
     }
   }
 
