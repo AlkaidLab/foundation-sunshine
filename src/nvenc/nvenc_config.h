@@ -71,8 +71,11 @@ namespace nvenc {
    * @brief NVENC encoder configuration.
    */
   struct nvenc_config {
-    // Quality preset from 1 to 7, higher is slower
-    int quality_preset = 1;
+    // Quality preset from 1 to 7, higher is slower.
+    // Default P4: matches the former GeForce Experience GameStream preset and the
+    // NVIDIA "low latency" quality tier (legacy ll_hq). The frame budget guard
+    // clamps it down automatically when the session framerate cannot keep up.
+    int quality_preset = 4;
 
     // Use optional preliminary pass for better motion vectors, bitrate distribution and stricter VBV(HRD), uses CUDA cores
     nvenc_two_pass two_pass = nvenc_two_pass::quarter_resolution;
@@ -83,11 +86,10 @@ namespace nvenc {
     // Improves fades compression, uses CUDA cores
     bool weighted_prediction = false;
 
-    // Allocate more bitrate to flat regions since they're visually more perceptible, uses CUDA cores
-    bool adaptive_quantization = false;
-
-    // Enable temporal adaptive quantization (requires lookahead)
-    bool enable_temporal_aq = false;
+    // Allocate more bitrate to flat regions since they're visually more perceptible, uses CUDA cores.
+    // Recommended by NVIDIA's game-streaming application note and enabled by default
+    // in other NVENC users (e.g. OBS); supported on all Maxwell (2014) and newer NVENC hardware.
+    bool adaptive_quantization = true;
 
     // Don't use QP below certain value, limits peak image quality to save bitrate
     bool enable_min_qp = false;
@@ -131,6 +133,11 @@ namespace nvenc {
     // ghosted/garbled output and stalls on some drivers, and the device-pointer
     // path is the known-good fallback.
     bool cuda_array_input = false;
+
+    // Lower the quality preset automatically when its estimated encode time would
+    // not fit within a fixed fraction of the frame interval (e.g. 4K120 clamps P4
+    // down to P2/P1). Applies to the configured preset whatever its origin.
+    bool frame_budget_guard = true;
   };
 
 }  // namespace nvenc

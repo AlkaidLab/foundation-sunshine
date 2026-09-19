@@ -29,13 +29,16 @@ namespace nvenc {
      * @param client_config Stream configuration requested by the client.
      * @param colorspace YUV colorspace.
      * @param buffer_format Platform-agnostic input surface format.
+     * @param is_probe Whether this session is an encoder capability probe.
+     *        Probe sessions do not publish frame budget reports.
      * @return `true` on success, `false` on error
      */
     virtual bool
     create_encoder(const nvenc_config &config,
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &colorspace,
-      platf::pix_fmt_e buffer_format) = 0;
+      platf::pix_fmt_e buffer_format,
+      bool is_probe) = 0;
 
     /**
      * @brief Destroy the encoder.
