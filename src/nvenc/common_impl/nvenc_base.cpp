@@ -239,12 +239,15 @@ namespace nvenc {
     // efficiency. When the configured preset cannot fit within a fixed fraction
     // of the frame interval, lower it so encoding keeps up with the stream
     // (e.g. 4K120 clamps P4 down to P2/P1 on a single-NVENC GPU).
+    // Multi-engine throughput only counts when split-frame encoding may engage;
+    // an explicit disable pins every frame to a single engine.
     const int num_nvenc_engines = std::max(1, get_encoder_cap(NV_ENC_CAPS_NUM_ENCODER_ENGINES));
+    const int budget_engines = config.split_frame_encoding != nvenc_split_frame_encoding::disabled ? num_nvenc_engines : 1;
     const auto budget_verdict = nvenc::evaluate_frame_budget(config.quality_preset,
       encoder_params.width,
       encoder_params.height,
       client_config.get_effective_framerate(),
-      num_nvenc_engines,
+      budget_engines,
       config.frame_budget_guard);
     if (budget_verdict.clamped) {
       auto f = stat_trackers::two_digits_after_decimal();
