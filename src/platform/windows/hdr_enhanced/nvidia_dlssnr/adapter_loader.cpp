@@ -179,7 +179,7 @@ namespace platf::dxgi::hdr_enhanced::nvidia_dlssnr {
     module_ = LoadLibraryExW(
       adapter_path.c_str(),
       nullptr,
-      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+      LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!module_) {
       const auto load_error = GetLastError();
       error_ = "adapter_load_failed:" + std::to_string(load_error);

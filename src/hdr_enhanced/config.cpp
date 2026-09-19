@@ -227,7 +227,7 @@ namespace hdr_enhanced {
       if (schema == 1) {
         const auto &selected = input.at("selected_backend");
         if (!selected.is_null()) {
-          if (!selected.is_string() || !is_known_backend(selected.get<std::string>())) return false;
+          if (!selected.is_string() || selected.get<std::string>() != std::string { NVIDIA_RTX_VIDEO_BACKEND }) return false;
           parsed.selected_backend = selected.get<std::string>();
         }
       }

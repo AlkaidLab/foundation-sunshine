@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <string>
 #include <type_traits>
@@ -476,7 +477,7 @@ namespace {
   }
 
   foundation_dlssnr_status_e
-  adapter_create(ID3D11Device *device, const foundation_dlssnr_config_t *config, void **out_instance) noexcept;
+  adapter_create(ID3D11Device *device, const foundation_dlssnr_config_t *config, void **out_instance);
 
   foundation_dlssnr_status_e
   adapter_process(void *raw_instance, void *device_context, void *input_texture, void *output_texture) noexcept;
@@ -541,7 +542,7 @@ namespace {
   }
 
   foundation_dlssnr_status_e
-  adapter_create(ID3D11Device *device, const foundation_dlssnr_config_t *config, void **out_instance) noexcept {
+  adapter_create(ID3D11Device *device, const foundation_dlssnr_config_t *config, void **out_instance) {
     if (!device || !config || !out_instance) {
       return FOUNDATION_DLSSNR_STATUS_INVALID_ARGUMENT;
     }
@@ -557,6 +558,7 @@ namespace {
 
     auto *instance = new (std::nothrow) instance_t();
     if (!instance) return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
+    std::unique_ptr<instance_t, decltype(&adapter_destroy)> owner(instance, adapter_destroy);
     instance->device11 = device;
     device->AddRef();
     instance->runtime_directory = config->runtime_directory;
@@ -647,10 +649,11 @@ namespace {
       if (SUCCEEDED(hr)) hr = clear_zero_texture_11(instance->device11, instance->context11, instance->zero_depth11);
       if (FAILED(hr)) { status = FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR; break; }
 
-      // Load the signed snippet and initialize it on the private device.
+      // Load the explicitly selected snippet. Resolve imports only from System32,
+      // never from an unverified DLL beside the runtime or the host executable.
       const std::wstring dll_path = instance->runtime_directory + L"\\nvngx_dlssnr.dll";
       instance->snippet = LoadLibraryExW(dll_path.c_str(), nullptr,
-        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+        LOAD_LIBRARY_SEARCH_SYSTEM32);
       if (!instance->snippet) { status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE; break; }
       if (!install_caller_compatibility(instance->snippet)) {
         status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE;
@@ -751,7 +754,7 @@ namespace {
       }
 
       initialize_timing(instance);
-      *out_instance = instance;
+      *out_instance = owner.release();
       return FOUNDATION_DLSSNR_STATUS_OK;
     } while (false);
 
@@ -759,7 +762,6 @@ namespace {
     // created; it releases any partially created NGX state.
     std::fprintf(stderr, "DLSS NR: create failed, status=%d HRESULT=0x%08lX\n",
       static_cast<int>(status), static_cast<unsigned long>(hr));
-    adapter_destroy(instance);
     return status;
   }
 
@@ -909,11 +911,10 @@ namespace {
     }
     instance->timing_pending = instance->timing_heap != nullptr;
 
-    // 3) D3D11 waits GPU-side, then copies the mirror into the caller's
-    // texture. A failed evaluation falls back to copying the input mirror,
-    // which still holds this frame, keeping the session visually unchanged.
+    // 3) D3D11 waits GPU-side, then copies the evaluated mirror. Evaluation
+    // errors return above; the host filter retains the original capture frame.
     instance->context11->Wait(instance->fence11, output_ready);
-    instance->context11->CopyResource(output, ngx_succeeded(evaluate_result) ? instance->output_mirror11 : instance->input_mirror11);
+    instance->context11->CopyResource(output, instance->output_mirror11);
     return FOUNDATION_DLSSNR_STATUS_OK;
   }
 

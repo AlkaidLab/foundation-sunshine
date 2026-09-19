@@ -1,5 +1,15 @@
 # DLSS NR 编码前神经增强 filter 实现方案（形态 1：同分辨率 SDR）
 
+## 2026-09-20：控制面板与首轮 review
+
+- 配套 Panel PR #137：29 项 Rust 测试（26 项组件事务/完整性，3 项 schema）、5 项 renderer 文案测试及 Vite 构建通过。浏览器使用模拟 Tauri 后端验证 NR 导入、启用、应用设置跳转、占用锁及删除，并确认 HDR 保持启用；这不等于已安装服务的端到端串流验收。
+- review 修正：schema v1 只允许 RTX Video 进入 HDR 槽；本地 SDK 与自动下载使用相同 SHA-256 清单（正确 SDK configure 通过，篡改头文件 configure 拒绝）；create 用 RAII 清理异常路径，C++ 分配异常交由 ABI thunk 捕获。process/flush/destroy 内没有抛出型标准库分配，保留其 noexcept。
+- adapter 与 snippet 的显式 LoadLibraryEx 导入搜索仅允许 System32，不再搜索组件目录、应用目录或用户目录的未验证依赖。310.8.0.0 实测无需同目录 nvngx_dlss.dll。此限制不宣称覆盖 NVIDIA 驱动内部自行加载的所有模块。
+- 修正无效的逐帧回退注释：Evaluate 失败向 host 返回错误，由 host 保留原始捕获帧；adapter 不伪装成功。
+- 收紧加载搜索后，独立 720p/100 帧和生产 factory/loader/filter 的 600 帧、三次会话及 720p→1080p 重建通过。测试日志：`build/dlssnr-host/review-pipeline-smoke.log`。
+- Panel 分支已启动不发布 release 的完整 Windows artifact 构建。正式安装包仍需绑定包含该 UX 的配套 GUI 版本；review、打包和真实 Moonlight 动态画面验收尚未闭环。NVOF 仍未实现，功能默认关闭并标注实验性。
+
+
 ## 最新真机验证（2026-09-19；以下结论覆盖原设计中的待验证假设）
 
 ### 编码前管线接入与开销验收
@@ -35,13 +45,13 @@ RTX 5080 / 616.92，原版 310.8.0.0，强度 1、零运动向量。新增 `--be
 }
 ```
 
-然后在应用编辑页启用 DLSS NR，Moonlight 使用 SDR。当前 Tauri 控制面板的一键导入/第二组件卡片尚未实现，不能用现有 RTX HDR 导入按钮导入 NR；部署需按上述目录与配置操作。
+然后在应用编辑页启用 DLSS NR，Moonlight 使用 SDR。Tauri 控制面板的独立 NR 导入、启用、状态与删除卡片已在配套 PR [sunshine-control-panel#137](https://github.com/qiin2333/sunshine-control-panel/pull/137) 实现，包含 v1/v2 配置兼容和 HDR/NR 选择保留。当前正式 GUI release 尚未包含该修改；旧面板不能用于管理 NR，手动部署仍按上述目录与配置操作。
 
 本机验证环境备注：预装 UCRT GCC 16 混用旧 binutils/CRT，导致无关单测在 `std::uncaught_exception(s)` 崩溃；从已有包缓存解压 binutils 2.47、CRT 14 到 `build/dlssnr-toolchain` 并使用 `-B` 指向匹配链接器/CRT 后，13 个帧契约测试与 8 个 filter 测试通过。MiniUPnPc 2.3.3 从官方 `miniupnpc_2_3_3` 标签在 build 目录构建；Boost Windows Event Log 在本地构建关闭。WGC 使用独立解压的 [MSYS2 C++/WinRT 2.0.250303.1-2](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-cppwinrt) 头文件，修复预装头文件缺少 MinUpdateInterval 的编译阻塞。未修改系统安装。
 
 本地生成的 `build/dlssnr-host/build.ninja` 做了环境专用修正：windows.rc 移除无用的目标宏和头文件路径（windres 对含空格路径转义错误）；WGC 前置新 WinRT include；MiniUPnPc 显式链接新构建的静态库。重新 CMake configure 会覆盖这些本地修正；这些不属于 PR 源码修改。
 
-最终验证：完整 `build/dlssnr-host/sunshine.exe` 编译链接成功，`--help` 退出码 0；adapter Release/SEH CTest、13 个帧契约测试、8 个 filter 测试、10 个应用服务测试、修改文件 ESLint、Web 构建、locale 键校验通过。浏览器实际展开 DLSS NR、设置零强度/风格/界面修正并保存，检查请求 JSON 与截图通过。Web 验证使用本机 bundled Node 24.19，未验证仓库指定 Node 26 工具链。未覆盖正在运行的 Sunshine 服务或游戏配置，未提交/推送 PR。
+最终验证：完整 `build/dlssnr-host/sunshine.exe` 编译链接成功，`--help` 退出码 0；adapter Release/SEH CTest、13 个帧契约测试、8 个 filter 测试、10 个应用服务测试、修改文件 ESLint、Web 构建、locale 键校验通过。浏览器实际展开 DLSS NR、设置零强度/风格/界面修正并保存，检查请求 JSON 与截图通过。Web 验证使用本机 bundled Node 24.19，未验证仓库指定 Node 26 工具链。未覆盖正在运行的 Sunshine 服务或游戏配置。上述主程序修改已推送至 PR #1066（cfb04fdb）。
 
 测试组件已备于 `build/dlssnr-host/tools/hdr_enhanced/nvidia_dlssnr/`，配置示例为 `build/dlssnr-host/hdr_enhanced.example.json`；真实串流仍需部署完整资产并配置应用，不能只靠运行此目录下的 EXE 视为串流验收通过。
 

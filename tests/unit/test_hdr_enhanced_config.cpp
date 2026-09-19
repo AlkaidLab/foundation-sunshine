@@ -291,6 +291,11 @@ TEST(HdrEnhancedSettingsTest, RejectsPathsAndUnregisteredBackends) {
     settings));
   // Capability slots only accept the backend registered for that slot.
   EXPECT_FALSE(hdr_enhanced::parse_settings(nlohmann::json {
+                                                 { "schema_version", 1 },
+                                                 { "selected_backend", "alkaidlab.nvidia_dlssnr" },
+                                                 { "backends", nlohmann::json::object() } },
+    settings));
+  EXPECT_FALSE(hdr_enhanced::parse_settings(nlohmann::json {
                                                  { "schema_version", 2 },
                                                  { "selected", { { "hdr", nullptr }, { "nr", "alkaidlab.nvidia_rtx_video" } } },
                                                  { "backends", nlohmann::json::object() } },
