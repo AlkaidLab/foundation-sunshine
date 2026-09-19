@@ -25,9 +25,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <string>
+#include <type_traits>
+#include <nvsdk_ngx.h>
 
 #ifndef NVSDK_CONV
   #define NVSDK_CONV __cdecl
@@ -36,34 +39,9 @@
 namespace {
 
   // ---------------------------------------------------------------------------
-  // Minimal NGX surface: stable result/version ABI and the documented C++
-  // parameter vtable (nvsdk_ngx_params.h layout).
+  // The public SDK supplies NGX types and the core parameter allocator.
+  // Feature 18 entry points are resolved from the separately supplied snippet.
   // ---------------------------------------------------------------------------
-
-  typedef int NVSDK_NGX_Result;
-  typedef enum NVSDK_NGX_Version { NVSDK_NGX_Version_API = 0x0000015 } NVSDK_NGX_Version;
-  typedef struct NVSDK_NGX_Handle NVSDK_NGX_Handle;
-  typedef void(NVSDK_CONV *PFN_NVSDK_NGX_ProgressCallback)(float, bool &);
-
-  struct NVSDK_NGX_Parameter {
-    virtual void Set(const char *InName, unsigned long long InValue) = 0;
-    virtual void Set(const char *InName, float InValue) = 0;
-    virtual void Set(const char *InName, double InValue) = 0;
-    virtual void Set(const char *InName, unsigned int InValue) = 0;
-    virtual void Set(const char *InName, int InValue) = 0;
-    virtual void Set(const char *InName, ID3D11Resource *InValue) = 0;
-    virtual void Set(const char *InName, ID3D12Resource *InValue) = 0;
-    virtual void Set(const char *InName, void *InValue) = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, unsigned long long *OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, float *OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, double *OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, unsigned int *OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, int *OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, ID3D11Resource **OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, ID3D12Resource **OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char *InName, void **OutValue) const = 0;
-    virtual void Reset() = 0;
-  };
 
   // Exports of the signed nvngx_dlssnr.dll snippet (resolved via GetProcAddress).
   typedef NVSDK_NGX_Result(NVSDK_CONV *SnippetInitExtFn)(
@@ -89,11 +67,11 @@ namespace {
   constexpr NVSDK_NGX_Version DLSSNR_SDK_VERSION = NVSDK_NGX_Version_API;
   constexpr int DLSSNR_FEATURE_ID = 18;  // DLSS neural rendering (same resolution)
   constexpr unsigned long long DLSSNR_SNIPPET_APPLICATION_ID = 0x0876232Cull;
-  constexpr NVSDK_NGX_Result NGX_PLATFORM_ERROR = -1;
+  constexpr NVSDK_NGX_Result NGX_PLATFORM_ERROR = NVSDK_NGX_Result_FAIL_PlatformError;
 
   inline bool
   ngx_succeeded(NVSDK_NGX_Result value) {
-    return value >= 0;
+    return NVSDK_NGX_SUCCEED(value);
   }
 
   // DLSSNR.* parameter names: same-resolution filter contract.
@@ -141,32 +119,42 @@ namespace {
 
   std::atomic<bool> g_faulted { false };
 
-  template <typename Fn>
-  NVSDK_NGX_Result
-  ngx_invoke(Fn &&body) noexcept {
+  // MSVC 19.39 /O2 fails the injected-exception regression at this SEH
+  // boundary. Keep the boundary out of line and unoptimized; the caller and
+  // all GPU work retain normal optimization.
+  #pragma optimize("", off)
+  __declspec(noinline) NVSDK_NGX_Result
+  ngx_invoke_raw(NVSDK_NGX_Result (*body)(void *), void *context) noexcept {
     if (g_faulted.load(std::memory_order_acquire)) {
       return NGX_PLATFORM_ERROR;
     }
+    NVSDK_NGX_Result result = NGX_PLATFORM_ERROR;
     __try {
-      return body();
+      result = body(context);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
       g_faulted.store(true, std::memory_order_release);
       return NGX_PLATFORM_ERROR;
     }
+    return result;
+  }
+  #pragma optimize("", on)
+
+  template <typename Fn>
+  NVSDK_NGX_Result
+  ngx_invoke(Fn &&body) noexcept {
+    return ngx_invoke_raw([](void *context) -> NVSDK_NGX_Result {
+      return (*static_cast<std::remove_reference_t<Fn> *>(context))();
+    }, &body);
   }
 
   NVSDK_NGX_Result
   ngx_set_scaling_ratio_callback(NVSDK_NGX_Parameter *parameters) noexcept {
-    __try {
+    return ngx_invoke([&] {
       if (!parameters) return NGX_PLATFORM_ERROR;
       parameters->Set(PARAM_SCALING_RATIO, 1.0f);
-      return 0;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-      g_faulted.store(true, std::memory_order_release);
-      return NGX_PLATFORM_ERROR;
-    }
+      return NVSDK_NGX_Result_Success;
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -178,6 +166,7 @@ namespace {
   std::atomic<HMODULE> g_hook_module { nullptr };
   std::atomic<void **> g_hook_slot { nullptr };
   std::atomic<void *> g_hook_original { nullptr };
+  SRWLOCK g_hook_lock = SRWLOCK_INIT;
 
   void **
   find_imported_function_slot(HMODULE module, const char *function_name) noexcept {
@@ -259,13 +248,26 @@ namespace {
 
   bool
   install_caller_compatibility(HMODULE snippet_module) noexcept {
+    struct lock_guard_t {
+      lock_guard_t() { AcquireSRWLockExclusive(&g_hook_lock); }
+      ~lock_guard_t() { ReleaseSRWLockExclusive(&g_hook_lock); }
+    } lock;
+
     void **slot = find_imported_function_slot(snippet_module, "GetModuleFileNameW");
     if (!slot) return false;
 
     void *hook = reinterpret_cast<void *>(&hook_get_module_file_name_w);
+    // The snippet stays loaded across sessions. Replacing an already patched
+    // slot would save our own hook as its original and recurse on other modules.
+    if (*slot == hook) {
+      return g_hook_original.load(std::memory_order_acquire) != nullptr;
+    }
+    // One process-wide original cannot represent multiple runtime imports.
+    if (g_hook_slot.load(std::memory_order_acquire)) return false;
+
     HMODULE owner = nullptr;
     if (!GetModuleHandleExW(
-          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
           reinterpret_cast<LPCWSTR>(hook), &owner)) {
       return false;
     }
@@ -275,9 +277,17 @@ namespace {
       return false;
     }
     g_hook_module.store(owner, std::memory_order_release);
-    void *original = InterlockedExchangePointer(
-      reinterpret_cast<void *volatile *>(slot), hook);
+    // Publish the original before installing the hook: the snippet may call
+    // the import as soon as it changes. Pin the owner above because the snippet
+    // retains this function pointer even after the host unloads its adapter.
+    void *original = *slot;
+    if (!original) {
+      DWORD ignored = 0;
+      VirtualProtect(slot, sizeof(void *), old_protection, &ignored);
+      return false;
+    }
     g_hook_original.store(original, std::memory_order_release);
+    InterlockedExchangePointer(reinterpret_cast<void *volatile *>(slot), hook);
     g_hook_slot.store(slot, std::memory_order_release);
     DWORD ignored = 0;
     VirtualProtect(slot, sizeof(void *), old_protection, &ignored);
@@ -326,6 +336,18 @@ namespace {
     foundation_dlssnr_config_t config {};
     std::wstring runtime_directory;
     std::wstring data_path;
+
+    // Optional diagnostics; collect after the existing submission fence, so
+    // timing adds no CPU/GPU wait to the normal processing path.
+    ID3D12QueryHeap *timing_heap = nullptr;
+    ID3D12Resource *timing_readback = nullptr;
+    uint64_t timing_frequency = 0;
+    bool timing_pending = false;
+    uint64_t timing_frames = 0;
+    uint64_t timing_samples = 0;
+    double timing_total_ms = 0;
+    double timing_min_ms = 0;
+    double timing_max_ms = 0;
   };
 
   template <typename T>
@@ -343,7 +365,8 @@ namespace {
     HRESULT hr = texture11->QueryInterface(IID_PPV_ARGS(&dxgi_resource));
     if (FAILED(hr)) return hr;
     HANDLE handle = nullptr;
-    hr = dxgi_resource->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &handle);
+    hr = dxgi_resource->CreateSharedHandle(nullptr,
+      DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &handle);
     dxgi_resource->Release();
     if (FAILED(hr)) return hr;
     hr = device12->OpenSharedHandle(handle, IID_PPV_ARGS(out));
@@ -367,8 +390,13 @@ namespace {
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-    return device->CreateTexture2D(&desc, nullptr, out);
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+    const HRESULT hr = device->CreateTexture2D(&desc, nullptr, out);
+    if (FAILED(hr)) {
+      std::fprintf(stderr, "DLSS NR: CreateTexture2D format=%u failed: 0x%08lX\n",
+        static_cast<unsigned>(format), static_cast<unsigned long>(hr));
+    }
+    return hr;
   }
 
   HRESULT
@@ -399,16 +427,72 @@ namespace {
   // Adapter lifecycle.
   // ---------------------------------------------------------------------------
 
+  void
+  initialize_timing(instance_t *instance) noexcept {
+    wchar_t enabled[2] {};
+    if (GetEnvironmentVariableW(L"SUNSHINE_DLSSNR_TIMING", enabled, 2) != 1 || enabled[0] != L'1') return;
+    D3D12_QUERY_HEAP_DESC query {};
+    query.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    query.Count = 2;
+    HRESULT hr = instance->queue12->GetTimestampFrequency(&instance->timing_frequency);
+    if (SUCCEEDED(hr)) hr = instance->device12->CreateQueryHeap(&query, IID_PPV_ARGS(&instance->timing_heap));
+    D3D12_HEAP_PROPERTIES heap {};
+    heap.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC buffer {};
+    buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buffer.Width = 2 * sizeof(uint64_t);
+    buffer.Height = 1;
+    buffer.DepthOrArraySize = 1;
+    buffer.MipLevels = 1;
+    buffer.SampleDesc.Count = 1;
+    buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (SUCCEEDED(hr)) hr = instance->device12->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
+      &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&instance->timing_readback));
+    if (FAILED(hr) || !instance->timing_frequency) {
+      std::fprintf(stderr, "DLSS NR: GPU timing unavailable: 0x%08lX\n", static_cast<unsigned long>(hr));
+      safe_release(instance->timing_heap);
+      safe_release(instance->timing_readback);
+    }
+  }
+
+  void
+  collect_timing(instance_t *instance) noexcept {
+    if (!instance->timing_pending) return;
+    instance->timing_pending = false;
+    const D3D12_RANGE read_range { 0, 2 * sizeof(uint64_t) };
+    void *mapped = nullptr;
+    if (FAILED(instance->timing_readback->Map(0, &read_range, &mapped))) return;
+    uint64_t ticks[2];
+    std::memcpy(ticks, mapped, sizeof(ticks));
+    const D3D12_RANGE no_writes { 0, 0 };
+    instance->timing_readback->Unmap(0, &no_writes);
+    // Exclude initialization/warmup from the steady-state measurement.
+    if (++instance->timing_frames <= 10 || ticks[1] < ticks[0]) return;
+    const double ms = double(ticks[1] - ticks[0]) * 1000.0 / double(instance->timing_frequency);
+    if (!instance->timing_samples || ms < instance->timing_min_ms) instance->timing_min_ms = ms;
+    if (!instance->timing_samples || ms > instance->timing_max_ms) instance->timing_max_ms = ms;
+    ++instance->timing_samples;
+    instance->timing_total_ms += ms;
+  }
+
   foundation_dlssnr_status_e
   adapter_create(ID3D11Device *device, const foundation_dlssnr_config_t *config, void **out_instance) noexcept;
 
   foundation_dlssnr_status_e
   adapter_process(void *raw_instance, void *device_context, void *input_texture, void *output_texture) noexcept;
 
+  void adapter_flush(void *raw_instance) noexcept;
+
   void
   adapter_destroy(void *raw_instance) noexcept {
     auto *instance = static_cast<instance_t *>(raw_instance);
     if (!instance) return;
+    adapter_flush(instance);
+    if (instance->timing_samples) {
+      std::fprintf(stderr, "DLSS NR: GPU Evaluate %ux%u samples=%llu warmup=10 avg=%.3f min=%.3f max=%.3f ms\n",
+        instance->width, instance->height, static_cast<unsigned long long>(instance->timing_samples),
+        instance->timing_total_ms / double(instance->timing_samples), instance->timing_min_ms, instance->timing_max_ms);
+    }
     // Release the feature through SEH, then tear down COM state. The snippet
     // itself stays loaded for the process lifetime: Shutdown1/FreeLibrary on a
     // runtime the driver may still reference is not survivable.
@@ -416,10 +500,12 @@ namespace {
       if (instance->feature && instance->release_feature) {
         instance->release_feature(instance->feature);
       }
-      return 0;
+      return NVSDK_NGX_Result_Success;
     });
     if (instance->parameters && instance->destroy_parameters) {
-      instance->destroy_parameters(instance->parameters);
+      ngx_invoke([&] {
+        return instance->destroy_parameters(instance->parameters);
+      });
     }
     // NGX objects are opaque driver allocations, not COM: parameters go
     // through DestroyParameters, handles through ReleaseFeature above.
@@ -434,6 +520,8 @@ namespace {
     safe_release(instance->zero_motion11);
     safe_release(instance->zero_depth11);
     safe_release(instance->list12);
+    safe_release(instance->timing_heap);
+    safe_release(instance->timing_readback);
     safe_release(instance->allocator12);
     safe_release(instance->queue12);
     safe_release(instance->fence11);
@@ -571,16 +659,14 @@ namespace {
 
       const auto init_ext = reinterpret_cast<SnippetInitExtFn>(
         GetProcAddress(instance->snippet, "NVSDK_NGX_D3D12_Init_Ext"));
-      instance->allocate_parameters = reinterpret_cast<AllocateParametersFn>(
-        GetProcAddress(instance->snippet, "NVSDK_NGX_D3D12_AllocateParameters"));
+      instance->allocate_parameters = &NVSDK_NGX_D3D12_AllocateParameters;
       instance->create_feature = reinterpret_cast<CreateFeatureFn>(
         GetProcAddress(instance->snippet, "NVSDK_NGX_D3D12_CreateFeature"));
       instance->evaluate_feature = reinterpret_cast<EvaluateFeatureFn>(
         GetProcAddress(instance->snippet, "NVSDK_NGX_D3D12_EvaluateFeature"));
       instance->release_feature = reinterpret_cast<ReleaseFeatureFn>(
         GetProcAddress(instance->snippet, "NVSDK_NGX_D3D12_ReleaseFeature"));
-      instance->destroy_parameters = reinterpret_cast<DestroyParametersFn>(
-        GetProcAddress(instance->snippet, "NVSDK_NGX_D3D12_DestroyParameters"));
+      instance->destroy_parameters = &NVSDK_NGX_D3D12_DestroyParameters;
       if (!init_ext || !instance->allocate_parameters || !instance->create_feature ||
           !instance->evaluate_feature) {
         status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE;
@@ -591,15 +677,25 @@ namespace {
       instance->data_path = instance->runtime_directory + L"\\foundation-dlssnr-ngx";
       CreateDirectoryW(instance->data_path.c_str(), nullptr);
 
+      const NVSDK_NGX_Result core_result = ngx_invoke([&] {
+        return NVSDK_NGX_D3D12_Init_with_ProjectID(
+          "ae3a6985-0b25-4ca9-b3f7-70ce4fa598a7", NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0",
+          instance->data_path.c_str(), instance->device12);
+      });
+      std::fprintf(stderr, "DLSS NR: core Init result=0x%08X\n", static_cast<unsigned>(core_result));
+      if (!ngx_succeeded(core_result)) { status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE; break; }
+
       const NVSDK_NGX_Result init_result = ngx_invoke([&] {
         return init_ext(DLSSNR_SNIPPET_APPLICATION_ID, instance->data_path.c_str(),
           instance->device12, DLSSNR_SDK_VERSION, nullptr);
       });
+      std::fprintf(stderr, "DLSS NR: snippet Init_Ext result=0x%08X\n", static_cast<unsigned>(init_result));
       if (!ngx_succeeded(init_result)) { status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE; break; }
 
       const NVSDK_NGX_Result allocate_result = ngx_invoke([&] {
         return instance->allocate_parameters(&instance->parameters);
       });
+      std::fprintf(stderr, "DLSS NR: AllocateParameters result=0x%08X\n", static_cast<unsigned>(allocate_result));
       if (!ngx_succeeded(allocate_result) || !instance->parameters) {
         status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE;
         break;
@@ -629,7 +725,7 @@ namespace {
         instance->parameters->Set(PARAM_PERF_QUALITY, 1u);  // Balanced
         instance->parameters->Set(PARAM_CREATION_NODE_MASK, 1u);
         instance->parameters->Set(PARAM_VISIBILITY_NODE_MASK, 1u);
-        return 0;
+        return NVSDK_NGX_Result_Success;
       });
       if (!ngx_succeeded(param_result)) { status = FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR; break; }
 
@@ -640,6 +736,7 @@ namespace {
       const NVSDK_NGX_Result create_result = ngx_invoke([&] {
         return instance->create_feature(instance->list12, DLSSNR_FEATURE_ID, instance->parameters, &instance->feature);
       });
+      std::fprintf(stderr, "DLSS NR: CreateFeature result=0x%08X\n", static_cast<unsigned>(create_result));
       instance->list12->Close();
       if (!ngx_succeeded(create_result) || !instance->feature) {
         status = FOUNDATION_DLSSNR_STATUS_UNSUPPORTED;
@@ -653,12 +750,15 @@ namespace {
         break;
       }
 
+      initialize_timing(instance);
       *out_instance = instance;
       return FOUNDATION_DLSSNR_STATUS_OK;
     } while (false);
 
     // Route through destroy for a consistent teardown of everything this call
     // created; it releases any partially created NGX state.
+    std::fprintf(stderr, "DLSS NR: create failed, status=%d HRESULT=0x%08lX\n",
+      static_cast<int>(status), static_cast<unsigned long>(hr));
     adapter_destroy(instance);
     return status;
   }
@@ -703,6 +803,7 @@ namespace {
     if (!wait_cpu_fence(instance, instance->fence_value)) {
       return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
     }
+    collect_timing(instance);
 
     // 1) Publish this frame into the D3D12-visible mirror.
     instance->context11->CopyResource(instance->input_mirror11, input);
@@ -714,7 +815,8 @@ namespace {
     }
 
     // 2) Evaluate on D3D12.
-    HRESULT hr = instance->list12->Reset(instance->allocator12, nullptr);
+    HRESULT hr = instance->allocator12->Reset();
+    if (SUCCEEDED(hr)) hr = instance->list12->Reset(instance->allocator12, nullptr);
     if (FAILED(hr)) return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
 
     const auto make_barrier = [&](ID3D12Resource *resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
@@ -769,17 +871,23 @@ namespace {
       instance->parameters->Set(PARAM_SKIN_STRUCTURE, instance->config.skin_structure_strength);
       instance->parameters->Set(PARAM_AUTO_MASK, instance->config.auto_mask ? 1u : 0u);
       instance->parameters->Set(PARAM_UI_CORRECTION, instance->config.ui_correction ? 1u : 0u);
-      return 0;
+      return NVSDK_NGX_Result_Success;
     });
     if (!ngx_succeeded(param_result)) {
       return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
     }
 
+    if (instance->timing_heap) instance->list12->EndQuery(instance->timing_heap, D3D12_QUERY_TYPE_TIMESTAMP, 0);
     const NVSDK_NGX_Result evaluate_result = ngx_invoke([&] {
       return instance->evaluate_feature(instance->list12, instance->feature, instance->parameters, nullptr);
     });
     if (!ngx_succeeded(evaluate_result)) {
       return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
+    }
+    if (instance->timing_heap) {
+      instance->list12->EndQuery(instance->timing_heap, D3D12_QUERY_TYPE_TIMESTAMP, 1);
+      instance->list12->ResolveQueryData(instance->timing_heap, D3D12_QUERY_TYPE_TIMESTAMP,
+        0, 2, instance->timing_readback, 0);
     }
 
     D3D12_RESOURCE_BARRIER reverse[4];
@@ -796,7 +904,10 @@ namespace {
     }
     instance->queue12->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(&instance->list12));
     const uint64_t output_ready = ++instance->fence_value;
-    instance->queue12->Signal(instance->fence12, output_ready);
+    if (FAILED(instance->queue12->Signal(instance->fence12, output_ready))) {
+      return FOUNDATION_DLSSNR_STATUS_DEVICE_LOST;
+    }
+    instance->timing_pending = instance->timing_heap != nullptr;
 
     // 3) D3D11 waits GPU-side, then copies the mirror into the caller's
     // texture. A failed evaluation falls back to copying the input mirror,
@@ -811,8 +922,16 @@ namespace {
     auto *instance = static_cast<instance_t *>(raw_instance);
     if (!instance || !instance->queue12) return;
     const uint64_t value = ++instance->fence_value;
-    instance->queue12->Signal(instance->fence12, value);
-    wait_cpu_fence(instance, value);
+    if (!instance->fence12 || FAILED(instance->queue12->Signal(instance->fence12, value))) return;
+    uint64_t completed = value;
+    // Include the D3D11 output copy before releasing or reusing shared mirrors.
+    if (instance->context11 && instance->fence11) {
+      if (FAILED(instance->context11->Wait(instance->fence11, value))) return;
+      completed = ++instance->fence_value;
+      if (FAILED(instance->context11->Signal(instance->fence11, completed))) return;
+      instance->context11->Flush();
+    }
+    if (wait_cpu_fence(instance, completed)) collect_timing(instance);
   }
 
 }  // namespace

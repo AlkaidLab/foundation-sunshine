@@ -2518,6 +2518,7 @@ namespace confighttp {
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
         { "configured_hdr_backend", enhancement_status.value("selected_backend", std::string {}) },
+        { "configured_nr_backend", enhancement_status.value("selected_nr_backend", std::string {}) },
         { "pipelines", json::array() },
       };
 
@@ -2535,6 +2536,9 @@ namespace confighttp {
           { "synthetic_hdr_backend", status.synthetic_hdr_backend },
           { "synthetic_hdr_state", status.synthetic_hdr_state },
           { "synthetic_hdr_failure_reason", status.synthetic_hdr_failure_reason },
+          { "nr_backend", status.nr_backend },
+          { "nr_state", status.nr_state },
+          { "nr_failure_reason", status.nr_failure_reason },
         });
       }
 
@@ -3974,7 +3978,7 @@ namespace confighttp {
     server.resource["^/api/hdr-enhanced/config$"]["GET"] = getHdrEnhancedConfig;
     server.resource["^/api/hdr-enhanced/config$"]["POST"] = saveHdrEnhancedConfig;
     server.resource["^/api/hdr-enhanced/status$"]["GET"] = getHdrEnhancedStatus;
-    server.resource["^/api/hdr-enhanced/components/alkaidlab\\.nvidia_rtx_video/maintenance$"]["POST"] = maintainHdrEnhancedComponent;
+    server.resource["^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$"]["POST"] = maintainHdrEnhancedComponent;
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
     server.resource["^/api/webhook/test$"]["POST"] = testWebhook;

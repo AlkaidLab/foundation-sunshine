@@ -50,6 +50,9 @@ namespace video {
     std::string synthetic_hdr_backend { "none" };
     std::string synthetic_hdr_state { "disabled" };
     std::string synthetic_hdr_failure_reason;
+    std::string nr_backend { "none" };
+    std::string nr_state { "disabled" };
+    std::string nr_failure_reason;
   };
 
   std::uint64_t

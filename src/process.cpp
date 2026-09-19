@@ -980,7 +980,7 @@ namespace proc {
           ctx.dlssnr = rtsp_stream::dlssnr_config_t {
             .enabled = mode == "on",
             .style = std::clamp(dlssnr_node->get<int>("style", 0), 0, 4),
-            .motion_quality = std::clamp(dlssnr_node->get<int>("motion-quality", 2), 0, 3),
+            .motion_quality = std::clamp(dlssnr_node->get<int>("motion-quality", 0), 0, 3),
             .intensity = std::clamp(dlssnr_node->get<float>("intensity", 1.0f), 0.0f, 1.0f),
             .local_tone_strength = std::clamp(dlssnr_node->get<float>("local-tone-strength", 1.0f), 0.0f, 1.0f),
             .local_structure_strength = std::clamp(dlssnr_node->get<float>("local-structure-strength", 1.0f), 0.0f, 1.0f),

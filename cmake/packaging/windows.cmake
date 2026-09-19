@@ -25,6 +25,7 @@ install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_
 # imported by the user and is never part of the package.
 if (TARGET sunshine_dlssnr_adapter)
   install(FILES "${DLSSNR_ADAPTER_DLL}"
+          "${_dlssnr_build}/NVIDIA-DLSS-LICENSE.txt"
           DESTINATION "tools/hdr_enhanced/nvidia_dlssnr"
           COMPONENT application)
 endif ()

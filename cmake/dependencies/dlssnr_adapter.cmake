@@ -1,7 +1,8 @@
 # The DLSS NR adapter is an optional MSVC DLL that hosts the signed
 # nvngx_dlssnr snippet on a private D3D12 device. The MinGW host consumes only
-# the stable C ABI. Unlike the RTX Video adapter, the NGX surface is declared
-# in-tree, so no NVIDIA SDK download is required to build this component.
+# the stable C ABI. The adapter downloads pinned public NGX SDK build inputs;
+# the user supplies the separate signed NR runtime.
+set(SUNSHINE_DLSS_SDK_ROOT "" CACHE PATH "Local NVIDIA DLSS SDK; empty downloads pinned build inputs")
 set(SUNSHINE_DLSSNR "AUTO" CACHE STRING "Build DLSS NR support: AUTO, ON or OFF")
 set_property(CACHE SUNSHINE_DLSSNR PROPERTY STRINGS AUTO ON OFF)
 string(TOUPPER "${SUNSHINE_DLSSNR}" _dlssnr_mode)
@@ -23,6 +24,7 @@ set(DLSSNR_TRUST_INCLUDE "${CMAKE_BINARY_DIR}/generated/dlssnr")
 set(DLSSNR_TRUST_HEADER "${DLSSNR_TRUST_INCLUDE}/dlssnr_trust.h")
 set(_dlssnr_adapter_sources
     "${_dlssnr_source}/CMakeLists.txt"
+    "${_dlssnr_source}/ngx_sdk.cmake"
     "${_dlssnr_source}/src/dlssnr_adapter.cpp"
     "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -30,9 +32,10 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 
 file(SHA256 "${_dlssnr_source}/CMakeLists.txt" _dlssnr_cmake_hash)
 file(SHA256 "${_dlssnr_source}/src/dlssnr_adapter.cpp" _dlssnr_source_hash)
+file(SHA256 "${_dlssnr_source}/ngx_sdk.cmake" _dlssnr_sdk_hash)
 file(SHA256 "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h" _dlssnr_abi_hash)
 string(SHA256 _dlssnr_inputs
-    "${_dlssnr_cmake_hash}|${_dlssnr_source_hash}|${_dlssnr_abi_hash}")
+    "${_dlssnr_cmake_hash}|${_dlssnr_source_hash}|${_dlssnr_abi_hash}|${_dlssnr_sdk_hash}|${SUNSHINE_DLSS_SDK_ROOT}")
 set(_dlssnr_previous "")
 if (EXISTS "${_dlssnr_build}/configure-inputs")
     file(READ "${_dlssnr_build}/configure-inputs" _dlssnr_previous)
@@ -44,6 +47,7 @@ if (NOT _dlssnr_inputs STREQUAL _dlssnr_previous OR NOT EXISTS "${_dlssnr_build}
         execute_process(COMMAND "${CMAKE_COMMAND}" -S "${_dlssnr_source}" -B "${_dlssnr_build}"
             -G "${_dlssnr_generator}" -A x64
             "-DSUNSHINE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DSUNSHINE_DLSS_SDK_ROOT=${SUNSHINE_DLSS_SDK_ROOT}"
             RESULT_VARIABLE _dlssnr_configured OUTPUT_VARIABLE _dlssnr_stdout ERROR_VARIABLE _dlssnr_stderr TIMEOUT 120)
         string(APPEND _dlssnr_configure_log
             "generator=${_dlssnr_generator}\nresult=${_dlssnr_configured}\nstdout:\n${_dlssnr_stdout}\nstderr:\n${_dlssnr_stderr}\n")

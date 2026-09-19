@@ -18,19 +18,68 @@
 
 #include <d3d11.h>
 #include <dxgi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace {
 
-  constexpr uint32_t WIDTH = 1280;
-  constexpr uint32_t HEIGHT = 720;
-  constexpr uint32_t FRAMES = 30;
+  uint32_t WIDTH = 1280;
+  uint32_t HEIGHT = 720;
+  uint32_t FRAMES = 100;
+  using Microsoft::WRL::ComPtr;
+
+  std::vector<uint32_t>
+  load_image(const std::filesystem::path &path, IWICImagingFactory *factory) {
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICBitmapScaler> scaler;
+    ComPtr<IWICFormatConverter> converter;
+    HRESULT hr = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+      WICDecodeMetadataCacheOnLoad, &decoder);
+    if (SUCCEEDED(hr)) hr = decoder->GetFrame(0, &frame);
+    if (SUCCEEDED(hr)) hr = factory->CreateBitmapScaler(&scaler);
+    if (SUCCEEDED(hr)) hr = scaler->Initialize(frame.Get(), WIDTH, HEIGHT, WICBitmapInterpolationModeFant);
+    if (SUCCEEDED(hr)) hr = factory->CreateFormatConverter(&converter);
+    if (SUCCEEDED(hr)) hr = converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppBGRA,
+      WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom);
+    std::vector<uint32_t> pixels(WIDTH * HEIGHT);
+    if (SUCCEEDED(hr)) hr = converter->CopyPixels(nullptr, WIDTH * 4,
+      static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE *>(pixels.data()));
+    if (FAILED(hr)) return {};
+    for (auto &pixel : pixels) pixel |= 0xFF000000u;
+    return pixels;
+  }
+
+  bool
+  save_image(const std::filesystem::path &path, const std::vector<uint32_t> &pixels, IWICImagingFactory *factory) {
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    HRESULT hr = factory->CreateStream(&stream);
+    if (SUCCEEDED(hr)) hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
+    if (SUCCEEDED(hr)) hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
+    if (SUCCEEDED(hr)) hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+    if (SUCCEEDED(hr)) hr = encoder->CreateNewFrame(&frame, nullptr);
+    if (SUCCEEDED(hr)) hr = frame->Initialize(nullptr);
+    if (SUCCEEDED(hr)) hr = frame->SetSize(WIDTH, HEIGHT);
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    if (SUCCEEDED(hr)) hr = frame->SetPixelFormat(&format);
+    if (format != GUID_WICPixelFormat32bppBGRA) return false;
+    if (SUCCEEDED(hr)) hr = frame->WritePixels(HEIGHT, WIDTH * 4,
+      static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE *>(const_cast<uint32_t *>(pixels.data())));
+    if (SUCCEEDED(hr)) hr = frame->Commit();
+    if (SUCCEEDED(hr)) hr = encoder->Commit();
+    return SUCCEEDED(hr);
+  }
 
   template <typename T>
   struct com_release_t {
@@ -90,7 +139,7 @@ namespace {
         const uint8_t r = static_cast<uint8_t>((x * 255u) / WIDTH);
         const uint8_t g = static_cast<uint8_t>((y * 255u) / HEIGHT);
         const uint8_t b = static_cast<uint8_t>(((x + y + shift) * 127u) / (WIDTH + HEIGHT));
-        pixels[y * WIDTH + x] = 0xFF000000u | (uint32_t(b) << 16) | (uint32_t(g) << 8) | r;
+        pixels[y * WIDTH + x] = 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
       }
     }
     return pixels;
@@ -174,9 +223,43 @@ namespace {
 
 int
 wmain(int argc, wchar_t **argv) {
-  if (argc < 2) {
-    std::printf("usage: foundation_dlssnr_adapter_smoke.exe <dir with nvngx_dlssnr.dll>\n");
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+  const bool benchmark = argc == 6 && std::wcscmp(argv[5], L"--benchmark") == 0;
+  if (argc != 2 && argc != 5 && argc != 7 && !benchmark) {
+    std::printf("usage: foundation_dlssnr_adapter_smoke.exe <runtime_dir> [width height frames [--benchmark | image output_dir]]\n");
     return 1;
+  }
+  if (argc >= 5) {
+    uint32_t *options[] = { &WIDTH, &HEIGHT, &FRAMES };
+    for (int i = 0; i < 3; ++i) {
+      wchar_t *end = nullptr;
+      const auto value = std::wcstoul(argv[i + 2], &end, 10);
+      if (end == argv[i + 2] || *end || value == 0 || value > (i == 2 ? 10000u : 8192u)) {
+        std::printf("FAIL: invalid width, height or frame count\n");
+        return 1;
+      }
+      *options[i] = static_cast<uint32_t>(value);
+    }
+  }
+  std::printf("smoke: %ux%u, %u frames\n", WIDTH, HEIGHT, FRAMES);
+  struct com_apartment_t {
+    HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    ~com_apartment_t() { if (SUCCEEDED(result)) CoUninitialize(); }
+  } apartment;
+  ComPtr<IWICImagingFactory> imaging;
+  std::vector<uint32_t> source_image;
+  std::filesystem::path image_output;
+  if (argc == 7) {
+    if (FAILED(apartment.result) || FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&imaging)))) return 1;
+    source_image = load_image(argv[5], imaging.Get());
+    if (source_image.empty()) {
+      std::printf("FAIL: image load failed\n");
+      return 1;
+    }
+    image_output = argv[6];
+    std::filesystem::create_directories(image_output);
+    if (!save_image(image_output / L"input.png", source_image, imaging.Get())) return 1;
   }
   const std::filesystem::path runtime_directory = argv[1];
   if (!std::filesystem::exists(runtime_directory / "nvngx_dlssnr.dll")) {
@@ -230,9 +313,24 @@ wmain(int argc, wchar_t **argv) {
 
   double total_ms = 0.0;
   double max_ms = 0.0;
+  uint64_t changed_pixels = 0;
   std::vector<uint32_t> first_output;
+  const auto benchmark_pixels = benchmark ? make_gradient_frame(0) : std::vector<uint32_t> {};
+  auto benchmark_input = benchmark ? upload_texture(device.get(), benchmark_pixels) : com_ptr_t<ID3D11Texture2D> {};
+  if (benchmark && !benchmark_input) { api->destroy(instance); return 1; }
+  const double batch_start = now_ms();
   for (uint32_t frame = 0; frame < FRAMES; ++frame) {
-    auto input = upload_texture(device.get(), make_gradient_frame(frame));
+    if (benchmark) {
+      const auto status = api->process(instance, context.get(), benchmark_input.get(), output.get());
+      if (status != FOUNDATION_DLSSNR_STATUS_OK) {
+        std::printf("FAIL: benchmark process status=%d on frame %u\n", static_cast<int>(status), frame);
+        api->destroy(instance);
+        return 1;
+      }
+      continue;
+    }
+    const auto input_pixels = source_image.empty() ? make_gradient_frame(frame) : source_image;
+    auto input = upload_texture(device.get(), input_pixels);
     if (!input) {
       std::printf("FAIL: input upload failed on frame %u\n", frame);
       api->destroy(instance);
@@ -241,9 +339,6 @@ wmain(int argc, wchar_t **argv) {
     const double start = now_ms();
     const auto status = api->process(instance, context.get(), input.get(), output.get());
     api->flush(instance);
-    const double elapsed = now_ms() - start;
-    total_ms += elapsed;
-    max_ms = elapsed > max_ms ? elapsed : max_ms;
     if (status != FOUNDATION_DLSSNR_STATUS_OK) {
       std::printf("FAIL: process status=%d on frame %u\n", static_cast<int>(status), frame);
       api->destroy(instance);
@@ -251,6 +346,11 @@ wmain(int argc, wchar_t **argv) {
     }
     context->Flush();
     auto pixels = read_back(context.get(), device.get(), output.get());
+    // Readback waits for the output copy too. This is CPU wall time including
+    // synchronization/readback, not a GPU timestamp measurement.
+    const double elapsed = now_ms() - start;
+    total_ms += elapsed;
+    max_ms = elapsed > max_ms ? elapsed : max_ms;
     if (pixels.size() != WIDTH * HEIGHT) {
       std::printf("FAIL: readback failed on frame %u\n", frame);
       api->destroy(instance);
@@ -266,11 +366,52 @@ wmain(int argc, wchar_t **argv) {
       api->destroy(instance);
       return 1;
     }
+    size_t nonblack = 0;
+    for (size_t i = 0; i < pixels.size(); ++i) {
+      const auto rgb = pixels[i] & 0x00FFFFFFu;
+      if (rgb) ++nonblack;
+      if (rgb != (input_pixels[i] & 0x00FFFFFFu)) ++changed_pixels;
+    }
+    if (!nonblack) {
+      std::printf("FAIL: black output on frame %u\n", frame);
+      api->destroy(instance);
+      return 1;
+    }
+    if (!source_image.empty() && (frame == 0 || frame == FRAMES - 1)) {
+      if (!save_image(image_output / (frame == 0 ? L"output-first.png" : L"output-last.png"), pixels, imaging.Get())) {
+        std::printf("FAIL: PNG output failed\n");
+        api->destroy(instance);
+        return 1;
+      }
+    }
     if (frame == 0) {
       first_output = std::move(pixels);
     }
   }
-  std::printf("process OK: %u frames, avg %.3f ms, max %.3f ms\n", FRAMES, total_ms / FRAMES, max_ms);
+  if (!benchmark && !changed_pixels) {
+    std::printf("FAIL: all %u frames were RGB passthrough; enhancement not demonstrated\n", FRAMES);
+    api->destroy(instance);
+    return 1;
+  }
+  if (benchmark) {
+    api->flush(instance);
+    context->Flush();
+    const auto pixels = read_back(context.get(), device.get(), output.get());
+    const double batch_ms = now_ms() - batch_start;
+    if (pixels.empty() || pixels == benchmark_pixels) {
+      std::printf("FAIL: benchmark readback or passthrough\n");
+      api->destroy(instance);
+      return 1;
+    }
+    std::printf("BENCHMARK: %u frames, total %.3f ms, average %.3f ms/frame, %.2f fps; no per-frame CPU readback/flush\n",
+      FRAMES, batch_ms, batch_ms / FRAMES, FRAMES * 1000.0 / batch_ms);
+    api->destroy(instance);
+    std::printf("BENCHMARK PASSED\n");
+    return 0;
+  }
+  std::printf("process OK: %u frames, %llu changed RGB pixels\n", FRAMES,
+    static_cast<unsigned long long>(changed_pixels));
+  std::printf("CPU wall time including readback: avg %.3f ms, max %.3f ms\n", total_ms / FRAMES, max_ms);
 
   // Spot-check: the center pixel must be a plausible processed value.
   const uint32_t center = first_output[HEIGHT / 2 * WIDTH + WIDTH / 2];

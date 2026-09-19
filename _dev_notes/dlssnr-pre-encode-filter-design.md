@@ -1,5 +1,90 @@
 # DLSS NR 编码前神经增强 filter 实现方案（形态 1：同分辨率 SDR）
 
+## 最新真机验证（2026-09-19；以下结论覆盖原设计中的待验证假设）
+
+### 编码前管线接入与开销验收
+
+RTX 5080 / 616.92，原版 310.8.0.0，强度 1、零运动向量。新增 `--benchmark` 模式：预上传渐变纹理，连续处理 300 帧，只在批次末尾 flush/回读一次，排除逐帧 CPU 回读；GPU timestamp 排除前 10 帧。
+
+| 工作尺寸 | 批次 wall time / 帧 | GPU Evaluate 平均 | 单独处理吞吐 |
+| --- | --- | --- | --- |
+| 1920×1080 | 16.125 ms | 14.112 ms | 62.02 fps |
+| 3840×2160 | 46.958 ms | 44.253 ms | 21.30 fps |
+
+这些数字不含游戏渲染、采集、编码、网络或客户端解码，不能视为实际串流帧率。1080p 已接近 60fps 帧预算，4K 当前无法满足 60fps。默认关闭，按应用显式开启。
+
+- 沿用 RTX HDR 的 `nvhttp → rtsp → display_vram → pre_encode_filter → 颜色转换/编码` 路径，NR 仅在 SDR 会话生效。生产 factory、adapter 哈希验证、runtime pin、真实 GPU filter 的独立宿主测试通过：三次会话重建，每次 720p→1080p，600 帧加 6 次未 flush 的尾帧；确认非黑、非透传、SDR 语义，退出与 resize 无崩溃。1080p 每组 100 帧均值 17.260 / 18.272 / 16.609 ms（含首次初始化）。不等同于 Moonlight 端到端验收。
+- 新增 Windows 应用编辑页 DLSS NR 模式、强度、风格、界面修正；保存与重开保留高级字段和零值，默认运动质量为 0。复选框兼容现有控件的字符串布尔值，并在保存时规范化。
+- 管线状态单独报告 `nr_backend / nr_state / nr_failure_reason`，不再占用 synthetic HDR 状态。组件 maintenance API 支持两个已知后端，保留本机认证入口。
+- adapter flush/destroy 排空 D3D12 工作及 D3D11 输出拷贝，避免切换分辨率或结束会话时提前释放 mirror。光流 M3 仍未实现；运动画质、长时间游戏串流仍待验收。
+
+复现：`foundation_dlssnr_adapter_smoke.exe <runtime_dir> 1920 1080 300 --benchmark`，设置 `SUNSHINE_DLSSNR_TIMING=1` 可收集 GPU 时间。宿主验证目标为 `dlssnr_pipeline_smoke`，参数是 adapter 绝对路径和小写 runtime SHA-256；两 DLL 须放同一目录。硬件测试不会自动加入普通 CTest。
+
+开发构建启用方式：以 `-DSUNSHINE_DLSSNR=ON` 构建，将本次生成的 adapter、`NVIDIA-DLSS-LICENSE.txt` 和另行取得的运行时置于部署目录 `tools/hdr_enhanced/nvidia_dlssnr/`。在 `sunshine.conf` 同目录的 `hdr_enhanced.json` 中保留已有 HDR 设置，合并以下 NR 配置（下例适用于没有已有配置的独立测试部署）：
+
+```json
+{
+  "schema_version": 2,
+  "selected": { "hdr": null, "nr": "alkaidlab.nvidia_dlssnr" },
+  "backends": {
+    "alkaidlab.nvidia_dlssnr": {
+      "version": "310-8-0-0",
+      "runtime_sha256": "e16bcf15e16e13f527491cdf7845b2fe6521a738d8f7c9c721866a8496e1fc8e"
+    }
+  }
+}
+```
+
+然后在应用编辑页启用 DLSS NR，Moonlight 使用 SDR。当前 Tauri 控制面板的一键导入/第二组件卡片尚未实现，不能用现有 RTX HDR 导入按钮导入 NR；部署需按上述目录与配置操作。
+
+本机验证环境备注：预装 UCRT GCC 16 混用旧 binutils/CRT，导致无关单测在 `std::uncaught_exception(s)` 崩溃；从已有包缓存解压 binutils 2.47、CRT 14 到 `build/dlssnr-toolchain` 并使用 `-B` 指向匹配链接器/CRT 后，13 个帧契约测试与 8 个 filter 测试通过。MiniUPnPc 2.3.3 从官方 `miniupnpc_2_3_3` 标签在 build 目录构建；Boost Windows Event Log 在本地构建关闭。WGC 使用独立解压的 [MSYS2 C++/WinRT 2.0.250303.1-2](https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-cppwinrt) 头文件，修复预装头文件缺少 MinUpdateInterval 的编译阻塞。未修改系统安装。
+
+本地生成的 `build/dlssnr-host/build.ninja` 做了环境专用修正：windows.rc 移除无用的目标宏和头文件路径（windres 对含空格路径转义错误）；WGC 前置新 WinRT include；MiniUPnPc 显式链接新构建的静态库。重新 CMake configure 会覆盖这些本地修正；这些不属于 PR 源码修改。
+
+最终验证：完整 `build/dlssnr-host/sunshine.exe` 编译链接成功，`--help` 退出码 0；adapter Release/SEH CTest、13 个帧契约测试、8 个 filter 测试、10 个应用服务测试、修改文件 ESLint、Web 构建、locale 键校验通过。浏览器实际展开 DLSS NR、设置零强度/风格/界面修正并保存，检查请求 JSON 与截图通过。Web 验证使用本机 bundled Node 24.19，未验证仓库指定 Node 26 工具链。未覆盖正在运行的 Sunshine 服务或游戏配置，未提交/推送 PR。
+
+测试组件已备于 `build/dlssnr-host/tools/hdr_enhanced/nvidia_dlssnr/`，配置示例为 `build/dlssnr-host/hdr_enhanced.example.json`；真实串流仍需部署完整资产并配置应用，不能只靠运行此目录下的 EXE 视为串流验收通过。
+
+默认关闭 `SUNSHINE_DLSSNR_TIMING` 的生产路径亦重复通过 600 帧、三次会话与每次 720p→1080p 切换，退出码 0；日志 `build/dlssnr-host/pipeline-smoke-default.log`。计时启用与关闭两种路径均验证了不显式 flush 的尾帧在 resize/destroy 时被正确排空。
+
+- 设备：RTX 5080，驱动 616.92。运行时 310.8.0.0，Windows Authenticode 状态 Valid、签署者 NVIDIA Corporation；DLL SHA-256 `E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E`。来源为 [社区镜像原版发布](https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.8.0)，运行时只放本地 build 目录。
+- 修复实际初始化阻塞：共享纹理同时设置 `SHARED | SHARED_NTHANDLE`；纹理共享句柄使用 DXGI READ/WRITE 权限。原签名 snippet **不导出 AllocateParameters/DestroyParameters**，改用公开 NVIDIA DLSS SDK 的 NGX core 初始化与参数分配，Feature 18 仍由 snippet 创建/评估。原文“无需 SDK”假设已被实测否定。
+- SDK 默认从 NVIDIA/DLSS 提交 `374959484e79a640feaba44c93ac8cfb0a03f5b5` 下载三个头文件、Release/Debug NGX 静态库和许可证，每文件 SHA-256 固定；可通过 `SUNSHINE_DLSS_SDK_ROOT` 使用本地 SDK。许可证随 adapter 打包，不下载/打包 NVIDIA NR 运行时。
+- MSVC Release 独立构建 `build/dlssnr-pinned`（自动下载路径）通过；`dlssnr_runtime_guard` CTest 通过。SDK 类型替代手写参数 vtable 和结果类型。逐帧在 fence 完成后重置 command allocator，避免持续积累命令内存。
+- 原版 DLL 的 core Init、snippet Init_Ext、AllocateParameters、CreateFeature 均返回 `0x1`。BGRA8 路径在本机可执行。以下各档 100 帧通过 process、回读、非全黑、非全程 RGB 透传及销毁检查：
+
+| 尺寸 | 平均 CPU wall time | 最大 CPU wall time |
+| --- | --- | --- |
+| 1280×720 | 12.238 ms | 22.883 ms |
+| 1920×1080 | 14.492 ms | 23.031 ms |
+| 3840×2160 | 44.214 ms | 58.991 ms |
+
+以上计时包含同步与 staging 回读，不是纯 GPU timestamp；测试输入为渐变，像素变化不能证明视觉质量。后续已补充 GPU timestamp、原神静态样张对照及宿主 filter 重建验证。尚未验证实际 Moonlight 串流、多客户端或 30 分钟稳定性；M3 光流尚未实现。
+
+复现：`build\dlssnr-pinned\Release\foundation_dlssnr_adapter_smoke.exe <runtime_dir> 1920 1080 100`（最后三个参数可选）。
+
+### GPU timestamp 与原神静态样张
+
+- `SUNSHINE_DLSSNR_TIMING=1` 开启可选 D3D12 timestamp。两个 query 包围 Evaluate 记录的 GPU 工作；数据在既有 fence 完成后读取，不额外等待。排除前 10 帧，销毁时输出样本数、均值、最小/最大值；默认关闭，无 ABI 变更。
+- Smoke 新增 `[image output_dir]` 参数，WIC 解码为 BGRA，按指定尺寸缩放；输出 `input.png`、`output-first.png`、`output-last.png`。输入 100 次相同静态画面，不构成运动导引/拖影验收。
+- 选用用户指定《原神》的 [Epic 官方商店](https://store.epicgames.com/p/genshin-impact?lang=en-US) 宣传样张，含游戏截图、移动端 UI 与人物立绘，**不是本机游戏实录**。须弥源图 SHA-256 `A75055B8A632AB829EC4C15DFFFDEF496B851BF81DA4C2570FAA45861705E433`；枫丹源图 `2D8EC6DC52D1AD2E85CB249523C10A446E61511551D5B5F2B1B8690D20605EAE`。
+
+| 样张 / 工作尺寸 | GPU Evaluate 平均 | 最小 / 最大 | 样本数 |
+| --- | --- | --- | --- |
+| 须弥 1920×1080 | 11.321 ms | 4.094 / 16.584 ms | 90 |
+| 枫丹 1920×1080 | 10.203 ms | 9.195 / 19.942 ms | 90 |
+| 须弥 3840×2160 | 44.615 ms | 18.556 / 60.794 ms | 90 |
+
+4K 工作负载由 1080p 样张放大，不代表原生 4K 细节。时间戳不包含 D3D11 拷贝、采集、编码和网络；受本机负载影响。当前 4K Evaluate 平均本身已超过 60fps 的 16.67ms 帧预算。
+
+视觉检查：景物纹理和阴影发生变化，人物立绘脸部明显偏写实，不能直接认定为画质提升；所查看样张的主要文字仍可辨认，不代表 UI 保真已通过。强度 1、零 MV、auto_mask/ui_correction 关闭。下一步应评估较低强度/保留原画风的设置，以及运动导引，再做真实串流。
+
+本机产物：`build/dlssnr-visual/compare.html` 前后滑块、首帧/第100帧切换及原始像素查看；同目录保存 PNG、每次运行日志和 `metrics.json`。Release 构建、CTest 和三组图像 smoke 通过；对照页经浏览器验证图像解码、滑块、场景/帧切换和缩放，无脚本错误。
+
+复现图像测试：先设置环境变量，再运行 `foundation_dlssnr_adapter_smoke.exe <runtime_dir> 1920 1080 100 <image_path> <output_dir>`。
+
+---
+
 > 2026-09-18。目标：在 pre-encode filter 链上新增 `alkaidlab.nvidia_dlssnr` 后端，把 DLSS 5 神经渲染（NGX Feature 18，DLSSNR）作为 SDR 会话的同分辨率画质增强 pass，与 RTX HDR 并列。导引契约完全复刻 Magpie-Experimental（SAOG0721 fork）已验证的 colour-only 方案：**零深度纹理 + NVOF 光流 MV + SEH 熔断**。
 
 > **实施状态**：M1 已完成（2026-09-18）。契约层 `external_sdr_to_sdr_nr` + `resolve_frame_pipeline_policy` 第三参、identity 兜底 filter、host 侧 `dlssnr_filter`/adapter ABI/带 runtime pin 的 loader、schema v2 双能力槽管理面（v1 自动迁移 + 文件内 runtime pin）、apps.json `dlssnr` 节点、nvhttp/rtsp SDR 激活分支、display_vram 门控拆分均已落地。测试：frame_contract 13/13、pre_encode_filter 8/8、test_sunshine 配置+契约套件全绿（唯一失败 DownloadFileTest 为 httpbin.org 外网集成测试，与改动无关，干净树上同样失败）。
@@ -7,6 +92,8 @@
 > **M2 已完成（代码侧）**：`dlssnr_adapter.cpp` 实现 snippet 加载（Init_Ext + appId 0x0876232C + IAT GetModuleFileNameW→"nvngx.dll" 调用方伪装 + 全调用 SEH 熔断）、私有 D3D12 设备（LUID 同卡）、NTHANDLE 共享纹理（BGRA8 输入/输出 mirror + R16G16 零 motion + R32 零 depth）+ D3D11↔D3D12 共享 fence、Feature 18 创建（Upscaling=0/Scale=1/Preset=0/Balanced）、逐帧 Evaluate（全幅 subrect、DepthInverted=1、风格参数透传、失败帧回退拷贝 input mirror）。MSVC 子构建 `sunshine_dlssnr_adapter`（无需 SDK 下载）+ 信任头（仅 pin adapter）+ 打包条目全部接线，主程序带 `SUNSHINE_DLSSNR_ADAPTER` 定义编译链接成功，smoke exe 编译成功。
 >
 > **M2 待办（阻塞于外部输入）**：真机 smoke 需要 `nvngx_dlssnr.dll`（本机未找到）。命令：`build\hdr_enhanced\nvidia_dlssnr_adapter\Release\foundation_dlssnr_adapter_smoke.exe <DLL 所在目录>`。关键验证点：BGRA8 直接喂 Color 是否被接受（拒则引入 swizzle pass）、AllocateParameters 是否由 snippet 导出、GPU 耗时。M3（NVOF 光流）尚未开始——process() 当前恒用 zero motion，motion_quality 参数已透传 config 但未接分支。
+
+> **2026-09-19 M2 稳定性收尾**：重复会话复用已安装的 IAT hook，避免把 hook 自身保存为 original；hook 所在 adapter 模块随常驻 snippet 一并 pin，防止宿主卸载后留下悬空函数指针。DestroyParameters 纳入 SEH 熔断。MSVC 19.39 Release 注入异常回归暴露 SEH 边界优化问题，现将边界独立为不内联、不优化的小函数，保持其他代码正常优化。新增 `dlssnr_runtime_guard` CTest（无需 NVIDIA runtime/GPU），本机 Release 通过。Smoke 改为 100 帧，拒绝全黑输出和全程 RGB 透传，修正 BGRA 测试图通道顺序；耗时明确为包含同步/回读的 CPU wall time，仍不能代替 GPU timestamp。当前机器 RTX 5080 / 驱动 616.92，adapter 与 smoke 编译通过；尚未运行真实 NGX 出图测试，仍需提供运行时 DLL。此次独立构建目录为 `build/dlssnr-review`。
 
 ## 0. 参照物与证据基础
 

@@ -1334,6 +1334,7 @@ namespace platf::dxgi {
           return -1;
         }
         hdr_backend = config.hdr_backend;
+        nr_filter_active = config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_sdr_nr;
         filter_capture_contract = contract;
       }
 
@@ -1745,10 +1746,13 @@ namespace platf::dxgi {
     update_synthetic_hdr_runtime_status(
       bool processed_frame,
       std::string_view frame_failure = {}) {
+      auto &reported_backend = nr_filter_active ? runtime_status.nr_backend : runtime_status.synthetic_hdr_backend;
+      auto &reported_state = nr_filter_active ? runtime_status.nr_state : runtime_status.synthetic_hdr_state;
+      auto &reported_reason = nr_filter_active ? runtime_status.nr_failure_reason : runtime_status.synthetic_hdr_failure_reason;
       if (!pre_encode_filter) {
-        runtime_status.synthetic_hdr_backend = "none";
-        runtime_status.synthetic_hdr_state = "disabled";
-        runtime_status.synthetic_hdr_failure_reason.clear();
+        reported_backend = "none";
+        reported_state = "disabled";
+        reported_reason.clear();
         return;
       }
 
@@ -1759,14 +1763,12 @@ namespace platf::dxgi {
       const std::string reason = frame_failure.empty()
                                    ? std::string { pre_encode_filter->failure_reason() }
                                    : std::string { frame_failure };
-      if (runtime_status.synthetic_hdr_backend == backend &&
-          runtime_status.synthetic_hdr_state == state &&
-          runtime_status.synthetic_hdr_failure_reason == reason) {
+      if (reported_backend == backend && reported_state == state && reported_reason == reason) {
         return;
       }
-      runtime_status.synthetic_hdr_backend = backend;
-      runtime_status.synthetic_hdr_state = state;
-      runtime_status.synthetic_hdr_failure_reason = reason;
+      reported_backend = backend;
+      reported_state = state;
+      reported_reason = reason;
       ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 
@@ -1840,6 +1842,7 @@ namespace platf::dxgi {
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
     boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    bool nr_filter_active = false;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
     texture2d_t filter_handoff_texture;

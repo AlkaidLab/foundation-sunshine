@@ -155,7 +155,8 @@ namespace hdr_enhanced::api {
       runtime["pipelines"] = json::array();
       for (const auto &pipeline : video::get_hdr_pipeline_statuses()) {
         runtime["pipelines"].push_back({ { "id", pipeline.id }, { "backend", pipeline.synthetic_hdr_backend },
-          { "state", pipeline.synthetic_hdr_state }, { "reason", pipeline.synthetic_hdr_failure_reason } });
+          { "state", pipeline.synthetic_hdr_state }, { "reason", pipeline.synthetic_hdr_failure_reason },
+          { "nr_backend", pipeline.nr_backend }, { "nr_state", pipeline.nr_state }, { "nr_reason", pipeline.nr_failure_reason } });
       }
       write(response, 200, { { "status", true }, { "runtime", runtime } });
     }
@@ -167,23 +168,28 @@ namespace hdr_enhanced::api {
   void
   maintenance_impl(response_t response, request_t request) noexcept {
     try {
+      const std::string backend = request->path_match[1].str();
+      if (backend != NVIDIA_RTX_VIDEO_BACKEND && backend != NVIDIA_DLSSNR_BACKEND) {
+        write(response, 404, { { "status", false }, { "error_code", "hdr_backend_unknown" } });
+        return;
+      }
       const auto input = request_json(request);
       const auto action = input.at("action").get<std::string>();
       result_t result;
       std::string operation_id;
       if (action == "begin")
-        result = manager().begin_maintenance(NVIDIA_RTX_VIDEO_BACKEND, operation_id);
+        result = manager().begin_maintenance(backend, operation_id);
       else if (action == "inspect")
-        result = manager().inspect_maintenance(NVIDIA_RTX_VIDEO_BACKEND, operation_id);
+        result = manager().inspect_maintenance(backend, operation_id);
       else if (action == "verify") {
         operation_id = input.at("operation_id").get<std::string>();
-        result = manager().verify_maintenance(NVIDIA_RTX_VIDEO_BACKEND, operation_id);
+        result = manager().verify_maintenance(backend, operation_id);
       }
       else if (action == "recover")
-        result = manager().recover_maintenance(NVIDIA_RTX_VIDEO_BACKEND);
+        result = manager().recover_maintenance(backend);
       else if (action == "commit" || action == "cancel") {
         operation_id = input.at("operation_id").get<std::string>();
-        result = manager().finish_maintenance(NVIDIA_RTX_VIDEO_BACKEND, operation_id);
+        result = manager().finish_maintenance(backend, operation_id);
       }
       else { result = { 400, "hdr_maintenance_invalid" }; }
       if (result.status == 200)
