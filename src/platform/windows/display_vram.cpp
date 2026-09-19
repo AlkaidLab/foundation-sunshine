@@ -3079,7 +3079,8 @@ namespace platf::dxgi {
       // probing on some drivers and a wedged probe delays every stream start.
       // Probe the known-good pitch-linear path; only real sessions opt in.
       nvenc_config.cuda_array_input = nvenc_config.cuda_array_input && !is_probe;
-      if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format)) return false;
+      // The encoder publishes its frame budget report itself for real sessions.
+      if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format, is_probe)) return false;
 
       base.apply_colorspace(colorspace);
       base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);

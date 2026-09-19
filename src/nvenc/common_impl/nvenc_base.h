@@ -38,7 +38,8 @@ namespace nvenc {
     create_encoder(const nvenc_config &config,
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &sunshine_colorspace,
-      platf::pix_fmt_e sunshine_buffer_format) override;
+      platf::pix_fmt_e sunshine_buffer_format,
+      bool is_probe) override;
 
     void
     destroy_encoder() override;

@@ -188,7 +188,7 @@ TEST_P(NvencVersionTests, CreateAndEncode) {
     .colorspace = video::colorspace_e::rec601,
     .bit_depth = 8,
   };
-  ASSERT_TRUE(nvenc->create_encoder({}, config, colorspace, platf::pix_fmt_e::nv12));
+  ASSERT_TRUE(nvenc->create_encoder({}, config, colorspace, platf::pix_fmt_e::nv12, false));
   ASSERT_FALSE(nvenc->encode_frame(0, false).data.empty());
 }
 
