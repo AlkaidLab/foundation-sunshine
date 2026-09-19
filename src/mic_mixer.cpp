@@ -19,8 +19,12 @@
 namespace mic_mixer {
   namespace {
     constexpr int channels = 1;
-    constexpr std::size_t max_buffered_packets = 4;
-    constexpr std::int64_t max_future_frames = 8;
+    // Keep the initial two-frame playout delay unchanged. This is only the
+    // bounded packet capacity used to absorb short arrival bursts.
+    constexpr std::size_t max_buffered_packets = 8;
+    // Leave enough timeline horizon for the enlarged bounded queue to absorb
+    // a burst before treating the packet as a discontinuity.
+    constexpr std::int64_t max_future_frames = static_cast<std::int64_t>(max_buffered_packets * 2);
     constexpr std::int64_t timestamp_discontinuity_ms = 200;
     constexpr std::size_t max_consecutive_plc_frames = jitter_buffer_frames;
     constexpr std::int64_t overflow_recovery_window_frames = 250;
@@ -120,8 +124,9 @@ namespace mic_mixer {
       }
 
       if (source.packets.size() <= max_buffered_packets) {
-        source.overflow_events = 0;
-        source.overflow_window_start_slot = -1;
+        // Keep overflow events within the active time window even when the
+        // queue briefly drains. Otherwise repeated short bursts never reach
+        // the recovery threshold.
         return true;
       }
 
