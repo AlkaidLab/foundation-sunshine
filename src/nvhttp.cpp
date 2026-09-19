@@ -280,11 +280,18 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     if (launch_session->enable_hdr) {
       if (const auto app_rtx_hdr = proc::proc.get_app_rtx_hdr_config(launch_session->appid); app_rtx_hdr && app_rtx_hdr->enabled) {
-        launch_session->hdr_backend = hdr_enhanced::manager().acquire_selected();
+        launch_session->hdr_backend = hdr_enhanced::manager().acquire_selected(hdr_enhanced::backend_capability_e::hdr);
         if (launch_session->hdr_backend && launch_session->hdr_backend->id == hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND) {
           launch_session->synthetic_hdr = *app_rtx_hdr;
         }
       }
+    }
+    else if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid); app_dlssnr && app_dlssnr->enabled) {
+      // SDR sessions may attach the neural-enhancement filter instead. The
+      // backend reference is released again in RTSP SETUP when the client
+      // requests HDR or the policy disallows the filter.
+      launch_session->dlssnr_backend = hdr_enhanced::manager().acquire_selected(hdr_enhanced::backend_capability_e::nr);
+      launch_session->dlssnr_params = *app_dlssnr;
     }
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));

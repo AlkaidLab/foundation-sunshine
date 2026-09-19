@@ -1,6 +1,6 @@
 /**
  * @file src/hdr_enhanced/config.cpp
- * @brief HDR configuration persistence, trusted versions and maintenance reservations.
+ * @brief Enhancement configuration persistence, trusted versions and maintenance reservations.
  */
 #include "config.h"
 
@@ -25,8 +25,12 @@
 
 #include "src/config.h"
 #include "src/file_handler.h"
+#include "src/logging_severity.h"
 #ifdef SUNSHINE_RTX_VIDEO_ADAPTER
   #include "rtx_video_trust.h"
+#endif
+#ifdef SUNSHINE_DLSSNR_ADAPTER
+  #include "dlssnr_trust.h"
 #endif
 
 #ifdef _WIN32
@@ -44,11 +48,56 @@ namespace hdr_enhanced {
     struct digest_failed_t {};
     struct digest_limit_exceeded_t {};
 
+    struct backend_traits_t {
+      std::string_view id;
+      backend_capability_e capability;
+      std::string_view subdir;
+      std::string_view adapter_name;
+      std::string_view runtime_name;
+      // The TrueHDR trust catalog keys runtime versions by their digest; the
+      // DLSS NR runtime is pinned from the persisted settings instead.
+      bool runtime_digest_is_version;
+    };
+
+    constexpr backend_traits_t BACKEND_TRAITS[] = {
+      { NVIDIA_RTX_VIDEO_BACKEND, backend_capability_e::hdr, "nvidia_rtx_video",
+        NVIDIA_RTX_VIDEO_ADAPTER, NVIDIA_RTX_VIDEO_RUNTIME, true },
+      { NVIDIA_DLSSNR_BACKEND, backend_capability_e::nr, "nvidia_dlssnr",
+        NVIDIA_DLSSNR_ADAPTER, NVIDIA_DLSSNR_RUNTIME, false },
+    };
+
+    const backend_traits_t &
+    traits_for(std::string_view id) {
+      for (const auto &traits : BACKEND_TRAITS) {
+        if (traits.id == id) return traits;
+      }
+      throw component_untrusted_t {};
+    }
+
+    bool
+    is_known_backend(std::string_view id) {
+      for (const auto &traits : BACKEND_TRAITS) {
+        if (traits.id == id) return true;
+      }
+      return false;
+    }
+
+    bool
+    is_hex_digest(std::string_view value) {
+      return value.size() == 64 &&
+             value.find_first_not_of("0123456789abcdef") == std::string_view::npos;
+    }
+
     template<typename T, typename... Args>
     boost::shared_ptr<const T>
     make_immutable(Args &&...args) {
       return boost::shared_ptr<const T>(new T(std::forward<Args>(args)...));
     }
+
+    struct validated_t {
+      boost::shared_ptr<const backend_use_t> hdr;
+      boost::shared_ptr<const backend_use_t> nr;
+    };
 
     class maintenance_lock_t {
     public:
@@ -124,7 +173,7 @@ namespace hdr_enhanced {
     std::string
     entity_tag(const settings_t &settings) {
       std::istringstream stream(settings_json(settings).dump());
-      return "\"hdr-v1-" + digest(stream) + "\"";
+      return "\"hdr-v2-" + digest(stream) + "\"";
     }
 
     bool
@@ -153,6 +202,14 @@ namespace hdr_enhanced {
     }
   }  // namespace
 
+  std::optional<backend_capability_e>
+  backend_capability(std::string_view id) {
+    for (const auto &traits : BACKEND_TRAITS) {
+      if (traits.id == id) return traits.capability;
+    }
+    return std::nullopt;
+  }
+
   bool
   valid_version(std::string_view version) {
     if (version.empty() || version.size() > 128 || version.front() == '.') return false;
@@ -162,21 +219,49 @@ namespace hdr_enhanced {
   bool
   parse_settings(const nlohmann::json &input, settings_t &output) {
     try {
-      if (!input.is_object() || input.size() != 3 || !input.at("schema_version").is_number_integer() || input.at("schema_version") != 1 ||
+      if (!input.is_object() || input.size() != 3 || !input.at("schema_version").is_number_integer() ||
           !input.at("backends").is_object()) return false;
+      const auto schema = input.at("schema_version").get<int>();
+      if (schema != 1 && schema != 2) return false;
       settings_t parsed;
-      const auto &selected = input.at("selected_backend");
-      if (!selected.is_null()) {
-        if (!selected.is_string() || selected.get<std::string>() != NVIDIA_RTX_VIDEO_BACKEND) return false;
-        parsed.selected_backend = selected.get<std::string>();
+      if (schema == 1) {
+        const auto &selected = input.at("selected_backend");
+        if (!selected.is_null()) {
+          if (!selected.is_string() || selected.get<std::string>() != std::string { NVIDIA_RTX_VIDEO_BACKEND }) return false;
+          parsed.selected_backend = selected.get<std::string>();
+        }
+      }
+      else {
+        const auto &selected = input.at("selected");
+        if (!selected.is_object() || selected.size() != 2 ||
+            !selected.contains("hdr") || !selected.contains("nr")) return false;
+        const auto &hdr = selected.at("hdr");
+        const auto &nr = selected.at("nr");
+        if (!hdr.is_null()) {
+          if (!hdr.is_string() || hdr.get<std::string>() != std::string { NVIDIA_RTX_VIDEO_BACKEND }) return false;
+          parsed.selected_backend = hdr.get<std::string>();
+        }
+        if (!nr.is_null()) {
+          if (!nr.is_string() || nr.get<std::string>() != std::string { NVIDIA_DLSSNR_BACKEND }) return false;
+          parsed.selected_nr_backend = nr.get<std::string>();
+        }
       }
       for (const auto &[id, value] : input.at("backends").items()) {
-        if (id != NVIDIA_RTX_VIDEO_BACKEND || !value.is_object() || value.size() != 1 || !value.at("version").is_string()) return false;
+        if (!is_known_backend(id) || !value.is_object() || value.empty() || value.size() > 2 ||
+            !value.contains("version") || !value.at("version").is_string()) return false;
         const auto version = value.at("version").get<std::string>();
         if (!valid_version(version)) return false;
+        if (value.contains("runtime_sha256")) {
+          const auto &pin = value.at("runtime_sha256");
+          if (!pin.is_null()) {
+            if (!pin.is_string() || !is_hex_digest(pin.get<std::string>())) return false;
+            parsed.runtime_pins.emplace(id, pin.get<std::string>());
+          }
+        }
         parsed.versions.emplace(id, version);
       }
       if (!parsed.selected_backend.empty() && !parsed.versions.contains(parsed.selected_backend)) return false;
+      if (!parsed.selected_nr_backend.empty() && !parsed.versions.contains(parsed.selected_nr_backend)) return false;
       output = std::move(parsed);
       return true;
     }
@@ -191,8 +276,25 @@ namespace hdr_enhanced {
   nlohmann::json
   settings_json(const settings_t &settings) {
     json backends = json::object();
-    for (const auto &[id, version] : settings.versions) backends[id] = { { "version", version } };
-    return { { "schema_version", 1 }, { "selected_backend", settings.selected_backend.empty() ? json(nullptr) : json(settings.selected_backend) }, { "backends", backends } };
+    for (const auto &[id, version] : settings.versions) {
+      json entry { { "version", version } };
+      const auto pin = settings.runtime_pins.find(id);
+      if (pin != settings.runtime_pins.end() && !pin->second.empty()) {
+        entry["runtime_sha256"] = pin->second;
+      }
+      else {
+        entry["runtime_sha256"] = nullptr;
+      }
+      backends[id] = entry;
+    }
+    return {
+      { "schema_version", 2 },
+      { "selected", {
+        { "hdr", settings.selected_backend.empty() ? json(nullptr) : json(settings.selected_backend) },
+        { "nr", settings.selected_nr_backend.empty() ? json(nullptr) : json(settings.selected_nr_backend) },
+      } },
+      { "backends", backends },
+    };
   }
 
   struct manager_t::impl_t {
@@ -204,7 +306,8 @@ namespace hdr_enhanced {
     boost::mutex transaction;
     boost::mutex ownership;
     boost::atomic_shared_ptr<const settings_t> active { make_immutable<settings_t>() };
-    boost::atomic_shared_ptr<const backend_use_t> validated;
+    boost::atomic_shared_ptr<const backend_use_t> validated_hdr;
+    boost::atomic_shared_ptr<const backend_use_t> validated_nr;
     std::vector<boost::weak_ptr<const backend_use_t>> users;
     std::string maintenance;
     bool maintenance_unknown = false;
@@ -228,28 +331,51 @@ namespace hdr_enhanced {
       }
     }
 
+    /**
+     * Validate one installed backend against the trust catalog and the
+     * settings-carried runtime pin. The backend does not have to be selected.
+     */
     boost::shared_ptr<const backend_use_t>
-    validate(const settings_t &value) {
+    validate_backend(const settings_t &value, std::string_view id) {
       try {
-        if (value.selected_backend.empty()) return {};
-        const auto &version = value.versions.at(value.selected_backend);
-        const auto directory = root / "hdr_enhanced" / "nvidia_rtx_video";
+        const auto &traits = traits_for(id);
+        const auto &version = value.versions.at(std::string { id });
+        const auto directory = root / "hdr_enhanced" / traits.subdir;
         const auto &catalog = trust;
         if (!catalog.is_object() || catalog.value("schema_version", 0) != 1) throw component_untrusted_t {};
-        const auto &trusted = catalog.at("components").at(value.selected_backend).at(version);
-        const auto &trusted_adapter = catalog.at("adapters").at(value.selected_backend);
+        const auto &trusted_adapter = catalog.at("adapters").at(std::string { traits.id }).at(std::string { traits.adapter_name });
         const auto canonical_directory = fs::canonical(directory);
-        if (canonical_directory != fs::canonical(root) / "hdr_enhanced" / "nvidia_rtx_video") throw component_untrusted_t {};
-        const auto validate_file = [&](const char *name, const std::string &expected) {
-          const auto path = fs::canonical(directory / name);
+        if (canonical_directory != fs::canonical(root) / "hdr_enhanced" / traits.subdir) throw component_untrusted_t {};
+        const auto validate_file = [&](std::string_view name, const std::string &expected) {
+          const auto path = fs::canonical(directory / std::string { name });
           if (path.parent_path() != canonical_directory || !fs::is_regular_file(path)) throw component_untrusted_t {};
           std::ifstream stream(path, std::ios::binary);
           constexpr auto maximum = 512ULL * 1024 * 1024;
           if (!stream || digest(stream, maximum) != expected) throw component_untrusted_t {};
         };
-        validate_file(NVIDIA_RTX_VIDEO_ADAPTER, trusted_adapter.at(NVIDIA_RTX_VIDEO_ADAPTER).get<std::string>());
-        validate_file(NVIDIA_RTX_VIDEO_RUNTIME, trusted.at(NVIDIA_RTX_VIDEO_RUNTIME).get<std::string>());
-        return make_immutable<backend_use_t>(backend_use_t { value.selected_backend, version, canonical_directory / NVIDIA_RTX_VIDEO_ADAPTER });
+        validate_file(traits.adapter_name, trusted_adapter.get<std::string>());
+        const auto pin = value.runtime_pins.find(std::string { id });
+        const auto runtime_digest =
+          pin != value.runtime_pins.end() ? pin->second : std::string {};
+        if (traits.runtime_digest_is_version) {
+          const auto &trusted_runtime =
+            catalog.at("components").at(std::string { traits.id }).at(version).at(std::string { traits.runtime_name });
+          validate_file(traits.runtime_name, trusted_runtime.get<std::string>());
+        }
+        else if (!runtime_digest.empty()) {
+          validate_file(traits.runtime_name, runtime_digest);
+        }
+        else {
+          // An unpinned runtime is accepted, but its in-place digest is
+          // recorded so the actually loaded binary is identifiable.
+          const auto path = fs::canonical(directory / std::string { traits.runtime_name });
+          if (path.parent_path() != canonical_directory || !fs::is_regular_file(path)) throw component_untrusted_t {};
+          std::ifstream stream(path, std::ios::binary);
+          constexpr auto maximum = 512ULL * 1024 * 1024;
+          if (!stream) throw component_untrusted_t {};
+          BOOST_LOG(info) << "DLSS NR runtime is unpinned; recorded nvngx_dlssnr.dll sha256=" << digest(stream, maximum);
+        }
+        return make_immutable<backend_use_t>(backend_use_t { std::string { id }, version, canonical_directory / std::string { traits.adapter_name }, runtime_digest });
       }
       catch (const std::bad_alloc &) {
         throw;
@@ -266,6 +392,18 @@ namespace hdr_enhanced {
       catch (...) {
         throw component_untrusted_t {};
       }
+    }
+
+    validated_t
+    validate(const settings_t &value) {
+      validated_t result;
+      if (!value.selected_backend.empty()) {
+        result.hdr = validate_backend(value, value.selected_backend);
+      }
+      if (!value.selected_nr_backend.empty()) {
+        result.nr = validate_backend(value, value.selected_nr_backend);
+      }
+      return result;
     }
 
     bool
@@ -300,11 +438,14 @@ namespace hdr_enhanced {
     try {
       const auto value = impl_->disk();
       impl_->active.store(make_immutable<settings_t>(value));
-      impl_->validated.store(impl_->validate(value));
+      const auto validated = impl_->validate(value);
+      impl_->validated_hdr.store(validated.hdr);
+      impl_->validated_nr.store(validated.nr);
       return true;
     }
     catch (...) {
-      impl_->validated.store({});
+      impl_->validated_hdr.store({});
+      impl_->validated_nr.store({});
       return false;
     }
   }
@@ -330,8 +471,13 @@ namespace hdr_enhanced {
       const auto previous = impl_->disk();
       const auto tag = entity_tag(previous);
       if (!if_match) return { 428, "hdr_precondition_required" };
-      if (if_match->size() != tag.size() || !if_match->starts_with("\"hdr-v1-") || if_match->back() != '"' ||
+      // The size and prefix guards must run before any substr: short values
+      // would make substr throw and surface as a 500 instead of a 400.
+      if (if_match->size() != tag.size() || !if_match->starts_with("\"hdr-v") ||
+          if_match->back() != '"' ||
           if_match->substr(8, 64).find_first_not_of("0123456789abcdef") != std::string_view::npos) return { 400, "hdr_precondition_invalid" };
+      const auto tag_version = if_match->substr(6, 2);
+      if (tag_version != "1-" && tag_version != "2-") return { 400, "hdr_precondition_invalid" };
       if (*if_match != tag) return { 412, "hdr_config_changed" };
       // 助手持有文件锁直到安装和配置提交完成；配置事务不能反过来等待该锁。
       // 维护令牌限制提交者，结束维护仍须取得文件锁，不能越过正在写入的助手。
@@ -341,25 +487,30 @@ namespace hdr_enhanced {
         boost::lock_guard gate(impl_->ownership);
         if (impl_->maintenance_unknown || ((!impl_->maintenance.empty() || !operation_id.empty()) && impl_->maintenance != operation_id)) return { 409, "hdr_component_busy" };
       }
-      if (operation_id.empty() && previous == requested && *impl_->active.load() == requested &&
-          (requested.selected_backend.empty() || impl_->validated.load())) {
+      const bool selections_unchanged_and_valid =
+        previous == requested && *impl_->active.load() == requested &&
+        (requested.selected_backend.empty() || impl_->validated_hdr.load()) &&
+        (requested.selected_nr_backend.empty() || impl_->validated_nr.load());
+      if (operation_id.empty() && selections_unchanged_and_valid) {
         return { 200, {}, requested, tag, false };
       }
-      const auto backend = impl_->validate(requested);
+      const auto validated = impl_->validate(requested);
       if (!operation_id.empty() && previous.versions != requested.versions) {
         // 安装即使不启用增强，也必须验证待发布的版本；不能记录没有落地的 DLL。
         for (const auto &[id, version] : requested.versions) {
-          if (id == requested.selected_backend) continue;
-          auto installed = requested;
-          installed.selected_backend = id;
-          impl_->validate(installed);
+          if (id == requested.selected_backend || id == requested.selected_nr_backend) continue;
+          impl_->validate_backend(requested, id);
         }
       }
       const auto snapshot = make_immutable<settings_t>(requested);
       const auto next_tag = entity_tag(requested);
       const bool changed = previous != requested;
       if (changed && !write_document(impl_->file, settings_json(requested))) return { 500, "hdr_save_failed" };
-      impl_->validated.store(backend);
+      {
+        boost::lock_guard gate(impl_->ownership);
+        impl_->validated_hdr.store(validated.hdr);
+        impl_->validated_nr.store(validated.nr);
+      }
       impl_->active.store(snapshot);
       return { 200, {}, requested, next_tag, changed };
     }
@@ -375,10 +526,18 @@ namespace hdr_enhanced {
   }
 
   boost::shared_ptr<const backend_use_t>
-  manager_t::acquire_selected() {
+  manager_t::acquire_selected(backend_capability_e capability) {
     boost::lock_guard gate(impl_->ownership);
     if (!impl_->maintenance.empty() || impl_->maintenance_unknown) return {};
-    const auto backend = impl_->validated.load();
+    boost::shared_ptr<const backend_use_t> backend;
+    switch (capability) {
+      case backend_capability_e::hdr:
+        backend = impl_->validated_hdr.load();
+        break;
+      case backend_capability_e::nr:
+        backend = impl_->validated_nr.load();
+        break;
+    }
     if (!backend) return {};
     // 每个会话独立拥有引用；配置快照本身不会被当作运行中的使用者。
     auto use = make_immutable<backend_use_t>(*backend);
@@ -393,12 +552,19 @@ namespace hdr_enhanced {
     const bool adapter_present = fs::is_regular_file(
       impl_->root / "hdr_enhanced" / "nvidia_rtx_video" / NVIDIA_RTX_VIDEO_ADAPTER,
       adapter_error);
+    std::error_code nr_adapter_error;
+    const bool nr_adapter_present = fs::is_regular_file(
+      impl_->root / "hdr_enhanced" / "nvidia_dlssnr" / NVIDIA_DLSSNR_ADAPTER,
+      nr_adapter_error);
     boost::lock_guard gate(impl_->ownership);
     const auto settings = impl_->active.load();
     return { { "in_use", impl_->used_locked() }, { "maintenance", !impl_->maintenance.empty() || impl_->maintenance_unknown },
       { "adapter_present", adapter_present && !adapter_error },
+      { "nr_adapter_present", nr_adapter_present && !nr_adapter_error },
       { "selected_backend", settings ? settings->selected_backend : std::string {} },
-      { "selection_verified", static_cast<bool>(impl_->validated.load()) },
+      { "selected_nr_backend", settings ? settings->selected_nr_backend : std::string {} },
+      { "selection_verified", static_cast<bool>(impl_->validated_hdr.load()) },
+      { "nr_selection_verified", static_cast<bool>(impl_->validated_nr.load()) },
       { "trusted_components", impl_->trust } };
   }
 
@@ -407,7 +573,7 @@ namespace hdr_enhanced {
 
   result_t
   manager_t::begin_maintenance(std::string_view id, std::string &operation_id) {
-    if (id != NVIDIA_RTX_VIDEO_BACKEND) return { 404, "hdr_component_unknown" };
+    if (!is_known_backend(id)) return { 404, "hdr_component_unknown" };
     boost::unique_lock lock(impl_->transaction, boost::try_to_lock);
     if (!lock.owns_lock()) return { 409, "hdr_save_busy" };
     const auto token = boost::uuids::to_string(boost::uuids::random_generator()());
@@ -424,13 +590,15 @@ namespace hdr_enhanced {
       return { 500, "hdr_maintenance_failed" };
     }
     operation_id = token;
-    impl_->validated.store({});
+    boost::lock_guard gate(impl_->ownership);
+    impl_->validated_hdr.store({});
+    impl_->validated_nr.store({});
     return {};
   }
 
   result_t
   manager_t::verify_maintenance(std::string_view id, std::string_view operation_id) {
-    if (id != NVIDIA_RTX_VIDEO_BACKEND || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
+    if (!is_known_backend(id) || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
     boost::lock_guard gate(impl_->ownership);
     if (impl_->maintenance_unknown || impl_->maintenance != operation_id) return { 409, "hdr_maintenance_mismatch" };
     return {};
@@ -438,7 +606,7 @@ namespace hdr_enhanced {
 
   result_t
   manager_t::inspect_maintenance(std::string_view id, std::string &operation_id) {
-    if (id != NVIDIA_RTX_VIDEO_BACKEND) return { 404, "hdr_component_unknown" };
+    if (!is_known_backend(id)) return { 404, "hdr_component_unknown" };
     boost::lock_guard gate(impl_->ownership);
     if (impl_->maintenance_unknown || impl_->maintenance.empty()) return { 409, "hdr_maintenance_mismatch" };
     operation_id = impl_->maintenance;
@@ -447,7 +615,7 @@ namespace hdr_enhanced {
 
   result_t
   manager_t::finish_maintenance(std::string_view id, std::string_view operation_id) {
-    if (id != NVIDIA_RTX_VIDEO_BACKEND || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
+    if (!is_known_backend(id) || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
     boost::unique_lock lock(impl_->transaction, boost::try_to_lock);
     if (!lock.owns_lock()) return { 409, "hdr_save_busy" };
     // 与助手共用独占文件锁；锁释放后才能删除凭据，晚到的助手会因凭据失效拒绝写入。
@@ -460,20 +628,24 @@ namespace hdr_enhanced {
     // 文件可能已被安装器替换；不能重新放行维护前验证过的路径快照。
     try {
       const auto value = impl_->disk();
-      const auto backend = impl_->validate(value);
+      const auto validated = impl_->validate(value);
       impl_->active.store(make_immutable<settings_t>(value));
-      impl_->validated.store(backend);
+      impl_->validated_hdr.store(validated.hdr);
+      impl_->validated_nr.store(validated.nr);
     }
     catch (const config_invalid_t &) {
-      impl_->validated.store({});
+      impl_->validated_hdr.store({});
+      impl_->validated_nr.store({});
       return { 500, "hdr_config_invalid" };
     }
     catch (const component_untrusted_t &) {
-      impl_->validated.store({});
+      impl_->validated_hdr.store({});
+      impl_->validated_nr.store({});
       return { 409, "hdr_component_untrusted" };
     }
     catch (...) {
-      impl_->validated.store({});
+      impl_->validated_hdr.store({});
+      impl_->validated_nr.store({});
       return { 500, "hdr_maintenance_failed" };
     }
     std::error_code error;
@@ -486,20 +658,24 @@ namespace hdr_enhanced {
 
   result_t
   manager_t::recover_maintenance(std::string_view id) {
-    if (id != NVIDIA_RTX_VIDEO_BACKEND) return { 404, "hdr_component_unknown" };
+    if (!is_known_backend(id)) return { 404, "hdr_component_unknown" };
     boost::unique_lock lock(impl_->transaction, boost::try_to_lock);
     if (!lock.owns_lock()) return { 409, "hdr_save_busy" };
     maintenance_lock_t operation_lock(impl_->maintenance_file);
     if (!operation_lock) return { 409, "hdr_helper_running" };
     // 恢复不意味着强行启用。文件不匹配时保留用户设置，但禁用运行时引用，允许修复。
-    impl_->validated.store({});
+    impl_->validated_hdr.store({});
+    impl_->validated_nr.store({});
     try {
       const auto value = impl_->disk();
       impl_->active.store(make_immutable<settings_t>(value));
-      impl_->validated.store(impl_->validate(value));
+      const auto validated = impl_->validate(value);
+      impl_->validated_hdr.store(validated.hdr);
+      impl_->validated_nr.store(validated.nr);
     }
     catch (...) {
-      impl_->validated.store({});
+      impl_->validated_hdr.store({});
+      impl_->validated_nr.store({});
     }
     std::error_code error;
     fs::remove(impl_->maintenance_file, error);
@@ -522,6 +698,9 @@ namespace hdr_enhanced {
         catalog["components"][NVIDIA_RTX_VIDEO_BACKEND][SUNSHINE_RTX_VIDEO_RUNTIME_SHA256] = {
           { NVIDIA_RTX_VIDEO_RUNTIME, SUNSHINE_RTX_VIDEO_RUNTIME_SHA256 }
         };
+#endif
+#ifdef SUNSHINE_DLSSNR_ADAPTER
+        catalog["adapters"][NVIDIA_DLSSNR_BACKEND][NVIDIA_DLSSNR_ADAPTER] = SUNSHINE_DLSSNR_ADAPTER_SHA256;
 #endif
         return catalog;
       }());

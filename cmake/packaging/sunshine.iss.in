@@ -208,6 +208,9 @@ Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools";
 Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\foundation_rtx_video_adapter.dll"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\README.md"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\RTX_VIDEO_THIRD_PARTY_NOTICES.md"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
+; Optional DLSS NR adapter: first-party only, the NVIDIA runtime is never packaged.
+Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_dlssnr\foundation_dlssnr_adapter.dll"; DestDir: "{app}\tools\hdr_enhanced\nvidia_dlssnr"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
+Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_dlssnr\NVIDIA-DLSS-LICENSE.txt"; DestDir: "{app}\tools\hdr_enhanced\nvidia_dlssnr"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 
 ; Portable scripts (will be deleted during install, but needed for layout)
 Source: "{#MySourceDir}\install_portable.bat"; DestDir: "{app}"; Flags: ignoreversion; Components: application

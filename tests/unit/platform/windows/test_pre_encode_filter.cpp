@@ -303,4 +303,81 @@ namespace {
     EXPECT_EQ(second.frame.format, DXGI_FORMAT_R16G16B16A16_FLOAT);
     EXPECT_EQ(second.frame.semantic.source_generation, 12u);
   }
+  TEST(PreEncodeFilter, NrBackendWithoutComponentDegradesToIdentityPassthrough) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+    auto filter = platf::dxgi::make_pre_encode_filter(
+      platf::pre_encode_filter_e::external_sdr_to_sdr_nr,
+      d3d.device.get(),
+      d3d.context.get(),
+      std::filesystem::path(FAKE_TRUEHDR_ADAPTER_PATH).parent_path() / "foundation_dlssnr_adapter.dll",
+      {},
+      "alkaidlab.nvidia_dlssnr");
+    ASSERT_TRUE(filter);
+    EXPECT_TRUE(filter->degraded());
+    EXPECT_EQ(filter->backend_name(), "identity_sdr_passthrough");
+
+    auto input = make_white_input(d3d.device.get(), 4, 4);
+    ASSERT_TRUE(input.texture);
+    const platf::dxgi::gpu_frame_view_t view {
+      .texture = input.texture.get(),
+      .srv = input.srv.get(),
+      .format = DXGI_FORMAT_B8G8R8A8_UNORM,
+      .semantic = {
+        .domain = platf::frame_domain_e::sdr_rec709,
+        .encoding = platf::pixel_encoding_class_e::unorm8,
+        .reference_white_nits = 80.0f,
+        .borrowed = false,
+        .source_generation = 21,
+      },
+      .width = 4,
+      .height = 4,
+    };
+
+    // The fallback is a zero-copy passthrough: the same SDR view comes back
+    // untouched so a degraded session keeps encoding captured frames as-is.
+    const auto result = filter->process(view);
+    ASSERT_EQ(result.status, platf::dxgi::filter_status_e::ready);
+    EXPECT_EQ(result.frame.texture, view.texture);
+    EXPECT_EQ(result.frame.srv, view.srv);
+    EXPECT_EQ(result.frame.format, DXGI_FORMAT_B8G8R8A8_UNORM);
+    EXPECT_EQ(result.frame.semantic.domain, platf::frame_domain_e::sdr_rec709);
+    EXPECT_EQ(result.frame.semantic.encoding, platf::pixel_encoding_class_e::unorm8);
+    EXPECT_FALSE(result.frame.semantic.borrowed);
+    EXPECT_EQ(result.frame.semantic.source_generation, 21u);
+  }
+
+  TEST(PreEncodeFilter, NrIdentityFallbackStillValidatesTheInputContract) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+    auto filter = platf::dxgi::make_pre_encode_filter(
+      platf::pre_encode_filter_e::external_sdr_to_sdr_nr,
+      d3d.device.get(),
+      d3d.context.get(),
+      std::filesystem::path(FAKE_TRUEHDR_ADAPTER_PATH).parent_path() / "foundation_dlssnr_adapter.dll",
+      {},
+      "alkaidlab.nvidia_dlssnr");
+    ASSERT_TRUE(filter);
+
+    auto input = make_white_input(d3d.device.get(), 4, 4);
+    ASSERT_TRUE(input.texture);
+    platf::dxgi::gpu_frame_view_t view {
+      .texture = input.texture.get(),
+      .srv = input.srv.get(),
+      .format = DXGI_FORMAT_B8G8R8A8_UNORM,
+      .semantic = {
+        .domain = platf::frame_domain_e::sdr_rec709,
+        .encoding = platf::pixel_encoding_class_e::unorm8,
+        .reference_white_nits = 80.0f,
+        .borrowed = true,
+        .source_generation = 22,
+      },
+      .width = 4,
+      .height = 4,
+    };
+
+    const auto result = filter->process(view);
+    EXPECT_EQ(result.status, platf::dxgi::filter_status_e::failed);
+    EXPECT_EQ(result.reason, "input_contract_mismatch");
+  }
 }  // namespace

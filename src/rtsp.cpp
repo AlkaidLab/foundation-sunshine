@@ -1523,6 +1523,9 @@ namespace rtsp_stream {
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     // Set inside the SDP parse below; consumed by the dynamic HDR selection.
     bool post_process_hdr_active = false;
+    // SDR-wire neural filter; declared unconditionally so the policy resolve
+    // below compiles on every platform.
+    bool post_process_nr_active = false;
     auto getArg = [&args](std::string_view key) {
       return util::from_view(args.at(key));
     };
@@ -1640,9 +1643,33 @@ namespace rtsp_stream {
         };
         monitor.hdr_backend = session.hdr_backend;
       }
+      // The neural filter is SDR-wire only: the encoded pixels stay in the
+      // existing SDR color pipeline, so an HDR client request skips it.
+      if (monitor.dynamicRange == 0) {
+        post_process_nr_active = session.dlssnr_params.enabled && static_cast<bool>(session.dlssnr_backend);
+      }
+      if (!post_process_nr_active) session.dlssnr_backend.reset();
+      if (post_process_nr_active) {
+        monitor.pre_encode_filter = platf::pre_encode_filter_e::external_sdr_to_sdr_nr;
+        monitor.pre_encode_filter_config = {
+          .contrast = 0.0f,
+          .saturation = 0.0f,
+          .middle_gray_nits = 50.0f,
+          .peak_nits = 1000.0f,
+          .nr_intensity = session.dlssnr_params.intensity,
+          .nr_local_tone_strength = session.dlssnr_params.local_tone_strength,
+          .nr_local_structure_strength = session.dlssnr_params.local_structure_strength,
+          .nr_skin_structure_strength = session.dlssnr_params.skin_structure_strength,
+          .nr_style = session.dlssnr_params.style,
+          .nr_motion_quality = session.dlssnr_params.motion_quality,
+          .nr_auto_mask = session.dlssnr_params.auto_mask,
+          .nr_ui_correction = session.dlssnr_params.ui_correction,
+        };
+        monitor.hdr_backend = session.dlssnr_backend;
+      }
 #endif
       monitor.frame_pipeline_policy =
-        platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active);
+        platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active, post_process_nr_active);
       monitor.frame_pipeline_policy_resolved = true;
 #ifdef _WIN32
       // Publish the resolved policy on the launch session so display

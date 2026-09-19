@@ -2,6 +2,7 @@ import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
 import { deepClone, formatError } from '../utils/helpers.js';
 import { normalizePerAppGamepadMode } from '../utils/gamepadModes.js';
+import { normalizeDlssnrConfig } from '../utils/dlssnr.js';
 
 const cloneData = deepClone;
 const normalizeAppName = (name) => String(name || '').trim().toLowerCase();
@@ -220,6 +221,7 @@ export class AppService {
         'middle-gray': Math.max(10, Math.min(100, Number(app['rtx-hdr']?.['middle-gray']) || 50)),
         'peak-nits': Math.max(400, Math.min(1000, Number(app['rtx-hdr']?.['peak-nits']) || 1000)),
       },
+      dlssnr: normalizeDlssnrConfig(app.dlssnr),
       'image-path': app['image-path']?.trim() || '',
       'working-dir': app['working-dir']?.trim() || ''
     };

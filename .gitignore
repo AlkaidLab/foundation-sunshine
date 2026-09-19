@@ -75,7 +75,10 @@ webhook_auth.json.bak
 webhook_auth.json.bak.tmp
 
 # Dev notes (analysis docs, guide generation, images)
-_dev_notes/
+# Tracked by exception: the DLSS NR implementation design doc is handed over
+# across machines via the branch itself.
+_dev_notes/*
+!_dev_notes/dlssnr-pre-encode-filter-design.md
 _draft/
 instructions/
 skills/

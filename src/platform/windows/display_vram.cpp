@@ -1302,17 +1302,23 @@ namespace platf::dxgi {
       display = nullptr;
 
       if (config.pre_encode_filter != pre_encode_filter_e::none) {
-        const bool hdr_output =
-          format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
-        if (!hdr_output) {
-          BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
-          return -1;
+        // Only the SDR-to-HDR kind feeds the synthetic-HDR wire, which is
+        // defined for 10-bit HDR encoder surfaces. The SDR-to-SDR neural kind
+        // writes back into the regular SDR color pipeline and accepts any
+        // encoder surface.
+        if (config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_hdr) {
+          const bool hdr_output =
+            format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+          if (!hdr_output) {
+            BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
+            return -1;
+          }
         }
         const auto &contract = config.effective_frame_pipeline_policy().capture;
         if (contract.required_domain != frame_domain_e::sdr_rec709 ||
             contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
             !contract.require_private_handoff) {
-          BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
+          BOOST_LOG(error) << "Pre-encode filter requires a private SDR UNORM capture contract"sv;
           return -1;
         }
         pre_encode_filter = make_pre_encode_filter(
@@ -1321,12 +1327,14 @@ namespace platf::dxgi {
           device_ctx.get(),
           config.hdr_backend ? config.hdr_backend->path : std::filesystem::path {},
           config.pre_encode_filter_config,
-          config.hdr_backend ? config.hdr_backend->id : std::string_view {});
+          config.hdr_backend ? config.hdr_backend->id : std::string_view {},
+          config.hdr_backend ? config.hdr_backend->runtime_digest : std::string_view {});
         if (!pre_encode_filter) {
           BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
           return -1;
         }
         hdr_backend = config.hdr_backend;
+        nr_filter_active = config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_sdr_nr;
         filter_capture_contract = contract;
       }
 
@@ -1738,10 +1746,13 @@ namespace platf::dxgi {
     update_synthetic_hdr_runtime_status(
       bool processed_frame,
       std::string_view frame_failure = {}) {
+      auto &reported_backend = nr_filter_active ? runtime_status.nr_backend : runtime_status.synthetic_hdr_backend;
+      auto &reported_state = nr_filter_active ? runtime_status.nr_state : runtime_status.synthetic_hdr_state;
+      auto &reported_reason = nr_filter_active ? runtime_status.nr_failure_reason : runtime_status.synthetic_hdr_failure_reason;
       if (!pre_encode_filter) {
-        runtime_status.synthetic_hdr_backend = "none";
-        runtime_status.synthetic_hdr_state = "disabled";
-        runtime_status.synthetic_hdr_failure_reason.clear();
+        reported_backend = "none";
+        reported_state = "disabled";
+        reported_reason.clear();
         return;
       }
 
@@ -1752,14 +1763,12 @@ namespace platf::dxgi {
       const std::string reason = frame_failure.empty()
                                    ? std::string { pre_encode_filter->failure_reason() }
                                    : std::string { frame_failure };
-      if (runtime_status.synthetic_hdr_backend == backend &&
-          runtime_status.synthetic_hdr_state == state &&
-          runtime_status.synthetic_hdr_failure_reason == reason) {
+      if (reported_backend == backend && reported_state == state && reported_reason == reason) {
         return;
       }
-      runtime_status.synthetic_hdr_backend = backend;
-      runtime_status.synthetic_hdr_state = state;
-      runtime_status.synthetic_hdr_failure_reason = reason;
+      reported_backend = backend;
+      reported_state = state;
+      reported_reason = reason;
       ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 
@@ -1833,6 +1842,7 @@ namespace platf::dxgi {
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
     boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    bool nr_filter_active = false;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
     texture2d_t filter_handoff_texture;

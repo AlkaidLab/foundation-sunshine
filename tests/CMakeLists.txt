@@ -92,6 +92,8 @@ if (WIN32)
             ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_backend_factory.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/truehdr_filter.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/dlssnr_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_loader.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/pre_encode_filter_test_stubs.cpp
             ${PRE_ENCODE_FILTER_TEST_SOURCE})
     target_include_directories(pre_encode_filter_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -109,6 +111,20 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
     add_test(NAME pre_encode_filter_unit_tests COMMAND pre_encode_filter_unit_tests)
+
+    if (SUNSHINE_DLSSNR_AVAILABLE)
+        # Hardware/runtime are supplied explicitly; do not add to ordinary CTest.
+        get_target_property(_nr_filter_sources pre_encode_filter_unit_tests SOURCES)
+        list(REMOVE_ITEM _nr_filter_sources "${PRE_ENCODE_FILTER_TEST_SOURCE}")
+        add_executable(dlssnr_pipeline_smoke ${_nr_filter_sources}
+                ${CMAKE_SOURCE_DIR}/tests/tools/dlssnr_pipeline_smoke.cpp)
+        target_include_directories(dlssnr_pipeline_smoke PRIVATE "${CMAKE_SOURCE_DIR}" "${DLSSNR_TRUST_INCLUDE}")
+        target_compile_definitions(dlssnr_pipeline_smoke PRIVATE SUNSHINE_DLSSNR_ADAPTER
+                SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
+        target_link_libraries(dlssnr_pipeline_smoke Boost::log Boost::thread d3d11 d3dcompiler dxgi bcrypt)
+        set_target_properties(dlssnr_pipeline_smoke PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+        add_dependencies(dlssnr_pipeline_smoke sunshine_dlssnr_adapter)
+    endif ()
 
     add_library(fake_truehdr_adapter SHARED
             ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_adapter.cpp)
