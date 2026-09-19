@@ -594,6 +594,7 @@ namespace stream {
 
     // 添加客户端名称字段
     std::string client_name;
+    std::string client_gamepad;
     std::string client_cert_uuid;
     bool use_vdd {false};
     int custom_screen_mode {-1};
@@ -4347,7 +4348,7 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
-      session.input = input::alloc(session.mail, session.launch_session_id);
+      session.input = input::alloc(session.mail, session.launch_session_id, session.client_gamepad);
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
@@ -4505,6 +4506,7 @@ namespace stream {
 
       // 设置客户端名称
       session->client_name = launch_session.client_name;
+      session->client_gamepad = launch_session.client_gamepad;
       session->client_cert_uuid = launch_session.client_cert_uuid;
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;

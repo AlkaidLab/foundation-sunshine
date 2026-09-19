@@ -26,7 +26,7 @@ namespace input {
   probe_gamepads();
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id);
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad);
 
   /**
    * @brief Check whether this session currently owns an allocated DualSense.

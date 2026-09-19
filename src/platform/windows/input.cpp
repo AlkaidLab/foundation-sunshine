@@ -526,23 +526,6 @@ namespace platf {
                     << "; active virtual controllers are unchanged"sv;
   }
 
-  // Client-declared gamepad type for the in-flight session, published at
-  // /launch time (see nvhttp.cpp). Empty = undeclared.
-  static std::mutex client_gamepad_pref_mutex;
-  static std::string client_gamepad_pref;
-
-  void
-  set_client_gamepad_pref(std::string pref) {
-    std::lock_guard lock(client_gamepad_pref_mutex);
-    client_gamepad_pref = std::move(pref);
-  }
-
-  static std::string
-  get_client_gamepad_pref() {
-    std::lock_guard lock(client_gamepad_pref_mutex);
-    return client_gamepad_pref;
-  }
-
   static int
   effective_gamepad_mode() {
     const auto app_mode = current_gamepad_mode.load(std::memory_order_relaxed);
@@ -1955,7 +1938,8 @@ namespace platf {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view client_gamepad) {
     auto raw = (input_raw_t *) input.get();
 
     // Component files may have been installed while Sunshine stayed running.
@@ -1964,10 +1948,9 @@ namespace platf {
     const bool ds5_available = raw->ds5_sidecar && ds5::component_available();
     // Client-declared preference (Sunshine /launch extension) outranks the
     // per-app and global host-side selection while client_gamepad_override is on.
-    const auto client_pref = get_client_gamepad_pref();
-    const bool client_declared = !client_pref.empty() && config::input.client_gamepad_override;
+    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
     auto gamepad_mode = client_declared
-      ? gamepad_mode_from_preference(client_pref)
+      ? gamepad_mode_from_preference(client_gamepad)
       : effective_gamepad_mode();
     const auto per_app_override = !client_declared && current_gamepad_mode.load(std::memory_order_relaxed) != 0;
     const char *selection_source = client_declared ? "client selection" : (per_app_override ? "per-app selection" : "global selection");
@@ -2632,7 +2615,7 @@ namespace platf {
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view client_gamepad) {
     platform_caps::caps_t caps = 0;
 
     // We support controller touchpad input as long as we're not emulating X360
@@ -2641,10 +2624,9 @@ namespace platf {
     }
 
     const auto ds5_settings = ds5_config::current();
-    const auto client_pref = get_client_gamepad_pref();
-    const bool client_declared = !client_pref.empty() && config::input.client_gamepad_override;
+    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
     const auto gamepad_mode = client_declared
-      ? gamepad_mode_from_preference(client_pref)
+      ? gamepad_mode_from_preference(client_gamepad)
       : effective_gamepad_mode();
     if (gamepad_mode == 4 && ds5_settings.audio_haptics &&
         ds5::refresh_component_availability()) {

@@ -52,11 +52,6 @@ namespace platf {
   }
 
   void
-  set_client_gamepad_pref(std::string pref) {
-    // Client-declared gamepad selection only overrides the Windows ViGEm backend.
-  }
-
-  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     platf::mouse::move(raw, deltaX, deltaY);
@@ -121,7 +116,8 @@ namespace platf {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view) {
     auto raw = (input_raw_t *) input.get();
     return platf::gamepad::alloc(raw, id, metadata, feedback_queue);
   }
@@ -162,7 +158,7 @@ namespace platf {
   }
 
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view) {
     platform_caps::caps_t caps = 0;
     // TODO: if has_uinput
     caps |= platform_caps::pen_touch;

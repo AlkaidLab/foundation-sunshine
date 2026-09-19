@@ -169,7 +169,8 @@ namespace input {
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
-      std::uint64_t session_id):
+      std::uint64_t session_id,
+      std::string client_gamepad):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
@@ -177,6 +178,7 @@ namespace input {
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
         session_id {session_id},
+        client_gamepad {std::move(client_gamepad)},
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
@@ -193,6 +195,7 @@ namespace input {
     platf::feedback_queue_t feedback_queue;
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
+    std::string client_gamepad;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -1026,7 +1029,8 @@ namespace input {
     }
 
     // Allocate a new gamepad
-    if (platf::alloc_gamepad(platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue)) {
+    if (platf::alloc_gamepad(
+          platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue, input->client_gamepad)) {
       free_id(gamepadMask, id);
       return;
     }
@@ -1372,7 +1376,8 @@ namespace input {
         return;
       }
 
-      if (platf::alloc_gamepad(platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue)) {
+      if (platf::alloc_gamepad(
+            platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
         return;
       }
@@ -2046,12 +2051,13 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
-      session_id);
+      session_id,
+      std::move(client_gamepad));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

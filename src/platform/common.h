@@ -14,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 
 // lib includes
 #include <boost/core/noncopyable.hpp>
@@ -1103,14 +1104,6 @@ namespace platf {
    */
   void
   set_global_gamepad_mode(std::string_view preference);
-  /**
-   * @brief Publish the client-declared controller type for the upcoming session.
-   * @param pref Empty = undeclared (host-side selection chain applies),
-   *             otherwise one of: auto, x360, ds4, ds5. Consumed per gamepad
-   *             allocation while the session streams; re-set on every launch.
-   */
-  void
-  set_client_gamepad_pref(std::string pref);
   void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void
@@ -1200,10 +1193,12 @@ namespace platf {
    * @param id The gamepad ID.
    * @param metadata Controller metadata from client (empty if none provided).
    * @param feedback_queue The queue for posting messages back to the client.
+   * @param client_gamepad Client-declared gamepad type for this session, or empty when undeclared.
    * @return 0 on success.
    */
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue);
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view client_gamepad);
   void
   free_gamepad(input_t &input, int nr);
   /**
@@ -1217,10 +1212,11 @@ namespace platf {
 
   /**
    * @brief Get the supported platform capabilities to advertise to the client.
+   * @param client_gamepad Client-declared gamepad type for this session, or empty when undeclared.
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities();
+  get_capabilities(std::string_view client_gamepad);
 
 #define SERVICE_NAME "Sunshine"
 #define SERVICE_TYPE "_nvstream._tcp"
