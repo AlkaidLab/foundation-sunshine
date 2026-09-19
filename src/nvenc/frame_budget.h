@@ -30,16 +30,18 @@ namespace nvenc {
   };
 
   /**
-   * @brief Estimate whether `configured_preset` can keep up with the session framerate
+   * @brief Evaluate whether `configured_preset` can keep up with the session framerate
    *        and lower it if it cannot. Pure function, no hardware access.
    * @param configured_preset NVENC performance preset 1-7.
    * @param width Encode width in pixels.
    * @param height Encode height in pixels.
    * @param fps Effective stream framerate.
    * @param num_engines Number of NVENC engines reported by the driver (>=1).
+   * @param guard_enabled When false the configured preset is kept and the estimate
+   *        fields describe it; the budget fields are still computed for reporting.
    */
   frame_budget_verdict
-  evaluate_frame_budget(int configured_preset, int width, int height, double fps, int num_engines);
+  evaluate_frame_budget(int configured_preset, int width, int height, double fps, int num_engines, bool guard_enabled);
 
   /**
    * @brief Publish the verdict of the latest real (non-probe) session so that the

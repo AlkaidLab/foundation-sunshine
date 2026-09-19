@@ -38,14 +38,8 @@ namespace nvenc {
     create_encoder(const nvenc_config &config,
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &sunshine_colorspace,
-      platf::pix_fmt_e sunshine_buffer_format) override;
-
-    std::optional<frame_budget_verdict>
-    take_frame_budget_verdict() override {
-      auto verdict = std::move(pending_frame_budget_verdict);
-      pending_frame_budget_verdict.reset();
-      return verdict;
-    }
+      platf::pix_fmt_e sunshine_buffer_format,
+      bool is_probe) override;
 
     void
     destroy_encoder() override;
@@ -144,9 +138,6 @@ namespace nvenc {
     // HDR metadata support
     std::optional<nvenc_hdr_metadata> hdr_metadata;
     int video_format = 0;  // 0 = H.264, 1 = HEVC, 2 = AV1
-
-    // Frame budget guard evaluation from the last create_encoder() call
-    std::optional<frame_budget_verdict> pending_frame_budget_verdict;
 
     // Per-frame HDR luminance stats for dynamic metadata
     platf::hdr_frame_luminance_stats_t luminance_stats;

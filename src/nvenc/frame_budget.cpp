@@ -32,7 +32,7 @@ namespace nvenc {
   }  // namespace
 
   frame_budget_verdict
-  evaluate_frame_budget(int configured_preset, int width, int height, double fps, int num_engines) {
+  evaluate_frame_budget(int configured_preset, int width, int height, double fps, int num_engines, bool guard_enabled) {
     frame_budget_verdict verdict;
     verdict.configured_preset = configured_preset;
     verdict.effective_preset = configured_preset;
@@ -55,6 +55,7 @@ namespace nvenc {
     const double mpix = static_cast<double>(width) * height / 1e6;
     const double speedup = num_engines > 1 ? multi_engine_speedup : 1.0;
     verdict.configured_estimated_ms = encode_ms_per_mpix[configured_preset] * mpix / speedup;
+    verdict.estimated_ms = verdict.configured_estimated_ms;
 
     int chosen = 1;
     for (int preset = configured_preset; preset >= 1; --preset) {
@@ -72,6 +73,13 @@ namespace nvenc {
     }
     if (verdict.estimated_ms > verdict.budget_ms) {
       verdict.budget_exceeded_at_floor = true;
+    }
+    if (!guard_enabled) {
+      // Guard disabled: the configured preset stands; still report the budget
+      // numbers so the config API describes the session truthfully.
+      verdict.clamped = false;
+      verdict.effective_preset = verdict.configured_preset;
+      verdict.estimated_ms = verdict.configured_estimated_ms;
     }
     return verdict;
   }
