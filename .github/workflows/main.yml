@@ -16,6 +16,10 @@ on:
       - master
   workflow_dispatch:
     inputs:
+      gui_run_id:
+        description: 'Optional successful Panel artifact run; its commit must match the Panel submodule'
+        type: string
+        default: ''
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -204,6 +208,16 @@ jobs:
           restore-keys: |
             ccache-windows-
 
+      - name: Fetch paired GUI artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUI_RUN_ID: ${{ inputs.gui_run_id }}
+        run: |
+          ./scripts/fetch-paired-gui.ps1 -RunId $env:GUI_RUN_ID -Destination "$env:RUNNER_TEMP/paired-gui"
+          "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
+
       - name: Configure Windows
         id: configure_windows
         shell: msys2 {0}
@@ -233,10 +247,15 @@ jobs:
         run: |
           mkdir -p build
           ccache --zero-stats
+          gui_options=()
+          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
+            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          fi
           cmake \
             -B build \
             -G Ninja \
             -S . \
+            "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DBUILD_TESTS=ON \

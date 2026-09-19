@@ -2,6 +2,8 @@
 
 ## 2026-09-20：控制面板与首轮 review
 
+- 手动构建新增 `gui_run_id`，仅接受配套仓库成功的 build.yml run，且其 head_sha 必须等于主仓库提交的 Panel gitlink；下载同一 ZIP 内的 GUI/插件，经 `FETCH_GUI=OFF` + `GUI_DIR` 进入安装包。旧提交 artifact 拒绝测试通过，最新 artifact 的正向打包仍在验证。
+
 - 新增 smoke 的 `image output_dir --pan`：60 帧合成平移→停止的赛博朋克样张通过，输出逐帧 PNG 和本地 `build/dlssnr-visual/cyberpunk-motion.html` 对照。1280×720 wall 均值 11.461 ms（含同步/回读）；停止后的帧 58→59 平均 RGB 绝对差 0.063/255、最大通道差 10，不构成真实游戏运动质量结论。
 - 本地完整 Sunshine 与 test_sunshine 已编译，22 项 HdrEnhanced 配置测试通过（含 v1 槽位隔离回归）。
 - Windows 打包 CI 增加 NR adapter/许可证存在断言及 NVIDIA NR runtime 不进入 staging、Inno 编译列表、portable ZIP 的负向断言。
