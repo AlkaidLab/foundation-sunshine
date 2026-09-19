@@ -225,8 +225,9 @@ int
 wmain(int argc, wchar_t **argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   const bool benchmark = argc == 6 && std::wcscmp(argv[5], L"--benchmark") == 0;
-  if (argc != 2 && argc != 5 && argc != 7 && !benchmark) {
-    std::printf("usage: foundation_dlssnr_adapter_smoke.exe <runtime_dir> [width height frames [--benchmark | image output_dir]]\n");
+  const bool pan = argc == 8 && std::wcscmp(argv[7], L"--pan") == 0;
+  if (argc != 2 && argc != 5 && argc != 7 && !benchmark && !pan) {
+    std::printf("usage: foundation_dlssnr_adapter_smoke.exe <runtime_dir> [width height frames [--benchmark | image output_dir [--pan]]]\n");
     return 1;
   }
   if (argc >= 5) {
@@ -249,7 +250,7 @@ wmain(int argc, wchar_t **argv) {
   ComPtr<IWICImagingFactory> imaging;
   std::vector<uint32_t> source_image;
   std::filesystem::path image_output;
-  if (argc == 7) {
+  if (argc == 7 || pan) {
     if (FAILED(apartment.result) || FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&imaging)))) return 1;
     source_image = load_image(argv[5], imaging.Get());
@@ -329,7 +330,16 @@ wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
-    const auto input_pixels = source_image.empty() ? make_gradient_frame(frame) : source_image;
+    auto input_pixels = source_image.empty() ? make_gradient_frame(frame) : source_image;
+    if (pan) {
+      // Deterministic horizontal camera-like translation, followed by a hold.
+      // Clamp the newly exposed edge; this is synthetic motion, not gameplay.
+      const uint32_t shift = (frame < FRAMES / 2 ? frame : FRAMES / 2) * 2;
+      for (uint32_t y = 0; y < HEIGHT; ++y) for (uint32_t x = 0; x < WIDTH; ++x) {
+        const uint32_t sx = x + shift < WIDTH ? x + shift : WIDTH - 1;
+        input_pixels[y * WIDTH + x] = source_image[y * WIDTH + sx];
+      }
+    }
     auto input = upload_texture(device.get(), input_pixels);
     if (!input) {
       std::printf("FAIL: input upload failed on frame %u\n", frame);
@@ -376,6 +386,15 @@ wmain(int argc, wchar_t **argv) {
       std::printf("FAIL: black output on frame %u\n", frame);
       api->destroy(instance);
       return 1;
+    }
+    if (pan) {
+      const auto suffix = std::to_wstring(frame) + L".png";
+      if (!save_image(image_output / (L"input-" + suffix), input_pixels, imaging.Get()) ||
+          !save_image(image_output / (L"output-" + suffix), pixels, imaging.Get())) {
+        std::printf("FAIL: motion sequence output failed\n");
+        api->destroy(instance);
+        return 1;
+      }
     }
     if (!source_image.empty() && (frame == 0 || frame == FRAMES - 1)) {
       if (!save_image(image_output / (frame == 0 ? L"output-first.png" : L"output-last.png"), pixels, imaging.Get())) {

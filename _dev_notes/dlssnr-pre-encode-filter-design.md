@@ -2,6 +2,10 @@
 
 ## 2026-09-20：控制面板与首轮 review
 
+- 新增 smoke 的 `image output_dir --pan`：60 帧合成平移→停止的赛博朋克样张通过，输出逐帧 PNG 和本地 `build/dlssnr-visual/cyberpunk-motion.html` 对照。1280×720 wall 均值 11.461 ms（含同步/回读）；停止后的帧 58→59 平均 RGB 绝对差 0.063/255、最大通道差 10，不构成真实游戏运动质量结论。
+- 本地完整 Sunshine 与 test_sunshine 已编译，22 项 HdrEnhanced 配置测试通过（含 v1 槽位隔离回归）。
+- Windows 打包 CI 增加 NR adapter/许可证存在断言及 NVIDIA NR runtime 不进入 staging、Inno 编译列表、portable ZIP 的负向断言。
+
 - 配套 Panel PR #137：29 项 Rust 测试（26 项组件事务/完整性，3 项 schema）、5 项 renderer 文案测试及 Vite 构建通过。浏览器使用模拟 Tauri 后端验证 NR 导入、启用、应用设置跳转、占用锁及删除，并确认 HDR 保持启用；这不等于已安装服务的端到端串流验收。
 - review 修正：schema v1 只允许 RTX Video 进入 HDR 槽；本地 SDK 与自动下载使用相同 SHA-256 清单（正确 SDK configure 通过，篡改头文件 configure 拒绝）；create 用 RAII 清理异常路径，C++ 分配异常交由 ABI thunk 捕获。process/flush/destroy 内没有抛出型标准库分配，保留其 noexcept。
 - adapter 与 snippet 的显式 LoadLibraryEx 导入搜索仅允许 System32，不再搜索组件目录、应用目录或用户目录的未验证依赖。310.8.0.0 实测无需同目录 nvngx_dlss.dll。此限制不宣称覆盖 NVIDIA 驱动内部自行加载的所有模块。
