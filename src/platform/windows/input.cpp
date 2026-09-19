@@ -2618,16 +2618,17 @@ namespace platf {
   get_capabilities(std::string_view client_gamepad) {
     platform_caps::caps_t caps = 0;
 
-    // We support controller touchpad input as long as we're not emulating X360
-    if (effective_gamepad_mode() != 2) {
-      caps |= platform_caps::controller_touch;
-    }
-
-    const auto ds5_settings = ds5_config::current();
     const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
     const auto gamepad_mode = client_declared
       ? gamepad_mode_from_preference(client_gamepad)
       : effective_gamepad_mode();
+
+    // 与手柄分配使用同一会话选择；强制模拟 Xbox 360 时不声明触控板能力。
+    if (gamepad_mode != 2) {
+      caps |= platform_caps::controller_touch;
+    }
+
+    const auto ds5_settings = ds5_config::current();
     if (gamepad_mode == 4 && ds5_settings.audio_haptics &&
         ds5::refresh_component_availability()) {
       caps |= platform_caps::ds5_haptics_pcm;
