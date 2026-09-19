@@ -306,8 +306,6 @@ namespace nvhttp {
       if (!declared_gamepad.empty()) {
         BOOST_LOG(info) << "Client declared gamepad preference: "sv << declared_gamepad;
       }
-      // Publish for the input layer (gamepads arrive after the stream starts).
-      platf::set_client_gamepad_pref(launch_session->client_gamepad);
     }
     const auto hdr_capabilities = hdr::parse_client_display_capabilities(
       find_arg(args, "maxBrightness"),

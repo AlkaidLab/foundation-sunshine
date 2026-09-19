@@ -1179,7 +1179,7 @@ namespace rtsp_stream {
 
     // Tell the client about our supported features
     {
-      auto caps = (uint32_t) platf::get_capabilities();
+      auto caps = (uint32_t) platf::get_capabilities(session.client_gamepad);
       // Advertise clipboard sync only when the user opted in AND a user-session
       // GUI agent is currently subscribed; otherwise the client would attempt
       // sync into a black hole.
