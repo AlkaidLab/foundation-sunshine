@@ -13,11 +13,11 @@ if (TARGET sunshine_rtx_video_adapter)
           DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
           COMPONENT application)
 endif ()
-install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter/THIRD_PARTY_NOTICES.md"
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter/THIRD_PARTY_NOTICES.md"
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
         RENAME "RTX_VIDEO_THIRD_PARTY_NOTICES.md"
         COMPONENT application)
-install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/README.md"
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/README.md"
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
         COMPONENT application)
 

@@ -25,7 +25,7 @@ extern "C" {
 }
 
 struct AVPacket;
-namespace hdr_enhanced {
+namespace image_enhancement {
   struct backend_use_t;
 }
 
@@ -165,7 +165,7 @@ namespace video {
     bool frame_pipeline_policy_resolved = false;
     platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
     platf::pre_encode_filter_config_t pre_encode_filter_config;
-    boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    boost::shared_ptr<const image_enhancement::backend_use_t> hdr_backend;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {

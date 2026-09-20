@@ -11,7 +11,7 @@
 #include <d3dcompiler.h>
 #include <dxgi.h>
 
-#include "hdr_backend_factory.h"
+#include "image_enhancement/backend_factory.h"
 #include "pre_encode_filter_helpers.h"
 #include "src/logging_severity.h"
 
@@ -296,7 +296,7 @@ namespace platf::dxgi {
     }
     if (kind == pre_encode_filter_e::external_sdr_to_sdr_nr) {
       std::string failure;
-      auto primary = make_hdr_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
+      auto primary = make_enhancement_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
       auto fallback = std::make_unique<identity_sdr_filter_t>();
       if (!primary) {
         BOOST_LOG(warning) << "Neural enhancement backend unavailable: " << failure;
@@ -311,7 +311,7 @@ namespace platf::dxgi {
     if (kind == pre_encode_filter_e::external_sdr_to_hdr) {
       auto fallback = make_mock_filter(device, device_context);
       std::string failure;
-      auto primary = make_hdr_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
+      auto primary = make_enhancement_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
       if (!primary) {
         BOOST_LOG(warning) << "HDR enhancement backend unavailable: " << failure;
         if (!fallback) {

@@ -17,8 +17,8 @@ if (_dlssnr_mode STREQUAL "OFF" OR NOT WIN32)
     return()
 endif ()
 
-set(_dlssnr_source "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter")
-set(_dlssnr_build "${CMAKE_BINARY_DIR}/hdr_enhanced/nvidia_dlssnr_adapter")
+set(_dlssnr_source "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter")
+set(_dlssnr_build "${CMAKE_BINARY_DIR}/image_enhancement/nvidia_dlssnr_adapter")
 set(DLSSNR_ADAPTER_DLL "${_dlssnr_build}/Release/foundation_dlssnr_adapter.dll")
 set(DLSSNR_TRUST_INCLUDE "${CMAKE_BINARY_DIR}/generated/dlssnr")
 set(DLSSNR_TRUST_HEADER "${DLSSNR_TRUST_INCLUDE}/dlssnr_trust.h")
@@ -31,14 +31,14 @@ set(_dlssnr_adapter_sources
     "${_dlssnr_source}/include/nvof/nvOpticalFlowCommon.h"
     "${_dlssnr_source}/include/nvof/nvOpticalFlowD3D11.h"
     "${_dlssnr_source}/NVIDIA-OPTICAL-FLOW-NOTICES.txt"
-    "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h")
+    "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_abi.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${_dlssnr_adapter_sources})
 
 file(SHA256 "${_dlssnr_source}/CMakeLists.txt" _dlssnr_cmake_hash)
 file(SHA256 "${_dlssnr_source}/src/dlssnr_adapter.cpp" _dlssnr_source_hash)
 file(SHA256 "${_dlssnr_source}/ngx_sdk.cmake" _dlssnr_sdk_hash)
-file(SHA256 "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h" _dlssnr_abi_hash)
+file(SHA256 "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_abi.h" _dlssnr_abi_hash)
 string(SHA256 _dlssnr_inputs
     "${_dlssnr_cmake_hash}|${_dlssnr_source_hash}|${_dlssnr_abi_hash}|${_dlssnr_sdk_hash}|${SUNSHINE_DLSS_SDK_ROOT}")
 foreach (_dlssnr_input IN LISTS _dlssnr_adapter_sources)

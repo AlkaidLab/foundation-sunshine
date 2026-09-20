@@ -23,7 +23,7 @@ extern "C" {
 }
 
 #include "display.h"
-#include "src/hdr_enhanced/config.h"
+#include "src/image_enhancement/config.h"
 #include "display_cursor.h"
 #include "display_vram_internal.h"
 #include "misc.h"
@@ -1841,7 +1841,7 @@ namespace platf::dxgi {
     // amongst multiple hwdevice_t objects (and therefore multiple ID3D11Devices).
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
-    boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    boost::shared_ptr<const image_enhancement::backend_use_t> hdr_backend;
     bool nr_filter_active = false;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;

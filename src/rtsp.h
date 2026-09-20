@@ -14,7 +14,7 @@
 
 #include "crypto.h"
 #include "hdr/client_display_capabilities.h"
-#include "hdr_enhanced/config.h"
+#include "image_enhancement/config.h"
 #include "launch_session_manager.h"
 #include "src/platform/frame_contract.h"
 
@@ -92,9 +92,9 @@ namespace rtsp_stream {
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
     synthetic_hdr_config_t synthetic_hdr;
-    boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    boost::shared_ptr<const image_enhancement::backend_use_t> hdr_backend;
     dlssnr_config_t dlssnr_params;
-    boost::shared_ptr<const hdr_enhanced::backend_use_t> dlssnr_backend;
+    boost::shared_ptr<const image_enhancement::backend_use_t> dlssnr_backend;
 
     // Resolved frame-pipeline policy for this session, published by RTSP SETUP
     // so display preparation consumes the same decision as the capture/encode

@@ -153,11 +153,11 @@ DDA 采集 (BGRA8 sdr_rec709, keyed mutex)
 
 - `pre_encode_filter_helpers.h` 新增 `make_sdr_result(view, output_texture, output_srv)`：语义 = 拷贝 input.semantic 后强制 `domain=sdr_rec709, encoding=unorm8, borrowed=false`，format = 输出纹理实际格式。与 `make_scrgb_result` 并列。
 - 新增 `identity_sdr_filter_t`（~30 行，直接放 pre_encode_filter.cpp）：`process()` 原样返回输入 view（status=ready）——作为 NR 主 filter 的 failover 兜底，零拷贝。
-- `make_pre_encode_filter` 分发表（cpp:246-290）新增 `external_sdr_to_sdr_nr` 分支：primary = `hdr_enhanced::nvidia_dlssnr::make_filter(...)`（经 hdr_backend_factory），fallback = identity filter。
+- `make_pre_encode_filter` 分发表（cpp:246-290）新增 `external_sdr_to_sdr_nr` 分支：primary = `image_enhancement::dlss_nr::make_filter(...)`（经 image_enhancement/backend_factory），fallback = identity filter。
 
 ### C. adapter DLL（核心新增组件）
 
-目录 `src/platform/windows/hdr_enhanced/nvidia_dlssnr/`：
+目录 `src/platform/windows/image_enhancement/dlss_nr/`：
 
 ```
 adapter_abi.h                 C ABI（镜像 truehdr 模式）
@@ -205,7 +205,7 @@ dlssnr_filter.{h,cpp}         宿主侧 pre_encode_filter_t 实现（镜像 true
 
 ### E. 激活链路
 
-- `src/nvhttp.cpp` make_launch_session（283-290 后）：新增独立分支——`proc.get_app_dlssnr_config(appid)`（`process.h` 加接口，数据源 `app_t::dlssnr = std::optional<dlssnr_config_t>`，镜像 `app_t::rtx_hdr` 全链：process.h:75/115、process.cpp:504-516）→ enabled 且 `!enable_hdr`（SDR 专用，v1）→ `launch_session->dlssnr_backend = hdr_enhanced::manager().acquire_selected(NR_CAPABILITY)` + 填 `launch_session->dlssnr_params`。新增 launch_session_t 字段（rtsp.h，镜像 hdr_backend:82）。
+- `src/nvhttp.cpp` make_launch_session（283-290 后）：新增独立分支——`proc.get_app_dlssnr_config(appid)`（`process.h` 加接口，数据源 `app_t::dlssnr = std::optional<dlssnr_config_t>`，镜像 `app_t::rtx_hdr` 全链：process.h:75/115、process.cpp:504-516）→ enabled 且 `!enable_hdr`（SDR 专用，v1）→ `launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(NR_CAPABILITY)` + 填 `launch_session->dlssnr_params`。新增 launch_session_t 字段（rtsp.h，镜像 hdr_backend:82）。
 - `src/rtsp.cpp`（1579-1608）：`dynamicRange == 0` 分支新增：`nr_active = session.dlssnr_backend && app 配置 enabled` → `monitor.pre_encode_filter = external_sdr_to_sdr_nr`、`monitor.hdr_backend = session.dlssnr_backend`、`monitor.pre_encode_filter_config = session.dlssnr_params`、policy 用 `resolve_frame_pipeline_policy(0, false, nr_active)`。PQ/HLG 分支不触碰。
 - `src/video.cpp` strip_unusable_pre_encode_filter（3590-3607）：**零改动**——`disp.is_hdr()` 时摘除对 NR 同样正确（v1 明确只支持 SDR 显示器）；`supports_pre_encode_filter` 已由 display_vram_t=true 覆盖。
 
@@ -220,11 +220,11 @@ dlssnr_filter.{h,cpp}         宿主侧 pre_encode_filter_t 实现（镜像 true
   ```
   - v1 文件读取后自动迁移（selected_backend→hdr 槽）；写回一律 v2。
   - `runtime_sha256` 由控制面板导入时计算写入（泄露 DLL 无构建期已知哈希；文件内 pin 防导入后被换，威胁模型内自洽），`null` = 仅记录日志不 pin。adapter 哈希仍走构建期信任目录录（GenerateRtxVideoTrustHeader.cmake 扩展成双组件）。
-- `src/hdr_enhanced/config.{h,cpp}`：
+- `src/image_enhancement/config.{h,cpp}`：
   - 常量区加 `NVIDIA_DLSSNR_BACKEND/"alkaidlab.nvidia_dlssnr"`、adapter/runtime 文件名。
   - 新增能力槽概念：`backend_capability_e { hdr, nr }`；`acquire_selected(capability)`；`parse_settings` 校验两个已知 id、`selected` 槽结构；`impl_t::validate` 目录表驱动（`id → root/hdr_enhanced/<subdir>`），dlssnr 的 runtime 校验接受文件内 pin 或 null（null 时仅算哈希记录）。
-  - 现有 truehdr 单测（test_hdr_enhanced_config.cpp）补 v2 迁移用例。
-- `src/hdr_enhanced/api.cpp` + `confighttp.cpp`：
+  - 现有 truehdr 单测（test_image_enhancement_config.cpp）补 v2 迁移用例。
+- `src/image_enhancement/api.cpp` + `confighttp.cpp`：
   - `get_status` 的 `runtime["pipelines"]` 追加 nr_* 字段透传。
   - maintenance 路由正则泛化 `^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$`，id 白名单 = 已知 backend 集合；config/save 路由不变。
 - Tauri 控制面板：
