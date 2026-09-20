@@ -70,6 +70,22 @@ It uses minimal diagnostic P010 writes, not the production colour conversion;
 desktop capture, the real conversion path and network delivery remain outside
 its scope. No additional Flush was needed in this test.
 
+The production-path follow-up reproduced a rejected first frame: Desktop
+Duplication can return a nonblank cursor-only dummy before learning the capture
+format. Its unknown semantics cannot satisfy the real NR contract. Conversion
+now bypasses enhancement for these placeholders, retaining the normal startup
+video path until a real capture is available.
+
+`DlssNrHardware.ProductionConversionFirstEncodedPacket` tests this transition
+through the production shared-texture handoff, HDR conversion/downscale and
+NVENC code using synthetic pixels. `DlssNrHardware.DesktopCaptureFirstEncodedPacket`
+additionally requires `SUNSHINE_TEST_DLSSNR_CAPTURE=1`: it captures the already
+HDR desktop, encodes the initial frame, then requires a real frame to reach NR
+active and produce another packet. No image or encoded bytes are saved or sent.
+All three hardware tests passed locally after the placeholder fix. They do not
+start Moonlight or verify network delivery; the earlier live timeout still needs
+a client retest and long-session validation.
+
 Live Moonlight HEVC/PQ testing reached NR feature creation but did not receive
 the first video frame before the client timeout. End-to-end HDR streaming and
 30-minute stability are therefore **not yet validated**. Keep this feature

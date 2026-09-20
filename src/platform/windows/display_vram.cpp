@@ -502,7 +502,10 @@ namespace platf::dxgi {
         DXGI_FORMAT conversion_input_format = img.format;
         auto conversion_input_semantic = img.frame_desc;
 
-        if (pre_encode_filter) {
+        // Desktop Duplication may initially provide a cursor-only dummy whose
+        // capture format/domain is not known yet. Encode that startup frame
+        // normally; only real captured frames may enter the enhancement model.
+        if (pre_encode_filter && !img.dummy) {
           auto source_contract = filter_capture_contract;
           source_contract.require_private_handoff = false;
           if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {

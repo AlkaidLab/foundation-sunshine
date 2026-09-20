@@ -5,8 +5,12 @@
 #include "../tests_common.h"
 
 #ifdef _WIN32
+  #include "src/image_enhancement/config.h"
   #include "src/nvenc/win/nvenc_dynamic_factory.h"
+  #include "src/platform/windows/display.h"
+  #include "src/platform/windows/display_vram_internal.h"
   #include "src/platform/windows/pre_encode_filter.h"
+  #include <boost/make_shared.hpp>
   #include <cstdlib>
   #include <cstring>
   #include <d3dcompiler.h>
@@ -93,5 +97,150 @@ RWTexture2D<unorm float2> uv : register(u1);
       EXPECT_TRUE(packet.idr);
     }
   }
+}
+
+namespace platf::dxgi {
+  int
+  init();  // Compile the same conversion shaders used by the host.
+}
+namespace {
+  class SyntheticHdrDisplay: public platf::dxgi::display_vram_t {
+  public:
+    platf::capture_e
+    snapshot(const pull_free_image_cb_t &, std::shared_ptr<platf::img_t> &,
+      std::chrono::milliseconds, bool) override { return platf::capture_e::timeout; }
+    platf::capture_e
+    release_snapshot() override { return platf::capture_e::ok; }
+    bool
+    is_hdr() override { return true; }
+    bool
+    get_hdr_metadata(SS_HDR_METADATA &metadata) override {
+      metadata = {};
+      metadata.maxDisplayLuminance = 1000;
+      return true;
+    }
+  };
+}  // namespace
+
+TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
+  const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
+  const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
+  if (!adapter_path || !digest) {
+    GTEST_SKIP() << "Explicit verified NR runtime required";
+  }
+  ASSERT_EQ(platf::dxgi::init(), 0);
+  auto display = std::make_shared<SyntheticHdrDisplay>();
+  display->width = display->width_before_rotation = display->env_width = 3840;
+  display->height = display->height_before_rotation = display->env_height = 2160;
+  display->offset_x = display->offset_y = 0;
+  display->capture_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+  display->capture_linear_gamma = true;
+  ASSERT_HRESULT_SUCCEEDED(CreateDXGIFactory1(IID_IDXGIFactory1, reinterpret_cast<void **>(&display->factory)));
+  ASSERT_HRESULT_SUCCEEDED(display->factory->EnumAdapters1(0, &display->adapter));
+  ASSERT_HRESULT_SUCCEEDED(D3D11CreateDevice(display->adapter.get(), D3D_DRIVER_TYPE_UNKNOWN,
+    nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &display->device, nullptr, &display->device_ctx));
+
+  video::config_t config { .width = 1920, .height = 1080, .framerate = 60, .bitrate = 20000 };
+  config.videoFormat = 1;
+  config.dynamicRange = 1;
+  config.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
+  config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(1, false, true);
+  config.frame_pipeline_policy_resolved = true;
+  auto backend = boost::make_shared<image_enhancement::backend_use_t>();
+  backend->id = "alkaidlab.nvidia_dlssnr";
+  backend->path = std::filesystem::path(reinterpret_cast<const char8_t *>(adapter_path));
+  backend->runtime_digest = digest;
+  config.hdr_backend = backend;
+  display->capture_contract = config.frame_pipeline_policy.capture;
+  auto encoder = display->make_nvenc_encode_device(platf::pix_fmt_e::p010, config);
+  ASSERT_TRUE(encoder);
+  ASSERT_TRUE(encoder->init_encoder(config, { video::colorspace_e::bt2020, false, 10 }));
+  auto frame = display->alloc_img();
+  ASSERT_TRUE(frame);
+  ASSERT_EQ(display->complete_img(frame.get(), true), 0);
+  auto &image = static_cast<platf::dxgi::img_d3d_t &>(*frame);
+  // DDX marks a cursor-only startup placeholder nonblank but leaves its frame
+  // semantics unknown. It must encode without entering the HDR NR contract.
+  image.blank = false;
+  ASSERT_EQ(encoder->convert(image), 0);
+  ASSERT_FALSE(encoder->nvenc->encode_frame(0, true).data.empty());
+  ASSERT_EQ(display->complete_img(frame.get(), false), 0);
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_EQ(image.capture_mutex->AcquireSync(0, 5000), S_OK);
+    const float colour[] { 0.25f, 1.0f, 4.0f, 1.0f };
+    display->device_ctx->ClearRenderTargetView(image.capture_rt.get(), colour);
+    ASSERT_HRESULT_SUCCEEDED(image.capture_mutex->ReleaseSync(0));
+    ASSERT_EQ(encoder->convert(image), 0);
+    const auto packet = encoder->nvenc->encode_frame(i + 1, i == 0);
+    ASSERT_FALSE(packet.data.empty());
+    if (i == 0) { EXPECT_TRUE(packet.idr); }
+  }
+  const auto statuses = video::get_hdr_pipeline_statuses();
+  ASSERT_EQ(statuses.size(), 1u);
+  EXPECT_EQ(statuses[0].nr_state, "active");
+  EXPECT_EQ(statuses[0].hdr_mode, "pq");
+}
+
+TEST(DlssNrHardware, DesktopCaptureFirstEncodedPacket) {
+  const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
+  const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
+  const auto capture = std::getenv("SUNSHINE_TEST_DLSSNR_CAPTURE");
+  if (!adapter_path || !digest || !capture || std::strcmp(capture, "1") != 0) {
+    GTEST_SKIP() << "Explicit desktop capture opt-in and verified NR runtime required";
+  }
+  ASSERT_EQ(platf::dxgi::init(), 0);
+  video::config_t config { .width = 1920, .height = 1080, .framerate = 60, .bitrate = 20000 };
+  config.videoFormat = 1;
+  config.dynamicRange = 1;
+  config.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
+  config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(1, false, true);
+  config.frame_pipeline_policy_resolved = true;
+  auto backend = boost::make_shared<image_enhancement::backend_use_t>();
+  backend->id = "alkaidlab.nvidia_dlssnr";
+  backend->path = std::filesystem::path(reinterpret_cast<const char8_t *>(adapter_path));
+  backend->runtime_digest = digest;
+  config.hdr_backend = backend;
+  auto display = std::make_shared<platf::dxgi::display_ddup_vram_t>();
+  ASSERT_EQ(display->init(config, ""), 0);
+  ASSERT_TRUE(display->is_hdr()) << "This diagnostic requires an already HDR desktop";
+  std::shared_ptr<platf::img_t> frame;
+  const auto pull = [&](std::shared_ptr<platf::img_t> &free) {
+    free = display->alloc_img();
+    return static_cast<bool>(free);
+  };
+  for (int attempt = 0; attempt < 20 && !frame; ++attempt) {
+    const auto status = display->snapshot(pull, frame, std::chrono::milliseconds(50), false);
+    display->release_snapshot();
+    ASSERT_TRUE(status == platf::capture_e::ok || status == platf::capture_e::timeout);
+  }
+  ASSERT_TRUE(frame);
+  auto encoder = display->make_nvenc_encode_device(platf::pix_fmt_e::p010, config);
+  ASSERT_TRUE(encoder);
+  ASSERT_TRUE(encoder->init_encoder(config, { video::colorspace_e::bt2020, false, 10 }));
+  ASSERT_EQ(encoder->convert(*frame), 0);
+  const auto packet = encoder->nvenc->encode_frame(0, true);
+  ASSERT_FALSE(packet.data.empty());
+  EXPECT_TRUE(packet.idr);
+  const auto statuses = video::get_hdr_pipeline_statuses();
+  ASSERT_EQ(statuses.size(), 1u);
+  const auto &image = static_cast<const platf::dxgi::img_d3d_t &>(*frame);
+  EXPECT_EQ(statuses[0].nr_state, image.dummy ? "warming_up" : "active");
+  EXPECT_EQ(statuses[0].hdr_mode, "pq");
+  // A startup placeholder must not prevent subsequent real HDR frames from
+  // enabling NR. Keep the capture deadline bounded and do not inject UI input.
+  for (int attempt = 0; attempt < 40 && static_cast<const platf::dxgi::img_d3d_t &>(*frame).dummy; ++attempt) {
+    std::shared_ptr<platf::img_t> next;
+    const auto status = display->snapshot(pull, next, std::chrono::milliseconds(50), false);
+    display->release_snapshot();
+    ASSERT_TRUE(status == platf::capture_e::ok || status == platf::capture_e::timeout);
+    if (status == platf::capture_e::ok && next) frame = std::move(next);
+  }
+  ASSERT_FALSE(static_cast<const platf::dxgi::img_d3d_t &>(*frame).dummy) << "No real desktop frame before the diagnostic deadline";
+  ASSERT_EQ(encoder->convert(*frame), 0);
+  ASSERT_FALSE(encoder->nvenc->encode_frame(1, false).data.empty());
+  const auto active_statuses = video::get_hdr_pipeline_statuses();
+  ASSERT_EQ(active_statuses.size(), 1u);
+  EXPECT_EQ(active_statuses[0].nr_state, "active");
+  // Encoded bytes stay in memory and are discarded with the test process.
 }
 #endif
