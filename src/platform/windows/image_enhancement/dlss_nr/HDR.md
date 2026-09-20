@@ -51,6 +51,14 @@ The opt-in smoke test also accepts `--4k` (1080p/2160p resize). The real runtime
 passed repeated native HDR processing at 3840x2160. This cost applies to capture
 resolution: a 4K desktop streamed at 1080p still runs NR at 4K before downscaling.
 
+`--shared` adds a producer D3D11 device, a keyed-mutex shared texture opened on
+the consumer device, and a private copy made before releasing capture ownership.
+The test reads the first processed frame back immediately, instead of checking
+only a drained batch. Three 2160p first-frame readbacks completed in
+137–146 ms on the local test GPU; the first 1080p initialization took 825 ms.
+This does not reproduce the live timeout. It verifies shared-resource handoff
+and NR progress, but does not exercise desktop duplication or NVENC submission.
+
 Live Moonlight HEVC/PQ testing reached NR feature creation but did not receive
 the first video frame before the client timeout. End-to-end HDR streaming and
 30-minute stability are therefore **not yet validated**. Keep this feature

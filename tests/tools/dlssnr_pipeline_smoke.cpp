@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <dxgi.h>
 #include <memory>
 #include <vector>
 
@@ -23,7 +24,7 @@ int
 main(int argc, char **argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   if (argc < 3) return 2;
-  bool hdr = false, zero = false, flow = false, uhd = false;
+  bool hdr = false, zero = false, flow = false, uhd = false, shared = false;
   for (int i = 3; i < argc; ++i) {
     if (std::strcmp(argv[i], "--hdr") == 0)
       hdr = true;
@@ -33,6 +34,8 @@ main(int argc, char **argv) {
       flow = true;
     else if (std::strcmp(argv[i], "--4k") == 0)
       uhd = true;
+    else if (std::strcmp(argv[i], "--shared") == 0)
+      shared = true;
     else
       return 2;
   }
@@ -41,10 +44,20 @@ main(int argc, char **argv) {
   config.nr_motion_quality = flow ? 2 : 0;
   ID3D11Device *raw_device = nullptr;
   ID3D11DeviceContext *raw_context = nullptr;
-  if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+  if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, shared ? D3D11_CREATE_DEVICE_VIDEO_SUPPORT : 0,
         nullptr, 0, D3D11_SDK_VERSION, &raw_device, nullptr, &raw_context))) return 1;
   com_ptr<ID3D11Device> device(raw_device);
   com_ptr<ID3D11DeviceContext> context(raw_context);
+  com_ptr<ID3D11Device> producer_device;
+  com_ptr<ID3D11DeviceContext> producer_context;
+  if (shared) {
+    raw_device = nullptr;
+    raw_context = nullptr;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+          nullptr, 0, D3D11_SDK_VERSION, &raw_device, nullptr, &raw_context))) return 1;
+    producer_device.reset(raw_device);
+    producer_context.reset(raw_context);
+  }
   for (int session = 0; session < 3; ++session) {
     auto filter = platf::dxgi::make_pre_encode_filter(
       platf::pre_encode_filter_e::external_neural_enhancement, device.get(), context.get(),
@@ -82,6 +95,31 @@ main(int argc, char **argv) {
       ID3D11ShaderResourceView *raw_srv = nullptr;
       if (FAILED(device->CreateShaderResourceView(input.get(), nullptr, &raw_srv))) return 1;
       com_ptr<ID3D11ShaderResourceView> srv(raw_srv);
+      com_ptr<ID3D11Texture2D> capture;
+      com_ptr<IDXGIKeyedMutex> capture_mutex;
+      com_ptr<ID3D11Texture2D> producer_texture;
+      com_ptr<IDXGIKeyedMutex> producer_mutex;
+      if (shared) {
+        auto shared_desc = desc;
+        shared_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+        raw = nullptr;
+        if (FAILED(producer_device->CreateTexture2D(&shared_desc, &data, &raw))) return 1;
+        producer_texture.reset(raw);
+        IDXGIResource *raw_resource = nullptr;
+        if (FAILED(producer_texture->QueryInterface(__uuidof(IDXGIResource), reinterpret_cast<void **>(&raw_resource)))) return 1;
+        com_ptr<IDXGIResource> resource(raw_resource);
+        HANDLE handle = nullptr;
+        if (FAILED(resource->GetSharedHandle(&handle))) return 1;
+        raw = nullptr;
+        if (FAILED(device->OpenSharedResource(handle, __uuidof(ID3D11Texture2D), reinterpret_cast<void **>(&raw)))) return 1;
+        capture.reset(raw);
+        IDXGIKeyedMutex *raw_mutex = nullptr;
+        if (FAILED(capture->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void **>(&raw_mutex)))) return 1;
+        capture_mutex.reset(raw_mutex);
+        raw_mutex = nullptr;
+        if (FAILED(producer_texture->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void **>(&raw_mutex)))) return 1;
+        producer_mutex.reset(raw_mutex);
+      }
       platf::dxgi::gpu_frame_view_t view {
         .texture = input.get(),
         .srv = srv.get(),
@@ -99,11 +137,37 @@ main(int argc, char **argv) {
       platf::dxgi::filter_result_t result;
       const auto start = std::chrono::steady_clock::now();
       for (int frame = 0; frame < 100; ++frame) {
+        if (shared) {
+          // Reproduce capture ownership -> private handoff -> model submission.
+          // The model must never retain the shared capture mutex while waiting
+          // on its D3D12 queue. Readback below also verifies first-frame progress.
+          if (producer_mutex->AcquireSync(0, 5000) != S_OK) return 1;
+          producer_context->UpdateSubresource(producer_texture.get(), 0, nullptr, data.pSysMem, data.SysMemPitch, 0);
+          if (FAILED(producer_mutex->ReleaseSync(1))) return 1;
+          if (capture_mutex->AcquireSync(1, 5000) != S_OK) return 1;
+          context->CopyResource(input.get(), capture.get());
+          if (FAILED(capture_mutex->ReleaseSync(0))) return 1;
+        }
         result = filter->process(view);
         if (filter->degraded() || result.status != platf::dxgi::filter_status_e::ready ||
             result.frame.texture == input.get() || result.frame.semantic.domain != view.semantic.domain || result.frame.format != desc.Format) {
           std::fprintf(stderr, "Process failed: %s\n", std::string(filter->failure_reason()).c_str());
           return 1;
+        }
+        if (frame == 0) {
+          auto readback_desc = desc;
+          readback_desc.Usage = D3D11_USAGE_STAGING;
+          readback_desc.BindFlags = 0;
+          readback_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+          raw = nullptr;
+          if (FAILED(device->CreateTexture2D(&readback_desc, nullptr, &raw))) return 1;
+          com_ptr<ID3D11Texture2D> first_readback(raw);
+          context->CopyResource(first_readback.get(), result.frame.texture);
+          D3D11_MAPPED_SUBRESOURCE first_map {};
+          if (FAILED(context->Map(first_readback.get(), 0, D3D11_MAP_READ, 0, &first_map))) return 1;
+          context->Unmap(first_readback.get(), 0);
+          std::printf("first_frame=%ux%u shared=%d elapsed=%.3f ms\n", width, height, shared,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         }
       }
       filter->flush();
