@@ -542,6 +542,12 @@ namespace platf {
     return 1;
   }
 
+  static int
+  selected_gamepad_mode(std::string_view client_gamepad) {
+    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
+    return client_declared ? gamepad_mode_from_preference(client_gamepad) : effective_gamepad_mode();
+  }
+
   struct input_raw_t {
     ~input_raw_t() {
       delete vigem;
@@ -1949,9 +1955,7 @@ namespace platf {
     // Client-declared preference (Sunshine /launch extension) outranks the
     // per-app and global host-side selection while client_gamepad_override is on.
     const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
-    auto gamepad_mode = client_declared
-      ? gamepad_mode_from_preference(client_gamepad)
-      : effective_gamepad_mode();
+    auto gamepad_mode = selected_gamepad_mode(client_gamepad);
     const auto per_app_override = !client_declared && current_gamepad_mode.load(std::memory_order_relaxed) != 0;
     const char *selection_source = client_declared ? "client selection" : (per_app_override ? "per-app selection" : "global selection");
 
@@ -2618,10 +2622,10 @@ namespace platf {
   get_capabilities(std::string_view client_gamepad) {
     platform_caps::caps_t caps = 0;
 
-    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
-    const auto gamepad_mode = client_declared
-      ? gamepad_mode_from_preference(client_gamepad)
-      : effective_gamepad_mode();
+    const auto selected_mode = selected_gamepad_mode(client_gamepad);
+    const auto ds5_available = ds5::refresh_component_availability();
+    // 能力声明必须与可选 DS5 组件不可用时的创建前回退保持一致。
+    const auto gamepad_mode = selected_mode == 4 && !ds5_available ? 1 : selected_mode;
 
     // 与手柄分配使用同一会话选择；强制模拟 Xbox 360 时不声明触控板能力。
     if (gamepad_mode != 2) {
@@ -2629,8 +2633,7 @@ namespace platf {
     }
 
     const auto ds5_settings = ds5_config::current();
-    if (gamepad_mode == 4 && ds5_settings.audio_haptics &&
-        ds5::refresh_component_availability()) {
+    if (gamepad_mode == 4 && ds5_settings.audio_haptics && ds5_available) {
       caps |= platform_caps::ds5_haptics_pcm;
     }
 
