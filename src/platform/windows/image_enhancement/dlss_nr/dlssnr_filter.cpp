@@ -55,11 +55,6 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
         destroy_instance();
       }
 
-      bool
-      requires_detached_input() const override {
-        return true;
-      }
-
       filter_result_t
       process(const gpu_frame_view_t &input) override {
         if (const auto reason = validate_sdr_input(input); !reason.empty()) {
@@ -90,11 +85,7 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
 
       void
       flush() override {
-        if (instance_) {
-          boost::lock_guard lock { adapter_mutex };
-          loader_.api()->destroy(instance_);
-          instance_ = nullptr;
-        }
+        destroy_instance();
       }
 
       std::string_view

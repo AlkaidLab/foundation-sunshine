@@ -156,7 +156,7 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     // loader trust. Encoder initialization and subsequent packets must survive.
     backend->runtime_digest = std::string(64, '0');
   }
-  config.hdr_backend = backend;
+  config.enhancement_backend = backend;
   display->capture_contract = config.frame_pipeline_policy.capture;
   const bool hdr_output = dynamic_range != 0;
   auto encoder = display->make_nvenc_encode_device(hdr_output ? platf::pix_fmt_e::p010 : platf::pix_fmt_e::nv12, config);
@@ -231,7 +231,7 @@ TEST(DlssNrHardware, DesktopCaptureFirstEncodedPacket) {
   backend->id = "alkaidlab.nvidia_dlssnr";
   backend->path = std::filesystem::path(reinterpret_cast<const char8_t *>(adapter_path));
   backend->runtime_digest = digest;
-  config.hdr_backend = backend;
+  config.enhancement_backend = backend;
   auto display = std::make_shared<platf::dxgi::display_ddup_vram_t>();
   ASSERT_EQ(display->init(config, ""), 0);
   ASSERT_TRUE(display->is_hdr()) << "This diagnostic requires an already HDR desktop";

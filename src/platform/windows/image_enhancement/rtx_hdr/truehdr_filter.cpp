@@ -55,11 +55,6 @@ namespace platf::dxgi::image_enhancement::rtx_hdr::truehdr {
         destroy_instance();
       }
 
-      bool
-      requires_detached_input() const override {
-        return true;
-      }
-
       filter_result_t
       process(const gpu_frame_view_t &input) override {
         if (const auto reason = validate_sdr_input(input); !reason.empty()) {

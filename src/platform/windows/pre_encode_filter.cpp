@@ -65,11 +65,6 @@ namespace platf::dxgi {
           device_context_ { device_context },
           shader_ { std::move(shader) } {}
 
-      bool
-      requires_detached_input() const override {
-        return true;
-      }
-
       filter_result_t
       process(const gpu_frame_view_t &input) override {
         if (const auto reason = validate_sdr_input(input); !reason.empty()) {
@@ -168,14 +163,6 @@ namespace platf::dxgi {
      */
     class identity_neural_filter_t final: public pre_encode_filter_t {
     public:
-      bool
-      requires_detached_input() const override {
-        // The unconditional handoff copy upstream already satisfies the
-        // isolation the vendor backend needs; the passthrough itself reads
-        // the input in place.
-        return false;
-      }
-
       filter_result_t
       process(const gpu_frame_view_t &input) override {
         if (const auto reason = validate_neural_input(input); !reason.empty()) {
@@ -203,11 +190,6 @@ namespace platf::dxgi {
           fallback_ { std::move(fallback) },
           degraded_ { !primary_ },
           failure_reason_ { std::move(initial_failure) } {}
-
-      bool
-      requires_detached_input() const override {
-        return true;
-      }
 
       filter_result_t
       process(const gpu_frame_view_t &input) override {
@@ -305,7 +287,7 @@ namespace platf::dxgi {
           std::move(fallback),
           failure);
       }
-      BOOST_LOG(info) << "Loaded external SDR-to-SDR neural backend; feature creation is deferred until the first frame";
+      BOOST_LOG(info) << "Loaded external signal-preserving neural enhancement backend; feature creation is deferred until the first frame";
       return std::make_unique<failover_filter_t>(std::move(primary), std::move(fallback));
     }
     if (kind == pre_encode_filter_e::external_sdr_to_hdr) {

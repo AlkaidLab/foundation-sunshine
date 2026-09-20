@@ -57,8 +57,6 @@ void resolve(uint3 pos : SV_DispatchThreadID) {
           device_(device),
           context_(context), model_(std::move(model)) {}
 
-      bool
-      requires_detached_input() const override { return true; }
       std::string_view
       backend_name() const override { return model_->backend_name(); }
       bool

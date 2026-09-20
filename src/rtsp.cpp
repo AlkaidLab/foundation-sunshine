@@ -1641,7 +1641,7 @@ namespace rtsp_stream {
           .middle_gray_nits = static_cast<float>(session.synthetic_hdr.middle_gray),
           .peak_nits = static_cast<float>(session.synthetic_hdr.peak_nits),
         };
-        monitor.hdr_backend = session.hdr_backend;
+        monitor.enhancement_backend = session.hdr_backend;
       }
       // NR preserves the captured SDR or native HDR signal. Synthetic RTX HDR
       // owns the single filter slot when selected; do not overwrite its policy.
@@ -1651,10 +1651,6 @@ namespace rtsp_stream {
       if (post_process_nr_active) {
         monitor.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
         monitor.pre_encode_filter_config = {
-          .contrast = 0.0f,
-          .saturation = 0.0f,
-          .middle_gray_nits = 50.0f,
-          .peak_nits = 1000.0f,
           .nr_intensity = session.dlssnr_params.intensity,
           .nr_local_tone_strength = session.dlssnr_params.local_tone_strength,
           .nr_local_structure_strength = session.dlssnr_params.local_structure_strength,
@@ -1664,7 +1660,7 @@ namespace rtsp_stream {
           .nr_auto_mask = session.dlssnr_params.auto_mask,
           .nr_ui_correction = session.dlssnr_params.ui_correction,
         };
-        monitor.hdr_backend = session.dlssnr_backend;
+        monitor.enhancement_backend = session.dlssnr_backend;
       }
 #endif
       monitor.frame_pipeline_policy =

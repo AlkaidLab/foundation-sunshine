@@ -40,9 +40,8 @@ namespace platf::dxgi {
   public:
     virtual ~pre_encode_filter_t() = default;
 
-    virtual bool
-    requires_detached_input() const = 0;
-
+    // The capture pipeline supplies a private handoff texture to isolate filters
+    // from capture-owned resources, including when a filter falls back to passthrough.
     virtual filter_result_t
     process(const gpu_frame_view_t &input) = 0;
 

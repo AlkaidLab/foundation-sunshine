@@ -118,7 +118,6 @@ namespace {
       d3d.device.get(),
       d3d.context.get());
     ASSERT_TRUE(filter);
-    EXPECT_TRUE(filter->requires_detached_input());
 
     auto input = make_white_input(d3d.device.get(), 4, 4);
     ASSERT_TRUE(input.texture);
@@ -385,8 +384,6 @@ namespace {
   }
   class proxy_model_t final: public platf::dxgi::pre_encode_filter_t {
   public:
-    bool
-    requires_detached_input() const override { return true; }
     void
     flush() override {}
     std::string_view

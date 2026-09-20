@@ -524,12 +524,12 @@ namespace platf::dxgi {
           if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {
             release_capture_mutex();
             BOOST_LOG(error) << "Pre-encode filter rejected captured frame contract"sv;
-            update_synthetic_hdr_runtime_status(false, "capture_contract_mismatch");
+            update_enhancement_runtime_status(false, "capture_contract_mismatch");
             return -1;
           }
           if (!prepare_filter_handoff(img_ctx.encoder_texture.get(), img.frame_desc)) {
             release_capture_mutex();
-            update_synthetic_hdr_runtime_status(false, "filter_handoff_failed");
+            update_enhancement_runtime_status(false, "filter_handoff_failed");
             return -1;
           }
           device_ctx->CopyResource(filter_handoff_texture.get(), img_ctx.encoder_texture.get());
@@ -550,10 +550,10 @@ namespace platf::dxgi {
           if (filter_result.status != filter_status_e::ready ||
               !filter_result.frame.texture || !filter_result.frame.srv) {
             BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
-            update_synthetic_hdr_runtime_status(false, filter_result.reason);
+            update_enhancement_runtime_status(false, filter_result.reason);
             return -1;
           }
-          update_synthetic_hdr_runtime_status(true);
+          update_enhancement_runtime_status(true);
           conversion_input_texture = filter_result.frame.texture;
           conversion_input_srv = filter_result.frame.srv;
           conversion_input_format = filter_result.frame.format;
@@ -1343,15 +1343,15 @@ namespace platf::dxgi {
           config.pre_encode_filter,
           device.get(),
           device_ctx.get(),
-          config.hdr_backend ? config.hdr_backend->path : std::filesystem::path {},
+          config.enhancement_backend ? config.enhancement_backend->path : std::filesystem::path {},
           config.pre_encode_filter_config,
-          config.hdr_backend ? config.hdr_backend->id : std::string_view {},
-          config.hdr_backend ? config.hdr_backend->runtime_digest : std::string_view {});
+          config.enhancement_backend ? config.enhancement_backend->id : std::string_view {},
+          config.enhancement_backend ? config.enhancement_backend->runtime_digest : std::string_view {});
         if (!pre_encode_filter) {
           BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
           return -1;
         }
-        hdr_backend = config.hdr_backend;
+        enhancement_backend = config.enhancement_backend;
         nr_filter_active = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement;
         filter_capture_contract = contract;
       }
@@ -1762,7 +1762,7 @@ namespace platf::dxgi {
     }
 
     void
-    update_synthetic_hdr_runtime_status(
+    update_enhancement_runtime_status(
       bool processed_frame,
       std::string_view frame_failure = {}) {
       auto &reported_backend = nr_filter_active ? runtime_status.nr_backend : runtime_status.synthetic_hdr_backend;
@@ -1775,7 +1775,7 @@ namespace platf::dxgi {
         return;
       }
 
-      const std::string backend { hdr_backend ? hdr_backend->id : pre_encode_filter->backend_name() };
+      const std::string backend { enhancement_backend ? enhancement_backend->id : pre_encode_filter->backend_name() };
       const std::string state = !frame_failure.empty() || pre_encode_filter->degraded()
                                   ? "degraded"
                                   : processed_frame ? "active" : "warming_up";
@@ -1830,7 +1830,7 @@ namespace platf::dxgi {
         cs_path_active ? std::string {} : cs_fallback_reason;
       runtime_status.analysis_failure_reason =
         runtime_status.analysis_active ? std::string {} : hdr_analysis_failure_reason;
-      update_synthetic_hdr_runtime_status(false);
+      update_enhancement_runtime_status(false);
 
       if (runtime_status_id == 0) {
         runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
@@ -1860,7 +1860,7 @@ namespace platf::dxgi {
     // amongst multiple hwdevice_t objects (and therefore multiple ID3D11Devices).
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
-    boost::shared_ptr<const image_enhancement::backend_use_t> hdr_backend;
+    boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     bool nr_filter_active = false;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
