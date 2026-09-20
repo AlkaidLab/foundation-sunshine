@@ -117,3 +117,20 @@ identity fallback; a primary processing failure switches the same failover
 wrapper to that fallback. Its input is the private capture handoff, never a
 second read of the shared texture after releasing capture ownership. Invalid
 capture contracts remain errors, as they cannot safely be interpreted as frames.
+
+The paired-package retest exposed a separate input/output mismatch: an HDR
+desktop was captured as scRGB FP16 while the client negotiated SDR HEVC. The NR
+capture contract had been inferred from the output transfer, rejecting the real
+frame before the backend could process it. NR now resolves its input domain
+from each known SDR UNORM8 or linear scRGB FP16 frame, without changing the
+client's output transfer or the private handoff requirement. Unknown domains
+remain rejected, and the SDR-to-HDR filter retains its strict input contract.
+
+`ProductionHdrCaptureToSdrFirstEncodedPacket` reproduces the failing conversion
+before the fix and verifies the placeholder plus three real NR/NV12/NVENC
+packets after it. `ProductionUnavailableNrStillEncodesHdrCaptureToSdr` checks
+the same route with a rejected runtime pin. Both pass locally along with the
+existing PQ, HLG and unavailable-backend HDR tests. This verifies frame delivery
+through the production encoder, not HDR-to-SDR tone-mapping quality. The client
+HDR negotiation and complete 30-minute paired-package stream remain separate
+acceptance checks.

@@ -506,6 +506,19 @@ namespace platf::dxgi {
         // capture format/domain is not known yet. Encode that startup frame
         // normally; only real captured frames may enter the enhancement model.
         if (pre_encode_filter && !img.dummy) {
+          // NR preserves the captured domain before the ordinary output
+          // conversion. In particular, an SDR client can receive an FP16 HDR
+          // desktop, so its wire transfer cannot determine the NR input.
+          // Resolve only the two domains supported by the NR wrapper; keep
+          // unknown frames and the SDR-to-HDR filter's contract strict.
+          if (nr_filter_active &&
+              ((img.frame_desc.domain == frame_domain_e::linear_scrgb &&
+                img.frame_desc.encoding == pixel_encoding_class_e::float16) ||
+               (img.frame_desc.domain == frame_domain_e::sdr_rec709 &&
+                img.frame_desc.encoding == pixel_encoding_class_e::unorm8))) {
+            filter_capture_contract.required_domain = img.frame_desc.domain;
+            filter_capture_contract.preferred_encoding = img.frame_desc.encoding;
+          }
           auto source_contract = filter_capture_contract;
           source_contract.require_private_handoff = false;
           if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {

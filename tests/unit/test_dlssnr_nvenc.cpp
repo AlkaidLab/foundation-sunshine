@@ -158,10 +158,12 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   }
   config.hdr_backend = backend;
   display->capture_contract = config.frame_pipeline_policy.capture;
-  auto encoder = display->make_nvenc_encode_device(platf::pix_fmt_e::p010, config);
+  const bool hdr_output = dynamic_range != 0;
+  auto encoder = display->make_nvenc_encode_device(hdr_output ? platf::pix_fmt_e::p010 : platf::pix_fmt_e::nv12, config);
   ASSERT_TRUE(encoder);
-  const auto colorspace = dynamic_range == 2 ? video::colorspace_e::bt2020hlg : video::colorspace_e::bt2020;
-  ASSERT_TRUE(encoder->init_encoder(config, { colorspace, false, 10 }));
+  const auto colorspace = !hdr_output ? video::colorspace_e::rec709 :
+                         dynamic_range == 2 ? video::colorspace_e::bt2020hlg : video::colorspace_e::bt2020;
+  ASSERT_TRUE(encoder->init_encoder(config, { colorspace, false, hdr_output ? 10u : 8u }));
   auto frame = display->alloc_img();
   ASSERT_TRUE(frame);
   ASSERT_EQ(display->complete_img(frame.get(), true), 0);
@@ -188,7 +190,15 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   if (unavailable_backend) {
     EXPECT_EQ(statuses[0].nr_failure_reason, "runtime_untrusted");
   }
-  EXPECT_EQ(statuses[0].hdr_mode, dynamic_range == 2 ? "hlg" : "pq");
+  EXPECT_EQ(statuses[0].hdr_mode, !hdr_output ? "sdr" : dynamic_range == 2 ? "hlg" : "pq");
+}
+
+TEST(DlssNrHardware, ProductionHdrCaptureToSdrFirstEncodedPacket) {
+  exercise_production_conversion(0);
+}
+
+TEST(DlssNrHardware, ProductionUnavailableNrStillEncodesHdrCaptureToSdr) {
+  exercise_production_conversion(0, true);
 }
 
 TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
