@@ -86,6 +86,14 @@ TEST_F(ImageEnhancementConfigTest, MissingDefaultDoesNotCreateAFileOrLoadACompon
   EXPECT_FALSE(std::filesystem::exists(root / "hdr.json"));
 }
 
+TEST_F(ImageEnhancementConfigTest, RelativeConfigurationExposesAbsoluteMaintenanceJournal) {
+  const std::filesystem::path relative_config = "config/hdr_enhanced.json";
+  image_enhancement::manager_t relative_store(relative_config, root / "tools", catalog());
+  const auto journal = relative_store.maintenance_path();
+  EXPECT_TRUE(journal.is_absolute());
+  EXPECT_EQ(journal, std::filesystem::current_path() / "config/hdr_enhanced.maintenance.json");
+}
+
 TEST_F(ImageEnhancementConfigTest, RuntimeUsesThePackagedAdapterAndEmbeddedTrustCatalog) {
   const auto settings = trusted_fixture();
   std::ofstream(root / "trusted.json") << "{forged catalog";

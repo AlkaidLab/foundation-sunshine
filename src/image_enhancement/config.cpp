@@ -415,7 +415,9 @@ namespace image_enhancement {
 
   manager_t::manager_t(fs::path file, fs::path root, json trust):
       impl_(std::make_unique<impl_t>()) {
-    impl_->file = std::move(file);
+    // The GUI/elevated helper has its own working directory and requires an
+    // absolute maintenance journal, even when Sunshine was given a relative config.
+    impl_->file = fs::absolute(file).lexically_normal();
     impl_->root = std::move(root);
     impl_->trust = std::move(trust);
     impl_->maintenance_file = impl_->file.parent_path() / "hdr_enhanced.maintenance.json";
