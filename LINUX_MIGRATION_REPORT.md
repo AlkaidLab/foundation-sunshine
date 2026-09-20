@@ -857,6 +857,26 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       Audio/MouseHID/Encoder 三套件 Setup 失败，与基线一致）；CUDA=ON 下本轮全部 TU（含改动的
       cuda.cpp/video.cpp/graphics.cpp）编译通过——完整链接仍被 §九既载的 nvcc 架构表问题挡住
       （CUDA 13 不支持 compute_50，需收敛架构表为 86 才能链），与本次改动无关。
+43. **第二十轮：D-Bus 握手补全——剪贴板双向同步修复（2026-09-20）**：用户报告 Wayland 下剪贴板
+    可疑；日志实锤：每次串流中 `klipper setClipboardContents failed: 连接被对方重置`（ECONNRESET），
+    即客户端→主机方向从未成功（主机→客户端的 get 失败只打 debug，同样全灭）。
+    - **根因（`src/platform/linux/sdbus_session.h`）**：`open_user_bus()` 为绕 AT_SECURE 手动
+      `sd_bus_new + set_address + start`，但漏了 `sd_bus_set_bus_client(bus, 1)`——socket 连上、
+      AUTH 通过，却从不发 `Hello()`、拿不到唯一名；**dbus-broker 对第一条方法调用直接断开连接**
+      （-ECONNRESET）。`sd_bus_start` 返回 1（异步建立）≥ 0，helper 误以为成功。最小复现程序
+      （同路径 + 纯 ASCII 文本）稳定复现 rc=-104 / `org.freedesktop.DBus.Error.Disconnected`；
+      busctl（走 `sd_bus_open_user`，内部设 bus_client）同机同总线正常。补上该标志后唯一名到手、
+      set/get 全通（复现程序与 klipper 实测验证）。
+    - **受影响面**：`open_user_bus()` 共 3 个调用方——`clipboard_host.cpp`（双向剪贴板）与
+      `foreground_app.cpp` 两处（KWin 前台检测的 vtable 注册 + `NameHasOwner` 探测，ABR 前台追踪
+      一直静默降级），一并在本修复中痊愈；kscreen 走子进程不受影响。
+    - **语义对齐（`src/clipboard_host.cpp`）**：对照 GUI agent `clipboard.rs` 补两条边界——
+      出站过滤空读取（agent 仅 `Ok(t) if !t.is_empty()`；klipper 对图片等非文本内容返回空串，
+      原先会把空文本帧发给客户端清掉对端剪贴板）；入站丢弃空串与含 NUL 文本（agent 的
+      `!s.is_empty() && !s.contains('\0')`，klipper/D-Bus 均无法承载 NUL）。
+    - **验证**：CUDA=OFF 增量构建通过（sdbus_session.h 的两个 TU 重编）；`ctest` 12/13 套件与
+      基线一致（仅无头环境三套件 Setup 失败，全套 627 用例通过、0 断言失败）；klipper 实机
+      get/set 与信号名（`clipboardHistoryUpdated`）经 busctl 与复现程序双重确认。
 
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +

@@ -173,6 +173,15 @@ namespace clipboard_host {
      */
     void
     apply_inbound_text(const std::string &text) {
+      // The GUI agent drops inbound text that is empty or carries embedded
+      // NULs (clipboard.rs accepts only `!s.is_empty() && !s.contains('\0')`);
+      // klipper cannot take either, and an empty post would blank the desktop
+      // clipboard.
+      if (text.empty() || text.find('\0') != std::string::npos) {
+        BOOST_LOG(debug) << "Ignoring inbound clipboard text that is empty or contains NUL bytes"sv;
+        return;
+      }
+
       const auto bytes = std::span<const std::uint8_t> {
         reinterpret_cast<const std::uint8_t *>(text.data()), text.size() };
       {
@@ -357,7 +366,11 @@ namespace clipboard_host {
         }
         had_sessions = session_count > 0;
 
-        if (content != last_seen && config::input.clipboard_sync && session_count > 0) {
+        // The agent maps an empty clipboard read to "nothing to post" (its
+        // text reader keeps only `Ok(t) if !t.is_empty()`): klipper returns an
+        // empty string for non-text content (e.g. a copied image), which must
+        // not overwrite the clients' clipboard with empty text.
+        if (!content.empty() && content != last_seen && config::input.clipboard_sync && session_count > 0) {
           last_seen = content;
 
           bool is_echo = false;
