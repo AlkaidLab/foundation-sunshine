@@ -582,6 +582,7 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
+    {},  // widget_token (Game Bar 小部件;为空=功能关闭)
     file_handler::path_to_utf8(platf::appdata() / "sunshine.conf"),  // config file
     {},  // cmd args
     47989,  // Base port number
@@ -1652,6 +1653,9 @@ namespace config {
                                                                    "ja"sv,  // Japanese
                                                                  });
 
+    // Game Bar 小部件本地端点的访问令牌(X-Sunshine-Token);为空表示功能关闭
+    string_f(vars, "widget_token"s, sunshine.widget_token);
+
     std::string log_level_string;
     string_f(vars, "min_log_level", log_level_string);
 
@@ -1941,6 +1945,7 @@ namespace config {
         "vdd_keep_enabled",       // 由系统托盘控制，不通过Web UI修改
         "vdd_headless_create",    // 由系统托盘控制，不通过Web UI修改
         "tray_locale",            // 由系统托盘控制，不通过Web UI修改
+        "widget_token",           // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
       };
 
       // 读取现有配置文件（用于获取受保护字段的值和后续对比）

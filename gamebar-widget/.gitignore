@@ -1,0 +1,7 @@
+bin/
+obj/
+AppPackages/
+*.user
+*.aps
+.vs/
+pkg/

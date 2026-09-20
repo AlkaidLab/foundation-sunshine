@@ -78,6 +78,7 @@
 #include "video.h"
 #include "version.h"
 #include "webhook/webhook.h"
+#include "widget_http.h"
 #include "webhook/webhook_api.h"
 
 #ifdef _WIN32
@@ -4069,6 +4070,16 @@ namespace confighttp {
       return authenticate(std::move(resp), std::move(req));
     };
     tray_http::register_routes(server, tray_local_auth, tray_local_auth);
+    // Game Bar widget 通道:仅环回,凭证由模块内的 X-Sunshine-Token(widget_token)校验,
+    // 不复用 basic-auth——widget 是本地 packaged app,没有浏览器语义。
+    widget_http::register_routes(server, [](widget_http::resp_https_t resp, widget_http::req_https_t req) {
+      const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
+      if (net::from_address(address) != net::PC) {
+        resp->write(SimpleWeb::StatusCode::client_error_forbidden);
+        return false;
+      }
+      return true;
+    });
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);

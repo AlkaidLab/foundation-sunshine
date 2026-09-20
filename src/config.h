@@ -267,6 +267,9 @@ namespace config {
     std::string password;
     std::string salt;
 
+    // Game Bar 小部件本地端点(/api/widget/*)的访问令牌;为空时该组端点不注册功能(404)
+    std::string widget_token;
+
     std::string config_file;
 
     struct cmd_t {

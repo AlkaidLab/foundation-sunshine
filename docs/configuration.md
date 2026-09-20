@@ -262,6 +262,35 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### widget_token
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Access token for the local Game Bar widget endpoints (<code>/api/widget/state</code> and
+            <code>/api/widget/action</code>). These endpoints are loopback-only and require the
+            <code>X-Sunshine-Token</code> request header to match this value. When left empty the
+            widget endpoints stay disabled (404). This field is not editable from the Web UI;
+            set it manually in <code>sunshine.conf</code> and restart Sunshine. Generate a random
+            value (for example a UUID) when enabling it. See <code>gamebar-widget/README.md</code>
+            for the widget-side setup.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            widget_token = 5f1e9a3c-2b7d-4e6a-9c1f-8a2b3d4e5f60
+            @endcode</td>
+    </tr>
+</table>
+
 ## [Input](https://localhost:47990/config/#input)
 
 ### [controller](https://localhost:47990/config/#controller)
