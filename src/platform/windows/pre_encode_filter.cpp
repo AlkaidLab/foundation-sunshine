@@ -166,7 +166,7 @@ namespace platf::dxgi {
      * view is returned as-is, so a degraded session keeps encoding captured
      * frames untouched instead of allocating GPU copies per frame.
      */
-    class identity_sdr_filter_t final: public pre_encode_filter_t {
+    class identity_neural_filter_t final: public pre_encode_filter_t {
     public:
       bool
       requires_detached_input() const override {
@@ -178,7 +178,7 @@ namespace platf::dxgi {
 
       filter_result_t
       process(const gpu_frame_view_t &input) override {
-        if (const auto reason = validate_sdr_input(input); !reason.empty()) {
+        if (const auto reason = validate_neural_input(input); !reason.empty()) {
           return { .status = filter_status_e::failed, .frame = {}, .reason = reason };
         }
         return { .status = filter_status_e::ready, .frame = input, .reason = {} };
@@ -189,7 +189,7 @@ namespace platf::dxgi {
 
       std::string_view
       backend_name() const override {
-        return "identity_sdr_passthrough";
+        return "identity_neural_passthrough";
       }
     };
 
@@ -294,10 +294,10 @@ namespace platf::dxgi {
     if (kind == pre_encode_filter_e::mock_sdr_to_scrgb) {
       return make_mock_filter(device, device_context);
     }
-    if (kind == pre_encode_filter_e::external_sdr_to_sdr_nr) {
+    if (kind == pre_encode_filter_e::external_neural_enhancement) {
       std::string failure;
       auto primary = make_enhancement_backend(backend_id, device, device_context, backend_path, config, runtime_digest, failure);
-      auto fallback = std::make_unique<identity_sdr_filter_t>();
+      auto fallback = std::make_unique<identity_neural_filter_t>();
       if (!primary) {
         BOOST_LOG(warning) << "Neural enhancement backend unavailable: " << failure;
         return std::make_unique<failover_filter_t>(

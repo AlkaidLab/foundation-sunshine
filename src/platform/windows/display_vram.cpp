@@ -1303,9 +1303,8 @@ namespace platf::dxgi {
 
       if (config.pre_encode_filter != pre_encode_filter_e::none) {
         // Only the SDR-to-HDR kind feeds the synthetic-HDR wire, which is
-        // defined for 10-bit HDR encoder surfaces. The SDR-to-SDR neural kind
-        // writes back into the regular SDR color pipeline and accepts any
-        // encoder surface.
+        // defined for 10-bit HDR encoder surfaces. Neural enhancement preserves
+        // the captured SDR or native HDR domain and uses its existing encoder.
         if (config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_hdr) {
           const bool hdr_output =
             format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
@@ -1315,10 +1314,13 @@ namespace platf::dxgi {
           }
         }
         const auto &contract = config.effective_frame_pipeline_policy().capture;
-        if (contract.required_domain != frame_domain_e::sdr_rec709 ||
-            contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
-            !contract.require_private_handoff) {
-          BOOST_LOG(error) << "Pre-encode filter requires a private SDR UNORM capture contract"sv;
+        const bool sdr_input = contract.required_domain == frame_domain_e::sdr_rec709 &&
+                               contract.preferred_encoding == pixel_encoding_class_e::unorm8;
+        const bool hdr_nr_input = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement &&
+                                  contract.required_domain == frame_domain_e::linear_scrgb &&
+                                  contract.preferred_encoding == pixel_encoding_class_e::float16;
+        if ((!sdr_input && !hdr_nr_input) || !contract.require_private_handoff) {
+          BOOST_LOG(error) << "Pre-encode filter requires a compatible private capture contract"sv;
           return -1;
         }
         pre_encode_filter = make_pre_encode_filter(
@@ -1334,7 +1336,7 @@ namespace platf::dxgi {
           return -1;
         }
         hdr_backend = config.hdr_backend;
-        nr_filter_active = config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_sdr_nr;
+        nr_filter_active = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement;
         filter_capture_contract = contract;
       }
 

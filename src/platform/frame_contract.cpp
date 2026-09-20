@@ -49,7 +49,7 @@ namespace platf {
       policy.capture = {
         .required_domain = frame_domain_e::linear_scrgb,
         .preferred_encoding = pixel_encoding_class_e::float16,
-        .require_private_handoff = false,
+        .require_private_handoff = post_process_nr_active,
       };
     }
     else if (post_process_nr_active) {

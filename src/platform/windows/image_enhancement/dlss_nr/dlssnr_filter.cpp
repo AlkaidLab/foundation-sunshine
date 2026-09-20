@@ -8,6 +8,7 @@
 #include "dlssnr_filter.h"
 #include "../../pre_encode_filter_helpers.h"
 #include "adapter_loader.h"
+#include "hdr_filter.h"
 
 #include <utility>
 
@@ -38,9 +39,9 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
       return during_create ? "backend_create_unknown_error" : "backend_process_unknown_error";
     }
 
-    class external_sdr_to_sdr_nr_filter_t final: public pre_encode_filter_t {
+    class external_neural_enhancement_filter_t final: public pre_encode_filter_t {
     public:
-      external_sdr_to_sdr_nr_filter_t(
+      external_neural_enhancement_filter_t(
         ID3D11Device *device,
         ID3D11DeviceContext *device_context,
         dlssnr_adapter_loader_t loader,
@@ -50,7 +51,7 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
           loader_ { std::move(loader) },
           config_ { config } {}
 
-      ~external_sdr_to_sdr_nr_filter_t() override {
+      ~external_neural_enhancement_filter_t() override {
         destroy_instance();
       }
 
@@ -91,7 +92,8 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
       flush() override {
         if (instance_) {
           boost::lock_guard lock { adapter_mutex };
-          loader_.api()->flush(instance_);
+          loader_.api()->destroy(instance_);
+          instance_ = nullptr;
         }
       }
 
@@ -147,8 +149,8 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
           .skin_structure_strength = config_.nr_skin_structure_strength,
           .style = config_.nr_style,
           .motion_mode = config_.nr_motion_quality > 0 ?
-            FOUNDATION_DLSSNR_MOTION_OPTICAL_FLOW :
-            FOUNDATION_DLSSNR_MOTION_ZERO,
+                           FOUNDATION_DLSSNR_MOTION_OPTICAL_FLOW :
+                           FOUNDATION_DLSSNR_MOTION_ZERO,
           .motion_quality = config_.nr_motion_quality,
           .auto_mask = config_.nr_auto_mask ? std::uint8_t { 1 } : std::uint8_t { 0 },
           .ui_correction = config_.nr_ui_correction ? std::uint8_t { 1 } : std::uint8_t { 0 },
@@ -211,6 +213,6 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
       error = loader.error();
       return {};
     }
-    return std::make_unique<external_sdr_to_sdr_nr_filter_t>(device, context, std::move(loader), config);
+    return make_hdr_compatible_filter(device, context, std::make_unique<external_neural_enhancement_filter_t>(device, context, std::move(loader), config));
   }
 }  // namespace platf::dxgi::image_enhancement::dlss_nr

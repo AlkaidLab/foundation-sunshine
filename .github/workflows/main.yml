@@ -340,7 +340,7 @@ jobs:
           test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll
           test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/nvngx_dlssnr.dll
           DLSSNR_ADAPTER_BUILT=false
-          if [[ -f ./hdr_enhanced/nvidia_dlssnr_adapter/Release/foundation_dlssnr_adapter.dll ]]; then
+          if [[ -f ./image_enhancement/nvidia_dlssnr_adapter/Release/foundation_dlssnr_adapter.dll ]]; then
             DLSSNR_ADAPTER_BUILT=true
             test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/foundation_dlssnr_adapter.dll
             test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-DLSS-LICENSE.txt

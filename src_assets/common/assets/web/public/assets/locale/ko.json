@@ -80,7 +80,7 @@
     "detached_cmds_desc": "백그라운드에서 실행할 명령어 입니다.",
     "detached_cmds_note": "명령 실행 파일의 경로에 공백이 포함되어 있으면 따옴표로 묶어야 합니다.",
     "detached_cmds_remove": "분리된 명령 제거",
-    "dlssnr_desc": "Experimental SDR enhancement before encoding. Requires an installed and enabled DLSS NR component. Adds GPU processing time; HDR sessions bypass it.",
+    "dlssnr_desc": "Experimental enhancement for SDR and native HDR (PQ/HLG) before encoding. Requires an installed and enabled DLSS NR component. Adds GPU processing time. RTX HDR takes priority when enabled.",
     "dlssnr_motion": "Motion estimation (experimental)",
     "dlssnr_motion_hint": "Off by default. Requires a supported NVIDIA GPU and driver; if unavailable, the original frame is retained. Reconnect after changing this setting.",
     "dlssnr_motion_off": "Off",

@@ -1523,7 +1523,7 @@ namespace rtsp_stream {
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     // Set inside the SDP parse below; consumed by the dynamic HDR selection.
     bool post_process_hdr_active = false;
-    // SDR-wire neural filter; declared unconditionally so the policy resolve
+    // Signal-preserving neural filter; declared unconditionally so the policy resolve
     // below compiles on every platform.
     bool post_process_nr_active = false;
     auto getArg = [&args](std::string_view key) {
@@ -1643,14 +1643,13 @@ namespace rtsp_stream {
         };
         monitor.hdr_backend = session.hdr_backend;
       }
-      // The neural filter is SDR-wire only: the encoded pixels stay in the
-      // existing SDR color pipeline, so an HDR client request skips it.
-      if (monitor.dynamicRange == 0) {
-        post_process_nr_active = session.dlssnr_params.enabled && static_cast<bool>(session.dlssnr_backend);
-      }
+      // NR preserves the captured SDR or native HDR signal. Synthetic RTX HDR
+      // owns the single filter slot when selected; do not overwrite its policy.
+      post_process_nr_active = !post_process_hdr_active && session.dlssnr_params.enabled &&
+                               static_cast<bool>(session.dlssnr_backend);
       if (!post_process_nr_active) session.dlssnr_backend.reset();
       if (post_process_nr_active) {
-        monitor.pre_encode_filter = platf::pre_encode_filter_e::external_sdr_to_sdr_nr;
+        monitor.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
         monitor.pre_encode_filter_config = {
           .contrast = 0.0f,
           .saturation = 0.0f,

@@ -1,4 +1,16 @@
-# DLSS NR 编码前神经增强 filter 实现方案（形态 1：同分辨率 SDR）
+# DLSS NR 编码前神经增强：SDR 与原生 HDR
+
+## 当前实现补充：公共层重构与原生 HDR
+
+公共代码及命名空间现为 `image_enhancement`；Windows 下 `rtx_hdr/` 与 `dlss_nr/`
+各自独立。旧配置、API、后端 ID 和安装路径保留兼容。
+
+NR 已扩展到原生 HDR 的私有 FP16 采集路径，保留 PQ/HLG 输出。310.8.0.0 DLL
+直接接收 FP16 时，即使强度为 0，也把高于 1 的值截到 1；因此使用保留 HDR 原图的
+参考画面与增量合成路径，具体机制和验证见
+`src/platform/windows/image_enhancement/dlss_nr/HDR.md`。不将 DLL 的格式支持等同于 HDR 语义支持。
+
+以下为历史阶段记录，其中“仅 SDR”“暂不支持光流/HDR”是当时的边界，已由当前实现更新。
 
 ## 2026-09-20：控制面板与首轮 review
 

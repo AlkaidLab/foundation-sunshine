@@ -93,6 +93,7 @@ if (WIN32)
             ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/truehdr_filter.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/dlssnr_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/hdr_filter.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_loader.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/pre_encode_filter_test_stubs.cpp
             ${PRE_ENCODE_FILTER_TEST_SOURCE})

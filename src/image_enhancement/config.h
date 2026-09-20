@@ -39,7 +39,7 @@ namespace image_enhancement {
     // HDR capability slot. The legacy field name is kept: schema v1's
     // selected_backend migrates into it.
     std::string selected_backend;
-    // SDR neural-enhancement capability slot.
+    // Signal-preserving neural-enhancement capability slot (SDR or native HDR).
     std::string selected_nr_backend;
     std::unordered_map<std::string, std::string> versions;
     // Per-backend pinned runtime digest; an absent entry accepts the runtime

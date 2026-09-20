@@ -80,7 +80,7 @@
     "detached_cmds_desc": "在背景執行的指令清單。",
     "detached_cmds_note": "如果指令執行檔的路徑有空格，請將路徑放在引號中。",
     "detached_cmds_remove": "移除獨立指令",
-    "dlssnr_desc": "實驗性編碼前 SDR 畫面增強，需安裝並啟用 DLSS NR 元件。會增加 GPU 處理時間；HDR 工作階段略過此處理。",
+    "dlssnr_desc": "實驗性編碼前畫面增強，支援 SDR 和原生 HDR（PQ/HLG）。需安裝並啟用 DLSS NR 元件，會增加 GPU 處理時間。開啟 RTX HDR 時優先使用 RTX HDR。",
     "dlssnr_motion": "運動估計（實驗性）",
     "dlssnr_motion_hint": "預設關閉。光流需要支援的 NVIDIA GPU 和驅動程式；無法使用時保留原始畫面。切換後請重新連線。",
     "dlssnr_motion_off": "關閉",

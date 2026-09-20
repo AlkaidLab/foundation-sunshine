@@ -80,7 +80,7 @@
     "detached_cmds_desc": "A list of commands to be run in the background.",
     "detached_cmds_note": "If the path to the command executable contains spaces, you must enclose it in quotes.",
     "detached_cmds_remove": "Remove Detached Command",
-    "dlssnr_desc": "Experimental SDR enhancement before encoding. Requires an installed and enabled DLSS NR component. Adds GPU processing time; HDR sessions bypass it.",
+    "dlssnr_desc": "Experimental enhancement for SDR and native HDR (PQ/HLG) before encoding. Requires an installed and enabled DLSS NR component. Adds GPU processing time. RTX HDR takes priority when enabled.",
     "dlssnr_motion": "Motion estimation (experimental)",
     "dlssnr_motion_hint": "Off by default. Requires a supported NVIDIA GPU and driver; if unavailable, the original frame is retained. Reconnect after changing this setting.",
     "dlssnr_motion_off": "Off",
