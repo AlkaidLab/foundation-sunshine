@@ -200,7 +200,7 @@ apps.json 与 GLSL shaders）。deb/rpm 的 postinst 会执行
 |---|---|
 | 核心串流 / Moonlight 配对 / WebUI | 上游成熟代码，全平台 |
 | 捕获：KMS / Wayland(wlr) / X11 | 见 §七第 4 条的合成器限制 |
-| 编码：NVENC / VAAPI / Vulkan / 软件 | Linux 注册四个编码器（`src/video.cpp:1633-1648`）；NVENC 走 FFmpeg avcodec + CUDA hwdevice（运行时加载驱动） |
+| 编码：NVENC / VAAPI / Vulkan / 软件 | Linux 注册四个编码器（`src/video.cpp:1633-1648`）；NVENC 走 FFmpeg avcodec + CUDA hwdevice（运行时加载驱动）；**NVENC 的 YUV 4:4:4 已解禁（2026-09-20，§十二进度 42）**：8-bit=`yuv444p`、10-bit=`yuv444p16`（16-bit 移位容器），由真实试编码探测门控，Ampere 上 h264/hevc 444 可用、AV1 444 需 Ada |
 | 输入注入 + 手柄振动 | inputtino（libevdev/uinput），含 rumble 回放 |
 | 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成（`src/stream.cpp:1463-1500`）；仅"在主机直连 DualSense 上播放"的 sidecar 是 Windows 专属 |
 | 文本输入通道 text_context | 纯数据通道（`src/text_context/`，挂接 `src/stream.cpp`） |
@@ -251,6 +251,8 @@ TODO、DPMS 关屏未实现（`misc.cpp:320`）等，均为上游 Sunshine 既�
 
 - **首选 `nvenc`**（h264_nvenc / hevc_nvenc / av1_nvenc，经 FFmpeg）——不需要安装 `cuda` 包。
   本机 `nvidia-utils 610.57.04` 满足驱动要求。
+- **NVENC 的 YUV 4:4:4 已解禁（2026-09-20，§十二进度 42）**：客户端开 4:4:4 后 h264 444=8-bit、
+  hevc 444=10-bit HDR；Ampere（本机 3050）h264/hevc 444 均可，AV1 444 需 Ada（探测自动拒绝）。
 - **建议 `-DSUNSHINE_ENABLE_CUDA=OFF`**：仓库 `cuda` 包是 13.3.1，CUDA 13 已移除 sm_50–72 等旧架构，
   而 `cmake/compile_definitions/linux.cmake:22-69` 按编译器版本自动推导的架构表包含这些旧值，
   nvcc 大概率直接报错。CUDA 仅服务 NvFBC/CUDA 捕获（GeForce 硬件本就不支持 NvFBC），关闭零损失。
@@ -821,6 +823,40 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
      探测超时 + 失败后 20 s 冷却（成功即清除）；变更命令仍 10 s 且只在探测成功后发出；VDD 层的 kscreen
      命令同样加闸（niri 走自身 IPC）。实测：KDE 699 ms 不变 / niri 0 ms / 无桌面 0 ms / KDE 但合成器不应答
      首次 807 ms 后续 0 ms。详见 `LINUX_PORT_GAPS.md` §5.22。
+42. **第十九轮：NVENC 的 YUV 4:4:4 解禁（2026-09-20）**：Linux nvenc（FFmpeg/CUDA 路径）原先在
+    encoder 条目里把 444 格式声明为 `AV_PIX_FMT_NONE` 且无 `YUV444_SUPPORT` 旗标，客户端请求
+    4:4:4 时会话被 `prepare_encoder` 直接拒绝；Windows 原生 NVENC 一直支持。本轮对齐：
+    - **声明与探测（`src/video.cpp`）**：Linux nvenc 条目 444 填 `AV_PIX_FMT_YUV444P`（8-bit）+
+      `AV_PIX_FMT_YUV444P16`（10-bit 16-bit 移位容器 = `NV_ENC_BUFFER_FORMAT_YUV444_10BIT`，与
+      platf `yuv444p16` 语义一致），flags 加 `YUV444_SUPPORT`；h264 的 sdr444 选项组补
+      `profile=AV_PROFILE_H264_HIGH_444_PREDICTIVE`——SDR 组的 `profile=high` 对 444 会话同样生效
+      且会经 av_dict 覆盖代码里设的 profile，需同键后写替换。支持与否仍由真实试编码探测决定
+      （h264 444=SDR 8-bit、hevc/av1 444=HDR 10-bit 探测），3050 上 h264/hevc 444 应通过、
+      AV1 444 需 Ada（探测自然拒绝）。
+    - **CPU 上载路径零改动即通（CUDA=OFF，本机生产配置）**：`cuda_init_avcodec_hardware_input_buffer`
+      通用建 CUDA hwdevice（`video.cpp` 内定义），平台设备无 `data` 时包成
+      `avcodec_software_encode_device_t`（swscale → `av_hwframe_transfer_data`，`video.cpp:446`），
+      完全格式无关，yuv444p/p16 直接可用。
+    - **EGL 三平面渲染（CUDA=ON 的 kms-egl 路径）**：`egl::create_target()`/`egl::sws_t` 原为双平面
+      形状（Y + 半宽交错 UV），新增 `is_planar_yuv444()`（`graphics.h`）判定后建 3 个全分辨率单通道
+      平面（R8/R16）。U/V 复用 ConvertY 着色器（同 Scene.vert），靠两个额外 ColorMatrix UBO 把 UV
+      的 range 乘/偏移**折叠进矩阵**（恒等式：`(dot(cu,rgb)+cu.w)*ru.x+ru.y == dot(cu*ru.x,rgb) +
+      (cu.w*ru.x+ru.y)`），零新增 shader 资产；`sws_t::convert()` 对 444 走 3 遍全尺寸渲染。
+      `gl_cuda_vram_t`（`cuda.cpp`）平面数泛化：注册/映射/拷贝 N 个平面，逐平面
+      WidthInBytes/Height 仍由 pix_fmt descriptor 推导。颜色数学零改动：向量按 `colorspace.bit_depth`
+      归一化，10-bit-in-16 行为与现有 P010 路径一致。
+    - **亮度分析器收编 444p16**：`luminance_analysis_format_supported/is_msb_aligned` 接受
+      `YUV444P16LE` 并按 MSB（>>6）解包，与 P010 同语义（swscale 写 16-bit 满量程=高位对齐 10-bit
+      码；EGL unorm16 写 ≈<<6），444 HDR 会话照常产出 HDR10+/DV L1 统计；P10 平面格式仍按 P13 修复
+      的 LSB 语义不变。
+    - **边界（有意不动）**：CUDA=ON 的 ram 回退路径（wlgrab/nvfbc，`cuda::sws_t` 的
+      `RGBA_to_NV12` CUDA 核）仍 NV12-only，这些捕获后端上 444 由探测兜底为不可用；VAAPI 444 未声明
+      （`get_va_profile()`/`is_va_profile_supported()` 已能查 Main444/444_10 但 encoder 条目未开），
+      立项 `LINUX_PORT_GAPS.md` §2.12。
+    - **验证**：CUDA=OFF 全量构建通过，`ctest` 12/13 套件（仅 `test_sunshine` 聚合套件因无头环境
+      Audio/MouseHID/Encoder 三套件 Setup 失败，与基线一致）；CUDA=ON 下本轮全部 TU（含改动的
+      cuda.cpp/video.cpp/graphics.cpp）编译通过——完整链接仍被 §九既载的 nvcc 架构表问题挡住
+      （CUDA 13 不支持 compute_50，需收敛架构表为 86 才能链），与本次改动无关。
 
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +

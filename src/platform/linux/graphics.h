@@ -222,6 +222,10 @@ namespace egl {
     static constexpr std::size_t num_fds = 4;
 
     std::array<file_t, num_fds> fds;
+
+    // Number of YUV planes: 2 for biplanar targets (NV12/P010),
+    // 3 for planar 4:4:4 targets (yuv444p / yuv444p16)
+    int num_planes = 2;
   };
 
   KITTY_USING_MOVE_T(rgb_t, rgb_img_t, , {
@@ -278,11 +282,19 @@ namespace egl {
     const surface_descriptor_t &y, const surface_descriptor_t &uv);
 
   /**
-   * @brief Creates biplanar YUV textures to render into.
+   * @brief Whether the format is planar YUV 4:4:4 (separate full-resolution Y/U/V planes).
+   * @param format The target frame format.
+   * @return true for yuv444p / yuv444p16-style formats.
+   */
+  bool
+  is_planar_yuv444(AVPixelFormat format);
+
+  /**
+   * @brief Creates YUV textures to render into (biplanar, or 3 planes for 4:4:4).
    * @param width Width of the target frame.
    * @param height Height of the target frame.
    * @param format Format of the target frame.
-   * @return The new RGB texture.
+   * @return The new YUV target.
    */
   std::optional<nv12_t>
   create_target(int width, int height, AVPixelFormat format);
@@ -352,13 +364,21 @@ namespace egl {
     gl::frame_buf_t cursor_framebuffer;
     gl::frame_buf_t copy_framebuffer;
 
-    // Y - shader, UV - shader, Cursor - shader
-    gl::program_t program[3];
+    // Y - shader, UV - shader, Cursor - shader, U (4:4:4) - shader, V (4:4:4) - shader
+    gl::program_t program[5];
     gl::buffer_t color_matrix;
+
+    // For planar 4:4:4 targets: ColorMatrix instances holding the U and V
+    // vectors pre-folded to fit the Y shader's computation
+    gl::buffer_t color_matrix_u;
+    gl::buffer_t color_matrix_v;
 
     int out_width, out_height;
     int in_width, in_height;
     int offsetX, offsetY;
+
+    // Target plane count: 2 for biplanar targets, 3 for planar 4:4:4
+    int num_planes = 2;
 
     // Pointer to the texture to be converted to nv12
     int loaded_texture;

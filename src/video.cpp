@@ -299,21 +299,22 @@ namespace video {
   namespace {
     /**
      * @brief Whether the analyzer can read this pixel format.
-     * @details All of them are 10-bit; P010 keeps its codes in the high bits of
-     *          each little-endian 16-bit word, while FFmpeg's planar formats
-     *          (what the software encoder converts to, and what VAAPI/CUDA
-     *          download to) are LSB-aligned. Unpacking both with the same shift
-     *          would read bits 15..6 of the planar formats, i.e. a black frame.
+     * @details All of them are 10-bit; P010 and YUV444P16 keep their codes in
+     *          the high bits of each little-endian 16-bit word, while FFmpeg's
+     *          planar P10 formats (what the software encoder converts to, and
+     *          what VAAPI/CUDA download to) are LSB-aligned. Unpacking both
+     *          with the same shift would read bits 15..6 of the planar formats,
+     *          i.e. a black frame.
      */
     bool
     luminance_analysis_format_supported(AVPixelFormat fmt) {
-      return fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV420P10LE || fmt == AV_PIX_FMT_YUV444P10LE;
+      return fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV420P10LE || fmt == AV_PIX_FMT_YUV444P10LE || fmt == AV_PIX_FMT_YUV444P16LE;
     }
 
     /// Whether the format needs a 6-bit shift before the histogram counts it.
     bool
     luminance_analysis_format_is_msb_aligned(AVPixelFormat fmt) {
-      return fmt == AV_PIX_FMT_P010LE;
+      return fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV444P16LE;
     }
 
     /**
@@ -1448,7 +1449,9 @@ namespace video {
       AV_PIX_FMT_CUDA,
   #endif
       AV_PIX_FMT_NV12, AV_PIX_FMT_P010,
-      AV_PIX_FMT_NONE, AV_PIX_FMT_NONE,
+      // YUV 4:4:4 (probe-gated on hardware): planar input, with 10-bit carried
+      // in the 16-bit shifted container (NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
+      AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P16,
   #ifdef _WIN32
       dxgi_init_avcodec_hardware_input_buffer
   #else
@@ -1522,12 +1525,17 @@ namespace video {
         { "profile"s, (int) nv::profile_h264_e::high },
       },
       {},  // HDR-specific options
-      {},  // YUV444 SDR-specific options
+      {
+        // YUV444 SDR-specific options
+        // The SDR profile override above applies to 4:4:4 sessions as well;
+        // replace it (same dict key) with the profile h264_nvenc needs for 4:4:4.
+        { "profile"s, (int) AV_PROFILE_H264_HIGH_444_PREDICTIVE },
+      },
       {},  // YUV444 HDR-specific options
       {},  // Fallback options
       "h264_nvenc"s,
     },
-    PARALLEL_ENCODING
+    PARALLEL_ENCODING | YUV444_SUPPORT
   };
 #endif
 

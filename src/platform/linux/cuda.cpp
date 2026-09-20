@@ -377,10 +377,12 @@ namespace cuda {
 
       cuda_ctx->stream = stream.get();
 
-      CU_CHECK(cdf->cuGraphicsGLRegisterImage(&y_res, nv12->tex[0], GL_TEXTURE_2D, CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY),
-        "Couldn't register Y plane texture");
-      CU_CHECK(cdf->cuGraphicsGLRegisterImage(&uv_res, nv12->tex[1], GL_TEXTURE_2D, CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY),
-        "Couldn't register UV plane texture");
+      // Biplanar targets register two textures (Y + UV), planar 4:4:4 registers
+      // three (Y, U, V)
+      for (int x = 0; x < nv12->num_planes; ++x) {
+        CU_CHECK(cdf->cuGraphicsGLRegisterImage(&plane_res[x], nv12->tex[x], GL_TEXTURE_2D, CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY),
+          "Couldn't register target plane texture");
+      }
 
       return 0;
     }
@@ -417,13 +419,18 @@ namespace cuda {
       sws.convert(nv12->buf);
 
       auto fmt_desc = av_pix_fmt_desc_get(sw_format);
+      const auto num_planes = nv12->num_planes;
 
       // Map the GL textures to read for CUDA
-      CUgraphicsResource resources[2] = { y_res.get(), uv_res.get() };
-      CU_CHECK(cdf->cuGraphicsMapResources(2, resources, stream.get()), "Couldn't map GL textures in CUDA");
+      CUgraphicsResource resources[3];
+      for (int x = 0; x < num_planes; ++x) {
+        resources[x] = plane_res[x].get();
+      }
+
+      CU_CHECK(cdf->cuGraphicsMapResources(num_planes, resources, stream.get()), "Couldn't map GL textures in CUDA");
 
       // Copy from the GL textures to the target CUDA frame
-      for (int i = 0; i < 2; i++) {
+      for (int i = 0; i < num_planes; i++) {
         CUDA_MEMCPY2D cpy = {};
         cpy.srcMemoryType = CU_MEMORYTYPE_ARRAY;
         CU_CHECK(cdf->cuGraphicsSubResourceGetMappedArray(&cpy.srcArray, resources[i], 0, 0), "Couldn't get mapped plane array");
@@ -438,7 +445,7 @@ namespace cuda {
       }
 
       // Unmap the textures to allow modification from GL again
-      CU_CHECK(cdf->cuGraphicsUnmapResources(2, resources, stream.get()), "Couldn't unmap GL textures from CUDA");
+      CU_CHECK(cdf->cuGraphicsUnmapResources(num_planes, resources, stream.get()), "Couldn't unmap GL textures from CUDA");
       return 0;
     }
 
@@ -468,8 +475,7 @@ namespace cuda {
     std::uint64_t sequence;
     egl::rgb_t rgb;
 
-    registered_resource_t y_res;
-    registered_resource_t uv_res;
+    registered_resource_t plane_res[3];
 
     int offset_x, offset_y;
   };

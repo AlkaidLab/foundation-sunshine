@@ -240,6 +240,20 @@ Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧�
   kscreen 报错噪音。**注意**：本机未装 niri，命令语法必须在 niri 环境实测；一律先做能力探测，
   探测失败必须保持现有降级路径（不得影响 KDE 与非 KDE 现状）。
 
+### 2.12 VAAPI 的 YUV 4:4:4（低，NVENC 已解禁）
+
+- **背景（2026-09-20，NVENC 444 解禁时核实）**：`vaapi.cpp` 的 `get_va_profile()` 已能把
+  `AV_PROFILE_HEVC_REXT` + 8/10-bit 映射到 `VAProfileHEVCMain444`/`Main444_10`，且
+  `is_va_profile_supported()` 会经 `vaQueryConfigProfiles()` 查驱动——这条 444 链路**代码已备**，
+  只是 vaapi encoder 条目（`video.cpp` `#ifdef __linux__` 段）的 444 格式仍为 `AV_PIX_FMT_NONE`
+  且无 `YUV444_SUPPORT`，走不到。
+- **做法**：条目 444 填 `AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P10`（hevc_vaapi 收平面格式）+
+  旗标，然后靠真实试编码探测兜底；`va_t::set_frame()` 的 VA surface 导出还要从写死的 2 层
+  （`prime.num_layers != 2` 拒绝）泛化到 3 平面 444 surface。
+- **收益/风险**：Intel/AMD iGPU 的 HEVC 444（h264 无 VAAPI 444 profile，天然只有 HEVC）；
+  NVIDIA 上 nvidia-vaapi-driver 无编码入口，探测自然拒绝。**本机（NVIDIA）无收益、无法实测**，
+  建议在有 Intel/AMD 核显的机器上做。
+
 ---
 
 ## 三、⛔ 本质不可移植（含原因与 Linux 对应物）
