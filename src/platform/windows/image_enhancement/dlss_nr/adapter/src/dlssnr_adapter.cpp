@@ -897,6 +897,10 @@ namespace {
       return NVSDK_NGX_Result_Success;
     });
     if (!ngx_succeeded(param_result)) {
+      // The command list is in the recording state; close it so the
+      // allocator stays resettable if the instance is ever reused, and so
+      // destroy does not release an open list (debug layer error).
+      (void) instance->list12->Close();
       return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
     }
 
@@ -905,6 +909,8 @@ namespace {
       return instance->evaluate_feature(instance->list12, instance->feature, instance->parameters, nullptr);
     });
     if (!ngx_succeeded(evaluate_result)) {
+      // Same recording-state concern as the parameter failure path above.
+      (void) instance->list12->Close();
       return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
     }
     if (instance->timing_heap) {
