@@ -209,13 +209,15 @@ jobs:
             ccache-windows-
 
       - name: Fetch paired GUI artifact
-        if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
+        if: github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.gui_run_id != '')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GUI_RUN_ID: ${{ inputs.gui_run_id }}
         run: |
-          ./scripts/fetch-paired-gui.ps1 -RunId $env:GUI_RUN_ID -Destination "$env:RUNNER_TEMP/paired-gui"
+          $arguments = @{ Destination = "$env:RUNNER_TEMP/paired-gui" }
+          if ($env:GUI_RUN_ID) { $arguments.RunId = $env:GUI_RUN_ID }
+          ./scripts/fetch-paired-gui.ps1 @arguments
           "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
 
       - name: Configure Windows

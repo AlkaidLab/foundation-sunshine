@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory)][ValidatePattern('^[0-9]+$')][string]$RunId,
+    [ValidatePattern('^[0-9]+$')][string]$RunId,
     [Parameter(Mandatory)][string]$Destination
 )
 
@@ -10,6 +10,22 @@ if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s') 
     throw 'Unable to resolve the committed Panel submodule'
 }
 $expectedCommit = $Matches[1]
+if (-not $RunId) {
+    # Release builds resolve only artifacts produced for the committed gitlink.
+    # PR-only checks may succeed without uploading a GUI bundle; skip those.
+    $runsJson = gh api "repos/$repository/actions/workflows/build.yml/runs?head_sha=$expectedCommit&status=success&per_page=100"
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to discover paired Panel builds' }
+    foreach ($candidate in ($runsJson | ConvertFrom-Json).workflow_runs) {
+        $artifactsJson = gh api "repos/$repository/actions/runs/$($candidate.id)/artifacts?per_page=100"
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect paired Panel artifacts' }
+        $available = ($artifactsJson | ConvertFrom-Json).artifacts |
+            Where-Object { $_.name -eq 'sunshine-gui-windows-x64' -and -not $_.expired }
+        if ($available) { $RunId = [string]$candidate.id; break }
+    }
+    if (-not $RunId) {
+        throw "No successful, unexpired GUI artifact for Panel $expectedCommit. Build that Panel commit before packaging this release."
+    }
+}
 $runJson = gh api "repos/$repository/actions/runs/$RunId"
 if ($LASTEXITCODE -ne 0) { throw 'Unable to read the Panel workflow run' }
 $run = $runJson | ConvertFrom-Json
