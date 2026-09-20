@@ -37,6 +37,7 @@ namespace platf {
     none,
     mock_sdr_to_scrgb,
     external_sdr_to_hdr,
+    external_neural_enhancement,
   };
 
   struct pre_encode_filter_config_t {
@@ -44,6 +45,16 @@ namespace platf {
     float saturation = 0.0f;
     float middle_gray_nits = 50.0f;
     float peak_nits = 1000.0f;
+    // Neural-rendering parameters for SDR and native HDR. Only read when the active
+    // filter kind is external_neural_enhancement.
+    float nr_intensity = 1.0f;
+    float nr_local_tone_strength = 1.0f;
+    float nr_local_structure_strength = 1.0f;
+    float nr_skin_structure_strength = 0.0f;
+    int nr_style = 0;
+    int nr_motion_quality = 0;  // 0 = zero motion, 1..3 = optical-flow quality tiers
+    bool nr_auto_mask = false;
+    bool nr_ui_correction = false;
   };
 
   struct capture_contract_t {
@@ -80,9 +91,12 @@ namespace platf {
    * post_process_hdr_active means an already-validated SDR-to-HDR filter will
    * generate the HDR source after capture. It must never be interpreted by a
    * capture backend as a vendor or filter selection.
+   * post_process_nr_active reserves the private handoff copy for neural
+   * enhancement without changing the source display or wire transfer.
    */
   frame_pipeline_policy_t
-  resolve_frame_pipeline_policy(int dynamic_range, bool post_process_hdr_active);
+  resolve_frame_pipeline_policy(int dynamic_range, bool post_process_hdr_active,
+    bool post_process_nr_active = false);
 
   /**
    * Return true when the pre-encode stage, rather than the captured display,

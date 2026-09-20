@@ -512,6 +512,18 @@ namespace proc {
     return iter == _apps.end() ? std::nullopt : iter->rtx_hdr;
   }
 
+  std::optional<rtsp_stream::dlssnr_config_t>
+  proc_t::get_app_dlssnr_config(int app_id) const {
+    if (_app_id == app_id && _app_id > 0) {
+      return _app.dlssnr;
+    }
+    const auto app_id_string = std::to_string(app_id);
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id_string](const auto &app) {
+      return app.id == app_id_string;
+    });
+    return iter == _apps.end() ? std::nullopt : iter->dlssnr;
+  }
+
   void
   proc_t::run_menu_cmd(std::string cmd_id) {
     auto iter = std::find_if(_app.menu_cmds.begin(), _app.menu_cmds.end(), [&cmd_id](const auto menu_cmd) {
@@ -957,6 +969,24 @@ namespace proc {
             .saturation = std::clamp(rtx_hdr_node->get<int>("saturation", 0), -100, 100),
             .middle_gray = std::clamp(rtx_hdr_node->get<int>("middle-gray", 50), 10, 100),
             .peak_nits = std::clamp(rtx_hdr_node->get<int>("peak-nits", 1000), 400, 1000),
+          };
+        }
+        auto dlssnr_node = app_node.get_child_optional("dlssnr"s);
+        if (dlssnr_node) {
+          const auto mode = dlssnr_node->get<std::string>("mode", "inherit");
+          if (mode != "on" && mode != "off" && mode != "inherit") {
+            BOOST_LOG(warning) << "Ignoring invalid DLSS NR mode ["sv << mode << "] for app ["sv << name << ']';
+          }
+          ctx.dlssnr = rtsp_stream::dlssnr_config_t {
+            .enabled = mode == "on",
+            .style = std::clamp(dlssnr_node->get<int>("style", 0), 0, 4),
+            .motion_quality = std::clamp(dlssnr_node->get<int>("motion-quality", 0), 0, 3),
+            .intensity = std::clamp(dlssnr_node->get<float>("intensity", 1.0f), 0.0f, 1.0f),
+            .local_tone_strength = std::clamp(dlssnr_node->get<float>("local-tone-strength", 1.0f), 0.0f, 1.0f),
+            .local_structure_strength = std::clamp(dlssnr_node->get<float>("local-structure-strength", 1.0f), 0.0f, 1.0f),
+            .skin_structure_strength = std::clamp(dlssnr_node->get<float>("skin-structure-strength", 0.0f), 0.0f, 1.0f),
+            .auto_mask = dlssnr_node->get<bool>("auto-mask", false),
+            .ui_correction = dlssnr_node->get<bool>("ui-correction", false),
           };
         }
 

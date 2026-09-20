@@ -40,6 +40,16 @@ namespace platf::dxgi::filter_detail {
     return {};
   }
 
+  inline std::string_view
+  validate_neural_input(const gpu_frame_view_t &input) {
+    if (input.semantic.domain != frame_domain_e::linear_scrgb) return validate_sdr_input(input);
+    if (!input.texture || !input.srv || !input.width || !input.height) return "invalid_input";
+    if (input.semantic.borrowed || input.semantic.encoding != pixel_encoding_class_e::float16 ||
+        input.semantic.reference_white_nits != 80.0f) return "input_contract_mismatch";
+    if (input.format != DXGI_FORMAT_R16G16B16A16_FLOAT) return "unsupported_format";
+    return {};
+  }
+
   inline filter_result_t
   make_scrgb_result(
     const gpu_frame_view_t &input,
@@ -56,6 +66,29 @@ namespace platf::dxgi::filter_detail {
         .texture = texture,
         .srv = srv,
         .format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+        .semantic = output_semantic,
+        .width = input.width,
+        .height = input.height,
+      },
+      .reason = {},
+    };
+  }
+
+  inline filter_result_t
+  make_sdr_result(
+    const gpu_frame_view_t &input,
+    ID3D11Texture2D *texture,
+    ID3D11ShaderResourceView *srv) {
+    auto output_semantic = input.semantic;
+    output_semantic.domain = frame_domain_e::sdr_rec709;
+    output_semantic.encoding = pixel_encoding_class_e::unorm8;
+    output_semantic.borrowed = false;
+    return {
+      .status = filter_status_e::ready,
+      .frame = {
+        .texture = texture,
+        .srv = srv,
+        .format = DXGI_FORMAT_B8G8R8A8_UNORM,
         .semantic = output_semantic,
         .width = input.width,
         .height = input.height,

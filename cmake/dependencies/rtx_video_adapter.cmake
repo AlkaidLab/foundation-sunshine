@@ -39,8 +39,8 @@ endif ()
 # reconfiguration after the CI environment has been cleared.
 set(RTX_VIDEO_NGX_APPLICATION_ID "${_rtx_app_id}" CACHE STRING "NGX application ID" FORCE)
 
-set(_rtx_source "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter")
-set(_rtx_build "${CMAKE_BINARY_DIR}/hdr_enhanced/nvidia_rtx_video_adapter")
+set(_rtx_source "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter")
+set(_rtx_build "${CMAKE_BINARY_DIR}/image_enhancement/nvidia_rtx_video_adapter")
 set(RTX_VIDEO_ADAPTER_DLL "${_rtx_build}/Release/foundation_rtx_video_adapter.dll")
 set(RTX_VIDEO_RUNTIME_DLL "${_rtx_sdk_root}/bin/Windows/x64/rel/nvngx_truehdr.dll")
 set(RTX_VIDEO_TRUST_INCLUDE "${CMAKE_BINARY_DIR}/generated/rtx_video")
@@ -48,7 +48,7 @@ set(RTX_VIDEO_TRUST_HEADER "${RTX_VIDEO_TRUST_INCLUDE}/rtx_video_trust.h")
 set(_rtx_adapter_sources
     "${_rtx_source}/CMakeLists.txt"
     "${_rtx_source}/src/truehdr_adapter.cpp"
-    "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h")
+    "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_abi.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${_rtx_adapter_sources}
     "${RTX_VIDEO_RUNTIME_DLL}"
@@ -56,7 +56,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 
 file(SHA256 "${_rtx_source}/CMakeLists.txt" _rtx_cmake_hash)
 file(SHA256 "${_rtx_source}/src/truehdr_adapter.cpp" _rtx_source_hash)
-file(SHA256 "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h" _rtx_abi_hash)
+file(SHA256 "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_abi.h" _rtx_abi_hash)
 file(SHA256 "${RTX_VIDEO_RUNTIME_DLL}" _rtx_runtime_hash)
 file(SHA256 "${_rtx_sdk_root}/lib/Windows/x64/nvsdk_ngx_d.lib" _rtx_client_hash)
 string(SHA256 _rtx_inputs
