@@ -86,6 +86,13 @@ All three hardware tests passed locally after the placeholder fix. They do not
 start Moonlight or verify network delivery; the earlier live timeout still needs
 a client retest and long-session validation.
 
+`ProductionHlgConversionFirstEncodedPacket` runs the same production-path
+placeholder transition and real NR/NVENC checks with HLG output. Both PQ and
+HLG variants pass locally. A subsequent loopback Moonlight retest of the
+placeholder fix received and decoded its first HEVC frame while the host
+reported NR active, PQ output and active scene metadata. Long-session and
+gameplay evaluation remain separate gates.
+
 Live Moonlight HEVC/PQ testing reached NR feature creation but did not receive
 the first video frame before the client timeout. End-to-end HDR streaming and
 30-minute stability are therefore **not yet validated**. Keep this feature

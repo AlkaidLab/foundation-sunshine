@@ -122,7 +122,8 @@ namespace {
   };
 }  // namespace
 
-TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
+static void
+exercise_production_conversion(int dynamic_range) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -142,9 +143,9 @@ TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
 
   video::config_t config { .width = 1920, .height = 1080, .framerate = 60, .bitrate = 20000 };
   config.videoFormat = 1;
-  config.dynamicRange = 1;
+  config.dynamicRange = dynamic_range;
   config.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
-  config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(1, false, true);
+  config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(dynamic_range, false, true);
   config.frame_pipeline_policy_resolved = true;
   auto backend = boost::make_shared<image_enhancement::backend_use_t>();
   backend->id = "alkaidlab.nvidia_dlssnr";
@@ -154,7 +155,8 @@ TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
   display->capture_contract = config.frame_pipeline_policy.capture;
   auto encoder = display->make_nvenc_encode_device(platf::pix_fmt_e::p010, config);
   ASSERT_TRUE(encoder);
-  ASSERT_TRUE(encoder->init_encoder(config, { video::colorspace_e::bt2020, false, 10 }));
+  const auto colorspace = dynamic_range == 2 ? video::colorspace_e::bt2020hlg : video::colorspace_e::bt2020;
+  ASSERT_TRUE(encoder->init_encoder(config, { colorspace, false, 10 }));
   auto frame = display->alloc_img();
   ASSERT_TRUE(frame);
   ASSERT_EQ(display->complete_img(frame.get(), true), 0);
@@ -178,7 +180,15 @@ TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
   const auto statuses = video::get_hdr_pipeline_statuses();
   ASSERT_EQ(statuses.size(), 1u);
   EXPECT_EQ(statuses[0].nr_state, "active");
-  EXPECT_EQ(statuses[0].hdr_mode, "pq");
+  EXPECT_EQ(statuses[0].hdr_mode, dynamic_range == 2 ? "hlg" : "pq");
+}
+
+TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
+  exercise_production_conversion(1);
+}
+
+TEST(DlssNrHardware, ProductionHlgConversionFirstEncodedPacket) {
+  exercise_production_conversion(2);
 }
 
 TEST(DlssNrHardware, DesktopCaptureFirstEncodedPacket) {
