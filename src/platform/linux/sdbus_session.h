@@ -27,7 +27,13 @@ namespace platf::sdbus {
     }
 
     const std::string address = std::string { "unix:path=" } + runtime_dir + "/bus";
-    if (sd_bus_set_address(bus, address.c_str()) < 0 || sd_bus_start(bus) < 0) {
+    // Mark the connection as a bus client so sd-bus performs the full
+    // handshake (AUTH + Hello) the way sd_bus_open_user() would. Without this
+    // flag the socket connects but never acquires a unique name, and
+    // dbus-broker resets the connection when the first method call arrives
+    // (surfaced as ECONNRESET from every klipper call).
+    if (sd_bus_set_bus_client(bus, 1) < 0 ||
+        sd_bus_set_address(bus, address.c_str()) < 0 || sd_bus_start(bus) < 0) {
       sd_bus_unref(bus);
       return nullptr;
     }
