@@ -1196,7 +1196,7 @@ namespace config {
 
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
-      const auto log_value = name == "file_mappings" && !val.empty() ? "<redacted>"s : val;
+      const auto log_value = (name == "file_mappings" || name == "widget_token") && !val.empty() ? "<redacted>"s : val;
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
       modified_config_settings[name] = val;
     }

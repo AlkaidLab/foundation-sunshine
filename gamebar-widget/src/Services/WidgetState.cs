@@ -61,13 +61,21 @@ namespace FoundationSunshineWidget.Services
             var result = new List<double>();
             if (latency == null) return result;
             IJsonValue v;
-            if (latency.TryGetValue("recent_fps", out v) && v != null && v.ValueType == JsonValueType.Array)
+            // 服务端当前输出单个数值(由采样窗口推算的最新帧率);兼容未来的数组历史序列
+            if (latency.TryGetValue("recent_fps", out v) && v != null)
             {
-                foreach (var item in v.GetArray())
+                if (v.ValueType == JsonValueType.Number)
                 {
-                    if (item.ValueType == JsonValueType.Number)
+                    result.Add(v.GetNumber());
+                }
+                else if (v.ValueType == JsonValueType.Array)
+                {
+                    foreach (var item in v.GetArray())
                     {
-                        result.Add(item.GetNumber());
+                        if (item.ValueType == JsonValueType.Number)
+                        {
+                            result.Add(item.GetNumber());
+                        }
                     }
                 }
             }

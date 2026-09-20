@@ -270,7 +270,9 @@ main(int argc, char *argv[]) {
     bool first = true;
     for (auto &[name, val] : config::modified_config_settings) {
       if (!first) config_json << ", ";
-      config_json << "\"" << name << "\": \"" << val << "\"";
+      // 凭证类配置只记录键名,不回显明文
+      const auto logged_val = name == "widget_token" ? "<redacted>"s : val;
+      config_json << "\"" << name << "\": \"" << logged_val << "\"";
       first = false;
     }
     config_json << "}";

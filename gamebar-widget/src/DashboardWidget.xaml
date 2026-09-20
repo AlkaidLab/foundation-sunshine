@@ -126,17 +126,17 @@
                     <!-- 动作区 -->
                     <StackPanel Spacing="6" Margin="0,4,0,0">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="StopButton" Content="断开会话" Click="StopButton_Click"
+                            <Button x:Name="StopButton" Content="断开所有会话" Click="StopButton_Click"
                                     FontSize="12" Foreground="#FF9C95" Background="#0FFFFFFF" BorderBrush="#73FF7B72" BorderThickness="1"
                                     Padding="14,7" CornerRadius="4"/>
                             <Button x:Name="RestartButton" Content="重启 Foundation Sunshine 服务" Click="RestartButton_Click"
                                     FontSize="12" Foreground="#EBEBEB" Background="#0FFFFFFF" BorderBrush="#29FFFFFF" BorderThickness="1"
                                     Padding="14,7" CornerRadius="4"/>
                         </StackPanel>
-                        <TextBlock Text="音量混音:Game Bar 自带音频小部件" FontSize="11" Foreground="#6B6B6B"/>
+                        <TextBlock Text="断开会终止全部串流会话(含其他客户端) · 音量混音:Game Bar 自带音频小部件" FontSize="11" Foreground="#6B6B6B" TextWrapping="Wrap"/>
                     </StackPanel>
 
-                    <TextBlock x:Name="StatusText" Text="" FontSize="11" Foreground="#9E9E9E"/>
+                    <TextBlock x:Name="StatusText" Text="" FontSize="11" Foreground="#9E9E9E" TextWrapping="Wrap"/>
                 </StackPanel>
 
                 <!-- ============ 无会话 ============ -->
@@ -145,33 +145,35 @@
                         <TextBlock Text="等待串流接入" FontSize="14" FontWeight="SemiBold" Foreground="#EBEBEB" HorizontalAlignment="Center"/>
                         <TextBlock Text="在客户端打开 Moonlight 连接本机;会话开始后,这里会显示实时状态。" FontSize="12" Foreground="#9E9E9E" TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="300"/>
                     </StackPanel>
-
-                    <!-- 连接设置(spike 期手动配对) -->
-                    <Border Background="#08FFFFFF" CornerRadius="6" Padding="12,10" Margin="0,12,0,0">
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="连接 Foundation Sunshine" FontSize="12" FontWeight="SemiBold" Foreground="#9E9E9E"/>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Text="Web UI 端口" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Center" Width="72"/>
-                                <TextBox x:Name="PortBox" InputScope="Number" Width="100" FontSize="12" PlaceholderText="47990"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Text="widget_token" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Center" Width="72"/>
-                                <TextBox x:Name="TokenBox" Width="220" FontSize="12" PlaceholderText="sunshine.conf 中的 widget_token"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button Content="保存并连接" Click="SaveSettings_Click" FontSize="12" Padding="14,6" CornerRadius="4"/>
-                                <TextBlock x:Name="SettingsHint" Text="" FontSize="11" Foreground="#6B6B6B" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
                 </StackPanel>
 
                 <!-- ============ 端点错误 ============ -->
                 <StackPanel x:Name="ErrorPanel" Visibility="Collapsed" Spacing="6" Margin="0,24,0,0">
                     <TextBlock Text="无法连接 Foundation Sunshine" FontSize="14" FontWeight="SemiBold" Foreground="#FF9C95" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="ErrorDetail" Text="—" FontSize="12" Foreground="#9E9E9E" TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="300"/>
+                    <TextBlock x:Name="ErrorDetail" Text="—" FontSize="12" Foreground="#9E9E9E" TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="300" TextAlignment="Center"/>
                     <TextBlock x:Name="RetryText" Text="每秒自动重试" FontSize="11" Foreground="#6B6B6B" HorizontalAlignment="Center"/>
                 </StackPanel>
+
+                <!-- ============ 连接设置(无会话与错误态可见) ============ -->
+                <Border x:Name="SettingsPanel" Visibility="Collapsed" Background="#08FFFFFF" CornerRadius="6" Padding="12,10" Margin="0,12,0,0">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="连接 Foundation Sunshine" FontSize="12" FontWeight="SemiBold" Foreground="#9E9E9E"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Web UI 端口" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Center" Width="72"/>
+                            <TextBox x:Name="PortBox" InputScope="Number" Width="100" FontSize="12" PlaceholderText="47990"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="widget_token" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Center" Width="72"/>
+                            <PasswordBox x:Name="TokenBox" Width="220" FontSize="12" PlaceholderText="sunshine.conf 中的 widget_token"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="保存并连接" Click="SaveSettings_Click" FontSize="12" Padding="14,6" CornerRadius="4"/>
+                            <Button x:Name="ClearTokenButton" Content="清除令牌" Click="ClearToken_Click" FontSize="12" Padding="14,6" CornerRadius="4"/>
+                            <TextBlock x:Name="SettingsHint" Text="" FontSize="11" Foreground="#6B6B6B" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TokenStatusText" Text="令牌:未配置" FontSize="11" Foreground="#6B6B6B"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
     </Grid>

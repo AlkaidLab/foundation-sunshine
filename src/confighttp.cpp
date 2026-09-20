@@ -1346,8 +1346,13 @@ namespace confighttp {
 
     auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
     for (auto &[name, value] : vars) {
+      // widget_token 是本地端点凭证,不回显明文;只暴露是否已配置
+      if (name == "widget_token") {
+        continue;
+      }
       outputTree.put(std::move(name), std::move(value));
     }
+    outputTree.put("widget_token_configured", !config::sunshine.widget_token.empty());
 
     outputTree.put("active_encoder", video::active_encoder_name());
     if (auto frame_budget = nvenc::get_frame_budget_report()) {

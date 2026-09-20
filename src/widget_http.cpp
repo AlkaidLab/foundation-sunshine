@@ -144,13 +144,18 @@ namespace widget_http {
         std::stringstream ss;
         ss << request->content.rdbuf();
         const auto body = json::parse(ss.str());
+        if (!body.is_object()) {
+          send_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "Request body must be a JSON object");
+          return;
+        }
         const auto type = body.value("type", std::string {});
 
-        if (type == "stop_session") {
+        if (type == "stop_all_sessions") {
+          // 语义:终止当前全部串流会话(所有客户端),与按钮文案一致
           rtsp_stream::terminate_sessions_async(
             stream::session::stop_reason_e::host_terminate,
             boost::function<void()>([] {}));
-          BOOST_LOG(info) << "widget_http: session stop requested by Game Bar widget"sv;
+          BOOST_LOG(info) << "widget_http: session termination requested by Game Bar widget"sv;
           send_json(std::move(response), {
                                             { "status", true },
                                             { "result", "session termination requested" },

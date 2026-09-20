@@ -1,6 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
+using System.Threading.Tasks;
+using Windows.Security.Credentials;
 using Windows.Storage;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
@@ -13,11 +14,16 @@ namespace FoundationSunshineWidget
     /// <summary>
     /// 串流仪表盘主视图。1s 轮询 /api/widget/state,四态:
     /// 串流中 / 无会话 / 数据过期(ts 停更 >5s 徽标) / 端点错误(持续重试)。
+    /// 连接设置在无会话与错误态可见,保证首次配置与修正配置都有入口。
+    /// token 存 PasswordVault(Credential Locker),LocalSettings 仅存端口与配置状态。
     /// 破坏性动作为两段式确认:第一次按下只上膛(3s 自动解除)。
     /// </summary>
     public sealed partial class DashboardWidget : Page
     {
         private const double StaleThresholdSec = 5.0;
+        private const string VaultResource = "FoundationSunshineWidget";
+        private const string VaultUserName = "sunshine-widget";
+        private const string LegacyTokenSetting = "SunshineToken";
 
         private readonly DispatcherTimer _timer = new DispatcherTimer();
         private WidgetClient _client;
@@ -50,6 +56,38 @@ namespace FoundationSunshineWidget
             base.OnNavigatedFrom(e);
         }
 
+        private static string LoadTokenFromVault()
+        {
+            try
+            {
+                var vault = new PasswordVault();
+                var credential = vault.Retrieve(VaultResource, VaultUserName);
+                return credential.Password ?? string.Empty;
+            }
+            catch (Exception)
+            {
+                // 未存储时 Retrieve 抛异常
+                return string.Empty;
+            }
+        }
+
+        private static void SaveTokenToVault(string token)
+        {
+            var vault = new PasswordVault();
+            try
+            {
+                vault.Remove(vault.Retrieve(VaultResource, VaultUserName));
+            }
+            catch (Exception)
+            {
+                // 无旧凭据时忽略
+            }
+            if (!string.IsNullOrEmpty(token))
+            {
+                vault.Add(new PasswordCredential(VaultResource, VaultUserName, token));
+            }
+        }
+
         private void LoadSettings()
         {
             var settings = ApplicationData.Current.LocalSettings;
@@ -59,10 +97,19 @@ namespace FoundationSunshineWidget
             {
                 port = (int)portVal;
             }
-            string token = settings.Values["SunshineToken"] as string ?? string.Empty;
 
+            // 一次性迁移:旧版本把 token 明文放在 LocalSettings,迁入 PasswordVault 后删除
+            var legacyToken = settings.Values[LegacyTokenSetting] as string;
+            if (!string.IsNullOrEmpty(legacyToken) && LoadTokenFromVault().Length == 0)
+            {
+                SaveTokenToVault(legacyToken);
+            }
+            settings.Values.Remove(LegacyTokenSetting);
+
+            var token = LoadTokenFromVault();
             PortBox.Text = port.ToString(CultureInfo.InvariantCulture);
-            TokenBox.Text = token;
+            // 令牌不回填到 PasswordBox,只显示配置状态
+            TokenStatusText.Text = "令牌:" + (token.Length > 0 ? "已配置" : "未配置");
             RebuildClient(port, token);
         }
 
@@ -80,11 +127,31 @@ namespace FoundationSunshineWidget
                 SettingsHint.Text = "端口无效";
                 return;
             }
+
             var settings = ApplicationData.Current.LocalSettings;
             settings.Values["SunshinePort"] = port;
-            settings.Values["SunshineToken"] = TokenBox.Text.Trim();
-            RebuildClient(port, TokenBox.Text.Trim());
+
+            // PasswordBox 为空 = 保留已存令牌;非空 = 替换
+            var token = LoadTokenFromVault();
+            var entered = TokenBox.Password.Trim();
+            if (entered.Length > 0)
+            {
+                SaveTokenToVault(entered);
+                token = entered;
+                TokenBox.Password = string.Empty;
+            }
+            TokenStatusText.Text = "令牌:" + (token.Length > 0 ? "已配置" : "未配置");
+
+            RebuildClient(port, token);
             SettingsHint.Text = "已保存";
+        }
+
+        private void ClearToken_Click(object sender, RoutedEventArgs e)
+        {
+            SaveTokenToVault(string.Empty);
+            TokenBox.Password = string.Empty;
+            TokenStatusText.Text = "令牌:未配置";
+            SettingsHint.Text = "令牌已清除";
         }
 
         private async void PollTimer_Tick(object sender, object e)
@@ -114,6 +181,8 @@ namespace FoundationSunshineWidget
             MainPanel.Visibility = Visibility.Collapsed;
             EmptyPanel.Visibility = Visibility.Collapsed;
             ErrorPanel.Visibility = Visibility.Visible;
+            // 设置区保持可见:首次配置与修正错误配置都必须有入口
+            SettingsPanel.Visibility = Visibility.Visible;
             StaleBadge.Visibility = Visibility.Collapsed;
             ErrorDetail.Text = "GET /api/widget/state 失败:" + message;
             RetryText.Text = _errorCount > 1
@@ -130,10 +199,12 @@ namespace FoundationSunshineWidget
             {
                 MainPanel.Visibility = Visibility.Collapsed;
                 EmptyPanel.Visibility = Visibility.Visible;
+                SettingsPanel.Visibility = Visibility.Visible;
                 return;
             }
 
             EmptyPanel.Visibility = Visibility.Collapsed;
+            SettingsPanel.Visibility = Visibility.Collapsed;
             MainPanel.Visibility = Visibility.Visible;
 
             // 数据过期:保留画面,只亮徽标
@@ -202,6 +273,16 @@ namespace FoundationSunshineWidget
             TargetLine.X2 = w;
             TargetLine.Y1 = MapY(h, lo, hi, target);
             TargetLine.Y2 = TargetLine.Y1;
+
+            if (fps.Count == 1)
+            {
+                // 单样本:只画末端点,不画线
+                FpsLine.Points = new PointCollection();
+                double y = MapY(h, lo, hi, fps[0]);
+                Canvas.SetLeft(FpsEndDot, w - 3.5);
+                Canvas.SetTop(FpsEndDot, y - 3.5);
+                return;
+            }
 
             var points = new PointCollection();
             for (int i = 0; i < fps.Count; i++)
@@ -285,14 +366,14 @@ namespace FoundationSunshineWidget
         {
             if (!_stopArmed)
             {
-                Arm(ref _stopArmed, ref _stopReset, StopButton, "确认断开?", StopDisarm);
+                Arm(ref _stopArmed, ref _stopReset, StopButton, "确认断开所有会话?", StopDisarm);
                 return;
             }
-            Disarm(ref _stopArmed, ref _stopReset, StopButton, "断开会话");
+            Disarm(ref _stopArmed, ref _stopReset, StopButton, "断开所有会话");
             try
             {
-                await _client.PostActionAsync("stop_session");
-                ShowStatus("已请求断开会话");
+                await _client.PostActionAsync("stop_all_sessions");
+                ShowStatus("已请求断开全部串流会话");
             }
             catch (Exception ex)
             {
@@ -302,7 +383,7 @@ namespace FoundationSunshineWidget
 
         private void StopDisarm()
         {
-            Disarm(ref _stopArmed, ref _stopReset, StopButton, "断开会话");
+            Disarm(ref _stopArmed, ref _stopReset, StopButton, "断开所有会话");
         }
 
         private async void RestartButton_Click(object sender, RoutedEventArgs e)

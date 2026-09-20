@@ -36,8 +36,8 @@ cd gamebar-widget/src
    (不配置则 `/api/widget/*` 返回 404,小部件不可用);
 3. 生成并安装 MSIX(未签名包用开发者模式安装):
    ```powershell
-   # VS 里 F5,或:
-   Add-AppxPackage -Register build\src\bin\x64\Debug\AppxManifest.xml   # 免打包注册
+   # VS 里 F5,或(仓库根目录起):
+   Add-AppxPackage -Register gamebar-widget\src\bin\x64\Debug\AppxManifest.xml   # 免打包注册
    ```
 4. **回环豁免**(packaged app 访问 localhost 的前提,只需一次):
    ```powershell
@@ -50,6 +50,6 @@ cd gamebar-widget/src
 ## 已知边界(spike 期)
 
 - 图标是生成的占位 PNG(深底 + Sunshine 蓝条);
-- token 为手动配对(小部件内文本框),产品化配对流程见设计稿开放问题 1;
+- token 为手动配对(小部件内 PasswordBox,存于系统 Credential Locker/PasswordVault,不回显,可清除),产品化配对流程见设计稿开放问题 1;
 - 客户端报告丢包字段服务端尚未暴露(客户端 IDX_LOSS_STATS 只进日志),NetText 暂不显示;
 - 紧凑模式(Game Bar pinned 小尺寸)未实现。
