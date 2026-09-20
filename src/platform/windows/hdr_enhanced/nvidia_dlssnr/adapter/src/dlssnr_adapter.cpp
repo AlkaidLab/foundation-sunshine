@@ -754,14 +754,16 @@ namespace {
         return instance->create_feature(instance->list12, DLSSNR_FEATURE_ID, instance->parameters, &instance->feature);
       });
       std::fprintf(stderr, "DLSS NR: CreateFeature result=0x%08X\n", static_cast<unsigned>(create_result));
-      instance->list12->Close();
+      hr = instance->list12->Close();
+      if (FAILED(hr)) { status = FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR; break; }
       if (!ngx_succeeded(create_result) || !instance->feature) {
         status = FOUNDATION_DLSSNR_STATUS_UNSUPPORTED;
         break;
       }
       const uint64_t ready_value = ++instance->fence_value;
       instance->queue12->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList *const *>(&instance->list12));
-      instance->queue12->Signal(instance->fence12, ready_value);
+      hr = instance->queue12->Signal(instance->fence12, ready_value);
+      if (FAILED(hr)) { status = FOUNDATION_DLSSNR_STATUS_DEVICE_LOST; break; }
       if (!wait_cpu_fence(instance, ready_value)) {
         status = FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
         break;
@@ -827,7 +829,9 @@ namespace {
       return FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE;
     }
     const uint64_t input_ready = ++instance->fence_value;
-    instance->context11->Signal(instance->fence11, input_ready);
+    if (FAILED(instance->context11->Signal(instance->fence11, input_ready))) {
+      return FOUNDATION_DLSSNR_STATUS_DEVICE_LOST;
+    }
     instance->context11->Flush();
     if (FAILED(instance->queue12->Wait(instance->fence12, input_ready))) {
       return FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR;
@@ -930,7 +934,9 @@ namespace {
 
     // 3) D3D11 waits GPU-side, then copies the evaluated mirror. Evaluation
     // errors return above; the host filter retains the original capture frame.
-    instance->context11->Wait(instance->fence11, output_ready);
+    if (FAILED(instance->context11->Wait(instance->fence11, output_ready))) {
+      return FOUNDATION_DLSSNR_STATUS_DEVICE_LOST;
+    }
     instance->context11->CopyResource(output, instance->output_mirror11);
     instance->first_frame = false;
     return FOUNDATION_DLSSNR_STATUS_OK;
