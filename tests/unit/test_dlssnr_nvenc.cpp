@@ -112,7 +112,8 @@ namespace {
     platf::capture_e
     release_snapshot() override { return platf::capture_e::ok; }
     bool
-    is_hdr() override { return true; }
+    is_hdr() override { return hdr_capture; }
+    bool hdr_capture = true;
     bool
     get_hdr_metadata(SS_HDR_METADATA &metadata) override {
       metadata = {};
@@ -123,7 +124,7 @@ namespace {
 }  // namespace
 
 static void
-exercise_production_conversion(int dynamic_range, bool unavailable_backend = false) {
+exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -131,11 +132,12 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   }
   ASSERT_EQ(platf::dxgi::init(), 0);
   auto display = std::make_shared<SyntheticHdrDisplay>();
+  display->hdr_capture = hdr_capture;
   display->width = display->width_before_rotation = display->env_width = 3840;
   display->height = display->height_before_rotation = display->env_height = 2160;
   display->offset_x = display->offset_y = 0;
-  display->capture_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-  display->capture_linear_gamma = true;
+  display->capture_format = hdr_capture ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+  display->capture_linear_gamma = hdr_capture;
   ASSERT_HRESULT_SUCCEEDED(CreateDXGIFactory1(IID_IDXGIFactory1, reinterpret_cast<void **>(&display->factory)));
   ASSERT_HRESULT_SUCCEEDED(display->factory->EnumAdapters1(0, &display->adapter));
   ASSERT_HRESULT_SUCCEEDED(D3D11CreateDevice(display->adapter.get(), D3D_DRIVER_TYPE_UNKNOWN,
@@ -158,12 +160,14 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   }
   config.enhancement_backend = backend;
   display->capture_contract = config.frame_pipeline_policy.capture;
-  const bool hdr_output = dynamic_range != 0;
-  auto encoder = display->make_nvenc_encode_device(hdr_output ? platf::pix_fmt_e::p010 : platf::pix_fmt_e::nv12, config);
+  config.encoderCscMode = 2;  // Rec.709 for the SDR fallback.
+  const auto colorspace = video::colorspace_from_client_config(config, display->is_hdr());
+  const bool hdr_output = video::colorspace_is_hdr(colorspace);
+  ASSERT_EQ(hdr_output, hdr_capture && dynamic_range != 0);
+  ASSERT_EQ(colorspace.bit_depth, dynamic_range != 0 ? 10u : 8u);
+  auto encoder = display->make_nvenc_encode_device(colorspace.bit_depth == 10 ? platf::pix_fmt_e::p010 : platf::pix_fmt_e::nv12, config);
   ASSERT_TRUE(encoder);
-  const auto colorspace = !hdr_output ? video::colorspace_e::rec709 :
-                         dynamic_range == 2 ? video::colorspace_e::bt2020hlg : video::colorspace_e::bt2020;
-  ASSERT_TRUE(encoder->init_encoder(config, { colorspace, false, hdr_output ? 10u : 8u }));
+  ASSERT_TRUE(encoder->init_encoder(config, colorspace));
   auto frame = display->alloc_img();
   ASSERT_TRUE(frame);
   ASSERT_EQ(display->complete_img(frame.get(), true), 0);
@@ -191,6 +195,10 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     EXPECT_EQ(statuses[0].nr_failure_reason, "runtime_untrusted");
   }
   EXPECT_EQ(statuses[0].hdr_mode, !hdr_output ? "sdr" : dynamic_range == 2 ? "hlg" : "pq");
+}
+
+TEST(DlssNrHardware, ProductionSdrCaptureReportsSdrDespiteHdrRequest) {
+  exercise_production_conversion(1, false, false);
 }
 
 TEST(DlssNrHardware, ProductionHdrCaptureToSdrFirstEncodedPacket) {

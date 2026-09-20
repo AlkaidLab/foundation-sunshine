@@ -134,3 +134,42 @@ existing PQ, HLG and unavailable-backend HDR tests. This verifies frame delivery
 through the production encoder, not HDR-to-SDR tone-mapping quality. The client
 HDR negotiation and complete 30-minute paired-package stream remain separate
 acceptance checks.
+
+
+### Latest paired-package and throughput scope (2026-09-20)
+
+The later Core 91080d54 / Panel 074ce83 paired package passed provenance and
+file verification. An explicit HEVC Main10/PQ desktop session used 4K scRGB
+capture and 1080p60 output. The user ended the client at 10:20; client statistics
+reported 60 fps received/decoded/rendered and zero network/jitter drops. Twenty
+host samples covered 570.39 seconds with NR, PQ, analysis and metadata active.
+This is short desktop-stream evidence, not completed 30-minute stability or
+real-game motion-quality acceptance. Those longer/visual checks were explicitly
+cancelled for this round; their limitations remain.
+
+A subsequent isolated RTX 5080 / driver 616.92 / runtime 310.8.0.0 test measured
+4K BGRA8 NR at 68.78 fps over 1200 frames (14.539 ms/frame; GPU Evaluate mean
+13.869 ms after ten warmup frames). Two and three independent processes reached
+approximately 68.4 and 68.2 fps in aggregate, rather than increasing throughput.
+The input was pre-uploaded, intensity was 1, optical flow was disabled, and only
+the final output was read back. This excludes game rendering, HDR proxy passes,
+capture and encoding. The historical ~44 ms GPU result was not reproduced;
+its cause remains unisolated. Neither result is a fixed resolution/FPS gate.
+
+### Review boundaries
+
+Launch retains both enabled component references until RTSP resolves the final
+wire format. PQ selects RTX HDR first; HLG/SDR can still select NR. RTSP releases
+the unused reference. Actual `hdr_mode` reporting follows the encoder colorspace,
+not the requested capture policy. A production regression covers an SDR source
+with an HDR request and requires SDR output status and delivered NVENC packets.
+That fallback retains 10-bit encoding with Rec.709; bit depth alone is not HDR.
+Unknown FP16 colour semantics are still rejected: bypassing NR alone cannot
+establish a correct downstream transfer function.
+
+A short same-process test with two D3D11 devices and independent NR instances
+passed interleaved processing, output readback, peer destruction and recreation.
+Calls were serialized, as in the host; this is not simultaneous API-call safety
+or multi-client streaming acceptance. No single-instance restriction is inferred
+from the earlier unverified risk. The Panel already checks the VC++ runtime and
+provides an explicit missing-runtime notice and download action.

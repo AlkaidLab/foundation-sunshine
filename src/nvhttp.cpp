@@ -287,9 +287,10 @@ namespace nvhttp {
       }
     }
     if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid);
-        !launch_session->synthetic_hdr.enabled && app_dlssnr && app_dlssnr->enabled) {
-      // Native HDR and SDR both attach NR. Only an active synthetic HDR
-      // backend owns this slot instead; RTSP validates the final wire policy.
+        app_dlssnr && app_dlssnr->enabled) {
+      // Reserve both enabled backends until RTSP knows the final wire format.
+      // It selects RTX HDR only for PQ and releases the unused backend;
+      // HLG/SDR must retain NR even when launch initially requested RTX HDR.
       launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
       launch_session->dlssnr_params = *app_dlssnr;
     }
