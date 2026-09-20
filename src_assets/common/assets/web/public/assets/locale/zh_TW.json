@@ -508,7 +508,7 @@
     "notify_pre_releases_desc": "是否接收 Sunshine 的新預發佈版本通知",
     "nvenc_cuda_array_input": "10-bit 4:4:4 使用 CUDA array 輸入",
     "nvenc_cuda_array_input_desc": "僅 Windows。將 10-bit 4:4:4 畫面透過區塊線性（block-linear）CUDA array 送給 NVENC，而不是使用線性記憶體指標。需要驅動支援 NVENC 13.1 以上；舊驅動程式會忽略此項，繼續走顯存指標。實驗功能：部分驅動開啟後會出現重影，也有驅動會在 Sunshine 啟動偵測編碼器時卡住，導致管理介面打不開。一旦出現這種情況就沒辦法在這裡關回去了 —— 請停止 Sunshine 服務，在 sunshine.conf 裡寫 nvenc_cuda_array_input = disabled，然後重新啟動服務。除非你正在協助測試，否則請保持關閉。",
-    "nvenc_frame_budget_clamped": "幀預算護欄已將本工作階段的預設從 P{configured} 降到 P{effective}（{width}x{height}{fps}fps：預算 {budget}ms，P{configured} 預估 {estimated}ms）。如需強制使用原檔位，可手動下調預設或關閉護欄。",
+    "nvenc_frame_budget_clamped": "幀預算護欄已將本工作階段的預設從 P{configured} 降到 P{effective}（{width}x{height} {fps}fps：預算 {budget}ms，P{configured} 預估 {estimated}ms）。如需強制使用原檔位，可手動下調預設或關閉護欄。",
     "nvenc_frame_budget_guard": "幀預算護欄",
     "nvenc_frame_budget_guard_desc": "當設定的預設檔位預估編碼耗時超出單幀時間預算（幀間隔的固定比例）時，自動降低檔位，確保編碼跟得上串流幀率（例如 4K 120fps 會在單 NVENC 顯示卡上把預設 P4 降到 P1）。預估按近期高階顯示卡保守標定；除非實測你的顯示卡可以跟上，建議保持啟用。",
     "nvenc_frame_budget_guard_disabled": "停用",
