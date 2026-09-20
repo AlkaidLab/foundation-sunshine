@@ -3584,8 +3584,8 @@ namespace video {
   /**
    * @brief Disable the pre-encode filter when the opened display cannot satisfy
    *        its preconditions, keeping the wire signal consistent with the pixels
-   *        actually produced. An HDR source or unsupported capture path must use
-   *        the normal pipeline instead of advertising synthetic HDR output.
+   *        actually produced. HDR sources allow signal-preserving NR but cannot
+   *        feed an SDR-to-HDR filter. Unsupported capture paths bypass all filters.
    */
   void
   strip_unusable_pre_encode_filter(platf::display_t &disp, config_t &config) {
@@ -3593,9 +3593,9 @@ namespace video {
       return;
     }
     if (!disp.supports_pre_encode_filter()) {
-      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling RTX HDR for this session"sv;
+      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling image enhancement for this session"sv;
     }
-    else if (disp.is_hdr()) {
+    else if (disp.is_hdr() && config.pre_encode_filter != platf::pre_encode_filter_e::external_neural_enhancement) {
       BOOST_LOG(warning) << "Source display is already in HDR mode (source_display_not_sdr); disabling RTX HDR for this session"sv;
     }
     else {
