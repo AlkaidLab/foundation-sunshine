@@ -59,6 +59,17 @@ only a drained batch. Three 2160p first-frame readbacks completed in
 This does not reproduce the live timeout. It verifies shared-resource handoff
 and NR progress, but does not exercise desktop duplication or NVENC submission.
 
+The opt-in aggregate test `DlssNrHardware.NativeHdrFirstEncodedPacket` covers
+NR -> synthetic P010 writes -> real HEVC NVENC submission without an explicit
+caller Flush, CPU readback, or a second NR frame before the first packet. Set
+`SUNSHINE_TEST_DLSSNR_ADAPTER` to the absolute adapter path and
+`SUNSHINE_TEST_DLSSNR_SHA256` to the runtime's lowercase SHA-256 to run it.
+Without both variables it skips. The local test produced an initial IDR and two
+subsequent packets (about 1.2 seconds for the whole test, including initialization).
+It uses minimal diagnostic P010 writes, not the production colour conversion;
+desktop capture, the real conversion path and network delivery remain outside
+its scope. No additional Flush was needed in this test.
+
 Live Moonlight HEVC/PQ testing reached NR feature creation but did not receive
 the first video frame before the client timeout. End-to-end HDR streaming and
 30-minute stability are therefore **not yet validated**. Keep this feature
