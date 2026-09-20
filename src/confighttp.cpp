@@ -2642,6 +2642,41 @@ namespace confighttp {
   }
 
   void
+  stopRuntimeSessions(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    if (!require_localhost(response, request, "stopping runtime sessions")) {
+      return;
+    }
+
+    try {
+      // 终止当前全部串流会话(所有客户端),语义与 Game Bar widget 的 stop_all_sessions 一致
+      rtsp_stream::terminate_sessions_async(
+        stream::session::stop_reason_e::host_terminate,
+        boost::function<void()>([] {}));
+      BOOST_LOG(info) << "Config API: session termination requested from local panel"sv;
+
+      response->write(json {
+                          { "success", true },
+                          { "status_message", "session termination requested" },
+                        }
+                         .dump(),
+        { { "Content-Type", "application/json" } });
+      response->close_connection_after_response = true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "stopRuntimeSessions: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+    }
+    catch (...) {
+      BOOST_LOG(error) << "stopRuntimeSessions: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
   getPerfCurrent(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -4030,6 +4065,7 @@ namespace confighttp {
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
+    server.resource["^/api/runtime/sessions/stop$"]["POST"] = stopRuntimeSessions;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
