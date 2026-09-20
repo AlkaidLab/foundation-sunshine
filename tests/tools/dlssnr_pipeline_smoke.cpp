@@ -23,7 +23,7 @@ int
 main(int argc, char **argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   if (argc < 3) return 2;
-  bool hdr = false, zero = false, flow = false;
+  bool hdr = false, zero = false, flow = false, uhd = false;
   for (int i = 3; i < argc; ++i) {
     if (std::strcmp(argv[i], "--hdr") == 0)
       hdr = true;
@@ -31,6 +31,8 @@ main(int argc, char **argv) {
       zero = true;
     else if (std::strcmp(argv[i], "--flow") == 0)
       flow = true;
+    else if (std::strcmp(argv[i], "--4k") == 0)
+      uhd = true;
     else
       return 2;
   }
@@ -52,7 +54,7 @@ main(int argc, char **argv) {
       return 1;
     }
     // Resize the same filter, then recreate the entire filter next session.
-    for (const UINT width : { 1280u, 1920u }) {
+    for (const UINT width : { uhd ? 1920u : 1280u, uhd ? 3840u : 1920u }) {
       const UINT height = width * 9 / 16;
       std::vector<uint32_t> pixels(width * height);
       std::vector<uint16_t> hdr_pixels(width * height * 4);

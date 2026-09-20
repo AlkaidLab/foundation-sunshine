@@ -38,3 +38,20 @@ Temporal and visual quality still need real gameplay evaluation.
 
 The hardware smoke tests are explicit opt-in checks, not ordinary CI tests.
 They do not prove Moonlight streaming, gameplay quality or a 30-minute session.
+
+### End-to-end follow-up (2026-09-20)
+
+Live native HDR testing exposed three remaining SDR-only gates: HTTP launch
+attachment, the opened-display filter check, and the private texture handoff.
+NR now survives all three; SDR-to-HDR filters still reject native HDR sources.
+The handoff uses the resolved capture contract, excluding only the requirement
+that its source already be detached.
+
+The opt-in smoke test also accepts `--4k` (1080p/2160p resize). The real runtime
+passed repeated native HDR processing at 3840x2160. This cost applies to capture
+resolution: a 4K desktop streamed at 1080p still runs NR at 4K before downscaling.
+
+Live Moonlight HEVC/PQ testing reached NR feature creation but did not receive
+the first video frame before the client timeout. End-to-end HDR streaming and
+30-minute stability are therefore **not yet validated**. Keep this feature
+experimental; passing the standalone filter test is not a streaming release gate.

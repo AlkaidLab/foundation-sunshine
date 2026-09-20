@@ -1466,8 +1466,9 @@ namespace platf::dxgi {
     prepare_filter_handoff(
       ID3D11Texture2D *source,
       const captured_frame_desc_t &semantic) {
-      if (!source || semantic.domain != frame_domain_e::sdr_rec709 ||
-          semantic.encoding != pixel_encoding_class_e::unorm8) {
+      auto source_contract = filter_capture_contract;
+      source_contract.require_private_handoff = false;
+      if (!source || !frame_satisfies_capture_contract(source_contract, semantic)) {
         BOOST_LOG(error) << "Cannot detach unsupported pre-encode filter input"sv;
         return false;
       }

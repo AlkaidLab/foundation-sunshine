@@ -286,10 +286,10 @@ namespace nvhttp {
         }
       }
     }
-    else if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid); app_dlssnr && app_dlssnr->enabled) {
-      // SDR sessions may attach the neural-enhancement filter instead. The
-      // backend reference is released again in RTSP SETUP when the client
-      // requests HDR or the policy disallows the filter.
+    if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid);
+        !launch_session->synthetic_hdr.enabled && app_dlssnr && app_dlssnr->enabled) {
+      // Native HDR and SDR both attach NR. Only an active synthetic HDR
+      // backend owns this slot instead; RTSP validates the final wire policy.
       launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
       launch_session->dlssnr_params = *app_dlssnr;
     }
