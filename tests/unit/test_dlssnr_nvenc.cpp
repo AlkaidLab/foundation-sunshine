@@ -123,7 +123,7 @@ namespace {
 }  // namespace
 
 static void
-exercise_production_conversion(int dynamic_range) {
+exercise_production_conversion(int dynamic_range, bool unavailable_backend = false) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -151,6 +151,11 @@ exercise_production_conversion(int dynamic_range) {
   backend->id = "alkaidlab.nvidia_dlssnr";
   backend->path = std::filesystem::path(reinterpret_cast<const char8_t *>(adapter_path));
   backend->runtime_digest = digest;
+  if (unavailable_backend) {
+    // Reject a runtime pin without modifying the installed files or weakening
+    // loader trust. Encoder initialization and subsequent packets must survive.
+    backend->runtime_digest = std::string(64, '0');
+  }
   config.hdr_backend = backend;
   display->capture_contract = config.frame_pipeline_policy.capture;
   auto encoder = display->make_nvenc_encode_device(platf::pix_fmt_e::p010, config);
@@ -179,7 +184,10 @@ exercise_production_conversion(int dynamic_range) {
   }
   const auto statuses = video::get_hdr_pipeline_statuses();
   ASSERT_EQ(statuses.size(), 1u);
-  EXPECT_EQ(statuses[0].nr_state, "active");
+  EXPECT_EQ(statuses[0].nr_state, unavailable_backend ? "degraded" : "active");
+  if (unavailable_backend) {
+    EXPECT_EQ(statuses[0].nr_failure_reason, "runtime_untrusted");
+  }
   EXPECT_EQ(statuses[0].hdr_mode, dynamic_range == 2 ? "hlg" : "pq");
 }
 
@@ -189,6 +197,10 @@ TEST(DlssNrHardware, ProductionConversionFirstEncodedPacket) {
 
 TEST(DlssNrHardware, ProductionHlgConversionFirstEncodedPacket) {
   exercise_production_conversion(2);
+}
+
+TEST(DlssNrHardware, ProductionUnavailableNrStillEncodesHdr) {
+  exercise_production_conversion(1, true);
 }
 
 TEST(DlssNrHardware, DesktopCaptureFirstEncodedPacket) {

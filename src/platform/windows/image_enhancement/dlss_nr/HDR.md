@@ -83,17 +83,37 @@ additionally requires `SUNSHINE_TEST_DLSSNR_CAPTURE=1`: it captures the already
 HDR desktop, encodes the initial frame, then requires a real frame to reach NR
 active and produce another packet. No image or encoded bytes are saved or sent.
 All three hardware tests passed locally after the placeholder fix. They do not
-start Moonlight or verify network delivery; the earlier live timeout still needs
-a client retest and long-session validation.
+start Moonlight or verify network delivery; the separate client retest below
+covers first-frame delivery.
 
 `ProductionHlgConversionFirstEncodedPacket` runs the same production-path
 placeholder transition and real NR/NVENC checks with HLG output. Both PQ and
 HLG variants pass locally. A subsequent loopback Moonlight retest of the
 placeholder fix received and decoded its first HEVC frame while the host
-reported NR active, PQ output and active scene metadata. Long-session and
-gameplay evaluation remain separate gates.
+reported NR active, PQ output and active scene metadata. This used official
+Moonlight 6.1, 1920x1080 capture/output with 60 fps requested, and disabled motion
+estimation.
+It is a desktop loopback test, not evidence of 4K streaming performance or
+gameplay quality. Long-session and gameplay evaluation remain separate gates.
 
-Live Moonlight HEVC/PQ testing reached NR feature creation but did not receive
-the first video frame before the client timeout. End-to-end HDR streaming and
-30-minute stability are therefore **not yet validated**. Keep this feature
-experimental; passing the standalone filter test is not a streaming release gate.
+The client retest ran for 29:13 on Moonlight's process clock (first decoded frame
+at 00:06) before the user deliberately disconnected with the quit shortcut.
+Moonlight reported 59.98 fps received/decoded/rendered, 0.00% network and jitter
+drops, and host processing latency of 6.9/920.9/7.3 ms (min/max/mean). The peak's
+cause was not isolated; these are whole-session host measurements, not the NR
+model's incremental cost. The 56 host samples spanned 27.5 minutes with NR active,
+PQ and scene metadata active, and private memory between 1369.20 and 1369.36 MiB.
+The monitor started after streaming, so its interval differs from the client's.
+
+The earlier first-frame timeout is resolved. This deliberately ended run is not
+a completed 30-minute test; keep the feature experimental pending that gate and
+real gameplay evaluation.
+
+`ProductionUnavailableNrStillEncodesHdr` rejects the runtime pin without changing
+installed files. It verifies production encoder initialization, the startup
+placeholder and three subsequent HDR packets, plus NR `degraded` state with
+`runtime_untrusted`. The factory already wraps a missing/rejected backend in an
+identity fallback; a primary processing failure switches the same failover
+wrapper to that fallback. Its input is the private capture handoff, never a
+second read of the shared texture after releasing capture ownership. Invalid
+capture contracts remain errors, as they cannot safely be interpreted as frames.
