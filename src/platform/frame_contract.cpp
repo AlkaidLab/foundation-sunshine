@@ -7,7 +7,8 @@
 
 namespace platf {
   frame_pipeline_policy_t
-  resolve_frame_pipeline_policy(int dynamic_range, bool post_process_hdr_active) {
+  resolve_frame_pipeline_policy(int dynamic_range, bool post_process_hdr_active,
+    bool post_process_nr_active) {
     frame_pipeline_policy_t policy;
 
     if (dynamic_range == 2) {
@@ -48,7 +49,18 @@ namespace platf {
       policy.capture = {
         .required_domain = frame_domain_e::linear_scrgb,
         .preferred_encoding = pixel_encoding_class_e::float16,
-        .require_private_handoff = false,
+        .require_private_handoff = post_process_nr_active,
+      };
+    }
+    else if (post_process_nr_active) {
+      // SDR-to-SDR neural filter: the wire stays SDR and the source display
+      // intent is unchanged, but the filter still consumes a private copy of
+      // every frame so capture ownership is released before evaluation.
+      policy.source_display = source_display_intent_e::unchanged;
+      policy.capture = {
+        .required_domain = frame_domain_e::sdr_rec709,
+        .preferred_encoding = pixel_encoding_class_e::unorm8,
+        .require_private_handoff = true,
       };
     }
     else {

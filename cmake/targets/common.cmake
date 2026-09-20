@@ -3,6 +3,7 @@
 
 add_executable(sunshine ${SUNSHINE_TARGET_FILES})
 include(${CMAKE_MODULE_PATH}/dependencies/rtx_video_adapter.cmake)
+include(${CMAKE_MODULE_PATH}/dependencies/dlssnr_adapter.cmake)
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(sunshine ${dep})  # compile these before sunshine
 endforeach()
@@ -31,6 +32,11 @@ if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(sunshine sunshine_rtx_video_adapter)
     target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
     target_compile_definitions(sunshine PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
+endif ()
+if (TARGET sunshine_dlssnr_adapter)
+    add_dependencies(sunshine sunshine_dlssnr_adapter)
+    target_include_directories(sunshine PRIVATE "${DLSSNR_TRUST_INCLUDE}")
+    target_compile_definitions(sunshine PRIVATE SUNSHINE_DLSSNR_ADAPTER)
 endif ()
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23

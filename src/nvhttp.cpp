@@ -280,11 +280,19 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     if (launch_session->enable_hdr) {
       if (const auto app_rtx_hdr = proc::proc.get_app_rtx_hdr_config(launch_session->appid); app_rtx_hdr && app_rtx_hdr->enabled) {
-        launch_session->hdr_backend = hdr_enhanced::manager().acquire_selected();
-        if (launch_session->hdr_backend && launch_session->hdr_backend->id == hdr_enhanced::NVIDIA_RTX_VIDEO_BACKEND) {
+        launch_session->hdr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::hdr);
+        if (launch_session->hdr_backend && launch_session->hdr_backend->id == image_enhancement::NVIDIA_RTX_VIDEO_BACKEND) {
           launch_session->synthetic_hdr = *app_rtx_hdr;
         }
       }
+    }
+    if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid);
+        app_dlssnr && app_dlssnr->enabled) {
+      // Reserve both enabled backends until RTSP knows the final wire format.
+      // It selects RTX HDR only for PQ and releases the unused backend;
+      // HLG/SDR must retain NR even when launch initially requested RTX HDR.
+      launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
+      launch_session->dlssnr_params = *app_dlssnr;
     }
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));

@@ -13,13 +13,23 @@ if (TARGET sunshine_rtx_video_adapter)
           DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
           COMPONENT application)
 endif ()
-install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter/THIRD_PARTY_NOTICES.md"
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter/THIRD_PARTY_NOTICES.md"
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
         RENAME "RTX_VIDEO_THIRD_PARTY_NOTICES.md"
         COMPONENT application)
-install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_rtx_video/README.md"
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/README.md"
         DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
         COMPONENT application)
+
+# The DLSS NR adapter ships first-party; the NVIDIA runtime DLL must be
+# imported by the user and is never part of the package.
+if (TARGET sunshine_dlssnr_adapter)
+  install(FILES "${DLSSNR_ADAPTER_DLL}"
+          "${_dlssnr_build}/NVIDIA-DLSS-LICENSE.txt"
+          "${_dlssnr_source}/NVIDIA-OPTICAL-FLOW-NOTICES.txt"
+          DESTINATION "tools/hdr_enhanced/nvidia_dlssnr"
+          COMPONENT application)
+endif ()
 
 
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)

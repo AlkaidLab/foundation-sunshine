@@ -47,8 +47,8 @@
 #include <boost/asio/ssl/context_base.hpp>
 
 #include "config.h"
-#include "hdr_enhanced/api.h"
-#include "hdr_enhanced/config.h"
+#include "image_enhancement/api.h"
+#include "image_enhancement/config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
 #include "text_context/http.h"
@@ -1602,29 +1602,29 @@ namespace confighttp {
   }
 
   void
-  getHdrEnhancedConfig(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR configuration")) return;
-    hdr_enhanced::api::get_config(response);
+  getImageEnhancementConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement configuration")) return;
+    image_enhancement::api::get_config(response);
   }
 
   void
-  saveHdrEnhancedConfig(resp_https_t response, req_https_t request) {
+  saveImageEnhancementConfig(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR configuration")) return;
-    hdr_enhanced::api::save_config(response, request);
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement configuration")) return;
+    image_enhancement::api::save_config(response, request);
   }
 
   void
-  getHdrEnhancedStatus(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR status")) return;
-    hdr_enhanced::api::get_status(response);
+  getImageEnhancementStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement status")) return;
+    image_enhancement::api::get_status(response);
   }
 
   void
-  maintainHdrEnhancedComponent(resp_https_t response, req_https_t request) {
+  maintainImageEnhancementComponent(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR maintenance")) return;
-    hdr_enhanced::api::maintenance(response, request);
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement maintenance")) return;
+    image_enhancement::api::maintenance(response, request);
   }
 
   void
@@ -2526,7 +2526,7 @@ namespace confighttp {
 
     try {
       const auto statuses = video::get_hdr_pipeline_statuses();
-      const auto enhancement_status = hdr_enhanced::manager().status();
+      const auto enhancement_status = image_enhancement::manager().status();
       json response_json {
         { "success", true },
         { "status_code", 200 },
@@ -2539,6 +2539,7 @@ namespace confighttp {
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
         { "configured_hdr_backend", enhancement_status.value("selected_backend", std::string {}) },
+        { "configured_nr_backend", enhancement_status.value("selected_nr_backend", std::string {}) },
         { "pipelines", json::array() },
       };
 
@@ -2556,6 +2557,9 @@ namespace confighttp {
           { "synthetic_hdr_backend", status.synthetic_hdr_backend },
           { "synthetic_hdr_state", status.synthetic_hdr_state },
           { "synthetic_hdr_failure_reason", status.synthetic_hdr_failure_reason },
+          { "nr_backend", status.nr_backend },
+          { "nr_state", status.nr_state },
+          { "nr_failure_reason", status.nr_failure_reason },
         });
       }
 
@@ -4027,10 +4031,10 @@ namespace confighttp {
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
-    server.resource["^/api/hdr-enhanced/config$"]["GET"] = getHdrEnhancedConfig;
-    server.resource["^/api/hdr-enhanced/config$"]["POST"] = saveHdrEnhancedConfig;
-    server.resource["^/api/hdr-enhanced/status$"]["GET"] = getHdrEnhancedStatus;
-    server.resource["^/api/hdr-enhanced/components/alkaidlab\\.nvidia_rtx_video/maintenance$"]["POST"] = maintainHdrEnhancedComponent;
+    server.resource["^/api/hdr-enhanced/config$"]["GET"] = getImageEnhancementConfig;
+    server.resource["^/api/hdr-enhanced/config$"]["POST"] = saveImageEnhancementConfig;
+    server.resource["^/api/hdr-enhanced/status$"]["GET"] = getImageEnhancementStatus;
+    server.resource["^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$"]["POST"] = maintainImageEnhancementComponent;
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
     server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
@@ -4160,7 +4164,7 @@ namespace confighttp {
     // Wait for any event
     shutdown_event->view();
 
-    hdr_enhanced::api::shutdown();
+    image_enhancement::api::shutdown();
     server.stop();
 
     tcp.join();
