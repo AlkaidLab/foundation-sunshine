@@ -1,19 +1,18 @@
-# Windows GUI package pairing
+# Optional Windows GUI package pairing
 
-Windows builds on `master`, including manual builds, require a GUI artifact
-matching the committed `src_assets/common/sunshine-control-panel` gitlink.
-The workflow discovers a successful Panel `build.yml` run with a non-expired
-`sunshine-gui-windows-x64` artifact for that commit. If none exists, packaging
-stops with the required commit in the error message. Build the matching Panel
-commit before retrying; there is no fallback to an older GUI release.
+Normal Windows builds, including pushes and manual builds on `master`, download
+the latest available Control Panel release bundle through `FetchGUI.cmake`.
+They do not require a GUI artifact matching the Panel submodule commit.
 
-Development branches retain the default released GUI. To test the paired GUI
-on a development branch, supply `gui_run_id` when dispatching `main.yml`.
-The override must identify a successful Panel build at the exact gitlink.
-The helper keeps the GUI executable and native plugin together and writes
-`paired-build.json` with the repository, run and commit used.
+For an explicit paired development test, supply `gui_run_id` when dispatching
+`main.yml`. Only this opt-in path uses `scripts/fetch-paired-gui.ps1`: the run
+must be a successful Panel `build.yml` run at the committed
+`src_assets/common/sunshine-control-panel` gitlink and contain a non-expired
+`sunshine-gui-windows-x64` artifact. It keeps the GUI executable and native
+plugin together and writes `paired-build.json` with the repository, run and
+commit used. This overrides the release download for that run only.
 
-For local staging, run `scripts/fetch-paired-gui.ps1 -Destination <fresh-path>`
+For local paired staging, run `scripts/fetch-paired-gui.ps1 -Destination <fresh-path>`
 from the Sunshine checkout. Omit `RunId` to discover a matching build, or pass
 `-RunId <id>` to validate a specific build. Configure with `FETCH_GUI=OFF` and
 `GUI_DIR=<fresh-path>` to use the verified bundle. GitHub artifact access requires

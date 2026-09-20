@@ -209,7 +209,7 @@ jobs:
             ccache-windows-
 
       - name: Fetch paired GUI artifact
-        if: github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.gui_run_id != '')
+        if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
