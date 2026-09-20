@@ -14,6 +14,7 @@
  * latches into a permanent error state instead of taking the host down.
  */
 #include "src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h"
+#include "nvof_provider.h"
 
 #include <windows.h>
 
@@ -316,11 +317,11 @@ namespace {
 
     ID3D11Texture2D *input_mirror11 = nullptr;
     ID3D11Texture2D *output_mirror11 = nullptr;
-    ID3D11Texture2D *zero_motion11 = nullptr;
+    ID3D11Texture2D *motion11 = nullptr;
     ID3D11Texture2D *zero_depth11 = nullptr;
     ID3D12Resource *input_mirror12 = nullptr;
     ID3D12Resource *output_mirror12 = nullptr;
-    ID3D12Resource *zero_motion12 = nullptr;
+    ID3D12Resource *motion12 = nullptr;
     ID3D12Resource *zero_depth12 = nullptr;
 
     HMODULE snippet = nullptr;
@@ -335,6 +336,8 @@ namespace {
     uint32_t width = 0;
     uint32_t height = 0;
     foundation_dlssnr_config_t config {};
+    std::unique_ptr<flow_provider> optical_flow;
+    bool first_frame = true;
     std::wstring runtime_directory;
     std::wstring data_path;
 
@@ -489,6 +492,7 @@ namespace {
     auto *instance = static_cast<instance_t *>(raw_instance);
     if (!instance) return;
     adapter_flush(instance);
+    instance->optical_flow.reset();
     if (instance->timing_samples) {
       std::fprintf(stderr, "DLSS NR: GPU Evaluate %ux%u samples=%llu warmup=10 avg=%.3f min=%.3f max=%.3f ms\n",
         instance->width, instance->height, static_cast<unsigned long long>(instance->timing_samples),
@@ -514,11 +518,11 @@ namespace {
     instance->parameters = nullptr;
     safe_release(instance->input_mirror12);
     safe_release(instance->output_mirror12);
-    safe_release(instance->zero_motion12);
+    safe_release(instance->motion12);
     safe_release(instance->zero_depth12);
     safe_release(instance->input_mirror11);
     safe_release(instance->output_mirror11);
-    safe_release(instance->zero_motion11);
+    safe_release(instance->motion11);
     safe_release(instance->zero_depth11);
     safe_release(instance->list12);
     safe_release(instance->timing_heap);
@@ -640,17 +644,27 @@ namespace {
         instance->width, instance->height, &instance->output_mirror11);
       if (SUCCEEDED(hr)) hr = open_shared_12(instance->device12, instance->output_mirror11, &instance->output_mirror12);
       if (SUCCEEDED(hr)) hr = create_shared_texture_11(instance->device11, DXGI_FORMAT_R16G16_FLOAT,
-        instance->width, instance->height, &instance->zero_motion11);
-      if (SUCCEEDED(hr)) hr = open_shared_12(instance->device12, instance->zero_motion11, &instance->zero_motion12);
+        instance->width, instance->height, &instance->motion11);
+      if (SUCCEEDED(hr)) hr = open_shared_12(instance->device12, instance->motion11, &instance->motion12);
       if (SUCCEEDED(hr)) hr = create_shared_texture_11(instance->device11, DXGI_FORMAT_R32_FLOAT,
         instance->width, instance->height, &instance->zero_depth11);
       if (SUCCEEDED(hr)) hr = open_shared_12(instance->device12, instance->zero_depth11, &instance->zero_depth12);
-      if (SUCCEEDED(hr)) hr = clear_zero_texture_11(instance->device11, instance->context11, instance->zero_motion11);
+      if (SUCCEEDED(hr)) hr = clear_zero_texture_11(instance->device11, instance->context11, instance->motion11);
       if (SUCCEEDED(hr)) hr = clear_zero_texture_11(instance->device11, instance->context11, instance->zero_depth11);
       if (FAILED(hr)) { status = FOUNDATION_DLSSNR_STATUS_INTERNAL_ERROR; break; }
 
       // Load the explicitly selected snippet. Resolve imports only from System32,
       // never from an unverified DLL beside the runtime or the host executable.
+      if (config->motion_mode == FOUNDATION_DLSSNR_MOTION_OPTICAL_FLOW) {
+        instance->optical_flow = flow_provider::create(instance->device11, instance->context11,
+          instance->input_mirror11, instance->motion11, config->motion_quality);
+        if (!instance->optical_flow) {
+          std::fprintf(stderr, "DLSS NR: requested NVOF provider unavailable\n");
+          status = FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE;
+          break;
+        }
+        std::fprintf(stderr, "DLSS NR: half-resolution NVOF enabled, quality=%d\n", config->motion_quality);
+      }
       const std::wstring dll_path = instance->runtime_directory + L"\\nvngx_dlssnr.dll";
       instance->snippet = LoadLibraryExW(dll_path.c_str(), nullptr,
         LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -809,6 +823,9 @@ namespace {
 
     // 1) Publish this frame into the D3D12-visible mirror.
     instance->context11->CopyResource(instance->input_mirror11, input);
+    if (instance->optical_flow && !instance->optical_flow->process(instance->first_frame)) {
+      return FOUNDATION_DLSSNR_STATUS_RUNTIME_UNAVAILABLE;
+    }
     const uint64_t input_ready = ++instance->fence_value;
     instance->context11->Signal(instance->fence11, input_ready);
     instance->context11->Flush();
@@ -833,14 +850,14 @@ namespace {
     D3D12_RESOURCE_BARRIER barriers[4];
     barriers[0] = make_barrier(instance->input_mirror12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     barriers[1] = make_barrier(instance->output_mirror12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    barriers[2] = make_barrier(instance->zero_motion12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    barriers[2] = make_barrier(instance->motion12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     barriers[3] = make_barrier(instance->zero_depth12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     instance->list12->ResourceBarrier(4, barriers);
 
     const NVSDK_NGX_Result param_result = ngx_invoke([&] {
       instance->parameters->Set(PARAM_COLOR, instance->input_mirror12);
       instance->parameters->Set(PARAM_OUTPUT, instance->output_mirror12);
-      instance->parameters->Set(PARAM_MVEC, instance->zero_motion12);
+      instance->parameters->Set(PARAM_MVEC, instance->motion12);
       instance->parameters->Set(PARAM_DEPTH, instance->zero_depth12);
       // Full-frame subrects for every resource.
       instance->parameters->Set("DLSSNR.ColorSubrectBaseX", 0u);
@@ -865,7 +882,7 @@ namespace {
       instance->parameters->Set(PARAM_INDICATOR_INVERT_X, 0u);
       instance->parameters->Set(PARAM_INDICATOR_INVERT_Y, 0u);
       instance->parameters->Set(PARAM_ENABLED, 1u);
-      instance->parameters->Set(PARAM_RESET, 0u);
+      instance->parameters->Set(PARAM_RESET, instance->first_frame ? 1u : 0u);
       instance->parameters->Set(PARAM_STYLE, instance->config.style);
       instance->parameters->Set(PARAM_INTENSITY, instance->config.intensity);
       instance->parameters->Set(PARAM_LOCAL_TONE, instance->config.local_tone_strength);
@@ -915,6 +932,7 @@ namespace {
     // errors return above; the host filter retains the original capture frame.
     instance->context11->Wait(instance->fence11, output_ready);
     instance->context11->CopyResource(output, instance->output_mirror11);
+    instance->first_frame = false;
     return FOUNDATION_DLSSNR_STATUS_OK;
   }
 

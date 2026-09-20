@@ -26,6 +26,11 @@ set(_dlssnr_adapter_sources
     "${_dlssnr_source}/CMakeLists.txt"
     "${_dlssnr_source}/ngx_sdk.cmake"
     "${_dlssnr_source}/src/dlssnr_adapter.cpp"
+    "${_dlssnr_source}/src/nvof_provider.cpp"
+    "${_dlssnr_source}/src/nvof_provider.h"
+    "${_dlssnr_source}/include/nvof/nvOpticalFlowCommon.h"
+    "${_dlssnr_source}/include/nvof/nvOpticalFlowD3D11.h"
+    "${_dlssnr_source}/NVIDIA-OPTICAL-FLOW-NOTICES.txt"
     "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${_dlssnr_adapter_sources})
@@ -36,6 +41,10 @@ file(SHA256 "${_dlssnr_source}/ngx_sdk.cmake" _dlssnr_sdk_hash)
 file(SHA256 "${CMAKE_SOURCE_DIR}/src/platform/windows/hdr_enhanced/nvidia_dlssnr/adapter_abi.h" _dlssnr_abi_hash)
 string(SHA256 _dlssnr_inputs
     "${_dlssnr_cmake_hash}|${_dlssnr_source_hash}|${_dlssnr_abi_hash}|${_dlssnr_sdk_hash}|${SUNSHINE_DLSS_SDK_ROOT}")
+foreach (_dlssnr_input IN LISTS _dlssnr_adapter_sources)
+    file(SHA256 "${_dlssnr_input}" _dlssnr_input_hash)
+    string(SHA256 _dlssnr_inputs "${_dlssnr_inputs}|${_dlssnr_input_hash}")
+endforeach ()
 set(_dlssnr_previous "")
 if (EXISTS "${_dlssnr_build}/configure-inputs")
     file(READ "${_dlssnr_build}/configure-inputs" _dlssnr_previous)

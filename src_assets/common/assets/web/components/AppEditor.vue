@@ -253,6 +253,14 @@
                     <input id="appDlssnrStyle" type="number" min="0" max="4" step="1" class="form-control form-control-enhanced" v-model.number="formData.dlssnr.style" />
                   </FormField>
                   <CheckboxField id="appDlssnrUi" v-model="formData.dlssnr['ui-correction']" :label="t('apps.dlssnr_ui')" />
+                  <FormField id="appDlssnrMotion" :label="t('apps.dlssnr_motion')" :hint="t('apps.dlssnr_motion_hint')">
+                    <select id="appDlssnrMotion" class="form-select form-control-enhanced" v-model.number="formData.dlssnr['motion-quality']">
+                      <option :value="0">{{ t('apps.dlssnr_motion_off') }}</option>
+                      <option :value="1">{{ t('apps.dlssnr_motion_fast') }}</option>
+                      <option :value="2">{{ t('apps.dlssnr_motion_balanced') }}</option>
+                      <option :value="3">{{ t('apps.dlssnr_motion_quality') }}</option>
+                    </select>
+                  </FormField>
                 </template>
               </AccordionItem>
 

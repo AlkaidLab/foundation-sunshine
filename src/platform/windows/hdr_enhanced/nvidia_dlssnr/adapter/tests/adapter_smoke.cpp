@@ -224,10 +224,12 @@ namespace {
 int
 wmain(int argc, wchar_t **argv) {
   std::setvbuf(stdout, nullptr, _IONBF, 0);
+  const bool optical_flow = argc > 2 && std::wcscmp(argv[argc - 1], L"--flow") == 0;
+  if (optical_flow) --argc;
   const bool benchmark = argc == 6 && std::wcscmp(argv[5], L"--benchmark") == 0;
   const bool pan = argc == 8 && std::wcscmp(argv[7], L"--pan") == 0;
   if (argc != 2 && argc != 5 && argc != 7 && !benchmark && !pan) {
-    std::printf("usage: foundation_dlssnr_adapter_smoke.exe <runtime_dir> [width height frames [--benchmark | image output_dir [--pan]]]\n");
+    std::printf("usage: foundation_dlssnr_adapter_smoke.exe <runtime_dir> [width height frames [--benchmark | image output_dir [--pan]]] [--flow]\n");
     return 1;
   }
   if (argc >= 5) {
@@ -291,8 +293,8 @@ wmain(int argc, wchar_t **argv) {
   config.local_structure_strength = 1.0f;
   config.skin_structure_strength = 0.0f;
   config.style = 0;
-  config.motion_mode = FOUNDATION_DLSSNR_MOTION_ZERO;
-  config.motion_quality = 0;
+  config.motion_mode = optical_flow ? FOUNDATION_DLSSNR_MOTION_OPTICAL_FLOW : FOUNDATION_DLSSNR_MOTION_ZERO;
+  config.motion_quality = optical_flow ? 2 : 0;
   config.auto_mask = 0;
   config.ui_correction = 0;
   config.runtime_directory = runtime_directory.c_str();
