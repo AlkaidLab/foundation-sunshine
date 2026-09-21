@@ -159,12 +159,6 @@ namespace video {
     return nr_request_t { it->second.nr_requested_enabled, it->second.nr_requested_scale_percent };
   }
 
-  std::optional<bool>
-  requested_nr_enabled(std::uint64_t id) {
-    const auto request = requested_nr_settings(id);
-    return request ? std::optional<bool>(request->enabled) : std::nullopt;
-  }
-
   bool
   rollback_nr_scale(std::uint64_t id, int failed_scale, int previous_scale) {
     std::lock_guard lock { hdr_pipeline_status_mutex };

@@ -385,6 +385,7 @@ namespace {
   class proxy_model_t final: public platf::dxgi::pre_encode_filter_t {
   public:
     explicit proxy_model_t(UINT width = 0, UINT height = 0): width_(width), height_(height) {}
+    void expect_dimensions(UINT width, UINT height) { width_ = width; height_ = height; }
     void
     flush() override {}
     std::string_view
@@ -403,13 +404,17 @@ namespace {
   static void hdr_proxy_identity(int scale) {
     d3d_fixture_t d3d;
     ASSERT_TRUE(d3d.init());
+    auto model = std::make_unique<proxy_model_t>();
+    auto *observed_model = model.get();
     auto filter = platf::dxgi::image_enhancement::dlss_nr::make_hdr_compatible_filter(
-      d3d.device.get(), d3d.context.get(), std::make_unique<proxy_model_t>(), scale);
+      d3d.device.get(), d3d.context.get(), std::move(model), scale);
     ASSERT_TRUE(filter);
     // FP16 wide-gamut negative, subnormal, 1000-nit and 4000-nit channels.
     const std::uint16_t pattern[] { 0xb000, 0x0001, 0x4a40, 0x3800, 0x5240, 0x3c00, 0x0000, 0x3c00 };
     for (UINT width : { 7u, 19u }) {
       constexpr UINT height = 5;
+      observed_model->expect_dimensions(platf::nr_scaled_dimension(width, scale),
+        platf::nr_scaled_dimension(height, scale));
       std::vector<std::uint16_t> pixels(width * height * 4);
       for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = pattern[i % 8];
       D3D11_TEXTURE2D_DESC desc {};

@@ -159,13 +159,13 @@ TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication)
   const auto second = video::register_hdr_pipeline_status(status);
   EXPECT_EQ(video::request_nr_enabled(first, true), 202);
   video::update_hdr_pipeline_status(first, status);
-  EXPECT_EQ(video::requested_nr_enabled(first), true);
-  EXPECT_EQ(video::requested_nr_enabled(second), false);
+  EXPECT_EQ(video::requested_nr_settings(first).value().enabled, true);
+  EXPECT_EQ(video::requested_nr_settings(second).value().enabled, false);
   EXPECT_EQ(video::request_nr_enabled(first, false), 202);
-  EXPECT_EQ(video::requested_nr_enabled(first), false);
+  EXPECT_EQ(video::requested_nr_settings(first).value().enabled, false);
   video::unregister_hdr_pipeline_status(first);
   EXPECT_EQ(video::request_nr_enabled(first, true), 404);
-  EXPECT_FALSE(video::requested_nr_enabled(first).has_value());
+  EXPECT_FALSE(video::requested_nr_settings(first).has_value());
   video::unregister_hdr_pipeline_status(second);
   status.nr_toggle_supported = false;
   const auto blocked = video::register_hdr_pipeline_status(status);
