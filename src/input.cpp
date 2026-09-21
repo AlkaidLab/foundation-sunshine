@@ -10,6 +10,7 @@ extern "C" {
 }
 
 #include <bitset>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <list>
@@ -132,12 +133,15 @@ namespace input {
     gamepad_t():
         gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
     ~gamepad_t() {
+      ds5 = false;
       if (id >= 0) {
         task_pool.push([id = this->id]() {
           free_gamepad(platf_input, id);
         });
       }
     }
+
+    std::atomic_bool ds5 { false };
 
     platf::gamepad_state_t gamepad_state;
 
@@ -165,7 +169,8 @@ namespace input {
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
-      std::uint64_t session_id):
+      std::uint64_t session_id,
+      std::string client_gamepad):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
@@ -173,6 +178,7 @@ namespace input {
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
         session_id {session_id},
+        client_gamepad {std::move(client_gamepad)},
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
@@ -189,6 +195,7 @@ namespace input {
     platf::feedback_queue_t feedback_queue;
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
+    std::string client_gamepad;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -200,6 +207,20 @@ namespace input {
     int32_t accumulated_vscroll_delta;
     int32_t accumulated_hscroll_delta;
   };
+
+  bool
+  has_ds5_gamepad(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /**
    * @brief Apply shortcut based on VKEY
@@ -1008,11 +1029,14 @@ namespace input {
     }
 
     // Allocate a new gamepad
-    if (platf::alloc_gamepad(platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue)) {
+    if (platf::alloc_gamepad(
+          platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue, input->client_gamepad)) {
       free_id(gamepadMask, id);
       return;
     }
 
+    input->gamepads[packet->controllerNumber].ds5.store(
+      platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
     input->gamepads[packet->controllerNumber].id = id;
   }
 
@@ -1352,16 +1376,19 @@ namespace input {
         return;
       }
 
-      if (platf::alloc_gamepad(platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue)) {
+      if (platf::alloc_gamepad(
+            platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
         return;
       }
 
+      gamepad.ds5.store(platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
       gamepad.id = id;
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
       free_gamepad(platf_input, gamepad.id);
+      gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
       return;
     }
@@ -2024,12 +2051,13 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
-      session_id);
+      session_id,
+      std::move(client_gamepad));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

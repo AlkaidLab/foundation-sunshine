@@ -594,6 +594,7 @@ namespace stream {
 
     // 添加客户端名称字段
     std::string client_name;
+    std::string client_gamepad;
     std::string client_cert_uuid;
     bool use_vdd {false};
     int custom_screen_mode {-1};
@@ -2440,9 +2441,10 @@ namespace stream {
           }
           else {
             const auto ds5_settings = ds5_config::current();
+            // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
-              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
-              (ds5_settings.enabled && ds5_settings.audio_haptics);
+              ds5_settings.audio_haptics &&
+              input::has_ds5_gamepad(session->input);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -4346,7 +4348,7 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
-      session.input = input::alloc(session.mail, session.launch_session_id);
+      session.input = input::alloc(session.mail, session.launch_session_id, session.client_gamepad);
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
@@ -4504,6 +4506,7 @@ namespace stream {
 
       // 设置客户端名称
       session->client_name = launch_session.client_name;
+      session->client_gamepad = launch_session.client_gamepad;
       session->client_cert_uuid = launch_session.client_cert_uuid;
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;
