@@ -134,26 +134,45 @@ namespace video {
     std::lock_guard lock { hdr_pipeline_status_mutex };
     if (hdr_pipeline_statuses.contains(id)) {
       updated.nr_requested_enabled = hdr_pipeline_statuses[id].nr_requested_enabled;
+      updated.nr_requested_scale_percent = hdr_pipeline_statuses[id].nr_requested_scale_percent;
       hdr_pipeline_statuses[id] = std::move(updated);
     }
   }
 
   int
-  request_nr_enabled(std::uint64_t id, bool enabled) {
+  request_nr_enabled(std::uint64_t id, bool enabled, std::optional<int> scale_percent) {
+    if (scale_percent && !platf::valid_nr_scale(*scale_percent)) return 400;
     std::lock_guard lock { hdr_pipeline_status_mutex };
     const auto it = hdr_pipeline_statuses.find(id);
     if (it == hdr_pipeline_statuses.end()) return 404;
     if (!it->second.nr_toggle_supported) return 409;
     it->second.nr_requested_enabled = enabled;
+    if (scale_percent) it->second.nr_requested_scale_percent = *scale_percent;
     return 202;
+  }
+
+  std::optional<nr_request_t>
+  requested_nr_settings(std::uint64_t id) {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_statuses.find(id);
+    if (it == hdr_pipeline_statuses.end() || !it->second.nr_toggle_supported) return std::nullopt;
+    return nr_request_t { it->second.nr_requested_enabled, it->second.nr_requested_scale_percent };
   }
 
   std::optional<bool>
   requested_nr_enabled(std::uint64_t id) {
+    const auto request = requested_nr_settings(id);
+    return request ? std::optional<bool>(request->enabled) : std::nullopt;
+  }
+
+  bool
+  rollback_nr_scale(std::uint64_t id, int failed_scale, int previous_scale) {
     std::lock_guard lock { hdr_pipeline_status_mutex };
     const auto it = hdr_pipeline_statuses.find(id);
-    if (it == hdr_pipeline_statuses.end() || !it->second.nr_toggle_supported) return std::nullopt;
-    return it->second.nr_requested_enabled;
+    if (it == hdr_pipeline_statuses.end() || !it->second.nr_requested_enabled ||
+        it->second.nr_requested_scale_percent != failed_scale) return false;
+    it->second.nr_requested_scale_percent = previous_scale;
+    return true;
   }
 
   void

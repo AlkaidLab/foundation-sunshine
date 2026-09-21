@@ -55,6 +55,10 @@ namespace video {
     std::string nr_failure_reason;
     bool nr_toggle_supported {};
     bool nr_requested_enabled {};
+    int nr_requested_scale_percent = 100;
+    int nr_scale_percent = 100;
+    std::uint32_t nr_source_width {}, nr_source_height {};
+    std::string nr_scale_failure_reason;
   };
 
   std::uint64_t
@@ -70,7 +74,10 @@ namespace video {
   get_hdr_pipeline_statuses();
 
   // Requests are consumed only by the owning conversion thread at a frame boundary.
-  int request_nr_enabled(std::uint64_t id, bool enabled);
+  struct nr_request_t { bool enabled; int scale_percent; };
+  int request_nr_enabled(std::uint64_t id, bool enabled, std::optional<int> scale_percent = std::nullopt);
+  std::optional<nr_request_t> requested_nr_settings(std::uint64_t id);
+  bool rollback_nr_scale(std::uint64_t id, int failed_scale, int previous_scale);
   std::optional<bool> requested_nr_enabled(std::uint64_t id);
 
   // 动态参数调节类型
