@@ -328,16 +328,23 @@ jobs:
         shell: pwsh
         run: |
           $current = "ccache-windows-${{ github.run_id }}"
-          $stale = gh cache list --repo $env:GITHUB_REPOSITORY --limit 100 --json id,key |
-            ConvertFrom-Json |
-            Where-Object {
-              $_.key -match '^ccache-windows-(\d+)$' -and [long]$Matches[1] -lt [long]"${{ github.run_id }}"
+          # Page through the caches API instead of `gh cache list`: the
+          # latter caps at --limit 100, and once this repo's other caches
+          # (msys2, npm, ...) grow past that, stale ccache entries would
+          # fall outside the window and never get pruned.
+          $stale = gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-[0-9]+$")) | [(.key | sub("^ccache-windows-";"") | tonumber), .id, .key] | @tsv' |
+            Where-Object { $_ } |
+            ForEach-Object {
+              $parts = $_ -split "`t"
+              if ([long]$parts[0] -lt [long]"${{ github.run_id }}") {
+                [pscustomobject]@{ Id = $parts[1]; Key = $parts[2] }
+              }
             }
           foreach ($entry in $stale) {
-            gh cache delete $entry.id --repo $env:GITHUB_REPOSITORY
-            Write-Output "Pruned $($entry.key)"
+            gh cache delete $entry.Id --repo $env:GITHUB_REPOSITORY
+            Write-Output "Pruned $($entry.Key)"
           }
-          Write-Output "Pruned $($stale.Count) stale ccache entries; kept $current"
+          Write-Output "Pruned $(@($stale).Count) stale ccache entries; kept $current"
 
       - name: Cache Inno Setup
         id: inno-cache
