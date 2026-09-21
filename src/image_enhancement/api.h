@@ -17,6 +17,10 @@ namespace image_enhancement::api {
   void
   get_status(response_t response) noexcept;
   void
+  get_sessions(response_t response) noexcept;
+  void
+  set_session_nr(response_t response, request_t request) noexcept;
+  void
   maintenance(response_t response, request_t request) noexcept;
   void
   shutdown() noexcept;

@@ -204,6 +204,6 @@ namespace platf::dxgi::image_enhancement::dlss_nr {
       error = loader.error();
       return {};
     }
-    return make_hdr_compatible_filter(device, context, std::make_unique<external_neural_enhancement_filter_t>(device, context, std::move(loader), config));
+    return make_hdr_compatible_filter(device, context, std::make_unique<external_neural_enhancement_filter_t>(device, context, std::move(loader), config), config.nr_scale_percent);
   }
 }  // namespace platf::dxgi::image_enhancement::dlss_nr
