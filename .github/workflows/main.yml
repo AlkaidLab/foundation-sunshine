@@ -92,6 +92,7 @@ jobs:
     needs: setup_release
     permissions:
       contents: read
+      actions: write  # prune stale ccache entries after saving this run's
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -198,12 +199,16 @@ jobs:
           npm run build
 
       - name: Cache compiler objects
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}\.ccache
-          # The key must be unique per run for the cache to be written at all,
-          # so the prefix restore-key is what actually produces the hits: every
-          # run seeds itself from the most recent previous one.
+          # The key is unique per run; the prefix restore-key is what actually
+          # produces the hits: every run seeds itself from the most recent
+          # previous one. Saving is split out below so that only master
+          # writes: PR-branch entries are invisible to other branches yet
+          # still consume the shared cache quota, and when that quota fills
+          # (10 GB, LRU), eviction wiped the whole lineage once and forced a
+          # full 47-minute cold rebuild.
           key: ccache-windows-${{ github.run_id }}
           restore-keys: |
             ccache-windows-
@@ -289,6 +294,43 @@ jobs:
       - name: Run native tests
         shell: msys2 {0}
         run: ctest --test-dir build --output-on-failure
+
+      - name: Save compiler cache
+        # Only master writes (always(): a failed or cancelled build still
+        # produced valid objects). PR runs restore master's entry, so they
+        # don't need to save, and skipping their saves keeps the shared
+        # cache quota flat.
+        if: always() && github.ref == 'refs/heads/master'
+        id: ccache_save
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ github.run_id }}
+
+      - name: Prune stale compiler cache entries
+        # Collapse the cache to exactly one entry (the one saved above).
+        # Entries pile up one-per-run otherwise; on a 10 GB repo quota that
+        # once got the entire lineage LRU-evicted. A single entry is also
+        # restored by every later run, which keeps resetting its 7-day
+        # inactivity clock, so neither eviction path can take it out.
+        # Skipped unless the save step actually succeeded (outcome keeps the
+        # real result under continue-on-error; the save subaction sets no
+        # outputs, so conclusion can't tell success from failure).
+        if: always() && github.ref == 'refs/heads/master' && steps.ccache_save.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $current = "ccache-windows-${{ github.run_id }}"
+          $stale = gh cache list --repo $env:GITHUB_REPOSITORY --limit 100 --json id,key |
+            ConvertFrom-Json |
+            Where-Object { $_.key -like 'ccache-windows-*' -and $_.key -ne $current }
+          foreach ($entry in $stale) {
+            gh cache delete $entry.id --repo $env:GITHUB_REPOSITORY
+            Write-Output "Pruned $($entry.key)"
+          }
+          Write-Output "Pruned $($stale.Count) stale ccache entries; kept $current"
 
       - name: Cache Inno Setup
         id: inno-cache
