@@ -59,7 +59,7 @@ namespace platf {
   };
 
   constexpr bool valid_nr_scale(int percent) {
-    return percent == 100 || percent == 75 || percent == 67 || percent == 50;
+    return percent >= 20 && percent <= 100 && percent % 5 == 0;
   }
 
   constexpr std::uint32_t nr_scaled_dimension(std::uint32_t size, int percent) {
