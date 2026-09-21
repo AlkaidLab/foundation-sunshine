@@ -126,7 +126,7 @@ namespace {
 }  // namespace
 
 static void
-exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true, bool live_toggle = false, bool live_scale = false) {
+exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true, bool live_toggle = false, bool live_scale = false, bool fail_scale = false) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -223,6 +223,34 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
       }
     }
   }
+  if (fail_scale) {
+    const auto before = video::get_hdr_pipeline_statuses();
+    ASSERT_EQ(before.size(), 1u);
+    ASSERT_EQ(before[0].nr_state, "active");
+    ASSERT_EQ(video::request_nr_enabled(before[0].id, true, 75), 202);
+    // Inject an invalid model-view dimension while keeping the actual D3D
+    // texture intact. The proxy must fail before inference; conversion must
+    // still encode its private source and restore the working scale next frame.
+    const auto width = image.width;
+    image.width = 0;
+    const auto failed_conversion = encoder->convert(image);
+    image.width = width;
+    ASSERT_EQ(failed_conversion, 0);
+    ASSERT_FALSE(encoder->nvenc->encode_frame(10, true).data.empty());
+    const auto failed = video::get_hdr_pipeline_statuses();
+    ASSERT_EQ(failed.size(), 1u);
+    EXPECT_EQ(failed[0].nr_state, "degraded");
+    EXPECT_EQ(failed[0].nr_scale_percent, 100);
+    EXPECT_EQ(failed[0].nr_requested_scale_percent, 100);
+    EXPECT_EQ(failed[0].nr_scale_failure_reason, "invalid_input");
+    ASSERT_EQ(encoder->convert(image), 0);
+    ASSERT_FALSE(encoder->nvenc->encode_frame(11, false).data.empty());
+    const auto restored = video::get_hdr_pipeline_statuses();
+    ASSERT_EQ(restored.size(), 1u);
+    EXPECT_EQ(restored[0].nr_state, "active");
+    EXPECT_EQ(restored[0].nr_scale_percent, 100);
+    EXPECT_EQ(restored[0].nr_scale_failure_reason, "invalid_input");
+  }
   const auto statuses = video::get_hdr_pipeline_statuses();
   ASSERT_EQ(statuses.size(), 1u);
   EXPECT_EQ(statuses[0].nr_state, unavailable_backend ? "degraded" : "active");
@@ -230,6 +258,14 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     EXPECT_EQ(statuses[0].nr_failure_reason, "runtime_untrusted");
   }
   EXPECT_EQ(statuses[0].hdr_mode, !hdr_output ? "sdr" : dynamic_range == 2 ? "hlg" : "pq");
+}
+
+TEST(DlssNrHardware, FailedScaleRestoresNativeHdrAndStillEncodes) {
+  exercise_production_conversion(1, false, true, false, false, true);
+}
+
+TEST(DlssNrHardware, FailedScaleRestoresSdrAndStillEncodes) {
+  exercise_production_conversion(0, false, false, false, false, true);
 }
 
 TEST(DlssNrHardware, LiveNrScalePreservesNativeHdrPackets) {

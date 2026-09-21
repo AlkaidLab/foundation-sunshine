@@ -547,7 +547,7 @@ namespace platf::dxgi {
 
           auto handoff_semantic = img.frame_desc;
           handoff_semantic.borrowed = false;
-          const auto filter_result = pre_encode_filter->process({
+          auto filter_result = pre_encode_filter->process({
             .texture = filter_handoff_texture.get(),
             .srv = filter_handoff_srv.get(),
             .format = img.format,
@@ -555,25 +555,40 @@ namespace platf::dxgi {
             .width = static_cast<std::uint32_t>(img.width),
             .height = static_cast<std::uint32_t>(img.height),
           });
-          if (filter_result.status != filter_status_e::ready ||
-              !filter_result.frame.texture || !filter_result.frame.srv) {
-            BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
-            update_enhancement_runtime_status(false, filter_result.reason);
-            return -1;
-          }
-          if (nr_filter_active && pre_encode_filter->degraded() && nr_rollback_pending) {
-            // Release the failed model before recreating the previous size;
-            // switching must not retain two expensive neural instances.
+          const bool filter_failed = filter_result.status != filter_status_e::ready ||
+            !filter_result.frame.texture || !filter_result.frame.srv;
+          const std::string failure_reason = filter_failed
+            ? (filter_result.reason.empty() ? "filter_invalid_output" : std::string(filter_result.reason))
+            : std::string(pre_encode_filter->failure_reason());
+          if (nr_filter_active && (filter_failed || pre_encode_filter->degraded()) && nr_rollback_pending) {
+            // Recreate the previous scale on the next frame, after releasing the
+            // failed model. Do this before any failed-result early return.
             nr_rollback_pending = false;
-            runtime_status.nr_scale_failure_reason = std::string(pre_encode_filter->failure_reason());
+            runtime_status.nr_scale_failure_reason = failure_reason;
             nr_restoring_scale = ::video::rollback_nr_scale(runtime_status_id,
               nr_filter_config.nr_scale_percent, runtime_status.nr_scale_percent);
           }
-          if (nr_filter_active && !pre_encode_filter->degraded()) {
-            nr_rollback_pending = false;
-            runtime_status.nr_scale_percent = nr_filter_config.nr_scale_percent;
+          if (filter_failed) {
+            BOOST_LOG(error) << "Pre-encode filter failed: "sv << failure_reason;
+            update_enhancement_runtime_status(false, failure_reason);
+            if (!nr_filter_active) return -1;
+            // The capture mutex is already released. Only our private handoff
+            // remains safe to encode while a failed NR scale is being restored.
+            filter_result.frame = {
+              .texture = filter_handoff_texture.get(),
+              .srv = filter_handoff_srv.get(),
+              .format = img.format,
+              .semantic = handoff_semantic,
+              .width = static_cast<std::uint32_t>(img.width),
+              .height = static_cast<std::uint32_t>(img.height),
+            };
+          } else {
+            if (nr_filter_active && !pre_encode_filter->degraded()) {
+              nr_rollback_pending = false;
+              runtime_status.nr_scale_percent = nr_filter_config.nr_scale_percent;
+            }
+            update_enhancement_runtime_status(true);
           }
-          update_enhancement_runtime_status(true);
           conversion_input_texture = filter_result.frame.texture;
           conversion_input_srv = filter_result.frame.srv;
           conversion_input_format = filter_result.frame.format;
