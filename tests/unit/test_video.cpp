@@ -152,6 +152,46 @@ TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
   EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
 }
 
+TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication) {
+  video::hdr_pipeline_status_t status;
+  status.nr_toggle_supported = true;
+  const auto first = video::register_hdr_pipeline_status(status);
+  const auto second = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(first, true), 202);
+  video::update_hdr_pipeline_status(first, status);
+  EXPECT_EQ(video::requested_nr_settings(first).value().enabled, true);
+  EXPECT_EQ(video::requested_nr_settings(second).value().enabled, false);
+  EXPECT_EQ(video::request_nr_enabled(first, false), 202);
+  EXPECT_EQ(video::requested_nr_settings(first).value().enabled, false);
+  video::unregister_hdr_pipeline_status(first);
+  EXPECT_EQ(video::request_nr_enabled(first, true), 404);
+  EXPECT_FALSE(video::requested_nr_settings(first).has_value());
+  video::unregister_hdr_pipeline_status(second);
+  status.nr_toggle_supported = false;
+  const auto blocked = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(blocked, true), 409);
+  video::unregister_hdr_pipeline_status(blocked);
+}
+
+TEST(HdrPipelineStatus, ScaleRequestsValidateAndRollbackWithoutOverwritingNewerCommands) {
+  video::hdr_pipeline_status_t status;
+  status.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 60), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 75), 202);
+  video::update_hdr_pipeline_status(id, status);
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 75);
+  EXPECT_TRUE(video::rollback_nr_scale(id, 75, 100));
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 100);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 50), 202);
+  EXPECT_FALSE(video::rollback_nr_scale(id, 75, 100));
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 50);
+  EXPECT_EQ(video::request_nr_enabled(id, false), 202);
+  EXPECT_FALSE(video::rollback_nr_scale(id, 50, 100));
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 50);
+  video::unregister_hdr_pipeline_status(id);
+}
+
 TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
   video::hdr_pipeline_status_t status {
     .hdr_mode = "hlg",

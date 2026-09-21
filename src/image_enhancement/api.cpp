@@ -148,20 +148,62 @@ namespace image_enhancement::api {
     if (draining) draining->join();
   }
 
+  static json
+  session_pipelines() {
+    auto pipelines = json::array();
+    for (const auto &pipeline : video::get_hdr_pipeline_statuses()) {
+      pipelines.push_back({ { "id", pipeline.id }, { "backend", pipeline.synthetic_hdr_backend },
+        { "state", pipeline.synthetic_hdr_state }, { "reason", pipeline.synthetic_hdr_failure_reason },
+        { "hdr_mode", pipeline.hdr_mode }, { "nr_toggle_supported", pipeline.nr_toggle_supported },
+        { "nr_requested_scale_percent", pipeline.nr_requested_scale_percent },
+        { "nr_scale_percent", pipeline.nr_scale_percent }, { "nr_scale_failure_reason", pipeline.nr_scale_failure_reason },
+        { "nr_source_width", pipeline.nr_source_width }, { "nr_source_height", pipeline.nr_source_height },
+        { "nr_requested_enabled", pipeline.nr_requested_enabled }, { "nr_backend", pipeline.nr_backend }, { "nr_state", pipeline.nr_state }, { "nr_reason", pipeline.nr_failure_reason } });
+    }
+    return pipelines;
+  }
+
+  void
+  get_sessions(response_t response) noexcept {
+    try { write(response, 200, { { "status", true }, { "pipelines", session_pipelines() } }); }
+    catch (...) { write(response, 500, { { "status", false }, { "error_code", "nr_status_unavailable" } }); }
+  }
+
   void
   get_status(response_t response) noexcept {
     try {
       auto runtime = manager().status();
-      runtime["pipelines"] = json::array();
-      for (const auto &pipeline : video::get_hdr_pipeline_statuses()) {
-        runtime["pipelines"].push_back({ { "id", pipeline.id }, { "backend", pipeline.synthetic_hdr_backend },
-          { "state", pipeline.synthetic_hdr_state }, { "reason", pipeline.synthetic_hdr_failure_reason },
-          { "nr_backend", pipeline.nr_backend }, { "nr_state", pipeline.nr_state }, { "nr_reason", pipeline.nr_failure_reason } });
-      }
+      runtime["pipelines"] = session_pipelines();
       write(response, 200, { { "status", true }, { "runtime", runtime } });
     }
     catch (...) {
       write(response, 500, { { "status", false }, { "error_code", "hdr_status_unavailable" } });
+    }
+  }
+
+  void
+  set_session_nr(response_t response, request_t request) noexcept {
+    try {
+      const auto input = request_json(request);
+      if (!input.at("id").is_number_unsigned() || !input.at("enabled").is_boolean() ||
+          (input.contains("scale_percent") && (!input["scale_percent"].is_number_integer() ||
+            (input["scale_percent"] != 100 && input["scale_percent"] != 75 && input["scale_percent"] != 67 && input["scale_percent"] != 50)))) {
+        write(response, 400, { { "status", false }, { "error_code", "nr_request_invalid" } });
+        return;
+      }
+      const auto result = video::request_nr_enabled(input.at("id").get<std::uint64_t>(), input.at("enabled").get<bool>(),
+        input.contains("scale_percent") ? std::optional<int>(input["scale_percent"].get<int>()) : std::nullopt);
+      write(response, result, { { "status", result == 202 },
+        { "error_code", result == 400 ? "nr_request_invalid" : result == 404 ? "nr_session_ended" : result == 409 ? "nr_toggle_unsupported" : "" } });
+    }
+    catch (const std::length_error &) {
+      write(response, 413, { { "status", false }, { "error_code", "nr_request_too_large" } });
+    }
+    catch (const json::exception &) {
+      write(response, 400, { { "status", false }, { "error_code", "nr_request_invalid" } });
+    }
+    catch (...) {
+      write(response, 500, { { "status", false }, { "error_code", "nr_request_failed" } });
     }
   }
 

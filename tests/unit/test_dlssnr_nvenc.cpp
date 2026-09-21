@@ -12,6 +12,8 @@
   #include "src/platform/windows/pre_encode_filter.h"
   #include <boost/make_shared.hpp>
   #include <cstdlib>
+  #include <chrono>
+  #include <iostream>
   #include <cstring>
   #include <d3dcompiler.h>
   #include <wrl/client.h>
@@ -124,7 +126,7 @@ namespace {
 }  // namespace
 
 static void
-exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true) {
+exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true, bool live_toggle = false, bool live_scale = false, bool fail_scale = false) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -146,7 +148,8 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   video::config_t config { .width = 1920, .height = 1080, .framerate = 60, .bitrate = 20000 };
   config.videoFormat = 1;
   config.dynamicRange = dynamic_range;
-  config.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
+  config.pre_encode_filter_config.nr_motion_quality = live_scale ? 2 : 0;
+  config.pre_encode_filter = live_toggle ? platf::pre_encode_filter_e::none : platf::pre_encode_filter_e::external_neural_enhancement;
   config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(dynamic_range, false, true);
   config.frame_pipeline_policy_resolved = true;
   auto backend = boost::make_shared<image_enhancement::backend_use_t>();
@@ -178,15 +181,75 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   ASSERT_EQ(encoder->convert(image), 0);
   ASSERT_FALSE(encoder->nvenc->encode_frame(0, true).data.empty());
   ASSERT_EQ(display->complete_img(frame.get(), false), 0);
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < (live_scale ? 5 : 3); ++i) {
+    if (live_toggle) {
+      const auto state = video::get_hdr_pipeline_statuses();
+      ASSERT_EQ(state.size(), 1u);
+      ASSERT_TRUE(state[0].nr_toggle_supported);
+      const int scales[] {100, 75, 67, 50, 100};
+      ASSERT_EQ(video::request_nr_enabled(state[0].id, live_scale || i != 1,
+        live_scale ? std::optional<int>(scales[i]) : std::nullopt), 202);
+    }
     ASSERT_EQ(image.capture_mutex->AcquireSync(0, 5000), S_OK);
     const float colour[] { 0.25f, 1.0f, 4.0f, 1.0f };
     display->device_ctx->ClearRenderTargetView(image.capture_rt.get(), colour);
     ASSERT_HRESULT_SUCCEEDED(image.capture_mutex->ReleaseSync(0));
+    const auto start = std::chrono::steady_clock::now();
     ASSERT_EQ(encoder->convert(image), 0);
+    const auto first_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (live_scale) {
+      // Bounded timing diagnostic; exclude recreation and warm up the model.
+      for (int warm = 0; warm < 3; ++warm) ASSERT_EQ(encoder->convert(image), 0);
+      const auto steady_start = std::chrono::steady_clock::now();
+      for (int sample = 0; sample < 20; ++sample) ASSERT_EQ(encoder->convert(image), 0);
+      const double steady_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - steady_start).count() / 20;
+      const int scales[] {100, 75, 67, 50, 100};
+      std::cout << "NR_SCALE hdr=" << hdr_capture << " percent=" << scales[i]
+                << " first_ms=" << first_ms << " steady_convert_ms=" << steady_ms << std::endl;
+    }
     const auto packet = encoder->nvenc->encode_frame(i + 1, i == 0);
     ASSERT_FALSE(packet.data.empty());
     if (i == 0) { EXPECT_TRUE(packet.idr); }
+    if (live_toggle) {
+      const auto state = video::get_hdr_pipeline_statuses();
+      ASSERT_EQ(state.size(), 1u);
+      EXPECT_EQ(state[0].nr_state, !live_scale && i == 1 ? "disabled" : "active");
+      EXPECT_EQ(state[0].nr_requested_enabled, live_scale || i != 1);
+      if (live_scale) {
+        const int scales[] {100, 75, 67, 50, 100};
+        EXPECT_EQ(state[0].nr_scale_percent, scales[i]);
+        EXPECT_TRUE(state[0].nr_scale_failure_reason.empty());
+        EXPECT_EQ(state[0].nr_source_width, 3840u);
+      }
+    }
+  }
+  if (fail_scale) {
+    const auto before = video::get_hdr_pipeline_statuses();
+    ASSERT_EQ(before.size(), 1u);
+    ASSERT_EQ(before[0].nr_state, "active");
+    ASSERT_EQ(video::request_nr_enabled(before[0].id, true, 75), 202);
+    // Inject an invalid model-view dimension while keeping the actual D3D
+    // texture intact. The proxy must fail before inference; conversion must
+    // still encode its private source and restore the working scale next frame.
+    const auto width = image.width;
+    image.width = 0;
+    const auto failed_conversion = encoder->convert(image);
+    image.width = width;
+    ASSERT_EQ(failed_conversion, 0);
+    ASSERT_FALSE(encoder->nvenc->encode_frame(10, true).data.empty());
+    const auto failed = video::get_hdr_pipeline_statuses();
+    ASSERT_EQ(failed.size(), 1u);
+    EXPECT_EQ(failed[0].nr_state, "degraded");
+    EXPECT_EQ(failed[0].nr_scale_percent, 100);
+    EXPECT_EQ(failed[0].nr_requested_scale_percent, 100);
+    EXPECT_EQ(failed[0].nr_scale_failure_reason, "invalid_input");
+    ASSERT_EQ(encoder->convert(image), 0);
+    ASSERT_FALSE(encoder->nvenc->encode_frame(11, false).data.empty());
+    const auto restored = video::get_hdr_pipeline_statuses();
+    ASSERT_EQ(restored.size(), 1u);
+    EXPECT_EQ(restored[0].nr_state, "active");
+    EXPECT_EQ(restored[0].nr_scale_percent, 100);
+    EXPECT_EQ(restored[0].nr_scale_failure_reason, "invalid_input");
   }
   const auto statuses = video::get_hdr_pipeline_statuses();
   ASSERT_EQ(statuses.size(), 1u);
@@ -195,6 +258,30 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     EXPECT_EQ(statuses[0].nr_failure_reason, "runtime_untrusted");
   }
   EXPECT_EQ(statuses[0].hdr_mode, !hdr_output ? "sdr" : dynamic_range == 2 ? "hlg" : "pq");
+}
+
+TEST(DlssNrHardware, FailedScaleRestoresNativeHdrAndStillEncodes) {
+  exercise_production_conversion(1, false, true, false, false, true);
+}
+
+TEST(DlssNrHardware, FailedScaleRestoresSdrAndStillEncodes) {
+  exercise_production_conversion(0, false, false, false, false, true);
+}
+
+TEST(DlssNrHardware, LiveNrScalePreservesNativeHdrPackets) {
+  exercise_production_conversion(1, false, true, true, true);
+}
+
+TEST(DlssNrHardware, LiveNrScalePreservesSdrPackets) {
+  exercise_production_conversion(0, false, false, true, true);
+}
+
+TEST(DlssNrHardware, LiveNrTogglePreservesNativeHdrPackets) {
+  exercise_production_conversion(1, false, true, true);
+}
+
+TEST(DlssNrHardware, LiveNrTogglePreservesSdrPackets) {
+  exercise_production_conversion(0, false, false, true);
 }
 
 TEST(DlssNrHardware, ProductionSdrCaptureReportsSdrDespiteHdrRequest) {

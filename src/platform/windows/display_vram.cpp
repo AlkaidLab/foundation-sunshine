@@ -403,6 +403,7 @@ namespace platf::dxgi {
 
     int
     convert(platf::img_t &img_base) {
+      apply_nr_request();
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
       }
@@ -502,6 +503,13 @@ namespace platf::dxgi {
         DXGI_FORMAT conversion_input_format = img.format;
         auto conversion_input_semantic = img.frame_desc;
 
+        if (!img.dummy && (runtime_status.nr_source_width != static_cast<std::uint32_t>(img.width) ||
+            runtime_status.nr_source_height != static_cast<std::uint32_t>(img.height))) {
+          runtime_status.nr_source_width = img.width;
+          runtime_status.nr_source_height = img.height;
+          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        }
+
         // Desktop Duplication may initially provide a cursor-only dummy whose
         // capture format/domain is not known yet. Encode that startup frame
         // normally; only real captured frames may enter the enhancement model.
@@ -539,7 +547,7 @@ namespace platf::dxgi {
 
           auto handoff_semantic = img.frame_desc;
           handoff_semantic.borrowed = false;
-          const auto filter_result = pre_encode_filter->process({
+          auto filter_result = pre_encode_filter->process({
             .texture = filter_handoff_texture.get(),
             .srv = filter_handoff_srv.get(),
             .format = img.format,
@@ -547,13 +555,40 @@ namespace platf::dxgi {
             .width = static_cast<std::uint32_t>(img.width),
             .height = static_cast<std::uint32_t>(img.height),
           });
-          if (filter_result.status != filter_status_e::ready ||
-              !filter_result.frame.texture || !filter_result.frame.srv) {
-            BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
-            update_enhancement_runtime_status(false, filter_result.reason);
-            return -1;
+          const bool filter_failed = filter_result.status != filter_status_e::ready ||
+            !filter_result.frame.texture || !filter_result.frame.srv;
+          const std::string failure_reason = filter_failed
+            ? (filter_result.reason.empty() ? "filter_invalid_output" : std::string(filter_result.reason))
+            : std::string(pre_encode_filter->failure_reason());
+          if (nr_filter_active && (filter_failed || pre_encode_filter->degraded()) && nr_rollback_pending) {
+            // Recreate the previous scale on the next frame, after releasing the
+            // failed model. Do this before any failed-result early return.
+            nr_rollback_pending = false;
+            runtime_status.nr_scale_failure_reason = failure_reason;
+            nr_restoring_scale = ::video::rollback_nr_scale(runtime_status_id,
+              nr_filter_config.nr_scale_percent, runtime_status.nr_scale_percent);
           }
-          update_enhancement_runtime_status(true);
+          if (filter_failed) {
+            BOOST_LOG(error) << "Pre-encode filter failed: "sv << failure_reason;
+            update_enhancement_runtime_status(false, failure_reason);
+            if (!nr_filter_active) return -1;
+            // The capture mutex is already released. Only our private handoff
+            // remains safe to encode while a failed NR scale is being restored.
+            filter_result.frame = {
+              .texture = filter_handoff_texture.get(),
+              .srv = filter_handoff_srv.get(),
+              .format = img.format,
+              .semantic = handoff_semantic,
+              .width = static_cast<std::uint32_t>(img.width),
+              .height = static_cast<std::uint32_t>(img.height),
+            };
+          } else {
+            if (nr_filter_active && !pre_encode_filter->degraded()) {
+              nr_rollback_pending = false;
+              runtime_status.nr_scale_percent = nr_filter_config.nr_scale_percent;
+            }
+            update_enhancement_runtime_status(true);
+          }
           conversion_input_texture = filter_result.frame.texture;
           conversion_input_srv = filter_result.frame.srv;
           conversion_input_format = filter_result.frame.format;
@@ -1356,6 +1391,14 @@ namespace platf::dxgi {
         filter_capture_contract = contract;
       }
 
+      runtime_status.nr_toggle_supported = config.pre_encode_filter == pre_encode_filter_e::none || nr_filter_active;
+      runtime_status.nr_requested_enabled = nr_filter_active;
+      runtime_status.nr_requested_scale_percent = runtime_status.nr_scale_percent = config.pre_encode_filter_config.nr_scale_percent;
+      nr_filter_config = config.pre_encode_filter_config;
+      if (config.enhancement_backend && config.enhancement_backend->id == image_enhancement::NVIDIA_DLSSNR_BACKEND) {
+        nr_session_backend = config.enhancement_backend;
+      }
+
       blend_disable = make_blend(device.get(), false, false);
       if (!blend_disable) {
         return -1;
@@ -1762,6 +1805,53 @@ namespace platf::dxgi {
     }
 
     void
+    apply_nr_request() {
+      const auto requested = ::video::requested_nr_settings(runtime_status_id);
+      if (!requested || (requested->enabled == runtime_status.nr_requested_enabled &&
+          requested->scale_percent == nr_filter_config.nr_scale_percent)) return;
+      nr_rollback_pending = requested->enabled && runtime_status.nr_state == "active" &&
+        requested->scale_percent != runtime_status.nr_scale_percent;
+      if (!nr_restoring_scale) runtime_status.nr_scale_failure_reason.clear();
+      nr_restoring_scale = false;
+      runtime_status.nr_requested_enabled = requested->enabled;
+      runtime_status.nr_requested_scale_percent = requested->scale_percent;
+      nr_filter_config.nr_scale_percent = requested->scale_percent;
+      // Only this conversion thread touches D3D state. Draining and destroying
+      // the old filter also discards NGX and optical-flow history before restart.
+      if (pre_encode_filter) pre_encode_filter->flush();
+      pre_encode_filter.reset();
+      enhancement_backend.reset();
+      nr_filter_active = false;
+      runtime_status.nr_backend = "none";
+      runtime_status.nr_failure_reason.clear();
+      runtime_status.nr_state = requested->enabled ? "warming_up" : "disabled";
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      if (!requested->enabled) return;
+
+      if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
+      enhancement_backend = nr_session_backend;
+      if (!enhancement_backend) {
+        runtime_status.nr_state = "degraded";
+        runtime_status.nr_failure_reason = "component_unavailable";
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
+      pre_encode_filter = make_pre_encode_filter(pre_encode_filter_e::external_neural_enhancement,
+        device.get(), device_ctx.get(), enhancement_backend->path, nr_filter_config,
+        enhancement_backend->id, enhancement_backend->runtime_digest);
+      nr_filter_active = true;
+      filter_capture_contract = {};
+      filter_capture_contract.require_private_handoff = true;
+      if (!pre_encode_filter) {
+        runtime_status.nr_state = "degraded";
+        runtime_status.nr_failure_reason = "filter_create_failed";
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
+      update_enhancement_runtime_status(false);
+    }
+
+    void
     update_enhancement_runtime_status(
       bool processed_frame,
       std::string_view frame_failure = {}) {
@@ -1862,6 +1952,9 @@ namespace platf::dxgi {
 
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     bool nr_filter_active = false;
+    bool nr_rollback_pending = false, nr_restoring_scale = false;
+    pre_encode_filter_config_t nr_filter_config;
+    boost::shared_ptr<const image_enhancement::backend_use_t> nr_session_backend;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
     texture2d_t filter_handoff_texture;

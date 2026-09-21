@@ -384,6 +384,8 @@ namespace {
   }
   class proxy_model_t final: public platf::dxgi::pre_encode_filter_t {
   public:
+    explicit proxy_model_t(UINT width = 0, UINT height = 0): width_(width), height_(height) {}
+    void expect_dimensions(UINT width, UINT height) { width_ = width; height_ = height; }
     void
     flush() override {}
     std::string_view
@@ -392,20 +394,27 @@ namespace {
     process(const platf::dxgi::gpu_frame_view_t &input) override {
       EXPECT_EQ(input.semantic.domain, platf::frame_domain_e::sdr_rec709);
       EXPECT_EQ(input.format, DXGI_FORMAT_B8G8R8A8_UNORM);
+      if (width_) { EXPECT_EQ(input.width, width_); EXPECT_EQ(input.height, height_); }
       return { .status = platf::dxgi::filter_status_e::ready, .frame = input };
     }
+  private:
+    UINT width_, height_;
   };
 
-  TEST(PreEncodeFilter, HdrProxyIdentityPreservesSignedHighlightsAlphaAndContext) {
+  static void hdr_proxy_identity(int scale) {
     d3d_fixture_t d3d;
     ASSERT_TRUE(d3d.init());
+    auto model = std::make_unique<proxy_model_t>();
+    auto *observed_model = model.get();
     auto filter = platf::dxgi::image_enhancement::dlss_nr::make_hdr_compatible_filter(
-      d3d.device.get(), d3d.context.get(), std::make_unique<proxy_model_t>());
+      d3d.device.get(), d3d.context.get(), std::move(model), scale);
     ASSERT_TRUE(filter);
     // FP16 wide-gamut negative, subnormal, 1000-nit and 4000-nit channels.
     const std::uint16_t pattern[] { 0xb000, 0x0001, 0x4a40, 0x3800, 0x5240, 0x3c00, 0x0000, 0x3c00 };
     for (UINT width : { 7u, 19u }) {
       constexpr UINT height = 5;
+      observed_model->expect_dimensions(platf::nr_scaled_dimension(width, scale),
+        platf::nr_scaled_dimension(height, scale));
       std::vector<std::uint16_t> pixels(width * height * 4);
       for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = pattern[i % 8];
       D3D11_TEXTURE2D_DESC desc {};
@@ -469,6 +478,51 @@ namespace {
       EXPECT_EQ(fallback.status, platf::dxgi::filter_status_e::ready);
       EXPECT_EQ(fallback.frame.texture, input.get());
       EXPECT_EQ(fallback.frame.semantic.domain, platf::frame_domain_e::linear_scrgb);
+    }
+  }
+  TEST(PreEncodeFilter, HdrProxyIdentityPreservesSignedHighlightsAlphaAndContext) {
+    for (int scale : {100, 75, 67, 50}) hdr_proxy_identity(scale);
+  }
+
+  TEST(PreEncodeFilter, ScaledSdrIdentityPreservesNativeTextPatternAndDimensions) {
+    d3d_fixture_t d3d;
+    ASSERT_TRUE(d3d.init());
+    constexpr UINT width = 19, height = 7;
+    std::vector<std::uint32_t> pixels(width * height);
+    for (UINT i = 0; i < pixels.size(); ++i) pixels[i] = i % 2 ? 0xff183fe2 : 0x7fe75b12;
+    D3D11_TEXTURE2D_DESC desc {};
+    desc.Width = width; desc.Height = height; desc.MipLevels = 1; desc.ArraySize = 1;
+    desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA data { pixels.data(), width * 4, 0 };
+    ID3D11Texture2D *raw = nullptr;
+    ASSERT_TRUE(SUCCEEDED(d3d.device->CreateTexture2D(&desc, &data, &raw)));
+    com_ptr_t<ID3D11Texture2D> input(raw);
+    ID3D11ShaderResourceView *srv_raw = nullptr;
+    ASSERT_TRUE(SUCCEEDED(d3d.device->CreateShaderResourceView(input.get(), nullptr, &srv_raw)));
+    com_ptr_t<ID3D11ShaderResourceView> srv(srv_raw);
+    platf::dxgi::gpu_frame_view_t view {
+      .texture = input.get(), .srv = srv.get(), .format = desc.Format,
+      .semantic = { .domain = platf::frame_domain_e::sdr_rec709,
+        .encoding = platf::pixel_encoding_class_e::unorm8 },
+      .width = width, .height = height,
+    };
+    desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ASSERT_TRUE(SUCCEEDED(d3d.device->CreateTexture2D(&desc, nullptr, &raw)));
+    com_ptr_t<ID3D11Texture2D> staging(raw);
+    for (int scale : {75, 67, 50}) {
+      auto filter = platf::dxgi::image_enhancement::dlss_nr::make_hdr_compatible_filter(
+        d3d.device.get(), d3d.context.get(), std::make_unique<proxy_model_t>(scale == 75 ? 14 : scale == 67 ? 13 : 10, scale == 50 ? 4 : 5), scale);
+      auto result = filter->process(view);
+      ASSERT_EQ(result.status, platf::dxgi::filter_status_e::ready) << result.reason;
+      EXPECT_EQ(result.frame.width, width); EXPECT_EQ(result.frame.height, height);
+      EXPECT_EQ(result.frame.format, desc.Format);
+      d3d.context->CopyResource(staging.get(), result.frame.texture);
+      D3D11_MAPPED_SUBRESOURCE mapped {};
+      ASSERT_TRUE(SUCCEEDED(d3d.context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &mapped)));
+      for (UINT row = 0; row < height; ++row) EXPECT_EQ(std::memcmp(pixels.data() + row * width,
+        static_cast<const char *>(mapped.pData) + row * mapped.RowPitch, width * 4), 0);
+      d3d.context->Unmap(staging.get(), 0);
     }
   }
 }  // namespace

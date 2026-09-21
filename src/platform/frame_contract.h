@@ -47,6 +47,7 @@ namespace platf {
     float peak_nits = 1000.0f;
     // Neural-rendering parameters for SDR and native HDR. Only read when the active
     // filter kind is external_neural_enhancement.
+    int nr_scale_percent = 100;
     float nr_intensity = 1.0f;
     float nr_local_tone_strength = 1.0f;
     float nr_local_structure_strength = 1.0f;
@@ -56,6 +57,15 @@ namespace platf {
     bool nr_auto_mask = false;
     bool nr_ui_correction = false;
   };
+
+  constexpr bool valid_nr_scale(int percent) {
+    return percent == 100 || percent == 75 || percent == 67 || percent == 50;
+  }
+
+  constexpr std::uint32_t nr_scaled_dimension(std::uint32_t size, int percent) {
+    const auto scaled = static_cast<std::uint32_t>((static_cast<std::uint64_t>(size) * percent + 50) / 100);
+    return scaled > 0 ? scaled : 1;
+  }
 
   struct capture_contract_t {
     frame_domain_e required_domain = frame_domain_e::unknown;
