@@ -36,6 +36,9 @@ namespace input {
   bool
   has_ds5_gamepad(const std::shared_ptr<input_t> &input);
 
+  bool
+  has_ds5_audio_haptics(const std::shared_ptr<input_t> &input);
+
   struct touch_port_t: public platf::touch_port_t {
     int env_width, env_height;
 

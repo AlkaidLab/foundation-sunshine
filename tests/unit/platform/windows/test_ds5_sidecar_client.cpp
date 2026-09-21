@@ -216,6 +216,7 @@ TEST(Ds5SidecarClientTests, EnvironmentScopeReportsApiFailures) {
 TEST(Ds5SidecarClientTests, UnassignedIndexIsNotOwned) {
   platf::ds5::sidecar_client_t client;
   EXPECT_FALSE(client.owns(-1));
+  EXPECT_FALSE(client.audio_haptics_active());
 }
 
 TEST(Ds5SidecarClientTests, AllocThenFreeCancelsBlockedReader) {
@@ -312,6 +313,7 @@ TEST(Ds5SidecarClientTests, FallsBackToHidWhenPeerLacksAudioPolicyCapability) {
   platf::ds5::sidecar_client_t client;
   EXPECT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true), 0);
   EXPECT_TRUE(client.owns(0));
+  EXPECT_FALSE(client.audio_haptics_active());
   client.free(0);
 }
 
@@ -402,6 +404,7 @@ TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
   ASSERT_TRUE(marker);
   EXPECT_EQ(marker->type, platf::gamepad_feedback_e::rumble);
   EXPECT_TRUE(client.owns(0));
+  EXPECT_FALSE(client.audio_haptics_active());
   client.free(0);
 }
 

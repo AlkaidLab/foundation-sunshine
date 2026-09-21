@@ -1211,6 +1211,14 @@ namespace platf {
   gamepad_is_ds5(input_t &input, int nr);
 
   /**
+   * @brief Check whether an allocated DualSense currently has an audio haptics endpoint.
+   * @param input The global platform input context.
+   * @return true only while the DualSense audio haptics endpoint is active.
+   */
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &input);
+
+  /**
    * @brief Get the supported platform capabilities to advertise to the client.
    * @param client_gamepad Client-declared gamepad type for this session, or empty when undeclared.
    * @return Capability flags.

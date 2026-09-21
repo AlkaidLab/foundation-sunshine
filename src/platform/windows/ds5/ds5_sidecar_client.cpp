@@ -275,7 +275,7 @@ namespace platf::ds5 {
     std::atomic_bool online { false };
     std::atomic_int global_index { -1 };
     std::uint8_t client_index = 0;
-    bool audio_haptics_requested = false;
+    std::atomic_bool audio_haptics_requested { false };
     bool genshin_compatibility_requested = false;
     bool force_hid_fallback = false;
     feedback_queue_t feedback_queue;
@@ -370,7 +370,7 @@ namespace platf::ds5 {
             };
             const auto role = p[2] < role_names.size() ? role_names[p[2]] : "unknown"sv;
             force_hid_fallback = true;
-            audio_haptics_requested = false;
+            audio_haptics_requested.store(false, std::memory_order_release);
             BOOST_LOG(warning) << "The virtual DualSense audio endpoint became the Windows "sv
                                << role << " default; falling back to HID-only DualSense"sv;
           }
@@ -544,8 +544,8 @@ namespace platf::ds5 {
       }
 
       client_index = id.clientRelativeIndex;
-      audio_haptics_requested = audio_haptics && !force_hid_fallback;
-      genshin_compatibility_requested = use_genshin_identity && audio_haptics_requested;
+      audio_haptics_requested.store(audio_haptics && !force_hid_fallback, std::memory_order_release);
+      genshin_compatibility_requested = use_genshin_identity && audio_haptics_requested.load(std::memory_order_acquire);
       online = true;
       BOOST_LOG(info) << "DualSense sidecar attached controller "sv << id.globalIndex
                       << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)")
@@ -614,7 +614,7 @@ namespace platf::ds5 {
           global_index.load(),
           client_index,
         };
-        if (!connect_and_attach(id, audio_haptics_requested, genshin_compatibility_requested)) {
+        if (!connect_and_attach(id, audio_haptics_requested.load(std::memory_order_acquire), genshin_compatibility_requested)) {
           close_transport();
           break;
         }
@@ -678,6 +678,12 @@ namespace platf::ds5 {
     // Ownership survives a temporary transport outage so the input layer can
     // still release the controller while the reader thread is recovering it.
     return global_index >= 0 && _impl->global_index == global_index;
+  }
+
+  bool sidecar_client_t::audio_haptics_active() const {
+    return _impl->online.load(std::memory_order_acquire) &&
+           _impl->global_index.load(std::memory_order_acquire) >= 0 &&
+           _impl->audio_haptics_requested.load(std::memory_order_acquire);
   }
 
   int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue,
