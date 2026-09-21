@@ -177,17 +177,18 @@ TEST(HdrPipelineStatus, ScaleRequestsValidateAndRollbackWithoutOverwritingNewerC
   video::hdr_pipeline_status_t status;
   status.nr_toggle_supported = true;
   const auto id = video::register_hdr_pipeline_status(status);
-  EXPECT_EQ(video::request_nr_enabled(id, true, 60), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 67), 400);
   EXPECT_EQ(video::request_nr_enabled(id, true, 75), 202);
   video::update_hdr_pipeline_status(id, status);
   EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 75);
-  EXPECT_TRUE(video::rollback_nr_scale(id, 75, 100));
+  const auto attempt = video::requested_nr_settings(id).value();
+  EXPECT_TRUE(video::rollback_nr_settings(id, attempt, { true, 100 }));
   EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 100);
   EXPECT_EQ(video::request_nr_enabled(id, true, 50), 202);
-  EXPECT_FALSE(video::rollback_nr_scale(id, 75, 100));
+  EXPECT_FALSE(video::rollback_nr_settings(id, attempt, { true, 100 }));
   EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 50);
   EXPECT_EQ(video::request_nr_enabled(id, false), 202);
-  EXPECT_FALSE(video::rollback_nr_scale(id, 50, 100));
+  EXPECT_FALSE(video::rollback_nr_settings(id, attempt, { true, 100 }));
   EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 50);
   video::unregister_hdr_pipeline_status(id);
 }
@@ -260,4 +261,41 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(EncoderTest, ValidateEncoder) {
   // todo:: test something besides fixture setup
+}
+
+TEST(HdrPipelineStatus, LiveControlsValidateAndPreserveNewerRequests) {
+  video::hdr_pipeline_status_t initial;
+  initial.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(initial);
+  for (int scale = 20; scale <= 100; scale += 5) {
+    EXPECT_EQ(video::request_nr_enabled(id, false, scale), 202);
+  }
+  for (int scale : {0, 19, 21, 67, 101}) EXPECT_EQ(video::request_nr_enabled(id, true, scale), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, -0.1f), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.1f), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, std::nullopt, true, 4), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 0.5f, true, 2, 4, 0.75f, true), 202);
+  const auto failed = video::requested_nr_settings(id).value();
+  EXPECT_FLOAT_EQ(failed.intensity, 0.5f);
+  EXPECT_TRUE(failed.ui_correction);
+  EXPECT_EQ(failed.motion_quality, 2);
+  EXPECT_EQ(failed.style, 4);
+  EXPECT_FLOAT_EQ(failed.skin_structure_strength, 0.75f);
+  EXPECT_TRUE(failed.auto_mask);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.0f, false, 0, 5), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.0f, false, 0, 0, -0.1f), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.0f, false, 0, 0, 1.1f), 400);
+  video::update_hdr_pipeline_status(id, initial);
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 0.5f);
+  EXPECT_TRUE(video::rollback_nr_settings(id, failed, {true, 100, 1.0f, false, 0}));
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 1.0f);
+  EXPECT_EQ(video::requested_nr_settings(id)->style, 0);
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->skin_structure_strength, 0.0f);
+  EXPECT_FALSE(video::requested_nr_settings(id)->auto_mask);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 0.5f, true, 2, 4, 0.75f, true), 202);
+  // Even an identical later request must not be overwritten by an old failure.
+  EXPECT_FALSE(video::rollback_nr_settings(id, failed, {true, 100}));
+  EXPECT_EQ(video::request_nr_enabled(id, false), 202);
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 0.5f);
+  video::unregister_hdr_pipeline_status(id);
 }

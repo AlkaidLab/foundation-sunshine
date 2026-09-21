@@ -126,7 +126,7 @@ namespace {
 }  // namespace
 
 static void
-exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true, bool live_toggle = false, bool live_scale = false, bool fail_scale = false) {
+exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true, bool live_toggle = false, bool live_scale = false, bool fail_scale = false, bool live_controls = false) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -186,9 +186,15 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
       const auto state = video::get_hdr_pipeline_statuses();
       ASSERT_EQ(state.size(), 1u);
       ASSERT_TRUE(state[0].nr_toggle_supported);
-      const int scales[] {100, 75, 67, 50, 100};
+      const int scales[] {100, 65, 40, 20, 100};
       ASSERT_EQ(video::request_nr_enabled(state[0].id, live_scale || i != 1,
-        live_scale ? std::optional<int>(scales[i]) : std::nullopt), 202);
+        live_scale ? std::optional<int>(scales[i]) : std::nullopt,
+        live_controls ? std::optional<float>(i == 0 ? 0.0f : 0.5f) : std::nullopt,
+        live_controls ? std::optional<bool>(i % 2 == 0) : std::nullopt,
+        live_controls ? std::optional<int>(i % 4) : std::nullopt,
+        live_controls ? std::optional<int>(i) : std::nullopt,
+        live_controls ? std::optional<float>(i / 4.0f) : std::nullopt,
+        live_controls ? std::optional<bool>(i % 2 == 0) : std::nullopt), 202);
     }
     ASSERT_EQ(image.capture_mutex->AcquireSync(0, 5000), S_OK);
     const float colour[] { 0.25f, 1.0f, 4.0f, 1.0f };
@@ -203,7 +209,7 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
       const auto steady_start = std::chrono::steady_clock::now();
       for (int sample = 0; sample < 20; ++sample) ASSERT_EQ(encoder->convert(image), 0);
       const double steady_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - steady_start).count() / 20;
-      const int scales[] {100, 75, 67, 50, 100};
+      const int scales[] {100, 65, 40, 20, 100};
       std::cout << "NR_SCALE hdr=" << hdr_capture << " percent=" << scales[i]
                 << " first_ms=" << first_ms << " steady_convert_ms=" << steady_ms << std::endl;
     }
@@ -216,10 +222,18 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
       EXPECT_EQ(state[0].nr_state, !live_scale && i == 1 ? "disabled" : "active");
       EXPECT_EQ(state[0].nr_requested_enabled, live_scale || i != 1);
       if (live_scale) {
-        const int scales[] {100, 75, 67, 50, 100};
+        const int scales[] {100, 65, 40, 20, 100};
         EXPECT_EQ(state[0].nr_scale_percent, scales[i]);
-        EXPECT_TRUE(state[0].nr_scale_failure_reason.empty());
+        EXPECT_TRUE(state[0].nr_settings_failure_reason.empty());
         EXPECT_EQ(state[0].nr_source_width, 3840u);
+        if (live_controls) {
+          EXPECT_FLOAT_EQ(state[0].nr_intensity, i == 0 ? 0.0f : 0.5f);
+          EXPECT_EQ(state[0].nr_ui_correction, i % 2 == 0);
+          EXPECT_EQ(state[0].nr_motion_quality, i % 4);
+          EXPECT_EQ(state[0].nr_style, i);
+          EXPECT_FLOAT_EQ(state[0].nr_skin_structure_strength, i / 4.0f);
+          EXPECT_EQ(state[0].nr_auto_mask, i % 2 == 0);
+        }
       }
     }
   }
@@ -227,7 +241,7 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     const auto before = video::get_hdr_pipeline_statuses();
     ASSERT_EQ(before.size(), 1u);
     ASSERT_EQ(before[0].nr_state, "active");
-    ASSERT_EQ(video::request_nr_enabled(before[0].id, true, 75), 202);
+    ASSERT_EQ(video::request_nr_enabled(before[0].id, true, 25, 0.5f, true, 1, 4, 0.75f, true), 202);
     // Inject an invalid model-view dimension while keeping the actual D3D
     // texture intact. The proxy must fail before inference; conversion must
     // still encode its private source and restore the working scale next frame.
@@ -242,14 +256,20 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     EXPECT_EQ(failed[0].nr_state, "degraded");
     EXPECT_EQ(failed[0].nr_scale_percent, 100);
     EXPECT_EQ(failed[0].nr_requested_scale_percent, 100);
-    EXPECT_EQ(failed[0].nr_scale_failure_reason, "invalid_input");
+    EXPECT_EQ(failed[0].nr_settings_failure_reason, "invalid_input");
     ASSERT_EQ(encoder->convert(image), 0);
     ASSERT_FALSE(encoder->nvenc->encode_frame(11, false).data.empty());
     const auto restored = video::get_hdr_pipeline_statuses();
     ASSERT_EQ(restored.size(), 1u);
     EXPECT_EQ(restored[0].nr_state, "active");
     EXPECT_EQ(restored[0].nr_scale_percent, 100);
-    EXPECT_EQ(restored[0].nr_scale_failure_reason, "invalid_input");
+    EXPECT_FLOAT_EQ(restored[0].nr_intensity, before[0].nr_intensity);
+    EXPECT_EQ(restored[0].nr_ui_correction, before[0].nr_ui_correction);
+    EXPECT_EQ(restored[0].nr_motion_quality, before[0].nr_motion_quality);
+    EXPECT_EQ(restored[0].nr_style, before[0].nr_style);
+    EXPECT_FLOAT_EQ(restored[0].nr_skin_structure_strength, before[0].nr_skin_structure_strength);
+    EXPECT_EQ(restored[0].nr_auto_mask, before[0].nr_auto_mask);
+    EXPECT_EQ(restored[0].nr_settings_failure_reason, "invalid_input");
   }
   const auto statuses = video::get_hdr_pipeline_statuses();
   ASSERT_EQ(statuses.size(), 1u);
@@ -266,6 +286,14 @@ TEST(DlssNrHardware, FailedScaleRestoresNativeHdrAndStillEncodes) {
 
 TEST(DlssNrHardware, FailedScaleRestoresSdrAndStillEncodes) {
   exercise_production_conversion(0, false, false, false, false, true);
+}
+
+TEST(DlssNrHardware, LiveControlsPreserveNativeHdrPackets) {
+  exercise_production_conversion(1, false, true, true, true, false, true);
+}
+
+TEST(DlssNrHardware, LiveControlsPreserveSdrPackets) {
+  exercise_production_conversion(0, false, false, true, true, false, true);
 }
 
 TEST(DlssNrHardware, LiveNrScalePreservesNativeHdrPackets) {

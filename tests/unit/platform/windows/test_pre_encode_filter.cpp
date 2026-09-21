@@ -481,7 +481,7 @@ namespace {
     }
   }
   TEST(PreEncodeFilter, HdrProxyIdentityPreservesSignedHighlightsAlphaAndContext) {
-    for (int scale : {100, 75, 67, 50}) hdr_proxy_identity(scale);
+    for (int scale : {100, 75, 65, 50, 20}) hdr_proxy_identity(scale);
   }
 
   TEST(PreEncodeFilter, ScaledSdrIdentityPreservesNativeTextPatternAndDimensions) {
@@ -510,9 +510,9 @@ namespace {
     desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ASSERT_TRUE(SUCCEEDED(d3d.device->CreateTexture2D(&desc, nullptr, &raw)));
     com_ptr_t<ID3D11Texture2D> staging(raw);
-    for (int scale : {75, 67, 50}) {
+    for (int scale : {75, 65, 50, 20}) {
       auto filter = platf::dxgi::image_enhancement::dlss_nr::make_hdr_compatible_filter(
-        d3d.device.get(), d3d.context.get(), std::make_unique<proxy_model_t>(scale == 75 ? 14 : scale == 67 ? 13 : 10, scale == 50 ? 4 : 5), scale);
+        d3d.device.get(), d3d.context.get(), std::make_unique<proxy_model_t>(platf::nr_scaled_dimension(19, scale), platf::nr_scaled_dimension(7, scale)), scale);
       auto result = filter->process(view);
       ASSERT_EQ(result.status, platf::dxgi::filter_status_e::ready) << result.reason;
       EXPECT_EQ(result.frame.width, width); EXPECT_EQ(result.frame.height, height);
