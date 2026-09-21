@@ -403,6 +403,7 @@ namespace platf::dxgi {
 
     int
     convert(platf::img_t &img_base) {
+      apply_nr_request();
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
       }
@@ -1356,6 +1357,13 @@ namespace platf::dxgi {
         filter_capture_contract = contract;
       }
 
+      runtime_status.nr_toggle_supported = config.pre_encode_filter == pre_encode_filter_e::none || nr_filter_active;
+      runtime_status.nr_requested_enabled = nr_filter_active;
+      nr_filter_config = config.pre_encode_filter_config;
+      if (config.enhancement_backend && config.enhancement_backend->id == image_enhancement::NVIDIA_DLSSNR_BACKEND) {
+        nr_session_backend = config.enhancement_backend;
+      }
+
       blend_disable = make_blend(device.get(), false, false);
       if (!blend_disable) {
         return -1;
@@ -1762,6 +1770,46 @@ namespace platf::dxgi {
     }
 
     void
+    apply_nr_request() {
+      const auto requested = ::video::requested_nr_enabled(runtime_status_id);
+      if (!requested || *requested == runtime_status.nr_requested_enabled) return;
+      runtime_status.nr_requested_enabled = *requested;
+      // Only this conversion thread touches D3D state. Draining and destroying
+      // the old filter also discards NGX and optical-flow history before restart.
+      if (pre_encode_filter) pre_encode_filter->flush();
+      pre_encode_filter.reset();
+      enhancement_backend.reset();
+      nr_filter_active = false;
+      runtime_status.nr_backend = "none";
+      runtime_status.nr_failure_reason.clear();
+      runtime_status.nr_state = *requested ? "warming_up" : "disabled";
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      if (!*requested) return;
+
+      if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
+      enhancement_backend = nr_session_backend;
+      if (!enhancement_backend) {
+        runtime_status.nr_state = "degraded";
+        runtime_status.nr_failure_reason = "component_unavailable";
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
+      pre_encode_filter = make_pre_encode_filter(pre_encode_filter_e::external_neural_enhancement,
+        device.get(), device_ctx.get(), enhancement_backend->path, nr_filter_config,
+        enhancement_backend->id, enhancement_backend->runtime_digest);
+      nr_filter_active = true;
+      filter_capture_contract = {};
+      filter_capture_contract.require_private_handoff = true;
+      if (!pre_encode_filter) {
+        runtime_status.nr_state = "degraded";
+        runtime_status.nr_failure_reason = "filter_create_failed";
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
+      update_enhancement_runtime_status(false);
+    }
+
+    void
     update_enhancement_runtime_status(
       bool processed_frame,
       std::string_view frame_failure = {}) {
@@ -1862,6 +1910,8 @@ namespace platf::dxgi {
 
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     bool nr_filter_active = false;
+    pre_encode_filter_config_t nr_filter_config;
+    boost::shared_ptr<const image_enhancement::backend_use_t> nr_session_backend;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
     texture2d_t filter_handoff_texture;

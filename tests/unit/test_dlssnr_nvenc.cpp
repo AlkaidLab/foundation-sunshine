@@ -124,7 +124,7 @@ namespace {
 }  // namespace
 
 static void
-exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true) {
+exercise_production_conversion(int dynamic_range, bool unavailable_backend = false, bool hdr_capture = true, bool live_toggle = false) {
   const auto adapter_path = std::getenv("SUNSHINE_TEST_DLSSNR_ADAPTER");
   const auto digest = std::getenv("SUNSHINE_TEST_DLSSNR_SHA256");
   if (!adapter_path || !digest) {
@@ -146,7 +146,7 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   video::config_t config { .width = 1920, .height = 1080, .framerate = 60, .bitrate = 20000 };
   config.videoFormat = 1;
   config.dynamicRange = dynamic_range;
-  config.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
+  config.pre_encode_filter = live_toggle ? platf::pre_encode_filter_e::none : platf::pre_encode_filter_e::external_neural_enhancement;
   config.frame_pipeline_policy = platf::resolve_frame_pipeline_policy(dynamic_range, false, true);
   config.frame_pipeline_policy_resolved = true;
   auto backend = boost::make_shared<image_enhancement::backend_use_t>();
@@ -179,6 +179,12 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
   ASSERT_FALSE(encoder->nvenc->encode_frame(0, true).data.empty());
   ASSERT_EQ(display->complete_img(frame.get(), false), 0);
   for (int i = 0; i < 3; ++i) {
+    if (live_toggle) {
+      const auto state = video::get_hdr_pipeline_statuses();
+      ASSERT_EQ(state.size(), 1u);
+      ASSERT_TRUE(state[0].nr_toggle_supported);
+      ASSERT_EQ(video::request_nr_enabled(state[0].id, i != 1), 202);
+    }
     ASSERT_EQ(image.capture_mutex->AcquireSync(0, 5000), S_OK);
     const float colour[] { 0.25f, 1.0f, 4.0f, 1.0f };
     display->device_ctx->ClearRenderTargetView(image.capture_rt.get(), colour);
@@ -187,6 +193,12 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     const auto packet = encoder->nvenc->encode_frame(i + 1, i == 0);
     ASSERT_FALSE(packet.data.empty());
     if (i == 0) { EXPECT_TRUE(packet.idr); }
+    if (live_toggle) {
+      const auto state = video::get_hdr_pipeline_statuses();
+      ASSERT_EQ(state.size(), 1u);
+      EXPECT_EQ(state[0].nr_state, i == 1 ? "disabled" : "active");
+      EXPECT_EQ(state[0].nr_requested_enabled, i != 1);
+    }
   }
   const auto statuses = video::get_hdr_pipeline_statuses();
   ASSERT_EQ(statuses.size(), 1u);
@@ -195,6 +207,14 @@ exercise_production_conversion(int dynamic_range, bool unavailable_backend = fal
     EXPECT_EQ(statuses[0].nr_failure_reason, "runtime_untrusted");
   }
   EXPECT_EQ(statuses[0].hdr_mode, !hdr_output ? "sdr" : dynamic_range == 2 ? "hlg" : "pq");
+}
+
+TEST(DlssNrHardware, LiveNrTogglePreservesNativeHdrPackets) {
+  exercise_production_conversion(1, false, true, true);
+}
+
+TEST(DlssNrHardware, LiveNrTogglePreservesSdrPackets) {
+  exercise_production_conversion(0, false, false, true);
 }
 
 TEST(DlssNrHardware, ProductionSdrCaptureReportsSdrDespiteHdrRequest) {

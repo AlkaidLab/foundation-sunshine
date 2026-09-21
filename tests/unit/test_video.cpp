@@ -152,6 +152,27 @@ TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
   EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
 }
 
+TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication) {
+  video::hdr_pipeline_status_t status;
+  status.nr_toggle_supported = true;
+  const auto first = video::register_hdr_pipeline_status(status);
+  const auto second = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(first, true), 202);
+  video::update_hdr_pipeline_status(first, status);
+  EXPECT_EQ(video::requested_nr_enabled(first), true);
+  EXPECT_EQ(video::requested_nr_enabled(second), false);
+  EXPECT_EQ(video::request_nr_enabled(first, false), 202);
+  EXPECT_EQ(video::requested_nr_enabled(first), false);
+  video::unregister_hdr_pipeline_status(first);
+  EXPECT_EQ(video::request_nr_enabled(first, true), 404);
+  EXPECT_FALSE(video::requested_nr_enabled(first).has_value());
+  video::unregister_hdr_pipeline_status(second);
+  status.nr_toggle_supported = false;
+  const auto blocked = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(blocked, true), 409);
+  video::unregister_hdr_pipeline_status(blocked);
+}
+
 TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
   video::hdr_pipeline_status_t status {
     .hdr_mode = "hlg",

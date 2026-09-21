@@ -133,8 +133,27 @@ namespace video {
     updated.id = id;
     std::lock_guard lock { hdr_pipeline_status_mutex };
     if (hdr_pipeline_statuses.contains(id)) {
+      updated.nr_requested_enabled = hdr_pipeline_statuses[id].nr_requested_enabled;
       hdr_pipeline_statuses[id] = std::move(updated);
     }
+  }
+
+  int
+  request_nr_enabled(std::uint64_t id, bool enabled) {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_statuses.find(id);
+    if (it == hdr_pipeline_statuses.end()) return 404;
+    if (!it->second.nr_toggle_supported) return 409;
+    it->second.nr_requested_enabled = enabled;
+    return 202;
+  }
+
+  std::optional<bool>
+  requested_nr_enabled(std::uint64_t id) {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_statuses.find(id);
+    if (it == hdr_pipeline_statuses.end() || !it->second.nr_toggle_supported) return std::nullopt;
+    return it->second.nr_requested_enabled;
   }
 
   void

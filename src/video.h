@@ -53,6 +53,8 @@ namespace video {
     std::string nr_backend { "none" };
     std::string nr_state { "disabled" };
     std::string nr_failure_reason;
+    bool nr_toggle_supported {};
+    bool nr_requested_enabled {};
   };
 
   std::uint64_t
@@ -66,6 +68,10 @@ namespace video {
 
   std::vector<hdr_pipeline_status_t>
   get_hdr_pipeline_statuses();
+
+  // Requests are consumed only by the owning conversion thread at a frame boundary.
+  int request_nr_enabled(std::uint64_t id, bool enabled);
+  std::optional<bool> requested_nr_enabled(std::uint64_t id);
 
   // 动态参数调节类型
   enum class dynamic_param_type_e : int {
