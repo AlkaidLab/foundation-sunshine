@@ -267,13 +267,14 @@ const hdrToggleDisabled = computed(() => codecStrategy.value !== 'modern')
 
     <div class="settings-panel mt-3" v-if="platform === 'windows'">
       <div class="form-label">{{ $t('config.hdr_enhanced') }}</div>
+      <div class="form-text">{{ $t('config.hdr_enhanced_desc') }}</div>
       <button
         type="button"
         class="btn btn-outline-primary btn-sm mt-2"
         :disabled="!nativeRtxHdrManagerAvailable"
         @click="openNativeRtxHdrManager"
       >
-        <i class="fas fa-puzzle-piece me-1" aria-hidden="true"></i>
+        <i class="fas fa-sliders-h me-1" aria-hidden="true"></i>
         {{ $t('config.hdr_enhanced_open_manager') }}
       </button>
       <div v-if="!nativeRtxHdrManagerAvailable" class="form-text">{{ $t('config.wgc_control_panel_only') }}</div>
