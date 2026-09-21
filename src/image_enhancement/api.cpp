@@ -164,7 +164,6 @@ namespace image_enhancement::api {
         { "nr_requested_motion_quality", pipeline.nr_requested_motion_quality }, { "nr_motion_quality", pipeline.nr_motion_quality },
         { "nr_requested_scale_percent", pipeline.nr_requested_scale_percent },
         { "nr_scale_percent", pipeline.nr_scale_percent }, { "nr_settings_failure_reason", pipeline.nr_settings_failure_reason },
-        { "nr_scale_failure_reason", pipeline.nr_settings_failure_reason },
         { "nr_source_width", pipeline.nr_source_width }, { "nr_source_height", pipeline.nr_source_height },
         { "nr_requested_enabled", pipeline.nr_requested_enabled }, { "nr_backend", pipeline.nr_backend }, { "nr_state", pipeline.nr_state }, { "nr_reason", pipeline.nr_failure_reason } });
     }
