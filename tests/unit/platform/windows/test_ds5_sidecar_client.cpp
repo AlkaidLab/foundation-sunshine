@@ -334,6 +334,7 @@ TEST(Ds5SidecarClientTests, SendsNegotiatedGenshinCompatibilityAttachFlag) {
   auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-genshin-compatibility-test");
   platf::ds5::sidecar_client_t client;
   ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), true, true), 0);
+  EXPECT_TRUE(client.audio_haptics_active());
   EXPECT_EQ(WaitForSingleObject(compatibility_event.handle, 2000), WAIT_OBJECT_0);
   client.free(0);
 }
