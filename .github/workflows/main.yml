@@ -309,11 +309,16 @@ jobs:
           key: ccache-windows-${{ github.run_id }}
 
       - name: Prune stale compiler cache entries
-        # Collapse the cache to exactly one entry (the one saved above).
+        # Collapse the cache to exactly one entry (the newest one saved).
         # Entries pile up one-per-run otherwise; on a 10 GB repo quota that
         # once got the entire lineage LRU-evicted. A single entry is also
         # restored by every later run, which keeps resetting its 7-day
         # inactivity clock, so neither eviction path can take it out.
+        # Only entries from runs OLDER than this one are deleted (run ids
+        # increase monotonically): a cancelled run still executes its
+        # always() save and prune alongside the next run, and age-filtered
+        # prunes converge to the newest entry under any interleaving —
+        # pruning by "not my key" instead could race down to zero entries.
         # Skipped unless the save step actually succeeded (outcome keeps the
         # real result under continue-on-error; the save subaction sets no
         # outputs, so conclusion can't tell success from failure).
@@ -325,7 +330,9 @@ jobs:
           $current = "ccache-windows-${{ github.run_id }}"
           $stale = gh cache list --repo $env:GITHUB_REPOSITORY --limit 100 --json id,key |
             ConvertFrom-Json |
-            Where-Object { $_.key -like 'ccache-windows-*' -and $_.key -ne $current }
+            Where-Object {
+              $_.key -match '^ccache-windows-(\d+)$' -and [long]$Matches[1] -lt [long]"${{ github.run_id }}"
+            }
           foreach ($entry in $stale) {
             gh cache delete $entry.id --repo $env:GITHUB_REPOSITORY
             Write-Output "Pruned $($entry.key)"
