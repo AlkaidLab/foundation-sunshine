@@ -1978,8 +1978,11 @@ namespace platf {
       if (result == 0) {
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+        return 0;
       }
-      return result;
+      BOOST_LOG(warning) << "DualSense allocation failed for "sv << selection_source
+                         << "; falling back to automatic gamepad selection"sv;
+      gamepad_mode = 1;
     }
 
     if (!raw->vigem) {
@@ -2067,6 +2070,12 @@ namespace platf {
   gamepad_is_ds5(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
     return raw->ds5_sidecar && raw->ds5_sidecar->owns(nr);
+  }
+
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &input) {
+    auto raw = (input_raw_t *) input.get();
+    return raw->ds5_sidecar && raw->ds5_sidecar->audio_haptics_active();
   }
 
   /**

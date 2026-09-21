@@ -222,6 +222,21 @@ namespace input {
     return false;
   }
 
+  bool
+  has_ds5_audio_haptics(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed) &&
+          platf::gamepad_has_ds5_audio_haptics(platf_input)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * @brief Apply shortcut based on VKEY
    * @param keyCode The VKEY code

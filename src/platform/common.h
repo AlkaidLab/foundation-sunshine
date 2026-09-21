@@ -1214,6 +1214,14 @@ namespace platf {
   gamepad_is_ds5(input_t &input, int nr);
 
   /**
+   * @brief 检查已分配的 DualSense 音频触觉会话是否仍可用。
+   * @param input 平台输入上下文。
+   * @return 音频触觉协商成功且未降级或断线时返回 true。
+   */
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &input);
+
+  /**
    * @brief Get the supported platform capabilities to advertise to the client.
    * @param client_gamepad Client-declared gamepad type for this session, or empty when undeclared.
    * @return Capability flags.

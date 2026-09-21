@@ -314,6 +314,11 @@ const KeyCodeMap kKeyCodesMap[] = {
     return false;
   }
 
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &) {
+    return false;
+  }
+
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     BOOST_LOG(info) << "gamepad: Gamepad not yet implemented for MacOS."sv;
