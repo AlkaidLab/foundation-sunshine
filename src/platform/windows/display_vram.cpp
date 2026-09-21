@@ -33,6 +33,7 @@ extern "C" {
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
 #include "src/amf/amf_d3d11.h"
 #include "src/video.h"
+#include "src/hdr/dynamic_hdr_selection.h"
 #include "src/video_hdr_metadata.h"
 
 #include <AMF/components/DisplayCapture.h>
@@ -561,12 +562,11 @@ namespace platf::dxgi {
             ? (filter_result.reason.empty() ? "filter_invalid_output" : std::string(filter_result.reason))
             : std::string(pre_encode_filter->failure_reason());
           if (nr_filter_active && (filter_failed || pre_encode_filter->degraded()) && nr_rollback_pending) {
-            // Recreate the previous scale on the next frame, after releasing the
+            // Recreate the previous settings on the next frame, after releasing the
             // failed model. Do this before any failed-result early return.
             nr_rollback_pending = false;
-            runtime_status.nr_scale_failure_reason = failure_reason;
-            nr_restoring_scale = ::video::rollback_nr_scale(runtime_status_id,
-              nr_filter_config.nr_scale_percent, runtime_status.nr_scale_percent);
+            runtime_status.nr_settings_failure_reason = failure_reason;
+            nr_restoring_settings = ::video::rollback_nr_settings(runtime_status_id, nr_attempt_request, nr_previous_request);
           }
           if (filter_failed) {
             BOOST_LOG(error) << "Pre-encode filter failed: "sv << failure_reason;
@@ -586,6 +586,12 @@ namespace platf::dxgi {
             if (nr_filter_active && !pre_encode_filter->degraded()) {
               nr_rollback_pending = false;
               runtime_status.nr_scale_percent = nr_filter_config.nr_scale_percent;
+              runtime_status.nr_intensity = nr_filter_config.nr_intensity;
+              runtime_status.nr_ui_correction = nr_filter_config.nr_ui_correction;
+              runtime_status.nr_motion_quality = nr_filter_config.nr_motion_quality;
+              runtime_status.nr_style = nr_filter_config.nr_style;
+              runtime_status.nr_skin_structure_strength = nr_filter_config.nr_skin_structure_strength;
+              runtime_status.nr_auto_mask = nr_filter_config.nr_auto_mask;
             }
             update_enhancement_runtime_status(true);
           }
@@ -846,6 +852,15 @@ namespace platf::dxgi {
       }
       hdr_pre_encode.constantBuffer = std::move(next_buffer);
       hdr_pre_encode.params = params;
+    }
+
+    void
+    report_dolby_vision_output(bool injected, bool enabled) {
+      if (runtime_status.dv_profile.empty()) return;
+      const std::string next = injected ? "active" : enabled ? "waiting" : "fallback";
+      if (runtime_status.dv_state == next) return;
+      runtime_status.dv_state = next;
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 
     void
@@ -1394,7 +1409,17 @@ namespace platf::dxgi {
       runtime_status.nr_toggle_supported = config.pre_encode_filter == pre_encode_filter_e::none || nr_filter_active;
       runtime_status.nr_requested_enabled = nr_filter_active;
       runtime_status.nr_requested_scale_percent = runtime_status.nr_scale_percent = config.pre_encode_filter_config.nr_scale_percent;
+      const auto dv = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+      runtime_status.dv_profile = dv == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ? "8.1" :
+        dv == hdr::dynamic_hdr_format_e::dolby_vision_profile_84 ? "8.4" : "";
+      runtime_status.dv_state = runtime_status.dv_profile.empty() ? "off" : "fallback";
       nr_filter_config = config.pre_encode_filter_config;
+      runtime_status.nr_requested_style = runtime_status.nr_style = nr_filter_config.nr_style;
+      runtime_status.nr_requested_skin_structure_strength = runtime_status.nr_skin_structure_strength = nr_filter_config.nr_skin_structure_strength;
+      runtime_status.nr_requested_auto_mask = runtime_status.nr_auto_mask = nr_filter_config.nr_auto_mask;
+      runtime_status.nr_requested_intensity = runtime_status.nr_intensity = nr_filter_config.nr_intensity;
+      runtime_status.nr_requested_ui_correction = runtime_status.nr_ui_correction = nr_filter_config.nr_ui_correction;
+      runtime_status.nr_requested_motion_quality = runtime_status.nr_motion_quality = nr_filter_config.nr_motion_quality;
       if (config.enhancement_backend && config.enhancement_backend->id == image_enhancement::NVIDIA_DLSSNR_BACKEND) {
         nr_session_backend = config.enhancement_backend;
       }
@@ -1805,17 +1830,40 @@ namespace platf::dxgi {
     }
 
     void
+    rollback_failed_nr_request() {
+      if (!nr_rollback_pending) return;
+      nr_rollback_pending = false;
+      runtime_status.nr_settings_failure_reason = runtime_status.nr_failure_reason;
+      nr_restoring_settings = ::video::rollback_nr_settings(runtime_status_id, nr_attempt_request, nr_previous_request);
+    }
+
+    void
     apply_nr_request() {
       const auto requested = ::video::requested_nr_settings(runtime_status_id);
       if (!requested || (requested->enabled == runtime_status.nr_requested_enabled &&
-          requested->scale_percent == nr_filter_config.nr_scale_percent)) return;
-      nr_rollback_pending = requested->enabled && runtime_status.nr_state == "active" &&
-        requested->scale_percent != runtime_status.nr_scale_percent;
-      if (!nr_restoring_scale) runtime_status.nr_scale_failure_reason.clear();
-      nr_restoring_scale = false;
+          requested->scale_percent == nr_filter_config.nr_scale_percent &&
+          requested->intensity == nr_filter_config.nr_intensity &&
+          requested->ui_correction == nr_filter_config.nr_ui_correction &&
+          requested->motion_quality == nr_filter_config.nr_motion_quality &&
+          requested->style == nr_filter_config.nr_style &&
+          requested->skin_structure_strength == nr_filter_config.nr_skin_structure_strength &&
+          requested->auto_mask == nr_filter_config.nr_auto_mask)) return;
+      nr_rollback_pending = requested->enabled && runtime_status.nr_state == "active";
+      nr_attempt_request = *requested;
+      nr_previous_request = { true, runtime_status.nr_scale_percent, runtime_status.nr_intensity,
+        runtime_status.nr_ui_correction, runtime_status.nr_motion_quality, 0,
+        runtime_status.nr_style, runtime_status.nr_skin_structure_strength, runtime_status.nr_auto_mask };
+      if (!nr_restoring_settings) runtime_status.nr_settings_failure_reason.clear();
+      nr_restoring_settings = false;
       runtime_status.nr_requested_enabled = requested->enabled;
       runtime_status.nr_requested_scale_percent = requested->scale_percent;
       nr_filter_config.nr_scale_percent = requested->scale_percent;
+      nr_filter_config.nr_intensity = runtime_status.nr_requested_intensity = requested->intensity;
+      nr_filter_config.nr_ui_correction = runtime_status.nr_requested_ui_correction = requested->ui_correction;
+      nr_filter_config.nr_motion_quality = runtime_status.nr_requested_motion_quality = requested->motion_quality;
+      nr_filter_config.nr_style = runtime_status.nr_requested_style = requested->style;
+      nr_filter_config.nr_skin_structure_strength = runtime_status.nr_requested_skin_structure_strength = requested->skin_structure_strength;
+      nr_filter_config.nr_auto_mask = runtime_status.nr_requested_auto_mask = requested->auto_mask;
       // Only this conversion thread touches D3D state. Draining and destroying
       // the old filter also discards NGX and optical-flow history before restart.
       if (pre_encode_filter) pre_encode_filter->flush();
@@ -1833,6 +1881,7 @@ namespace platf::dxgi {
       if (!enhancement_backend) {
         runtime_status.nr_state = "degraded";
         runtime_status.nr_failure_reason = "component_unavailable";
+        rollback_failed_nr_request();
         ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
@@ -1845,6 +1894,7 @@ namespace platf::dxgi {
       if (!pre_encode_filter) {
         runtime_status.nr_state = "degraded";
         runtime_status.nr_failure_reason = "filter_create_failed";
+        rollback_failed_nr_request();
         ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
@@ -1952,8 +2002,9 @@ namespace platf::dxgi {
 
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     bool nr_filter_active = false;
-    bool nr_rollback_pending = false, nr_restoring_scale = false;
+    bool nr_rollback_pending = false, nr_restoring_settings = false;
     pre_encode_filter_config_t nr_filter_config;
+    ::video::nr_request_t nr_attempt_request {}, nr_previous_request {};
     boost::shared_ptr<const image_enhancement::backend_use_t> nr_session_backend;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
@@ -3223,6 +3274,11 @@ namespace platf::dxgi {
     }
 
     void
+    report_dolby_vision_output(bool injected, bool enabled) override {
+      base.report_dolby_vision_output(injected, enabled);
+    }
+
+    void
     set_client_sdr_white_nits(float nits) override {
       base.set_client_sdr_white(nits);
     }
@@ -3341,6 +3397,11 @@ namespace platf::dxgi {
       int result = base.convert(img_base);
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    void
+    report_dolby_vision_output(bool injected, bool enabled) override {
+      base.report_dolby_vision_output(injected, enabled);
     }
 
     void

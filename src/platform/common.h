@@ -555,6 +555,9 @@ namespace platf {
     set_client_sdr_white_nits(float) {
     }
 
+    // Packet-level confirmation, independent of the PQ/HLG transfer function.
+    virtual void report_dolby_vision_output(bool injected, bool enabled) {}
+
     video::sunshine_colorspace_t colorspace;
 
     /**
