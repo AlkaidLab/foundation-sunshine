@@ -10,6 +10,7 @@ extern "C" {
 }
 
 #include <bitset>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -206,7 +207,27 @@ namespace input {
 
     int32_t accumulated_vscroll_delta;
     int32_t accumulated_hscroll_delta;
+
+    std::array<std::chrono::steady_clock::time_point, MAX_GAMEPADS> last_unallocated_controller_log {};
   };
+
+  constexpr auto CONTROLLER_WARNING_INTERVAL = 5s;
+
+  void
+  log_unallocated_controller(input_t &input, int controller_number) {
+    if (controller_number < 0 || controller_number >= static_cast<int>(input.last_unallocated_controller_log.size())) {
+      return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    auto &last_log = input.last_unallocated_controller_log[controller_number];
+    if (last_log != std::chrono::steady_clock::time_point {} && now - last_log < CONTROLLER_WARNING_INTERVAL) {
+      return;
+    }
+
+    last_log = now;
+    BOOST_LOG(warning) << "ControllerNumber ["sv << controller_number << "] not allocated"sv;
+  }
 
   bool
   has_ds5_gamepad(const std::shared_ptr<input_t> &input) {
@@ -1289,7 +1310,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1323,7 +1344,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1356,7 +1377,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1411,7 +1432,7 @@ namespace input {
     // If this gamepad has not been initialized, ignore it.
     // This could happen when platf::alloc_gamepad fails
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
