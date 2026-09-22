@@ -6,11 +6,10 @@
 
 #include <cstdint>
 #include <limits>
-#include <mutex>
 #include <optional>
 #include <sstream>
-#include <string>
 
+#include <boost/atomic.hpp>
 #include <nlohmann/json.hpp>
 
 #include "bridge.h"
@@ -20,21 +19,7 @@ namespace text_context::http {
   namespace {
     constexpr std::size_t kMaxBodyBytes = 4096;
 
-    std::mutex log_state_mutex;
-    std::string last_capability_log;
-    std::string last_observation_log;
-
-    /**
-     * @brief Log a diagnostic state only when it differs from the previous state.
-     */
-    bool should_log_state(std::string &last_state, const std::string &state) {
-      std::lock_guard lock {log_state_mutex};
-      if (last_state == state) {
-        return false;
-      }
-      last_state = state;
-      return true;
-    }
+    boost::atomic_uint8_t last_capability_state {0xff};
 
     void write_json(resp_https_t &resp, SimpleWeb::StatusCode status, const nlohmann::json &body) {
       SimpleWeb::CaseInsensitiveMultimap headers;
@@ -118,9 +103,9 @@ namespace text_context::http {
       }
       const auto input_pane_available = bridge.input_pane_available();
       const auto uia_available = bridge.uia_available();
-      const auto log_state = std::string {input_pane_available ? "1" : "0"} +
-                             (uia_available ? "1" : "0");
-      if (should_log_state(last_capability_log, log_state)) {
+      const auto capability_state = static_cast<std::uint8_t>((input_pane_available ? 0x01 : 0) |
+                                                               (uia_available ? 0x02 : 0));
+      if (last_capability_state.exchange(capability_state, boost::memory_order_relaxed) != capability_state) {
         BOOST_LOG(debug) << "Remote text context GUI capability: input_pane="
                          << input_pane_available << ", uia=" << uia_available;
       }
@@ -165,17 +150,7 @@ namespace text_context::http {
 
       auto &bridge = text_context::bridge_t::instance();
       const bool matched = bridge.observe(observation);
-      const auto log_state = source +
-                             "|active=" + (observation.active ? "1" : "0") +
-                             "|editable=" + (observation.editable ? "1" : "0") +
-                             "|password=" + (observation.password ? "1" : "0") +
-                             "|multiline=" + (observation.multiline ? "1" : "0") +
-                             "|pane_visible=" + (observation.pane_visible ? "1" : "0") +
-                             "|auto_show=" + (observation.auto_show ? "1" : "0") +
-                             "|element_rect=" + (observation.element_rect ? "1" : "0") +
-                             "|caret_rect=" + (observation.caret_rect ? "1" : "0") +
-                             "|matched=" + (matched ? "1" : "0");
-      if (should_log_state(last_observation_log, log_state)) {
+      if (matched) {
         BOOST_LOG(debug) << "Remote text context observation: source=" << source
                          << ", active=" << observation.active
                          << ", editable=" << observation.editable
