@@ -258,6 +258,7 @@ main(int argc, char *argv[]) {
   if (is_running_as_system_user) {
     BOOST_LOG(info) << "Running as SYSTEM user (service mode)";
   }
+  BOOST_LOG(info) << "Running with Windows " << platf::windows_version();
 #endif
 
   // Log publisher metadata

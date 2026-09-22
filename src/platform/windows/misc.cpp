@@ -407,6 +407,34 @@ namespace platf {
     return ret;
   }
 
+  std::string
+  windows_version() {
+    using rtl_get_version_fn = LONG(WINAPI *)(OSVERSIONINFOEXW *);
+
+    const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+    const auto rtl_get_version = ntdll == nullptr ? nullptr : reinterpret_cast<rtl_get_version_fn>(GetProcAddress(ntdll, "RtlGetVersion"));
+    if (rtl_get_version == nullptr) {
+      return "unknown";
+    }
+
+    OSVERSIONINFOEXW version {};
+    version.dwOSVersionInfoSize = sizeof(version);
+    if (rtl_get_version(&version) < 0) {
+      return "unknown";
+    }
+
+    const bool is_workstation = version.wProductType == VER_NT_WORKSTATION;
+    const auto product_name = is_workstation ?
+                                (version.dwBuildNumber >= 22000 ? "Windows 11" : "Windows 10") :
+                                "Windows Server";
+    std::ostringstream result;
+    result << product_name << ' '
+           << version.dwMajorVersion << '.'
+           << version.dwMinorVersion << '.'
+           << version.dwBuildNumber << (is_workstation ? " (workstation)" : " (server)");
+    return result.str();
+  }
+
   // Note: This does NOT append a null terminator
   void
   append_string_to_environment_block(wchar_t *env_block, int &offset, const std::wstring &wstr) {
