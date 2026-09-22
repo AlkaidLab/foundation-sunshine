@@ -19,7 +19,12 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/process/v1.hpp>
 #include <boost/process/v1/async_pipe.hpp>
+#include <boost/process/v1/extend.hpp>
 #include <boost/process/v1/pipe.hpp>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace remote_usb {
 namespace {
@@ -29,6 +34,109 @@ namespace bp = boost::process::v1;
 using namespace std::chrono_literals;
 
 constexpr std::uint16_t kMaxHubPort = 255;
+
+/* Once the helper exited, the pipes reach EOF as soon as the last writer is
+ * gone; this only bounds how long a surviving writer may delay that. */
+constexpr auto kReaderDrainGrace = 500ms;
+
+#ifdef _WIN32
+/*
+ * Boost.Process launches the helper with bInheritHandles and without a handle
+ * list, so it inherits every inheritable handle this process owns: the RTSP
+ * and HTTPS listeners, the log file, and whatever else happens to be open.
+ * usbip-win2 may leave a worker process behind, and an orphaned worker then
+ * keeps those handles - and the ports bound through them - alive after
+ * Sunshine exits, which leaves a stale listener and a service that cannot be
+ * started again (AlkaidLab/foundation-sunshine#1080).
+ *
+ * Hand the helper exactly the handles its own redirections use, the way the
+ * other Windows spawn sites in this tree do.
+ */
+class inherit_only_child_handles {
+public:
+  template <typename Executor>
+  void on_setup(Executor &executor) const {
+    /* Run after the redirections: they mark their own handles inheritable as
+     * they set themselves up, and a handle list may only name inheritable
+     * handles - the process group's job handle, for one, is not. */
+    std::vector<HANDLE> handles;
+    bp::extend::foreach_used_handle(executor, [&handles](HANDLE handle) {
+      DWORD flags = 0;
+      if (handle && handle != INVALID_HANDLE_VALUE &&
+          GetHandleInformation(handle, &flags) && (flags & HANDLE_FLAG_INHERIT) &&
+          std::find(handles.begin(), handles.end(), handle) == handles.end()) {
+        handles.push_back(handle);
+      }
+    });
+    if (handles.empty()) {
+      executor.set_error(std::make_error_code(std::errc::invalid_argument),
+                         "usbip helper would inherit no handles");
+      return;
+    }
+
+    SIZE_T attribute_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_size);
+    storage_ = std::make_shared<std::vector<unsigned char>>(attribute_size);
+    attributes_ = std::make_shared<attribute_list>(reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage_->data()));
+    if (!InitializeProcThreadAttributeList(attributes_->get(), 1, 0, &attribute_size)) {
+      executor.set_error(std::error_code(static_cast<int>(GetLastError()), std::system_category()),
+                         "InitializeProcThreadAttributeList() failed");
+      return;
+    }
+
+    /* The list has to stay valid until the process is created, so the handles
+     * live in a member rather than on this frame. */
+    handles_ = std::make_shared<std::vector<HANDLE>>(std::move(handles));
+    if (!UpdateProcThreadAttribute(attributes_->get(), 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                   handles_->data(), handles_->size() * sizeof(HANDLE), nullptr, nullptr)) {
+      executor.set_error(std::error_code(static_cast<int>(GetLastError()), std::system_category()),
+                         "UpdateProcThreadAttribute() failed");
+      return;
+    }
+
+    executor.set_startup_info_ex();
+    executor.startup_info_ex.lpAttributeList = attributes_->get();
+    executor.inherit_handles = true;
+  }
+
+private:
+  struct attribute_list {
+    explicit attribute_list(LPPROC_THREAD_ATTRIBUTE_LIST value): list(value) {}
+    ~attribute_list() {
+      if (list) {
+        DeleteProcThreadAttributeList(list);
+      }
+    }
+    LPPROC_THREAD_ATTRIBUTE_LIST list;
+  };
+
+  /* Shared and mutable: on_setup is const, and the executor keeps its own copy
+   * of every handler it runs. */
+  mutable std::shared_ptr<std::vector<unsigned char>> storage_;
+  mutable std::shared_ptr<attribute_list> attributes_;
+  mutable std::shared_ptr<std::vector<HANDLE>> handles_;
+};
+
+/*
+ * Boost's process group is a job object, but one that does not kill what is
+ * left in it when the last handle closes. A helper that outlives Sunshine -
+ * after a crash, or a service restart - therefore survives as an orphan.
+ * Tie the group's processes to the job handle instead.
+ */
+void kill_helpers_with_parent(const bp::group &group) noexcept {
+  const auto job = reinterpret_cast<HANDLE>(group.native_handle());
+  if (!job) {
+    return;
+  }
+
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits {};
+  if (!QueryInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits), nullptr)) {
+    return;
+  }
+  limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+}
+#endif
 
 std::string
 resolve_executable(std::string executable) {
@@ -142,6 +250,16 @@ run_process(const std::string &executable,
   // Keep the complete helper tree in a process group so timeout/cancel also
   // closes those inherited handles and the reader threads can finish.
   bp::group process_group;
+#ifdef _WIN32
+  // What outlives this process is a leak in the field, and what the helper
+  // does not need must not reach it in the first place.
+  kill_helpers_with_parent(process_group);
+  const inherit_only_child_handles inherit_policy;
+#else
+  /* POSIX closes the descriptors the child was not given, which enforces the
+   * same rule from the other side of the fork. */
+  const auto &inherit_policy = bp::limit_handles;
+#endif
 
   try {
     child = bp::child(resolve_executable(executable),
@@ -150,6 +268,7 @@ run_process(const std::string &executable,
                       bp::std_in < bp::null,
                       bp::std_out > standard_output,
                       bp::std_err > standard_error,
+                      inherit_policy,
                       launch_error);
   }
   catch (const std::exception &exception) {
@@ -163,6 +282,7 @@ run_process(const std::string &executable,
 
   std::thread output_reader;
   std::thread error_reader;
+  std::atomic<int> readers_pending { 2 };
   const auto terminate_tree = [&]() noexcept {
     std::error_code group_error;
     process_group.terminate(group_error);
@@ -192,9 +312,11 @@ run_process(const std::string &executable,
   try {
     output_reader = reader_thread_factory([&]() {
       drain_pipe(standard_output, output_context, result.standard_output, max_output_bytes);
+      readers_pending.fetch_sub(1, std::memory_order_acq_rel);
     });
     error_reader = reader_thread_factory([&]() {
       drain_pipe(standard_error, error_context, result.standard_error, max_output_bytes);
+      readers_pending.fetch_sub(1, std::memory_order_acq_rel);
     });
   }
   catch (const std::exception &exception) {
@@ -254,6 +376,18 @@ run_process(const std::string &executable,
    * readers so normal-exit, cancellation, and timeout all use the same path. */
   const auto group_error = terminate_tree();
   if (group_error) {
+    cancel_readers();
+  }
+  /* A descendant that survived termination can still own a pipe's write end.
+   * Waiting for it without a bound used to keep this operation - and one of
+   * the four concurrency slots it holds - forever, so give the pipes the time
+   * an exiting helper needs and take the readers down after that. */
+  const auto drain_deadline = std::chrono::steady_clock::now() + kReaderDrainGrace;
+  while (readers_pending.load(std::memory_order_acquire) != 0 &&
+         std::chrono::steady_clock::now() < drain_deadline) {
+    std::this_thread::sleep_for(2ms);
+  }
+  if (readers_pending.load(std::memory_order_acquire) != 0) {
     cancel_readers();
   }
   output_reader.join();
