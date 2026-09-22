@@ -575,9 +575,23 @@ namespace platf {
       }
     }
 
+    /**
+     * @brief 在 DSU 服务已启用但未成功启动时输出一次告警。
+     */
+    void
+    log_dsu_uninitialized() {
+      if (dsu_uninitialized_warning_logged) {
+        return;
+      }
+
+      dsu_uninitialized_warning_logged = true;
+      BOOST_LOG(warning) << "DSU服务器未初始化，无法发送运动数据";
+    }
+
     vigem_t *vigem;
     std::unique_ptr<ds5::sidecar_client_t> ds5_sidecar;
     dsu_server_t *dsu_server;
+    bool dsu_uninitialized_warning_logged = false;
     vmouse::device_t *vmouse_dev;
     int vmouse_vscroll_accum = 0;
     int vmouse_hscroll_accum = 0;
@@ -2489,8 +2503,8 @@ namespace platf {
         BOOST_LOG(debug) << "未知的运动数据类型: " << (int) motion.motionType;
       }
     }
-    else {
-      BOOST_LOG(warning) << "DSU服务器未初始化，无法发送运动数据";
+    else if (config::input.enable_dsu_server) {
+      raw->log_dsu_uninitialized();
     }
   }
 
