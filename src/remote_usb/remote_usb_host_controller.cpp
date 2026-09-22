@@ -53,7 +53,7 @@ constexpr auto kReaderDrainGrace = 500ms;
  * Hand the helper exactly the handles its own redirections use, the way the
  * other Windows spawn sites in this tree do.
  */
-class inherit_only_child_handles {
+class inherit_only_child_handles : public bp::extend::handler {
 public:
   template <typename Executor>
   void on_setup(Executor &executor) const {
