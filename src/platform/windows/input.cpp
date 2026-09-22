@@ -575,6 +575,9 @@ namespace platf {
       }
     }
 
+    /**
+     * @brief 在 DSU 服务已启用但未成功启动时输出一次告警。
+     */
     void
     log_dsu_uninitialized() {
       if (dsu_uninitialized_warning_logged) {

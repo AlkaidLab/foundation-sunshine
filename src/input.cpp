@@ -213,6 +213,11 @@ namespace input {
 
   constexpr auto CONTROLLER_WARNING_INTERVAL = 5s;
 
+  /**
+   * @brief 记录手柄未分配的告警，并按控制器编号限频。
+   * @param input 当前会话的输入上下文。
+   * @param controller_number 客户端上报的控制器编号。
+   */
   void
   log_unallocated_controller(input_t &input, int controller_number) {
     if (controller_number < 0 || controller_number >= static_cast<int>(input.last_unallocated_controller_log.size())) {
