@@ -17,6 +17,7 @@
 #include <utility>
 
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/process/v1.hpp>
 #include <boost/process/v1/async_pipe.hpp>
 #include <boost/process/v1/extend.hpp>
@@ -76,16 +77,19 @@ public:
 
     SIZE_T attribute_size = 0;
     InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_size);
-    storage_ = std::make_shared<std::vector<unsigned char>>(attribute_size);
-    attributes_ = std::make_shared<attribute_list>(reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage_->data()));
-    if (!InitializeProcThreadAttributeList(attributes_->get(), 1, 0, &attribute_size)) {
+    auto storage = std::make_shared<std::vector<unsigned char>>(attribute_size);
+    auto *attribute_buffer = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage->data());
+    if (!InitializeProcThreadAttributeList(attribute_buffer, 1, 0, &attribute_size)) {
       executor.set_error(std::error_code(static_cast<int>(GetLastError()), std::system_category()),
                          "InitializeProcThreadAttributeList() failed");
       return;
     }
 
-    /* The list has to stay valid until the process is created, so the handles
-     * live in a member rather than on this frame. */
+    /* Both the list and the handles it names have to stay valid until the
+     * process is created, so they live in members rather than on this frame.
+     * Taking ownership only here keeps a failed list out of the deleter. */
+    storage_ = std::move(storage);
+    attributes_ = std::make_shared<attribute_list>(attribute_buffer);
     handles_ = std::make_shared<std::vector<HANDLE>>(std::move(handles));
     if (!UpdateProcThreadAttribute(attributes_->get(), 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                                    handles_->data(), handles_->size() * sizeof(HANDLE), nullptr, nullptr)) {
@@ -107,6 +111,9 @@ private:
         DeleteProcThreadAttributeList(list);
       }
     }
+    LPPROC_THREAD_ATTRIBUTE_LIST get() const { return list; }
+
+  private:
     LPPROC_THREAD_ATTRIBUTE_LIST list;
   };
 
@@ -121,20 +128,27 @@ private:
  * Boost's process group is a job object, but one that does not kill what is
  * left in it when the last handle closes. A helper that outlives Sunshine -
  * after a crash, or a service restart - therefore survives as an orphan.
- * Tie the group's processes to the job handle instead.
+ * Tie the group's processes to the job handle instead, and report a failure
+ * rather than launching a helper that could be orphaned again.
  */
-void kill_helpers_with_parent(const bp::group &group) noexcept {
+std::error_code
+kill_helpers_with_parent(const bp::group &group) noexcept {
   const auto job = reinterpret_cast<HANDLE>(group.native_handle());
   if (!job) {
-    return;
+    return std::make_error_code(std::errc::invalid_argument);
   }
 
+  /* Read first: the limit flags are a set, and Boost enables break-away on
+   * this job for its own reasons. */
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits {};
   if (!QueryInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits), nullptr)) {
-    return;
+    return std::error_code(static_cast<int>(GetLastError()), std::system_category());
   }
   limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-  SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
+  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+    return std::error_code(static_cast<int>(GetLastError()), std::system_category());
+  }
+  return {};
 }
 #endif
 
@@ -206,7 +220,8 @@ void
 drain_pipe(bp::async_pipe &pipe,
            asio::io_context &context,
            std::string &destination,
-           std::size_t maximum) noexcept {
+           std::size_t maximum,
+           const std::shared_ptr<std::atomic_bool> &stop) noexcept {
   try {
     std::array<char, 4096> buffer {};
     std::function<void()> read_next;
@@ -215,7 +230,9 @@ drain_pipe(bp::async_pipe &pipe,
         if (count != 0) {
           append_bounded(destination, std::string_view(buffer.data(), count), maximum);
         }
-        if (!error) {
+        /* A read that finishes just before the stop flag is set must not post
+         * its successor, or nothing would ever cancel that successor. */
+        if (!error && !stop->load(std::memory_order_acquire)) {
           read_next();
         }
       });
@@ -253,7 +270,10 @@ run_process(const std::string &executable,
 #ifdef _WIN32
   // What outlives this process is a leak in the field, and what the helper
   // does not need must not reach it in the first place.
-  kill_helpers_with_parent(process_group);
+  if (const auto group_error = kill_helpers_with_parent(process_group)) {
+    result.standard_error = "usbip helpers would not be tied to this process: " + group_error.message();
+    return result;
+  }
   const inherit_only_child_handles inherit_policy;
 #else
   /* POSIX closes the descriptors the child was not given, which enforces the
@@ -283,6 +303,7 @@ run_process(const std::string &executable,
   std::thread output_reader;
   std::thread error_reader;
   std::atomic<int> readers_pending { 2 };
+  const auto stop_readers = std::make_shared<std::atomic_bool>(false);
   const auto terminate_tree = [&]() noexcept {
     std::error_code group_error;
     process_group.terminate(group_error);
@@ -298,24 +319,32 @@ run_process(const std::string &executable,
     return group_error;
   };
   const auto cancel_readers = [&]() noexcept {
-    try {
-      standard_output.cancel();
-    }
-    catch (...) {
-    }
-    try {
-      standard_error.cancel();
-    }
-    catch (...) {
-    }
+    /* Stop first, then cancel through each pipe's own context: cancelling from
+     * here can otherwise land between a completion handler and the read it
+     * posts, leaving that read to run forever. */
+    stop_readers->store(true, std::memory_order_release);
+    asio::post(output_context, [&standard_output] {
+      try {
+        standard_output.cancel();
+      }
+      catch (...) {
+      }
+    });
+    asio::post(error_context, [&standard_error] {
+      try {
+        standard_error.cancel();
+      }
+      catch (...) {
+      }
+    });
   };
   try {
     output_reader = reader_thread_factory([&]() {
-      drain_pipe(standard_output, output_context, result.standard_output, max_output_bytes);
+      drain_pipe(standard_output, output_context, result.standard_output, max_output_bytes, stop_readers);
       readers_pending.fetch_sub(1, std::memory_order_acq_rel);
     });
     error_reader = reader_thread_factory([&]() {
-      drain_pipe(standard_error, error_context, result.standard_error, max_output_bytes);
+      drain_pipe(standard_error, error_context, result.standard_error, max_output_bytes, stop_readers);
       readers_pending.fetch_sub(1, std::memory_order_acq_rel);
     });
   }
