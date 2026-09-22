@@ -407,6 +407,60 @@ namespace platf {
     return ret;
   }
 
+  namespace {
+    /**
+     * @brief 将 GetProductInfo 返回的 SKU 映射为常见的版本名称。
+     * @return 版本名称；未知 SKU 返回空字符串。
+     */
+    std::string
+    windows_edition_name(DWORD product_type, bool is_workstation) {
+      switch (product_type) {
+        case PRODUCT_CORE:
+        case PRODUCT_HOME_BASIC:
+          return "Home";
+        case PRODUCT_CORE_N:
+          return "Home N";
+        case PRODUCT_CORE_SINGLELANGUAGE:
+          return "Home Single Language";
+        case PRODUCT_CORE_COUNTRYSPECIFIC:
+          return "Home China";
+        case PRODUCT_HOME_PREMIUM:
+          return "Home Premium";
+        case PRODUCT_PROFESSIONAL:
+        case PRODUCT_PROFESSIONAL_N:
+          return "Pro";
+        case PRODUCT_EDUCATION:
+        case PRODUCT_EDUCATION_N:
+          return "Education";
+        case PRODUCT_ENTERPRISE:
+        case PRODUCT_ENTERPRISE_N:
+          return "Enterprise";
+        case PRODUCT_ENTERPRISE_S:
+        case PRODUCT_ENTERPRISE_S_N:
+          return "Enterprise LTSC";
+        case PRODUCT_ULTIMATE:
+          return "Ultimate";
+        default:
+          break;
+      }
+      if (is_workstation) {
+        return {};
+      }
+      switch (product_type) {
+        case PRODUCT_STANDARD_SERVER:
+        case PRODUCT_STANDARD_SERVER_CORE:
+          return "Standard";
+        case PRODUCT_DATACENTER_SERVER:
+        case PRODUCT_DATACENTER_SERVER_CORE:
+          return "Datacenter";
+        case PRODUCT_SERVER_FOUNDATION:
+          return "Foundation";
+        default:
+          return {};
+      }
+    }
+  }
+
   std::string
   windows_version() {
     using rtl_get_version_fn = LONG(WINAPI *)(OSVERSIONINFOEXW *);
@@ -424,14 +478,23 @@ namespace platf {
     }
 
     const bool is_workstation = version.wProductType == VER_NT_WORKSTATION;
-    const auto product_name = is_workstation ?
-                                (version.dwBuildNumber >= 22000 ? "Windows 11" : "Windows 10") :
-                                "Windows Server";
+    DWORD product_type = 0;
+    GetProductInfo(version.dwMajorVersion, version.dwMinorVersion, 0, 0, &product_type);
+    const auto edition = windows_edition_name(product_type, is_workstation);
+
     std::ostringstream result;
-    result << product_name << ' '
-           << version.dwMajorVersion << '.'
+    if (is_workstation) {
+      result << (version.dwBuildNumber >= 22000 ? "Windows 11" : "Windows 10");
+    }
+    else {
+      result << "Windows Server";
+    }
+    if (!edition.empty()) {
+      result << ' ' << edition;
+    }
+    result << ' ' << version.dwMajorVersion << '.'
            << version.dwMinorVersion << '.'
-           << version.dwBuildNumber << (is_workstation ? " (workstation)" : " (server)");
+           << version.dwBuildNumber;
     return result.str();
   }
 
