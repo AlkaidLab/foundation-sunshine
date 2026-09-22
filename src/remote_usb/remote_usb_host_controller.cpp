@@ -295,19 +295,6 @@ run_process(const std::string &executable,
     return result;
   }
 
-#ifdef _WIN32
-  /* Configure the group only now that it has taken part in a launch: Boost
-   * documents a default-constructed group as undefined to use before that.
-   * A helper that cannot be tied to this process is not worth running. */
-  if (const auto group_error = kill_helpers_with_parent(process_group)) {
-    std::error_code ignored;
-    process_group.terminate(ignored);
-    child.wait(ignored);
-    result.standard_error = "usbip helpers would not be tied to this process: " + group_error.message();
-    return result;
-  }
-#endif
-
   std::thread output_reader;
   std::thread error_reader;
   std::atomic<int> readers_pending { 2 };
@@ -346,6 +333,21 @@ run_process(const std::string &executable,
       }
     });
   };
+
+#ifdef _WIN32
+  /* Configure the group only now that it has taken part in a launch: Boost
+   * documents a default-constructed group as undefined to use before that.
+   * A helper that cannot be tied to this process is not worth running, and
+   * terminate_tree has the fallback for a group that will not stop either. */
+  if (const auto group_error = kill_helpers_with_parent(process_group)) {
+    terminate_tree();
+    std::error_code ignored;
+    child.wait(ignored);
+    result.standard_error = "usbip helpers would not be tied to this process: " + group_error.message();
+    return result;
+  }
+#endif
+
   try {
     output_reader = reader_thread_factory([&]() {
       drain_pipe(standard_output, output_context, result.standard_output, max_output_bytes, stop_readers);
