@@ -268,12 +268,7 @@ run_process(const std::string &executable,
   // closes those inherited handles and the reader threads can finish.
   bp::group process_group;
 #ifdef _WIN32
-  // What outlives this process is a leak in the field, and what the helper
-  // does not need must not reach it in the first place.
-  if (const auto group_error = kill_helpers_with_parent(process_group)) {
-    result.standard_error = "usbip helpers would not be tied to this process: " + group_error.message();
-    return result;
-  }
+  // What the helper does not need must not reach it in the first place.
   const inherit_only_child_handles inherit_policy;
 #else
   /* POSIX closes the descriptors the child was not given, which enforces the
@@ -299,6 +294,19 @@ run_process(const std::string &executable,
     result.standard_error = launch_error ? launch_error.message() : "process is invalid";
     return result;
   }
+
+#ifdef _WIN32
+  /* Configure the group only now that it has taken part in a launch: Boost
+   * documents a default-constructed group as undefined to use before that.
+   * A helper that cannot be tied to this process is not worth running. */
+  if (const auto group_error = kill_helpers_with_parent(process_group)) {
+    std::error_code ignored;
+    process_group.terminate(ignored);
+    child.wait(ignored);
+    result.standard_error = "usbip helpers would not be tied to this process: " + group_error.message();
+    return result;
+  }
+#endif
 
   std::thread output_reader;
   std::thread error_reader;
