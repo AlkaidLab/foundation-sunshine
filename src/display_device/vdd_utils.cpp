@@ -1035,6 +1035,7 @@ namespace display_device {
 
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/platform/linux/compositor_output.h"
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
@@ -1096,7 +1097,11 @@ namespace display_device::vdd_utils {
     std::string active_status_path; // e.g. /sys/class/drm/card1-DP-1/status
     std::string active_edid_path;   // e.g. /sys/kernel/debug/dri/0000:01:00.0/DP-1/edid_override
     std::string active_edid_content;  // Last written EDID, for mode-switch dedup
-    std::vector<std::string> offlined_physical_status_paths;  // Physicals powered off by display_off prep
+    // Connectors whose physical outputs were turned off for an exclusive
+    // (display_off) session, by name ("eDP-1"): the name works for both the
+    // sysfs status node and the compositor's output, and it survives a crash
+    // through the state file below.
+    std::vector<std::string> offlined_physical_outputs;
     parsed_config_t::vdd_prep_e last_prep { parsed_config_t::vdd_prep_e::no_operation };
     vdd_edid::edid_options active_edid_opts;  // Personalization captured at create
     unsigned int cached_width { 1920 };
@@ -1124,15 +1129,95 @@ namespace display_device::vdd_utils {
     }
 
     /**
-     * @brief Power the physical connectors back on after an exclusive
-     *        (display_off) session. Safe to call multiple times.
+     * @brief Record the connectors an exclusive session switched off.
+     * @details A forced-off connector reads as plain "disconnected" in sysfs,
+     *          so a process that did not do the switching cannot tell it from an
+     *          unplugged one. Persisting the list is what lets a later process
+     *          put the screen back after a crash.
+     */
+    std::string
+    offlined_state_path() {
+      return (std::filesystem::path { platf::appdata() } / "vdd_offlined_physicals.txt").string();
+    }
+
+    void
+    persist_offlined_physicals() {
+      std::ofstream out { offlined_state_path(), std::ios::trunc };
+      if (!out) {
+        BOOST_LOG(warning) << "vdd: cannot record the powered-off physical outputs in "sv << offlined_state_path();
+        return;
+      }
+      for (const auto &connector : offlined_physical_outputs) {
+        out << connector << '\n';
+      }
+    }
+
+    void
+    load_persisted_offlined_physicals() {
+      std::ifstream in { offlined_state_path() };
+      std::string line;
+      while (std::getline(in, line)) {
+        if (!line.empty() && std::find(offlined_physical_outputs.begin(), offlined_physical_outputs.end(), line) == offlined_physical_outputs.end()) {
+          offlined_physical_outputs.emplace_back(std::move(line));
+        }
+      }
+    }
+
+    void
+    clear_persisted_offlined_physicals() {
+      std::error_code ec;
+      std::filesystem::remove(offlined_state_path(), ec);
+    }
+
+    /**
+     * @brief The sysfs status node of a connector name, if the card exposes it.
+     */
+    std::string
+    status_path_for_connector(const std::string &connector) {
+      std::error_code ec;
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm", ec }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        if (name.substr(name.find('-') + 1) == connector) {
+          return (entry.path() / "status").string();
+        }
+      }
+      return {};
+    }
+
+    /**
+     * @brief Put the physical outputs of an exclusive session back.
+     * @details Runs on teardown and for anything a previous process left behind
+     *          (loaded from the state file). Safe to call multiple times.
      */
     void
     restore_offlined_physicals() {
-      for (const auto &status_path : offlined_physical_status_paths) {
-        write_text_file(status_path, "on");
+      if (offlined_physical_outputs.empty()) {
+        load_persisted_offlined_physicals();
       }
-      offlined_physical_status_paths.clear();
+
+      for (const auto &connector : offlined_physical_outputs) {
+        // "detect", not "on": clear any leftover DRM force from an older build
+        // and let the kernel re-detect, instead of forcing the connector
+        // connected (which would fabricate a phantom output for a panel that
+        // has since been unplugged).
+        if (const auto status_path = status_path_for_connector(connector); !status_path.empty()) {
+          write_text_file(status_path, "detect");
+        }
+
+        // A compositor-side disable is undone through the compositor, which
+        // owns the layout.
+        if (platf::kscreen::session_supports_kscreen()) {
+          platf::kscreen::run("output." + connector + ".enable", std::chrono::milliseconds { 10'000 });
+        }
+
+        BOOST_LOG(info) << "vdd: restored physical output "sv << connector;
+      }
+
+      offlined_physical_outputs.clear();
+      clear_persisted_offlined_physicals();
     }
 
     std::string
@@ -1895,17 +1980,21 @@ namespace display_device::vdd_utils {
     if (active && !active_connector.empty() && connector_status_is(active_status_path, "connected")) {
       return active_connector;
     }
+
+    // Nothing live: a previous process may have died while its exclusive
+    // session had the physical outputs switched off, which is recorded on disk
+    // exactly because a forced-off connector is indistinguishable from an
+    // unplugged one. Restoring here means the screen comes back as soon as
+    // Sunshine (or anything querying the virtual display) starts again. No-op
+    // once the record is gone.
+    restore_offlined_physicals();
     return {};
   }
 
   std::vector<std::string>
   offlined_physical_connectors() {
     std::lock_guard lock { state_mutex };
-    std::vector<std::string> names;
-    for (const auto &status_path : offlined_physical_status_paths) {
-      names.emplace_back(connector_name_for_status(status_path));
-    }
-    return names;
+    return offlined_physical_outputs;
   }
 
   exec_output_t
@@ -2464,6 +2553,13 @@ namespace display_device::vdd_utils {
     std::lock_guard lock { state_mutex };
     last_prep = vdd_prep;
 
+    if (vdd_prep != parsed_config_t::vdd_prep_e::display_off) {
+      // Whatever a previous run switched off for an exclusive session comes
+      // back before this one decides its own layout (an exclusive session
+      // disables what it needs right below anyway).
+      restore_offlined_physicals();
+    }
+
     const std::string vd_connector = active_connector;
 
     switch (vdd_prep) {
@@ -2493,15 +2589,30 @@ namespace display_device::vdd_utils {
       }
 
       case parsed_config_t::vdd_prep_e::display_off: {
-        // Exclusive mode: power off every connected physical connector for
-        // the duration of the session. destroy_vdd_monitor() restores them.
-        offlined_physical_status_paths.clear();
-        for_each_connected_physical(vd_connector, [&](const auto &status_path, const auto &connector) {
-          if (write_text_file(status_path, "off")) {
-            offlined_physical_status_paths.emplace_back(status_path);
-            BOOST_LOG(info) << "vdd: display_off prep powered off card-connector with status path "sv << status_path;
+        // Exclusive mode: ask the compositor to switch the physical outputs
+        // off, and never the DRM layer. Writing the sysfs `status` forced the
+        // panel off below the compositor, which survives a crash and (on
+        // NVIDIA) emits no hotplug to recover from -- the reported "the screen
+        // did not come back" failure. The compositor owns the layout, so it is
+        // also what puts it back.
+        offlined_physical_outputs.clear();
+        if (!platf::kscreen::session_supports_kscreen()) {
+          BOOST_LOG(warning) << "vdd: exclusive prep cannot switch the physical outputs off in this session "
+                                "(no compositor output backend yet); the host screen stays on"sv;
+          return true;
+        }
+
+        for_each_connected_physical(vd_connector, [&](const auto &, const auto &connector) {
+          const auto result = platf::kscreen::run("output." + connector + ".disable", std::chrono::milliseconds { 10'000 });
+          if (result.exit_code == 0) {
+            offlined_physical_outputs.emplace_back(connector);
+            BOOST_LOG(info) << "vdd: display_off prep switched physical output "sv << connector << " off through the compositor"sv;
+          }
+          else {
+            BOOST_LOG(warning) << "vdd: could not switch physical output "sv << connector << " off: "sv << result.output;
           }
         });
+        persist_offlined_physicals();
         return true;
       }
 
