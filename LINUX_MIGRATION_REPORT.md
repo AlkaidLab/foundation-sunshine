@@ -878,6 +878,20 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
       基线一致（仅无头环境三套件 Setup 失败，全套 627 用例通过、0 断言失败）；klipper 实机
       get/set 与信号名（`clipboardHistoryUpdated`）经 busctl 与复现程序双重确认。
 
+44. **第二十一轮：动态码率 VBV、独占会话的物理屏还原、CUDA 构建（2026-09-23）**：三项用户反馈，
+    详见 `LINUX_PORT_GAPS.md` §5.23：
+     - **动态码率**（`c22ba19e`）：Linux `set_bitrate()` 只改码率字段、没同步 VBV 窗口，而 Windows 原生
+       NVENC 会按比例重算 `vbvBufferSize` —— 属移植遗漏。现已对齐（100 kbit 下限）并把编码器可见值打日志；
+       FFmpeg nvenc 每帧 `reconfig_encoder()` 生效。
+     - **物理屏还原**（`8999b791`）：`display_off` 原先直接写 sysfs `status=off`（DRM 强制、崩溃后无人还原、
+       NVIDIA 不发 hotplug），现改为**经合成器关闭**，没有后端时保持物理屏开启；被关闭输出名持久化到
+       `<appdata>/vdd_offlined_physicals.txt`，会话结束 / 下一场非独占会话 / 进程启动发现无活动虚拟屏时
+       自动还原，还原用 `detect` 而非 `on`（避免幽灵输出）。
+     - **CUDA 构建**（`9f525c39`）：`cuda.cu` 因 `468442f3` 的同步把新版接在旧版后面而重复且括号不平衡
+       （深度 -1），从未编译过；现恢复为最后一个自洽版本 + 上游 PR 的那一行改动。CMake 尊重显式
+       `CMAKE_CUDA_ARCHITECTURES` 并剔除工具链已删除的架构（CUDA 13 不接受 Turing 以下）。CUDA 13.4/sm_86
+       实测编译+链接通过，`sccache` launcher 生效；运行时未在本沙箱验证（无 GPU）。
+
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /

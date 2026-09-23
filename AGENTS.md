@@ -24,6 +24,19 @@ ninja -C build sunshine
 cd build && ctest          # baseline: 12/13 pass; Audio/MouseHID/Encoder fail headless (expected)
 ```
 
+`sccache`/`ccache` speed up rebuilds a lot — add the launchers (CUDA included):
+`-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` (start it with `sccache --start-server`).
+
+CUDA capture is available once the tree enables it:
+`-DSUNSHINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=<your arch, e.g. 86>`.
+Without an explicit arch list CMake builds the whole compatibility ladder, which
+is slow; architectures the installed toolkit removed (CUDA 13 dropped everything
+below Turing) are filtered out automatically. Note this changes the capture path
+(NVENC without the GPU->RAM->GPU round trip) — verify a stream before relying on
+it. `SUNSHINE_BUILD_DIR=<dir> makepkg -f` packages another build tree (e.g. a
+CUDA one) instead of `build/`.
+
 Packaging (`packaging/arch-local/`, installs prebuilt tree, no compile in makepkg):
 bump `pkgrel` → `cmake -B build ...` (refreshes the binary version stamp — the user
 checks the `Sunshine version:` log line) → `ninja -C build sunshine` → `makepkg -f`.

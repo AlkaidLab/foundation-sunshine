@@ -42,7 +42,9 @@ optdepends=(
 options=(!strip)
 install=sunshine-foundation.install
 
-_build_dir="$startdir/../../build"
+# Package a different build tree (e.g. a CUDA-enabled one) without moving files:
+#   SUNSHINE_BUILD_DIR="$PWD/build-cuda" makepkg -f
+_build_dir="${SUNSHINE_BUILD_DIR:-$startdir/../../build}"
 
 # The executable carries a version stamp made of the configure timestamp plus the
 # current commit (cmake/prep/build_version.cmake), and cmake bakes that name into

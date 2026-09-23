@@ -714,7 +714,47 @@ sunshine` 启动。在 plasmalogin 界面和 niri 里，客户端建立连接都
 **说明**：niri 的**显示后端**仍缺（§2.11 待做 1 / §5.23 第 2 条）——本轮只保证"不因缺少后端而阻塞"，
 分辨率/HDR 在 niri 下依旧是"合成器不可用"的既有降级（该降级有一行明确 warning）。
 
-### 5.23 仍未完成（诚实清单）
+### 5.23 第二十一轮修复（动态码率 / 物理屏还原 / CUDA 构建，2026-09-23）
+
+用户三项反馈：
+
+1. **客户端动态调整码率不生效**。链路本身完整（控制流 `IDX_DYNAMIC_PARAM_CHANGE` → `set_dynamic_param` →
+   `set_bitrate`），但 Linux 的 `avcodec_encode_device_t::set_bitrate()` 只改 `bit_rate`/`rc_max_rate`/
+   `rc_min_rate`，**没有同步 VBV 窗口**（`rc_buffer_size`）——窗口仍按旧码率设定：新码率更高时被"饿"，
+   更低时又会突发，所以看起来"改了没用"。Windows 原生 NVENC 路径（`nvenc_base::set_bitrate()`）本来就
+   会按比例重算 `vbvBufferSize`，因此这里是**移植遗漏**而非平台差异。现已对齐（同 100 kbit 下限），并把
+   编码器可见的值（码率 + VBV）打进日志。FFmpeg 的 nvenc 会在每帧检查这些字段
+   （`reconfig_encoder()` → `nvEncReconfigureEncoder`，`resetEncoder + forceIDR`），所以字段一改就会生效。
+   *待用户实测确认*：日志里应出现 `Dynamic bitrate change: N Kbps`（控制流）→
+   `AVCodec encoder bitrate set to: N Kbps ... VBV: M bits`（编码器）两行；若只有第一行没有第二行，
+   说明参数没进编码线程；两行都有而码率仍不变，则是驱动 `NV_ENC_CAPS_SUPPORT_DYN_BITRATE_CHANGE`
+   或速率控制模式（constqp）的问题，需要再查。
+
+2. **退出偶尔无法还原物理屏**。`display_off`（独占）原先直接写 sysfs `status = off`：这是 **DRM 层强制**，
+   崩溃后没人还原（记录只在内存里），而 NVIDIA 对强制连接器**不发 hotplug**，所以也不会自愈。现在：
+   - **不再从 DRM 层 off 物理屏**（采纳用户建议）：改为让**合成器**关闭物理输出（KDE/kscreen），
+     合成器拥有布局也能恢复它；没有合成器输出后端时（niri/wlroots/X11）**保持物理屏开启**并明确告警。
+   - 被关闭的输出名列表**持久化**到 `<appdata>/vdd_offlined_physicals.txt`（强制关闭的连接器在 sysfs 里
+     与"拔掉"无法区分，只能靠自己记录），于是：会话结束、下一场非独占会话开始、以及**进程启动后发现没有
+     活动虚拟屏**时都会自动还原（崩溃场景无需等到开流）。
+   - 还原用 sysfs `detect`（清掉旧版本遗留的强制状态，让内核重新探测）**而不是 `on`**：对已经拔掉的屏幕
+     写 `on` 会造出一个幽灵输出。
+
+3. **CUDA 用起来**。环境侧：装好 `sccache 0.18.0` 与 CUDA 13.4（`nvcc`），构建侧修了三处：
+   - `src/platform/linux/cuda.cu` **根本无法编译**：fork 的同步提交 `468442f3` 把上游新版文件**接在旧版
+     后面**而不是替换，导致每个 helper/成员函数都有两份、花括号最终不平衡（深度 -1）。因为本地一直是
+     `SUNSHINE_ENABLE_CUDA=OFF`，从没人发现。现取最后一个自洽版本（`468442f3^`，与本仓库 `cuda.h` 的
+     `convert()/viewport/scale/threadsPerBlock` 匹配）并补上上游 PR 的唯一一行改动
+     （`color_vectors_from_colorspace(colorspace, true)`）。
+   - CMake 现在**尊重显式 `-DCMAKE_CUDA_ARCHITECTURES`**（一台真机只编一个 arch，比整条兼容阶梯快得多）。
+   - 兼容阶梯会**剔除工具链自己已删除的架构**（CUDA 13 不再接受 Turing 以下；传 `sm_50` 会让 nvcc 直接
+     以 `Unsupported gpu architecture` 失败）。
+   **验证**：CUDA 13.4 + `-DCMAKE_CUDA_ARCHITECTURES=86` 下 CUDA 目标编译通过、整个二进制链接成功
+   （`build-cuda/sunshine`）；`sccache` 作为 launcher 生效。**运行时**未在本沙箱验证（无 GPU）：
+   CUDA 捕获路径（kmsgrab 的 CUDA 分支）此前在本移植中从未跑过，建议先在非关键场景试，日志里
+   `Attempting to use NVENC without CUDA support. Reverting back to GPU -> RAM -> GPU` 应消失。
+
+### 5.24 仍未完成（诚实清单）
 
 1. **F4 HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
    拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；本机
