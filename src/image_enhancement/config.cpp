@@ -483,8 +483,14 @@ namespace image_enhancement {
     try {
       impl_->complete_deferred_removal();
     }
+    catch (const std::bad_alloc &) {
+      throw;
+    }
     catch (const std::exception &error) {
       BOOST_LOG(warning) << "Deferred enhancement removal remains pending: " << error.what();
+    }
+    catch (...) {
+      BOOST_LOG(warning) << "Deferred enhancement removal remains pending: invalid configuration";
     }
     impl_->maintenance.clear();
     impl_->pending_removal.clear();
@@ -495,15 +501,16 @@ namespace image_enhancement {
         impl_->maintenance = maintenance.at("operation_id").get<std::string>();
         if (impl_->maintenance.empty()) throw std::runtime_error("maintenance_invalid");
         if (maintenance.contains("pending_remove")) {
-          impl_->pending_removal = maintenance.at("pending_remove").get<std::string>();
-          if (!is_known_backend(impl_->pending_removal) ||
-              maintenance.at("component_id").get<std::string>() != impl_->pending_removal) {
+          const auto pending = maintenance.at("pending_remove").get<std::string>();
+          if (!is_known_backend(pending) || maintenance.at("component_id").get<std::string>() != pending) {
             throw std::runtime_error("deferred_removal_invalid");
           }
+          impl_->pending_removal = pending;
         }
       }
     }
     catch (...) {
+      impl_->pending_removal.clear();
       impl_->maintenance_unknown = true;
     }
     try {
@@ -788,8 +795,15 @@ namespace image_enhancement {
         impl_->pending_removal.clear();
         return {};
       }
+      catch (const std::bad_alloc &) {
+        throw;
+      }
       catch (const std::exception &error) {
         BOOST_LOG(warning) << "Deferred enhancement removal retry failed: " << error.what();
+        return { 500, "hdr_removal_pending" };
+      }
+      catch (...) {
+        BOOST_LOG(warning) << "Deferred enhancement removal retry failed: invalid configuration";
         return { 500, "hdr_removal_pending" };
       }
     }
