@@ -1543,7 +1543,11 @@ namespace video {
         // YUV444 SDR-specific options
         // The SDR profile override above applies to 4:4:4 sessions as well;
         // replace it (same dict key) with the profile h264_nvenc needs for 4:4:4.
-        { "profile"s, (int) AV_PROFILE_H264_HIGH_444_PREDICTIVE },
+        // That is NVENC's own enum (high444p = 3), not FFmpeg's generic
+        // AV_PROFILE_H264_HIGH_444_PREDICTIVE (244): the encoder's "profile"
+        // option only accepts 0-5, so 244 made h264_nvenc refuse to open
+        // ("Value 244.000000 for parameter 'profile' out of range").
+        { "profile"s, (int) nv::profile_h264_e::high_444p },
       },
       {},  // YUV444 HDR-specific options
       {},  // Fallback options

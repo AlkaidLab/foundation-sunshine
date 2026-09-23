@@ -629,7 +629,12 @@ namespace cuda {
         handle_t handle;
         auto status = func.nvFBCCreateHandle(&handle.handle, &params);
         if (status) {
-          BOOST_LOG(error) << "Failed to create session: "sv << handle.last_error();
+          // Expected on consumer GeForce drivers: the privateData trick only
+          // works on some driver versions, and NvFBC proper is a Quadro/GRID
+          // feature. The capture sources fall back to DRM/Wayland, so say so
+          // instead of leaving a bare error with an empty driver message.
+          BOOST_LOG(warning) << "NvFBC unavailable (status "sv << status << "): "sv << handle.last_error()
+                             << "; using the DRM/Wayland capture sources instead"sv;
 
           return std::nullopt;
         }
