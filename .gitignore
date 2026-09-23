@@ -120,3 +120,6 @@ packaging/aur/*/pkg/
 packaging/aur/*/src/
 packaging/aur/*/*.pkg.tar.*
 logs_archive/
+
+# secondary build trees (CUDA / experiments)
+build-cuda/
