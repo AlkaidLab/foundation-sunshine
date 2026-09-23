@@ -246,6 +246,10 @@ namespace image_enhancement::api {
         operation_id = input.at("operation_id").get<std::string>();
         result = manager().verify_maintenance(backend, operation_id);
       }
+      else if (action == "defer_remove") {
+        operation_id = input.at("operation_id").get<std::string>();
+        result = manager().defer_removal(backend, operation_id);
+      }
       else if (action == "recover")
         result = manager().recover_maintenance(backend);
       else if (action == "commit" || action == "cancel") {

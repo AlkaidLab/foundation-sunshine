@@ -151,6 +151,93 @@ TEST_F(ImageEnhancementConfigTest, MaintenanceSurvivesRestartAndRequiresItsOwner
   EXPECT_FALSE(store->status()["maintenance"]);
 }
 
+TEST_F(ImageEnhancementConfigTest, DeferredRemovalCompletesOnStartupAndPreservesOtherBackend) {
+  auto selected = trusted_fixture();
+  selected.versions.emplace(std::string { image_enhancement::NVIDIA_DLSSNR_BACKEND }, "other-version");
+  ASSERT_EQ(store->update(selected, store->query().etag).status, 200);
+  std::string operation;
+  ASSERT_EQ(store->begin_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  selected.selected_backend.clear();
+  ASSERT_EQ(store->update(selected, store->query().etag, operation).status, 200);
+  EXPECT_EQ(store->defer_removal(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, "wrong").status, 409);
+  EXPECT_EQ(store->defer_removal(image_enhancement::NVIDIA_DLSSNR_BACKEND, operation).status, 409);
+  ASSERT_EQ(store->defer_removal(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  EXPECT_EQ(store->status()["pending_removal"], image_enhancement::NVIDIA_RTX_VIDEO_BACKEND);
+  EXPECT_EQ(store->finish_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 409);
+  EXPECT_EQ(store->recover_maintenance(image_enhancement::NVIDIA_DLSSNR_BACKEND).status, 409);
+
+  store.reset();
+  store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
+  ASSERT_TRUE(store->initialize());
+  EXPECT_FALSE(std::filesystem::exists(root / "tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll"));
+  EXPECT_FALSE(std::filesystem::exists(store->maintenance_path()));
+  EXPECT_FALSE(store->status()["maintenance"]);
+  const auto current = store->query();
+  ASSERT_EQ(current.status, 200);
+  EXPECT_FALSE(current.settings.versions.contains(std::string { image_enhancement::NVIDIA_RTX_VIDEO_BACKEND }));
+  EXPECT_EQ(current.settings.versions.at(std::string { image_enhancement::NVIDIA_DLSSNR_BACKEND }), "other-version");
+}
+
+TEST_F(ImageEnhancementConfigTest, DeferredRemovalRetriesAfterConfigurationWriteFailure) {
+  auto selected = trusted_fixture();
+  ASSERT_EQ(store->update(selected, store->query().etag).status, 200);
+  std::string operation;
+  ASSERT_EQ(store->begin_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  selected.selected_backend.clear();
+  ASSERT_EQ(store->update(selected, store->query().etag, operation).status, 200);
+  ASSERT_EQ(store->defer_removal(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  std::filesystem::create_directory(root / "hdr.json.tmp");
+
+  store.reset();
+  store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
+  ASSERT_TRUE(store->initialize());
+  EXPECT_TRUE(store->status()["maintenance"]);
+  EXPECT_EQ(store->status()["pending_removal"], image_enhancement::NVIDIA_RTX_VIDEO_BACKEND);
+  EXPECT_TRUE(std::filesystem::exists(store->maintenance_path()));
+  EXPECT_FALSE(std::filesystem::exists(root / "tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll"));
+
+  std::filesystem::remove(root / "hdr.json.tmp");
+  ASSERT_EQ(store->recover_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND).status, 200);
+  EXPECT_FALSE(store->status()["maintenance"]);
+  EXPECT_FALSE(std::filesystem::exists(store->maintenance_path()));
+  EXPECT_TRUE(store->query().settings.versions.empty());
+}
+
+TEST_F(ImageEnhancementConfigTest, ForgedDeferredRemovalCannotDeleteAnotherComponent) {
+  const auto selected = trusted_fixture();
+  ASSERT_EQ(store->update(selected, store->query().etag).status, 200);
+  std::string operation;
+  ASSERT_EQ(store->begin_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  std::ofstream(store->maintenance_path(), std::ios::trunc)
+    << nlohmann::json { { "operation_id", operation },
+         { "component_id", image_enhancement::NVIDIA_RTX_VIDEO_BACKEND },
+         { "pending_remove", image_enhancement::NVIDIA_DLSSNR_BACKEND } }.dump();
+
+  store.reset();
+  store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
+  ASSERT_TRUE(store->initialize());
+  EXPECT_TRUE(store->status()["maintenance"]);
+  EXPECT_TRUE(std::filesystem::exists(root / "tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll"));
+  EXPECT_TRUE(store->query().settings.versions.contains(std::string { image_enhancement::NVIDIA_RTX_VIDEO_BACKEND }));
+}
+
+TEST_F(ImageEnhancementConfigTest, DeferredRemovalCannotBeCompletedAfterJournalTampering) {
+  auto selected = trusted_fixture();
+  ASSERT_EQ(store->update(selected, store->query().etag).status, 200);
+  std::string operation;
+  ASSERT_EQ(store->begin_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  selected.selected_backend.clear();
+  ASSERT_EQ(store->update(selected, store->query().etag, operation).status, 200);
+  ASSERT_EQ(store->defer_removal(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
+  std::ofstream(store->maintenance_path(), std::ios::trunc)
+    << nlohmann::json { { "operation_id", operation },
+         { "component_id", image_enhancement::NVIDIA_RTX_VIDEO_BACKEND } }.dump();
+
+  EXPECT_EQ(store->recover_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND).status, 409);
+  EXPECT_TRUE(store->status()["maintenance"]);
+  EXPECT_TRUE(std::filesystem::exists(root / "tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll"));
+}
+
 TEST_F(ImageEnhancementConfigTest, ExistingSessionRetainsItsVersionAfterSelectionIsDisabled) {
   const auto settings = trusted_fixture();
   ASSERT_EQ(store->update(settings, store->query().etag).status, 200);
