@@ -34,10 +34,6 @@ architectures the toolkit removed are filtered out automatically. The CUDA build
 dlopen()s `libcuda.so.1` (NVIDIA driver) at runtime and links cudart statically —
 no CUDA toolkit is needed to run it, and nothing changes for Moonlight clients.
 
-`sccache`/`ccache` speed up rebuilds a lot — add the launchers (CUDA included):
-`-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
--DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` (start it with `sccache --start-server`).
-
 CUDA adds the NVFBC path and removes the NVENC GPU->RAM->GPU round trip; the
 ordinary KMS/Wayland/X11 paths stay compiled in. `SUNSHINE_BUILD_DIR=<dir>
 makepkg -f` packages another build tree instead of `build/`.
