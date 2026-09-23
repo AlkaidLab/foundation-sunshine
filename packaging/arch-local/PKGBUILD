@@ -89,7 +89,9 @@ prepare() {
     error "build/ is not configured; run this from the repository root first:"
     error "  cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \\"
     error "    -DSUNSHINE_ASSETS_DIR=share/sunshine -DSUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine \\"
-    error "    -DSUNSHINE_ENABLE_CUDA=OFF && ninja -C build sunshine"
+    error "    -DSUNSHINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \\"
+    error "    -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \\"
+    error "    -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON && ninja -C build sunshine"
     return 1
   fi
 

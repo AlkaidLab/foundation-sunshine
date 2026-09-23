@@ -17,25 +17,30 @@ gracefully when it is absent — never assume kscreen-doctor exists.
 ## Build / test / package
 
 ```bash
+sccache --start-server 2>/dev/null || true      # optional but big win on rebuilds
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
   -DSUNSHINE_ASSETS_DIR=share/sunshine -DSUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine \
-  -DSUNSHINE_ENABLE_CUDA=OFF -DBUILD_TESTS=ON
+  -DSUNSHINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d .)" \
+  -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+  -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON
 ninja -C build sunshine
 cd build && ctest          # baseline: 12/13 pass; Audio/MouseHID/Encoder fail headless (expected)
 ```
+
+CUDA is the default (`SUNSHINE_ENABLE_CUDA` defaults to ON on Linux; a missing
+toolkit just skips the CUDA sources). Setting `CMAKE_CUDA_ARCHITECTURES` to the
+local GPU keeps CUDA objects to one architecture; the fallback ladder is slow and
+architectures the toolkit removed are filtered out automatically. The CUDA build
+dlopen()s `libcuda.so.1` (NVIDIA driver) at runtime and links cudart statically —
+no CUDA toolkit is needed to run it, and nothing changes for Moonlight clients.
 
 `sccache`/`ccache` speed up rebuilds a lot — add the launchers (CUDA included):
 `-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` (start it with `sccache --start-server`).
 
-CUDA capture is available once the tree enables it:
-`-DSUNSHINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=<your arch, e.g. 86>`.
-Without an explicit arch list CMake builds the whole compatibility ladder, which
-is slow; architectures the installed toolkit removed (CUDA 13 dropped everything
-below Turing) are filtered out automatically. Note this changes the capture path
-(NVENC without the GPU->RAM->GPU round trip) — verify a stream before relying on
-it. `SUNSHINE_BUILD_DIR=<dir> makepkg -f` packages another build tree (e.g. a
-CUDA one) instead of `build/`.
+CUDA adds the NVFBC path and removes the NVENC GPU->RAM->GPU round trip; the
+ordinary KMS/Wayland/X11 paths stay compiled in. `SUNSHINE_BUILD_DIR=<dir>
+makepkg -f` packages another build tree instead of `build/`.
 
 Packaging (`packaging/arch-local/`, installs prebuilt tree, no compile in makepkg):
 bump `pkgrel` → `cmake -B build ...` (refreshes the binary version stamp — the user
