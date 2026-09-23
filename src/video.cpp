@@ -792,6 +792,16 @@ namespace video {
 
       auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
 
+      // Scale the VBV window with the new rate, the way the native Windows NVENC
+      // path does (nvEncReconfigureEncoder with a proportional vbvBufferSize).
+      // A window sized for the old rate starves a higher one and lets a lower
+      // one burst, which is what makes a client-side bitrate change look like it
+      // had no effect.
+      if (avcodec_ctx->rc_buffer_size > 0 && avcodec_ctx->bit_rate > 0) {
+        const auto scaled = static_cast<int64_t>(avcodec_ctx->rc_buffer_size) * bitrate / avcodec_ctx->bit_rate;
+        avcodec_ctx->rc_buffer_size = static_cast<int>(std::max<int64_t>(scaled, 100'000));  // floor: 100 kbit
+      }
+
       // Update AVCodecContext fields (for software encoders and as fallback).
       // Note: dynamic bitrate changes for the AMF path are handled inside the
       // native amf_d3d11 encoder via amf_d3d11::set_bitrate(), so the legacy
@@ -800,9 +810,13 @@ namespace video {
       avcodec_ctx->rc_max_rate = bitrate;
       avcodec_ctx->rc_min_rate = bitrate;
 
+      // FFmpeg's nvenc reads these per frame (reconfig_encoder() ->
+      // nvEncReconfigureEncoder, resetEncoder + forceIDR), so logging the
+      // encoder-visible values is what proves the request reached rate control.
       BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
                       << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                      << config::stream.fec_percentage << "%)";
+                      << config::stream.fec_percentage << "%), VBV: "
+                      << avcodec_ctx->rc_buffer_size << " bits";
     }
 
     void
