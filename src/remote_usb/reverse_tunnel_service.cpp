@@ -232,8 +232,25 @@ namespace remote_usb {
       finish_attach(usbip_host_result result) {
         attach_operation_ = 0;
         if (finished_.load()) {
+          /* The session ended while this attach was in flight, so finish() could
+           * not release the device slot yet: whatever this attach produced still
+           * has to be detached, and the slot may only be released after that -
+           * releasing it earlier lets a re-share start a new attach while this
+           * detach is running. */
+          auto release_slot = config_.release_device_slot;
+          auto busid = slot_busid_;
           if (result.binding) {
-            controller_.detach(*result.binding, [](usbip_host_result) {});
+            controller_.detach(*result.binding, [release_slot, busid](usbip_host_result detached) {
+              if (!detached.ok()) {
+                BOOST_LOG(warning) << "Remote USB tunnel detach reported: " << detached.detail;
+              }
+              if (release_slot && !busid.empty()) {
+                release_slot(busid);
+              }
+            });
+          }
+          else if (release_slot && !busid.empty()) {
+            release_slot(busid);
           }
           return;
         }
@@ -410,8 +427,15 @@ namespace remote_usb {
           binding_.reset();
           slot_busid_.clear();
         }
+        else if (attach_operation_ != 0) {
+          /* An attach is still in flight, so this session cannot tell yet what
+           * has to be detached: finish_attach runs after it and releases the
+           * slot once that detach is done. Releasing it here would let a
+           * re-share of the same device start while the detach is still
+           * running, which is what wedges the usbip-win2 port. */
+        }
         else if (!slot_busid_.empty()) {
-          /* The attach never completed, so there is no detach to wait for. */
+          /* Nothing was attached and nothing is on its way. */
           if (config_.release_device_slot) {
             config_.release_device_slot(slot_busid_);
           }
