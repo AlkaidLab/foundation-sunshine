@@ -390,15 +390,28 @@ namespace remote_usb {
         stream_.lowest_layer().close(ignored);
 
         if (binding_) {
-          // Fire-and-forget: the controller completes detach on its worker.
-          controller_.detach(*binding_, [](usbip_host_result result) {
+          /* Fire-and-forget on the controller's worker, but the device stays
+           * claimed until that detach completes: releasing the slot here let a
+           * re-share of the same device start a new attach while this detach
+           * was still in flight, and two operations on one usbip-win2 port left
+           * the driver wedged - every later attach and detach then timed out.
+           * The callback must not touch this session, which is already gone by
+           * then; it only reports and releases the slot. */
+          auto release_slot = config_.release_device_slot;
+          auto busid = slot_busid_;
+          controller_.detach(*binding_, [release_slot, busid](usbip_host_result result) {
             if (!result.ok()) {
               BOOST_LOG(warning) << "Remote USB tunnel detach reported: " << result.detail;
             }
+            if (release_slot && !busid.empty()) {
+              release_slot(busid);
+            }
           });
           binding_.reset();
+          slot_busid_.clear();
         }
-        if (!slot_busid_.empty()) {
+        else if (!slot_busid_.empty()) {
+          /* The attach never completed, so there is no detach to wait for. */
           if (config_.release_device_slot) {
             config_.release_device_slot(slot_busid_);
           }
