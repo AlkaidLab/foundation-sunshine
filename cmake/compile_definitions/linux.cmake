@@ -19,6 +19,15 @@ if(${SUNSHINE_ENABLE_CUDA})
         enable_language(CUDA)
 
         message(STATUS "CUDA Compiler Version: ${CMAKE_CUDA_COMPILER_VERSION}")
+
+        # An explicit -DCMAKE_CUDA_ARCHITECTURES wins: building the whole
+        # compatibility ladder below costs minutes per CUDA object, and a modern
+        # toolkit dropped most of it anyway (CUDA 13 removed everything below
+        # Turing, and passing a dropped architecture aborts nvcc with
+        # "Unsupported gpu architecture"). Otherwise fall back to the ladder.
+        if(CMAKE_CUDA_ARCHITECTURES)
+            message(STATUS "CUDA Architectures (from the cache): ${CMAKE_CUDA_ARCHITECTURES}")
+        else()
         set(CMAKE_CUDA_ARCHITECTURES "")
 
         # https://tech.amikelive.com/node-930/cuda-compatibility-of-nvidia-display-gpu-drivers/
@@ -62,11 +71,20 @@ if(${SUNSHINE_ENABLE_CUDA})
             list(APPEND CMAKE_CUDA_ARCHITECTURES 35)
         endif()
 
+        # Architectures the toolkit itself no longer accepts would make every
+        # CUDA object fail to compile, so drop them after building the ladder.
+        if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0)
+            list(REMOVE_ITEM CMAKE_CUDA_ARCHITECTURES 10 11 20 30 35 37 50 52 60 61 62 70 72)
+        elseif(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0)
+            list(REMOVE_ITEM CMAKE_CUDA_ARCHITECTURES 10 11 20 30 35 37)
+        endif()
+
         # sort the architectures
         list(SORT CMAKE_CUDA_ARCHITECTURES COMPARE NATURAL)
 
         # message(STATUS "CUDA NVCC Flags: ${CUDA_NVCC_FLAGS}")
         message(STATUS "CUDA Architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+        endif()
     endif()
 endif()
 if(CUDA_FOUND)
