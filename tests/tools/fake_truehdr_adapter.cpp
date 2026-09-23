@@ -1,4 +1,4 @@
-#include "src/platform/windows/hdr_enhanced/nvidia_rtx_video/adapter_abi.h"
+#include "src/platform/windows/image_enhancement/rtx_hdr/adapter_abi.h"
 
 namespace {
   foundation_truehdr_status_e FOUNDATION_RTX_VIDEO_CALL

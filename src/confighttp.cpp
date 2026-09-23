@@ -47,8 +47,8 @@
 #include <boost/asio/ssl/context_base.hpp>
 
 #include "config.h"
-#include "hdr_enhanced/api.h"
-#include "hdr_enhanced/config.h"
+#include "image_enhancement/api.h"
+#include "image_enhancement/config.h"
 #include "confighttp.h"
 #include "clipboard_http.h"
 #include "text_context/http.h"
@@ -65,6 +65,7 @@
 #include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
+#include "nvenc/frame_budget.h"
 #include "perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -1348,6 +1349,20 @@ namespace confighttp {
     }
 
     outputTree.put("active_encoder", video::active_encoder_name());
+    if (auto frame_budget = nvenc::get_frame_budget_report()) {
+      pt::ptree budget_node;
+      budget_node.put("clamped", frame_budget->clamped);
+      budget_node.put("configured_preset", frame_budget->configured_preset);
+      budget_node.put("effective_preset", frame_budget->effective_preset);
+      budget_node.put("width", frame_budget->width);
+      budget_node.put("height", frame_budget->height);
+      budget_node.put("fps", frame_budget->fps);
+      budget_node.put("budget_ms", frame_budget->budget_ms);
+      budget_node.put("estimated_ms", frame_budget->estimated_ms);
+      budget_node.put("configured_estimated_ms", frame_budget->configured_estimated_ms);
+      budget_node.put("num_engines", frame_budget->num_engines);
+      outputTree.add_child("active_nvenc_frame_budget", budget_node);
+    }
     // Configuration capability only; never expose the paired-client tunnel token here.
     outputTree.put("usb_forwarding_config_version", "1");
     outputTree.put("pair_name", nvhttp::get_pair_name());
@@ -1581,29 +1596,145 @@ namespace confighttp {
   }
 
   void
-  getHdrEnhancedConfig(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR configuration")) return;
-    hdr_enhanced::api::get_config(response);
+  getGamepadConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    pt::ptree outputTree;
+    auto response_guard = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(data.str());
+    });
+
+    const auto config_snapshot = config::get_config_snapshot();
+    if (!config_snapshot) {
+      outputTree.put("status", "false");
+      outputTree.put("error", "failed to read controller configuration");
+      return;
+    }
+
+    const auto get_value = [&](std::string_view key, std::string_view fallback) {
+      const auto entry = config_snapshot->find(std::string {key});
+      return entry == config_snapshot->end() ? std::string {fallback} : entry->second;
+    };
+    outputTree.put("status", "true");
+    outputTree.put("gamepad", get_value("gamepad", "auto"));
+    outputTree.put("motion_as_ds4", get_value("motion_as_ds4", "true"));
+    outputTree.put("touchpad_as_ds4", get_value("touchpad_as_ds4", "true"));
+    outputTree.put("ds4_back_as_touchpad_click", get_value("ds4_back_as_touchpad_click", "true"));
+    outputTree.put("enable_dsu_server", get_value("enable_dsu_server", "false"));
+    outputTree.put("dsu_server_port", get_value("dsu_server_port", "26760"));
   }
 
   void
-  saveHdrEnhancedConfig(resp_https_t response, req_https_t request) {
+  saveGamepadConfig(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR configuration")) return;
-    hdr_enhanced::api::save_config(response, request);
+    if (!authenticate(response, request)) return;
+
+    pt::ptree outputTree;
+    auto response_guard = util::fail_guard([&]() {
+      std::ostringstream data;
+      pt::write_json(data, outputTree);
+      response->write(data.str());
+    });
+
+    try {
+      pt::ptree inputTree;
+      std::stringstream body;
+      body << request->content.rdbuf();
+      pt::read_json(body, inputTree);
+      if (inputTree.empty() || inputTree.size() > 6) {
+        throw std::invalid_argument("controller configuration patch must contain 1 to 6 fields");
+      }
+
+      const std::set<std::string> boolean_fields {
+        "ds4_back_as_touchpad_click",
+        "enable_dsu_server",
+        "motion_as_ds4",
+        "touchpad_as_ds4",
+      };
+      std::map<std::string, std::string> updates;
+      for (const auto &[key, node] : inputTree) {
+        if (!node.empty()) {
+          throw std::invalid_argument("controller configuration fields must be scalar values");
+        }
+        const auto value = node.get_value<std::string>();
+        if (key == "gamepad") {
+          if (value != "auto"sv && value != "x360"sv && value != "ds4"sv && value != "ds5"sv) {
+            throw std::invalid_argument("invalid gamepad mode");
+          }
+        }
+        else if (boolean_fields.contains(key)) {
+          if (value != "true"sv && value != "false"sv) {
+            throw std::invalid_argument("controller boolean fields must be true or false");
+          }
+        }
+        else if (key == "dsu_server_port") {
+          std::size_t parsed = 0;
+          const auto port = std::stoi(value, &parsed);
+          if (parsed != value.size() || port < 1024 || port > 65535) {
+            throw std::invalid_argument("DSU port must be between 1024 and 65535");
+          }
+        }
+        else {
+          throw std::invalid_argument("unsupported controller configuration field");
+        }
+        if (!updates.emplace(key, value).second) {
+          throw std::invalid_argument("duplicate controller configuration field");
+        }
+      }
+
+      if (!config::update_config(updates)) {
+        outputTree.put("status", "false");
+        outputTree.put("error", "failed to persist controller configuration");
+        return;
+      }
+      outputTree.put("status", "true");
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "SaveGamepadConfig: "sv << e.what();
+      outputTree.put("status", "false");
+      outputTree.put("error", "invalid controller configuration patch");
+    }
   }
 
   void
-  getHdrEnhancedStatus(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR status")) return;
-    hdr_enhanced::api::get_status(response);
+  getImageEnhancementConfig(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement configuration")) return;
+    image_enhancement::api::get_config(response);
   }
 
   void
-  maintainHdrEnhancedComponent(resp_https_t response, req_https_t request) {
+  saveImageEnhancementConfig(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
-    if (!authenticate(response, request) || !require_localhost(response, request, "HDR maintenance")) return;
-    hdr_enhanced::api::maintenance(response, request);
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement configuration")) return;
+    image_enhancement::api::save_config(response, request);
+  }
+
+  void
+  getImageEnhancementStatus(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement status")) return;
+    image_enhancement::api::get_status(response);
+  }
+
+  void
+  getEnhancementSessions(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request) || !require_localhost(response, request, "Session image enhancement")) return;
+    image_enhancement::api::get_sessions(response);
+  }
+
+  void
+  setSessionNr(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request) || !require_localhost(response, request, "Session image enhancement")) return;
+    image_enhancement::api::set_session_nr(response, request);
+  }
+
+  void
+  maintainImageEnhancementComponent(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement maintenance")) return;
+    image_enhancement::api::maintenance(response, request);
   }
 
   void
@@ -2505,7 +2636,7 @@ namespace confighttp {
 
     try {
       const auto statuses = video::get_hdr_pipeline_statuses();
-      const auto enhancement_status = hdr_enhanced::manager().status();
+      const auto enhancement_status = image_enhancement::manager().status();
       json response_json {
         { "success", true },
         { "status_code", 200 },
@@ -2518,6 +2649,7 @@ namespace confighttp {
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
         { "configured_hdr_backend", enhancement_status.value("selected_backend", std::string {}) },
+        { "configured_nr_backend", enhancement_status.value("selected_nr_backend", std::string {}) },
         { "pipelines", json::array() },
       };
 
@@ -2535,6 +2667,9 @@ namespace confighttp {
           { "synthetic_hdr_backend", status.synthetic_hdr_backend },
           { "synthetic_hdr_state", status.synthetic_hdr_state },
           { "synthetic_hdr_failure_reason", status.synthetic_hdr_failure_reason },
+          { "nr_backend", status.nr_backend },
+          { "nr_state", status.nr_state },
+          { "nr_failure_reason", status.nr_failure_reason },
         });
       }
 
@@ -3971,10 +4106,14 @@ namespace confighttp {
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
-    server.resource["^/api/hdr-enhanced/config$"]["GET"] = getHdrEnhancedConfig;
-    server.resource["^/api/hdr-enhanced/config$"]["POST"] = saveHdrEnhancedConfig;
-    server.resource["^/api/hdr-enhanced/status$"]["GET"] = getHdrEnhancedStatus;
-    server.resource["^/api/hdr-enhanced/components/alkaidlab\\.nvidia_rtx_video/maintenance$"]["POST"] = maintainHdrEnhancedComponent;
+    server.resource["^/api/gamepad/config$"]["GET"] = getGamepadConfig;
+    server.resource["^/api/gamepad/config$"]["POST"] = saveGamepadConfig;
+    server.resource["^/api/hdr-enhanced/config$"]["GET"] = getImageEnhancementConfig;
+    server.resource["^/api/hdr-enhanced/config$"]["POST"] = saveImageEnhancementConfig;
+    server.resource["^/api/hdr-enhanced/status$"]["GET"] = getImageEnhancementStatus;
+    server.resource["^/api/hdr-enhanced/sessions$"]["GET"] = getEnhancementSessions;
+    server.resource["^/api/hdr-enhanced/session-nr$"]["POST"] = setSessionNr;
+    server.resource["^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$"]["POST"] = maintainImageEnhancementComponent;
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
     server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
@@ -4093,7 +4232,7 @@ namespace confighttp {
     // Wait for any event
     shutdown_event->view();
 
-    hdr_enhanced::api::shutdown();
+    image_enhancement::api::shutdown();
     server.stop();
 
     tcp.join();

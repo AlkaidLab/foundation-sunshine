@@ -8,7 +8,9 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -52,6 +54,35 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+
+    std::optional<std::string>
+    read_config_file_contents() {
+      const auto path = file_handler::path_from_utf8(sunshine.config_file);
+      std::error_code error;
+      const auto exists = fs::exists(path, error);
+      if (error) {
+        BOOST_LOG(warning) << "Failed to inspect config file: " << error.message();
+        return std::nullopt;
+      }
+      if (!exists) {
+        return std::string {};
+      }
+
+      std::ifstream input(path, std::ios::binary);
+      if (!input.is_open()) {
+        BOOST_LOG(warning) << "Failed to open config file for reading"sv;
+        return std::nullopt;
+      }
+      std::string contents {
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()
+      };
+      if (input.bad()) {
+        BOOST_LOG(warning) << "Failed while reading config file"sv;
+        return std::nullopt;
+      }
+      return contents;
+    }
   }
 
   namespace nv {
@@ -491,6 +522,7 @@ namespace config {
 
   stream_t stream {
     10s,  // ping_timeout
+    false,  // stop_on_last_video_session
 
     APPS_JSON_PATH,
 
@@ -1210,9 +1242,9 @@ namespace config {
     string_f(vars, "sw_tune", video.sw.sw_tune);
 
     int_between_f(vars, "nvenc_preset", video.nv.quality_preset, { 1, 7 });
+    bool_f(vars, "nvenc_frame_budget_guard", video.nv.frame_budget_guard);
     int_between_f(vars, "nvenc_vbv_increase", video.nv.vbv_percentage_increase, { 0, 400 });
     bool_f(vars, "nvenc_spatial_aq", video.nv.adaptive_quantization);
-    bool_f(vars, "nvenc_temporal_aq", video.nv.enable_temporal_aq);
     generic_f(vars, "nvenc_twopass", video.nv.two_pass, nv::twopass_from_view);
     bool_f(vars, "nvenc_h264_cavlc", video.nv.h264_cavlc);
     generic_f(vars, "nvenc_split_encode", video.nv.split_frame_encoding, nv::split_encode_from_view);
@@ -1510,6 +1542,7 @@ namespace config {
     if (to != -1) {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
+    bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -1861,16 +1894,12 @@ namespace config {
   update_config(const std::map<std::string, std::string> &updates) {
     std::lock_guard lock { config_file_mutex };
     try {
-      // 读取现有配置文件
-      std::map<std::string, std::string> configMap;
-      try {
-        std::string fileContent = file_handler::read_file(sunshine.config_file.c_str());
-        auto existingConfig = parse_config(fileContent);
-        configMap.insert(existingConfig.begin(), existingConfig.end());
+      const auto file_content = read_config_file_contents();
+      if (!file_content) {
+        return false;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
-      }
+      const auto existing_config = parse_config(*file_content);
+      std::map<std::string, std::string> configMap {existing_config.begin(), existing_config.end()};
 
       // 更新配置项，同时检查是否有变化
       bool hasChanged = false;
@@ -1894,7 +1923,7 @@ namespace config {
 
       if (!hasChanged) {
         BOOST_LOG(info) << "Config unchanged, skip writing";
-        return false;
+        return true;
       }
 
       // 按字母顺序写入配置文件
@@ -1909,12 +1938,33 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
+      if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
+        const auto gamepad = configMap.find("gamepad");
+        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});
+      }
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to update config: " << e.what();
       return false;
+    }
+  }
+
+  std::optional<std::map<std::string, std::string>>
+  get_config_snapshot() {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto file_content = read_config_file_contents();
+      if (!file_content) {
+        return std::nullopt;
+      }
+      const auto config = parse_config(*file_content);
+      return std::map<std::string, std::string> {config.begin(), config.end()};
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read config snapshot: " << e.what();
+      return std::nullopt;
     }
   }
 
@@ -1928,6 +1978,7 @@ namespace config {
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
         "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读
         "pair_name",        // 配对名称，由系统生成，只读
@@ -1940,16 +1991,12 @@ namespace config {
         "tray_locale",            // 由系统托盘控制，不通过Web UI修改
       };
 
-      // 读取现有配置文件（用于获取受保护字段的值和后续对比）
-      std::map<std::string, std::string> originalMap;
-      try {
-        std::string originalFileContent = file_handler::read_file(sunshine.config_file.c_str());
-        auto existingConfig = parse_config(originalFileContent);
-        originalMap.insert(existingConfig.begin(), existingConfig.end());
+      const auto original_file_content = read_config_file_contents();
+      if (!original_file_content) {
+        return false;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
-      }
+      const auto existing_config = parse_config(*original_file_content);
+      std::map<std::string, std::string> originalMap {existing_config.begin(), existing_config.end()};
 
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
@@ -1995,6 +2042,9 @@ namespace config {
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
+
+      const auto gamepad = resultMap.find("gamepad");
+      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
 
       return true;
     }

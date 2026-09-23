@@ -16,6 +16,10 @@ on:
       - master
   workflow_dispatch:
     inputs:
+      gui_run_id:
+        description: 'Optional successful Panel artifact run; its commit must match the Panel submodule'
+        type: string
+        default: ''
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -88,6 +92,7 @@ jobs:
     needs: setup_release
     permissions:
       contents: read
+      actions: write  # prune stale ccache entries after saving this run's
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -194,20 +199,38 @@ jobs:
           npm run build
 
       - name: Cache compiler objects
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}\.ccache
-          # The key must be unique per run for the cache to be written at all,
-          # so the prefix restore-key is what actually produces the hits: every
-          # run seeds itself from the most recent previous one.
+          # The key is unique per run; the prefix restore-key is what actually
+          # produces the hits: every run seeds itself from the most recent
+          # previous one. Saving is split out below so that only master
+          # writes: PR-branch entries are invisible to other branches yet
+          # still consume the shared cache quota, and when that quota fills
+          # (10 GB, LRU), eviction wiped the whole lineage once and forced a
+          # full 47-minute cold rebuild.
           key: ccache-windows-${{ github.run_id }}
           restore-keys: |
             ccache-windows-
+
+      - name: Fetch paired GUI artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUI_RUN_ID: ${{ inputs.gui_run_id }}
+        run: |
+          $arguments = @{ Destination = "$env:RUNNER_TEMP/paired-gui" }
+          if ($env:GUI_RUN_ID) { $arguments.RunId = $env:GUI_RUN_ID }
+          ./scripts/fetch-paired-gui.ps1 @arguments
+          "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
 
       - name: Configure Windows
         id: configure_windows
         shell: msys2 {0}
         env:
+          # Only trusted events may expose the read-only token to PR-controlled CMake code.
+          GITHUB_TOKEN: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
           # Same-repository PRs are trusted; fork PRs never receive the private credential.
           RTX_VIDEO_SDK_URL: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_SDK_URL || '' }}
           RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
@@ -231,10 +254,15 @@ jobs:
         run: |
           mkdir -p build
           ccache --zero-stats
+          gui_options=()
+          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
+            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          fi
           cmake \
             -B build \
             -G Ninja \
             -S . \
+            "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DBUILD_TESTS=ON \
@@ -266,6 +294,57 @@ jobs:
       - name: Run native tests
         shell: msys2 {0}
         run: ctest --test-dir build --output-on-failure
+
+      - name: Save compiler cache
+        # Only master writes (always(): a failed or cancelled build still
+        # produced valid objects). PR runs restore master's entry, so they
+        # don't need to save, and skipping their saves keeps the shared
+        # cache quota flat.
+        if: always() && github.ref == 'refs/heads/master'
+        id: ccache_save
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ github.run_id }}
+
+      - name: Prune stale compiler cache entries
+        # Collapse the cache to exactly one entry (the newest one saved).
+        # Entries pile up one-per-run otherwise; on a 10 GB repo quota that
+        # once got the entire lineage LRU-evicted. A single entry is also
+        # restored by every later run, which keeps resetting its 7-day
+        # inactivity clock, so neither eviction path can take it out.
+        # Only entries from runs OLDER than this one are deleted (run ids
+        # increase monotonically): a cancelled run still executes its
+        # always() save and prune alongside the next run, and age-filtered
+        # prunes converge to the newest entry under any interleaving —
+        # pruning by "not my key" instead could race down to zero entries.
+        # Skipped unless the save step actually succeeded (outcome keeps the
+        # real result under continue-on-error; the save subaction sets no
+        # outputs, so conclusion can't tell success from failure).
+        if: always() && github.ref == 'refs/heads/master' && steps.ccache_save.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $current = "ccache-windows-${{ github.run_id }}"
+          # Page through the caches API instead of `gh cache list`: the
+          # latter caps at --limit 100, and once this repo's other caches
+          # (msys2, npm, ...) grow past that, stale ccache entries would
+          # fall outside the window and never get pruned.
+          $stale = gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-[0-9]+$")) | [(.key | sub("^ccache-windows-";"") | tonumber), .id, .key] | @tsv' |
+            Where-Object { $_ } |
+            ForEach-Object {
+              $parts = $_ -split "`t"
+              if ([long]$parts[0] -lt [long]"${{ github.run_id }}") {
+                [pscustomobject]@{ Id = $parts[1]; Key = $parts[2] }
+              }
+            }
+          foreach ($entry in $stale) {
+            gh cache delete $entry.Id --repo $env:GITHUB_REPOSITORY
+            Write-Output "Pruned $($entry.Key)"
+          }
+          Write-Output "Pruned $(@($stale).Count) stale ccache entries; kept $current"
 
       - name: Cache Inno Setup
         id: inno-cache
@@ -315,12 +394,29 @@ jobs:
             test ! -e ./inno_staging/vcruntime140.dll
           fi
           test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll
+          test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/nvngx_dlssnr.dll
+          DLSSNR_ADAPTER_BUILT=false
+          if [[ -f ./image_enhancement/nvidia_dlssnr_adapter/Release/foundation_dlssnr_adapter.dll ]]; then
+            DLSSNR_ADAPTER_BUILT=true
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/foundation_dlssnr_adapter.dll
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-DLSS-LICENSE.txt
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-OPTICAL-FLOW-NOTICES.txt
+          fi
           test ! -e ./inno_staging/assets/hdr-components.json
           
           # Run the Inno Setup compiler and prove that it consumed only the
           # lightweight package manifest, not the self-contained runtime.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
           grep -F "ds5-sidecar-package.json" inno-build.log
+          if grep -Ei 'nvngx_(truehdr|dlssnr)\.dll' inno-build.log; then
+            echo "NVIDIA enhancement runtimes must not be compiled into the installer"
+            exit 1
+          fi
+          if [[ "$DLSSNR_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "foundation_dlssnr_adapter.dll" inno-build.log
+            grep -F "NVIDIA-DLSS-LICENSE.txt" inno-build.log
+            grep -F "NVIDIA-OPTICAL-FLOW-NOTICES.txt" inno-build.log
+          fi
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "foundation_rtx_video_adapter.dll" inno-build.log
           fi
@@ -332,7 +428,12 @@ jobs:
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
           fi
-          if grep -E 'nvngx_truehdr\.dll|hdr-components\.json' portable-files.txt; then
+          if [[ "$DLSSNR_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_dlssnr/foundation_dlssnr_adapter.dll" portable-files.txt
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-DLSS-LICENSE.txt" portable-files.txt
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-OPTICAL-FLOW-NOTICES.txt" portable-files.txt
+          fi
+          if grep -Ei 'nvngx_(truehdr|dlssnr)\.dll|hdr-components\.json' portable-files.txt; then
             echo "Side-loaded HDR files and mutable trust metadata must not be included in the main portable package"
             exit 1
           fi

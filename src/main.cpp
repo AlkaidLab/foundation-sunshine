@@ -35,7 +35,7 @@
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
 #include "ds5/config.h"
-#include "hdr_enhanced/config.h"
+#include "image_enhancement/config.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
@@ -258,6 +258,7 @@ main(int argc, char *argv[]) {
   if (is_running_as_system_user) {
     BOOST_LOG(info) << "Running as SYSTEM user (service mode)";
   }
+  BOOST_LOG(info) << "Running with " << platf::windows_version();
 #endif
 
   // Log publisher metadata
@@ -427,7 +428,7 @@ main(int argc, char *argv[]) {
 
   proc::refresh(config::stream.file_apps);
 
-  if (!hdr_enhanced::manager().initialize()) {
+  if (!image_enhancement::manager().initialize()) {
     BOOST_LOG(warning) << "HDR enhancement configuration or selected component is unavailable; optional processing is disabled";
   }
 
@@ -445,7 +446,7 @@ main(int argc, char *argv[]) {
   }
   if (ds5_settings_result.status == ds5_config::load_status_t::INVALID ||
       !ds5_config::configure(std::move(ds5_settings_result.settings))) {
-    BOOST_LOG(error) << "DualSense configuration is invalid; DualSense emulation is disabled"sv;
+    BOOST_LOG(error) << "DualSense configuration is invalid; using default DualSense settings"sv;
     ds5_config::configure({});
   }
 #endif

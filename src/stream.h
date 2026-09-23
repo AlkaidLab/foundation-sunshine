@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -170,6 +171,19 @@ namespace stream {
 
     bool
     has_active_video_sessions();
+
+    /**
+     * @brief 请求统一的异步应用取消流程。
+     *
+     * 手动 /cancel 和“所有客户端断开后结束串流”都通过此函数进入同一条清理链路。
+     * 函数只负责提交异步任务，不在调用线程中直接终止应用或恢复显示；任务会在 RTSP
+     * 执行上下文中重新检查条件，并由完成回调释放去重标记、终止应用和恢复显示状态。
+     *
+     * @param source 用于本地日志的触发原因，不会作为外部协议数据发送。
+     * @param require_no_video_session 是否要求任务执行时仍没有视频会话和待处理的 RTSP 票据。
+     */
+    void
+    request_global_cancel(std::string_view source, bool require_no_video_session = false);
     
 
 

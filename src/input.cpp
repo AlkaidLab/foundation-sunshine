@@ -10,6 +10,8 @@ extern "C" {
 }
 
 #include <bitset>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <list>
@@ -132,12 +134,15 @@ namespace input {
     gamepad_t():
         gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
     ~gamepad_t() {
+      ds5 = false;
       if (id >= 0) {
         task_pool.push([id = this->id]() {
           free_gamepad(platf_input, id);
         });
       }
     }
+
+    std::atomic_bool ds5 { false };
 
     platf::gamepad_state_t gamepad_state;
 
@@ -165,7 +170,8 @@ namespace input {
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
-      std::uint64_t session_id):
+      std::uint64_t session_id,
+      std::string client_gamepad):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
         client_context { platf::allocate_client_input_context(platf_input) },
@@ -173,6 +179,7 @@ namespace input {
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
         session_id {session_id},
+        client_gamepad {std::move(client_gamepad)},
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
@@ -189,6 +196,7 @@ namespace input {
     platf::feedback_queue_t feedback_queue;
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
+    std::string client_gamepad;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -199,7 +207,61 @@ namespace input {
 
     int32_t accumulated_vscroll_delta;
     int32_t accumulated_hscroll_delta;
+
+    std::array<std::chrono::steady_clock::time_point, MAX_GAMEPADS> last_unallocated_controller_log {};
   };
+
+  constexpr auto CONTROLLER_WARNING_INTERVAL = 5s;
+
+  /**
+   * @brief 记录手柄未分配的告警，并按控制器编号限频。
+   * @param input 当前会话的输入上下文。
+   * @param controller_number 客户端上报的控制器编号。
+   */
+  void
+  log_unallocated_controller(input_t &input, int controller_number) {
+    if (controller_number < 0 || controller_number >= static_cast<int>(input.last_unallocated_controller_log.size())) {
+      return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    auto &last_log = input.last_unallocated_controller_log[controller_number];
+    if (last_log != std::chrono::steady_clock::time_point {} && now - last_log < CONTROLLER_WARNING_INTERVAL) {
+      return;
+    }
+
+    last_log = now;
+    BOOST_LOG(warning) << "ControllerNumber ["sv << controller_number << "] not allocated"sv;
+  }
+
+  bool
+  has_ds5_gamepad(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool
+  has_ds5_audio_haptics(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed) &&
+          platf::gamepad_has_ds5_audio_haptics(platf_input)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /**
    * @brief Apply shortcut based on VKEY
@@ -1008,11 +1070,14 @@ namespace input {
     }
 
     // Allocate a new gamepad
-    if (platf::alloc_gamepad(platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue)) {
+    if (platf::alloc_gamepad(
+          platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue, input->client_gamepad)) {
       free_id(gamepadMask, id);
       return;
     }
 
+    input->gamepads[packet->controllerNumber].ds5.store(
+      platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
     input->gamepads[packet->controllerNumber].id = id;
   }
 
@@ -1250,7 +1315,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1284,7 +1349,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1317,7 +1382,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1352,16 +1417,19 @@ namespace input {
         return;
       }
 
-      if (platf::alloc_gamepad(platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue)) {
+      if (platf::alloc_gamepad(
+            platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
         return;
       }
 
+      gamepad.ds5.store(platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
       gamepad.id = id;
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
       free_gamepad(platf_input, gamepad.id);
+      gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
       return;
     }
@@ -1369,7 +1437,7 @@ namespace input {
     // If this gamepad has not been initialized, ignore it.
     // This could happen when platf::alloc_gamepad fails
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -2024,12 +2092,13 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
-      session_id);
+      session_id,
+      std::move(client_gamepad));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {

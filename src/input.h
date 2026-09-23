@@ -26,7 +26,23 @@ namespace input {
   probe_gamepads();
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id);
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad);
+
+  /**
+   * @brief 检查当前会话是否已成功分配 DualSense。
+   * @param input 会话输入上下文。
+   * @return 至少一个 DualSense 手柄分配成功时返回 true。
+   */
+  bool
+  has_ds5_gamepad(const std::shared_ptr<input_t> &input);
+
+  /**
+   * @brief 检查当前会话的 DualSense 音频触觉是否仍可用。
+   * @param input 会话输入上下文。
+   * @return 已协商音频触觉且未降级或断线时返回 true。
+   */
+  bool
+  has_ds5_audio_haptics(const std::shared_ptr<input_t> &input);
 
   struct touch_port_t: public platf::touch_port_t {
     int env_width, env_height;

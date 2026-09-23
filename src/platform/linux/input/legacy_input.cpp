@@ -1192,8 +1192,8 @@ namespace platf {
   }
 
   void
-  set_client_gamepad_pref(std::string pref) {
-    // Client-declared gamepad selection only overrides the Windows ViGEm backend.
+  set_global_gamepad_mode(std::string_view) {
+    // Runtime gamepad selection is currently implemented by the Windows backend.
   }
 
   void
@@ -1586,13 +1586,24 @@ namespace platf {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view) {
     return ((input_raw_t *) input.get())->alloc_gamepad(id, metadata, std::move(feedback_queue));
   }
 
   void
   free_gamepad(input_t &input, int nr) {
     ((input_raw_t *) input.get())->clear_gamepad(nr);
+  }
+
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &) {
+    return false;
   }
 
   void
@@ -2583,7 +2594,7 @@ namespace platf {
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view) {
     platform_caps::caps_t caps = 0;
 
     // Pen and touch emulation requires uinput

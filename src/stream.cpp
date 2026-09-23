@@ -44,7 +44,6 @@ extern "C" {
 #include "config.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
-#include "ds5/config.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "rtsp.h"
@@ -140,6 +139,8 @@ namespace stream {
   }
 
   namespace {
+    boost::atomic_flag global_cancel_pending = BOOST_ATOMIC_FLAG_INIT;
+
     std::uint32_t
     read_dynamic_param_u32(std::string_view payload, std::size_t offset) {
       return static_cast<std::uint32_t>(static_cast<unsigned char>(payload[offset])) |
@@ -592,6 +593,7 @@ namespace stream {
 
     // 添加客户端名称字段
     std::string client_name;
+    std::string client_gamepad;
     std::string client_cert_uuid;
     bool use_vdd {false};
     int custom_screen_mode {-1};
@@ -2437,10 +2439,9 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
-            const auto ds5_settings = ds5_config::current();
+            // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
-              (session->config.mlFeatureFlags & (ML_FF_DS5_HAPTICS_PCM | ML_FF_DS5_HAPTICS_IR_V2)) != 0 ||
-              (ds5_settings.enabled && ds5_settings.audio_haptics);
+              input::has_ds5_audio_haptics(session->input);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
@@ -4146,6 +4147,57 @@ namespace stream {
     }
 
     void
+    request_global_cancel(std::string_view source, bool require_no_video_session) {
+      if (!global_cancel_pending.test_and_set(boost::memory_order_acq_rel)) {
+        BOOST_LOG(info) << source << " accepted; stopping all streaming sessions asynchronously"sv;
+        rtsp_stream::terminate_sessions_async_if(
+          stop_reason_e::client_cancel,
+          [require_no_video_session]() {
+            return !require_no_video_session ||
+                   (video_session_count() == 0 &&
+                    rtsp_stream::pending_session_count() == 0);
+          },
+          [](bool termination_started) {
+            auto clear_pending = util::fail_guard([]() {
+              global_cancel_pending.clear(boost::memory_order_release);
+            });
+
+            if (!termination_started) {
+              return;
+            }
+
+            try {
+              if (proc::proc.running() > 0) {
+                proc::proc.terminate();
+              }
+            }
+            catch (const std::exception &e) {
+              BOOST_LOG(error) << "Failed to terminate the running application during app cancel: "sv << e.what();
+            }
+            catch (...) {
+              BOOST_LOG(error) << "Failed to terminate the running application during app cancel"sv;
+            }
+
+            try {
+              display_device::session_t::get().restore_state();
+            }
+            catch (const std::exception &e) {
+              BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
+            }
+            catch (...) {
+              BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
+            }
+
+            BOOST_LOG(info) << "Global app cancel cleanup finished"sv;
+          }
+        );
+      }
+      else {
+        BOOST_LOG(debug) << "Global app cancel is already in progress"sv;
+      }
+    }
+
+    void
     stop(session_t &session, stop_reason_e reason) {
       while_starting_do_nothing(session.lifecycle);
       if (!session.lifecycle.request_stop(reason)) {
@@ -4210,6 +4262,8 @@ namespace stream {
                            << (was_registered ? " released"sv : " was already absent"sv);
         }
 
+        const auto stop_reason = session.lifecycle.snapshot().stop_reason;
+
         // If this is the last non-control-only session, invoke the platform callbacks
         if (unregister_video_session() == 0) {
           bool restore_display_state { true };
@@ -4240,6 +4294,12 @@ namespace stream {
 #endif
 
           platf::streaming_will_stop();
+
+          if (config::stream.stop_on_last_video_session &&
+              stop_reason != stop_reason_e::client_cancel &&
+              stop_reason != stop_reason_e::host_terminate) {
+            request_global_cancel("Automatic cancel after the last video session ended"sv, true);
+          }
         }
       }
 
@@ -4285,7 +4345,7 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
-      session.input = input::alloc(session.mail, session.launch_session_id);
+      session.input = input::alloc(session.mail, session.launch_session_id, session.client_gamepad);
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
@@ -4443,6 +4503,7 @@ namespace stream {
 
       // 设置客户端名称
       session->client_name = launch_session.client_name;
+      session->client_gamepad = launch_session.client_gamepad;
       session->client_cert_uuid = launch_session.client_cert_uuid;
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;

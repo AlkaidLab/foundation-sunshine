@@ -23,7 +23,7 @@ extern "C" {
 }
 
 #include "display.h"
-#include "src/hdr_enhanced/config.h"
+#include "src/image_enhancement/config.h"
 #include "display_cursor.h"
 #include "display_vram_internal.h"
 #include "misc.h"
@@ -33,6 +33,7 @@ extern "C" {
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
 #include "src/amf/amf_d3d11.h"
 #include "src/video.h"
+#include "src/hdr/dynamic_hdr_selection.h"
 #include "src/video_hdr_metadata.h"
 
 #include <AMF/components/DisplayCapture.h>
@@ -403,6 +404,7 @@ namespace platf::dxgi {
 
     int
     convert(platf::img_t &img_base) {
+      apply_nr_request();
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
       }
@@ -502,18 +504,41 @@ namespace platf::dxgi {
         DXGI_FORMAT conversion_input_format = img.format;
         auto conversion_input_semantic = img.frame_desc;
 
-        if (pre_encode_filter) {
+        if (!img.dummy && (runtime_status.nr_source_width != static_cast<std::uint32_t>(img.width) ||
+            runtime_status.nr_source_height != static_cast<std::uint32_t>(img.height))) {
+          runtime_status.nr_source_width = img.width;
+          runtime_status.nr_source_height = img.height;
+          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        }
+
+        // Desktop Duplication may initially provide a cursor-only dummy whose
+        // capture format/domain is not known yet. Encode that startup frame
+        // normally; only real captured frames may enter the enhancement model.
+        if (pre_encode_filter && !img.dummy) {
+          // NR preserves the captured domain before the ordinary output
+          // conversion. In particular, an SDR client can receive an FP16 HDR
+          // desktop, so its wire transfer cannot determine the NR input.
+          // Resolve only the two domains supported by the NR wrapper; keep
+          // unknown frames and the SDR-to-HDR filter's contract strict.
+          if (nr_filter_active &&
+              ((img.frame_desc.domain == frame_domain_e::linear_scrgb &&
+                img.frame_desc.encoding == pixel_encoding_class_e::float16) ||
+               (img.frame_desc.domain == frame_domain_e::sdr_rec709 &&
+                img.frame_desc.encoding == pixel_encoding_class_e::unorm8))) {
+            filter_capture_contract.required_domain = img.frame_desc.domain;
+            filter_capture_contract.preferred_encoding = img.frame_desc.encoding;
+          }
           auto source_contract = filter_capture_contract;
           source_contract.require_private_handoff = false;
           if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {
             release_capture_mutex();
             BOOST_LOG(error) << "Pre-encode filter rejected captured frame contract"sv;
-            update_synthetic_hdr_runtime_status(false, "capture_contract_mismatch");
+            update_enhancement_runtime_status(false, "capture_contract_mismatch");
             return -1;
           }
           if (!prepare_filter_handoff(img_ctx.encoder_texture.get(), img.frame_desc)) {
             release_capture_mutex();
-            update_synthetic_hdr_runtime_status(false, "filter_handoff_failed");
+            update_enhancement_runtime_status(false, "filter_handoff_failed");
             return -1;
           }
           device_ctx->CopyResource(filter_handoff_texture.get(), img_ctx.encoder_texture.get());
@@ -523,7 +548,7 @@ namespace platf::dxgi {
 
           auto handoff_semantic = img.frame_desc;
           handoff_semantic.borrowed = false;
-          const auto filter_result = pre_encode_filter->process({
+          auto filter_result = pre_encode_filter->process({
             .texture = filter_handoff_texture.get(),
             .srv = filter_handoff_srv.get(),
             .format = img.format,
@@ -531,13 +556,45 @@ namespace platf::dxgi {
             .width = static_cast<std::uint32_t>(img.width),
             .height = static_cast<std::uint32_t>(img.height),
           });
-          if (filter_result.status != filter_status_e::ready ||
-              !filter_result.frame.texture || !filter_result.frame.srv) {
-            BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
-            update_synthetic_hdr_runtime_status(false, filter_result.reason);
-            return -1;
+          const bool filter_failed = filter_result.status != filter_status_e::ready ||
+            !filter_result.frame.texture || !filter_result.frame.srv;
+          const std::string failure_reason = filter_failed
+            ? (filter_result.reason.empty() ? "filter_invalid_output" : std::string(filter_result.reason))
+            : std::string(pre_encode_filter->failure_reason());
+          if (nr_filter_active && (filter_failed || pre_encode_filter->degraded()) && nr_rollback_pending) {
+            // Recreate the previous settings on the next frame, after releasing the
+            // failed model. Do this before any failed-result early return.
+            nr_rollback_pending = false;
+            runtime_status.nr_settings_failure_reason = failure_reason;
+            nr_restoring_settings = ::video::rollback_nr_settings(runtime_status_id, nr_attempt_request, nr_previous_request);
           }
-          update_synthetic_hdr_runtime_status(true);
+          if (filter_failed) {
+            BOOST_LOG(error) << "Pre-encode filter failed: "sv << failure_reason;
+            update_enhancement_runtime_status(false, failure_reason);
+            if (!nr_filter_active) return -1;
+            // The capture mutex is already released. Only our private handoff
+            // remains safe to encode while a failed NR scale is being restored.
+            filter_result.frame = {
+              .texture = filter_handoff_texture.get(),
+              .srv = filter_handoff_srv.get(),
+              .format = img.format,
+              .semantic = handoff_semantic,
+              .width = static_cast<std::uint32_t>(img.width),
+              .height = static_cast<std::uint32_t>(img.height),
+            };
+          } else {
+            if (nr_filter_active && !pre_encode_filter->degraded()) {
+              nr_rollback_pending = false;
+              runtime_status.nr_scale_percent = nr_filter_config.nr_scale_percent;
+              runtime_status.nr_intensity = nr_filter_config.nr_intensity;
+              runtime_status.nr_ui_correction = nr_filter_config.nr_ui_correction;
+              runtime_status.nr_motion_quality = nr_filter_config.nr_motion_quality;
+              runtime_status.nr_style = nr_filter_config.nr_style;
+              runtime_status.nr_skin_structure_strength = nr_filter_config.nr_skin_structure_strength;
+              runtime_status.nr_auto_mask = nr_filter_config.nr_auto_mask;
+            }
+            update_enhancement_runtime_status(true);
+          }
           conversion_input_texture = filter_result.frame.texture;
           conversion_input_srv = filter_result.frame.srv;
           conversion_input_format = filter_result.frame.format;
@@ -795,6 +852,15 @@ namespace platf::dxgi {
       }
       hdr_pre_encode.constantBuffer = std::move(next_buffer);
       hdr_pre_encode.params = params;
+    }
+
+    void
+    report_dolby_vision_output(bool injected, bool enabled) {
+      if (runtime_status.dv_profile.empty()) return;
+      const std::string next = injected ? "active" : enabled ? "waiting" : "fallback";
+      if (runtime_status.dv_state == next) return;
+      runtime_status.dv_state = next;
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 
     void
@@ -1302,32 +1368,60 @@ namespace platf::dxgi {
       display = nullptr;
 
       if (config.pre_encode_filter != pre_encode_filter_e::none) {
-        const bool hdr_output =
-          format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
-        if (!hdr_output) {
-          BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
-          return -1;
+        // Only the SDR-to-HDR kind feeds the synthetic-HDR wire, which is
+        // defined for 10-bit HDR encoder surfaces. Neural enhancement preserves
+        // the captured SDR or native HDR domain and uses its existing encoder.
+        if (config.pre_encode_filter == pre_encode_filter_e::external_sdr_to_hdr) {
+          const bool hdr_output =
+            format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+          if (!hdr_output) {
+            BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
+            return -1;
+          }
         }
         const auto &contract = config.effective_frame_pipeline_policy().capture;
-        if (contract.required_domain != frame_domain_e::sdr_rec709 ||
-            contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
-            !contract.require_private_handoff) {
-          BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
+        const bool sdr_input = contract.required_domain == frame_domain_e::sdr_rec709 &&
+                               contract.preferred_encoding == pixel_encoding_class_e::unorm8;
+        const bool hdr_nr_input = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement &&
+                                  contract.required_domain == frame_domain_e::linear_scrgb &&
+                                  contract.preferred_encoding == pixel_encoding_class_e::float16;
+        if ((!sdr_input && !hdr_nr_input) || !contract.require_private_handoff) {
+          BOOST_LOG(error) << "Pre-encode filter requires a compatible private capture contract"sv;
           return -1;
         }
         pre_encode_filter = make_pre_encode_filter(
           config.pre_encode_filter,
           device.get(),
           device_ctx.get(),
-          config.hdr_backend ? config.hdr_backend->path : std::filesystem::path {},
+          config.enhancement_backend ? config.enhancement_backend->path : std::filesystem::path {},
           config.pre_encode_filter_config,
-          config.hdr_backend ? config.hdr_backend->id : std::string_view {});
+          config.enhancement_backend ? config.enhancement_backend->id : std::string_view {},
+          config.enhancement_backend ? config.enhancement_backend->runtime_digest : std::string_view {});
         if (!pre_encode_filter) {
           BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
           return -1;
         }
-        hdr_backend = config.hdr_backend;
+        enhancement_backend = config.enhancement_backend;
+        nr_filter_active = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement;
         filter_capture_contract = contract;
+      }
+
+      runtime_status.nr_toggle_supported = config.pre_encode_filter == pre_encode_filter_e::none || nr_filter_active;
+      runtime_status.nr_requested_enabled = nr_filter_active;
+      runtime_status.nr_requested_scale_percent = runtime_status.nr_scale_percent = config.pre_encode_filter_config.nr_scale_percent;
+      const auto dv = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+      runtime_status.dv_profile = dv == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ? "8.1" :
+        dv == hdr::dynamic_hdr_format_e::dolby_vision_profile_84 ? "8.4" : "";
+      runtime_status.dv_state = runtime_status.dv_profile.empty() ? "off" : "fallback";
+      nr_filter_config = config.pre_encode_filter_config;
+      runtime_status.nr_requested_style = runtime_status.nr_style = nr_filter_config.nr_style;
+      runtime_status.nr_requested_skin_structure_strength = runtime_status.nr_skin_structure_strength = nr_filter_config.nr_skin_structure_strength;
+      runtime_status.nr_requested_auto_mask = runtime_status.nr_auto_mask = nr_filter_config.nr_auto_mask;
+      runtime_status.nr_requested_intensity = runtime_status.nr_intensity = nr_filter_config.nr_intensity;
+      runtime_status.nr_requested_ui_correction = runtime_status.nr_ui_correction = nr_filter_config.nr_ui_correction;
+      runtime_status.nr_requested_motion_quality = runtime_status.nr_motion_quality = nr_filter_config.nr_motion_quality;
+      if (config.enhancement_backend && config.enhancement_backend->id == image_enhancement::NVIDIA_DLSSNR_BACKEND) {
+        nr_session_backend = config.enhancement_backend;
       }
 
       blend_disable = make_blend(device.get(), false, false);
@@ -1456,8 +1550,9 @@ namespace platf::dxgi {
     prepare_filter_handoff(
       ID3D11Texture2D *source,
       const captured_frame_desc_t &semantic) {
-      if (!source || semantic.domain != frame_domain_e::sdr_rec709 ||
-          semantic.encoding != pixel_encoding_class_e::unorm8) {
+      auto source_contract = filter_capture_contract;
+      source_contract.require_private_handoff = false;
+      if (!source || !frame_satisfies_capture_contract(source_contract, semantic)) {
         BOOST_LOG(error) << "Cannot detach unsupported pre-encode filter input"sv;
         return false;
       }
@@ -1735,31 +1830,104 @@ namespace platf::dxgi {
     }
 
     void
-    update_synthetic_hdr_runtime_status(
+    rollback_failed_nr_request() {
+      if (!nr_rollback_pending) return;
+      nr_rollback_pending = false;
+      runtime_status.nr_settings_failure_reason = runtime_status.nr_failure_reason;
+      nr_restoring_settings = ::video::rollback_nr_settings(runtime_status_id, nr_attempt_request, nr_previous_request);
+    }
+
+    void
+    apply_nr_request() {
+      const auto requested = ::video::requested_nr_settings(runtime_status_id);
+      if (!requested || (requested->enabled == runtime_status.nr_requested_enabled &&
+          requested->scale_percent == nr_filter_config.nr_scale_percent &&
+          requested->intensity == nr_filter_config.nr_intensity &&
+          requested->ui_correction == nr_filter_config.nr_ui_correction &&
+          requested->motion_quality == nr_filter_config.nr_motion_quality &&
+          requested->style == nr_filter_config.nr_style &&
+          requested->skin_structure_strength == nr_filter_config.nr_skin_structure_strength &&
+          requested->auto_mask == nr_filter_config.nr_auto_mask)) return;
+      nr_rollback_pending = requested->enabled && runtime_status.nr_state == "active";
+      nr_attempt_request = *requested;
+      nr_previous_request = { true, runtime_status.nr_scale_percent, runtime_status.nr_intensity,
+        runtime_status.nr_ui_correction, runtime_status.nr_motion_quality, 0,
+        runtime_status.nr_style, runtime_status.nr_skin_structure_strength, runtime_status.nr_auto_mask };
+      if (!nr_restoring_settings) runtime_status.nr_settings_failure_reason.clear();
+      nr_restoring_settings = false;
+      runtime_status.nr_requested_enabled = requested->enabled;
+      runtime_status.nr_requested_scale_percent = requested->scale_percent;
+      nr_filter_config.nr_scale_percent = requested->scale_percent;
+      nr_filter_config.nr_intensity = runtime_status.nr_requested_intensity = requested->intensity;
+      nr_filter_config.nr_ui_correction = runtime_status.nr_requested_ui_correction = requested->ui_correction;
+      nr_filter_config.nr_motion_quality = runtime_status.nr_requested_motion_quality = requested->motion_quality;
+      nr_filter_config.nr_style = runtime_status.nr_requested_style = requested->style;
+      nr_filter_config.nr_skin_structure_strength = runtime_status.nr_requested_skin_structure_strength = requested->skin_structure_strength;
+      nr_filter_config.nr_auto_mask = runtime_status.nr_requested_auto_mask = requested->auto_mask;
+      // Only this conversion thread touches D3D state. Draining and destroying
+      // the old filter also discards NGX and optical-flow history before restart.
+      if (pre_encode_filter) pre_encode_filter->flush();
+      pre_encode_filter.reset();
+      enhancement_backend.reset();
+      nr_filter_active = false;
+      runtime_status.nr_backend = "none";
+      runtime_status.nr_failure_reason.clear();
+      runtime_status.nr_state = requested->enabled ? "warming_up" : "disabled";
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      if (!requested->enabled) return;
+
+      if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
+      enhancement_backend = nr_session_backend;
+      if (!enhancement_backend) {
+        runtime_status.nr_state = "degraded";
+        runtime_status.nr_failure_reason = "component_unavailable";
+        rollback_failed_nr_request();
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
+      pre_encode_filter = make_pre_encode_filter(pre_encode_filter_e::external_neural_enhancement,
+        device.get(), device_ctx.get(), enhancement_backend->path, nr_filter_config,
+        enhancement_backend->id, enhancement_backend->runtime_digest);
+      nr_filter_active = true;
+      filter_capture_contract = {};
+      filter_capture_contract.require_private_handoff = true;
+      if (!pre_encode_filter) {
+        runtime_status.nr_state = "degraded";
+        runtime_status.nr_failure_reason = "filter_create_failed";
+        rollback_failed_nr_request();
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
+      update_enhancement_runtime_status(false);
+    }
+
+    void
+    update_enhancement_runtime_status(
       bool processed_frame,
       std::string_view frame_failure = {}) {
+      auto &reported_backend = nr_filter_active ? runtime_status.nr_backend : runtime_status.synthetic_hdr_backend;
+      auto &reported_state = nr_filter_active ? runtime_status.nr_state : runtime_status.synthetic_hdr_state;
+      auto &reported_reason = nr_filter_active ? runtime_status.nr_failure_reason : runtime_status.synthetic_hdr_failure_reason;
       if (!pre_encode_filter) {
-        runtime_status.synthetic_hdr_backend = "none";
-        runtime_status.synthetic_hdr_state = "disabled";
-        runtime_status.synthetic_hdr_failure_reason.clear();
+        reported_backend = "none";
+        reported_state = "disabled";
+        reported_reason.clear();
         return;
       }
 
-      const std::string backend { hdr_backend ? hdr_backend->id : pre_encode_filter->backend_name() };
+      const std::string backend { enhancement_backend ? enhancement_backend->id : pre_encode_filter->backend_name() };
       const std::string state = !frame_failure.empty() || pre_encode_filter->degraded()
                                   ? "degraded"
                                   : processed_frame ? "active" : "warming_up";
       const std::string reason = frame_failure.empty()
                                    ? std::string { pre_encode_filter->failure_reason() }
                                    : std::string { frame_failure };
-      if (runtime_status.synthetic_hdr_backend == backend &&
-          runtime_status.synthetic_hdr_state == state &&
-          runtime_status.synthetic_hdr_failure_reason == reason) {
+      if (reported_backend == backend && reported_state == state && reported_reason == reason) {
         return;
       }
-      runtime_status.synthetic_hdr_backend = backend;
-      runtime_status.synthetic_hdr_state = state;
-      runtime_status.synthetic_hdr_failure_reason = reason;
+      reported_backend = backend;
+      reported_state = state;
+      reported_reason = reason;
       ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 
@@ -1802,7 +1970,7 @@ namespace platf::dxgi {
         cs_path_active ? std::string {} : cs_fallback_reason;
       runtime_status.analysis_failure_reason =
         runtime_status.analysis_active ? std::string {} : hdr_analysis_failure_reason;
-      update_synthetic_hdr_runtime_status(false);
+      update_enhancement_runtime_status(false);
 
       if (runtime_status_id == 0) {
         runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
@@ -1832,7 +2000,12 @@ namespace platf::dxgi {
     // amongst multiple hwdevice_t objects (and therefore multiple ID3D11Devices).
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
-    boost::shared_ptr<const hdr_enhanced::backend_use_t> hdr_backend;
+    boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
+    bool nr_filter_active = false;
+    bool nr_rollback_pending = false, nr_restoring_settings = false;
+    pre_encode_filter_config_t nr_filter_config;
+    ::video::nr_request_t nr_attempt_request {}, nr_previous_request {};
+    boost::shared_ptr<const image_enhancement::backend_use_t> nr_session_backend;
     capture_contract_t filter_capture_contract;
     std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
     texture2d_t filter_handoff_texture;
@@ -3079,7 +3252,8 @@ namespace platf::dxgi {
       // probing on some drivers and a wedged probe delays every stream start.
       // Probe the known-good pitch-linear path; only real sessions opt in.
       nvenc_config.cuda_array_input = nvenc_config.cuda_array_input && !is_probe;
-      if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format)) return false;
+      // The encoder publishes its frame budget report itself for real sessions.
+      if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format, is_probe)) return false;
 
       base.apply_colorspace(colorspace);
       base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);
@@ -3097,6 +3271,11 @@ namespace platf::dxgi {
       // Propagate per-frame luminance stats from GPU analyzer to encode device
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    void
+    report_dolby_vision_output(bool injected, bool enabled) override {
+      base.report_dolby_vision_output(injected, enabled);
     }
 
     void
@@ -3218,6 +3397,11 @@ namespace platf::dxgi {
       int result = base.convert(img_base);
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    void
+    report_dolby_vision_output(bool injected, bool enabled) override {
+      base.report_dolby_vision_output(injected, enabled);
     }
 
     void
