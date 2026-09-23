@@ -44,7 +44,6 @@ extern "C" {
 #include "config.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
-#include "ds5/config.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "rtsp.h"
@@ -2440,11 +2439,9 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
-            const auto ds5_settings = ds5_config::current();
             // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
-              ds5_settings.audio_haptics &&
-              input::has_ds5_gamepad(session->input);
+              input::has_ds5_audio_haptics(session->input);
             auto &feedback_queue = session->control.feedback_queue;
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();

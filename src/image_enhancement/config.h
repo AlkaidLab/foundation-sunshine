@@ -102,6 +102,8 @@ namespace image_enhancement {
     result_t
     verify_maintenance(std::string_view id, std::string_view operation_id);
     result_t
+    defer_removal(std::string_view id, std::string_view operation_id);
+    result_t
     inspect_maintenance(std::string_view id, std::string &operation_id);
     result_t
     finish_maintenance(std::string_view id, std::string_view operation_id);

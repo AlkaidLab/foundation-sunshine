@@ -1601,6 +1601,11 @@ namespace platf {
     return false;
   }
 
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &) {
+    return false;
+  }
+
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     TUPLE_2D_REF(uinput, gamepad_state_old, ((input_raw_t *) input.get())->gamepads[nr]);

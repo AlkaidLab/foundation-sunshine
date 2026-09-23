@@ -310,6 +310,7 @@ namespace image_enhancement {
     boost::atomic_shared_ptr<const backend_use_t> validated_nr;
     std::vector<boost::weak_ptr<const backend_use_t>> users;
     std::string maintenance;
+    std::string pending_removal;
     bool maintenance_unknown = false;
 
     settings_t
@@ -329,6 +330,58 @@ namespace image_enhancement {
       catch (...) {
         throw config_invalid_t {};
       }
+    }
+
+    // A loaded NGX module can keep its DLL mapped until this process exits.
+    // Complete a previously authorized removal before validating or loading
+    // any component in the new Sunshine process.
+    bool
+    complete_deferred_removal(std::string_view expected_id = {}, std::string_view expected_operation = {}) {
+      const auto journal = read_document(maintenance_file, true);
+      if (journal.is_discarded() || !journal.contains("pending_remove")) return false;
+      const auto id = journal.at("pending_remove").get<std::string>();
+      const auto operation = journal.at("operation_id").get<std::string>();
+      if (operation.empty() || journal.at("component_id").get<std::string>() != id || !is_known_backend(id) ||
+          (!expected_id.empty() && id != expected_id) ||
+          (!expected_operation.empty() && operation != expected_operation)) {
+        throw std::runtime_error("deferred_removal_invalid");
+      }
+      maintenance_lock_t operation_lock(maintenance_file);
+      if (!operation_lock) throw std::runtime_error("deferred_removal_helper_running");
+      if (read_document(maintenance_file) != journal) throw std::runtime_error("deferred_removal_changed");
+
+      auto value = disk();
+      const auto &traits = traits_for(id);
+      const auto directory = root / "hdr_enhanced" / traits.subdir;
+      if (fs::exists(directory) || fs::is_symlink(directory)) {
+        const auto canonical_root = fs::canonical(root);
+        if (canonical_root != fs::canonical(root.parent_path()) / root.filename())
+          throw std::runtime_error("deferred_removal_root_invalid");
+        const auto expected = canonical_root / "hdr_enhanced" / traits.subdir;
+        if (fs::canonical(directory) != expected) throw std::runtime_error("deferred_removal_directory_invalid");
+        for (const auto name : { traits.runtime_name, std::string_view { "component.json" } }) {
+          const auto file = directory / name;
+          if (fs::exists(file) || fs::is_symlink(file)) {
+            if (!fs::is_regular_file(file) && !fs::is_symlink(file)) throw std::runtime_error("deferred_removal_file_invalid");
+            fs::remove(file);
+          }
+        }
+      }
+      bool changed = false;
+      if (value.selected_backend == id) {
+        value.selected_backend.clear();
+        changed = true;
+      }
+      if (value.selected_nr_backend == id) {
+        value.selected_nr_backend.clear();
+        changed = true;
+      }
+      changed |= value.versions.erase(std::string { id }) != 0;
+      changed |= value.runtime_pins.erase(std::string { id }) != 0;
+      if (changed && !write_document(file, settings_json(value))) throw std::runtime_error("deferred_removal_config_save_failed");
+      if (!fs::remove(maintenance_file)) throw std::runtime_error("deferred_removal_journal_missing");
+      BOOST_LOG(info) << "Completed deferred removal of " << id;
+      return true;
     }
 
     /**
@@ -428,13 +481,36 @@ namespace image_enhancement {
   manager_t::initialize() {
     boost::lock_guard lock(impl_->transaction);
     try {
+      impl_->complete_deferred_removal();
+    }
+    catch (const std::bad_alloc &) {
+      throw;
+    }
+    catch (const std::exception &error) {
+      BOOST_LOG(warning) << "Deferred enhancement removal remains pending: " << error.what();
+    }
+    catch (...) {
+      BOOST_LOG(warning) << "Deferred enhancement removal remains pending: invalid configuration";
+    }
+    impl_->maintenance.clear();
+    impl_->pending_removal.clear();
+    impl_->maintenance_unknown = false;
+    try {
       const auto maintenance = read_document(impl_->maintenance_file, true);
       if (!maintenance.is_discarded()) {
         impl_->maintenance = maintenance.at("operation_id").get<std::string>();
         if (impl_->maintenance.empty()) throw std::runtime_error("maintenance_invalid");
+        if (maintenance.contains("pending_remove")) {
+          const auto pending = maintenance.at("pending_remove").get<std::string>();
+          if (!is_known_backend(pending) || maintenance.at("component_id").get<std::string>() != pending) {
+            throw std::runtime_error("deferred_removal_invalid");
+          }
+          impl_->pending_removal = pending;
+        }
       }
     }
     catch (...) {
+      impl_->pending_removal.clear();
       impl_->maintenance_unknown = true;
     }
     try {
@@ -561,6 +637,7 @@ namespace image_enhancement {
     boost::lock_guard gate(impl_->ownership);
     const auto settings = impl_->active.load();
     return { { "in_use", impl_->used_locked() }, { "maintenance", !impl_->maintenance.empty() || impl_->maintenance_unknown },
+      { "pending_removal", impl_->pending_removal },
       { "adapter_present", adapter_present && !adapter_error },
       { "nr_adapter_present", nr_adapter_present && !nr_adapter_error },
       { "selected_backend", settings ? settings->selected_backend : std::string {} },
@@ -586,7 +663,7 @@ namespace image_enhancement {
       if (impl_->used_locked() || !impl_->maintenance.empty() || impl_->maintenance_unknown) return { 409, "hdr_component_busy" };
       impl_->maintenance = token;
     }
-    if (!write_document(impl_->maintenance_file, { { "operation_id", token } })) {
+    if (!write_document(impl_->maintenance_file, { { "operation_id", token }, { "component_id", id } })) {
       boost::lock_guard gate(impl_->ownership);
       impl_->maintenance.clear();
       return { 500, "hdr_maintenance_failed" };
@@ -603,6 +680,33 @@ namespace image_enhancement {
     if (!is_known_backend(id) || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
     boost::lock_guard gate(impl_->ownership);
     if (impl_->maintenance_unknown || impl_->maintenance != operation_id) return { 409, "hdr_maintenance_mismatch" };
+    return {};
+  }
+
+  result_t
+  manager_t::defer_removal(std::string_view id, std::string_view operation_id) {
+    if (!is_known_backend(id) || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
+    boost::unique_lock lock(impl_->transaction, boost::try_to_lock);
+    if (!lock.owns_lock()) return { 409, "hdr_save_busy" };
+    maintenance_lock_t operation_lock(impl_->maintenance_file);
+    if (!operation_lock) return { 409, "hdr_helper_running" };
+    {
+      boost::lock_guard gate(impl_->ownership);
+      if (impl_->maintenance_unknown || impl_->maintenance != operation_id || !impl_->pending_removal.empty())
+        return { 409, "hdr_maintenance_mismatch" };
+    }
+    try {
+      const auto journal = read_document(impl_->maintenance_file);
+      if (journal.at("operation_id").get<std::string>() != operation_id ||
+          journal.at("component_id").get<std::string>() != id) return { 409, "hdr_maintenance_mismatch" };
+      if (!write_document(impl_->maintenance_file, { { "operation_id", operation_id },
+            { "component_id", id }, { "pending_remove", id } })) return { 500, "hdr_maintenance_failed" };
+    }
+    catch (...) {
+      return { 500, "hdr_maintenance_failed" };
+    }
+    boost::lock_guard gate(impl_->ownership);
+    impl_->pending_removal = id;
     return {};
   }
 
@@ -626,6 +730,7 @@ namespace image_enhancement {
     {
       boost::lock_guard gate(impl_->ownership);
       if (impl_->maintenance != operation_id || impl_->maintenance_unknown) return { 409, "hdr_maintenance_mismatch" };
+      if (!impl_->pending_removal.empty()) return { 409, "hdr_removal_pending" };
     }
     // 文件可能已被安装器替换；不能重新放行维护前验证过的路径快照。
     try {
@@ -663,6 +768,45 @@ namespace image_enhancement {
     if (!is_known_backend(id)) return { 404, "hdr_component_unknown" };
     boost::unique_lock lock(impl_->transaction, boost::try_to_lock);
     if (!lock.owns_lock()) return { 409, "hdr_save_busy" };
+    std::string pending_operation;
+    {
+      boost::lock_guard gate(impl_->ownership);
+      if (!impl_->pending_removal.empty()) {
+        if (impl_->maintenance_unknown || impl_->pending_removal != id) return { 409, "hdr_maintenance_mismatch" };
+        pending_operation = impl_->maintenance;
+      }
+    }
+    if (!pending_operation.empty()) {
+      try {
+        if (!impl_->complete_deferred_removal(id, pending_operation)) return { 409, "hdr_maintenance_mismatch" };
+        const auto value = impl_->disk();
+        impl_->active.store(make_immutable<settings_t>(value));
+        try {
+          const auto validated = impl_->validate(value);
+          impl_->validated_hdr.store(validated.hdr);
+          impl_->validated_nr.store(validated.nr);
+        }
+        catch (...) {
+          impl_->validated_hdr.store({});
+          impl_->validated_nr.store({});
+        }
+        boost::lock_guard gate(impl_->ownership);
+        impl_->maintenance.clear();
+        impl_->pending_removal.clear();
+        return {};
+      }
+      catch (const std::bad_alloc &) {
+        throw;
+      }
+      catch (const std::exception &error) {
+        BOOST_LOG(warning) << "Deferred enhancement removal retry failed: " << error.what();
+        return { 500, "hdr_removal_pending" };
+      }
+      catch (...) {
+        BOOST_LOG(warning) << "Deferred enhancement removal retry failed: invalid configuration";
+        return { 500, "hdr_removal_pending" };
+      }
+    }
     maintenance_lock_t operation_lock(impl_->maintenance_file);
     if (!operation_lock) return { 409, "hdr_helper_running" };
     // 恢复不意味着强行启用。文件不匹配时保留用户设置，但禁用运行时引用，允许修复。

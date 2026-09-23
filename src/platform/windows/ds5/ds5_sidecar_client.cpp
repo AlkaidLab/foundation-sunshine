@@ -265,6 +265,10 @@ namespace platf::ds5 {
   }  // namespace
 
   struct sidecar_client_t::impl_t {
+    explicit impl_t(boost::atomic<bool> &published_audio_haptics):
+        published_audio_haptics(published_audio_haptics) {}
+
+    boost::atomic<bool> &published_audio_haptics;
     HANDLE pipe = INVALID_HANDLE_VALUE;
     HANDLE process = nullptr;
     HANDLE job = nullptr;
@@ -371,6 +375,7 @@ namespace platf::ds5 {
             const auto role = p[2] < role_names.size() ? role_names[p[2]] : "unknown"sv;
             force_hid_fallback = true;
             audio_haptics_requested = false;
+            published_audio_haptics.store(false, boost::memory_order_relaxed);
             BOOST_LOG(warning) << "The virtual DualSense audio endpoint became the Windows "sv
                                << role << " default; falling back to HID-only DualSense"sv;
           }
@@ -547,6 +552,7 @@ namespace platf::ds5 {
       audio_haptics_requested = audio_haptics && !force_hid_fallback;
       genshin_compatibility_requested = use_genshin_identity && audio_haptics_requested;
       online = true;
+      published_audio_haptics.store(audio_haptics_requested, boost::memory_order_relaxed);
       BOOST_LOG(info) << "DualSense sidecar attached controller "sv << id.globalIndex
                       << (reply.payload[1] ? " with native four-channel haptics" : " (HID only)")
                       << (genshin_compatibility_requested ? " using Genshin compatibility identity" : "");
@@ -600,6 +606,7 @@ namespace platf::ds5 {
         while (!stopping && receive(message)) {
           dispatch(message);
         }
+        published_audio_haptics.store(false, boost::memory_order_relaxed);
         online = false;
         if (stopping) {
           break;
@@ -620,6 +627,7 @@ namespace platf::ds5 {
         }
         BOOST_LOG(info) << "DualSense sidecar recovered after one relaunch"sv;
       }
+      published_audio_haptics.store(false, boost::memory_order_relaxed);
       online = false;
       if (!stopping) {
         global_index = -1;
@@ -631,6 +639,7 @@ namespace platf::ds5 {
       if (stopping.exchange(true)) {
         return;
       }
+      published_audio_haptics.store(false, boost::memory_order_relaxed);
       online = false;
       if (stop_event) {
         SetEvent(stop_event);
@@ -638,6 +647,8 @@ namespace platf::ds5 {
       if (reader.joinable()) {
         reader.join();
       }
+      // 正在完成的恢复可能再次发布 true；join 后确保最终状态为离线。
+      published_audio_haptics.store(false, boost::memory_order_relaxed);
       close_transport();
       global_index = -1;
     }
@@ -664,7 +675,7 @@ namespace platf::ds5 {
   }
 
   sidecar_client_t::sidecar_client_t():
-      _impl(std::make_unique<impl_t>()) {
+      _impl(std::make_unique<impl_t>(published_audio_haptics)) {
     refresh_component_availability();
   }
 
@@ -680,6 +691,10 @@ namespace platf::ds5 {
     return global_index >= 0 && _impl->global_index == global_index;
   }
 
+  bool sidecar_client_t::audio_haptics_active() const noexcept {
+    return published_audio_haptics.load(boost::memory_order_relaxed);
+  }
+
   int sidecar_client_t::alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue,
                               bool audio_haptics, bool genshin_compatibility) {
     if (!configured() || _impl->global_index >= 0) {
@@ -689,14 +704,14 @@ namespace platf::ds5 {
     if (_impl->attach(id, audio_haptics, genshin_compatibility && audio_haptics)) {
       return 0;
     }
-    _impl = std::make_unique<impl_t>();
+    _impl = std::make_unique<impl_t>(published_audio_haptics);
     return -1;
   }
 
   void sidecar_client_t::free(int global_index) {
     if (_impl->global_index == global_index) {
       _impl->close();
-      _impl = std::make_unique<impl_t>();
+      _impl = std::make_unique<impl_t>(published_audio_haptics);
     }
   }
 
