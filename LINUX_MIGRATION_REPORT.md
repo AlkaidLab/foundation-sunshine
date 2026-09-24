@@ -892,6 +892,23 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
        `CMAKE_CUDA_ARCHITECTURES` 并剔除工具链已删除的架构（CUDA 13 不接受 Turing 以下）。CUDA 13.4/sm_86
        实测编译+链接通过，`sccache` launcher 生效；运行时未在本沙箱验证（无 GPU）。
 
+45. **第二十二轮：虚拟屏创建与 KWin 激活的竞争修复（2026-09-24）**：用户报告会话启动连锁失败
+    （`Output with name or uuid DP-2 not found` → `Cannot set display mode for unknown output: DP-2` →
+    `Couldn't find monitor [23172]` → 全部编码器失败 → 会话中止回滚）。现场复现（kdialog 提权 +
+    udevadm/modetest/kscreen 轮询）定位根因：**status 强制上电触发的 uevent 会让当前 KWin 自己探测、
+    点亮并给 CRTC（实测 176ms–1.5s 内），但这个激活是一次性的；`force_crtc_assignment` 的 pidfd
+    抢 master modeset 若与之相撞，KWin 记 `atomic commit failed: 权限不够` 后放弃该输出且永不重试**，
+    于是 kscreen 永远列不出 DP-2，后续全链失败。按 boot 时序翻车（9/20、9/23 多次成功，9/24 boot 5/5
+    失败）；greenboost.ko / EDID 内容 / 包版本均被对照实验排除。修复（`vdd_utils.cpp`）：
+     - 创建与模式切换路径改为**组合器先行**：`wait_for_compositor_output()` 轮询 kscreen（新助手
+       `kscreen_sees_connector`）等 KWin 点亮连接器，点亮即跳过抢 master；
+     - 抢 master 降级为对"忽略 status-forced 连接器的合成器"的兜底；兜底得手但 kscreen 仍不可见时，
+       **status off→on 循环一次**给组合器新的激活机会（EDID override 跨周期存活）；
+     - 可观察的组合器（KDE）在兜底+回收后仍看不到连接器时**创建即失败**（原先返回 true 只把失败
+       推迟到模式切换并冠以假 "live" 日志）；非 KScreen 会话保持原宽放行为；
+     - 修掉 kscreen-doctor **退出码 0 但 `applying config failed!`** 的假成功判定（`display_off` prep
+       曾据此误报"已关闭 eDP-1"——KWin 拒绝禁用唯一输出）。
+
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /

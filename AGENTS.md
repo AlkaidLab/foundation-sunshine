@@ -82,9 +82,14 @@ User installs packages themselves (sudo needs a password).
   `vdd_utils::run_logged()` (fork/exec, closes fds, 10s kill).
 - kscreen-doctor needs the session env (`WAYLAND_DISPLAY` + bus); it rejects decimal
   refresh in `mode.WxH@refresh` — fractional rates go by mode id.
-- NVIDIA: status-forced connectors emit no hotplug (CRTC must be force-assigned via
-  pidfd DRM-master borrow) and forced-off reads as plain "disconnected" in sysfs —
-  enumeration must consult `vdd_utils::offlined_physical_connectors()`.
+- NVIDIA: status-forced connectors DO emit a DRM uevent and current KWin probes,
+  lights and CRTCs them itself within ~1.5s — but that activation is one-shot:
+  racing it with the pidfd master-steal SETCRTC makes KWin fail its atomic commit
+  and drop the output permanently. Compositor first, steal only as fallback
+  (`wait_for_compositor_output` in vdd_utils.cpp). Forced-off still reads as plain
+  "disconnected" in sysfs — enumeration must consult `vdd_utils::offlined_physical_connectors()`.
+- kscreen-doctor exits 0 on failures (`Output ... not found`, `applying config
+  failed!`) — verdicts must parse the output text, never the exit code alone.
 - `BOOST_LOG` `"...sv"` literals need `using namespace std::string_view_literals`.
 - Only one sunshine instance at a time (ports 47984/47989/47990/48010).
 

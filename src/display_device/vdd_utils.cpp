@@ -1370,6 +1370,75 @@ namespace display_device::vdd_utils {
     }
 
     /**
+     * @brief Whether the compositor currently exposes the connector as an
+     *        output. kscreen-doctor is the only observable; sessions without
+     *        KScreen cannot be queried and callers fall back to the DRM-level
+     *        signals.
+     */
+    bool
+    kscreen_sees_connector(const std::string &connector) {
+      if (!platf::kscreen::session_supports_kscreen() || !platf::kscreen::probe_allowed()) {
+        return false;
+      }
+
+      const auto result = platf::kscreen::run("-o", platf::kscreen::kProbeTimeout);
+      if (result.exit_code != 0) {
+        platf::kscreen::note_unavailable(result.exit_code < 0 ? "kscreen-doctor did not respond" : "kscreen-doctor failed");
+        return false;
+      }
+      platf::kscreen::note_available();
+
+      // Stripped lines look like "Output: 1 DP-2 <uuid>"; match the name field,
+      // not a substring — a connector-name substring could turn up inside the
+      // uuid of an unrelated output.
+      std::istringstream stream { result.output };
+      std::string line;
+      while (std::getline(stream, line)) {
+        if (line.rfind("Output:", 0) != 0) {
+          continue;
+        }
+        std::istringstream fields { line };
+        std::string tag, index, name;
+        fields >> tag >> index >> name;
+        if (name == connector) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * @brief Wait for the compositor to surface a freshly (re)connected
+     *        connector as an output.
+     * @details The status write emits a DRM uevent and current KWin reprobes,
+     *          enables the output and assigns the CRTC itself, usually within
+     *          a second. That activation is one-shot: racing it with the
+     *          master-steal modeset in force_crtc_assignment() fails KWin's
+     *          atomic commit and it drops the output for good, leaving every
+     *          compositor-mediated step after this (mode set, topology, HDR)
+     *          to die on an output kscreen never lists. Give the compositor
+     *          the first chance; the CRTC steal is the fallback for
+     *          compositors that ignore status-forced connectors.
+     */
+    bool
+    wait_for_compositor_output(const std::string &connector, std::chrono::milliseconds timeout) {
+      if (!platf::kscreen::session_supports_kscreen()) {
+        return false;
+      }
+
+      const auto deadline = std::chrono::steady_clock::now() + timeout;
+      while (true) {
+        if (kscreen_sees_connector(connector)) {
+          return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+          return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds { 200 });
+      }
+    }
+
+    /**
      * @brief Best-effort "make this output the primary display" hint, keyed
      *        by desktop environment. There is no DRM-level primary concept,
      *        so each desktop gets its native mechanism; unsupported desktops
@@ -2160,7 +2229,11 @@ namespace display_device::vdd_utils {
       return true;
     }
 
-    if (!connector_has_crtc(card, connector)) {
+    // Same ordering as creation: the status cycle for the new mode handed the
+    // compositor a fresh connector event, and its one-shot activation must
+    // not be raced with a master steal.
+    if (!wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 }) &&
+        !connector_has_crtc(card, connector)) {
       force_crtc_assignment("/dev/dri/" + card, connector);
     }
     enable_output_via_compositor(connector);
@@ -2425,29 +2498,58 @@ namespace display_device::vdd_utils {
       return false;
     }
 
-    // NVIDIA does not emit a hotplug for a status-forced connector, so the
-    // compositor sees the output but leaves it disabled with no CRTC. Assign
-    // the CRTC ourselves at the DRM level (compositor-agnostic); the KDE
-    // helper is only a fallback. Once the CRTC is up, enable the output so
-    // the compositor starts painting it.
+    // The status write emits a DRM uevent; current KWin reprobes, enables the
+    // output and assigns the CRTC itself. That activation is one-shot, so it
+    // must not be raced with the master steal below: a SETCRTC taken from
+    // under the compositor mid-activation fails its atomic commit and it
+    // drops the output for good, leaving the session to die on the mode set
+    // against an output kscreen never lists. Compositor first; the steal is
+    // the fallback for compositors that ignore status-forced connectors.
+    bool compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
     bool crtc_assigned = connector_has_crtc(card, connector);
-    for (int attempt = 0; attempt < 4 && !crtc_assigned; ++attempt) {
-      if (force_crtc_assignment("/dev/dri/" + card, connector)) {
-        crtc_assigned = true;
-        break;
+
+    if (!compositor_live && !crtc_assigned) {
+      for (int attempt = 0; attempt < 4 && !crtc_assigned; ++attempt) {
+        force_crtc_assignment("/dev/dri/" + card, connector);
+        enable_output_via_compositor(connector);
+        crtc_assigned = connector_has_crtc(card, connector);
+        if (!crtc_assigned) {
+          std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+        }
       }
-      enable_output_via_compositor(connector);
-      crtc_assigned = connector_has_crtc(card, connector);
-      if (!crtc_assigned) {
-        std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+
+      if (crtc_assigned) {
+        // The steal may have landed inside the compositor's one-shot
+        // activation of this connector event. Recycling the connector hands
+        // it a fresh attempt; the EDID override survives the cycle.
+        compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 1000 });
+        if (!compositor_live) {
+          BOOST_LOG(warning) << "vdd: recycling "sv << connector
+                             << " so the compositor retries its activation"sv;
+          write_text_file(status_path, "off");
+          wait_for_status(status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+          write_text_file(status_path, "on");
+          wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
+          compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
+        }
       }
     }
 
-    if (!crtc_assigned) {
-      BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
+    if (compositor_live || crtc_assigned) {
+      // No-op when the compositor already enabled the output; needed for
+      // compositors that surface new outputs disabled.
+      enable_output_via_compositor(connector);
+    }
+    else if (platf::kscreen::session_supports_kscreen()) {
+      // The compositor is observable and still does not see the connector.
+      // Returning true here would only move the failure to the mode set with
+      // a bogus "live" log in front of it; fail where the cause is visible.
+      BOOST_LOG(error) << "vdd: compositor never surfaced "sv << connector
+                       << "; refusing to create a virtual display it cannot use"sv;
+      return false;
     }
     else {
-      enable_output_via_compositor(connector);
+      BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
     }
 
     active = true;
@@ -2604,7 +2706,13 @@ namespace display_device::vdd_utils {
 
         for_each_connected_physical(vd_connector, [&](const auto &, const auto &connector) {
           const auto result = platf::kscreen::run("output." + connector + ".disable", std::chrono::milliseconds { 10'000 });
-          if (result.exit_code == 0) {
+          // kscreen-doctor exits 0 even when the config application fails
+          // ("applying config failed! <compositor reason>" — e.g. KWin
+          // refusing to disable the only output it knows about); the text is
+          // the only reliable verdict.
+          const bool switched_off = result.exit_code == 0 &&
+                                    result.output.find("applying config failed") == std::string::npos;
+          if (switched_off) {
             offlined_physical_outputs.emplace_back(connector);
             BOOST_LOG(info) << "vdd: display_off prep switched physical output "sv << connector << " off through the compositor"sv;
           }
