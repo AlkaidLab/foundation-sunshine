@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Nessuna modifica allo stato del display; l'utente deve assicurarsi che il display sia pronto",
     "display_device_prep_no_operation_windows": "Disabilitato",
     "display_device_prep_windows": "Preparazione del display",
-    "display_mode_remapping_default_mode_desc_windows": "Deve essere specificato almeno un valore \"ricevuto\" e un valore \"finale\".\nUn campo vuoto nella sezione \"ricevuto\" significa \"corrisponde a qualsiasi valore\". Un campo vuoto nella sezione \"finale\" significa \"mantieni il valore ricevuto\".\nSe lo desideri, puoi associare un valore FPS specifico a una risoluzione specifica...\n\nNota: se l'opzione \"Ottimizza impostazioni di gioco\" non è abilitata nel client Moonlight, le righe contenenti i valori di risoluzione vengono ignorate.",
-    "display_mode_remapping_desc_windows": "Specifica come una risoluzione e/o una frequenza di aggiornamento specifica deve essere rimappata ad altri valori.\nPuoi trasmettere in streaming a una risoluzione inferiore, mentre il rendering avviene a una risoluzione superiore sull'host per un effetto di supersampling.\nOppure puoi trasmettere in streaming a FPS più alti limitando l'host a una frequenza di aggiornamento inferiore.\nLa corrispondenza viene eseguita dall'alto verso il basso. Una volta trovata la corrispondenza, le altre voci non vengono più controllate, ma vengono comunque validate.",
-    "display_mode_remapping_final_refresh_rate_windows": "Frequenza di aggiornamento finale",
-    "display_mode_remapping_final_resolution_windows": "Risoluzione finale",
-    "display_mode_remapping_optional": "opzionale",
-    "display_mode_remapping_received_fps_windows": "FPS ricevuti",
-    "display_mode_remapping_received_resolution_windows": "Risoluzione ricevuta",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Nota: se l'opzione \"Ottimizza impostazioni di gioco\" non è abilitata nel client Moonlight, la rimappatura è disabilitata.",
-    "display_mode_remapping_windows": "Rimappa le modalità di visualizzazione",
     "display_modes": "Modalità di visualizzazione",
     "ds4_back_as_touchpad_click": "Mappa Indietro/Select come Clic Touchpad",
     "ds4_back_as_touchpad_click_desc": "Quando si forza l'emulazione DS4, mappa Indietro/Select come Clic Touchpad",
@@ -637,11 +628,6 @@
           "description": "Sunshine modificherà la risoluzione o la frequenza di aggiornamento per le sessioni di streaming.",
           "recovery": "Ripristina la modifica della risoluzione e la modifica dell'FPS su Disabilitato se il monitor non ritorna alla modalità prevista.",
           "title": "Automazione della modalità di visualizzazione modificata"
-        },
-        "display_mode_remapping": {
-          "description": "Le modalità di visualizzazione richieste dal cliente verranno rimappate prima che Sunshine le applichi.",
-          "recovery": "Rimuovere le regole di rimappatura se i client ricevono una risoluzione o una frequenza di aggiornamento imprevista.",
-          "title": "Rimappatura modalità di visualizzazione modificata"
         },
         "elevated_global_commands": {
           "description": "I comandi di preparazione globale includono comandi con privilegi elevati. Possono modificare lo stato del sistema prima o dopo l'avvio di qualsiasi app.",

@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Inga ändringar av skärmstatus; användaren måste själv se till att skärmen är redo",
     "display_device_prep_no_operation_windows": "Inaktiverad",
     "display_device_prep_windows": "Skärmförberedelse",
-    "display_mode_remapping_default_mode_desc_windows": "Minst ett \"mottaget\" och ett \"slutligt\" värde måste anges.\nTomt fält i avsnittet \"mottaget\" betyder \"matcha alla\". Tomt fält i avsnittet \"slutligt\" betyder \"behåll mottaget värde\".\nDu kan matcha specifikt FPS-värde till specifik upplösning om du vill...\n\nObs: om alternativet \"Optimera spelinställningar\" inte är aktiverat på Moonlight-klienten ignoreras raderna som innehåller upplösningsvärde(n).",
-    "display_mode_remapping_desc_windows": "Ange hur en specifik upplösning och/eller uppdateringsfrekvens ska mappas om till andra värden.\nDu kan strömma med lägre upplösning medan du renderar med högre upplösning på värden för en översamplingseffekt.\nEller så kan du strömma med högre FPS medan du begränsar värden till den lägre uppdateringsfrekvensen.\nMatchning utförs uppifrån och ner. När posten matchas kontrolleras inte andra längre, men valideras fortfarande.",
-    "display_mode_remapping_final_refresh_rate_windows": "Slutlig uppdateringsfrekvens",
-    "display_mode_remapping_final_resolution_windows": "Slutlig upplösning",
-    "display_mode_remapping_optional": "valfritt",
-    "display_mode_remapping_received_fps_windows": "Mottagen FPS",
-    "display_mode_remapping_received_resolution_windows": "Mottagen upplösning",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Obs: om alternativet \"Optimera spelinställningar\" inte är aktiverat på Moonlight-klienten är ommappningen inaktiverad.",
-    "display_mode_remapping_windows": "Mappa om skärmlägen",
     "display_modes": "Skärmlägen",
     "ds4_back_as_touchpad_click": "Karta bakåt/välj att Touchpad Klicka",
     "ds4_back_as_touchpad_click_desc": "När DS4-emulering tvingas, kartlägg Tillbaka/välj att Touchpad Klicka",
@@ -637,11 +628,6 @@
           "description": "Sunshine ändrar upplösning eller uppdateringsfrekvens under strömningssessioner.",
           "recovery": "Återställ Ändra upplösning och Ändra FPS till Inaktiverad om bildskärmen inte återgår till förväntat läge.",
           "title": "Automatiken för bildskärmsläge har ändrats"
-        },
-        "display_mode_remapping": {
-          "description": "Bildskärmslägen som klienten begär mappas om innan Sunshine tillämpar dem.",
-          "recovery": "Ta bort ommappningsreglerna om klienterna får oväntad upplösning eller uppdateringsfrekvens.",
-          "title": "Ommappningen av bildskärmsläge har ändrats"
         },
         "elevated_global_commands": {
           "description": "De globala förberedelsekommandona innehåller kommandon med förhöjd behörighet. De kan ändra systemets tillstånd före eller efter att ett program startas.",

@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Ekran durumunda değişiklik yapılmaz; kullanıcı ekranın hazır olduğundan emin olmalıdır",
     "display_device_prep_no_operation_windows": "Devre Dışı",
     "display_device_prep_windows": "Ekran hazırlığı",
-    "display_mode_remapping_default_mode_desc_windows": "En az bir \"alınan\" ve bir \"son\" değer belirtilmelidir.\n\"alınan\" bölümündeki boş alan \"herhangi biriyle eşleş\" anlamına gelir. \"son\" bölümündeki boş alan \"alınan değeri koru\" anlamına gelir.\nİsterseniz belirli FPS değerini belirli çözünürlükle eşleştirebilirsiniz...\n\nNot: Moonlight istemcisinde \"Oyun ayarlarını optimize et\" seçeneği etkin değilse, çözünürlük değeri (veya değerleri) içeren satırlar yoksayılır.",
-    "display_mode_remapping_desc_windows": "Belirli bir çözünürlüğün ve/veya yenileme hızının diğer değerlere nasıl yeniden eşleneceğini belirtin.\nDaha düşük çözünürlükte akış yaparken, ana bilgisayarda daha yüksek çözünürlükte işleyerek süper örnekleme efekti elde edebilirsiniz.\nVeya daha yüksek FPS'de akış yaparken ana bilgisayarı daha düşük yenileme hızına sınırlayabilirsiniz.\nEşleştirme yukarıdan aşağıya doğru yapılır. Giriş eşleştiğinde, diğerleri artık kontrol edilmez ancak yine de doğrulanır.",
-    "display_mode_remapping_final_refresh_rate_windows": "Son yenileme hızı",
-    "display_mode_remapping_final_resolution_windows": "Son çözünürlük",
-    "display_mode_remapping_optional": "isteğe bağlı",
-    "display_mode_remapping_received_fps_windows": "Alınan FPS",
-    "display_mode_remapping_received_resolution_windows": "Alınan çözünürlük",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Not: Moonlight istemcisinde \"Oyun ayarlarını optimize et\" seçeneği etkin değilse, yeniden eşleme devre dışı bırakılır.",
-    "display_mode_remapping_windows": "Ekran modlarını yeniden eşle",
     "display_modes": "Ekran Modları",
     "ds4_back_as_touchpad_click": "Geri/Seçimi Dokunmatik Yüzeye Eşle Tıklama",
     "ds4_back_as_touchpad_click_desc": "DS4 emülasyonunu zorlarken, Geri/Seç'i Dokunmatik Yüzey Tıklaması ile eşleyin",
@@ -637,11 +628,6 @@
           "description": "Sunshine, akış oturumlarında çözünürlüğü veya yenileme hızını değiştirecek.",
           "recovery": "Monitör beklenen moda dönmezse Çözünürlük Değişikliği ve FPS Değişikliği ayarlarını Devre dışı olarak geri alın.",
           "title": "Ekran modu otomasyonu değiştirildi"
-        },
-        "display_mode_remapping": {
-          "description": "İstemcinin istediği ekran modları Sunshine tarafından uygulanmadan önce yeniden eşlenecek.",
-          "recovery": "İstemciler beklenmeyen çözünürlük veya yenileme hızı alırsa yeniden eşleme kurallarını kaldırın.",
-          "title": "Ekran modu yeniden eşlemesi değiştirildi"
         },
         "elevated_global_commands": {
           "description": "Genel hazırlık komutları yükseltilmiş komutlar içeriyor. Bunlar herhangi bir uygulama başlatılmadan önce veya sonra sistem durumunu değiştirebilir.",
