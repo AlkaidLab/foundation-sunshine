@@ -1,0 +1,180 @@
+<Page
+    x:Class="FoundationSunshineWidget.DashboardWidget"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Background="#F01E1E20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 标题行 -->
+        <Grid Grid.Row="0" Margin="14,12,14,0">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Foundation Sunshine" FontSize="14" FontWeight="SemiBold" Foreground="#EBEBEB" VerticalAlignment="Center"/>
+                <TextBlock Text="串流仪表盘" FontSize="12" Foreground="#6B6B6B" VerticalAlignment="Center"/>
+            </StackPanel>
+            <!-- 数据过期徽标 -->
+            <Border x:Name="StaleBadge" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center"
+                    BorderBrush="#66FFC83D" BorderThickness="1" Background="#14FFC83D" CornerRadius="9" Padding="8,2">
+                <TextBlock x:Name="StaleText" Text="数据过期" FontSize="11" Foreground="#FFC83D"/>
+            </Border>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" Margin="14,10,14,14" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- ============ 主视图:串流中 ============ -->
+                <StackPanel x:Name="MainPanel" Spacing="10">
+                    <!-- 会话卡 -->
+                    <Border Background="#08FFFFFF" CornerRadius="6" Padding="12,10">
+                        <StackPanel Spacing="3">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <Ellipse Width="8" Height="8" Fill="#FF6CCB5E"/>
+                                    <TextBlock Text="串流中" FontSize="12" Foreground="#FF6CCB5E"/>
+                                </StackPanel>
+                                <TextBlock x:Name="ClientText" Text="—" FontSize="13" FontWeight="SemiBold" Foreground="#EBEBEB" VerticalAlignment="Center"/>
+                                <Border BorderBrush="#16FFFFFF" BorderThickness="1" CornerRadius="10" Padding="8,1" VerticalAlignment="Center">
+                                    <TextBlock x:Name="AppText" Text="—" FontSize="12" Foreground="#9E9E9E"/>
+                                </Border>
+                            </StackPanel>
+                            <TextBlock x:Name="MetaText" Text="—" FontSize="12" Foreground="#9E9E9E"/>
+                            <Grid>
+                                <TextBlock x:Name="EncoderText" Text="—" FontSize="11" Foreground="#6B6B6B"/>
+                                <TextBlock x:Name="UptimeText" Text="—" FontSize="11" Foreground="#6B6B6B" HorizontalAlignment="Right"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- FPS 块 -->
+                    <StackPanel Spacing="4">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock x:Name="FpsText" Text="—" FontSize="26" FontWeight="SemiBold" Foreground="#EBEBEB"/>
+                                <TextBlock Text="fps" FontSize="12" Foreground="#6B6B6B" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                            </StackPanel>
+                            <TextBlock x:Name="FpsDeltaText" Text="" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Bottom" Margin="0,0,0,5"/>
+                        </StackPanel>
+                        <Canvas x:Name="SparkCanvas" Height="64" SizeChanged="SparkCanvas_SizeChanged">
+                            <!-- 目标线(代码内定位) -->
+                            <Line x:Name="TargetLine" Stroke="#47FFFFFF" StrokeThickness="1" StrokeDashArray="3,4" X1="0" X2="100"/>
+                            <Polyline x:Name="FpsLine" Stroke="#FF60CDFF" StrokeThickness="2"/>
+                            <Ellipse x:Name="FpsEndDot" Width="7" Height="7" Fill="#FF60CDFF" Stroke="#1E1E20" StrokeThickness="2"/>
+                        </Canvas>
+                        <Grid>
+                            <TextBlock Text="近 60 秒" FontSize="11" Foreground="#6B6B6B"/>
+                            <TextBlock x:Name="TargetNoteText" Text="虚线 = 目标 120 fps" FontSize="11" Foreground="#6B6B6B" HorizontalAlignment="Right"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- 管线延迟 -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="主机管线延迟(p95)" FontSize="12" FontWeight="SemiBold" Foreground="#9E9E9E"/>
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="88"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="捕获→转换" FontSize="12" Foreground="#9E9E9E" HorizontalAlignment="Right" Margin="0,4"/>
+                            <Grid Grid.Row="0" Grid.Column="1" x:Name="Track1" Height="6" VerticalAlignment="Center" SizeChanged="Track_SizeChanged">
+                                <Rectangle Fill="#0DFFFFFF" RadiusX="3" RadiusY="3"/>
+                                <Rectangle x:Name="Bar1" Fill="#FF60CDFF" RadiusX="3" RadiusY="3" HorizontalAlignment="Left" Width="0"/>
+                                <Rectangle x:Name="Mark1" Fill="#59FFFFFF" Width="1" HorizontalAlignment="Left"/>
+                            </Grid>
+                            <TextBlock Grid.Row="0" Grid.Column="2" x:Name="Val1" Text="—" FontSize="12" Foreground="#EBEBEB" Margin="2,4"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="编码" FontSize="12" Foreground="#9E9E9E" HorizontalAlignment="Right" Margin="0,4"/>
+                            <Grid Grid.Row="1" Grid.Column="1" x:Name="Track2" Height="6" VerticalAlignment="Center">
+                                <Rectangle Fill="#0DFFFFFF" RadiusX="3" RadiusY="3"/>
+                                <Rectangle x:Name="Bar2" Fill="#FF60CDFF" RadiusX="3" RadiusY="3" HorizontalAlignment="Left" Width="0"/>
+                                <Rectangle x:Name="Mark2" Fill="#59FFFFFF" Width="1" HorizontalAlignment="Left"/>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Grid.Column="2" x:Name="Val2" Text="—" FontSize="12" Foreground="#EBEBEB" Margin="2,4"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="发送与 FEC" FontSize="12" Foreground="#9E9E9E" HorizontalAlignment="Right" Margin="0,4"/>
+                            <Grid Grid.Row="2" Grid.Column="1" x:Name="Track3" Height="6" VerticalAlignment="Center">
+                                <Rectangle Fill="#0DFFFFFF" RadiusX="3" RadiusY="3"/>
+                                <Rectangle x:Name="Bar3" Fill="#FF60CDFF" RadiusX="3" RadiusY="3" HorizontalAlignment="Left" Width="0"/>
+                                <Rectangle x:Name="Mark3" Fill="#59FFFFFF" Width="1" HorizontalAlignment="Left"/>
+                            </Grid>
+                            <TextBlock Grid.Row="2" Grid.Column="2" x:Name="Val3" Text="—" FontSize="12" Foreground="#EBEBEB" Margin="2,4"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="合计" FontSize="12" FontWeight="SemiBold" Foreground="#EBEBEB" HorizontalAlignment="Right" Margin="0,4"/>
+                            <Grid Grid.Row="3" Grid.Column="1" x:Name="Track4" Height="8" VerticalAlignment="Center">
+                                <Rectangle Fill="#0DFFFFFF" RadiusX="4" RadiusY="4"/>
+                                <Rectangle x:Name="Bar4" Fill="#FF60CDFF" RadiusX="4" RadiusY="4" HorizontalAlignment="Left" Width="0"/>
+                                <Rectangle x:Name="Mark4" Fill="#59FFFFFF" Width="1" HorizontalAlignment="Left"/>
+                            </Grid>
+                            <TextBlock Grid.Row="3" Grid.Column="2" x:Name="Val4" Text="—" FontSize="12" FontWeight="SemiBold" Foreground="#EBEBEB" Margin="2,4"/>
+                        </Grid>
+                        <TextBlock x:Name="BudgetLegend" Text="│ 帧预算 8.3 ms(按 120 fps 目标计算)" FontSize="11" Foreground="#6B6B6B"/>
+                        <TextBlock x:Name="NetText" Text="—" FontSize="11" Foreground="#6B6B6B"/>
+                    </StackPanel>
+
+                    <!-- 动作区 -->
+                    <StackPanel Spacing="6" Margin="0,4,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="StopButton" Content="断开所有会话" Click="StopButton_Click"
+                                    FontSize="12" Foreground="#FF9C95" Background="#0FFFFFFF" BorderBrush="#73FF7B72" BorderThickness="1"
+                                    Padding="14,7" CornerRadius="4"/>
+                            <Button x:Name="RestartButton" Content="重启 Foundation Sunshine 服务" Click="RestartButton_Click"
+                                    FontSize="12" Foreground="#EBEBEB" Background="#0FFFFFFF" BorderBrush="#29FFFFFF" BorderThickness="1"
+                                    Padding="14,7" CornerRadius="4"/>
+                        </StackPanel>
+                        <TextBlock Text="断开会终止全部串流会话(含其他客户端) · 音量混音:Game Bar 自带音频小部件" FontSize="11" Foreground="#6B6B6B" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="StatusText" Text="" FontSize="11" Foreground="#9E9E9E" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- ============ 无会话 ============ -->
+                <StackPanel x:Name="EmptyPanel" Visibility="Collapsed" Spacing="10">
+                    <StackPanel Spacing="6" Margin="0,24,0,0">
+                        <TextBlock Text="等待串流接入" FontSize="14" FontWeight="SemiBold" Foreground="#EBEBEB" HorizontalAlignment="Center"/>
+                        <TextBlock Text="在客户端打开 Moonlight 连接本机;会话开始后,这里会显示实时状态。" FontSize="12" Foreground="#9E9E9E" TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="300"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- ============ 端点错误 ============ -->
+                <StackPanel x:Name="ErrorPanel" Visibility="Collapsed" Spacing="6" Margin="0,24,0,0">
+                    <TextBlock Text="无法连接 Foundation Sunshine" FontSize="14" FontWeight="SemiBold" Foreground="#FF9C95" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="ErrorDetail" Text="—" FontSize="12" Foreground="#9E9E9E" TextWrapping="Wrap" HorizontalAlignment="Center" MaxWidth="300" TextAlignment="Center"/>
+                    <TextBlock x:Name="RetryText" Text="每秒自动重试" FontSize="11" Foreground="#6B6B6B" HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- ============ 连接设置(无会话与错误态可见) ============ -->
+                <Border x:Name="SettingsPanel" Visibility="Collapsed" Background="#08FFFFFF" CornerRadius="6" Padding="12,10" Margin="0,12,0,0">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="连接 Foundation Sunshine" FontSize="12" FontWeight="SemiBold" Foreground="#9E9E9E"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Web UI 端口" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Center" Width="72"/>
+                            <TextBox x:Name="PortBox" InputScope="Number" Width="100" FontSize="12" PlaceholderText="47990"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="widget_token" FontSize="12" Foreground="#9E9E9E" VerticalAlignment="Center" Width="72"/>
+                            <PasswordBox x:Name="TokenBox" Width="220" FontSize="12" PlaceholderText="sunshine.conf 中的 widget_token"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="保存并连接" Click="SaveSettings_Click" FontSize="12" Padding="14,6" CornerRadius="4"/>
+                            <Button x:Name="ClearTokenButton" Content="清除令牌" Click="ClearToken_Click" FontSize="12" Padding="14,6" CornerRadius="4"/>
+                            <TextBlock x:Name="SettingsHint" Text="" FontSize="11" Foreground="#6B6B6B" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TokenStatusText" Text="令牌:未配置" FontSize="11" Foreground="#6B6B6B"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

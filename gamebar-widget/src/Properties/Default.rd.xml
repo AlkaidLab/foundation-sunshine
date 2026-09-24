@@ -1,0 +1,8 @@
+<!--
+    默认 RD 映射(与 UWP 模板一致)。
+-->
+<Directives xmlns="http://schemas.microsoft.com/netfx/2013/01/metadata">
+  <Application>
+    <Assembly Name="FoundationSunshineWidget" Dynamic="Required All" />
+  </Application>
+</Directives>

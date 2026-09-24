@@ -78,6 +78,7 @@
 #include "video.h"
 #include "version.h"
 #include "webhook/webhook.h"
+#include "widget_http.h"
 #include "webhook/webhook_api.h"
 
 #ifdef _WIN32
@@ -1345,8 +1346,13 @@ namespace confighttp {
 
     auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
     for (auto &[name, value] : vars) {
+      // widget_token 是本地端点凭证,不回显明文;只暴露是否已配置
+      if (name == "widget_token") {
+        continue;
+      }
       outputTree.put(std::move(name), std::move(value));
     }
+    outputTree.put("widget_token_configured", !config::sunshine.widget_token.empty());
 
     outputTree.put("active_encoder", video::active_encoder_name());
     if (auto frame_budget = nvenc::get_frame_budget_report()) {
@@ -2756,6 +2762,41 @@ namespace confighttp {
   }
 
   void
+  stopRuntimeSessions(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+
+    print_req(request);
+
+    if (!require_localhost(response, request, "stopping runtime sessions")) {
+      return;
+    }
+
+    try {
+      // 终止当前全部串流会话(所有客户端),语义与 Game Bar widget 的 stop_all_sessions 一致
+      rtsp_stream::terminate_sessions_async(
+        stream::session::stop_reason_e::host_terminate,
+        boost::function<void()>([] {}));
+      BOOST_LOG(info) << "Config API: session termination requested from local panel"sv;
+
+      response->write(json {
+                          { "success", true },
+                          { "status_message", "session termination requested" },
+                        }
+                         .dump(),
+        { { "Content-Type", "application/json" } });
+      response->close_connection_after_response = true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "stopRuntimeSessions: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+    }
+    catch (...) {
+      BOOST_LOG(error) << "stopRuntimeSessions: Unknown exception";
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+    }
+  }
+
+  void
   getPerfCurrent(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -4148,6 +4189,7 @@ namespace confighttp {
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
+    server.resource["^/api/runtime/sessions/stop$"]["POST"] = stopRuntimeSessions;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
@@ -4193,6 +4235,16 @@ namespace confighttp {
       return authenticate(std::move(resp), std::move(req));
     };
     tray_http::register_routes(server, tray_local_auth, tray_local_auth);
+    // Game Bar widget 通道:仅环回,凭证由模块内的 X-Sunshine-Token(widget_token)校验,
+    // 不复用 basic-auth——widget 是本地 packaged app,没有浏览器语义。
+    widget_http::register_routes(server, [](widget_http::resp_https_t resp, widget_http::req_https_t req) {
+      const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
+      if (net::from_address(address) != net::PC) {
+        resp->write(SimpleWeb::StatusCode::client_error_forbidden);
+        return false;
+      }
+      return true;
+    });
     server.resource["^/assets\\/.+$"]["GET"] = getNodeModules;
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
