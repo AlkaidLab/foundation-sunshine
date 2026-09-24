@@ -110,14 +110,6 @@ namespace config {
     std::string encoder;
     std::string adapter_name;
 
-    struct display_mode_remapping_t {
-      std::string type;
-      std::string received_resolution;
-      std::string received_fps;
-      std::string final_resolution;
-      std::string final_refresh_rate;
-    };
-
     std::string output_name;
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
     std::string window_title;     // Window title to capture when capture_target="window"
@@ -128,7 +120,6 @@ namespace config {
     int refresh_rate_change;
     std::string manual_refresh_rate;
     int hdr_prep;
-    std::vector<display_mode_remapping_t> display_mode_remapping;
     bool variable_refresh_rate;  // Allow video stream framerate to match render framerate for VRR support
     int minimum_fps_target;  // Minimum FPS target (0 = auto, 1-1000 = minimum FPS to maintain)
     bool input_activity_boost;  // Temporarily raise encoding cadence after local input while VRR is active

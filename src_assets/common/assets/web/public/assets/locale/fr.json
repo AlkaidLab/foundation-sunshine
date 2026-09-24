@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Aucune modification de l'état de l'écran ; l'utilisateur doit s'assurer que l'écran est prêt",
     "display_device_prep_no_operation_windows": "Désactivé",
     "display_device_prep_windows": "Préparation de l'affichage",
-    "display_mode_remapping_default_mode_desc_windows": "Au moins une valeur \"reçue\" et une valeur \"finale\" doivent être spécifiées.\nUn champ vide dans la section \"reçue\" signifie \"correspondre à n'importe quelle valeur\". Un champ vide dans la section \"finale\" signifie \"garder la valeur reçue\".\nVous pouvez faire correspondre une valeur FPS spécifique à une résolution spécifique si vous le souhaitez...\n\nNote : si l'option \"Optimiser les paramètres du jeu\" n'est pas activée sur le client Moonlight, les lignes contenant la valeur de résolution sont ignorées.",
-    "display_mode_remapping_desc_windows": "Spécifiez comment une résolution et/ou un taux de rafraîchissement spécifiques doivent être remappés vers d'autres valeurs.\nVous pouvez diffuser à une résolution plus faible, tout en rendant à une résolution plus élevée sur l'hôte pour un effet de suréchantillonnage.\nOu vous pouvez diffuser à un FPS plus élevé tout en limitant l'hôte au taux de rafraîchissement plus faible.\nLa correspondance est effectuée de haut en bas. Une fois qu'une entrée correspond, les autres ne sont plus vérifiées, mais sont toujours validées.",
-    "display_mode_remapping_final_refresh_rate_windows": "Taux de rafraîchissement final",
-    "display_mode_remapping_final_resolution_windows": "Résolution finale",
-    "display_mode_remapping_optional": "optionnel",
-    "display_mode_remapping_received_fps_windows": "FPS reçu",
-    "display_mode_remapping_received_resolution_windows": "Résolution reçue",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Note : si l'option \"Optimiser les paramètres du jeu\" n'est pas activée sur le client Moonlight, le remappage est désactivé.",
-    "display_mode_remapping_windows": "Remapper les modes d'affichage",
     "display_modes": "Modes d'affichage",
     "ds4_back_as_touchpad_click": "Mapper Retour/Sélection au clic du pavé tactile",
     "ds4_back_as_touchpad_click_desc": "Lorsque vous forcez l'émulation DS4, mapper retour/sélectionner sur Touchpad Clic",
@@ -637,11 +628,6 @@
           "description": "Sunshine modifiera la résolution ou la fréquence de rafraîchissement pour les sessions de streaming.",
           "recovery": "Remettez la modification de résolution et de FPS sur « Désactivé » si le moniteur ne revient pas au mode attendu.",
           "title": "L'automatisation du mode d'affichage a été modifiée"
-        },
-        "display_mode_remapping": {
-          "description": "Les modes d'affichage demandés par le client seront remappés avant leur application par Sunshine.",
-          "recovery": "Supprimez les règles de remappage si les clients reçoivent une résolution ou une fréquence inattendue.",
-          "title": "Le remappage des modes d'affichage a été modifié"
         },
         "elevated_global_commands": {
           "description": "Les commandes globales de préparation comprennent des commandes avec privilèges élevés. Elles peuvent modifier l'état du système avant ou après le lancement de toute application.",

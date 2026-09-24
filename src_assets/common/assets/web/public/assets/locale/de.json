@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Keine Änderungen am Anzeigestatus; der Benutzer muss sicherstellen, dass die Anzeige bereit ist",
     "display_device_prep_no_operation_windows": "Deaktiviert",
     "display_device_prep_windows": "Anzeigevorbereitung",
-    "display_mode_remapping_default_mode_desc_windows": "Mindestens ein \"empfangener\" und ein \"finaler\" Wert müssen angegeben werden.\nLeeres Feld im \"empfangenen\" Abschnitt bedeutet \"beliebig übereinstimmen\". Leeres Feld im \"finalen\" Abschnitt bedeutet \"empfangenen Wert beibehalten\".\nSie können einen bestimmten FPS-Wert einer bestimmten Auflösung zuordnen, wenn Sie möchten...\n\nHinweis: Wenn die Option \"Spieleinstellungen optimieren\" im Moonlight-Client nicht aktiviert ist, werden die Zeilen mit Auflösungswerten ignoriert.",
-    "display_mode_remapping_desc_windows": "Geben Sie an, wie eine bestimmte Auflösung und/oder Bildwiederholrate auf andere Werte neu zugeordnet werden soll.\nSie können mit niedrigerer Auflösung streamen, während Sie auf dem Host mit höherer Auflösung rendern, um einen Supersampling-Effekt zu erzielen.\nOder Sie können mit höherem FPS streamen, während Sie den Host auf die niedrigere Bildwiederholrate beschränken.\nDie Übereinstimmung erfolgt von oben nach unten. Sobald ein Eintrag übereinstimmt, werden andere nicht mehr überprüft, aber dennoch validiert.",
-    "display_mode_remapping_final_refresh_rate_windows": "Finale Bildwiederholrate",
-    "display_mode_remapping_final_resolution_windows": "Finale Auflösung",
-    "display_mode_remapping_optional": "optional",
-    "display_mode_remapping_received_fps_windows": "Empfangene FPS",
-    "display_mode_remapping_received_resolution_windows": "Empfangene Auflösung",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Hinweis: Wenn die Option \"Spieleinstellungen optimieren\" im Moonlight-Client nicht aktiviert ist, ist die Neuordnung deaktiviert.",
-    "display_mode_remapping_windows": "Anzeigemodi neu zuordnen",
     "display_modes": "Anzeigemodi",
     "ds4_back_as_touchpad_click": "Zum Touchpad-Klick zurück/auswählen",
     "ds4_back_as_touchpad_click_desc": "Beim Erzwingen der DS4-Emulation zum Touchpad-Klick zurück/auswählen",
@@ -637,11 +628,6 @@
           "description": "Sunshine ändert Auflösung oder Bildwiederholrate für Streaming-Sitzungen.",
           "recovery": "Setzen Sie die Auflösungs- und FPS-Änderung auf „Deaktiviert“, wenn der Monitor nicht in den erwarteten Modus zurückkehrt.",
           "title": "Automatisierung des Anzeigemodus wurde geändert"
-        },
-        "display_mode_remapping": {
-          "description": "Vom Client angeforderte Anzeigemodi werden neu zugeordnet, bevor Sunshine sie anwendet.",
-          "recovery": "Entfernen Sie die Zuordnungsregeln, wenn Clients eine unerwartete Auflösung oder Bildwiederholrate erhalten.",
-          "title": "Neuzuordnung der Anzeigemodi wurde geändert"
         },
         "elevated_global_commands": {
           "description": "Globale Vorbereitungsbefehle enthalten Befehle mit erhöhten Rechten. Sie können den Systemzustand vor oder nach dem Start jeder App ändern.",

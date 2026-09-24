@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Žádné změny stavu displeje; uživatel musí sám zajistit, že displej je připraven",
     "display_device_prep_no_operation_windows": "Zakázáno",
     "display_device_prep_windows": "Příprava displeje",
-    "display_mode_remapping_default_mode_desc_windows": "Musí být zadána alespoň jedna \"přijatá\" a jedna \"konečná\" hodnota.\nPrázdné pole v sekci \"přijatá\" znamená \"shoda s čímkoli\". Prázdné pole v sekci \"konečná\" znamená \"zachovat přijatou hodnotu\".\nMůžete přiřadit konkrétní hodnotu FPS ke konkrétnímu rozlišení, pokud si to přejete...\n\nPoznámka: pokud není v klientovi Moonlight povolena možnost \"Optimalizovat nastavení hry\", řádky obsahující hodnoty rozlišení jsou ignorovány.",
-    "display_mode_remapping_desc_windows": "Uveďte, jak se má konkrétní rozlišení a/nebo obnovovací frekvence přemapovat na jiné hodnoty.\nMůžete streamovat v nižším rozlišení, zatímco na hostiteli renderovat ve vyšším rozlišení pro efekt supersamplingu.\nNebo můžete streamovat s vyšším FPS, zatímco omezíte hostitele na nižší obnovovací frekvenci.\nShoda se provádí shora dolů. Jakmile je záznam spárován, ostatní se již nekontrolují, ale stále se ověřují.",
-    "display_mode_remapping_final_refresh_rate_windows": "Konečná obnovovací frekvence",
-    "display_mode_remapping_final_resolution_windows": "Konečné rozlišení",
-    "display_mode_remapping_optional": "volitelné",
-    "display_mode_remapping_received_fps_windows": "Přijaté FPS",
-    "display_mode_remapping_received_resolution_windows": "Přijaté rozlišení",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Poznámka: pokud není v klientovi Moonlight povolena možnost \"Optimalizovat nastavení hry\", přemapování je zakázáno.",
-    "display_mode_remapping_windows": "Přemapovat režimy zobrazení",
     "display_modes": "Režimy zobrazení",
     "ds4_back_as_touchpad_click": "Mapa zpátky/Vyberte pro klepnutí na Touchpad",
     "ds4_back_as_touchpad_click_desc": "Při vynucení emulace DS4 mapa zpět/Vyberte na Touchpad kliknutí",
@@ -637,11 +628,6 @@
           "description": "Sunshine bude pro streamovací relace měnit rozlišení nebo obnovovací frekvenci.",
           "recovery": "Pokud se monitor nevrátí do očekávaného režimu, nastavte změnu rozlišení a FPS zpět na „Vypnuto“.",
           "title": "Automatizace režimu displeje byla změněna"
-        },
-        "display_mode_remapping": {
-          "description": "Režimy displeje požadované klientem budou přemapovány před jejich použitím aplikací Sunshine.",
-          "recovery": "Pokud klienti obdrží neočekávané rozlišení nebo obnovovací frekvenci, odeberte pravidla přemapování.",
-          "title": "Přemapování režimů displeje bylo změněno"
         },
         "elevated_global_commands": {
           "description": "Globální přípravné příkazy obsahují příkazy se zvýšenými oprávněními. Mohou měnit stav systému před nebo po spuštění libovolné aplikace.",

@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Brak zmian stanu wyświetlacza; użytkownik musi sam upewnić się, że wyświetlacz jest gotowy",
     "display_device_prep_no_operation_windows": "Wyłączone",
     "display_device_prep_windows": "Przygotowanie wyświetlacza",
-    "display_mode_remapping_default_mode_desc_windows": "Należy określić co najmniej jedną wartość \"odebraną\" i jedną \"końcową\".\nPuste pole w sekcji \"odebrane\" oznacza \"dopasuj dowolną wartość\". Puste pole w sekcji \"końcowe\" oznacza \"zachowaj odebraną wartość\".\nMożesz dopasować konkretną wartość FPS do konkretnej rozdzielczości, jeśli chcesz...\n\nUwaga: jeśli opcja \"Optymalizuj ustawienia gry\" nie jest włączona w kliencie Moonlight, wiersze zawierające wartości rozdzielczości są ignorowane.",
-    "display_mode_remapping_desc_windows": "Określ, jak konkretna rozdzielczość i/lub częstotliwość odświeżania powinna być przemapowana na inne wartości.\nMożesz streamować w niższej rozdzielczości, jednocześnie renderując w wyższej rozdzielczości na hoście, uzyskując efekt supersamplingu.\nMożesz też streamować z wyższym FPS, ograniczając hosta do niższej częstotliwości odświeżania.\nDopasowywanie odbywa się od góry do dołu. Gdy wpis zostanie dopasowany, pozostałe nie są już sprawdzane, ale nadal są walidowane.",
-    "display_mode_remapping_final_refresh_rate_windows": "Końcowa częstotliwość odświeżania",
-    "display_mode_remapping_final_resolution_windows": "Końcowa rozdzielczość",
-    "display_mode_remapping_optional": "opcjonalnie",
-    "display_mode_remapping_received_fps_windows": "Odebrane FPS",
-    "display_mode_remapping_received_resolution_windows": "Odebrana rozdzielczość",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Uwaga: jeśli opcja \"Optymalizuj ustawienia gry\" nie jest włączona w kliencie Moonlight, przemapowanie jest wyłączone.",
-    "display_mode_remapping_windows": "Przemapuj tryby wyświetlania",
     "display_modes": "Tryby wyświetlania",
     "ds4_back_as_touchpad_click": "Mapuj przycisk Wstecz/Wybierz na kliknięcie panelu dotykowego",
     "ds4_back_as_touchpad_click_desc": "Podczas wymuszania emulacji DS4, mapuj Back/Select na kliknięcie panelu dotykowego",
@@ -637,11 +628,6 @@
           "description": "Sunshine zmieni rozdzielczość lub częstotliwość odświeżania sesji przesyłania strumieniowego.",
           "recovery": "Przywróć zmianę rozdzielczości i liczbę FPS na Wyłączone, jeśli monitor nie powróci do oczekiwanego trybu.",
           "title": "Zmieniono automatyzację trybu wyświetlania"
-        },
-        "display_mode_remapping": {
-          "description": "Tryby wyświetlania żądane przez klienta zostaną ponownie przypisane, zanim Sunshine je zastosuje.",
-          "recovery": "Usuń reguły ponownego mapowania, jeśli klienci otrzymają nieoczekiwaną rozdzielczość lub częstotliwość odświeżania.",
-          "title": "Zmieniono ponowne mapowanie trybu wyświetlania"
         },
         "elevated_global_commands": {
           "description": "Globalne polecenia przygotowania obejmują polecenia z podwyższonym poziomem uprawnień. Mogą zmienić stan systemu przed lub po uruchomieniu dowolnej aplikacji.",

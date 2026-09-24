@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "不對顯示器進行任何操作，使用者需自行確保顯示器狀態",
     "display_device_prep_no_operation_windows": "已停用",
     "display_device_prep_windows": "顯示器準備",
-    "display_mode_remapping_default_mode_desc_windows": "必須至少指定一個「接收」值和一個「最終」值。\n「接收」區段中的空欄位表示「符合任何值」。「最終」區段中的空欄位表示「保留接收值」。\n如果您願意，可以將特定的幀率值對應到特定的解析度...\n\n注意：如果 Moonlight 用戶端上未啟用「最佳化遊戲設定」選項，則會忽略包含解析度值的列。",
-    "display_mode_remapping_desc_windows": "指定應如何將特定解析度和/或重新整理率重新對應到其他值。\n您可以在較低解析度下串流，同時在主機上以較高解析度渲染以獲得超取樣效果。\n或者，您可以在較高幀率下串流，同時將主機限制為較低的重新整理率。\n比對是從上到下執行的。一旦符合項目，就不會再檢查其他項目，但仍會驗證。",
-    "display_mode_remapping_final_refresh_rate_windows": "最終重新整理率",
-    "display_mode_remapping_final_resolution_windows": "最終解析度",
-    "display_mode_remapping_optional": "選用",
-    "display_mode_remapping_received_fps_windows": "接收的幀率",
-    "display_mode_remapping_received_resolution_windows": "接收的解析度",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "注意：如果 Moonlight 用戶端上未啟用「最佳化遊戲設定」選項，則會停用重新對應。",
-    "display_mode_remapping_windows": "重新對應顯示模式",
     "display_modes": "顯示模式",
     "ds4_back_as_touchpad_click": "地圖 Back/Select 至觸控板點選",
     "ds4_back_as_touchpad_click_desc": "當強制啟用 DS4 模擬時，將返回/選擇按鈕映射為觸控板點擊",
@@ -637,11 +628,6 @@
           "description": "Sunshine 會在串流期間自動或手動切換解析度/更新率。",
           "recovery": "如果顯示器沒有恢復到預期狀態，請把解析度變更和 FPS 變更回「停用」。",
           "title": "顯示模式自動化已變更"
-        },
-        "display_mode_remapping": {
-          "description": "客戶端請求的顯示模式會先重新映射，然後再由 Sunshine 套用。",
-          "recovery": "如果用戶端拿到異常解析度或更新率，請刪除對應重映射規則。",
-          "title": "显示模式重映射已变更"
         },
         "elevated_global_commands": {
           "description": "全局准备命令包含管理员命令。它們會在任意應用啟動前/後執行，可能會改變系統狀態。",

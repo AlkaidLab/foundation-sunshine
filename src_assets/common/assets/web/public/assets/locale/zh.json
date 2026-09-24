@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "不对显示器进行任何操作，用户需自行确保显示器状态",
     "display_device_prep_no_operation_windows": "无操作",
     "display_device_prep_windows": "串流时显示器组合状态设置",
-    "display_mode_remapping_default_mode_desc_windows": "必须至少指定一个\"接收\"值和一个\"最终\"值。\n\"接收\"部分的空字段表示\"匹配任意值\"。\"最终\"部分的空字段表示\"保持接收值\"。\n您可以根据需要将特定的FPS值与特定的分辨率进行匹配...\n\n注意：如果在Moonlight客户端上未启用\"优化游戏设置\"选项，则包含分辨率值的行将被忽略。",
-    "display_mode_remapping_desc_windows": "指定如何将特定的分辨率和/或刷新率重新映射到其他值。\n您可以在较低分辨率下进行串流，同时在主机上以较高分辨率渲染以获得超采样效果。\n或者您可以在较高FPS下进行串流，同时将主机限制在较低的刷新率。\n匹配从上到下执行。一旦匹配到条目，其他条目将不再检查，但仍会进行验证。",
-    "display_mode_remapping_final_refresh_rate_windows": "最终刷新率",
-    "display_mode_remapping_final_resolution_windows": "最终分辨率",
-    "display_mode_remapping_optional": "可选",
-    "display_mode_remapping_received_fps_windows": "接收的FPS",
-    "display_mode_remapping_received_resolution_windows": "接收的分辨率",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "注意：如果在Moonlight客户端上未启用\"优化游戏设置\"选项，则重新映射功能将被禁用。",
-    "display_mode_remapping_windows": "重新映射显示模式",
     "display_modes": "显示模式",
     "ds4_back_as_touchpad_click": "映射回/选择触摸板点击",
     "ds4_back_as_touchpad_click_desc": "强制使用 DS4 模拟时，将“返回”/“选择”映射到触摸板点击",
@@ -637,11 +628,6 @@
           "description": "Sunshine 会在串流期间自动或手动切换分辨率/刷新率。",
           "recovery": "如果显示器没有恢复到预期状态，请把分辨率变更和 FPS 变更改回“禁用”。",
           "title": "显示模式自动化已变更"
-        },
-        "display_mode_remapping": {
-          "description": "客户端请求的显示模式会先被重映射，然后再由 Sunshine 应用。",
-          "recovery": "如果客户端拿到异常分辨率或刷新率，请删除对应重映射规则。",
-          "title": "显示模式重映射已变更"
         },
         "elevated_global_commands": {
           "description": "全局准备命令包含管理员命令。它们会在任意应用启动前/后执行，可能改动系统状态。",

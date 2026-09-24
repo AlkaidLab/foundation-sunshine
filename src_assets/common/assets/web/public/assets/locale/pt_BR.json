@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "Sem alterações no estado do monitor; o usuário deve garantir que o monitor esteja pronto",
     "display_device_prep_no_operation_windows": "Desativado",
     "display_device_prep_windows": "Preparação de exibição",
-    "display_mode_remapping_default_mode_desc_windows": "Pelo menos um valor \"recebido\" e um valor \"final\" devem ser especificados.\nO campo vazio na seção \"recebido\" significa \"corresponder a qualquer um\". O campo vazio na seção \"final\" significa \"manter o valor recebido\".\nVocê pode corresponder um valor de FPS específico a uma resolução específica, se desejar...\n\nNota: se a opção \"Otimizar configurações do jogo\" não estiver ativada no cliente Moonlight, as linhas contendo valor(es) de resolução serão ignoradas.",
-    "display_mode_remapping_desc_windows": "Especifique como uma resolução específica e/ou taxa de atualização deve ser remapeada para outros valores.\nVocê pode transmitir em resolução mais baixa, enquanto renderiza em resolução mais alta no host para um efeito de supersampling.\nOu você pode transmitir em FPS mais alto enquanto limita o host à taxa de atualização mais baixa.\nA correspondência é executada de cima para baixo. Depois que a entrada for correspondida, outras não serão mais verificadas, mas ainda serão validadas.",
-    "display_mode_remapping_final_refresh_rate_windows": "Taxa de atualização final",
-    "display_mode_remapping_final_resolution_windows": "Resolução final",
-    "display_mode_remapping_optional": "opcional",
-    "display_mode_remapping_received_fps_windows": "FPS recebido",
-    "display_mode_remapping_received_resolution_windows": "Resolução recebida",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Nota: se a opção \"Otimizar configurações do jogo\" não estiver ativada no cliente Moonlight, o remapeamento será desativado.",
-    "display_mode_remapping_windows": "Remapear modos de exibição",
     "display_modes": "Modos de Exibição",
     "ds4_back_as_touchpad_click": "Mapear Voltar/Selecionar para clicar no touchpad",
     "ds4_back_as_touchpad_click_desc": "Ao forçar a emulação DS4, mapeie Back/Select para Touchpad Click",
@@ -637,11 +628,6 @@
           "description": "O Sunshine alterará a resolução ou a taxa de atualização nas sessões de transmissão.",
           "recovery": "Restaure Alteração de resolução e Alteração de FPS para Desativado se o monitor não retornar ao modo esperado.",
           "title": "A automação do modo de exibição foi alterada"
-        },
-        "display_mode_remapping": {
-          "description": "Os modos de exibição solicitados pelo cliente serão remapeados antes de o Sunshine aplicá-los.",
-          "recovery": "Remova as regras de remapeamento se os clientes receberem uma resolução ou taxa de atualização inesperada.",
-          "title": "O remapeamento do modo de exibição foi alterado"
         },
         "elevated_global_commands": {
           "description": "Os comandos globais de preparação incluem comandos elevados. Eles podem alterar o estado do sistema antes ou depois da inicialização de qualquer aplicativo.",

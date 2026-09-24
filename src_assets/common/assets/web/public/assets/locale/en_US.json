@@ -354,15 +354,6 @@
     "display_device_prep_no_operation_desc_windows": "No changes to display state; user must ensure display is ready",
     "display_device_prep_no_operation_windows": "Disabled",
     "display_device_prep_windows": "Display preparation",
-    "display_mode_remapping_default_mode_desc_windows": "At least one \"received\" and one \"final\" value must be specified.\nEmpty field in \"received\" section means \"match any\". Empty field in \"final\" section means \"keep received value\".\nYou can match specific FPS value to specific resolution if you wish so...\n\nNote: if \"Optimize game settings\" option is not enabled on the Moonlight client, the rows containing resolution value(-s) are ignored.",
-    "display_mode_remapping_desc_windows": "Specify how a specific resolution and/or refresh rate should be remapped to other values.\nYou can stream at lower resolution, while rendering at higher resolution on host for a supersampling effect.\nOr you can stream at higher FPS while limiting the host to the lower refresh rate.\nMatching is performed top to bottom. Once the entry is matched, others are no longer checked, but still validated.",
-    "display_mode_remapping_final_refresh_rate_windows": "Final refresh rate",
-    "display_mode_remapping_final_resolution_windows": "Final resolution",
-    "display_mode_remapping_optional": "optional",
-    "display_mode_remapping_received_fps_windows": "Received FPS",
-    "display_mode_remapping_received_resolution_windows": "Received resolution",
-    "display_mode_remapping_resolution_only_mode_desc_windows": "Note: if \"Optimize game settings\" option is not enabled on the Moonlight client, the remapping is disabled.",
-    "display_mode_remapping_windows": "Remap display modes",
     "display_modes": "Display Modes",
     "ds4_back_as_touchpad_click": "Map Back/Select to Touchpad Click",
     "ds4_back_as_touchpad_click_desc": "When forcing DS4 emulation, map Back/Select to Touchpad Click",
@@ -637,11 +628,6 @@
           "description": "Sunshine will change resolution or refresh rate for streaming sessions.",
           "recovery": "Restore Resolution change and FPS change to Disabled if the monitor does not return to the expected mode.",
           "title": "Display mode automation changed"
-        },
-        "display_mode_remapping": {
-          "description": "Client-requested display modes will be remapped before Sunshine applies them.",
-          "recovery": "Remove the remapping rules if clients receive an unexpected resolution or refresh rate.",
-          "title": "Display mode remapping changed"
         },
         "elevated_global_commands": {
           "description": "Global preparation commands include elevated commands. They can change system state before or after any app launch.",

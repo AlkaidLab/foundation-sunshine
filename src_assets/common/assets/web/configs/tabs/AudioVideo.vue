@@ -13,7 +13,7 @@ import AutomaticNumberSetting from './audiovideo/AutomaticNumberSetting.vue'
 import Checkbox from '../../components/Checkbox.vue'
 import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
-const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'displayModeRemapping'])
+const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
 
 const { t } = useI18n()
 const config = ref(props.config)
@@ -309,7 +309,6 @@ onBeforeUnmount(() => {
     <DisplayDeviceOptions
       :platform="platform"
       :config="config"
-      :display-mode-remapping="displayModeRemapping"
     />
 
     <!-- Display Modes Tab Navigation -->
