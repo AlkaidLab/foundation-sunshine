@@ -94,6 +94,7 @@ namespace rtsp_stream {
     synthetic_hdr_config_t synthetic_hdr;
     boost::shared_ptr<const image_enhancement::backend_use_t> hdr_backend;
     dlssnr_config_t dlssnr_params;
+    int dlssnr_scale_percent { 100 };
     boost::shared_ptr<const image_enhancement::backend_use_t> dlssnr_backend;
 
     // Resolved frame-pipeline policy for this session, published by RTSP SETUP

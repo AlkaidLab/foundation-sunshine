@@ -101,6 +101,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/ds5/config_api.cpp"
         "${CMAKE_SOURCE_DIR}/src/image_enhancement/config.h"
         "${CMAKE_SOURCE_DIR}/src/image_enhancement/config.cpp"
+        "${CMAKE_SOURCE_DIR}/src/image_enhancement/nr_defaults.h"
+        "${CMAKE_SOURCE_DIR}/src/image_enhancement/nr_defaults.cpp"
         "${CMAKE_SOURCE_DIR}/src/image_enhancement/api.h"
         "${CMAKE_SOURCE_DIR}/src/image_enhancement/api.cpp"
         "${CMAKE_SOURCE_DIR}/src/entry_handler.cpp"

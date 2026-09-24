@@ -1874,7 +1874,17 @@ namespace platf::dxgi {
       runtime_status.nr_failure_reason.clear();
       runtime_status.nr_state = requested->enabled ? "warming_up" : "disabled";
       ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-      if (!requested->enabled) return;
+      if (!requested->enabled) {
+        runtime_status.nr_scale_percent = requested->scale_percent;
+        runtime_status.nr_intensity = requested->intensity;
+        runtime_status.nr_ui_correction = requested->ui_correction;
+        runtime_status.nr_motion_quality = requested->motion_quality;
+        runtime_status.nr_style = requested->style;
+        runtime_status.nr_skin_structure_strength = requested->skin_structure_strength;
+        runtime_status.nr_auto_mask = requested->auto_mask;
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        return;
+      }
 
       if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
       enhancement_backend = nr_session_backend;

@@ -4,15 +4,18 @@
  */
 #include "api.h"
 #include "config.h"
+#include "nr_defaults.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/video.h"
+#include <algorithm>
 #include <boost/asio/post.hpp>
 #include <boost/asio/thread_pool.hpp>
 #include <boost/atomic.hpp>
 #include <boost/thread/lock_guard.hpp>
 #include <boost/thread/mutex.hpp>
 #include <utility>
+#include <cmath>
 
 namespace image_enhancement::api {
   namespace {
@@ -223,6 +226,57 @@ namespace image_enhancement::api {
     }
     catch (...) {
       write(response, 500, { { "status", false }, { "error_code", "nr_request_failed" } });
+    }
+  }
+
+  void
+  remember_session_nr(response_t response, request_t request) noexcept {
+    try {
+      const auto input = request_json(request);
+      if (!input.is_object() || input.size() != 1 || !input.contains("id") || !input["id"].is_number_unsigned()) {
+        write(response, 400, { { "status", false }, { "error_code", "nr_request_invalid" } });
+        return;
+      }
+      const auto id = input["id"].get<std::uint64_t>();
+      const auto pipelines = video::get_hdr_pipeline_statuses();
+      const auto it = std::find_if(pipelines.begin(), pipelines.end(), [id](const auto &item) { return item.id == id; });
+      if (it == pipelines.end()) {
+        write(response, 404, { { "status", false }, { "error_code", "nr_session_ended" } });
+        return;
+      }
+      const auto &p = *it;
+      const auto same = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
+      const bool settled = p.nr_toggle_supported && p.nr_settings_failure_reason.empty() &&
+        ((p.nr_requested_enabled && p.nr_state == "active") || (!p.nr_requested_enabled && p.nr_state == "disabled")) &&
+        p.nr_requested_scale_percent == p.nr_scale_percent && same(p.nr_requested_intensity, p.nr_intensity) &&
+        p.nr_requested_style == p.nr_style && same(p.nr_requested_skin_structure_strength, p.nr_skin_structure_strength) &&
+        p.nr_requested_auto_mask == p.nr_auto_mask && p.nr_requested_ui_correction == p.nr_ui_correction &&
+        p.nr_requested_motion_quality == p.nr_motion_quality;
+      if (!settled) {
+        write(response, 409, { { "status", false }, { "error_code", "nr_settings_pending" } });
+        return;
+      }
+      nr_defaults_t defaults;
+      defaults.enabled = p.nr_requested_enabled;
+      auto &f = defaults.filter;
+      f.nr_scale_percent = p.nr_scale_percent;
+      f.nr_intensity = p.nr_intensity;
+      f.nr_style = p.nr_style;
+      f.nr_skin_structure_strength = p.nr_skin_structure_strength;
+      f.nr_auto_mask = p.nr_auto_mask;
+      f.nr_ui_correction = p.nr_ui_correction;
+      f.nr_motion_quality = p.nr_motion_quality;
+      if (!save_nr_defaults(defaults)) {
+        write(response, 500, { { "status", false }, { "error_code", "nr_save_failed" } });
+        return;
+      }
+      write(response, 200, { { "status", true } });
+    }
+    catch (const json::exception &) {
+      write(response, 400, { { "status", false }, { "error_code", "nr_request_invalid" } });
+    }
+    catch (...) {
+      write(response, 500, { { "status", false }, { "error_code", "nr_save_failed" } });
     }
   }
 
