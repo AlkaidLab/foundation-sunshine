@@ -1873,7 +1873,6 @@ namespace platf::dxgi {
       runtime_status.nr_backend = "none";
       runtime_status.nr_failure_reason.clear();
       runtime_status.nr_state = requested->enabled ? "warming_up" : "disabled";
-      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
       if (!requested->enabled) {
         runtime_status.nr_scale_percent = requested->scale_percent;
         runtime_status.nr_intensity = requested->intensity;
@@ -1885,6 +1884,7 @@ namespace platf::dxgi {
         ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
 
       if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
       enhancement_backend = nr_session_backend;

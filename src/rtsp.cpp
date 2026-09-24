@@ -1650,28 +1650,20 @@ namespace rtsp_stream {
       if (!post_process_nr_active) session.dlssnr_backend.reset();
       // Keep remembered controls available when NR starts disabled and is
       // enabled later through the live overlay.
-      monitor.pre_encode_filter_config.nr_scale_percent = session.dlssnr_scale_percent;
-      monitor.pre_encode_filter_config.nr_intensity = session.dlssnr_params.intensity;
-      monitor.pre_encode_filter_config.nr_style = session.dlssnr_params.style;
-      monitor.pre_encode_filter_config.nr_skin_structure_strength = session.dlssnr_params.skin_structure_strength;
-      monitor.pre_encode_filter_config.nr_auto_mask = session.dlssnr_params.auto_mask;
-      monitor.pre_encode_filter_config.nr_ui_correction = session.dlssnr_params.ui_correction;
-      monitor.pre_encode_filter_config.nr_motion_quality = session.dlssnr_params.motion_quality;
       if (post_process_nr_active) {
         monitor.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
-        monitor.pre_encode_filter_config = {
-          .nr_scale_percent = session.dlssnr_scale_percent,
-          .nr_intensity = session.dlssnr_params.intensity,
-          .nr_local_tone_strength = session.dlssnr_params.local_tone_strength,
-          .nr_local_structure_strength = session.dlssnr_params.local_structure_strength,
-          .nr_skin_structure_strength = session.dlssnr_params.skin_structure_strength,
-          .nr_style = session.dlssnr_params.style,
-          .nr_motion_quality = session.dlssnr_params.motion_quality,
-          .nr_auto_mask = session.dlssnr_params.auto_mask,
-          .nr_ui_correction = session.dlssnr_params.ui_correction,
-        };
         monitor.enhancement_backend = session.dlssnr_backend;
       }
+      auto &nr_config = monitor.pre_encode_filter_config;
+      nr_config.nr_scale_percent = session.dlssnr_scale_percent;
+      nr_config.nr_intensity = session.dlssnr_params.intensity;
+      nr_config.nr_local_tone_strength = session.dlssnr_params.local_tone_strength;
+      nr_config.nr_local_structure_strength = session.dlssnr_params.local_structure_strength;
+      nr_config.nr_skin_structure_strength = session.dlssnr_params.skin_structure_strength;
+      nr_config.nr_style = session.dlssnr_params.style;
+      nr_config.nr_motion_quality = session.dlssnr_params.motion_quality;
+      nr_config.nr_auto_mask = session.dlssnr_params.auto_mask;
+      nr_config.nr_ui_correction = session.dlssnr_params.ui_correction;
 #endif
       monitor.frame_pipeline_policy =
         platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active, post_process_nr_active);
