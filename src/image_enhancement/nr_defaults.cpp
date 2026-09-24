@@ -1,17 +1,13 @@
 #include "nr_defaults.h"
+#include "config.h"
 
 #include <cmath>
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 
 #include <nlohmann/json.hpp>
 
 #include "src/platform/common.h"
-
-#ifdef _WIN32
-  #include <windows.h>
-#endif
 
 namespace image_enhancement {
   namespace {
@@ -33,10 +29,8 @@ namespace image_enhancement {
   std::optional<nr_defaults_t> load_nr_defaults() {
     std::lock_guard lock(defaults_mutex);
     try {
-      if (!std::filesystem::exists(path()) || std::filesystem::file_size(path()) > 64 * 1024) return std::nullopt;
-      std::ifstream stream(path(), std::ios::binary);
-      if (!stream) return std::nullopt;
-      const auto document = nlohmann::json::parse(stream);
+      const auto document = read_json_document(path(), true);
+      if (document.is_discarded()) return std::nullopt;
       if (document.at("version").get<int>() != 1) return std::nullopt;
       nr_defaults_t value;
       value.enabled = document.at("enabled").get<bool>();
@@ -58,8 +52,6 @@ namespace image_enhancement {
     if (!valid(value)) return false;
     std::lock_guard lock(defaults_mutex);
     const auto destination = path();
-    auto temporary = destination;
-    temporary += ".tmp";
     try {
       std::filesystem::create_directories(destination.parent_path());
       const auto &f = value.filter;
@@ -69,24 +61,7 @@ namespace image_enhancement {
         { "skin_structure_strength", f.nr_skin_structure_strength }, { "auto_mask", f.nr_auto_mask },
         { "ui_correction", f.nr_ui_correction }, { "motion_quality", f.nr_motion_quality },
       };
-      std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-      stream << document.dump(2) << '\n';
-      stream.flush();
-      const bool written = stream.good();
-      stream.close();
-      if (!written || stream.fail()) {
-        std::filesystem::remove(temporary);
-        return false;
-      }
-#ifdef _WIN32
-      if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        std::filesystem::remove(temporary);
-        return false;
-      }
-#else
-      std::filesystem::rename(temporary, destination);
-#endif
-      return true;
+      return write_json_document(destination, document);
     }
     catch (...) { return false; }
   }
