@@ -41,7 +41,7 @@ Virtual displays, DualSense, USB forwarding, and NVIDIA image enhancements have 
 
 - **Virtual DualSense:** Choose the gamepad type in the control panel's controller center. Install the optional DualSense component first; audio haptics additionally require USB/IP transport and client support. If the component is unavailable, gamepad allocation falls back to automatic selection.
 - **NVIDIA enhancements:** Set up the RTX HDR or DLSS NR component in image enhancement management, then enable it for an application. DLSS NR can be adjusted during a stream. The displayed SDR, HDR, or Dolby Vision output depends on the negotiated stream and device capabilities.
-- **USB forwarding:** Paired clients can configure runtime USB forwarding when the Windows host has a working USB/IP transport component.
+- **USB forwarding:** The Windows host must enable USB forwarding and have a working USB/IP transport component before paired clients can configure runtime forwarding.
 
 ### 🎬 Full HDR Pipeline Architecture
 

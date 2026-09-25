@@ -41,7 +41,7 @@ Les écrans virtuels, DualSense, le transfert USB et les améliorations NVIDIA n
 
 - **DualSense virtuelle :** Choisissez le type de manette dans le centre des contrôleurs du panneau de contrôle. Installez d'abord le composant DualSense ; l'haptique audio demande aussi le transport USB/IP et un client compatible. Si le composant est indisponible, l'attribution de la manette revient au mode automatique.
 - **Améliorations NVIDIA :** Configurez le composant RTX HDR ou DLSS NR dans la gestion des améliorations d'image, puis activez-le pour une application. DLSS NR se règle pendant la diffusion. La sortie SDR, HDR ou Dolby Vision affichée dépend de la négociation du flux et des capacités des appareils.
-- **Transfert USB :** Les clients appairés peuvent configurer le transfert USB en cours d'utilisation si l'hôte Windows dispose d'un composant de transport USB/IP fonctionnel.
+- **Transfert USB :** L'hôte Windows doit activer le transfert USB et disposer d'un composant de transport USB/IP fonctionnel avant que les clients appairés puissent configurer le transfert pendant l'utilisation.
 
 ### 🎬 Architecture complète du pipeline HDR
 

@@ -115,7 +115,7 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 - **多硬件实例编码**：支持 AMF Multi-HW Instance / Smart Access Video 相关开关，允许驱动在支持的平台上拆分编码负载
 
 **通用**
-- **编码器结果缓存**：持久化探测结果，减少后续连接时重复探测的等待
+- **编码器结果缓存**：复用进程内探测结果，减少后续连接时重复探测的等待
 - **自适应下采样**：支持双线性 / 双三次 / 高质量三档分辨率缩放，适配 4K 主机→1080p 串流场景
 - **Vulkan 编码器**：实验性 Vulkan 视频编码支持
 - **无锁证书链**：`shared_mutex` 替代 mutex，消除 TLS 队列开销
@@ -130,7 +130,7 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 
 - **虚拟 DualSense**：在控制面板的控制器中心选择手柄类型。可设全局默认值，也可为单个应用覆盖；需要先安装可选 DualSense 组件。音频触觉还需相应 USB/IP 传输及客户端能力。组件不可用时会回退到自动手柄选择，具体状态以控制面板提示为准。
 - **NVIDIA 画质增强**：在画质增强管理页配置 RTX HDR 或 DLSS NR 所需组件，再为应用开启相应功能。DLSS NR 支持串流中的即时开关和处理比例调整；界面会显示当前输出是 SDR、HDR，或已确认生效的 Dolby Vision Profile 8.1 / 8.4。输出格式取决于串流协商和设备能力。
-- **USB 转发**：已配对客户端可配置运行时 USB 转发；Windows 主机需要可用的 USB/IP 传输组件。安装和设备授权请以控制面板中的状态与提示为准。
+- **USB 转发**：Windows 主机须启用 USB 转发并具备可用的 USB/IP 传输组件，已配对客户端才能配置运行时转发。安装和设备授权请以控制面板中的状态与提示为准。
 
 相关开发说明：[DualSense 组件](docs/windows_dualsense_component_lifecycle.md) · [NVIDIA RTX HDR 构建](docs/rtx_hdr_build.md) · [串流性能调节](docs/performance_tuning.md)
 

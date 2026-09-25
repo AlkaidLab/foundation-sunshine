@@ -41,7 +41,7 @@ Virtuelle Displays, DualSense, USB-Weiterleitung und NVIDIA-Bildverbesserungen b
 
 - **Virtueller DualSense:** Wählen Sie den Gamepad-Typ im Controller-Center des Bedienfelds. Installieren Sie zuvor die optionale DualSense-Komponente; Audiohaptik benötigt zusätzlich USB/IP-Transport und einen kompatiblen Client. Ist die Komponente nicht verfügbar, wird die automatische Gamepad-Auswahl verwendet.
 - **NVIDIA-Bildverbesserungen:** Richten Sie die RTX HDR- oder DLSS NR-Komponente in der Bildverbesserungsverwaltung ein und aktivieren Sie sie für eine Anwendung. DLSS NR lässt sich während eines Streams anpassen. Die angezeigte SDR-, HDR- oder Dolby Vision-Ausgabe hängt von der Streamaushandlung und den Gerätefähigkeiten ab.
-- **USB-Weiterleitung:** Gekoppelte Clients können die USB-Weiterleitung zur Laufzeit konfigurieren, wenn auf dem Windows-Host eine funktionsfähige USB/IP-Transportkomponente vorhanden ist.
+- **USB-Weiterleitung:** Auf dem Windows-Host muss die USB-Weiterleitung aktiviert und eine funktionsfähige USB/IP-Transportkomponente vorhanden sein, bevor gekoppelte Clients die Weiterleitung zur Laufzeit konfigurieren können.
 
 ### 🎬 Vollständige HDR-Pipeline-Architektur
 
