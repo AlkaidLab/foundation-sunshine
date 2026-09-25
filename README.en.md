@@ -5,7 +5,7 @@
 <div align="center">
 
 [![English](https://img.shields.io/badge/English-README.en.md-blue?style=for-the-badge)](README.en.md)
-[![简体中文](https://img.shields.io/badge/简体中文-README.zh--CN.md-red?style=for-the-badge)](README.md)
+[![简体中文](https://img.shields.io/badge/简体中文-README.md-red?style=for-the-badge)](README.md)
 [![Français](https://img.shields.io/badge/Français-README.fr.md-green?style=for-the-badge)](README.fr.md)
 [![Deutsch](https://img.shields.io/badge/Deutsch-README.de.md-yellow?style=for-the-badge)](README.de.md)
 [![日本語](https://img.shields.io/badge/日本語-README.ja.md-purple?style=for-the-badge)](README.ja.md)
@@ -18,13 +18,30 @@ A fork based on LizardByte/Sunshine, providing comprehensive documentation suppo
 
 **Sunshine-Foundation** is a self-hosted game stream host for Moonlight. This forked version introduces significant improvements over the original Sunshine, focusing on enhancing the game streaming experience for various streaming terminal devices connected to a Windows host:
 
+### 🚀 Quick Start
+
+1. Download a Windows installer from [Foundation Sunshine Releases](https://github.com/AlkaidLab/foundation-sunshine/releases), install it, and start Sunshine. Check the release notes before choosing a pre-release build.
+2. Open [https://localhost:47990](https://localhost:47990) on the host. Create and save your login credentials on first launch; the browser may warn about the local self-signed certificate.
+3. Add an application in Sunshine, add the host in Moonlight, and enter Moonlight's PIN in Sunshine to pair.
+
+Virtual displays, DualSense, USB forwarding, and NVIDIA image enhancements have separate driver or component requirements. Check their status in the control panel before enabling them.
+
 ### 🌟 Core Features
 - **Full HDR Pipeline Support** - Dual-format HDR10 (PQ) + HLG encoding with adaptive metadata, covering a wider range of endpoint devices
-- **Virtual Display** - Built-in virtual display management, allowing creation and management of virtual displays without additional software
+- **Virtual Display** - Integrated ZakoVDD management for virtual displays; requires the corresponding driver
 - **Remote Microphone** - Supports receiving client microphones, providing high-quality voice passthrough
 - **Advanced Control Panel** - Intuitive web control interface with real-time monitoring and configuration management
 - **Low-Latency Transmission** - Optimized encoding processing leveraging the latest hardware capabilities
 - **Smart Pairing** - Intelligent management of pairing devices with corresponding profiles
+- **Controllers and devices** - Global and per-application gamepad selection, optional virtual DualSense with audio haptics, and USB forwarding for paired clients
+- **NVIDIA image enhancements** - Optional RTX HDR and DLSS NR; DLSS NR supports SDR and native HDR, with live toggling and processing-scale control when the required hardware and components are available
+- **Stream status** - Reports confirmed Dolby Vision Profile 8.1 / 8.4 output and offers an option to end streaming after all clients disconnect
+
+### Optional Features
+
+- **Virtual DualSense:** Choose the gamepad type in the control panel's controller center. Install the optional DualSense component first; audio haptics additionally require USB/IP transport and client support. If the component is unavailable, gamepad allocation falls back to automatic selection.
+- **NVIDIA enhancements:** Set up the RTX HDR or DLSS NR component in image enhancement management, then enable it for an application. DLSS NR can be adjusted during a stream. The displayed SDR, HDR, or Dolby Vision output depends on the negotiated stream and device capabilities.
+- **USB forwarding:** Paired clients can configure runtime USB forwarding when the Windows host has a working USB/IP transport component.
 
 ### 🎬 Full HDR Pipeline Architecture
 
