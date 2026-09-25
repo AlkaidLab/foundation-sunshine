@@ -5,7 +5,7 @@
 <div align="center">
 
 [![English](https://img.shields.io/badge/English-README.en.md-blue?style=for-the-badge)](README.en.md)
-[![中文简体](https://img.shields.io/badge/简体中文-README.zh--CN.md-red?style=for-the-badge)](README.md)
+[![中文简体](https://img.shields.io/badge/简体中文-README.md-red?style=for-the-badge)](README.md)
 [![Français](https://img.shields.io/badge/Français-README.fr.md-green?style=for-the-badge)](README.fr.md)
 [![Deutsch](https://img.shields.io/badge/Deutsch-README.de.md-yellow?style=for-the-badge)](README.de.md)
 [![日本語](https://img.shields.io/badge/日本語-README.ja.md-purple?style=for-the-badge)](README.ja.md)
@@ -18,13 +18,30 @@ Fork basé sur LizardByte/Sunshine, offrant une documentation complète [Lire la
 
 **Sunshine-Foundation** est un hôte de streaming de jeu auto-hébergé pour Moonlight. Cette version forkée apporte des améliorations significatives par rapport à Sunshine original, en se concentrant sur l'amélioration de l'expérience de streaming de jeu entre divers appareils terminaux et l'hôte Windows :
 
+### 🚀 Démarrage rapide
+
+1. Téléchargez un installateur Windows depuis les [versions de Foundation Sunshine](https://github.com/AlkaidLab/foundation-sunshine/releases), installez-le et lancez Sunshine. Consultez les notes avant de choisir une préversion.
+2. Sur l'hôte, ouvrez [https://localhost:47990](https://localhost:47990). Lors du premier lancement, créez et conservez vos identifiants ; le navigateur peut signaler le certificat local autosigné.
+3. Ajoutez une application dans Sunshine, ajoutez l'hôte dans Moonlight, puis saisissez dans Sunshine le code PIN affiché par Moonlight.
+
+Les écrans virtuels, DualSense, le transfert USB et les améliorations NVIDIA nécessitent chacun des pilotes ou composants spécifiques. Vérifiez leur état dans le panneau de contrôle avant de les activer.
+
 ### 🌟 Fonctionnalités principales
 - **Support HDR Full Pipeline** - Double encodage HDR10 (PQ) + HLG avec métadonnées adaptatives, couvrant un plus large éventail d'appareils
-- **Écran virtuel** - Gestion intégrée des écrans virtuels, permettant de créer et gérer des écrans virtuels sans logiciel supplémentaire
+- **Écran virtuel** - Gestion intégrée de ZakoVDD pour les écrans virtuels ; nécessite le pilote correspondant
 - **Microphone distant** - Prise en charge de la réception du microphone client, offrant une fonction de transmission vocale de haute qualité
 - **Panneau de contrôle avancé** - Interface de contrôle Web intuitive avec surveillance en temps réel et gestion de configuration
 - **Transmission à faible latence** - Traitement de codage optimisé exploitant les dernières capacités matérielles
 - **Appairage intelligent** - Gestion intelligente des profils correspondants aux appareils appairés
+- **Manettes et périphériques** - Choix global ou par application du type de manette, DualSense virtuelle optionnelle avec haptique audio et transfert USB pour les clients appairés
+- **Améliorations NVIDIA** - RTX HDR et DLSS NR en option ; DLSS NR prend en charge SDR et HDR natif, avec activation et réglage de l'échelle de traitement pendant la diffusion si le matériel et les composants requis sont disponibles
+- **État du flux** - Affichage du profil Dolby Vision 8.1 / 8.4 négocié et de l'état de l'injection RPU côté hôte, avec une option pour arrêter l'application à la fin de la dernière session vidéo
+
+### Fonctions optionnelles
+
+- **DualSense virtuelle :** Choisissez le type de manette dans le centre des contrôleurs du panneau de contrôle. Installez d'abord le composant DualSense ; l'haptique audio demande aussi le transport USB/IP et un client compatible. Si le composant est indisponible, l'attribution de la manette revient au mode automatique.
+- **Améliorations NVIDIA :** Configurez le composant RTX HDR ou DLSS NR dans la gestion des améliorations d'image, puis activez-le pour une application. RTX HDR convertit une entrée SDR en HDR PQ ; il ne traite pas une entrée HDR native ni une sortie HLG, et son activation peut empêcher la négociation du Dolby Vision Profile 8.4 pour une session HLG. DLSS NR se règle pendant la diffusion. L'indicateur Dolby Vision reflète l'injection RPU côté hôte, sans confirmer l'affichage côté client ; le Profile 8.4 doit encore être validé de bout en bout sur appareil réel.
+- **Transfert USB :** L'hôte Windows doit activer le transfert USB et disposer d'un composant de transport USB/IP fonctionnel avant que les clients appairés puissent configurer le transfert pendant l'utilisation.
 
 ### 🎬 Architecture complète du pipeline HDR
 

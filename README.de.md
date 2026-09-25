@@ -5,7 +5,7 @@
 <div align="center">
 
 [![English](https://img.shields.io/badge/English-README.en.md-blue?style=for-the-badge)](README.en.md)
-[![中文简体](https://img.shields.io/badge/中文简体-README.zh--CN.md-red?style=for-the-badge)](README.md)
+[![中文简体](https://img.shields.io/badge/中文简体-README.md-red?style=for-the-badge)](README.md)
 [![Français](https://img.shields.io/badge/Français-README.fr.md-green?style=for-the-badge)](README.fr.md)
 [![Deutsch](https://img.shields.io/badge/Deutsch-README.de.md-yellow?style=for-the-badge)](README.de.md)
 [![日本語](https://img.shields.io/badge/日本語-README.ja.md-purple?style=for-the-badge)](README.ja.md)
@@ -18,13 +18,30 @@ Ein Fork basierend auf LizardByte/Sunshine, bietet vollständige Dokumentationsu
 
 **Sunshine-Foundation** ist ein selbst gehosteter Game-Stream-Host für Moonlight. Diese Fork-Version hat erhebliche Verbesserungen gegenüber dem ursprünglichen Sunshine vorgenommen und konzentriert sich darauf, das Spiel-Streaming-Erlebnis für verschiedene Streaming-Endgeräte und Windows-Hosts zu verbessern:
 
+### 🚀 Schnellstart
+
+1. Laden Sie ein Windows-Installationspaket von den [Foundation Sunshine Releases](https://github.com/AlkaidLab/foundation-sunshine/releases) herunter, installieren Sie es und starten Sie Sunshine. Lesen Sie vor der Wahl einer Vorabversion die Versionshinweise.
+2. Öffnen Sie auf dem Host [https://localhost:47990](https://localhost:47990). Erstellen und sichern Sie beim ersten Start Ihre Zugangsdaten; der Browser kann vor dem lokalen selbstsignierten Zertifikat warnen.
+3. Fügen Sie in Sunshine eine Anwendung und in Moonlight den Host hinzu. Geben Sie anschließend die von Moonlight angezeigte PIN in Sunshine ein.
+
+Virtuelle Displays, DualSense, USB-Weiterleitung und NVIDIA-Bildverbesserungen benötigen jeweils eigene Treiber oder Komponenten. Prüfen Sie deren Status vor der Aktivierung im Bedienfeld.
+
 ### 🌟 Kernfunktionen
 - **Vollständige HDR-Pipeline-Unterstützung** - Dualformat HDR10 (PQ) + HLG Kodierung mit adaptiven Metadaten für eine breitere Geräteabdeckung
-- **Virtuelle Anzeige** - Integriertes virtuelles Display-Management, ermöglicht das Erstellen und Verwalten virtueller Displays ohne zusätzliche Software
+- **Virtuelle Anzeige** - Integrierte Verwaltung von ZakoVDD-Displays; der zugehörige Treiber wird benötigt
 - **Entferntes Mikrofon** - Unterstützt das Empfangen von Client-Mikrofonen und bietet hochwertige Sprachdurchleitung
 - **Erweiterte Systemsteuerung** - Intuitive Web-Oberfläche zur Konfiguration mit Echtzeit-Überwachung und Verwaltung
 - **Niedrige Latenzübertragung** - Optimierte Encoder-Verarbeitung unter Nutzung der neuesten Hardware-Fähigkeiten
 - **Intelligente Paarung** - Intelligentes Management von Profilen für gepaarte Geräte
+- **Controller und Geräte** - Globale und anwendungsbezogene Wahl des Gamepad-Typs, optionaler virtueller DualSense mit Audiohaptik und USB-Weiterleitung für gekoppelte Clients
+- **NVIDIA-Bildverbesserungen** - Optionales RTX HDR und DLSS NR; DLSS NR unterstützt SDR und natives HDR sowie Umschalten und Skalieren der Verarbeitung während des Streams, sofern Hardware und Komponenten verfügbar sind
+- **Streamstatus** - Anzeige des ausgehandelten Dolby Vision Profile 8.1 / 8.4 und des RPU-Injektionsstatus auf dem Host sowie Option, die Anwendung nach Ende der letzten Videositzung zu beenden
+
+### Optionale Funktionen
+
+- **Virtueller DualSense:** Wählen Sie den Gamepad-Typ im Controller-Center des Bedienfelds. Installieren Sie zuvor die optionale DualSense-Komponente; Audiohaptik benötigt zusätzlich USB/IP-Transport und einen kompatiblen Client. Ist die Komponente nicht verfügbar, wird die automatische Gamepad-Auswahl verwendet.
+- **NVIDIA-Bildverbesserungen:** Richten Sie die RTX HDR- oder DLSS NR-Komponente in der Bildverbesserungsverwaltung ein und aktivieren Sie sie für eine Anwendung. RTX HDR wandelt SDR-Eingaben in PQ HDR um; native HDR-Eingaben und HLG-Ausgaben werden nicht verarbeitet. Die Aktivierung kann bei HLG-Sitzungen die Aushandlung von Dolby Vision Profile 8.4 verhindern. DLSS NR lässt sich während eines Streams anpassen. Die Dolby Vision-Anzeige beschreibt die RPU-Injektion auf dem Host, nicht eine bestätigte Ausgabe am Client oder Display; Profile 8.4 benötigt noch eine Ende-zu-Ende-Prüfung auf einem Gerät.
+- **USB-Weiterleitung:** Auf dem Windows-Host muss die USB-Weiterleitung aktiviert und eine funktionsfähige USB/IP-Transportkomponente vorhanden sein, bevor gekoppelte Clients die Weiterleitung zur Laufzeit konfigurieren können.
 
 ### 🎬 Vollständige HDR-Pipeline-Architektur
 
