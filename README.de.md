@@ -35,12 +35,12 @@ Virtuelle Displays, DualSense, USB-Weiterleitung und NVIDIA-Bildverbesserungen b
 - **Intelligente Paarung** - Intelligentes Management von Profilen für gepaarte Geräte
 - **Controller und Geräte** - Globale und anwendungsbezogene Wahl des Gamepad-Typs, optionaler virtueller DualSense mit Audiohaptik und USB-Weiterleitung für gekoppelte Clients
 - **NVIDIA-Bildverbesserungen** - Optionales RTX HDR und DLSS NR; DLSS NR unterstützt SDR und natives HDR sowie Umschalten und Skalieren der Verarbeitung während des Streams, sofern Hardware und Komponenten verfügbar sind
-- **Streamstatus** - Anzeige bestätigter Dolby Vision Profile 8.1 / 8.4-Ausgabe und Option, den Stream nach Trennung aller Clients zu beenden
+- **Streamstatus** - Anzeige des ausgehandelten Dolby Vision Profile 8.1 / 8.4 und des RPU-Injektionsstatus auf dem Host sowie Option, die Anwendung nach Ende der letzten Videositzung zu beenden
 
 ### Optionale Funktionen
 
 - **Virtueller DualSense:** Wählen Sie den Gamepad-Typ im Controller-Center des Bedienfelds. Installieren Sie zuvor die optionale DualSense-Komponente; Audiohaptik benötigt zusätzlich USB/IP-Transport und einen kompatiblen Client. Ist die Komponente nicht verfügbar, wird die automatische Gamepad-Auswahl verwendet.
-- **NVIDIA-Bildverbesserungen:** Richten Sie die RTX HDR- oder DLSS NR-Komponente in der Bildverbesserungsverwaltung ein und aktivieren Sie sie für eine Anwendung. DLSS NR lässt sich während eines Streams anpassen. Die angezeigte SDR-, HDR- oder Dolby Vision-Ausgabe hängt von der Streamaushandlung und den Gerätefähigkeiten ab.
+- **NVIDIA-Bildverbesserungen:** Richten Sie die RTX HDR- oder DLSS NR-Komponente in der Bildverbesserungsverwaltung ein und aktivieren Sie sie für eine Anwendung. RTX HDR wandelt SDR-Eingaben in PQ HDR um; native HDR-Eingaben und HLG-Ausgaben werden nicht verarbeitet. Die Aktivierung kann bei HLG-Sitzungen die Aushandlung von Dolby Vision Profile 8.4 verhindern. DLSS NR lässt sich während eines Streams anpassen. Die Dolby Vision-Anzeige beschreibt die RPU-Injektion auf dem Host, nicht eine bestätigte Ausgabe am Client oder Display; Profile 8.4 benötigt noch eine Ende-zu-Ende-Prüfung auf einem Gerät.
 - **USB-Weiterleitung:** Auf dem Windows-Host muss die USB-Weiterleitung aktiviert und eine funktionsfähige USB/IP-Transportkomponente vorhanden sein, bevor gekoppelte Clients die Weiterleitung zur Laufzeit konfigurieren können.
 
 ### 🎬 Vollständige HDR-Pipeline-Architektur

@@ -35,12 +35,12 @@ Virtual displays, DualSense, USB forwarding, and NVIDIA image enhancements have 
 - **Smart Pairing** - Intelligent management of pairing devices with corresponding profiles
 - **Controllers and devices** - Global and per-application gamepad selection, optional virtual DualSense with audio haptics, and USB forwarding for paired clients
 - **NVIDIA image enhancements** - Optional RTX HDR and DLSS NR; DLSS NR supports SDR and native HDR, with live toggling and processing-scale control when the required hardware and components are available
-- **Stream status** - Reports confirmed Dolby Vision Profile 8.1 / 8.4 output and offers an option to end streaming after all clients disconnect
+- **Stream status** - Reports the negotiated Dolby Vision Profile 8.1 / 8.4 and host-side RPU injection status, plus an option to end the application after the last video session ends
 
 ### Optional Features
 
 - **Virtual DualSense:** Choose the gamepad type in the control panel's controller center. Install the optional DualSense component first; audio haptics additionally require USB/IP transport and client support. If the component is unavailable, gamepad allocation falls back to automatic selection.
-- **NVIDIA enhancements:** Set up the RTX HDR or DLSS NR component in image enhancement management, then enable it for an application. DLSS NR can be adjusted during a stream. The displayed SDR, HDR, or Dolby Vision output depends on the negotiated stream and device capabilities.
+- **NVIDIA enhancements:** Set up the RTX HDR or DLSS NR component in image enhancement management, then enable it for an application. RTX HDR converts SDR input to PQ HDR; it does not process native HDR input or HLG output, and enabling it may prevent Dolby Vision Profile 8.4 negotiation for HLG sessions. DLSS NR can be adjusted during a stream. The Dolby Vision indicator reports host-side RPU injection, not confirmed client or display output; Profile 8.4 still needs end-to-end device validation.
 - **USB forwarding:** The Windows host must enable USB forwarding and have a working USB/IP transport component before paired clients can configure runtime forwarding.
 
 ### 🎬 Full HDR Pipeline Architecture

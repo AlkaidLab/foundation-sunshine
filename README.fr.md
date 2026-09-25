@@ -35,12 +35,12 @@ Les écrans virtuels, DualSense, le transfert USB et les améliorations NVIDIA n
 - **Appairage intelligent** - Gestion intelligente des profils correspondants aux appareils appairés
 - **Manettes et périphériques** - Choix global ou par application du type de manette, DualSense virtuelle optionnelle avec haptique audio et transfert USB pour les clients appairés
 - **Améliorations NVIDIA** - RTX HDR et DLSS NR en option ; DLSS NR prend en charge SDR et HDR natif, avec activation et réglage de l'échelle de traitement pendant la diffusion si le matériel et les composants requis sont disponibles
-- **État du flux** - Affichage de la sortie Dolby Vision Profile 8.1 / 8.4 confirmée et option pour arrêter la diffusion après la déconnexion de tous les clients
+- **État du flux** - Affichage du profil Dolby Vision 8.1 / 8.4 négocié et de l'état de l'injection RPU côté hôte, avec une option pour arrêter l'application à la fin de la dernière session vidéo
 
 ### Fonctions optionnelles
 
 - **DualSense virtuelle :** Choisissez le type de manette dans le centre des contrôleurs du panneau de contrôle. Installez d'abord le composant DualSense ; l'haptique audio demande aussi le transport USB/IP et un client compatible. Si le composant est indisponible, l'attribution de la manette revient au mode automatique.
-- **Améliorations NVIDIA :** Configurez le composant RTX HDR ou DLSS NR dans la gestion des améliorations d'image, puis activez-le pour une application. DLSS NR se règle pendant la diffusion. La sortie SDR, HDR ou Dolby Vision affichée dépend de la négociation du flux et des capacités des appareils.
+- **Améliorations NVIDIA :** Configurez le composant RTX HDR ou DLSS NR dans la gestion des améliorations d'image, puis activez-le pour une application. RTX HDR convertit une entrée SDR en HDR PQ ; il ne traite pas une entrée HDR native ni une sortie HLG, et son activation peut empêcher la négociation du Dolby Vision Profile 8.4 pour une session HLG. DLSS NR se règle pendant la diffusion. L'indicateur Dolby Vision reflète l'injection RPU côté hôte, sans confirmer l'affichage côté client ; le Profile 8.4 doit encore être validé de bout en bout sur appareil réel.
 - **Transfert USB :** L'hôte Windows doit activer le transfert USB et disposer d'un composant de transport USB/IP fonctionnel avant que les clients appairés puissent configurer le transfert pendant l'utilisation.
 
 ### 🎬 Architecture complète du pipeline HDR

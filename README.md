@@ -28,7 +28,7 @@
 
 ### ░▒▓ 核心特性
 
-- **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・Dolby Vision 输出状态展示
+- **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・Dolby Vision 主机侧注入状态展示
 - **虚拟显示器** — 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd)・Zako Direct 零拷贝借帧・5 种屏幕模式・多客户端 GUID 会话
 - **音频增强** — 7.1.4 环绕声 (12ch)・Opus DRED 丢包恢复・持续音频流・远程麦克风・虚拟扬声器位深匹配
 - **编码优化** — NVENC SDK 13.0・AMF QVBR/HQVBR/多硬件实例・编码器探测结果缓存・自适应下采样・NVENC 帧预算自适应降档
@@ -36,7 +36,7 @@
 - **文件夹共享** — Windows 主机目录映射・资源管理器右键共享・只读安全默认值・已配对设备授权
 - **控制面板** — Tauri 2 + Vue 3 + Vite・深色模式・QR 配对・实时监控・画质增强组件管理
 - **输入增强** — 全局及应用级手柄类型选择・可选虚拟 DualSense 与音频触觉・原生精密触摸板适配・虚拟鼠标驱动 (vmouse)
-- **设备扩展** — 已配对客户端的 USB 转发配置・可选“所有客户端断开后结束串流”
+- **设备扩展** — 已配对客户端的 USB 转发配置・可选在最后一个视频会话结束后清理应用
 
 ### ░▒▓ 技术细节
 
@@ -129,7 +129,7 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 ### ░▒▓ 按需启用的功能
 
 - **虚拟 DualSense**：在控制面板的控制器中心选择手柄类型。可设全局默认值，也可为单个应用覆盖；需要先安装可选 DualSense 组件。音频触觉还需相应 USB/IP 传输及客户端能力。组件不可用时会回退到自动手柄选择，具体状态以控制面板提示为准。
-- **NVIDIA 画质增强**：在画质增强管理页配置 RTX HDR 或 DLSS NR 所需组件，再为应用开启相应功能。DLSS NR 支持串流中的即时开关和处理比例调整；界面会显示当前输出是 SDR、HDR，或已确认生效的 Dolby Vision Profile 8.1 / 8.4。输出格式取决于串流协商和设备能力。
+- **NVIDIA 画质增强**：在画质增强管理页配置 RTX HDR 或 DLSS NR 所需组件，再为应用开启相应功能。RTX HDR 将 SDR 输入转换为 PQ HDR，不作用于原生 HDR 或 HLG 输出；启用后也可能阻止 HLG 会话协商 Dolby Vision Profile 8.4。DLSS NR 支持串流中的即时开关和处理比例调整。界面可显示协商的 Dolby Vision Profile 8.1 / 8.4 及主机侧 RPU 注入状态；这不代表客户端或显示设备已成功呈现 Dolby Vision，Profile 8.4 仍需真机端到端验证。
 - **USB 转发**：Windows 主机须启用 USB 转发并具备可用的 USB/IP 传输组件，已配对客户端才能配置运行时转发。安装和设备授权请以控制面板中的状态与提示为准。
 
 相关开发说明：[DualSense 组件](docs/windows_dualsense_component_lifecycle.md) · [NVIDIA RTX HDR 构建](docs/rtx_hdr_build.md) · [串流性能调节](docs/performance_tuning.md)
