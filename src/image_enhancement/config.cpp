@@ -202,6 +202,16 @@ namespace image_enhancement {
     }
   }  // namespace
 
+  nlohmann::json
+  read_json_document(const std::filesystem::path &path, bool missing_allowed) {
+    return read_document(path, missing_allowed);
+  }
+
+  bool
+  write_json_document(const std::filesystem::path &path, const nlohmann::json &value) {
+    return write_document(path, value);
+  }
+
   std::optional<backend_capability_e>
   backend_capability(std::string_view id) {
     for (const auto &traits : BACKEND_TRAITS) {

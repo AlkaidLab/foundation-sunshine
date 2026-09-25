@@ -977,7 +977,7 @@ namespace proc {
           if (mode != "on" && mode != "off" && mode != "inherit") {
             BOOST_LOG(warning) << "Ignoring invalid DLSS NR mode ["sv << mode << "] for app ["sv << name << ']';
           }
-          ctx.dlssnr = rtsp_stream::dlssnr_config_t {
+          if (mode == "on" || mode == "off") ctx.dlssnr = rtsp_stream::dlssnr_config_t {
             .enabled = mode == "on",
             .style = std::clamp(dlssnr_node->get<int>("style", 0), 0, 4),
             .motion_quality = std::clamp(dlssnr_node->get<int>("motion-quality", 0), 0, 3),

@@ -48,6 +48,7 @@
 #include "file_mapping/service.h"
 #include "globals.h"
 #include "hdr/session_target.h"
+#include "image_enhancement/nr_defaults.h"
 #include "http_util.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -286,13 +287,27 @@ namespace nvhttp {
         }
       }
     }
-    if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid);
-        app_dlssnr && app_dlssnr->enabled) {
+    if (const auto defaults = image_enhancement::load_nr_defaults()) {
+      const auto &f = defaults->filter;
+      launch_session->dlssnr_params.enabled = defaults->enabled;
+      launch_session->dlssnr_params.intensity = f.nr_intensity;
+      launch_session->dlssnr_params.style = f.nr_style;
+      launch_session->dlssnr_params.skin_structure_strength = f.nr_skin_structure_strength;
+      launch_session->dlssnr_params.auto_mask = f.nr_auto_mask;
+      launch_session->dlssnr_params.ui_correction = f.nr_ui_correction;
+      launch_session->dlssnr_params.motion_quality = f.nr_motion_quality;
+      launch_session->dlssnr_scale_percent = f.nr_scale_percent;
+    }
+    // Explicit per-app on/off settings take precedence; inherit uses the saved
+    // stream defaults. The overlay processing scale is currently global.
+    if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid)) {
+      launch_session->dlssnr_params = *app_dlssnr;
+    }
+    if (launch_session->dlssnr_params.enabled) {
       // Reserve both enabled backends until RTSP knows the final wire format.
       // It selects RTX HDR only for PQ and releases the unused backend;
       // HLG/SDR must retain NR even when launch initially requested RTX HDR.
       launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
-      launch_session->dlssnr_params = *app_dlssnr;
     }
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));

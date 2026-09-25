@@ -1737,6 +1737,13 @@ namespace confighttp {
   }
 
   void
+  rememberSessionNr(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request) || !require_localhost(response, request, "Session image enhancement")) return;
+    image_enhancement::api::remember_session_nr(response, request);
+  }
+
+  void
   maintainImageEnhancementComponent(resp_https_t response, req_https_t request) {
     if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request) || !require_localhost(response, request, "Image enhancement maintenance")) return;
@@ -4154,6 +4161,7 @@ namespace confighttp {
     server.resource["^/api/hdr-enhanced/status$"]["GET"] = getImageEnhancementStatus;
     server.resource["^/api/hdr-enhanced/sessions$"]["GET"] = getEnhancementSessions;
     server.resource["^/api/hdr-enhanced/session-nr$"]["POST"] = setSessionNr;
+    server.resource["^/api/hdr-enhanced/session-nr/remember$"]["POST"] = rememberSessionNr;
     server.resource["^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$"]["POST"] = maintainImageEnhancementComponent;
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;

@@ -71,6 +71,12 @@ namespace image_enhancement {
   parse_settings(const nlohmann::json &input, settings_t &output);
   nlohmann::json
   settings_json(const settings_t &settings);
+
+  // Shared bounded JSON I/O for enhancement settings and NR stream defaults.
+  nlohmann::json
+  read_json_document(const std::filesystem::path &path, bool missing_allowed = false);
+  bool
+  write_json_document(const std::filesystem::path &path, const nlohmann::json &value);
   bool
   valid_version(std::string_view version);
 
