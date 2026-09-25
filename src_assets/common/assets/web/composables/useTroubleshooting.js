@@ -56,8 +56,9 @@ export function useTroubleshooting({ fetchLogs = fetchLogsFromApi } = {}) {
   const logInterval = ref(null)
 
   const actualLogs = computed(() => {
-    const renderedLines = logs.value.split('\n').slice(-MAX_RENDERED_LOG_LINES)
-    if (!logFilter.value) return renderedLines.join('\n')
+    const lines = logs.value.split('\n')
+    if (lines.at(-1) === '') lines.pop()
+    if (!logFilter.value) return lines.slice(-MAX_RENDERED_LOG_LINES).join('\n')
 
     const filter = ignoreCase.value ? logFilter.value.toLowerCase() : logFilter.value
     const filterFn = (() => {
@@ -82,7 +83,7 @@ export function useTroubleshooting({ fetchLogs = fetchLogsFromApi } = {}) {
       }
     })()
 
-    return renderedLines.filter(filterFn).join('\n')
+    return lines.filter(filterFn).slice(-MAX_RENDERED_LOG_LINES).join('\n')
   })
 
   let refreshingLogs = false

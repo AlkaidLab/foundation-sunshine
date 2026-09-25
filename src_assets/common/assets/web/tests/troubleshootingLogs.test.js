@@ -81,3 +81,41 @@ test('troubleshooting incremental updates append to the capped live view', async
     globalThis.document = originalDocument
   }
 })
+
+test('troubleshooting keeps 2000 actual lines when logs end with a newline', () => {
+  const originalDocument = globalThis.document
+  const originalWarn = console.warn
+  globalThis.document = { addEventListener() {}, removeEventListener() {} }
+  console.warn = () => {}
+
+  try {
+    const state = useTroubleshooting()
+    state.logs.value = Array.from({ length: 2000 }, (_, index) => 'line-' + index).join('\n') + '\n'
+
+    const renderedLines = state.actualLogs.value.split('\n')
+    assert.equal(renderedLines.length, 2000)
+    assert.equal(renderedLines[0], 'line-0')
+    assert.equal(renderedLines.at(-1), 'line-1999')
+  } finally {
+    console.warn = originalWarn
+    globalThis.document = originalDocument
+  }
+})
+
+test('troubleshooting searches the full retained cache before limiting matching lines', () => {
+  const originalDocument = globalThis.document
+  const originalWarn = console.warn
+  globalThis.document = { addEventListener() {}, removeEventListener() {} }
+  console.warn = () => {}
+
+  try {
+    const state = useTroubleshooting()
+    state.logs.value = ['early-match', ...Array.from({ length: 2000 }, (_, index) => 'line-' + index)].join('\n')
+    state.logFilter.value = 'early-match'
+
+    assert.equal(state.actualLogs.value, 'early-match')
+  } finally {
+    console.warn = originalWarn
+    globalThis.document = originalDocument
+  }
+})
