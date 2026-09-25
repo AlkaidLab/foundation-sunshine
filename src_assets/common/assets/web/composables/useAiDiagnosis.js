@@ -216,8 +216,6 @@ export function useAiDiagnosis() {
     }
   }
 
-  loadConfig()
-
   return {
     config,
     isConfigLoading,
