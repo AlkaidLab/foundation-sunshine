@@ -246,6 +246,7 @@ const {
   localFindings: aiLocalFindings,
   localSuggestions: aiLocalSuggestions,
   diagnose: aiDiagnose,
+  loadConfig: loadAiConfig,
 } = useAiDiagnosis()
 
 const showDiagnosisModal = ref(false)
@@ -319,8 +320,9 @@ const handleCopyConfig = () => copyConfig(t)
 
 const handleReopenSetupWizard = () => reopenSetupWizard(t)
 
-const openDiagnosis = () => {
+const openDiagnosis = async () => {
   showDiagnosisModal.value = true
+  await loadAiConfig()
 }
 
 const handleDiagnose = () => {
