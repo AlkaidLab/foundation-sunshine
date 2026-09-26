@@ -4275,7 +4275,7 @@ namespace confighttp {
     if (!config::sunshine.bind_address.empty()) {
       boost::system::error_code bind_error;
       const auto configured_address = boost::asio::ip::make_address(config::sunshine.bind_address, bind_error);
-      if (!bind_error && !configured_address.is_unspecified()) {
+      if (!bind_error && (configured_address.is_v6() || !configured_address.is_unspecified())) {
         const bool already_uses_panel_loopback = configured_address.is_v4() &&
           configured_address.to_v4() == boost::asio::ip::address_v4::loopback();
         if (!already_uses_panel_loopback) {
