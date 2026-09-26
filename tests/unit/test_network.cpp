@@ -139,6 +139,30 @@ TEST_F(BindAddressTest, WildcardAddressFunction) {
   ASSERT_EQ(net::af_to_any_address_string(net::af_e::BOTH), "::");
 }
 
+TEST_F(BindAddressTest, WebUiHostUsesPanelLoopbackForConfiguredAddresses) {
+  config::sunshine.bind_address = "192.0.2.10";
+  EXPECT_EQ(net::get_web_ui_host(), "127.0.0.1");
+
+  config::sunshine.bind_address = "2001:db8::10";
+  EXPECT_EQ(net::get_web_ui_host(), "127.0.0.1");
+}
+
+TEST_F(BindAddressTest, WebUiHostUsesLoopbackForEmptyAndWildcardAddresses) {
+  config::sunshine.bind_address.clear();
+  EXPECT_EQ(net::get_web_ui_host(), "localhost");
+
+  config::sunshine.bind_address = "0.0.0.0";
+  EXPECT_EQ(net::get_web_ui_host(), "127.0.0.1");
+
+  config::sunshine.bind_address = "::";
+  EXPECT_EQ(net::get_web_ui_host(), "127.0.0.1");
+}
+
+TEST_F(BindAddressTest, WebUiHostKeepsHistoricalHostForInvalidConfiguredAddress) {
+  config::sunshine.bind_address = "not-an-ip";
+  EXPECT_EQ(net::get_web_ui_host(), "localhost");
+}
+
 TEST(AddressNormalizationTest, ConvertsIpv4MappedIpv6ToIpv4) {
   const auto mapped = boost::asio::ip::make_address("::ffff:192.0.2.10");
   const auto normalized = net::normalize_address(mapped);

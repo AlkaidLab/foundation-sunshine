@@ -32,13 +32,15 @@ using namespace std::literals;
 
 void
 launch_ui() {
-  std::string url = "https://localhost:" + std::to_string(net::map_port(confighttp::PORT_HTTPS));
+  std::string url = "https://" + net::get_web_ui_host() + ':' +
+                    std::to_string(net::map_port(confighttp::PORT_HTTPS));
   platf::open_url(url);
 }
 
 void
 launch_ui_with_path(std::string path) {
-  std::string url = "https://localhost:" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + path;
+  std::string url = "https://" + net::get_web_ui_host() + ':' +
+                    std::to_string(net::map_port(confighttp::PORT_HTTPS)) + path;
   platf::open_url(url);
 }
 
