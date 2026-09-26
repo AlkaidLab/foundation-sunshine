@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <latch>
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -4266,15 +4267,64 @@ namespace confighttp {
     // base64 cover-upload endpoint.
     server.config.max_request_streambuf_size = 16 * 1024 * 1024;
 
-    auto accept_and_run = [&](https_server_t *server) {
+    // A concrete bind address intentionally limits remote Sunshine traffic to
+    // one interface. Keep an IPv4 loopback-only Web UI listener so the local
+    // GUI/tray and Control Panel entry points remain available. The Panel
+    // intentionally uses 127.0.0.1, including when the configured address is
+    // IPv6.
+    std::optional<https_server_t> loopback_server;
+    if (!config::sunshine.bind_address.empty()) {
+      boost::system::error_code bind_error;
+      const auto configured_address = boost::asio::ip::make_address(config::sunshine.bind_address, bind_error);
+      if (!bind_error && (configured_address.is_v6() || !configured_address.is_unspecified())) {
+        const bool already_uses_panel_loopback = configured_address.is_v4() &&
+          configured_address.to_v4() == boost::asio::ip::address_v4::loopback();
+        if (!already_uses_panel_loopback) {
+          loopback_server.emplace(config::nvhttp.cert, config::nvhttp.pkey);
+          loopback_server->default_resource = server.default_resource;
+          loopback_server->resource = server.resource;
+          loopback_server->config.reuse_address = true;
+          loopback_server->config.address = "127.0.0.1";
+          loopback_server->config.port = port_https;
+          loopback_server->config.thread_pool_size = server.config.thread_pool_size;
+          loopback_server->config.max_request_streambuf_size = server.config.max_request_streambuf_size;
+        }
+      }
+    }
+
+    auto accept_and_run = [&](https_server_t *server,
+                              const char *listener_name,
+                              std::string listener_address,
+                              bool required,
+                              const std::shared_ptr<std::latch> &startup_latch,
+                              const std::shared_ptr<std::atomic_bool> &startup_signaled) {
+      const auto signal_startup = [&]() {
+        if (startup_latch && startup_signaled && !startup_signaled->exchange(true)) {
+          startup_latch->count_down();
+        }
+      };
       try {
-        server->start([](unsigned short port) {
-          BOOST_LOG(debug) << "Configuration UI available at [https://localhost:"sv << port << "]"sv;
+        server->start([listener_name,
+                       listener_address = std::move(listener_address),
+                       startup_latch,
+                       startup_signaled](unsigned short port) {
+          if (startup_latch && startup_signaled && !startup_signaled->exchange(true)) {
+            startup_latch->count_down();
+          }
+          BOOST_LOG(debug) << "Configuration UI listener ["sv << listener_name << "] ready at [https://"
+                            << listener_address << ':' << port << "]"sv;
         });
       }
       catch (boost::system::system_error &err) {
+        signal_startup();
         // It's possible the exception gets thrown after calling server->stop() from a different thread
         if (shutdown_event->peek()) {
+          return;
+        }
+        if (!required) {
+          BOOST_LOG(warning) << "Optional Configuration UI listener ["sv << listener_name
+                             << "] could not start on ["sv << listener_address << ':' << port_https
+                             << "]: "sv << err.what();
           return;
         }
         BOOST_LOG(fatal) << "Couldn't start Configuration HTTPS server on port ["sv << port_https << "]: "sv << err.what();
@@ -4282,19 +4332,66 @@ namespace confighttp {
         return;
       }
       catch (std::exception &err) {
+        signal_startup();
+        if (shutdown_event->peek()) {
+          return;
+        }
+        if (!required) {
+          BOOST_LOG(warning) << "Optional Configuration UI listener ["sv << listener_name
+                             << "] failed on ["sv << listener_address << ':' << port_https
+                             << "]: "sv << err.what();
+          return;
+        }
         BOOST_LOG(fatal) << "Configuration HTTPS server failed to start: "sv << err.what();
         shutdown_event->raise(true);
         return;
       }
     };
-    std::thread tcp { accept_and_run, &server };
+    const auto listener_host = [](const std::string &address) {
+      boost::system::error_code error;
+      const auto parsed = boost::asio::ip::make_address(address, error);
+      return error ? address : net::addr_to_url_escaped_string(parsed);
+    };
+
+    std::thread tcp {
+      accept_and_run,
+      &server,
+      "configured",
+      listener_host(server.config.address),
+      true,
+      nullptr,
+      nullptr
+    };
+    std::thread loopback_tcp;
+    std::shared_ptr<std::latch> loopback_startup_latch;
+    std::shared_ptr<std::atomic_bool> loopback_startup_signaled;
+    if (loopback_server) {
+      loopback_startup_latch = std::make_shared<std::latch>(1);
+      loopback_startup_signaled = std::make_shared<std::atomic_bool>(false);
+      loopback_tcp = std::thread {
+        accept_and_run,
+        &*loopback_server,
+        "loopback",
+        listener_host(loopback_server->config.address),
+        false,
+        loopback_startup_latch,
+        loopback_startup_signaled
+      };
+      loopback_startup_latch->wait();
+    }
 
     // Wait for any event
     shutdown_event->view();
 
     image_enhancement::api::shutdown();
     server.stop();
+    if (loopback_server) {
+      loopback_server->stop();
+    }
 
     tcp.join();
+    if (loopback_tcp.joinable()) {
+      loopback_tcp.join();
+    }
   }
 }  // namespace confighttp

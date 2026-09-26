@@ -129,6 +129,26 @@ namespace net {
     return std::string(af_to_any_address_string(af));
   }
 
+  std::string get_web_ui_host() {
+    if (config::sunshine.bind_address.empty()) {
+      return "localhost";
+    }
+
+    boost::system::error_code error;
+    ip::make_address(config::sunshine.bind_address, error);
+    if (error) {
+      // The listener will report the invalid bind address when it starts. Keep
+      // local UI entry points on their historical loopback endpoint instead of
+      // turning an invalid config value into a browser target.
+      return "localhost";
+    }
+
+    // The config HTTPS service adds a loopback listener whenever a concrete
+    // interface address is configured. Local GUI/tray callers therefore stay
+    // on loopback, while remote clients use the configured interface address.
+    return "127.0.0.1";
+  }
+
   boost::asio::ip::address
   normalize_address(boost::asio::ip::address address) {
     // Convert IPv6-mapped IPv4 addresses into regular IPv4 addresses
