@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <latch>
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -4291,14 +4292,31 @@ namespace confighttp {
       }
     }
 
-    auto accept_and_run = [&](https_server_t *server, const char *listener_name, std::string listener_address, bool required) {
+    auto accept_and_run = [&](https_server_t *server,
+                              const char *listener_name,
+                              std::string listener_address,
+                              bool required,
+                              const std::shared_ptr<std::latch> &startup_latch,
+                              const std::shared_ptr<std::atomic_bool> &startup_signaled) {
+      const auto signal_startup = [&]() {
+        if (startup_latch && startup_signaled && !startup_signaled->exchange(true)) {
+          startup_latch->count_down();
+        }
+      };
       try {
-        server->start([listener_name, listener_address = std::move(listener_address)](unsigned short port) {
+        server->start([listener_name,
+                       listener_address = std::move(listener_address),
+                       startup_latch,
+                       startup_signaled](unsigned short port) {
+          if (startup_latch && startup_signaled && !startup_signaled->exchange(true)) {
+            startup_latch->count_down();
+          }
           BOOST_LOG(debug) << "Configuration UI listener ["sv << listener_name << "] ready at [https://"
                             << listener_address << ':' << port << "]"sv;
         });
       }
       catch (boost::system::system_error &err) {
+        signal_startup();
         // It's possible the exception gets thrown after calling server->stop() from a different thread
         if (shutdown_event->peek()) {
           return;
@@ -4314,6 +4332,7 @@ namespace confighttp {
         return;
       }
       catch (std::exception &err) {
+        signal_startup();
         if (shutdown_event->peek()) {
           return;
         }
@@ -4334,16 +4353,31 @@ namespace confighttp {
       return error ? address : net::addr_to_url_escaped_string(parsed);
     };
 
-    std::thread tcp { accept_and_run, &server, "configured", listener_host(server.config.address), true };
+    std::thread tcp {
+      accept_and_run,
+      &server,
+      "configured",
+      listener_host(server.config.address),
+      true,
+      nullptr,
+      nullptr
+    };
     std::thread loopback_tcp;
+    std::shared_ptr<std::latch> loopback_startup_latch;
+    std::shared_ptr<std::atomic_bool> loopback_startup_signaled;
     if (loopback_server) {
+      loopback_startup_latch = std::make_shared<std::latch>(1);
+      loopback_startup_signaled = std::make_shared<std::atomic_bool>(false);
       loopback_tcp = std::thread {
         accept_and_run,
         &*loopback_server,
         "loopback",
         listener_host(loopback_server->config.address),
-        false
+        false,
+        loopback_startup_latch,
+        loopback_startup_signaled
       };
+      loopback_startup_latch->wait();
     }
 
     // Wait for any event
