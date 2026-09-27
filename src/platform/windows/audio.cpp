@@ -971,6 +971,87 @@ namespace platf::audio {
       return true;
     }
 
+    std::optional<std::wstring>
+    default_device_id_for_role(int role) {
+      device_t device;
+      auto status = device_enum->GetDefaultAudioEndpoint(
+        eRender,
+        (ERole) role,
+        &device);
+      if (FAILED(status) || !device) {
+        return std::nullopt;
+      }
+
+      audio::wstring_t id;
+      if (FAILED(device->GetId(&id))) {
+        return std::nullopt;
+      }
+
+      return std::wstring { id.get() };
+    }
+
+    std::optional<std::vector<std::optional<std::wstring>>>
+    capture_default_device_roles() {
+      std::vector<std::optional<std::wstring>> defaults;
+      defaults.reserve(ERole_enum_count);
+
+      for (int role = 0; role < (int) ERole_enum_count; ++role) {
+        auto device_id = default_device_id_for_role(role);
+        if (!device_id) {
+          BOOST_LOG(error) << "Couldn't read the default audio device for role ["sv << role << ']';
+          return std::nullopt;
+        }
+        defaults.emplace_back(std::move(*device_id));
+      }
+
+      return defaults;
+    }
+
+    void
+    log_set_default_endpoint_failure(const std::string &sink, int role, HRESULT status) {
+      if (status == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) || status == E_INVALIDARG) {
+        BOOST_LOG(warning) << "Audio sink not found: "sv << sink;
+      }
+      else {
+        BOOST_LOG(warning) << "Couldn't set ["sv << sink << "] to role ["sv << role << "]: 0x"sv
+                          << util::hex(status).to_string_view();
+      }
+    }
+
+    int
+    set_default_device_roles(
+      const std::wstring &device_id,
+      const std::string &sink,
+      const std::vector<std::optional<std::wstring>> &rollback_device_ids) {
+      for (int role = 0; role < (int) ERole_enum_count; ++role) {
+        auto status = policy->SetDefaultEndpoint(device_id.c_str(), (ERole) role);
+        if (FAILED(status)) {
+          log_set_default_endpoint_failure(sink, role, status);
+
+          for (int rollback_role = 0; rollback_role < role; ++rollback_role) {
+            const auto &rollback_device_id = rollback_device_ids[rollback_role];
+            if (!rollback_device_id) {
+              continue;
+            }
+
+            auto current_device_id = default_device_id_for_role(rollback_role);
+            if (current_device_id && *current_device_id == device_id) {
+              auto rollback_status = policy->SetDefaultEndpoint(
+                rollback_device_id->c_str(),
+                (ERole) rollback_role);
+              if (FAILED(rollback_status)) {
+                log_set_default_endpoint_failure(sink, rollback_role, rollback_status);
+              }
+            }
+          }
+
+          return -1;
+        }
+      }
+
+      return 0;
+    }
+
     void
     restore_assigned_sink() {
       std::lock_guard lock { assigned_sink_mutex };
@@ -980,7 +1061,12 @@ namespace platf::audio {
         return;
       }
 
-      if (auto assigned = resolve_sink_device_id(sink); assigned && all_default_roles_match(*assigned)) {
+      if (assigned_sink_device_id && all_default_roles_match(*assigned_sink_device_id)) {
+        return;
+      }
+
+      auto rollback_device_ids = capture_default_device_roles();
+      if (!rollback_device_ids) {
         return;
       }
 
@@ -993,7 +1079,8 @@ namespace platf::audio {
         BOOST_LOG(info) << "Restoring selected audio sink after default device changed";
       }
 
-      if (set_sink_locked(sink)) {
+      if (!assigned_sink_device_id ||
+          set_default_device_roles(*assigned_sink_device_id, sink, *rollback_device_ids)) {
         BOOST_LOG(warning) << "Couldn't restore selected audio sink after default device changed";
       }
     }
@@ -1127,49 +1214,72 @@ namespace platf::audio {
         return true;
       }
 
-      auto assigned = resolve_sink_device_id(assigned_sink);
-      if (!assigned || !all_default_roles_match(*assigned)) {
-        BOOST_LOG(debug) << "Skipping audio sink restoration because the default device changed";
+      if (!assigned_sink_device_id) {
+        BOOST_LOG(debug) << "Skipping audio sink restoration because the assigned device is unavailable";
         return true;
       }
 
-      if (set_sink_locked(sink)) {
-        BOOST_LOG(warning) << "Couldn't restore the original audio sink";
+      bool restored_any {};
+      for (int role = 0; role < (int) ERole_enum_count; ++role) {
+        auto current_device_id = default_device_id_for_role(role);
+        if (!current_device_id || *current_device_id != *assigned_sink_device_id) {
+          continue;
+        }
+
+        const auto &original_device_id = original_default_device_roles[role];
+        if (!original_device_id || *original_device_id == *assigned_sink_device_id) {
+          continue;
+        }
+
+        auto status = policy->SetDefaultEndpoint(original_device_id->c_str(), (ERole) role);
+        if (FAILED(status)) {
+          log_set_default_endpoint_failure("the original audio sink"s, role, status);
+          continue;
+        }
+
+        restored_any = true;
       }
+
+      BOOST_LOG(debug) << (restored_any ?
+                             "Restored the original audio sink roles after streaming"sv :
+                             "Skipped audio sink restoration because no assigned role changed"sv);
+      assigned_sink.clear();
+      assigned_sink_device_id.reset();
+      original_default_device_roles.clear();
       return true;
+    }
+
+    bool
+    has_assigned_sink() override {
+      std::lock_guard lock { assigned_sink_mutex };
+      return !assigned_sink.empty();
     }
 
   private:
     int
     set_sink_locked(const std::string &sink) {
+      assigned_sink.clear();
+      assigned_sink_device_id.reset();
+      original_default_device_roles.clear();
+
       auto device_id = set_format(sink);
       if (!device_id) {
         return -1;
       }
 
-      int failure {};
-      for (int x = 0; x < (int) ERole_enum_count; ++x) {
-        auto status = policy->SetDefaultEndpoint(device_id->c_str(), (ERole) x);
-        if (status) {
-          // Depending on the format of the string, we could get either of these errors
-          if (status == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) || status == E_INVALIDARG) {
-            BOOST_LOG(warning) << "Audio sink not found: "sv << sink;
-          }
-          else {
-            BOOST_LOG(warning) << "Couldn't set ["sv << sink << "] to role ["sv << x << "]: 0x"sv << util::hex(status).to_string_view();
-          }
-
-          ++failure;
-        }
+      auto original_device_roles = capture_default_device_roles();
+      if (!original_device_roles) {
+        return -1;
       }
 
-      // Remember the assigned sink name, so we have it for later if we need to set it
-      // back after another application changes it
-      if (!failure) {
-        assigned_sink = sink;
+      if (set_default_device_roles(*device_id, sink, *original_device_roles)) {
+        return -1;
       }
 
-      return failure;
+      assigned_sink = sink;
+      assigned_sink_device_id = *device_id;
+      original_default_device_roles = std::move(*original_device_roles);
+      return 0;
     }
 
   public:
@@ -1470,6 +1580,8 @@ namespace platf::audio {
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
+    std::optional<std::wstring> assigned_sink_device_id;
+    std::vector<std::optional<std::wstring>> original_default_device_roles;
     std::mutex assigned_sink_mutex;
     std::chrono::steady_clock::time_point last_virtual_sink_notification {};
     std::mutex last_virtual_sink_notification_mutex;

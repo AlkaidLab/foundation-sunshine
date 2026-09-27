@@ -799,6 +799,11 @@ namespace platf {
       return false;
     }
 
+    virtual bool
+    has_assigned_sink() {
+      return false;
+    }
+
     virtual std::unique_ptr<mic_t>
     microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous) = 0;
 

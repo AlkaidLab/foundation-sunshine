@@ -680,14 +680,15 @@ namespace audio {
   }
 
   void stop_audio_control(audio_ctx_t &ctx) {
-    // restore audio-sink if applicable
-    if (!ctx.restore_sink) {
-      return;
-    }
 
     // 检查 control 是否存在，如果不存在则无法恢复 sink
     if (!ctx.control) {
       BOOST_LOG(debug) << "Audio control not available, skipping sink restoration";
+      return;
+    }
+
+    const bool restore_assigned_sink = config::audio.keep_sink_default && ctx.control->has_assigned_sink();
+    if (!ctx.restore_sink && !restore_assigned_sink) {
       return;
     }
 
@@ -696,8 +697,11 @@ namespace audio {
     if (!sink.empty()) {
       // Windows can skip restoration when the user changed the default sink.
       if (!ctx.control->restore_sink_if_assigned(sink)) {
-        // Platforms without ownership-aware restoration retain the previous behavior.
-        ctx.control->set_sink(sink);
+        // Platforms without ownership-aware restoration retain the previous behavior
+        // when Sunshine actually changed the default sink.
+        if (ctx.restore_sink) {
+          ctx.control->set_sink(sink);
+        }
       }
     }
   }
