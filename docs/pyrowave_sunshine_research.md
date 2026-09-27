@@ -19,7 +19,7 @@ Steam 已在 2026 年 9 月的 Beta 客户端中加入 Pyrowave 实验支持。�
 - [Steam Remote Play：Pyrowave video codec now in beta](https://steamcommunity.com/groups/homestream/discussions/0/564794422009744473?snr=2___)
 - [Steam Client Beta 更新记录](https://steamcommunity.com/groups/SteamClientBeta/announcements?client_view=1)
 
-截至 2026 年 9 月 25 日，Steam 仍在修复 Pyrowave 的闪烁、GPU 内存泄漏、Compute Queue 竞争和编码延迟问题，说明其仍处于快速迭代阶段。
+截至 2026 年 9 月 25 日，Steam 已在 9 月 22 日的 Beta 更新中处理 Linux/SteamOS 串流闪烁、频繁切换分辨率时的 GPU 内存泄漏，以及 Compute Queue 竞争问题。该更新未说明编码延迟问题已经修复，因此 Pyrowave 仍处于快速迭代阶段。
 
 ## 3. Pyrowave 的技术特点
 

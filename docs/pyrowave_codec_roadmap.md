@@ -602,9 +602,10 @@ Web UI 应在"视频设置"中提供实验性开关，开启时提示需要客�
 | `import_start` | D3D11→Vulkan 开始 | μs | 外部内存导入 |
 | `import_end` | D3D11→Vulkan 结束 | μs | |
 | `encode_start` | 编码提交 | μs | Vulkan command buffer 提交 |
-| `encode_end` | 编码完成 | μs | GPU timestamp query |
+| `encode_end` | 编码完成 | μs | GPU timestamp query，按 `timestampPeriod` 换算后通过 GPU 与主机时钟校准为 Unix epoch |
 | `frame_size` | 编码输出 | bytes | 当前帧压缩后大小 |
 | `packet_count` | RTP 发送 | count | 当前帧分片数 |
+| `first_send_ts` | 首分片发送 | μs | 第一个 RTP packet 交给 socket |
 | `last_send_ts` | 末分片发送 | μs | 最后一个 RTP packet 交给 socket |
 | `queue_depth` | 发送队列 | count | 当前待发送帧数 |
 | `encoder_retry` | 编码器状态 | count | 编码重试次数 |
@@ -618,7 +619,7 @@ Web UI 应在"视频设置"中提供实验性开关，开启时提示需要客�
 | `last_packet_ts` | 末分片到达 | μs | 当前帧最后一个 RTP packet |
 | `reassembly_end` | 重组完成 | μs | 完整 Pyrowave frame 组装 |
 | `decode_start` | 解码提交 | μs | Vulkan command buffer 提交 |
-| `decode_end` | 解码完成 | μs | GPU timestamp query |
+| `decode_end` | 解码完成 | μs | GPU timestamp query，按 `timestampPeriod` 换算后通过 GPU 与主机时钟校准为 Unix epoch |
 | `render_ts` | 提交渲染 | μs | 解码结果输出到渲染管线 |
 | `display_ts` | 呈现到屏幕 | μs | present / swapchain |
 | `dropped_frame` | 丢帧 | bool | 因超时或丢包丢弃的帧 |
@@ -634,13 +635,13 @@ Web UI 应在"视频设置"中提供实验性开关，开启时提示需要客�
 | 导入耗时 | `import_end - import_start` | D3D11→Vulkan |
 | 纯编码耗时 | `encode_end - encode_start` | Pyrowave Compute |
 | 编码到发送 | `last_send_ts - encode_end` | 含分片和 socket 提交 |
-| 网络传输 | `first_packet_ts(client) - last_send_ts(server)` | 需时钟修正 |
+| 网络传输 | `first_packet_ts(client) - first_send_ts(server)` | 同一分片的服务端发送与客户端到达，需时钟修正 |
 | 重组耗时 | `reassembly_end - first_packet_ts` | 客户端分片组装 |
 | 纯解码耗时 | `decode_end - decode_start` | Pyrowave Compute |
 | 渲染到显示 | `display_ts - render_ts` | 客户端呈现 |
 | 端到端总延迟 | `display_ts(client) - capture_ts(server)` | 需时钟修正 |
 | 帧大小 | `frame_size` | 用于码率计算 |
-| 实际码率 | `Σframe_size / duration` | Mbps |
+| 实际码率 | `Σframe_size × 8 / duration_seconds / 1,000,000` | duration 以秒计，frame_size 以字节计 |
 | 丢帧率 | `dropped_frames / total_frames` | 百分比 |
 
 ### 9.5 探针输出格式
@@ -660,6 +661,7 @@ Web UI 应在"视频设置"中提供实验性开关，开启时提示需要客�
   "encode_end": 1761234567891100,
   "frame_size": 512000,
   "packet_count": 350,
+  "first_send_ts": 1761234567891300,
   "last_send_ts": 1761234567892000,
   "queue_depth": 0,
   "fallback_event": false
@@ -1002,7 +1004,7 @@ gantt
 | iOS | — | — | — | ✓ | ✓ | ✓ |
 | macOS 增强版 | — | — | — | 评估 | 评估 | 评估 |
 | Web 客户端 | — | — | — | — | — | 评估 |
-| 默认状态 | 关闭 | 关闭 | 关闭 | 关闭 | 关闭 | 关闭或 auto |
+| 默认状态 | 关闭 | 关闭 | 关闭 | 关闭 | 关闭 | 关闭 |
 | 稳定性标签 | 实验 | 实验 | 实验 | 实验 | Beta | 正式 |
 
 以下原则贯穿所有阶段：
