@@ -926,6 +926,26 @@ namespace platf::audio {
       return std::nullopt;
     }
 
+    std::string
+    assigned_sink_snapshot() {
+      std::lock_guard lock { assigned_sink_mutex };
+      return assigned_sink;
+    }
+
+    void
+    restore_assigned_virtual_sink() {
+      auto sink = assigned_sink_snapshot();
+      if (!extract_virtual_sink_info(sink)) {
+        return;
+      }
+
+      BOOST_LOG(info) << "Restoring virtual audio sink after default device changed";
+      notify_virtual_sink_managed();
+      if (set_sink(sink)) {
+        BOOST_LOG(warning) << "Couldn't restore virtual audio sink after default device changed";
+      }
+    }
+
     std::unique_ptr<mic_t>
     microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio) override {
       auto mic = std::make_unique<mic_wasapi_t>();
@@ -934,15 +954,11 @@ namespace platf::audio {
         return nullptr;
       }
 
-      // If this is a virtual sink, set a callback that will change the sink back if it's changed
-      auto virtual_sink_info = extract_virtual_sink_info(assigned_sink);
-      if (virtual_sink_info) {
-        mic->default_endpt_changed_cb = [this] {
-          BOOST_LOG(info) << "Resetting sink to ["sv << assigned_sink << "] after default changed";
-          notify_virtual_sink_managed();
-          set_sink(assigned_sink);
-        };
-      }
+      // The target is read when the device changes so sessions created before the
+      // initial sink assignment can still restore the virtual sink.
+      mic->default_endpt_changed_cb = [this] {
+        restore_assigned_virtual_sink();
+      };
 
       return mic;
     }
@@ -1019,6 +1035,8 @@ namespace platf::audio {
 
     int
     set_sink(const std::string &sink) override {
+      std::lock_guard lock { assigned_sink_mutex };
+
       auto device_id = set_format(sink);
       if (!device_id) {
         return -1;
@@ -1346,6 +1364,7 @@ namespace platf::audio {
     policy_t policy;
     audio::device_enum_t device_enum;
     std::string assigned_sink;
+    std::mutex assigned_sink_mutex;
     std::chrono::steady_clock::time_point last_virtual_sink_notification {};
     std::mutex last_virtual_sink_notification_mutex;
 
