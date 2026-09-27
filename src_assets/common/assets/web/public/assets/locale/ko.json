@@ -418,6 +418,8 @@
     "input_driver_management": "입력 드라이버 관리",
     "install_steam_audio_drivers": "Steam 오디오 드라이버 설치",
     "install_steam_audio_drivers_desc": "Steam이 설치되어 있으면 5.1/7.1 서라운드 사운드와 호스트 오디오 음소거를 지원하는 Steam Streaming Speakers 드라이버가 자동으로 설치됩니다. (수동으로 설치할 일이 없어요)",
+    "keep_sink_default": "선택한 오디오 출력 장치 강제 유지",
+    "keep_sink_default_desc": "활성화하면 다른 프로그램이 변경하더라도 스트리밍 중 선택한 오디오 출력 장치를 Windows 기본 장치로 복원합니다.",
     "key_repeat_delay": "키 반복 지연",
     "key_repeat_delay_desc": "키가 반복되는 속도를 제어합니다. 키가 반복되기 전 초기 지연 시간 (ms) 입니다.",
     "key_repeat_frequency": "키 반복 빈도",

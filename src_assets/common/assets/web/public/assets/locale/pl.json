@@ -418,6 +418,8 @@
     "input_driver_management": "Zarządzanie sterownikami wejścia",
     "install_steam_audio_drivers": "Zainstaluj sterowniki audio Steam",
     "install_steam_audio_drivers_desc": "Jeśli zainstalowany jest Steam, automatycznie zainstalowany zostanie sterownik Steam Streaming Speakers do obsługi dźwięku przestrzennego 5.1/7.1 i wyciszania dźwięku hosta.",
+    "keep_sink_default": "Wymuś wybrane urządzenie wyjściowe audio",
+    "keep_sink_default_desc": "Po włączeniu tej opcji Sunshine podczas streamowania przywróci wybrane urządzenie wyjściowe audio jako domyślne urządzenie systemu Windows, jeśli zmieni je inny program.",
     "key_repeat_delay": "Opóźnienie powtarzania klawiszy",
     "key_repeat_delay_desc": "Kontroluje szybkość powtarzania klawiszy. Początkowe opóźnienie w milisekundach przed powtarzaniem klawiszy.",
     "key_repeat_frequency": "Częstotliwość powtarzania klawiszy",

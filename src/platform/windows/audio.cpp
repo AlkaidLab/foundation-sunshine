@@ -516,7 +516,7 @@ namespace platf::audio {
     }
 
     int
-    init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out, bool continuous) {
+    init(std::uint32_t sample_rate, std::uint32_t frame_size, std::uint32_t channels_out, bool continuous, std::optional<std::wstring> selected_device_id) {
       audio_event.reset(CreateEventA(nullptr, FALSE, FALSE, nullptr));
       if (!audio_event) {
         BOOST_LOG(error) << "Couldn't create Event handle"sv;
@@ -546,9 +546,19 @@ namespace platf::audio {
         return -1;
       }
 
-      auto device = default_device(device_enum);
-      if (!device) {
-        return -1;
+      device_t device;
+      if (selected_device_id) {
+        auto status = device_enum->GetDevice(selected_device_id->c_str(), &device);
+        if (FAILED(status)) {
+          BOOST_LOG(error) << "Couldn't open the selected audio sink [0x"sv << util::hex(status).to_string_view() << ']';
+          return -1;
+        }
+      }
+      else {
+        device = default_device(device_enum);
+        if (!device) {
+          return -1;
+        }
       }
 
       for (const auto &format : formats) {
@@ -926,23 +936,65 @@ namespace platf::audio {
       return std::nullopt;
     }
 
-    std::string
-    assigned_sink_snapshot() {
-      std::lock_guard lock { assigned_sink_mutex };
-      return assigned_sink;
+    std::optional<std::wstring>
+    resolve_sink_device_id(const std::string &sink) {
+      if (auto virtual_sink_info = extract_virtual_sink_info(sink)) {
+        return virtual_sink_info->first;
+      }
+
+      auto matched = find_device_id(match_all_fields(from_utf8(sink)));
+      if (matched) {
+        return matched->second;
+      }
+
+      return std::nullopt;
+    }
+
+    bool
+    all_default_roles_match(const std::wstring &expected_device_id) {
+      for (int role = 0; role < (int) ERole_enum_count; ++role) {
+        device_t device;
+        auto status = device_enum->GetDefaultAudioEndpoint(
+          eRender,
+          (ERole) role,
+          &device);
+        if (FAILED(status) || !device) {
+          return false;
+        }
+
+        audio::wstring_t id;
+        if (FAILED(device->GetId(&id)) || expected_device_id != id.get()) {
+          return false;
+        }
+      }
+
+      return true;
     }
 
     void
-    restore_assigned_virtual_sink() {
-      auto sink = assigned_sink_snapshot();
-      if (!extract_virtual_sink_info(sink)) {
+    restore_assigned_sink() {
+      std::lock_guard lock { assigned_sink_mutex };
+
+      const auto &sink = assigned_sink;
+      if (!config::audio.keep_sink_default || sink.empty()) {
         return;
       }
 
-      BOOST_LOG(info) << "Restoring virtual audio sink after default device changed";
-      notify_virtual_sink_managed();
-      if (set_sink(sink)) {
-        BOOST_LOG(warning) << "Couldn't restore virtual audio sink after default device changed";
+      if (auto assigned = resolve_sink_device_id(sink); assigned && all_default_roles_match(*assigned)) {
+        return;
+      }
+
+      auto virtual_sink_info = extract_virtual_sink_info(sink);
+      if (virtual_sink_info) {
+        BOOST_LOG(info) << "Restoring virtual audio sink after default device changed";
+        notify_virtual_sink_managed();
+      }
+      else {
+        BOOST_LOG(info) << "Restoring selected audio sink after default device changed";
+      }
+
+      if (set_sink_locked(sink)) {
+        BOOST_LOG(warning) << "Couldn't restore selected audio sink after default device changed";
       }
     }
 
@@ -950,14 +1002,40 @@ namespace platf::audio {
     microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio) override {
       auto mic = std::make_unique<mic_wasapi_t>();
 
-      if (mic->init(sample_rate, frame_size, channels, continuous_audio)) {
+      if (mic->init(sample_rate, frame_size, channels, continuous_audio, {})) {
         return nullptr;
       }
 
       // The target is read when the device changes so sessions created before the
-      // initial sink assignment can still restore the virtual sink.
+      // initial sink assignment can still restore the selected sink.
       mic->default_endpt_changed_cb = [this] {
-        restore_assigned_virtual_sink();
+        restore_assigned_sink();
+      };
+
+      return mic;
+    }
+
+    std::unique_ptr<mic_t>
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous_audio, const std::string &sink) override {
+      std::optional<std::wstring> selected_device_id;
+      if (!sink.empty()) {
+        selected_device_id = resolve_sink_device_id(sink);
+        if (!selected_device_id) {
+          BOOST_LOG(error) << "Couldn't find the configured audio capture sink "sv << sink;
+          return nullptr;
+        }
+      }
+
+      auto mic = std::make_unique<mic_wasapi_t>();
+
+      if (mic->init(sample_rate, frame_size, channels, continuous_audio, std::move(selected_device_id))) {
+        return nullptr;
+      }
+
+      // The target is read when the device changes so sessions created before the
+      // initial sink assignment can still restore the selected sink.
+      mic->default_endpt_changed_cb = [this] {
+        restore_assigned_sink();
       };
 
       return mic;
@@ -1037,6 +1115,33 @@ namespace platf::audio {
     set_sink(const std::string &sink) override {
       std::lock_guard lock { assigned_sink_mutex };
 
+      return set_sink_locked(sink);
+    }
+
+    bool
+    restore_sink_if_assigned(const std::string &sink) override {
+      std::lock_guard lock { assigned_sink_mutex };
+
+      if (assigned_sink.empty()) {
+        BOOST_LOG(debug) << "Audio sink was not assigned by Sunshine; skipping restoration";
+        return true;
+      }
+
+      auto assigned = resolve_sink_device_id(assigned_sink);
+      if (!assigned || !all_default_roles_match(*assigned)) {
+        BOOST_LOG(debug) << "Skipping audio sink restoration because the default device changed";
+        return true;
+      }
+
+      if (set_sink_locked(sink)) {
+        BOOST_LOG(warning) << "Couldn't restore the original audio sink";
+      }
+      return true;
+    }
+
+  private:
+    int
+    set_sink_locked(const std::string &sink) {
       auto device_id = set_format(sink);
       if (!device_id) {
         return -1;
@@ -1067,6 +1172,7 @@ namespace platf::audio {
       return failure;
     }
 
+  public:
     void
     notify_virtual_sink_managed() {
       const auto now = std::chrono::steady_clock::now();

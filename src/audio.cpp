@@ -527,8 +527,13 @@ namespace audio {
     if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
       // If the selected sink is different than the current one, change sinks.
       ref->restore_sink = ref->sink.host != *sink;
-      if (ref->restore_sink) {
-        if (control->set_sink(*sink)) {
+      // Record the selected sink even when it already is the default so forced
+      // retention can restore it after another application changes the default.
+      if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {
+        const auto sink_status = control->set_sink(*sink);
+        // If this was already the active default, a policy failure must not
+        // prevent an otherwise valid audio capture from starting.
+        if (sink_status && ref->restore_sink) {
           return;
         }
       }
@@ -536,7 +541,10 @@ namespace audio {
 
     auto frame_size = config.packetDuration * stream.sampleRate / 1000;
     bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
-    auto mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio);
+    // An explicitly configured sink remains the capture endpoint across default-device
+    // changes. An empty sink keeps the existing behavior of following the current default.
+    const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
+    auto mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, capture_sink);
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -575,7 +583,7 @@ namespace audio {
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
           do {
-            mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio);
+            mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, capture_sink);
             if (!mic) {
               BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
             }
@@ -686,8 +694,11 @@ namespace audio {
     // Change back to the host sink, unless there was none
     const std::string &sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
     if (!sink.empty()) {
-      // Best effort, it's allowed to fail
-      ctx.control->set_sink(sink);
+      // Windows can skip restoration when the user changed the default sink.
+      if (!ctx.control->restore_sink_if_assigned(sink)) {
+        // Platforms without ownership-aware restoration retain the previous behavior.
+        ctx.control->set_sink(sink);
+      }
     }
   }
 

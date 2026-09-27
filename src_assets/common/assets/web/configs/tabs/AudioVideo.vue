@@ -158,6 +158,14 @@ onBeforeUnmount(() => {
           <div class="form-text">{{ $t('config.virtual_sink_desc') }}</div>
         </div>
 
+        <Checkbox
+          class="mb-3"
+          id="keep_sink_default"
+          locale-prefix="config"
+          v-model="config.keep_sink_default"
+          :default="false"
+        ></Checkbox>
+
         <!-- Install Steam Audio Drivers -->
         <div class="mb-3">
           <label for="install_steam_audio_drivers" class="form-label">{{

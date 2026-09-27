@@ -418,6 +418,8 @@
     "input_driver_management": "Správa vstupních ovladačů",
     "install_steam_audio_drivers": "Nainstalujte Steam Audio Drivers",
     "install_steam_audio_drivers_desc": "Pokud je Steam nainstalován, tak se automaticky nainstaluje ovladač Steam Streaming Speakers pro podporu 5.1/7.1 prostorového zvuku a ztlumení zvuku.",
+    "keep_sink_default": "Vynutit vybrané zvukové výstupní zařízení",
+    "keep_sink_default_desc": "Je-li tato možnost zapnutá, Sunshine během streamování obnoví vybrané zvukové výstupní zařízení jako výchozí zařízení Windows, pokud ho změní jiný program.",
     "key_repeat_delay": "Zpoždění opakování klíče",
     "key_repeat_delay_desc": "Ovládejte, jak rychle se budou klíče opakovat. Počáteční zpoždění v milisekundách před opakováním klíčů.",
     "key_repeat_frequency": "Frekvence opakování klíče",

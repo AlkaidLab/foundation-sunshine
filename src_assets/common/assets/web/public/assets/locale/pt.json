@@ -418,6 +418,8 @@
     "input_driver_management": "Gestão de controladores de entrada",
     "install_steam_audio_drivers": "Instalar drivers de áudio Steam",
     "install_steam_audio_drivers_desc": "Se o Steam estiver instalado, isso irá instalar automaticamente o driver de Alto-falantes de Streaming do Steam para suportar o som Surround 5.1/7.1 e silenciar o áudio do host.",
+    "keep_sink_default": "Forçar o dispositivo de saída de áudio selecionado",
+    "keep_sink_default_desc": "Quando ativado, o Sunshine restaura o dispositivo de saída de áudio selecionado como dispositivo predefinido do Windows durante o streaming se outro programa o alterar.",
     "key_repeat_delay": "Atraso da repetição da chave",
     "key_repeat_delay_desc": "Controla a rapidez com que as teclas se irão repetir. O atraso inicial em milissegundos antes de repetir as chaves.",
     "key_repeat_frequency": "Frequência de repetição de chave",

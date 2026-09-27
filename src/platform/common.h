@@ -787,8 +787,31 @@ namespace platf {
     virtual int
     set_sink(const std::string &sink) = 0;
 
+    /**
+     * @brief Restore the previous sink only when this controller still owns the default sink.
+     * @param sink Sink to restore.
+     * @returns True when the platform handled the decision, including skipping restoration
+     *          because the user selected another default sink; false when the platform has
+     *          no ownership-aware implementation.
+     */
+    virtual bool
+    restore_sink_if_assigned(const std::string &sink) {
+      return false;
+    }
+
     virtual std::unique_ptr<mic_t>
     microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous) = 0;
+
+    /**
+     * @brief Create a capture client for a selected sink.
+     * @param sink Sink to capture. An empty sink follows the current default device.
+     * @returns The capture client, or null on failure. Platforms without explicit sink
+     *          capture can fall back to their default microphone implementation.
+     */
+    virtual std::unique_ptr<mic_t>
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous, const std::string &sink) {
+      return microphone(mapping, channels, sample_rate, frame_size, continuous);
+    }
 
     /**
      * @brief Check if the audio sink is available in the system.
