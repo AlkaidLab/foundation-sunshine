@@ -418,6 +418,8 @@
     "input_driver_management": "Eingabetreiber verwalten",
     "install_steam_audio_drivers": "Steam Audio Treiber installieren",
     "install_steam_audio_drivers_desc": "Wenn Steam installiert ist, wird der Steam Streaming Speakers Treiber automatisch installiert, um 5.1/7.1 Surround-Sound zu unterstützen und Host-Audio zu mutieren.",
+    "keep_sink_default": "Ausgewähltes Audio-Ausgabegerät erzwingen",
+    "keep_sink_default_desc": "Wenn diese Option aktiviert ist, stellt Sunshine das ausgewählte Audio-Ausgabegerät während des Streamings als Windows-Standardgerät wieder her, falls ein anderes Programm es ändert.",
     "key_repeat_delay": "Schlüssel-Wiederholung Verzögerung",
     "key_repeat_delay_desc": "Legen Sie fest, wie schnell sich die Tasten wiederholen. Die anfängliche Verzögerung in Millisekunden bevor Sie die Tasten wiederholen.",
     "key_repeat_frequency": "Tastendruck-Frequenz",

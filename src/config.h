@@ -135,6 +135,7 @@ namespace config {
   struct audio_t {
     std::string sink;
     std::string virtual_sink;
+    bool keep_sink_default;  // Keep the selected Windows audio output device as the system default while streaming
     std::string microphone_redirect_backend;
     bool stream;
     bool stream_mic;

@@ -63,6 +63,7 @@ const DEFAULT_TABS = [
     options: {
       audio_sink: '',
       virtual_sink: '',
+      keep_sink_default: false,
       microphone_redirect_backend: 'vb_cable',
       stream_mic: true,
       install_steam_audio_drivers: 'enabled',

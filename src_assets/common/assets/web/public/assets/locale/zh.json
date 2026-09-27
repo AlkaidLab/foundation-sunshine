@@ -418,6 +418,8 @@
     "input_driver_management": "输入驱动管理",
     "install_steam_audio_drivers": "安装 Steam 音频驱动程序",
     "install_steam_audio_drivers_desc": "如果安装了 Steam，则会自动安装 Steam Streaming Speakers 驱动程序，以支持 5.1/7.1 环绕声和主机音频静音。",
+    "keep_sink_default": "强制保持音频输出设备",
+    "keep_sink_default_desc": "启用后，如果其他程序切换了系统默认播放设备，Sunshine 会在串流期间尝试将选定的音频输出设备恢复为系统默认设备。",
     "key_repeat_delay": "按键重复延迟",
     "key_repeat_delay_desc": "控制按键重复的速度。重复按键前的初始延迟（毫秒）。",
     "key_repeat_frequency": "按键重复频率",

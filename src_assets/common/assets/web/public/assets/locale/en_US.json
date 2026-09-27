@@ -418,6 +418,8 @@
     "input_driver_management": "Input driver management",
     "install_steam_audio_drivers": "Install Steam Audio Drivers",
     "install_steam_audio_drivers_desc": "If Steam is installed, this will automatically install the Steam Streaming Speakers driver to support 5.1/7.1 surround sound and muting host audio.",
+    "keep_sink_default": "Force selected audio output device",
+    "keep_sink_default_desc": "When enabled, Sunshine will restore the selected audio output device as the Windows default during streaming if another application changes it.",
     "key_repeat_delay": "Key Repeat Delay",
     "key_repeat_delay_desc": "Control how fast keys will repeat themselves. The initial delay in milliseconds before repeating keys.",
     "key_repeat_frequency": "Key Repeat Frequency",

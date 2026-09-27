@@ -749,6 +749,9 @@ editing the `conf` file in a text editor. Use the examples as reference.
             %ProgramFiles%\Sunshine\tools\audio-info.exe
             @endcode
             If you have multiple audio devices with identical names, use the Device ID instead.
+            On Windows, an empty value captures the current default device and follows default-device
+            changes during a stream. A selected device remains the capture endpoint even when the
+            Windows default device changes.
             }
             @attention{If you want to mute the host speakers, use
             [virtual_sink](#virtual_sinkhttpslocalhost47990configvirtual_sink) instead.}
@@ -805,6 +808,24 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td colspan="2">@code{}
             virtual_sink = Steam Streaming Speakers
             @endcode</td>
+    </tr>
+</table>
+
+### [keep_sink_default](https://localhost:47990/config/#keep_sink_default)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            On Windows, keep the selected audio output device as the system default during streaming.
+            If another application changes the default playback device, Sunshine will try to select the
+            configured or automatically selected sink again. When this setting is disabled, Sunshine
+            leaves the default playback device selected by Windows during the stream.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Disabled</td>
     </tr>
 </table>
 

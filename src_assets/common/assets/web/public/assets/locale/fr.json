@@ -418,6 +418,8 @@
     "input_driver_management": "Gestion des pilotes d’entrée",
     "install_steam_audio_drivers": "Installer les pilotes audio Steam",
     "install_steam_audio_drivers_desc": "Si Steam est installé, cela installera automatiquement le pilote Steam Streaming Speakers pour prendre en charge le son surround 5.1/7.1 et rendre muet l'audio de l'hôte.",
+    "keep_sink_default": "Forcer le périphérique de sortie audio sélectionné",
+    "keep_sink_default_desc": "Lorsque cette option est activée, Sunshine rétablit le périphérique de sortie audio sélectionné comme périphérique Windows par défaut pendant le streaming si un autre programme le modifie.",
     "key_repeat_delay": "Délai de répétition de la clé",
     "key_repeat_delay_desc": "Contrôle la vitesse à laquelle les clés se répètent. Le délai initial en millisecondes avant de répéter les clés.",
     "key_repeat_frequency": "Fréquence de répétition des touches",

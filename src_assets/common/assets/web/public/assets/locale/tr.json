@@ -418,6 +418,8 @@
     "input_driver_management": "Giriş sürücüsü yönetimi",
     "install_steam_audio_drivers": "Steam Ses Sürücülerini Yükleyin",
     "install_steam_audio_drivers_desc": "Steam yüklüyse, 5.1/7.1 surround sesi desteklemek ve ana bilgisayar sesini kapatmak için Steam Streaming Speakers sürücüsünü otomatik olarak yükleyecektir.",
+    "keep_sink_default": "Seçilen ses çıkış cihazını zorla koru",
+    "keep_sink_default_desc": "Etkinleştirildiğinde Sunshine, başka bir program değiştirse bile akış sırasında seçilen ses çıkış cihazını Windows varsayılan cihazı olarak geri yükler.",
     "key_repeat_delay": "Tuş Tekrarlama Gecikmesi",
     "key_repeat_delay_desc": "Tuşların kendilerini ne kadar hızlı tekrarlayacaklarını kontrol edin. Tuşları tekrarlamadan önce milisaniye cinsinden ilk gecikme.",
     "key_repeat_frequency": "Anahtar Tekrarlama Sıklığı",
