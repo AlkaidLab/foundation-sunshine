@@ -116,10 +116,16 @@ namespace clipboard_blob_store {
     sweep_locked(now);
     evict_for_locked(incoming);
 
-    blob_id id = make_id();
-    // Defensive: ensure no collision (vanishingly unlikely).
-    while (g_entries.find(id) != g_entries.end()) {
+    blob_id id;
+    try {
       id = make_id();
+      // Defensive: ensure no collision (vanishingly unlikely).
+      while (g_entries.find(id) != g_entries.end()) {
+        id = make_id();
+      }
+    }
+    catch (const std::exception &) {
+      return { {}, false, "internal" };
     }
 
     entry_t e;

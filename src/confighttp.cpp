@@ -2098,9 +2098,14 @@ namespace confighttp {
             outputTree.put("error", "Password Mismatch");
           }
           else {
-            http::save_user_creds(config::sunshine.credentials_file, newUsername, newPassword);
-            http::reload_user_creds(config::sunshine.credentials_file);
-            outputTree.put("status", true);
+            if (http::save_user_creds(config::sunshine.credentials_file, newUsername, newPassword) != 0 ||
+                http::reload_user_creds(config::sunshine.credentials_file) != 0) {
+              outputTree.put("status", false);
+              outputTree.put("error", "Failed to save credentials");
+            }
+            else {
+              outputTree.put("status", true);
+            }
           }
         }
         else {
