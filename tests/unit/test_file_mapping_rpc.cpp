@@ -52,11 +52,11 @@ TEST(FileMappingRpc, NormalizesRequestIds) {
 }
 
 TEST(FileMappingRpc, ParsesNonnegativeUintmax) {
-  const auto parsed = file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json { 42 });
+  const auto parsed = file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json(42));
   ASSERT_TRUE(parsed.has_value());
   EXPECT_EQ(*parsed, 42);
-  EXPECT_FALSE(file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json { -1 }).has_value());
-  EXPECT_FALSE(file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json { "42" }).has_value());
+  EXPECT_FALSE(file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json(-1)).has_value());
+  EXPECT_FALSE(file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json("42")).has_value());
 }
 
 TEST(FileMappingRpc, ParsesReadChunkAlias) {
