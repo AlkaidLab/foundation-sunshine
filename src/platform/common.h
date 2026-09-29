@@ -333,7 +333,7 @@ namespace platf {
     constexpr caps_t touchpad_frame = 0x20;  // Native precision touchpad frame events
     constexpr caps_t cursor_shape = 0x40;  // Client-rendered cursor shape updates
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
-    constexpr caps_t dynamic_sdr_white = 0x100;  // Runtime client SDR reference white updates
+    constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
     constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
   };  // namespace platform_caps
 
@@ -549,11 +549,6 @@ namespace platf {
 
     virtual int
     convert(platf::img_t &img) = 0;
-
-    // Optional: supported HDR converters can apply this at a frame boundary.
-    virtual void
-    set_client_sdr_white_nits(float) {
-    }
 
     // Packet-level confirmation, independent of the PQ/HLG transfer function.
     virtual void report_dolby_vision_output(bool injected, bool enabled) {}

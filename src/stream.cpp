@@ -689,9 +689,6 @@ namespace stream {
     bool frame_pipeline_policy_resolved { false };
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::client_display_capabilities_t reported_hdr_capabilities;
-    // Runtime SDR white updates are consumed by the video thread and may also
-    // be needed by a control-thread display reconfiguration.
-    std::atomic<float> dynamic_sdr_white_nits { 0.0f };
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
@@ -1976,9 +1973,6 @@ namespace stream {
       temp_launch_session.custom_screen_mode = session->custom_screen_mode;
       temp_launch_session.hdr_capabilities = session->hdr_capabilities;
       temp_launch_session.reported_hdr_capabilities = session->reported_hdr_capabilities;
-      const auto dynamic_sdr_white_nits = session->dynamic_sdr_white_nits.load(std::memory_order_acquire);
-      temp_launch_session.hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
-      temp_launch_session.reported_hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
       temp_launch_session.hdr_target_source = session->hdr_target_source;
 
       bool active_display_resolved = true;
@@ -2122,35 +2116,9 @@ namespace stream {
         return;
       }
 
-      // This is an HDR conversion parameter, not part of the display/VDD HDR
-      // capability tuple. Apply it on the video thread without rebuilding the
-      // display or encoder.
       if (param_type_enum == video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
-        constexpr size_t SDR_WHITE_PAYLOAD_SIZE = WIRE_WORD_SIZE * 2;
-        if (payload.size() != SDR_WHITE_PAYLOAD_SIZE) {
-          BOOST_LOG(warning) << "Invalid payload size for client SDR white. Expected "
-                             << SDR_WHITE_PAYLOAD_SIZE << " bytes, got " << payload.size();
-          return;
-        }
-        if (session->config.controlProtocolType != 13 || session->config.monitor.dynamicRange == 0) {
-          BOOST_LOG(warning) << "Ignoring client SDR white update outside an encrypted HDR session";
-          return;
-        }
-
-        const float sdr_white_nits = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
-        if (!video::is_valid_client_sdr_white_nits(sdr_white_nits)) {
-          BOOST_LOG(warning) << "Invalid client SDR white value: " << sdr_white_nits;
-          return;
-        }
-
-        video::dynamic_param_t param {};
-        param.type = video::dynamic_param_type_e::CLIENT_SDR_WHITE_NITS;
-        param.value.float_value = sdr_white_nits;
-        param.valid = true;
-        session->dynamic_sdr_white_nits.store(sdr_white_nits, std::memory_order_release);
-        session->video.dynamic_param_change_events->raise(param);
-
-        BOOST_LOG(info) << "Dynamic client SDR white change: " << sdr_white_nits << " nits";
+        // Legacy clients may still send this retired parameter. Ignore it:
+        // SDR white cannot identify SDR pixels in an already composed HDR frame.
         return;
       }
 
@@ -4519,9 +4487,6 @@ namespace stream {
       session->frame_pipeline_policy_resolved = launch_session.frame_pipeline_policy_resolved;
       session->hdr_capabilities = launch_session.hdr_capabilities;
       session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
-      session->dynamic_sdr_white_nits.store(
-        launch_session.hdr_capabilities.sdr_white_nits,
-        std::memory_order_release);
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;

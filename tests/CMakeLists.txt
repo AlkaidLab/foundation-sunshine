@@ -82,6 +82,16 @@ endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
 
 if (WIN32)
+    set(HDR_ENCODING_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_hdr_encoding.cpp)
+    add_executable(hdr_encoding_unit_tests
+            ${HDR_ENCODING_TEST_SOURCE})
+    target_link_libraries(hdr_encoding_unit_tests PRIVATE d3d11 d3dcompiler dxgi gtest_main)
+    target_compile_definitions(hdr_encoding_unit_tests PRIVATE
+            SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
+    set_target_properties(hdr_encoding_unit_tests PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+    add_test(NAME hdr_encoding_unit_tests COMMAND hdr_encoding_unit_tests)
+
     set(PRE_ENCODE_FILTER_TEST_SOURCE
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
     set(TRUEHDR_ADAPTER_LOADER_TEST_SOURCE
@@ -326,9 +336,10 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)
-    # These tests depend on generated fake backend paths and run in dedicated
+    # These tests depend on shader or generated backend paths and run in dedicated
     # targets above; do not compile a second copy into the aggregate suite.
     list(REMOVE_ITEM TEST_SOURCES
+            ${HDR_ENCODING_TEST_SOURCE}
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
             ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
 endif ()
