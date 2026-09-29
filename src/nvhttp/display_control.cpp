@@ -8,7 +8,6 @@
 #include <nlohmann/json.hpp>
 
 #include "display_scale.h"
-#include "url_utils.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/vdd_capability.h"
@@ -167,9 +166,6 @@ namespace nvhttp::display_control {
 
       auto display_name_param = args.find("display_name");
       std::string display_name = display_name_param != args.end() ? display_name_param->second : "";
-      if (!display_name.empty()) {
-        display_name = url_utils::decode(std::move(display_name));
-      }
 
       if (display_name.empty() && !config::video.output_name.empty()) {
         display_name = display_device::get_display_name(config::video.output_name);

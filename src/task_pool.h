@@ -161,8 +161,16 @@ namespace task_pool_util {
       for (; it < _timer_tasks.cend(); ++it) {
         const __task &task = std::get<1>(*it);
 
-        if (&*task == task_id) {
-          std::get<0>(*it) = std::chrono::steady_clock::now() + duration;
+        if (task.get() == task_id) {
+          __time_point time_point;
+          if constexpr (std::is_floating_point_v<X>) {
+            time_point = std::chrono::steady_clock::now() +
+              std::chrono::duration_cast<std::chrono::nanoseconds>(duration);
+          }
+          else {
+            time_point = std::chrono::steady_clock::now() + duration;
+          }
+          std::get<0>(*it) = time_point;
 
           break;
         }
@@ -172,16 +180,20 @@ namespace task_pool_util {
         return;
       }
 
-      // smaller time goes to the back
-      auto prev = it - 1;
-      while (it > _timer_tasks.cbegin()) {
-        if (std::get<0>(*it) > std::get<0>(*prev)) {
-          std::swap(*it, *prev);
-        }
+      // Keep timer tasks ordered from the latest deadline at the front to the
+      // earliest deadline at the back.  Reinsert the task after changing its
+      // deadline so moving it in either direction preserves that invariant.
+      auto task = std::move(*it);
+      _timer_tasks.erase(it);
 
-        --prev;
-        --it;
+      auto insert_at = _timer_tasks.cbegin();
+      for (; insert_at < _timer_tasks.cend(); ++insert_at) {
+        if (std::get<0>(*insert_at) < task.first) {
+          break;
+        }
       }
+
+      _timer_tasks.emplace(insert_at, std::move(task));
     }
 
     bool
@@ -192,7 +204,7 @@ namespace task_pool_util {
       for (; it < _timer_tasks.cend(); ++it) {
         const __task &task = std::get<1>(*it);
 
-        if (&*task == task_id) {
+        if (task.get() == task_id) {
           _timer_tasks.erase(it);
 
           return true;
@@ -212,7 +224,9 @@ namespace task_pool_util {
         return std::nullopt;
       }
 
-      return std::move(*pos);
+      auto task = std::move(*pos);
+      _timer_tasks.erase(pos);
+      return task;
     }
 
     std::optional<__task>

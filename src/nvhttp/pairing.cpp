@@ -595,12 +595,16 @@ namespace nvhttp {
     auto x509 = crypto::x509(conf_intern.servercert);
     auto sign = crypto::signature(x509);
     auto serversecret = crypto::rand(16);
+    auto serverchallenge = crypto::rand(16);
+    if (serversecret.size() != 16 || serverchallenge.size() != 16) {
+      fail_pair(sess, tree, "Failed to generate pairing challenge");
+      return;
+    }
 
     decrypted.insert(std::end(decrypted), std::begin(sign), std::end(sign));
     decrypted.insert(std::end(decrypted), std::begin(serversecret), std::end(serversecret));
 
     auto hash = crypto::hash({ (char *) decrypted.data(), decrypted.size() });
-    auto serverchallenge = crypto::rand(16);
 
     std::string plaintext;
     plaintext.reserve(hash.size() + serverchallenge.size());

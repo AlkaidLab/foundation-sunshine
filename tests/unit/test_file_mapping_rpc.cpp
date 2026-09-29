@@ -44,6 +44,21 @@ TEST(FileMappingRpc, RejectsBadControlMessages) {
   EXPECT_FALSE(malformed_version.ok);
 }
 
+TEST(FileMappingRpc, NormalizesRequestIds) {
+  EXPECT_EQ(file_mapping::rpc::request_id(nlohmann::json { { "id", 42 } }), 42);
+  EXPECT_EQ(file_mapping::rpc::request_id(nlohmann::json { { "id", -1 } }), 0);
+  EXPECT_EQ(file_mapping::rpc::request_id(nlohmann::json { { "id", "42" } }), 0);
+  EXPECT_EQ(file_mapping::rpc::request_id(nlohmann::json::object()), 0);
+}
+
+TEST(FileMappingRpc, ParsesNonnegativeUintmax) {
+  const auto parsed = file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json(42));
+  ASSERT_TRUE(parsed.has_value());
+  EXPECT_EQ(*parsed, 42);
+  EXPECT_FALSE(file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json(-1)).has_value());
+  EXPECT_FALSE(file_mapping::rpc::parse_nonnegative_uintmax(nlohmann::json("42")).has_value());
+}
+
 TEST(FileMappingRpc, ParsesReadChunkAlias) {
   auto parsed = file_mapping::rpc::parse_control_message(R"({"type":"read_chunk","id":1})");
   ASSERT_TRUE(parsed.ok) << parsed.error;

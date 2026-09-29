@@ -27,6 +27,10 @@ namespace sync_util {
 
     sync_t &
     operator=(sync_t &&other) noexcept {
+      if (this == &other) {
+        return *this;
+      }
+
       std::lock(_lock, other._lock);
 
       raw = std::move(other.raw);
@@ -39,6 +43,10 @@ namespace sync_util {
 
     sync_t &
     operator=(sync_t &other) noexcept {
+      if (this == &other) {
+        return *this;
+      }
+
       std::lock(_lock, other._lock);
 
       raw = other.raw;

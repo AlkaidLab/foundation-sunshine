@@ -6,8 +6,8 @@
 
 #include <Simple-Web-Server/server_http.hpp>
 #include <nlohmann/json.hpp>
-#include <openssl/rand.h>
 
+#include "src/crypto.h"
 #include "src/logging.h"
 #include "src/stream.h"
 
@@ -45,7 +45,9 @@ namespace nvhttp::network_probe {
     std::array<char, CHUNK_BYTES> payload {};
 
     impl_t() {
-      if (RAND_bytes(reinterpret_cast<unsigned char *>(payload.data()), static_cast<int>(payload.size())) == 1) {
+      const auto random = crypto::rand(payload.size());
+      if (random.size() == payload.size()) {
+        std::copy(random.begin(), random.end(), payload.begin());
         return;
       }
 

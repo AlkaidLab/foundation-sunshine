@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -20,7 +21,6 @@
 #include <atomic>
 #include <mutex>
 #include <stdexcept>
-#include <random>
 #include <map>
 #include <optional>
 #include <set>
@@ -31,7 +31,6 @@
 #include <utility>
 
 #include <openssl/evp.h>
-#include <openssl/rand.h>
 #include <openssl/sha.h>
 
 #include <boost/property_tree/json_parser.hpp>
@@ -2099,9 +2098,14 @@ namespace confighttp {
             outputTree.put("error", "Password Mismatch");
           }
           else {
-            http::save_user_creds(config::sunshine.credentials_file, newUsername, newPassword);
-            http::reload_user_creds(config::sunshine.credentials_file);
-            outputTree.put("status", true);
+            if (http::save_user_creds(config::sunshine.credentials_file, newUsername, newPassword) != 0 ||
+                http::reload_user_creds(config::sunshine.credentials_file) != 0) {
+              outputTree.put("status", false);
+              outputTree.put("error", "Failed to save credentials");
+            }
+            else {
+              outputTree.put("status", true);
+            }
           }
         }
         else {
@@ -2221,8 +2225,14 @@ namespace confighttp {
     });
 
     // Generate a random 4-digit PIN using OpenSSL CSPRNG
-    uint16_t random_val;
-    RAND_bytes(reinterpret_cast<unsigned char *>(&random_val), sizeof(random_val));
+    const auto random_bytes = crypto::rand(sizeof(std::uint16_t));
+    if (random_bytes.size() != sizeof(std::uint16_t)) {
+      outputTree.put("status", false);
+      outputTree.put("error", "Failed to generate pairing PIN");
+      return;
+    }
+    std::uint16_t random_val;
+    std::memcpy(&random_val, random_bytes.data(), sizeof(random_val));
     int pin_num = random_val % 10000;
     char pin_buf[5];
     std::snprintf(pin_buf, sizeof(pin_buf), "%04d", pin_num);
