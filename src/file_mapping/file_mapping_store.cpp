@@ -335,6 +335,9 @@ namespace file_mapping_store {
   persist_to_config(const store_t &store) {
     auto mappings = store.snapshot();
     const auto serialized = serialize_config_value(mappings);
+    if (serialized == "base64:") {
+      return false;
+    }
     if (config::nvhttp.file_mappings == serialized) {
       return true;
     }
