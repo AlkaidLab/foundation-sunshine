@@ -726,9 +726,6 @@ namespace video {
           }
           break;
         }
-        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
-          device->set_client_sdr_white_nits(param.value.float_value);
-          break;
         default:
           BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -919,9 +916,6 @@ namespace video {
           BOOST_LOG(info) << "NVENC encoder VBV buffer size change requested: " << param.value.int_value << " Kbps";
           break;
         }
-        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
-          device->set_client_sdr_white_nits(param.value.float_value);
-          break;
         default:
           BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -1059,9 +1053,6 @@ namespace video {
       switch (param.type) {
         case dynamic_param_type_e::BITRATE:
           set_bitrate(param.value.int_value);
-          break;
-        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
-          device->set_client_sdr_white_nits(param.value.float_value);
           break;
         default:
           break;
@@ -1733,22 +1724,6 @@ namespace video {
   active_encoder_name() {
     const auto *encoder = active_encoder_for_status.load(std::memory_order_acquire);
     return encoder ? std::string { encoder->name } : std::string {};
-  }
-
-  bool
-  active_encoder_supports_dynamic_sdr_white() {
-    const auto *encoder = active_encoder_for_status.load(std::memory_order_acquire);
-    if (!encoder) {
-      return false;
-    }
-
-    return dynamic_cast<const encoder_platform_formats_nvenc *>(encoder->platform_formats.get()) != nullptr ||
-           dynamic_cast<const encoder_platform_formats_amf *>(encoder->platform_formats.get()) != nullptr;
-  }
-
-  bool
-  is_valid_client_sdr_white_nits(float nits) {
-    return std::isfinite(nits) && nits >= 50.0f && nits <= 1000.0f;
   }
 
   void
@@ -3536,12 +3511,6 @@ namespace video {
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
-          if (param->type == dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
-            // Keep the latest value in the video-thread-owned config. If the
-            // encoder is recreated after a display/capture reinit, device
-            // construction will apply this value again.
-            config.hdr_capabilities.sdr_white_nits = param->value.float_value;
-          }
           session->set_dynamic_param(*param);
         }
       }

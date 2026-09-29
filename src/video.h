@@ -115,7 +115,7 @@ namespace video {
     VBV_BUFFER_SIZE,   // VBV缓冲区大小 - 值：1个int
     // Wire value 9; keep this explicit because the enum ordinal is part of the
     // Sunshine dynamic-parameter control protocol.
-    CLIENT_SDR_WHITE_NITS = 9, // 客户端 SDR reference white - 值：1个float (nits)
+    CLIENT_SDR_WHITE_NITS = 9, // Reserved legacy wire ID; ignored, never reuse
     MAX_PARAM_TYPE
   };
 
@@ -622,18 +622,6 @@ namespace video {
    */
   std::string
   active_encoder_name();
-
-  /**
-   * @brief Whether the selected encoder path can apply runtime SDR white updates.
-   */
-  bool
-  active_encoder_supports_dynamic_sdr_white();
-
-  /**
-   * @brief Validate a client SDR reference white value from the control stream.
-   */
-  bool
-  is_valid_client_sdr_white_nits(float nits);
 
   void
   capture(

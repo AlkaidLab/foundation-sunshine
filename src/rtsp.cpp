@@ -1189,9 +1189,6 @@ namespace rtsp_stream {
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;
       }
-      if (video::active_encoder_supports_dynamic_sdr_white()) {
-        caps |= platf::platform_caps::dynamic_sdr_white;
-      }
       if (text_context::bridge_t::instance().gui_alive()) {
         caps |= platf::platform_caps::remote_text_context;
       }
