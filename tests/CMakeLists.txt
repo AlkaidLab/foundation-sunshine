@@ -191,11 +191,15 @@ if (WIN32)
 
     add_executable(credential_store_unit_tests
             ${CMAKE_SOURCE_DIR}/src/ai/credential_store.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/test_credential_store.cpp)
+            ${CMAKE_SOURCE_DIR}/src/ai/codex_auth.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_credential_store.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_codex_auth.cpp)
     target_include_directories(credential_store_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(credential_store_unit_tests
             advapi32
             crypt32
+            ${CURL_STATIC_LIBRARIES}
+            nlohmann_json::nlohmann_json
             gtest_main)
     target_compile_options(credential_store_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
     set_target_properties(credential_store_unit_tests PROPERTIES
@@ -203,6 +207,19 @@ if (WIN32)
             LINK_SEARCH_START_STATIC 1)
     add_test(NAME credential_store_unit_tests COMMAND credential_store_unit_tests)
 endif ()
+
+add_executable(codex_responses_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_codex_responses.cpp)
+target_include_directories(codex_responses_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(codex_responses_unit_tests
+        nlohmann_json::nlohmann_json
+        gtest_main)
+target_compile_options(codex_responses_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(codex_responses_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(codex_responses_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME codex_responses_unit_tests COMMAND codex_responses_unit_tests)
 
 if (NOT BUILD_TESTS)
     return()
