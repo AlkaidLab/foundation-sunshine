@@ -5,6 +5,7 @@
 #pragma once
 
 #include "task_pool.h"
+#include <atomic>
 #include <thread>
 
 namespace thread_pool_util {
@@ -21,7 +22,7 @@ namespace thread_pool_util {
     std::condition_variable _cv;
     std::mutex _lock;
 
-    bool _continue;
+    std::atomic_bool _continue;
 
   public:
     ThreadPool():
@@ -35,8 +36,6 @@ namespace thread_pool_util {
     }
 
     ~ThreadPool() noexcept {
-      if (!_continue) return;
-
       stop();
       join();
     }
@@ -91,7 +90,9 @@ namespace thread_pool_util {
     void
     join() {
       for (auto &t : _thread) {
-        t.join();
+        if (t.joinable()) {
+          t.join();
+        }
       }
     }
 

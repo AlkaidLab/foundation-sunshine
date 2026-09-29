@@ -16,7 +16,6 @@
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <random>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -27,6 +26,8 @@
 #include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/system/errc.hpp>
+
+#include "src/crypto.h"
 
 namespace remote_usb {
 namespace {
@@ -163,15 +164,16 @@ busy_error() {
  * device without the endpoint returned to the launching helper. */
 std::string
 make_opaque_busid() {
-  constexpr char hex[] = "0123456789abcdef";
   static std::atomic<std::uint64_t> serial { 0 };
-  std::random_device random;
-  std::string value = "usbip-";
-  value.reserve(30);
-  for (std::size_t i = 0; i < 16; ++i) {
-    value.push_back(hex[random() & 0x0fu]);
+  auto random_part = crypto::rand_alphabet(16, "0123456789abcdef");
+  if (random_part.size() != 16) {
+    throw std::runtime_error("remote_usb: failed to generate opaque busid");
   }
+
+  std::string value = "usbip-" + random_part;
+  value.reserve(30);
   const auto suffix = serial.fetch_add(1, std::memory_order_relaxed);
+  static constexpr char hex[] = "0123456789abcdef";
   for (int shift = 28; shift >= 0; shift -= 4) {
     value.push_back(hex[(suffix >> shift) & 0x0fu]);
   }

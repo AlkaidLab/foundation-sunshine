@@ -225,12 +225,14 @@ endif ()
 
 add_executable(loopback_usbip_bridge_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
 target_include_directories(loopback_usbip_bridge_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(loopback_usbip_bridge_unit_tests
         Boost::asio
         Boost::system
+        OpenSSL::Crypto
         ${CMAKE_THREAD_LIBS_INIT}
         ${REMOTE_USB_SOCKET_LIBRARIES}
         gtest_main)

@@ -246,6 +246,44 @@ namespace file_mapping::rpc {
     };
   }
 
+  std::uint64_t
+  request_id(const nlohmann::json &body) {
+    if (!body.contains("id")) {
+      return 0;
+    }
+    if (body["id"].is_number_unsigned()) {
+      return body["id"].get<std::uint64_t>();
+    }
+    if (body["id"].is_number_integer()) {
+      const auto id = body["id"].get<std::int64_t>();
+      return id < 0 ? 0 : static_cast<std::uint64_t>(id);
+    }
+    return 0;
+  }
+
+  std::optional<std::uintmax_t>
+  parse_nonnegative_uintmax(const nlohmann::json &value) {
+    std::uint64_t parsed = 0;
+    if (value.is_number_unsigned()) {
+      parsed = value.get<std::uint64_t>();
+    }
+    else if (value.is_number_integer()) {
+      const auto signed_value = value.get<std::int64_t>();
+      if (signed_value < 0) {
+        return std::nullopt;
+      }
+      parsed = static_cast<std::uint64_t>(signed_value);
+    }
+    else {
+      return std::nullopt;
+    }
+
+    if (parsed > std::numeric_limits<std::uintmax_t>::max()) {
+      return std::nullopt;
+    }
+    return static_cast<std::uintmax_t>(parsed);
+  }
+
   nlohmann::json
   job_to_json(const transfer_job_t &job) {
     return {
