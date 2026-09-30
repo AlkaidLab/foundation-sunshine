@@ -7,6 +7,7 @@
 
 #include "amf_avcodec_compat.h"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -22,6 +23,29 @@
 #include "src/utility.h"
 
 namespace amf {
+
+  namespace {
+    /**
+     * @brief Compute AMF_*_VBV_BUFFER_SIZE for the standalone path.
+     *
+     * The property is expressed in bits and is meant to span only a small
+     * number of frames of data. The standalone path used to pass the raw
+     * bitrate here, i.e. one full second of data (~2.75 MB at 22 Mbps), which
+     * is ~75x deeper than what the avcodec_compat path computes. At that depth
+     * a ~1 MB IDR only fills 40% of the buffer, so AMF_*_ENFORCE_HRD never
+     * engages and the rate control effectively has no ceiling.
+     *
+     * @param bitrate_bps Encoder bitrate in bits per second.
+     * @param client_config Client stream config, used to resolve the effective
+     *   framerate (handles fractional rates such as 30000/1001).
+     * @return VBV buffer size in bits, never below 1.
+     */
+    int64_t
+    standalone_vbv_size(int64_t bitrate_bps, const video::config_t &client_config) {
+      const auto effective_fps = std::max(client_config.get_effective_framerate(), 1.0);
+      return std::max<int64_t>(static_cast<int64_t>(bitrate_bps / effective_fps), 1);
+    }
+  }  // namespace
 
   // AMF DLL function types
   typedef AMF_RESULT(AMF_CDECL_CALL *AMFInit_Fn)(amf_uint64 version, ::amf::AMFFactory **ppFactory);
@@ -135,6 +159,10 @@ namespace amf {
     avcodec_compat_profile = config.avcodec_compat;
     user_configured_rate_control = config.rc_mode.has_value();
     hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
+
+    // HRD/VBV depth for the standalone path, in the same units the
+    // avcodec_compat path uses: one frame of data.
+    const auto vbv_size = standalone_vbv_size(bitrate, client_config);
 
     auto configure_multi_hw_instance = [&](const wchar_t *multi_hw_property,
                                            const wchar_t *sav_property,
@@ -295,7 +323,7 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
       if (user_configured_rate_control) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_size);
       }
       encoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_ENFORCE_HRD, !!(*config.enforce_hrd));
@@ -380,7 +408,7 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
       if (user_configured_rate_control) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_size);
       }
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
@@ -452,7 +480,7 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
       if (user_configured_rate_control) {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_size);
       }
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd));
@@ -1317,7 +1345,7 @@ namespace amf {
     if (!encoder) return;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
-    auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : bitrate;
+    auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : standalone_vbv_size(bitrate, current_config);
     AMF_RESULT res;
 
     if (video_format == 0) {
