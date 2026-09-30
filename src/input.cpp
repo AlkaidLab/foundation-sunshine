@@ -1242,6 +1242,13 @@ namespace input {
       abs_port.offset_x, abs_port.offset_y,
       static_cast<std::uint32_t>(touch_port.display_width), static_cast<std::uint32_t>(touch_port.display_height));
 
+#ifdef SUNSHINE_TESTS
+    // Unit-test inputs do not allocate a platform client context. Do not pass a
+    // null context into platform handlers that expect their concrete state.
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::touch_update(input->client_context.get(), abs_port, touch);
   }
 
@@ -1275,6 +1282,11 @@ namespace input {
       from_clamped_netfloat(packet->contactAreaMinor, 0.0f, 1.0f),
     };
 
+#ifdef SUNSHINE_TESTS
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::touchpad_update(input->client_context.get(), touchpad);
   }
 
@@ -1326,6 +1338,11 @@ namespace input {
       };
     }
 
+#ifdef SUNSHINE_TESTS
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::touchpad_frame_update(input->client_context.get(), touchpad);
   }
 
@@ -1385,6 +1402,11 @@ namespace input {
       contact_area.second,
     };
 
+#ifdef SUNSHINE_TESTS
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::pen_update(input->client_context.get(), abs_port, pen);
   }
 
