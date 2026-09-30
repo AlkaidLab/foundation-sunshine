@@ -5,10 +5,9 @@
 #include "nvenc_d3d11_on_cuda.h"
 
 #include "../../common_impl/nvenc_utils.h"
+#include "../../scoped_context_cache.h"
 
-#include <map>
 #include <memory>
-#include <mutex>
 #include <utility>
 
 #ifdef NVENC_NAMESPACE
@@ -49,8 +48,9 @@ namespace nvenc {
       }
     }
 
-    // The CUDA context is shared per adapter and outlives this encoder; drop
-    // only the reference, the per-adapter cache keeps it alive.
+    // Release ownership only after the encoder, registered resources and the
+    // pushed context are gone. A probe token or another encoder may still own
+    // it; otherwise this releases the adapter's last CUDA context immediately.
     interop_context.reset();
     cuda_context = nullptr;
   }
@@ -69,39 +69,13 @@ namespace nvenc {
     }
   }
 
-  // One CUDA interop context per DXGI adapter, kept for the process lifetime.
-  // Encoder probing alone used to cycle through several full create/destroy
-  // lifecycles (one per 4:4:4 candidate, another per session setup), and each
-  // cycle is driver interop churn we have no reason to exercise.
+  // Active encoders share one context per DXGI adapter. Only an explicit
+  // probe token retains it between candidates; the idle cache owns nothing.
   using cuda_interop_luid_key_t = std::pair<LONG, DWORD>;
-  static std::mutex g_cuda_interop_cache_mutex;
-  static std::map<cuda_interop_luid_key_t, std::shared_ptr<cuda_interop_context>> g_cuda_interop_cache;
+  static nvenc::scoped_context_cache<cuda_interop_luid_key_t, cuda_interop_context> g_cuda_interop_cache;
 
   static std::shared_ptr<cuda_interop_context>
-  acquire_cuda_interop_context(ID3D11Device *d3d_device) {
-    IDXGIDevicePtr dxgi_device;
-    IDXGIAdapterPtr dxgi_adapter;
-    if (!d3d_device ||
-        FAILED(d3d_device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) ||
-        FAILED(dxgi_device->GetAdapter(&dxgi_adapter))) {
-      BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter for CUDA interop";
-      return nullptr;
-    }
-
-    DXGI_ADAPTER_DESC adapter_desc {};
-    if (FAILED(dxgi_adapter->GetDesc(&adapter_desc))) {
-      // A zeroed AdapterLuid would key every failing adapter onto the same
-      // cache entry, i.e. another GPU's CUDA context.
-      BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter description for CUDA interop";
-      return nullptr;
-    }
-    const cuda_interop_luid_key_t key { adapter_desc.AdapterLuid.HighPart, adapter_desc.AdapterLuid.LowPart };
-
-    std::lock_guard<std::mutex> lock(g_cuda_interop_cache_mutex);
-    if (auto it = g_cuda_interop_cache.find(key); it != g_cuda_interop_cache.end()) {
-      return it->second;
-    }
-
+  create_cuda_interop_context(IDXGIAdapter *dxgi_adapter) {
     auto interop = std::make_shared<cuda_interop_context>();
     auto &functions = interop->functions;
 
@@ -149,13 +123,34 @@ namespace nvenc {
         (last_error = functions.cuD3D11GetDevice(&cuda_device, dxgi_adapter)) == CUDA_SUCCESS &&
         (last_error = functions.cuCtxCreate(&interop->context, CU_CTX_SCHED_BLOCKING_SYNC, cuda_device)) == CUDA_SUCCESS &&
         (last_error = functions.cuCtxPopCurrent(&interop->context)) == CUDA_SUCCESS) {
-      g_cuda_interop_cache.emplace(key, interop);
       return interop;
     }
 
     BOOST_LOG(error) << "NvEnc: couldn't create CUDA interop context: error " << last_error;
     // ~cuda_interop_context releases a partially created context, if any
     return nullptr;
+  }
+
+  static std::shared_ptr<cuda_interop_context>
+  acquire_cuda_interop_context(ID3D11Device *d3d_device) {
+    IDXGIDevicePtr dxgi_device;
+    IDXGIAdapterPtr dxgi_adapter;
+    if (!d3d_device ||
+        FAILED(d3d_device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) ||
+        FAILED(dxgi_device->GetAdapter(&dxgi_adapter))) {
+      BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter for CUDA interop";
+      return nullptr;
+    }
+
+    DXGI_ADAPTER_DESC adapter_desc {};
+    if (FAILED(dxgi_adapter->GetDesc(&adapter_desc))) {
+      BOOST_LOG(error) << "NvEnc: couldn't get DXGI adapter description for CUDA interop";
+      return nullptr;
+    }
+    const cuda_interop_luid_key_t key { adapter_desc.AdapterLuid.HighPart, adapter_desc.AdapterLuid.LowPart };
+    return g_cuda_interop_cache.acquire(key, [&]() {
+      return create_cuda_interop_context(dxgi_adapter);
+    });
   }
 
   // cuCtxPushCurrent() cannot fail on a healthy context, so a failure means
@@ -166,23 +161,9 @@ namespace nvenc {
   // restart. Worst case (the context was actually fine) this costs one
   // context re-creation.
   static void
-  evict_dead_cuda_interop_context(CUcontext context) {
-    std::shared_ptr<cuda_interop_context> evicted;
-    {
-      std::lock_guard<std::mutex> lock(g_cuda_interop_cache_mutex);
-      for (auto it = g_cuda_interop_cache.begin(); it != g_cuda_interop_cache.end(); ++it) {
-        if (it->second && it->second->context == context) {
-          BOOST_LOG(warning) << "NvEnc: evicting dead CUDA interop context from the per-adapter cache";
-          evicted = it->second;
-          g_cuda_interop_cache.erase(it);
-          break;
-        }
-      }
-    }
-    // Drop the cache's reference outside the lock; if this was the last one,
-    // ~cuda_interop_context runs and its cuCtxDestroy() on the dead context
-    // just fails and logs.
-    evicted.reset();
+  evict_dead_cuda_interop_context(const std::shared_ptr<cuda_interop_context> &context) {
+    BOOST_LOG(warning) << "NvEnc: evicting dead CUDA interop context from the per-adapter cache";
+    g_cuda_interop_cache.erase(context);
   }
 
   bool
@@ -510,7 +491,7 @@ namespace nvenc {
     else {
       BOOST_LOG(error) << "NvEnc: cuCtxPushCurrent() failed: error " << last_cuda_error;
       if (cuda_context) {
-        evict_dead_cuda_interop_context(cuda_context);
+        evict_dead_cuda_interop_context(interop_context);
       }
       return { *this, nullptr };
     }

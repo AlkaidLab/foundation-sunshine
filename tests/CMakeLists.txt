@@ -65,6 +65,17 @@ if (WIN32)
 endif ()
 add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 
+add_executable(nvenc_context_cache_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_nvenc_context_cache.cpp)
+target_include_directories(nvenc_context_cache_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(nvenc_context_cache_unit_tests gtest_main)
+target_compile_options(nvenc_context_cache_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(nvenc_context_cache_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(nvenc_context_cache_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME nvenc_context_cache_unit_tests COMMAND nvenc_context_cache_unit_tests)
+
 add_executable(frame_contract_unit_tests
         ${CMAKE_SOURCE_DIR}/src/platform/frame_contract.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp)
