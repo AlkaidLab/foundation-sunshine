@@ -5,9 +5,10 @@
 #include "nvenc_d3d11_on_cuda.h"
 
 #include "../../common_impl/nvenc_utils.h"
-#include "../../scoped_context_cache.h"
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #ifdef NVENC_NAMESPACE
@@ -72,7 +73,21 @@ namespace nvenc {
   // Active encoders share one context per DXGI adapter. Only an explicit
   // probe token retains it between candidates; the idle cache owns nothing.
   using cuda_interop_luid_key_t = std::pair<LONG, DWORD>;
-  static nvenc::scoped_context_cache<cuda_interop_luid_key_t, cuda_interop_context> g_cuda_interop_cache;
+  using cuda_interop_contexts_t = std::map<cuda_interop_luid_key_t, std::shared_ptr<cuda_interop_context>>;
+  static std::mutex g_cuda_interop_cache_mutex;
+  static std::map<cuda_interop_luid_key_t, std::weak_ptr<cuda_interop_context>> g_cuda_interop_cache;
+  static std::weak_ptr<cuda_interop_contexts_t> g_cuda_probe_contexts;
+
+  [[maybe_unused]] static std::shared_ptr<cuda_interop_contexts_t>
+  retain_cuda_interop_contexts() {
+    std::lock_guard lock(g_cuda_interop_cache_mutex);
+    auto retained = g_cuda_probe_contexts.lock();
+    if (!retained) {
+      retained = std::make_shared<cuda_interop_contexts_t>();
+      g_cuda_probe_contexts = retained;
+    }
+    return retained;
+  }
 
   static std::shared_ptr<cuda_interop_context>
   create_cuda_interop_context(IDXGIAdapter *dxgi_adapter) {
@@ -132,6 +147,25 @@ namespace nvenc {
   }
 
   static std::shared_ptr<cuda_interop_context>
+  acquire_cuda_interop_context(const cuda_interop_luid_key_t &key, IDXGIAdapter *adapter,
+    std::shared_ptr<cuda_interop_context> (*create)(IDXGIAdapter *) = create_cuda_interop_context) {
+    // Declare owners before the lock so their teardown runs after unlocking,
+    // including when the last probe token is concurrently released.
+    std::shared_ptr<cuda_interop_contexts_t> retained;
+    std::shared_ptr<cuda_interop_context> context;
+    std::lock_guard lock(g_cuda_interop_cache_mutex);
+    std::erase_if(g_cuda_interop_cache, [](const auto &entry) { return entry.second.expired(); });
+    context = g_cuda_interop_cache[key].lock();
+    if (!context) {
+      context = create(adapter);
+      g_cuda_interop_cache[key] = context;
+    }
+    retained = g_cuda_probe_contexts.lock();
+    if (retained && context) (*retained)[key] = context;
+    return context;
+  }
+
+  static std::shared_ptr<cuda_interop_context>
   acquire_cuda_interop_context(ID3D11Device *d3d_device) {
     IDXGIDevicePtr dxgi_device;
     IDXGIAdapterPtr dxgi_adapter;
@@ -148,22 +182,23 @@ namespace nvenc {
       return nullptr;
     }
     const cuda_interop_luid_key_t key { adapter_desc.AdapterLuid.HighPart, adapter_desc.AdapterLuid.LowPart };
-    return g_cuda_interop_cache.acquire(key, [&]() {
-      return create_cuda_interop_context(dxgi_adapter);
-    });
+    return acquire_cuda_interop_context(key, dxgi_adapter);
   }
 
-  // cuCtxPushCurrent() cannot fail on a healthy context, so a failure means
-  // the shared context is dead (GPU reset, adapter removal). Evict it so the
-  // next encoder object builds a fresh one: the failing session dies once and
-  // the existing session-reinit logic retries with a new context, instead of
-  // the poisoned entry breaking every future 4:4:4 session until service
-  // restart. Worst case (the context was actually fine) this costs one
-  // context re-creation.
+  // Forget dead contexts after GPU reset; existing encoders still own them
+  // until cleanup. Match ownership so late failures cannot evict replacements.
   static void
   evict_dead_cuda_interop_context(const std::shared_ptr<cuda_interop_context> &context) {
-    BOOST_LOG(warning) << "NvEnc: evicting dead CUDA interop context from the per-adapter cache";
-    g_cuda_interop_cache.erase(context);
+    std::shared_ptr<cuda_interop_contexts_t> retained;
+    std::lock_guard lock(g_cuda_interop_cache_mutex);
+    retained = g_cuda_probe_contexts.lock();
+    for (auto it = g_cuda_interop_cache.begin(); it != g_cuda_interop_cache.end(); ++it) {
+      if (!it->second.owner_before(context) && !context.owner_before(it->second)) {
+        if (retained) retained->erase(it->first);
+        g_cuda_interop_cache.erase(it);
+        break;
+      }
+    }
   }
 
   bool
@@ -491,9 +526,109 @@ namespace nvenc {
     else {
       BOOST_LOG(error) << "NvEnc: cuCtxPushCurrent() failed: error " << last_cuda_error;
       if (cuda_context) {
+        BOOST_LOG(warning) << "NvEnc: evicting dead CUDA interop context from the per-adapter cache";
         evict_dead_cuda_interop_context(interop_context);
       }
       return { *this, nullptr };
     }
   }
 }
+
+#if defined(SUNSHINE_TESTS) && NVENC_FACTORY_VERSION == 1301
+  #include <array>
+  #include <barrier>
+  #include <thread>
+
+  #include <gtest/gtest.h>
+
+namespace NVENC_NAMESPACE {
+
+  // Exercise the concrete cache once through the newest SDK implementation.
+  // Empty context holders never load CUDA or call the driver.
+  struct NvencCudaContextTest: testing::Test {
+    inline static int creations;
+
+    void
+    SetUp() override { creations = 0; }
+
+    static std::shared_ptr<cuda_interop_context>
+    create(IDXGIAdapter *) {
+      ++creations;
+      return std::make_shared<cuda_interop_context>();
+    }
+
+    static std::shared_ptr<cuda_interop_context>
+    acquire(DWORD adapter = 0) {
+      return acquire_cuda_interop_context({ -1, adapter }, nullptr, create);
+    }
+  };
+
+  TEST_F(NvencCudaContextTest, ProbeReusesContextsUntilLastTokenExits) {
+    auto probe = retain_cuda_interop_contexts();
+    auto overlapping_probe = retain_cuda_interop_contexts();
+    EXPECT_FALSE(acquire_cuda_interop_context({ -1, 0 }, nullptr,
+      [](IDXGIAdapter *) { return std::shared_ptr<cuda_interop_context> {}; }));
+    std::weak_ptr<cuda_interop_context> observed;
+    for (int candidate = 0; candidate < 3; ++candidate) {
+      auto context = acquire();
+      EXPECT_EQ(creations, 1);
+      observed = context;
+    }
+    probe.reset();
+    EXPECT_FALSE(observed.expired());
+    overlapping_probe.reset();
+    EXPECT_TRUE(observed.expired());
+    auto next = acquire();
+    EXPECT_EQ(creations, 2);
+  }
+
+  TEST_F(NvencCudaContextTest, EncodersSharePerAdapterAndOutliveProbe) {
+    auto first = acquire();
+    auto probe = retain_cuda_interop_contexts();
+    auto second = acquire();
+    auto other_adapter = acquire(1);
+    EXPECT_EQ(first, second);
+    EXPECT_NE(first, other_adapter);
+    std::weak_ptr<cuda_interop_context> observed = first;
+    probe.reset();
+    first.reset();
+    EXPECT_FALSE(observed.expired());
+    second.reset();
+    EXPECT_TRUE(observed.expired());
+  }
+
+  TEST_F(NvencCudaContextTest, LateEvictionPreservesReplacement) {
+    auto probe = retain_cuda_interop_contexts();
+    auto dead = acquire();
+    std::weak_ptr<cuda_interop_context> observed = dead;
+    evict_dead_cuda_interop_context(dead);
+    auto replacement = acquire();
+    EXPECT_NE(dead, replacement);
+    evict_dead_cuda_interop_context(dead);
+    EXPECT_EQ(acquire(), replacement);
+    EXPECT_FALSE(observed.expired());
+    dead.reset();
+    EXPECT_TRUE(observed.expired());
+  }
+
+  TEST_F(NvencCudaContextTest, ConcurrentEncodersCreateOneContext) {
+    std::array<std::shared_ptr<cuda_interop_context>, 8> contexts;
+    std::barrier start(static_cast<std::ptrdiff_t>(contexts.size()));
+    {
+      std::array<std::jthread, 8> threads;
+      for (std::size_t i = 0; i < threads.size(); ++i) {
+        threads[i] = std::jthread([&, i]() {
+          start.arrive_and_wait();
+          contexts[i] = acquire();
+        });
+      }
+    }
+    EXPECT_EQ(creations, 1);
+    for (const auto &context : contexts) EXPECT_EQ(context, contexts.front());
+    std::weak_ptr<cuda_interop_context> observed = contexts.front();
+    contexts = {};
+    EXPECT_TRUE(observed.expired());
+  }
+
+}  // namespace NVENC_NAMESPACE
+#endif

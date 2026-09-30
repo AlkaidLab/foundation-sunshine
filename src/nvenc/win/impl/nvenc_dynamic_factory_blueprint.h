@@ -72,7 +72,7 @@ namespace nvenc {
 
   std::shared_ptr<void>
   NVENC_FACTORY_CLASS::retain_cuda_interop_contexts() {
-    return NVENC_NAMESPACE::g_cuda_interop_cache.retain();
+    return NVENC_NAMESPACE::retain_cuda_interop_contexts();
   }
 
   std::unique_ptr<nvenc_d3d11>
