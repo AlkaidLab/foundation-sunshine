@@ -214,7 +214,7 @@ export default defineConfig({
             // 将Bootstrap和FontAwesome分离
             { name: 'ui-vendor', test: /[\\/]node_modules[\\/](bootstrap|@fortawesome|@popperjs)[\\/]/ },
             // 将其他第三方库分离
-            { name: 'utils-vendor', test: /[\\/]node_modules[\\/](marked|nanoid|vuedraggable)[\\/]/ },
+            { name: 'utils-vendor', test: /[\\/]node_modules[\\/](marked|nanoid|vuedraggable-es)[\\/]/ },
           ],
         },
         // 优化chunk命名

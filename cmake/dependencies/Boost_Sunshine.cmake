@@ -20,12 +20,11 @@ set(BOOST_COMPONENTS
 )
 # system is not used by Sunshine, but by Simple-Web-Server, added here for convenience
 
-# algorithm, preprocessor, scope, and uuid are not used by Sunshine, but by libdisplaydevice, added here for convenience
+# Additional components used by the Windows sources.
 if(WIN32)
     list(APPEND BOOST_COMPONENTS
             algorithm
             preprocessor
-            scope
             uuid
     )
 endif()

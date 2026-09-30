@@ -94,6 +94,6 @@ export default defineConfig({
   },
   // 优化依赖预构建
   optimizeDeps: {
-    include: ['vue', 'vue-i18n', 'bootstrap', '@popperjs/core', 'marked', 'nanoid', 'vuedraggable'],
+    include: ['vue', 'vue-i18n', 'bootstrap', '@popperjs/core', 'marked', 'nanoid', 'vuedraggable-es'],
   },
 })
