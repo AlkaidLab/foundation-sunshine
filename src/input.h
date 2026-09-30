@@ -74,4 +74,30 @@ namespace input {
    */
   std::pair<float, float>
   scale_client_contact_area(const std::pair<float, float> &val, uint16_t rotation, const std::pair<float, float> &scalar);
+
+#ifdef SUNSHINE_TESTS
+  namespace testing {
+    struct keyboard_event_t {
+      std::uint16_t key_code;
+      bool release;
+      std::uint8_t flags;
+    };
+
+    std::shared_ptr<input_t>
+    make_input();
+
+    void
+    set_keyboard_sink(std::function<void(const keyboard_event_t &)> sink);
+
+    void
+    send_keyboard_packet(std::shared_ptr<input_t> &input, std::uint16_t key_code,
+                         std::uint8_t modifiers, std::uint8_t flags, bool release);
+
+    void
+    release_held_keys();
+
+    void
+    reset_keyboard_state();
+  }  // namespace testing
+#endif
 }  // namespace input
