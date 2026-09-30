@@ -37,6 +37,9 @@ namespace nvenc {
     std::unique_ptr<nvenc_d3d11>
     create_nvenc_d3d11_on_cuda(ID3D11Device *d3d_device) override;
 
+    std::shared_ptr<void>
+    retain_cuda_interop_contexts() override;
+
   private:
     shared_dll dll;
   };
@@ -66,6 +69,11 @@ using namespace nvenc;
   #include "nvenc_d3d11_on_cuda.cpp"
 
 namespace nvenc {
+
+  std::shared_ptr<void>
+  NVENC_FACTORY_CLASS::retain_cuda_interop_contexts() {
+    return NVENC_NAMESPACE::retain_cuda_interop_contexts();
+  }
 
   std::unique_ptr<nvenc_d3d11>
   NVENC_FACTORY_CLASS::create_nvenc_d3d11_native(ID3D11Device *d3d_device) {
