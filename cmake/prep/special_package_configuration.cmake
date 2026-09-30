@@ -40,7 +40,6 @@ elseif(UNIX)
     # configure the flatpak manifest
     if(${SUNSHINE_CONFIGURE_FLATPAK_MAN})
         configure_file(packaging/linux/flatpak/${PROJECT_FQDN}.yml ${PROJECT_FQDN}.yml @ONLY)
-        file(COPY packaging/linux/flatpak/deps/ DESTINATION ${CMAKE_BINARY_DIR})
         file(COPY packaging/linux/flatpak/modules DESTINATION ${CMAKE_BINARY_DIR})
     endif()
 endif()
