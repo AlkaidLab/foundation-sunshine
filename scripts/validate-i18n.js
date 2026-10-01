@@ -131,12 +131,6 @@ function getEnglishOnlyKeys() {
     "gamepad_x360", // X360 (Xbox 360) - product name
     "gamepad_xone", // XOne (Xbox One) - product name
     "port_web_ui", // Web UI
-    "boom_sunshine", // Boom!
-    "boom_sunshine_title", // Boom!
-    "boom_sunshine_button", // Boom!
-    "boom_sunshine_button_desc", // Boom!
-    "boom_sunshine_button_title", // Boom!
-    "boom_sunshine_button_desc", // Boom!
     "upnp", // UPnP
     "scan_result_type_url", // URL
     "scan_result_filter_url_title", // URL

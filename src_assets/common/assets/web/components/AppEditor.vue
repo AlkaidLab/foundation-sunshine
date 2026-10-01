@@ -7,7 +7,7 @@
             <i class="fas fa-edit me-2"></i>
             {{ isNewApp ? t('apps.add_new') : t('apps.edit') }}
           </h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" :aria-label="t('_common.close')"></button>
         </div>
         <div class="modal-body">
           <input type="file" ref="fileInput" style="display: none" />
@@ -109,7 +109,7 @@
                         </span>
                         <span class="cmd-tag">
                           <code>"C:\Program Files\...\game.exe"</code>
-                          <span class="cmd-tag-desc">Start program directly</span>
+                          <span class="cmd-tag-desc">{{ t('apps.launch_program_directly') }}</span>
                         </span>
                       </div>
                     </div>
@@ -501,6 +501,7 @@ const initializeFileSelector = () => {
   const notify = (type) => (message) => showMessage(message, type)
   fileSelector.value = createFileSelector({
     platform: props.platform,
+    translate: t,
     onSuccess: notify('info'),
     onError: notify('error'),
     onInfo: notify('info'),
@@ -590,7 +591,7 @@ const cleanup = () => {
 
 const validateField = (fieldName) => {
   const validationKey = FIELD_VALIDATION_MAP[fieldName] || fieldName
-  const result = validateFieldHelper(validationKey, formData.value[fieldName])
+  const result = validateFieldHelper(validationKey, formData.value[fieldName], {}, t)
   validation.value[fieldName] = result
   return result
 }
@@ -716,7 +717,7 @@ const getButtonTitle = (type) => fileSelector.value?.getButtonTitle(type) || t('
 
 const saveApp = async () => {
   formData.value.dlssnr = normalizeDlssnrConfig(formData.value.dlssnr)
-  const formValidation = validateAppForm(formData.value)
+  const formValidation = validateAppForm(formData.value, t)
   if (!formValidation.isValid) {
     if (formValidation.errors.length) alert(formValidation.errors[0])
     return
