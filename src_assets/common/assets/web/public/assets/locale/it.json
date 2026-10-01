@@ -201,7 +201,9 @@
     "scan_library": "Scansiona le librerie di giochi (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Miglioramenti con IA",
+      "ai_cover_matching": "Abbinamento delle copertine con IA",
       "ai_desc": "Migliora i risultati dopo la scansione",
+      "ai_name_cleanup": "Miglioramento dei nomi con IA",
       "directory": "Cartella personalizzata",
       "directory_desc": "Scegli una cartella locale in cui cercare programmi eseguibili",
       "directory_scan": "Scansione della cartella",
@@ -1230,7 +1232,7 @@
     "ai_result": "Risultato della diagnosi",
     "ai_retry": "Riprova",
     "ai_start_diagnosis": "Avvia diagnosi",
-    "boom_sunshine": "Arresta Sunshine",
+    "boom_sunshine": "Boom! Arresta Sunshine",
     "boom_sunshine_desc": "Se è necessario spegnere immediatamente Sunshine, è possibile utilizzare questa funzione. Si noti che sarà necessario avviarlo manualmente dopo lo spegnimento.",
     "boom_sunshine_success": "Sunshine è stato spento",
     "confirm_boom": "Vuoi davvero uscire?",

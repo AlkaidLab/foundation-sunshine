@@ -201,7 +201,9 @@
     "scan_library": "Buscar en las bibliotecas de juegos (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Mejoras con IA",
+      "ai_cover_matching": "Selección de portadas con IA",
       "ai_desc": "Mejora los resultados después del análisis",
+      "ai_name_cleanup": "Mejora de nombres con IA",
       "directory": "Carpeta personalizada",
       "directory_desc": "Elija una carpeta local para buscar programas ejecutables",
       "directory_scan": "Análisis de carpeta",
@@ -1230,7 +1232,7 @@
     "ai_result": "Resultado del diagnóstico",
     "ai_retry": "Reintentar",
     "ai_start_diagnosis": "Iniciar diagnóstico",
-    "boom_sunshine": "Detener Sunshine",
+    "boom_sunshine": "Boom! Detener Sunshine",
     "boom_sunshine_desc": "Si necesita apagar Sunshine inmediatamente, puede usar esta función. Tenga en cuenta que deberá iniciarlo manualmente después del apagado.",
     "boom_sunshine_success": "Sunshine se ha apagado",
     "confirm_boom": "¿Realmente quieres salir?",

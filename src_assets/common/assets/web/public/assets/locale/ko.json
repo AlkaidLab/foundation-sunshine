@@ -201,7 +201,9 @@
     "scan_library": "게임 라이브러리 검색 (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "AI 개선",
+      "ai_cover_matching": "AI 표지 매칭",
       "ai_desc": "검색이 끝난 후 결과를 개선합니다",
+      "ai_name_cleanup": "AI 이름 정리",
       "directory": "사용자 지정 폴더",
       "directory_desc": "로컬 폴더를 선택하여 실행 가능한 프로그램을 검색합니다",
       "directory_scan": "폴더 검색",
@@ -1230,7 +1232,7 @@
     "ai_result": "진단 결과",
     "ai_retry": "재시도",
     "ai_start_diagnosis": "진단 시작",
-    "boom_sunshine": "Sunshine 중지",
+    "boom_sunshine": "Boom! Sunshine 중지",
     "boom_sunshine_desc": "Sunshine을 즉시 종료해야 하는 경우 이 기능을 사용할 수 있습니다. 종료 후 수동으로 다시 시작해야 합니다.",
     "boom_sunshine_success": "Sunshine이 종료되었습니다",
     "confirm_boom": "정말 종료하시겠습니까?",

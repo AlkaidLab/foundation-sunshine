@@ -280,6 +280,12 @@ export function useApps() {
   const getGameLibrarySkillIcon = (skillId) => getGameLibraryCapabilityIcon(skillId)
 
   const getGameLibrarySkillLabel = (skillId) => {
+    if (skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
+      return translate('apps.scan_options.ai_name_cleanup')
+    }
+    if (skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
+      return translate('apps.scan_options.ai_cover_matching')
+    }
     const locale = typeof document === 'undefined'
       ? ''
       : String(document.documentElement?.getAttribute?.('lang') || '').toLowerCase()

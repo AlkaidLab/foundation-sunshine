@@ -7,7 +7,7 @@
             <i class="fas fa-edit me-2"></i>
             {{ isNewApp ? t('apps.add_new') : t('apps.edit') }}
           </h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" :aria-label="t('_common.close')"></button>
         </div>
         <div class="modal-body">
           <input type="file" ref="fileInput" style="display: none" />

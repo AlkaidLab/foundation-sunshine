@@ -201,7 +201,9 @@
     "scan_library": "Prohledat herní knihovny (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Vylepšení pomocí AI",
+      "ai_cover_matching": "Výběr obalů pomocí AI",
       "ai_desc": "Vylepší výsledky po dokončení vyhledávání",
+      "ai_name_cleanup": "Úprava názvů pomocí AI",
       "directory": "Vlastní složka",
       "directory_desc": "Vyberte místní složku, ve které chcete hledat spustitelné programy",
       "directory_scan": "Prohledání složky",
@@ -1230,7 +1232,7 @@
     "ai_result": "Výsledek diagnostiky",
     "ai_retry": "Opakovat",
     "ai_start_diagnosis": "Zahájit diagnostiku",
-    "boom_sunshine": "Zastavit Sunshine",
+    "boom_sunshine": "Boom! Zastavit Sunshine",
     "boom_sunshine_desc": "Pokud potřebujete okamžitě vypnout Sunshine, můžete použít tuto funkci. Všimněte si, že budete muset ručně spustit znovu po vypnutí.",
     "boom_sunshine_success": "Sunshine byl vypnut",
     "confirm_boom": "Opravdu chcete ukončit?",

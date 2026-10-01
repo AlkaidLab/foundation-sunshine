@@ -201,7 +201,9 @@
     "scan_library": "Przeszukaj biblioteki gier (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Ulepszenia AI",
+      "ai_cover_matching": "Dopasowywanie okładek przez AI",
       "ai_desc": "Poprawia wyniki po zakończeniu wyszukiwania",
+      "ai_name_cleanup": "Poprawianie nazw przez AI",
       "directory": "Własny folder",
       "directory_desc": "Wybierz lokalny folder, aby znaleźć programy możliwe do uruchomienia",
       "directory_scan": "Przeszukiwanie folderu",
@@ -1230,7 +1232,7 @@
     "ai_result": "Wynik diagnostyki",
     "ai_retry": "Ponów",
     "ai_start_diagnosis": "Rozpocznij diagnostykę",
-    "boom_sunshine": "Zatrzymaj Sunshine",
+    "boom_sunshine": "Boom! Zatrzymaj Sunshine",
     "boom_sunshine_desc": "Jeśli musisz natychmiast zamknąć Sunshine, możesz użyć tej funkcji. Pamiętaj, że będziesz musiał ręcznie uruchomić go ponownie po zamknięciu.",
     "boom_sunshine_success": "Sunshine został zamknięty",
     "confirm_boom": "Naprawdę chcesz wyjść?",

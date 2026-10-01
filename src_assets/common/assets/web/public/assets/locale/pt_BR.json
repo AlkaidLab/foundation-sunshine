@@ -201,7 +201,9 @@
     "scan_library": "Analisar bibliotecas de jogos (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Melhorias com IA",
+      "ai_cover_matching": "Correspondência de capas com IA",
       "ai_desc": "Melhora os resultados após a análise",
+      "ai_name_cleanup": "Melhoria de nomes com IA",
       "directory": "Pasta personalizada",
       "directory_desc": "Escolha uma pasta local para buscar programas executáveis",
       "directory_scan": "Análise de pasta",
@@ -1230,7 +1232,7 @@
     "ai_result": "Resultado do diagnóstico",
     "ai_retry": "Tentar novamente",
     "ai_start_diagnosis": "Iniciar diagnóstico",
-    "boom_sunshine": "Parar o Sunshine",
+    "boom_sunshine": "Boom! Parar o Sunshine",
     "boom_sunshine_desc": "Se você precisar desligar o Sunshine imediatamente, pode usar esta função. Observe que será necessário iniciá-lo manualmente após o desligamento.",
     "boom_sunshine_success": "Sunshine foi desligado",
     "confirm_boom": "Realmente quer sair?",

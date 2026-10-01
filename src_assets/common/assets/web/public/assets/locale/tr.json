@@ -201,7 +201,9 @@
     "scan_library": "Oyun kitaplıklarını tara (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Yapay zekâ iyileştirmeleri",
+      "ai_cover_matching": "Yapay zekâ ile kapak eşleştirme",
       "ai_desc": "Tarama sonrasında sonuçları iyileştirir",
+      "ai_name_cleanup": "Yapay zekâ ile ad düzenleme",
       "directory": "Özel klasör",
       "directory_desc": "Başlatılabilir programları aramak için yerel bir klasör seçin",
       "directory_scan": "Klasör taraması",
@@ -1230,7 +1232,7 @@
     "ai_result": "Tanılama Sonucu",
     "ai_retry": "Tekrar dene",
     "ai_start_diagnosis": "Tanılamayı Başlat",
-    "boom_sunshine": "Sunshine'ı durdur",
+    "boom_sunshine": "Boom! Sunshine'ı durdur",
     "boom_sunshine_desc": "Sunshine'ı hemen kapatmanız gerekiyorsa, bu işlevi kullanabilirsiniz. Kapatıldıktan sonra manuel olarak yeniden başlatmanız gerekeceğini unutmayın.",
     "boom_sunshine_success": "Sunshine kapatıldı",
     "confirm_boom": "Gerçekten çıkmak istiyor musunuz?",

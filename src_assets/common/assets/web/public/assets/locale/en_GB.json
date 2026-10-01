@@ -201,7 +201,9 @@
     "scan_library": "Scan game libraries (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "AI Enhancements",
+      "ai_cover_matching": "AI cover matching",
       "ai_desc": "Runs after the scan to enhance the results",
+      "ai_name_cleanup": "AI name cleanup",
       "directory": "Custom folder",
       "directory_desc": "Choose a local folder to search for launchable programs",
       "directory_scan": "Folder Scan",
@@ -1230,7 +1232,7 @@
     "ai_result": "Diagnosis Result",
     "ai_retry": "Retry",
     "ai_start_diagnosis": "Start Diagnosis",
-    "boom_sunshine": "Stop Sunshine",
+    "boom_sunshine": "Boom! Stop Sunshine",
     "boom_sunshine_desc": "Stop Sunshine immediately. You will need to start it again manually.",
     "boom_sunshine_success": "Sunshine has stopped",
     "confirm_boom": "Really want to exit?",

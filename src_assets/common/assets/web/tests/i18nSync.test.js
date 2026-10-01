@@ -15,7 +15,7 @@ test('i18n sync preserves translated shutdown actions while normalizing protocol
   const script = join(scripts, 'validate-i18n.mjs')
   copyFileSync(new URL('../../../../../scripts/validate-i18n.js', import.meta.url), script)
 
-  const translations = { en: 'Stop Sunshine', fr: 'Arrêter Sunshine', zh: '停止 Sunshine' }
+  const translations = { en: 'Boom! Stop Sunshine', fr: 'Boom! Arrêter Sunshine', zh: 'Boom! 停止 Sunshine' }
   for (const [locale, label] of Object.entries(translations)) {
     writeFileSync(join(locales, `${locale}.json`), JSON.stringify({
       troubleshooting: { boom_sunshine: label },

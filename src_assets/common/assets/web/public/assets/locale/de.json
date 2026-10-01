@@ -201,7 +201,9 @@
     "scan_library": "Spielebibliotheken durchsuchen (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "KI-Verbesserungen",
+      "ai_cover_matching": "KI-Coverzuordnung",
       "ai_desc": "Verbessert die Ergebnisse nach dem Scan",
+      "ai_name_cleanup": "KI-Namenskorrektur",
       "directory": "Eigener Ordner",
       "directory_desc": "Wählen Sie einen lokalen Ordner, um nach startbaren Programmen zu suchen",
       "directory_scan": "Ordnerscan",
@@ -1230,7 +1232,7 @@
     "ai_result": "Diagnoseergebnis",
     "ai_retry": "Wiederholen",
     "ai_start_diagnosis": "Diagnose starten",
-    "boom_sunshine": "Sunshine beenden",
+    "boom_sunshine": "Boom! Sunshine beenden",
     "boom_sunshine_desc": "Wenn Sie Sunshine sofort herunterfahren müssen, können Sie diese Funktion verwenden. Beachten Sie, dass Sie es nach dem Herunterfahren manuell neu starten müssen.",
     "boom_sunshine_success": "Sunshine wurde heruntergefahren",
     "confirm_boom": "Wirklich beenden?",

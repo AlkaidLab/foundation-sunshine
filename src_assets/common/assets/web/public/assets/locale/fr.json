@@ -201,7 +201,9 @@
     "scan_library": "Analyser les bibliothèques de jeux (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "Améliorations par IA",
+      "ai_cover_matching": "Sélection des jaquettes par IA",
       "ai_desc": "Améliore les résultats après l'analyse",
+      "ai_name_cleanup": "Amélioration des noms par IA",
       "directory": "Dossier personnalisé",
       "directory_desc": "Choisissez un dossier local pour rechercher des programmes exécutables",
       "directory_scan": "Analyse de dossier",
@@ -1230,7 +1232,7 @@
     "ai_result": "Résultat du diagnostic",
     "ai_retry": "Réessayer",
     "ai_start_diagnosis": "Démarrer le diagnostic",
-    "boom_sunshine": "Arrêter Sunshine",
+    "boom_sunshine": "Boom! Arrêter Sunshine",
     "boom_sunshine_desc": "Si vous devez arrêter Sunshine immédiatement, vous pouvez utiliser cette fonction. Notez que vous devrez le redémarrer manuellement après l'arrêt.",
     "boom_sunshine_success": "Sunshine a été arrêté",
     "confirm_boom": "Vraiment quitter ?",

@@ -201,7 +201,9 @@
     "scan_library": "ゲームライブラリをスキャン (Steam/Epic/GOG)",
     "scan_options": {
       "ai": "AIによる改善",
+      "ai_cover_matching": "AIによるカバーの照合",
       "ai_desc": "スキャン後に結果を改善します",
+      "ai_name_cleanup": "AIによる名前の整理",
       "directory": "任意のフォルダー",
       "directory_desc": "ローカルフォルダーを選択し、起動可能なプログラムを検索します",
       "directory_scan": "フォルダーのスキャン",
@@ -1230,7 +1232,7 @@
     "ai_result": "診断結果",
     "ai_retry": "再試行",
     "ai_start_diagnosis": "診断を開始",
-    "boom_sunshine": "Sunshineを停止",
+    "boom_sunshine": "Boom! Sunshineを停止",
     "boom_sunshine_desc": "Sunshineをすぐにシャットダウンする必要がある場合は、この機能を使用できます。シャットダウン後は手動で再起動する必要があることに注意してください。",
     "boom_sunshine_success": "Sunshineがシャットダウンされました",
     "confirm_boom": "本当に終了しますか？",
