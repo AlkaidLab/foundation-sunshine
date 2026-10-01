@@ -3,10 +3,7 @@
  * 提供跨平台的文件和目录选择功能
  */
 
-const FILE_FILTERS = [
-  { name: '可执行文件', extensions: ['exe', 'app', 'sh', 'bat', 'cmd'] },
-  { name: '所有文件', extensions: ['*'] },
-]
+import { localizedMessage } from './localizedMessage.js'
 
 const PLACEHOLDERS = {
   windows: { cmd: 'C:\\Program Files\\App\\app.exe', 'working-dir': 'C:\\Program Files\\App' },
@@ -22,8 +19,20 @@ export class FileSelector {
     this.onSuccess = options.onSuccess || (() => {})
     this.onError = options.onError || (() => {})
     this.onInfo = options.onInfo || (() => {})
+    this.translate = options.translate
     this.currentField = null
     this.selectionType = null
+  }
+
+  message(key, params) {
+    return localizedMessage(this.translate, `apps.file_selection.${key}`, params)
+  }
+
+  getFileFilters() {
+    return [
+      { name: this.message('executables'), extensions: ['exe', 'app', 'sh', 'bat', 'cmd'] },
+      { name: this.message('all_files'), extensions: ['*'] },
+    ]
   }
 
   /**
@@ -65,7 +74,7 @@ export class FileSelector {
    */
   selectBrowser(input, callback, isDirectory) {
     if (!input) {
-      this.onError(isDirectory ? '目录输入元素不存在' : '文件输入元素不存在')
+      this.onError(this.message(isDirectory ? 'directory_unavailable' : 'file_unavailable'))
       return
     }
 
@@ -81,14 +90,14 @@ export class FileSelector {
           const path = isDirectory ? this.processDirectoryPath(files[0]) : this.processFilePath(files[0])
 
           callback?.(this.currentField, path)
-          this.onSuccess(`${isDirectory ? '目录' : '文件'}选择成功: ${path}`)
+          this.onSuccess(this.message(isDirectory ? 'directory_selected' : 'file_selected', { path }))
 
           if (!this.isElectronEnvironment()) {
-            this.onInfo('浏览器环境下无法获取完整路径，请检查并手动调整路径')
+            this.onInfo(this.message('browser_path_hint'))
           }
         } catch (error) {
           console.error(`${isDirectory ? '目录' : '文件'}选择处理失败:`, error)
-          this.onError(`${isDirectory ? '目录' : '文件'}选择处理失败，请重试`)
+          this.onError(this.message(isDirectory ? 'directory_retry' : 'file_retry'))
         }
       }
 
@@ -128,27 +137,27 @@ export class FileSelector {
   async selectTauri(fieldName, callback, isDirectory) {
     const tauri = window.__TAURI__
     if (!tauri?.dialog?.open) {
-      this.onError('Tauri 对话框 API 不可用')
+      this.onError(this.message('dialog_unavailable'))
       this.resetState()
       return null
     }
 
     try {
       const options = isDirectory
-        ? { title: '选择目录', multiple: false, directory: true }
-        : { title: '选择文件', filters: FILE_FILTERS, multiple: false, directory: false }
+        ? { title: this.getButtonTitle('directory'), multiple: false, directory: true }
+        : { title: this.getButtonTitle('file'), filters: this.getFileFilters(), multiple: false, directory: false }
 
       const selected = await tauri.dialog.open(options)
 
       if (selected) {
         callback?.(fieldName, selected)
-        this.onSuccess(`${isDirectory ? '目录' : '文件'}选择成功: ${selected}`)
+        this.onSuccess(this.message(isDirectory ? 'directory_selected' : 'file_selected', { path: selected }))
         this.resetState()
         return selected
       }
     } catch (error) {
       console.error(`Tauri ${isDirectory ? '目录' : '文件'}选择失败:`, error)
-      this.onError(`${isDirectory ? '目录' : '文件'}选择失败，请手动输入路径`)
+      this.onError(this.message(isDirectory ? 'directory_failed' : 'file_failed'))
     }
 
     this.resetState()
@@ -170,20 +179,20 @@ export class FileSelector {
     try {
       const { dialog } = window.require('electron').remote
       const options = isDirectory
-        ? { properties: ['openDirectory'] }
-        : { properties: ['openFile'], filters: FILE_FILTERS }
+        ? { title: this.getButtonTitle('directory'), properties: ['openDirectory'] }
+        : { title: this.getButtonTitle('file'), properties: ['openFile'], filters: this.getFileFilters() }
 
       const result = await dialog.showOpenDialog(options)
 
       if (!result.canceled && result.filePaths.length > 0) {
         const path = result.filePaths[0]
         callback?.(fieldName, path)
-        this.onSuccess(`${isDirectory ? '目录' : '文件'}选择成功: ${path}`)
+        this.onSuccess(this.message(isDirectory ? 'directory_selected' : 'file_selected', { path }))
         return path
       }
     } catch (error) {
       console.error(`${isDirectory ? '目录' : '文件'}选择失败:`, error)
-      this.onError(`${isDirectory ? '目录' : '文件'}选择失败，请手动输入路径`)
+      this.onError(this.message(isDirectory ? 'directory_failed' : 'file_failed'))
     }
 
     this.resetState()
@@ -263,7 +272,7 @@ export class FileSelector {
    * 获取按钮标题文本
    */
   getButtonTitle(type) {
-    return type === 'file' ? '选择文件' : type === 'directory' ? '选择目录' : '选择'
+    return this.message(type === 'file' ? 'select_file' : type === 'directory' ? 'select_directory' : 'select')
   }
 
   /**

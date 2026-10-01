@@ -28,16 +28,16 @@
           <h3 class="app-name-list">{{ app.name }}</h3>
           <div class="app-tags-list">
             <span v-if="app['exclude-global-prep-cmd'] && app['exclude-global-prep-cmd'] !== 'false'" class="app-tag-list tag-exclude-global-prep-cmd">
-              <i class="fas fa-ellipsis-h me-1"></i>全局预处理
+              <i class="fas fa-ellipsis-h me-1"></i>{{ $t('apps.tag_skip_prep') }}
             </span>
             <span v-if="app['menu-cmd'] && app['menu-cmd'].length > 0" class="app-tag-list tag-menu">
-              <span class="badge rounded-pill bg-secondary me-1">{{ app['menu-cmd'].length }}</span>菜单
+              <span class="badge rounded-pill bg-secondary me-1">{{ app['menu-cmd'].length }}</span>{{ $t('apps.tag_menu') }}
             </span>
             <span v-if="app.elevated && app.elevated !== 'false'" class="app-tag-list tag-elevated">
-              <i class="fas fa-shield-alt me-1"></i>管理员
+              <i class="fas fa-shield-alt me-1"></i>{{ $t('apps.tag_admin') }}
             </span>
             <span v-if="app['auto-detach'] && app['auto-detach'] !== 'false'" class="app-tag-list tag-detach">
-              <i class="fas fa-unlink me-1"></i>自动分离
+              <i class="fas fa-unlink me-1"></i>{{ $t('apps.tag_auto_detach') }}
             </span>
           </div>
         </div>
@@ -133,7 +133,7 @@ export default {
      */
     async copyToClipboard(text, appName, event) {
       if (!text) {
-        this.$emit('copy-error', '没有可复制的命令');
+        this.$emit('copy-error', this.$t('apps.copy_no_command'));
         return;
       }
       
@@ -160,14 +160,14 @@ export default {
             this.showCopySuccess(targetElement, appName);
           } catch (err) {
             console.error('复制失败:', err);
-            this.$emit('copy-error', '复制失败，请手动复制');
+            this.$emit('copy-error', this.$t('apps.copy_failed_manual'));
           } finally {
             document.body.removeChild(textArea);
           }
         }
       } catch (err) {
         console.error('复制到剪贴板失败:', err);
-        this.$emit('copy-error', '复制失败，请检查浏览器权限');
+        this.$emit('copy-error', this.$t('apps.copy_failed_permissions'));
       }
     },
     
@@ -179,7 +179,7 @@ export default {
       element.classList.add('copy-success');
       
       // 发出成功事件
-      this.$emit('copy-success', `📋 已复制 "${appName}" 的命令`);
+      this.$emit('copy-success', this.$t('apps.copy_command_success', { name: appName }));
       
       // 400ms后移除动画类
       setTimeout(() => {

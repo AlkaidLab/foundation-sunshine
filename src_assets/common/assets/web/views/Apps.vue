@@ -29,7 +29,8 @@
               class="view-toggle-btn"
               :class="{ active: viewMode === 'grid' }"
               @click="viewMode = 'grid'"
-              title="网格视图"
+              :title="$t('apps.grid_view')"
+              :aria-label="$t('apps.grid_view')"
             >
               <i class="fas fa-th"></i>
             </button>
@@ -37,7 +38,8 @@
               class="view-toggle-btn"
               :class="{ active: viewMode === 'list' }"
               @click="viewMode = 'list'"
-              title="列表视图"
+              :title="$t('apps.list_view')"
+              :aria-label="$t('apps.list_view')"
             >
               <i class="fas fa-list"></i>
             </button>
@@ -72,8 +74,8 @@
             class="cute-btn cute-btn-secondary"
             @click="openScanOptions"
             :disabled="isScanning || scanProgress.active"
-            title="扫描游戏平台库 (Steam/Epic/GOG)"
-            aria-label="扫描游戏平台库 (Steam/Epic/GOG)"
+            :title="$t('apps.scan_library')"
+            :aria-label="$t('apps.scan_library')"
           >
             <i class="fas" :class="isScanning || scanProgress.active ? 'fa-spinner fa-spin' : 'fa-gamepad'"></i>
           </button>
@@ -314,8 +316,8 @@
           <div class="empty-icon">
             <i class="fas fa-search"></i>
           </div>
-          <h3 class="empty-title">未找到匹配的应用</h3>
-          <p class="empty-subtitle">尝试使用不同的搜索关键词</p>
+          <h3 class="empty-title">{{ $t('apps.scan_result_no_matches') }}</h3>
+          <p class="empty-subtitle">{{ $t('apps.scan_result_try_different_keywords') }}</p>
         </div>
 
         <!-- 空状态 - 无应用 -->
@@ -323,8 +325,8 @@
           <div class="empty-icon">
             <i class="fas fa-rocket"></i>
           </div>
-          <h3 class="empty-title">暂无应用</h3>
-          <p class="empty-subtitle">点击下方按钮添加第一个应用</p>
+          <h3 class="empty-title">{{ $t('apps.no_apps') }}</h3>
+          <p class="empty-subtitle">{{ $t('apps.no_apps_desc') }}</p>
           <button class="btn btn-primary" @click="newApp">
             <i class="fas fa-plus me-1"></i>{{ $t('apps.add_new') }}
           </button>
@@ -369,32 +371,32 @@
           <div class="scan-options-modal">
             <div class="scan-options-header">
               <h5>
-                <i class="fas fa-gamepad me-2"></i>扫描游戏资源
+                <i class="fas fa-gamepad me-2"></i>{{ $t('apps.scan_options.title') }}
               </h5>
-              <button class="btn-close" type="button" aria-label="Close" @click="closeScanOptions"></button>
+              <button class="btn-close" type="button" :aria-label="$t('_common.close')" @click="closeScanOptions"></button>
             </div>
 
             <div class="scan-options-body">
               <section class="scan-options-section">
-                <div class="scan-options-title">扫描范围</div>
+                <div class="scan-options-title">{{ $t('apps.scan_options.scope') }}</div>
                 <label class="scan-option-row">
                   <input v-model="scanOptions.scope" type="radio" value="libraries" />
                   <span>
-                    <strong>游戏平台库</strong>
-                    <small>扫描已安装的 Steam、Epic Games 和 GOG 游戏</small>
+                    <strong>{{ $t('apps.scan_options.libraries') }}</strong>
+                    <small>{{ $t('apps.scan_options.libraries_desc') }}</small>
                   </span>
                 </label>
                 <label class="scan-option-row">
                   <input v-model="scanOptions.scope" type="radio" value="directory" />
                   <span>
-                    <strong>自选目录</strong>
-                    <small>选择一个本地目录，扫描其中的可启动程序</small>
+                    <strong>{{ $t('apps.scan_options.directory') }}</strong>
+                    <small>{{ $t('apps.scan_options.directory_desc') }}</small>
                   </span>
                 </label>
               </section>
 
               <section v-if="scanOptions.scope === 'libraries'" class="scan-options-section">
-                <div class="scan-options-title">游戏平台</div>
+                <div class="scan-options-title">{{ $t('apps.scan_options.platforms') }}</div>
                 <div class="scan-platform-grid">
                   <label v-for="platformOption in scanPlatformOptions" :key="platformOption.id" class="scan-pill-toggle">
                     <input v-model="scanOptions.platforms[platformOption.id]" type="checkbox" />
@@ -404,18 +406,18 @@
               </section>
 
               <section v-if="scanOptions.scope === 'directory'" class="scan-options-section">
-                <div class="scan-options-title">目录扫描</div>
+                <div class="scan-options-title">{{ $t('apps.scan_options.directory_scan') }}</div>
                 <label class="scan-option-row scan-option-row--compact">
                   <input v-model="scanOptions.extractIcons" type="checkbox" />
                   <span>
-                    <strong>提取应用图标</strong>
-                    <small>扫描速度会稍慢，但结果更容易辨认</small>
+                    <strong>{{ $t('apps.scan_options.extract_icons') }}</strong>
+                    <small>{{ $t('apps.scan_options.extract_icons_desc') }}</small>
                   </span>
                 </label>
               </section>
 
               <section class="scan-options-section">
-                <div class="scan-options-title">AI 增强</div>
+                <div class="scan-options-title">{{ $t('apps.scan_options.ai') }}</div>
                 <div class="scan-enhancement-list">
                   <label
                     v-for="skill in selectableGameLibrarySkills"
@@ -429,7 +431,7 @@
                     />
                     <span>
                       <strong>{{ getGameLibrarySkillLabel(skill.skillId) }}</strong>
-                      <small>作为扫描后的增强步骤执行</small>
+                      <small>{{ $t('apps.scan_options.ai_desc') }}</small>
                     </span>
                     <i class="fas scan-option-icon" :class="getGameLibrarySkillIcon(skill.skillId)"></i>
                   </label>
@@ -439,11 +441,11 @@
 
             <div class="scan-options-footer">
               <button class="btn btn-secondary" type="button" :disabled="isScanning" @click="closeScanOptions">
-                取消
+                {{ $t('_common.cancel') }}
               </button>
               <button class="btn btn-primary" type="button" :disabled="isScanning" @click="runConfiguredScan">
                 <i class="fas me-1" :class="isScanning ? 'fa-spinner fa-spin' : 'fa-search'"></i>
-                开始扫描
+                {{ $t('apps.scan_options.start') }}
               </button>
             </div>
           </div>
