@@ -47,10 +47,10 @@ int main() { return 0; }" SUNSHINE_GOOGCC_VALIDATED_UCRT_X64)
         # The adapter exposes only a PImpl header; static PRIVATE dependencies
         # remain link dependencies without becoming host compile requirements.
         add_library(sunshine_googcc_build_interface STATIC
-                "${googcc_source_root}/src/googcc_runtime.cpp"
-                "${googcc_source_root}/src/googcc_runtime.h"
-                "${googcc_source_root}/src/googcc_adapter.cpp"
-                "${googcc_source_root}/src/googcc_adapter.h")
+                "${googcc_source_root}/src/transport/googcc_runtime.cpp"
+                "${googcc_source_root}/src/transport/googcc_runtime.h"
+                "${googcc_source_root}/src/transport/googcc_adapter.cpp"
+                "${googcc_source_root}/src/transport/googcc_adapter.h")
         add_library(sunshine::googcc ALIAS sunshine_googcc_build_interface)
         target_include_directories(sunshine_googcc_build_interface PUBLIC "${googcc_source_root}")
         target_compile_features(sunshine_googcc_build_interface PUBLIC cxx_std_23)

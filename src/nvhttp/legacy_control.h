@@ -3,7 +3,7 @@
 #include "src/network.h"
 #include "src/nvhttp.h"
 #include "src/stream.h"
-#include "src/transport_policy_json.h"
+#include "src/transport/transport_policy_json.h"
 
 namespace nvhttp::legacy_control {
   struct error_t : std::runtime_error {

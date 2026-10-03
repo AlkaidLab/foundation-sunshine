@@ -1,5 +1,5 @@
 /**
- * @file src/transport_pacer.h
+ * @file src/transport/transport_pacer.h
  * @brief Owned, bounded deadline queues and successful-IP-byte pacing.
  */
 #pragma once

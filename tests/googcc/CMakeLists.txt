@@ -7,12 +7,12 @@ get_filename_component(SUNSHINE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 include("${SUNSHINE_ROOT}/cmake/dependencies/googcc.cmake")
 sunshine_add_pinned_googcc(TRUE)
 add_executable(googcc_input_tests
-    "${SUNSHINE_ROOT}/src/transport_feedback.cpp"
-    "${SUNSHINE_ROOT}/src/transport_feedback_wire.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_feedback.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_feedback_wire.cpp"
     "${SUNSHINE_ROOT}/third-party/moonlight-common-c/src/TransportFeedbackWire.c"
-    "${SUNSHINE_ROOT}/src/transport_fec_controller.cpp"
-    "${SUNSHINE_ROOT}/src/transport_policy.cpp"
-    "${SUNSHINE_ROOT}/src/transport_budget.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_fec_controller.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_policy.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_budget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/test_googcc_runtime.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/test_googcc_input.cpp")
 target_include_directories(googcc_input_tests PRIVATE "${SUNSHINE_ROOT}")
@@ -24,8 +24,8 @@ else()
 endif()
 add_test(NAME googcc_input_tests COMMAND googcc_input_tests --gtest_output=xml:googcc-input-results.xml)
 add_executable(googcc_wire_tests
-    "${SUNSHINE_ROOT}/src/transport_feedback.cpp"
-    "${SUNSHINE_ROOT}/src/transport_feedback_wire.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_feedback.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_feedback_wire.cpp"
     "${SUNSHINE_ROOT}/third-party/moonlight-common-c/src/TransportFeedbackWire.c"
     "${SUNSHINE_ROOT}/tests/unit/test_transport_feedback_wire.cpp")
 target_include_directories(googcc_wire_tests PRIVATE "${SUNSHINE_ROOT}")

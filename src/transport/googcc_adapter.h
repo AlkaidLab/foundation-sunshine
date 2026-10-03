@@ -1,5 +1,5 @@
 /**
- * @file src/googcc_adapter.h
+ * @file src/transport/googcc_adapter.h
  * @brief Isolated adapter to the pinned, unmodified WebRTC GoogCC algorithms.
  */
 #pragma once

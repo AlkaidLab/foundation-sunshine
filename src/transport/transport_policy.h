@@ -1,5 +1,5 @@
 /**
- * @file src/transport_policy.h
+ * @file src/transport/transport_policy.h
  * @brief Immutable per-frame policy and truthful, session-local apply receipts.
  */
 #pragma once

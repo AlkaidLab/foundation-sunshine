@@ -445,17 +445,17 @@ encoderTarget     ≈ (primaryVideoBudget - videoOverhead) / (1 + effectiveFecRa
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
-| `src/transport_budget.*` | 字节口径、开销换算、预算与分片可行性 | 编码器重配置或网络发送 |
-| `src/transport_policy.*`、`src/transport_policy_json.*` | 已接不可变策略、候选与幂等历史、配置和首发回执、严格手动 API 契约 | 拥塞估计与网络发送 |
-| `src/transport_feedback.*`、`src/transport_feedback_wire.*`、`src/transport_send.h` | 已接成功提交账本、批量后缀回退、串行协议入账和反馈输入限流；客户端实际报告已完成闭合前缀对账 | 直接修改码率 |
-| `src/transport_fec_controller.*` | 已接唯一账本的只读投影、实际整帧几何与帧型、候选重新分块、整帧风险回放、尽力保护与预算检查 | 另建权威包账本、将重叠样本当成独立置信证据、直接发包 |
-| `src/googcc_adapter.*` | 已实现固定上游估计器的隔离输入映射、时钟转换与探测请求输出 | 发送探测包或执行编码/FEC 策略 |
-| `src/googcc_runtime.*` | 已接真实 owner 的串行发送/反馈/时钟输入；组件实现明确协商、应用/首发与有效反馈门槛，以及不可自动重获的租约 | 自建第二份包账本、把 accepted 当作 SDK applied，或伪造探测发送 |
-| `src/transport_controller.*`（拟定，尚未创建） | 保护需求、唯一会话仲裁、模式切换与估计器接管；当前相关职责在 policy/runtime 中 | RTP 分包与阻塞发送 |
-| `src/transport_pacer.*` | 有界发送队列、债务、期限与实际提交记录 | 将排队成功当作发送成功 |
-| `src/transport_send_budget.*` | 已实现共享 IP 字节额度、同 epoch 许可、策略版本防回退、停止与结算；视频、音频、ENet 共用一个实例 | 把许可、排队或 ENet 入队计为 OS 成功，或在提交已开始后退款 |
-| `src/transport_owner_inbox.*` | 已接有界帧、反馈与预算命令入口，停止 gate、排空确认及异常清理 | 授予控制权或把未提交身份计为网络丢包 |
-| `src/transport_trace.*`（拟定，尚未创建） | 有界实验轨迹与离线输入输出；当前轨迹在已有 owner/出口中记录 | 常态记录明文视频或无限逐包日志 |
+| `src/transport/transport_budget.*` | 字节口径、开销换算、预算与分片可行性 | 编码器重配置或网络发送 |
+| `src/transport/transport_policy.*`、`src/transport/transport_policy_json.*` | 已接不可变策略、候选与幂等历史、配置和首发回执、严格手动 API 契约 | 拥塞估计与网络发送 |
+| `src/transport/transport_feedback.*`、`src/transport/transport_feedback_wire.*`、`src/transport/transport_send.h` | 已接成功提交账本、批量后缀回退、串行协议入账和反馈输入限流；客户端实际报告已完成闭合前缀对账 | 直接修改码率 |
+| `src/transport/transport_fec_controller.*` | 已接唯一账本的只读投影、实际整帧几何与帧型、候选重新分块、整帧风险回放、尽力保护与预算检查 | 另建权威包账本、将重叠样本当成独立置信证据、直接发包 |
+| `src/transport/googcc_adapter.*` | 已实现固定上游估计器的隔离输入映射、时钟转换与探测请求输出 | 发送探测包或执行编码/FEC 策略 |
+| `src/transport/googcc_runtime.*` | 已接真实 owner 的串行发送/反馈/时钟输入；组件实现明确协商、应用/首发与有效反馈门槛，以及不可自动重获的租约 | 自建第二份包账本、把 accepted 当作 SDK applied，或伪造探测发送 |
+| `src/transport/transport_controller.*`（拟定，尚未创建） | 保护需求、唯一会话仲裁、模式切换与估计器接管；当前相关职责在 policy/runtime 中 | RTP 分包与阻塞发送 |
+| `src/transport/transport_pacer.*` | 有界发送队列、债务、期限与实际提交记录 | 将排队成功当作发送成功 |
+| `src/transport/transport_send_budget.*` | 已实现共享 IP 字节额度、同 epoch 许可、策略版本防回退、停止与结算；视频、音频、ENet 共用一个实例 | 把许可、排队或 ENet 入队计为 OS 成功，或在提交已开始后退款 |
+| `src/transport/transport_owner_inbox.*` | 已接有界帧、反馈与预算命令入口，停止 gate、排空确认及异常清理 | 授予控制权或把未提交身份计为网络丢包 |
+| `src/transport/transport_trace.*`（拟定，尚未创建） | 有界实验轨迹与离线输入输出；当前轨迹在已有 owner/出口中记录 | 常态记录明文视频或无限逐包日志 |
 
 接收线程拥有原始观测器状态；控制器由一个会话执行上下文串行更新。编码线程取得不可变策略并回报应用结果，发送线程拥有队列与发送账本。跨线程以有界队列或一致快照传递数据；停止与回执不能持有全局锁等待编码或网络操作。
 

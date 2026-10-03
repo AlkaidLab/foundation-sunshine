@@ -82,4 +82,4 @@ controlSource、failure 分别描述 accepted 策略的来源与回执；首发�
 
 分别验证严格线格式、畸形与未知版本、完整 uint64、重复/倒序、身份隔离、回执历史淘汰、SDK 重建、在途查询竞争、通知限频、可靠队列拒绝、停止与重连。再验证真实加密 ENet 与配对查询一致、两端实际应用消费、新旧能力组合和真实控制开销。
 
-源码入口为 Sunshine `src/transport_policy_notice.*` 和 `src/stream.cpp`、公共库 `src/TransportPolicyStatus.*`/`VideoStream.c`/`ControlStream.c`/RTSP 协商，以及两端 TransportPolicy 查询服务。三份公共库必须分别同步、构建和保存产物，不能将某一份检出通过视为三端通过。
+源码入口为 Sunshine `src/transport/transport_policy_notice.*` 和 `src/stream.cpp`、公共库 `src/TransportPolicyStatus.*`/`VideoStream.c`/`ControlStream.c`/RTSP 协商，以及两端 TransportPolicy 查询服务。三份公共库必须分别同步、构建和保存产物，不能将某一份检出通过视为三端通过。
