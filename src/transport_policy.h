@@ -143,6 +143,8 @@ namespace transport {
     acknowledge_first_sent(const frame_policy_ref_t &policy, std::uint64_t frame);
     policy_snapshot_t
     snapshot() const;
+    bool
+    stopped() const;
     void
     stop();
 
