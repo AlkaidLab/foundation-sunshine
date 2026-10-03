@@ -3628,6 +3628,7 @@ namespace confighttp {
     if (state.pending) {
       body["userCode"] = state.user_code;
       body["verificationUri"] = state.verification_uri;
+      body["flowId"] = state.flow_id;
       body["interval"] = state.interval_seconds;
     }
     if (!state.error.empty()) body["error"] = state.error;
@@ -3649,6 +3650,7 @@ namespace confighttp {
       {"pending", true},
       {"userCode", result.user_code},
       {"verificationUri", result.verification_uri},
+      {"flowId", result.flow_id},
       {"interval", result.interval_seconds},
       {"expiresIn", result.expires_in_seconds}
     });
@@ -3659,15 +3661,36 @@ namespace confighttp {
     if (!check_content_type(response, request, "application/json")) return;
     if (!authenticate(response, request)) return;
     print_req(request);
-    const auto result = codex_auth::poll(getCodexCredentialPath());
+    std::stringstream bodyStream;
+    bodyStream << request->content.rdbuf();
+    const auto input = json::parse(bodyStream.str(), nullptr, false);
+    if (!input.is_object() || !input.contains("flowId") || !input["flowId"].is_string()) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request,
+                       "A device sign-in flow ID is required");
+      return;
+    }
+    const auto result = codex_auth::poll(getCodexCredentialPath(), input["flowId"].get<std::string>());
     if (result.state == codex_auth::poll_state_e::error || result.state == codex_auth::poll_state_e::expired) {
       write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request,
                        result.error.empty() ? "ChatGPT account sign-in expired" : result.error);
       return;
     }
+    if (result.state == codex_auth::poll_state_e::retryable_error) {
+      const auto state = codex_auth::status(getCodexCredentialPath());
+      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, json {
+        {"connected", state.connected},
+        {"pending", true},
+        {"retryable", true},
+        {"flowId", state.flow_id},
+        {"interval", result.retry_after_seconds}
+      });
+      return;
+    }
+    const auto state = codex_auth::status(getCodexCredentialPath());
     write_json(std::move(response), SimpleWeb::StatusCode::success_ok, json {
-      {"connected", codex_auth::status(getCodexCredentialPath()).connected},
+      {"connected", state.connected},
       {"pending", result.state == codex_auth::poll_state_e::pending},
+      {"flowId", state.flow_id},
       {"interval", result.retry_after_seconds}
     });
   }
@@ -3706,8 +3729,9 @@ namespace confighttp {
                         json_headers());
         return;
       }
-      response->write(SimpleWeb::StatusCode::success_ok,
-                      R"({"data":[{"id":"gpt-6-luna"},{"id":"gpt-6-sol"},{"id":"gpt-6-astra"}]})", json_headers());
+      json models = json::array();
+      for (const auto model : codex_responses::available_models) models.push_back({ {"id", std::string(model)} });
+      response->write(SimpleWeb::StatusCode::success_ok, json { {"data", std::move(models)} }.dump(), json_headers());
       return;
     }
     const std::string api_key = cfg.value("apiKey", "");
@@ -3876,7 +3900,7 @@ namespace confighttp {
     try {
       auto chat = json::parse(requestBody);
       if (!chat.contains("model") || !chat["model"].is_string() || chat["model"].get<std::string>().empty()) {
-        chat["model"] = cfg.value("model", "gpt-6-luna");
+        chat["model"] = codex_responses::configured_model_or_default(cfg.value("model", ""));
       }
       auto converted = codex_responses::make_request(chat.dump());
       if (!converted.success) {
@@ -4159,10 +4183,11 @@ namespace confighttp {
       return codexError(httpStatus == 401 || httpStatus == 403 ? 403 : 502,
                         codexUpstreamError(httpStatus, ctx.errorBody));
     }
-    ctx.decoder.finish();
-    std::string error;
-    if (curlResult != CURLE_OK) error = ctx.callbackError.empty() ? "ChatGPT Codex stream was interrupted" : ctx.callbackError;
-    if (error.empty()) error = ctx.decoder.error();
+    if (curlResult == CURLE_OK && ctx.callbackError.empty() && ctx.decoder.error().empty()) {
+      ctx.decoder.finish();
+    }
+    const auto error = codex_responses::stream_error(
+      ctx.callbackError, ctx.decoder.error(), curlResult == CURLE_OK);
     if (!error.empty()) {
       if (!ctx.emitted) return codexError(502, error);
       const std::string event = "data: " + json { {"error", { {"message", error} }} }.dump() + "\n\n";

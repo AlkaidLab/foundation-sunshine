@@ -40,9 +40,11 @@ namespace codex_auth {
     struct pending_t {
       std::string device_auth_id;
       std::string user_code;
+      std::uint64_t generation = 0;
       int interval_seconds = 1;
       steady_clock::time_point next_poll;
       steady_clock::time_point expires;
+      bool poll_in_flight = false;
     };
 
     struct credential_t {
@@ -61,6 +63,16 @@ namespace codex_auth {
 
     std::mutex state_mutex;
     std::optional<pending_t> pending;
+    std::uint64_t flow_generation = 0;
+    std::mutex credential_mutex;
+    std::mutex refresh_mutex;
+    std::uint64_t credential_generation = 0;
+
+    bool
+    is_current_flow(std::uint64_t generation) {
+      std::lock_guard lock(state_mutex);
+      return pending && pending->generation == generation && flow_generation == generation;
+    }
 
     size_t
     append_response(char *data, size_t size, size_t count, void *context) {
@@ -322,7 +334,13 @@ namespace codex_auth {
 #if !defined(_WIN32)
     return { false, {}, {}, 0, 0, "Secure OpenAI account persistence is only supported on Windows" };
 #else
-    std::lock_guard lock(state_mutex);
+    std::uint64_t generation;
+    {
+      std::lock_guard lock(state_mutex);
+      generation = ++flow_generation;
+      pending.reset();
+    }
+
     const auto response = post(user_code_url, json { { "client_id", client_id } }.dump(),
                                "Content-Type: application/json");
     if (!response.error.empty()) return { false, {}, {}, 0, 0, response.error };
@@ -364,62 +382,120 @@ namespace codex_auth {
     }
     interval = std::max(1, interval);
     const auto now = steady_clock::now();
-    pending = pending_t { std::move(device_auth_id), user_code, interval,
-                          now + std::chrono::seconds(interval),
-                          now + std::chrono::seconds(device_lifetime_seconds) };
-    return { true, std::move(user_code), verification_uri, interval, device_lifetime_seconds, {} };
+    {
+      std::lock_guard lock(state_mutex);
+      if (generation != flow_generation) {
+        return { false, {}, {}, 0, 0, "OpenAI device sign-in was superseded" };
+      }
+      pending = pending_t { std::move(device_auth_id), user_code, generation, interval,
+                            now + std::chrono::seconds(interval),
+                            now + std::chrono::seconds(device_lifetime_seconds), false };
+    }
+    return { true, std::move(user_code), verification_uri, interval, device_lifetime_seconds, {},
+             std::to_string(generation) };
 #endif
   }
 
   poll_result_t
-  poll(const std::filesystem::path &credential_path) {
-    std::lock_guard lock(state_mutex);
-    if (!pending) return { poll_state_e::error, 0, "No OpenAI device sign-in is pending" };
-    const auto now = steady_clock::now();
-    if (now >= pending->expires) {
-      pending.reset();
-      return { poll_state_e::expired, 0, "OpenAI device sign-in expired" };
+  poll(const std::filesystem::path &credential_path, std::string_view flow_id) {
+    pending_t flow;
+    {
+      std::lock_guard lock(state_mutex);
+      if (!pending) return { poll_state_e::error, 0, "No OpenAI device sign-in is pending" };
+      if (flow_id.empty() || flow_id != std::to_string(pending->generation)) {
+        return { poll_state_e::error, 0, "OpenAI device sign-in was superseded" };
+      }
+      const auto now = steady_clock::now();
+      if (now >= pending->expires) {
+        pending.reset();
+        ++flow_generation;
+        return { poll_state_e::expired, 0, "OpenAI device sign-in expired" };
+      }
+      if (pending->poll_in_flight || now < pending->next_poll) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(pending->next_poll - now).count();
+        return { poll_state_e::pending, std::max(1, static_cast<int>(remaining + 1)), {} };
+      }
+      pending->poll_in_flight = true;
+      pending->next_poll = now + std::chrono::seconds(pending->interval_seconds);
+      flow = *pending;
     }
-    if (now < pending->next_poll) {
-      const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(pending->next_poll - now).count();
-      return { poll_state_e::pending, static_cast<int>(remaining + 1), {} };
-    }
-    pending->next_poll = now + std::chrono::seconds(pending->interval_seconds);
+
     const auto response = post(device_token_url,
-                               json { { "device_auth_id", pending->device_auth_id },
-                                      { "user_code", pending->user_code } }.dump(),
+                               json { { "device_auth_id", flow.device_auth_id },
+                                      { "user_code", flow.user_code } }.dump(),
                                "Content-Type: application/json");
-    if (!response.error.empty()) return { poll_state_e::error, pending->interval_seconds, response.error };
+    if (!response.error.empty()) {
+      std::lock_guard lock(state_mutex);
+      if (!pending || pending->generation != flow.generation) {
+        return { poll_state_e::error, 0, "OpenAI device sign-in was superseded" };
+      }
+      pending->poll_in_flight = false;
+      return { poll_state_e::retryable_error, flow.interval_seconds, response.error };
+    }
+    if (!is_current_flow(flow.generation)) {
+      return { poll_state_e::error, 0, "OpenAI device sign-in was superseded" };
+    }
+
     const auto outcome = detail::classify_device_poll_response(response.status, response.body);
     if (outcome == detail::poll_response_e::pending) {
+      std::lock_guard lock(state_mutex);
+      if (!pending || pending->generation != flow.generation) {
+        return { poll_state_e::error, 0, "OpenAI device sign-in was superseded" };
+      }
+      pending->poll_in_flight = false;
       return { poll_state_e::pending, pending->interval_seconds, {} };
     }
     if (outcome == detail::poll_response_e::slow_down) {
+      std::lock_guard lock(state_mutex);
+      if (!pending || pending->generation != flow.generation) {
+        return { poll_state_e::error, 0, "OpenAI device sign-in was superseded" };
+      }
+      pending->poll_in_flight = false;
       pending->interval_seconds = std::min(60, pending->interval_seconds + 5);
       pending->next_poll = steady_clock::now() + std::chrono::seconds(pending->interval_seconds);
       return { poll_state_e::pending, pending->interval_seconds, {} };
     }
     if (outcome == detail::poll_response_e::error) {
+      std::lock_guard lock(state_mutex);
+      if (pending && pending->generation == flow.generation) {
+        pending.reset();
+        ++flow_generation;
+      }
       return { poll_state_e::error, 0,
                "OpenAI device sign-in failed (HTTP " + std::to_string(response.status) + ")" };
     }
     const auto body = parse_json(response.body);
     if (!body.is_object() || !body.value("authorization_code", json {}).is_string() ||
         !body.value("code_verifier", json {}).is_string()) {
-      pending.reset();
+      std::lock_guard lock(state_mutex);
+      if (pending && pending->generation == flow.generation) {
+        pending.reset();
+        ++flow_generation;
+      }
       return { poll_state_e::error, 0, "Invalid OpenAI device authorization response" };
     }
     const auto authorization_code = body["authorization_code"].get<std::string>();
     const auto code_verifier = body["code_verifier"].get<std::string>();
     if (authorization_code.empty() || code_verifier.empty() ||
         authorization_code.size() > 2048 || code_verifier.size() > 2048) {
-      pending.reset();
+      std::lock_guard lock(state_mutex);
+      if (pending && pending->generation == flow.generation) {
+        pending.reset();
+        ++flow_generation;
+      }
       return { poll_state_e::error, 0, "Invalid OpenAI device authorization response" };
     }
     std::string error;
     const auto credential = exchange_code(authorization_code, code_verifier, error);
+    std::lock_guard state_lock(state_mutex);
+    if (!pending || pending->generation != flow.generation || flow_generation != flow.generation) {
+      return { poll_state_e::error, 0, "OpenAI device sign-in was superseded" };
+    }
     pending.reset();
+    ++flow_generation;
     if (!credential) return { poll_state_e::error, 0, error };
+    std::lock_guard credential_lock(credential_mutex);
+    ++credential_generation;
     const auto saved = credential_store::write_codex_credential(credential_path, encode_credential(*credential));
     if (!saved.success) return { poll_state_e::error, 0, saved.error };
     return { poll_state_e::complete, 0, {} };
@@ -427,18 +503,28 @@ namespace codex_auth {
 
   status_result_t
   status(const std::filesystem::path &credential_path) {
-    std::lock_guard lock(state_mutex);
     status_result_t result;
-    const auto now = steady_clock::now();
-    if (pending && now >= pending->expires) pending.reset();
-    if (pending) {
-      result.pending = true;
-      result.user_code = pending->user_code;
-      result.verification_uri = verification_uri;
-      result.interval_seconds = pending->interval_seconds;
+    {
+      std::lock_guard lock(state_mutex);
+      const auto now = steady_clock::now();
+      if (pending && now >= pending->expires) {
+        pending.reset();
+        ++flow_generation;
+      }
+      if (pending) {
+        result.pending = true;
+        result.user_code = pending->user_code;
+        result.verification_uri = verification_uri;
+        result.flow_id = std::to_string(pending->generation);
+        result.interval_seconds = pending->interval_seconds;
+      }
     }
     std::string error;
-    const auto credential = read_credential(credential_path, error);
+    std::optional<credential_t> credential;
+    {
+      std::lock_guard lock(credential_mutex);
+      credential = read_credential(credential_path, error);
+    }
     if (!credential) {
       result.error = std::move(error);
       return result;
@@ -450,39 +536,76 @@ namespace codex_auth {
 
   credential_store::mutation_result_t
   logout(const std::filesystem::path &credential_path) {
-    std::lock_guard lock(state_mutex);
-    pending.reset();
+    {
+      std::lock_guard lock(state_mutex);
+      pending.reset();
+      ++flow_generation;
+    }
+    std::lock_guard lock(credential_mutex);
+    ++credential_generation;
     return credential_store::erase_codex_credential(credential_path);
   }
 
   token_result_t
   access_token(const std::filesystem::path &credential_path) {
-    std::lock_guard lock(state_mutex);
     std::string error;
-    auto credential = read_credential(credential_path, error);
+    std::optional<credential_t> credential;
+    std::uint64_t generation = 0;
+    {
+      std::lock_guard lock(credential_mutex);
+      credential = read_credential(credential_path, error);
+      generation = credential_generation;
+    }
     if (!credential) {
       return { false, {}, {}, error.empty() ? "OpenAI account is not connected" : error };
     }
-    if (credential->expires_at <= unix_seconds() + 60) {
-      const std::string body = "grant_type=refresh_token&refresh_token=" + form_escape(credential->refresh) +
-                               "&client_id=" + std::string(client_id);
-      const auto response = post(oauth_token_url, body, "Content-Type: application/x-www-form-urlencoded");
-      if (!response.error.empty()) return { false, {}, {}, response.error };
-      credential_t refreshed;
-      if (!parse_token_response(response, refreshed)) {
-        if (response.status == 400 || response.status == 401 || response.status == 403) {
+    if (credential->expires_at > unix_seconds() + 60) {
+      return { true, std::move(credential->access), std::move(credential->account_id), {} };
+    }
+
+    std::lock_guard refresh_lock(refresh_mutex);
+    {
+      std::lock_guard credential_lock(credential_mutex);
+      credential = read_credential(credential_path, error);
+      generation = credential_generation;
+    }
+    if (!credential) {
+      return { false, {}, {}, error.empty() ? "OpenAI account is not connected" : error };
+    }
+    if (credential->expires_at > unix_seconds() + 60) {
+      return { true, std::move(credential->access), std::move(credential->account_id), {} };
+    }
+
+    const std::string body = "grant_type=refresh_token&refresh_token=" + form_escape(credential->refresh) +
+                             "&client_id=" + std::string(client_id);
+    const auto response = post(oauth_token_url, body, "Content-Type: application/x-www-form-urlencoded");
+    if (!response.error.empty()) return { false, {}, {}, response.error };
+    credential_t refreshed;
+    if (!parse_token_response(response, refreshed)) {
+      if (response.status == 400 || response.status == 401 || response.status == 403) {
+        std::lock_guard credential_lock(credential_mutex);
+        if (generation == credential_generation) {
           const auto erased = credential_store::erase_codex_credential(credential_path);
           if (!erased.success) {
             return { false, {}, {}, "OpenAI account token refresh was rejected, but stored credential could not be cleared: " + erased.error };
           }
+          ++credential_generation;
         }
-        return { false, {}, {}, "OpenAI account token refresh failed (HTTP " +
-                                std::to_string(response.status) + ")" };
+      }
+      return { false, {}, {}, "OpenAI account token refresh failed (HTTP " +
+                              std::to_string(response.status) + ")" };
+    }
+
+    {
+      std::lock_guard credential_lock(credential_mutex);
+      if (generation != credential_generation) {
+        return { false, {}, {}, "OpenAI account credential changed during token refresh" };
       }
       const auto saved = credential_store::write_codex_credential(credential_path, encode_credential(refreshed));
       if (!saved.success) return { false, {}, {}, saved.error };
-      credential = std::move(refreshed);
+      ++credential_generation;
     }
+    credential = std::move(refreshed);
     return { true, std::move(credential->access), std::move(credential->account_id), {} };
   }
 

@@ -19,12 +19,14 @@ namespace codex_auth {
     int interval_seconds = 0;
     int expires_in_seconds = 0;
     std::string error;
+    std::string flow_id;
   };
 
   enum class poll_state_e {
     pending,
     complete,
     expired,
+    retryable_error,
     error
   };
 
@@ -41,6 +43,7 @@ namespace codex_auth {
     bool pending = false;
     std::string user_code;
     std::string verification_uri;
+    std::string flow_id;
     int interval_seconds = 0;
   };
 
@@ -54,7 +57,7 @@ namespace codex_auth {
   // These functions perform blocking network I/O. Call them off the UI thread.
   // Pass <config directory>/ai_codex_credential.bin to every path-taking call.
   start_result_t start();
-  poll_result_t poll(const std::filesystem::path &credential_path);
+  poll_result_t poll(const std::filesystem::path &credential_path, std::string_view flow_id);
   status_result_t status(const std::filesystem::path &credential_path);
   credential_store::mutation_result_t logout(const std::filesystem::path &credential_path);
   token_result_t access_token(const std::filesystem::path &credential_path);

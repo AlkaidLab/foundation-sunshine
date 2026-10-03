@@ -5,6 +5,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -14,6 +15,28 @@
 #include <nlohmann/json.hpp>
 
 namespace codex_responses {
+
+  inline constexpr std::string_view default_model = "gpt-6-luna";
+  inline constexpr std::array<std::string_view, 3> available_models {
+    "gpt-6-luna", "gpt-6-sol", "gpt-6-astra"
+  };
+
+  inline bool
+  is_available_model(std::string_view model) {
+    return std::find(available_models.begin(), available_models.end(), model) != available_models.end();
+  }
+
+  inline std::string
+  configured_model_or_default(std::string_view model) {
+    return is_available_model(model) ? std::string(model) : std::string(default_model);
+  }
+
+  inline std::string
+  stream_error(std::string_view callback_error, std::string_view decoder_error, bool transport_ok) {
+    if (!callback_error.empty()) return std::string(callback_error);
+    if (!decoder_error.empty()) return std::string(decoder_error);
+    return transport_ok ? std::string {} : std::string("ChatGPT Codex stream was interrupted");
+  }
 
   struct request_result_t {
     bool success = false;

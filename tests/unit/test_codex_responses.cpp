@@ -92,6 +92,19 @@ TEST(CodexResponsesTest, RejectsMalformedAndUnsupportedInput) {
   EXPECT_EQ(json::parse(no_system.body)["instructions"], "You are a helpful assistant.");
 }
 
+TEST(CodexResponsesTest, SelectsAccountModeFallbackModel) {
+  EXPECT_EQ(codex_responses::configured_model_or_default("gpt-6-sol"), "gpt-6-sol");
+  EXPECT_EQ(codex_responses::configured_model_or_default("gpt-4.1-mini"), "gpt-6-luna");
+  EXPECT_EQ(codex_responses::configured_model_or_default(""), "gpt-6-luna");
+}
+
+TEST(CodexResponsesTest, PrefersSpecificStreamErrorsOverCurlWriteFailure) {
+  EXPECT_EQ(codex_responses::stream_error("callback failed", "quota exceeded", false), "callback failed");
+  EXPECT_EQ(codex_responses::stream_error("", "quota exceeded", false), "quota exceeded");
+  EXPECT_EQ(codex_responses::stream_error("", "", false), "ChatGPT Codex stream was interrupted");
+  EXPECT_TRUE(codex_responses::stream_error("", "", true).empty());
+}
+
 TEST(CodexResponsesTest, DecodesSseAcrossArbitraryChunkBoundaries) {
   const std::string stream =
     ": keepalive\r\n\r\n"
