@@ -1,4 +1,5 @@
 #include "abr_api.h"
+#include "legacy_control.h"
 
 #include <algorithm>
 #include <sstream>
@@ -22,12 +23,6 @@ namespace nvhttp::abr_api {
 
   namespace {
 
-    struct resolved_client_t {
-      std::string name;
-      int bitrate = 0;
-      std::string app_name;
-    };
-
     void
     log_request(const req_https_t &request) {
       BOOST_LOG(debug) << "Request - Protocol: HTTPS"
@@ -42,21 +37,6 @@ namespace nvhttp::abr_api {
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       return headers;
-    }
-
-    resolved_client_t
-    resolve_client(req_https_t request) {
-      auto client_addr = net::addr_to_normalized_string(request->remote_endpoint().address());
-      try {
-        auto sessions_info = stream::session::get_all_sessions_info();
-        for (const auto &si : sessions_info) {
-          if (si.client_address == client_addr && si.state == "RUNNING") {
-            return { si.client_name, si.bitrate, si.app_name };
-          }
-        }
-      }
-      catch (...) {}
-      return {};
     }
 
     int
@@ -105,7 +85,7 @@ namespace nvhttp::abr_api {
     json resp_json;
     resp_json["supported"] = caps.supported;
     resp_json["version"] = caps.version;
-    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold", "bitrate_cap" });
+    resp_json["features"] = json::array({ "llm_ai", "game_aware", "fallback_threshold", "bitrate_cap", "connection_scope" });
     resp_json["llmEnabled"] = confighttp::isAiEnabled();
     resp_json["hostMaxBitrate"] = host_max_bitrate_kbps();
 
@@ -119,23 +99,13 @@ namespace nvhttp::abr_api {
     auto headers = json_headers();
 
     try {
-      auto client = resolve_client(request);
-      if (client.name.empty()) {
-        json err;
-        err["success"] = false;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
+      auto body = transport::parse_legacy_control_body(request->content.string());
+      auto client = legacy_control::resolve(request, transport::parse_legacy_scope(body));
 
       bool enabled = body.value("enabled", false);
 
       if (!enabled) {
-        abr::disable(client.name);
+        abr::disable(client.abr_key);
         json resp_json;
         resp_json["success"] = true;
         resp_json["enabled"] = false;
@@ -189,20 +159,26 @@ namespace nvhttp::abr_api {
       const auto capped_by_host = host_max_bitrate > 0 && requested_max_bitrate > 0 && cfg.max_bitrate_kbps < requested_max_bitrate;
       const auto inherited_host_cap = host_max_bitrate > 0 && requested_max_bitrate <= 0;
 
-      int initial_bitrate = client.bitrate > 0 ? client.bitrate
+      int initial_bitrate = client.session.bitrate > 0 ? client.session.bitrate
                             : cfg.max_bitrate_kbps > 0 ? cfg.max_bitrate_kbps
                             : 20000;
       initial_bitrate = clamp_bitrate_to_range(initial_bitrate, cfg);
 
-      abr::enable(client.name, cfg, initial_bitrate, client.app_name);
+      abr::enable(client.abr_key, cfg, initial_bitrate, client.session.app_name);
+      // Stop may have raced enable outside the registry lock. Clean only this
+      // connection's key, never a replacement session sharing its display name.
+      if (!legacy_control::still_legacy(client)) {
+        abr::cleanup(client.abr_key);
+        throw legacy_control::error_t(404, "session_stopped");
+      }
 
       bool bitrate_applied = true;
-      if (client.bitrate > 0 && cfg.max_bitrate_kbps > 0 && client.bitrate > cfg.max_bitrate_kbps) {
+      if (client.session.bitrate > 0 && cfg.max_bitrate_kbps > 0 && client.session.bitrate > cfg.max_bitrate_kbps) {
         video::dynamic_param_t param;
         param.type = video::dynamic_param_type_e::BITRATE;
         param.value.int_value = cfg.max_bitrate_kbps;
         param.valid = true;
-        bitrate_applied = stream::session::change_dynamic_param_for_client(client.name, param);
+        bitrate_applied = legacy_control::submit(client, param);
       }
 
       json resp_json;
@@ -221,6 +197,13 @@ namespace nvhttp::abr_api {
         resp_json["bitrateApplyError"] = "ABR configured, but failed to apply bitrate to the active session";
       }
       response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+    }
+    catch (const legacy_control::error_t &error) {
+      response->write(error.http_status(), json({ { "success", false }, { "error", error.what() } }).dump(), headers);
+    }
+    catch (const std::invalid_argument &error) {
+      response->write(SimpleWeb::StatusCode::client_error_bad_request,
+        json({ { "success", false }, { "error", error.what() } }).dump(), headers);
     }
     catch (const json::exception &e) {
       BOOST_LOG(warning) << "ABR configure: JSON parse error: " << e.what();
@@ -243,24 +226,14 @@ namespace nvhttp::abr_api {
     auto headers = json_headers();
 
     try {
-      auto client_name = resolve_client(request).name;
-      if (client_name.empty()) {
-        json err;
-        err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
-        return;
-      }
-
-      if (!abr::is_enabled(client_name)) {
+      auto body = transport::parse_legacy_control_body(request->content.string());
+      auto client = legacy_control::resolve(request, transport::parse_legacy_scope(body));
+      if (!abr::is_enabled(client.abr_key)) {
         json err;
         err["error"] = "ABR not enabled for this client";
         response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
         return;
       }
-
-      std::stringstream ss;
-      ss << request->content.rdbuf();
-      auto body = json::parse(ss.str());
 
       abr::network_feedback_t feedback;
       feedback.packet_loss = body.value("packetLoss", 0.0);
@@ -269,7 +242,7 @@ namespace nvhttp::abr_api {
       feedback.dropped_frames = body.value("droppedFrames", 0);
       feedback.current_bitrate_kbps = body.value("currentBitrate", 0);
 
-      auto action = abr::process_feedback(client_name, feedback);
+      auto action = abr::process_feedback(client.abr_key, feedback);
       bool bitrate_applied = true;
       if (action.new_bitrate_kbps > 0) {
         video::dynamic_param_t param;
@@ -277,7 +250,7 @@ namespace nvhttp::abr_api {
         param.value.int_value = action.new_bitrate_kbps;
         param.valid = true;
 
-        bitrate_applied = stream::session::change_dynamic_param_for_client(client_name, param);
+        bitrate_applied = legacy_control::submit(client, param);
       }
 
       json resp_json;
@@ -290,6 +263,12 @@ namespace nvhttp::abr_api {
       }
       resp_json["reason"] = action.reason;
       response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+    }
+    catch (const legacy_control::error_t &error) {
+      response->write(error.http_status(), json({ { "error", error.what() } }).dump(), headers);
+    }
+    catch (const std::invalid_argument &error) {
+      response->write(SimpleWeb::StatusCode::client_error_bad_request, json({ { "error", error.what() } }).dump(), headers);
     }
     catch (const json::exception &e) {
       json err;

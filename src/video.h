@@ -7,12 +7,15 @@
 #include "input.h"
 #include "platform/common.h"
 #include "thread_safe.h"
+#include "transport_policy.h"
 #include "video_colorspace.h"
+#include "video_deadline.h"
 
 #include <boost/smart_ptr/shared_ptr.hpp>
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -431,6 +434,10 @@ namespace video {
   };
 
   struct encode_session_t {
+    enum class bitrate_result_e { applied, rebuild, failed };
+    std::shared_ptr<transport::policy_state_t> transport_state;
+    transport::frame_policy_history_t frame_policies;
+    frame_deadline_history_t frame_deadlines;
     virtual ~encode_session_t() = default;
 
     virtual int
@@ -447,6 +454,9 @@ namespace video {
 
     virtual void
     set_bitrate(int bitrate_kbps) = 0;  // 新增：动态码率调整方法
+
+    // Receives a net encoder target, with no legacy/global FEC discount.
+    virtual bitrate_result_e apply_encoder_bitrate(int encoder_kbps) = 0;
 
     virtual void
     set_dynamic_param(const dynamic_param_t &param) = 0;  // 新增：通用动态参数调整方法
@@ -488,19 +498,21 @@ namespace video {
     data_size() = 0;
 
     struct replace_t {
-      std::string_view old;
-      std::string_view _new;
-
-      KITTY_DEFAULT_CONSTR_MOVE(replace_t)
-
-      replace_t(std::string_view old, std::string_view _new) noexcept:
-          old { std::move(old) }, _new { std::move(_new) } {}
+      std::string old;
+      std::string _new;
+      replace_t(std::string_view old, std::string_view replacement):
+          old { old }, _new { replacement } {}
     };
 
     std::vector<replace_t> *replacements = nullptr;
+    std::vector<replace_t> owned_replacements;
+    transport::frame_policy_ref_t transport_policy;
     void *channel_data = nullptr;
     bool after_ref_frame_invalidation = false;
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
+    // Matched to this output's submitted input, including repeated frames.
+    // Unknown/evicted input identity stays null; never substitute latest/now.
+    std::optional<std::chrono::steady_clock::time_point> deadline_origin;
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
   };
 
@@ -568,6 +580,14 @@ namespace video {
 
   using packet_t = std::unique_ptr<packet_raw_t>;
 
+  struct packet_sink_t {
+    virtual ~packet_sink_t() = default;
+    // False means this packet was explicitly discarded. It is not an encoder
+    // backend failure; the sink owns drop accounting and reference recovery.
+    virtual bool submit(packet_t packet) = 0;
+  };
+  using packet_sink_ref_t = std::shared_ptr<packet_sink_t>;
+
   struct hdr_info_raw_t {
     explicit hdr_info_raw_t(bool enabled):
         enabled { enabled }, metadata {} {};
@@ -628,7 +648,9 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt);
+    packet_sink_ref_t sink,
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt,
+    std::shared_ptr<transport::policy_state_t> transport_state = {});
 
   bool
   validate_encoder(

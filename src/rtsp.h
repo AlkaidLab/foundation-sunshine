@@ -123,6 +123,11 @@ namespace rtsp_stream {
     // GameStream 的 RTSP 请求可能分别使用独立 TCP 连接，
     // 但一个启动票据最多只能创建一个串流会话。
     bool stream_session_started { false };
+    uint64_t packet_feedback_epoch { 0 };
+    bool policy_status_negotiated { false };
+    uint64_t transport_connection_epoch { 0 };
+    bool legacy_scope_required { false };
+    bool packet_control_negotiated { false };
     std::string stream_announce_payload;
     /// One-shot dynamic HDR negotiation result (hdr::to_wire value and
     /// fallback reason name, empty when none), echoed in the first ANNOUNCE

@@ -9,9 +9,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <future>
 #include <optional>
 #include <queue>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -57,6 +59,17 @@ extern "C" {
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
 #include "thread_safe.h"
+#include "transport_budget.h"
+#include "transport_feedback.h"
+#include "transport_feedback_wire.h"
+#include "transport_policy_json.h"
+#include "transport_policy_notice.h"
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+#include "googcc_runtime.h"
+#endif
+#include "transport_owner_inbox.h"
+#include "transport_send.h"
+#include "transport_send_budget.h"
 #include "utility.h"
 #include "webhook/webhook.h"
 
@@ -443,6 +456,11 @@ namespace stream {
     int
     bind(net::af_e address_family, std::uint16_t port) {
       _host = net::host_create(address_family, _addr, port);
+      if (_host) {
+        _host->sendAdmissionContext = this;
+        _host->sendAdmission = admit_send;
+        _host->sendCompletion = complete_send;
+      }
 
       return !(bool) _host;
     }
@@ -514,10 +532,25 @@ namespace stream {
 
     ENetAddress _addr;
     net::host_t _host;
+    struct budget_context_t {
+      std::shared_ptr<transport::session_send_budget_t> budget;
+      std::shared_ptr<transport::policy_state_t> policy;
+      std::uint64_t epoch;
+      std::uint64_t ip_header_bytes;
+    };
+    // Owned exclusively by the control thread; no raw session in callbacks.
+    std::unordered_map<net::peer_t, budget_context_t> peer_budgets;
+    std::optional<transport::session_send_budget_t::permit_t> send_permit;
+    std::uint64_t send_ip_header_bytes = 0;
+    static int ENET_CALLBACK
+    admit_send(void *context, ENetPeer *peer, size_t maximum_payload) noexcept;
+    static void ENET_CALLBACK
+    complete_send(void *context, ENetPeer *peer, size_t payload_bytes, int sent_length, int attempted) noexcept;
   };
 
   struct broadcast_ctx_t {
     message_queue_queue_t message_queue_queue;
+    std::shared_ptr<transport::owner_inbox_t> video_inbox;
 
     std::thread recv_thread;
     std::thread video_thread;
@@ -575,6 +608,11 @@ namespace stream {
     boost::atomic<bool> mic_playout_reset_pending { false };
   };
 
+  struct audio_send_context_t {
+    std::mutex mutex;
+    session_t *session = nullptr;
+  };
+
   struct session_t {
     config_t config;
 
@@ -595,6 +633,8 @@ namespace stream {
     std::string client_name;
     std::string client_gamepad;
     std::string client_cert_uuid;
+    bool legacy_scope_required { false };
+    std::string legacy_abr_key;
     bool use_vdd {false};
     int custom_screen_mode {-1};
     bool highly_suspected_unknown_client {false};
@@ -610,7 +650,9 @@ namespace stream {
     struct {
       std::string ping_payload;
 
-      int lowseq;
+      std::uint64_t lowseq;
+      std::unique_ptr<transport::wire_feedback_t> sent_packets;
+      std::atomic<transport::owner_flow_ref_t> send_flow;
       udp::endpoint peer;
 
       std::optional<crypto::cipher::gcm_t> cipher;
@@ -641,6 +683,7 @@ namespace stream {
 
       bool enable_mic;
       bool mic_registered { false };
+      std::shared_ptr<audio_send_context_t> send_context;
     } audio;
 
     struct {
@@ -654,6 +697,9 @@ namespace stream {
 
       net::peer_t peer;
       std::uint32_t seq;
+      std::chrono::steady_clock::time_point next_transport_ready {};
+      std::chrono::steady_clock::time_point next_policy_status {};
+      transport::policy_notice_sender_t policy_status;
 
       platf::feedback_queue_t feedback_queue;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
@@ -697,9 +743,186 @@ namespace stream {
     // Current total bitrate for this session (including FEC overhead) in Kbps
     // This is the user-configured bitrate, not the encoding bitrate
     std::atomic<int> current_total_bitrate { 0 };
+    std::shared_ptr<transport::policy_state_t> transport_state;
+    std::shared_ptr<transport::session_send_budget_t> send_budget;
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
+  };
+
+  struct video_send_context_t {
+    // The session is kept alive by its existing RTSP owner until producers have
+    // joined and this flow's drain barrier has completed. This context never
+    // owns a session or broadcast reference, avoiding a last-reference self join.
+    session_t *session;
+    udp::endpoint peer;
+    boost::asio::ip::address source_address;
+  };
+
+  std::int64_t
+  transport_now_us() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+  }
+
+  transport::pacing_limits_t
+  video_pacing_limits(const transport::frame_policy_ref_t &policy) {
+    // Preserve the previous 800 Mbps transport ceiling in the compatibility
+    // path. Experimental normalized pacing has an explicit per-video budget;
+    // audio/control are not falsely claimed to be enforced by this queue.
+    if (!config::stream.experimental_transport_pacer || !policy ||
+        policy->basis != transport::budget_basis_e::normalized) {
+      return { { 100000000, 65536, 0 }, { 100000000, 65536, 0 } };
+    }
+    const auto &budget = policy->budget;
+    const auto video_kbps = static_cast<std::int64_t>(budget.total_kbps) - budget.other_kbps -
+                            budget.repair_kbps - budget.probe_kbps;
+    const auto rate = static_cast<std::uint64_t>(std::max<std::int64_t>(0, video_kbps)) * 125;
+    const auto burst = static_cast<std::uint64_t>(config::stream.transport_pacer_burst_kb) * 1024;
+    const auto debt = static_cast<std::uint64_t>(config::stream.transport_pacer_debt_kb) * 1024;
+    return { { rate, burst, debt }, { rate, burst, debt } };
+  }
+
+  transport::send_budget_limits_t
+  session_send_limits(const transport::frame_policy_ref_t &policy) {
+    return { static_cast<std::uint64_t>(policy->budget.total_kbps) * 125,
+      static_cast<std::uint64_t>(config::stream.transport_pacer_burst_kb) * 1024,
+      static_cast<std::uint64_t>(config::stream.transport_pacer_debt_kb) * 1024 };
+  }
+
+  void
+  trace_send_budget(const transport::send_budget_event_t &event) {
+    if (!config::stream.experimental_transport_trace) return;
+    BOOST_LOG(debug) << "Shared IP limit: epoch=" << event.connection_epoch << " ordinal=" << event.ordinal
+                     << " now=" << event.at_us << " rate=" << event.limits.rate_bytes_per_second
+                     << " burst=" << event.limits.burst_bytes << " debt=" << event.limits.maximum_debt_bytes
+                     << " credit=" << event.credit_microbytes << " revision=" << event.policy_revision;
+  }
+
+  void
+  trace_send_budget(const transport::send_budget_receipt_t &receipt) {
+    if (!config::stream.experimental_transport_trace) return;
+    BOOST_LOG(debug) << "Shared IP send: epoch=" << receipt.connection_epoch << " ordinal=" << receipt.ordinal
+                     << " now=" << receipt.at_us << " reserved_at=" << receipt.reserved_at_us
+                     << " traffic=" << static_cast<unsigned>(receipt.traffic) << " permitted=" << receipt.permitted_ip_bytes
+                     << " success=" << receipt.successful_ip_bytes << " packets=" << receipt.successful_packets
+                     << " uncertain=" << receipt.uncertain_ip_bytes << " credit=" << receipt.credit_microbytes
+                     << " revision=" << receipt.policy_revision << " known=" << receipt.completion_known;
+  }
+
+  transport::session_send_budget_t::reservation_t
+  reserve_send_budget(const std::shared_ptr<transport::session_send_budget_t> &budget,
+    const std::shared_ptr<transport::policy_state_t> &policy, transport::send_traffic_e traffic,
+    std::uint64_t maximum_bytes, std::uint64_t minimum_bytes) {
+    const auto snapshot = policy->snapshot();
+    if (snapshot.stopped) return { transport::send_budget_result_e::stopped, {} };
+    const auto &accepted = snapshot.accepted;
+    const auto update = budget->try_update(accepted->connection_epoch, session_send_limits(accepted), transport_now_us(), accepted->revision);
+    if (update.result != transport::send_budget_result_e::accepted) return { update.result, {} };
+    if (update.event) trace_send_budget(*update.event);
+    return budget->try_reserve(accepted->connection_epoch, traffic, maximum_bytes, minimum_bytes, transport_now_us());
+  }
+
+  int ENET_CALLBACK
+  control_server_t::admit_send(void *context, ENetPeer *peer, size_t maximum_payload) noexcept {
+    auto &server = *static_cast<control_server_t *>(context);
+    try {
+      const auto entry = server.peer_budgets.find(peer);
+      if (entry == server.peer_budgets.end()) return 1;  // Unbound handshake/legacy traffic.
+      if (server.send_permit) return 0;
+      auto &bound = entry->second;
+      const auto bytes = maximum_payload + bound.ip_header_bytes;
+      auto reservation = reserve_send_budget(bound.budget, bound.policy, transport::send_traffic_e::control, bytes, bytes);
+      if (!reservation.permit) return 0;
+      if (!reservation.permit->begin_submission()) {
+        trace_send_budget(reservation.permit->cancel_before_send(transport_now_us()));
+        return 0;
+      }
+      server.send_ip_header_bytes = bound.ip_header_bytes;
+      server.send_permit.emplace(std::move(*reservation.permit));
+      return 1;
+    }
+    catch (...) {
+      const auto entry = server.peer_budgets.find(peer);
+      if (entry != server.peer_budgets.end()) entry->second.budget->stop(entry->second.epoch);
+      return 0;
+    }
+  }
+
+  void ENET_CALLBACK
+  control_server_t::complete_send(void *context, ENetPeer *peer, size_t payload_bytes, int sent_length, int attempted) noexcept {
+    auto &server = *static_cast<control_server_t *>(context);
+    if (!server.send_permit) {
+      try {
+        if (attempted && sent_length > 0 && config::stream.experimental_transport_trace) {
+          const auto address = boost::asio::ip::make_address(platf::from_sockaddr(reinterpret_cast<sockaddr *>(&peer->address.address)));
+          const auto ipv4 = address.is_v4() || (address.is_v6() && address.to_v6().is_v4_mapped());
+          BOOST_LOG(debug) << "Shared control unbound: now=" << transport_now_us() << " ip_bytes=" << sent_length + (ipv4 ? 28 : 48);
+        }
+      } catch (...) {}
+      return;
+    }
+    // Datagram APIs can report known zero/failure or one whole datagram. A
+    // positive partial result is uncertain, never guessed as a successful send.
+    const bool success = attempted && sent_length > 0 && static_cast<size_t>(sent_length) == payload_bytes;
+    const bool known = !attempted || sent_length <= 0 || success;
+    const auto receipt = server.send_permit->complete(success ? payload_bytes + server.send_ip_header_bytes : 0,
+      success ? 1 : 0, known, transport_now_us());
+    server.send_permit.reset();
+    try { trace_send_budget(receipt); } catch (...) {}
+  }
+
+  bool
+  experimental_packet_control_available() {
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+    return config::stream.experimental_transport_pacer && config::stream.experimental_packet_control;
+#else
+    return false;
+#endif
+  }
+
+  class video_packet_sink_t final: public video::packet_sink_t {
+  public:
+    video_packet_sink_t(std::shared_ptr<transport::owner_inbox_t> inbox, transport::owner_flow_ref_t flow,
+      safe::mail_raw_t::event_t<bool> idr_events):
+        inbox_ { std::move(inbox) }, flow_ { std::move(flow) }, idr_events_ { std::move(idr_events) } {}
+
+    bool
+    submit(video::packet_t packet) override {
+      if (!packet) return false;
+      const auto index = packet->frame_index();
+      // RFI receives its recovery FEC policy, but is not proof that a reference
+      // lost in this host queue has been repaired. Until that encoder/decoder
+      // contract is verified, only a complete IDR may clear the pacing barrier.
+      const auto recovery = packet->is_idr();
+      if (index < 0 || !packet->transport_policy ||
+          packet->transport_policy->connection_epoch != flow_->connection_epoch || !packet->deadline_origin) {
+        idr_events_->raise(true);
+        if (index >= 0) inbox_->mark_reference_break(flow_, static_cast<std::uint64_t>(index));
+        return false;
+      }
+      transport::owner_frame_t frame;
+      frame.flow = flow_;
+      frame.frame_id = static_cast<std::uint64_t>(index);
+      frame.policy = packet->transport_policy;
+      frame.owned_bytes = packet->data_size();
+      frame.deadline_origin_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        packet->deadline_origin->time_since_epoch())
+                                   .count();
+      // Ordinary frames may be references. Only a proven disposable frame may
+      // use non_reference; the current encoder contract supplies no such proof.
+      frame.dependency = recovery ? transport::frame_dependency_e::recovery : transport::frame_dependency_e::reference;
+      frame.payload = std::shared_ptr<video::packet_raw_t>(std::move(packet));
+      const auto result = inbox_->submit(std::move(frame));
+      if (result != transport::owner_submit_result_e::accepted) idr_events_->raise(true);
+      return result == transport::owner_submit_result_e::accepted;
+    }
+
+  private:
+    std::shared_ptr<transport::owner_inbox_t> inbox_;
+    transport::owner_flow_ref_t flow_;
+    safe::mail_raw_t::event_t<bool> idr_events_;
   };
 
   namespace session {
@@ -812,6 +1035,10 @@ namespace stream {
 
     if (session->config.controlProtocolType != 13) {
       return plaintext;
+    }
+    if (session->config.packet_feedback && session->control.seq == std::numeric_limits<uint32_t>::max()) {
+      session::stop(*session, session::stop_reason_e::protocol_error);
+      return {};
     }
 
     auto seq = session->control.seq++;
@@ -1032,6 +1259,28 @@ namespace stream {
     return bitrate_kbps;
   }
 
+  static bool
+  queue_transport_parameter(session_t &session, const video::dynamic_param_t &param) {
+    if (!param.valid || !session.transport_state) return false;
+    transport::policy_request_result_t result;
+    if (param.type == video::dynamic_param_type_e::BITRATE) {
+      if (param.value.int_value <= 0 || param.value.int_value > 800000) return false;
+      result = session.transport_state->request_legacy_change(
+        clamp_total_bitrate_to_host_cap(param.value.int_value, session.client_name), std::nullopt);
+    }
+    else if (param.type == video::dynamic_param_type_e::FEC_PERCENTAGE) {
+      if (param.value.int_value < 0 || param.value.int_value > 100) return false;
+      result = session.transport_state->request_legacy_change(std::nullopt, static_cast<unsigned>(param.value.int_value));
+    }
+    else return false;
+    if (result.result != transport::policy_request_result_e::accepted) return false;
+    session.current_total_bitrate = result.policy->budget.total_kbps;
+    perf::update_session_bitrate(session.launch_session_id, result.policy->budget.total_kbps);
+    BOOST_LOG(info) << "Transport policy accepted: session=" << session.launch_session_id
+                    << ", revision=" << result.policy->revision << ", FEC=" << result.policy->fec_base << "%";
+    return true;
+  }
+
   static auto broadcast_shared = safe::make_shared<broadcast_ctx_t>(start_broadcast, end_broadcast);
 
   session_t *
@@ -1092,6 +1341,14 @@ namespace stream {
       // Insert this into the map for O(1) lookups in the future
       auto ptslg = _peer_to_session.lock();
       _peer_to_session->emplace(peer, session_p);
+      if (session_p->send_budget) {
+        // Read the control thread's peer address, not video.peer which the
+        // concurrent ping producer may still be updating.
+        const auto address = boost::asio::ip::make_address(peer_addr);
+        const auto ipv4 = address.is_v4() || (address.is_v6() && address.to_v6().is_v4_mapped());
+        peer_budgets.emplace(peer, budget_context_t { session_p->send_budget, session_p->transport_state,
+          session_p->transport_state->active()->connection_epoch, ipv4 ? 28u : 48u });
+      }
       return session_p;
     }
 
@@ -1146,8 +1403,10 @@ namespace stream {
       switch (event.type) {
         case ENET_EVENT_TYPE_RECEIVE: {
           net::packet_t packet { event.packet };
-
-          auto type = *(std::uint16_t *) packet->data;
+          if (packet->dataLength < sizeof(std::uint16_t)) break;
+          std::uint16_t wire_type;
+          std::memcpy(&wire_type, packet->data, sizeof(wire_type));
+          const auto type = util::endian::little(wire_type);
           std::string_view payload { (char *) packet->data + sizeof(type), packet->dataLength - sizeof(type) };
 
           call(type, session, payload, false);
@@ -1206,15 +1465,12 @@ namespace stream {
 
       auto aligned_data_shards = payload_size / blocksize;
       auto data_shards = aligned_data_shards + (pad ? 1 : 0);
-      auto parity_shards = (data_shards * fecpercentage + 99) / 100;
-
-      // increase the FEC percentage for this frame if the parity shard minimum is not met
-      if (parity_shards < minparityshards && fecpercentage != 0) {
-        parity_shards = minparityshards;
-        fecpercentage = (100 * parity_shards) / data_shards;
-
-        BOOST_LOG(verbose) << "Increasing FEC percentage to "sv << fecpercentage << " to meet parity shard minimum"sv << std::endl;
+      const auto layout = transport::plan_fec_block(data_shards, fecpercentage, minparityshards);
+      if (!layout) {
+        throw std::invalid_argument("FEC block cannot be represented by the existing packet header");
       }
+      const auto parity_shards = layout->parity_shards;
+      fecpercentage = layout->encoded_percentage;
 
       auto nr_shards = data_shards + parity_shards;
 
@@ -1879,8 +2135,76 @@ namespace stream {
     return 0;
   }
 
+  int
+  send_transport_ready(session_t *session, std::int64_t sample) {
+    const auto ready = session->video.sent_packets->ready(sample);
+    if (!ready || !session->control.peer) return -1;
+    // READY is already bounded to one update per 250 ms. Record the actual
+    // successful-send/feedback ledger here rather than logging every packet.
+    const auto feedback = session->video.sent_packets->snapshot();
+    BOOST_LOG(debug) << "Packet feedback ledger: committed=" << feedback.ledger.committed_packets
+                     << " ip_bytes=" << feedback.ledger.committed_ip_bytes
+                     << " received=" << feedback.ledger.received_packets
+                     << " missing=" << feedback.ledger.missing_declarations
+                     << " late=" << feedback.ledger.late_corrections
+                     << " reports=" << feedback.accepted_reports
+                     << " rejected=" << feedback.rejected_reports
+                     << " limited=" << feedback.rate_limited_reports
+                     << " valid=" << feedback.ledger.counters_valid;
+    struct {
+      control_header_v2 header;
+      std::array<uint8_t, TF_READY_BYTES> body;
+    } plaintext {};
+    plaintext.header.type = util::endian::little<uint16_t>(TF_READY_PACKET_TYPE);
+    plaintext.header.payloadLength = util::endian::little<uint16_t>(TF_READY_BYTES);
+    if (!TfEncodeReady(&*ready, plaintext.body.data(), plaintext.body.size())) return -1;
+    std::array<uint8_t, sizeof(control_encrypted_t) + sizeof(plaintext) + crypto::cipher::tag_size> encrypted {};
+    const auto payload = encode_control(session, util::view(plaintext), encrypted);
+    return payload.empty() ? -1 : session->broadcast_ref->control_server.send(payload, session->control.peer);
+  }
+
+  int
+  send_transport_policy_status(session_t *session, std::int64_t sample) {
+    if (!session->transport_state || !session->control.peer) return -1;
+    const auto body = session->control.policy_status.prepare(session->transport_state->snapshot(),
+      session->launch_session_id, sample);
+    if (!body) return 0;
+    struct {
+      control_header_v2 header;
+      std::array<std::uint8_t, TPS_STATUS_BYTES> body;
+    } plaintext {};
+    plaintext.header.type = util::endian::little<std::uint16_t>(TPS_STATUS_PACKET_TYPE);
+    plaintext.header.payloadLength = util::endian::little<std::uint16_t>(TPS_STATUS_BYTES);
+    plaintext.body = *body;
+    std::array<std::uint8_t, sizeof(control_encrypted_t) + sizeof(plaintext) + crypto::cipher::tag_size> encrypted {};
+    const auto payload = encode_control(session, util::view(plaintext), encrypted);
+    // Reliable ENet queueing and its real retransmissions use the same control
+    // admission/actual IP accounting as all other control traffic.
+    if (payload.empty() || session->broadcast_ref->control_server.send(payload, session->control.peer)) return -1;
+    session->control.policy_status.queued(*body, sample);
+    TPS_STATUS_NOTICE notice {};
+    TpsDecodeStatus(body->data(), body->size(), &notice);
+    BOOST_LOG(debug) << "Policy status notice queued: epoch=" << notice.connectionEpoch
+                     << " sequence=" << notice.noticeSequence << " accepted=" << notice.acceptedRevision
+                     << " applied=" << notice.encoderAppliedRevision << " sent=" << notice.firstSentRevision;
+    return 0;
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
+    server->map(TF_REPORT_PACKET_TYPE, [](session_t *session, const std::string_view &payload) {
+      if (!session->config.packet_feedback || session->config.controlProtocolType != 13 ||
+          !(session->config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) || !session->video.sent_packets ||
+          session->lifecycle.state() != session::state_e::RUNNING) return;
+      const auto flow = session->video.send_flow.load(std::memory_order_acquire);
+      if (!flow || flow->is_closed() || payload.empty() || payload.size() > transport::max_owner_feedback_bytes) return;
+      const auto *first = reinterpret_cast<const std::uint8_t *>(payload.data());
+      // Authentication has already completed in call(). The sender owns both
+      // ledger commits and feedback application; the ENet thread only queues a
+      // bounded copy and never races a receipt that is awaiting commit.
+      session->broadcast_ref->video_inbox->submit_feedback(flow,
+        std::vector<std::uint8_t>(first, first + payload.size()), transport_now_us());
+    });
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_PERIODIC_PING]"sv;
     });
@@ -2144,6 +2468,9 @@ namespace stream {
           } else {
             param.value.int_value = value;
           }
+          if (param.type == video::dynamic_param_type_e::BITRATE || param.type == video::dynamic_param_type_e::FEC_PERCENTAGE) {
+            return queue_transport_parameter(*session, param);
+          }
           session->video.dynamic_param_change_events->raise(param);
           BOOST_LOG(info) << "Dynamic " << name << " change: " << value << unit;
           return true;
@@ -2284,13 +2611,14 @@ namespace stream {
 
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_ENCRYPTED]"sv;
+      if (payload.size() < sizeof(control_encrypted_t) - 2) return;
 
       auto header = (control_encrypted_p) (payload.data() - 2);
 
       auto length = util::endian::little(header->length);
       auto seq = util::endian::little(header->seq);
 
-      if (length < (16 + 4 + 4)) {
+      if (length < (16 + 4 + 4) || payload.size() != static_cast<size_t>(length) + 2) {
         BOOST_LOG(warning) << "Control: Runt packet"sv;
         return;
       }
@@ -2331,7 +2659,15 @@ namespace stream {
         return;
       }
 
-      auto type = *(std::uint16_t *) plaintext.data();
+      if (plaintext.size() < 4) return;
+      std::uint16_t wire_type;
+      std::memcpy(&wire_type, plaintext.data(), sizeof(wire_type));
+      const auto type = util::endian::little(wire_type);
+      if (type == TF_REPORT_PACKET_TYPE) {
+        std::uint16_t wire_length;
+        std::memcpy(&wire_length, plaintext.data() + 2, sizeof(wire_length));
+        if (util::endian::little(wire_length) != plaintext.size() - 4) return;
+      }
       std::string_view next_payload { (char *) plaintext.data() + 4, plaintext.size() - 4 };
 
       if (type == packetTypes[IDX_ENCRYPTED]) {
@@ -2394,6 +2730,7 @@ namespace stream {
               }
 
               enet_peer_disconnect_now(session->control.peer, 0);
+              server->peer_budgets.erase(session->control.peer);
             }
 
             session->controlEnd.raise(true);
@@ -2407,6 +2744,17 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            if (session->config.policy_status && now >= session->control.next_policy_status) {
+              send_transport_policy_status(session,
+                std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
+              session->control.next_policy_status = now + 250ms;
+            }
+            if (session->config.packet_feedback && session->video.sent_packets &&
+                now >= session->control.next_transport_ready) {
+              const auto sample = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+              send_transport_ready(session, sample);
+              session->control.next_transport_ready = now + 250ms;
+            }
             // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
               input::has_ds5_audio_haptics(session->input);
@@ -3362,41 +3710,189 @@ namespace stream {
   }
 
   void
-  videoBroadcastThread(udp::socket &sock) {
+  videoBroadcastThread(broadcast_ctx_t &broadcast) try {
+    auto &sock = broadcast.video_sock;
+    auto inbox = broadcast.video_inbox;
     auto shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
-    auto packets = mail::man->queue<video::packet_t>(mail::video_packets);
-    auto video_epoch = std::chrono::steady_clock::now();
-
-    // Video traffic is sent on this thread
+    const auto video_epoch = std::chrono::steady_clock::now();
     platf::adjust_thread_priority(platf::thread_priority_e::high);
-
     logging::min_max_avg_periodic_logger<double> frame_processing_latency_logger(debug, "Frame processing latency", "ms");
-
-    logging::time_delta_periodic_logger frame_send_batch_latency_logger(debug, "Network: each send_batch() latency");
     logging::time_delta_periodic_logger frame_fec_latency_logger(debug, "Network: each FEC block latency");
-    logging::time_delta_periodic_logger frame_network_latency_logger(debug, "Network: frame's overall network latency");
-
+    transport::deadline_pacer_t pacer;
+    // Compatibility ceiling is shared, so multiple flows cannot each turn the
+    // old 800 Mbps ceiling into an independent unbounded host allowance.
+    pacer.set_host_limits(transport::pacing_limits_t { { 100000000, 65536, 0 }, { 100000000, 65536, 0 } }, transport_now_us());
+    struct active_flow_t {
+      transport::owner_flow_ref_t flow;
+      std::shared_ptr<video_send_context_t> context;
+      std::uint64_t pacer_handle;
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      std::unique_ptr<transport::googcc_runtime_t> controller;
+      std::int64_t next_controller_log_us = 0;
+      bool controller_failed = false;
+      transport::frame_policy_ref_t last_controller_limits;
+      std::deque<transport::googcc_probe_t> pending_probes;
+      std::int32_t last_probe_cluster = -1;
+      transport::paced_probe_result_e last_probe_result = transport::paced_probe_result_e::none;
+      std::uint64_t probe_clock_resets = 0;
+      bool probing_enabled = false;
+      transport::googcc_runtime_config_t controller_config;
+      std::uint64_t controller_activation_epoch = 0;
+#endif
+    };
+    std::unordered_map<std::uint64_t, active_flow_t> flows;
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+    std::unique_ptr<platf::high_precision_timer> probe_timer;
+    const auto trace_controller = [&](const active_flow_t &active, std::int64_t now, bool final) {
+      if (!config::stream.experimental_transport_trace || !active.controller) return;
+      const auto status = active.controller->snapshot();
+      BOOST_LOG(debug) << "GoogCC observer: epoch=" << active.flow->connection_epoch << " now=" << now
+                       << " target_kbps=" << status.estimate.target_kbps << " sends=" << status.estimate.accepted_sends
+                       << " requested_padding_kbps=" << status.estimate.requested_padding_kbps << " padding_at=" << status.estimate.padding_updated_at_us
+                       << " loss_recovery_without_padding=" << static_cast<int>(status.estimate.loss_recovery_without_padding)
+                       << " native_loss_ppm=" << status.estimate.network_loss_ppm << " native_rtt_us=" << status.estimate.network_rtt_us
+                       << " covered_feedback_at=" << status.estimate.last_covered_feedback_us << " covered_send_at=" << status.estimate.last_covered_send_us
+                       << " native_probe_successes=" << status.estimate.native_probe_successes << " native_probe_failures=" << status.estimate.native_probe_failures
+                       << " native_probe_cluster=" << status.estimate.last_native_probe_cluster << " native_probe_bps=" << status.estimate.last_native_probe_bps
+                       << " native_probe_at=" << status.estimate.last_native_probe_at_us << " native_probe_failure=" << status.estimate.last_native_probe_failure
+                       << " stale_probe_feedback_suppressed=" << status.estimate.stale_probe_feedback_suppressed
+                       << " activation_epoch=" << active.controller_activation_epoch
+                       << " automatic_bitrate=" << active.controller_config.automatic_bitrate_enabled
+                       << " automatic_fec=" << active.controller_config.automatic_fec_enabled
+                       << " maximum_video_kbps=" << active.controller_config.controller.maximum_kbps
+                       << " application_limited=" << status.estimate.application_limited
+                       << " target_updated_at=" << status.estimate.target_updated_at_us
+                       << " encoder_reduce_ppm=" << static_cast<int>(status.estimate.encoder_reduce_ratio * 1000000)
+                       << " queue_ip_bytes=" << (status.estimate.pacer_queue_ip_bytes ? static_cast<std::int64_t>(*status.estimate.pacer_queue_ip_bytes) : -1)
+                       << " queue_at=" << status.estimate.pacer_queue_at_us
+                       << " queue_samples=" << status.estimate.accepted_queue_samples
+                       << " rejected_queue_samples=" << status.estimate.rejected_queue_samples
+                       << " batches=" << status.estimate.feedback_batches << " changes=" << status.estimate.feedback_packet_changes
+                       << " rejected_sends=" << status.estimate.rejected_send_events
+                       << " rejected_feedback=" << status.estimate.rejected_feedback_events
+                       << " probes_declined=" << status.rejected_probe_requests << " lease=" << status.lease.has_value()
+                       << " control_epoch=" << (status.lease ? status.lease->control_epoch : 0)
+                       << " accepted_updates=" << status.accepted_policy_requests << " stale=" << status.feedback_stale
+                       << " fec_updates=" << status.accepted_fec_requests << " fec_infeasible=" << status.infeasible_fec_decisions
+                       << " fec_base=" << status.fec_selection.classes[0].percentage
+                       << " fec_key=" << status.fec_selection.classes[1].percentage
+                       << " fec_recovery=" << status.fec_selection.classes[2].percentage
+                       << " fec_target_base=" << static_cast<int>(status.fec_selection.classes[0].target_met)
+                       << " fec_target_key=" << static_cast<int>(status.fec_selection.classes[1].target_met)
+                       << " fec_target_recovery=" << static_cast<int>(status.fec_selection.classes[2].target_met)
+                       << " fec_result_base=" << static_cast<int>(status.fec_selection.classes[0].result)
+                       << " fec_risk_base=" << status.fec_selection.classes[0].worst_frame_failure_ppm
+                       << " fec_frames_base=" << status.fec_selection.classes[0].frame_shapes
+                       << " fec_geometry_evals=" << status.fec_selection.geometries_evaluated
+                       << " fec_geometry_hits=" << status.fec_selection.geometry_cache_hits
+                       << " fec_cache_bytes=" << status.fec_selection.geometry_cache_bytes
+                       << " fec_replay_at=" << status.fec_replay_at_us
+                       << " fec_replay_us=" << status.fec_replay_duration_us
+                       << " fec_clean_us=" << status.fec_selection_context.clean_covered_us
+                       << " fec_residence_us=" << status.fec_selection_context.since_last_change_us
+                       << " failed=" << active.controller_failed << " final=" << final;
+    };
+    const auto replace_controller = [&](active_flow_t &active, const transport::frame_policy_ref_t &policy, std::int64_t now) {
+      auto runtime = active.controller_config;
+      if (active.controller) {
+        const auto highest = active.controller->snapshot().estimate.last_generated_probe_cluster;
+        if (highest > std::numeric_limits<std::int32_t>::max() - 33)
+          throw std::runtime_error("Controller probe namespace exhausted");
+        runtime.controller.first_probe_cluster_id = static_cast<std::int32_t>(highest + 1);
+        active.controller->stop();
+        trace_controller(active, now, true);
+      }
+      // No dispatch receipt survives to this boundary. Cancel only the unsent
+      // probe suffix; owned frames, already charged bytes and the ledger stay.
+      active.pending_probes.clear();
+      pacer.cancel_probe(active.pacer_handle, now);
+      runtime.controller.start_time_us = now;
+      const auto reserve = policy->budget.other_kbps + policy->budget.repair_kbps + policy->budget.probe_kbps;
+      const auto maximum = policy->automatic_control ? policy->automatic_control->maximum_total_kbps : policy->budget.total_kbps;
+      runtime.controller.maximum_kbps = maximum - reserve;
+      runtime.controller.minimum_kbps = std::min(1000, runtime.controller.maximum_kbps);
+      runtime.controller.initial_kbps = policy->budget.total_kbps - reserve;
+      if (policy->automatic_control) {
+        runtime.automatic_bitrate_enabled = policy->automatic_control->bitrate;
+        runtime.automatic_fec_enabled = policy->automatic_control->fec;
+      }
+      // Manual-only policies must never arm a new instance during registration.
+      runtime.control_negotiated = active.context->session->config.packet_control &&
+                                   (policy->control_source == transport::control_source_e::legacy || policy->automatic_control.has_value());
+      runtime.controller.periodic_alr_probing = runtime.budgeted_probing_enabled && runtime.automatic_bitrate_enabled;
+      runtime.controller.loss_recovery_without_padding = runtime.controller.periodic_alr_probing;
+      active.controller = std::make_unique<transport::googcc_runtime_t>(runtime, active.context->session->transport_state, policy);
+      active.controller_config = runtime;
+      active.controller_activation_epoch = policy->automatic_control ? policy->automatic_control->activation_epoch : 0;
+      active.probing_enabled = runtime.controller.periodic_alr_probing;
+      active.probe_clock_resets = 0;
+      active.last_controller_limits.reset();
+      active.next_controller_log_us = 0;
+      if (config::stream.experimental_transport_trace)
+        BOOST_LOG(debug) << "Controller activation: epoch=" << active.flow->connection_epoch << " now=" << now
+                         << " revision=" << policy->revision << " activation_epoch=" << active.controller_activation_epoch
+                         << " automatic_bitrate=" << runtime.automatic_bitrate_enabled << " automatic_fec=" << runtime.automatic_fec_enabled
+                         << " maximum_total_kbps=" << maximum << " first_probe_cluster=" << runtime.controller.first_probe_cluster_id;
+    };
+#endif
+    std::unordered_map<std::uint64_t, std::uint64_t> pacer_to_flow;
+    auto abort_guard = util::fail_guard([&]() noexcept {
+      inbox->stop();
+      // No taken frame/feedback or dispatch result survives stack unwinding
+      // into this guard. Release local owners before publishing drain barriers.
+      (void) pacer.abort_noexcept();
+      pacer_to_flow.clear();
+      flows.clear();
+      inbox->emergency_drained_after_owner_abort();
+    });
     crypto::aes_t iv(12);
 
-    auto timer = platf::create_high_precision_timer();
-    if (!timer || !*timer) {
-      BOOST_LOG(error) << "Failed to create timer, aborting video broadcast thread";
-      return;
-    }
-
-    auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
-
-    while (auto packet = packets->pop()) {
-      if (shutdown_event->peek()) {
-        break;
+    const auto settle = [&](const std::vector<transport::paced_frame_result_t> &results) {
+      for (const auto &result : results) {
+        const auto mapping = pacer_to_flow.find(result.session_handle);
+        if (mapping == pacer_to_flow.end()) continue;
+        const auto found = flows.find(mapping->second);
+        if (found == flows.end()) continue;
+        auto *session = found->second.context->session;
+        if (result.recovery_required && !found->second.flow->is_closed()) session->video.idr_events->raise(true);
+        BOOST_LOG(debug) << "Paced frame result: epoch=" << found->second.flow->connection_epoch
+                         << " frame=" << result.frame_id << " result=" << static_cast<int>(result.result)
+                         << " submitted=" << result.submitted_packets << " ip_bytes=" << result.submitted_ip_bytes
+                         << " abandoned=" << result.abandoned_packets << " abandoned_ip_bytes=" << result.abandoned_ip_bytes
+                         << " recovery=" << result.recovery_required
+                         << " primary=" << result.primary_complete;
       }
+    };
 
-      frame_network_latency_logger.first_point_now();
+    const auto mark_broken = [&](std::uint64_t handle, std::uint64_t frame_id) {
+      auto broken = pacer.mark_reference_break(handle, frame_id, transport_now_us());
+      settle(broken.frames);
+      using result_e = transport::pacer_reference_break_result_e;
+      if (broken.result != result_e::marked && broken.result != result_e::already_broken && broken.result != result_e::stale)
+        throw std::runtime_error("Video reference break could not be applied");
+      return broken.recovery_required;
+    };
 
-      auto session = (session_t *) packet->channel_data;
+    const auto build_frame = [&](const transport::owner_frame_t &input) -> std::optional<transport::paced_frame_t> {
+      auto context = std::static_pointer_cast<video_send_context_t>(input.flow->context);
+      auto *session = context->session;
+      auto packet = std::static_pointer_cast<video::packet_raw_t>(input.payload);
+      if (input.flow->is_closed() || session->lifecycle.state() != session::state_e::RUNNING ||
+          !packet || !input.policy || !input.deadline_origin_us ||
+          input.policy->connection_epoch != input.flow->connection_epoch ||
+          session->config.packetsize + MAX_RTP_HEADER_SIZE <= sizeof(video_packet_raw_t)) return std::nullopt;
+      const auto now = transport_now_us();
+      const auto deadline_ms = config::stream.experimental_transport_pacer ? config::stream.transport_pacer_deadline_ms : 1000;
+      if (*input.deadline_origin_us > now + 1000 || *input.deadline_origin_us > std::numeric_limits<std::int64_t>::max() - deadline_ms * 1000LL)
+        return std::nullopt;
+      transport::paced_frame_t output;
+      output.frame_id = input.frame_id;
+      output.policy = input.policy;
+      output.dependency = input.dependency;
+      output.deadline_us = *input.deadline_origin_us + deadline_ms * 1000LL;
+      if (now >= output.deadline_us) return std::nullopt;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
-
       std::string_view payload { (char *) packet->data(), packet->data_size() };
       std::vector<uint8_t> payload_with_replacements;
 
@@ -3406,8 +3902,8 @@ namespace stream {
       // part of the payload.
       if (packet->is_idr() && packet->replacements) {
         for (auto &replacement : *packet->replacements) {
-          auto frame_old = replacement.old;
-          auto frame_new = replacement._new;
+          std::string_view frame_old = replacement.old;
+          std::string_view frame_new = replacement._new;
 
           payload_with_replacements = replace(payload, frame_old, frame_new);
           payload = { (char *) payload_with_replacements.data(), payload_with_replacements.size() };
@@ -3467,7 +3963,7 @@ namespace stream {
         perf::record_pipeline_sample(session->launch_session_id, sample, frame_dequeue_time);
       }
 
-      auto fecPercentage = config::stream.fec_percentage;
+      auto fecPercentage = packet->transport_policy->fec_for_frame(packet->is_idr(), packet->after_ref_frame_invalidation);
 
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
@@ -3477,246 +3973,703 @@ namespace stream {
 
       payload = std::string_view { (char *) payload_new.data(), payload_new.size() };
 
-      // There are 2 bits for FEC block count for a maximum of 4 FEC blocks
-      constexpr auto MAX_FEC_BLOCKS = 4;
-
-      // The max number of data shards per block is found by solving this system of equations for D:
-      // D = 255 - P
-      // P = D * F
-      // which results in the solution:
-      // D = 255 / (1 + F)
-      // multiplied by 100 since F is the percentage as an integer:
-      // D = (255 * 100) / (100 + F)
-      auto max_data_shards_per_fec_block = (DATA_SHARDS_MAX * 100) / (100 + fecPercentage);
-
-      // Compute the number of FEC blocks needed for this frame using the block size and max shards
-      auto max_data_per_fec_block = max_data_shards_per_fec_block * blocksize;
-      auto fec_blocks_needed = (payload.size() + (max_data_per_fec_block - 1)) / max_data_per_fec_block;
-
-      // If the number of FEC blocks needed exceeds the protocol limit, turn off FEC for this frame.
-      // For normal FEC percentages, this should only happen for enormous frames (over 800 packets at 20%).
-      if (fec_blocks_needed > MAX_FEC_BLOCKS) {
-        BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
+      const auto frame_data_shards = (payload.size() + blocksize - 1) / blocksize;
+      const auto frame_layout = transport::plan_fec_frame(frame_data_shards, fecPercentage, session->config.minRequiredFecPackets);
+      if (!frame_layout) {
+        BOOST_LOG(error) << "Encoded frame exceeds the video packet index space; dropping frame "sv << packet->frame_index();
+        session->video.idr_events->raise(true);
+        return std::nullopt;
+      }
+      const auto fec_blocks_needed = frame_layout->block_count;
+      if (frame_layout->fec_skipped) {
+        BOOST_LOG(warning) << "Skipping FEC for frame whose shard layout cannot be represented (data shards "sv << frame_data_shards << ")"sv;
         fecPercentage = 0;
-        fec_blocks_needed = MAX_FEC_BLOCKS;
       }
 
-      std::array<std::string_view, MAX_FEC_BLOCKS> fec_blocks;
+      std::array<std::string_view, transport::max_fec_blocks> fec_blocks;
       decltype(fec_blocks)::iterator
         fec_blocks_begin = std::begin(fec_blocks),
         fec_blocks_end = std::begin(fec_blocks) + fec_blocks_needed;
 
       BOOST_LOG(verbose) << "Generating "sv << fec_blocks_needed << " FEC blocks"sv;
 
-      // Align individual FEC blocks to blocksize
-      auto unaligned_size = payload.size() / fec_blocks_needed;
-      auto aligned_size = ((unaligned_size + (blocksize - 1)) / blocksize) * blocksize;
-
-      // If we exceed the 10-bit FEC packet index (which means our frame exceeded 4096 packets),
-      // the frame will be unrecoverable. Log an error for this case.
-      if (aligned_size / blocksize >= 1024) {
-        BOOST_LOG(error) << "Encoder produced a frame too large to send! Is the encoder broken? (needed "sv << (aligned_size / blocksize) << " packets)"sv;
+      // Balanced shard counts keep every block nonempty and validate minimum
+      // parity and the on-wire percentage before any part of the frame is sent.
+      std::size_t block_offset = 0;
+      for (std::size_t x = 0; x < fec_blocks_needed; ++x) {
+        const auto block_bytes = std::min(payload.size() - block_offset, static_cast<std::size_t>(frame_layout->blocks[x].data_shards) * blocksize);
+        fec_blocks[x] = payload.substr(block_offset, block_bytes);
+        block_offset += block_bytes;
       }
 
-      // Split the data into aligned FEC blocks
-      for (int x = 0; x < fec_blocks_needed; ++x) {
-        if (x == fec_blocks_needed - 1) {
-          // The last block must extend to the end of the payload
-          fec_blocks[x] = payload.substr(x * aligned_size);
+      output.packets.reserve(frame_layout->data_shards() + frame_layout->parity_shards());
+      const auto presentation_time = packet->frame_timestamp.value_or(std::chrono::steady_clock::time_point(
+        std::chrono::microseconds(*input.deadline_origin_us)));
+      const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
+      auto blockIndex = 0;
+      for (auto current_payload = fec_blocks_begin; current_payload != fec_blocks_end; ++current_payload, ++blockIndex) {
+        if (input.flow->is_closed() || transport_now_us() >= output.deadline_us) return std::nullopt;
+        auto block_payload = *current_payload;
+        const auto block_sequence = lowseq;
+        auto packets = (block_payload.size() + (blocksize - 1)) / blocksize;
+
+        for (int x = 0; x < packets; ++x) {
+          auto *inspect = (video_packet_raw_t *) &block_payload[x * blocksize];
+
+          inspect->packet.frameIndex = packet->frame_index();
+          inspect->packet.streamPacketIndex = ((uint32_t) block_sequence + x) << 8;
+
+          // Match multiFecFlags with Moonlight
+          inspect->packet.multiFecFlags = 0x10;
+          inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
+
+          inspect->packet.flags = FLAG_CONTAINS_PIC_DATA;
+          if (x == 0) {
+            inspect->packet.flags |= FLAG_SOF;
+          }
+          if (x == packets - 1) {
+            inspect->packet.flags |= FLAG_EOF;
+          }
+        }
+
+        frame_fec_latency_logger.first_point_now();
+        // If video encryption is enabled, we allocate space for the encryption header before each shard
+        auto shards = fec::encode(block_payload, blocksize, fecPercentage, session->config.minRequiredFecPackets,
+          session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0);
+        frame_fec_latency_logger.second_point_now_and_log();
+        if (shards.size() > std::numeric_limits<uint64_t>::max() - lowseq) {
+          session::stop(*session, session::stop_reason_e::protocol_error);
+          return std::nullopt;
+        }
+        // Reserve all transport identities before any OS submission. An
+        // exception or partial send must not reuse an already submitted ID.
+        lowseq += shards.size();
+        session->video.lowseq = lowseq;
+
+        const auto send_blocksize = blocksize + (session->config.packet_feedback ? TF_VIDEO_IDENTITY_BYTES : 0);
+        if (session->config.packet_feedback && !session->video.cipher) {
+          session::stop(*session, session::stop_reason_e::protocol_error);
+          return std::nullopt;
+        }
+        std::vector<uint8_t> identity_plaintext;
+        std::vector<uint8_t> identity_ciphertext;
+        if (session->config.packet_feedback) {
+          identity_plaintext.resize(send_blocksize);
+          identity_ciphertext.resize(shards.size() * send_blocksize);
+        }
+        // set FEC info now that we know for sure what our percentage will be for this frame
+        for (auto x = 0; x < shards.size(); ++x) {
+          auto *inspect = (video_packet_raw_t *) shards.data(x);
+
+          inspect->packet.fecInfo =
+            (x << 12 |
+              shards.data_shards << 22 |
+              shards.percentage << 4);
+
+          inspect->rtp.header = 0x80 | FLAG_EXTENSION;
+          inspect->rtp.sequenceNumber = util::endian::big<uint16_t>(block_sequence + x);
+          inspect->rtp.timestamp = util::endian::big<uint32_t>(timestamp);
+
+          inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
+          inspect->packet.frameIndex = packet->frame_index();
+          // streamPacketIndex participates in RS coding. Keep parity bytes
+          // intact so recovered data retains its original contiguous index.
+          // The authenticated full identity identifies every transmitted shard.
+
+          // Encrypt this shard if video encryption is enabled
+          if (session->video.cipher) {
+            if (session->video.gcm_iv_counter == std::numeric_limits<uint64_t>::max()) {
+              session::stop(*session, session::stop_reason_e::protocol_error);
+              return std::nullopt;
+            }
+            // We use the deterministic IV construction algorithm specified in NIST SP 800-38D
+            // Section 8.2.1. The sequence number is our "invocation" field and the 'V' in the
+            // high bytes is the "fixed" field. Because each client provides their own unique
+            // key, our values in the fixed field need only uniquely identify each independent
+            // use of the client's key with AES-GCM in our code.
+            //
+            // The IV counter is 64 bits long which allows for 2^64 encrypted video packets
+            // to be sent to each client before the IV repeats.
+            std::copy_n((uint8_t *) &session->video.gcm_iv_counter, sizeof(session->video.gcm_iv_counter), std::begin(iv));
+            iv[11] = 'V';  // Video stream
+            session->video.gcm_iv_counter++;
+
+            // Encrypt the target buffer in place
+            auto *prefix = (video_packet_enc_prefix_t *) shards.prefix(x);
+            prefix->frameNumber = packet->frame_index();
+            std::copy(std::begin(iv), std::end(iv), prefix->iv);
+            const auto plaintext = session->config.packet_feedback ? [&] {
+              TfEncodeVideoIdentity(packet->transport_policy->connection_epoch, block_sequence + x,
+                identity_plaintext.data(), identity_plaintext.size());
+              std::memcpy(identity_plaintext.data() + TF_VIDEO_IDENTITY_BYTES, inspect, blocksize);
+              return std::string_view(reinterpret_cast<const char *>(identity_plaintext.data()), send_blocksize);
+            }() :
+                                                                     std::string_view(reinterpret_cast<const char *>(inspect), blocksize);
+            auto *cipher_output = session->config.packet_feedback ? identity_ciphertext.data() + x * send_blocksize :
+                                                                    reinterpret_cast<uint8_t *>(inspect);
+            const auto encrypted_bytes = session->video.cipher->encrypt(plaintext, prefix->tag, cipher_output, &iv);
+            if (encrypted_bytes != send_blocksize) {
+              session::stop(*session, session::stop_reason_e::protocol_error);
+              return std::nullopt;
+            }
+          }
+
+          transport::owned_paced_packet_t owned;
+          // A mapped endpoint can still emit an IPv4 datagram. Preserve its
+          // native routing address, but count the actual outer IP family.
+          owned.ipv6 = net::normalize_address(context->peer.address()).is_v6();
+          owned.udp_payload.resize(shards.prefixsize + send_blocksize);
+          if (shards.prefixsize) std::memcpy(owned.udp_payload.data(), shards.prefix(x), shards.prefixsize);
+          const auto *payload_bytes = session->config.packet_feedback ?
+                                        reinterpret_cast<const char *>(identity_ciphertext.data() + x * send_blocksize) :
+                                        shards.data(x);
+          std::memcpy(owned.udp_payload.data() + shards.prefixsize, payload_bytes, send_blocksize);
+          const auto ip_bytes = transport::ip_datagram_bytes(owned.udp_payload.size(), owned.ipv6);
+          if (!ip_bytes || *ip_bytes > std::numeric_limits<std::uint32_t>::max()) return std::nullopt;
+          owned.metadata = { block_sequence + x, 0, static_cast<std::uint32_t>(*ip_bytes), input.frame_id,
+            input.policy->revision, x < shards.data_shards ? transport::packet_kind_e::data : transport::packet_kind_e::fec, {} };
+          owned.metadata.protection = { static_cast<std::uint16_t>(shards.data_shards),
+            static_cast<std::uint16_t>(shards.nr_shards), static_cast<std::uint16_t>(x),
+            static_cast<std::uint8_t>(blockIndex), packet->is_idr() ? transport::protection_class_e::key :
+            packet->after_ref_frame_invalidation ? transport::protection_class_e::recovery : transport::protection_class_e::base,
+            static_cast<std::uint16_t>(frame_data_shards), static_cast<std::uint8_t>(fec_blocks_needed) };
+          output.packets.push_back(std::move(owned));
+        }
+      }
+      return output;
+    };
+
+    const auto send_batch = [&](std::uint64_t pacer_handle, std::span<const transport::paced_packet_view_t> packets) {
+      transport::paced_batch_submission_t result;
+      result.packets.resize(packets.size());  // All allocation precedes OS sends.
+      result.failed_suffix_retryable = false;
+      const auto mapping = pacer_to_flow.find(pacer_handle);
+      if (mapping == pacer_to_flow.end()) {
+        result.completed_at_us = transport_now_us();
+        return result;
+      }
+      const auto found = flows.find(mapping->second);
+      if (found == flows.end()) {
+        result.completed_at_us = transport_now_us();
+        return result;
+      }
+      const auto &active = found->second;
+      const auto probe_authorized = [&] {
+        if (packets.empty() || packets.front().metadata.probe.cluster_id < 0) return true;
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+        return active.controller && !active.controller_failed && active.controller->probe_eligible(transport_now_us());
+#else
+        return false;
+#endif
+      };
+      if (!probe_authorized()) {
+        result.failed_suffix_retryable = result.suffix_probe_cancelled = true;
+        result.completed_at_us = transport_now_us();
+        return result;
+      }
+      auto peer_address = active.context->peer.address();
+      const auto can_send = [&](std::size_t index) {
+        return !active.flow->is_closed() && transport_now_us() < packets[index].deadline_us;
+      };
+      bool equal_size = !packets.empty();
+      std::vector<platf::buffer_descriptor_t> descriptors;
+      descriptors.reserve(packets.size());
+      for (const auto &packet : packets) {
+        equal_size &= packet.udp_payload.size() == packets.front().udp_payload.size();
+        descriptors.emplace_back(reinterpret_cast<const char *>(packet.udp_payload.data()), packet.udp_payload.size());
+      }
+      bool fallback = !equal_size;
+      std::size_t prefix = 0;
+      std::optional<transport::session_send_budget_t::permit_t> budget_permit;
+      const auto original_count = packets.size();
+      if (const auto &budget = active.context->session->send_budget) {
+        std::uint64_t maximum_bytes = 0;
+        for (const auto &packet : packets) maximum_bytes += packet.metadata.ip_bytes;
+        auto reservation = reserve_send_budget(budget, active.context->session->transport_state,
+          packets.front().metadata.probe.cluster_id >= 0 ? transport::send_traffic_e::probe : transport::send_traffic_e::video,
+          maximum_bytes, packets.front().metadata.ip_bytes);
+        if (!reservation.permit) {
+          result.suffix_budget_deferred = reservation.result == transport::send_budget_result_e::busy ||
+                                         reservation.result == transport::send_budget_result_e::insufficient ||
+                                         reservation.result == transport::send_budget_result_e::stale_revision;
+          result.failed_suffix_retryable = result.suffix_budget_deferred;
+          if (!result.suffix_budget_deferred) session::stop(*active.context->session, session::stop_reason_e::protocol_error);
+          result.completed_at_us = transport_now_us();
+          return result;
+        }
+        std::uint64_t bytes = 0;
+        std::size_t count = 0;
+        for (const auto &packet : packets) {
+          if (packet.metadata.ip_bytes > reservation.permit->ip_bytes() - bytes) break;
+          bytes += packet.metadata.ip_bytes;
+          ++count;
+        }
+        packets = packets.first(count);
+        descriptors.resize(count);
+        if (!probe_authorized()) {
+          trace_send_budget(reservation.permit->cancel_before_send(transport_now_us()));
+          result.failed_suffix_retryable = result.suffix_probe_cancelled = true;
+          result.completed_at_us = transport_now_us();
+          return result;
+        }
+        if (!reservation.permit->begin_submission()) {
+          trace_send_budget(reservation.permit->cancel_before_send(transport_now_us()));
+          result.completed_at_us = transport_now_us();
+          return result;
+        }
+        budget_permit.emplace(std::move(*reservation.permit));
+      }
+      if (equal_size && can_send(0)) {
+        auto info = platf::batched_send_info_t { nullptr, 0, descriptors, packets.front().udp_payload.size(), 0, packets.size(),
+          static_cast<uintptr_t>(sock.native_handle()), peer_address, active.context->peer.port(), active.context->source_address };
+        const auto attempt = platf::try_send_batch(info);
+        const auto sent_at = transport_now_us();
+        if (attempt.submitted_datagrams > packets.size() ||
+            attempt.submitted_payload_bytes != attempt.submitted_datagrams * packets.front().udp_payload.size()) {
+          result.submission_known = false;
         }
         else {
-          // Earlier blocks just extend to the next block offset
-          fec_blocks[x] = payload.substr(x * aligned_size, aligned_size);
+          prefix = attempt.submitted_datagrams;
+          for (std::size_t i = 0; i < prefix; ++i) result.packets[i] = { true, sent_at };
+          result.submission_known = attempt.submission_known;
+          result.failed_suffix_retryable = attempt.retryable;
+          fallback = attempt.submission_known && attempt.status == platf::udp_send_status_e::unsupported;
         }
       }
+      if (fallback && result.submission_known) {
+        for (std::size_t i = prefix; i < packets.size(); ++i) {
+          if (!can_send(i)) {
+            result.failed_suffix_retryable = false;
+            break;
+          }
+          auto info = platf::send_info_t { nullptr, 0, reinterpret_cast<const char *>(packets[i].udp_payload.data()), packets[i].udp_payload.size(),
+            static_cast<uintptr_t>(sock.native_handle()), peer_address, active.context->peer.port(), active.context->source_address };
+          const auto attempt = platf::try_send(info);
+          const auto sent_at = transport_now_us();
+          if (attempt.submitted_datagrams > 1 ||
+              attempt.submitted_payload_bytes != attempt.submitted_datagrams * packets[i].udp_payload.size()) {
+            result.submission_known = false;
+            result.failed_suffix_retryable = false;
+            break;
+          }
+          if (attempt.submitted_datagrams == 1) result.packets[i] = { true, sent_at };
+          if (!attempt.submission_known) {
+            result.submission_known = false;
+            result.failed_suffix_retryable = false;
+            break;
+          }
+          if (attempt.submitted_datagrams == 1)
+            continue;
+          else if (attempt.retryable) {
+            result.failed_suffix_retryable = true;
+            break;
+          }
+          else {
+            result.failed_suffix_retryable = false;
+            break;
+          }
+        }
+      }
+      result.completed_at_us = transport_now_us();
+      if (budget_permit) {
+        std::uint64_t bytes = 0, successes = 0;
+        for (std::size_t i = 0; i < packets.size(); ++i) {
+          if (result.packets[i].submitted) {
+            bytes += packets[i].metadata.ip_bytes;
+            ++successes;
+          }
+        }
+        const auto receipt = budget_permit->complete(bytes, successes, result.submission_known, result.completed_at_us);
+        trace_send_budget(receipt);
+        result.submission_known &= receipt.completion_known && receipt.accounting_valid;
+        if (result.submission_known && successes == packets.size() && packets.size() < original_count) {
+          result.suffix_budget_deferred = true;
+          result.failed_suffix_retryable = true;
+        }
+      }
+      return result;
+    };
 
-      try {
-        // Use around 80% of 1Gbps          1Gbps            percent    ms     packet      byte
-        size_t ratecontrol_packets_in_1ms = std::giga::num * 80 / 100 / 1000 / blocksize / 8;
-
-        // Send less than 64K in a single batch.
-        // On Windows, batches above 64K seem to bypass SO_SNDBUF regardless of its size,
-        // appear in "Other I/O" and begin waiting for interrupts.
-        // This gives inconsistent performance so we'd rather avoid it.
-        size_t send_batch_size = 64 * 1024 / blocksize;
-        // Also don't exceed 64 packets, which can happen when Moonlight requests
-        // unusually small packet size.
-        // Generic Segmentation Offload on Linux can't do more than 64.
-        send_batch_size = std::min<size_t>(64, send_batch_size);
-
-        // Don't ignore the last ratecontrol group of the previous frame
-        auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
-
-        size_t ratecontrol_frame_packets_sent = 0;
-        size_t ratecontrol_group_packets_sent = 0;
-
-        // RTP video timestamps use the 90 kHz media clock and the original
-        // capture presentation timestamp. Frames without a capture timestamp
-        // (intentional duplicates) retain the next scheduled pacing time.
-        const bool frame_is_dupe = !packet->frame_timestamp;
-        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_next_frame_start);
-        const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
-
-        auto blockIndex = 0;
-        std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
-          auto packets = (current_payload.size() + (blocksize - 1)) / blocksize;
-
-          for (int x = 0; x < packets; ++x) {
-            auto *inspect = (video_packet_raw_t *) &current_payload[x * blocksize];
-
-            inspect->packet.frameIndex = packet->frame_index();
-            inspect->packet.streamPacketIndex = ((uint32_t) lowseq + x) << 8;
-
-            // Match multiFecFlags with Moonlight
-            inspect->packet.multiFecFlags = 0x10;
-            inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
-
-            inspect->packet.flags = FLAG_CONTAINS_PIC_DATA;
-            if (x == 0) {
-              inspect->packet.flags |= FLAG_SOF;
+    const auto drain_commands = [&] {
+      for (auto &command : inbox->take_commands()) {
+        const auto handle = command.flow->handle;
+        auto context = std::static_pointer_cast<video_send_context_t>(command.flow->context);
+        auto found = flows.find(handle);
+        if (command.close) {
+          if (found != flows.end()) {
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+            const auto state = pacer.snapshot(found->second.pacer_handle);
+            if (config::stream.experimental_transport_trace && state && state->probe.result == transport::paced_probe_result_e::active)
+              BOOST_LOG(debug) << "Probe outcome: epoch=" << found->second.flow->connection_epoch << " now=" << transport_now_us()
+                               << " cluster=" << state->probe.cluster_id << " result=" << static_cast<int>(transport::paced_probe_result_e::cancelled)
+                               << " packets=" << state->probe.successful_packets << " ip_bytes=" << state->probe.successful_ip_bytes
+                               << " groups=" << state->probe.successful_groups << " next=-1";
+#endif
+            settle(pacer.stop_session(found->second.pacer_handle, transport_now_us()));
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+            // The closed gate revokes authority before the final trace.
+            if (found->second.controller) found->second.controller->stop();
+            trace_controller(found->second, transport_now_us(), true);
+#endif
+            pacer_to_flow.erase(found->second.pacer_handle);
+            flows.erase(found);
+          }
+          command.discarded_frames.clear();
+          if (!inbox->acknowledge_drained(command.flow)) throw std::runtime_error("Video drain barrier refused");
+          continue;
+        }
+        if (command.register_flow && found == flows.end()) {
+          const auto registered_at = transport_now_us();
+          const auto pacer_handle = pacer.add_session(command.flow->connection_epoch, command.initial_limits, registered_at);
+          if (!pacer_handle) {
+            session::stop(*context->session, session::stop_reason_e::protocol_error);
+            inbox->close(command.flow);
+            continue;
+          }
+          flows.emplace(handle, active_flow_t { command.flow, context, *pacer_handle });
+          pacer_to_flow.emplace(*pacer_handle, handle);
+          found = flows.find(handle);
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+          if (config::stream.experimental_transport_pacer && context->session->config.packet_feedback) {
+            const auto policy = context->session->transport_state->snapshot().accepted;
+            transport::googcc_runtime_config_t runtime;
+            runtime.controller.connection_epoch = command.flow->connection_epoch;
+            runtime.controller.start_time_us = registered_at;
+            runtime.controller.maximum_kbps = std::clamp(policy->budget.total_kbps - policy->budget.other_kbps -
+              policy->budget.repair_kbps - policy->budget.probe_kbps, 1, 800000);
+            runtime.controller.minimum_kbps = std::min(1000, runtime.controller.maximum_kbps);
+            runtime.controller.initial_kbps = runtime.controller.maximum_kbps;
+            runtime.controller.pacer_queue_feedback = true;
+            runtime.controller.queue_pushback = config::stream.experimental_packet_queue_pushback;
+            runtime.controller.queue_delay_ms = config::stream.transport_pacer_deadline_ms;
+            runtime.feedback_negotiated = true;
+            runtime.deadline_pacing_enabled = true;
+            runtime.control_negotiated = context->session->config.packet_control;
+            runtime.automatic_bitrate_enabled = config::stream.experimental_packet_bitrate;
+            runtime.automatic_fec_enabled = config::stream.experimental_packet_fec;
+            runtime.budgeted_probing_enabled = config::stream.experimental_packet_probe;
+            runtime.controller.periodic_alr_probing = runtime.budgeted_probing_enabled && runtime.automatic_bitrate_enabled;
+            // This transport has no negotiated padding protocol. Use the
+            // pinned controller's supported no-padding recovery mode instead
+            // of silently ignoring traffic which its loss state expects.
+            runtime.controller.loss_recovery_without_padding = runtime.controller.periodic_alr_probing;
+            found->second.probing_enabled = runtime.controller.periodic_alr_probing;
+            runtime.fec.minimum_parity = context->session->config.minRequiredFecPackets;
+            found->second.controller_config = runtime;
+            try {
+              replace_controller(found->second, policy, registered_at);
             }
-            if (x == packets - 1) {
-              inspect->packet.flags |= FLAG_EOF;
+            catch (const std::exception &failure) {
+              found->second.controller_failed = true;
+              BOOST_LOG(error) << "Controller activation failed: " << failure.what();
+              session::stop(*context->session, session::stop_reason_e::protocol_error);
+              inbox->close(command.flow);
             }
           }
+#endif
+          if (config::stream.experimental_transport_trace) {
+            BOOST_LOG(debug) << "Paced limit boundary: epoch=" << command.flow->connection_epoch << " now=" << registered_at
+                             << " rate=" << command.initial_limits.budget.rate_bytes_per_second
+                             << " burst=" << command.initial_limits.budget.burst_bytes
+                             << " debt=" << command.initial_limits.budget.maximum_debt_bytes << " initial=1";
+          }
+        }
+        if (found == flows.end()) continue;
+        if (command.latest_limits) {
+          const auto changed_at = transport_now_us();
+          // A coalesced wake is not an immutable policy receipt. Derive the
+          // negotiated flow's actual boundary from one accepted snapshot so
+          // a newer API request cannot be labelled with an older command rate.
+          const auto policy = context->session->config.packet_control ? context->session->transport_state->snapshot().accepted :
+                                                                       transport::frame_policy_ref_t {};
+          const auto limits = policy ? video_pacing_limits(policy) : *command.latest_limits;
+          if (!pacer.update_limits(found->second.pacer_handle, limits, changed_at))
+            throw std::runtime_error("Video pacing limits refused");
+          if (config::stream.experimental_transport_trace) {
+            BOOST_LOG(debug) << "Paced limit boundary: epoch=" << command.flow->connection_epoch << " now=" << changed_at
+                             << " rate=" << limits.budget.rate_bytes_per_second
+                             << " burst=" << limits.budget.burst_bytes
+                             << " debt=" << limits.budget.maximum_debt_bytes << " initial=0"
+                             << " revision=" << (policy ? policy->revision : 0) << " control_epoch=" << (policy ? policy->control_epoch : 0);
+          }
+        }
+        if (command.highest_reference_break) {
+          if (mark_broken(found->second.pacer_handle, *command.highest_reference_break)) context->session->video.idr_events->raise(true);
+        }
+        if (!command.drops.empty()) {
+          BOOST_LOG(debug) << "Video ingress drops: epoch=" << command.flow->connection_epoch
+                           << " full=" << command.drops.full_frames << " closed=" << command.drops.closed_frames
+                           << " discarded=" << command.drops.discarded_frames << " feedback=" << command.drops.dropped_feedback;
+        }
+      }
+    };
 
-          frame_fec_latency_logger.first_point_now();
-          // If video encryption is enabled, we allocate space for the encryption header before each shard
-          auto shards = fec::encode(current_payload, blocksize, fecPercentage, session->config.minRequiredFecPackets,
-            session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0);
-          frame_fec_latency_logger.second_point_now_and_log();
-
-          auto peer_address = session->video.peer.address();
-          auto batch_info = platf::batched_send_info_t {
-            shards.headers.begin(),
-            shards.prefixsize,
-            shards.payload_buffers,
-            shards.blocksize,
-            0,
-            0,
-            (uintptr_t) sock.native_handle(),
-            peer_address,
-            session->video.peer.port(),
-            session->localAddress,
-          };
-
-          size_t next_shard_to_send = 0;
-
-          // set FEC info now that we know for sure what our percentage will be for this frame
-          for (auto x = 0; x < shards.size(); ++x) {
-            auto *inspect = (video_packet_raw_t *) shards.data(x);
-
-            inspect->packet.fecInfo =
-              (x << 12 |
-                shards.data_shards << 22 |
-                shards.percentage << 4);
-
-            inspect->rtp.header = 0x80 | FLAG_EXTENSION;
-            inspect->rtp.sequenceNumber = util::endian::big<uint16_t>(lowseq + x);
-            inspect->rtp.timestamp = util::endian::big<uint32_t>(timestamp);
-
-            inspect->packet.multiFecBlocks = (blockIndex << 4) | ((fec_blocks_needed - 1) << 6);
-            inspect->packet.frameIndex = packet->frame_index();
-
-            // Encrypt this shard if video encryption is enabled
-            if (session->video.cipher) {
-              // We use the deterministic IV construction algorithm specified in NIST SP 800-38D
-              // Section 8.2.1. The sequence number is our "invocation" field and the 'V' in the
-              // high bytes is the "fixed" field. Because each client provides their own unique
-              // key, our values in the fixed field need only uniquely identify each independent
-              // use of the client's key with AES-GCM in our code.
-              //
-              // The IV counter is 64 bits long which allows for 2^64 encrypted video packets
-              // to be sent to each client before the IV repeats.
-              std::copy_n((uint8_t *) &session->video.gcm_iv_counter, sizeof(session->video.gcm_iv_counter), std::begin(iv));
-              iv[11] = 'V';  // Video stream
-              session->video.gcm_iv_counter++;
-
-              // Encrypt the target buffer in place
-              auto *prefix = (video_packet_enc_prefix_t *) shards.prefix(x);
-              prefix->frameNumber = packet->frame_index();
-              std::copy(std::begin(iv), std::end(iv), prefix->iv);
-              session->video.cipher->encrypt(std::string_view { (char *) inspect, (size_t) blocksize },
-                prefix->tag, (uint8_t *) inspect, &iv);
+    while (!shutdown_event->peek()) {
+      const auto generation = inbox->wake_generation();  // Before work: no lost wake.
+      drain_commands();
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      for (auto &[handle, active] : flows) {
+        (void) handle;
+        if (!active.controller || active.controller_failed || active.flow->is_closed()) continue;
+        const auto policy = active.context->session->transport_state->snapshot().accepted;
+        if (!policy->automatic_control || !policy->automatic_control->activation_epoch ||
+            policy->automatic_control->activation_epoch == active.controller_activation_epoch) continue;
+        try {
+          replace_controller(active, policy, transport_now_us());
+        }
+        catch (const std::exception &failure) {
+          active.controller_failed = true;
+          BOOST_LOG(error) << "Controller replacement failed: " << failure.what();
+          session::stop(*active.context->session, session::stop_reason_e::protocol_error);
+          inbox->close(active.flow);
+        }
+      }
+#endif
+      for (unsigned i = 0; i < 16; ++i) {
+        auto feedback = inbox->take_feedback();
+        if (!feedback) break;
+        if (feedback->flow->is_closed()) continue;
+        auto context = std::static_pointer_cast<video_send_context_t>(feedback->flow->context);
+        const auto event = context->session->video.sent_packets->apply_wire_event(feedback->authenticated_bytes, transport_now_us());
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+        const auto found = flows.find(feedback->flow->handle);
+        if (found != flows.end() && found->second.controller && !found->second.controller_failed &&
+            event.feedback.result == transport::report_result_e::accepted && !found->second.controller->on_feedback(event)) {
+          found->second.controller_failed = true;
+          BOOST_LOG(error) << "GoogCC rejected feedback for epoch=" << feedback->flow->connection_epoch;
+          session::stop(*context->session, session::stop_reason_e::protocol_error);
+          inbox->close(feedback->flow);
+        }
+#endif
+      }
+      if (auto frame = inbox->take_frame(); frame && !frame->flow->is_closed()) {
+        auto context = std::static_pointer_cast<video_send_context_t>(frame->flow->context);
+        const auto found = flows.find(frame->flow->handle);
+        if (found == flows.end()) throw std::runtime_error("Encoded frame for unregistered video flow");
+        if (found != flows.end()) {
+          try {
+            auto prepared = build_frame(*frame);
+            transport::pacer_enqueue_result_t enqueued;
+            std::uint64_t admitted_packets = 0, admitted_ip_bytes = 0;
+            if (prepared && config::stream.experimental_transport_trace) {
+              admitted_packets = prepared->packets.size();
+              for (const auto &packet : prepared->packets) admitted_ip_bytes += packet.metadata.ip_bytes;
             }
-
-            if (x - next_shard_to_send + 1 >= send_batch_size ||
-                x + 1 == shards.size()) {
-              // Do pacing within the frame.
-              // Also trigger pacing before the first send_batch() of the frame
-              // to account for the last send_batch() of the previous frame.
-              if (ratecontrol_group_packets_sent >= ratecontrol_packets_in_1ms ||
-                  ratecontrol_frame_packets_sent == 0) {
-                auto due = ratecontrol_frame_start +
-                           std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                             ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
-
-                auto now = std::chrono::steady_clock::now();
-                if (now < due) {
-                  timer->sleep_for(due - now);
-                }
-
-                ratecontrol_group_packets_sent = 0;
-              }
-
-              size_t current_batch_size = x - next_shard_to_send + 1;
-              batch_info.block_offset = next_shard_to_send;
-              batch_info.block_count = current_batch_size;
-
-              frame_send_batch_latency_logger.first_point_now();
-              // Use a batched send if it's supported on this platform
-              if (!platf::send_batch(batch_info)) {
-                // Batched send is not available, so send each packet individually
-                BOOST_LOG(verbose) << "Falling back to unbatched send"sv;
-                for (auto y = 0; y < current_batch_size; y++) {
-                  auto send_info = platf::send_info_t {
-                    shards.prefix(next_shard_to_send + y),
-                    shards.prefixsize,
-                    shards.data(next_shard_to_send + y),
-                    shards.blocksize,
-                    (uintptr_t) sock.native_handle(),
-                    peer_address,
-                    session->video.peer.port(),
-                    session->localAddress,
-                  };
-
-                  platf::send(send_info);
-                }
-              }
-              frame_send_batch_latency_logger.second_point_now_and_log();
-
-              ratecontrol_group_packets_sent += current_batch_size;
-              ratecontrol_frame_packets_sent += current_batch_size;
-              next_shard_to_send = x + 1;
+            if (prepared) enqueued = pacer.enqueue_frame(found->second.pacer_handle, std::move(*prepared), transport_now_us());
+            if (enqueued.result == transport::pacer_enqueue_result_e::queued && config::stream.experimental_transport_trace) {
+              BOOST_LOG(debug) << "Paced queue admission: epoch=" << found->second.flow->connection_epoch
+                               << " frame=" << frame->frame_id << " packets=" << admitted_packets << " ip_bytes=" << admitted_ip_bytes;
+            }
+            if (enqueued.dropped_frame) settle({ *enqueued.dropped_frame });
+            if (!prepared || enqueued.result != transport::pacer_enqueue_result_e::queued) {
+              mark_broken(found->second.pacer_handle, frame->frame_id);
+              context->session->video.idr_events->raise(true);
             }
           }
-
-          // remember this in case the next frame comes immediately
-          ratecontrol_next_frame_start = ratecontrol_frame_start +
-                                         std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                                           ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
-
-          frame_network_latency_logger.second_point_now_and_log();
-
-          BOOST_LOG(verbose) << "Sent Frame seq ["sv << packet->frame_index() << "] pts ["sv << timestamp
-                             << "] shards ["sv << shards.size() << "/"sv << shards.percentage << "%]"sv
-                             << (frame_is_dupe ? " Dupe" : "")
-                             << (packet->is_idr() ? " Key" : "")
-                             << (packet->after_ref_frame_invalidation ? " RFI" : "");
-
-          ++blockIndex;
-          lowseq += shards.size();
-        });
-
-        session->video.lowseq = lowseq;
+          catch (const std::exception &failure) {
+            BOOST_LOG(error) << "Video frame preparation aborted: " << failure.what();
+            mark_broken(found->second.pacer_handle, frame->frame_id);
+            context->session->video.idr_events->raise(true);
+          }
+        }
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(error) << "Broadcast video failed "sv << e.what();
-        std::this_thread::sleep_for(100ms);
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      for (auto &[handle, active] : flows) {
+        (void) handle;
+        if (!active.controller || !active.probing_enabled) continue;
+        const auto now = transport_now_us();
+        const auto clock_resets = active.controller->snapshot().estimate.receiver_clock_resets;
+        if (clock_resets != active.probe_clock_resets) {
+          active.pending_probes.clear();
+          pacer.cancel_probe(active.pacer_handle, now);
+          active.probe_clock_resets = clock_resets;
+        }
+        // Recheck before every real submission, including manual/stop events
+        // which arrive after the previous controller tick.
+        if (active.controller_failed || active.flow->is_closed() || !active.controller->probe_eligible(now)) {
+          if (config::stream.experimental_transport_trace) {
+            for (const auto &request : active.pending_probes)
+              BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
+                               << " cluster=" << request.cluster_id << " result=" << static_cast<int>(transport::paced_probe_result_e::cancelled);
+          }
+          active.pending_probes.clear();
+          pacer.cancel_probe(active.pacer_handle, now);
+          continue;
+        }
+        while (!active.pending_probes.empty()) {
+          const auto request = active.pending_probes.front();
+          auto disposition = transport::paced_probe_result_e::cancelled;
+          if (request.requested_at_us >= 0 && now >= request.requested_at_us && now - request.requested_at_us <= 1000000)
+            disposition = pacer.start_probe(active.pacer_handle,
+              { request.cluster_id, request.target_kbps, request.duration_us, request.minimum_delta_us, request.minimum_packets }, now);
+          if (disposition == transport::paced_probe_result_e::busy || disposition == transport::paced_probe_result_e::insufficient_media ||
+              disposition == transport::paced_probe_result_e::deadline) break;
+          if (config::stream.experimental_transport_trace)
+            BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
+                             << " cluster=" << request.cluster_id << " result=" << static_cast<int>(disposition);
+          active.pending_probes.pop_front();
+          if (disposition == transport::paced_probe_result_e::active) break;
+        }
       }
+#endif
+      const auto dispatch = pacer.dispatch(transport_now_us(), send_batch);
+      // Commit actual OS receipts immediately, before feedback or later ticks.
+      for (const auto &success : dispatch.successful) {
+        const auto mapping = pacer_to_flow.find(success.session_handle);
+        if (mapping == pacer_to_flow.end()) throw std::runtime_error("Unknown video receipt flow");
+        auto &active = flows.at(mapping->second);
+        auto *session = active.context->session;
+        const auto event = session->video.sent_packets->commit_success_event(success.packet);
+        if (!event)
+          throw std::runtime_error("Successful video receipt could not be recorded");
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+        if (active.controller && !active.controller_failed && !active.controller->on_successful_send(*event)) {
+          active.controller_failed = true;
+          BOOST_LOG(error) << "GoogCC rejected OS receipt for epoch=" << active.flow->connection_epoch;
+          session::stop(*session, session::stop_reason_e::protocol_error);
+          inbox->close(active.flow);
+        }
+#endif
+        session->transport_state->acknowledge_first_sent(success.policy, success.packet.frame_id);
+        if (config::stream.experimental_transport_trace) {
+          BOOST_LOG(debug) << "Paced UDP receipt: epoch=" << success.policy->connection_epoch
+                           << " now=" << success.packet.send_time_us << " sequence=" << success.packet.extended_sequence
+                           << " commit_ordinal=" << event->commit_ordinal
+                           << " frame=" << success.packet.frame_id << " ip_bytes=" << success.packet.ip_bytes
+                           << " revision=" << success.policy->revision << " deadline=" << success.deadline_us
+                           << " kind=" << static_cast<int>(success.packet.kind)
+                           << " probe_cluster=" << success.packet.probe.cluster_id
+                           << " probe_min_packets=" << success.packet.probe.min_packets
+                           << " probe_min_bytes=" << success.packet.probe.min_bytes
+                           << " probe_kbps=" << success.packet.probe.send_kbps
+                           << " data_shards=" << success.packet.protection.data_shards
+                           << " total_shards=" << success.packet.protection.total_shards
+                           << " shard_index=" << success.packet.protection.shard_index
+                           << " block_index=" << static_cast<int>(success.packet.protection.block_index)
+                           << " protection_class=" << static_cast<int>(success.packet.protection.frame_class)
+                           << " frame_data_shards=" << success.packet.protection.frame_data_shards
+                           << " frame_blocks=" << static_cast<int>(success.packet.protection.frame_blocks);
+        }
+      }
+      settle(dispatch.frames);
+      if (dispatch.accounting_closed || dispatch.clock_invalid) throw std::runtime_error("Video accounting closed");
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      bool has_controller = false;
+      bool has_active_probe = false;
+      for (auto &[handle, active] : flows) {
+        if (!active.controller || active.controller_failed || active.flow->is_closed()) continue;
+        has_controller = true;
+        const auto now = transport_now_us();
+        const auto queued_state = pacer.snapshot(active.pacer_handle);
+        if (!queued_state) throw std::runtime_error("Unknown controller pacer queue");
+        has_active_probe |= queued_state->probe.result == transport::paced_probe_result_e::active;
+        const transport::googcc_queue_sample_t queue { active.flow->connection_epoch, now,
+          queued_state->queued_ip_bytes, queued_state->accounting_valid, queued_state->stopped };
+        // Same owner and time order as real receipts. This is a gated, one-time
+        // handoff; a user update before/after it invalidates the old instance.
+        active.controller->try_take_control(now, queue);
+        std::optional<transport::protection_trace_t> protection;
+        if (active.controller->needs_protection_trace(now))
+          protection = active.context->session->video.sent_packets->protection_trace(now);
+        if (!active.controller->process_interval(now, protection ? &*protection : nullptr, queue)) {
+          active.controller_failed = true;
+          BOOST_LOG(error) << "GoogCC timer invalid for epoch=" << active.flow->connection_epoch;
+          session::stop(*active.context->session, session::stop_reason_e::protocol_error);
+          inbox->close(active.flow);
+          continue;
+        }
+        for (const auto &request : active.controller->take_probe_requests(now)) {
+          if (config::stream.experimental_transport_trace)
+            BOOST_LOG(debug) << "Probe request: epoch=" << active.flow->connection_epoch << " now=" << now
+                             << " cluster=" << request.cluster_id << " target_kbps=" << request.target_kbps
+                             << " duration=" << request.duration_us << " delta=" << request.minimum_delta_us
+                             << " min_packets=" << request.minimum_packets << " requested_at=" << request.requested_at_us;
+          if (active.pending_probes.size() < 32)
+            active.pending_probes.push_back(request);
+          else if (config::stream.experimental_transport_trace)
+            BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
+                             << " cluster=" << request.cluster_id << " result=" << static_cast<int>(transport::paced_probe_result_e::busy);
+        }
+        const auto &probe = queued_state->probe;
+        if (probe.cluster_id != active.last_probe_cluster || probe.result != active.last_probe_result) {
+          if (config::stream.experimental_transport_trace)
+            BOOST_LOG(debug) << "Probe outcome: epoch=" << active.flow->connection_epoch << " now=" << now
+                             << " cluster=" << probe.cluster_id << " result=" << static_cast<int>(probe.result)
+                             << " packets=" << probe.successful_packets << " ip_bytes=" << probe.successful_ip_bytes
+                             << " groups=" << probe.successful_groups << " next=" << probe.next_send_us;
+          active.last_probe_cluster = probe.cluster_id;
+          active.last_probe_result = probe.result;
+        }
+        const auto policy = active.context->session->transport_state->snapshot().accepted;
+        const auto lease = active.controller->snapshot().lease;
+        if (lease && policy->connection_epoch == lease->connection_epoch && policy->control_epoch == lease->control_epoch &&
+            policy->control_source == lease->source && policy != active.last_controller_limits) {
+          const auto limits = video_pacing_limits(policy);
+          const auto changed_at = transport_now_us();
+          if (!pacer.update_limits(active.pacer_handle, limits, changed_at))
+            throw std::runtime_error("Controller pacing limits refused");
+          active.last_controller_limits = policy;
+          active.context->session->current_total_bitrate = policy->budget.total_kbps;
+          perf::update_session_bitrate(active.context->session->launch_session_id, policy->budget.total_kbps);
+          if (config::stream.experimental_transport_trace) {
+            BOOST_LOG(debug) << "Paced limit boundary: epoch=" << active.flow->connection_epoch << " now=" << changed_at
+                             << " rate=" << limits.budget.rate_bytes_per_second << " burst=" << limits.budget.burst_bytes
+                             << " debt=" << limits.budget.maximum_debt_bytes << " initial=0"
+                             << " revision=" << policy->revision << " control_epoch=" << policy->control_epoch;
+          }
+        }
+        if (config::stream.experimental_transport_trace && now >= active.next_controller_log_us) {
+          trace_controller(active, now, false);
+          active.next_controller_log_us = now + 250000;
+        }
+      }
+#endif
+      const auto queued = inbox->snapshot();
+      auto wakeup = std::chrono::steady_clock::now() + 250ms;
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      if (has_controller) wakeup = std::min(wakeup, std::chrono::steady_clock::now() + 25ms);
+#endif
+      if (queued.pending_commands || queued.queued_frames || queued.queued_feedback_messages)
+        wakeup = std::chrono::steady_clock::now();
+      else if (dispatch.next_wakeup_us)
+        wakeup = std::min(wakeup, std::chrono::steady_clock::time_point(std::chrono::microseconds(*dispatch.next_wakeup_us)));
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      if (has_active_probe) {
+        const auto delay = wakeup - std::chrono::steady_clock::now();
+        if (delay > 0ns) {
+          if (!probe_timer) probe_timer = platf::create_high_precision_timer();
+          if (probe_timer && *probe_timer) {
+            // No submission permit is held. Reenter the owner after at most a
+            // requested 1 ms slice to handle commands/feedback/other flows.
+            probe_timer->sleep_for(std::min(std::chrono::duration_cast<std::chrono::nanoseconds>(delay),
+              std::chrono::duration_cast<std::chrono::nanoseconds>(1ms)));
+            continue;
+          }
+        }
+      }
+#endif
+      if (inbox->wait_until(generation, wakeup) == transport::owner_wait_result_e::stopped) break;
     }
-
-    shutdown_event->raise(true);
+    inbox->stop();
+    settle(pacer.stop(transport_now_us()));
+    drain_commands();
+    abort_guard.disable();
+  }
+  catch (...) {
+    // This also covers initialization and final-drain exceptions. All local
+    // owners have unwound before this handler, including the cleanup guard.
+    broadcast.video_inbox->stop();
+    broadcast.video_inbox->emergency_drained_after_owner_abort();
+    mail::man->event<bool>(mail::broadcast_shutdown)->raise(true);
+    try {
+      throw;
+    }
+    catch (const std::exception &failure) {
+      BOOST_LOG(error) << "Video owner stopped with invalid accounting: " << failure.what();
+    }
+    catch (...) {
+      BOOST_LOG(error) << "Video owner stopped with invalid accounting"sv;
+    }
   }
 
   void
@@ -3727,6 +4680,81 @@ namespace stream {
     audio_packet_t audio_packet;
     fec::rs_t rs { reed_solomon_new(RTPA_DATA_SHARDS, RTPA_FEC_SHARDS) };
     crypto::aes_t iv(16);
+
+    struct queued_audio_t {
+      std::vector<std::uint8_t> payload;
+      udp::endpoint peer;
+      boost::asio::ip::address source;
+      std::shared_ptr<transport::session_send_budget_t> budget;
+      std::shared_ptr<transport::policy_state_t> policy;
+      std::uint64_t epoch;
+      std::uint64_t ip_bytes;
+      std::int64_t queued_at_us;
+      std::int64_t deadline_us;
+    };
+    std::deque<queued_audio_t> pending;
+    std::size_t pending_bytes = 0;
+    // Experimental bounds, pending V6 calibration. These do not extend the
+    // receiver's playback wait and do not promise an end-to-end audio deadline.
+    constexpr std::size_t maximum_pending_packets = 256;
+    constexpr std::size_t maximum_pending_bytes = 256 * 1024;
+    constexpr std::int64_t audio_send_deadline_us = 40000;
+    const auto trace_audio = [](const queued_audio_t &packet, std::string_view reason) {
+      if (config::stream.experimental_transport_trace)
+        BOOST_LOG(debug) << "Shared audio outcome: epoch=" << packet.epoch << " queued_at=" << packet.queued_at_us
+                         << " deadline=" << packet.deadline_us << " ip_bytes=" << packet.ip_bytes << " result=" << reason;
+    };
+    const auto flush_audio = [&] {
+      std::unordered_set<transport::session_send_budget_t *> blocked;
+      for (auto entry = pending.begin(); entry != pending.end();) {
+        auto &packet = *entry;
+        bool retire = false;
+        if (transport_now_us() >= packet.deadline_us) {
+          trace_audio(packet, "expired");
+          retire = true;
+        }
+        else if (blocked.contains(packet.budget.get())) {
+          ++entry;
+          continue;
+        }
+        else {
+          auto reservation = reserve_send_budget(packet.budget, packet.policy, transport::send_traffic_e::audio,
+            packet.ip_bytes, packet.ip_bytes);
+          if (!reservation.permit) {
+            const auto status = reservation.result;
+            retire = status != transport::send_budget_result_e::busy && status != transport::send_budget_result_e::insufficient &&
+                     status != transport::send_budget_result_e::stale_revision;
+            if (retire) trace_audio(packet, "closed");
+            else blocked.insert(packet.budget.get());
+          }
+          else if (!reservation.permit->begin_submission()) {
+            trace_send_budget(reservation.permit->cancel_before_send(transport_now_us()));
+            trace_audio(packet, "closed");
+            retire = true;
+          }
+          else {
+            auto target_address = packet.peer.address();
+            auto info = platf::send_info_t { nullptr, 0, reinterpret_cast<const char *>(packet.payload.data()), packet.payload.size(),
+              static_cast<uintptr_t>(sock.native_handle()), target_address, packet.peer.port(), packet.source };
+            const auto attempt = platf::try_send(info);
+            const bool shape_valid = attempt.submitted_datagrams <= 1 &&
+                                     attempt.submitted_payload_bytes == attempt.submitted_datagrams * packet.payload.size();
+            const bool success = shape_valid && attempt.submitted_datagrams == 1;
+            const auto receipt = reservation.permit->complete(success ? packet.ip_bytes : 0, success ? 1 : 0,
+              shape_valid && attempt.submission_known, transport_now_us());
+            trace_send_budget(receipt);
+            retire = success || !receipt.completion_known || !receipt.accounting_valid || !attempt.retryable;
+            if (retire) trace_audio(packet, success ? "sent" : receipt.completion_known ? "send_failed" : "unknown");
+            else blocked.insert(packet.budget.get());
+          }
+        }
+        if (retire) {
+          pending_bytes -= packet.payload.size();
+          entry = pending.erase(entry);
+        }
+        else ++entry;
+      }
+    };
 
     // For unknown reasons, the RS parity matrix computed by our RS implementation
     // doesn't match the one Nvidia uses for audio data. I'm not exactly sure why,
@@ -3743,13 +4771,20 @@ namespace stream {
     // Audio traffic is sent on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
-    while (auto packet = packets->pop()) {
-      if (shutdown_event->peek()) {
-        break;
+    while (!shutdown_event->peek()) {
+      flush_audio();
+      auto packet = packets->pop(pending.empty() ? 250ms : 1ms);
+      if (!packet) {
+        if (!packets->running()) break;
+        continue;
       }
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
-      auto session = (session_t *) channel_data;
+      const auto context = std::static_pointer_cast<audio_send_context_t>(channel_data);
+      if (!context) continue;
+      std::unique_lock session_guard(context->mutex);
+      auto session = context->session;
+      if (!session || session->lifecycle.state() != session::state_e::RUNNING) continue;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
       auto sequenceNumber = session->audio.sequenceNumber;
@@ -3809,6 +4844,27 @@ namespace stream {
       session->audio.timestamp += session->config.audio.packetDuration;
 
       auto peer_address = session->audio.peer.address();
+      const auto submit_audio = [&](platf::send_info_t &info) {
+        if (!session->send_budget) {
+          platf::send(info);
+          return;
+        }
+        const auto size = info.header_size + info.payload_size;
+        queued_audio_t owned { {}, session->audio.peer, session->localAddress, session->send_budget,
+          session->transport_state, session->transport_state->active()->connection_epoch,
+          // Keep the native mapped route, but charge its actual IPv4 wire size.
+          size + (net::normalize_address(peer_address).is_v4() ? 28u : 48u), transport_now_us(), 0 };
+        owned.deadline_us = owned.queued_at_us + audio_send_deadline_us;
+        if (size > 65507 || pending.size() >= maximum_pending_packets || size > maximum_pending_bytes - pending_bytes) {
+          trace_audio(owned, "queue_full");
+          return;
+        }
+        owned.payload.resize(size);
+        if (info.header_size) std::memcpy(owned.payload.data(), info.header, info.header_size);
+        if (info.payload_size) std::memcpy(owned.payload.data() + info.header_size, info.payload, info.payload_size);
+        pending.push_back(std::move(owned));
+        pending_bytes += size;
+      };
       try {
         auto send_info = platf::send_info_t {
           (const char *) &audio_packet,
@@ -3820,7 +4876,7 @@ namespace stream {
           session->audio.peer.port(),
           session->localAddress,
         };
-        platf::send(send_info);
+        submit_audio(send_info);
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -3847,7 +4903,7 @@ namespace stream {
               session->audio.peer.port(),
               session->localAddress,
             };
-            platf::send(send_info);
+            submit_audio(send_info);
             BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
@@ -3921,7 +4977,8 @@ namespace stream {
 
     ctx.message_queue_queue = std::make_shared<message_queue_queue_t::element_type>(30);
 
-    ctx.video_thread = std::thread { videoBroadcastThread, std::ref(ctx.video_sock) };
+    ctx.video_inbox = std::make_shared<transport::owner_inbox_t>();
+    ctx.video_thread = std::thread { videoBroadcastThread, std::ref(ctx) };
     ctx.audio_thread = std::thread { audioBroadcastThread, std::ref(ctx.audio_sock) };
     ctx.control_thread = std::thread { controlBroadcastThread, &ctx.control_server };
 
@@ -3937,31 +4994,32 @@ namespace stream {
 
     broadcast_shutdown_event->raise(true);
 
-    auto video_packets = mail::man->queue<video::packet_t>(mail::video_packets);
     auto audio_packets = mail::man->queue<audio::packet_t>(mail::audio_packets);
 
     // Minimize delay stopping video/audio threads
-    video_packets->stop();
+    ctx.video_inbox->stop();
     audio_packets->stop();
 
     ctx.message_queue_queue->stop();
     ctx.io_context.stop();
     ctx.mic_io_context.stop();
 
-    ctx.video_sock.close();
     ctx.audio_sock.close();
 
     if (disable_mic_socket(ctx)) {
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
     }
 
-    video_packets.reset();
     audio_packets.reset();
 
     BOOST_LOG(debug) << "Waiting for main listening thread to end..."sv;
     ctx.recv_thread.join();
     BOOST_LOG(debug) << "Waiting for main video thread to end..."sv;
     ctx.video_thread.join();
+    // The socket remains valid until the sole sender has settled all receipts
+    // and acknowledged every flow. close() must never race its native syscall.
+    ctx.video_sock.close();
+    ctx.video_inbox.reset();
     BOOST_LOG(debug) << "Waiting for main audio thread to end..."sv;
     ctx.audio_thread.join();
     BOOST_LOG(debug) << "Waiting for main control thread to end..."sv;
@@ -4038,12 +5096,28 @@ namespace stream {
     });
 
     while_starting_do_nothing(session->lifecycle);
+    if (session->lifecycle.state() != session::state_e::RUNNING) return;
 
     auto ref = broadcast_shared.ref();
     auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
     if (error < 0) {
       return;
     }
+
+    if (session->lifecycle.state() != session::state_e::RUNNING) return;
+    const auto policy = session->transport_state->snapshot().accepted;
+    auto context = std::make_shared<video_send_context_t>(video_send_context_t {
+      session, session->video.peer, session->localAddress});
+    const auto flow = ref->video_inbox->add_flow(policy->connection_epoch, std::move(context), video_pacing_limits(policy));
+    if (!flow) return;
+    session->video.send_flow.store(flow, std::memory_order_release);
+    // stop() may have raced registration before send_flow was published. Seal
+    // the newly published gate in that case; join() waits after this producer.
+    if (session->lifecycle.state() != session::state_e::RUNNING) {
+      ref->video_inbox->close(flow);
+      return;
+    }
+    auto sink = std::make_shared<video_packet_sink_t>(ref->video_inbox, flow, session->video.idr_events);
 
     // Enable local prioritization and QoS tagging on video traffic if requested by the client
     auto address = session->video.peer.address();
@@ -4053,7 +5127,7 @@ namespace stream {
     BOOST_LOG(debug) << "Start capturing Video"sv;
     // Debug: Log the display_name before calling video::capture
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
-    video::capture(session->mail, session->config.monitor, session, session->video.dynamic_param_change_events);
+    video::capture(session->mail, session->config.monitor, session, std::move(sink), session->video.dynamic_param_change_events, session->transport_state);
   }
 
   void
@@ -4078,7 +5152,7 @@ namespace stream {
       session->audio.peer.port(), platf::qos_data_type_e::audio, session->config.audioQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Audio"sv;
-    audio::capture(session->mail, session->config.audio, session);
+    audio::capture(session->mail, session->config.audio, session->audio.send_context);
   }
 
   namespace session {
@@ -4171,12 +5245,18 @@ namespace stream {
       if (!session.lifecycle.request_stop(reason)) {
         return;
       }
+      if (session.send_budget) session.send_budget->stop(session.transport_state->active()->connection_epoch);
+
+      if (const auto flow = session.video.send_flow.load(std::memory_order_acquire)) {
+        session.broadcast_ref->video_inbox->close(flow);
+      }
 
       BOOST_LOG(info) << "Stopping streaming session "sv << session.launch_session_id
                       << " [client_uuid="sv << session.client_cert_uuid
                       << ", reason="sv << stop_reason_name(reason) << ']';
 
       perf::end_session(session.launch_session_id);
+      if (session.transport_state) session.transport_state->stop();
       session.shutdown_event->raise(true);
     }
 
@@ -4202,6 +5282,21 @@ namespace stream {
         session.videoThread.join();
         BOOST_LOG(debug) << "Waiting for audio to end..."sv;
         session.audioThread.join();
+        // Queued producer packets retain this gate, not the session. A sender
+        // already encrypting under the gate finishes before the raw pointer is
+        // retired; later packets are discarded without touching the session.
+        if (session.audio.send_context) {
+          std::lock_guard lock(session.audio.send_context->mutex);
+          session.audio.send_context->session = nullptr;
+        }
+        // Every producer has stopped. A raw session pointer can now be released
+        // only after the sender has discarded its owned buffers, committed any
+        // successful native prefix and retired its pacer/session mapping.
+        if (const auto flow = session.video.send_flow.exchange({}, std::memory_order_acq_rel)) {
+          session.broadcast_ref->video_inbox->close(flow);
+          BOOST_LOG(debug) << "Waiting for video send ownership to drain..."sv;
+          flow->wait_drained();
+        }
       }
       else {
         BOOST_LOG(debug) << "Control-only session: skipping video/audio thread join"sv;
@@ -4274,7 +5369,7 @@ namespace stream {
       perf::end_session(session.launch_session_id);
 
       // Clean up ABR state for this client
-      abr::cleanup(session.client_name);
+      abr::cleanup(session.legacy_abr_key);
 
       std::string client_ip = session.control.expected_peer_address;
       if (session.control.peer) {
@@ -4473,6 +5568,9 @@ namespace stream {
       session->client_name = launch_session.client_name;
       session->client_gamepad = launch_session.client_gamepad;
       session->client_cert_uuid = launch_session.client_cert_uuid;
+      session->legacy_scope_required = launch_session.legacy_scope_required;
+      session->legacy_abr_key = transport::legacy_scope_key(session->client_cert_uuid,
+        { launch_session.id, launch_session.transport_connection_epoch });
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;
       session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
@@ -4490,6 +5588,12 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
+      if (config.policy_status && (launch_session.control_only || !config.packet_feedback ||
+          config.controlProtocolType != 13 || !(config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) ||
+          !(config.encryptionFlagsEnabled & SS_ENC_VIDEO))) return {};
+      if (config.packet_control && (!experimental_packet_control_available() || !config.packet_feedback ||
+          config.controlProtocolType != 13 || !(config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) ||
+          !(config.encryptionFlagsEnabled & SS_ENC_VIDEO) || config.transport_budget_kbps <= 0)) return {};
 
       // Initialize current total bitrate (including FEC) from config
       // config.monitor.bitrate is the encoding bitrate (excluding FEC)
@@ -4503,6 +5607,52 @@ namespace stream {
       else {
         // If FEC percentage is 0 or > 80%, encoding bitrate equals total bitrate
         session->current_total_bitrate = encoding_bitrate;
+      }
+
+      if (!launch_session.control_only) {
+        transport::frame_policy_t policy;
+        policy.connection_epoch = launch_session.transport_connection_epoch;
+        if (!policy.connection_epoch) return {};
+        policy.budget.total_kbps = clamp_total_bitrate_to_host_cap(config.packet_control ?
+          config.transport_budget_kbps : session->current_total_bitrate.load(), session->client_name);
+        const auto fec = static_cast<unsigned>(std::clamp(fec_percentage, 0, 100));
+        policy.encoder_kbps = fec && fec <= 80 ?
+          static_cast<int>(static_cast<int64_t>(policy.budget.total_kbps) * (100 - fec) / 100) : policy.budget.total_kbps;
+        policy.fec_base = policy.fec_key = policy.fec_recovery = fec;
+        if (config.packet_control)
+          policy.automatic_control = transport::automatic_control_t { config::stream.experimental_packet_bitrate,
+            config::stream.experimental_packet_fec, policy.budget.total_kbps, 0 };
+        session->current_total_bitrate = policy.budget.total_kbps;
+        session->config.monitor.bitrate = policy.encoder_kbps;
+        if (policy.encoder_kbps <= 0 || policy.budget.total_kbps > 800000) return {};
+        session->transport_state = std::make_shared<transport::policy_state_t>(policy, config::video.max_bitrate,
+          config.packet_control, config::stream.experimental_transport_pacer);
+        if (config.packet_control) {
+          auto normalized = policy.budget;
+          const auto audio_kbps = (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels;
+          // Startup reserves are estimates, not proof of aggregate enforcement.
+          normalized.other_kbps = std::min(audio_kbps, normalized.total_kbps / 5) +
+                                  std::min(100, normalized.total_kbps / 10);
+          normalized.video_overhead_kbps = std::min(500, normalized.total_kbps / 10);
+          const auto prepared = session->transport_state->prepare_normalized_controller(
+            {policy.connection_epoch, policy.control_epoch, policy.control_source}, normalized, fec, fec, fec, policy.revision);
+          if (prepared.result != transport::policy_request_result_e::accepted) return {};
+        }
+        // The opt-in feedback path retains enough successful packets for a
+        // complete mature window at high video rates. Legacy allocation stays bounded at its old size.
+        session->video.sent_packets = std::make_unique<transport::wire_feedback_t>(policy.connection_epoch,
+          session->config.packet_feedback, session->config.packet_feedback ? 65536 : 16384);
+        if (config.packet_control && config::stream.experimental_transport_pacer) {
+          const auto accepted = session->transport_state->snapshot().accepted;
+          session->send_budget = std::make_shared<transport::session_send_budget_t>(accepted->connection_epoch,
+            session_send_limits(accepted), transport_now_us(), accepted->revision);
+          if (const auto initial = session->send_budget->try_snapshot()) trace_send_budget(*initial);
+        }
+        session->audio.send_context = std::make_shared<audio_send_context_t>();
+        session->audio.send_context->session = session.get();
+        launch_session.packet_feedback_epoch = session->config.packet_feedback ? policy.connection_epoch : 0;
+        launch_session.packet_control_negotiated = config.packet_control;
+        launch_session.policy_status_negotiated = config.policy_status;
       }
 
       session->control.connect_data = launch_session.control_connect_data;
@@ -4597,6 +5747,10 @@ namespace stream {
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         if (session_p->client_name == client_name &&
             session_p->lifecycle.state() == state_e::RUNNING) {
+          if (effective_param.type == video::dynamic_param_type_e::BITRATE ||
+              effective_param.type == video::dynamic_param_type_e::FEC_PERCENTAGE) {
+            return queue_transport_parameter(*session_p, effective_param);
+          }
           // Update session's current total bitrate if this is a bitrate change
           if (effective_param.type == video::dynamic_param_type_e::BITRATE && effective_param.valid) {
             effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
@@ -4616,6 +5770,110 @@ namespace stream {
 
       BOOST_LOG(warning) << "No active session found for client: " << client_name;
       return false;
+    }
+
+    bool
+    change_legacy_param_for_session(const std::string &client_cert_uuid, uint32_t session_id,
+      uint64_t connection_epoch, const video::dynamic_param_t &param) {
+      if (client_cert_uuid.empty() || !connection_epoch || !broadcast_shared.has_ref()) return false;
+      if (param.type != video::dynamic_param_type_e::BITRATE && param.type != video::dynamic_param_type_e::FEC_PERCENTAGE) return false;
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return false;
+      auto guard = broadcast_ref->control_server._sessions.lock();
+      for (const auto session : *broadcast_ref->control_server._sessions) {
+        if (session->client_cert_uuid == client_cert_uuid && session->launch_session_id == session_id &&
+            session->lifecycle.state() == state_e::RUNNING && session->transport_state &&
+            session->transport_state->active()->connection_epoch == connection_epoch) {
+          return queue_transport_parameter(*session, param);
+        }
+      }
+      return false;
+    }
+
+    std::shared_ptr<transport::policy_state_t>
+    get_transport_policy(const std::string &client_cert_uuid, uint32_t session_id, std::optional<uint64_t> connection_epoch) {
+      if (client_cert_uuid.empty() || !broadcast_shared.has_ref()) return {};
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return {};
+      auto guard = broadcast_ref->control_server._sessions.lock();
+      for (const auto session : *broadcast_ref->control_server._sessions) {
+        if (session->client_cert_uuid == client_cert_uuid && session->launch_session_id == session_id &&
+            session->lifecycle.state() == state_e::RUNNING && session->transport_state &&
+            (!connection_epoch || session->transport_state->active()->connection_epoch == *connection_epoch)) {
+          return session->transport_state;
+        }
+      }
+      return {};
+    }
+
+    std::optional<transport::network_statistics_t>
+    get_transport_network_statistics(const std::string &client_cert_uuid, uint32_t session_id,
+      uint64_t connection_epoch) {
+      if (client_cert_uuid.empty() || !connection_epoch || !broadcast_shared.has_ref()) return std::nullopt;
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return std::nullopt;
+      auto guard = broadcast_ref->control_server._sessions.lock();
+      for (const auto session : *broadcast_ref->control_server._sessions) {
+        if (session->client_cert_uuid == client_cert_uuid && session->launch_session_id == session_id &&
+            session->lifecycle.state() == state_e::RUNNING && session->transport_state &&
+            session->transport_state->active()->connection_epoch == connection_epoch && session->video.sent_packets) {
+          // Snapshot while the registered session still owns the ledger. No raw
+          // session/ledger pointer crosses the registry's lifetime boundary.
+          return session->video.sent_packets->network_statistics(transport_now_us());
+        }
+      }
+      return std::nullopt;
+    }
+
+    transport::policy_request_result_t
+    queue_transport_control(const std::string &client_cert_uuid, const transport::control_update_t &update) {
+      if (client_cert_uuid.empty() || !broadcast_shared.has_ref()) return { transport::policy_request_result_e::stopped, {} };
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return { transport::policy_request_result_e::stopped, {} };
+      auto guard = broadcast_ref->control_server._sessions.lock();
+      for (const auto session : *broadcast_ref->control_server._sessions) {
+        if (session->client_cert_uuid != client_cert_uuid || session->launch_session_id != update.session_id ||
+            session->lifecycle.state() != state_e::RUNNING || !session->transport_state ||
+            session->transport_state->active()->connection_epoch != update.connection_epoch) continue;
+        const auto result = session->transport_state->request_automatic_control(update.automatic_bitrate, update.automatic_fec,
+          update.maximum_total_kbps, update.expected_revision, update.control_epoch, update.request_id);
+        if (result.result == transport::policy_request_result_e::accepted) {
+          const auto accepted = session->transport_state->snapshot().accepted;
+          if (const auto flow = session->video.send_flow.load(std::memory_order_acquire))
+            broadcast_ref->video_inbox->update_limits(flow, video_pacing_limits(accepted));
+          session->current_total_bitrate = accepted->budget.total_kbps;
+          perf::update_session_bitrate(session->launch_session_id, accepted->budget.total_kbps);
+        }
+        return result;
+      }
+      return { transport::policy_request_result_e::stopped, {} };
+    }
+
+    transport::policy_request_result_t
+    queue_transport_policy(const std::string &client_cert_uuid, const transport::policy_update_t &update) {
+      if (client_cert_uuid.empty() || !broadcast_shared.has_ref()) return {transport::policy_request_result_e::stopped, {}};
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return {transport::policy_request_result_e::stopped, {}};
+      auto guard = broadcast_ref->control_server._sessions.lock();
+      for (const auto session : *broadcast_ref->control_server._sessions) {
+        if (session->client_cert_uuid != client_cert_uuid || session->launch_session_id != update.session_id ||
+            session->lifecycle.state() != state_e::RUNNING || !session->transport_state ||
+            session->transport_state->active()->connection_epoch != update.connection_epoch) continue;
+        const auto result = session->transport_state->request_normalized(update.budget,
+          update.fec_base, update.fec_key, update.fec_recovery, update.expected_revision, update.control_epoch, update.request_id);
+        if (result.result == transport::policy_request_result_e::accepted) {
+          const auto accepted = session->transport_state->snapshot().accepted;
+          if (const auto flow = session->video.send_flow.load(std::memory_order_acquire)) {
+            // Shrinking transport credit is independent of the encoder's later
+            // SDK apply receipt. Existing debt and packet ownership survive it.
+            broadcast_ref->video_inbox->update_limits(flow, video_pacing_limits(accepted));
+          }
+          session->current_total_bitrate = accepted->budget.total_kbps;
+          perf::update_session_bitrate(session->launch_session_id, accepted->budget.total_kbps);
+        }
+        return result;
+      }
+      return {transport::policy_request_result_e::stopped, {}};
     }
 
     std::vector<session_info_t>
@@ -4649,6 +5907,8 @@ namespace stream {
           info.client_name = session_p->client_name;
           info.client_uuid = session_p->client_cert_uuid;
           info.session_id = session_p->launch_session_id;
+          info.legacy_scope_required = session_p->legacy_scope_required;
+          if (session_p->transport_state) info.connection_epoch = session_p->transport_state->active()->connection_epoch;
 
           const auto lifecycle = session_p->lifecycle.snapshot();
           info.stop_reason = stop_reason_name(lifecycle.stop_reason);
