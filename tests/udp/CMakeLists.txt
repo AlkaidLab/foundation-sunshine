@@ -12,9 +12,9 @@ if(NOT WIN32)
 endif()
 
 # Source-tree Boost::headers only exports libs/headers/include. The production
-# declarations used here require Asio and Log and their transitive headers.
-if(TARGET Boost::asio AND TARGET Boost::log)
-    set(UDP_BOOST_HEADER_TARGET Boost::asio Boost::log)
+# declarations used here require Asio, Log, Format and their transitive headers.
+if(TARGET Boost::asio AND TARGET Boost::log AND TARGET Boost::format)
+    set(UDP_BOOST_HEADER_TARGET Boost::asio Boost::log Boost::format)
 elseif(TARGET Boost::headers)
     set(UDP_BOOST_HEADER_TARGET Boost::headers)
 elseif(TARGET Boost::boost)
