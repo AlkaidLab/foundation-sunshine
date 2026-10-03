@@ -13,6 +13,12 @@ set(CPACK_PACKAGE_ICON ${PROJECT_SOURCE_DIR}/sunshine.png)
 set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_STRIP_FILES YES)
 
+if(SUNSHINE_EXPERIMENTAL_GOOGCC AND TARGET sunshine_googcc_build_interface)
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/googcc/licenses/"
+            DESTINATION "${SUNSHINE_ASSETS_DIR}/third_party_licenses/googcc"
+            COMPONENT application)
+endif()
+
 # install common assets
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}"

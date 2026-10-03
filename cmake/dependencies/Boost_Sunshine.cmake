@@ -37,6 +37,11 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
     cmake_policy(SET CMP0167 NEW)  # Get BoostConfig.cmake from upstream
 endif()
 find_package(Boost CONFIG ${BOOST_VERSION} EXACT COMPONENTS ${BOOST_COMPONENTS})
+if(Boost_FOUND AND NOT TARGET Boost::headers AND NOT TARGET Boost::boost)
+    # A stale FetchContent redirect can report a package without restoring its
+    # targets on a subsequent configure. Re-enter the pinned source path.
+    set(Boost_FOUND FALSE)
+endif()
 if(NOT Boost_FOUND)
     message(STATUS "Boost v${BOOST_VERSION} package not found in the system. Falling back to FetchContent.")
     include(FetchContent)
@@ -111,6 +116,14 @@ if(NOT Boost_FOUND)
     foreach(component ${BOOST_COMPONENTS})
         list(APPEND Boost_LIBRARIES "Boost::${component}")
     endforeach()
+endif()
+
+# Modern source builds export Boost::headers, while Simple-Web-Server still
+# consumes the historical Boost::boost interface. Keep one header implementation.
+if(TARGET Boost::headers AND NOT TARGET Boost::boost)
+    add_library(sunshine_boost_headers INTERFACE)
+    target_link_libraries(sunshine_boost_headers INTERFACE Boost::headers)
+    add_library(Boost::boost ALIAS sunshine_boost_headers)
 endif()
 
 message(STATUS "Boost include dirs: ${Boost_INCLUDE_DIRS}")

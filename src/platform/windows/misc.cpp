@@ -48,6 +48,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
+#include "src/platform/udp_send_impl.h"
 #include "src/utility.h"
 #include <iterator>
 
@@ -1919,10 +1920,23 @@ namespace platf {
     });
   }
 
+  udp_send_attempt_t
+  try_send(send_info_t &send_info) {
+    udp_send_detail::native_calls_t calls;
+    return udp_send_detail::try_send_impl(send_info, calls);
+  }
+
+  udp_send_attempt_t
+  try_send_batch(batched_send_info_t &send_info) {
+    udp_send_detail::native_calls_t calls;
+    return udp_send_detail::try_send_batch_impl(send_info, calls);
+  }
+
   // Use UDP segmentation offload if it is supported by the OS. If the NIC is capable, this will use
   // hardware acceleration to reduce CPU usage. Support for USO was introduced in Windows 10 20H1.
   bool
   send_batch(batched_send_info_t &send_info) {
+    send_info.submitted_blocks = 0;
     ensure_address_change_watcher();
 
     WSAMSG msg;
@@ -2012,8 +2026,12 @@ namespace platf {
     // We intentionally do NOT treat a batch failure as a source-pinning failure, because an
     // unsupported-USO error is indistinguishable from an invalid-source error here; the
     // self-heal logic lives in the unbatched send() fallback path instead.
-    DWORD bytes_sent;
-    return WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
+    DWORD bytes_sent = 0;
+    if (WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) == SOCKET_ERROR) return false;
+    const auto block_size = send_info.header_size + send_info.payload_size;
+    if (!block_size || bytes_sent % block_size) return false;
+    send_info.submitted_blocks = std::min<size_t>(send_info.block_count, bytes_sent / block_size);
+    return send_info.submitted_blocks == send_info.block_count;
   }
 
   bool
@@ -2394,8 +2412,15 @@ namespace platf {
 
       LARGE_INTEGER due_time;
       due_time.QuadPart = duration.count() / -100;
-      SetWaitableTimer(timer, &due_time, 0, nullptr, nullptr, false);
-      WaitForSingleObject(timer, INFINITE);
+      if (!SetWaitableTimer(timer, &due_time, 0, nullptr, nullptr, false)) {
+        BOOST_LOG(error) << "Unable to arm high_precision_timer: " << GetLastError();
+        return;
+      }
+      // An arming/wait failure must not turn a bounded capture/probe sleep
+      // into an uninterruptible infinite wait. Keep scheduler slack bounded.
+      const auto timeout_ms = static_cast<DWORD>((duration.count() + 999999) / 1000000 + 50);
+      if (WaitForSingleObject(timer, timeout_ms) != WAIT_OBJECT_0)
+        BOOST_LOG(error) << "Unable to complete high_precision_timer wait";
     }
 
     operator bool() override {

@@ -35,16 +35,9 @@ using json = nlohmann::json;
 
 namespace abr {
 
-  // NOTE: sessions are keyed by client_name (the device display name), which is the
-  // identifier that bridges the stateless HTTPS REST endpoints (abrFeedback/
-  // configureAbr resolve the client by source IP) and the streaming layer
-  // (stream::session::change_dynamic_param_for_client also routes by client_name).
-  // Limitation: two concurrently-running sessions that share the same device name
-  // would collide on a single entry and cross-contaminate state. This is acceptable
-  // because single-session deployments are immune and normally-paired devices have
-  // distinct names; supporting multi-session-same-name would require a coordinated
-  // rekey to a session-level id across resolve_client, this map, and
-  // change_dynamic_param_for_client.
+  // Production callers key entries by paired owner, session ID and connection
+  // epoch. Display names and source IPs cannot identify asynchronous work across
+  // reconnection. The string argument is an opaque connection key.
   //
   // The LLM worker runs on a detached thread and may still be in flight (its HTTP
   // call has a 300s timeout) when the process begins shutting down. To avoid a

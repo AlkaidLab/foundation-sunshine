@@ -77,7 +77,7 @@ namespace audio {
     // packets->stop() and exit); true otherwise (including on EAGAIN/EOF).
     template <typename Packets>
     bool drain_packets(AVCodecContext *ctx, AVPacket *pkt, Packets &packets,
-                       void *channel_data, const char *codec_name) {
+                       std::shared_ptr<void> channel_data, const char *codec_name) {
       while (true) {
         int err = avcodec_receive_packet(ctx, pkt);
         if (err == AVERROR(EAGAIN) || err == AVERROR_EOF) {
@@ -113,7 +113,7 @@ namespace audio {
   static bool encodeThreadFFmpeg(sample_queue_t samples,
                                  const opus_stream_config_t &stream,
                                  const config_t &config,
-                                 void *channel_data) {
+                                 std::shared_ptr<void> channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
 
     enum AVCodecID codec_id = (config.codec == CODEC_EAC3) ? AV_CODEC_ID_EAC3 : AV_CODEC_ID_AC3;
@@ -344,7 +344,7 @@ namespace audio {
   static void encodePcmThread(sample_queue_t samples,
                               const opus_stream_config_t &stream,
                               const config_t &config,
-                              void *channel_data) {
+                              std::shared_ptr<void> channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
     const int frame_samples = config.packetDuration * stream.sampleRate / 1000;
     const int channels = stream.channelCount;
@@ -375,7 +375,7 @@ namespace audio {
   static void encodeOpusThread(sample_queue_t samples,
                                const opus_stream_config_t &stream,
                                const config_t &config,
-                               void *channel_data) {
+                               std::shared_ptr<void> channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
 
     opus_t opus {opus_multistream_encoder_create(
@@ -427,7 +427,7 @@ namespace audio {
   // Each per-codec function owns its own packet-queue handle, init logging
   // and error path, so adding a new codec is just a new case below + a new
   // worst-case entry in stream.cpp's audio_payload table.
-  void encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
+  void encodeThread(sample_queue_t samples, config_t config, std::shared_ptr<void> channel_data) {
     platf::adjust_thread_priority(platf::thread_priority_e::high);
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
     if (config.codec == CODEC_OPUS && config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
@@ -459,7 +459,7 @@ namespace audio {
     }
   }
 
-  void capture(safe::mail_t mail, config_t config, void *channel_data) {
+  void capture(safe::mail_t mail, config_t config, std::shared_ptr<void> channel_data) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     if (!config::audio.stream) {
       BOOST_LOG(info) << "Audio streaming is disabled in configuration";

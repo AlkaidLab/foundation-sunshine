@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,10 +17,15 @@
 
 #include "audio.h"
 #include "crypto.h"
+#include "transport/transport_feedback_wire.h"
 #include "video.h"
 
 namespace rtsp_stream {
   struct launch_session_t;
+}
+namespace transport {
+  struct policy_update_t;
+  struct control_update_t;
 }
 
 namespace stream {
@@ -52,9 +58,16 @@ namespace stream {
     int videoQosType;
 
     uint32_t encryptionFlagsEnabled;
+    bool packet_feedback = false;
+    bool packet_control = false;
+    bool policy_status = false;
+    int transport_budget_kbps = 0;
 
     std::optional<int> gcmap;
   };
+
+  // Default-off isolated controller capability, independent of measurement.
+  bool experimental_packet_control_available();
 
   namespace session {
     enum class stop_reason_e : int {
@@ -135,6 +148,8 @@ namespace stream {
     std::string state;
     std::string stop_reason;
     uint32_t session_id;
+    uint64_t connection_epoch { 0 };
+    bool legacy_scope_required { false };
     std::int64_t uptime_ms;
     std::int64_t control_idle_ms;
     std::int64_t video_idle_ms;
@@ -195,6 +210,24 @@ namespace stream {
      */
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param);
+    // Used by authenticated compatibility endpoints. Selection and submission
+    // remain under the session registry lock; never route again by display name.
+    bool
+    change_legacy_param_for_session(const std::string &client_cert_uuid, uint32_t session_id,
+      uint64_t connection_epoch, const video::dynamic_param_t &param);
+
+    // The caller supplies a TLS-authenticated paired identity. A returned
+    // state owns its lifetime and is stopped with the session.
+    std::shared_ptr<transport::policy_state_t>
+    get_transport_policy(const std::string &client_cert_uuid, uint32_t session_id,
+      std::optional<uint64_t> connection_epoch = std::nullopt);
+    std::optional<transport::network_statistics_t>
+    get_transport_network_statistics(const std::string &client_cert_uuid, uint32_t session_id,
+      uint64_t connection_epoch);
+    transport::policy_request_result_t
+    queue_transport_policy(const std::string &client_cert_uuid, const transport::policy_update_t &update);
+    transport::policy_request_result_t
+    queue_transport_control(const std::string &client_cert_uuid, const transport::control_update_t &update);
 
     /**
      * @brief Get information about all active sessions.

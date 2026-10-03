@@ -623,6 +623,7 @@ namespace video {
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
       frame_timestamps = std::move(other.frame_timestamps);
+      frame_deadlines = std::move(other.frame_deadlines);
       dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
       dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
       sps = std::move(other.sps);
@@ -686,6 +687,12 @@ namespace video {
       BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
                       << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
                       << config::stream.fec_percentage << "%)";
+    }
+
+    bitrate_result_e apply_encoder_bitrate(int) override {
+      // Assigning AVCodecContext fields is not a backend application receipt.
+      // The owner creates and opens a new codec with the requested net target.
+      return bitrate_result_e::rebuild;
     }
 
     void
@@ -877,6 +884,11 @@ namespace video {
       }
     }
 
+    bitrate_result_e apply_encoder_bitrate(int encoder_kbps) override {
+      return device && device->nvenc && device->nvenc->set_bitrate(encoder_kbps) ?
+        bitrate_result_e::applied : bitrate_result_e::failed;
+    }
+
     void
     set_dynamic_param(const dynamic_param_t &param) override {
       if (!device || !device->nvenc) return;
@@ -1047,6 +1059,11 @@ namespace video {
       }
     }
 
+    bitrate_result_e apply_encoder_bitrate(int encoder_kbps) override {
+      return device && device->amf && device->amf->set_bitrate(encoder_kbps) ?
+        bitrate_result_e::applied : bitrate_result_e::failed;
+    }
+
     void
     set_dynamic_param(const dynamic_param_t &param) override {
       if (!device || !device->amf) return;
@@ -1119,7 +1136,7 @@ namespace video {
   struct sync_session_ctx_t {
     safe::signal_t *join_event;
     safe::mail_raw_t::event_t<bool> shutdown_event;
-    safe::mail_raw_t::queue_t<packet_t> packets;
+    packet_sink_ref_t sink;
     safe::mail_raw_t::event_t<bool> idr_events;
     safe::mail_raw_t::event_t<hdr_info_t> hdr_events;
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_events;
@@ -1127,6 +1144,8 @@ namespace video {
     config_t config;
     int frame_nr;
     void *channel_data;
+    safe::mail_raw_t::event_t<dynamic_param_t> dynamic_param_events;
+    std::shared_ptr<transport::policy_state_t> transport_state;
   };
 
   struct sync_session_t {
@@ -2309,7 +2328,7 @@ namespace video {
   encode_avcodec(
     int64_t frame_nr,
     avcodec_encode_session_t &session,
-    safe::mail_raw_t::queue_t<packet_t> &packets,
+    const packet_sink_ref_t &sink,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
@@ -2398,6 +2417,7 @@ namespace video {
       if (av_packet && av_packet->pts >= 0) {
         const auto encoded_frame_index = static_cast<uint64_t>(av_packet->pts);
         packet->frame_timestamp = session.frame_timestamps.lookup(encoded_frame_index);
+        packet->deadline_origin = session.frame_deadlines.find(encoded_frame_index);
         auto encoded_trace = session.frame_timestamps.lookup_trace(encoded_frame_index);
         if (encoded_trace) {
           encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2405,9 +2425,18 @@ namespace video {
         }
       }
 
-      packet->replacements = &session.replacements;
+      packet->owned_replacements = session.replacements;
+      packet->replacements = &packet->owned_replacements;
       packet->channel_data = channel_data;
-      packets->raise(std::move(packet));
+      if (session.transport_state) {
+        packet->transport_policy = session.frame_policies.find(static_cast<uint64_t>(packet->frame_index()));
+        if (!packet->transport_policy) {
+          BOOST_LOG(error) << "Missing submission policy for AVCodec output " << packet->frame_index();
+          return -1;
+        }
+      }
+      // A rejected output is an explicit sink drop, not a codec failure.
+      sink->submit(std::move(packet));
     }
 
     return 0;
@@ -2417,7 +2446,7 @@ namespace video {
   encode_nvenc(
     int64_t frame_nr,
     nvenc_encode_session_t &session,
-    safe::mail_raw_t::queue_t<packet_t> &packets,
+    const packet_sink_ref_t &sink,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
@@ -2451,13 +2480,18 @@ namespace video {
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
+    if (session.transport_state) {
+      packet->transport_policy = session.frame_policies.find(encoded_frame.frame_index);
+      if (!packet->transport_policy) return -1;
+    }
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->deadline_origin = session.frame_deadlines.find(encoded_frame.frame_index);
     auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
     if (encoded_trace) {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
       packet->pipeline_trace = std::move(encoded_trace);
     }
-    packets->raise(std::move(packet));
+    sink->submit(std::move(packet));
 
     return 0;
   }
@@ -2466,7 +2500,7 @@ namespace video {
   encode_amf(
     int64_t frame_nr,
     amf_encode_session_t &session,
-    safe::mail_raw_t::queue_t<packet_t> &packets,
+    const packet_sink_ref_t &sink,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
@@ -2510,13 +2544,18 @@ namespace video {
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
+    if (session.transport_state) {
+      packet->transport_policy = session.frame_policies.find(encoded_frame.frame_index);
+      if (!packet->transport_policy) return -1;
+    }
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->deadline_origin = session.frame_deadlines.find(encoded_frame.frame_index);
     auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
     if (encoded_trace) {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
       packet->pipeline_trace = std::move(encoded_trace);
     }
-    packets->raise(std::move(packet));
+    sink->submit(std::move(packet));
 
     return 0;
   }
@@ -2525,18 +2564,25 @@ namespace video {
   encode(
     int64_t frame_nr,
     encode_session_t &session,
-    safe::mail_raw_t::queue_t<packet_t> &packets,
+    const packet_sink_ref_t &sink,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+    if (!sink || frame_nr < 0) return -1;
+    // Bind at input submission even with tracing disabled or a duplicate image.
+    // Buffered/RFI/IDR outputs all recover the origin by their own frame index.
+    session.frame_deadlines.bind(static_cast<uint64_t>(frame_nr), frame_timestamp);
+    if (session.transport_state) {
+      session.frame_policies.bind(static_cast<uint64_t>(frame_nr), session.transport_state->active());
+    }
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
-      return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+      return encode_avcodec(frame_nr, *avcodec_session, sink, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else if (auto nvenc_session = dynamic_cast<nvenc_encode_session_t *>(&session)) {
-      return encode_nvenc(frame_nr, *nvenc_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+      return encode_nvenc(frame_nr, *nvenc_session, sink, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else if (auto amf_session = dynamic_cast<amf_encode_session_t *>(&session)) {
-      return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+      return encode_amf(frame_nr, *amf_session, sink, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
 
     return -1;
@@ -3235,9 +3281,9 @@ namespace video {
   }
 
   std::unique_ptr<encode_session_t>
-  make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+  make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false, bool exact_bitrate = false) {
     auto effective_config = config;
-    effective_config.bitrate = cap_initial_encoder_bitrate(
+    effective_config.bitrate = exact_bitrate ? config.bitrate : cap_initial_encoder_bitrate(
       config.bitrate,
       config::video.max_bitrate,
       config::stream.fec_percentage
@@ -3320,14 +3366,15 @@ namespace video {
     config_t &config,
     int width,
     int height,
-    std::function<std::unique_ptr<platf::encode_device_t>()> make_encode_device_func) {
+    std::function<std::unique_ptr<platf::encode_device_t>()> make_encode_device_func,
+    bool exact_bitrate = false) {
     // First try with original framerate
     auto encode_device = make_encode_device_func();
     if (!encode_device) {
       return nullptr;
     }
 
-    auto session = make_encode_session(disp, encoder, config, width, height, std::move(encode_device));
+    auto session = make_encode_session(disp, encoder, config, width, height, std::move(encode_device), false, exact_bitrate);
     if (session) {
       return session;
     }
@@ -3352,7 +3399,7 @@ namespace video {
         return nullptr;
       }
 
-      session = make_encode_session(disp, encoder, config, width, height, std::move(encode_device));
+      session = make_encode_session(disp, encoder, config, width, height, std::move(encode_device), false, exact_bitrate);
       if (session) {
         BOOST_LOG(info) << "Successfully initialized encoder with NTSC framerate "
                         << (double) ntsc_num / ntsc_den << "fps";
@@ -3368,6 +3415,51 @@ namespace video {
     return nullptr;
   }
 
+  std::unique_ptr<platf::encode_device_t>
+  make_encode_device(platf::display_t &disp, const encoder_t &encoder, const config_t &config);
+
+  bool
+  apply_transport_policy(std::unique_ptr<encode_session_t> &session,
+      const std::shared_ptr<transport::policy_state_t> &state, platf::display_t &display,
+      const encoder_t &encoder, config_t &config, const std::shared_ptr<platf::img_t> &image) {
+    if (!state) return true;
+    const auto pending = state->acquire_pending();
+    if (!pending) return !state->stopped();
+    auto result = encode_session_t::bitrate_result_e::applied;
+    if (pending->encoder_kbps != state->active()->encoder_kbps) {
+      result = session->apply_encoder_bitrate(pending->encoder_kbps);
+    }
+    if (result == encode_session_t::bitrate_result_e::rebuild) {
+      auto next_config = config;
+      next_config.bitrate = pending->encoder_kbps;
+      // Packets own their NAL replacements and frame policies. Old buffered
+      // codec output is discarded; the new reference chain starts with an IDR.
+      session.reset();
+      auto device = make_encode_device(display, encoder, next_config);
+      if (device && image) {
+        session = make_encode_session(&display, encoder, next_config, image->width, image->height,
+          std::move(device), false, true);
+      }
+      if (!session || session->convert(*image)) {
+        state->acknowledge_encoder(pending, transport::policy_failure_e::backend_failure);
+        return false;
+      }
+      session->transport_state = state;
+      session->request_idr_frame();
+    }
+    else if (result == encode_session_t::bitrate_result_e::failed) {
+      state->acknowledge_encoder(pending, transport::policy_failure_e::backend_failure);
+      // A partial SDK update cannot encode under the old confirmed policy.
+      // The outer owner recreates the encoder from its last confirmed target.
+      return false;
+    }
+    if (!state->acknowledge_encoder(pending, transport::policy_failure_e::none)) return false;
+    config.bitrate = pending->encoder_kbps;
+    BOOST_LOG(info) << "Transport policy encoder applied: revision=" << pending->revision
+                    << ", encoder=" << pending->encoder_kbps << " Kbps, FEC=" << pending->fec_base << "%";
+    return true;
+  }
+
   void
   encode_run(
     int &frame_nr,  // Store progress of the frame number
@@ -3379,11 +3471,19 @@ namespace video {
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
-    auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
+    const packet_sink_ref_t &sink,
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    const std::shared_ptr<transport::policy_state_t> &transport_state) {
+    const auto initial_policy = transport_state ? transport_state->begin_encoder_initialization() : nullptr;
+    if (transport_state && !initial_policy) return;
+    if (initial_policy) config.bitrate = initial_policy->encoder_kbps;
+    auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height,
+      std::move(encode_device), false, !!transport_state);
     if (!session) {
+      if (initial_policy) transport_state->acknowledge_encoder(initial_policy, transport::policy_failure_e::backend_failure);
       return;
     }
+    session->transport_state = transport_state;
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -3432,7 +3532,6 @@ namespace video {
     }
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
-    auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto idr_events = mail->event<bool>(mail::idr);
     auto invalidate_ref_frames_events = mail->event<std::pair<int64_t, int64_t>>(mail::invalidate_ref_frames);
     auto dynamic_param_events_ptr = dynamic_param_events.value_or(mail::man->event<dynamic_param_t>(mail::dynamic_param_change));
@@ -3472,16 +3571,13 @@ namespace video {
       return {};
     };
 
-    {
-      // Load a dummy image into the AVFrame to ensure we have something to encode
-      // even if we timeout waiting on the first frame. This is a relatively large
-      // allocation which can be freed immediately after convert(), so we do this
-      // in a separate scope.
-      auto dummy_img = disp->alloc_img();
-      if (!dummy_img || disp->dummy_img(dummy_img.get()) || session->convert(*dummy_img)) {
-        return;
-      }
+    // Keep one owned image for a codec rebuild on a static desktop.
+    auto latest_image = disp->alloc_img();
+    if (!latest_image || disp->dummy_img(latest_image.get()) || session->convert(*latest_image)) {
+      if (initial_policy) transport_state->acknowledge_encoder(initial_policy, transport::policy_failure_e::backend_failure);
+      return;
     }
+    if (initial_policy && !transport_state->acknowledge_encoder(initial_policy, transport::policy_failure_e::none)) return;
 
     while (true) {
       // Break out of the encoding loop if any of the following are true:
@@ -3537,6 +3633,7 @@ namespace video {
       if (!requested_idr_frame || images->peek()) {
         if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           auto &img = frame->image;
+          latest_image = img;
           if (!frame->is_replay) {
             frame_timestamp = img->frame_timestamp;
             pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
@@ -3580,7 +3677,8 @@ namespace video {
         // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
+      if (!apply_transport_policy(session, transport_state, *disp, encoder, config, latest_image)) break;
+      if (encode(frame_nr++, *session, sink, channel_data, frame_timestamp, std::move(pipeline_trace))) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
@@ -3711,6 +3809,12 @@ namespace video {
     sync_session_t encode_session;
 
     encode_session.ctx = &ctx;
+    const auto initial_policy = ctx.transport_state ? ctx.transport_state->begin_encoder_initialization() : nullptr;
+    if (ctx.transport_state && !initial_policy) return std::nullopt;
+    if (initial_policy) ctx.config.bitrate = initial_policy->encoder_kbps;
+    auto initialization_guard = util::fail_guard([&] {
+      if (initial_policy) ctx.transport_state->acknowledge_encoder(initial_policy, transport::policy_failure_e::backend_failure);
+    });
 
     // absolute mouse coordinates require that the dimensions of the screen are known
     ctx.touch_port_events->raise(make_port(disp, ctx.config));
@@ -3722,7 +3826,7 @@ namespace video {
     };
 
     auto session = make_encode_session_with_ntsc_fallback(
-      disp, encoder, ctx.config, img.width, img.height, make_encode_device_func);
+      disp, encoder, ctx.config, img.width, img.height, make_encode_device_func, !!ctx.transport_state);
     if (!session) {
       return std::nullopt;
     }
@@ -3752,6 +3856,9 @@ namespace video {
     }
 
     encode_session.session = std::move(session);
+    encode_session.session->transport_state = ctx.transport_state;
+    if (initial_policy && !ctx.transport_state->acknowledge_encoder(initial_policy, transport::policy_failure_e::none)) return std::nullopt;
+    initialization_guard.disable();
 
     return encode_session;
   }
@@ -3849,9 +3956,11 @@ namespace video {
       synced_sessions.emplace_back(std::move(*synced_session));
     }
 
+    auto latest_image = img;
     auto ec = platf::capture_e::ok;
     while (encode_session_ctx_queue.running()) {
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
+        if (img) latest_image = img;
         while (encode_session_ctx_queue.peek()) {
           auto encode_session_ctx = encode_session_ctx_queue.pop();
           if (!encode_session_ctx) {
@@ -3896,9 +4005,15 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+          while (ctx->dynamic_param_events->peek()) {
+            if (auto param = ctx->dynamic_param_events->pop(0ms)) pos->session->set_dynamic_param(*param);
+          }
+
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
           std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
-          if (img) {
+          // Preserve duplicate-frame RTP semantics; a fresh capture timestamp
+          // is extracted independently of optional performance tracing.
+          if (frame_captured && img) {
             frame_timestamp = img->frame_timestamp;
           }
 
@@ -3921,7 +4036,11 @@ namespace video {
             pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
+          if (!apply_transport_policy(pos->session, ctx->transport_state, *disp, encoder, ctx->config, latest_image)) {
+            ec = platf::capture_e::reinit;
+            return false;
+          }
+          if (encode(ctx->frame_nr++, *pos->session, ctx->sink, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
@@ -3996,7 +4115,9 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    const packet_sink_ref_t &sink,
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    const std::shared_ptr<transport::policy_state_t> &transport_state) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<captured_frame_event_t::element_type>();
@@ -4175,7 +4296,7 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_param_events);
+        channel_data, sink, dynamic_param_events, transport_state);
     }
   }
 
@@ -4184,12 +4305,19 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    packet_sink_ref_t sink,
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    std::shared_ptr<transport::policy_state_t> transport_state) {
+    if (!sink) {
+      BOOST_LOG(error) << "Video capture requires a packet sink";
+      mail->event<bool>(mail::shutdown)->raise(true);
+      return;
+    }
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events);
+      capture_async(std::move(mail), config, channel_data, sink, dynamic_param_events, transport_state);
     }
     else {
       safe::signal_t join_event;
@@ -4197,13 +4325,15 @@ namespace video {
       ref->encode_session_ctx_queue.raise(sync_session_ctx_t {
         &join_event,
         mail->event<bool>(mail::shutdown),
-        mail::man->queue<packet_t>(mail::video_packets),
+        std::move(sink),
         std::move(idr_events),
         mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
         config,
         1,
         channel_data,
+        dynamic_param_events.value_or(mail->event<dynamic_param_t>(mail::dynamic_param_change)),
+        std::move(transport_state),
       });
 
       // Wait for join signal
@@ -4213,6 +4343,18 @@ namespace video {
 
   enum validate_flag_e {
     VUI_PARAMS = 0x01,  ///< VUI parameters
+  };
+
+  // Probe output belongs to this one validation call. It never competes with
+  // a live session's sink, and owns only the first complete encoded packet.
+  class first_packet_probe_sink_t final: public packet_sink_t {
+  public:
+    bool submit(packet_t packet) override {
+      if (!packet || first_packet) return false;
+      first_packet = std::move(packet);
+      return true;
+    }
+    packet_t first_packet;
   };
 
   int
@@ -4237,10 +4379,11 @@ namespace video {
 
     session->request_idr_frame();
 
-    auto packets = mail::man->queue<packet_t>(mail::video_packets);
+    auto probe_sink = std::make_shared<first_packet_probe_sink_t>();
+    int64_t probe_frame_nr = 1;
     auto encode_start = std::chrono::steady_clock::now();
-    while (!packets->peek()) {
-      if (encode(1, *session, packets, nullptr, {}, {})) {
+    while (!probe_sink->first_packet) {
+      if (encode(probe_frame_nr++, *session, probe_sink, nullptr, {}, {})) {
         return -1;
       }
       // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
@@ -4250,7 +4393,7 @@ namespace video {
       }
     }
 
-    auto packet = packets->pop();
+    auto packet = std::move(probe_sink->first_packet);
     if (!packet->is_idr()) {
       BOOST_LOG(error) << "First packet type is not an IDR frame"sv;
 

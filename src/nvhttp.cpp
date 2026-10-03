@@ -255,6 +255,14 @@ namespace nvhttp {
     auto launch_session = std::make_shared<rtsp_stream::launch_session_t>();
 
     launch_session->id = ++session_id_counter;
+    // Publish the same connection identity during HTTPS and RTSP negotiation.
+    // A fresh launch/resume must not inherit an earlier connection's epoch.
+    launch_session->legacy_scope_required = get_arg(args, "transportScope", "0") == "1";
+    do {
+      const auto random_epoch = crypto::rand(sizeof(launch_session->transport_connection_epoch));
+      if (random_epoch.size() != sizeof(launch_session->transport_connection_epoch)) return {};
+      std::memcpy(&launch_session->transport_connection_epoch, random_epoch.data(), random_epoch.size());
+    } while (!launch_session->transport_connection_epoch);
 
     auto rikey = util::from_hex_vec(get_arg(args, "rikey"), true);
     std::copy(rikey.cbegin(), rikey.cend(), std::back_inserter(launch_session->gcm_key));
@@ -788,6 +796,11 @@ namespace nvhttp {
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.gamesession", 1);
+    tree.put("root.transportSessionId", std::to_string(launch_session->id));
+    if (launch_session->legacy_scope_required) {
+      tree.put("root.transportScope", 1);
+      tree.put("root.transportConnectionEpoch", std::to_string(launch_session->transport_connection_epoch));
+    }
 
     try {
       std::map<std::string, std::string> extra_data {
@@ -947,6 +960,11 @@ namespace nvhttp {
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.resume", 1);
+    tree.put("root.transportSessionId", std::to_string(launch_session->id));
+    if (launch_session->legacy_scope_required) {
+      tree.put("root.transportScope", 1);
+      tree.put("root.transportConnectionEpoch", std::to_string(launch_session->transport_connection_epoch));
+    }
     need_to_restore_display_state = false;
 
     try {
@@ -1238,6 +1256,9 @@ namespace nvhttp {
     https_server.resource["^/supercmd$"]["GET"] = apps::exec_super_cmd;
     https_server.resource["^/bitrate$"]["GET"] = dynamic_params::change_bitrate;
     https_server.resource["^/stream/settings$"]["GET"] = dynamic_params::change;
+    https_server.resource["^/api/v2/transport-policy$"]["GET"] = dynamic_params::transport_policy;
+    https_server.resource["^/api/v2/transport-policy$"]["POST"] = dynamic_params::transport_policy;
+    https_server.resource["^/api/v2/transport-control$"]["POST"] = dynamic_params::transport_control;
     https_server.resource["^/sessions$"]["GET"] = sessions::get;
 
     // Clipboard blob routes are mirrored onto nvhttp so paired Moonlight

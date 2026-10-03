@@ -1,6 +1,11 @@
 # load common dependencies
 # this file will also load platform specific dependencies
 
+if(SUNSHINE_EXPERIMENTAL_GOOGCC)
+    include("${CMAKE_MODULE_PATH}/dependencies/googcc.cmake")
+    sunshine_add_pinned_googcc(FALSE)
+endif()
+
 # boost, this should be before Simple-Web-Server as it also depends on boost
 include(dependencies/Boost_Sunshine)
 
