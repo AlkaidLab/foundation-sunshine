@@ -3820,6 +3820,8 @@ namespace stream {
       runtime.control_negotiated = active.context->session->config.packet_control &&
                                    (policy->control_source == transport::control_source_e::legacy || policy->automatic_control.has_value());
       runtime.controller.periodic_alr_probing = runtime.budgeted_probing_enabled && runtime.automatic_bitrate_enabled;
+      // No padding protocol is negotiated; use the pinned controller's
+      // supported recovery mode rather than silently omitting its traffic.
       runtime.controller.loss_recovery_without_padding = runtime.controller.periodic_alr_probing;
       active.controller = std::make_unique<transport::googcc_runtime_t>(runtime, active.context->session->transport_state, policy);
       active.controller_config = runtime;
@@ -4371,27 +4373,17 @@ namespace stream {
             const auto policy = context->session->transport_state->snapshot().accepted;
             transport::googcc_runtime_config_t runtime;
             runtime.controller.connection_epoch = command.flow->connection_epoch;
-            runtime.controller.start_time_us = registered_at;
-            runtime.controller.maximum_kbps = std::clamp(policy->budget.total_kbps - policy->budget.other_kbps -
-              policy->budget.repair_kbps - policy->budget.probe_kbps, 1, 800000);
-            runtime.controller.minimum_kbps = std::min(1000, runtime.controller.maximum_kbps);
-            runtime.controller.initial_kbps = runtime.controller.maximum_kbps;
             runtime.controller.pacer_queue_feedback = true;
             runtime.controller.queue_pushback = config::stream.experimental_packet_queue_pushback;
             runtime.controller.queue_delay_ms = config::stream.transport_pacer_deadline_ms;
             runtime.feedback_negotiated = true;
             runtime.deadline_pacing_enabled = true;
-            runtime.control_negotiated = context->session->config.packet_control;
             runtime.automatic_bitrate_enabled = config::stream.experimental_packet_bitrate;
             runtime.automatic_fec_enabled = config::stream.experimental_packet_fec;
             runtime.budgeted_probing_enabled = config::stream.experimental_packet_probe;
-            runtime.controller.periodic_alr_probing = runtime.budgeted_probing_enabled && runtime.automatic_bitrate_enabled;
-            // This transport has no negotiated padding protocol. Use the
-            // pinned controller's supported no-padding recovery mode instead
-            // of silently ignoring traffic which its loss state expects.
-            runtime.controller.loss_recovery_without_padding = runtime.controller.periodic_alr_probing;
-            found->second.probing_enabled = runtime.controller.periodic_alr_probing;
             runtime.fec.minimum_parity = context->session->config.minRequiredFecPackets;
+            // Policy-derived fields are set only by replace_controller, which
+            // is shared by registration and every later activation boundary.
             found->second.controller_config = runtime;
             try {
               replace_controller(found->second, policy, registered_at);
