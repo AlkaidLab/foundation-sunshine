@@ -1,4 +1,5 @@
 #include "transport_send_budget.h"
+#include "transport_credit.h"
 
 #include <algorithm>
 #include <atomic>
@@ -8,7 +9,7 @@
 
 namespace transport {
   namespace {
-    constexpr std::int64_t scale = 1000000;
+    constexpr auto scale = detail::credit_scale;
     constexpr auto maximum_time_us = std::numeric_limits<std::int64_t>::max() / 4;
     constexpr std::uint64_t maximum_rate = 100000000;
     constexpr std::uint64_t maximum_credit_bytes = 1000000000;
@@ -37,14 +38,8 @@ namespace transport {
       // Concurrent callers may sample just before the previous owner releases
       // its mutex. Keep the effective clock; never award backwards-time credit.
       now = std::max(now, now_us);
-      const auto ceiling = static_cast<std::int64_t>(limits.burst_bytes * scale);
-      const auto needed = static_cast<std::uint64_t>(ceiling - credit);
       const auto elapsed = static_cast<std::uint64_t>(now - now_us);
-      const auto rate = limits.rate_bytes_per_second;
-      if (elapsed >= (needed + rate - 1) / rate)
-        credit = ceiling;
-      else
-        credit += static_cast<std::int64_t>(elapsed * rate);
+      credit = detail::refill_credit(credit, limits.rate_bytes_per_second, limits.burst_bytes, elapsed);
       now_us = now;
     }
 

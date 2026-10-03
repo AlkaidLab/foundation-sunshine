@@ -69,6 +69,7 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/transport_budget.h"
         "${CMAKE_SOURCE_DIR}/src/transport_send_budget.cpp"
         "${CMAKE_SOURCE_DIR}/src/transport_send_budget.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_credit.h"
         "${CMAKE_SOURCE_DIR}/src/transport_feedback.cpp"
         "${CMAKE_SOURCE_DIR}/src/transport_feedback.h"
         "${CMAKE_SOURCE_DIR}/src/transport_fec_controller.cpp"

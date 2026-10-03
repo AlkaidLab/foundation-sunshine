@@ -296,7 +296,10 @@ TEST(TransportFeedbackWire, AuthenticatedDecodedInputIntersectsOnlyCommittedPack
   EXPECT_EQ(state.snapshot().ledger.committed_packets, 2u);
   late.reportSequence = 3;
   late.connectionEpoch = 43;
-  EXPECT_EQ(state.apply_wire(encode(late), 1003).result, transport::report_result_e::wrong_epoch);
+  const auto rejected = state.apply_wire_event(encode(late), 1003);
+  EXPECT_EQ(rejected.feedback.result, transport::report_result_e::wrong_epoch);
+  EXPECT_EQ(rejected.connection_epoch, 42u);
+  EXPECT_EQ(rejected.event_sequence, 0u);
   EXPECT_EQ(state.snapshot().ledger.committed_packets, 2u);
 }
 

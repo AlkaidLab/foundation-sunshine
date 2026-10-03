@@ -4,20 +4,19 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CTest)
 get_filename_component(SUNSHINE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-add_subdirectory("${SUNSHINE_ROOT}/third-party/webrtc-googcc" googcc)
+include("${SUNSHINE_ROOT}/cmake/dependencies/googcc.cmake")
+sunshine_add_pinned_googcc(TRUE)
 add_executable(googcc_input_tests
     "${SUNSHINE_ROOT}/src/transport_feedback.cpp"
     "${SUNSHINE_ROOT}/src/transport_feedback_wire.cpp"
     "${SUNSHINE_ROOT}/third-party/moonlight-common-c/src/TransportFeedbackWire.c"
-    "${SUNSHINE_ROOT}/src/googcc_adapter.cpp"
-    "${SUNSHINE_ROOT}/src/googcc_runtime.cpp"
     "${SUNSHINE_ROOT}/src/transport_fec_controller.cpp"
     "${SUNSHINE_ROOT}/src/transport_policy.cpp"
     "${SUNSHINE_ROOT}/src/transport_budget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/test_googcc_runtime.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/test_googcc_input.cpp")
 target_include_directories(googcc_input_tests PRIVATE "${SUNSHINE_ROOT}")
-target_link_libraries(googcc_input_tests PRIVATE webrtc_googcc gtest_main)
+target_link_libraries(googcc_input_tests PRIVATE sunshine::googcc gtest_main)
 if(MSVC)
     target_compile_options(googcc_input_tests PRIVATE /W4 /WX)
 else()
