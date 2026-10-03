@@ -3,13 +3,15 @@
 These tools exercise the actual client core and validate captured H.264 offline.
 They do not render video and are not an end-to-end latency benchmark.
 
-Build the PC core under test and optionally use the existing PC FFmpeg bundle:
+The default client core is this checkout's pinned `third-party/moonlight-common-c`.
+To test a different checkout, pass `TRANSPORT_COMMON_C_ROOT`. The optional decoder
+requires the PC FFmpeg bundle; replace the example path with your local bundle,
+or omit `TRANSPORT_FFMPEG_ROOT` to build only the runtime client:
 
 ```powershell
 cmake -S tests/streaming -B .codex-build/adaptive-fec-live-client -G Ninja `
   -DCMAKE_C_COMPILER=C:/msys64/ucrt64/bin/gcc.exe `
-  -DTRANSPORT_COMMON_C_ROOT=C:/Users/mohaha/source/repos/moonlight-qt/moonlight-common-c/moonlight-common-c `
-  -DTRANSPORT_FFMPEG_ROOT=C:/Users/mohaha/source/repos/moonlight-qt/libs/windows
+  -DTRANSPORT_FFMPEG_ROOT=D:/path/to/moonlight-qt/libs/windows
 cmake --build .codex-build/adaptive-fec-live-client --parallel 3
 ```
 
@@ -36,21 +38,19 @@ PC bundle there is no H.264 parser, so CSV packet boundaries are required. Keep
 the original CSV, byte total and file hash: successful decoding alone does not
 prove byte-for-byte integrity.
 
-The phase-six local fixture and independent proxy scripts are recorded in
-`.codex-build/adaptive-fec-runtime/manifest.json`. Each preserved experiment has
-its own runtime result, packet actions, server ledger, policy receipts and
-capture. They use dedicated loopback ports and preprovisioned test certificates.
-The proxy only rewrites plaintext RTSP's video port; the video identity and ENet
-feedback retain real AES-GCM authentication. It records actions after authenticating
-ingress identity and before forwarding. It does not simulate a bottleneck or OS
-partial submission.
+Historical isolated experiments and their proxy/reconciliation scripts are kept
+with local runtime records; they are not distributed by this source target.
+A new live run must record its own launch identity, exact source and binary
+versions, packet actions, server ledger, policy receipts and capture. Use dedicated
+ports and preprovisioned test certificates. If a proxy changes plaintext RTSP's
+video port, preserve the authenticated video identity and ENet feedback, and
+record actions after authenticating ingress and before forwarding. Such a proxy
+alone does not simulate a bottleneck or OS partial submission.
 
-To repeat reconciliation for a preserved impaired experiment, pass its directory:
-
-```powershell
-python .codex-build/adaptive-fec-live-test/reconcile_faults.py `
-  .codex-build/adaptive-fec-live-test/post-rs-fix-impaired
-```
+Independently reconcile source/parity/feedback bytes, deliberate drops and
+reordering, receiver raw-loss and recovery counters, and actual decode-unit
+boundaries. Successful negotiation or offline decoding is insufficient evidence
+for the application control loop or QoE.
 
 Comparison covers only the complete successful-send prefix observed by the
 proxy. The later ingress tail is explicitly excluded. Live fixture certificates,
