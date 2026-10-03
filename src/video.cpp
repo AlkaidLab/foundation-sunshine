@@ -3487,7 +3487,7 @@ namespace video {
       const encoder_t &encoder, config_t &config, const std::shared_ptr<platf::img_t> &image) {
     if (!state) return true;
     const auto pending = state->acquire_pending();
-    if (!pending) return !state->snapshot().stopped;
+    if (!pending) return !state->stopped();
     auto result = encode_session_t::bitrate_result_e::applied;
     if (pending->encoder_kbps != state->active()->encoder_kbps) {
       result = session->apply_encoder_bitrate(pending->encoder_kbps);

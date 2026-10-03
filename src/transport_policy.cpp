@@ -319,6 +319,12 @@ namespace transport {
     return result;
   }
 
+  bool
+  policy_state_t::stopped() const {
+    std::lock_guard lock(mutex_);
+    return stopped_;
+  }
+
   void
   policy_state_t::stop() {
     std::lock_guard lock(mutex_);

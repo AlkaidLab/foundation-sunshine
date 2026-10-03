@@ -347,10 +347,12 @@ TEST(TransportPolicy, ReinitializationKeepsConfirmedPolicyInsteadOfPendingTarget
 
 TEST(TransportPolicy, StopCancelsPendingAndLateReceipts) {
   transport::policy_state_t state(initial(), 50000);
+  EXPECT_FALSE(state.stopped());
   ready(state);
   auto p = state.request_legacy_change(30000, 20).policy;
   ASSERT_EQ(state.acquire_pending(), p);
   state.stop();
+  EXPECT_TRUE(state.stopped());
   EXPECT_FALSE(state.acknowledge_encoder(p, transport::policy_failure_e::none));
   EXPECT_FALSE(state.acknowledge_first_sent(state.active(), 4));
   EXPECT_FALSE(state.begin_encoder_initialization());
