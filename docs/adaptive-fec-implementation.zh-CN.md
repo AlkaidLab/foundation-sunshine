@@ -170,6 +170,21 @@ Android 和 PC 的上述证据见[验证记录](adaptive-fec-validation.zh-CN.md
 
 每个扩展分别保存对照组、开关、源码版本和失败结果。主方案验收不自动通过扩展验收；同一实验同时加入多个扩展时，仍须补单项消融才能说明收益来源。
 
+### SDK 与上游模块复用
+
+先进手段保留，工程实现优先复用成熟依赖。当前范围包含拥塞控制和发送调度，已经超过单独的动态 FEC；每项自研模块都须说明 SDK 尚未覆盖的项目语义及其成本。整理目录不能替代这项核查。
+
+| 部分 | 当前实现与可复用候选 | 替换前要证明的边界 |
+| --- | --- | --- |
+| 拥塞与带宽估计 | 已通过隔离适配器调用固定版本的真实上游 GoogCC，未重写其估计器 | 保持版本、构建及许可可追溯；继续缩小适配层，仅转换项目观测与控制输出 |
+| 发送调度 | 评估 WebRTC [PacingController](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/pacing/pacing_controller.h) 对现有 deadline pacer 的替换 | 当前上游接口使用 RtpPacketToSend，SendPacket 返回 void，且可在积压时提高发送速率。须验证真实 OS 部分提交、未知提交、帧期限与参考链、音视频/ENet 共享预算；不能把回调调用视为成功提交 |
+| FEC 保护决策 | 评估 WebRTC [FecControllerDefault](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/video_coding/fec_controller_default.cc) 的关键帧保护和实际开销扣减 | 当前上游实现忽略 loss_mask_vector，默认采用随机损伤掩码。须核对保护比例到本项目 RS 分块的转换，并在相同预算和期限下对照随机与突发损伤；已有 select_fec 是独立函数，但自动执行目前接在 GoogCC runtime 中 |
+| 完整传输 SDK | 完整 WebRTC Native SDK 等作为传输迁移候选 | 需单独证明现有协议兼容或新的能力协商、两端接入与回退。官方 WebRTC [构建流程](https://webrtc.googlesource.com/src/+/refs/heads/main/docs/native-code/development/README.md) 使用 GN/Ninja 及 Chromium 依赖；须计入平台、包体、构建和升级维护成本 |
+
+上述接口核查是选型依据，尚未完成 SDK 替换或收益验收。已通过固定清单版本的 git show 核对 pacer 与 FEC 的上述接口；其中 modules/pacing/BUILD.gn 明示客户端不应直接使用 pacing target，api/fec_controller.h 也保留尚不应供其他用户使用的提示，不能将这些模块当成具有稳定承诺的独立 SDK。原型仍须登记准确依赖与构建版本，放在隔离构建中，登记可删除的生产代码、所需适配及上游修改、平台覆盖、兼容性和最坏处理成本，再进入既定 M4 同预算对照。复用能减少总维护成本且通过相同语义验收时，替换对应自研模块；完整目标和验收要求保持不变。
+
+固定版本 FecControllerDefault 的隔离原型已在 Windows/UCRT GCC 15.2 编译运行，五个确定性场景通过：相同损伤率的分散/突发序列、模拟开销上限、无损与禁用。新增编译 18 个未修改的上游源文件并使用其原始依赖；没有新增生产 FEC 模块。分散和突发输入产生相同建议，故尚不能证明它能替代现有突发保护选择器。适配还须核对 0–255 损伤输入和相对源包的保护比例单位，以及基于上一秒回调开销的编码目标与新策略 RS 开销之间的关系；维持先计算新策略预算、再按帧一致应用的约束。此原型只证明组件可用性与上述行为，没有实际 RS 线上包、成本或 QoE 对照。
+
 ## 核对基线与已知缺口
 
 | 仓库或组件 | 核对提交 | 本地位置 |
