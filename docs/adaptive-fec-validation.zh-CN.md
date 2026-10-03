@@ -9,7 +9,7 @@ Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入�
 | 依赖 | 固定提交 | 可审查入口 |
 | --- | --- | --- |
 | ENet | `d906d15bfc52792c12d851305a5eae58fe14c968` | [发送准入 PR #1](https://github.com/qiin2333/enet/pull/1) |
-| moonlight-common-c | `fd3b370f1ffaae00b2a59f98773f58a5235175aa` | [逐包反馈与通知 PR #31](https://github.com/qiin2333/moonlight-common-c/pull/31)；基于 `mic`，保留既有 RFI/IDR 修复 |
+| moonlight-common-c | `53116f5c0d3a2c76881057d8094064705e925aed` | [逐包反馈与通知 PR #31](https://github.com/qiin2333/moonlight-common-c/pull/31)；基于 `mic`，保留既有 RFI/IDR 修复 |
 | GoogCC 及依赖 | [versions.json](../third-party/webrtc-googcc/versions.json) | [获取、构建及兼容说明](../third-party/webrtc-googcc/README.md) |
 
 每项结果只证明所列版本、工具链和运行范围。原工作区的长期实验记录与原始失败日志继续保留；私有配对凭据、设备信息、逐包日志与媒体不进入发布源码。实施文档提到的历史阶段用于定位既有实现，不能替代本发布版本的复验。
@@ -23,12 +23,12 @@ Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入�
 | common c Windows/UCRT GCC Debug/Release | 两种静态构建与各 11 个 CTest 通过 | 公共测量、反馈、通知、协商、AES-GCM 及既有协议回归；不包含网络控制握手、Qt/Android 应用运行 |
 | common c Windows/MSVC Debug | DLL 和内部静态测试库构建及 11 个 CTest 通过 | 保留 Debug 断言及真实 RS 合成恢复校验，验证原子支持、导出构建和会话重置/清理；不是 DLL 消费者的运行验收 |
 | common c Linux/WSL GCC 11.4 + MbedTLS 3.6.7 | Debug/Release 共享构建与各 11 个 CTest 通过 | 执行既有 PSA 加密后端的已知向量、认证失败和复用测试；官方依赖发布包校验 SHA-256 |
-| common c 多平台 CI | `70f41ae` 的 9 个任务通过；日志表明旧矩阵的 Linux Clang 标签实际使用 GCC。`fd3b370` 修正 CC/CXX 后重新验证，终态待检查 | 已有 Windows x64/ARM64、macOS、Linux x64/ARM GCC、OpenSSL/MbedTLS 证据；真实 Linux Clang 覆盖与新 review 暂未通过 |
+| common c 多平台 CI | `fd3b370` 的 9 个任务全部通过；修正矩阵 CC/CXX 后，Linux x64 Clang 配置日志明确为 Clang 18.1.3 | Windows x64/ARM64、macOS、Linux x64/ARM GCC/Clang、OpenSSL/MbedTLS 构建与回归；`53116f5` 已修复 review 指出的观测锁忙等，新 head CI 待终态 |
 | Sunshine 发布版本传输组件 | Windows/UCRT GCC Release，267 个 GTest、4/4 CTest 通过 | 新 master 与公开依赖组合的策略、预算、反馈、期限和通知组件；不代表完整主机或应用闭环 |
 | Sunshine 发布版本出口组件 | Windows/UCRT GCC Release，2/2 CTest 通过 | 平台 UDP 与 ENet 发送准入，含实际回环；独立构建显式引用已准备的 FFmpeg 头文件 |
 | Sunshine 发布版本 GoogCC | Windows/UCRT GCC Release，3/3 CTest 通过 | 固定上游、适配/运行、线格式的独立测试；容量重放是合成输入，不代表媒体收益或完整闭环 |
-| Sunshine 发布版本完整主机 | 待 OFF/ON 构建与运行 | 需在最终公共依赖组合上继续真实出口、SDK 与应用闭环复验 |
-| PC/Android 发布版本 | 待准备与复验 | 旧工作区证据不直接提升为新发布版本通过 |
+| Sunshine 发布版本完整主机 | OFF 完整编译曾中断，未形成通过结果；继续最终依赖上的 OFF/ON 构建与运行 | 需在最终公共依赖组合上继续真实出口、SDK 与应用闭环复验 |
+| PC/Android 发布版本 | 已迁移到各自最新 master；PC 62 项 Qt 测试及导航检查、Android 78 项 JVM 回归通过；完整构建曾中断，仍需最终依赖复验 | 单元结果不代表真实 Game/JNI、控制会话或设备性能 |
 
 通知回归覆盖独立 72 字节向量、高位 64 位计数、版本/长度/保留位校验与原子拒绝、历史进度和可下降的 encoder-ready 状态、停止与重初始化隔离。队列生命周期测试保留真实 RS 生成、丢失五个源分片后的恢复和载荷逐字节核对；快照读取与反复销毁重建并发测试单列。
 
@@ -40,7 +40,9 @@ Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入�
 | common c Debug 清理断言与队列夹具失败 | 初始化的控制流可在启动前被连接阶段回滚；保持停止状态直到 startup。夹具分别初始化会话，普通完成使用无 FEC 块，真实恢复测试保留 Debug 校验 | Debug/Release 复验通过；完整应用的启动、停止及重连仍单独验收 |
 | MSVC 编译警告与原子支持 | 控制加密封装校验 16 位长度后转换；主库与原子测试启用 C11 原子，主库明确 UTF-8 | MSVC Debug 构建和回归通过；跨工具链结果以 CI 为准 |
 | 默认 DLL 和旧加密依赖的链接失败 | Windows 生成导出表，内部全局状态测试使用相同配置的静态库；配置检测 PSA multipart AEAD，CI 改用校验散列的官方 MbedTLS 3.6.7 | 未改生产密码算法；两种后端执行同一已知向量、认证拒绝和复用回归，9 个 CI 任务通过 |
-| CI 编译器标签与实际执行不符 | 从配置日志发现 Linux Clang 任务实际运行 GNU 13.3；工作流显式设置矩阵的 CC/CXX | 保留旧结果的实际 GCC 范围；修正后真实 Clang 结果单独检查 |
+| CI 编译器标签与实际执行不符 | 从配置日志发现 Linux Clang 任务实际运行 GNU 13.3；工作流显式设置矩阵的 CC/CXX | 保留旧结果的实际 GCC 范围；修正后 `fd3b370` 的 9 项 CI 全部通过，真实 Clang 配置已检查 |
+
+观测锁竞争修复在 64 次失败后作名义 1 ms 平台休眠，保留跨销毁生命周期的原子锁；GCC Debug/Release 和 MSVC DLL Debug 各 11 项 CTest 通过。休眠实际粒度、公平性及接收延迟尚未完成设备测量，不能据此宣称性能改善。
 
 历史隔离串流还观察到无损场景中的编码回压和强突发严格恢复目标未达标。回压继续默认关闭，强突发仍需参考链、有效帧交付、画质和延迟的独立验收；策略已经变化不等于体验改善。
 
