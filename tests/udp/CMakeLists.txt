@@ -11,9 +11,11 @@ if(NOT WIN32)
     message(FATAL_ERROR "Platform UDP validation currently covers the Windows implementation only")
 endif()
 
-# Root builds may fetch Boost as component source trees instead of installing a
-# merged include directory. Reuse their header target and its usage requirements.
-if(TARGET Boost::headers)
+# Source-tree Boost::headers only exports libs/headers/include. The production
+# declarations used here require Asio and Log and their transitive headers.
+if(TARGET Boost::asio AND TARGET Boost::log)
+    set(UDP_BOOST_HEADER_TARGET Boost::asio Boost::log)
+elseif(TARGET Boost::headers)
     set(UDP_BOOST_HEADER_TARGET Boost::headers)
 elseif(TARGET Boost::boost)
     set(UDP_BOOST_HEADER_TARGET Boost::boost)
