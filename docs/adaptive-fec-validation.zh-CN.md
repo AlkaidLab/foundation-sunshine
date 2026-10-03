@@ -28,7 +28,8 @@ Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入�
 | Sunshine 发布版本出口组件 | Windows/UCRT GCC Release，2/2 CTest 通过 | 平台 UDP 与 ENet 发送准入，含实际回环；独立构建显式引用已准备的 FFmpeg 头文件 |
 | Sunshine 发布版本 GoogCC | Windows/UCRT GCC Release，3/3 CTest 通过 | 固定上游、适配/运行、线格式的独立测试；容量重放是合成输入，不代表媒体收益或完整闭环 |
 | Sunshine 发布版本完整主机 | `ced00d6` + common c `53116f5` 的 OFF/ON 完整编译与各 5/5 CTest 通过；后续 `9ee1a09` 仅调整捕获工具格式，生产源码相同 | 覆盖反馈连接身份与共享额度算法修复；复用已有 GUI/FFmpeg，未验证驱动安装包；实际出口、SDK 与应用闭环仍需复验 |
-| PC 发布版本 | `80ac770b` 保留最新 Wayland 改动，62 项 Qt 测试及导航检查、Qt 6.11.1/MSVC x64 Release 完整构建通过 | 原生绘制基类与策略控件同时保留；普通构建不包含开发驱动，实际 Session 另验收 |
+| PC 发布版本构建 | `80ac770b` 保留最新 Wayland 改动，62 项 Qt 测试及导航检查、普通及独立开发 Qt 6.11.1/MSVC x64 Release 完整构建通过；8 个远端 CI 任务全部通过 | 原生绘制基类与策略控件同时保留；普通构建不包含开发驱动 |
+| PC 发布版本完整控制 Session | `80ac770b` + common c `53116f5` + `ced00d6` 主机运行源码：13 个菜单操作通过、正常退出；独立配对 HTTPS 核对 47 份主机样本、26 个不可变策略版本及 SDK/首包回执 | 日志确认 threaded Qt/D3D11、实际解码和渲染帧产出；抽查三张生产菜单绘制图。私有 loopback、未冻结桌面内容，不证明桌面合成、重连、任意故障、共享预算完整验收或 QoE |
 | Android 发布版本 | `9201f86` + common c `53116f5` + SDK `b3f97c3`：78 项 JVM 回归、普通/隔离 Debug 及各自 instrumentation APK 构建通过；`7a8b0b95` 去重样本后 37 项策略测试通过，普通 CI 与两次策略验证 CI 全部通过 | 保留 44 个采样时序点与原 JSON 值；隔离包 ID 已核对，正常 ADB 安装返回 `INSTALL_FAILED_USER_RESTRICTED`，设备测试未执行 |
 
 通知回归覆盖独立 72 字节向量、高位 64 位计数、版本/长度/保留位校验与原子拒绝、历史进度和可下降的 encoder-ready 状态、停止与重初始化隔离。队列生命周期测试保留真实 RS 生成、丢失五个源分片后的恢复和载荷逐字节核对；快照读取与反复销毁重建并发测试单列。
