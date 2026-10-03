@@ -167,9 +167,7 @@ namespace nvhttp::dynamic_params {
       }
 
       if (args.count("bitrate") != 1 || args.count("clientname") != 1) throw std::invalid_argument("Duplicate bitrate query");
-      const auto bitrate_value = transport::parse_policy_identity(bitrate_param->second);
-      if (!bitrate_value || bitrate_value > 800000) throw std::invalid_argument("Invalid bitrate");
-      int bitrate = static_cast<int>(bitrate_value);
+      int bitrate = std::stoi(bitrate_param->second);
       std::string client_name = clientname_param->second;
 
       if (bitrate <= 0 || bitrate > 800000) {
