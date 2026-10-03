@@ -189,6 +189,16 @@ Android 和 PC 的上述证据见[验证记录](adaptive-fec-validation.zh-CN.md
 
 当前先形成项目内模块：已有传输文件收拢到 `src/transport/`，编码、会话和实际出口接线保留在各自所属层。Sunshine 是当前主机侧唯一消费者，不立即将整套实现独立发布为 SDK；否则还须维护公开 API、版本兼容、包和发布流程。出现第二个真实消费者时，再依据实际共用代码提取不依赖 Sunshine 会话与编码对象的核心。无论采用上游模块还是独立 SDK，都以“能删除多少生产实现、还需多少适配、平台与升级成本、相同预算下的收益”评估，不能仅以新增一个库或换目录视为工程精简。
 
+### 许可、分发与专利边界
+
+2026 年 10 月 3 日核对当前依赖：Sunshine 为 GPL-3.0-only，common c 为 GPLv3；固定 WebRTC 为 BSD-3-Clause 并附 PATENTS，Chromium Abseil 为 Apache-2.0，现有 nanors/ENet 为 MIT。按 [Apache 官方兼容说明](https://apache.org/licenses/GPL-compatibility.html)及 [GNU 许可说明](https://www.gnu.org/licenses/license-list.html#ModifiedBSD)，这些主要许可未显示与本项目 GPLv3 的明显冲突。这是本次传输变更的初步核查，不是完整发行包或专利自由实施意见。
+
+分发二进制时须保留适用版权、许可与通知，并按 [GPLv3](https://www.gnu.org/licenses/gpl.en.html)提供实际对应源码，包括适用的依赖及构建、修改脚本；只有固定版本和上游链接不足以证明义务已经履行。GoogCC 启用版现在收集 WebRTC LICENSE/PATENTS/AUTHORS、Abseil LICENSE/README.chromium、存在时的 NOTICE、版本及构建说明，并安装到 `assets/third_party_licenses/googcc/`。这修补具体的顶层通知交付缺口，不代替其他依赖、源码交付和最终包的核验。GoogleTest 只用于验证目标，不作为此运行通知包的组成。
+
+SDK 化不自动改变许可：从 GPL 代码形成派生实现或与其组成同一程序时，须评估相应 GPL 义务；闭源商业 SDK 不能仅凭目录、动态库或进程命名主张独立。完全独立的新实现及可获得额外授权的代码须按实际权属另行判断。GPL 允许商业分发，商业用途与闭源许可是不同问题。依据见 [GNU GPL FAQ](https://www.gnu.org/licenses/gpl-faq.en.html#GPLStaticVsDynamic)。
+
+版权许可不能证明没有专利风险。[WebRTC PATENTS](https://webrtc.googlesource.com/src/+/refs/heads/main/PATENTS)的固定版本已核对：覆盖特定 Google 可许可且被原实现必要实施的权利要求，不覆盖仅因后续修改产生的权利要求，也不保证其他主体的专利已获授权。采用 SDK、自行实现或公开论文都不能替代自由实施排查；M5/M6 的 RTX、窗口编码和预测扩展在实际选型后分别核查代码许可与专利。商业发布前还须明确发行地区、产品形式与拟实施功能，按这些边界取得法律审查；当前没有作零专利风险或完整合规结论。
+
 ## 核对基线与已知缺口
 
 | 仓库或组件 | 核对提交 | 本地位置 |
