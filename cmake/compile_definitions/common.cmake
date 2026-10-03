@@ -52,6 +52,31 @@ configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
 include_directories("${CMAKE_CURRENT_BINARY_DIR}")  # required for importing version.h
 
 set(SUNSHINE_TARGET_FILES
+        "${CMAKE_SOURCE_DIR}/src/transport_feedback_wire.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_feedback_wire.h"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportFeedbackWire.c"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportFeedbackWire.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_policy.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_policy.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_policy_json.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_policy_notice.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_policy_notice.h"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportPolicyStatus.c"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportPolicyStatus.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_policy_json.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_send.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_budget.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_budget.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_send_budget.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_send_budget.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_feedback.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_feedback.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_fec_controller.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_fec_controller.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_pacer.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_pacer.h"
+        "${CMAKE_SOURCE_DIR}/src/transport_owner_inbox.cpp"
+        "${CMAKE_SOURCE_DIR}/src/transport_owner_inbox.h"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Input.h"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Rtsp.h"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/RtspParser.c"
@@ -317,3 +342,9 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${Boost_LIBRARIES}
         ${OPENSSL_LIBRARIES}
         ${PLATFORM_LIBRARIES})
+
+# This interface supplies the actual adapter source, capability definition and
+# pinned upstream link dependency together. OFF adds none of these to Sunshine.
+if(SUNSHINE_EXPERIMENTAL_GOOGCC)
+    list(APPEND SUNSHINE_EXTERNAL_LIBRARIES sunshine::googcc)
+endif()

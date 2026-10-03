@@ -32,6 +32,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
+#include "src/platform/udp_send_impl.h"
 #include "vaapi.h"
 
 #ifdef __GNUC__
@@ -437,8 +438,21 @@ namespace platf {
     return saddr_v6;
   }
 
+  udp_send_attempt_t
+  try_send(send_info_t &send_info) {
+    udp_send_detail::native_calls_t calls;
+    return udp_send_detail::try_send_impl(send_info, calls);
+  }
+
+  udp_send_attempt_t
+  try_send_batch(batched_send_info_t &send_info) {
+    udp_send_detail::native_calls_t calls;
+    return udp_send_detail::try_send_batch_impl(send_info, calls);
+  }
+
   bool
   send_batch(batched_send_info_t &send_info) {
+    send_info.submitted_blocks = 0;
     auto sockfd = (int) send_info.native_socket;
     struct msghdr msg = {};
 
@@ -581,6 +595,7 @@ namespace platf {
         }
 
         seg_index += bytes_sent / msg_size;
+        send_info.submitted_blocks = seg_index;
       }
 
       // If we sent something, return the status and don't fall back to the non-GSO path.
@@ -640,10 +655,12 @@ namespace platf {
           return false;
         }
 
+        if (!msgs_sent) break;
         blocks_sent += msgs_sent;
+        send_info.submitted_blocks = blocks_sent;
       }
 
-      return true;
+      return blocks_sent == send_info.block_count;
     }
   }
 

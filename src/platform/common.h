@@ -1015,6 +1015,10 @@ namespace platf {
     uint16_t target_port;
     boost::asio::ip::address &source_address;
 
+    // Output: exact successful prefix, even when a later batch submission
+    // fails. Callers only retry the remaining suffix, never this prefix.
+    size_t submitted_blocks = 0;
+
     /**
      * @brief Returns a payload buffer descriptor for the given payload offset.
      * @param offset The offset in the total payload data (bytes).
@@ -1054,6 +1058,58 @@ namespace platf {
 
   bool
   send(send_info_t &send_info);
+
+  /** Outcome of one bounded, nonblocking UDP submission attempt. */
+  enum class udp_send_status_e {
+    complete,
+    partial,
+    would_block,
+    interrupted,
+    unsupported,
+    invalid_request,
+    failed,
+    unknown_submission,
+  };
+
+  struct udp_send_attempt_t {
+    udp_send_status_e status = udp_send_status_e::invalid_request;
+    // Exact successful prefix when submission_known is true. With an unknown
+    // outcome these fields describe only a confirmed prefix, never a zero-send
+    // assertion about the remaining datagrams.
+    size_t submitted_datagrams = 0;
+    size_t submitted_payload_bytes = 0;  // Complete UDP payloads, including headers.
+    int native_error = 0;
+    bool retryable = false;
+    bool submission_known = true;
+    size_t reported_payload_bytes = 0;  // Raw syscall bytes, useful for diagnostics.
+  };
+
+  inline constexpr size_t max_try_send_batch = 32;
+  inline constexpr size_t max_try_send_udp_payload = 65507;
+
+  /**
+   * @brief Make exactly one nonblocking, nonempty UDP send attempt, without waiting or retrying.
+   * @note The owner must check cancellation/deadline before every call and keep
+   * the socket open and its mode stable for the call. Windows sets FIONBIO before
+   * its synchronous WSASendMsg; POSIX passes MSG_DONTWAIT. Only UDP sockets are
+   * permitted. These calls do not enable adaptive transport control.
+   * @note An unknown_submission must never be retried or treated as zero bytes:
+   * stop the socket owner and invalidate its accounting. No receive/delivery
+   * acknowledgement is implied by complete or partial.
+   */
+  udp_send_attempt_t
+  try_send(send_info_t &send_info);
+
+  /**
+   * @brief Attempt up to max_try_send_batch equal-sized datagrams in one syscall.
+   * @note Buffer descriptors must be payload-size aligned, at most 32 descriptors;
+   * each datagram's payload is wholly within a descriptor. No internal fallback
+   * is performed. Unsupported batches may fall back to try_send, with a fresh
+   * deadline/cancellation check before each attempt. headers == nullptr and
+   * header_size == 0 bridge complete owned UDP payloads without another prefix.
+   */
+  udp_send_attempt_t
+  try_send_batch(batched_send_info_t &send_info);
 
   enum class qos_data_type_e : int {
     audio,  ///< Audio

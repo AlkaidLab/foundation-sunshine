@@ -261,6 +261,54 @@ if (NOT BUILD_TESTS)
     return()
 endif ()
 
+add_executable(transport_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/transport_send_budget.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_send_budget.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_fec_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_fec_controller.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_owner_inbox.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_owner_inbox.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_video_deadline.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_pacer.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_pacer.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoNetwork.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoPacketFeedback.c
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_video_packet_feedback.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportFeedbackWire.c
+        ${CMAKE_SOURCE_DIR}/src/transport_feedback_wire.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_feedback_wire.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_policy_notice.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportPolicyStatus.c
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_policy_notice.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_policy_json.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_policy_json.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_budget.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport_feedback.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_budget.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_feedback.cpp)
+target_include_directories(transport_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(transport_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json)
+target_compile_options(transport_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(transport_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME transport_unit_tests COMMAND transport_unit_tests)
+
+add_executable(transport-feedback-wire-tests
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportFeedbackWire.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/tests/TransportFeedbackWireTest.c)
+target_include_directories(transport-feedback-wire-tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src")
+set_target_properties(transport-feedback-wire-tests PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME transport-feedback-wire-tests COMMAND transport-feedback-wire-tests)
+
+add_executable(video-network-observer-tests
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoNetwork.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/tests/VideoNetworkObserverTest.c)
+target_include_directories(video-network-observer-tests PRIVATE
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src")
+set_target_properties(video-network-observer-tests PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME video-network-observer-tests COMMAND video-network-observer-tests)
+
 set(REMOTE_USB_SOCKET_LIBRARIES)
 if (WIN32)
     list(APPEND REMOTE_USB_SOCKET_LIBRARIES mswsock ws2_32)
@@ -374,6 +422,10 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+# GoogCC validation owns a separate pinned dependency/toolchain entry point.
+# Do not glob its adapter/runtime fixtures into the normal host test executable,
+# which must build with experimental GoogCC disabled and on other platforms.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/googcc/")
 # The touchscreen device test has a dedicated target that links the device
 # implementation; do not compile a second copy into the aggregate suite.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
@@ -391,6 +443,8 @@ endif ()
 
 set(SUNSHINE_SOURCES
         ${SUNSHINE_TARGET_FILES}
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoNetwork.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoPacketFeedback.c
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
 
 # remove main.cpp from the list of sources
@@ -629,3 +683,23 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
+
+add_executable(video-packet-feedback-tests
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoNetwork.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoPacketFeedback.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportFeedbackWire.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/tests/VideoPacketFeedbackTest.c)
+target_include_directories(video-packet-feedback-tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src")
+set_target_properties(video-packet-feedback-tests PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+if(MSVC)
+    target_compile_options(video-packet-feedback-tests PRIVATE /W4 /WX)
+else()
+    target_compile_options(video-packet-feedback-tests PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME video-packet-feedback-tests COMMAND video-packet-feedback-tests)
+
+# The production helper is tested with real Windows UDP and injected native
+# results. POSIX wrappers remain source-only until their own toolchain checks.
+if(WIN32)
+    add_subdirectory(udp)
+endif()

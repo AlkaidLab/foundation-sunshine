@@ -438,6 +438,7 @@ namespace config {
     },  // software
 
     {},  // nv
+    true,  // nv_manage_driver_settings
     true,  // nv_realtime_hags
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
@@ -1221,6 +1222,7 @@ namespace config {
     generic_f(vars, "nvenc_rate_control", video.nv.rate_control_mode, nv::rate_control_mode_from_view);
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
     bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
+    bool_f(vars, "nvenc_manage_driver_settings", video.nv_manage_driver_settings);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
@@ -1510,6 +1512,16 @@ namespace config {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
     bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
+    bool_f(vars, "experimental_transport_pacer", stream.experimental_transport_pacer);
+    bool_f(vars, "experimental_transport_trace", stream.experimental_transport_trace);
+    bool_f(vars, "experimental_packet_control", stream.experimental_packet_control);
+    bool_f(vars, "experimental_packet_bitrate", stream.experimental_packet_bitrate);
+    bool_f(vars, "experimental_packet_fec", stream.experimental_packet_fec);
+    bool_f(vars, "experimental_packet_queue_pushback", stream.experimental_packet_queue_pushback);
+    bool_f(vars, "experimental_packet_probe", stream.experimental_packet_probe);
+    int_between_f(vars, "transport_pacer_deadline_ms", stream.transport_pacer_deadline_ms, {5, 1000});
+    int_between_f(vars, "transport_pacer_burst_kb", stream.transport_pacer_burst_kb, {1, 1024});
+    int_between_f(vars, "transport_pacer_debt_kb", stream.transport_pacer_debt_kb, {0, 1024});
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -1529,7 +1541,7 @@ namespace config {
     }
 #endif
 
-    int_between_f(vars, "fec_percentage", stream.fec_percentage, {1, 255});
+    int_between_f(vars, "fec_percentage", stream.fec_percentage, {0, 255});
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 

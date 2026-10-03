@@ -35,6 +35,8 @@ namespace config {
     } sw;
 
     nvenc::nvenc_config nv;
+    /** Allow NVIDIA application/global profile management. Disable for isolated hosts. */
+    bool nv_manage_driver_settings;
     bool nv_realtime_hags;
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_sunshine_high_power_mode;
@@ -157,6 +159,19 @@ namespace config {
     // Video encryption settings for LAN and WAN streams
     int lan_encryption_mode;
     int wan_encryption_mode;
+
+    // Explicit laboratory controls. Measurement alone never grants automatic
+    // control, and these do not change the production defaults before V6.
+    bool experimental_transport_pacer = false;
+    bool experimental_transport_trace = false;
+    bool experimental_packet_control = false;
+    bool experimental_packet_bitrate = true;
+    bool experimental_packet_fec = false;
+    bool experimental_packet_queue_pushback = false;
+    bool experimental_packet_probe = false;
+    int transport_pacer_deadline_ms = 100;
+    int transport_pacer_burst_kb = 16;
+    int transport_pacer_debt_kb = 16;
   };
 
   // Sleep mode options for PC sleep command

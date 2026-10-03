@@ -1312,42 +1312,52 @@ namespace amf {
     return true;
   }
 
-  void
+  bool
   amf_d3d11::set_bitrate(int bitrate_kbps) {
-    if (!encoder) return;
+    if (!encoder || bitrate_kbps <= 0 || bitrate_kbps > 800000) return false;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
     auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : bitrate;
-    AMF_RESULT res;
-
+    const wchar_t *properties[3];
     if (video_format == 0) {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_size);
-      }
+      properties[0] = AMF_VIDEO_ENCODER_TARGET_BITRATE;
+      properties[1] = AMF_VIDEO_ENCODER_PEAK_BITRATE;
+      properties[2] = AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE;
     }
     else if (video_format == 1) {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_size);
-      }
+      properties[0] = AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE;
+      properties[1] = AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE;
+      properties[2] = AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE;
     }
     else {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_size);
+      properties[0] = AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE;
+      properties[1] = AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE;
+      properties[2] = AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE;
+    }
+    const int count = user_configured_rate_control ? 3 : 1;
+    ::amf::AMFVariant previous[3];
+    for (int i = 0; i < count; ++i) {
+      if (encoder->GetProperty(properties[i], &previous[i]) != AMF_OK) {
+        BOOST_LOG(warning) << "AMF: cannot read bitrate properties for a safe update";
+        return false;
       }
     }
-
-    if (res == AMF_OK) {
-      BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
+    const int64_t values[] = {bitrate, bitrate, vbv_size};
+    for (int i = 0; i < count; ++i) {
+      const auto result = encoder->SetProperty(properties[i], values[i]);
+      if (result != AMF_OK) {
+        // Include the failed property: an error must not be assumed to mean
+        // that the SDK left it untouched. The caller reinitializes on failure.
+        bool restored = true;
+        for (int j = 0; j <= i; ++j) {
+          restored = encoder->SetProperty(properties[j], previous[j]) == AMF_OK && restored;
+        }
+        BOOST_LOG(warning) << "AMF: bitrate reconfiguration failed: " << result << ", rollback=" << restored;
+        return false;
+      }
     }
-    else {
-      BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << res;
-    }
+    BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
+    return true;
   }
 
   void
