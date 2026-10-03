@@ -35,6 +35,21 @@ set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
 add_subdirectory("${SUNSHINE_GOOGCC_DEPS_DIR}/chromium-third-party/abseil-cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/abseil" EXCLUDE_FROM_ALL)
 set(WEBRTC_ROOT "${SUNSHINE_GOOGCC_DEPS_DIR}/webrtc")
+# Preserve notices alongside every opt-in build; packaging installs this bundle.
+set(GOOGCC_LICENSE_DIR "${CMAKE_CURRENT_BINARY_DIR}/licenses")
+foreach(NOTICE LICENSE PATENTS AUTHORS)
+    configure_file("${WEBRTC_ROOT}/${NOTICE}" "${GOOGCC_LICENSE_DIR}/webrtc/${NOTICE}" COPYONLY)
+endforeach()
+foreach(NOTICE LICENSE README.chromium)
+    configure_file("${SUNSHINE_GOOGCC_DEPS_DIR}/chromium-third-party/abseil-cpp/${NOTICE}"
+        "${GOOGCC_LICENSE_DIR}/abseil/${NOTICE}" COPYONLY)
+endforeach()
+if(EXISTS "${SUNSHINE_GOOGCC_DEPS_DIR}/chromium-third-party/abseil-cpp/NOTICE")
+    configure_file("${SUNSHINE_GOOGCC_DEPS_DIR}/chromium-third-party/abseil-cpp/NOTICE"
+        "${GOOGCC_LICENSE_DIR}/abseil/NOTICE" COPYONLY)
+endif()
+configure_file("${CMAKE_CURRENT_LIST_DIR}/versions.json" "${GOOGCC_LICENSE_DIR}/versions.json" COPYONLY)
+configure_file("${CMAKE_CURRENT_LIST_DIR}/README.md" "${GOOGCC_LICENSE_DIR}/BUILD-AND-SOURCE-NOTES.md" COPYONLY)
 set(GOOGCC_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${GOOGCC_GENERATED}/experiments")
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${WEBRTC_ROOT}/experiments/field_trials.py"
