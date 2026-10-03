@@ -1,5 +1,5 @@
-#include "src/googcc_adapter.h"
-#include "src/transport_feedback_wire.h"
+#include "src/transport/googcc_adapter.h"
+#include "src/transport/transport_feedback_wire.h"
 
 #include <array>
 #include <deque>

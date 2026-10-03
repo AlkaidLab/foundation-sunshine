@@ -1,6 +1,6 @@
 # 视频逐包反馈协议：协商 profile 2，消息体 v1
 
-本契约对应三份 common c 共用的 `src/TransportFeedbackWire.*`、`src/VideoPacketFeedback.*` 和 Sunshine 的 `src/transport_feedback_wire.*`。已接入编解码、双方协商、完整包身份、可靠水位、有界报告生成与加密 ENet 发送入口。组件对账与 ARM64 核心测试通过；真实串流闭环尚未验收。此能力只提供测量，不授予自动码率或 FEC 控制权。
+本契约对应三份 common c 共用的 `src/TransportFeedbackWire.*`、`src/VideoPacketFeedback.*` 和 Sunshine 的 `src/transport/transport_feedback_wire.*`。已接入编解码、双方协商、完整包身份、可靠水位、有界报告生成与加密 ENet 发送入口。组件对账与 ARM64 核心测试通过；真实串流闭环尚未验收。此能力只提供测量，不授予自动码率或 FEC 控制权。
 
 ## 协商与边界
 

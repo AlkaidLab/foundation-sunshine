@@ -1,5 +1,5 @@
 /**
- * @file src/transport_send_budget.h
+ * @file src/transport/transport_send_budget.h
  * @brief Shared session IP budget for serialized, nonblocking OS submissions.
  */
 #pragma once

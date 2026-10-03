@@ -1,5 +1,5 @@
 /**
- * @file src/transport_budget.h
+ * @file src/transport/transport_budget.h
  * @brief Wire-budget allocation and the existing Moonlight RS shard limits.
  */
 #pragma once

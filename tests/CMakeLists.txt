@@ -219,30 +219,30 @@ if (NOT BUILD_TESTS)
 endif ()
 
 add_executable(transport_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/transport_send_budget.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_send_budget.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_send_budget.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_fec_controller.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_fec_controller.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_fec_controller.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_owner_inbox.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_owner_inbox.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_owner_inbox.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_deadline.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_pacer.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_pacer.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_pacer.cpp
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoNetwork.c
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoPacketFeedback.c
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_packet_feedback.cpp
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportFeedbackWire.c
-        ${CMAKE_SOURCE_DIR}/src/transport_feedback_wire.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_feedback_wire.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_feedback_wire.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_policy.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_policy_notice.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_policy_notice.cpp
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportPolicyStatus.c
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_policy_notice.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_policy_json.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_policy_json.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_policy_json.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_policy.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_budget.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport_feedback.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_budget.cpp
+        ${CMAKE_SOURCE_DIR}/src/transport/transport_feedback.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_budget.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_feedback.cpp)
 target_include_directories(transport_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

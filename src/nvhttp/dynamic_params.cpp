@@ -14,7 +14,7 @@
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
-#include "src/transport_policy_json.h"
+#include "src/transport/transport_policy_json.h"
 #include "src/utility.h"
 #include "src/video.h"
 

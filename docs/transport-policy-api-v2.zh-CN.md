@@ -1,6 +1,6 @@
 # 会话传输策略 API v2
 
-本接口用于已配对客户端查询和提交自身串流会话的手动传输策略。代码入口为 `src/nvhttp/dynamic_params.cpp`，严格 JSON 契约为 `src/transport_policy_json.*`，会话寻址与接受为 `src/stream.cpp`。当前实现包含会话 FEC、归一化净编码目标、策略版本、控制来源与代次以及应用回执。期限视频 owner 已接线并完整构建，隔离串流的单视频预算、显式自动接管及实验 FEC 联动已有证据；全流量预算与完整客户端业务接入仍待完成，见[实施文档](adaptive-fec-implementation.zh-CN.md)。
+本接口用于已配对客户端查询和提交自身串流会话的手动传输策略。代码入口为 `src/nvhttp/dynamic_params.cpp`，严格 JSON 契约为 `src/transport/transport_policy_json.*`，会话寻址与接受为 `src/stream.cpp`。当前实现包含会话 FEC、归一化净编码目标、策略版本、控制来源与代次以及应用回执。期限视频 owner 已接线并完整构建，隔离串流的单视频预算、显式自动接管及实验 FEC 联动已有证据；全流量预算与完整客户端业务接入仍待完成，见[实施文档](adaptive-fec-implementation.zh-CN.md)。
 
 同一认证上下文新增实验操作 `POST /api/v2/transport-control`，用于活动会话独立切换自动码率/FEC 和更新手动总预算上限。原手动 POST 的严格字段集合保持不变；两端 UI、可靠通知和真机验收分别记录，不因服务端接口存在而宣告 P3 完成。
 

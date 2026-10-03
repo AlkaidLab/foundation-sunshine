@@ -1,5 +1,5 @@
 /**
- * @file src/transport_owner_inbox.h
+ * @file src/transport/transport_owner_inbox.h
  * @brief Bounded producer ingress and lifecycle commands for one transport owner.
  */
 #pragma once

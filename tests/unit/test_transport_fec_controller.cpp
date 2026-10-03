@@ -1,5 +1,5 @@
-#include "src/transport_fec_controller.h"
-#include "src/transport_feedback_wire.h"
+#include "src/transport/transport_fec_controller.h"
+#include "src/transport/transport_feedback_wire.h"
 
 #include <gtest/gtest.h>
 
