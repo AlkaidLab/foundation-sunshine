@@ -154,6 +154,11 @@ static bool decode(AVCodecContext* codec, AVCodecParserContext* parser,
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
     bool valid = packet && frame;
+    uint8_t* parser_input = parser ? av_malloc(65536 + AV_INPUT_BUFFER_PADDING_SIZE) : NULL;
+    if (parser && !parser_input) {
+        record_error(AVERROR(ENOMEM));
+        valid = false;
+    }
     size_t offset = 0;
     unsigned zero_progress = 0;
     if (!parser) {
@@ -167,8 +172,11 @@ static bool decode(AVCodecContext* codec, AVCodecParserContext* parser,
         uint8_t* output = NULL;
         int output_size = 0;
         const int chunk = (int)((size - offset) > 65536 ? 65536 : size - offset);
+        /* Every parser input needs its own zero tail, including interior chunks. */
+        memcpy(parser_input, bytes + offset, (size_t)chunk);
+        memset(parser_input + chunk, 0, AV_INPUT_BUFFER_PADDING_SIZE);
         const int used = av_parser_parse2(parser, codec, &output, &output_size,
-            bytes + offset, chunk, AV_NOPTS_VALUE, AV_NOPTS_VALUE, (int64_t)offset);
+            parser_input, chunk, AV_NOPTS_VALUE, AV_NOPTS_VALUE, (int64_t)offset);
         if (used < 0 || used > chunk || (!used && !output_size) || (!used && ++zero_progress > 2)) {
             record_error(used < 0 ? used : AVERROR_INVALIDDATA);
             valid = false;
@@ -201,6 +209,7 @@ static bool decode(AVCodecContext* codec, AVCodecParserContext* parser,
     }
     av_frame_free(&frame);
     av_packet_free(&packet);
+    av_free(parser_input);
     return valid;
 }
 

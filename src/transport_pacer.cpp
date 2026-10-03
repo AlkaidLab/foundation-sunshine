@@ -1,6 +1,7 @@
 #include "transport_pacer.h"
 
 #include "transport_budget.h"
+#include "transport_credit.h"
 
 #include <algorithm>
 #include <deque>
@@ -10,7 +11,7 @@
 
 namespace transport {
   namespace {
-    constexpr std::int64_t scale = 1000000;
+    constexpr auto scale = detail::credit_scale;
     constexpr std::uint64_t maximum_credit_bytes = 1ULL << 32;
     constexpr std::uint64_t maximum_rate = 1000000000000ULL;
     // Experimental scheduling tolerance; not a V6-approved production value.
@@ -50,18 +51,8 @@ namespace transport {
 
       void
       advance(std::int64_t now) {
-        const auto ceiling = static_cast<std::int64_t>(limits.burst_bytes) * scale;
-        const auto room = static_cast<std::uint64_t>(ceiling - credit);
         const auto elapsed = static_cast<std::uint64_t>(now - updated_at_us);
-        if (limits.rate_bytes_per_second != 0) {
-          // Compare before multiplying; arbitrarily long idle time saturates
-          // credit without overflowing rate*elapsed or minting unbounded burst.
-          const auto fill = ceil_div(room, limits.rate_bytes_per_second);
-          if (elapsed >= fill)
-            credit = ceiling;
-          else
-            credit += static_cast<std::int64_t>(elapsed * limits.rate_bytes_per_second);
-        }
+        credit = detail::refill_credit(credit, limits.rate_bytes_per_second, limits.burst_bytes, elapsed);
         updated_at_us = now;
       }
 

@@ -7,16 +7,21 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory("${TRANSPORT_COMMON_C_ROOT}" common-c)
 add_executable(transport_stream_client stream_client.c)
-target_include_directories(transport_stream_client PRIVATE
+add_executable(transport_capture_output_tests capture_output_test.c)
+foreach(target transport_stream_client transport_capture_output_tests)
+target_include_directories(${target} PRIVATE
         "${TRANSPORT_COMMON_C_ROOT}/src"
         "${TRANSPORT_COMMON_C_ROOT}/enet/include")
-target_link_libraries(transport_stream_client PRIVATE moonlight-common-c)
-set_target_properties(transport_stream_client PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+target_link_libraries(${target} PRIVATE moonlight-common-c)
+set_target_properties(${target} PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 if(MSVC)
-    target_compile_options(transport_stream_client PRIVATE /W4 /WX)
+    target_compile_options(${target} PRIVATE /W4 /WX)
 else()
-    target_compile_options(transport_stream_client PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
 endif()
+endforeach()
+enable_testing()
+add_test(NAME transport_capture_output_tests COMMAND transport_capture_output_tests)
 
 # Optional offline validation using the client's existing Windows FFmpeg.
 # Sunshine's encoder-only FFmpeg is insufficient; never treat a missing

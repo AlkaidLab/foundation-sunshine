@@ -74,7 +74,6 @@ namespace transport {
       observations[i] = { decoded.baseExtendedSequence + i, static_cast<packet_status_e>(decoded.status[i]),
         decoded.status[i] == TF_RECEIVED ? static_cast<std::int64_t>(decoded.firstArrivalTimeUs[i]) : -1 };
     }
-    event.connection_epoch = decoded.connectionEpoch;
     event.receiver_clock_epoch = decoded.receiverClockEpoch;
     event.receiver_sample_time_us = static_cast<std::int64_t>(decoded.receiverSampleTimeUs);
     event.feedback = ledger_.apply({ decoded.connectionEpoch, decoded.reportSequence,
