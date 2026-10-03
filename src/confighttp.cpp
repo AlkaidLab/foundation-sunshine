@@ -25,6 +25,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <string_view>
 #include <cstdio>
 #include <ctime>
 #include <thread>
@@ -52,6 +53,8 @@
 #include "confighttp.h"
 #include "clipboard_http.h"
 #include "text_context/http.h"
+#include "ai/codex_auth.h"
+#include "ai/codex_responses.h"
 #include "ai/credential_store.h"
 #include "crypto.h"
 #include "display_device/color_profile.h"
@@ -3079,6 +3082,17 @@ namespace confighttp {
     return config_dir / "ai_llm_credential.bin";
   }
 
+  static fs::path
+  getCodexCredentialPath() {
+    auto config_dir = file_handler::path_from_utf8(config::sunshine.config_file).parent_path();
+    return config_dir / "ai_codex_credential.bin";
+  }
+
+  static bool
+  isCodexAuthMode(const nlohmann::json &cfg) {
+    return cfg.value("provider", "") == "openai" && cfg.value("authMode", "apiKey") == "chatgpt";
+  }
+
   static void
   applyStoredCredentialLocked(nlohmann::json &cfg) {
     auto credential = credential_store::read_llm_api_key(getAiCredentialPath());
@@ -3177,6 +3191,7 @@ namespace confighttp {
     ai_config_cache = nlohmann::json{
       {"enabled", false},
       {"provider", "openai"},
+      {"authMode", "apiKey"},
       {"apiBase", "https://api.openai.com/v1"},
       {"apiKey", ""},
       {"apiKeyConfigured", false},
@@ -3208,6 +3223,7 @@ namespace confighttp {
     persisted.erase("apiKey");
     persisted.erase("apiKeyConfigured");
     persisted.erase("apiKeyHint");
+    persisted.erase("codexConnected");
     if (!writeAiConfigFile(persisted)) return false;
     ai_config_cache = cfg;
     ai_config_loaded = true;
@@ -3514,6 +3530,8 @@ namespace confighttp {
     const std::string key = cfg.value("apiKey", "");
     cfg.erase("apiKey");
     cfg["apiKeyConfigured"] = !key.empty();
+    cfg["authMode"] = cfg.value("authMode", "apiKey");
+    cfg["codexConnected"] = codex_auth::status(getCodexCredentialPath()).connected;
 
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
@@ -3541,6 +3559,18 @@ namespace confighttp {
       auto current = loadAiConfigLocked();
       if (input.contains("enabled")) current["enabled"] = input["enabled"].get<bool>();
       if (input.contains("provider")) current["provider"] = input["provider"].get<std::string>();
+      if (input.contains("authMode")) {
+        const std::string mode = input["authMode"].get<std::string>();
+        if (mode != "apiKey" && mode != "chatgpt") {
+          throw std::invalid_argument("authMode must be apiKey or chatgpt");
+        }
+        current["authMode"] = mode;
+      } else if (input.contains("provider") && current.value("provider", "") != "openai") {
+        current["authMode"] = "apiKey";
+      }
+      if (current.value("authMode", "apiKey") == "chatgpt" && current.value("provider", "") != "openai") {
+        throw std::invalid_argument("ChatGPT account login requires the OpenAI provider");
+      }
       if (input.contains("apiBase")) current["apiBase"] = input["apiBase"].get<std::string>();
       if (input.contains("model")) current["model"] = input["model"].get<std::string>();
       if (input.contains("compatibility")) current["compatibility"] = input["compatibility"].get<std::string>();
@@ -3576,6 +3606,7 @@ namespace confighttp {
       if (saveAiConfigLocked(current)) {
         output["status"] = "ok";
         output["apiKeyConfigured"] = current["apiKeyConfigured"];
+        output["codexConnected"] = codex_auth::status(getCodexCredentialPath()).connected;
       } else {
         output["status"] = "error";
         output["error"] = "Failed to write config file";
@@ -3596,6 +3627,99 @@ namespace confighttp {
   }
 
   void
+  getCodexAuth(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    const auto state = codex_auth::status(getCodexCredentialPath());
+    json body {
+      {"connected", state.connected},
+      {"pending", state.pending}
+    };
+    if (state.pending) {
+      body["userCode"] = state.user_code;
+      body["verificationUri"] = state.verification_uri;
+      body["flowId"] = state.flow_id;
+      body["interval"] = state.interval_seconds;
+    }
+    if (!state.error.empty()) body["error"] = state.error;
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+  }
+
+  void
+  startCodexAuth(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    const auto result = codex_auth::start();
+    if (!result.success) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_bad_gateway, result.error);
+      return;
+    }
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, json {
+      {"connected", codex_auth::status(getCodexCredentialPath()).connected},
+      {"pending", true},
+      {"userCode", result.user_code},
+      {"verificationUri", result.verification_uri},
+      {"flowId", result.flow_id},
+      {"interval", result.interval_seconds},
+      {"expiresIn", result.expires_in_seconds}
+    });
+  }
+
+  void
+  pollCodexAuth(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    std::stringstream bodyStream;
+    bodyStream << request->content.rdbuf();
+    const auto input = json::parse(bodyStream.str(), nullptr, false);
+    if (!input.is_object() || !input.contains("flowId") || !input["flowId"].is_string()) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request,
+                       "A device sign-in flow ID is required");
+      return;
+    }
+    const auto result = codex_auth::poll(getCodexCredentialPath(), input["flowId"].get<std::string>());
+    if (result.state == codex_auth::poll_state_e::error || result.state == codex_auth::poll_state_e::expired) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request,
+                       result.error.empty() ? "ChatGPT account sign-in expired" : result.error);
+      return;
+    }
+    if (result.state == codex_auth::poll_state_e::retryable_error) {
+      const auto state = codex_auth::status(getCodexCredentialPath());
+      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, json {
+        {"connected", state.connected},
+        {"pending", true},
+        {"retryable", true},
+        {"flowId", state.flow_id},
+        {"interval", result.retry_after_seconds}
+      });
+      return;
+    }
+    const auto state = codex_auth::status(getCodexCredentialPath());
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok, json {
+      {"connected", state.connected},
+      {"pending", result.state == codex_auth::poll_state_e::pending},
+      {"flowId", state.flow_id},
+      {"interval", result.retry_after_seconds}
+    });
+  }
+
+  void
+  logoutCodexAuth(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    print_req(request);
+    const auto result = codex_auth::logout(getCodexCredentialPath());
+    if (!result.success) {
+      write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, result.error);
+      return;
+    }
+    write_json(std::move(response), SimpleWeb::StatusCode::success_ok,
+               json { {"connected", false}, {"pending", false} });
+  }
+
+  void
   proxyAiModels(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
     print_req(request);
@@ -3606,6 +3730,18 @@ namespace confighttp {
         SimpleWeb::StatusCode::client_error_forbidden,
         R"({"error":{"message":"AI proxy is not enabled","type":"invalid_request_error"}})",
         json_headers());
+      return;
+    }
+    if (isCodexAuthMode(cfg)) {
+      if (!codex_auth::status(getCodexCredentialPath()).connected) {
+        response->write(SimpleWeb::StatusCode::client_error_bad_request,
+                        R"({"error":{"message":"Sign in with a ChatGPT account first","type":"invalid_request_error"}})",
+                        json_headers());
+        return;
+      }
+      json models = json::array();
+      for (const auto model : codex_responses::available_models) models.push_back({ {"id", std::string(model)} });
+      response->write(SimpleWeb::StatusCode::success_ok, json { {"data", std::move(models)} }.dump(), json_headers());
       return;
     }
     const std::string api_key = cfg.value("apiKey", "");
@@ -3689,7 +3825,12 @@ namespace confighttp {
       if (result.httpCode != 200 && !headerSent) {
         SimpleWeb::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
-        response->write(SimpleWeb::StatusCode::server_error_bad_gateway, result.body, headers);
+        const auto statusCode = result.httpCode == 403
+          ? SimpleWeb::StatusCode::client_error_forbidden
+          : result.httpCode == 400
+            ? SimpleWeb::StatusCode::client_error_bad_request
+            : SimpleWeb::StatusCode::server_error_bad_gateway;
+        response->write(statusCode, result.body, headers);
       }
     } else {
       auto result = processAiChat(requestBody);
@@ -3724,9 +3865,103 @@ namespace confighttp {
   bool
   isAiEnabled() {
     auto cfg = loadAiConfig();
+    if (isCodexAuthMode(cfg)) {
+      return cfg.value("enabled", false) && codex_auth::status(getCodexCredentialPath()).connected;
+    }
     return cfg.value("enabled", false) &&
            (!isApiKeyRequired(cfg) || !cfg.value("apiKey", "").empty()) &&
            !cfg.value("apiBase", "").empty();
+  }
+
+  static AiProxyResult
+  codexError(int status, const std::string &message) {
+    return {status, json { {"error", { {"message", message}, {"type", "upstream_error"} }} }.dump(), "application/json"};
+  }
+
+  static std::string
+  codexUpstreamError(long status, const std::string &body) {
+    try {
+      auto parsed = json::parse(body);
+      const auto &error = parsed.value("error", json::object());
+      if (error.is_object()) {
+        auto message = error.value("message", "");
+        if (!message.empty()) return message.substr(0, 300);
+      }
+    } catch (...) {}
+    return "ChatGPT Codex request failed (HTTP " + std::to_string(status) + ")";
+  }
+
+  static bool
+  prepareCodexRequest(const std::string &requestBody,
+                      std::string &processedBody,
+                      std::string &model,
+                      std::map<std::string, std::string> &headers,
+                      AiProxyResult &result) {
+    const auto cfg = loadAiConfig();
+    if (!cfg.value("enabled", false)) {
+      result = codexError(403, "AI proxy is not enabled");
+      return false;
+    }
+    auto token = codex_auth::access_token(getCodexCredentialPath());
+    if (!token.success) {
+      result = codexError(403, "ChatGPT account is not connected; sign in again");
+      return false;
+    }
+    try {
+      auto chat = json::parse(requestBody);
+      if (!chat.contains("model") || !chat["model"].is_string() || chat["model"].get<std::string>().empty()) {
+        chat["model"] = codex_responses::configured_model_or_default(cfg.value("model", ""));
+      }
+      auto converted = codex_responses::make_request(chat.dump());
+      if (!converted.success) {
+        result = codexError(400, converted.error);
+        return false;
+      }
+      processedBody = std::move(converted.body);
+      model = std::move(converted.model);
+    } catch (const std::exception &e) {
+      result = codexError(400, std::string("Invalid chat request: ") + e.what());
+      return false;
+    }
+    headers["Authorization"] = "Bearer " + token.access_token;
+    headers["chatgpt-account-id"] = token.account_id;
+    headers["OpenAI-Beta"] = "responses=experimental";
+    headers["Accept"] = "text/event-stream";
+    headers["originator"] = "foundation-sunshine";
+    return true;
+  }
+
+  static AiProxyResult
+  processCodexChat(const std::string &requestBody) {
+    std::string processedBody, model;
+    std::map<std::string, std::string> headers;
+    AiProxyResult result;
+    if (!prepareCodexRequest(requestBody, processedBody, model, headers, result)) return result;
+
+    std::string upstreamBody;
+    long status = 0;
+    constexpr auto endpoint = "https://chatgpt.com/backend-api/codex/responses";
+    if (!http::post_json(endpoint, processedBody, headers, upstreamBody, status, 120)) {
+      return codexError(502, "Could not connect to ChatGPT Codex");
+    }
+    if (status < 200 || status >= 300) {
+      return codexError(status == 401 || status == 403 ? 403 : 502, codexUpstreamError(status, upstreamBody));
+    }
+
+    codex_responses::sse_decoder_t decoder;
+    decoder.feed(upstreamBody);
+    decoder.finish();
+    if (!decoder.error().empty()) return codexError(502, decoder.error());
+
+    json output {
+      {"id", "chatcmpl-sunshine-codex"},
+      {"object", "chat.completion"},
+      {"model", model},
+      {"choices", json::array({
+        { {"index", 0}, {"message", { {"role", "assistant"}, {"content", decoder.text()} }}, {"finish_reason", "stop"} }
+      })}
+    };
+    return {200, output.dump(), "application/json"};
   }
 
   /**
@@ -3807,6 +4042,7 @@ namespace confighttp {
 
   AiProxyResult
   processAiChat(const std::string &requestBody) {
+    if (isCodexAuthMode(loadAiConfig())) return processCodexChat(requestBody);
     std::string targetUrl, processedBody;
     std::map<std::string, std::string> proxyHeaders;
     bool isAnthropic = false, isStream = false;
@@ -3854,10 +4090,135 @@ namespace confighttp {
     return realsize;
   }
 
+  struct CodexStreamContext {
+    codex_responses::sse_decoder_t decoder;
+    std::function<void(const char *, size_t)> callback;
+    std::string model;
+    std::string errorBody;
+    std::string callbackError;
+    long status = 0;
+    bool emitted = false;
+  };
+
+  static void
+  emitCodexChunk(CodexStreamContext &ctx, const std::string &delta, bool done) {
+    json chunk {
+      {"id", "chatcmpl-sunshine-codex"},
+      {"object", "chat.completion.chunk"},
+      {"model", ctx.model},
+      {"choices", json::array({
+        { {"index", 0}, {"delta", done ? json::object() : json { {"content", delta} }},
+          {"finish_reason", done ? json("stop") : json(nullptr)} }
+      })}
+    };
+    const std::string event = "data: " + chunk.dump() + "\n\n";
+    ctx.callback(event.data(), event.size());
+    ctx.emitted = true;
+  }
+
+  static AiProxyResult
+  processCodexChatStream(const std::string &requestBody,
+                         std::function<void(const char *, size_t)> chunkCallback) {
+    std::string processedBody, model;
+    std::map<std::string, std::string> headers;
+    AiProxyResult result;
+    if (!prepareCodexRequest(requestBody, processedBody, model, headers, result)) return result;
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return codexError(500, "Could not initialize ChatGPT connection");
+    CodexStreamContext ctx;
+    ctx.callback = std::move(chunkCallback);
+    ctx.model = std::move(model);
+
+    struct curl_slist *headerList = nullptr;
+    headerList = curl_slist_append(headerList, "Content-Type: application/json");
+    for (const auto &[key, value] : headers) {
+      const std::string header = key + ": " + value;
+      headerList = curl_slist_append(headerList, header.c_str());
+    }
+    auto onHeader = [](char *ptr, size_t size, size_t count, void *data) -> size_t {
+      const size_t bytes = size * count;
+      auto &context = *static_cast<CodexStreamContext *>(data);
+      std::string_view line(ptr, bytes);
+      if (line.starts_with("HTTP/")) {
+        const auto space = line.find(' ');
+        if (space != std::string_view::npos) {
+          context.status = std::strtol(ptr + space + 1, nullptr, 10);
+        }
+      }
+      return bytes;
+    };
+    auto onBody = [](char *ptr, size_t size, size_t count, void *data) -> size_t {
+      const size_t bytes = size * count;
+      auto &context = *static_cast<CodexStreamContext *>(data);
+      if (context.status < 200 || context.status >= 300) {
+        if (context.errorBody.size() < 64 * 1024) {
+          context.errorBody.append(ptr, std::min(bytes, 64 * 1024 - context.errorBody.size()));
+        }
+        return bytes;
+      }
+      try {
+        context.decoder.feed(std::string_view(ptr, bytes), [&](const std::string &delta) {
+          emitCodexChunk(context, delta, false);
+        });
+        if (!context.decoder.error().empty()) return size_t { 0 };
+      } catch (const std::exception &e) {
+        context.callbackError = e.what();
+        return 0;
+      }
+      return bytes;
+    };
+
+    constexpr auto endpoint = "https://chatgpt.com/backend-api/codex/responses";
+    curl_easy_setopt(curl, CURLOPT_URL, endpoint);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, processedBody.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(processedBody.size()));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerList);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, +onHeader);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +onBody);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    const CURLcode curlResult = curl_easy_perform(curl);
+    long httpStatus = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    curl_slist_free_all(headerList);
+    curl_easy_cleanup(curl);
+
+    if (httpStatus < 200 || httpStatus >= 300) {
+      return codexError(httpStatus == 401 || httpStatus == 403 ? 403 : 502,
+                        codexUpstreamError(httpStatus, ctx.errorBody));
+    }
+    if (curlResult == CURLE_OK && ctx.callbackError.empty() && ctx.decoder.error().empty()) {
+      ctx.decoder.finish();
+    }
+    const auto error = codex_responses::stream_error(
+      ctx.callbackError, ctx.decoder.error(), curlResult == CURLE_OK);
+    if (!error.empty()) {
+      if (!ctx.emitted) return codexError(502, error);
+      const std::string event = "data: " + json { {"error", { {"message", error} }} }.dump() + "\n\n";
+      ctx.callback(event.data(), event.size());
+    } else {
+      if (!ctx.emitted && !ctx.decoder.text().empty()) emitCodexChunk(ctx, ctx.decoder.text(), false);
+      emitCodexChunk(ctx, "", true);
+    }
+    constexpr std::string_view done = "data: [DONE]\n\n";
+    ctx.callback(done.data(), done.size());
+    return {200, "", "text/event-stream"};
+  }
+
   AiProxyResult
   processAiChatStream(
     const std::string &requestBody,
     std::function<void(const char *, size_t)> chunkCallback) {
+
+    if (isCodexAuthMode(loadAiConfig())) {
+      return processCodexChatStream(requestBody, std::move(chunkCallback));
+    }
 
     std::string targetUrl, processedBody;
     std::map<std::string, std::string> proxyHeaders;
@@ -4217,6 +4578,10 @@ namespace confighttp {
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/api/ai/config$"]["GET"] = getAiConfig;
     server.resource["^/api/ai/config$"]["POST"] = saveAiConfigEndpoint;
+    server.resource["^/api/ai/codex/auth$"]["GET"] = getCodexAuth;
+    server.resource["^/api/ai/codex/auth/start$"]["POST"] = startCodexAuth;
+    server.resource["^/api/ai/codex/auth/poll$"]["POST"] = pollCodexAuth;
+    server.resource["^/api/ai/codex/auth/logout$"]["POST"] = logoutCodexAuth;
     server.resource["^/api/ai/models$"]["GET"] = proxyAiModels;
     server.resource["^/api/ai/chat/completions$"]["POST"] = proxyAiChat;
     server.resource["^/api/ai/chat/completions$"]["OPTIONS"] = handleAiCors;
