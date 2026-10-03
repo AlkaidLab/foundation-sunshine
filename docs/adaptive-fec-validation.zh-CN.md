@@ -4,7 +4,7 @@
 
 ## 版本与证据范围
 
-Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入原工作区以 `87ea00bc4` 为基线的传输变更，未纳入控制面板、USB 或其他无关修改。主机最终发布提交和构建验证将在完成后登记。公共依赖固定如下：
+Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入原工作区以 `87ea00bc4` 为基线的传输变更，未纳入控制面板、USB 或其他无关修改。主机 PR 为 [#1118](https://github.com/AlkaidLab/foundation-sunshine/pull/1118)，PC 为 [#256](https://github.com/qiin2333/moonlight-qt/pull/256)，Android 为 [#686](https://github.com/qiin2333/moonlight-vplus/pull/686)。各自运行证据按实际源码版本登记。公共依赖固定如下：
 
 | 依赖 | 固定提交 | 可审查入口 |
 | --- | --- | --- |
@@ -23,12 +23,13 @@ Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入�
 | common c Windows/UCRT GCC Debug/Release | 两种静态构建与各 11 个 CTest 通过 | 公共测量、反馈、通知、协商、AES-GCM 及既有协议回归；不包含网络控制握手、Qt/Android 应用运行 |
 | common c Windows/MSVC Debug | DLL 和内部静态测试库构建及 11 个 CTest 通过 | 保留 Debug 断言及真实 RS 合成恢复校验，验证原子支持、导出构建和会话重置/清理；不是 DLL 消费者的运行验收 |
 | common c Linux/WSL GCC 11.4 + MbedTLS 3.6.7 | Debug/Release 共享构建与各 11 个 CTest 通过 | 执行既有 PSA 加密后端的已知向量、认证失败和复用测试；官方依赖发布包校验 SHA-256 |
-| common c 多平台 CI | `fd3b370` 的 9 个任务全部通过；修正矩阵 CC/CXX 后，Linux x64 Clang 配置日志明确为 Clang 18.1.3 | Windows x64/ARM64、macOS、Linux x64/ARM GCC/Clang、OpenSSL/MbedTLS 构建与回归；`53116f5` 已修复 review 指出的观测锁忙等，新 head CI 待终态 |
+| common c 多平台 CI | `53116f5` 的 9 个任务全部通过；修正矩阵 CC/CXX 后，Linux x64 Clang 配置日志明确为 Clang 18.1.3 | Windows x64/ARM64、macOS、Linux x64/ARM GCC/Clang、OpenSSL/MbedTLS 构建与回归；`53116f5` 修复 review 指出的观测锁忙等，当前 head CI 已全部通过 |
 | Sunshine 发布版本传输组件 | Windows/UCRT GCC Release，267 个 GTest、4/4 CTest 通过 | 新 master 与公开依赖组合的策略、预算、反馈、期限和通知组件；不代表完整主机或应用闭环 |
 | Sunshine 发布版本出口组件 | Windows/UCRT GCC Release，2/2 CTest 通过 | 平台 UDP 与 ENet 发送准入，含实际回环；独立构建显式引用已准备的 FFmpeg 头文件 |
 | Sunshine 发布版本 GoogCC | Windows/UCRT GCC Release，3/3 CTest 通过 | 固定上游、适配/运行、线格式的独立测试；容量重放是合成输入，不代表媒体收益或完整闭环 |
-| Sunshine 发布版本完整主机 | OFF 完整编译曾中断，未形成通过结果；继续最终依赖上的 OFF/ON 构建与运行 | 需在最终公共依赖组合上继续真实出口、SDK 与应用闭环复验 |
-| PC/Android 发布版本 | 已迁移到各自最新 master；PC 62 项 Qt 测试及导航检查、Android 78 项 JVM 回归通过；完整构建曾中断，仍需最终依赖复验 | 单元结果不代表真实 Game/JNI、控制会话或设备性能 |
+| Sunshine 发布版本完整主机 | `7e5fb81` + common c `53116f5` 的 OFF/ON 完整编译与各 5/5 CTest 通过；后续 UDP 依赖发现修复也通过两配置复验 | 复用已有 GUI/FFmpeg，未验证驱动安装包；实际出口、SDK 与应用闭环仍需复验 |
+| PC 发布版本 | `80ac770b` 保留最新 Wayland 改动，62 项 Qt 测试及导航检查、Qt 6.11.1/MSVC x64 Release 完整构建通过 | 原生绘制基类与策略控件同时保留；普通构建不包含开发驱动，实际 Session 另验收 |
+| Android 发布版本 | `9201f86` + common c `53116f5` + SDK `b3f97c3`：78 项 JVM 回归、普通/隔离 Debug 及各自 instrumentation APK 构建通过；后续文档单列 | 隔离包 ID 已核对，正常 ADB 安装返回 `INSTALL_FAILED_USER_RESTRICTED`，设备测试未执行 |
 
 通知回归覆盖独立 72 字节向量、高位 64 位计数、版本/长度/保留位校验与原子拒绝、历史进度和可下降的 encoder-ready 状态、停止与重初始化隔离。队列生命周期测试保留真实 RS 生成、丢失五个源分片后的恢复和载荷逐字节核对；快照读取与反复销毁重建并发测试单列。
 
@@ -41,6 +42,7 @@ Sunshine 发布分支基于 `59bea4757333550b954ae67bc1cf1ece649e3cf6`，合入�
 | MSVC 编译警告与原子支持 | 控制加密封装校验 16 位长度后转换；主库与原子测试启用 C11 原子，主库明确 UTF-8 | MSVC Debug 构建和回归通过；跨工具链结果以 CI 为准 |
 | 默认 DLL 和旧加密依赖的链接失败 | Windows 生成导出表，内部全局状态测试使用相同配置的静态库；配置检测 PSA multipart AEAD，CI 改用校验散列的官方 MbedTLS 3.6.7 | 未改生产密码算法；两种后端执行同一已知向量、认证拒绝和复用回归，9 个 CI 任务通过 |
 | CI 编译器标签与实际执行不符 | 从配置日志发现 Linux Clang 任务实际运行 GNU 13.3；工作流显式设置矩阵的 CC/CXX | 保留旧结果的实际 GCC 范围；修正后 `fd3b370` 的 9 项 CI 全部通过，真实 Clang 配置已检查 |
+| Sunshine UDP 测试在 CI 配置失败 | 根构建采用组件形式的 Boost 源码，测试仍查找安装式 include；改为复用 Boost::headers/Boost::boost，并从已配置 FFmpeg 路径找头文件 | OFF/ON 各 5 项 CTest 通过，清除两项 UDP 路径缓存后配置及实际 UDP 测试通过；远端新 head CI 另行跟进 |
 
 观测锁竞争修复在 64 次失败后作名义 1 ms 平台休眠，保留跨销毁生命周期的原子锁；GCC Debug/Release 和 MSVC DLL Debug 各 11 项 CTest 通过。休眠实际粒度、公平性及接收延迟尚未完成设备测量，不能据此宣称性能改善。
 

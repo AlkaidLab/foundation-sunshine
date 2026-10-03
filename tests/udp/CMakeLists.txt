@@ -11,15 +11,29 @@ if(NOT WIN32)
     message(FATAL_ERROR "Platform UDP validation currently covers the Windows implementation only")
 endif()
 
-find_path(UDP_DEPENDENCY_INCLUDE_DIR boost/core/noncopyable.hpp
-        HINTS "${UDP_SOURCE_ROOT}/third-party/build-deps/dist/Windows-AMD64/include"
-        REQUIRED)
+# Root builds may fetch Boost as component source trees instead of installing a
+# merged include directory. Reuse their header target and its usage requirements.
+if(TARGET Boost::headers)
+    set(UDP_BOOST_HEADER_TARGET Boost::headers)
+elseif(TARGET Boost::boost)
+    set(UDP_BOOST_HEADER_TARGET Boost::boost)
+else()
+    find_path(UDP_DEPENDENCY_INCLUDE_DIR boost/core/noncopyable.hpp
+            HINTS "${UDP_SOURCE_ROOT}/third-party/build-deps/dist/Windows-AMD64/include"
+            REQUIRED)
+endif()
 find_path(UDP_FFMPEG_INCLUDE_DIR libavutil/pixfmt.h
-        HINTS "${UDP_SOURCE_ROOT}/third-party/build-deps/dist/Windows-AMD64/include"
+        HINTS ${FFMPEG_INCLUDE_DIRS} "${FFMPEG_PREPARED_BINARIES}/include"
+            "${UDP_SOURCE_ROOT}/third-party/build-deps/dist/Windows-AMD64/include"
         REQUIRED)
 add_executable(platform_udp_send_tests "${UDP_SOURCE_ROOT}/tests/unit/test_platform_udp_send.cpp")
 target_include_directories(platform_udp_send_tests PRIVATE "${UDP_SOURCE_ROOT}" "${UDP_SOURCE_ROOT}/third-party")
-target_include_directories(platform_udp_send_tests SYSTEM PRIVATE "${UDP_DEPENDENCY_INCLUDE_DIR}" "${UDP_FFMPEG_INCLUDE_DIR}")
+target_include_directories(platform_udp_send_tests SYSTEM PRIVATE "${UDP_FFMPEG_INCLUDE_DIR}")
+if(UDP_BOOST_HEADER_TARGET)
+    target_link_libraries(platform_udp_send_tests PRIVATE ${UDP_BOOST_HEADER_TARGET})
+else()
+    target_include_directories(platform_udp_send_tests SYSTEM PRIVATE "${UDP_DEPENDENCY_INCLUDE_DIR}")
+endif()
 target_link_libraries(platform_udp_send_tests PRIVATE gtest_main ws2_32 mswsock)
 set_target_properties(platform_udp_send_tests PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 if(MSVC)
