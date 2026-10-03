@@ -14,6 +14,7 @@ static atomic_uint_fast64_t audioPacketCount;
 static atomic_uint_fast64_t audioBytes;
 static atomic_int terminationCode;
 static atomic_bool captureIoFailed;
+static atomic_bool captureTruncated;
 static uint64_t captureBytes;
 
 static bool
@@ -46,7 +47,11 @@ static int videoSetup(int format, int width, int height, int rate, void* context
 }
 
 static int submit(PDECODE_UNIT unit) {
-    if (captureBytes + (uint64_t)unit->fullLength > 100 * 1024 * 1024) return DR_NEED_IDR;
+  if (atomic_load_explicit(&captureTruncated, memory_order_relaxed)) return DR_NEED_IDR;
+  if (captureBytes + (uint64_t) unit->fullLength > 100 * 1024 * 1024) {
+    atomic_store_explicit(&captureTruncated, true, memory_order_relaxed);
+    return DR_NEED_IDR;
+  }
     for (PLENTRY entry = unit->bufferList; entry != NULL; entry = entry->next) {
       if (fwrite(entry->data, 1, (size_t) entry->length, video) != (size_t) entry->length) {
         atomic_store_explicit(&captureIoFailed, true, memory_order_relaxed);
@@ -141,7 +146,8 @@ int main(int argc, char** argv) {
     uint64_t notice_sequence = 0;
     unsigned notices_observed = 0;
     for (int i = 0; i < seconds * 10 && !atomic_load_explicit(&terminationCode, memory_order_relaxed) &&
-                    !atomic_load_explicit(&captureIoFailed, memory_order_relaxed);
+                    !atomic_load_explicit(&captureIoFailed, memory_order_relaxed) &&
+                    !atomic_load_explicit(&captureTruncated, memory_order_relaxed);
       ++i) {
       LI_VIDEO_NETWORK_SNAPSHOT snapshot;
       if (LiGetVideoNetworkSnapshot(&snapshot)) {
@@ -175,18 +181,20 @@ int main(int argc, char** argv) {
     TPS_STATUS_NOTICE stopped_notice;
     const bool notice_after_stop = LiGetTransportPolicyStatusNotice(&stopped_notice);
     const bool outputs_valid = closeCapture();
+    const bool truncated = atomic_load_explicit(&captureTruncated, memory_order_relaxed);
     printf("{\"frames\":%u,\"video_bytes\":\"%" PRIu64 "\",\"negotiated_epoch\":\"%" PRIu64
            "\",\"control_requested\":%s,\"control_negotiated\":%s,\"termination\":%d,\"audio_packets_delivered\":\"%" PRIu64 "\",\"audio_bytes_delivered\":\"%" PRIu64
-           "\",\"notices_observed\":%u,\"notice_after_stop\":%s,\"capture_io_failed\":%s}\n",
+           "\",\"notices_observed\":%u,\"notice_after_stop\":%s,\"capture_io_failed\":%s,\"capture_truncated\":%s}\n",
       atomic_load_explicit(&frameCount, memory_order_relaxed), captureBytes, epoch,
       requested_control ? "true" : "false", negotiated_control ? "true" : "false",
       atomic_load_explicit(&terminationCode, memory_order_relaxed),
       (uint64_t) atomic_load_explicit(&audioPacketCount, memory_order_relaxed),
       (uint64_t) atomic_load_explicit(&audioBytes, memory_order_relaxed),
-      notices_observed, notice_after_stop ? "true" : "false", outputs_valid ? "false" : "true");
+      notices_observed, notice_after_stop ? "true" : "false", outputs_valid ? "false" : "true",
+      truncated ? "true" : "false");
     return outputs_valid && atomic_load_explicit(&frameCount, memory_order_relaxed) &&
                (atoi(argv[7]) != 1 || epoch != 0) && (!requested_control || negotiated_control) &&
-               !notice_after_stop && !atomic_load_explicit(&terminationCode, memory_order_relaxed) ?
+               !truncated && !notice_after_stop && !atomic_load_explicit(&terminationCode, memory_order_relaxed) ?
              0 :
              4;
 }

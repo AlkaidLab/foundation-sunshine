@@ -25,7 +25,9 @@ transport_stream_client host rtsp-url app-version gfe-version codec-mask seconds
 
 Duration is bounded to 1–60 seconds and video capture to 100 MiB. The client saves
 `.h264`, `.frames.csv` and JSON observation output. CSV records actual decode-unit
-boundaries. After capture, validate using a decoder-enabled client FFmpeg:
+boundaries. Exceeding the byte limit stops capture, reports `capture_truncated`
+and returns a failing exit status; a captured prefix is not a complete run.
+After capture, validate using a decoder-enabled client FFmpeg:
 
 ```powershell
 .codex-build/adaptive-fec-live-client/transport_decode_capture.exe `
