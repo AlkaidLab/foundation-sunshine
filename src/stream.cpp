@@ -3734,6 +3734,8 @@ namespace stream {
       std::deque<transport::googcc_probe_t> pending_probes;
       std::int32_t last_probe_cluster = -1;
       transport::paced_probe_result_e last_probe_result = transport::paced_probe_result_e::none;
+      std::int32_t last_probe_wait_cluster = -1;
+      transport::paced_probe_result_e last_probe_wait_result = transport::paced_probe_result_e::none;
       std::uint64_t probe_clock_resets = 0;
       bool probing_enabled = false;
       transport::googcc_runtime_config_t controller_config;
@@ -4509,7 +4511,16 @@ namespace stream {
             disposition = pacer.start_probe(active.pacer_handle,
               { request.cluster_id, request.target_kbps, request.duration_us, request.minimum_delta_us, request.minimum_packets }, now);
           if (disposition == transport::paced_probe_result_e::busy || disposition == transport::paced_probe_result_e::insufficient_media ||
-              disposition == transport::paced_probe_result_e::deadline) break;
+              disposition == transport::paced_probe_result_e::deadline) {
+            if (config::stream.experimental_transport_trace &&
+                (active.last_probe_wait_cluster != request.cluster_id || active.last_probe_wait_result != disposition)) {
+              BOOST_LOG(debug) << "Probe wait: epoch=" << active.flow->connection_epoch << " now=" << now
+                               << " cluster=" << request.cluster_id << " result=" << static_cast<int>(disposition);
+              active.last_probe_wait_cluster = request.cluster_id;
+              active.last_probe_wait_result = disposition;
+            }
+            break;
+          }
           if (config::stream.experimental_transport_trace)
             BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
                              << " cluster=" << request.cluster_id << " result=" << static_cast<int>(disposition);
