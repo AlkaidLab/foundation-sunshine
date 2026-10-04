@@ -1617,6 +1617,75 @@ namespace {
     EXPECT_EQ(pacer.host_snapshot().queued_packets, 0);
     EXPECT_FALSE(pacer.add_session(8, limits(), 1000000));
   }
+  TEST(TransportPacer, RecoveryPrimaryFitsDeadlineEvenWhenParityDoesNot) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 100), 0);
+    ASSERT_EQ(pacer.mark_reference_break(handle, 0, 0).result, pacer_reference_break_result_e::marked);
+    ASSERT_EQ(pacer.enqueue_frame(handle, primary_then_fec(1, 1, 2, 2, 150, frame_dependency_e::recovery), 0).result,
+      pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.enqueue_frame(handle, primary_then_fec(2, 5, 1, 0, 500, frame_dependency_e::reference), 0).result,
+      pacer_enqueue_result_e::queued);
+
+    for (const auto now : { 0, 100 }) {
+      const auto sent = pacer.dispatch(now, all_success(now));
+      ASSERT_EQ(sent.successful.size(), 1);
+      EXPECT_EQ(sent.successful[0].packet.kind, packet_kind_e::data);
+      EXPECT_EQ(sent.successful[0].packet.extended_sequence, now == 0 ? 1u : 2u);
+      EXPECT_TRUE(sent.frames.empty());
+    }
+    const auto retired = pacer.dispatch(101, all_success(101));
+    ASSERT_EQ(retired.frames.size(), 1);
+    EXPECT_EQ(retired.frames[0].result, frame_send_result_e::cannot_meet_deadline);
+    EXPECT_TRUE(retired.frames[0].primary_complete);
+    EXPECT_FALSE(retired.frames[0].recovery_required);
+    EXPECT_EQ(retired.frames[0].submitted_ip_bytes, 200u);
+    EXPECT_EQ(retired.frames[0].abandoned_ip_bytes, 200u);
+    EXPECT_TRUE(retired.successful.empty());
+    const auto next = pacer.dispatch(200, all_success(200));
+    ASSERT_EQ(next.frames.size(), 1);
+    EXPECT_EQ(next.frames[0].result, frame_send_result_e::complete);
+    EXPECT_EQ(next.successful[0].packet.extended_sequence, 5u);
+    EXPECT_EQ(pacer.host_snapshot().submitted_ip_bytes, 300u);
+    EXPECT_EQ(pacer.snapshot(handle)->budget_debt_bytes, 0u);
+    EXPECT_FALSE(pacer.snapshot(handle)->reference_chain_broken);
+  }
+
+  TEST(TransportPacer, InterleavedParityStillCountsTowardPrimaryCompletionDeadline) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 100), 0);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 4, 100, 150, frame_dependency_e::recovery), 0).result,
+      pacer_enqueue_result_e::queued);
+    const auto retired = pacer.dispatch(0, [](auto, auto) {
+      ADD_FAILURE() << "the source prefix including interleaved parity cannot meet its deadline";
+      return paced_batch_submission_t {};
+    });
+    ASSERT_EQ(retired.frames.size(), 1);
+    EXPECT_EQ(retired.frames[0].result, frame_send_result_e::cannot_meet_deadline);
+    EXPECT_FALSE(retired.frames[0].primary_complete);
+    EXPECT_TRUE(retired.frames[0].recovery_required);
+    EXPECT_EQ(retired.frames[0].submitted_ip_bytes, 0u);
+    EXPECT_EQ(retired.frames[0].abandoned_ip_bytes, 400u);
+  }
+
+  TEST(TransportPacer, UnfundableParityPacketDoesNotRejectFundablePrimary) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 100), 0);
+    auto value = primary_then_fec(1, 1, 1, 1, 1000, frame_dependency_e::reference);
+    value.packets[1].udp_payload.resize(300 - 28);
+    value.packets[1].metadata.ip_bytes = 300;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(value), 0).result, pacer_enqueue_result_e::queued);
+    const auto sent = pacer.dispatch(0, all_success(0));
+    ASSERT_EQ(sent.successful.size(), 1);
+    EXPECT_EQ(sent.successful[0].packet.kind, packet_kind_e::data);
+    const auto retired = pacer.dispatch(1, all_success(1));
+    ASSERT_EQ(retired.frames.size(), 1);
+    EXPECT_EQ(retired.frames[0].result, frame_send_result_e::cannot_meet_deadline);
+    EXPECT_TRUE(retired.frames[0].primary_complete);
+    EXPECT_FALSE(retired.frames[0].recovery_required);
+    EXPECT_EQ(retired.frames[0].abandoned_ip_bytes, 300u);
+    EXPECT_EQ(pacer.host_snapshot().submitted_ip_bytes, 100u);
+  }
+
   TEST(TransportPacer, TimelyPrimaryWithExpiredParityDoesNotBreakTheNextReference) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000, 100), 0);

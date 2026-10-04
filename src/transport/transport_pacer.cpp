@@ -153,6 +153,7 @@ namespace transport {
       std::uint64_t total_data_packets = 0;
       std::uint64_t submitted_data_packets = 0;
       bool late_data = false;
+      std::uint64_t trailing_fec_ip_bytes = 0;
     };
     struct session_t {
       std::uint64_t epoch = 0;
@@ -413,11 +414,21 @@ namespace transport {
     try {
       std::vector<std::uint32_t> suffix_maximum(packet_count);
       std::uint32_t maximum = 0;
+      std::uint64_t trailing_fec_ip_bytes = 0;
+      bool primary_suffix = frame.dependency == frame_dependency_e::non_reference;
       for (std::size_t i = packet_count; i > 0; --i) {
+        if (!primary_suffix) {
+          if (frame.packets[i - 1].metadata.kind == packet_kind_e::data) {
+            primary_suffix = true;
+            maximum = 0;
+          }
+          else
+            trailing_fec_ip_bytes += frame.packets[i - 1].metadata.ip_bytes;
+        }
         maximum = std::max(maximum, frame.packets[i - 1].metadata.ip_bytes);
         suffix_maximum[i - 1] = maximum;
       }
-      session.frames.push_back({ std::move(frame), std::move(suffix_maximum), 0, ip_bytes, 0, 0, 0, data_packets, 0, false });
+      session.frames.push_back({ std::move(frame), std::move(suffix_maximum), 0, ip_bytes, 0, 0, 0, data_packets, 0, false, trailing_fec_ip_bytes });
     }
     catch (const std::bad_alloc &) {
       if (dependency != frame_dependency_e::non_reference) p.break_chain(session, reserved_frame);
@@ -536,13 +547,17 @@ namespace transport {
       while (!session.frames.empty()) {
         const auto &queued = session.frames.front();
         const auto &frame = queued.frame;
+        // Predict completion through the last source packet. Parity between
+        // source blocks still costs budget; only the final FEC tail is optional.
+        const auto required_ip_bytes = queued.remaining_ip_bytes -
+                                       (queued.submitted_data_packets < queued.total_data_packets ? queued.trailing_fec_ip_bytes : 0);
         std::optional<frame_send_result_e> reason;
         if (now >= frame.deadline_us)
           reason = frame_send_result_e::deadline_expired;
         else if (frame.dependency == frame_dependency_e::reference && session.first_broken_frame &&
                  frame.frame_id > *session.first_broken_frame)
           reason = frame_send_result_e::reference_chain_broken;
-        else if (p.earliest(session, queued.remaining_ip_bytes, now) >= frame.deadline_us ||
+        else if (p.earliest(session, required_ip_bytes, now) >= frame.deadline_us ||
                  !p.packet_fits(session, queued.suffix_maximum_ip_bytes[queued.cursor]))
           reason = frame_send_result_e::cannot_meet_deadline;
         if (!reason) break;
