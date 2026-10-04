@@ -1,6 +1,6 @@
 # 视频逐包反馈协议：协商 profile 2，消息体 v1
 
-本契约对应三份 common c 共用的 `src/TransportFeedbackWire.*`、`src/VideoPacketFeedback.*` 和 Sunshine 的 `src/transport/transport_feedback_wire.*`。已接入编解码、双方协商、完整包身份、可靠水位、有界报告生成与加密 ENet 发送入口。组件对账与 ARM64 核心测试通过；真实串流闭环尚未验收。此能力只提供测量，不授予自动码率或 FEC 控制权。
+本契约对应三份 common c 共用的 `src/TransportFeedbackWire.*`、`src/VideoPacketFeedback.*` 和 Sunshine 的 `src/transport/transport_feedback_wire.*`。已接入编解码、双方协商、完整包身份、可靠水位、有界报告生成与加密 ENet 发送入口。至 2026 年 10 月 4 日，已有组件、ARM64 核心测试及真实 PC 串流的提交、反馈和策略回执对账；Android 应用入口与构建已接入，实际应用及设备验收仍待完成。测量协商不授予自动控制权；固定 GoogCC 通过另行协商的控制能力和策略仲裁取得权限，突发回放驱动的自动 FEC 已移除。完整闭环边界见[验证记录](adaptive-fec-validation.zh-CN.md)。
 
 ## 协商与边界
 
@@ -17,7 +17,7 @@ Sunshine 在 DESCRIBE 中广告 `x-ss-video[0].packetFeedbackVersion:2`。客户
 
 接受后，ANNOUNCE 响应同时返回 `X-SS-Packet-Feedback: 2` 与 `X-SS-Transport-Epoch: <canonical uint64 decimal>`。epoch 非零，无符号、无前导零、无空白。客户端验证确认值、协商条件及完整 epoch；无确认则沿旧视频格式启动，不依据名称、IP 或仅有广告猜测已接受。之后 READY 与 REPORT 必须经过本次加密 ENet 控制通道。
 
-旧内部 profile 1 构建要求 parity 的 streamPacketIndex 与传输序号低 24 位匹配；该假设会破坏 RS 符号或拒绝正确的 parity，不能与 profile 2 混用。新客户端收到旧 host 的 profile 1 广告时，在 ANNOUNCE 之前不请求此扩展，不扣减身份的 16 字节，也不因反馈设置额外强制视频加密；旧客户端收到 profile 2 广告时同样走其不支持版本的旧格式分支。新 host 只接受属性值 2，普通旧格式视频仍可使用原有加密能力。设置反馈请求只表示在双方支持时启用，不能强迫不支持的 host 使用新 profile；意外的确认头或错误版本须拒绝握手。旧内部构建与新构建的真实四组合互通仍须单独验收，历史第六阶段证据保持其原始 profile 1 版本域。
+旧内部 profile 1 构建要求 parity 的 streamPacketIndex 与传输序号低 24 位匹配；该假设会破坏 RS 符号或拒绝正确的 parity，不能与 profile 2 混用。新客户端收到旧 host 的 profile 1 广告时，在 ANNOUNCE 之前不请求此扩展，不扣减身份的 16 字节，也不因反馈设置额外强制视频加密；旧客户端收到 profile 2 广告时同样走其不支持版本的旧格式分支。新 host 只接受属性值 2，普通旧格式视频仍可使用原有加密能力。设置反馈请求只表示在双方支持时启用，不能强迫不支持的 host 使用新 profile；意外的确认头或错误版本须拒绝握手。核心协议新旧四组合已有真实串流与离线解码证据，完整 Qt 和 Android 应用及开关重连仍须各自验收；历史第六阶段证据保持其原始 profile 1 版本域。
 
 English compatibility note: Profile 1 and profile 2 are not interchangeable. A version mismatch disables the extension before ANNOUNCE and retains the legacy video layout. Unexpected confirmation headers fail the handshake; enabling the feedback setting does not require unsupported hosts to negotiate profile 2.
 
@@ -70,7 +70,7 @@ SDP 的现有 RTP packetSize 额外扣除 16 字节，以保持既有外层数�
 
 ## 入账、负荷与序号对齐
 
-Sunshine 使用同一会话互斥锁串行处理 UDP 成功提交和加密控制反馈。只针对已登记的包产生收到、首次缺失和一次迟到更正；未提交、历史过期、未知与 pending 不制造网络丢包。入账结果仍未输入实际 GoogCC 或自动保护策略。
+Sunshine 使用同一会话互斥锁串行处理 UDP 成功提交和加密控制反馈。只针对已登记的包产生收到、首次缺失和一次迟到更正；未提交、历史过期、未知与 pending 不制造网络丢包。已入账的成功提交与有效反馈由发送 owner 交给固定版本 GoogCC；自动码率另检查协商、策略租约、编码器及首发回执与反馈新鲜度。手动 FEC 保持固定，原始丢包统计不再驱动自动保护选择。
 
 服务端按消息体加 96 字节的正常 UDP/IP、ENet 与加密封装余量计入反馈 token bucket。当前速率上限为 125000 字节/秒，突发上限为 7840 字节；超额在解析前拒绝。它是测量阶段的候选资源界限，不是 V6 已冻结的性能结论。客户端发送器须兑现同一界限，并为输入、心跳和可靠控制保留调度机会；实际反向流量和尾部延迟仍待测量。
 
@@ -82,4 +82,6 @@ Sunshine 使用同一会话互斥锁串行处理 UDP 成功提交和加密控制
 
 ## 下一步验收
 
-PC 已有 `MOONLIGHT_VIDEO_PACKET_FEEDBACK=1` 的显式实验入口；Android 已有 Java/JNI setter，应用设置、业务与 UI 入口仍待接入。继续用独立实际故障计划、两端轨迹与成功提交集合对账，验证协商接受/拒绝、加密封装、RS 恢复、整帧缺失、部分 OS 提交、回绕、重连及反向拥堵。协议和客户端核心测试，包括 ARM64 真机执行，均不替代真实串流验收，见[验证记录](adaptive-fec-validation.zh-CN.md)。
+PC 已有 `MOONLIGHT_VIDEO_PACKET_FEEDBACK=1` 的显式实验入口，请求 `MOONLIGHT_VIDEO_PACKET_CONTROL=1` 时也会请求反馈。Android 已将实验反馈设置、连接业务、Java/JNI 和网络统计入口接入应用；请求控制时也会请求反馈，control only 会话除外。两端默认值仍关闭。已有真实 PC 故障与回执对账，Linux 真实部分 OS 提交另取得组件证据；继续补完整 owner、反向拥堵、生命周期及 Android 实机验收。协议和客户端核心测试，包括 ARM64 真机执行，均不替代实际应用与设备验收，见[验证记录](adaptive-fec-validation.zh-CN.md)。
+
+当前 profile 2 只定义原有媒体数据与 RS 冗余的认证身份，没有独立 padding 包契约。媒体探测使用真实媒体，数量不足时可以等待或取消；2026 年 10 月 4 日固定 FEC 的容量恢复实验因此未通过完整探测与上限恢复门槛。补独立探测须另行明确协商、包识别与丢弃、序号及 nonce 分配、实际预算入账，并保证其提交不冒充编码帧首发回执；不能将其当作当前协议已经支持的能力。

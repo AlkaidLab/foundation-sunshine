@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -26,11 +27,37 @@ TEST(TransportPolicy, LiveModeRequestsRequireNegotiationAndANormalizedSession) {
   transport::policy_state_t old(initial(), 50000);
   auto p = old.request_normalized(initial().budget, 20, 20, 20, 1, 1).policy;
   ASSERT_TRUE(p);
-  EXPECT_EQ(old.request_automatic_control(true, true, 50000, p->revision, p->control_epoch, "modes").result,
+  EXPECT_EQ(old.request_automatic_control(true, false, 50000, p->revision, p->control_epoch, "modes").result,
     transport::policy_request_result_e::invalid);
   transport::policy_state_t negotiated(initial(), 50000, true, true);
-  EXPECT_EQ(negotiated.request_automatic_control(true, true, 50000, 1, 1, "modes").result,
+  EXPECT_EQ(negotiated.request_automatic_control(true, false, 50000, 1, 1, "modes").result,
     transport::policy_request_result_e::invalid);
+}
+
+TEST(TransportPolicy, AutomaticFecRequestsDoNotMutateState) {
+  for (const bool bitrate : { false, true }) {
+    transport::policy_state_t state(initial(), 50000, true, true);
+    const auto manual = state.request_normalized(initial().budget, 20, 30, 40, 1, 1).policy;
+    ASSERT_TRUE(manual);
+    EXPECT_EQ(state.request_automatic_control(bitrate, true, 30000, manual->revision, manual->control_epoch, "unsupported-fec").result,
+      transport::policy_request_result_e::invalid);
+    EXPECT_EQ(state.snapshot().accepted, manual);
+    EXPECT_FALSE(state.snapshot().accepted->automatic_control);
+    const auto allowed = state.request_automatic_control(bitrate, false, 30000, manual->revision, manual->control_epoch, "unsupported-fec").policy;
+    ASSERT_TRUE(allowed);
+    EXPECT_FALSE(allowed->automatic_control->fec);
+    EXPECT_EQ(allowed->fec_base, 20U);
+    EXPECT_EQ(allowed->fec_key, 30U);
+    EXPECT_EQ(allowed->fec_recovery, 40U);
+  }
+}
+
+TEST(TransportPolicy, AutomaticFecInitialStateIsRejected) {
+  auto invalid = initial();
+  invalid.automatic_control = transport::automatic_control_t { true, true, invalid.budget.total_kbps, 0 };
+  EXPECT_THROW(transport::policy_state_t state(invalid, 50000, true, true), std::invalid_argument);
+  invalid.automatic_control->fec = false;
+  EXPECT_NO_THROW(transport::policy_state_t state(invalid, 50000, true, true));
 }
 
 TEST(TransportPolicy, EveryExplicitModeRequestRevokesThePreviousGenerationBeforeApply) {
@@ -38,7 +65,7 @@ TEST(TransportPolicy, EveryExplicitModeRequestRevokesThePreviousGenerationBefore
   ready(state);
   auto manual = state.request_normalized(initial().budget, 20, 30, 20, 1, 1).policy;
   ASSERT_TRUE(manual);
-  auto armed = state.request_automatic_control(true, true, 50000, manual->revision, manual->control_epoch, "enable").policy;
+  auto armed = state.request_automatic_control(true, false, 50000, manual->revision, manual->control_epoch, "enable").policy;
   ASSERT_TRUE(armed);
   EXPECT_EQ(armed->control_source, transport::control_source_e::manual);
   EXPECT_GT(armed->control_epoch, manual->control_epoch);
@@ -48,7 +75,7 @@ TEST(TransportPolicy, EveryExplicitModeRequestRevokesThePreviousGenerationBefore
   EXPECT_EQ(state.active()->revision, 1u);
   EXPECT_FALSE(state.acknowledge_first_sent(armed, 10));
   // Even a byte-identical old request cannot renew a revoked generation.
-  EXPECT_EQ(state.request_automatic_control(true, true, 50000, manual->revision, manual->control_epoch, "enable").result,
+  EXPECT_EQ(state.request_automatic_control(true, false, 50000, manual->revision, manual->control_epoch, "enable").result,
     transport::policy_request_result_e::conflict);
   auto next = state.request_automatic_control(false, false, 25000, armed->revision, armed->control_epoch, "disable").policy;
   ASSERT_TRUE(next);
@@ -63,32 +90,30 @@ TEST(TransportPolicy, EveryExplicitModeRequestRevokesThePreviousGenerationBefore
   EXPECT_FALSE(state.acknowledge_encoder(armed, transport::policy_failure_e::none));
 }
 
-TEST(TransportPolicy, ControllerCannotBypassAnyOfTheFourModeCombinations) {
+TEST(TransportPolicy, ControllerRespectsBitrateModeAndFixedManualFec) {
   for (const bool bitrate : { false, true }) {
-    for (const bool fec : { false, true }) {
-      SCOPED_TRACE(::testing::Message() << "bitrate=" << bitrate << " fec=" << fec);
-      transport::policy_state_t state(initial(), 50000, true, true);
-      const auto manual = state.request_normalized(initial().budget, 20, 30, 20, 1, 1).policy;
-      const auto armed = state.request_automatic_control(bitrate, fec, 30000, manual->revision, manual->control_epoch, "modes").policy;
-      ASSERT_TRUE(armed);
-      const auto granted = state.transfer_control({ 42, armed->control_epoch, transport::control_source_e::manual },
-                                  transport::control_source_e::googcc, armed->revision)
-                             .policy;
-      ASSERT_TRUE(granted);
-      EXPECT_EQ(granted->automatic_control, armed->automatic_control);
-      const transport::control_lease_t lease { 42, granted->control_epoch, transport::control_source_e::googcc };
-      auto budget = granted->budget;
-      budget.total_kbps = 30001;
-      EXPECT_EQ(state.request_controller_update(lease, budget, 20, 30, 20, granted->revision).result,
-        transport::policy_request_result_e::invalid);
-      budget.total_kbps = 25000;
-      EXPECT_EQ(state.request_controller_update(lease, budget, 20, 30, 20, granted->revision).result,
-        bitrate ? transport::policy_request_result_e::accepted : transport::policy_request_result_e::invalid);
-      const auto current = state.snapshot().accepted;
-      EXPECT_EQ(state.request_controller_update(lease, current->budget, 30, 40, 30, current->revision).result,
-        fec ? transport::policy_request_result_e::accepted : transport::policy_request_result_e::invalid);
-      EXPECT_EQ(state.snapshot().accepted->automatic_control, armed->automatic_control);
-    }
+    SCOPED_TRACE(::testing::Message() << "bitrate=" << bitrate);
+    transport::policy_state_t state(initial(), 50000, true, true);
+    const auto manual = state.request_normalized(initial().budget, 20, 30, 20, 1, 1).policy;
+    const auto armed = state.request_automatic_control(bitrate, false, 30000, manual->revision, manual->control_epoch, "modes").policy;
+    ASSERT_TRUE(armed);
+    const auto granted = state.transfer_control({ 42, armed->control_epoch, transport::control_source_e::manual },
+                                transport::control_source_e::googcc, armed->revision)
+                           .policy;
+    ASSERT_TRUE(granted);
+    EXPECT_EQ(granted->automatic_control, armed->automatic_control);
+    const transport::control_lease_t lease { 42, granted->control_epoch, transport::control_source_e::googcc };
+    auto budget = granted->budget;
+    budget.total_kbps = 30001;
+    EXPECT_EQ(state.request_controller_update(lease, budget, 20, 30, 20, granted->revision).result,
+      transport::policy_request_result_e::invalid);
+    budget.total_kbps = 25000;
+    EXPECT_EQ(state.request_controller_update(lease, budget, 20, 30, 20, granted->revision).result,
+      bitrate ? transport::policy_request_result_e::accepted : transport::policy_request_result_e::invalid);
+    const auto current = state.snapshot().accepted;
+    EXPECT_EQ(state.request_controller_update(lease, current->budget, 30, 40, 30, current->revision).result,
+      transport::policy_request_result_e::invalid);
+    EXPECT_EQ(state.snapshot().accepted->automatic_control, armed->automatic_control);
   }
 }
 
@@ -100,7 +125,7 @@ TEST(TransportPolicy, LiveCeilingValidationCannotExhaustReservesOrIncreaseAutoma
   const auto manual = state.request_normalized(budget, 20, 30, 20, 1, 1).policy;
   ASSERT_TRUE(manual);
   for (const int invalid : { -1, 0, 2500, 50001, 800001 })
-    EXPECT_EQ(state.request_automatic_control(true, true, invalid, manual->revision, manual->control_epoch, "invalid").result,
+    EXPECT_EQ(state.request_automatic_control(true, false, invalid, manual->revision, manual->control_epoch, "invalid").result,
       transport::policy_request_result_e::invalid);
   EXPECT_EQ(state.snapshot().accepted, manual);
   const auto raised = state.request_automatic_control(true, false, 50000, manual->revision, manual->control_epoch, "raise").policy;
@@ -115,7 +140,7 @@ TEST(TransportPolicy, LiveCeilingValidationCannotExhaustReservesOrIncreaseAutoma
 TEST(TransportPolicy, ManualPolicyDisarmsAutomaticIntentAndOldLeasesStayRevoked) {
   transport::policy_state_t state(initial(), 50000, true, true);
   auto manual = state.request_normalized(initial().budget, 20, 30, 20, 1, 1).policy;
-  auto armed = state.request_automatic_control(true, true, 50000, manual->revision, manual->control_epoch, "enable").policy;
+  auto armed = state.request_automatic_control(true, false, 50000, manual->revision, manual->control_epoch, "enable").policy;
   ASSERT_TRUE(armed);
   const auto granted = state.transfer_control({ 42, armed->control_epoch, transport::control_source_e::manual },
                               transport::control_source_e::googcc, armed->revision)
@@ -135,7 +160,7 @@ TEST(TransportPolicy, ManualPolicyDisarmsAutomaticIntentAndOldLeasesStayRevoked)
   EXPECT_GT(rearmed->automatic_control->activation_epoch, armed->automatic_control->activation_epoch);
   EXPECT_FALSE(rearmed->encoder_ceiling_kbps);
   state.stop();
-  EXPECT_EQ(state.request_automatic_control(true, true, 40000, rearmed->revision, rearmed->control_epoch, "stopped").result,
+  EXPECT_EQ(state.request_automatic_control(true, false, 40000, rearmed->revision, rearmed->control_epoch, "stopped").result,
     transport::policy_request_result_e::stopped);
 }
 

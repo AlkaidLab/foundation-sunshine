@@ -15,7 +15,8 @@ namespace transport {
       throw std::invalid_argument("Packet control requires experimental pacing");
     if (!initial.connection_epoch || initial.revision != 1 || initial.control_epoch != 1 ||
         initial.control_source != control_source_e::legacy || initial.encoder_ceiling_kbps ||
-        (initial.automatic_control && (!experimental_packet_control_negotiated || initial.automatic_control->activation_epoch ||
+        (initial.automatic_control && (!experimental_packet_control_negotiated || initial.automatic_control->fec ||
+                                        initial.automatic_control->activation_epoch ||
                                         initial.automatic_control->maximum_total_kbps != initial.budget.total_kbps)) ||
         initial.encoder_kbps <= 0 || initial.encoder_kbps > 800000 || initial.budget.total_kbps <= 0 ||
         initial.budget.total_kbps > 800000 || maximum_total_kbps < 0 ||
@@ -44,7 +45,7 @@ namespace transport {
     if (expected_control_epoch != accepted_->control_epoch || expected_revision != accepted_->revision)
       return { policy_request_result_e::conflict, {} };
     if (!experimental_packet_control_negotiated_ || !experimental_video_pacer_enabled_ ||
-        accepted_->basis != budget_basis_e::normalized || request_id.empty() || maximum_total_kbps <= 0 ||
+        accepted_->basis != budget_basis_e::normalized || fec || request_id.empty() || maximum_total_kbps <= 0 ||
         maximum_total_kbps > 800000 || (maximum_total_kbps_ && maximum_total_kbps > maximum_total_kbps_) ||
         accepted_->control_epoch == std::numeric_limits<std::uint64_t>::max()) return {};
     auto budget = accepted_->budget;

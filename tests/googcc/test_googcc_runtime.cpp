@@ -525,10 +525,8 @@ namespace {
   TEST(GoogCcRuntime, AutomaticFecActivationIsUnsupported) {
     runtime_fixture_t f;
     const auto manual = f.policy->snapshot().accepted;
-    const auto activation = f.policy->request_automatic_control(true, true, 30000,
-                                      manual->revision, manual->control_epoch, "unsupported-fec")
-                              .policy;
-    ASSERT_TRUE(activation);
+    auto activation = std::make_shared<frame_policy_t>(*manual);
+    activation->automatic_control = automatic_control_t { true, true, 30000, manual->control_epoch };
     EXPECT_THROW(googcc_runtime_t runtime(f.config, f.policy, activation), std::invalid_argument);
   }
 

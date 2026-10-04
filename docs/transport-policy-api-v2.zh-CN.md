@@ -88,7 +88,7 @@ GET /api/v2/transport-policy?sessionId=100&connectionEpoch=42
 
 每个回执含 `encoderApplied`、`firstSentFrame` 和 `failure`。`firstSentFrame` 仅在该版本某个 UDP 包成功提交给操作系统后出现，不表示全帧发送完成、对端收到或恢复成功。冗余为零、分片可行性回退和发送失败需分别记录。
 
-策略对象另含只读 `automaticControl`：归一化手动策略为 null；已协商启动策略或显式模式请求包含 `automaticBitrate`、`automaticFec`、`maximumTotalKbps`、十进制字符串 `activationEpoch`。启动时 activationEpoch 为 `"0"`，冻结本会话启动默认值；显式请求由仲裁器分配非零激活代次，后续自动策略和租约交接保留它。它描述不可变意图，实际应用仍检查 SDK、首发和反馈门槛；来源为 GoogCC 也可能两项自动调整都关闭。
+策略对象另含只读 `automaticControl`：归一化手动策略为 null；已协商启动策略或显式模式请求包含 `automaticBitrate`、兼容字段 `automaticFec`、`maximumTotalKbps`、十进制字符串 `activationEpoch`。`automaticFec` 固定为 false，策略状态入口也拒绝启用请求与非法启动意图。启动时 activationEpoch 为 `"0"`，冻结本会话启动默认值；显式请求由仲裁器分配非零激活代次，后续自动策略和租约交接保留它。它描述不可变意图，实际应用仍检查 SDK、首发和反馈门槛；来源为 GoogCC 也可能关闭自动码率。
 
 ### 原始视频包统计
 
@@ -200,7 +200,7 @@ Content-Type: application/json
 
 每次成功请求都产生新 revision 和 control epoch，来源暂为 manual；同一模式也使用新代次，旧实例立即失去调整和探测资格。owner 取消未发送探测，使用请求的不可变策略重建控制器，保留已成功发送的账本和在途帧快照。新策略经实际 SDK 应用、该版本首包成功提交和新实例映射的近期反馈后，才授予新的 GoogCC 租约并再次递增 control epoch。探测编号映射到会话内不重复的空间，迟到旧簇不能被重建实例当作新探测；原始统计继续结算。
 
-本操作的成功请求会立即改变代次，因此原 body 的重复提交返回 409。响应丢失时先查询当前 epoch、模式与回执，再用当前身份和新的 requestId 显式提交；不把相同目标推断为原请求已成功。错误状态沿用下表。原手动 POST 会清除 `automaticControl` 并接管，旧自动实例不可自行恢复；需要再次自动控制时显式调用本操作。两项自动开关与启动配置中的独立拥塞窗口回压开关分别控制，不将固定预算理解为禁止已单独启用的编码回压。
+本操作的成功请求会立即改变代次，因此原 body 的重复提交返回 409。响应丢失时先查询当前 epoch、模式与回执，再用当前身份和新的 requestId 显式提交；不把相同目标推断为原请求已成功。错误状态沿用下表。原手动 POST 会清除 `automaticControl` 并接管，旧自动实例不可自行恢复；需要再次自动控制时显式调用本操作。当前仅自动码率可启用，手动 FEC 不受控制器调整；启动配置中的独立拥塞窗口回压开关另行控制，不将固定预算理解为禁止已单独启用的编码回压。
 
 ## 应用与失败
 
