@@ -1229,6 +1229,8 @@ namespace rtsp_stream {
     ss << "a=x-ss-video[0].policyStatusVersion:1" << std::endl;
     if (stream::experimental_packet_control_available())
       ss << "a=x-ss-video[0].packetControlVersion:1" << std::endl;
+    if (stream::experimental_packet_control_available() && config::stream.experimental_packet_probe)
+      ss << "a=x-ss-video[0].packetProbeVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
     
     // 记录加密请求状态用于调试
@@ -1427,22 +1429,30 @@ namespace rtsp_stream {
    */
   struct packet_feedback_response_headers_t {
     std::string epoch_value;
-    OPTION_ITEM version {}, epoch {}, control {}, policy_status {};
-    explicit packet_feedback_response_headers_t(uint64_t connection_epoch, bool packet_control = false, bool notifications = false): epoch_value(connection_epoch ? std::to_string(connection_epoch) : "") {
+    OPTION_ITEM version {}, epoch {}, control {}, policy_status {}, probe {};
+    explicit packet_feedback_response_headers_t(uint64_t connection_epoch, bool packet_control = false, bool notifications = false, bool padding = false): epoch_value(connection_epoch ? std::to_string(connection_epoch) : "") {
       version.option = const_cast<char *>("X-SS-Packet-Feedback");
       version.content = const_cast<char *>(TF_PACKET_FEEDBACK_PROFILE_VERSION_STRING);
       version.next = &epoch;
       epoch.option = const_cast<char *>("X-SS-Transport-Epoch");
       epoch.content = epoch_value.data();
+      auto *tail = &epoch;
       if (packet_control && connection_epoch) {
-        epoch.next = &control;
+        tail->next = &control;
+        tail = &control;
         control.option = const_cast<char *>("X-SS-Packet-Control");
         control.content = const_cast<char *>("1");
       }
       if (notifications && connection_epoch) {
-        (packet_control ? control : epoch).next = &policy_status;
+        tail->next = &policy_status;
+        tail = &policy_status;
         policy_status.option = const_cast<char *>("X-SS-Policy-Status");
         policy_status.content = const_cast<char *>("1");
+      }
+      if (padding && connection_epoch) {
+        tail->next = &probe;
+        probe.option = const_cast<char *>("X-SS-Packet-Probe");
+        probe.content = const_cast<char *>("1");
       }
     }
     void attach(OPTION_ITEM &root) {
@@ -1499,7 +1509,7 @@ namespace rtsp_stream {
           session.negotiated_dynamic_hdr_format,
           session.negotiated_dynamic_hdr_fallback);
         dynamic_hdr_headers.attach(option);
-        packet_feedback_response_headers_t packet_feedback_headers(session.packet_feedback_epoch, session.packet_control_negotiated, session.policy_status_negotiated);
+        packet_feedback_response_headers_t packet_feedback_headers(session.packet_feedback_epoch, session.packet_control_negotiated, session.policy_status_negotiated, session.packet_probe_negotiated);
         packet_feedback_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
@@ -1680,7 +1690,10 @@ namespace rtsp_stream {
         (config.encryptionFlagsEnabled & SS_ENC_VIDEO);
       const auto packet_control = args.find("x-ss-video[0].packetControlVersion"sv);
       config.packet_control = stream::experimental_packet_control_available() && config.packet_feedback &&
-        packet_control != args.end() && packet_control->second == "1";
+                              packet_control != args.end() && packet_control->second == "1";
+      const auto packet_probe = args.find("x-ss-video[0].packetProbeVersion"sv);
+      config.packet_probe = stream::experimental_packet_control_available() && config::stream.experimental_packet_probe && config.packet_feedback &&
+                            packet_probe != args.end() && packet_probe->second == "1";
       const auto policy_status = args.find("x-ss-video[0].policyStatusVersion"sv);
       config.policy_status = config.packet_feedback && policy_status != args.end() && policy_status->second == "1";
 
@@ -2080,7 +2093,7 @@ namespace rtsp_stream {
       session.negotiated_dynamic_hdr_format,
       session.negotiated_dynamic_hdr_fallback);
     dynamic_hdr_headers.attach(option);
-    packet_feedback_response_headers_t packet_feedback_headers(session.packet_feedback_epoch, session.packet_control_negotiated, session.policy_status_negotiated);
+    packet_feedback_response_headers_t packet_feedback_headers(session.packet_feedback_epoch, session.packet_control_negotiated, session.policy_status_negotiated, session.packet_probe_negotiated);
     packet_feedback_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});

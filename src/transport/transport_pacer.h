@@ -47,6 +47,10 @@ namespace transport {
     non_reference,
     recovery };
 
+  enum class paced_work_e { media,
+    probe,
+    keepalive };
+
   // Move complete UDP payloads (encryption prefix included) into the queue.
   // The queue has sole ownership; no encoder, shard or stack buffers survive
   // through a borrow. metadata.ip_bytes must equal payload.size()+28/48.
@@ -62,6 +66,9 @@ namespace transport {
     std::int64_t deadline_us = 0;
     frame_dependency_e dependency = frame_dependency_e::reference;
     std::vector<owned_paced_packet_t> packets;
+    // Transport work uses frame_id=0 and never advances the codec frame ID or
+    // reference chain. Probe work requires an active native schedule.
+    paced_work_e purpose = paced_work_e::media;
   };
 
   enum class frame_send_result_e {
@@ -89,6 +96,7 @@ namespace transport {
     // FEC may be incomplete; this does not prove receiver delivery or decode.
     // Unknown/invalid submission and explicit reference loss cannot set it.
     bool primary_complete = false;
+    paced_work_e purpose = paced_work_e::media;
   };
 
   enum class pacer_enqueue_result_e { queued,

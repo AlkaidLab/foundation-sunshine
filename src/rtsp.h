@@ -128,6 +128,7 @@ namespace rtsp_stream {
     uint64_t transport_connection_epoch { 0 };
     bool legacy_scope_required { false };
     bool packet_control_negotiated { false };
+    bool packet_probe_negotiated { false };
     std::string stream_announce_payload;
     /// One-shot dynamic HDR negotiation result (hdr::to_wire value and
     /// fallback reason name, empty when none), echoed in the first ANNOUNCE

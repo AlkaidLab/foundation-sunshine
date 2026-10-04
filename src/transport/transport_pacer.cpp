@@ -159,7 +159,6 @@ namespace transport {
       std::deque<frame_t> frames;
       struct probe_t {
         probe_info_t metadata;
-        std::uint64_t frame_id = 0;
         std::uint64_t group_bytes = 0;
         std::uint64_t last_sequence = 0;
         std::int64_t maximum_delay_us = 0;
@@ -219,7 +218,8 @@ namespace transport {
     finish(std::uint64_t handle, session_t &session, frame_send_result_e reason, std::size_t index = 0) {
       auto &queued = session.frames[index];
       const auto &frame = queued.frame;
-      if (session.probe && session.probe->frame_id == frame.frame_id)
+      if (session.probe && session.probe->last_sequence >= frame.packets.front().metadata.extended_sequence &&
+          session.probe->last_sequence <= frame.packets.back().metadata.extended_sequence)
         end_probe(session, paced_probe_result_e::cancelled);
       const bool valid_source_result = reason == frame_send_result_e::complete || reason == frame_send_result_e::deadline_expired ||
                                        reason == frame_send_result_e::cannot_meet_deadline || reason == frame_send_result_e::send_failed;
@@ -236,12 +236,12 @@ namespace transport {
         }
       }
       else if (!primary_complete && reason != frame_send_result_e::reference_chain_broken &&
-               frame.dependency != frame_dependency_e::non_reference)
+               frame.purpose == paced_work_e::media && frame.dependency != frame_dependency_e::non_reference)
         break_chain(session, frame.frame_id);
       session.stats.reference_chain_broken = session.first_broken_frame.has_value();
       paced_frame_result_t result { handle, frame.frame_id, frame.policy, reason, queued.submitted_packets,
         queued.submitted_ip_bytes, static_cast<std::uint64_t>(frame.packets.size() - queued.cursor),
-        queued.remaining_ip_bytes, session.stats.reference_chain_broken, primary_complete };
+        queued.remaining_ip_bytes, session.stats.reference_chain_broken, primary_complete, frame.purpose };
       for (std::size_t i = queued.cursor; i < frame.packets.size(); ++i) {
         const auto size = frame.packets[i].udp_payload.size();
         payload_bytes -= size;
@@ -374,7 +374,10 @@ namespace transport {
         frame.packets.empty() || frame.packets.size() > p.bounds.maximum_packets_per_frame ||
         (frame.dependency != frame_dependency_e::reference && frame.dependency != frame_dependency_e::non_reference &&
           frame.dependency != frame_dependency_e::recovery) ||
-        (session.last_frame && frame.frame_id <= *session.last_frame)) return {};
+        (frame.purpose != paced_work_e::media && frame.purpose != paced_work_e::probe && frame.purpose != paced_work_e::keepalive) ||
+        (frame.purpose == paced_work_e::media && session.last_frame && frame.frame_id <= *session.last_frame) ||
+        (frame.purpose != paced_work_e::media && (frame.frame_id != 0 || frame.dependency != frame_dependency_e::non_reference ||
+                                                   !session.frames.empty()))) return {};
     std::size_t bytes = 0;
     std::uint64_t ip_bytes = 0;
     std::uint64_t data_packets = 0;
@@ -387,6 +390,8 @@ namespace transport {
           packet.metadata.frame_id != frame.frame_id || packet.metadata.policy_revision != frame.policy->revision) return {};
       if (packet.metadata.kind != packet_kind_e::data && packet.metadata.kind != packet_kind_e::fec &&
           packet.metadata.kind != packet_kind_e::repair && packet.metadata.kind != packet_kind_e::probe) return {};
+      if (frame.purpose != paced_work_e::media && (packet.metadata.kind != packet_kind_e::probe ||
+                                                    packet.metadata.protection.data_shards || packet.metadata.protection.total_shards)) return {};
       if (frame.dependency != frame_dependency_e::non_reference && packet.metadata.kind != packet_kind_e::data &&
           packet.metadata.kind != packet_kind_e::fec) return {};
       if (packet.metadata.kind == packet_kind_e::data) ++data_packets;
@@ -396,7 +401,7 @@ namespace transport {
     }
     if (frame.dependency != frame_dependency_e::non_reference && data_packets == 0) return {};
     // Even a refused encoded frame consumes its already reserved identities.
-    session.last_frame = frame.frame_id;
+    if (frame.purpose == paced_work_e::media) session.last_frame = frame.frame_id;
     session.last_reserved_sequence = last_sequence;
     if (session.frames.size() >= p.bounds.maximum_frames_per_session ||
         frame.packets.size() > p.bounds.maximum_queued_packets - p.queued_packets ||
@@ -404,12 +409,13 @@ namespace transport {
       if (frame.dependency != frame_dependency_e::non_reference) p.break_chain(session, frame.frame_id);
       return { pacer_enqueue_result_e::queue_full, paced_frame_result_t { handle, frame.frame_id, frame.policy,
                                                      frame_send_result_e::queue_full, 0, 0, static_cast<std::uint64_t>(frame.packets.size()), ip_bytes,
-                                                     session.stats.reference_chain_broken } };
+                                                     session.stats.reference_chain_broken, false, frame.purpose } };
     }
     const auto reserved_frame = frame.frame_id;
     const auto reserved_policy = frame.policy;
     const auto packet_count = frame.packets.size();
     const auto dependency = frame.dependency;
+    const auto purpose = frame.purpose;
     try {
       std::vector<std::uint32_t> suffix_maximum(packet_count);
       std::uint32_t maximum = 0;
@@ -433,7 +439,7 @@ namespace transport {
       if (dependency != frame_dependency_e::non_reference) p.break_chain(session, reserved_frame);
       return { pacer_enqueue_result_e::queue_full, paced_frame_result_t { handle, reserved_frame, reserved_policy,
                                                      frame_send_result_e::queue_full, 0, 0, static_cast<std::uint64_t>(packet_count), ip_bytes,
-                                                     session.stats.reference_chain_broken } };
+                                                     session.stats.reference_chain_broken, false, purpose } };
     }
     p.payload_bytes += bytes;
     p.queued_packets += packet_count;
@@ -485,7 +491,7 @@ namespace transport {
     bool recovery_barrier = false;
     for (std::size_t i = 0; i < session.frames.size();) {
       const auto &frame = session.frames[i].frame;
-      if (frame.frame_id == frame_id) {
+      if (frame.purpose == paced_work_e::media && frame.frame_id == frame_id) {
         // finish reports existing successes, destroys only remaining owned
         // payloads, and never refunds an already submitted datagram's debt.
         result.frames.push_back(p.finish(handle, session, frame_send_result_e::reference_chain_broken, i));
@@ -551,7 +557,9 @@ namespace transport {
         const auto required_ip_bytes = queued.remaining_ip_bytes -
                                        (queued.submitted_data_packets < queued.total_data_packets ? queued.trailing_fec_ip_bytes : 0);
         std::optional<frame_send_result_e> reason;
-        if (now >= frame.deadline_us)
+        if (frame.purpose == paced_work_e::probe && !session.probe)
+          reason = frame_send_result_e::stopped;
+        else if (now >= frame.deadline_us)
           reason = frame_send_result_e::deadline_expired;
         else if (frame.dependency == frame_dependency_e::reference && session.first_broken_frame &&
                  frame.frame_id > *session.first_broken_frame)
@@ -574,6 +582,12 @@ namespace transport {
           p.note_wakeup(result.next_wakeup_us, session.stats.probe.next_send_us);
           continue;
         }
+      }
+      // A revoked, late or unfunded transport probe must never leak its unsent
+      // suffix as ordinary media. It has no codec frame to salvage.
+      if (frame.purpose == paced_work_e::probe && !session.probe) {
+        result.frames.push_back(p.finish(handle, session, frame_send_result_e::stopped));
+        continue;
       }
       if (session.retry_at_us > now) {
         p.note_wakeup(result.next_wakeup_us, session.retry_at_us);
@@ -614,6 +628,10 @@ namespace transport {
           }
           p.end_probe(session, paced_probe_result_e::budget_deferred);
         }
+      }
+      if (frame.purpose == paced_work_e::probe && !session.probe) {
+        result.frames.push_back(p.finish(handle, session, frame_send_result_e::stopped));
+        continue;
       }
       for (std::size_t i = queued.cursor; i < frame.packets.size() && views.size() < p.bounds.maximum_batch_packets; ++i) {
         const auto &packet = frame.packets[i];
@@ -838,7 +856,7 @@ namespace transport {
     // it. Actual dispatch rechecks all buckets and the adapter's shared permit.
     if (!p.accept_time(now)) return paced_probe_result_e::invalid;
     session.probe = impl_t::session_t::probe_t {
-      schedule->metadata, frame.frame_id, schedule->minimum_group_ip_bytes, last_sequence, schedule->maximum_delay_us,
+      schedule->metadata, schedule->minimum_group_ip_bytes, last_sequence, schedule->maximum_delay_us,
       0, std::move(scheduler)
     };
     session.last_probe_cluster = schedule->metadata.cluster_id;

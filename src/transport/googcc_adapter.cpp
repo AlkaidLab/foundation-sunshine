@@ -25,8 +25,8 @@ namespace transport {
 
     class native_probe_scheduler_t final: public probe_scheduler_t {
     public:
-      native_probe_scheduler_t(const googcc_probe_t &request, std::int64_t now): prober_(trials_),
-                                                                                 maximum_delay_us_(webrtc::BitrateProberConfig(&trials_).max_probe_delay.Get().us()), last_time_us_(now) {
+      native_probe_scheduler_t(const googcc_probe_t &request, std::int64_t now, bool independent_padding): prober_(trials_),
+                                                                                                           maximum_delay_us_(webrtc::BitrateProberConfig(&trials_).max_probe_delay.Get().us()), last_time_us_(now) {
         webrtc::ProbeClusterConfig cluster;
         cluster.id = request.cluster_id;
         cluster.at_time = webrtc::Timestamp::Micros(now);
@@ -34,6 +34,7 @@ namespace transport {
         cluster.target_duration = webrtc::TimeDelta::Micros(request.duration_us);
         cluster.min_probe_delta = webrtc::TimeDelta::Micros(request.minimum_delta_us);
         cluster.target_probe_count = request.minimum_packets;
+        prober_.SetAllowProbeWithoutMediaPacket(independent_padding);
         prober_.CreateProbeCluster(cluster);
       }
       native_probe_scheduler_t(const native_probe_scheduler_t &other):
@@ -162,12 +163,12 @@ namespace transport {
   }  // namespace
 
   std::unique_ptr<probe_scheduler_t>
-  make_googcc_probe_scheduler(const googcc_probe_t &request, std::int64_t now) {
+  make_googcc_probe_scheduler(const googcc_probe_t &request, std::int64_t now, bool independent_padding) {
     if (now < 0 || now > max_time_us || request.cluster_id < 0 || request.target_kbps <= 0 || request.target_kbps > 800000 ||
         request.duration_us <= 0 || request.duration_us > 200000 ||
         request.minimum_delta_us <= 0 || request.minimum_delta_us > 20000 ||
         request.minimum_packets < 2 || request.minimum_packets > 32) return {};
-    return std::make_unique<native_probe_scheduler_t>(request, now);
+    return std::make_unique<native_probe_scheduler_t>(request, now, independent_padding);
   }
 
   struct googcc_adapter_t::impl_t {

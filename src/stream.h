@@ -60,6 +60,7 @@ namespace stream {
     uint32_t encryptionFlagsEnabled;
     bool packet_feedback = false;
     bool packet_control = false;
+    bool packet_probe = false;
     bool policy_status = false;
     int transport_budget_kbps = 0;
 

@@ -413,7 +413,119 @@ namespace {
     EXPECT_EQ(actual->current(57)->next_send_us, 2457);
     EXPECT_FALSE(actual->current(12458));
   }
+
+  TEST(TransportPacer, CancelledIndependentProbeDropsSuffixWithoutConsumingCodecIdentity) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 10000), 0);
+    auto padding = frame(0, 1, 6, 1000);
+    padding.purpose = paced_work_e::probe;
+    for (auto &packet : padding.packets) packet.metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    auto native = make_googcc_probe_scheduler({ 1, 8000, 6000, 2000, 3 }, 0, true);
+    ASSERT_TRUE(native->current(0));  // Explicit padding activation needs no media trigger.
+    ASSERT_EQ(pacer.start_probe(handle, native, 0), paced_probe_result_e::active);
+    EXPECT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
+    ASSERT_TRUE(pacer.cancel_probe(handle, 0));
+    bool attempted = false;
+    auto cancelled = pacer.dispatch(0, [&](auto, auto) { attempted = true; return paced_batch_submission_t {}; });
+    EXPECT_FALSE(attempted);
+    ASSERT_EQ(cancelled.frames.size(), 1U);
+    EXPECT_EQ(cancelled.frames[0].purpose, paced_work_e::probe);
+    EXPECT_EQ(cancelled.frames[0].abandoned_packets, 4U);
+    EXPECT_FALSE(cancelled.frames[0].primary_complete);
+    EXPECT_FALSE(cancelled.frames[0].recovery_required);
+    EXPECT_EQ(pacer.snapshot(handle)->probe.successful_groups, 1U);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 7, 1, 1000, 1000000, frame_dependency_e::reference), 0).result,
+      pacer_enqueue_result_e::queued);
+    EXPECT_TRUE(pacer.dispatch(0, all_success(0)).frames[0].primary_complete);
+  }
+
+  TEST(TransportPacer, UnfundedIndependentProbeNeverSendsAnUntaggedSuffix) {
+    deadline_pacer_t pacer;
+    // Future credit can finish the owned work before its deadline, but cannot
+    // fund the next group inside the native probe's maximum delay.
+    ASSERT_TRUE(pacer.set_host_limits(limits(10000, 10000), 0));
+    const auto handle = *pacer.add_session(7, limits(1000000, 10000), 0);
+    const auto peer = *pacer.add_session(8, limits(1000000, 10000), 0);
+    auto padding = frame(0, 1, 6, 1000);
+    padding.purpose = paced_work_e::probe;
+    for (auto &packet : padding.packets) packet.metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    auto native = make_googcc_probe_scheduler({ 1, 8000, 6000, 2000, 3 }, 0, true);
+    ASSERT_EQ(pacer.start_probe(handle, native, 0), paced_probe_result_e::active);
+    ASSERT_EQ(pacer.enqueue_frame(peer, frame(1, 1, 1, 7000, 1000000, frame_dependency_e::non_reference, policy(8)), 0).result,
+      pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
+    bool attempted = false;
+    const auto deferred = pacer.dispatch(2000, [&](auto, auto) { attempted = true; return paced_batch_submission_t {}; });
+    EXPECT_FALSE(attempted);
+    EXPECT_TRUE(deferred.successful.empty());
+    EXPECT_EQ(pacer.snapshot(handle)->probe.result, paced_probe_result_e::budget_deferred);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 2000U);
+    EXPECT_EQ(pacer.host_snapshot().submitted_ip_bytes, 9000U);
+    ASSERT_EQ(deferred.frames.size(), 1U);
+    EXPECT_EQ(deferred.frames[0].abandoned_packets, 4U);
+  }
 #endif
+
+  TEST(TransportPacer, KeepaliveHasNoPrimaryOrCodecFrameIdentity) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(), 0);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1, 100), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
+    auto padding = frame(0, 2, 1, 100);
+    padding.purpose = paced_work_e::keepalive;
+    padding.packets[0].metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    const auto keepalive = pacer.dispatch(0, all_success(0));
+    ASSERT_EQ(keepalive.frames.size(), 1U);
+    EXPECT_EQ(keepalive.frames[0].purpose, paced_work_e::keepalive);
+    EXPECT_FALSE(keepalive.frames[0].primary_complete);
+    EXPECT_FALSE(keepalive.frames[0].recovery_required);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 3, 1, 100, 1000000, frame_dependency_e::reference), 0).result,
+      pacer_enqueue_result_e::queued);
+    EXPECT_TRUE(pacer.dispatch(0, all_success(0)).frames[0].primary_complete);
+  }
+
+  TEST(TransportPacer, TransportWorkRejectsMediaGeometryAndInterleaving) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(), 0);
+    auto padding = frame(0, 2, 1, 100);
+    padding.purpose = paced_work_e::keepalive;
+    padding.packets[0].metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1, 100), 0).result, pacer_enqueue_result_e::queued);
+    EXPECT_EQ(pacer.enqueue_frame(handle, padding, 0).result, pacer_enqueue_result_e::invalid);
+    pacer.dispatch(0, all_success(0));
+    auto invalid = padding;
+    invalid.packets[0].metadata.protection.total_shards = 1;
+    EXPECT_EQ(pacer.enqueue_frame(handle, invalid, 0).result, pacer_enqueue_result_e::invalid);
+    invalid = padding;
+    invalid.packets[0].metadata.kind = packet_kind_e::data;
+    EXPECT_EQ(pacer.enqueue_frame(handle, invalid, 0).result, pacer_enqueue_result_e::invalid);
+    invalid = padding;
+    invalid.frame_id = invalid.packets[0].metadata.frame_id = 2;
+    EXPECT_EQ(pacer.enqueue_frame(handle, invalid, 0).result, pacer_enqueue_result_e::invalid);
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    EXPECT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
+  }
+
+  TEST(TransportPacer, UnarmedProbePaddingIsRetiredWithoutOsSubmission) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(), 0);
+    auto padding = frame(0, 1, 1, 100);
+    padding.purpose = paced_work_e::probe;
+    padding.packets[0].metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    bool attempted = false;
+    const auto discarded = pacer.dispatch(0, [&](auto, auto) { attempted = true; return paced_batch_submission_t {}; });
+    EXPECT_FALSE(attempted);
+    ASSERT_EQ(discarded.frames.size(), 1U);
+    EXPECT_EQ(discarded.frames[0].purpose, paced_work_e::probe);
+    EXPECT_FALSE(discarded.frames[0].recovery_required);
+    EXPECT_FALSE(discarded.frames[0].primary_complete);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_packets, 0U);
+  }
 
   TEST(TransportPacer, OwnsCiphertextAndPreservesPolicyUntilActualSubmission) {
     deadline_pacer_t pacer;
