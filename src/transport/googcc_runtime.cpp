@@ -175,7 +175,10 @@ namespace transport {
       normalized.fec_numerator = std::max({ base, key, recovery });
       normalized.fec_denominator = 100;
       const auto allocation = allocate_budget(normalized);
-      if (!allocation || allocation->encoder_kbps <= 0) return false;
+      if (!allocation || allocation->encoder_kbps <= 0) {
+        ++rejected_requests_;
+        return true;
+      }
       std::optional<int> desired;
       const auto ratio = controller_.snapshot().encoder_reduce_ratio;
       if (ratio > 0) desired = std::max(1, static_cast<int>(allocation->encoder_kbps * (1 - ratio)));

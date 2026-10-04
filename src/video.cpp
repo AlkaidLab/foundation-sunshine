@@ -3540,7 +3540,10 @@ namespace video {
     std::function<std::unique_ptr<encode_session_t>()> session_factory = {},
     std::function<void()> backend_failure_handler = {}) {
     const auto initial_policy = transport_state ? transport_state->begin_encoder_initialization() : nullptr;
-    if (transport_state && !initial_policy) return;
+    if (transport_state && !initial_policy) {
+      if (transport_state->stopped()) mail->event<bool>(mail::shutdown)->raise(true);
+      return;
+    }
     if (initial_policy) config.bitrate = initial_policy->encoder_kbps;
     auto session = session_factory ? session_factory() : make_encode_session(disp.get(), encoder, config, disp->width, disp->height,
       std::move(encode_device), false, !!transport_state);

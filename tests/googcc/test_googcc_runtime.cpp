@@ -223,6 +223,34 @@ namespace {
     EXPECT_EQ(f.policy->snapshot().applied, reduced);
   }
 
+  TEST(GoogCcRuntime, ZeroEncoderBudgetRejectsUpdateWithoutStoppingOrChangingPolicy) {
+    runtime_fixture_t f;
+    f.config.controller.pacer_queue_feedback = f.config.controller.queue_pushback = true;
+    f.config.controller.minimum_kbps = f.config.controller.maximum_kbps = f.config.controller.initial_kbps = 100;
+    googcc_runtime_t runtime(f.config, f.policy);
+    f.apply();
+    f.feedback(runtime, 1000);
+    ASSERT_TRUE(runtime.try_take_control(11000, googcc_queue_sample_t { 7, 11000, 0, true, false }));
+    f.apply();
+    const auto original = f.policy->snapshot();
+
+    EXPECT_TRUE(runtime.process_interval(261000, googcc_queue_sample_t { 7, 261000, 0, true, false }));
+    EXPECT_LE(runtime.snapshot().estimate.target_kbps, f.budget.video_overhead_kbps);
+    EXPECT_EQ(runtime.snapshot().rejected_requests, 1U);
+    EXPECT_EQ(runtime.snapshot().accepted_policy_requests, 0U);
+    EXPECT_EQ(f.policy->snapshot().accepted, original.accepted);
+    EXPECT_EQ(f.policy->snapshot().applied, original.applied);
+    EXPECT_FALSE(f.policy->stopped());
+    EXPECT_TRUE(runtime.snapshot().lease);
+
+    EXPECT_TRUE(runtime.process_interval(261001, googcc_queue_sample_t { 7, 261001, 0, true, false }));
+    EXPECT_EQ(runtime.snapshot().rejected_requests, 1U);
+    EXPECT_TRUE(runtime.process_interval(511000, googcc_queue_sample_t { 7, 511000, 0, true, false }));
+    EXPECT_EQ(runtime.snapshot().rejected_requests, 2U);
+    EXPECT_EQ(f.policy->snapshot().accepted, original.accepted);
+    EXPECT_FALSE(f.policy->stopped());
+  }
+
   TEST(GoogCcRuntime, QueuePresenceCannotReplaceNegotiationApplicationOrManualOwnership) {
     runtime_fixture_t f;
     f.config.controller.pacer_queue_feedback = f.config.controller.queue_pushback = true;
