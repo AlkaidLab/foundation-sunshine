@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | RTSP packet feedback profile | 2 | `TF_PACKET_FEEDBACK_PROFILE_VERSION`；完整身份、包长调整及 parity 保留 RS 符号的契约 |
 | READY / REPORT 消息体格式 | 1 | `TF_WIRE_VERSION`；下面两类控制消息的 version 字段及原有字节布局 |
+| 独立探测包 profile | 1 | `TF_PROBE_PADDING_PROFILE_VERSION`；单独协商的认证 RTP padding，复用反馈身份与报告，不改变 READY/REPORT 布局 |
 
 English version note: RTSP packet feedback profile 2 negotiates the video identity and RS parity contract. READY and REPORT retain body format version 1. These version domains are independent; a profile change does not change the body codec.
 
@@ -80,8 +81,18 @@ Sunshine 使用同一会话互斥锁串行处理 UDP 成功提交和加密控制
 
 报告使用 UNSEQUENCED ENet 包；每个周期最多生成 8 个，每次状态变化优先发送，并保留第二份尽力重复。只有成功加入 ENet 发送队列才清除对应变化，排队成功不等于远端已收到；排队失败仍消费已预留序号和预算。准备报告后发生迟到的更正不会被旧排队回执清除。两份反馈均丢失时服务端保持无覆盖，不将其当作视频缺失。
 
+## 独立探测包
+
+主机启用已有实验探测开关且支持实验控制构建时，DESCRIBE 另行广告 `x-ss-video[0].packetProbeVersion:1`。客户端仅在反馈 profile 2、视频 AES-GCM、控制协议 13 与 control v2 加密均满足且非 control only 时请求该属性。只有本次有效反馈 epoch 与精确 `X-SS-Packet-Probe: 1` 确认同时成立，接收器才接受此封装；缺失、未来版本、非法确认及重连重置均不沿用能力。旧客户端与关闭探测的主机不发送独立填充。
+
+加密外层及 16 字节完整身份与媒体一致，身份后的 RTP 头固定 12 字节：首字节 `0xa0`（v2、padding、无扩展或 CSRC），payload type 为 127，序号等于完整传输序号低 16 位，timestamp 与 SSRC 为零。随后为 1 至 255 字节 padding，除最后的精确长度字节外全部为零。接收端完成 AES-GCM、epoch、完整身份、低序号与严格格式核对后，记录原始到达并在 RS 队列及视频解包前丢弃；畸形包不进入反馈和恢复。未协商时不把此封装识别为有效媒体。
+
+发送继续由现有视频 owner 独占分配序号、nonce 和密文，只在媒体队列空时插入完整传输工作，不能穿插冻结的 RS 帧。固定填充 255 字节时，实际 UDP 为 315 字节，IPv4/IPv6 IP 字节分别为 343/363；探测与媒体共享原有整数预算及 OS 成功回执。它不占用编码帧编号，不推进编码帧首发确认，也不触发参考链恢复。独立簇仍由固定版本的原生 BitrateProber 决定组大小、发送时间及完成条件，预算、反馈或期限失效时丢弃未发后缀，不能降级成普通媒体发送。
+
+已确认自动码率与首个实际媒体提交后，空闲时可尝试一个最多每 500 ms 的传输保活包；仍须通过队列、预算与 50 ms 期限，不能用 READY 或保活生成虚假容量。持续原生 background padding 仍通过既有 SDK 参数禁用。当前已有真实认证 IPv4 媒体/填充/反馈及兼容回退核对，零产出保活、完整 V6 成本与容量恢复尚未验收。
+
 ## 下一步验收
 
 PC 已有 `MOONLIGHT_VIDEO_PACKET_FEEDBACK=1` 的显式实验入口，请求 `MOONLIGHT_VIDEO_PACKET_CONTROL=1` 时也会请求反馈。Android 已将实验反馈设置、连接业务、Java/JNI 和网络统计入口接入应用；请求控制时也会请求反馈，control only 会话除外。两端默认值仍关闭。已有真实 PC 故障与回执对账，Linux 真实部分 OS 提交另取得组件证据；继续补完整 owner、反向拥堵、生命周期及 Android 实机验收。协议和客户端核心测试，包括 ARM64 真机执行，均不替代实际应用与设备验收，见[验证记录](adaptive-fec-validation.zh-CN.md)。
 
-当前 profile 2 只定义原有媒体数据与 RS 冗余的认证身份，没有独立 padding 包契约。媒体探测使用真实媒体，数量不足时可以等待或取消；2026 年 10 月 4 日固定 FEC 的容量恢复实验因此未通过完整探测与上限恢复门槛。补独立探测须另行明确协商、包识别与丢弃、序号及 nonce 分配、实际预算入账，并保证其提交不冒充编码帧首发回执；不能将其当作当前协议已经支持的能力。
+反馈 profile 2 本身不授予独立探测能力，必须完成上面的独立 profile 1 协商。2026 年 10 月 4 日生产提交 `99ac0ac6` 与 common-c `a7007bd5` 已完成该接入；真实容量复验虽完成 11 个簇并取得 SDK 估计更新，仍未通过恢复至 19 Mbps 连续 5 秒的门槛。不能据探测包实现、组件通过或局部恢复宣称 P2/P5 已完成。
