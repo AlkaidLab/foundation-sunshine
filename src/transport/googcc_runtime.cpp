@@ -1,7 +1,6 @@
 #include "googcc_runtime.h"
 
 #include <algorithm>
-#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -19,7 +18,7 @@ namespace transport {
     if (activation_policy_->connection_epoch != config_.controller.connection_epoch ||
         (activation_policy_->automatic_control &&
           (activation_policy_->automatic_control->bitrate != config_.automatic_bitrate_enabled ||
-            activation_policy_->automatic_control->fec != config_.automatic_fec_enabled ||
+            activation_policy_->automatic_control->fec ||
             static_cast<std::int64_t>(config_.controller.maximum_kbps) + activation_policy_->budget.other_kbps +
                 activation_policy_->budget.repair_kbps + activation_policy_->budget.probe_kbps >
               activation_policy_->automatic_control->maximum_total_kbps)))
@@ -135,26 +134,14 @@ namespace transport {
     granted_ = true;
     stale_ = false;
     last_policy_us_ = now_us;
-    last_fec_change_us_ = now_us;
     return true;
   }
 
   bool
-  googcc_runtime_t::needs_protection_trace(std::int64_t now_us) const {
-    return config_.automatic_fec_enabled && lease_ && !revoked_ && fresh(now_us) &&
-           (last_policy_us_ < 0 || now_us - last_policy_us_ >= config_.policy_interval_us);
-  }
-
-  bool
-  googcc_runtime_t::process_interval(std::int64_t now_us, const protection_trace_t *protection,
-    std::optional<googcc_queue_sample_t> queue) {
+  googcc_runtime_t::process_interval(std::int64_t now_us, std::optional<googcc_queue_sample_t> queue) {
     if (!controller_.process_interval(now_us, queue)) return false;
     collect_probes();
     stale_ = !fresh(now_us);
-    if (stale_) {
-      clean_start_us_ = clean_end_us_ = -1;
-      clean_through_ordinal_.reset();
-    }
     const auto state = policy_->snapshot();
     if (state.stopped) {
       lease_.reset();
@@ -180,59 +167,8 @@ namespace transport {
       return true;
     }
     budget.total_kbps = static_cast<int>(total);
-    auto base = policy->fec_base, key = policy->fec_key, recovery = policy->fec_recovery;
-    // New FEC applies only through an encoder-confirmed immutable frame policy.
-    // No pending/failed policy or stale feedback licenses extra protection.
-    if (config_.automatic_fec_enabled && !stale_ && state.encoder_initialized && state.applied == policy &&
-        protection && protection->sampled_at_us == now_us && protection->connection_epoch == policy->connection_epoch) {
-      bool clean = protection->valid && !protection->samples.empty();
-      for (std::size_t i = 0; i < protection->samples.size(); ++i) {
-        const auto &sample = protection->samples[i];
-        if (sample.status != packet_status_e::received || sample.late_correction || !sample.sent.protection.frame_data_shards ||
-            !sample.commit_ordinal || (i && sample.commit_ordinal - protection->samples[i - 1].commit_ordinal != 1)) clean = false;
-      }
-      if (protection_clock_epoch_ != protection->receiver_clock_epoch) {
-        clean_start_us_ = clean_end_us_ = -1;
-        clean_through_ordinal_.reset();
-        protection_clock_epoch_ = protection->receiver_clock_epoch;
-      }
-      if (!clean) {
-        clean_start_us_ = clean_end_us_ = -1;
-        clean_through_ordinal_.reset();
-      }
-      else {
-        const auto covered = protection->samples.back().sent.send_time_us;
-        const auto first_ordinal = protection->samples.front().commit_ordinal;
-        const bool uncovered_gap = clean_through_ordinal_ && first_ordinal > *clean_through_ordinal_ &&
-                                   first_ordinal - *clean_through_ordinal_ > 1;
-        if (clean_end_us_ < 0 || covered < clean_end_us_ || covered - clean_end_us_ > config_.feedback_timeout_us || uncovered_gap)
-          clean_start_us_ = covered;
-        clean_end_us_ = covered;
-        clean_through_ordinal_ = protection->samples.back().commit_ordinal;
-      }
-      auto proposed = *policy;
-      proposed.budget = budget;
-      const fec_selection_context_t context { clean_start_us_ >= 0 ? clean_end_us_ - clean_start_us_ : 0,
-        last_fec_change_us_ >= 0 ? now_us - last_fec_change_us_ : 0 };
-      fec_selection_context_ = context;
-      const auto replay_begin = std::chrono::steady_clock::now();
-      fec_selection_ = select_fec(*protection, proposed, config_.fec, context);
-      if (!fec_selection_.valid) {
-        clean_start_us_ = clean_end_us_ = -1;
-        clean_through_ordinal_.reset();
-        fec_selection_context_.clean_covered_us = 0;
-      }
-      fec_replay_duration_us_ = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - replay_begin).count();
-      fec_replay_at_us_ = now_us;
-      if (fec_selection_.infeasible) ++infeasible_fec_decisions_;
-      if (fec_selection_.valid && fec_selection_.changed) {
-        base = fec_selection_.classes[0].percentage;
-        key = fec_selection_.classes[1].percentage;
-        recovery = fec_selection_.classes[2].percentage;
-      }
-    }
+    const auto base = policy->fec_base, key = policy->fec_key, recovery = policy->fec_recovery;
     last_policy_us_ = now_us;
-    const bool fec_changed = base != policy->fec_base || key != policy->fec_key || recovery != policy->fec_recovery;
     auto encoder_ceiling = policy->encoder_ceiling_kbps;
     if (config_.controller.queue_pushback) {
       auto normalized = budget;
@@ -250,15 +186,11 @@ namespace transport {
       }
       encoder_ceiling = desired;
     }
-    if (budget == policy->budget && !fec_changed && encoder_ceiling == policy->encoder_ceiling_kbps) return true;
+    if (budget == policy->budget && encoder_ceiling == policy->encoder_ceiling_kbps) return true;
     const auto result = policy_->request_controller_update(*lease_, budget,
       base, key, recovery, policy->revision, {}, encoder_ceiling);
     if (result.result == policy_request_result_e::accepted) {
       ++accepted_policy_requests_;
-      if (fec_changed) {
-        ++accepted_fec_requests_;
-        last_fec_change_us_ = now_us;
-      }
     }
     else {
       ++rejected_requests_;
@@ -270,8 +202,7 @@ namespace transport {
 
   googcc_runtime_snapshot_t
   googcc_runtime_t::snapshot() const {
-    return { controller_.snapshot(), lease_, accepted_policy_requests_, rejected_requests_, rejected_probes_, revoked_, stale_,
-      accepted_fec_requests_, infeasible_fec_decisions_, fec_selection_, fec_replay_at_us_, fec_replay_duration_us_, fec_selection_context_ };
+    return { controller_.snapshot(), lease_, accepted_policy_requests_, rejected_requests_, rejected_probes_, revoked_, stale_ };
   }
   void
   googcc_runtime_t::stop() noexcept {

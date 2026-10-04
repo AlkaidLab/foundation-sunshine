@@ -3758,7 +3758,6 @@ namespace stream {
                        << " stale_probe_feedback_suppressed=" << status.estimate.stale_probe_feedback_suppressed
                        << " activation_epoch=" << active.controller_activation_epoch
                        << " automatic_bitrate=" << active.controller_config.automatic_bitrate_enabled
-                       << " automatic_fec=" << active.controller_config.automatic_fec_enabled
                        << " maximum_video_kbps=" << active.controller_config.controller.maximum_kbps
                        << " application_limited=" << status.estimate.application_limited
                        << " target_updated_at=" << status.estimate.target_updated_at_us
@@ -3773,23 +3772,6 @@ namespace stream {
                        << " probes_declined=" << status.rejected_probe_requests << " lease=" << status.lease.has_value()
                        << " control_epoch=" << (status.lease ? status.lease->control_epoch : 0)
                        << " accepted_updates=" << status.accepted_policy_requests << " stale=" << status.feedback_stale
-                       << " fec_updates=" << status.accepted_fec_requests << " fec_infeasible=" << status.infeasible_fec_decisions
-                       << " fec_base=" << status.fec_selection.classes[0].percentage
-                       << " fec_key=" << status.fec_selection.classes[1].percentage
-                       << " fec_recovery=" << status.fec_selection.classes[2].percentage
-                       << " fec_target_base=" << static_cast<int>(status.fec_selection.classes[0].target_met)
-                       << " fec_target_key=" << static_cast<int>(status.fec_selection.classes[1].target_met)
-                       << " fec_target_recovery=" << static_cast<int>(status.fec_selection.classes[2].target_met)
-                       << " fec_result_base=" << static_cast<int>(status.fec_selection.classes[0].result)
-                       << " fec_risk_base=" << status.fec_selection.classes[0].worst_frame_failure_ppm
-                       << " fec_frames_base=" << status.fec_selection.classes[0].frame_shapes
-                       << " fec_geometry_evals=" << status.fec_selection.geometries_evaluated
-                       << " fec_geometry_hits=" << status.fec_selection.geometry_cache_hits
-                       << " fec_cache_bytes=" << status.fec_selection.geometry_cache_bytes
-                       << " fec_replay_at=" << status.fec_replay_at_us
-                       << " fec_replay_us=" << status.fec_replay_duration_us
-                       << " fec_clean_us=" << status.fec_selection_context.clean_covered_us
-                       << " fec_residence_us=" << status.fec_selection_context.since_last_change_us
                        << " failed=" << active.controller_failed << " final=" << final;
     };
     const auto replace_controller = [&](active_flow_t &active, const transport::frame_policy_ref_t &policy, std::int64_t now) {
@@ -3814,7 +3796,6 @@ namespace stream {
       runtime.controller.initial_kbps = policy->budget.total_kbps - reserve;
       if (policy->automatic_control) {
         runtime.automatic_bitrate_enabled = policy->automatic_control->bitrate;
-        runtime.automatic_fec_enabled = policy->automatic_control->fec;
       }
       // Manual-only policies must never arm a new instance during registration.
       runtime.control_negotiated = active.context->session->config.packet_control &&
@@ -3833,7 +3814,6 @@ namespace stream {
       if (config::stream.experimental_transport_trace)
         BOOST_LOG(debug) << "Controller activation: epoch=" << active.flow->connection_epoch << " now=" << now
                          << " revision=" << policy->revision << " activation_epoch=" << active.controller_activation_epoch
-                         << " automatic_bitrate=" << runtime.automatic_bitrate_enabled << " automatic_fec=" << runtime.automatic_fec_enabled
                          << " maximum_total_kbps=" << maximum << " first_probe_cluster=" << runtime.controller.first_probe_cluster_id;
     };
 #endif
@@ -4169,9 +4149,8 @@ namespace stream {
             input.policy->revision, x < shards.data_shards ? transport::packet_kind_e::data : transport::packet_kind_e::fec, {} };
           owned.metadata.protection = { static_cast<std::uint16_t>(shards.data_shards),
             static_cast<std::uint16_t>(shards.nr_shards), static_cast<std::uint16_t>(x),
-            static_cast<std::uint8_t>(blockIndex), packet->is_idr() ? transport::protection_class_e::key :
-            packet->after_ref_frame_invalidation ? transport::protection_class_e::recovery : transport::protection_class_e::base,
-            static_cast<std::uint16_t>(frame_data_shards), static_cast<std::uint8_t>(fec_blocks_needed) };
+            static_cast<std::uint8_t>(blockIndex), packet->is_idr() ? transport::protection_class_e::key : packet->after_ref_frame_invalidation ? transport::protection_class_e::recovery :
+                                                                                                                                                  transport::protection_class_e::base };
           output.packets.push_back(std::move(owned));
         }
       }
@@ -4379,9 +4358,7 @@ namespace stream {
             runtime.feedback_negotiated = true;
             runtime.deadline_pacing_enabled = true;
             runtime.automatic_bitrate_enabled = config::stream.experimental_packet_bitrate;
-            runtime.automatic_fec_enabled = config::stream.experimental_packet_fec;
             runtime.budgeted_probing_enabled = config::stream.experimental_packet_probe;
-            runtime.fec.minimum_parity = context->session->config.minRequiredFecPackets;
             // Policy-derived fields are set only by replace_controller, which
             // is shared by registration and every later activation boundary.
             found->second.controller_config = runtime;
@@ -4575,9 +4552,7 @@ namespace stream {
                            << " total_shards=" << success.packet.protection.total_shards
                            << " shard_index=" << success.packet.protection.shard_index
                            << " block_index=" << static_cast<int>(success.packet.protection.block_index)
-                           << " protection_class=" << static_cast<int>(success.packet.protection.frame_class)
-                           << " frame_data_shards=" << success.packet.protection.frame_data_shards
-                           << " frame_blocks=" << static_cast<int>(success.packet.protection.frame_blocks);
+                           << " protection_class=" << static_cast<int>(success.packet.protection.frame_class);
         }
       }
       settle(dispatch.frames);
@@ -4597,10 +4572,7 @@ namespace stream {
         // Same owner and time order as real receipts. This is a gated, one-time
         // handoff; a user update before/after it invalidates the old instance.
         active.controller->try_take_control(now, queue);
-        std::optional<transport::protection_trace_t> protection;
-        if (active.controller->needs_protection_trace(now))
-          protection = active.context->session->video.sent_packets->protection_trace(now);
-        if (!active.controller->process_interval(now, protection ? &*protection : nullptr, queue)) {
+        if (!active.controller->process_interval(now, queue)) {
           active.controller_failed = true;
           BOOST_LOG(error) << "GoogCC timer invalid for epoch=" << active.flow->connection_epoch;
           session::stop(*active.context->session, session::stop_reason_e::protocol_error);
@@ -5656,7 +5628,7 @@ namespace stream {
         policy.fec_base = policy.fec_key = policy.fec_recovery = fec;
         if (config.packet_control)
           policy.automatic_control = transport::automatic_control_t { config::stream.experimental_packet_bitrate,
-            config::stream.experimental_packet_fec, policy.budget.total_kbps, 0 };
+            false, policy.budget.total_kbps, 0 };
         session->current_total_bitrate = policy.budget.total_kbps;
         session->config.monitor.bitrate = policy.encoder_kbps;
         if (policy.encoder_kbps <= 0 || policy.budget.total_kbps > 800000) return {};

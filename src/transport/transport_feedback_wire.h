@@ -53,9 +53,6 @@ namespace transport {
     // Counts, coverage epochs and freshness are copied under the same lock.
     network_statistics_t
     network_statistics(std::int64_t now_us) const;
-    protection_trace_t
-    protection_trace(std::int64_t now_us, std::int64_t horizon_us = 2000000,
-      std::int64_t maturity_us = 200000, std::size_t maximum_samples = 4096) const;
 
   private:
     const std::uint64_t connection_epoch_;

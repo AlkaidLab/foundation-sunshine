@@ -1,7 +1,6 @@
 #pragma once
 
 #include "googcc_adapter.h"
-#include "transport_fec_controller.h"
 #include "transport_policy.h"
 
 namespace transport {
@@ -13,9 +12,7 @@ namespace transport {
     std::int64_t feedback_timeout_us = 1000000;
     std::int64_t policy_interval_us = 250000;
     bool automatic_bitrate_enabled = true;
-    bool automatic_fec_enabled = false;
     bool budgeted_probing_enabled = false;
-    fec_selection_config_t fec;
   };
 
   struct googcc_runtime_snapshot_t {
@@ -26,12 +23,6 @@ namespace transport {
     std::uint64_t rejected_probe_requests = 0;
     bool control_revoked = false;
     bool feedback_stale = true;
-    std::uint64_t accepted_fec_requests = 0;
-    std::uint64_t infeasible_fec_decisions = 0;
-    fec_selection_t fec_selection;
-    std::int64_t fec_replay_at_us = -1;
-    std::int64_t fec_replay_duration_us = 0;
-    fec_selection_context_t fec_selection_context;
   };
 
   // The video owner serializes OS receipts, authenticated feedback and timers.
@@ -50,10 +41,7 @@ namespace transport {
     bool
     try_take_control(std::int64_t now_us, std::optional<googcc_queue_sample_t> queue = {});
     bool
-    process_interval(std::int64_t now_us, const protection_trace_t *protection = nullptr,
-      std::optional<googcc_queue_sample_t> queue = {});
-    bool
-    needs_protection_trace(std::int64_t now_us) const;
+    process_interval(std::int64_t now_us, std::optional<googcc_queue_sample_t> queue = {});
     bool
     probe_eligible(std::int64_t now_us) const;
     std::vector<googcc_probe_t>
@@ -83,16 +71,5 @@ namespace transport {
     std::uint64_t rejected_requests_ = 0;
     std::uint64_t rejected_probes_ = 0;
     std::vector<googcc_probe_t> pending_probes_;
-    std::uint64_t accepted_fec_requests_ = 0;
-    std::uint64_t infeasible_fec_decisions_ = 0;
-    fec_selection_t fec_selection_;
-    std::int64_t fec_replay_at_us_ = -1;
-    std::int64_t fec_replay_duration_us_ = 0;
-    fec_selection_context_t fec_selection_context_;
-    std::uint64_t protection_clock_epoch_ = 0;
-    std::int64_t clean_start_us_ = -1;
-    std::int64_t clean_end_us_ = -1;
-    std::optional<std::uint64_t> clean_through_ordinal_;
-    std::int64_t last_fec_change_us_ = -1;
   };
 }  // namespace transport

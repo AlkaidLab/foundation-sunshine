@@ -55,7 +55,7 @@ namespace {
         const auto shard = static_cast<std::uint16_t>(i % layout->total_shards());
         sent.kind = shard < frame_shards ? packet_kind_e::data : packet_kind_e::fec;
         sent.protection = { static_cast<std::uint16_t>(frame_shards), layout->total_shards(), shard,
-          0, protection_class_e::base, static_cast<std::uint16_t>(frame_shards), 1 };
+          0, protection_class_e::base };
         const auto event = wire.commit_success_event(sent);
         ASSERT_TRUE(event);
         ASSERT_TRUE(runtime.on_successful_send(*event));
@@ -203,7 +203,7 @@ namespace {
     ASSERT_TRUE(runtime.try_take_control(11000, googcc_queue_sample_t { 7, 11000, 0, true, false }));
     f.apply();
     const auto original = f.policy->snapshot().accepted;
-    ASSERT_TRUE(runtime.process_interval(300000, nullptr, googcc_queue_sample_t { 7, 300000, 2000000, true, false }));
+    ASSERT_TRUE(runtime.process_interval(300000, googcc_queue_sample_t { 7, 300000, 2000000, true, false }));
     const auto reduced = f.policy->snapshot().accepted;
     ASSERT_TRUE(reduced->encoder_ceiling_kbps);
     EXPECT_LT(reduced->encoder_kbps, original->encoder_kbps);
@@ -211,11 +211,11 @@ namespace {
     EXPECT_EQ(f.policy->snapshot().applied, original);
     EXPECT_FALSE(f.policy->snapshot().receipts.back().encoder_applied);
     EXPECT_FALSE(f.policy->snapshot().receipts.back().first_sent_frame);
-    ASSERT_TRUE(runtime.process_interval(550000, nullptr, googcc_queue_sample_t { 7, 550000, 0, true, false }));
+    ASSERT_TRUE(runtime.process_interval(550000, googcc_queue_sample_t { 7, 550000, 0, true, false }));
     EXPECT_EQ(f.policy->snapshot().accepted, reduced);
     f.apply();
     f.feedback(runtime, 600000);
-    ASSERT_TRUE(runtime.process_interval(800000, nullptr, googcc_queue_sample_t { 7, 800000, 0, true, false }));
+    ASSERT_TRUE(runtime.process_interval(800000, googcc_queue_sample_t { 7, 800000, 0, true, false }));
     const auto recovered = f.policy->snapshot().accepted;
     EXPECT_FALSE(recovered->encoder_ceiling_kbps);
     EXPECT_EQ(recovered->encoder_kbps, original->encoder_kbps);
@@ -238,7 +238,7 @@ namespace {
     const auto current = f.policy->snapshot().accepted;
     const auto manual = f.policy->request_normalized(f.budget, 10, 30, 20, current->revision, current->control_epoch);
     ASSERT_EQ(manual.result, policy_request_result_e::accepted);
-    ASSERT_TRUE(runtime.process_interval(300000, nullptr, googcc_queue_sample_t { 7, 300000, 2000000, true, false }));
+    ASSERT_TRUE(runtime.process_interval(300000, googcc_queue_sample_t { 7, 300000, 2000000, true, false }));
     EXPECT_EQ(f.policy->snapshot().accepted, manual.policy);
     EXPECT_FALSE(manual.policy->encoder_ceiling_kbps);
     EXPECT_FALSE(runtime.snapshot().lease);
@@ -296,9 +296,9 @@ namespace {
     EXPECT_EQ(f.wire.snapshot().ledger.received_packets, 40U);
   }
 
-  TEST(GoogCcRuntime, LateCoveragePreservesStatisticsButCannotRefreshProbeOrFecAuthority) {
+  TEST(GoogCcRuntime, LateCoveragePreservesStatisticsButCannotRefreshProbeAuthority) {
     runtime_fixture_t f;
-    f.config.budgeted_probing_enabled = f.config.automatic_fec_enabled = true;
+    f.config.budgeted_probing_enabled = true;
     googcc_runtime_t runtime(f.config, f.policy);
     f.apply();
     f.feedback(runtime, 1000);
@@ -310,7 +310,6 @@ namespace {
     EXPECT_EQ(runtime.snapshot().estimate.last_covered_feedback_us, 1230000);
     EXPECT_EQ(runtime.snapshot().estimate.last_covered_send_us, 21900);
     EXPECT_FALSE(runtime.probe_eligible(1230000));
-    EXPECT_FALSE(runtime.needs_protection_trace(1230000));
     ASSERT_TRUE(runtime.process_interval(1230000));
     EXPECT_TRUE(runtime.snapshot().feedback_stale);
     EXPECT_TRUE(runtime.take_probe_requests(1230000).empty());
@@ -500,233 +499,37 @@ namespace {
     EXPECT_EQ(runtime.snapshot().accepted_policy_requests, 0U);
   }
 
-  TEST(GoogCcRuntime, AutomaticFecUsesAuthoritativeReplayAtFixedBudgetWithoutFakingApplication) {
-    runtime_fixture_t f;
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    EXPECT_FALSE(runtime.needs_protection_trace(12000));
-    frame_policy_ref_t applied_before;
-    for (int i = 0; i < 100 && !runtime.snapshot().accepted_fec_requests; ++i) {
-      const auto pending = f.policy->acquire_pending();
-      if (pending) {
-        ASSERT_TRUE(f.policy->acknowledge_encoder(pending, policy_failure_e::none));
-      }
-      const auto at = 30000 + i * 50000;
-      f.feedback(runtime, at, 2);
-      applied_before = f.policy->snapshot().applied;
-      const auto trace = f.wire.protection_trace(at + 10000);
-      ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
-    }
-    ASSERT_GT(runtime.snapshot().accepted_fec_requests, 0U);
-    const auto accepted = f.policy->snapshot().accepted;
-    EXPECT_GT(accepted->fec_base, 10U);
-    EXPECT_EQ(accepted->budget.total_kbps, 30000);
-    EXPECT_EQ(accepted->budget.other_kbps, 500);
-    EXPECT_EQ(accepted->budget.repair_kbps, 500);
-    EXPECT_EQ(accepted->budget.probe_kbps, 500);
-    EXPECT_EQ(f.policy->snapshot().applied, applied_before);
-    EXPECT_LE(accepted->encoder_kbps, applied_before->encoder_kbps);
-  }
-
-  TEST(GoogCcRuntime, BestEffortCanApplyAtFixedBudgetWhileStrictTargetRemainsUnmet) {
-    runtime_fixture_t f;
-    const auto before = f.policy->snapshot().accepted;
-    ASSERT_EQ(f.policy->request_normalized(f.budget, 0, 0, 0, before->revision, before->control_epoch).result,
-      policy_request_result_e::accepted);
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    f.config.fec.minimum_parity = 2;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000, 0, true, 1);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    auto pending = f.policy->acquire_pending();
-    ASSERT_TRUE(pending);
-    ASSERT_TRUE(f.policy->acknowledge_encoder(pending, policy_failure_e::none));
-    const auto applied = f.policy->snapshot().applied;
-    for (int i = 0; i < 80 && !runtime.snapshot().accepted_fec_requests; ++i) {
-      const auto at = 30000 + i * 50000;
-      f.feedback(runtime, at, i % 8 == 0 ? 8 : 0, true, 1);
-      const auto trace = f.wire.protection_trace(at + 10000);
-      ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
-    }
-    const auto state = runtime.snapshot();
-    ASSERT_GT(state.accepted_fec_requests, 0U);
-    EXPECT_GT(state.infeasible_fec_decisions, 0U);
-    EXPECT_EQ(state.fec_selection.classes[0].result, fec_selection_result_e::best_effort);
-    EXPECT_FALSE(state.fec_selection.classes[0].target_met);
-    EXPECT_EQ(f.policy->snapshot().accepted->fec_base, 5U);
-    EXPECT_EQ(f.policy->snapshot().accepted->budget.total_kbps, 30000);
-    EXPECT_EQ(f.policy->snapshot().applied, applied);
-  }
-
-  TEST(GoogCcRuntime, IndependentlyDisabledBitrateAndFecKeepTheUserPolicy) {
-    runtime_fixture_t f;
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = false;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    const auto current = f.policy->snapshot().accepted;
-    for (int i = 0; i < 50; ++i) {
-      const auto at = 30000 + i * 50000;
-      f.feedback(runtime, at, 6);
-      const auto trace = f.wire.protection_trace(at + 10000);
-      ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
-      EXPECT_FALSE(runtime.needs_protection_trace(at + 10000));
-    }
-    EXPECT_EQ(f.policy->snapshot().accepted, current);
-    EXPECT_EQ(runtime.snapshot().accepted_policy_requests, 0U);
-    EXPECT_EQ(runtime.snapshot().accepted_fec_requests, 0U);
-    EXPECT_LT(runtime.snapshot().estimate.target_kbps, 28500);
-  }
-
-  TEST(GoogCcRuntime, PendingOrBackendFailedPolicyCannotEnableNewAutomaticProtection) {
-    for (const bool failed : { false, true }) {
+  TEST(GoogCcRuntime, RawLossNeverChangesManualProtectionAtFixedBudget) {
+    for (const bool persistent : { false, true }) {
       runtime_fixture_t f;
       f.config.automatic_bitrate_enabled = false;
-      f.config.automatic_fec_enabled = true;
       googcc_runtime_t runtime(f.config, f.policy);
       f.apply();
       f.feedback(runtime, 1000);
       ASSERT_TRUE(runtime.try_take_control(11000));
-      if (failed) {
-        ASSERT_TRUE(f.policy->acknowledge_encoder(f.policy->acquire_pending(), policy_failure_e::backend_failure));
-      }
-      for (int i = 0; i < 50; ++i) {
+      f.apply();
+      for (int i = 0; i < 80; ++i) {
         const auto at = 30000 + i * 50000;
-        f.feedback(runtime, at, 2);
-        const auto trace = f.wire.protection_trace(at + 10000);
-        ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
+        f.feedback(runtime, at, i == 0 || persistent ? 8 : 0);
+        ASSERT_TRUE(runtime.process_interval(at + 10000));
+        const auto accepted = f.policy->snapshot().accepted;
+        EXPECT_EQ(accepted->fec_base, 10U);
+        EXPECT_EQ(accepted->fec_key, 30U);
+        EXPECT_EQ(accepted->fec_recovery, 20U);
+        EXPECT_EQ(accepted->budget.total_kbps, 30000);
       }
-      EXPECT_EQ(runtime.snapshot().accepted_fec_requests, 0U);
-      EXPECT_EQ(f.policy->snapshot().accepted->fec_base, 10U);
+      EXPECT_EQ(runtime.snapshot().accepted_policy_requests, 0U);
     }
   }
 
-  TEST(GoogCcRuntime, ManualPreemptionRejectsFecEvenWithFreshProjection) {
+  TEST(GoogCcRuntime, AutomaticFecActivationIsUnsupported) {
     runtime_fixture_t f;
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    const auto current = f.policy->snapshot().accepted;
-    ASSERT_EQ(f.policy->request_normalized(f.budget, 0, 0, 0, current->revision, current->control_epoch).result,
-      policy_request_result_e::accepted);
     const auto manual = f.policy->snapshot().accepted;
-    for (int i = 0; i < 50; ++i) {
-      const auto at = 30000 + i * 50000;
-      f.feedback(runtime, at, 2);
-      const auto trace = f.wire.protection_trace(at + 10000);
-      ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
-    }
-    EXPECT_EQ(f.policy->snapshot().accepted, manual);
-    EXPECT_EQ(runtime.snapshot().accepted_fec_requests, 0U);
-    EXPECT_FALSE(runtime.snapshot().lease);
-  }
-
-  TEST(GoogCcRuntime, FecFeedbackSilenceCannotManufactureStableCleanCoverage) {
-    runtime_fixture_t f;
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    ASSERT_TRUE(f.policy->acknowledge_encoder(f.policy->acquire_pending(), policy_failure_e::none));
-    const auto current = f.policy->snapshot().accepted;
-    const auto trace = f.wire.protection_trace(20000000);
-    ASSERT_TRUE(runtime.process_interval(20000000, &trace));
-    EXPECT_TRUE(runtime.snapshot().feedback_stale);
-    EXPECT_EQ(f.policy->snapshot().accepted, current);
-    EXPECT_EQ(runtime.snapshot().accepted_fec_requests, 0U);
-    EXPECT_FALSE(runtime.needs_protection_trace(20000000));
-  }
-
-  TEST(GoogCcRuntime, ActualCleanCoverageAcrossReservedIdsCanDownstepWithoutIncreasingBudget) {
-    runtime_fixture_t f;
-    const auto original = f.policy->snapshot().accepted;
-    ASSERT_EQ(f.policy->request_normalized(f.budget, 20, 20, 20, original->revision, original->control_epoch).result,
-      policy_request_result_e::accepted);
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    f.config.fec.decrease_stability_us = 500000;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    ASSERT_TRUE(f.policy->acknowledge_encoder(f.policy->acquire_pending(), policy_failure_e::none));
-    const auto applied = f.policy->snapshot().applied;
-    for (int i = 1; i <= 80 && !runtime.snapshot().accepted_fec_requests; ++i) {
-      f.next_sequence += 11;  // Reserved, never submitted or reported.
-      const auto at = i * 50000;
-      f.feedback(runtime, at);
-      const auto trace = f.wire.protection_trace(at + 10000);
-      ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
-    }
-    ASSERT_GT(runtime.snapshot().accepted_fec_requests, 0U);
-    EXPECT_EQ(f.policy->snapshot().accepted->fec_base, 15U);
-    EXPECT_EQ(f.policy->snapshot().accepted->budget.total_kbps, f.budget.total_kbps);
-    EXPECT_EQ(f.policy->snapshot().applied, applied);
-    EXPECT_EQ(f.wire.snapshot().ledger.missing_declarations, 0U);
-  }
-
-  TEST(GoogCcRuntime, InvalidProjectionCannotAccumulateCleanResidenceBeforeLaterValidData) {
-    runtime_fixture_t f;
-    const auto original = f.policy->snapshot().accepted;
-    ASSERT_EQ(f.policy->request_normalized(f.budget, 20, 20, 20, original->revision, original->control_epoch).result,
-      policy_request_result_e::accepted);
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    f.config.fec.decrease_stability_us = 500000;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    ASSERT_TRUE(f.policy->acknowledge_encoder(f.policy->acquire_pending(), policy_failure_e::none));
-    for (int i = 1; i <= 110; ++i) {
-      const auto at = i * 50000;
-      f.feedback(runtime, at);
-      auto projection = f.wire.protection_trace(at + 10000);
-      if (i <= 100 && !projection.samples.empty()) ++projection.samples.front().sent.protection.frame_data_shards;
-      ASSERT_TRUE(runtime.process_interval(at + 10000, &projection));
-    }
-    EXPECT_EQ(runtime.snapshot().accepted_fec_requests, 0U);
-    EXPECT_EQ(f.policy->snapshot().accepted->fec_base, 20U);
-  }
-
-  TEST(GoogCcRuntime, TruncatedSnapshotsCannotCountUnexaminedPacketsAsCleanResidence) {
-    runtime_fixture_t f;
-    const auto original = f.policy->snapshot().accepted;
-    ASSERT_EQ(f.policy->request_normalized(f.budget, 20, 20, 20, original->revision, original->control_epoch).result,
-      policy_request_result_e::accepted);
-    f.config.automatic_bitrate_enabled = false;
-    f.config.automatic_fec_enabled = true;
-    f.config.fec.decrease_stability_us = 500000;
-    googcc_runtime_t runtime(f.config, f.policy);
-    f.apply();
-    f.feedback(runtime, 1000);
-    ASSERT_TRUE(runtime.try_take_control(11000));
-    ASSERT_TRUE(f.policy->acknowledge_encoder(f.policy->acquire_pending(), policy_failure_e::none));
-    for (int i = 1; i <= 120; ++i) {
-      const auto at = i * 20000;
-      f.feedback(runtime, at);
-      if (i % 20 == 0) {
-        // 400 new packets between reads, only 300 retained in each projection.
-        // Internally clean windows are not continuous coverage across reads.
-        const auto trace = f.wire.protection_trace(at + 10000, 2000000, 200000, 300);
-        ASSERT_TRUE(runtime.process_interval(at + 10000, &trace));
-      }
-    }
-    EXPECT_EQ(runtime.snapshot().accepted_fec_requests, 0U);
-    EXPECT_EQ(f.policy->snapshot().accepted->fec_base, 20U);
+    const auto activation = f.policy->request_automatic_control(true, true, 30000,
+                                      manual->revision, manual->control_epoch, "unsupported-fec")
+                              .policy;
+    ASSERT_TRUE(activation);
+    EXPECT_THROW(googcc_runtime_t runtime(f.config, f.policy, activation), std::invalid_argument);
   }
 
   TEST(GoogCcRuntime, ExplicitReenableNeedsNewAppliedPolicyAndNewMappedCoverage) {
@@ -800,7 +603,7 @@ namespace {
                               .policy;
     ASSERT_TRUE(activation);
     auto incorrect = f.config;
-    incorrect.automatic_fec_enabled = true;
+    incorrect.automatic_bitrate_enabled = false;
     EXPECT_THROW(googcc_runtime_t runtime(incorrect, f.policy, activation), std::invalid_argument);
     const auto newer = f.policy->request_automatic_control(true, false, 30000,
                                  activation->revision, activation->control_epoch, "replace")

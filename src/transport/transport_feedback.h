@@ -32,10 +32,6 @@ namespace transport {
     std::uint16_t shard_index = 0;
     std::uint8_t block_index = 0;
     protection_class_e frame_class = protection_class_e::base;
-    // Frozen whole-frame geometry, including blocks that were never sent.
-    // Zero preserves ledger compatibility but cannot drive frame-risk replay.
-    std::uint16_t frame_data_shards = 0;
-    std::uint8_t frame_blocks = 0;
   };
 
   struct probe_info_t {
@@ -54,27 +50,6 @@ namespace transport {
     packet_kind_e kind = packet_kind_e::data;
     probe_info_t probe;
     packet_protection_t protection {};
-  };
-
-  struct protection_sample_t {
-    sent_packet_t sent;
-    packet_status_e status = packet_status_e::unknown;
-    // Conservative erasure for modelling, not a playback-deadline proof.
-    bool late_correction = false;
-    // One-based ordinal assigned only by the authoritative success ledger.
-    // Reserved transport identities do not advance this coverage index.
-    std::uint64_t commit_ordinal = 0;
-  };
-
-  struct protection_trace_t {
-    std::uint64_t connection_epoch = 0;
-    std::uint64_t receiver_clock_epoch = 0;
-    std::int64_t sampled_at_us = -1;
-    std::int64_t settled_until_us = -1;
-    std::int64_t last_feedback_us = -1;
-    std::vector<protection_sample_t> samples;
-    bool valid = false;
-    bool history_truncated = false;
   };
 
   struct packet_observation_t {
@@ -185,11 +160,6 @@ namespace transport {
     expire_before(std::int64_t send_time_us);
     std::optional<sent_packet_t>
     find(std::uint64_t sequence) const;
-    // Read-only projection of the one authoritative ledger. Unsent gaps and
-    // unresolved observations are not manufactured network loss.
-    protection_trace_t
-    protection_trace(std::int64_t now_us, std::int64_t horizon_us = 2000000,
-      std::int64_t maturity_us = 200000, std::size_t maximum_samples = 4096) const;
     const send_ledger_snapshot_t &
     snapshot() const noexcept;
     network_window_t
@@ -204,8 +174,6 @@ namespace transport {
       packet_status_e status = packet_status_e::pending;
       std::int64_t first_arrival_us = -1;
       std::uint64_t receiver_clock_epoch = 0;
-      bool late_correction = false;
-      std::uint64_t commit_ordinal = 0;
     };
 
     void

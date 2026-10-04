@@ -3204,30 +3204,31 @@ connection epoch. Enabling measurement alone does not grant control.
 | `experimental_transport_pacer` | disabled | Enables the bounded experimental video sender. |
 | `experimental_packet_control` | disabled | Allows control capability advertisement and explicit negotiation when the build and pacer gates also pass. |
 | `experimental_packet_bitrate` | enabled | Lets the negotiated controller adjust the network budget; has no effect without the other control gates. Disabling it retains the current fixed budget. |
-| `experimental_packet_fec` | disabled | Replans complete frame blocks and selects protection using bounded replay of actual raw observations, within the existing network budget. |
 | `experimental_packet_queue_pushback` | disabled | Feeds the actual owned video queue to native congestion-window pushback and applies a separate encoder ceiling. The pacer continues draining at the network budget. Requires the negotiated experimental controller. |
 | `experimental_packet_probe` | disabled | Allows native probe requests to use already owned video datagrams within the existing shared IP budget. Requires automatic bitrate control and a valid controller lease; enables native periodic ALR requests and selects the native loss-recovery profile for a transport without padding. Does not add padding traffic or raise the budget for a probe. |
 | `experimental_transport_trace` | disabled | Emits private packet, policy and controller traces for bounded validation runs. |
 
-Bitrate, FEC and encoder queue pushback can be enabled independently. With bitrate adjustment disabled, explicit queue
-pushback can reduce encoder production while retaining the fixed network budget. Its read-only `encoderCeilingKbps`
-policy field is nullable and does not imply SDK application; consult the separate application and first-send receipts.
-Bitrate/FEC startup defaults are frozen in the negotiated session policy. The experimental paired
-`POST /api/v2/transport-control` operation can update both modes and the user's total ceiling in an active session;
-its new generation revokes the old instance and waits for actual apply/send/feedback before a fresh handoff.
-Queue pushback and probe enablement remain startup settings. Editing file configuration is not a live mode request;
-PC/Android live controls, state notifications and device acceptance remain pending.
-New FEC uses an encoder-confirmed immutable frame policy; pending or failed
-configuration cannot enable extra protection. Manual preemption revokes the old controller instance. FEC reductions
-require new continuous clean coverage and a residence interval; feedback silence and uncovered snapshot gaps do not count.
-Replay failure fractions are empirical thresholds, not confidence guarantees or proof of playback deadline performance.
+Automatic bitrate and encoder queue pushback can be enabled independently. With bitrate adjustment disabled,
+explicit queue pushback can reduce encoder production while retaining the fixed network budget. Its read-only
+`encoderCeilingKbps` field is nullable; consult the separate application and first-send receipts.
+Automatic FEC is unavailable: historical burst-replay selection and its configuration option have been removed.
+Manual FEC and existing RS coding remain. Status reports `experimentalAutomaticFecAvailable: false`; a paired
+`POST /api/v2/transport-control` request with `automaticFec: true` returns 400 without changing the policy.
+PC and Android disable this switch unless the host explicitly reports a boolean true capability. Automatic bitrate
+and manual budget operations remain available. Startup bitrate intent is frozen in the negotiated policy; the live
+operation updates bitrate mode and the user's total ceiling. Its new generation revokes the old instance and waits
+for actual apply/send/feedback before a fresh handoff. Queue pushback and probes remain startup settings.
+Editing file configuration is not a live mode request. Full application and device acceptance is recorded separately.
+Each frame uses an encoder-confirmed immutable manual FEC policy; pending or failed configuration cannot enable
+extra protection. Manual preemption revokes the old controller instance. A mature dynamic FEC replacement requires
+separate same-budget, same-deadline validation before it can enter production.
 The probe prototype keeps at most 32 pending requests for one second and schedules one cluster per flow. It preserves
 media identities and data/FEC semantics; only actual OS successes acquire probe metadata. Insufficient media, credit,
 deadline, freshness or authority cancels or rejects a cluster. Completed submission does not prove a valid capacity estimate. Private controller traces separately expose
 upstream native estimate success/failure counts and the last result; counts are estimate updates, not clusters.
 Feedback freshness requires both recent processing of newly mapped changes and a recent actual send time covered
 by those changes. Delayed old coverage still contributes raw accounting and upstream feedback; it cannot renew
-handoff, probe, budget-upstep or automatic-FEC authority by processing liveness alone. Clock resets invalidate
+handoff, probe or budget-upstep authority by processing liveness alone. Clock resets invalidate
 coverage until new mapped changes arrive. The current one-second timeout remains an experimental validation parameter.
 After a receiver clock/route reset, old-cluster feedback retains its raw delivery accounting but loses its
 upstream probe tag. Actual post-recovery probe feedback and later higher SDK/pacer policies have been checked

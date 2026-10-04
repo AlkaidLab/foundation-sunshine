@@ -166,7 +166,6 @@ namespace config {
     bool experimental_transport_trace = false;
     bool experimental_packet_control = false;
     bool experimental_packet_bitrate = true;
-    bool experimental_packet_fec = false;
     bool experimental_packet_queue_pushback = false;
     bool experimental_packet_probe = false;
     int transport_pacer_deadline_ms = 100;

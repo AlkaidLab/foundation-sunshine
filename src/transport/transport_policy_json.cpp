@@ -237,6 +237,7 @@ namespace transport {
       throw std::invalid_argument("Automatic control requires boolean modes");
     out.automatic_bitrate = j.at("automaticBitrate").get<bool>();
     out.automatic_fec = j.at("automaticFec").get<bool>();
+    if (out.automatic_fec) throw std::invalid_argument("Automatic FEC is unavailable");
     out.maximum_total_kbps = integer(j.at("maximumTotalKbps"), 1, 800000);
     return out;
   }
@@ -264,6 +265,7 @@ namespace transport {
       { "packetControlAvailable", false }, { "pacerAvailable", false }, { "wireBudgetEnforced", false },
       { "experimentalPacketControlNegotiated", s.experimental_packet_control_negotiated && !s.stopped },
       { "experimentalLiveControlAvailable", s.experimental_packet_control_negotiated && s.experimental_video_pacer_enabled && !s.stopped },
+      { "experimentalAutomaticFecAvailable", false },
       { "experimentalVideoPacerEnabled", s.experimental_video_pacer_enabled && !s.stopped },
       { "experimentalControllerActive", s.experimental_packet_control_negotiated && s.experimental_video_pacer_enabled &&
                                           s.accepted->control_source == control_source_e::googcc && !s.stopped },

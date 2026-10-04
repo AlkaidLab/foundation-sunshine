@@ -11,8 +11,6 @@ add_subdirectory("${TRANSPORT_SOURCE_ROOT}/third-party/googletest" googletest EX
 add_executable(transport_unit_tests
         "${TRANSPORT_SOURCE_ROOT}/src/transport/transport_send_budget.cpp"
         "${TRANSPORT_SOURCE_ROOT}/tests/unit/test_transport_send_budget.cpp"
-        "${TRANSPORT_SOURCE_ROOT}/src/transport/transport_fec_controller.cpp"
-        "${TRANSPORT_SOURCE_ROOT}/tests/unit/test_transport_fec_controller.cpp"
         "${TRANSPORT_SOURCE_ROOT}/src/transport/transport_owner_inbox.cpp"
         "${TRANSPORT_SOURCE_ROOT}/tests/unit/test_transport_owner_inbox.cpp"
         "${TRANSPORT_SOURCE_ROOT}/tests/unit/test_video_deadline.cpp"

@@ -5,13 +5,6 @@
 #include <limits>
 
 namespace transport {
-  protection_trace_t
-  wire_feedback_t::protection_trace(std::int64_t now_us, std::int64_t horizon_us,
-    std::int64_t maturity_us, std::size_t maximum_samples) const {
-    std::lock_guard lock(mutex_);
-    return ledger_.protection_trace(now_us, horizon_us, maturity_us, maximum_samples);
-  }
-
   wire_feedback_t::wire_feedback_t(std::uint64_t epoch, bool negotiated, std::size_t capacity, std::uint64_t initial_event_sequence):
       connection_epoch_(epoch), negotiated_(negotiated), ledger_(epoch, capacity), event_sequence_(initial_event_sequence) {
     state_.negotiated = negotiated;

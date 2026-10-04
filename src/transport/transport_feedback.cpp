@@ -34,16 +34,9 @@ namespace transport {
           protection.shard_index >= protection.total_shards || protection.block_index >= 4 ||
           protection.frame_class > protection_class_e::recovery ||
           packet.kind != (protection.shard_index < protection.data_shards ? packet_kind_e::data : packet_kind_e::fec)) return false;
-      if (protection.frame_data_shards || protection.frame_blocks) {
-        if (!protection.frame_blocks || protection.frame_blocks > 4 ||
-            protection.frame_data_shards < protection.frame_blocks || protection.frame_data_shards > 4092 ||
-            protection.block_index >= protection.frame_blocks ||
-            protection.data_shards != protection.frame_data_shards / protection.frame_blocks +
-                                        (protection.block_index < protection.frame_data_shards % protection.frame_blocks)) return false;
-      }
     }
     else if (protection.total_shards || protection.shard_index || protection.block_index ||
-             protection.frame_class != protection_class_e::base || protection.frame_data_shards || protection.frame_blocks)
+             protection.frame_class != protection_class_e::base)
       return false;
     if (packet.send_time_us < 0 || packet.ip_bytes < 28 || packet.ip_bytes > 65575 ||
         (last_sent_sequence_ && (packet.extended_sequence <= *last_sent_sequence_ ||
@@ -67,7 +60,6 @@ namespace transport {
       throw;
     }
     add_counter(snapshot_.committed_packets, 1);
-    iterator->second.commit_ordinal = snapshot_.committed_packets;
     add_counter(snapshot_.committed_ip_bytes, packet.ip_bytes);
     snapshot_.data_in_flight_bytes += packet.ip_bytes;
     last_sent_sequence_ = packet.extended_sequence;
@@ -160,7 +152,6 @@ namespace transport {
         const bool recovered = entry.status == packet_status_e::missing;
         if (recovered) {
           add_counter(snapshot_.late_corrections, 1);
-          entry.late_correction = true;
         }
         else {
           snapshot_.data_in_flight_bytes -= entry.packet.ip_bytes;
@@ -248,33 +239,4 @@ namespace transport {
     return result;
   }
 
-  protection_trace_t
-  send_ledger_t::protection_trace(std::int64_t now_us, std::int64_t horizon_us,
-    std::int64_t maturity_us, std::size_t maximum_samples) const {
-    protection_trace_t trace;
-    trace.connection_epoch = connection_epoch_;
-    trace.receiver_clock_epoch = receiver_clock_epoch_;
-    trace.sampled_at_us = now_us;
-    trace.last_feedback_us = highest_report_sequence_ ? last_report_received_us_ : -1;
-    if (now_us < 0 || horizon_us <= 0 || horizon_us > 5000000 || maturity_us < 0 ||
-        maturity_us >= horizon_us || now_us < maturity_us || !maximum_samples || maximum_samples > 4096 ||
-        !snapshot_.counters_valid) return trace;
-    trace.settled_until_us = now_us - maturity_us;
-    const auto beginning = now_us >= horizon_us ? now_us - horizon_us : 0;
-    trace.samples.reserve(std::min(maximum_samples, order_.size()));
-    for (auto item = order_.rbegin(); item != order_.rend(); ++item) {
-      const auto &entry = entries_.at(*item);
-      if (entry.packet.send_time_us > trace.settled_until_us) continue;
-      if (entry.packet.send_time_us < beginning) break;
-      if (trace.samples.size() == maximum_samples) {
-        trace.history_truncated = true;
-        break;
-      }
-      const auto status = entry.receiver_clock_epoch == receiver_clock_epoch_ ? entry.status : packet_status_e::unknown;
-      trace.samples.push_back({ entry.packet, status, entry.late_correction, entry.commit_ordinal });
-    }
-    std::reverse(trace.samples.begin(), trace.samples.end());
-    trace.valid = true;
-    return trace;
-  }
 }  // namespace transport

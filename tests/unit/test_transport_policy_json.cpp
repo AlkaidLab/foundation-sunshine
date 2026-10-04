@@ -138,6 +138,9 @@ TEST(TransportPolicyJson, LiveControlIsStrictAndSeparateFromManualPolicyFields) 
   EXPECT_EQ(parsed.connection_epoch, std::numeric_limits<uint64_t>::max());
   EXPECT_TRUE(parsed.automatic_bitrate);
   EXPECT_FALSE(parsed.automatic_fec);
+  auto unsupported_fec = j;
+  unsupported_fec["automaticFec"] = true;
+  EXPECT_THROW(transport::parse_control_update(unsupported_fec.dump()), std::invalid_argument);
   EXPECT_EQ(parsed.maximum_total_kbps, 40000);
   EXPECT_THROW(transport::parse_policy_update(j.dump()), std::invalid_argument);
   EXPECT_THROW(transport::parse_control_update(request().dump()), std::invalid_argument);

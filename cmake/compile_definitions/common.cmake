@@ -72,8 +72,6 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/transport/transport_credit.h"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_feedback.cpp"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_feedback.h"
-        "${CMAKE_SOURCE_DIR}/src/transport/transport_fec_controller.cpp"
-        "${CMAKE_SOURCE_DIR}/src/transport/transport_fec_controller.h"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_pacer.cpp"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_pacer.h"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_owner_inbox.cpp"

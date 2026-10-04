@@ -264,8 +264,6 @@ endif ()
 add_executable(transport_unit_tests
         ${CMAKE_SOURCE_DIR}/src/transport/transport_send_budget.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_send_budget.cpp
-        ${CMAKE_SOURCE_DIR}/src/transport/transport_fec_controller.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_fec_controller.cpp
         ${CMAKE_SOURCE_DIR}/src/transport/transport_owner_inbox.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_owner_inbox.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_deadline.cpp

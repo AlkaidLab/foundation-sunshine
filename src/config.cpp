@@ -1516,7 +1516,6 @@ namespace config {
     bool_f(vars, "experimental_transport_trace", stream.experimental_transport_trace);
     bool_f(vars, "experimental_packet_control", stream.experimental_packet_control);
     bool_f(vars, "experimental_packet_bitrate", stream.experimental_packet_bitrate);
-    bool_f(vars, "experimental_packet_fec", stream.experimental_packet_fec);
     bool_f(vars, "experimental_packet_queue_pushback", stream.experimental_packet_queue_pushback);
     bool_f(vars, "experimental_packet_probe", stream.experimental_packet_probe);
     int_between_f(vars, "transport_pacer_deadline_ms", stream.transport_pacer_deadline_ms, {5, 1000});
