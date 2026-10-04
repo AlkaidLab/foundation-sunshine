@@ -4662,20 +4662,19 @@ namespace stream {
           active.pending_probe_scheduler.reset();
           if (disposition == transport::paced_probe_result_e::active) break;
         }
-        if (active.pending_probes.empty() && active.context->session->config.packet_probe) {
-          const auto estimate = active.controller->snapshot().estimate;
-          if (estimate.requested_padding_kbps > 0 && estimate.padding_credit_ip_bytes > 0)
-            enqueue_padding(active, nullptr, now, now + 50000, transport::paced_work_e::padding, estimate.padding_credit_ip_bytes);
-        }
       }
 #endif
-      // Reserve independent transport work before the next codec frame.
+      // Reserve native probe groups before the next codec frame. Continuous
+      // loss-recovery padding yields its unsent suffix to arriving media.
       if (auto frame = inbox->take_frame(); frame && !frame->flow->is_closed()) {
         auto context = std::static_pointer_cast<video_send_context_t>(frame->flow->context);
         const auto found = flows.find(frame->flow->handle);
         if (found == flows.end()) throw std::runtime_error("Encoded frame for unregistered video flow");
         if (found != flows.end()) {
           try {
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+            settle(pacer.cancel_padding(found->second.pacer_handle, transport_now_us()));
+#endif
             auto prepared = build_frame(*frame);
             transport::pacer_enqueue_result_t enqueued;
             std::uint64_t admitted_packets = 0, admitted_ip_bytes = 0;
@@ -4747,7 +4746,7 @@ namespace stream {
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
       bool has_controller = false;
       bool has_active_probe = false;
-      bool has_padding_credit = false;
+      bool padding_enqueued = false;
       for (auto &[handle, active] : flows) {
         if (!active.controller || active.controller_failed || active.flow->is_closed()) continue;
         has_controller = true;
@@ -4768,12 +4767,6 @@ namespace stream {
           continue;
         }
         const auto estimate = active.controller->snapshot().estimate;
-        if (active.context->session->config.packet_probe && active.pending_probes.empty() && !queued_state->queued_packets &&
-            estimate.requested_padding_kbps > 0 && active.controller->probe_eligible(now) && padding_policy(active)) {
-          constexpr auto payload = sizeof(video_packet_enc_prefix_t) + TF_VIDEO_IDENTITY_BYTES + TF_PROBE_PADDING_HEADER_BYTES + TF_PROBE_PADDING_MAX_BYTES;
-          const auto cost = *transport::ip_datagram_bytes(payload, net::normalize_address(active.context->peer.address()).is_v6());
-          has_padding_credit |= estimate.padding_credit_ip_bytes >= cost;
-        }
         for (const auto &request : active.controller->take_probe_requests(now)) {
           if (config::stream.experimental_transport_trace)
             BOOST_LOG(debug) << "Probe request: epoch=" << active.flow->connection_epoch << " now=" << now
@@ -4818,13 +4811,22 @@ namespace stream {
           trace_controller(active, now, false);
           active.next_controller_log_us = now + 250000;
         }
+        // Media has entered/drained the deadline queue and actual IP receipts
+        // have reached the native budget. Only admitted padding wakes this
+        // owner immediately; refused work follows the normal controller tick.
+        if (active.probing_enabled && active.pending_probes.empty() && active.controller->probe_eligible(now) &&
+            estimate.requested_padding_kbps > 0 && estimate.padding_credit_ip_bytes > 0) {
+          const auto admitted = enqueue_padding(active, nullptr, now, now + 50000,
+            transport::paced_work_e::padding, estimate.padding_credit_ip_bytes);
+          padding_enqueued |= admitted;
+        }
       }
 #endif
       const auto queued = inbox->snapshot();
       auto wakeup = std::chrono::steady_clock::now() + 250ms;
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
       if (has_controller) wakeup = std::min(wakeup, std::chrono::steady_clock::now() + 25ms);
-      if (has_padding_credit) wakeup = std::chrono::steady_clock::now();
+      if (padding_enqueued) wakeup = std::chrono::steady_clock::now();
 #endif
       if (queued.pending_commands || queued.queued_frames || queued.queued_feedback_messages)
         wakeup = std::chrono::steady_clock::now();
