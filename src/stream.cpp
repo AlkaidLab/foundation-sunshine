@@ -3732,6 +3732,7 @@ namespace stream {
       bool controller_failed = false;
       transport::frame_policy_ref_t last_controller_limits;
       std::deque<transport::googcc_probe_t> pending_probes;
+      std::unique_ptr<transport::probe_scheduler_t> pending_probe_scheduler;
       std::int32_t last_probe_cluster = -1;
       transport::paced_probe_result_e last_probe_result = transport::paced_probe_result_e::none;
       std::int32_t last_probe_wait_cluster = -1;
@@ -3789,6 +3790,7 @@ namespace stream {
       // No dispatch receipt survives to this boundary. Cancel only the unsent
       // probe suffix; owned frames, already charged bytes and the ledger stay.
       active.pending_probes.clear();
+      active.pending_probe_scheduler.reset();
       pacer.cancel_probe(active.pacer_handle, now);
       runtime.controller.start_time_us = now;
       const auto reserve = policy->budget.other_kbps + policy->budget.repair_kbps + policy->budget.probe_kbps;
@@ -4489,6 +4491,7 @@ namespace stream {
         const auto clock_resets = active.controller->snapshot().estimate.receiver_clock_resets;
         if (clock_resets != active.probe_clock_resets) {
           active.pending_probes.clear();
+          active.pending_probe_scheduler.reset();
           pacer.cancel_probe(active.pacer_handle, now);
           active.probe_clock_resets = clock_resets;
         }
@@ -4501,15 +4504,18 @@ namespace stream {
                                << " cluster=" << request.cluster_id << " result=" << static_cast<int>(transport::paced_probe_result_e::cancelled);
           }
           active.pending_probes.clear();
+          active.pending_probe_scheduler.reset();
           pacer.cancel_probe(active.pacer_handle, now);
           continue;
         }
         while (!active.pending_probes.empty()) {
           const auto request = active.pending_probes.front();
           auto disposition = transport::paced_probe_result_e::cancelled;
-          if (request.requested_at_us >= 0 && now >= request.requested_at_us && now - request.requested_at_us <= 1000000)
-            disposition = pacer.start_probe(active.pacer_handle,
-              { request.cluster_id, request.target_kbps, request.duration_us, request.minimum_delta_us, request.minimum_packets }, now);
+          if (request.requested_at_us >= 0 && now >= request.requested_at_us && now - request.requested_at_us <= 1000000) {
+            if (!active.pending_probe_scheduler)
+              active.pending_probe_scheduler = transport::make_googcc_probe_scheduler(request, now);
+            disposition = pacer.start_probe(active.pacer_handle, active.pending_probe_scheduler, now);
+          }
           if (disposition == transport::paced_probe_result_e::busy || disposition == transport::paced_probe_result_e::insufficient_media ||
               disposition == transport::paced_probe_result_e::deadline) {
             if (config::stream.experimental_transport_trace &&
@@ -4525,6 +4531,7 @@ namespace stream {
             BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
                              << " cluster=" << request.cluster_id << " result=" << static_cast<int>(disposition);
           active.pending_probes.pop_front();
+          active.pending_probe_scheduler.reset();
           if (disposition == transport::paced_probe_result_e::active) break;
         }
       }

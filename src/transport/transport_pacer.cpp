@@ -14,8 +14,6 @@ namespace transport {
     constexpr auto scale = detail::credit_scale;
     constexpr std::uint64_t maximum_credit_bytes = 1ULL << 32;
     constexpr std::uint64_t maximum_rate = 1000000000000ULL;
-    // Experimental scheduling tolerance; not a V6-approved production value.
-    constexpr std::uint64_t probe_schedule_slack_us = 5000;
 
     bool
     valid(const pacing_limits_t &limits) {
@@ -164,8 +162,9 @@ namespace transport {
         std::uint64_t frame_id = 0;
         std::uint64_t group_bytes = 0;
         std::uint64_t last_sequence = 0;
-        std::int64_t delta_us = 0;
+        std::int64_t maximum_delay_us = 0;
         std::uint64_t group_sent_bytes = 0;
+        std::unique_ptr<probe_scheduler_t> scheduler;
       };
       std::optional<probe_t> probe;
       std::int32_t last_probe_cluster = -1;
@@ -568,7 +567,8 @@ namespace transport {
       auto &frame = queued.frame;
       p.note_wakeup(result.next_wakeup_us, frame.deadline_us);
       if (session.probe) {
-        if (now > add_time(session.stats.probe.next_send_us, probe_schedule_slack_us))
+        if (now > add_time(session.stats.probe.next_send_us, session.probe->maximum_delay_us) ||
+            !session.probe->scheduler->current(now))
           p.end_probe(session, paced_probe_result_e::schedule_late);
         else if (now < session.stats.probe.next_send_us) {
           p.note_wakeup(result.next_wakeup_us, session.stats.probe.next_send_us);
@@ -606,7 +606,7 @@ namespace transport {
         if (group_cost > allowance) {
           const auto funded_at = p.earliest(session, group_cost, now);
           if (p.packet_fits(session, group_cost) && funded_at < frame.deadline_us &&
-              funded_at <= add_time(session.stats.probe.next_send_us, probe_schedule_slack_us)) {
+              funded_at <= add_time(session.stats.probe.next_send_us, session.probe->maximum_delay_us)) {
             // Do not spend a partial group on ordinary media and then claim
             // a slower synthetic probe. Wait only inside the existing slack.
             p.note_wakeup(result.next_wakeup_us, funded_at);
@@ -714,19 +714,29 @@ namespace transport {
         session.probe->group_sent_bytes += group_success_bytes;
         const bool last_packet_sent = successes && result.successful.back().packet.extended_sequence == session.probe->last_sequence;
         const bool group_complete = session.probe->group_sent_bytes >= session.probe->group_bytes || last_packet_sent;
-        if (group_complete) ++probe.successful_groups;
         if (late || p.clock_us >= frame.deadline_us)
           p.end_probe(session, paced_probe_result_e::deadline);
         else if (submission.suffix_probe_cancelled)
           p.end_probe(session, paced_probe_result_e::cancelled);
         else if (failed || !submission.submission_known)
           p.end_probe(session, submission.suffix_budget_deferred ? paced_probe_result_e::budget_deferred : paced_probe_result_e::send_failed);
-        else if (last_packet_sent)
-          p.end_probe(session, paced_probe_result_e::complete);
         else if (group_complete) {
-          probe.next_send_us = add_time(p.clock_us, std::max(static_cast<std::uint64_t>(session.probe->delta_us),
-                                                      ceil_div(session.probe->group_sent_bytes * 8000, static_cast<std::uint64_t>(session.probe->metadata.send_kbps))));
-          session.probe->group_sent_bytes = 0;
+          if (!session.probe->scheduler->on_group_sent(session.probe->group_sent_bytes, p.clock_us))
+            p.end_probe(session, paced_probe_result_e::schedule_late);
+          else {
+            ++probe.successful_groups;
+            const auto next = session.probe->scheduler->current(p.clock_us);
+            if (!next)
+              p.end_probe(session, paced_probe_result_e::complete);
+            else if (last_packet_sent)
+              p.end_probe(session, paced_probe_result_e::cancelled);
+            else {
+              probe.next_send_us = next->next_send_us;
+              session.probe->group_bytes = next->minimum_group_ip_bytes;
+              session.probe->maximum_delay_us = next->maximum_delay_us;
+              session.probe->group_sent_bytes = 0;
+            }
+          }
         }
         // A group may span several bounded submissions. Retain its original
         // schedule/slack until complete, rotate normally, and retry immediately
@@ -778,57 +788,61 @@ namespace transport {
   }
 
   paced_probe_result_e
-  deadline_pacer_t::start_probe(std::uint64_t handle, const paced_probe_request_t &request, std::int64_t now) {
+  deadline_pacer_t::start_probe(std::uint64_t handle, std::unique_ptr<probe_scheduler_t> &scheduler, std::int64_t now) {
     auto &p = *impl_;
     const auto found = p.sessions.find(handle);
     if (p.busy || p.stopped || found == p.sessions.end() || found->second.stats.stopped ||
         now < p.clock_us || now < 0 || now > std::numeric_limits<std::int64_t>::max() / 4 ||
-        request.cluster_id < 0 || request.target_kbps <= 0 || request.target_kbps > 800000 ||
-        request.duration_us <= 0 || request.duration_us > 200000 ||
-        request.minimum_delta_us <= 0 || request.minimum_delta_us > 20000 ||
-        request.minimum_packets < 2 || request.minimum_packets > 32) return paced_probe_result_e::invalid;
+        !scheduler) return paced_probe_result_e::invalid;
     auto &session = found->second;
     if (session.probe) return paced_probe_result_e::busy;
-    if (request.cluster_id <= session.last_probe_cluster) return paced_probe_result_e::invalid;
     if (session.frames.empty()) return paced_probe_result_e::insufficient_media;
-    const auto min_bytes = ceil_div(static_cast<std::uint64_t>(request.target_kbps * request.duration_us), 8000);
-    const auto group_bytes = ceil_div(static_cast<std::uint64_t>(request.target_kbps * request.minimum_delta_us), 8000);
-    if (!p.packet_fits(session, group_bytes)) return paced_probe_result_e::budget_deferred;
     const auto &queued = session.frames.front();
     const auto &frame = queued.frame;
-    std::uint64_t bytes = 0, group = 0, last_sequence = 0, span = 0;
-    std::uint32_t groups = 0;
+    for (auto i = queued.cursor; i < frame.packets.size(); ++i)
+      scheduler->on_incoming_packet(frame.packets[i].metadata.ip_bytes);
+    const auto schedule = scheduler->current(now);
+    if (!schedule) return paced_probe_result_e::insufficient_media;
+    if (schedule->metadata.cluster_id <= session.last_probe_cluster || schedule->metadata.min_packets < 2 ||
+        schedule->metadata.min_packets > 32 || schedule->metadata.min_bytes <= 0 ||
+        schedule->metadata.send_kbps <= 0 || schedule->metadata.send_kbps > 800000 ||
+        schedule->minimum_group_ip_bytes == 0 || schedule->maximum_delay_us <= 0 || schedule->maximum_delay_us > 20000)
+      return paced_probe_result_e::invalid;
+    if (!p.packet_fits(session, schedule->minimum_group_ip_bytes)) return paced_probe_result_e::budget_deferred;
+    auto preview = scheduler->clone();
+    auto predicted_at = p.earliest(session, queued.remaining_ip_bytes, now);
+    if (!preview || predicted_at >= frame.deadline_us) return paced_probe_result_e::deadline;
+    std::uint64_t group = 0, last_sequence = 0;
     bool ready = false;
     for (auto i = queued.cursor; i < frame.packets.size(); ++i) {
       const auto &packet = frame.packets[i].metadata;
       if (packet.probe.cluster_id >= 0) return paced_probe_result_e::invalid;
-      bytes += packet.ip_bytes;
       group += packet.ip_bytes;
-      if (group >= group_bytes) {
+      if (group >= schedule->minimum_group_ip_bytes) {
         if (!p.packet_fits(session, group)) return paced_probe_result_e::budget_deferred;
-        ++groups;
-        if (bytes >= min_bytes && groups >= static_cast<std::uint32_t>(request.minimum_packets)) {
+        if (!preview->on_group_sent(group, predicted_at)) return paced_probe_result_e::deadline;
+        const auto next = preview->current(predicted_at);
+        if (!next) {
           last_sequence = packet.extended_sequence;
           ready = true;
           break;
         }
-        span += std::max(static_cast<std::uint64_t>(request.minimum_delta_us),
-          ceil_div(group * 8000, static_cast<std::uint64_t>(request.target_kbps)));
+        predicted_at = next->next_send_us;
         group = 0;
       }
     }
     if (!ready) return paced_probe_result_e::insufficient_media;
-    if (add_time(p.earliest(session, queued.remaining_ip_bytes, now), span + probe_schedule_slack_us) >= frame.deadline_us)
+    if (add_time(predicted_at, schedule->maximum_delay_us) >= frame.deadline_us)
       return paced_probe_result_e::deadline;
     // Admission does not promise future credit: shared/host outlets may consume
     // it. Actual dispatch rechecks all buckets and the adapter's shared permit.
     if (!p.accept_time(now)) return paced_probe_result_e::invalid;
     session.probe = impl_t::session_t::probe_t {
-      { request.cluster_id, request.minimum_packets, static_cast<std::int32_t>(min_bytes), static_cast<std::int32_t>(request.target_kbps) },
-      frame.frame_id, group_bytes, last_sequence, request.minimum_delta_us
+      schedule->metadata, frame.frame_id, schedule->minimum_group_ip_bytes, last_sequence, schedule->maximum_delay_us,
+      0, std::move(scheduler)
     };
-    session.last_probe_cluster = request.cluster_id;
-    session.stats.probe = { request.cluster_id, paced_probe_result_e::active, 0, 0, 0, now };
+    session.last_probe_cluster = schedule->metadata.cluster_id;
+    session.stats.probe = { schedule->metadata.cluster_id, paced_probe_result_e::active, 0, 0, 0, schedule->next_send_us };
     return paced_probe_result_e::active;
   }
 

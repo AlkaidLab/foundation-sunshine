@@ -11,6 +11,8 @@ add_executable(googcc_input_tests
     "${SUNSHINE_ROOT}/src/transport/transport_feedback_wire.cpp"
     "${SUNSHINE_ROOT}/third-party/moonlight-common-c/src/TransportFeedbackWire.c"
     "${SUNSHINE_ROOT}/src/transport/transport_policy.cpp"
+    "${SUNSHINE_ROOT}/src/transport/transport_pacer.cpp"
+    "${SUNSHINE_ROOT}/tests/unit/test_transport_pacer.cpp"
     "${SUNSHINE_ROOT}/src/transport/transport_budget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/test_googcc_runtime.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/test_googcc_input.cpp")

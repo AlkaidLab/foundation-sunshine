@@ -97,6 +97,7 @@ set(GOOGCC_SUPPORT
     api/units/time_delta.cc
     api/units/timestamp.cc
     modules/pacing/interval_budget.cc
+    modules/pacing/bitrate_prober.cc
     modules/remote_bitrate_estimator/aimd_rate_control.cc
     modules/remote_bitrate_estimator/bwe_defines.cc
     rtc_base/checks.cc

@@ -12,6 +12,13 @@
 #include <vector>
 
 namespace transport {
+  class probe_scheduler_t;
+  struct googcc_probe_t;
+  // An invalid request returns null. Cancellation destroys this single-cluster
+  // native instance, so upstream's queued clusters cannot survive a reset.
+  std::unique_ptr<probe_scheduler_t>
+  make_googcc_probe_scheduler(const googcc_probe_t &request, std::int64_t now_us);
+
   struct googcc_config_t {
     std::uint64_t connection_epoch = 0;
     std::int64_t start_time_us = 0;

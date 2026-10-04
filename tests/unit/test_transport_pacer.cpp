@@ -1,4 +1,7 @@
 #include "src/transport/transport_pacer.h"
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+  #include "src/transport/googcc_adapter.h"
+#endif
 
 #include <algorithm>
 #include <limits>
@@ -73,11 +76,18 @@ namespace {
     return value;
   }
 
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+  paced_probe_result_e
+  start_probe(deadline_pacer_t &pacer, std::uint64_t handle, const googcc_probe_t &request, std::int64_t now) {
+    auto scheduler = make_googcc_probe_scheduler(request, now);
+    return pacer.start_probe(handle, scheduler, now);
+  }
+
   TEST(TransportPacer, RealMediaProbeGroupsPreserveIdentityPayloadAndIntegralBudget) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 100, 10), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(handle, { 9, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, handle, { 9, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     std::set<std::uint64_t> identities;
     for (const auto now : { 0, 2400, 4800 }) {
       const auto sent = pacer.dispatch(now, [&](auto, auto packets) {
@@ -111,18 +121,19 @@ namespace {
     ASSERT_EQ(tail.successful.size(), 4U);
     for (const auto &success : tail.successful) EXPECT_EQ(success.packet.probe.cluster_id, -1);
     EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 12000U);
-    EXPECT_EQ(pacer.start_probe(handle, { 9, 8000, 6000, 2000, 3 }, 4801), paced_probe_result_e::invalid);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 110, 10), 4801).result, pacer_enqueue_result_e::queued);
+    EXPECT_EQ(start_probe(pacer, handle, { 9, 8000, 6000, 2000, 3 }, 4801), paced_probe_result_e::invalid);
   }
 
   TEST(TransportPacer, ProbeRejectsUnavailableMediaDeadlineAndReentryWithoutCreditChanges) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
-    EXPECT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::insufficient_media);
+    EXPECT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::insufficient_media);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10, 1200, 9000), 0).result, pacer_enqueue_result_e::queued);
-    EXPECT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::deadline);
-    EXPECT_EQ(pacer.start_probe(handle, { 1, 800000, 6000, 2000, 3 }, 0), paced_probe_result_e::budget_deferred);
+    EXPECT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::deadline);
+    EXPECT_EQ(start_probe(pacer, handle, { 1, 800000, 6000, 2000, 3 }, 0), paced_probe_result_e::budget_deferred);
     auto sent = pacer.dispatch(0, [&](auto, auto packets) {
-      EXPECT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::invalid);
+      EXPECT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::invalid);
       EXPECT_FALSE(pacer.cancel_probe(handle, 0));
       return all_success(0)(handle, packets);
     });
@@ -136,12 +147,12 @@ namespace {
       deadline_pacer_t pacer;
       const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
       ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
-      ASSERT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+      ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
       ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
       if (!late) {
         ASSERT_TRUE(pacer.cancel_probe(handle, 1));
       }
-      const auto now = late ? 7401 : 1;
+      const auto now = late ? 12401 : 1;
       const auto sent = pacer.dispatch(now, all_success(now));
       ASSERT_EQ(sent.successful.size(), 8U);
       for (const auto &success : sent.successful) EXPECT_EQ(success.packet.probe.cluster_id, -1);
@@ -155,7 +166,7 @@ namespace {
       deadline_pacer_t pacer;
       const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
       ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
-      ASSERT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+      ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
       const auto sent = pacer.dispatch(0, [&](auto, auto packets) {
         EXPECT_EQ(packets.size(), 2U);
         return paced_batch_submission_t { { { mode != 0, 0 }, { false, 0 } }, 0, true, mode != 2, mode == 0 };
@@ -181,7 +192,7 @@ namespace {
     ASSERT_TRUE(pacer.set_host_limits(limits(1000000, 10000), 0));
     ASSERT_EQ(pacer.enqueue_frame(a, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
     ASSERT_EQ(pacer.enqueue_frame(b, frame(1, 20, 2, 1200, 1000000, frame_dependency_e::non_reference, policy(8)), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(a, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, a, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
     const auto peer = pacer.dispatch(1, all_success(1));
     ASSERT_EQ(peer.successful.size(), 2U);
@@ -194,7 +205,7 @@ namespace {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
     ASSERT_TRUE(pacer.update_limits(handle, limits(1000000, 1200), 1));
     const auto normal = pacer.dispatch(2400, all_success(2400));
@@ -210,7 +221,7 @@ namespace {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     const auto declined = pacer.dispatch(0, [](auto, auto packets) {
       paced_batch_submission_t result;
       result.packets.resize(packets.size());
@@ -230,7 +241,7 @@ namespace {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000, 10000), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
     ASSERT_TRUE(pacer.debit_external_success(handle, 8000, 2399));
     const auto waiting = pacer.dispatch(2400, all_success(2400));
@@ -255,7 +266,7 @@ namespace {
     ASSERT_TRUE(pacer.set_host_limits(limits(12500000, 32768), 0));
     ASSERT_EQ(pacer.enqueue_frame(a, frame(1, 1, 70), 0).result, pacer_enqueue_result_e::queued);
     ASSERT_EQ(pacer.enqueue_frame(b, frame(1, 100, 1, 1200, 1000000, frame_dependency_e::non_reference, policy(8)), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(a, { 1, 100000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, a, { 1, 100000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     std::set<std::uint64_t> identities;
     auto now = 0LL;
     for (unsigned group = 0; group < 3; ++group) {
@@ -285,7 +296,7 @@ namespace {
       EXPECT_EQ(state->probe.successful_groups, group + 1);
       EXPECT_EQ(state->probe.successful_ip_bytes, (group + 1) * 25200U);
       if (group != 2) {
-        EXPECT_EQ(state->probe.next_send_us, now + 2016);
+        EXPECT_EQ(state->probe.next_send_us, 2 + (group + 1) * 2016);
         EXPECT_FALSE(pacer.dispatch(now + 1, all_success(now + 1)).attempted);
         now = state->probe.next_send_us;
       }
@@ -312,8 +323,8 @@ namespace {
     deadline_pacer_t pacer(bounds);
     const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 6), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
-    for (const auto now : { 0, 1, 2401, 2402, 4802, 4803 }) {
+    ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    for (const auto now : { 0, 1, 2401, 2402, 4801, 4802 }) {
       ASSERT_EQ(pacer.dispatch(now, all_success(now)).successful.size(), 1U);
       const auto state = pacer.snapshot(handle);
       EXPECT_EQ(state->probe.successful_groups, state->probe.successful_packets / 2);
@@ -328,12 +339,12 @@ namespace {
       deadline_pacer_t pacer;
       const auto handle = *pacer.add_session(7, limits(12500000, 32768), 0);
       ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 70), 0).result, pacer_enqueue_result_e::queued);
-      ASSERT_EQ(pacer.start_probe(handle, { 1, 100000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+      ASSERT_EQ(start_probe(pacer, handle, { 1, 100000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
       ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 13U);
       if (!late) {
         ASSERT_TRUE(pacer.update_limits(handle, limits(12500000, 1200), 1));
       }
-      const auto now = late ? 5001 : 2;
+      const auto now = late ? 10001 : 2;
       const auto ordinary = pacer.dispatch(now, all_success(now));
       ASSERT_FALSE(ordinary.successful.empty());
       for (const auto &sent : ordinary.successful) EXPECT_EQ(sent.packet.probe.cluster_id, -1);
@@ -348,7 +359,7 @@ namespace {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(12500000, 32768), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 70), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.start_probe(handle, { 1, 100000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    ASSERT_EQ(start_probe(pacer, handle, { 1, 100000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     const auto sent = pacer.dispatch(0, [&](auto, auto packets) {
       auto result = all_success(0)(handle, packets);
       result.submission_known = false;
@@ -361,6 +372,48 @@ namespace {
     EXPECT_EQ(pacer.snapshot(handle)->probe.result, paced_probe_result_e::send_failed);
     EXPECT_FALSE(pacer.dispatch(1, all_success(1)).attempted);
   }
+
+  TEST(TransportPacer, UnknownWholeProbeGroupDoesNotAdvanceNativeCompletion) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 20000), 0);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 6), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
+    const auto sent = pacer.dispatch(0, [&](auto, auto packets) {
+      auto result = all_success(0)(handle, packets);
+      result.submission_known = false;
+      return result;
+    });
+    EXPECT_TRUE(sent.accounting_closed);
+    ASSERT_EQ(sent.successful.size(), 2U);
+    EXPECT_EQ(pacer.snapshot(handle)->probe.successful_packets, 2U);
+    EXPECT_EQ(pacer.snapshot(handle)->probe.successful_ip_bytes, 2400U);
+    EXPECT_EQ(pacer.snapshot(handle)->probe.successful_groups, 0U);
+    EXPECT_EQ(pacer.snapshot(handle)->probe.result, paced_probe_result_e::send_failed);
+  }
+
+  TEST(GoogccProbeScheduler, NativeMediaTriggerForecastIsolationAndMonotonicReceipts) {
+    auto actual = make_googcc_probe_scheduler({ 1, 8000, 6000, 2000, 3 }, 0);
+    ASSERT_TRUE(actual);
+    EXPECT_FALSE(actual->current(0));
+    actual->on_incoming_packet(199);
+    EXPECT_FALSE(actual->current(0));
+    actual->on_incoming_packet(200);
+    const auto before = actual->current(0);
+    ASSERT_TRUE(before);
+    EXPECT_EQ(before->minimum_group_ip_bytes, 2000U);
+    EXPECT_EQ(before->metadata.min_bytes, 6000);
+    EXPECT_EQ(before->maximum_delay_us, 10000);
+    auto preview = actual->clone();
+    ASSERT_TRUE(preview->on_group_sent(2400, 37));
+    EXPECT_EQ(preview->current(37)->next_send_us, 2437);
+    EXPECT_EQ(actual->current(0)->next_send_us, 0);
+    EXPECT_FALSE(actual->on_group_sent(0, 0));
+    ASSERT_TRUE(actual->on_group_sent(2400, 57));
+    EXPECT_FALSE(actual->on_group_sent(2400, 56));
+    EXPECT_EQ(actual->current(57)->next_send_us, 2457);
+    EXPECT_FALSE(actual->current(12458));
+  }
+#endif
 
   TEST(TransportPacer, OwnsCiphertextAndPreservesPolicyUntilActualSubmission) {
     deadline_pacer_t pacer;

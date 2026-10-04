@@ -167,12 +167,26 @@ namespace transport {
     std::optional<std::int64_t> next_wakeup_us;
   };
 
-  struct paced_probe_request_t {
-    std::int32_t cluster_id = -1;
-    std::int64_t target_kbps = 0;
-    std::int64_t duration_us = 0;
-    std::int64_t minimum_delta_us = 0;
-    std::int32_t minimum_packets = 0;
+  struct probe_schedule_t {
+    probe_info_t metadata;
+    std::uint64_t minimum_group_ip_bytes = 0;
+    std::int64_t next_send_us = -1;
+    std::int64_t maximum_delay_us = 0;
+  };
+  // The optional SDK supplies probe timing/progress. The deadline queue owns
+  // payloads, admission and actual success accounting; it has no probe algorithm.
+  // Clones are for bounded admission forecasts and never receive OS receipts.
+  class probe_scheduler_t {
+  public:
+    virtual ~probe_scheduler_t() = default;
+    virtual void
+    on_incoming_packet(std::uint32_t ip_bytes) = 0;
+    virtual std::optional<probe_schedule_t>
+    current(std::int64_t now_us) = 0;
+    virtual bool
+    on_group_sent(std::uint64_t ip_bytes, std::int64_t now_us) = 0;
+    virtual std::unique_ptr<probe_scheduler_t>
+    clone() const = 0;
   };
   enum class paced_probe_result_e {
     none,
@@ -268,7 +282,7 @@ namespace transport {
     // submission. The whole group's actual cost must fit the existing buckets;
     // dispatch rechecks remaining funding and only counts completed groups.
     paced_probe_result_e
-    start_probe(std::uint64_t handle, const paced_probe_request_t &request, std::int64_t now_us);
+    start_probe(std::uint64_t handle, std::unique_ptr<probe_scheduler_t> &scheduler, std::int64_t now_us);
     bool
     cancel_probe(std::uint64_t handle, std::int64_t now_us);
     std::vector<paced_frame_result_t>

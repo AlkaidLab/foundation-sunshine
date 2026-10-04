@@ -1,4 +1,5 @@
 #include "googcc_adapter.h"
+#include "transport_pacer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,12 +15,65 @@
 #include "logging/rtc_event_log/events/rtc_event_probe_result_failure.h"
 #include "logging/rtc_event_log/events/rtc_event_probe_result_success.h"
 #include "modules/congestion_controller/goog_cc/goog_cc_network_control.h"
+#include "modules/pacing/bitrate_prober.h"
 #include "system_wrappers/include/clock.h"
 
 namespace transport {
   namespace {
     // Leave ample headroom for upstream timestamp arithmetic and NTP conversion.
     constexpr auto max_time_us = std::numeric_limits<std::int64_t>::max() / 4;
+
+    class native_probe_scheduler_t final: public probe_scheduler_t {
+    public:
+      native_probe_scheduler_t(const googcc_probe_t &request, std::int64_t now): prober_(trials_),
+                                                                                 maximum_delay_us_(webrtc::BitrateProberConfig(&trials_).max_probe_delay.Get().us()), last_time_us_(now) {
+        webrtc::ProbeClusterConfig cluster;
+        cluster.id = request.cluster_id;
+        cluster.at_time = webrtc::Timestamp::Micros(now);
+        cluster.target_data_rate = webrtc::DataRate::KilobitsPerSec(request.target_kbps);
+        cluster.target_duration = webrtc::TimeDelta::Micros(request.duration_us);
+        cluster.min_probe_delta = webrtc::TimeDelta::Micros(request.minimum_delta_us);
+        cluster.target_probe_count = request.minimum_packets;
+        prober_.CreateProbeCluster(cluster);
+      }
+      native_probe_scheduler_t(const native_probe_scheduler_t &other):
+          prober_(other.prober_), maximum_delay_us_(other.maximum_delay_us_), last_time_us_(other.last_time_us_) {}
+      void
+      on_incoming_packet(std::uint32_t bytes) override { prober_.OnIncomingPacket(webrtc::DataSize::Bytes(bytes)); }
+      std::optional<probe_schedule_t>
+      current(std::int64_t now) override {
+        if (now < last_time_us_ || now > max_time_us) return {};
+        last_time_us_ = now;
+        const auto timestamp = webrtc::Timestamp::Micros(now);
+        const auto cluster = prober_.CurrentCluster(timestamp);
+        if (!cluster) return {};
+        const auto next = prober_.NextProbeTime(timestamp);
+        return probe_schedule_t {
+          { cluster->probe_cluster_id, cluster->probe_cluster_min_probes, cluster->probe_cluster_min_bytes,
+            static_cast<std::int32_t>(cluster->send_bitrate.kbps()) },
+          static_cast<std::uint64_t>(prober_.RecommendedMinProbeSize().bytes()),
+          next.IsFinite() ? next.us() : now, maximum_delay_us_
+        };
+      }
+      bool
+      on_group_sent(std::uint64_t bytes, std::int64_t now) override {
+        if (now < last_time_us_ || now > max_time_us || bytes == 0) return false;
+        last_time_us_ = now;
+        const auto timestamp = webrtc::Timestamp::Micros(now);
+        const auto cluster = prober_.CurrentCluster(timestamp);
+        if (!cluster || bytes > static_cast<std::uint64_t>(std::numeric_limits<int>::max() - cluster->probe_cluster_bytes_sent)) return false;
+        prober_.ProbeSent(timestamp, webrtc::DataSize::Bytes(bytes));
+        return true;
+      }
+      std::unique_ptr<probe_scheduler_t>
+      clone() const override { return std::make_unique<native_probe_scheduler_t>(*this); }
+
+    private:
+      webrtc::FieldTrials trials_ { "" };
+      webrtc::BitrateProber prober_;
+      const std::int64_t maximum_delay_us_;
+      std::int64_t last_time_us_;
+    };
 
     // Observe the existing upstream decision; never calculate a second probe
     // estimate, retain packet history, or alter the controller's update.
@@ -106,6 +160,15 @@ namespace transport {
       return upstream;
     }
   }  // namespace
+
+  std::unique_ptr<probe_scheduler_t>
+  make_googcc_probe_scheduler(const googcc_probe_t &request, std::int64_t now) {
+    if (now < 0 || now > max_time_us || request.cluster_id < 0 || request.target_kbps <= 0 || request.target_kbps > 800000 ||
+        request.duration_us <= 0 || request.duration_us > 200000 ||
+        request.minimum_delta_us <= 0 || request.minimum_delta_us > 20000 ||
+        request.minimum_packets < 2 || request.minimum_packets > 32) return {};
+    return std::make_unique<native_probe_scheduler_t>(request, now);
+  }
 
   struct googcc_adapter_t::impl_t {
     explicit impl_t(const googcc_config_t &configuration):

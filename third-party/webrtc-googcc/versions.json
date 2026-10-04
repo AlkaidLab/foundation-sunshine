@@ -8,6 +8,7 @@
       "/api/", "/rtc_base/", "/system_wrappers/", "/experiments/",
       "/modules/congestion_controller/goog_cc/", "/modules/remote_bitrate_estimator/",
       "/modules/pacing/interval_budget.cc", "/modules/pacing/interval_budget.h",
+      "/modules/pacing/bitrate_prober.cc", "/modules/pacing/bitrate_prober.h",
       "/logging/rtc_event_log/", "/test/gtest.h", "/test/gmock.h",
       "/test/create_test_field_trials.h", "/test/create_test_field_trials.cc",
       "/DEPS", "/LICENSE", "/PATENTS", "/AUTHORS"
