@@ -488,6 +488,85 @@ namespace {
     EXPECT_TRUE(pacer.dispatch(0, all_success(0)).frames[0].primary_complete);
   }
 
+  TEST(TransportPacer, CancelPaddingPreservesSubmittedBytesAndQueuedMedia) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 100), 0);
+    auto padding = frame(0, 1, 3, 100);
+    padding.purpose = paced_work_e::padding;
+    for (auto &packet : padding.packets) packet.metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    const auto prefix = pacer.dispatch(0, [&](auto, auto packets) {
+      EXPECT_EQ(packets[0].purpose, paced_work_e::padding);
+      EXPECT_TRUE(pacer.cancel_padding(handle, 0).empty());  // Sender reentry cannot release borrowed views.
+      return paced_batch_submission_t { { { true, 0 } }, 0, false };
+    });
+    ASSERT_EQ(prefix.successful.size(), 1U);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 4, 1, 100, 1000000, frame_dependency_e::reference), 0).result,
+      pacer_enqueue_result_e::queued);
+    const auto cancelled = pacer.cancel_padding(handle, 0);
+    ASSERT_EQ(cancelled.size(), 1U);
+    EXPECT_EQ(cancelled[0].purpose, paced_work_e::padding);
+    EXPECT_EQ(cancelled[0].submitted_ip_bytes, 100U);
+    EXPECT_EQ(cancelled[0].abandoned_packets, 2U);
+    EXPECT_EQ(cancelled[0].abandoned_ip_bytes, 200U);
+    EXPECT_FALSE(cancelled[0].primary_complete);
+    EXPECT_FALSE(cancelled[0].recovery_required);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 100U);
+    EXPECT_EQ(pacer.snapshot(handle)->queued_packets, 1U);
+    const auto media = pacer.dispatch(1000, all_success(1000));
+    ASSERT_EQ(media.successful.size(), 1U);
+    EXPECT_EQ(media.successful[0].packet.extended_sequence, 4U);
+    EXPECT_TRUE(media.frames[0].primary_complete);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 200U);
+  }
+
+  TEST(TransportPacer, PaddingLeaseCancellationPreservesSuccessAndRetiresUnsentSuffix) {
+    deadline_pacer_t pacer;
+    const auto handle = *pacer.add_session(7, limits(1000000, 1000), 0);
+    auto padding = frame(0, 1, 3, 100);
+    padding.purpose = paced_work_e::padding;
+    for (auto &packet : padding.packets) packet.metadata.kind = packet_kind_e::probe;
+    ASSERT_EQ(pacer.enqueue_frame(handle, std::move(padding), 0).result, pacer_enqueue_result_e::queued);
+    const auto cancelled = pacer.dispatch(0, [](auto, auto packets) {
+      EXPECT_EQ(packets.size(), 3U);
+      paced_batch_submission_t receipt { { { true, 1 }, { false, 0 }, { false, 0 } }, 2, true };
+      receipt.suffix_padding_cancelled = true;
+      return receipt;
+    });
+    ASSERT_FALSE(cancelled.accounting_closed);
+    ASSERT_EQ(cancelled.successful.size(), 1U);
+    ASSERT_EQ(cancelled.frames.size(), 1U);
+    EXPECT_EQ(cancelled.frames[0].submitted_ip_bytes, 100U);
+    EXPECT_EQ(cancelled.frames[0].abandoned_ip_bytes, 200U);
+    EXPECT_FALSE(cancelled.frames[0].recovery_required);
+    EXPECT_EQ(pacer.snapshot(handle)->queued_packets, 0U);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 4, 1, 100, 1000000, frame_dependency_e::reference), 2).result,
+      pacer_enqueue_result_e::queued);
+    EXPECT_TRUE(pacer.dispatch(2, all_success(2)).frames[0].primary_complete);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 200U);
+  }
+
+  TEST(TransportPacer, PaddingCancellationCannotBeUsedToSalvageAnUnknownOrMediaSubmission) {
+    for (const bool known : { false, true }) {
+      deadline_pacer_t pacer;
+      const auto handle = *pacer.add_session(7, limits(), 0);
+      auto work = frame(known ? 1 : 0, 1, 1, 100);
+      if (!known) {
+        work.purpose = paced_work_e::padding;
+        work.packets[0].metadata.kind = packet_kind_e::probe;
+      }
+      ASSERT_EQ(pacer.enqueue_frame(handle, std::move(work), 0).result, pacer_enqueue_result_e::queued);
+      const auto broken = pacer.dispatch(0, [&](auto, auto) {
+        paced_batch_submission_t receipt { { { false, 0 } }, 0, true, known };
+        receipt.suffix_padding_cancelled = true;
+        return receipt;
+      });
+      EXPECT_TRUE(broken.accounting_closed);
+      EXPECT_TRUE(broken.sender_contract_broken);
+      EXPECT_FALSE(pacer.snapshot(handle)->accounting_valid);
+    }
+  }
+
   TEST(TransportPacer, TransportWorkRejectsMediaGeometryAndInterleaving) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(), 0);

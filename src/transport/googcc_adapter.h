@@ -63,6 +63,9 @@ namespace transport {
     std::int64_t pacing_kbps = 0;
     std::int64_t requested_padding_kbps = 0;
     std::int64_t padding_updated_at_us = -1;
+    // Stock IntervalBudget deficit. Every actual video/FEC/probe IP receipt
+    // consumes it; it is neither extra session credit nor a send reservation.
+    std::uint64_t padding_credit_ip_bytes = 0;
     std::uint32_t network_loss_ppm = 0;
     std::int64_t network_rtt_us = -1;
     bool loss_recovery_without_padding = false;

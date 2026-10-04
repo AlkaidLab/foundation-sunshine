@@ -3746,6 +3746,23 @@ namespace stream {
 #endif
     };
     std::unordered_map<std::uint64_t, active_flow_t> flows;
+    std::unordered_map<std::uint64_t, std::uint64_t> pacer_to_flow;
+    const auto settle = [&](const std::vector<transport::paced_frame_result_t> &results) {
+      for (const auto &result : results) {
+        const auto mapping = pacer_to_flow.find(result.session_handle);
+        if (mapping == pacer_to_flow.end()) continue;
+        const auto found = flows.find(mapping->second);
+        if (found == flows.end()) continue;
+        auto *session = found->second.context->session;
+        if (result.purpose == transport::paced_work_e::media && result.recovery_required && !found->second.flow->is_closed()) session->video.idr_events->raise(true);
+        BOOST_LOG(debug) << "Paced frame result: epoch=" << found->second.flow->connection_epoch
+                         << " frame=" << result.frame_id << " result=" << static_cast<int>(result.result)
+                         << " submitted=" << result.submitted_packets << " ip_bytes=" << result.submitted_ip_bytes
+                         << " abandoned=" << result.abandoned_packets << " abandoned_ip_bytes=" << result.abandoned_ip_bytes
+                         << " recovery=" << result.recovery_required
+                         << " primary=" << result.primary_complete << " purpose=" << static_cast<int>(result.purpose);
+      }
+    };
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
     std::unique_ptr<platf::high_precision_timer> probe_timer;
     const auto trace_controller = [&](const active_flow_t &active, std::int64_t now, bool final) {
@@ -3754,6 +3771,7 @@ namespace stream {
       BOOST_LOG(debug) << "GoogCC observer: epoch=" << active.flow->connection_epoch << " now=" << now
                        << " target_kbps=" << status.estimate.target_kbps << " sends=" << status.estimate.accepted_sends
                        << " requested_padding_kbps=" << status.estimate.requested_padding_kbps << " padding_at=" << status.estimate.padding_updated_at_us
+                       << " padding_credit_ip_bytes=" << status.estimate.padding_credit_ip_bytes
                        << " loss_recovery_without_padding=" << static_cast<int>(status.estimate.loss_recovery_without_padding)
                        << " native_loss_ppm=" << status.estimate.network_loss_ppm << " native_rtt_us=" << status.estimate.network_rtt_us
                        << " covered_feedback_at=" << status.estimate.last_covered_feedback_us << " covered_send_at=" << status.estimate.last_covered_send_us
@@ -3794,6 +3812,7 @@ namespace stream {
       active.pending_probes.clear();
       active.pending_probe_scheduler.reset();
       pacer.cancel_probe(active.pacer_handle, now);
+      settle(pacer.cancel_padding(active.pacer_handle, now));
       runtime.controller.start_time_us = now;
       const auto reserve = policy->budget.other_kbps + policy->budget.repair_kbps + policy->budget.probe_kbps;
       const auto maximum = policy->automatic_control ? policy->automatic_control->maximum_total_kbps : policy->budget.total_kbps;
@@ -3807,9 +3826,10 @@ namespace stream {
       runtime.control_negotiated = active.context->session->config.packet_control &&
                                    (policy->control_source == transport::control_source_e::legacy || policy->automatic_control.has_value());
       runtime.controller.periodic_alr_probing = runtime.budgeted_probing_enabled && runtime.automatic_bitrate_enabled;
-      // Independent probe clusters are supported. Continuous native padding
-      // remains disabled through the upstream recovery integration parameter.
-      runtime.controller.loss_recovery_without_padding = runtime.controller.periodic_alr_probing;
+      // Native continuous loss-recovery padding uses the separately negotiated
+      // authenticated transport format. Legacy peers retain the no-padding mode.
+      runtime.controller.loss_recovery_without_padding = runtime.controller.periodic_alr_probing &&
+                                                        !active.context->session->config.packet_probe;
       active.controller = std::make_unique<transport::googcc_runtime_t>(runtime, active.context->session->transport_state, policy);
       active.controller_config = runtime;
       active.controller_activation_epoch = policy->automatic_control ? policy->automatic_control->activation_epoch : 0;
@@ -3823,7 +3843,6 @@ namespace stream {
                          << " maximum_total_kbps=" << maximum << " first_probe_cluster=" << runtime.controller.first_probe_cluster_id;
     };
 #endif
-    std::unordered_map<std::uint64_t, std::uint64_t> pacer_to_flow;
     auto abort_guard = util::fail_guard([&]() noexcept {
       inbox->stop();
       // No taken frame/feedback or dispatch result survives stack unwinding
@@ -3834,23 +3853,6 @@ namespace stream {
       inbox->emergency_drained_after_owner_abort();
     });
     crypto::aes_t iv(12);
-
-    const auto settle = [&](const std::vector<transport::paced_frame_result_t> &results) {
-      for (const auto &result : results) {
-        const auto mapping = pacer_to_flow.find(result.session_handle);
-        if (mapping == pacer_to_flow.end()) continue;
-        const auto found = flows.find(mapping->second);
-        if (found == flows.end()) continue;
-        auto *session = found->second.context->session;
-        if (result.purpose == transport::paced_work_e::media && result.recovery_required && !found->second.flow->is_closed()) session->video.idr_events->raise(true);
-        BOOST_LOG(debug) << "Paced frame result: epoch=" << found->second.flow->connection_epoch
-                         << " frame=" << result.frame_id << " result=" << static_cast<int>(result.result)
-                         << " submitted=" << result.submitted_packets << " ip_bytes=" << result.submitted_ip_bytes
-                         << " abandoned=" << result.abandoned_packets << " abandoned_ip_bytes=" << result.abandoned_ip_bytes
-                         << " recovery=" << result.recovery_required
-                         << " primary=" << result.primary_complete << " purpose=" << static_cast<int>(result.purpose);
-      }
-    };
 
     const auto mark_broken = [&](std::uint64_t handle, std::uint64_t frame_id) {
       auto broken = pacer.mark_reference_break(handle, frame_id, transport_now_us());
@@ -4165,7 +4167,9 @@ namespace stream {
 
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
     const auto enqueue_padding = [&](active_flow_t &active, transport::probe_scheduler_t *scheduler,
-                                   std::int64_t now, std::int64_t expires) {
+                                   std::int64_t now, std::int64_t expires,
+                                   transport::paced_work_e purpose = transport::paced_work_e::keepalive,
+                                   std::uint64_t padding_credit = 0) {
       try {
         auto *session = active.context->session;
         const auto queue = pacer.snapshot(active.pacer_handle);
@@ -4179,6 +4183,10 @@ namespace stream {
         const bool ipv6 = net::normalize_address(active.context->peer.address()).is_v6();
         const auto ip_bytes = *transport::ip_datagram_bytes(sizeof(video_packet_enc_prefix_t) + plain_bytes, ipv6);
         std::size_t packet_count = 1;
+        if (purpose == transport::paced_work_e::padding) {
+          packet_count = std::min<std::uint64_t>(32, padding_credit / ip_bytes);
+          if (!packet_count) return false;
+        }
         if (scheduler) {
           auto preview = scheduler->clone();
           auto plan = preview->current(now);
@@ -4209,7 +4217,7 @@ namespace stream {
         transport::paced_frame_t output;
         output.policy = state.applied;
         output.dependency = transport::frame_dependency_e::non_reference;
-        output.purpose = scheduler ? transport::paced_work_e::probe : transport::paced_work_e::keepalive;
+        output.purpose = scheduler ? transport::paced_work_e::probe : purpose;
         output.deadline_us = std::min(expires, now + 200000);
         output.packets.reserve(packet_count);
         // The same owner reserves transport IDs and nonces for both media and
@@ -4247,6 +4255,7 @@ namespace stream {
         if (config::stream.experimental_transport_trace)
           BOOST_LOG(debug) << "Padding queue: epoch=" << active.flow->connection_epoch << " now=" << now
                            << " probe=" << (scheduler != nullptr) << " packets=" << packet_count << " ip_bytes=" << ip_bytes * packet_count
+                           << " purpose=" << static_cast<int>(scheduler ? transport::paced_work_e::probe : purpose)
                            << " result=" << static_cast<int>(enqueued.result);
         return enqueued.result == transport::pacer_enqueue_result_e::queued;
       }
@@ -4262,6 +4271,7 @@ namespace stream {
 
     const auto send_batch = [&](std::uint64_t pacer_handle, std::span<const transport::paced_packet_view_t> packets) {
       transport::paced_batch_submission_t result;
+      const auto original_count = packets.size();
       result.packets.resize(packets.size());  // All allocation precedes OS sends.
       result.failed_suffix_retryable = false;
       const auto mapping = pacer_to_flow.find(pacer_handle);
@@ -4275,21 +4285,52 @@ namespace stream {
         return result;
       }
       const auto &active = found->second;
+      const bool continuous_padding = !packets.empty() && packets.front().purpose == transport::paced_work_e::padding;
       const auto probe_authorized = [&] {
-        if (packets.empty() || packets.front().metadata.probe.cluster_id < 0) return true;
+        if (packets.empty() || (!continuous_padding && packets.front().metadata.probe.cluster_id < 0)) return true;
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
-        return active.controller && !active.controller_failed && active.controller->probe_eligible(transport_now_us());
+        return active.controller && !active.controller_failed && active.controller->probe_eligible(transport_now_us()) &&
+               (!continuous_padding || (active.context->session->config.packet_probe &&
+                                         active.controller->snapshot().estimate.requested_padding_kbps > 0));
 #else
         return false;
 #endif
       };
+      const auto cancel_controlled_work = [&] {
+        result.failed_suffix_retryable = true;
+        result.suffix_budget_deferred = false;
+        result.suffix_padding_cancelled = continuous_padding;
+        result.suffix_probe_cancelled = !continuous_padding;
+      };
       if (!probe_authorized()) {
-        result.failed_suffix_retryable = result.suffix_probe_cancelled = true;
+        cancel_controlled_work();
         result.completed_at_us = transport_now_us();
         return result;
       }
+#if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+      if (continuous_padding) {
+        const auto credit = active.controller->snapshot().estimate.padding_credit_ip_bytes;
+        std::uint64_t bytes = 0;
+        std::size_t count = 0;
+        for (const auto &packet : packets) {
+          if (packet.metadata.ip_bytes > credit - bytes) break;
+          bytes += packet.metadata.ip_bytes;
+          ++count;
+        }
+        packets = packets.first(count);
+        if (packets.empty()) {
+          result.failed_suffix_retryable = result.suffix_budget_deferred = true;
+          result.completed_at_us = transport_now_us();
+          return result;
+        }
+      }
+#endif
       auto peer_address = active.context->peer.address();
       const auto can_send = [&](std::size_t index) {
+        if (!probe_authorized()) {
+          cancel_controlled_work();
+          return false;
+        }
         return !active.flow->is_closed() && transport_now_us() < packets[index].deadline_us;
       };
       bool equal_size = !packets.empty();
@@ -4302,7 +4343,6 @@ namespace stream {
       bool fallback = !equal_size;
       std::size_t prefix = 0;
       std::optional<transport::session_send_budget_t::permit_t> budget_permit;
-      const auto original_count = packets.size();
       if (const auto &budget = active.context->session->send_budget) {
         std::uint64_t maximum_bytes = 0;
         for (const auto &packet : packets) maximum_bytes += packet.metadata.ip_bytes;
@@ -4329,7 +4369,7 @@ namespace stream {
         descriptors.resize(count);
         if (!probe_authorized()) {
           trace_send_budget(reservation.permit->cancel_before_send(transport_now_us()));
-          result.failed_suffix_retryable = result.suffix_probe_cancelled = true;
+          cancel_controlled_work();
           result.completed_at_us = transport_now_us();
           return result;
         }
@@ -4360,7 +4400,7 @@ namespace stream {
       if (fallback && result.submission_known) {
         for (std::size_t i = prefix; i < packets.size(); ++i) {
           if (!can_send(i)) {
-            result.failed_suffix_retryable = false;
+            if (!result.suffix_probe_cancelled && !result.suffix_padding_cancelled) result.failed_suffix_retryable = false;
             break;
           }
           auto info = platf::send_info_t { nullptr, 0, reinterpret_cast<const char *>(packets[i].udp_payload.data()), packets[i].udp_payload.size(),
@@ -4403,11 +4443,10 @@ namespace stream {
         const auto receipt = budget_permit->complete(bytes, successes, result.submission_known, result.completed_at_us);
         trace_send_budget(receipt);
         result.submission_known &= receipt.completion_known && receipt.accounting_valid;
-        if (result.submission_known && successes == packets.size() && packets.size() < original_count) {
-          result.suffix_budget_deferred = true;
-          result.failed_suffix_retryable = true;
-        }
       }
+      if (result.submission_known && packets.size() < original_count &&
+          std::all_of(result.packets.begin(), result.packets.begin() + packets.size(), [](const auto &packet) { return packet.submitted; }))
+        result.failed_suffix_retryable = result.suffix_budget_deferred = true;
       return result;
     };
 
@@ -4557,6 +4596,7 @@ namespace stream {
         if (!active.controller || !active.probing_enabled) continue;
         const auto now = transport_now_us();
         if (!active.controller_failed && !active.flow->is_closed() && active.pending_probes.empty() &&
+            !active.controller->snapshot().control_revoked && active.controller->snapshot().estimate.requested_padding_kbps == 0 &&
             active.context->session->config.packet_probe && now >= active.next_keepalive_us) {
           active.next_keepalive_us = now + 500000;
           enqueue_padding(active, nullptr, now, now + 50000);
@@ -4566,6 +4606,7 @@ namespace stream {
           active.pending_probes.clear();
           active.pending_probe_scheduler.reset();
           pacer.cancel_probe(active.pacer_handle, now);
+          settle(pacer.cancel_padding(active.pacer_handle, now));
           active.probe_clock_resets = clock_resets;
         }
         // Recheck before every real submission, including manual/stop events
@@ -4579,8 +4620,11 @@ namespace stream {
           active.pending_probes.clear();
           active.pending_probe_scheduler.reset();
           pacer.cancel_probe(active.pacer_handle, now);
+          settle(pacer.cancel_padding(active.pacer_handle, now));
           continue;
         }
+        if (!active.pending_probes.empty() || active.controller->snapshot().estimate.requested_padding_kbps == 0)
+          settle(pacer.cancel_padding(active.pacer_handle, now));
         while (!active.pending_probes.empty()) {
           const auto request = active.pending_probes.front();
           auto disposition = transport::paced_probe_result_e::cancelled;
@@ -4610,6 +4654,11 @@ namespace stream {
           active.pending_probes.pop_front();
           active.pending_probe_scheduler.reset();
           if (disposition == transport::paced_probe_result_e::active) break;
+        }
+        if (active.pending_probes.empty() && active.context->session->config.packet_probe) {
+          const auto estimate = active.controller->snapshot().estimate;
+          if (estimate.requested_padding_kbps > 0 && estimate.padding_credit_ip_bytes > 0)
+            enqueue_padding(active, nullptr, now, now + 50000, transport::paced_work_e::padding, estimate.padding_credit_ip_bytes);
         }
       }
 #endif
@@ -4691,6 +4740,7 @@ namespace stream {
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
       bool has_controller = false;
       bool has_active_probe = false;
+      bool has_padding_credit = false;
       for (auto &[handle, active] : flows) {
         if (!active.controller || active.controller_failed || active.flow->is_closed()) continue;
         has_controller = true;
@@ -4709,6 +4759,13 @@ namespace stream {
           session::stop(*active.context->session, session::stop_reason_e::protocol_error);
           inbox->close(active.flow);
           continue;
+        }
+        const auto estimate = active.controller->snapshot().estimate;
+        if (active.context->session->config.packet_probe && active.pending_probes.empty() && !queued_state->queued_packets &&
+            estimate.requested_padding_kbps > 0 && active.controller->probe_eligible(now)) {
+          constexpr auto payload = sizeof(video_packet_enc_prefix_t) + TF_VIDEO_IDENTITY_BYTES + TF_PROBE_PADDING_HEADER_BYTES + TF_PROBE_PADDING_MAX_BYTES;
+          const auto cost = *transport::ip_datagram_bytes(payload, net::normalize_address(active.context->peer.address()).is_v6());
+          has_padding_credit |= estimate.padding_credit_ip_bytes >= cost;
         }
         for (const auto &request : active.controller->take_probe_requests(now)) {
           if (config::stream.experimental_transport_trace)
@@ -4760,6 +4817,7 @@ namespace stream {
       auto wakeup = std::chrono::steady_clock::now() + 250ms;
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
       if (has_controller) wakeup = std::min(wakeup, std::chrono::steady_clock::now() + 25ms);
+      if (has_padding_credit) wakeup = std::chrono::steady_clock::now();
 #endif
       if (queued.pending_commands || queued.queued_frames || queued.queued_feedback_messages)
         wakeup = std::chrono::steady_clock::now();

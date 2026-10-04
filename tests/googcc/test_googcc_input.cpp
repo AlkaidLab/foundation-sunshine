@@ -648,6 +648,46 @@ namespace {
     EXPECT_GT(recovered_requests[1], 0U);
   }
 
+  TEST(GoogCcInput, NativePaddingDeficitChargesEverySuccessfulIpReceiptOnce) {
+    auto config = configuration();
+    config.initial_kbps = config.maximum_kbps = 10000;
+    config.periodic_alr_probing = true;
+    session_t adapter(config);
+    std::uint64_t sequence = 0, reports = 0, checked_kinds = 0;
+    for (std::int64_t at = 0; at < 40000000; at += 100000) {
+      ASSERT_TRUE(adapter.process_interval(at));
+      std::vector<packet_observation_t> observations;
+      for (int index = 0; index < 5; ++index) {
+        auto sent = packet(sequence++, at);
+        sent.kind = index % 3 == 0 ? packet_kind_e::data : index % 3 == 1 ? packet_kind_e::fec : packet_kind_e::probe;
+        sent.ip_bytes = index % 2 == 0 ? 1436 : 1456;  // Actual V4/V6 cost for the same payload size.
+        const auto before = adapter.snapshot().padding_credit_ip_bytes;
+        const auto event = adapter.wire.commit_success_event(sent);
+        ASSERT_TRUE(event);
+        ASSERT_TRUE(adapter.controller.on_successful_send(*event));
+        if (before > sent.ip_bytes) {
+          EXPECT_EQ(adapter.snapshot().padding_credit_ip_bytes, before - sent.ip_bytes);
+          checked_kinds |= std::uint64_t { 1 } << static_cast<unsigned>(sent.kind);
+        }
+        else
+          EXPECT_EQ(adapter.snapshot().padding_credit_ip_bytes, 0U);
+        const auto after = adapter.snapshot().padding_credit_ip_bytes;
+        EXPECT_FALSE(adapter.controller.on_successful_send(*event));
+        EXPECT_EQ(adapter.snapshot().padding_credit_ip_bytes, after);  // Duplicate/rejected events cannot charge again.
+        const bool lost = at >= 5000000 && at < 11000000 && index < 3;
+        observations.push_back({ sent.extended_sequence, lost ? packet_status_e::missing : packet_status_e::received,
+          lost ? -1 : 9000000000 + at + 20000 + index * 600 });
+      }
+      ASSERT_EQ(adapter.on_feedback(report(++reports, at + 50000, observations, 9000000000 + at + 40000)).result,
+        report_result_e::accepted);
+    }
+    EXPECT_EQ(checked_kinds, 11U);
+    EXPECT_EQ(adapter.ledger_snapshot().committed_packets, sequence);
+    EXPECT_EQ(adapter.ledger_snapshot().received_packets + adapter.ledger_snapshot().missing_declarations, sequence);
+    EXPECT_EQ(adapter.snapshot().accepted_sends, sequence);
+    EXPECT_EQ(adapter.snapshot().rejected_send_events, sequence);
+  }
+
   TEST(GoogCcInput, CapacityStepReplayRespondsToQueueGrowth) {
     session_t adapter(configuration());
     struct queued_packet_t {

@@ -3205,7 +3205,7 @@ connection epoch. Enabling measurement alone does not grant control.
 | `experimental_packet_control` | disabled | Allows control capability advertisement and explicit negotiation when the build and pacer gates also pass. |
 | `experimental_packet_bitrate` | enabled | Lets the negotiated controller adjust the network budget; has no effect without the other control gates. Disabling it retains the current fixed budget. |
 | `experimental_packet_queue_pushback` | disabled | Feeds the actual owned video queue to native congestion-window pushback and applies a separate encoder ceiling. The pacer continues draining at the network budget. Requires the negotiated experimental controller. |
-| `experimental_packet_probe` | disabled | Allows native probe requests to use already owned video datagrams within the existing shared IP budget. Requires automatic bitrate control and a valid controller lease; enables native periodic ALR requests and selects the native loss-recovery profile for a transport without padding. Does not add padding traffic or raise the budget for a probe. |
+| `experimental_packet_probe` | disabled | Schedules native probes and requested loss-recovery padding within the existing shared IP budget. Requires automatic bitrate control, fresh feedback and a valid controller lease. Authenticated padding requires separate client negotiation; legacy peers use owned media probes and the native recovery profile without padding. |
 | `experimental_transport_trace` | disabled | Emits private packet, policy and controller traces for bounded validation runs. |
 
 Automatic bitrate and encoder queue pushback can be enabled independently. With bitrate adjustment disabled,
@@ -3233,20 +3233,20 @@ coverage until new mapped changes arrive. The current one-second timeout remains
 After a receiver clock/route reset, old-cluster feedback retains its raw delivery accounting but loses its
 upstream probe tag. Actual post-recovery probe feedback and later higher SDK/pacer policies have been checked
 against on-wire versions in a single-session experiment; full capacity recovery and QoE improvement still require separate validation.
-When both probing and automatic bitrate adjustment are enabled, the adapter selects the pinned upstream
-`WebRTC-Bwe-LossBasedBweV2/Enabled,PaddingDuration:0ms/` profile. The default native recovery path can request padding,
-which this transport has not implemented. Disabled probing or fixed bitrate retains the default profile.
-This is an explicit integration profile, not an implementation of independent padding. Private traces expose its mode,
+With authenticated padding negotiated, native loss recovery can request real padding at the SDK's requested rate.
+The already-linked WebRTC `IntervalBudget` tracks a bounded deficit, debited by every successful video, FEC and probe IP receipt.
+The owner submits padding only into an empty media queue, in bounded batches under the existing shared budget and a 50 ms deadline.
+Revocation, stale feedback, clock reset or withdrawal of the native request retires its owned unsent suffix without advancing codec state.
+Clients without the extension retain the upstream `WebRTC-Bwe-LossBasedBweV2/Enabled,PaddingDuration:0ms/` profile
+when automatic bitrate and probing are enabled. Private traces expose the mode, deficit credit,
 requested padding and native `NetworkEstimate` loss/RTT fields. Those fields must not be interpreted as raw packet loss
 or measured RTT; zero values in current experiments do not establish lossless or zero-latency delivery.
 The current scheduler requires a sufficient prefix in one owned frame. A group may span bounded batches,
 rotating between flows and rechecking the existing budget after every submission. Its whole cost must fit the
 existing burst/debt limits; a partial group is not counted as complete. Synthetic 100 Mbps tests cover this scheduling contract;
-independent padding, sparse/static media and the full high-bitrate range still require further implementation and validation.
+sparse/static media, continuous padding recovery, cost and the full high-bitrate range still require actual owner validation.
 Short active-probe waits use the existing platform timer in requested slices of at most 1 ms, with no send permit held.
-The 5 ms scheduling tolerance remains experimental and has not passed V6 cost or response-tail acceptance.
-When strict replay targets cannot be met, a best-effort upstep must reduce the worst observed frame-shape risk without
-regressing another observed shape. It still reports that the target is unmet; increased FEC alone does not prove recovery.
+Active probe delay tolerance comes from the pinned SDK. V6 cost and response-tail acceptance remain incomplete.
 
 For newly negotiated packet-control sessions with the experimental pacer enabled, video, audio data/FEC and bound ENet
 datagrams share one IP budget at the actual nonblocking send boundaries. Unbound handshake traffic is reported separately.

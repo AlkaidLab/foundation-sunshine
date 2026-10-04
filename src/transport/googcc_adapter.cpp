@@ -16,6 +16,7 @@
 #include "logging/rtc_event_log/events/rtc_event_probe_result_success.h"
 #include "modules/congestion_controller/goog_cc/goog_cc_network_control.h"
 #include "modules/pacing/bitrate_prober.h"
+#include "modules/pacing/interval_budget.h"
 #include "system_wrappers/include/clock.h"
 
 namespace transport {
@@ -176,7 +177,7 @@ namespace transport {
         config(configuration),
         environment(make_environment(state, clock, config)),
         controller(make_configuration(config, environment), webrtc::GoogCcConfig {}),
-        now_us(config.start_time_us), next_cc_sequence(config.first_cc_sequence),
+        now_us(config.start_time_us), padding_budget_time_ms(config.start_time_us / 1000), next_cc_sequence(config.first_cc_sequence),
         minimum_current_probe_cluster(config.first_probe_cluster_id) {
       state.last_generated_probe_cluster = static_cast<std::int64_t>(config.first_probe_cluster_id) - 1;
       state.loss_recovery_without_padding = config.loss_recovery_without_padding;
@@ -191,6 +192,11 @@ namespace transport {
 
     void
     advance(std::int64_t time_us) {
+      const auto milliseconds = time_us / 1000;
+      if (milliseconds > padding_budget_time_ms) {
+        padding_budget.IncreaseBudget(milliseconds - padding_budget_time_ms);
+        padding_budget_time_ms = milliseconds;
+      }
       clock->AdvanceTimeMicroseconds(time_us - now_us);
       now_us = time_us;
     }
@@ -214,6 +220,9 @@ namespace transport {
         state.pacing_kbps = update.pacer_config->data_rate().kbps();
         state.requested_padding_kbps = update.pacer_config->pad_rate().kbps();
         state.padding_updated_at_us = update.pacer_config->at_time.us();
+        if (state.requested_padding_kbps < 0 || state.requested_padding_kbps > std::numeric_limits<int>::max())
+          throw std::runtime_error("Invalid upstream padding rate");
+        padding_budget.set_target_rate_kbps(static_cast<int>(state.requested_padding_kbps));
       }
       if (update.congestion_window && update.congestion_window->IsFinite()) {
         state.congestion_window_bytes = update.congestion_window->bytes();
@@ -229,18 +238,24 @@ namespace transport {
         probes.push_back({ static_cast<std::int32_t>(physical_id), probe.target_data_rate.kbps(), probe.target_duration.us(),
           probe.min_probe_delta.us(), probe.target_probe_count, probe.at_time.us() });
       }
+      state.padding_credit_ip_bytes = padding_budget.bytes_remaining();
     }
 
     const googcc_config_t config;
     // Only wire-to-controller identity translation. No receive/missing states,
-    // packet matching, byte accounting, or report replay window lives here.
+    // packet matching or report replay window lives here. Padding deficit is
+    // a native scheduler budget fed by authoritative successful receipts.
     std::unordered_map<std::uint64_t, std::int64_t> sequence_mapping;
     std::deque<std::uint64_t> sequence_order;
     googcc_snapshot_t state;
     webrtc::SimulatedClock *clock = nullptr;
     webrtc::Environment environment;
     webrtc::GoogCcNetworkController controller;
+    // Retain bounded underuse while the owner drains/rotates small batches.
+    // The stock 500 ms window, request changes and actual IP receipts bound it.
+    webrtc::IntervalBudget padding_budget { 0, true };
     std::int64_t now_us;
+    std::int64_t padding_budget_time_ms;
     std::int64_t next_cc_sequence;
     std::uint64_t last_event_sequence = 0;
     std::uint64_t receiver_epoch = 0;
@@ -298,6 +313,14 @@ namespace transport {
     impl_->advance(packet.send_time_us);
     impl_->consume(impl_->controller.OnSentPacket(map_sent(packet, cc_sequence, event.data_in_flight_bytes,
       impl_->config.first_probe_cluster_id, impl_->minimum_current_probe_cluster, impl_->state.last_generated_probe_cluster)));
+    // IntervalBudget::UseBudget takes size_t but narrows to int internally.
+    // Normal IP datagrams are small; keep the adapter's uint32 input safe too.
+    for (std::uint64_t bytes = packet.ip_bytes; bytes != 0;) {
+      const auto part = std::min<std::uint64_t>(bytes, std::numeric_limits<int>::max());
+      impl_->padding_budget.UseBudget(static_cast<std::size_t>(part));
+      bytes -= part;
+    }
+    impl_->state.padding_credit_ip_bytes = impl_->padding_budget.bytes_remaining();
     return true;
   }
 
@@ -338,6 +361,7 @@ namespace transport {
       impl_->sender_anchor_us = sender_anchor;
     }
     if (event.feedback.receiver_clock_changed) {
+      impl_->padding_budget = webrtc::IntervalBudget(0, true);
       impl_->state.last_covered_feedback_us = -1;
       impl_->state.last_covered_send_us = -1;
       impl_->minimum_current_probe_cluster = impl_->state.last_generated_probe_cluster + 1;

@@ -374,7 +374,8 @@ namespace transport {
         frame.packets.empty() || frame.packets.size() > p.bounds.maximum_packets_per_frame ||
         (frame.dependency != frame_dependency_e::reference && frame.dependency != frame_dependency_e::non_reference &&
           frame.dependency != frame_dependency_e::recovery) ||
-        (frame.purpose != paced_work_e::media && frame.purpose != paced_work_e::probe && frame.purpose != paced_work_e::keepalive) ||
+        (frame.purpose != paced_work_e::media && frame.purpose != paced_work_e::probe && frame.purpose != paced_work_e::keepalive &&
+          frame.purpose != paced_work_e::padding) ||
         (frame.purpose == paced_work_e::media && session.last_frame && frame.frame_id <= *session.last_frame) ||
         (frame.purpose != paced_work_e::media && (frame.frame_id != 0 || frame.dependency != frame_dependency_e::non_reference ||
                                                    !session.frames.empty()))) return {};
@@ -637,7 +638,7 @@ namespace transport {
         const auto &packet = frame.packets[i];
         if (packet.metadata.ip_bytes > allowance - scheduled_bytes ||
             (!views.empty() && packet.metadata.ip_bytes > p.bounds.batch_quantum_ip_bytes - std::min(scheduled_bytes, p.bounds.batch_quantum_ip_bytes))) break;
-        views.push_back({ packet.udp_payload, packet.metadata, frame.deadline_us });
+        views.push_back({ packet.udp_payload, packet.metadata, frame.deadline_us, frame.purpose });
         if (session.probe) views.back().metadata.probe = session.probe->metadata;
         scheduled_bytes += packet.metadata.ip_bytes;
         if (session.probe && (session.probe->group_sent_bytes + scheduled_bytes >= session.probe->group_bytes ||
@@ -664,7 +665,11 @@ namespace transport {
       bool contract_valid = submission.packets.size() == views.size() && submission.completed_at_us >= now;
       contract_valid &= !submission.suffix_budget_deferred || (submission.submission_known && submission.failed_suffix_retryable);
       contract_valid &= !submission.suffix_probe_cancelled || (session.probe && submission.submission_known &&
-                                                                submission.failed_suffix_retryable && !submission.suffix_budget_deferred);
+                                                                submission.failed_suffix_retryable && !submission.suffix_budget_deferred &&
+                                                                !submission.suffix_padding_cancelled);
+      contract_valid &= !submission.suffix_padding_cancelled || (frame.purpose == paced_work_e::padding && submission.submission_known &&
+                                                                  submission.failed_suffix_retryable && !submission.suffix_budget_deferred &&
+                                                                  !submission.suffix_probe_cancelled);
       if (contract_valid) {
         for (const auto &packet : submission.packets) {
           if (packet.submitted) {
@@ -773,7 +778,7 @@ namespace transport {
         p.close_accounting(submission.submission_known ? std::optional<std::uint64_t> {} : handle, result);
         return result;
       }
-      const bool deferred = submission.suffix_budget_deferred || submission.suffix_probe_cancelled;
+      const bool deferred = submission.suffix_budget_deferred || submission.suffix_probe_cancelled || submission.suffix_padding_cancelled;
       if (failed && !deferred) ++queued.failed_attempts;
       if (success_after_failure) {
         // Move successes out of the abandoned count, even when the platform
@@ -785,7 +790,9 @@ namespace transport {
       }
       else {
         queued.cursor += successes;
-        if (late)
+        if (submission.suffix_padding_cancelled)
+          result.frames.push_back(p.finish(handle, session, frame_send_result_e::stopped));
+        else if (late)
           result.frames.push_back(p.finish(handle, session, frame_send_result_e::deadline_expired));
         else if (queued.cursor == frame.packets.size())
           result.frames.push_back(p.finish(handle, session, frame_send_result_e::complete));
@@ -871,6 +878,19 @@ namespace transport {
     if (found == p.sessions.end() || !p.accept_time(now)) return false;
     p.end_probe(found->second, paced_probe_result_e::cancelled);
     return true;
+  }
+
+  std::vector<paced_frame_result_t>
+  deadline_pacer_t::cancel_padding(std::uint64_t handle, std::int64_t now) {
+    auto &p = *impl_;
+    std::vector<paced_frame_result_t> results;
+    const auto found = p.sessions.find(handle);
+    if (found == p.sessions.end() || !p.accept_time(now)) return results;
+    auto &session = found->second;
+    for (auto i = session.frames.size(); i != 0; --i)
+      if (session.frames[i - 1].frame.purpose == paced_work_e::padding)
+        results.push_back(p.finish(handle, session, frame_send_result_e::stopped, i - 1));
+    return results;
   }
 
   std::vector<paced_frame_result_t>

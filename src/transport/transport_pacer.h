@@ -49,7 +49,8 @@ namespace transport {
 
   enum class paced_work_e { media,
     probe,
-    keepalive };
+    keepalive,
+    padding };
 
   // Move complete UDP payloads (encryption prefix included) into the queue.
   // The queue has sole ownership; no encoder, shard or stack buffers survive
@@ -131,6 +132,7 @@ namespace transport {
     std::span<const std::uint8_t> udp_payload;
     sent_packet_t metadata;
     std::int64_t deadline_us = 0;
+    paced_work_e purpose = paced_work_e::media;
   };
 
   struct packet_submission_t {
@@ -154,6 +156,9 @@ namespace transport {
     // The adapter rechecked the probe lease immediately before its OS call.
     // No suffix was attempted; retry as ordinary media after cancelling tags.
     bool suffix_probe_cancelled = false;
+    // Continuous padding lost its native request/lease before OS submission.
+    // Preserve the successful prefix and retire its owned unsent suffix.
+    bool suffix_padding_cancelled = false;
   };
 
   struct paced_success_t {
@@ -285,7 +290,7 @@ namespace transport {
     dispatch(std::int64_t now_us, const sender_t &sender);
     // Probe only a contiguous prefix of the already owned front frame. This
     // changes spacing/metadata, never payload, rate, credit, or wire identity.
-    // One bounded cluster per flow; no padding or synthetic success records.
+    // One bounded cluster per flow; no payload generation or synthetic success records.
     // A group may span bounded batches, rotating between flows after each OS
     // submission. The whole group's actual cost must fit the existing buckets;
     // dispatch rechecks remaining funding and only counts completed groups.
@@ -293,6 +298,8 @@ namespace transport {
     start_probe(std::uint64_t handle, std::unique_ptr<probe_scheduler_t> &scheduler, std::int64_t now_us);
     bool
     cancel_probe(std::uint64_t handle, std::int64_t now_us);
+    std::vector<paced_frame_result_t>
+    cancel_padding(std::uint64_t handle, std::int64_t now_us);
     std::vector<paced_frame_result_t>
     stop_session(std::uint64_t handle, std::int64_t now_us);
     std::vector<paced_frame_result_t>
