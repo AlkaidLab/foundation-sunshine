@@ -1922,13 +1922,15 @@ namespace platf {
 
   udp_send_attempt_t
   try_send(send_info_t &send_info) {
-    udp_send_detail::native_calls_t calls;
+    ensure_address_change_watcher();
+    udp_send_detail::native_calls_t calls { should_pin_source_address, handle_wsasendmsg_failure };
     return udp_send_detail::try_send_impl(send_info, calls);
   }
 
   udp_send_attempt_t
   try_send_batch(batched_send_info_t &send_info) {
-    udp_send_detail::native_calls_t calls;
+    ensure_address_change_watcher();
+    udp_send_detail::native_calls_t calls { should_pin_source_address, handle_wsasendmsg_failure };
     return udp_send_detail::try_send_batch_impl(send_info, calls);
   }
 

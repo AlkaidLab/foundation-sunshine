@@ -179,8 +179,21 @@ namespace {
     std::optional<DWORD> report_bytes;
     int mode_calls = 0;
     int send_calls = 0;
+    bool pin_enabled = true;
+    int failure_calls = 0;
     std::string captured;
     std::function<void(const WSAMSG &)> inspect;
+
+    bool
+    pin_source(const boost::asio::ip::address &source) {
+      return pin_enabled && !source.is_unspecified();
+    }
+
+    void
+    on_failure(int native_error) {
+      ++failure_calls;
+      if (native_error == WSAEINVAL) pin_enabled = false;
+    }
 
     int
     nonblocking(SOCKET) {
@@ -191,7 +204,7 @@ namespace {
     int
     send_message(SOCKET, WSAMSG *message, DWORD *bytes) {
       ++send_calls;
-      EXPECT_EQ(mode_calls, 1);
+      EXPECT_EQ(mode_calls, send_calls);
       EXPECT_EQ(message->dwFlags, 0u);
       DWORD total = 0;
       for (DWORD i = 0; i < message->dwBufferCount; ++i) {
@@ -298,6 +311,8 @@ namespace {
     EXPECT_TRUE(result.submission_known);
     EXPECT_EQ(calls.send_calls, 0);
     EXPECT_EQ(calls.mode_calls, 1);
+    EXPECT_EQ(calls.failure_calls, 0);
+    EXPECT_TRUE(calls.pin_enabled);
   }
 
   TEST(PlatformUdpSyscall, PendingAndInProgressSendCannotPretendZero) {
@@ -395,6 +410,69 @@ namespace {
     EXPECT_TRUE(result.submission_known);
     EXPECT_FALSE(result.retryable);
     EXPECT_EQ(result.native_error, WSAEINVAL);
+  }
+
+  TEST(PlatformUdpSyscall, InvalidPinnedSourceFallsBackOnNextSendAndCanBeReenabled) {
+    for (const auto &address : {"127.0.0.1", "::1"}) {
+      request_t request;
+      request.source = request.target = boost::asio::ip::make_address(address);
+      auto info = request.single();
+      fake_calls_t calls;
+      calls.send_result = SOCKET_ERROR;
+      calls.error = WSAEINVAL;
+      calls.inspect = [](const WSAMSG &msg) { EXPECT_NE(msg.Control.buf, nullptr); };
+      const auto failed = detail::try_send_impl(info, calls);
+      EXPECT_EQ(failed.status, udp_send_status_e::failed);
+      EXPECT_TRUE(failed.submission_known);
+      EXPECT_EQ(failed.submitted_datagrams, 0u);
+      EXPECT_EQ(calls.send_calls, 1);  // No hidden retry of this owner's packet.
+      EXPECT_EQ(calls.failure_calls, 1);
+      EXPECT_FALSE(calls.pin_enabled);
+
+      calls.send_result = 0;
+      calls.inspect = [](const WSAMSG &msg) {
+        EXPECT_EQ(msg.Control.len, 0u);
+        EXPECT_EQ(msg.Control.buf, nullptr);
+      };
+      EXPECT_EQ(detail::try_send_impl(info, calls).status, udp_send_status_e::complete);
+      EXPECT_EQ(calls.send_calls, 2);
+      EXPECT_EQ(info.source_address, request.source);
+
+      calls.pin_enabled = true;  // Existing address-change watcher re-enables pinning.
+      calls.inspect = [](const WSAMSG &msg) { EXPECT_NE(msg.Control.buf, nullptr); };
+      EXPECT_EQ(detail::try_send_impl(info, calls).status, udp_send_status_e::complete);
+      EXPECT_EQ(calls.send_calls, 3);
+      EXPECT_EQ(calls.failure_calls, 1);
+    }
+  }
+
+  TEST(PlatformUdpSyscall, RoutingFallbackKeepsUsoAndIsSharedWithSingleSubmission) {
+    request_t request;
+    request.source = request.target;
+    auto batch = request.batch();
+    fake_calls_t calls;
+    calls.send_result = SOCKET_ERROR;
+    calls.error = WSAEINVAL;
+    EXPECT_EQ(detail::try_send_batch_impl(batch, calls).status, udp_send_status_e::failed);
+    EXPECT_EQ(batch.submitted_blocks, 0u);
+    EXPECT_EQ(calls.send_calls, 1);
+    EXPECT_EQ(calls.failure_calls, 1);
+    calls.send_result = 0;
+    calls.inspect = [](const WSAMSG &input) {
+      auto *msg = const_cast<WSAMSG *>(&input);
+      auto *cm = WSA_CMSG_FIRSTHDR(msg);
+      ASSERT_NE(cm, nullptr);
+      EXPECT_EQ(cm->cmsg_level, IPPROTO_UDP);
+      EXPECT_EQ(cm->cmsg_type, UDP_SEND_MSG_SIZE);
+      EXPECT_EQ(WSA_CMSG_NXTHDR(msg, cm), nullptr);
+    };
+    EXPECT_EQ(detail::try_send_batch_impl(batch, calls).status, udp_send_status_e::complete);
+    EXPECT_EQ(batch.submitted_blocks, 3u);
+    auto single = request.single();
+    calls.inspect = [](const WSAMSG &msg) { EXPECT_EQ(msg.Control.buf, nullptr); };
+    EXPECT_EQ(detail::try_send_impl(single, calls).status, udp_send_status_e::complete);
+    EXPECT_EQ(calls.send_calls, 3);
+    EXPECT_EQ(calls.failure_calls, 1);
   }
 
   TEST(PlatformUdpSyscall, CompleteBatchUsesAlignedOffsetAndAllUdpBytes) {

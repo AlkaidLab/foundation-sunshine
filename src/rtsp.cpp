@@ -1692,7 +1692,7 @@ namespace rtsp_stream {
       config.packet_control = stream::experimental_packet_control_available() && config.packet_feedback &&
                               packet_control != args.end() && packet_control->second == "1";
       const auto packet_probe = args.find("x-ss-video[0].packetProbeVersion"sv);
-      config.packet_probe = stream::experimental_packet_control_available() && config::stream.experimental_packet_probe && config.packet_feedback &&
+      config.packet_probe = stream::experimental_packet_control_available() && config::stream.experimental_packet_probe && config.packet_control &&
                             packet_probe != args.end() && packet_probe->second == "1";
       const auto policy_status = args.find("x-ss-video[0].policyStatusVersion"sv);
       config.policy_status = config.packet_feedback && policy_status != args.end() && policy_status->second == "1";
@@ -2054,6 +2054,8 @@ namespace rtsp_stream {
     session.control_only = session.setup_control && !session.setup_video && !session.setup_audio;
     if (session.control_only) {
       config.packet_control = false;
+      config.packet_probe = false;
+      config.policy_status = false;
       BOOST_LOG(info) << "Control-only session detected: client ["sv << session.client_name << "] will only provide input control"sv;
     }
 

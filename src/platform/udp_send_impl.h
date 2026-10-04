@@ -177,6 +177,9 @@ namespace platf::udp_send_detail {
   }
 
   struct native_calls_t {
+    bool (*pin_source)(const boost::asio::ip::address &) = [](const boost::asio::ip::address &source) { return !source.is_unspecified(); };
+    void (*on_failure)(int) = [](int) {};
+
     int
     nonblocking(SOCKET socket) {
       u_long mode = 1;
@@ -205,7 +208,7 @@ namespace platf::udp_send_detail {
          WSA_CMSG_SPACE(sizeof(IN6_PKTINFO)) : WSA_CMSG_SPACE(sizeof(IN_PKTINFO)))> control {};
 
     void
-    initialize(const boost::asio::ip::address &target, uint16_t port, const boost::asio::ip::address &source, size_t segment_size = 0) {
+    initialize(const boost::asio::ip::address &target, uint16_t port, const boost::asio::ip::address &source, size_t segment_size = 0, bool pin_source = true) {
       if (target.is_v6()) {
         target_v6.sin6_family = AF_INET6;
         target_v6.sin6_port = htons(port);
@@ -228,7 +231,7 @@ namespace platf::udp_send_detail {
       msg.Control.len = static_cast<ULONG>(control.size());
       auto *cm = WSA_CMSG_FIRSTHDR(&msg);
       ULONG used = 0;
-      if (!source.is_unspecified()) {
+      if (pin_source && !source.is_unspecified()) {
         if (source.is_v6() && !source.to_v6().is_v4_mapped()) {
           IN6_PKTINFO info {};
           auto bytes = source.to_v6().to_bytes();
@@ -286,6 +289,7 @@ namespace platf::udp_send_detail {
     DWORD bytes = 0;
     if (calls.send_message(static_cast<SOCKET>(socket), &context.msg, &bytes) == SOCKET_ERROR) {
       const auto error = calls.last_error();
+      if (error == WSAEINVAL) calls.on_failure(error);
       if (bytes) {
         return unknown_submission(bytes, error);
       }
@@ -303,7 +307,7 @@ namespace platf::udp_send_detail {
       return invalid_request();
     }
     message_context_t context;
-    context.initialize(info.target_address, info.target_port, info.source_address);
+    context.initialize(info.target_address, info.target_port, info.source_address, 0, calls.pin_source(info.source_address));
     if (info.header_size) {
       context.append(info.header, info.header_size);
     }
@@ -320,7 +324,8 @@ namespace platf::udp_send_detail {
       return invalid_request();
     }
     message_context_t context;
-    context.initialize(info.target_address, info.target_port, info.source_address, info.block_count > 1 ? layout.datagram_size : 0);
+    context.initialize(info.target_address, info.target_port, info.source_address, info.block_count > 1 ? layout.datagram_size : 0,
+      calls.pin_source(info.source_address));
     for (size_t i = 0; i < info.block_count; ++i) {
       if (info.header_size) {
         context.append(info.headers + (info.block_offset + i) * info.header_size, info.header_size);

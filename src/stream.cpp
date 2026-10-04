@@ -4893,6 +4893,9 @@ namespace stream {
     };
     std::deque<queued_audio_t> pending;
     std::size_t pending_bytes = 0;
+#ifdef _WIN32
+    bool bounded_socket = false;
+#endif
     // Experimental bounds, pending V6 calibration. These do not extend the
     // receiver's playback wait and do not promise an end-to-end audio deadline.
     constexpr std::size_t maximum_pending_packets = 256;
@@ -4904,7 +4907,7 @@ namespace stream {
                          << " deadline=" << packet.deadline_us << " ip_bytes=" << packet.ip_bytes << " result=" << reason;
     };
     const auto flush_audio = [&] {
-      std::unordered_set<transport::session_send_budget_t *> blocked;
+      std::unordered_set<transport::policy_state_t *> blocked;
       for (auto entry = pending.begin(); entry != pending.end();) {
         auto &packet = *entry;
         bool retire = false;
@@ -4912,21 +4915,25 @@ namespace stream {
           trace_audio(packet, "expired");
           retire = true;
         }
-        else if (blocked.contains(packet.budget.get())) {
+        else if (packet.policy->stopped()) {
+          trace_audio(packet, "closed");
+          retire = true;
+        }
+        else if (blocked.contains(packet.policy.get())) {
           ++entry;
           continue;
         }
         else {
-          auto reservation = reserve_send_budget(packet.budget, packet.policy, transport::send_traffic_e::audio,
-            packet.ip_bytes, packet.ip_bytes);
-          if (!reservation.permit) {
+          auto reservation = packet.budget ? reserve_send_budget(packet.budget, packet.policy, transport::send_traffic_e::audio,
+            packet.ip_bytes, packet.ip_bytes) : transport::session_send_budget_t::reservation_t {};
+          if (packet.budget && !reservation.permit) {
             const auto status = reservation.result;
             retire = status != transport::send_budget_result_e::busy && status != transport::send_budget_result_e::insufficient &&
                      status != transport::send_budget_result_e::stale_revision;
             if (retire) trace_audio(packet, "closed");
-            else blocked.insert(packet.budget.get());
+            else blocked.insert(packet.policy.get());
           }
-          else if (!reservation.permit->begin_submission()) {
+          else if (reservation.permit && !reservation.permit->begin_submission()) {
             trace_send_budget(reservation.permit->cancel_before_send(transport_now_us()));
             trace_audio(packet, "closed");
             retire = true;
@@ -4935,16 +4942,26 @@ namespace stream {
             auto target_address = packet.peer.address();
             auto info = platf::send_info_t { nullptr, 0, reinterpret_cast<const char *>(packet.payload.data()), packet.payload.size(),
               static_cast<uintptr_t>(sock.native_handle()), target_address, packet.peer.port(), packet.source };
+#ifdef _WIN32
+            // The shared socket stays nonblocking after the first bounded
+            // submission. Legacy sessions must then use this same retry queue.
+            bounded_socket = true;
+#endif
             const auto attempt = platf::try_send(info);
             const bool shape_valid = attempt.submitted_datagrams <= 1 &&
                                      attempt.submitted_payload_bytes == attempt.submitted_datagrams * packet.payload.size();
             const bool success = shape_valid && attempt.submitted_datagrams == 1;
-            const auto receipt = reservation.permit->complete(success ? packet.ip_bytes : 0, success ? 1 : 0,
-              shape_valid && attempt.submission_known, transport_now_us());
-            trace_send_budget(receipt);
-            retire = success || !receipt.completion_known || !receipt.accounting_valid || !attempt.retryable;
-            if (retire) trace_audio(packet, success ? "sent" : receipt.completion_known ? "send_failed" : "unknown");
-            else blocked.insert(packet.budget.get());
+            bool completion_known = shape_valid && attempt.submission_known;
+            bool accounting_valid = true;
+            if (reservation.permit) {
+              const auto receipt = reservation.permit->complete(success ? packet.ip_bytes : 0, success ? 1 : 0, completion_known, transport_now_us());
+              trace_send_budget(receipt);
+              completion_known = receipt.completion_known;
+              accounting_valid = receipt.accounting_valid;
+            }
+            retire = success || !completion_known || !accounting_valid || !attempt.retryable;
+            if (retire) trace_audio(packet, success ? "sent" : completion_known ? "send_failed" : "unknown");
+            else blocked.insert(packet.policy.get());
           }
         }
         if (retire) {
@@ -5044,7 +5061,11 @@ namespace stream {
 
       auto peer_address = session->audio.peer.address();
       const auto submit_audio = [&](platf::send_info_t &info) {
+#ifdef _WIN32
+        if (!session->send_budget && !bounded_socket) {
+#else
         if (!session->send_budget) {
+#endif
           platf::send(info);
           return;
         }
@@ -5790,7 +5811,7 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
-      if (config.packet_probe && (launch_session.control_only || !config.packet_feedback || !experimental_packet_control_available() ||
+      if (config.packet_probe && (launch_session.control_only || !config.packet_control || !config.packet_feedback || !experimental_packet_control_available() ||
                                    !config::stream.experimental_packet_probe || config.controlProtocolType != 13 ||
                                    !(config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) || !(config.encryptionFlagsEnabled & SS_ENC_VIDEO))) return {};
       if (config.policy_status && (launch_session.control_only || !config.packet_feedback ||
