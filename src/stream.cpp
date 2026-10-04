@@ -4166,19 +4166,26 @@ namespace stream {
     };
 
 #if defined(SUNSHINE_HAS_GOOGCC) && SUNSHINE_HAS_GOOGCC
+    const auto padding_policy = [&](const active_flow_t &active) -> transport::frame_policy_ref_t {
+      const auto *session = active.context->session;
+      const auto queue = pacer.snapshot(active.pacer_handle);
+      const auto state = session->transport_state->snapshot();
+      if (!session->config.packet_probe || active.flow->is_closed() || !session->video.cipher ||
+          !queue || queue->queued_packets || state.stopped || !state.encoder_initialized || !state.applied) return {};
+      const auto receipt = std::find_if(state.receipts.begin(), state.receipts.end(), [&](const auto &r) { return r.policy == state.applied; });
+      if (receipt == state.receipts.end() || !receipt->encoder_applied || !receipt->first_sent_frame ||
+          receipt->failure != transport::policy_failure_e::none) return {};
+      return state.applied;
+    };
+
     const auto enqueue_padding = [&](active_flow_t &active, transport::probe_scheduler_t *scheduler,
                                    std::int64_t now, std::int64_t expires,
                                    transport::paced_work_e purpose = transport::paced_work_e::keepalive,
                                    std::uint64_t padding_credit = 0) {
       try {
         auto *session = active.context->session;
-        const auto queue = pacer.snapshot(active.pacer_handle);
-        const auto state = session->transport_state->snapshot();
-        if (!session->config.packet_probe || active.flow->is_closed() || !session->video.cipher ||
-            !queue || queue->queued_packets || state.stopped || !state.encoder_initialized || !state.applied || expires <= now) return false;
-        const auto receipt = std::find_if(state.receipts.begin(), state.receipts.end(), [&](const auto &r) { return r.policy == state.applied; });
-        if (receipt == state.receipts.end() || !receipt->encoder_applied || !receipt->first_sent_frame ||
-            receipt->failure != transport::policy_failure_e::none) return false;
+        const auto policy = padding_policy(active);
+        if (!policy || expires <= now) return false;
         constexpr std::size_t plain_bytes = TF_VIDEO_IDENTITY_BYTES + TF_PROBE_PADDING_HEADER_BYTES + TF_PROBE_PADDING_MAX_BYTES;
         const bool ipv6 = net::normalize_address(active.context->peer.address()).is_v6();
         const auto ip_bytes = *transport::ip_datagram_bytes(sizeof(video_packet_enc_prefix_t) + plain_bytes, ipv6);
@@ -4215,7 +4222,7 @@ namespace stream {
           return false;
         }
         transport::paced_frame_t output;
-        output.policy = state.applied;
+        output.policy = policy;
         output.dependency = transport::frame_dependency_e::non_reference;
         output.purpose = scheduler ? transport::paced_work_e::probe : purpose;
         output.deadline_us = std::min(expires, now + 200000);
@@ -4246,7 +4253,7 @@ namespace stream {
             std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()), prefix->tag,
             packet.udp_payload.data() + sizeof(*prefix), &iv);
           if (bytes != plain_bytes) throw std::runtime_error("Probe padding encryption failed");
-          packet.metadata = { sequence, 0, static_cast<std::uint32_t>(ip_bytes), 0, state.applied->revision,
+          packet.metadata = { sequence, 0, static_cast<std::uint32_t>(ip_bytes), 0, policy->revision,
             transport::packet_kind_e::probe, {} };
           output.packets.push_back(std::move(packet));
         }
@@ -4762,7 +4769,7 @@ namespace stream {
         }
         const auto estimate = active.controller->snapshot().estimate;
         if (active.context->session->config.packet_probe && active.pending_probes.empty() && !queued_state->queued_packets &&
-            estimate.requested_padding_kbps > 0 && active.controller->probe_eligible(now)) {
+            estimate.requested_padding_kbps > 0 && active.controller->probe_eligible(now) && padding_policy(active)) {
           constexpr auto payload = sizeof(video_packet_enc_prefix_t) + TF_VIDEO_IDENTITY_BYTES + TF_PROBE_PADDING_HEADER_BYTES + TF_PROBE_PADDING_MAX_BYTES;
           const auto cost = *transport::ip_datagram_bytes(payload, net::normalize_address(active.context->peer.address()).is_v6());
           has_padding_credit |= estimate.padding_credit_ip_bytes >= cost;
