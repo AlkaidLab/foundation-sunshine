@@ -3731,7 +3731,7 @@ namespace stream {
       std::int64_t next_controller_log_us = 0;
       bool controller_failed = false;
       transport::frame_policy_ref_t last_controller_limits;
-      std::deque<transport::googcc_probe_t> pending_probes;
+      std::int32_t last_probe_request_cluster = -1;
       std::unique_ptr<transport::probe_scheduler_t> pending_probe_scheduler;
       std::int32_t last_probe_cluster = -1;
       transport::paced_probe_result_e last_probe_result = transport::paced_probe_result_e::none;
@@ -3809,7 +3809,6 @@ namespace stream {
       }
       // No dispatch receipt survives to this boundary. Cancel only the unsent
       // probe suffix; owned frames, already charged bytes and the ledger stay.
-      active.pending_probes.clear();
       active.pending_probe_scheduler.reset();
       pacer.cancel_probe(active.pacer_handle, now);
       settle(pacer.cancel_padding(active.pacer_handle, now));
@@ -3835,6 +3834,7 @@ namespace stream {
       active.controller_activation_epoch = policy->automatic_control ? policy->automatic_control->activation_epoch : 0;
       active.probing_enabled = runtime.controller.periodic_alr_probing;
       active.probe_clock_resets = 0;
+      active.last_probe_request_cluster = -1;
       active.last_controller_limits.reset();
       active.next_controller_log_us = 0;
       if (config::stream.experimental_transport_trace)
@@ -4602,7 +4602,7 @@ namespace stream {
         (void) handle;
         if (!active.controller || !active.probing_enabled) continue;
         const auto now = transport_now_us();
-        if (!active.controller_failed && !active.flow->is_closed() && active.pending_probes.empty() &&
+        if (!active.controller_failed && !active.flow->is_closed() && active.controller->pending_probe_requests(now).empty() &&
             !active.controller->snapshot().control_revoked && active.controller->snapshot().estimate.requested_padding_kbps == 0 &&
             active.context->session->config.packet_probe && now >= active.next_keepalive_us) {
           active.next_keepalive_us = now + 500000;
@@ -4610,7 +4610,6 @@ namespace stream {
         }
         const auto clock_resets = active.controller->snapshot().estimate.receiver_clock_resets;
         if (clock_resets != active.probe_clock_resets) {
-          active.pending_probes.clear();
           active.pending_probe_scheduler.reset();
           pacer.cancel_probe(active.pacer_handle, now);
           settle(pacer.cancel_padding(active.pacer_handle, now));
@@ -4619,21 +4618,23 @@ namespace stream {
         // Recheck before every real submission, including manual/stop events
         // which arrive after the previous controller tick.
         if (active.controller_failed || active.flow->is_closed() || !active.controller->probe_eligible(now)) {
-          if (config::stream.experimental_transport_trace) {
-            for (const auto &request : active.pending_probes)
-              BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
-                               << " cluster=" << request.cluster_id << " result=" << static_cast<int>(transport::paced_probe_result_e::cancelled);
-          }
-          active.pending_probes.clear();
           active.pending_probe_scheduler.reset();
           pacer.cancel_probe(active.pacer_handle, now);
           settle(pacer.cancel_padding(active.pacer_handle, now));
           continue;
         }
-        if (!active.pending_probes.empty() || active.controller->snapshot().estimate.requested_padding_kbps == 0)
+        if (!active.controller->pending_probe_requests(now).empty() || active.controller->snapshot().estimate.requested_padding_kbps == 0)
           settle(pacer.cancel_padding(active.pacer_handle, now));
-        while (!active.pending_probes.empty()) {
-          const auto request = active.pending_probes.front();
+        while (!active.controller->pending_probe_requests(now).empty()) {
+          const auto request = active.controller->pending_probe_requests(now).front();
+          if (active.pending_probe_scheduler && active.last_probe_request_cluster != request.cluster_id)
+            active.pending_probe_scheduler.reset();
+          if (config::stream.experimental_transport_trace && active.last_probe_request_cluster != request.cluster_id)
+            BOOST_LOG(debug) << "Probe request: epoch=" << active.flow->connection_epoch << " now=" << now
+                             << " cluster=" << request.cluster_id << " target_kbps=" << request.target_kbps
+                             << " duration=" << request.duration_us << " delta=" << request.minimum_delta_us
+                             << " min_packets=" << request.minimum_packets << " requested_at=" << request.requested_at_us;
+          active.last_probe_request_cluster = request.cluster_id;
           auto disposition = transport::paced_probe_result_e::cancelled;
           if (request.requested_at_us >= 0 && now >= request.requested_at_us && now - request.requested_at_us <= 1000000) {
             if (!active.pending_probe_scheduler)
@@ -4658,7 +4659,8 @@ namespace stream {
           if (config::stream.experimental_transport_trace)
             BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
                              << " cluster=" << request.cluster_id << " result=" << static_cast<int>(disposition);
-          active.pending_probes.pop_front();
+          if (!active.controller->consume_probe_request(request.cluster_id))
+            throw std::runtime_error("Controller probe request changed during scheduling");
           active.pending_probe_scheduler.reset();
           if (disposition == transport::paced_probe_result_e::active) break;
         }
@@ -4767,18 +4769,6 @@ namespace stream {
           continue;
         }
         const auto estimate = active.controller->snapshot().estimate;
-        for (const auto &request : active.controller->take_probe_requests(now)) {
-          if (config::stream.experimental_transport_trace)
-            BOOST_LOG(debug) << "Probe request: epoch=" << active.flow->connection_epoch << " now=" << now
-                             << " cluster=" << request.cluster_id << " target_kbps=" << request.target_kbps
-                             << " duration=" << request.duration_us << " delta=" << request.minimum_delta_us
-                             << " min_packets=" << request.minimum_packets << " requested_at=" << request.requested_at_us;
-          if (active.pending_probes.size() < 32)
-            active.pending_probes.push_back(request);
-          else if (config::stream.experimental_transport_trace)
-            BOOST_LOG(debug) << "Probe schedule: epoch=" << active.flow->connection_epoch << " now=" << now
-                             << " cluster=" << request.cluster_id << " result=" << static_cast<int>(transport::paced_probe_result_e::busy);
-        }
         const auto &probe = queued_state->probe;
         if (probe.cluster_id != active.last_probe_cluster || probe.result != active.last_probe_result) {
           if (config::stream.experimental_transport_trace)
@@ -4814,7 +4804,7 @@ namespace stream {
         // Media has entered/drained the deadline queue and actual IP receipts
         // have reached the native budget. Only admitted padding wakes this
         // owner immediately; refused work follows the normal controller tick.
-        if (active.probing_enabled && active.pending_probes.empty() && active.controller->probe_eligible(now) &&
+        if (active.probing_enabled && active.controller->pending_probe_requests(now).empty() && active.controller->probe_eligible(now) &&
             estimate.requested_padding_kbps > 0 && estimate.padding_credit_ip_bytes > 0) {
           const auto admitted = enqueue_padding(active, nullptr, now, now + 50000,
             transport::paced_work_e::padding, estimate.padding_credit_ip_bytes);

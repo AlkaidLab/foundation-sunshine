@@ -239,11 +239,14 @@ namespace {
 
   TEST(TransportPacer, ProbeWaitsForAnEntireFundableGroupWithinSlackWithoutInventingSuccess) {
     deadline_pacer_t pacer;
+    ASSERT_TRUE(pacer.set_host_limits(limits(1000000, 10000), 0));
     const auto handle = *pacer.add_session(7, limits(1000000, 10000), 0);
+    const auto other = *pacer.add_session(8, limits(1000000, 10000), 0);
     ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 10), 0).result, pacer_enqueue_result_e::queued);
     ASSERT_EQ(start_probe(pacer, handle, { 1, 8000, 6000, 2000, 3 }, 0), paced_probe_result_e::active);
     ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 2U);
-    ASSERT_TRUE(pacer.debit_external_success(handle, 8000, 2399));
+    ASSERT_EQ(pacer.enqueue_frame(other, frame(1, 100, 1, 8000, 1000000, frame_dependency_e::non_reference, policy(8)), 2399).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(2399, all_success(2399)).successful.size(), 1U);
     const auto waiting = pacer.dispatch(2400, all_success(2400));
     EXPECT_FALSE(waiting.attempted);
     EXPECT_TRUE(waiting.successful.empty());
@@ -254,7 +257,7 @@ namespace {
     const auto next = pacer.dispatch(2800, all_success(2800));
     ASSERT_EQ(next.successful.size(), 2U);
     EXPECT_EQ(pacer.snapshot(handle)->probe.successful_packets, 4U);
-    EXPECT_EQ(pacer.snapshot(handle)->externally_submitted_ip_bytes, 8000U);
+    EXPECT_EQ(pacer.snapshot(other)->submitted_ip_bytes, 8000U);
     EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 4800U);
     EXPECT_EQ(pacer.snapshot(handle)->budget_debt_bytes, 0U);
   }
@@ -860,7 +863,8 @@ namespace {
     }
     EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 0);
     EXPECT_EQ(pacer.snapshot(handle)->budget_debt_bytes, 0);
-    EXPECT_TRUE(pacer.external_allowance(handle, 1200, 2000));
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 2, 1), 2000).result, pacer_enqueue_result_e::queued);
+    EXPECT_EQ(pacer.dispatch(2000, all_success(2000)).successful.size(), 1U);
   }
 
   TEST(TransportPacer, BudgetReductionRetainsDebtAndDoesNotRewriteTheOldFramePolicy) {
@@ -884,19 +888,6 @@ namespace {
     EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 2500);
   }
 
-  TEST(TransportPacer, RateChangeIntegratesOldAndNewRatesAtTheirOwnTimeBoundaries) {
-    deadline_pacer_t pacer;
-    const auto handle = *pacer.add_session(7, limits(1000, 1000), 0);
-    ASSERT_TRUE(pacer.debit_external_success(handle, 1000, 0));
-    ASSERT_TRUE(pacer.update_limits(handle, limits(2000, 1000), 250000));
-    EXPECT_TRUE(pacer.external_allowance(handle, 250, 250000));
-    EXPECT_FALSE(pacer.external_allowance(handle, 251, 250000));
-    EXPECT_TRUE(pacer.external_allowance(handle, 750, 500000));
-    EXPECT_FALSE(pacer.external_allowance(handle, 751, 500000));
-    ASSERT_TRUE(pacer.update_limits(handle, limits(0, 100), 500000));
-    EXPECT_TRUE(pacer.external_allowance(handle, 100, 500000));
-    EXPECT_FALSE(pacer.external_allowance(handle, 101, 500000));
-  }
 
   TEST(TransportPacer, FeasibilityAbortsWholeOldFrameBeforeSendingWhenTheBudgetFalls) {
     pacer_bounds_t bounds;
@@ -1041,10 +1032,10 @@ namespace {
     deadline_pacer_t pacer;
     ASSERT_TRUE(pacer.set_host_limits(limits(1000, 1500), 0));
     const auto a = *pacer.add_session(7, limits(1000000, 10000), 0);
-    const auto b = *pacer.add_session(8, limits(1000000, 10000), 0);
-    ASSERT_TRUE(pacer.external_allowance(a, 1500, 0));
-    ASSERT_TRUE(pacer.debit_external_success(a, 1500, 0));
     ASSERT_EQ(pacer.enqueue_frame(a, frame(1, 1, 1, 1500, 10000000), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
+    const auto b = *pacer.add_session(8, limits(1000000, 10000), 0);
+    ASSERT_EQ(pacer.enqueue_frame(a, frame(2, 2, 1, 1500, 10000000), 0).result, pacer_enqueue_result_e::queued);
     ASSERT_EQ(pacer.enqueue_frame(b, frame(1, 1, 20, 100, 10000000, frame_dependency_e::non_reference, policy(8)), 0).result, pacer_enqueue_result_e::queued);
     for (std::int64_t now = 100000; now < 1500000; now += 100000) {
       auto waiting = pacer.dispatch(now, all_success(now));
@@ -1058,44 +1049,10 @@ namespace {
     auto small = pacer.dispatch(1600000, all_success(1600000));
     ASSERT_EQ(small.successful.size(), 1);
     EXPECT_EQ(small.successful[0].session_handle, b);
-    EXPECT_EQ(pacer.host_snapshot().submitted_ip_bytes + pacer.host_snapshot().externally_submitted_ip_bytes, 3100);
+    EXPECT_EQ(pacer.host_snapshot().submitted_ip_bytes, 3100);
   }
 
-  TEST(TransportPacer, ExternalAudioBytesShareTheSameSuccessfulIpBudget) {
-    deadline_pacer_t pacer;
-    const auto handle = *pacer.add_session(7, limits(100000, 2400), 0);
-    ASSERT_TRUE(pacer.external_allowance(handle, 600, 0));
-    ASSERT_TRUE(pacer.debit_external_success(handle, 600, 0));
-    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 2, 1200, 20000), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1);
-    auto waiting = pacer.dispatch(0, all_success(0));
-    EXPECT_FALSE(waiting.attempted);
-    ASSERT_TRUE(waiting.next_wakeup_us);
-    EXPECT_EQ(*waiting.next_wakeup_us, 6000);
-    ASSERT_EQ(pacer.dispatch(6000, all_success(6000)).successful.size(), 1);
-    auto snapshot = pacer.snapshot(handle);
-    ASSERT_TRUE(snapshot);
-    EXPECT_EQ(snapshot->externally_submitted_ip_bytes, 600);
-    EXPECT_EQ(snapshot->submitted_ip_bytes, 2400);
-    EXPECT_TRUE(snapshot->accounting_valid);
-    EXPECT_EQ(snapshot->budget_debt_bytes, 0);
-  }
 
-  TEST(TransportPacer, UnapprovedExternalSendRecordsActualBytesAndClosesAccounting) {
-    deadline_pacer_t pacer;
-    const auto handle = *pacer.add_session(7, limits(0, 1200, 100), 0);
-    EXPECT_FALSE(pacer.external_allowance(handle, 2000, 0));
-    EXPECT_FALSE(pacer.debit_external_success(handle, 2000, 0));
-    const auto snapshot = pacer.snapshot(handle);
-    ASSERT_TRUE(snapshot);
-    EXPECT_EQ(snapshot->externally_submitted_ip_bytes, 2000);
-    EXPECT_EQ(snapshot->budget_debt_bytes, 800);
-    EXPECT_FALSE(snapshot->accounting_valid);
-    EXPECT_TRUE(snapshot->stopped);
-    EXPECT_TRUE(pacer.host_snapshot().stopped);
-    EXPECT_FALSE(pacer.add_session(8, limits(), 0));
-    EXPECT_FALSE(pacer.external_allowance(handle, 1, 1000000));
-  }
 
   TEST(TransportPacer, PayloadPacketFrameAndSessionBoundsAreIndependentAndStopReleasesOwnership) {
     pacer_bounds_t bounds;
@@ -1178,13 +1135,15 @@ namespace {
   TEST(TransportPacer, LongIdleAndMaximumConfiguredRatesSaturateWithoutOverflowOrUnboundedBurst) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000000000000ULL, 1200), 0);
-    ASSERT_TRUE(pacer.debit_external_success(handle, 1200, 0));
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
     const auto late = std::numeric_limits<std::int64_t>::max() - 1;
-    EXPECT_TRUE(pacer.external_allowance(handle, 1200, late));
-    EXPECT_FALSE(pacer.external_allowance(handle, 1201, late));
-    ASSERT_TRUE(pacer.debit_external_success(handle, 1200, late));
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 2, 1, 1200, std::numeric_limits<std::int64_t>::max()), late).result, pacer_enqueue_result_e::queued);
+    EXPECT_EQ(pacer.dispatch(late, all_success(late)).successful.size(), 1U);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(3, 3, 1, 1200, std::numeric_limits<std::int64_t>::max()), late).result, pacer_enqueue_result_e::queued);
+    EXPECT_TRUE(pacer.dispatch(late, all_success(late)).successful.empty());
     EXPECT_EQ(pacer.snapshot(handle)->budget_debt_bytes, 0);
-    EXPECT_EQ(pacer.snapshot(handle)->externally_submitted_ip_bytes, 2400);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 2400);
     auto bad_limits = limits(1000000000001ULL);
     EXPECT_FALSE(pacer.update_limits(handle, bad_limits, late));
     EXPECT_THROW(deadline_pacer_t(pacer_bounds_t { 0 }), std::invalid_argument);
@@ -1282,20 +1241,21 @@ namespace {
   TEST(TransportPacer, ExpiredQueuedTailIsRetiredWithoutInvalidatingItsEarlierStillValidFrame) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000, 1200), 0);
-    ASSERT_TRUE(pacer.debit_external_success(handle, 1200, 0));
-    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1, 1200, 2000000, frame_dependency_e::reference), 0).result, pacer_enqueue_result_e::queued);
-    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 2, 1, 1200, 1000000, frame_dependency_e::reference), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 2, 1, 1200, 2000000, frame_dependency_e::reference), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(3, 3, 1, 1200, 1000000, frame_dependency_e::reference), 0).result, pacer_enqueue_result_e::queued);
     auto waiting = pacer.dispatch(0, all_success(0));
     ASSERT_TRUE(waiting.next_wakeup_us);
     EXPECT_EQ(*waiting.next_wakeup_us, 1000000);
     auto expired = pacer.dispatch(1000000, all_success(1000000));
     ASSERT_EQ(expired.frames.size(), 1);
-    EXPECT_EQ(expired.frames[0].frame_id, 2);
+    EXPECT_EQ(expired.frames[0].frame_id, 3);
     EXPECT_EQ(expired.frames[0].result, frame_send_result_e::deadline_expired);
     EXPECT_FALSE(expired.attempted);
     auto earlier = pacer.dispatch(1200000, all_success(1200000));
     ASSERT_EQ(earlier.successful.size(), 1);
-    EXPECT_EQ(earlier.successful[0].packet.frame_id, 1);
+    EXPECT_EQ(earlier.successful[0].packet.frame_id, 2);
     EXPECT_TRUE(pacer.snapshot(handle)->reference_chain_broken);
     EXPECT_EQ(pacer.snapshot(handle)->queued_packets, 0);
   }
@@ -1658,22 +1618,21 @@ namespace {
   TEST(TransportPacerReferenceBreak, RepeatedMarkerDoesNotDuplicateSettlementsOrForgiveDebt) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000, 0, 2400), 0);
-    ASSERT_TRUE(pacer.external_allowance(handle, 1200, 0));
-    ASSERT_TRUE(pacer.debit_external_success(handle, 1200, 0));
-    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 1, 1, 1200, 10000000, frame_dependency_e::reference), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1, 1200, 10000000), 0).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(0, all_success(0)).successful.size(), 1U);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(2, 2, 1, 1200, 10000000, frame_dependency_e::reference), 0).result, pacer_enqueue_result_e::queued);
     auto first = pacer.mark_reference_break(handle, 1, 0);
     ASSERT_EQ(first.frames.size(), 1);
     auto repeated = pacer.mark_reference_break(handle, 1, 200000);
     EXPECT_EQ(repeated.result, pacer_reference_break_result_e::already_broken);
     EXPECT_TRUE(repeated.frames.empty());
     EXPECT_EQ(pacer.snapshot(handle)->budget_debt_bytes, 1000);
-    EXPECT_EQ(pacer.snapshot(handle)->externally_submitted_ip_bytes, 1200);
-    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 0);
+    EXPECT_EQ(pacer.snapshot(handle)->submitted_ip_bytes, 1200);
     auto higher = pacer.mark_reference_break(handle, 9, 200000);
     EXPECT_EQ(higher.result, pacer_reference_break_result_e::marked);
     EXPECT_TRUE(higher.frames.empty());
-    EXPECT_EQ(pacer.enqueue_frame(handle, frame(9, 2, 1), 200000).result, pacer_enqueue_result_e::invalid);
-    ASSERT_EQ(pacer.enqueue_frame(handle, frame(10, 2, 1, 1200, 10000000, frame_dependency_e::recovery), 200000).result, pacer_enqueue_result_e::queued);
+    EXPECT_EQ(pacer.enqueue_frame(handle, frame(9, 3, 1), 200000).result, pacer_enqueue_result_e::invalid);
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(10, 3, 1, 1200, 10000000, frame_dependency_e::recovery), 200000).result, pacer_enqueue_result_e::queued);
     ASSERT_EQ(pacer.dispatch(200000, all_success(200000)).successful.size(), 1);
     EXPECT_EQ(pacer.snapshot(handle)->budget_debt_bytes, 2200);
     EXPECT_FALSE(pacer.snapshot(handle)->reference_chain_broken);
@@ -1732,7 +1691,8 @@ namespace {
   TEST(TransportPacerReferenceBreak, UnknownStoppedAndInvalidClockCallsDoNotMutateOwner) {
     deadline_pacer_t pacer;
     const auto handle = *pacer.add_session(7, limits(1000, 0, 2400), 100);
-    ASSERT_TRUE(pacer.debit_external_success(handle, 900, 100));
+    ASSERT_EQ(pacer.enqueue_frame(handle, frame(1, 1, 1, 900), 100).result, pacer_enqueue_result_e::queued);
+    ASSERT_EQ(pacer.dispatch(100, all_success(100)).successful.size(), 1U);
     EXPECT_EQ(pacer.mark_reference_break(999, 20, 1000000).result, pacer_reference_break_result_e::unknown_session);
     EXPECT_EQ(pacer.mark_reference_break(handle, 20, -1).result, pacer_reference_break_result_e::clock_invalid);
     EXPECT_EQ(pacer.mark_reference_break(handle, 20, 99).result, pacer_reference_break_result_e::clock_invalid);

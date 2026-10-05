@@ -3,6 +3,8 @@
 #include "googcc_adapter.h"
 #include "transport_policy.h"
 
+#include <span>
+
 namespace transport {
   struct googcc_runtime_config_t {
     googcc_config_t controller;
@@ -44,8 +46,13 @@ namespace transport {
     process_interval(std::int64_t now_us, std::optional<googcc_queue_sample_t> queue = {});
     bool
     probe_eligible(std::int64_t now_us) const;
-    std::vector<googcc_probe_t>
-    take_probe_requests(std::int64_t now_us);
+    // Keep one bounded request queue through handoff and media/budget waits.
+    // The view expires on the next runtime mutation. Scheduling transfers only
+    // the front request; it never grants permission for an OS submission.
+    std::span<const googcc_probe_t>
+    pending_probe_requests(std::int64_t now_us);
+    bool
+    consume_probe_request(std::int32_t cluster_id);
     void
     stop() noexcept;
     googcc_runtime_snapshot_t

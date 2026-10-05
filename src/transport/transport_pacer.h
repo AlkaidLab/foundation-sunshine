@@ -226,7 +226,6 @@ namespace transport {
   struct pacer_snapshot_t {
     std::uint64_t submitted_packets = 0;
     std::uint64_t submitted_ip_bytes = 0;
-    std::uint64_t externally_submitted_ip_bytes = 0;
     std::uint64_t budget_debt_bytes = 0;
     std::uint64_t instant_debt_bytes = 0;
     std::size_t queued_frames = 0;
@@ -311,15 +310,6 @@ namespace transport {
     bool
     abort_noexcept() noexcept;
 
-    // Audio/control sent outside this queue must check allowance immediately
-    // before nonblocking submission under the same owner. Debit always records
-    // actual successful IP bytes, even for an unapproved send; exceeding the
-    // allowance closes this owner's accounting instead of hiding the bytes.
-    // On false, call stop() and consume its abandoned-frame results.
-    bool
-    external_allowance(std::uint64_t handle, std::uint64_t ip_bytes, std::int64_t now_us);
-    bool
-    debit_external_success(std::uint64_t handle, std::uint64_t ip_bytes, std::int64_t now_us);
     std::optional<pacer_snapshot_t>
     snapshot(std::uint64_t handle) const;
     pacer_snapshot_t

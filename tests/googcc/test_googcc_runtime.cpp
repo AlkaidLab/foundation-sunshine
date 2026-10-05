@@ -83,13 +83,13 @@ namespace {
     runtime_fixture_t f;
     f.config.budgeted_probing_enabled = true;
     googcc_runtime_t runtime(f.config, f.policy);
-    EXPECT_TRUE(runtime.take_probe_requests(0).empty());
+    EXPECT_TRUE(runtime.pending_probe_requests(0).empty());
     EXPECT_FALSE(runtime.probe_eligible(0));
     f.apply();
     f.feedback(runtime, 1000);
     ASSERT_TRUE(runtime.try_take_control(11000));
     ASSERT_TRUE(runtime.probe_eligible(11000));
-    const auto requests = runtime.take_probe_requests(11000);
+    const auto requests = runtime.pending_probe_requests(11000);
     ASSERT_EQ(requests.size(), 2U);
     for (const auto &request : requests) {
       EXPECT_GE(request.cluster_id, 0);
@@ -99,7 +99,18 @@ namespace {
       EXPECT_GT(request.minimum_delta_us, 0);
       EXPECT_EQ(request.minimum_packets, 5);
     }
-    EXPECT_TRUE(runtime.take_probe_requests(11000).empty());
+    // Reading the queue cannot consume a request or manufacture sends.
+    EXPECT_EQ(runtime.pending_probe_requests(11000).size(), 2U);
+    const auto first = requests.front().cluster_id;
+    const auto second = requests.back().cluster_id;
+    EXPECT_FALSE(runtime.consume_probe_request(second));
+    EXPECT_EQ(runtime.pending_probe_requests(11000).size(), 2U);
+    EXPECT_TRUE(runtime.consume_probe_request(first));
+    EXPECT_FALSE(runtime.consume_probe_request(first));
+    ASSERT_EQ(runtime.pending_probe_requests(11000).size(), 1U);
+    EXPECT_EQ(runtime.pending_probe_requests(11000).front().cluster_id, second);
+    EXPECT_TRUE(runtime.consume_probe_request(second));
+    EXPECT_TRUE(runtime.pending_probe_requests(11000).empty());
     EXPECT_FALSE(runtime.probe_eligible(1011001));
     EXPECT_EQ(runtime.snapshot().estimate.accepted_sends, 20U);
     // Reading a request cannot manufacture sent packets or feedback.
@@ -118,7 +129,7 @@ namespace {
     ASSERT_EQ(f.policy->request_normalized(f.budget, 10, 30, 20, accepted->revision, accepted->control_epoch).result,
       policy_request_result_e::accepted);
     EXPECT_FALSE(runtime.probe_eligible(11000));
-    EXPECT_TRUE(runtime.take_probe_requests(11000).empty());
+    EXPECT_TRUE(runtime.pending_probe_requests(11000).empty());
     EXPECT_EQ(runtime.snapshot().rejected_probe_requests, 2U);
     runtime.stop();
     EXPECT_FALSE(runtime.probe_eligible(11000));
@@ -130,11 +141,28 @@ namespace {
       f.config.budgeted_probing_enabled = true;
       f.config.automatic_bitrate_enabled = !fixed;
       googcc_runtime_t runtime(f.config, f.policy);
-      EXPECT_TRUE(runtime.take_probe_requests(1000001).empty());
+      EXPECT_TRUE(runtime.pending_probe_requests(1000001).empty());
       EXPECT_EQ(runtime.snapshot().rejected_probe_requests, 2U);
       EXPECT_FALSE(runtime.probe_eligible(1000001));
       EXPECT_EQ(runtime.snapshot().estimate.accepted_sends, 0U);
     }
+  }
+
+  TEST(GoogCcRuntime, UnscheduledRequestsExpireOrStopInTheSingleRuntimeQueue) {
+    runtime_fixture_t f;
+    f.config.budgeted_probing_enabled = true;
+    googcc_runtime_t runtime(f.config, f.policy);
+    f.apply();
+    f.feedback(runtime, 1000);
+    ASSERT_TRUE(runtime.try_take_control(11000));
+    ASSERT_EQ(runtime.pending_probe_requests(11000).size(), 2U);
+    const auto expired = runtime.pending_probe_requests(11000).front().cluster_id;
+    EXPECT_TRUE(runtime.pending_probe_requests(1000001).empty());
+    EXPECT_FALSE(runtime.consume_probe_request(expired));
+    EXPECT_GE(runtime.snapshot().rejected_probe_requests, 2U);
+    runtime.stop();
+    EXPECT_TRUE(runtime.pending_probe_requests(11000).empty());
+    EXPECT_FALSE(runtime.probe_eligible(11000));
   }
 
   TEST(GoogCcRuntime, ReceiverClockResetRetiresOldRequestsBeforeNewRouteProbes) {
@@ -148,7 +176,7 @@ namespace {
     f.feedback(runtime, 20000, 0, true, 20, 2);
     ASSERT_EQ(runtime.snapshot().estimate.receiver_clock_resets, 1U);
     EXPECT_GE(runtime.snapshot().rejected_probe_requests, 2U);
-    const auto requests = runtime.take_probe_requests(30000);
+    const auto requests = runtime.pending_probe_requests(30000);
     ASSERT_FALSE(requests.empty());
     for (const auto &request : requests) {
       EXPECT_GE(request.cluster_id, 2);
@@ -331,7 +359,7 @@ namespace {
     f.apply();
     f.feedback(runtime, 1000);
     ASSERT_TRUE(runtime.try_take_control(11000));
-    EXPECT_FALSE(runtime.take_probe_requests(11000).empty());
+    EXPECT_FALSE(runtime.pending_probe_requests(11000).empty());
     f.apply();
     const auto before = f.policy->snapshot().accepted;
     f.feedback(runtime, 20000, 0, true, 20, 1, 1200000);
@@ -340,7 +368,7 @@ namespace {
     EXPECT_FALSE(runtime.probe_eligible(1230000));
     ASSERT_TRUE(runtime.process_interval(1230000));
     EXPECT_TRUE(runtime.snapshot().feedback_stale);
-    EXPECT_TRUE(runtime.take_probe_requests(1230000).empty());
+    EXPECT_TRUE(runtime.pending_probe_requests(1230000).empty());
     const auto after = f.policy->snapshot().accepted;
     EXPECT_LE(after->budget.total_kbps, before->budget.total_kbps);
     EXPECT_EQ(after->fec_base, before->fec_base);
@@ -616,7 +644,7 @@ namespace {
     ASSERT_TRUE(current.try_take_control(40000));
     EXPECT_GT(current.snapshot().lease->control_epoch, activation->control_epoch);
     EXPECT_EQ(f.policy->snapshot().accepted->automatic_control, activation->automatic_control);
-    const auto probes = current.take_probe_requests(40000);
+    const auto probes = current.pending_probe_requests(40000);
     ASSERT_FALSE(probes.empty());
     EXPECT_GT(probes.front().cluster_id, previous.snapshot().estimate.last_generated_probe_cluster);
   }

@@ -121,6 +121,31 @@ namespace {
     EXPECT_EQ(raised.event->credit_microbytes, 0);
   }
 
+  TEST(SessionSendBudget, RateChangesIntegrateEachRateAtItsOwnBoundaryAndCapCredit) {
+    session_send_budget_t budget(epoch, { 1000, 1000, 0 }, 0);
+    auto initial = budget.try_reserve(epoch, video, 1000, 1000, 0);
+    ASSERT_EQ(initial.result, accepted);
+    ASSERT_TRUE(initial.permit->begin_submission());
+    EXPECT_EQ(initial.permit->complete(1000, 1, true, 0).credit_microbytes, 0);
+    const auto update = budget.try_update(epoch, { 2000, 1000, 0 }, 250000);
+    ASSERT_EQ(update.result, accepted);
+    ASSERT_TRUE(update.event);
+    EXPECT_EQ(update.event->credit_microbytes, 250 * scale);
+    EXPECT_EQ(budget.try_reserve(epoch, video, 251, 251, 250000).result, send_budget_result_e::insufficient);
+    auto old_rate = budget.try_reserve(epoch, video, 250, 250, 250000);
+    ASSERT_EQ(old_rate.result, accepted);
+    EXPECT_TRUE(old_rate.permit->cancel_before_send(250000).accounting_valid);
+    EXPECT_EQ(budget.try_reserve(epoch, video, 751, 751, 500000).result, send_budget_result_e::insufficient);
+    auto both_rates = budget.try_reserve(epoch, video, 750, 750, 500000);
+    ASSERT_EQ(both_rates.result, accepted);
+    EXPECT_EQ(both_rates.permit->cancel_before_send(500000).credit_microbytes, 750 * scale);
+    const auto cap = budget.try_update(epoch, { 2000, 100, 0 }, 500000);
+    ASSERT_EQ(cap.result, accepted);
+    ASSERT_TRUE(cap.event);
+    EXPECT_EQ(cap.event->credit_microbytes, 100 * scale);
+    EXPECT_EQ(budget.try_reserve(epoch, video, 101, 101, 500000).result, send_budget_result_e::insufficient);
+  }
+
   TEST(SessionSendBudget, UpToReservationClipsAtAvailableWholeIPBytes) {
     session_send_budget_t budget(epoch, { 1000, 100, 20 }, 0);
     auto permit = budget.try_reserve(epoch, send_traffic_e::audio, 1000, 48, 0);

@@ -932,15 +932,6 @@ namespace transport {
   }
 
   bool
-  deadline_pacer_t::external_allowance(std::uint64_t handle, std::uint64_t bytes, std::int64_t now) {
-    auto &p = *impl_;
-    auto it = p.sessions.find(handle);
-    if (p.stopped || it == p.sessions.end() || it->second.stats.stopped || bytes == 0 || bytes > maximum_credit_bytes || !p.accept_time(now)) return false;
-    p.advance_session(it->second, now);
-    return bytes <= p.allowance(it->second);
-  }
-
-  bool
   deadline_pacer_t::abort_noexcept() noexcept {
     auto &p = *impl_;
     if (p.busy) return false;
@@ -960,28 +951,6 @@ namespace transport {
     p.queued_packets = 0;
     p.payload_bytes = 0;
     return true;
-  }
-
-  bool
-  deadline_pacer_t::debit_external_success(std::uint64_t handle, std::uint64_t bytes, std::int64_t now) {
-    auto &p = *impl_;
-    auto it = p.sessions.find(handle);
-    if (p.stopped || it == p.sessions.end() || it->second.stats.stopped || bytes == 0 || bytes > maximum_credit_bytes || !p.accept_time(now)) return false;
-    auto &session = it->second;
-    p.advance_session(session, now);
-    const auto allowed = p.debit(session, bytes);
-    session.stats.accounting_valid &= increment(session.stats.externally_submitted_ip_bytes, bytes);
-    p.host_stats.accounting_valid &= increment(p.host_stats.externally_submitted_ip_bytes, bytes);
-    if (!allowed || !session.stats.accounting_valid || !p.host_stats.accounting_valid) {
-      session.stats.accounting_valid = false;
-      p.host_stats.accounting_valid = false;
-      p.stopped = true;
-      for (auto &[other_handle, other] : p.sessions) {
-        (void) other_handle;
-        other.stats.stopped = true;
-      }
-    }
-    return allowed && session.stats.accounting_valid && p.host_stats.accounting_valid;
   }
 
   std::optional<pacer_snapshot_t>

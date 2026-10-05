@@ -45,29 +45,25 @@ namespace transport {
            state.accepted->control_epoch == lease_->control_epoch && state.accepted->control_source == lease_->source;
   }
 
-  std::vector<googcc_probe_t>
-  googcc_runtime_t::take_probe_requests(std::int64_t now_us) {
+  std::span<const googcc_probe_t>
+  googcc_runtime_t::pending_probe_requests(std::int64_t now_us) {
     if (pending_probes_.empty()) return {};
     const auto eligible = probe_eligible(now_us);
     const auto state = policy_->snapshot();
     const bool awaiting_handoff = config_.budgeted_probing_enabled && config_.automatic_bitrate_enabled &&
                                   !granted_ && !revoked_ && !state.stopped;
-    std::vector<googcc_probe_t> result;
-    std::vector<googcc_probe_t> waiting;
-    result.reserve(pending_probes_.size());
-    waiting.reserve(pending_probes_.size());
-    for (const auto &request : pending_probes_) {
-      if (request.requested_at_us < 0 || now_us < request.requested_at_us || now_us - request.requested_at_us > 1000000)
-        ++rejected_probes_;
-      else if (eligible)
-        result.push_back(request);
-      else if (awaiting_handoff)
-        waiting.push_back(request);
-      else
-        ++rejected_probes_;
-    }
-    pending_probes_.swap(waiting);
-    return result;
+    rejected_probes_ += std::erase_if(pending_probes_, [&](const auto &request) {
+      return request.requested_at_us < 0 || now_us < request.requested_at_us ||
+             now_us - request.requested_at_us > 1000000 || (!eligible && !awaiting_handoff);
+    });
+    return eligible ? std::span<const googcc_probe_t>(pending_probes_) : std::span<const googcc_probe_t>();
+  }
+
+  bool
+  googcc_runtime_t::consume_probe_request(std::int32_t cluster_id) {
+    if (pending_probes_.empty() || pending_probes_.front().cluster_id != cluster_id) return false;
+    pending_probes_.erase(pending_probes_.begin());
+    return true;
   }
 
   bool
