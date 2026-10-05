@@ -14,6 +14,12 @@ set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
 
+add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
+target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main)
+set_target_properties(pen_barrel_roll_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME pen_barrel_roll_unit_tests COMMAND pen_barrel_roll_unit_tests)
+
 # coverage
 # https://gcovr.com/en/stable/guide/compiling.html#compiler-options
 option(SUNSHINE_TESTS_ENABLE_COVERAGE "Enable gcov coverage instrumentation for tests" OFF)

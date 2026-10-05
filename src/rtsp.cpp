@@ -1193,6 +1193,11 @@ namespace rtsp_stream {
         caps |= platf::platform_caps::remote_text_context;
       }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
+#ifdef _WIN32
+      if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {
+        ss << "a=x-ss-general.penBarrelRoll:1" << std::endl;
+      }
+#endif
     }
 
     // Always request new control stream encryption if the client supports it
