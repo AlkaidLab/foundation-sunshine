@@ -386,6 +386,7 @@ namespace transport {
       upstream.feedback_time = webrtc::Timestamp::Micros(event.processing_time_us);
       upstream.data_in_flight = webrtc::DataSize::Bytes(event.data_in_flight_bytes);
       upstream.packet_feedbacks.reserve(event.feedback.changes.size());
+      std::optional<webrtc::TimeDelta> round_trip;
       auto latest_covered_send_us = impl_->state.last_covered_send_us;
       for (const auto &change : event.feedback.changes) {
         const auto mapping = impl_->sequence_mapping.find(change.sent.extended_sequence);
@@ -412,6 +413,12 @@ namespace transport {
           packet.receive_time = webrtc::Timestamp::Micros(impl_->sender_anchor_us +
                                                           (change.first_arrival_us - impl_->receiver_anchor_us));
           packet.arrival_time_offset = webrtc::TimeDelta::Micros(event.receiver_sample_time_us - change.first_arrival_us);
+          // Subtract receiver feedback age using intervals in each clock domain.
+          // The batch minimum is an unsmoothed sample for the native RTT input.
+          const auto sample = upstream.feedback_time - packet.sent_packet.send_time - *packet.arrival_time_offset;
+          if (sample > webrtc::TimeDelta::Zero()) {
+            round_trip = round_trip ? std::min(*round_trip, sample) : sample;
+          }
         }
         upstream.packet_feedbacks.push_back(packet);
       }
@@ -419,6 +426,9 @@ namespace transport {
         impl_->state.last_covered_feedback_us = event.processing_time_us;
         impl_->state.last_covered_send_us = latest_covered_send_us;
         impl_->state.feedback_packet_changes += upstream.packet_feedbacks.size();
+        if (round_trip) {
+          impl_->consume(impl_->controller.OnRoundTripTimeUpdate({ upstream.feedback_time, *round_trip, false }));
+        }
         impl_->consume(impl_->controller.OnTransportPacketsFeedback(std::move(upstream)));
         ++impl_->state.feedback_batches;
       }

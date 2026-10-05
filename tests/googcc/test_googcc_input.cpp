@@ -108,6 +108,87 @@ namespace {
     EXPECT_TRUE(adapter.take_probe_requests().empty());
   }
 
+  TEST(GoogCcInput, FeedbackRoundTripSubtractsReceiverAgeWithoutUsingClockOffset) {
+    for (const auto receiver_origin : { 9000000LL, 9000000000LL }) {
+      session_t adapter(configuration());
+      ASSERT_TRUE(adapter.on_successful_send(packet(0, 10000)));
+      const std::array received { packet_observation_t { 0, packet_status_e::received, receiver_origin + 10000 } };
+      ASSERT_EQ(adapter.on_feedback(report(1, 50000, received, receiver_origin + 20000)).result, report_result_e::accepted);
+      ASSERT_TRUE(adapter.process_interval(50000));
+      EXPECT_EQ(adapter.snapshot().network_rtt_us, 30000);
+      EXPECT_EQ(adapter.ledger_snapshot().received_packets, 1U);
+    }
+  }
+
+  TEST(GoogCcInput, FeedbackRoundTripUsesMinimumPositiveReceivedSample) {
+    session_t adapter(configuration());
+    for (std::uint64_t id = 0; id < 3; ++id) ASSERT_TRUE(adapter.on_successful_send(packet(id, id * 1000)));
+    const std::array received { packet_observation_t { 0, packet_status_e::received, 9010000 },
+      packet_observation_t { 1, packet_status_e::received, 9013000 },
+      packet_observation_t { 2, packet_status_e::received, 9001000 } };
+    ASSERT_EQ(adapter.on_feedback(report(1, 40000, received, 9030000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(40000));
+    EXPECT_EQ(adapter.snapshot().network_rtt_us, 9000);
+    EXPECT_EQ(adapter.ledger_snapshot().received_packets, 3U);
+  }
+
+  TEST(GoogCcInput, FeedbackRoundTripSkipsNonpositiveIntervalsWithoutRejectingReports) {
+    session_t adapter(configuration());
+    ASSERT_TRUE(adapter.on_successful_send(packet(0, 0)));
+    const std::array initial { packet_observation_t { 0, packet_status_e::received, 9005000 } };
+    ASSERT_EQ(adapter.on_feedback(report(1, 30000, initial, 9015000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(30000));
+    ASSERT_EQ(adapter.snapshot().network_rtt_us, 20000);
+    ASSERT_TRUE(adapter.on_successful_send(packet(1, 40000)));
+    const std::array negative { packet_observation_t { 1, packet_status_e::received, 9025000 } };
+    ASSERT_EQ(adapter.on_feedback(report(2, 60000, negative, 9055000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(60000));
+    EXPECT_EQ(adapter.snapshot().network_rtt_us, 20000);
+    ASSERT_TRUE(adapter.on_successful_send(packet(2, 60000)));
+    const std::array zero { packet_observation_t { 2, packet_status_e::received, 9045000 } };
+    ASSERT_EQ(adapter.on_feedback(report(3, 80000, zero, 9065000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(80000));
+    EXPECT_EQ(adapter.snapshot().network_rtt_us, 20000);
+    EXPECT_EQ(adapter.snapshot().rejected_feedback_events, 0U);
+    EXPECT_EQ(adapter.ledger_snapshot().received_packets, 3U);
+  }
+
+  TEST(GoogCcInput, FeedbackRoundTripIgnoresMissingAndUnmappedIdentities) {
+    auto config = configuration();
+    config.history_capacity = 1;
+    session_t adapter(config);
+    ASSERT_TRUE(adapter.on_successful_send(packet(0, 0)));
+    const std::array initial { packet_observation_t { 0, packet_status_e::received, 9005000 } };
+    ASSERT_EQ(adapter.on_feedback(report(1, 30000, initial, 9015000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(30000));
+    ASSERT_EQ(adapter.snapshot().network_rtt_us, 20000);
+    ASSERT_TRUE(adapter.on_successful_send(packet(1, 40000)));
+    ASSERT_TRUE(adapter.on_successful_send(packet(2, 50000)));
+    const std::array observations { packet_observation_t { 1, packet_status_e::received, 9100000 },
+      packet_observation_t { 2, packet_status_e::missing, -1 } };
+    ASSERT_EQ(adapter.on_feedback(report(2, 150000, observations, 9110000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(150000));
+    EXPECT_EQ(adapter.snapshot().network_rtt_us, 20000);
+    EXPECT_EQ(adapter.snapshot().unmapped_feedback_changes, 1U);
+    EXPECT_EQ(adapter.ledger_snapshot().received_packets, 2U);
+    EXPECT_EQ(adapter.ledger_snapshot().missing_declarations, 1U);
+  }
+
+  TEST(GoogCcInput, FeedbackRoundTripAcceptsNewReceiverClockEpoch) {
+    session_t adapter(configuration());
+    ASSERT_TRUE(adapter.on_successful_send(packet(0, 0)));
+    const std::array initial { packet_observation_t { 0, packet_status_e::received, 9005000 } };
+    ASSERT_EQ(adapter.on_feedback(report(1, 30000, initial, 9015000)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(30000));
+    ASSERT_EQ(adapter.snapshot().network_rtt_us, 20000);
+    ASSERT_TRUE(adapter.on_successful_send(packet(1, 100000)));
+    const std::array new_clock { packet_observation_t { 1, packet_status_e::received, 16080000 } };
+    ASSERT_EQ(adapter.on_feedback(report(2, 160000, new_clock, 16100000, 2)).result, report_result_e::accepted);
+    ASSERT_TRUE(adapter.process_interval(160000));
+    EXPECT_EQ(adapter.snapshot().receiver_clock_resets, 1U);
+    EXPECT_EQ(adapter.snapshot().network_rtt_us, 40000);
+  }
+
   TEST(GoogCcInput, QueuePushbackReducesProductionWithoutShrinkingTheNetworkDrainRate) {
     auto config = configuration();
     config.pacer_queue_feedback = config.queue_pushback = true;
