@@ -288,6 +288,9 @@ add_executable(transport_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_transport_feedback.cpp)
 target_include_directories(transport_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(transport_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json)
+if (TARGET sunshine::googcc)
+    target_link_libraries(transport_unit_tests PRIVATE sunshine::googcc)
+endif ()
 target_compile_options(transport_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(transport_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME transport_unit_tests COMMAND transport_unit_tests)
@@ -424,6 +427,10 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 # Do not glob its adapter/runtime fixtures into the normal host test executable,
 # which must build with experimental GoogCC disabled and on other platforms.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/googcc/")
+# The dedicated transport target owns these cases, including native probe
+# coverage when the production SDK is enabled.
+get_target_property(TRANSPORT_UNIT_TEST_SOURCES transport_unit_tests SOURCES)
+list(REMOVE_ITEM TEST_SOURCES ${TRANSPORT_UNIT_TEST_SOURCES})
 # The touchscreen device test has a dedicated target that links the device
 # implementation; do not compile a second copy into the aggregate suite.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
@@ -431,12 +438,13 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)
-    # These tests depend on shader or generated backend paths and run in dedicated
-    # targets above; do not compile a second copy into the aggregate suite.
+    # Dedicated targets own these cases; avoid compiling and running them again.
     list(REMOVE_ITEM TEST_SOURCES
             ${HDR_ENCODING_TEST_SOURCE}
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
-            ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
+            ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE}
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_platform_udp_send.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_enet_send_admission.cpp)
 endif ()
 
 set(SUNSHINE_SOURCES
