@@ -221,6 +221,26 @@ namespace {
     EXPECT_EQ(f.policy->snapshot().accepted, accepted);
   }
 
+  TEST(GoogCcRuntime, ManualOnlyFeedbackPreservesOwnershipAndPendingManualRequest) {
+    runtime_fixture_t f;
+    f.config.automatic_bitrate_enabled = false;
+    googcc_runtime_t runtime(f.config, f.policy);
+    f.apply();
+    const auto accepted = f.policy->snapshot().accepted;
+    f.feedback(runtime, 1000);
+    EXPECT_FALSE(runtime.try_take_control(11000));
+    ASSERT_TRUE(runtime.process_interval(20000));
+    const auto snapshot = runtime.snapshot();
+    EXPECT_EQ(snapshot.estimate.accepted_sends, 20U);
+    EXPECT_EQ(snapshot.estimate.feedback_batches, 1U);
+    EXPECT_EQ(snapshot.estimate.feedback_packet_changes, 20U);
+    EXPECT_FALSE(snapshot.lease);
+    EXPECT_EQ(snapshot.accepted_policy_requests, 0U);
+    EXPECT_EQ(f.policy->snapshot().accepted, accepted);
+    EXPECT_EQ(f.policy->request_normalized(f.budget, 11, 31, 21, accepted->revision, accepted->control_epoch).result,
+      policy_request_result_e::accepted);
+  }
+
   TEST(GoogCcRuntime, QueuePressureCapsEncoderAndPreservesDrainBudgetThroughPendingAndRecovery) {
     runtime_fixture_t f;
     f.config.controller.pacer_queue_feedback = f.config.controller.queue_pushback = true;
@@ -561,9 +581,9 @@ namespace {
       f.config.automatic_bitrate_enabled = false;
       googcc_runtime_t runtime(f.config, f.policy);
       f.apply();
+      const auto manual = f.policy->snapshot().accepted;
       f.feedback(runtime, 1000);
-      ASSERT_TRUE(runtime.try_take_control(11000));
-      f.apply();
+      ASSERT_FALSE(runtime.try_take_control(11000));
       for (int i = 0; i < 80; ++i) {
         const auto at = 30000 + i * 50000;
         f.feedback(runtime, at, i == 0 || persistent ? 8 : 0);
@@ -575,6 +595,8 @@ namespace {
         EXPECT_EQ(accepted->budget.total_kbps, 30000);
       }
       EXPECT_EQ(runtime.snapshot().accepted_policy_requests, 0U);
+      EXPECT_FALSE(runtime.snapshot().lease);
+      EXPECT_EQ(f.policy->snapshot().accepted, manual);
     }
   }
 

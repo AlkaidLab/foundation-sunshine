@@ -107,7 +107,8 @@ namespace transport {
 
   bool
   googcc_runtime_t::try_take_control(std::int64_t now_us, std::optional<googcc_queue_sample_t> queue) {
-    if (granted_ || revoked_ || !config_.control_negotiated || !config_.deadline_pacing_enabled || !fresh(now_us)) return false;
+    if (granted_ || revoked_ || !config_.control_negotiated || !config_.deadline_pacing_enabled ||
+        (!config_.automatic_bitrate_enabled && !config_.controller.queue_pushback) || !fresh(now_us)) return false;
     const auto state = policy_->snapshot();
     const auto &policy = state.accepted;
     if (policy != activation_policy_) {
