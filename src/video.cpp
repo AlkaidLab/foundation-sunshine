@@ -3980,6 +3980,15 @@ namespace video {
     auto active_display_event = mail::man->event<std::string>(mail::active_display);
     std::string active_display_name;
 
+    // Initialization rejection is session-local. No encoder survives at
+    // these call sites; active sessions use the shutdown cleanup below.
+    const auto end_stopped_session = [](sync_session_ctx_t &ctx) {
+      if (!ctx.shutdown_event->peek() && (!ctx.transport_state || !ctx.transport_state->stopped())) return false;
+      ctx.shutdown_event->raise(true);
+      ctx.join_event->raise(true);
+      return true;
+    };
+
     if (synced_session_ctxs.empty()) {
       auto ctx = encode_session_ctx_queue.pop();
       if (!ctx) {
@@ -3987,6 +3996,11 @@ namespace video {
       }
 
       synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*ctx)));
+    }
+
+    std::erase_if(synced_session_ctxs, [&](auto &ctx) { return end_stopped_session(*ctx); });
+    if (synced_session_ctxs.empty()) {
+      return encode_session_ctx_queue.peek() ? encode_e::reinit : encode_e::ok;
     }
 
     while (encode_session_ctx_queue.running()) {
@@ -4050,13 +4064,21 @@ namespace video {
     }
 
     std::vector<sync_session_t> synced_sessions;
-    for (auto &ctx : synced_session_ctxs) {
-      auto synced_session = make_synced_session(disp.get(), encoder, *img, *ctx);
+    for (auto pos = synced_session_ctxs.begin(); pos != synced_session_ctxs.end();) {
+      auto synced_session = make_synced_session(disp.get(), encoder, *img, **pos);
       if (!synced_session) {
+        if (end_stopped_session(**pos)) {
+          pos = synced_session_ctxs.erase(pos);
+          continue;
+        }
         return encode_e::error;
       }
 
       synced_sessions.emplace_back(std::move(*synced_session));
+      ++pos;
+    }
+    if (synced_sessions.empty()) {
+      return encode_session_ctx_queue.peek() ? encode_e::reinit : encode_e::ok;
     }
 
     auto latest_image = img;
@@ -4076,8 +4098,17 @@ namespace video {
           encode_session_ctx->config.display_name = active_display_name;
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
+          if (end_stopped_session(*synced_session_ctxs.back())) {
+            synced_session_ctxs.pop_back();
+            continue;
+          }
+
           auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
           if (!encode_session) {
+            if (end_stopped_session(*synced_session_ctxs.back())) {
+              synced_session_ctxs.pop_back();
+              continue;
+            }
             ec = platf::capture_e::error;
             return false;
           }
@@ -4140,6 +4171,10 @@ namespace video {
           }
 
           if (!apply_transport_policy(pos->session, ctx->transport_state, *disp, encoder, ctx->config, latest_image)) {
+            if (ctx->transport_state && ctx->transport_state->stopped()) {
+              ctx->shutdown_event->raise(true);
+              continue;
+            }
             ec = platf::capture_e::reinit;
             return false;
           }
