@@ -649,8 +649,9 @@ namespace amf {
       // encoder settings so quality-based modes cannot bypass that budget.
       const auto *mode = video_format == 0 ? AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD :
                          video_format == 1 ? AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD : AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD;
-      const auto cbr = static_cast<amf_int64>(video_format == 0 ? AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR :
-                                            video_format == 1 ? AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CBR : AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR);
+      const auto cbr = video_format == 0 ? static_cast<amf_int64>(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR) :
+                       video_format == 1 ? static_cast<amf_int64>(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CBR) :
+                                           static_cast<amf_int64>(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR);
       const auto *hrd = video_format == 0 ? AMF_VIDEO_ENCODER_ENFORCE_HRD :
                         video_format == 1 ? AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD : AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD;
       amf_int64 applied_mode = -1;

@@ -5813,6 +5813,8 @@ namespace stream {
       if (config.packet_control && (!experimental_packet_control_available() || !config.packet_feedback ||
           config.controlProtocolType != 13 || !(config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) ||
           !(config.encryptionFlagsEnabled & SS_ENC_VIDEO) || config.transport_budget_kbps <= 0)) return {};
+      session->config.monitor.paced_rate_control = !launch_session.control_only &&
+                                                  config.packet_control && config::stream.experimental_transport_pacer;
 
       // Initialize current total bitrate (including FEC) from config
       // config.monitor.bitrate is the encoding bitrate (excluding FEC)

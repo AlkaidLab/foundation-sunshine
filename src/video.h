@@ -207,7 +207,7 @@ namespace video {
     // Local diagnostics only; never serialized into the media protocol.
     std::uint32_t perf_session_id = 0;
 
-    // Resolved by the encoder session factory for a negotiated paced budget.
+    // Resolved from this session's negotiated control and pacing settings.
     // Legacy sessions and capability probes retain their encoder defaults.
     bool paced_rate_control = false;
 
