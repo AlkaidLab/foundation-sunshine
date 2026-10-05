@@ -34,7 +34,12 @@ namespace {
     HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT *, void *) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE GetParent(REFIID, void **) override { return E_NOTIMPL; }
     void STDMETHODCALLTYPE GetDesc(DXGI_OUTDUPL_DESC *) override {}
-    HRESULT STDMETHODCALLTYPE AcquireNextFrame(UINT, DXGI_OUTDUPL_FRAME_INFO *, IDXGIResource **) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE AcquireNextFrame(UINT, DXGI_OUTDUPL_FRAME_INFO *frame, IDXGIResource **resource) override {
+      *frame = {};
+      frame->PointerShapeBufferSize = 4;
+      *resource = nullptr;
+      return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE GetFrameDirtyRects(UINT, RECT *, UINT *) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE GetFrameMoveRects(UINT, DXGI_OUTDUPL_MOVE_RECT *, UINT *) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE MapDesktopSurface(DXGI_MAPPED_RECT *) override { return E_NOTIMPL; }
@@ -129,6 +134,28 @@ TEST(WindowsCursorImage, PublishesPointerShapeAfterSuccessfulNativeRead) {
   EXPECT_EQ(duplication.cursor.img_data, (std::vector<std::uint8_t> {0x33, 0x22, 0x11, 0xFF}));
   EXPECT_EQ(duplication.cursor.x, 99);
   EXPECT_TRUE(duplication.cursor.visible);
+}
+
+TEST(WindowsCursorImage, PropagatesCursorFailureThroughBothCaptureBackends) {
+  auto check = [](auto &display) {
+    for (const auto status : {DXGI_ERROR_ACCESS_LOST, E_INVALIDARG}) {
+      display.dup.dup.reset(new pointer_shape_duplication_t(status));
+      std::shared_ptr<platf::img_t> image;
+      bool image_requested = false;
+      const auto result = display.snapshot([&](auto &) {
+        image_requested = true;
+        return false;
+      }, image, std::chrono::milliseconds(0), false);
+      EXPECT_EQ(result, status == DXGI_ERROR_ACCESS_LOST ? platf::capture_e::reinit : platf::capture_e::error);
+      EXPECT_FALSE(image_requested);
+      EXPECT_FALSE(image);
+      EXPECT_EQ(display.release_snapshot(), platf::capture_e::ok);
+    }
+  };
+  platf::dxgi::display_ddup_ram_t ram;
+  platf::dxgi::display_ddup_vram_t vram;
+  check(ram);
+  check(vram);
 }
 
 TEST(WindowsCursorImage, IgnoresMonochromeMaskRowPadding) {

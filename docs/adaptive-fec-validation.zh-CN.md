@@ -565,3 +565,7 @@ b7e63fae6精确提交的完整OFF/ON构建及根工程26/30 CTest通过。默认
 该真实错误暴露了捕获恢复缺口：AcquireNextFrame及ReleaseFrame已将ACCESS_LOST归为reinit，GetFramePointerShape却统一归为error。[微软接口契约](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgioutputduplication-getframepointershape)要求释放并重建失效的复制接口。最小修复将此错误返回现有reinit路径，不改其他原生错误、不发布半更新游标、不新增恢复模块。直接调用生产update_cursor的COM夹具在修复前复现失败，修复后原3项测试通过；记录分别为`.logs/cursor-access-loss-before-20261005-172139`与`.logs/cursor-access-loss-after-20261005-172234`。未切换用户桌面，也不由该夹具宣称真实驱动恢复验收完成。
 
 7ff的全量review 5412385742选中92路径、过滤5个third-party路径，新增未发送许可取消的时间边界意见。预算状态已允许并发采样早于有效预留时间，取消路径却把同一旧采样视为未知提交并关闭预算。新增回归先复现该误记，修复只把取消时间限制为不早于预留时间；未开始发送时仍是已知零提交，已开始发送后的取消仍记不确定字节并关闭预算。前后记录为`.logs/permit-cancel-before-20261005-172512`与`.logs/permit-cancel-after-20261005-172528`。新的完整构建、CI与线复验按修复后提交另行记录，7ff证据保留其版本范围。
+
+6b7162c09的完整OFF/ON构建与根CTest 26/26、30/30通过。其增量review 5412603899指出RAM/VRAM两个snapshot调用点仍将update_cursor的reinit转为error，底层分类修复尚未贯通。补充回归直接调用两个实际snapshot，以成功AcquireNextFrame和失效指针接口复现该遗漏；两个调用点现在原样传递状态，其他指针错误仍返回error，不申请图像或发布游标。前后记录为`.logs/cursor-backends-before-20261005-175048`与`.logs/cursor-backends-after-20261005-175116`，不由原生接口夹具宣称真实驱动重建已验收。
+
+6b首轮固定源复验`.logs/kernel-fixed-capacity-20261005-173857`完成真实运行与计费/内核核对，但1341个完整离线解码单元均无标记，源关联审计失败。保留原始码流的附加luma诊断确认采集到Windows锁屏；随后只读原生会话查询也确认锁定。原容量门槛结果失败并保留，不能将锁屏轮次用于固定源恢复结论。剩余对照等待可见桌面与新提交产物，既有门槛不改，全部历史失败继续保留。
