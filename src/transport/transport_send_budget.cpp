@@ -152,7 +152,7 @@ namespace transport {
 
   send_budget_receipt_t
   session_send_budget_t::permit_t::cancel_before_send(std::int64_t now) noexcept {
-    return complete(0, 0, !started_, now);
+    return complete(0, 0, !started_, std::max(now, at_us_));
   }
 
   session_send_budget_t::reservation_t

@@ -553,3 +553,15 @@ b7e63fae6精确提交的完整OFF/ON构建及根工程26/30 CTest通过。默认
 同提交的既有AMF兼容配置复验在uniform-0收到HTTP 409：全部自动控制关闭，GoogCC却在GET与POST之间转移控制权，使revision从2变为3、controlEpoch从1变为2，令原手动请求失效。该独立故障记录为`.logs/manual-fec-wire-range-20261005-155117`，不能归因于编码缓冲或用重试隐藏。
 
 接管入口增加一项条件：自动码率与原生队列回压均关闭时，保留实际发送和逐包反馈观察，不转移策略所有权。显式启用队列回压但固定网络预算的已有模式继续允许接管。真实wire/反馈/首发事件的回归先复现旧代码抢占、版本失效与手动请求拒绝；修复后原版本请求成功，持续/突发原始丢包不改变手动RS策略，已有队列回压回归仍通过。修复前后记录分别为`.logs/convergence-components-20261005-155633`与`.logs/convergence-components-20261005-155653`；后者transport 4/4与GoogCC 3/3 CTest通过，输入/调度149项、wire15项、上游179项通过。新源码完整主机与真实复验继续单独记录，既有期限、容量、公平性失败及未测项目保留。
+
+## 7ff 真实复验与捕获恢复修复（2026-10-05）
+
+7ffeb7937的完整OFF/ON构建与根CTest分别26/26、30/30通过，对应CI 37280711084成功。固定源/Linux TBF原20→1.5→20 Mbps六轮复验全部执行：默认1/3、已有队列回压1/3达到原19 Mbps连续5秒门槛，重复验收失败；每轮22项IP、30项内核、12项像素核对通过。当前双会话45项计费/内核与17项源/解码核对通过，但原持续饱和资格窗口0/5，公平性未验收。各原始失败均保留。
+
+同源码默认100ms手动RS完成uniform-0至57，在uniform-58失败；既有AMF兼容配置完成uniform-0至68，在uniform-69失败，分别记录于`.logs/manual-fec-wire-range-20261005-165524`与`.logs/manual-fec-wire-range-20261005-161101`。59/70次手动请求均HTTP202、无409，但完整冗余尾部未发完；默认frame1020另有8条晚20微秒的提交回执，其中2条源片，发送器保留primary=false与恢复请求。失败后强制终止的CSV/码流不匹配，追加部分离线解码返回capture_csv_mismatch，不能补记解码通过或完整107矩阵通过。
+
+固定SDK已有RapidRecovery字段试验只在独立派生二进制验证，未接入生产。三轮预先声明的实验中，两轮达到原门槛13.62秒和8.91秒，首轮`.logs/kernel-fixed-capacity-20261005-163527`在指针形状读取报DXGI_ERROR_ACCESS_LOST后以video_ended结束会话。不能把两次完整结果记为三轮通过，导致复制接口失效的外部触发原因也未确认。
+
+该真实错误暴露了捕获恢复缺口：AcquireNextFrame及ReleaseFrame已将ACCESS_LOST归为reinit，GetFramePointerShape却统一归为error。[微软接口契约](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgioutputduplication-getframepointershape)要求释放并重建失效的复制接口。最小修复将此错误返回现有reinit路径，不改其他原生错误、不发布半更新游标、不新增恢复模块。直接调用生产update_cursor的COM夹具在修复前复现失败，修复后原3项测试通过；记录分别为`.logs/cursor-access-loss-before-20261005-172139`与`.logs/cursor-access-loss-after-20261005-172234`。未切换用户桌面，也不由该夹具宣称真实驱动恢复验收完成。
+
+7ff的全量review 5412385742选中92路径、过滤5个third-party路径，新增未发送许可取消的时间边界意见。预算状态已允许并发采样早于有效预留时间，取消路径却把同一旧采样视为未知提交并关闭预算。新增回归先复现该误记，修复只把取消时间限制为不早于预留时间；未开始发送时仍是已知零提交，已开始发送后的取消仍记不确定字节并关闭预算。前后记录为`.logs/permit-cancel-before-20261005-172512`与`.logs/permit-cancel-after-20261005-172528`。新的完整构建、CI与线复验按修复后提交另行记录，7ff证据保留其版本范围。

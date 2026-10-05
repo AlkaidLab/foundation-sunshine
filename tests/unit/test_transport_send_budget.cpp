@@ -330,6 +330,28 @@ namespace {
     EXPECT_EQ(receipt.credit_microbytes, 100 * scale);
   }
 
+  TEST(SessionSendBudget, CancellingWithOlderSamplePreservesKnownZeroAndSubmissionUncertainty) {
+    session_send_budget_t budget(1, {1000, 1000, 0}, 100);
+    auto before = budget.try_reserve(1, send_traffic_e::video, 100, 100, 90);
+    ASSERT_TRUE(before.permit);
+    const auto cancelled = before.permit->cancel_before_send(90);
+    EXPECT_TRUE(cancelled.accounting_valid);
+    EXPECT_TRUE(cancelled.completion_known);
+    EXPECT_EQ(cancelled.reserved_at_us, 100);
+    EXPECT_EQ(cancelled.at_us, 100);
+    EXPECT_EQ(cancelled.uncertain_ip_bytes, 0U);
+    EXPECT_EQ(cancelled.credit_microbytes, 1000 * scale);
+
+    auto after = budget.try_reserve(1, send_traffic_e::audio, 100, 100, 90);
+    ASSERT_TRUE(after.permit);
+    ASSERT_TRUE(after.permit->begin_submission());
+    const auto uncertain = after.permit->cancel_before_send(90);
+    EXPECT_FALSE(uncertain.accounting_valid);
+    EXPECT_FALSE(uncertain.completion_known);
+    EXPECT_EQ(uncertain.uncertain_ip_bytes, 100U);
+    EXPECT_TRUE(budget.try_snapshot()->stopped);
+  }
+
   TEST(SessionSendBudget, MaximumClockAndCreditDoNotOverflowRefillArithmetic) {
     constexpr auto maximum_time = std::numeric_limits<std::int64_t>::max() / 4;
     session_send_budget_t budget(epoch, { 100000000, 1000000000, 0 }, 0);
