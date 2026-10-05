@@ -37,6 +37,8 @@
 
 本轮删除 `external_allowance`、`debit_external_success` 与 `externally_submitted_ip_bytes`。时间边界测试迁到实际共享预算；探测、债务和参考链测试通过真实入队/成功提交建立初始条件，取消只服务于旧接口的模型测试。实际出口的信用、未知后缀与多线程回执验证继续保留。
 
+另删除没有生产调用的批量发送模板 `transport_send.h` 及其三个专属模型测试。生产提交继续使用平台 UDP 接口和 pacer；成功前缀、后缀重试、成功集合含洞、未知提交及账本计数的既有生产组件测试保留。
+
 `stream.cpp` 仍承担 Sunshine 会话和线格式适配，不能把这些职责整体删去。继续拆分时应以减少共享状态、队列和跨模块回调为标准，记录实际删除量与留下的适配代码；本轮未新增生产模块、运行时或依赖。
 
 NVIDIA 驱动设置管理开关有独立职责：允许隔离验证主机不修改全局 NVAPI 设置，并保留已有撤销恢复。它不参与拥塞控制或 FEC 决策，后续提交整理应单独说明该配置用途。
@@ -49,7 +51,7 @@ NVIDIA 驱动设置管理开关有独立职责：允许隔离验证主机不修�
 | --- | --- | --- |
 | `src/transport/transport_budget.*` | 字节口径、开销换算、预算与分片可行性 | 编码器重配置或网络发送 |
 | `src/transport/transport_policy.*`、`src/transport/transport_policy_json.*` | 已接不可变策略、候选与幂等历史、配置和首发回执、严格手动 API 契约 | 拥塞估计与网络发送 |
-| `src/transport/transport_feedback.*`、`src/transport/transport_feedback_wire.*`、`src/transport/transport_send.h` | 已接成功提交账本、批量后缀回退、串行协议入账和反馈输入限流；客户端实际报告已完成闭合前缀对账 | 直接修改码率 |
+| `src/transport/transport_feedback.*`、`src/transport/transport_feedback_wire.*` | 已接成功提交账本、串行协议入账和反馈输入限流；客户端实际报告已完成闭合前缀对账 | 直接修改码率 |
 | `src/transport/googcc_adapter.*` | 已实现固定上游估计器的隔离输入映射、时钟转换与探测请求输出 | 发送探测包或执行编码/FEC 策略 |
 | `src/transport/googcc_runtime.*` | 已接真实 owner 的串行发送/反馈/时钟输入；组件实现明确协商、应用/首发与有效反馈门槛，以及不可自动重获的租约 | 自建第二份包账本、把 accepted 当作 SDK applied，或伪造探测发送 |
 | `src/transport/transport_controller.*`（拟定，尚未创建） | 保护需求、唯一会话仲裁、模式切换与估计器接管；当前相关职责在 policy/runtime 中 | RTP 分包与阻塞发送 |

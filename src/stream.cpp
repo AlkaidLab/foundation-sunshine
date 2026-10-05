@@ -68,7 +68,6 @@ extern "C" {
   #include "transport/googcc_runtime.h"
 #endif
 #include "transport/transport_owner_inbox.h"
-#include "transport/transport_send.h"
 #include "transport/transport_send_budget.h"
 #include "utility.h"
 #include "webhook/webhook.h"

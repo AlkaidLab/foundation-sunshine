@@ -1,5 +1,4 @@
 #include "src/transport/transport_feedback.h"
-#include "src/transport/transport_send.h"
 
 #include <array>
 #include <limits>
@@ -379,46 +378,5 @@ namespace {
     EXPECT_TRUE(snapshot.counters_valid);
     EXPECT_LE(ledger.size(), 256);
     EXPECT_LE(snapshot.data_in_flight_bytes, 256 * 1280);
-  }
-  TEST(TransportSubmission, PartialBatchRetriesOnlyUnsubmittedSuffixAndAccountsSuccesses) {
-    send_ledger_t ledger(7);
-    std::vector<size_t> retries, committed;
-    const auto result = submit_packet_batch(8, [] { return size_t{3}; },
-      [&](size_t i) { retries.push_back(i); return i != 4 && i != 6; },
-      [&](size_t i) { committed.push_back(i); EXPECT_TRUE(ledger.commit_success(packet(65534 + i, 100 + i))); });
-    EXPECT_EQ(retries, (std::vector<size_t>{3,4,5,6,7}));
-    EXPECT_EQ(committed, (std::vector<size_t>{0,1,2,3,5,7}));
-    EXPECT_EQ(result.submitted, 6u);
-    EXPECT_EQ(result.failed, 2u);
-    EXPECT_EQ(ledger.snapshot().committed_packets, 6u);
-    EXPECT_EQ(ledger.snapshot().committed_ip_bytes, 6u * 1280u);
-    EXPECT_FALSE(ledger.find(65538));
-    EXPECT_FALSE(ledger.find(65540));
-  }
-
-  TEST(TransportSubmission, AllBatchPrefixesAndFallbackFailurePatternsMatchIndependentOracle) {
-    for (size_t count = 1; count <= 64; ++count) {
-      for (size_t prefix = 0; prefix <= count; ++prefix) {
-        std::vector<size_t> expected, actual, retried;
-        for (size_t i = 0; i < count; ++i) if (i < prefix || i % 3 != 0) expected.push_back(i);
-        const auto result = submit_packet_batch(count, [=] { return prefix; },
-          [&](size_t i) { retried.push_back(i); return i % 3 != 0; },
-          [&](size_t i) { actual.push_back(i); });
-        EXPECT_EQ(actual, expected);
-        EXPECT_EQ(result.submitted, expected.size());
-        EXPECT_EQ(result.failed, count - expected.size());
-        EXPECT_EQ(retried.size(), count - prefix);
-        for (const auto i : retried) EXPECT_GE(i, prefix);
-      }
-    }
-  }
-
-  TEST(TransportSubmission, InvalidPrefixDoesNotGuessSuccessOrDuplicateUnknownSubmissions) {
-    bool retried = false, confirmed = false;
-    const auto result = submit_packet_batch(8, [] { return size_t{9}; },
-      [&](size_t) { retried = true; return true; }, [&](size_t) { confirmed = true; });
-    EXPECT_FALSE(result.prefix_valid);
-    EXPECT_FALSE(retried);
-    EXPECT_FALSE(confirmed);
   }
 }  // namespace

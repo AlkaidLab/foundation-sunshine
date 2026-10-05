@@ -64,7 +64,6 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportPolicyStatus.c"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/TransportPolicyStatus.h"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_policy_json.h"
-        "${CMAKE_SOURCE_DIR}/src/transport/transport_send.h"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_budget.cpp"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_budget.h"
         "${CMAKE_SOURCE_DIR}/src/transport/transport_send_budget.cpp"
