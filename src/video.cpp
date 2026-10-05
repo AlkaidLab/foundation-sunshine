@@ -3346,6 +3346,7 @@ namespace video {
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false, bool exact_bitrate = false) {
     auto effective_config = config;
+    effective_config.paced_rate_control = exact_bitrate && !is_probe;
     effective_config.bitrate = exact_bitrate ? config.bitrate : cap_initial_encoder_bitrate(
       config.bitrate,
       config::video.max_bitrate,

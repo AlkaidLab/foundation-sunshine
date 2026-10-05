@@ -130,6 +130,8 @@ namespace transport {
                       std::string {};
       if (config.loss_recovery_without_padding)
         trials += "WebRTC-Bwe-LossBasedBweV2/Enabled,PaddingDuration:0ms/";
+      if (config.periodic_alr_probing)
+        trials += "WebRTC-BweRapidRecoveryExperiment/Enabled/";
       auto probe_log = std::make_unique<probe_event_log_t>(state, *clock, config.first_probe_cluster_id);
       return webrtc::CreateEnvironment(std::move(owned_clock), std::move(probe_log), webrtc::FieldTrials::Create(trials));
     }
