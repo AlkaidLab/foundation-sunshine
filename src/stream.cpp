@@ -3754,7 +3754,10 @@ namespace stream {
         const auto found = flows.find(mapping->second);
         if (found == flows.end()) continue;
         auto *session = found->second.context->session;
-        if (result.purpose == transport::paced_work_e::media && result.recovery_required && !found->second.flow->is_closed()) session->video.idr_events->raise(true);
+        // Dependent drops belong to the existing break. Re-requesting an IDR
+        // while its recovery is queued can turn that recovery into an IDR storm.
+        if (result.purpose == transport::paced_work_e::media && result.recovery_required &&
+            result.result != transport::frame_send_result_e::reference_chain_broken && !found->second.flow->is_closed()) session->video.idr_events->raise(true);
         BOOST_LOG(debug) << "Paced frame result: epoch=" << found->second.flow->connection_epoch
                          << " frame=" << result.frame_id << " result=" << static_cast<int>(result.result)
                          << " submitted=" << result.submitted_packets << " ip_bytes=" << result.submitted_ip_bytes
