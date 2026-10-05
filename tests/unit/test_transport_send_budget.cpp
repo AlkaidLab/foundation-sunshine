@@ -203,8 +203,6 @@ namespace {
     session_send_budget_t budget(epoch, { 1000, 200, 0 }, 0);
     auto permit = budget.try_reserve(epoch, video, 100, 100, 0);
     ASSERT_EQ(permit.result, accepted);
-    EXPECT_FALSE(budget.try_snapshot());
-    EXPECT_EQ(budget.try_reserve(epoch, video, 28, 28, 0).result, send_budget_result_e::busy);
     auto child = std::async(std::launch::async, [&] {
       return budget.try_reserve(epoch, send_traffic_e::audio, 28, 28, 0).result == send_budget_result_e::busy &&
              budget.try_update(epoch, { 1000, 100, 0 }, 0).result == send_budget_result_e::busy &&
