@@ -2,7 +2,7 @@
 
 本文定义 Sunshine 与 Moonlight 公共库的最新策略状态通知，以及 PC/Android 的查询补偿。消息只传递可信状态进度，完整策略与请求回执仍由[配对 HTTPS API](transport-policy-api-v2.zh-CN.md)提供。可靠通知不授予控制租约，也不证明整帧到达、解码或呈现。
 
-工作区已有实现与组件测试，完整交付继续按[实施文档 P3d](adaptive-fec-implementation.zh-CN.md#可靠通知与查询补偿)验收。真实收发、应用运行与资源开销分别记录于[验证记录](adaptive-fec-validation.zh-CN.md)，不能仅凭协议编解码通过宣告闭环完成。
+工作区已有实现与组件测试，完整交付继续按[实施文档 P3/P4](adaptive-fec-implementation.zh-CN.md#尚待完成的验收)验收。真实收发、应用运行与资源开销分别记录于[验证记录](adaptive-fec-validation.zh-CN.md)，不能仅凭协议编解码通过宣告闭环完成。
 
 第 41 阶段通过原生实际收发，第 42 阶段补充完整 Qt 只读会话中的原生接收、提前唤醒实际配对查询及独立回执对账。Qt 控制会话、Android Game/JNI、完整故障与资源成本仍须验收。
 
