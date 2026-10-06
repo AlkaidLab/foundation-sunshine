@@ -220,6 +220,7 @@ namespace input {
     activity::tracker_t activity_tracker;
     pen_wire::roll_probe_t pen_roll_probe;
     bool input_stopped = false;
+    std::chrono::steady_clock::time_point next_invalid_pen_warning {};
     std::unique_ptr<platf::client_input_t> client_context;
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
@@ -2174,6 +2175,23 @@ namespace input {
       if (input->input_stopped) {
         return;
       }
+      if (input_data.size() >= sizeof(NV_INPUT_HEADER)) {
+        const auto *header = reinterpret_cast<const NV_INPUT_HEADER *>(input_data.data());
+        if (util::endian::little(header->magic) == pen_wire::magic &&
+            !pen_wire::valid_size(input_data.size(), header->size)) {
+          const auto now = std::chrono::steady_clock::now();
+          if (now >= input->next_invalid_pen_warning) {
+            input->next_invalid_pen_warning = now + std::chrono::seconds(5);
+            BOOST_LOG(warning) << "Dropping invalid barrel-roll pen packet [session_id=" << input->session_id
+                               << ", payload_bytes=" << input_data.size()
+                               << ", header.size=" << util::endian::big(header->size)
+                               << ", expected_payload_bytes=" << sizeof(pen_wire::packet_t)
+                               << ", expected_header.size=" << sizeof(pen_wire::packet_t) - sizeof(std::uint32_t)
+                               << "] (warnings limited to one per 5 seconds per session)";
+          }
+          return;
+        }
+      }
       if (input_data.size() >= sizeof(SS_PEN_PACKET) &&
           util::endian::little(reinterpret_cast<PNV_INPUT_HEADER>(input_data.data())->magic) == SS_PEN_MAGIC) {
         input->pen_roll_probe.reset();
@@ -2231,11 +2249,13 @@ namespace input {
 
     // Ensure input is synchronous, by using the task_pool
     task_pool.push([input]() {
+#ifdef _WIN32
       if (input->client_context) {
         platf::pen_input_t cancel {};
         cancel.eventType = LI_TOUCH_EVENT_CANCEL_ALL;
         platf::pen_update(input->client_context.get(), {}, cancel);
       }
+#endif
       reset_input_state();
     });
   }
