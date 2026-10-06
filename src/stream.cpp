@@ -2416,11 +2416,19 @@ namespace stream {
 
         const float new_fps = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
         
-        if (new_fps <= 0.0f || new_fps > 1000.0f) {
+        if (!(new_fps > 0.0f && new_fps <= 1000.0f)) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
           return;
         }
 
+        if (session->config.packet_control) {
+          const auto floor_fps = static_cast<std::uint32_t>(new_fps);
+          const auto ceiling_fps = floor_fps + (new_fps != floor_fps);
+          if (session->transport_state->request_frame_rate(ceiling_fps, 1).result != transport::policy_request_result_e::accepted) {
+            BOOST_LOG(warning) << "Dynamic FPS does not fit the current transport budget";
+            return;
+          }
+        }
         session->config.monitor.framerate = static_cast<int>(new_fps);
         perf::update_session_display(
           session->launch_session_id,
@@ -4392,6 +4400,7 @@ namespace stream {
       if (equal_size && can_send(0)) {
         auto info = platf::batched_send_info_t { nullptr, 0, descriptors, packets.front().udp_payload.size(), 0, packets.size(),
           static_cast<uintptr_t>(sock.native_handle()), peer_address, active.context->peer.port(), active.context->source_address };
+        info.before_send = [&] { return can_send(0); };
         const auto attempt = platf::try_send_batch(info);
         const auto sent_at = transport_now_us();
         if (attempt.submitted_datagrams > packets.size() ||
@@ -4414,6 +4423,7 @@ namespace stream {
           }
           auto info = platf::send_info_t { nullptr, 0, reinterpret_cast<const char *>(packets[i].udp_payload.data()), packets[i].udp_payload.size(),
             static_cast<uintptr_t>(sock.native_handle()), peer_address, active.context->peer.port(), active.context->source_address };
+          info.before_send = [&, i] { return can_send(i); };
           const auto attempt = platf::try_send(info);
           const auto sent_at = transport_now_us();
           if (attempt.submitted_datagrams > 1 ||
@@ -5770,7 +5780,7 @@ namespace stream {
     }
 
     std::shared_ptr<session_t>
-    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session) {
+    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session, bool ipv6) {
       auto session = std::make_shared<session_t>();
 
       auto mail = std::make_shared<safe::mail_raw_t>();
@@ -5848,8 +5858,27 @@ namespace stream {
         session->current_total_bitrate = policy.budget.total_kbps;
         session->config.monitor.bitrate = policy.encoder_kbps;
         if (policy.encoder_kbps <= 0 || policy.budget.total_kbps > 800000) return {};
+        std::optional<transport::video_packetization_t> packetization;
+        if (config.packet_control) {
+          const auto block_bytes = static_cast<std::int64_t>(config.packetsize) + MAX_RTP_HEADER_SIZE;
+          const auto ip_bytes = block_bytes + static_cast<std::int64_t>(sizeof(video_packet_enc_prefix_t)) + TF_VIDEO_IDENTITY_BYTES + (ipv6 ? 48 : 28);
+          auto fps_num = config.monitor.frameRateNum > 0 ? config.monitor.frameRateNum : config.monitor.framerate;
+          auto fps_den = config.monitor.frameRateNum > 0 ? config.monitor.frameRateDen : 1;
+          if (block_bytes <= static_cast<std::int64_t>(sizeof(video_packet_raw_t)) || ip_bytes > 65535 ||
+              fps_num <= 0 || fps_den <= 0 || config.minRequiredFecPackets < 0) return {};
+          // Cover the existing integer-rate encoder fallback too.
+          if (static_cast<std::int64_t>(fps_num) < static_cast<std::int64_t>(config.monitor.framerate) * fps_den) {
+            fps_num = config.monitor.framerate;
+            fps_den = 1;
+          }
+          packetization = transport::video_packetization_t {
+            static_cast<std::uint32_t>(block_bytes - sizeof(video_packet_raw_t)), static_cast<std::uint32_t>(ip_bytes),
+            sizeof(video_short_frame_header_t), static_cast<std::uint32_t>(fps_num), static_cast<std::uint32_t>(fps_den),
+            static_cast<unsigned>(config.minRequiredFecPackets)
+          };
+        }
         session->transport_state = std::make_shared<transport::policy_state_t>(policy, config::video.max_bitrate,
-          config.packet_control, config::stream.experimental_transport_pacer);
+          config.packet_control, config::stream.experimental_transport_pacer, packetization);
         if (config.packet_control) {
           auto normalized = policy.budget;
           const auto audio_kbps = (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels;

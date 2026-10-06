@@ -40,6 +40,11 @@ namespace platf::udp_send_detail {
     return {udp_send_status_e::complete, datagrams, bytes, 0, false, true, bytes};
   }
 
+  inline udp_send_attempt_t
+  cancelled_before_send() {
+    return {udp_send_status_e::cancelled, 0, 0, 0, false, true, 0};
+  }
+
   template<class LengthAt>
   udp_send_attempt_t
   interpret_batch_prefix(int native_count, size_t requested, size_t datagram_size, LengthAt length_at) {
@@ -277,7 +282,8 @@ namespace platf::udp_send_detail {
 
   template<class Calls>
   udp_send_attempt_t
-  submit(std::uintptr_t socket, message_context_t &context, size_t packets, size_t expected_bytes, bool batch, Calls &calls) {
+  submit(std::uintptr_t socket, message_context_t &context, size_t packets, size_t expected_bytes, bool batch,
+    const std::function<bool()> &before_send, Calls &calls) {
     // Winsock has no per-send MSG_DONTWAIT. A synchronous WSASendMsg inherits
     // FIONBIO even for an overlapped socket. The owner must forbid concurrent
     // socket mode changes/close; no blocking-mode assertion is trusted here.
@@ -287,6 +293,7 @@ namespace platf::udp_send_detail {
       return {udp_send_status_e::failed, 0, 0, calls.last_error(), false, true, 0};
     }
     DWORD bytes = 0;
+    if (before_send && !before_send()) return cancelled_before_send();
     if (calls.send_message(static_cast<SOCKET>(socket), &context.msg, &bytes) == SOCKET_ERROR) {
       const auto error = calls.last_error();
       if (error == WSAEINVAL) calls.on_failure(error);
@@ -312,7 +319,7 @@ namespace platf::udp_send_detail {
       context.append(info.header, info.header_size);
     }
     context.append(info.payload, info.payload_size);
-    return submit(info.native_socket, context, 1, info.header_size + info.payload_size, false, calls);
+    return submit(info.native_socket, context, 1, info.header_size + info.payload_size, false, info.before_send, calls);
   }
 
   template<class Calls>
@@ -332,7 +339,8 @@ namespace platf::udp_send_detail {
       }
       context.append(layout.payloads[i], info.payload_size);
     }
-    auto result = submit(info.native_socket, context, info.block_count, info.block_count * layout.datagram_size, info.block_count > 1, calls);
+    auto result = submit(info.native_socket, context, info.block_count, info.block_count * layout.datagram_size,
+      info.block_count > 1, info.before_send, calls);
     info.submitted_blocks = result.submitted_datagrams;
     return result;
   }
@@ -450,6 +458,7 @@ namespace platf::udp_send_detail {
       context.append(info.header, info.header_size);
     }
     context.append(info.payload, info.payload_size);
+    if (info.before_send && !info.before_send()) return cancelled_before_send();
     const auto sent = calls.send_message(static_cast<int>(info.native_socket), &context.msg, MSG_DONTWAIT);
     if (sent < 0) {
       return native_failure(calls.last_error(), false);
@@ -477,6 +486,7 @@ namespace platf::udp_send_detail {
       contexts[i].append(layout.payloads[i], info.payload_size);
       messages[i].msg_hdr = contexts[i].msg;
     }
+    if (info.before_send && !info.before_send()) return cancelled_before_send();
     const auto sent = calls.send_messages(static_cast<int>(info.native_socket), messages.data(), static_cast<unsigned>(info.block_count), MSG_DONTWAIT);
     if (sent < 0) {
       return native_failure(calls.last_error(), true);

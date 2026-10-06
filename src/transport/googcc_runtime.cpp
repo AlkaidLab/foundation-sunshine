@@ -171,7 +171,7 @@ namespace transport {
       auto normalized = budget;
       normalized.fec_numerator = std::max({ base, key, recovery });
       normalized.fec_denominator = 100;
-      const auto allocation = allocate_budget(normalized);
+      const auto allocation = policy_->allocate_budget(normalized);
       if (!allocation || allocation->encoder_kbps <= 0) {
         ++rejected_requests_;
         return true;

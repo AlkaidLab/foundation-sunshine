@@ -7,12 +7,16 @@
 
 namespace transport {
   policy_state_t::policy_state_t(frame_policy_t initial, int maximum_total_kbps,
-    bool experimental_packet_control_negotiated, bool experimental_video_pacer_enabled):
+    bool experimental_packet_control_negotiated, bool experimental_video_pacer_enabled,
+    std::optional<video_packetization_t> packetization):
       maximum_total_kbps_(maximum_total_kbps),
       experimental_packet_control_negotiated_(experimental_packet_control_negotiated),
-      experimental_video_pacer_enabled_(experimental_video_pacer_enabled) {
+      experimental_video_pacer_enabled_(experimental_video_pacer_enabled),
+      packetization_(packetization) {
     if (experimental_packet_control_negotiated && !experimental_video_pacer_enabled)
       throw std::invalid_argument("Packet control requires experimental pacing");
+    if (packetization_ && (!experimental_packet_control_negotiated || !allocate_budget_locked(initial.budget)))
+      throw std::invalid_argument("Invalid negotiated video packetization");
     if (!initial.connection_epoch || initial.revision != 1 || initial.control_epoch != 1 ||
         initial.control_source != control_source_e::legacy || initial.encoder_ceiling_kbps ||
         (initial.automatic_control && (!experimental_packet_control_negotiated || initial.automatic_control->fec ||
@@ -26,6 +30,41 @@ namespace transport {
     }
     accepted_ = applied_ = std::make_shared<const frame_policy_t>(std::move(initial));
     receipts_.emplace(1, policy_receipt_t { applied_, false, std::nullopt, policy_failure_e::none });
+  }
+
+  std::optional<budget_allocation_t>
+  policy_state_t::allocate_budget_locked(const budget_request_t &budget) const noexcept {
+    return packetization_ ? transport::allocate_budget(budget, *packetization_) : transport::allocate_budget(budget);
+  }
+
+  std::optional<budget_allocation_t>
+  policy_state_t::allocate_budget(const budget_request_t &budget) const {
+    std::lock_guard lock(mutex_);
+    return allocate_budget_locked(budget);
+  }
+
+  policy_request_result_t
+  policy_state_t::request_frame_rate(std::uint32_t numerator, std::uint32_t denominator) {
+    std::lock_guard lock(mutex_);
+    if (stopped_) return { policy_request_result_e::stopped, {} };
+    if (!packetization_ || accepted_->basis != budget_basis_e::normalized) return {};
+    if (!numerator || !denominator) return {};
+    // The existing FPS command has no backend application receipt. Retain the
+    // higher rate until a new session establishes its negotiated format.
+    if (static_cast<std::uint64_t>(packetization_->frame_rate_num) * denominator >=
+        static_cast<std::uint64_t>(numerator) * packetization_->frame_rate_den)
+      return { policy_request_result_e::accepted, accepted_ };
+    auto wire = *packetization_;
+    wire.frame_rate_num = numerator;
+    wire.frame_rate_den = denominator;
+    const auto allocation = transport::allocate_budget(accepted_->budget, wire);
+    if (!allocation || allocation->encoder_kbps <= 0) return {};
+    auto policy = *accepted_;
+    policy.encoder_kbps = policy.encoder_ceiling_kbps ?
+      std::min(allocation->encoder_kbps, *policy.encoder_ceiling_kbps) : allocation->encoder_kbps;
+    const auto result = accept_locked(std::move(policy));
+    if (result.result == policy_request_result_e::accepted) packetization_ = wire;
+    return result;
   }
 
   policy_request_result_t
@@ -130,7 +169,7 @@ namespace transport {
     auto normalized = budget;
     normalized.fec_numerator = std::max({ fec_base, fec_key, fec_recovery });
     normalized.fec_denominator = 100;
-    const auto allocation = allocate_budget(normalized);
+    const auto allocation = allocate_budget_locked(normalized);
     if (!allocation || allocation->encoder_kbps <= 0) {
       return {};
     }

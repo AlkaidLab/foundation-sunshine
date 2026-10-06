@@ -101,7 +101,15 @@ namespace transport {
   public:
     static constexpr std::size_t receipt_capacity = 32;
     explicit policy_state_t(frame_policy_t initial, int maximum_total_kbps,
-      bool experimental_packet_control_negotiated = false, bool experimental_video_pacer_enabled = false);
+      bool experimental_packet_control_negotiated = false, bool experimental_video_pacer_enabled = false,
+      std::optional<video_packetization_t> packetization = {});
+
+    std::optional<budget_allocation_t>
+    allocate_budget(const budget_request_t &budget) const;
+    // Existing dynamic FPS commands update the format and encoder ceiling in
+    // one policy revision, without taking over network/FEC control.
+    policy_request_result_t
+    request_frame_rate(std::uint32_t numerator, std::uint32_t denominator);
 
     policy_request_result_t
     request_normalized(const budget_request_t &budget,
@@ -149,6 +157,8 @@ namespace transport {
     stop();
 
   private:
+    std::optional<budget_allocation_t>
+    allocate_budget_locked(const budget_request_t &budget) const noexcept;
     policy_request_result_t
     request_normalized_locked(const budget_request_t &budget,
       unsigned fec_base, unsigned fec_key, unsigned fec_recovery,
@@ -162,6 +172,7 @@ namespace transport {
     const int maximum_total_kbps_;
     const bool experimental_packet_control_negotiated_;
     const bool experimental_video_pacer_enabled_;
+    std::optional<video_packetization_t> packetization_;
     mutable std::mutex mutex_;
     frame_policy_ref_t accepted_;
     frame_policy_ref_t applied_;

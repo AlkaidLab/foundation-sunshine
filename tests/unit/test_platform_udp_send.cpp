@@ -226,6 +226,39 @@ namespace {
     }
   };
 
+  TEST(PlatformUdpSyscall, OwnerGuardRunsAfterNativeSetupAndCancelsKnownZero) {
+    for (const bool batch : {false, true}) {
+      request_t request;
+      fake_calls_t calls;
+      unsigned guards = 0;
+      const auto ready = [&] {
+        ++guards;
+        // Deadline/lease was valid at entry, then expired during FIONBIO.
+        return calls.mode_calls == 0;
+      };
+      platf::udp_send_attempt_t result;
+      if (batch) {
+        auto info = request.batch();
+        info.before_send = ready;
+        result = detail::try_send_batch_impl(info, calls);
+        EXPECT_EQ(info.submitted_blocks, 0U);
+      }
+      else {
+        auto info = request.single();
+        info.before_send = ready;
+        result = detail::try_send_impl(info, calls);
+      }
+      EXPECT_EQ(guards, 1U);
+      EXPECT_EQ(calls.mode_calls, 1);
+      EXPECT_EQ(calls.send_calls, 0);
+      EXPECT_EQ(result.status, udp_send_status_e::cancelled);
+      EXPECT_TRUE(result.submission_known);
+      EXPECT_FALSE(result.retryable);
+      EXPECT_EQ(result.submitted_datagrams, 0U);
+      EXPECT_EQ(result.submitted_payload_bytes, 0U);
+    }
+  }
+
   TEST(PlatformUdpSyscall, CompleteSingleCountsWholePrefixAndPayload) {
     request_t request;
     auto info = request.single();

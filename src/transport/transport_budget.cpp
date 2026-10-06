@@ -39,9 +39,9 @@ namespace transport {
     auto encoded_percentage = percentage;
     auto parity = (data_shards * encoded_percentage + 99) / 100;
     if (parity < minimum_parity) {
-      // Rounding the percentage down can describe fewer parity shards than
-      // were generated. Round up and recalculate the actual count instead.
-      encoded_percentage = static_cast<unsigned>((100 * minimum_parity + data_shards - 1) / data_shards);
+      // ceil(D*F/100) >= M iff D*F > 100*(M-1). Choose the smallest
+      // representable percentage; ceil(100*M/D) can add an unnecessary shard.
+      encoded_percentage = static_cast<unsigned>((100 * (minimum_parity - 1)) / data_shards + 1);
       parity = (data_shards * encoded_percentage + 99) / 100;
     }
     if (encoded_percentage > 255 || data_shards + parity > max_rs_shards) {
@@ -122,5 +122,39 @@ namespace transport {
       return std::nullopt;
     }
     return udp_payload_bytes + overhead;
+  }
+
+  std::optional<budget_allocation_t>
+  allocate_budget(const budget_request_t &request, const video_packetization_t &wire) noexcept {
+    auto allocation = allocate_budget(request);
+    if (!allocation || !wire.codec_payload_bytes || wire.codec_payload_bytes >= wire.ip_packet_bytes ||
+        wire.ip_packet_bytes > 65535 || wire.frame_header_bytes > 65535 ||
+        !wire.frame_rate_num || !wire.frame_rate_den || wire.minimum_parity > max_rs_shards) return {};
+    const auto scaled_fec = static_cast<std::uint64_t>(request.fec_numerator) * 100;
+    const auto percentage = scaled_fec / request.fec_denominator + (scaled_fec % request.fec_denominator != 0);
+    if (percentage > 255) return {};
+    const auto rate_denominator = static_cast<std::uint64_t>(wire.frame_rate_den) * 1000;
+    int encoder_ceiling = 0;
+    std::uint64_t largest_ip_rate = 0;
+    // The existing 4-block/10-bit frame index bounds this search and every
+    // multiplication below (at most4092*65535*8*UINT32_MAX < UINT64_MAX).
+    for (std::size_t data = 1; data <= max_fec_blocks * max_unprotected_shards; ++data) {
+      const auto payload = static_cast<std::uint64_t>(data) * wire.codec_payload_bytes;
+      if (payload <= wire.frame_header_bytes) continue;
+      const auto codec_rate = (payload - wire.frame_header_bytes) * 8 * wire.frame_rate_num / rate_denominator;
+      const auto layout = plan_fec_frame(data, static_cast<unsigned>(percentage), wire.minimum_parity);
+      if (!layout) return {};
+      const auto ip_rate = static_cast<std::uint64_t>(layout->data_shards() + layout->parity_shards()) *
+                           wire.ip_packet_bytes * 8 * wire.frame_rate_num;
+      const auto ip_kbps = ip_rate / rate_denominator + (ip_rate % rate_denominator != 0);
+      // Minimum-parity percentage rounding can make a smaller block cost more
+      // than the next larger one. Do not hide that cost behind a larger plan.
+      largest_ip_rate = std::max(largest_ip_rate, ip_kbps);
+      if (!layout->fec_skipped && largest_ip_rate <= static_cast<std::uint64_t>(allocation->primary_video_kbps))
+        encoder_ceiling = static_cast<int>(std::min(codec_rate, static_cast<std::uint64_t>(allocation->encoder_kbps)));
+      if (codec_rate >= static_cast<std::uint64_t>(allocation->encoder_kbps)) break;
+    }
+    allocation->encoder_kbps = encoder_ceiling;
+    return allocation;
   }
 }  // namespace transport

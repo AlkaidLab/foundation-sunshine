@@ -1,5 +1,6 @@
 #include "src/transport/transport_budget.h"
 
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <limits>
 
@@ -59,6 +60,40 @@ TEST(TransportBudget, IncreasingProtectionCannotIncreaseEncoderBudget) {
   }
 }
 
+TEST(TransportBudget, PacketizedRateClosesTheObservedNineDataNineParityOverrun) {
+  const transport::budget_request_t request { .total_kbps = 6000, .other_kbps = 200, .video_overhead_kbps = 500, .fec_numerator = 89 };
+  // Original authenticated IPv4 capture:1328 codec bytes per shard, 1436 IP
+  // bytes per datagram and8 short-header bytes at30fps. Nine data shards at
+  //89% require nine parity shards:18 * 1436 * 30 * 8 =6203520bits/s before audio.
+  const transport::video_packetization_t wire { 1328, 1436, 8, 30, 1, 2};
+  const auto nominal = transport::allocate_budget(request);
+  const auto packetized = transport::allocate_budget(request, wire);
+  ASSERT_TRUE(nominal);
+  ASSERT_TRUE(packetized);
+  EXPECT_EQ(nominal->encoder_kbps, 2804);
+  EXPECT_EQ(packetized->encoder_kbps, 2547);
+  EXPECT_EQ(packetized->wire_budget_kbps, 6000);
+  EXPECT_EQ(packetized->primary_video_kbps, 5800);
+}
+
+TEST(TransportBudget, PacketizedLimitsCoverActualHeadersMinimumParityAndFractionalFps) {
+  const transport::video_packetization_t wire { 1328, 1456, 8, 60000, 1001, 2 };
+  for (unsigned fec = 0; fec <= 100; ++fec) {
+    const auto allocation = transport::allocate_budget({ .total_kbps = 28000, .other_kbps = 200, .video_overhead_kbps = 500, .fec_numerator = fec }, wire);
+    ASSERT_TRUE(allocation);
+    ASSERT_GT(allocation->encoder_kbps, 0);
+    // Independent receiver/header arithmetic for this one-block format.
+    const auto mean_bits = static_cast<std::uint64_t>(allocation->encoder_kbps) * 1000 * 1001;
+    const auto codec_bytes = (mean_bits + 60000 * 8 - 1) / (60000 * 8);
+    const auto data = (codec_bytes + 8 + 1327) / 1328;
+    ASSERT_LE(data, 127U);
+    const auto encoded = fec ? std::max<std::uint64_t>(fec, 100 / data + 1) : 0;
+    const auto parity = (data * encoded + 99) / 100;
+    const auto ip_rate = (data + parity) * 1456 * 8 * 60000;
+    EXPECT_LE(ip_rate, static_cast<std::uint64_t>(allocation->primary_video_kbps) * 1000 * 1001);
+  }
+}
+
 TEST(TransportFec, DisabledFecIgnoresMinimumParity) {
   const auto block = transport::plan_fec_block(5, 0, 10);
   ASSERT_TRUE(block);
@@ -75,9 +110,25 @@ TEST(TransportFec, MinimumParityRoundTripsThroughActualHeaderPercentage) {
   EXPECT_EQ(block->parity_shards, (200 * block->encoded_percentage + 99) / 100);
 }
 
+TEST(TransportFec, MinimumParityUsesTheSmallestCoherentHeaderPercentage) {
+  const auto block = transport::plan_fec_block(51, 1, 2);
+  ASSERT_TRUE(block);
+  EXPECT_EQ(block->encoded_percentage, 2);
+  EXPECT_EQ(block->parity_shards, 2);
+  const auto small = transport::plan_fec_block(9, 1, 2);
+  ASSERT_TRUE(small);
+  EXPECT_EQ(small->encoded_percentage, 12);
+  EXPECT_EQ(small->parity_shards, 2);
+  const auto three = transport::plan_fec_block(1, 20, 3);
+  ASSERT_TRUE(three);
+  EXPECT_EQ(three->encoded_percentage, 201);
+  EXPECT_EQ(three->parity_shards, 3);
+}
+
 TEST(TransportFec, RejectsUnrepresentableMinimumAndOversizedRsBlocks) {
   EXPECT_FALSE(transport::plan_fec_block(0, 20, 0));
-  EXPECT_FALSE(transport::plan_fec_block(1, 20, 3));
+  // ceil(1*255/100) can represent three parity shards, but never four.
+  EXPECT_FALSE(transport::plan_fec_block(1, 20, 4));
   EXPECT_FALSE(transport::plan_fec_block(255, 20, 0));
   EXPECT_FALSE(transport::plan_fec_block(100, 256, 0));
   EXPECT_FALSE(transport::plan_fec_block(1024, 0, 0));

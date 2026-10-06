@@ -175,7 +175,7 @@ namespace stream {
 
   namespace session {
     std::shared_ptr<session_t>
-    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session);
+    alloc(config_t &config, rtsp_stream::launch_session_t &launch_session, bool ipv6);
     int
     start(session_t &session, const std::string &addr_string);
     void

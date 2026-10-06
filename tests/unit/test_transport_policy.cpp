@@ -23,6 +23,43 @@ namespace {
   }
 }  // namespace
 
+TEST(TransportPolicy, NormalizationRetainsTheNegotiatedWireLayoutAcrossOwnershipChanges) {
+  transport::policy_state_t state(initial(), 50000, true, true, transport::video_packetization_t { 1328, 1436, 8, 30, 1, 2 });
+  transport::budget_request_t budget { .total_kbps = 6000, .other_kbps = 200, .video_overhead_kbps = 500 };
+  const auto manual = state.request_normalized(budget, 89, 89, 89, 1, 1, "wire-bound").policy;
+  ASSERT_TRUE(manual);
+  EXPECT_EQ(manual->encoder_kbps, 2547);
+  ready(state);
+  const auto handoff = state.transfer_control({ 42, manual->control_epoch, manual->control_source }, transport::control_source_e::googcc, manual->revision).policy;
+  ASSERT_TRUE(handoff);
+  const auto controlled = state.request_controller_update({ 42, handoff->control_epoch, handoff->control_source }, budget, 89, 89, 89, handoff->revision).policy;
+  ASSERT_TRUE(controlled);
+  EXPECT_EQ(controlled->encoder_kbps, 2547);
+  EXPECT_EQ(controlled->budget.total_kbps, 6000);
+}
+
+TEST(TransportPolicy, DynamicFrameRateReallocatesAtomicallyWithoutTakingOverControl) {
+  transport::policy_state_t state(initial(), 50000, true, true, transport::video_packetization_t { 1328, 1436, 8, 30, 1, 2 });
+  const auto manual = state.request_normalized({ .total_kbps = 6000, .other_kbps = 200, .video_overhead_kbps = 500 }, 89, 89, 89, 1, 1).policy;
+  ASSERT_TRUE(manual);
+  ready(state);
+  ASSERT_EQ(state.acquire_pending(), manual);
+  ASSERT_TRUE(state.acknowledge_encoder(manual, transport::policy_failure_e::none));
+  const auto changed = state.request_frame_rate(60, 1).policy;
+  ASSERT_TRUE(changed);
+  EXPECT_EQ(changed->control_source, manual->control_source);
+  EXPECT_EQ(changed->control_epoch, manual->control_epoch);
+  EXPECT_EQ(changed->budget, manual->budget);
+  EXPECT_LE(changed->encoder_kbps, manual->encoder_kbps);
+  EXPECT_EQ(state.active(), manual);
+  EXPECT_EQ(state.request_frame_rate(60, 1).policy, changed);
+  EXPECT_EQ(state.request_frame_rate(10, 1).policy, changed);
+  EXPECT_EQ(state.request_frame_rate(0, 1).result, transport::policy_request_result_e::invalid);
+  EXPECT_EQ(state.request_frame_rate(1000, 1).result, transport::policy_request_result_e::invalid);
+  EXPECT_EQ(state.request_frame_rate(60, 0).result, transport::policy_request_result_e::invalid);
+  EXPECT_EQ(state.snapshot().accepted, changed);
+}
+
 TEST(TransportPolicy, LiveModeRequestsRequireNegotiationAndANormalizedSession) {
   transport::policy_state_t old(initial(), 50000);
   auto p = old.request_normalized(initial().budget, 20, 20, 20, 1, 1).policy;

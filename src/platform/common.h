@@ -1019,6 +1019,10 @@ namespace platf {
     // fails. Callers only retry the remaining suffix, never this prefix.
     size_t submitted_blocks = 0;
 
+    // Optional final owner check for try_send_batch, after native setup and
+    // immediately before the syscall. Synchronous; must not send or reenter.
+    std::function<bool()> before_send {};
+
     /**
      * @brief Returns a payload buffer descriptor for the given payload offset.
      * @param offset The offset in the total payload data (bytes).
@@ -1054,6 +1058,9 @@ namespace platf {
     boost::asio::ip::address &target_address;
     uint16_t target_port;
     boost::asio::ip::address &source_address;
+    // Same final owner check as the nonblocking batch API. Legacy send()
+    // does not use it; the owner keeps this callback alive for the call.
+    std::function<bool()> before_send {};
   };
 
   bool
@@ -1069,6 +1076,7 @@ namespace platf {
     invalid_request,
     failed,
     unknown_submission,
+    cancelled,
   };
 
   struct udp_send_attempt_t {

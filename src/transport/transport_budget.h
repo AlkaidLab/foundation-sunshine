@@ -36,6 +36,23 @@ namespace transport {
   std::optional<budget_allocation_t>
   allocate_budget(const budget_request_t &request) noexcept;
 
+  // Immutable negotiated wire layout. Codec bytes exclude the short frame
+  // header; every shard includes its padded payload and all outer headers.
+  struct video_packetization_t {
+    std::uint32_t codec_payload_bytes = 0;
+    std::uint32_t ip_packet_bytes = 0;
+    std::uint32_t frame_header_bytes = 0;
+    std::uint32_t frame_rate_num = 0;
+    std::uint32_t frame_rate_den = 1;
+    unsigned minimum_parity = 0;
+  };
+
+  // Preserve the requested reserve/ratio ceiling, then bound it by the actual
+  // padded RS layout at the negotiated mean frame rate. This does not predict
+  // or guarantee the size/deadline of an individual encoded access unit.
+  std::optional<budget_allocation_t>
+  allocate_budget(const budget_request_t &request, const video_packetization_t &packetization) noexcept;
+
   struct fec_block_t {
     std::uint16_t data_shards = 0;
     std::uint16_t parity_shards = 0;

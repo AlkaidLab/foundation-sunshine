@@ -2073,7 +2073,7 @@ namespace rtsp_stream {
     }
 
     std::string announce_payload { payload };
-    auto stream_session = stream::session::alloc(config, session);
+    auto stream_session = stream::session::alloc(config, session, net::normalize_address(sock.remote_endpoint().address()).is_v6());
     if (!stream_session) {
       respond(sock, session, &option, 400, "Invalid Transport Budget", req->sequenceNumber, {});
       return;
