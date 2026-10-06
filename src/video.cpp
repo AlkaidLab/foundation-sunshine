@@ -3728,7 +3728,9 @@ namespace video {
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
-      if (!requested_idr_frame || images->peek()) {
+      // Paced sessions use the existing capture/minimum-FPS input cadence
+      // for IDR too. A request must not insert an extra immediate codec input.
+      if (config.paced_rate_control || !requested_idr_frame || images->peek()) {
         if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           auto &img = frame->image;
           latest_image = img;
