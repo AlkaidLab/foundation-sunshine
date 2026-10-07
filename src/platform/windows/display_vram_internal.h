@@ -4,12 +4,37 @@
  */
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 
 #include "display.h"
 
 namespace platf::dxgi {
+  struct shared_yuv_plane_t {
+    HANDLE shared_handle = nullptr;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    bool ten_bit = false;
+  };
+
+  /**
+   * D3D11 YUV output owned by the existing conversion/filter pipeline.
+   *
+   * PyroWave consumes this interface without duplicating Sunshine's HDR,
+   * rotation, scaling, cursor, or optional enhancement shaders.
+   */
+  class shared_yuv_encode_device_t: public platf::encode_device_t {
+  public:
+    virtual ID3D11Device *d3d_device() noexcept = 0;
+    virtual ID3D11DeviceContext *d3d_context() noexcept = 0;
+    virtual const std::array<shared_yuv_plane_t, 3> &yuv_planes() const noexcept = 0;
+  };
+
+  [[nodiscard]] std::unique_ptr<shared_yuv_encode_device_t>
+  make_shared_yuv_encode_device(std::shared_ptr<display_base_t> display, const ::video::config_t &config);
+
   /**
    * D3D11-backed image shared by capture backends and hardware encoders.
    *

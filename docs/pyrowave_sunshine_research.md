@@ -1,171 +1,124 @@
-# Pyrowave 与 Foundation Sunshine 集成研究报告
+# PyroWave 与 Foundation Sunshine 集成研究
 
-日期：2026-09-27
+## 结论
 
-## 1. 结论
+PyroWave 适合在高带宽局域网中作为实验性视频格式进行研究。它可能降低编码和解码等待时间，但通常需要更多网络带宽，因此不能替代 H.264、HEVC 和 AV1，也不适合作为默认编码格式。
 
-Pyrowave 适合在主机与客户端位于同一有线千兆网络、且用户优先考虑端到端延迟的场景中作为实验性视频编码方案。它的主要优势来自 GPU Compute 编解码和帧内编码，代价是带宽显著高于 H.264、HEVC 和 AV1。
+当前建议只面向 Windows Sunshine 和配套的 Moonlight V+ Android 实验版本，保持旧客户端和旧编码格式兼容。
 
-将 Pyrowave 集成到 Foundation Sunshine 需要同时扩展 Sunshine 服务端、Moonlight 客户端、视频格式协商、RTP/帧分片和 Vulkan 图像互操作。当前需求不能按“增加一个编码器名称”处理。
-
-建议先保留为增强需求，使用单一客户端做独立 PoC，默认关闭，并保留 H.264、HEVC 和 AV1 回退。待 Pyrowave 的 API/ABI 和客户端协议稳定后，再评估是否进入正式版本。
-
-## 2. 需求背景
-
-本报告评估在 Sunshine 中增加 Pyrowave codec 的技术可行性。当前没有具体客户端、GPU、操作系统或性能数据，因此只能评估技术可行性，不能判断对现有 Foundation Sunshine 用户的实际收益。
-
-Steam 已在 2026 年 9 月的 Beta 客户端中加入 Pyrowave 实验支持。官方说明支持 Windows 和 macOS，Linux 需要实验性的 SteamRT3 客户端，移动端支持后续提供。Steam 将其定位为高带宽、低延迟选项，并建议主机和客户端使用至少千兆以太网：
-
-- [Steam Remote Play：Pyrowave video codec now in beta](https://steamcommunity.com/groups/homestream/discussions/0/564794422009744473?snr=2___)
-- [Steam Client Beta 更新记录](https://steamcommunity.com/groups/SteamClientBeta/announcements?client_view=1)
-
-截至 2026 年 9 月 25 日，Steam 已在 9 月 22 日的 Beta 更新中处理 Linux/SteamOS 串流闪烁、频繁切换分辨率时的 GPU 内存泄漏，以及 Compute Queue 竞争问题。该更新未说明编码延迟问题已经修复，因此 Pyrowave 仍处于快速迭代阶段。
-
-## 3. Pyrowave 的技术特点
-
-Pyrowave 官方项目的说明如下：
-
-- 帧内编码，实际使用方式接近高速静态图像编码；
-- 使用 CDF 9/7 小波变换和 Vulkan Compute Shader；
-- 目标码率约 200 Mbps 以上；
-- 支持 YCbCr 4:2:0 和 4:4:4；
-- 每个 64×64 区块独立编码，丢包后不会像传统参考帧编码一样持续污染后续画面；
-- 项目声称 1080p 编解码耗时约低于 0.1 ms，4K 约低于 0.2 ms；
-- 当前 C API/ABI 仍处于 0.x 版本，项目明确说明尚未稳定。
-
-资料：
-
-- [Themaister/pyrowave](https://github.com/Themaister/pyrowave)
-- [Pyrowave C API](https://raw.githubusercontent.com/Themaister/pyrowave/master/pyrowave.h)
-- [Pyrowave CMake 构建要求](https://raw.githubusercontent.com/Themaister/pyrowave/master/CMakeLists.txt)
-
-Steam 文档给出的客户端码率范围为 100～500 Mbps，并说明总延迟仍由编码、网络、解码和显示共同决定。网络本身已经占据主要延迟时，替换编码器未必能带来相同幅度的端到端收益。
-
-## 4. Sunshine 当前视频链路
-
-### 4.1 协议和编码器
-
-Foundation Sunshine 当前 Moonlight 协议中的视频格式主要是 H.264、HEVC 和 AV1：[Limelight.h](../third-party/moonlight-common-c/src/Limelight.h:305)。
-
-当前视频编码器抽象为 H.264、HEVC 和 AV1 三组配置：[video.h](../src/video.h:393)。RTSP 描述阶段也只根据 HEVC 和 AV1 能力广播对应字段：[rtsp.cpp](../src/rtsp.cpp:1238)。
-
-因此，增加 Pyrowave 至少需要新增：
-
-1. 客户端和服务端共同理解的视频格式标识与能力协商；
-2. RTSP/控制流中的 Pyrowave 参数，包括尺寸、帧率、色彩空间和目标码率；
-3. Pyrowave 帧的 RTP 分片、重组、时间戳和丢包处理；
-4. 客户端 GPU 解码、帧同步和显示路径；
-5. 不支持 Pyrowave 时的 H.264、HEVC 或 AV1 回退。
-
-### 4.2 Windows 捕获资源
-
-Windows 的 VRAM 捕获路径使用 D3D11 资源。捕获图像类型 `img_d3d_t` 持有 D3D11 纹理、共享句柄和 Keyed Mutex：[display_vram_internal.h](../src/platform/windows/display_vram_internal.h:19)。捕获纹理创建时还会设置 `D3D11_RESOURCE_MISC_SHARED_NTHANDLE` 和 `D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX`：[display_vram.cpp](../src/platform/windows/display_vram.cpp:4336)。
-
-这意味着 Sunshine 已经可以在 GPU 内部保留捕获画面，通常不需要先复制到 CPU 内存。问题在于这张画面当前是 D3D11 `ID3D11Texture2D`，而 Pyrowave 需要 Vulkan `VkImage` 和 Vulkan 设备。
-
-### 4.3 Vulkan 互操作
-
-当前代码虽然存在 Vulkan 编码器路径，但其 FFmpeg Vulkan 输入设备会单独创建 Vulkan 设备：[video.cpp](../src/video.cpp:4933)。这不能直接证明捕获得到的 D3D11 纹理已经可以被 Pyrowave 使用。
-
-Windows 上可行的低延迟路径是：
+## 端到端架构
 
 ```text
-D3D11 捕获纹理
-    ↓ 共享 NT Handle / 外部内存导入
-Vulkan VkImage
-    ↓ 外部 Semaphore 或其他同步机制
-Pyrowave Vulkan Encoder
+Windows 捕获
+    → Sunshine 现有画面处理
+    → PyroWave 视频编码
+    → Sunshine 视频传输
+    → Moonlight V+ 协议重组
+    → PyroWave GPU 解码
+    → 客户端 Surface 呈现
 ```
 
-这个路径需要验证：
+PyroWave 作为独立的视频编码后端接入共享视频管线，不复制一套新的捕获或会话循环。音频、麦克风、输入、USB、控制器和剪贴板通道继续使用现有实现。
 
-- D3D11 资源是否能被当前 GPU 驱动导入 Vulkan；
-- D3D11 Keyed Mutex 与 Vulkan 外部同步对象如何对应；
-- 捕获 GPU 与 Vulkan 编码 GPU 是否为同一适配器；
-- BGRA、FP16、NV12、P010 等格式如何转换；
-- VDD、混合显卡和显示器切换时资源是否仍然有效。
+Windows 构建直接使用仓库中的 PyroWave CMake 子项目，将 C API、核心和必要依赖静态链接进 Sunshine。PyroWave、Granite 和嵌套依赖的版本由各自的子模块 gitlink 固定，不在构建脚本中重复维护 SHA，也不复制一份源码参与构建。运行时不依赖单独的 PyroWave DLL。
 
-单 GPU 且捕获和编码使用同一适配器时，零拷贝方案具有较高可行性。混合显卡场景需要跨适配器复制或共享，风险明显更高。若退回 CPU 内存再上传 Vulkan，虽然可以快速验证协议，但会削弱 Pyrowave 的主要低延迟优势。
+## 协议与兼容性
 
-### 4.4 当前仓库中的 Vulkan 能力边界
+PyroWave 现在使用独立的 `PYRF` Frame Envelope。当前合同字段固定为
+`protocolVersion=2`、`bitstreamVersion=2`、`payloadVersion=3`；每个内层包使用固定
+Frame Header，并区分 Frame Header、data 和 parity 包。metadata 使用 TLV，受保护 metadata
+与 PyroWave bitstream 一起参与 block-aware FEC。PyroWave 尚未发布旧 wire，因此不实现旧格式兼容或
+迁移分支；没有声明该能力的客户端继续使用传统编码格式。
 
-当前代码定义了一个基于 FFmpeg Vulkan 的 `vulkan` 编码器，包含 `h264_vulkan`、`hevc_vulkan` 和 `av1_vulkan`，输入格式为 NV12/P010，编码器定义没有提供 YUV 4:4:4 输入：[video.cpp](../src/video.cpp:1649)。这表示仓库中存在 Vulkan 编码器描述和 FFmpeg Vulkan 设备初始化代码，不代表现有捕获纹理已经能够直接进入 Vulkan 编码器。
+客户端与服务端必须同时支持：
 
-当前 Windows 显示工厂主要根据 `dxgi` 和 `system` 创建 DDX/WGC/VDD 捕获对象：[display_base.cpp](../src/platform/windows/display_base.cpp:1262)。Linux 的 Wayland、KMS 捕获路径主要处理 `system`、`vaapi` 和 `cuda`，没有看到与 `mem_type_e::vulkan` 对应的完整捕获对象接入：[wlgrab.cpp](../src/platform/linux/wlgrab.cpp:381) [kmsgrab.cpp](../src/platform/linux/kmsgrab.cpp:1534)。因此现有 Vulkan encoder 目前应视为已定义但链路尚未完整接通的能力，是否能在特定构建和 FFmpeg 环境下运行仍需单独验证。
+- API 和 bitstream 版本；
+- 视频尺寸、帧率和最大包长度；
+- SDR、HDR10/PQ、HLG 及对应的 limited/full 色彩范围；
+- 帧分片、重组、超时和丢包恢复规则。
 
-Windows 中的 Vulkan HDR Bridge 是另一条独立能力。它为 ZakoVDD 的 Vulkan 应用临时注册 HDR 兼容层，作用是改善 Vulkan 应用向 VDD HDR 输出的呈现，不负责屏幕捕获、Vulkan 编码或 D3D11 到 Vulkan 的资源导入：[vulkan_hdr_bridge.md](vulkan_hdr_bridge.md:1)。
+主机处理耗时通过可选 Runtime TLV 传递；丢失时只影响诊断，不影响视频。静态 HDR 呈现信息
+仍通过现有控制通道传递，不能把 `SS_HDR_METADATA` 混入 PyroWave color metadata。
 
-因此，Pyrowave 所需的能力仍然缺失以下关键环节：
+旧版 Moonlight 不声明 PyroWave 能力，因此继续使用 H.264、HEVC 或 AV1。实验客户端
+显式选择 PyroWave 但不满足协议或设备条件时，应在媒体开始前拒绝本次连接并记录原因，
+不在同一次连接中自动切换传统编码格式。
 
-```text
-D3D11 捕获纹理
-    → Vulkan 外部内存导入
-    → D3D11/Vulkan 外部同步
-    → Pyrowave Vulkan Compute 编码
-```
+## HDR 处理边界
 
-这也是 Pyrowave 需要独立编码后端和资源互操作层的原因，不能直接复用现有 NVENC、AMF 或当前 FFmpeg Vulkan 编码器定义。
+PyroWave 的码流颜色信息与 Sunshine 的静态 HDR 呈现信息不是同一类数据：
 
-## 5. 网络和客户端影响
+- 码流合同描述 primaries、transfer、YCbCr 变换、range 和 chroma siting；
+- Sunshine 的静态 HDR 信息通过现有控制通道传递到客户端呈现层；
+- HDR10/PQ 在客户端具备对应呈现能力时应用静态 HDR 信息；
+- HLG 没有完整 mastering metadata 时仍保持 HLG 呈现，不伪造 HDR10 metadata；
+- `maxFullFrameLuminance` 会随 `SS_HDR_METADATA` 传递并校验，但 Vulkan 的 `VkHdrMetadataEXT`
+  没有独立字段，因此当前呈现层只保留该值，不把它错误映射为 MaxFALL；
+- 动态 HDR10+ 的 TLV 类型已经预留，但当前不产生也不由 Vulkan 呈现；HDR10+、HDR Vivid 和
+  Dolby Vision 仍不属于当前可用能力。
 
-Pyrowave 的带宽成本是主要产品风险。PyroFling 项目给出的 1080p60 示例使用 250 Mbps，且额外的 FEC 会继续增加带宽；4K、120 FPS 或高质量 4:4:4 场景可能明显高于这个数值。
+缺少必要能力时，媒体开始前拒绝本次 PyroWave 连接。静态 HDR 元数据缺失或无法校验时，
+不伪造默认值，保留已协商的 PQ/HLG 色彩空间并明确记录降级状态；运行中的 Vulkan/Surface
+不可恢复错误仍只结束当前视频会话。
 
-参考：[Themaister/pyrofling](https://github.com/Themaister/pyrofling)
+## 失败处理
 
-影响范围包括：
+PyroWave 的资源、设备和协议错误必须限定在当前视频会话：
 
-- 普通 Wi-Fi、百兆网络和存在带宽限制的远程网络不适合默认启用；
-- 路由器队列、MTU、UDP 丢包和 FEC 开销需要重新评估；
-- 客户端需要真正支持 Vulkan Compute 或等效的 GPU 解码路径；
-- Moonlight PC、Android、iOS、Switch 以及 Foundation 生态中的定制客户端都需要分别适配；
-- 旧客户端必须继续使用已有视频格式，不能因为服务器支持 Pyrowave 就改变默认协商结果。
+1. 协商失败，或初始化失败且没有支持的恢复路径：结束当前 PyroWave 连接，不静默改用传统编码格式；
+2. 没有 GPU 专属增强且独占共享捕获的 SDR 会话允许重建为 CPU PyroWave；存在其他会话时不改变共享捕获类型，只结束失败会话。CPU 捕获期间拒绝不兼容的新 GPU 会话，显示重建继续使用 CPU 图像；HDR、增强路径和 CPU 恢复失败时结束当前视频会话；
+3. 客户端解码或呈现发生不可恢复错误时结束当前视频会话，不在运行中切换传统编码器；
+4. 会话结束后释放本次视频资源；
+5. 不影响 Sunshine 进程、音频通道和其他客户端。
 
-PyroFling 已经有自己的 `pyro://` 传输、客户端、服务端和 Android 实验代码，但它是独立协议，不能直接替代 Moonlight 的 RTSP/RTP 链路。它更适合作为性能和算法参考实现。
+## 主要风险
 
-## 6. 主要风险
+### 带宽
 
-| 风险 | 影响 | 处理建议 |
-|---|---|---|
-| 协议不兼容 | 现有 Moonlight 客户端无法解码 | 先完成能力协商和客户端 PoC，服务端保持回退 |
-| 高带宽 | Wi-Fi、百兆网或 WAN 下卡顿、丢帧 | 仅手动开启，限制在有线千兆环境 |
-| Vulkan 设备不匹配 | 混合显卡、VDD 或多 GPU 下导入失败 | 按适配器 LUID 选择设备，失败后回退 |
-| D3D11/Vulkan 同步错误 | 花屏、撕裂、GPU hang | 单独封装外部内存和同步生命周期 |
-| API/ABI 未稳定 | 上游升级造成构建或运行时破坏 | 暂不依赖动态 ABI，固定版本并隔离模块 |
-| 驱动覆盖不足 | 部分旧 GPU 无法运行 Vulkan 1.3 特性 | 启动时能力探测，保留 H.264/HEVC/AV1 |
-| 资源生命周期错误 | VDD、串流恢复或断开时崩溃 | 将编码资源绑定到 RTSP 会话，完整覆盖取消和断开路径 |
+PyroWave 的带宽需求可能明显高于 HEVC 和 AV1。普通 Wi-Fi、百兆网络和远程网络不应默认使用实验格式。
 
-Pyrowave 项目采用 MIT 许可证，但引入其构建依赖、Vulkan 运行库和客户端组件时仍需单独核对发行包和第三方许可证边界。
+### 硬件差异
 
-## 7. 推荐的 PoC 方案
+GPU、驱动、显示设备、虚拟显示器和混合显卡会影响 GPU 编解码与显示呈现。单一设备上的成功不能推导出所有硬件都兼容。
 
-建议第一阶段只选择 Windows 服务端和一个可控客户端，例如 Moonlight V+，暂时不修改所有客户端。
+### 生命周期
 
-### 服务端
+显示切换、设备丢失、恢复连接和长时间运行需要单独验证，不能仅凭一次启动成功判断资源生命周期完整。
 
-1. 固定一个 Pyrowave 版本，先静态集成，不依赖不稳定的动态 ABI。
-2. 新增独立的 `pyrowave` 编码模块，不改动已有 H.264、HEVC、AV1 实现。
-3. 从当前 D3D11 捕获纹理导入 Vulkan，验证同一适配器下的零拷贝路径。
-4. 初期只支持 SDR、1080p60、4:2:0 和有线网络。
-5. 导入或同步失败时立即回退到现有编码器。
+### 上游变化
 
-### 客户端
+PyroWave API/ABI 仍处于 0.x，项目必须固定版本并在升级时重新验证 Sunshine 与客户端的合同。
 
-1. 增加实验性视频格式能力声明。
-2. 增加 Pyrowave 帧分片和重组。
-3. 使用 Vulkan Compute 解码并输出到渲染纹理。
-4. 加入解码耗时、丢包、重组超时和 GPU 内存统计。
+## 当前范围
 
-### 验收指标
+当前研究只覆盖：
 
-- 1080p60 下编码和解码路径稳定运行 30 分钟以上；
-- 不经过 CPU 帧拷贝；
-- 在 1 Gbps 有线网络中对比 AV1/HEVC 的编码、网络、解码和显示延迟；
-- 模拟丢包后能在下一帧恢复；
-- 断开、Resume、VDD 销毁和客户端切换不会泄漏 Vulkan/D3D11 资源；
-- 不支持 Pyrowave 的客户端仍能正常使用现有编码格式。
+- Windows Sunshine；
+- 配套 Moonlight V+ Android 实验版本；
+- SDR、静态 HDR10/PQ、静态 HLG；
+- 4:2:0、limited/full range；
+- SDR 8-bit、HDR10/PQ 与 HLG 10-bit；不提供独立的 SDR 10-bit 模式；
+- 高带宽局域网；
+- 未选择 PyroWave 时，传统视频格式仍按既有规则协商；这不表示显式 PyroWave 连接会自动改用其他编码器。
 
-## 8. 最终建议
+PyroWave 的位深与传输模式固定为：
 
-当前最合理的处理方式是将 Pyrowave 作为实验性研究需求，不立即进入主线实现。先完成“单 GPU、D3D11 到 Vulkan 零拷贝、单客户端、1080p60”的 PoC，再根据实际端到端延迟决定是否扩展到 HDR、4:4:4、4K 和其他客户端。
+| `dynamicRange` | 信号 | 位深 | 范围 |
+|---:|---|---:|---|
+| `0` | SDR / BT.709 | 8-bit | limited 或 full |
+| `1` | HDR10 / PQ / BT.2020 | 10-bit | limited 或 full |
+| `2` | HLG / BT.2020 | 10-bit | limited 或 full |
 
-Pyrowave 的价值主要在局域网极低延迟场景。它不能替代现有 H.264、HEVC 和 AV1，也不适合作为默认编码格式。
+协议没有独立的 SDR 10-bit 选项；编码器探针显示的 SDR 10-bit 能力不代表该模式可由
+Moonlight 选择。
+
+Linux、其他客户端、动态 HDR、4K、4:4:4、高帧率全覆盖以及正式发行承诺，均不在当前范围内。
+
+## 参考资料
+
+- [PyroWave](https://github.com/Themaister/pyrowave)
+- [PyroWave C API](https://raw.githubusercontent.com/Themaister/pyrowave/master/pyrowave.h)
+- [PyroWave bitstream draft](https://github.com/Themaister/pyrowave/blob/master/bitstream/bitstream.md)
+- [PyroFling](https://github.com/Themaister/pyrofling)
+- [Steam PyroWave beta announcement](https://steamcommunity.com/groups/homestream/discussions/0/564794422009744473)
+- [Vulkan external memory and synchronization](https://docs.vulkan.org/guide/latest/extensions/external.html)

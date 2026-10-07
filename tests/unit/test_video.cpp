@@ -143,6 +143,11 @@ TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
   EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
 }
 
+TEST(VideoBitrate, PyrowaveUsesHostCapWithoutLegacyRtpFecConversion) {
+  EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 50000, 0), 50000);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 0), 50000);
+}
+
 TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication) {
   video::hdr_pipeline_status_t status;
   status.nr_toggle_supported = true;

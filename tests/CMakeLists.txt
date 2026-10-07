@@ -81,6 +81,49 @@ if (WIN32)
 endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
 
+add_executable(pyrowave_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/config.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/capabilities.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/gpu_interop.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packet.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/session.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/runtime.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveProtocol.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c
+        ${CMAKE_SOURCE_DIR}/tests/tools/pyrowave_test_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pyrowave.cpp)
+target_include_directories(pyrowave_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(pyrowave_unit_tests Boost::log Boost::format gtest_main)
+target_compile_options(pyrowave_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(pyrowave_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_sources(pyrowave_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp)
+    target_link_libraries(pyrowave_unit_tests Pyrowave::Runtime ${FFMPEG_LIBRARIES})
+    set_target_properties(pyrowave_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME pyrowave_unit_tests COMMAND pyrowave_unit_tests)
+
+add_executable(pyrowave_packetizer_probe
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packet.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveProtocol.c
+        ${CMAKE_SOURCE_DIR}/tests/tools/pyrowave_test_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/tools/pyrowave_packetizer_probe.cpp)
+target_include_directories(pyrowave_packetizer_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(pyrowave_packetizer_probe Boost::log Boost::format)
+target_compile_options(pyrowave_packetizer_probe PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(pyrowave_packetizer_probe PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+if (WIN32)
+    set_target_properties(pyrowave_packetizer_probe PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME pyrowave_packetizer_probe COMMAND pyrowave_packetizer_probe)
+
 if (WIN32)
     set(HDR_ENCODING_TEST_SOURCE
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_hdr_encoding.cpp)
@@ -356,6 +399,11 @@ list(REMOVE_ITEM SUNSHINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
 add_executable(${PROJECT_NAME}
         ${TEST_SOURCES}
         ${SUNSHINE_SOURCES})
+target_sources(${PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c)
+if (WIN32)
+    target_link_libraries(${PROJECT_NAME} Pyrowave::Runtime)
+endif ()
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(${PROJECT_NAME} sunshine_rtx_video_adapter)
     target_include_directories(${PROJECT_NAME} PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")

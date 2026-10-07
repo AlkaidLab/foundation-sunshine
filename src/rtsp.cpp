@@ -15,8 +15,12 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cstring>
+#include <limits>
+#include <optional>
 #include <set>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -36,6 +40,8 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "network.h"
+#include "pyrowave/runtime.h"
+#include "pyrowave/packet.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "sync.h"
@@ -1240,6 +1246,34 @@ namespace rtsp_stream {
       ss << "a=rtpmap:98 AV1/90000"sv << std::endl;
     }
 
+#ifdef _WIN32
+    // Clients that do not advertise CAPABILITY_PYROWAVE ignore this Windows
+    // extension and negotiate one of the legacy formats below. Do not
+    // advertise it if this host cannot create the Vulkan runtime device; that
+    // lets clients fall back before ANNOUNCE instead of failing on the first
+    // encoded frame.
+    if (pyrowave::is_server_runtime_available()) {
+      // Select PyroWave only through the versioned x-ss-pyrowave contract.
+      // Do not put its out-of-range numeric ID in the legacy bitStreamFormat
+      // attribute, which older clients may parse.
+      ss << "a=x-ss-pyrowave.protocolVersion:" << LI_PYROWAVE_PROTOCOL_VERSION << std::endl;
+      ss << "a=x-ss-pyrowave.bitstreamVersion:" << LI_PYROWAVE_BITSTREAM_VERSION << std::endl;
+      ss << "a=x-ss-pyrowave.payloadVersion:" << LI_PYROWAVE_PAYLOAD_VERSION << std::endl;
+      ss << "a=x-ss-pyrowave.capabilityFlags:"
+         << (LI_PYROWAVE_CAPABILITY_REASSEMBLY |
+             LI_PYROWAVE_CAPABILITY_FRAME_DEADLINE |
+              LI_PYROWAVE_CAPABILITY_BLOCK_AWARE_FEC |
+              LI_PYROWAVE_CAPABILITY_FRAME_METADATA |
+             LI_PYROWAVE_CAPABILITY_SDR_BT709_YUV420 |
+             LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE |
+             LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE |
+             LI_PYROWAVE_CAPABILITY_HDR10_PQ_BT2020 |
+             LI_PYROWAVE_CAPABILITY_HLG_BT2020)
+         << std::endl;
+      ss << "a=x-ss-pyrowave.maxPacketSize:" << LI_PYROWAVE_MAX_PACKET_SIZE << std::endl;
+    }
+#endif
+
     if (!session.surround_params.empty()) {
       // If we have our own surround parameters, advertise them twice first
       ss << "a=fmtp:97 surround-params="sv << session.surround_params << std::endl;
@@ -1622,6 +1656,122 @@ namespace rtsp_stream {
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
       monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
+      monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
+      if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat))) {
+        const auto requested_color_space = monitor.encoderCscMode >> 1;
+        const auto requested_range = (monitor.encoderCscMode & 0x1) != 0 ? "full"sv : "limited"sv;
+        const auto requested_color_space_name = requested_color_space == 1 ? "BT.709"sv :
+          requested_color_space == 2 ? "BT.2020"sv : "unknown"sv;
+        const auto requested_range_name = requested_color_space == 1 || requested_color_space == 2
+          ? requested_range
+          : "invalid"sv;
+        const auto requested_dynamic_range_name = monitor.dynamicRange == 0 ? "SDR"sv :
+          monitor.dynamicRange == 1 ? "HDR10/PQ"sv :
+          monitor.dynamicRange == 2 ? "HLG"sv : "unknown"sv;
+        const auto requested_bit_depth = monitor.dynamicRange == 0 ? 8 :
+          monitor.dynamicRange == 1 || monitor.dynamicRange == 2 ? 10 : 0;
+        BOOST_LOG(info) << "PyroWave client color request: dynamicRange="
+                        << requested_dynamic_range_name
+                        << ", colorspace=" << requested_color_space_name
+                        << ", range=" << requested_range_name
+                        << ", bitDepth=" << requested_bit_depth
+                        << ", chroma=" << (monitor.chromaSamplingType == 0 ? "4:2:0"sv : "4:4:4"sv)
+                        << ", encoderCscMode=" << monitor.encoderCscMode;
+      }
+      if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat)) &&
+          (!pyrowave::is_server_video_format_available(static_cast<std::uint32_t>(monitor.videoFormat)) ||
+           !pyrowave::is_server_runtime_available())) {
+        BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: server encoder is not available"sv;
+        respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+        return;
+      }
+      if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat))) {
+        const auto is_bt709 = (monitor.encoderCscMode >> 1) == 1;
+        const auto is_bt2020 = (monitor.encoderCscMode >> 1) == 2;
+        const auto color_range = monitor.encoderCscMode & 0x1;
+        const auto is_full_range = color_range == 1;
+        const auto is_limited_range = color_range == 0;
+        const auto is_sdr = monitor.dynamicRange == 0;
+        const auto is_hdr10 = monitor.dynamicRange == 1;
+        const auto is_hlg = monitor.dynamicRange == 2;
+        if ((!is_sdr && !is_hdr10 && !is_hlg) || monitor.chromaSamplingType != 0 ||
+            (is_sdr && !is_bt709) || ((is_hdr10 || is_hlg) && !is_bt2020) ||
+            (!is_full_range && !is_limited_range)) {
+          BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: SDR BT.709 or static HDR10/HLG BT.2020 4:2:0 with a valid color range is required"sv;
+          respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+          return;
+        }
+        const auto parse_pyrowave_u32 = [&args](std::string_view key) -> std::optional<std::uint32_t> {
+          const auto entry = args.find(key);
+          if (entry == args.end() || entry->second.empty()) {
+            return std::nullopt;
+          }
+          std::uint32_t value = 0;
+          const auto begin = entry->second.data();
+          const auto end = begin + entry->second.size();
+          const auto parsed = std::from_chars(begin, end, value);
+          if (parsed.ec != std::errc {} || parsed.ptr != end) {
+            return std::nullopt;
+          }
+          return value;
+        };
+        const auto parse_pyrowave_u16 = [&parse_pyrowave_u32](std::string_view key) -> std::optional<std::uint16_t> {
+          const auto value = parse_pyrowave_u32(key);
+          if (!value || *value > std::numeric_limits<std::uint16_t>::max()) {
+            return std::nullopt;
+          }
+          return static_cast<std::uint16_t>(*value);
+        };
+        const auto protocol_version = parse_pyrowave_u16("x-ml-pyrowave.protocolVersion"sv);
+        const auto bitstream_version = parse_pyrowave_u16("x-ml-pyrowave.bitstreamVersion"sv);
+        const auto payload_version = parse_pyrowave_u16("x-ml-pyrowave.payloadVersion"sv);
+        const auto capability_flags = parse_pyrowave_u32("x-ml-pyrowave.capabilityFlags"sv);
+        const auto max_packet_size = parse_pyrowave_u32("x-ml-pyrowave.maxPacketSize"sv);
+        const auto range_capability = is_full_range
+          ? LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE
+          : LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE;
+        const auto required_capabilities =
+          (monitor.dynamicRange == 1 ? LI_PYROWAVE_REQUIRED_HDR10_BASE_CAPABILITIES :
+           monitor.dynamicRange == 2 ? LI_PYROWAVE_REQUIRED_HLG_BASE_CAPABILITIES :
+           LI_PYROWAVE_REQUIRED_SDR_BASE_CAPABILITIES) |
+          range_capability;
+        LI_PYROWAVE_CAPABILITIES server_capabilities {
+          .protocolVersion = LI_PYROWAVE_PROTOCOL_VERSION,
+          .bitstreamVersion = LI_PYROWAVE_BITSTREAM_VERSION,
+          .payloadVersion = LI_PYROWAVE_PAYLOAD_VERSION,
+          .reserved = 0,
+          .capabilityFlags = required_capabilities,
+          .maxPacketSize = LI_PYROWAVE_MAX_PACKET_SIZE,
+        };
+        LI_PYROWAVE_CAPABILITIES client_capabilities {
+          .protocolVersion = protocol_version.value_or(0),
+          .bitstreamVersion = bitstream_version.value_or(0),
+          .payloadVersion = payload_version.value_or(0),
+          .reserved = 0,
+          .capabilityFlags = capability_flags.value_or(0),
+          .maxPacketSize = max_packet_size.value_or(0),
+        };
+        LI_PYROWAVE_CAPABILITIES negotiated_capabilities {};
+        if (!protocol_version || !bitstream_version || !payload_version || !capability_flags ||
+            !max_packet_size || LiPyrowaveNegotiate(
+              &server_capabilities,
+              &client_capabilities,
+              required_capabilities,
+              &negotiated_capabilities) != LI_PYROWAVE_NEGOTIATION_OK) {
+          BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: client capability contract is incompatible"sv;
+          respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+          return;
+        }
+        // The encoder and outer RTP broadcaster must use the same reduced
+        // boundary; clamping only the inner packetizer would break alignment.
+        config.packetsize = pyrowave::limit_rtp_packet_size(
+          config.packetsize, negotiated_capabilities.maxPacketSize);
+        if (config.packetsize == 0) {
+          BOOST_LOG(warning) << "Rejecting PyroWave video format: negotiated packet size is too small"sv;
+          respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+          return;
+        }
+      }
 #ifdef _WIN32
       // The TrueHDR output and synthetic metadata are defined for PQ. HLG keeps
       // the original capture path so the encoded pixels and wire signal agree.
@@ -1662,6 +1812,12 @@ namespace rtsp_stream {
       nr_config.nr_auto_mask = session.dlssnr_params.auto_mask;
       nr_config.nr_ui_correction = session.dlssnr_params.ui_correction;
 #endif
+      if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat)) &&
+          monitor.dynamicRange == 0 && post_process_hdr_active) {
+        BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: RTX HDR requires an HDR10/PQ session"sv;
+        respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+        return;
+      }
       monitor.frame_pipeline_policy =
         platf::resolve_frame_pipeline_policy(monitor.dynamicRange, post_process_hdr_active, post_process_nr_active);
       monitor.frame_pipeline_policy_resolved = true;
@@ -1672,7 +1828,6 @@ namespace rtsp_stream {
       session.frame_pipeline_policy = monitor.frame_pipeline_policy;
       session.frame_pipeline_policy_resolved = true;
 #endif
-      monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       monitor.enableIntraRefresh = getArg("x-ss-video[0].intraRefresh"sv);
       monitor.hdr_capabilities = session.hdr_capabilities;
 
@@ -1752,7 +1907,12 @@ namespace rtsp_stream {
 
       // If the FEC percentage isn't too high, adjust the configured bitrate to ensure video
       // traffic doesn't exceed the user's selected bitrate when the FEC shards are included.
-      if (config::stream.fec_percentage <= 80) {
+      // PyroWave disables the legacy RTP FEC layer and carries its own
+      // block-aware parity. Do not subtract the legacy FEC percentage from
+      // its encoder budget; the shared video pipeline accounts for the
+      // PyroWave transport contract separately.
+      if (config.monitor.videoFormat != LI_PYROWAVE_VIDEO_FORMAT &&
+          config::stream.fec_percentage <= 80) {
         configuredBitrateKbps /= 100.f / (100 - config::stream.fec_percentage);
       }
 
@@ -1810,6 +1970,12 @@ namespace rtsp_stream {
       dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none
         ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
         : std::string {};
+    if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(config.monitor.videoFormat)) &&
+        dynamic_hdr_selection.format != hdr::dynamic_hdr_format_e::none) {
+      BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: dynamic HDR metadata is not part of the static color contract"sv;
+      respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+      return;
+    }
     if (dynamic_hdr_selection.dolby_vision_active()) {
       BOOST_LOG(info) << "Dynamic HDR negotiated: "sv << hdr::to_string(dynamic_hdr_selection.format);
     }

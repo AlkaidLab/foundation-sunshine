@@ -2,6 +2,25 @@
 # this file will also load platform specific macros
 
 add_executable(sunshine ${SUNSHINE_TARGET_FILES})
+if(WIN32)
+    target_link_libraries(sunshine Pyrowave::Runtime)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSE"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.pyrowave" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/NOTICE.md"
+            DESTINATION "tools/pyrowave" RENAME "NOTICE.pyrowave.md" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSES/GPL-3.0-only.txt"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.pyrowave-GPL-3.0-only.txt" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/third_party/Granite/LICENSE"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.granite" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/third_party/Granite/third_party/volk/LICENSE.md"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.volk" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/third_party/Granite/third_party/khronos/vulkan-headers/LICENSE.md"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.vulkan-headers" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/third_party/Granite/third_party/khronos/vulkan-headers/LICENSES/MIT.txt"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.vulkan-headers-MIT.txt" COMPONENT application)
+    install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/third_party/Granite/third_party/khronos/vulkan-headers/LICENSES/Apache-2.0.txt"
+            DESTINATION "tools/pyrowave" RENAME "LICENSE.vulkan-headers-Apache-2.0.txt" COMPONENT application)
+endif()
 include(${CMAKE_MODULE_PATH}/dependencies/rtx_video_adapter.cmake)
 include(${CMAKE_MODULE_PATH}/dependencies/dlssnr_adapter.cmake)
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})

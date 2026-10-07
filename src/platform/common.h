@@ -458,6 +458,9 @@ namespace platf {
     std::optional<std::chrono::steady_clock::time_point> convert_end;
     std::optional<std::chrono::steady_clock::time_point> encode_submit;
     std::optional<std::chrono::steady_clock::time_point> packet_ready;
+    // The existing performance recorder uses this bit to count PyroWave
+    // frames without adding a second per-frame instrumentation path.
+    bool pyrowave = false;
   };
 
   struct img_t: std::enable_shared_from_this<img_t> {
