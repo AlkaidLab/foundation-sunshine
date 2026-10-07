@@ -7,23 +7,6 @@
 #include <span>
 
 namespace transport {
-  struct wire_feedback_snapshot_t {
-    send_ledger_snapshot_t ledger;
-    bool negotiated = false;
-    std::uint64_t accepted_reports = 0;
-    std::uint64_t rejected_reports = 0;
-    std::uint64_t rate_limited_reports = 0;
-    std::uint64_t submitted_through_exclusive = 0;
-    std::int64_t last_feedback_us = -1;
-    std::int64_t last_new_feedback_us = -1;
-    std::int64_t latest_covered_send_us = -1;
-  };
-
-  struct network_statistics_t {
-    wire_feedback_snapshot_t cumulative;
-    network_window_t window;
-  };
-
   // Serializes UDP commits and authenticated control input for one video flow.
   // Transport negotiation does not grant automatic bitrate/FEC control.
   class wire_feedback_t {

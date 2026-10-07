@@ -1,7 +1,7 @@
 #pragma once
 
 #include "transport_policy.h"
-#include "transport_feedback_wire.h"
+#include "transport_feedback.h"
 #include <nlohmann/json.hpp>
 #include <string_view>
 
