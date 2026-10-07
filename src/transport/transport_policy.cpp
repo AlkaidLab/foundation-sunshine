@@ -102,7 +102,7 @@ namespace transport {
     std::uint64_t expected_revision, std::string request_id, std::optional<int> encoder_ceiling_kbps) {
     std::lock_guard lock(mutex_);
     if (stopped_) return { policy_request_result_e::stopped, {} };
-    if (lease.source != control_source_e::googcc && lease.source != control_source_e::local) return {};
+    if (lease.source != control_source_e::googcc) return {};
     if (lease.connection_epoch != accepted_->connection_epoch || lease.control_epoch != accepted_->control_epoch ||
         lease.source != accepted_->control_source) return { policy_request_result_e::conflict, {} };
     if (accepted_->automatic_control) {
@@ -214,7 +214,7 @@ namespace transport {
     control_source_e target, std::uint64_t expected_revision) {
     std::lock_guard lock(mutex_);
     if (stopped_) return { policy_request_result_e::stopped, {} };
-    if (target != control_source_e::manual && target != control_source_e::googcc && target != control_source_e::local) return {};
+    if (target != control_source_e::manual && target != control_source_e::googcc) return {};
     if (lease.connection_epoch != accepted_->connection_epoch || lease.control_epoch != accepted_->control_epoch ||
         lease.source != accepted_->control_source || expected_revision != accepted_->revision) {
       return { policy_request_result_e::conflict, {} };

@@ -584,7 +584,7 @@ TEST(TransportPolicy, HandoffChecksConnectionSourceEpochAndRevisionAtomically) {
     transport::policy_request_result_e::conflict);
   EXPECT_EQ(state.transfer_control(lease, transport::control_source_e::googcc, 1).result,
     transport::policy_request_result_e::conflict);
-  for (const auto target : { transport::control_source_e::legacy, static_cast<transport::control_source_e>(999) })
+  for (const auto target : { transport::control_source_e::legacy, transport::control_source_e::local, static_cast<transport::control_source_e>(999) })
     EXPECT_EQ(state.transfer_control(lease, target, 2).result, transport::policy_request_result_e::invalid);
   EXPECT_EQ(state.snapshot().accepted, manual);
 }
@@ -637,7 +637,7 @@ TEST(TransportPolicy, CorrectEpochDoesNotPermitADifferentControllerSourceOrConne
   auto forged = lease_of(granted);
   forged.source = transport::control_source_e::local;
   EXPECT_EQ(state.request_controller_update(forged, normalized_budget(), 10, 40, 20, 3).result,
-    transport::policy_request_result_e::conflict);
+    transport::policy_request_result_e::invalid);
   forged = lease_of(granted);
   ++forged.connection_epoch;
   EXPECT_EQ(state.request_controller_update(forged, normalized_budget(), 10, 40, 20, 3).result,
@@ -682,7 +682,7 @@ TEST(TransportPolicy, InFlightEncoderCanReportTruthfullyWithoutReacquiringContro
 TEST(TransportPolicy, StoppedSessionCannotGrantOrUseAControllerLease) {
   transport::policy_state_t state(initial(), 50000);
   const auto manual = state.request_normalized(normalized_budget(), 10, 40, 20, 1, 1).policy;
-  const auto granted = state.transfer_control(lease_of(manual), transport::control_source_e::local, 2).policy;
+  const auto granted = state.transfer_control(lease_of(manual), transport::control_source_e::googcc, 2).policy;
   ASSERT_TRUE(granted);
   state.stop();
   EXPECT_EQ(state.transfer_control(lease_of(granted), transport::control_source_e::manual, 3).result,
