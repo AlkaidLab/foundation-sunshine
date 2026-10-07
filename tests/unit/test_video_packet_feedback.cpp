@@ -26,7 +26,7 @@ namespace {
         const auto size = TfEncodeReport(&report, bytes.data(), bytes.size());
         EXPECT_NE(size, 0u);
         if (deliver) {
-          EXPECT_EQ(server.apply_wire_event({bytes.data(), size}, now).feedback.result, transport::report_result_e::accepted);
+          EXPECT_EQ(server.apply_wire_event({ bytes.data(), size }, now).feedback.result, transport::report_result_e::accepted);
         }
         VfCommitQueued(&feedback, &observer, &report);
         count++;
@@ -45,8 +45,9 @@ TEST(VideoPacketFeedback, IndependentFaultPlanMatchesSuccessfulSubmissionsInclud
     const bool submitted = sequence % 17 != 0;
     const bool dropped = sequence % 11 == 0 || (sequence >= 100 && sequence < 120) || sequence >= 980;
     if (!submitted) continue;
-    ASSERT_TRUE(server.commit_success_event({sequence, 10000 + static_cast<int64_t>(sequence), 1248,
-      sequence / 20, 1, sequence % 5 ? transport::packet_kind_e::data : transport::packet_kind_e::fec, {}}).has_value());
+    ASSERT_TRUE(server.commit_success_event({ sequence, 10000 + static_cast<int64_t>(sequence), 1248,
+                                              sequence / 20, 1, sequence % 5 ? transport::packet_kind_e::data : transport::packet_kind_e::fec, {} })
+        .has_value());
     committed++;
     if (dropped) missing++;
     else {
@@ -77,7 +78,7 @@ TEST(VideoPacketFeedback, LostBothFeedbackCopiesNeverCreatesServerLoss) {
   transport::wire_feedback_t server(42, true);
   auto client = std::make_unique<client_t>();
   for (uint64_t i = 0; i < 3; ++i) {
-    ASSERT_TRUE(server.commit_success_event({i, 10000, 1248, 1, 1, transport::packet_kind_e::data, {}}).has_value());
+    ASSERT_TRUE(server.commit_success_event({ i, 10000, 1248, 1, 1, transport::packet_kind_e::data, {} }).has_value());
     ASSERT_TRUE(VfObserveAuthenticated(&client->feedback, &client->observer, 42, i, 1220, 100000 + i));
   }
   ASSERT_TRUE(client->ready(server, 102000));
@@ -97,7 +98,7 @@ TEST(VideoPacketFeedback, SustainedReportsHonorSharedRateAndBurstBounds) {
   for (int cycle = 0; cycle < 40; ++cycle) {
     const int64_t now = 100000 + cycle * 50000;
     for (unsigned i = 0; i < 500; ++i, ++sequence) {
-      ASSERT_TRUE(server.commit_success_event({sequence, now - 1000, 1248, sequence / 20, 1, transport::packet_kind_e::data, {}}).has_value());
+      ASSERT_TRUE(server.commit_success_event({ sequence, now - 1000, 1248, sequence / 20, 1, transport::packet_kind_e::data, {} }).has_value());
       ASSERT_TRUE(VfObserveAuthenticated(&client->feedback, &client->observer, 42, sequence, 1220, now + i));
     }
     ASSERT_TRUE(client->ready(server, now + 1000));

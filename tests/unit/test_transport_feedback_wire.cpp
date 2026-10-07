@@ -68,13 +68,13 @@ TEST(TransportFeedbackWire, IndependentGoldenBytesPreserveHeaderStatusesAndFirst
 
 TEST(NetworkStatisticsWire, NoChangeHeartbeatCannotRefreshNewCoverage) {
   transport::wire_feedback_t wire(42,true);
-  ASSERT_TRUE(wire.commit_success_event({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}).has_value());
+  ASSERT_TRUE(wire.commit_success_event({ 100, 1000000, 1234, 1, 1, transport::packet_kind_e::data, {} }).has_value());
   auto report = make_report(1);
   report.status[0] = TF_RECEIVED;
   report.firstArrivalTimeUs[0] = report.receiverSampleTimeUs;
-  ASSERT_EQ(wire.apply_wire_event(encode(report),1100000).feedback.result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report), 1100000).feedback.result, transport::report_result_e::accepted);
   ++report.reportSequence;
-  ASSERT_EQ(wire.apply_wire_event(encode(report),2100000).feedback.result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report), 2100000).feedback.result, transport::report_result_e::accepted);
   const auto statistics = wire.network_statistics(2300000);
   EXPECT_EQ(statistics.cumulative.last_feedback_us,2100000);
   EXPECT_EQ(statistics.cumulative.last_new_feedback_us,1100000);
@@ -84,14 +84,14 @@ TEST(NetworkStatisticsWire, NoChangeHeartbeatCannotRefreshNewCoverage) {
 
 TEST(NetworkStatisticsWire, UnmatchedAndOldCoveredSendsDoNotGrantFreshCoverage) {
   transport::wire_feedback_t wire(42,true);
-  ASSERT_TRUE(wire.commit_success_event({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}).has_value());
+  ASSERT_TRUE(wire.commit_success_event({ 100, 1000000, 1234, 1, 1, transport::packet_kind_e::data, {} }).has_value());
   auto report = make_report(1);
   report.status[0] = TF_RECEIVED;
   report.firstArrivalTimeUs[0] = report.receiverSampleTimeUs;
-  ASSERT_EQ(wire.apply_wire_event(encode(report),2100000).feedback.result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report), 2100000).feedback.result, transport::report_result_e::accepted);
   report.baseExtendedSequence = 101;
   ++report.reportSequence;
-  ASSERT_EQ(wire.apply_wire_event(encode(report),2200000).feedback.result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report), 2200000).feedback.result, transport::report_result_e::accepted);
   const auto statistics = wire.network_statistics(2300000);
   EXPECT_EQ(statistics.cumulative.last_new_feedback_us,2100000);
   EXPECT_EQ(statistics.cumulative.latest_covered_send_us,1000000);
@@ -100,14 +100,14 @@ TEST(NetworkStatisticsWire, UnmatchedAndOldCoveredSendsDoNotGrantFreshCoverage) 
 
 TEST(NetworkStatisticsWire, ReceiverClockResetRevokesPreviousFreshness) {
   transport::wire_feedback_t wire(42,true);
-  ASSERT_TRUE(wire.commit_success_event({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}).has_value());
+  ASSERT_TRUE(wire.commit_success_event({ 100, 1000000, 1234, 1, 1, transport::packet_kind_e::data, {} }).has_value());
   auto report = make_report(1);
   report.status[0] = TF_RECEIVED;
   report.firstArrivalTimeUs[0] = report.receiverSampleTimeUs;
-  ASSERT_EQ(wire.apply_wire_event(encode(report),1100000).feedback.result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report), 1100000).feedback.result, transport::report_result_e::accepted);
   ++report.reportSequence;
   ++report.receiverClockEpoch;
-  ASSERT_EQ(wire.apply_wire_event(encode(report),1200000).feedback.result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report), 1200000).feedback.result, transport::report_result_e::accepted);
   const auto statistics = wire.network_statistics(1300000);
   EXPECT_EQ(statistics.window.receiver_clock_epoch,2u);
   EXPECT_EQ(statistics.window.unknown,1u);
