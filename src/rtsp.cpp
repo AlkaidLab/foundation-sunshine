@@ -41,6 +41,7 @@ extern "C" {
 #include "logging.h"
 #include "network.h"
 #include "pyrowave/runtime.h"
+#include "pyrowave/packet.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "sync.h"
@@ -1758,6 +1759,15 @@ namespace rtsp_stream {
               required_capabilities,
               &negotiated_capabilities) != LI_PYROWAVE_NEGOTIATION_OK) {
           BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: client capability contract is incompatible"sv;
+          respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+          return;
+        }
+        // The encoder and outer RTP broadcaster must use the same reduced
+        // boundary; clamping only the inner packetizer would break alignment.
+        config.packetsize = pyrowave::limit_rtp_packet_size(
+          config.packetsize, negotiated_capabilities.maxPacketSize);
+        if (config.packetsize == 0) {
+          BOOST_LOG(warning) << "Rejecting PyroWave video format: negotiated packet size is too small"sv;
           respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
           return;
         }

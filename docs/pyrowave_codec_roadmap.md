@@ -23,6 +23,10 @@ Windows Sunshine 通过 CMake 子项目将 PyroWave 核心和 C API 静态链接
 颜色范围只影响 YUV 信号的量化范围，不改变上述位深合同。PyroWave GPU 编解码路径会在
 对应的 SDR 8-bit 或 HDR 10-bit shader 中完成 limited/full 归一化。
 
+颜色标签必须与实际像素转换和位深一致。请求 HDR 但显示器及增强管线都没有提供 HDR
+输出时，不把 SDR 数据伪装成 PQ/HLG。GPU 失败只能在独占共享捕获的 SDR 会话中切换为
+CPU 捕获；不得为单个 PyroWave 会话改变其他串流的图像内存类型。
+
 帧预算固定按协商帧率计算，不按捕获等待超时、最低刷新帧率或单帧实测间隔放大预算，
 避免内容更新频率升高时码率超出预算，也避免逐帧预算变化导致静态文字质量闪动。
 FEC、包头和音频仍有额外网络开销。低 bits-per-pixel 时仍会优先保留亮度高频细节，但 PyroWave
@@ -36,6 +40,7 @@ PyroWave 传输合同直接冻结为 `PYRF` Frame Envelope（当前字段值为
 `protocolVersion=2`、`bitstreamVersion=2`、`payloadVersion=3`）：
 
 - 每个内层包使用固定 Frame Header，并区分 `FRAME_HEADER`、`DATA`、`PARITY`；
+- 内层完整包长受协商后的 `maxPacketSize` 约束，外层 RTP 同步缩小分块容量，保持一包一块；
 - metadata 使用 TLV，受保护 metadata 与 PyroWave bitstream 一起参与 block-aware FEC；
 - 主机耗时通过可选 Runtime TLV 传递，丢失时不影响视频；
 - `SS_HDR_METADATA` 仍走现有控制通道，不复制到 PyroWave color metadata。

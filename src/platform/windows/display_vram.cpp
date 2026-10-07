@@ -3035,8 +3035,7 @@ namespace platf::dxgi {
 
       colorspace = ::video::colorspace_from_client_config(config, display->is_hdr());
       video_format = config.videoFormat;
-      const bool hdr_output = config.dynamicRange != 0 ||
-        config.pre_encode_filter == ::platf::pre_encode_filter_e::external_sdr_to_hdr;
+      const bool hdr_output = colorspace.bit_depth == 10;
       const auto pixel_format = hdr_output ? pix_fmt_e::p010 : pix_fmt_e::nv12;
       const auto output_format = hdr_output ? DXGI_FORMAT_P010 : DXGI_FORMAT_NV12;
       const auto plane_format = hdr_output ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;

@@ -4,7 +4,28 @@
  */
 #include "packet.h"
 
+#include <algorithm>
+
+extern "C" {
+#include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
+}
+
 namespace pyrowave {
+
+  int
+  limit_rtp_packet_size(int requested_packet_size, std::uint32_t max_wire_packet_size) noexcept {
+    constexpr std::uint32_t outer_header_overhead = 16;
+    if (requested_packet_size <= static_cast<int>(outer_header_overhead) ||
+        max_wire_packet_size > LI_PYROWAVE_MAX_PACKET_SIZE) {
+      return 0;
+    }
+    const auto wire_size = std::min(
+      static_cast<std::uint32_t>(requested_packet_size) - outer_header_overhead, max_wire_packet_size);
+    if (wire_size <= 2 * LI_PYROWAVE_WIRE_HEADER_SIZE) {
+      return 0;
+    }
+    return static_cast<int>(wire_size + outer_header_overhead);
+  }
 
   bool
   validate(const encoded_frame_t &frame) noexcept {
@@ -14,7 +35,7 @@ namespace pyrowave {
 
   bool
   validate(const packetization_request_t &request) noexcept {
-    return request.packet_boundary == 0 || request.packet_boundary <= 65535;
+    return request.packet_boundary == 0 || request.packet_boundary <= LI_PYROWAVE_MAX_PACKET_SIZE;
   }
 
   bool

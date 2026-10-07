@@ -17,14 +17,14 @@ namespace platf {
 }
 
 namespace platf::dxgi {
-  class display_base_t;
+  class display_vram_t;
 }
 
 namespace platf::pyrowave_windows {
 
   [[nodiscard]] std::unique_ptr<video::encode_session_t>
   make_gpu_encoder(
-    std::shared_ptr<dxgi::display_base_t> display,
+    std::shared_ptr<dxgi::display_vram_t> display,
     const video::config_t &config,
     std::size_t packet_boundary,
     int frame_rate_num,

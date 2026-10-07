@@ -15,6 +15,11 @@
 
 namespace pyrowave {
 
+  // Preserve one complete inner wire packet per RTP payload. Zero means the
+  // negotiated bound cannot carry the encoder and transport headers.
+  [[nodiscard]] int
+  limit_rtp_packet_size(int requested_packet_size, std::uint32_t max_wire_packet_size) noexcept;
+
   struct bitstream_buffer_t {
     using storage_t = std::shared_ptr<const std::vector<std::uint8_t>>;
 

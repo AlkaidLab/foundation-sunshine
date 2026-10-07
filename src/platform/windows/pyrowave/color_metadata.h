@@ -7,7 +7,11 @@
  */
 #pragma once
 
+#include <vulkan/vulkan.h>
 #include "pyrowave.h"
+#include "src/video_colorspace.h"
+
+#include <optional>
 
 namespace platf::pyrowave_windows {
   [[nodiscard]] inline pyrowave_color_metadata
@@ -21,5 +25,21 @@ namespace platf::pyrowave_windows {
       .range = full_range ? PYROWAVE_YCBCR_FULL : PYROWAVE_YCBCR_LIMITED,
       .chroma_siting = 0,
     };
+  }
+
+  [[nodiscard]] inline std::optional<pyrowave_color_metadata>
+  color_metadata_for(const video::sunshine_colorspace_t &colorspace) noexcept {
+    if (colorspace.colorspace == video::colorspace_e::rec709 && colorspace.bit_depth == 8) {
+      return color_metadata_for(0, colorspace.full_range);
+    }
+    if (colorspace.colorspace == video::colorspace_e::bt2020 && colorspace.bit_depth == 10) {
+      return color_metadata_for(1, colorspace.full_range);
+    }
+    if (colorspace.colorspace == video::colorspace_e::bt2020hlg && colorspace.bit_depth == 10) {
+      return color_metadata_for(2, colorspace.full_range);
+    }
+    // In particular, SDR BT.2020/10-bit is not PQ and is not a negotiated
+    // PyroWave mode. Never label those pixels as HDR to satisfy the request.
+    return std::nullopt;
   }
 }  // namespace platf::pyrowave_windows

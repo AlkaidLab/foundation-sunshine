@@ -3,6 +3,7 @@
  * @brief Pure-data and state-transition tests for the PyroWave foundation.
  */
 #include "src/pyrowave/capabilities.h"
+#include "src/pyrowave/capture_policy.h"
 #include "src/pyrowave/config.h"
 #include "src/pyrowave/gpu_interop.h"
 #include "src/pyrowave/packet.h"
@@ -88,6 +89,50 @@ TEST(PyrowaveCapabilityTest, RequiresExactApiVersion) {
   const auto result = pyrowave::evaluate_capabilities(config, device, client);
   EXPECT_EQ(result.availability, pyrowave::availability_e::failed);
   EXPECT_EQ(result.failure, pyrowave::failure_e::api_mismatch);
+}
+
+TEST(PyrowaveCapturePolicyTest, RejectsFallbackWhileAnotherSessionIsRegistered) {
+  pyrowave::capture_policy_t policy;
+  ASSERT_TRUE(policy.attach(true));
+  ASSERT_TRUE(policy.attach(false));
+  EXPECT_FALSE(policy.request_system_capture());
+  EXPECT_FALSE(policy.system_capture());
+  policy.detach();
+  EXPECT_TRUE(policy.request_system_capture());
+}
+
+TEST(PyrowaveCapturePolicyTest, KeepsFallbackAcrossReinitAndRejectsIncompatibleJoins) {
+  pyrowave::capture_policy_t policy;
+  ASSERT_TRUE(policy.attach(true));
+  ASSERT_TRUE(policy.request_system_capture());
+  EXPECT_TRUE(policy.system_capture());
+  EXPECT_FALSE(policy.attach(false));
+  EXPECT_TRUE(policy.attach(true));
+  EXPECT_TRUE(policy.request_system_capture());
+  policy.detach();
+  EXPECT_TRUE(policy.system_capture());
+  policy.detach();
+  EXPECT_TRUE(policy.system_capture());
+  EXPECT_FALSE(policy.attach(false));
+  EXPECT_FALSE(policy.request_system_capture());
+  pyrowave::capture_policy_t next_capture;
+  EXPECT_FALSE(next_capture.system_capture());
+  EXPECT_TRUE(next_capture.attach(false));
+}
+
+TEST(PyrowavePacketTest, NegotiatedWireLimitAlsoBoundsOuterRtpGeometry) {
+  EXPECT_EQ(pyrowave::limit_rtp_packet_size(1392, 65536), 1392);
+  EXPECT_EQ(pyrowave::limit_rtp_packet_size(1392, 1024), 1040);
+  EXPECT_EQ(pyrowave::limit_rtp_packet_size(1000, 1024), 1000);
+  EXPECT_EQ(pyrowave::limit_rtp_packet_size(-1, 1024), 0);
+  EXPECT_EQ(pyrowave::limit_rtp_packet_size(1392, 128), 0);
+  EXPECT_EQ(pyrowave::limit_rtp_packet_size(1392, 65537), 0);
+  EXPECT_TRUE(pyrowave::validate(pyrowave::packetization_request_t {
+    .packet_boundary = LI_PYROWAVE_MAX_PACKET_SIZE,
+  }));
+  EXPECT_FALSE(pyrowave::validate(pyrowave::packetization_request_t {
+    .packet_boundary = LI_PYROWAVE_MAX_PACKET_SIZE + 1u,
+  }));
 }
 
 TEST(PyrowaveCapabilityTest, RequiresBlockAwareFec) {
@@ -368,7 +413,51 @@ TEST(PyrowaveColorMetadataTest, PreservesLimitedAndFullRangeForAllSupportedModes
       : dynamic_range == 1 ? PYROWAVE_TRANSFER_PQ : PYROWAVE_TRANSFER_HLG);
   }
 }
+
+TEST(PyrowaveColorMetadataTest, UsesResolvedConversionColorSpace) {
+  using video::colorspace_e;
+  using platf::pyrowave_windows::color_metadata_for;
+  const auto sdr = color_metadata_for({ colorspace_e::rec709, false, 8 });
+  ASSERT_TRUE(sdr);
+  EXPECT_EQ(sdr->transfer, PYROWAVE_TRANSFER_BT709);
+  EXPECT_EQ(sdr->range, PYROWAVE_YCBCR_LIMITED);
+  const auto pq = color_metadata_for({ colorspace_e::bt2020, true, 10 });
+  ASSERT_TRUE(pq);
+  EXPECT_EQ(pq->transfer, PYROWAVE_TRANSFER_PQ);
+  EXPECT_EQ(pq->range, PYROWAVE_YCBCR_FULL);
+  const auto hlg = color_metadata_for({ colorspace_e::bt2020hlg, false, 10 });
+  ASSERT_TRUE(hlg);
+  EXPECT_EQ(hlg->transfer, PYROWAVE_TRANSFER_HLG);
+  EXPECT_FALSE(color_metadata_for({ colorspace_e::bt2020sdr, true, 10 }));
+  EXPECT_FALSE(color_metadata_for({ colorspace_e::rec709, true, 10 }));
+  EXPECT_FALSE(color_metadata_for({ colorspace_e::bt2020, true, 8 }));
+}
 #endif
+
+TEST(PyrowavePacketizerTest, HonorsSmallerNegotiatedWireLimitWithoutSplittingInnerPackets) {
+  const auto rtp_size = pyrowave::limit_rtp_packet_size(1392, 1024);
+  ASSERT_EQ(rtp_size, 1040);
+  const auto outer_payload_size = static_cast<std::size_t>(rtp_size - 16);
+  pyrowave::encoded_frame_t frame {
+    .frame_id = 1,
+    .deadline = { std::chrono::steady_clock::now(), std::chrono::milliseconds(100) },
+    .bitstream = { std::make_shared<const std::vector<std::uint8_t>>(9000, 0x5a) },
+  };
+  const auto result = pyrowave::make_transport_packetizer()->packetize(frame, {
+    .packet_boundary = outer_payload_size,
+    .block_aware_fec = true,
+  });
+  ASSERT_EQ(result.failure, pyrowave::failure_e::none);
+  ASSERT_FALSE(result.packets.empty());
+  for (const auto &packet : result.packets) {
+    EXPECT_EQ(packet.size, outer_payload_size);
+    EXPECT_EQ(packet.offset % outer_payload_size, 0u);
+    LI_PYROWAVE_PACKET_HEADER header {};
+    const std::uint8_t *payload = nullptr;
+    EXPECT_EQ(LiPyrowaveParsePacket(result.bitstream.view().data() + packet.offset,
+      packet.size, &header, &payload), LI_PYROWAVE_PACKET_OK);
+  }
+}
 
 TEST(PyrowavePacketizerTest, RecoversOneMissingBlockWithBlockAwareFec) {
   auto source = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>(5000, 0x5a));

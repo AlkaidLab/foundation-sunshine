@@ -88,7 +88,7 @@ namespace platf::pyrowave_windows {
       static constexpr std::size_t maximum_bitstream_size = 16u * 1024u * 1024u;
 
       gpu_encoder_session_t(
-        std::shared_ptr<dxgi::display_base_t> display,
+        std::shared_ptr<dxgi::display_vram_t> display,
         const video::config_t &config,
         std::size_t packet_boundary,
         int frame_rate_num,
@@ -243,9 +243,13 @@ namespace platf::pyrowave_windows {
         }
         encoder_.reset(raw_encoder);
 
-        const auto metadata = color_metadata_for(
-          config.dynamicRange, (config.encoderCscMode & 0x1) != 0);
-        const auto metadata_result = pyrowave_encoder_set_color_metadata(encoder_.get(), &metadata);
+        const auto metadata = color_metadata_for(conversion_->colorspace);
+        if (!metadata) {
+          init_failure("capture color space is outside the negotiated PyroWave contract");
+          encoder_.reset();
+          return;
+        }
+        const auto metadata_result = pyrowave_encoder_set_color_metadata(encoder_.get(), &*metadata);
         if (metadata_result != PYROWAVE_SUCCESS) {
           init_failure("PyroWave color metadata", static_cast<int>(metadata_result));
           encoder_.reset();
@@ -494,7 +498,7 @@ namespace platf::pyrowave_windows {
 
   std::unique_ptr<video::encode_session_t>
   make_gpu_encoder(
-    std::shared_ptr<dxgi::display_base_t> display,
+    std::shared_ptr<dxgi::display_vram_t> display,
     const video::config_t &config,
     std::size_t packet_boundary,
     int frame_rate_num,
