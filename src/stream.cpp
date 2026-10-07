@@ -4348,7 +4348,12 @@ namespace stream {
           cancel_controlled_work();
           return false;
         }
-        return !active.flow->is_closed() && transport_now_us() < packets[index].deadline_us;
+        // Keep the final millisecond inside the existing frame deadline for
+        // native submission. The authoritative receipt still uses its actual
+        // return time; a late OS return remains an expired frame.
+        constexpr auto submission_reserve_us = 1000;
+        return !active.flow->is_closed() &&
+               packets[index].deadline_us - transport_now_us() > submission_reserve_us;
       };
       bool equal_size = !packets.empty();
       std::vector<platf::buffer_descriptor_t> descriptors;
