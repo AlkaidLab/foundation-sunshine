@@ -64,6 +64,22 @@ namespace {
     return client;
   }
 
+  std::vector<std::uint8_t>
+  optional_metadata(std::size_t total_size) {
+    std::vector<std::uint8_t> metadata(total_size, 0x5a);
+    const auto value_size = static_cast<std::uint32_t>(total_size - 8);
+    // Unknown optional TLV, with a valid length and flags.
+    metadata[0] = 0x80;
+    metadata[1] = 0x00;
+    metadata[2] = 0x00;
+    metadata[3] = LI_PYROWAVE_METADATA_FLAG_PROTECTED | LI_PYROWAVE_METADATA_FLAG_OPTIONAL;
+    metadata[4] = static_cast<std::uint8_t>(value_size >> 24);
+    metadata[5] = static_cast<std::uint8_t>(value_size >> 16);
+    metadata[6] = static_cast<std::uint8_t>(value_size >> 8);
+    metadata[7] = static_cast<std::uint8_t>(value_size);
+    return metadata;
+  }
+
 }  // namespace
 
 TEST(PyrowaveConfigTest, RejectsMissingApiVersion) {
@@ -277,6 +293,81 @@ TEST(PyrowavePacketizerTest, ProtectsMetadataAndStripsItBeforeDecode) {
   EXPECT_EQ(output_length, source->size());
   EXPECT_EQ(output, *source);
   LiPyrowaveReassemblyDestroy(&state);
+}
+
+TEST(PyrowavePacketizerTest, RejectsMetadataLargerThanFrameHeaderPayload) {
+  const pyrowave::encoded_frame_t frame {
+    .frame_id = 14,
+    .deadline = { std::chrono::steady_clock::now(), std::chrono::milliseconds(100) },
+    .bitstream = { std::make_shared<const std::vector<std::uint8_t>>(4, 0x5a) },
+  };
+  auto packetizer = pyrowave::make_transport_packetizer();
+  for (const std::size_t boundary : { 128u, 0u, LI_PYROWAVE_MAX_PACKET_SIZE }) {
+    const auto effective_boundary = boundary == 0 ? LI_PYROWAVE_MAX_PACKET_SIZE : boundary;
+    for (const bool fec : { false, true }) {
+      SCOPED_TRACE(::testing::Message() << "boundary=" << boundary << ", fec=" << fec);
+      const pyrowave::packetization_request_t request {
+        .packet_boundary = boundary,
+        .block_aware_fec = fec,
+        .metadata = optional_metadata(effective_boundary - LI_PYROWAVE_WIRE_HEADER_SIZE + 1),
+        .metadata_flags = LI_PYROWAVE_METADATA_FLAG_PROTECTED | LI_PYROWAVE_METADATA_FLAG_OPTIONAL,
+      };
+      // Fail before exercising the copy if the request guard regresses.
+      ASSERT_FALSE(pyrowave::validate(request));
+      const auto result = packetizer->packetize(frame, request);
+      EXPECT_EQ(result.failure, pyrowave::failure_e::configuration_invalid);
+      EXPECT_TRUE(result.bitstream.empty());
+      EXPECT_TRUE(result.packets.empty());
+    }
+  }
+}
+
+TEST(PyrowavePacketizerTest, RoundTripsMetadataThatFillsFrameHeaderPayload) {
+  const auto source = std::make_shared<const std::vector<std::uint8_t>>(4, 0xa5);
+  const pyrowave::encoded_frame_t frame {
+    .frame_id = 15,
+    .deadline = { std::chrono::steady_clock::now(), std::chrono::milliseconds(100) },
+    .bitstream = { source },
+  };
+  auto packetizer = pyrowave::make_transport_packetizer();
+  for (const std::size_t boundary : { 128u, 0u, LI_PYROWAVE_MAX_PACKET_SIZE }) {
+    const auto effective_boundary = boundary == 0 ? LI_PYROWAVE_MAX_PACKET_SIZE : boundary;
+    for (const bool fec : { false, true }) {
+      SCOPED_TRACE(::testing::Message() << "boundary=" << boundary << ", fec=" << fec);
+      const pyrowave::packetization_request_t request {
+        .packet_boundary = boundary,
+        .block_aware_fec = fec,
+        .metadata = optional_metadata(effective_boundary - LI_PYROWAVE_WIRE_HEADER_SIZE),
+        .metadata_flags = LI_PYROWAVE_METADATA_FLAG_PROTECTED | LI_PYROWAVE_METADATA_FLAG_OPTIONAL,
+      };
+      ASSERT_TRUE(pyrowave::validate(request));
+      const auto result = packetizer->packetize(frame, request);
+      ASSERT_EQ(result.failure, pyrowave::failure_e::none);
+      LI_PYROWAVE_REASSEMBLY_STATE state;
+      LiPyrowaveReassemblyInitialize(&state, 16 * 1024 * 1024);
+      for (const auto &packet : result.packets) {
+        EXPECT_LE(packet.size, effective_boundary);
+        const auto status = LiPyrowaveReassemblyPushPacket(&state,
+          result.bitstream.view().data() + packet.offset, packet.size, 5000, 100000);
+        EXPECT_TRUE(status == LI_PYROWAVE_REASSEMBLY_ACCEPTED ||
+                    status == LI_PYROWAVE_REASSEMBLY_COMPLETE ||
+                    status == LI_PYROWAVE_REASSEMBLY_DUPLICATE);
+      }
+      EXPECT_TRUE(LiPyrowaveReassemblyIsComplete(&state));
+      std::vector<std::uint8_t> metadata_out(request.metadata.size());
+      std::size_t written = 0;
+      EXPECT_EQ(LiPyrowaveReassemblyCopyMetadata(&state, metadata_out.data(), metadata_out.size(),
+        &written, nullptr), LI_PYROWAVE_REASSEMBLY_COMPLETE);
+      EXPECT_EQ(written, request.metadata.size());
+      EXPECT_EQ(metadata_out, request.metadata);
+      std::vector<std::uint8_t> decoded_bytes(source->size());
+      EXPECT_EQ(LiPyrowaveReassemblyCopyFrame(&state, decoded_bytes.data(), decoded_bytes.size(),
+        &written, nullptr), LI_PYROWAVE_REASSEMBLY_COMPLETE);
+      EXPECT_EQ(written, source->size());
+      EXPECT_EQ(decoded_bytes, *source);
+      LiPyrowaveReassemblyDestroy(&state);
+    }
+  }
 }
 
 #ifdef _WIN32

@@ -35,7 +35,12 @@ namespace pyrowave {
 
   bool
   validate(const packetization_request_t &request) noexcept {
-    return request.packet_boundary == 0 || request.packet_boundary <= LI_PYROWAVE_MAX_PACKET_SIZE;
+    const auto boundary = request.packet_boundary == 0 ? LI_PYROWAVE_MAX_PACKET_SIZE : request.packet_boundary;
+    // FRAME_HEADER carries a complete metadata copy in one packet, even
+    // though the protected payload may span multiple DATA packets.
+    return boundary > LI_PYROWAVE_WIRE_HEADER_SIZE &&
+           boundary <= LI_PYROWAVE_MAX_PACKET_SIZE &&
+           request.metadata.size() <= boundary - LI_PYROWAVE_WIRE_HEADER_SIZE;
   }
 
   bool

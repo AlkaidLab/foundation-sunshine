@@ -64,6 +64,8 @@ block 容量，保证它与一个外层 RTP payload 对齐。客户端先恢复�
 data block，先提取 metadata，再依据 codec payload 长度去掉 metadata 和末尾填充，将纯编码
 数据交给 decoder。恢复不了的帧在 deadline 后丢弃。
 块级 FEC 是协商的必需能力；恢复规则与帧时限由公共协议实现统一校验。
+Frame Header 还携带完整 metadata 副本，因此 metadata 必须能放入扣除 64 字节封套头后的
+单包容量。使用默认包长时遵守相同限制；超限请求在复制前拒绝，不截断 TLV。
 
 主机处理耗时使用受保护的可选 Runtime TLV。只有 metadata 非空时才设置外层 metadata
 标记；重复帧不携带该 TLV。发布层区分分包成功与合法的失败结果，失败不入队，也不发送空帧。

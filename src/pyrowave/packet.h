@@ -58,7 +58,7 @@ namespace pyrowave {
     bool preserve_pyrowave_block_boundaries = false;
     bool block_aware_fec = false;
     bool mark_critical = false;
-    std::vector<std::uint8_t> metadata;
+    std::vector<std::uint8_t> metadata;  // Must fit the FRAME_HEADER packet payload.
     std::uint16_t metadata_flags = 0;
   };
 
