@@ -35,11 +35,6 @@ namespace transport {
     // It does not restore ledger state or a prior connection epoch.
     wire_feedback_t(std::uint64_t connection_epoch, bool negotiated, std::size_t capacity = 16384,
       std::uint64_t initial_event_sequence = 0);
-    // Compatibility entry points delegate to the event path, never apply twice.
-    bool
-    commit_success(const sent_packet_t &packet);
-    feedback_result_t
-    apply_wire(std::span<const std::uint8_t> bytes, std::int64_t received_at_us);
     std::optional<successful_send_event_t>
     commit_success_event(const sent_packet_t &packet);
     // Input must already have passed control-channel authentication. Returned

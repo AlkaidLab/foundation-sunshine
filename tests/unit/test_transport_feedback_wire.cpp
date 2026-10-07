@@ -68,13 +68,13 @@ TEST(TransportFeedbackWire, IndependentGoldenBytesPreserveHeaderStatusesAndFirst
 
 TEST(NetworkStatisticsWire, NoChangeHeartbeatCannotRefreshNewCoverage) {
   transport::wire_feedback_t wire(42,true);
-  ASSERT_TRUE(wire.commit_success({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}));
+  ASSERT_TRUE(wire.commit_success_event({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}).has_value());
   auto report = make_report(1);
   report.status[0] = TF_RECEIVED;
   report.firstArrivalTimeUs[0] = report.receiverSampleTimeUs;
-  ASSERT_EQ(wire.apply_wire(encode(report),1100000).result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report),1100000).feedback.result,transport::report_result_e::accepted);
   ++report.reportSequence;
-  ASSERT_EQ(wire.apply_wire(encode(report),2100000).result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report),2100000).feedback.result,transport::report_result_e::accepted);
   const auto statistics = wire.network_statistics(2300000);
   EXPECT_EQ(statistics.cumulative.last_feedback_us,2100000);
   EXPECT_EQ(statistics.cumulative.last_new_feedback_us,1100000);
@@ -84,14 +84,14 @@ TEST(NetworkStatisticsWire, NoChangeHeartbeatCannotRefreshNewCoverage) {
 
 TEST(NetworkStatisticsWire, UnmatchedAndOldCoveredSendsDoNotGrantFreshCoverage) {
   transport::wire_feedback_t wire(42,true);
-  ASSERT_TRUE(wire.commit_success({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}));
+  ASSERT_TRUE(wire.commit_success_event({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}).has_value());
   auto report = make_report(1);
   report.status[0] = TF_RECEIVED;
   report.firstArrivalTimeUs[0] = report.receiverSampleTimeUs;
-  ASSERT_EQ(wire.apply_wire(encode(report),2100000).result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report),2100000).feedback.result,transport::report_result_e::accepted);
   report.baseExtendedSequence = 101;
   ++report.reportSequence;
-  ASSERT_EQ(wire.apply_wire(encode(report),2200000).result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report),2200000).feedback.result,transport::report_result_e::accepted);
   const auto statistics = wire.network_statistics(2300000);
   EXPECT_EQ(statistics.cumulative.last_new_feedback_us,2100000);
   EXPECT_EQ(statistics.cumulative.latest_covered_send_us,1000000);
@@ -100,14 +100,14 @@ TEST(NetworkStatisticsWire, UnmatchedAndOldCoveredSendsDoNotGrantFreshCoverage) 
 
 TEST(NetworkStatisticsWire, ReceiverClockResetRevokesPreviousFreshness) {
   transport::wire_feedback_t wire(42,true);
-  ASSERT_TRUE(wire.commit_success({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}));
+  ASSERT_TRUE(wire.commit_success_event({100,1000000,1234,1,1,transport::packet_kind_e::data,{}}).has_value());
   auto report = make_report(1);
   report.status[0] = TF_RECEIVED;
   report.firstArrivalTimeUs[0] = report.receiverSampleTimeUs;
-  ASSERT_EQ(wire.apply_wire(encode(report),1100000).result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report),1100000).feedback.result,transport::report_result_e::accepted);
   ++report.reportSequence;
   ++report.receiverClockEpoch;
-  ASSERT_EQ(wire.apply_wire(encode(report),1200000).result,transport::report_result_e::accepted);
+  ASSERT_EQ(wire.apply_wire_event(encode(report),1200000).feedback.result,transport::report_result_e::accepted);
   const auto statistics = wire.network_statistics(1300000);
   EXPECT_EQ(statistics.window.receiver_clock_epoch,2u);
   EXPECT_EQ(statistics.window.unknown,1u);
@@ -228,8 +228,8 @@ TEST(TransportFeedbackWire, MaximumArrivalAgeAnd64BitClockAreExact) {
 
 TEST(TransportFeedbackWire, SenderReadyUsesSuccessfulWatermarkAndStrictLimits) {
   transport::wire_feedback_t state(42, true);
-  ASSERT_TRUE(state.commit_success(sent(100)));
-  ASSERT_TRUE(state.commit_success(sent(105)));
+  ASSERT_TRUE(state.commit_success_event(sent(100)).has_value());
+  ASSERT_TRUE(state.commit_success_event(sent(105)).has_value());
   const auto ready = state.ready(1000);
   ASSERT_TRUE(ready);
   EXPECT_EQ(ready->submittedThroughExclusive, 106u);
@@ -277,21 +277,21 @@ TEST(TransportFeedbackWire, Unwrap24BitUsesReferenceAndRejectsAmbiguousOrUnrepre
 
 TEST(TransportFeedbackWire, AuthenticatedDecodedInputIntersectsOnlyCommittedPackets) {
   transport::wire_feedback_t state(42, true);
-  ASSERT_TRUE(state.commit_success(sent(101)));
-  ASSERT_TRUE(state.commit_success(sent(102)));
+  ASSERT_TRUE(state.commit_success_event(sent(101)).has_value());
+  ASSERT_TRUE(state.commit_success_event(sent(102)).has_value());
   const auto bytes = encode(make_report());
-  const auto result = state.apply_wire(bytes, 1000);
+  const auto result = state.apply_wire_event(bytes, 1000).feedback;
   ASSERT_EQ(result.result, transport::report_result_e::accepted);
   EXPECT_EQ(result.changes.size(), 2u);
   EXPECT_EQ(result.unmatched_packets, 2u);
   EXPECT_EQ(state.snapshot().ledger.received_packets, 1u);
   EXPECT_EQ(state.snapshot().ledger.missing_declarations, 1u);
-  EXPECT_EQ(state.apply_wire(bytes, 1001).result, transport::report_result_e::duplicate);
+  EXPECT_EQ(state.apply_wire_event(bytes, 1001).feedback.result, transport::report_result_e::duplicate);
   auto late = make_report();
   late.reportSequence = 2;
   late.status[2] = TF_RECEIVED;
   late.firstArrivalTimeUs[2] = 99999;
-  EXPECT_EQ(state.apply_wire(encode(late), 1002).result, transport::report_result_e::accepted);
+  EXPECT_EQ(state.apply_wire_event(encode(late), 1002).feedback.result, transport::report_result_e::accepted);
   EXPECT_EQ(state.snapshot().ledger.late_corrections, 1u);
   EXPECT_EQ(state.snapshot().ledger.committed_packets, 2u);
   late.reportSequence = 3;
@@ -306,24 +306,24 @@ TEST(TransportFeedbackWire, AuthenticatedDecodedInputIntersectsOnlyCommittedPack
 TEST(TransportFeedbackWire, DisabledMalformedAndRateLimitedInputNeverChangesLoss) {
   transport::wire_feedback_t disabled(42, false);
   const auto report = encode(make_report());
-  EXPECT_EQ(disabled.apply_wire(report, 1000).result, transport::report_result_e::invalid);
+  EXPECT_EQ(disabled.apply_wire_event(report, 1000).feedback.result, transport::report_result_e::invalid);
   transport::wire_feedback_t state(42, true);
   const std::vector<uint8_t> invalid(TF_MAX_REPORT_BYTES, 0);
-  for (int i = 0; i < 1000; ++i) state.apply_wire(invalid, 1000);
+  for (int i = 0; i < 1000; ++i) state.apply_wire_event(invalid, 1000);
   // Exhaust the final remainder with smaller malformed datagrams as well.
-  for (int i = 0; i < 1000; ++i) state.apply_wire({}, 1000);
+  for (int i = 0; i < 1000; ++i) state.apply_wire_event({}, 1000);
   auto status = state.snapshot();
   EXPECT_GT(status.rejected_reports, 0u);
   EXPECT_GT(status.rate_limited_reports, 0u);
   EXPECT_EQ(status.ledger.missing_declarations, 0u);
-  EXPECT_EQ(state.apply_wire(report, 1000).result, transport::report_result_e::invalid);
-  EXPECT_EQ(state.apply_wire(report, 1001000).result, transport::report_result_e::accepted);
-  EXPECT_EQ(state.apply_wire(report, 999).result, transport::report_result_e::invalid);
+  EXPECT_EQ(state.apply_wire_event(report, 1000).feedback.result, transport::report_result_e::invalid);
+  EXPECT_EQ(state.apply_wire_event(report, 1001000).feedback.result, transport::report_result_e::accepted);
+  EXPECT_EQ(state.apply_wire_event(report, 999).feedback.result, transport::report_result_e::invalid);
 }
 
 TEST(TransportFeedbackWire, ConcurrentCommitFeedbackAndReadersKeepOneSessionLedger) {
   transport::wire_feedback_t state(42, true);
-  std::thread sender([&] { for (uint64_t i = 0; i < 1000; ++i) EXPECT_TRUE(state.commit_success(sent(i))); });
+  std::thread sender([&] { for (uint64_t i = 0; i < 1000; ++i) EXPECT_TRUE(state.commit_success_event(sent(i)).has_value()); });
   std::thread observer([&] {
     for (unsigned i = 0; i < 1000; ++i) {
       auto r = make_report(1);
@@ -331,7 +331,7 @@ TEST(TransportFeedbackWire, ConcurrentCommitFeedbackAndReadersKeepOneSessionLedg
       r.baseExtendedSequence = i;
       r.status[0] = TF_RECEIVED;
       r.firstArrivalTimeUs[0] = 1000;
-      state.apply_wire(encode(r), 1000000 + static_cast<int64_t>(i) * 50000);
+      state.apply_wire_event(encode(r), 1000000 + static_cast<int64_t>(i) * 50000);
       EXPECT_TRUE(state.snapshot().ledger.counters_valid);
     }
   });
@@ -353,7 +353,10 @@ TEST(TransportFeedbackWire, OwnedEventsPreserveAuthoritativeMetadataAndApplyExac
   EXPECT_EQ(first->commit_ordinal, 1u);
   EXPECT_EQ(first->sent.send_time_us, 101);
   EXPECT_EQ(first->data_in_flight_bytes, 1234u);
-  ASSERT_TRUE(state.commit_success(sent(102)));  // Compatibility path, once.
+  const auto second = state.commit_success_event(sent(102));
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second->event_sequence, 2u);
+  EXPECT_EQ(second->commit_ordinal, 2u);
   transport::feedback_event_t event;
   {
     auto bytes = encode(make_report());
@@ -382,7 +385,7 @@ TEST(TransportFeedbackWire, OwnedEventsPreserveAuthoritativeMetadataAndApplyExac
   late.reportSequence = 2;
   late.status[2] = TF_RECEIVED;
   late.firstArrivalTimeUs[2] = 99998;
-  EXPECT_EQ(state.apply_wire(encode(late), 1200).changes.size(), 1u);
+  EXPECT_EQ(state.apply_wire_event(encode(late), 1200).feedback.changes.size(), 1u);
   EXPECT_EQ(state.snapshot().ledger.late_corrections, 1u);
   EXPECT_EQ(state.snapshot().accepted_reports, 2u);
 }
@@ -401,7 +404,7 @@ TEST(TransportFeedbackWire, EventSequenceExhaustionRejectsBeforeLedgerMutation) 
   EXPECT_EQ(send_exhaustion.snapshot().ledger.missing_declarations, 0u);
 
   transport::wire_feedback_t feedback_exhaustion(42, true, 10, UINT64_MAX - 2);
-  ASSERT_TRUE(feedback_exhaustion.commit_success(sent(101)));
+  ASSERT_TRUE(feedback_exhaustion.commit_success_event(sent(101)).has_value());
   const auto final_report = feedback_exhaustion.apply_wire_event(encode(make_report()), 1000);
   EXPECT_EQ(final_report.event_sequence, UINT64_MAX);
   EXPECT_EQ(final_report.feedback.result, transport::report_result_e::accepted);

@@ -10,11 +10,6 @@ namespace transport {
     state_.negotiated = negotiated;
   }
 
-  bool
-  wire_feedback_t::commit_success(const sent_packet_t &packet) {
-    return commit_success_event(packet).has_value();
-  }
-
   std::optional<successful_send_event_t>
   wire_feedback_t::commit_success_event(const sent_packet_t &packet) {
     std::lock_guard lock(mutex_);
@@ -23,11 +18,6 @@ namespace transport {
     state_.submitted_through_exclusive = packet.extended_sequence + 1;
     return successful_send_event_t { connection_epoch_, ++event_sequence_, packet,
       ledger_.snapshot().data_in_flight_bytes, ledger_.snapshot().committed_packets };
-  }
-
-  feedback_result_t
-  wire_feedback_t::apply_wire(std::span<const std::uint8_t> bytes, std::int64_t received_at_us) {
-    return apply_wire_event(bytes, received_at_us).feedback;
   }
 
   feedback_event_t
