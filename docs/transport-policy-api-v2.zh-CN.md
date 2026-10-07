@@ -1,8 +1,8 @@
 # 会话传输策略 API v2
 
-本接口用于已配对客户端查询和提交自身串流会话的手动传输策略。代码入口为 `src/nvhttp/dynamic_params.cpp`，严格 JSON 契约为 `src/transport/transport_policy_json.*`，会话寻址与接受为 `src/stream.cpp`。当前实现包含会话 FEC、归一化净编码目标、策略版本、控制来源与代次以及应用回执。期限视频 owner 已接线并完整构建，隔离串流的单视频预算、显式自动接管及实验 FEC 联动已有证据；全流量预算与完整客户端业务接入仍待完成，见[实施文档](adaptive-fec-implementation.zh-CN.md)。
+本接口用于已配对客户端查询和提交自身串流会话的手动传输策略。代码入口为 `src/nvhttp/dynamic_params.cpp`，严格 JSON 契约为 `src/transport/transport_policy_json.*`，会话寻址与接受为 `src/stream.cpp`。当前实现包含会话 FEC、归一化净编码目标、策略版本、控制来源与代次以及应用回执。期限视频 owner 已接线并完整构建，隔离串流的单视频预算、显式自动接管已有证据；全流量预算运行验收与完整客户端业务验收仍待完成，见[实施文档](adaptive-fec-implementation.zh-CN.md)。
 
-同一认证上下文新增实验操作 `POST /api/v2/transport-control`，用于活动会话独立切换自动码率/FEC 和更新手动总预算上限。原手动 POST 的严格字段集合保持不变；两端 UI、可靠通知和真机验收分别记录，不因服务端接口存在而宣告 P3 完成。
+同一认证上下文新增实验操作 `POST /api/v2/transport-control`，用于活动会话切换自动码率、恢复手动控制及更新总预算上限；兼容字段 automaticFec 固定为 false。原手动 POST 的严格字段集合保持不变；两端 UI、可靠通知和真机验收分别记录，不因服务端接口存在而宣告 P3 完成。
 
 接口注册和源码测试不证明设备上的配置结果或网络收益。新模式必须显式提交，进入后旧码率/FEC 请求被拒绝；本阶段通过重连回到启动时的兼容模式。当前没有自动启用 GoogCC 或 RTX。
 
@@ -20,7 +20,7 @@
 
 升级客户端在配对 `/launch`、`/resume` 查询中发送 `transportScope=1`，与实验逐包控制开关独立。支持该扩展的服务端在成功 XML 回复中同时返回 `transportScope` 为 `1`、既有 `transportSessionId` 和新增 `transportConnectionEpoch`。epoch 在 HTTPS 启动阶段生成，同一启动票据的 RTSP 及策略状态沿用该值；每次新 launch/resume 都生成新值。随机数生成失败时拒绝启动。
 
-客户端只在未收到 scope 确认和 epoch 两个节点时使用旧主机兼容路径；可以仍收到旧的 sessionId。确认存在却缺少身份、未知确认值、重复身份或非法值均作为握手错误，不能退为无身份写入。PC 使用完整 XML 解析；Android 的完整解析已接线并编译，JVM 只覆盖字段模型，其设备解析和 Game 握手仍待验证。
+客户端只在未收到 scope 确认和 epoch 两个节点时使用旧主机兼容路径；可以仍收到旧的 sessionId。确认存在却缺少身份、未知确认值、重复身份或非法值均作为握手错误，不能退为无身份写入。PC 使用完整 XML 解析；Android 的完整解析已接线并编译，JVM 已覆盖实际 XML 解析的非法、重复和部分身份；真机 Game/JNI 握手仍待验证。
 
 | 兼容操作 | 绑定字段 | 选择与拒绝规则 |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ GET /api/v2/transport-policy?sessionId=100&connectionEpoch=42
 
 第十八阶段为 accepted、confirmed 与各 revision 回执增加只读 `encoderCeilingKbps`，无拥塞窗口回压上限时为 null。有上限时 `encoderKbps` 是预算/FEC 分配与该上限的较小值；`wireBudgetKbps` 保留网络预算，pacer 不随该独立编码上限降速。该字段不允许 POST：客户端仍须遵守原有严格请求字段集合。请求接受、SDK 应用和首帧发送继续分别确认；pending 或失败不得被展示为已经应用。手动接管会清除自动编码上限并撤销旧租约，旧 epoch 的请求不能继续覆盖新策略。
 
-每个回执含 `encoderApplied`、`firstSentFrame` 和 `failure`。`firstSentFrame` 仅在该版本某个 UDP 包成功提交给操作系统后出现，不表示全帧发送完成、对端收到或恢复成功。冗余为零、分片可行性回退和发送失败需分别记录。
+每个回执含 `encoderApplied`、`firstSentFrame` 和 `failure`。首包发送要求已有编码器应用证据，已应用回执要求 failure 为 none；两端解析器拒绝相互矛盾的历史回执。`firstSentFrame` 仅在该版本某个 UDP 包成功提交给操作系统后出现，不表示全帧发送完成、对端收到或恢复成功。冗余为零、分片可行性回退和发送失败需分别记录。
 
 策略对象另含只读 `automaticControl`：归一化手动策略为 null；已协商启动策略或显式模式请求包含 `automaticBitrate`、兼容字段 `automaticFec`、`maximumTotalKbps`、十进制字符串 `activationEpoch`。`automaticFec` 固定为 false，策略状态入口也拒绝启用请求与非法启动意图。启动时 activationEpoch 为 `"0"`，冻结本会话启动默认值；显式请求由仲裁器分配非零激活代次，后续自动策略和租约交接保留它。它描述不可变意图，实际应用仍检查 SDK、首发和反馈门槛；来源为 GoogCC 也可能关闭自动码率。
 
@@ -167,7 +167,7 @@ encoder = floor((primary - videoOverhead) / (1 + max(base,key,recovery)/100))
 
 服务端先核对当前 control epoch 和控制来源，再查最近 128 个成功请求的幂等记录。在同一控制代次内，相同 requestId 与完整内容返回原接收版本，不再创建策略；内容不同返回 409。旧代次即使命中成功历史也返回 409。因此，首次接管的旧 epoch 重试不会再次取得授权；接管响应丢失时先查询当前来源、epoch 与策略，必要时用当前 epoch 与新的 requestId 提交。GET 当前不提供按 requestId 的历史查找；相同预算不能证明原请求身份，不能推断某次历史请求是否成功。记录过期后，旧 expectedRevision 仍被拒绝。
 
-内部 `transfer_control()` 使用连接 epoch、control epoch、来源和预期 revision 比较后交接，保留全部预算与 FEC。即使替换同一类控制器实例也增加代次；`request_controller_update()` 只接受已持有匹配租约的 GoogCC 或 local 候选。HTTPS body 不接受 `controlSource` 或自报租约，不能以额外字段取得自动控制权。手动更新可以按当前 epoch/revision 显式覆盖其他来源并产生新代次；测量请求不会执行该交接。实验 GoogCC 运行入口只在显式协商、pacing、归一化实际应用与首发、近期匹配反馈同时成立后授予租约；local 尚未授予。
+内部 `transfer_control()` 使用连接 epoch、control epoch、来源和预期 revision 比较后交接，保留全部预算与 FEC。即使替换同一类控制器实例也增加代次；`request_controller_update()` 只接受已持有匹配租约的 GoogCC 候选。HTTPS body 不接受 `controlSource` 或自报租约，不能以额外字段取得自动控制权。手动更新可以按当前 epoch/revision 显式覆盖其他来源并产生新代次；测量请求不会执行该交接。实验 GoogCC 运行入口只在显式协商、pacing、归一化实际应用与首发、近期匹配反馈同时成立后授予租约；local 尚未授予。
 
 实验自动启动在内部先准备归一化 revision 2，来源仍为 `legacy`、control epoch 仍为 1；随后实际门槛满足才交接至 `googcc` 并产生新代次。准备阶段不虚构应用或首发回执，归一化会话拒绝无版本的旧 ABR 更新。它不是 HTTPS 可调用的新操作；客户端查询时须同时读取策略 basis、来源和回执，不能仅根据 revision 增加推断已自动接管。
 
@@ -220,6 +220,6 @@ Content-Type: application/json
 
 Android 控件设备测试已构建，但手机 USB 安装被系统限制，尚未执行。PC 的完整构建及 offscreen 菜单/后台组件测试通过；软件界面后端的实际 Session 完成 13 次生产菜单操作，后续 D3D11 配合 `QSG_RENDER_LOOP=basic` 也重复通过 13 步、83 次独立配对查询及 26 个策略版本，并有实际解码/渲染。默认 threaded 渲染循环、桌面合成、完整故障矩阵和性能仍须验收，详见[验证记录](adaptive-fec-validation.zh-CN.md)。组件和离线样本不代替应用串流验收。
 
-连接生命周期以 connection epoch 区分，客户端保留最近确认的总预算用于新握手时，不得继承旧控制代次、pending、回执或自动授权。重连先核对主机当前运行的应用，再选择 launch/resume；每次连接尝试使用新串流密钥及独立回调配置。新连接收到真实 decode unit 后才能判为视频已开始，push/pull 路径分别覆盖。以上是客户端实施约束；具体实现与通过范围见实施文档的连接生命周期验收及验证记录，不增加 API 字段或修改 HTTP 状态含义。Android 已保存最后通过校验的 accepted 总预算用于新握手，停止时清空旧 view；同 revision 的完整已知 v2 策略须一致，最近 64 项历史中的 SDK/首发回执不能倒退。缺少可空状态字段与显式 null 分别处理，回复丢失不推断原请求身份。44 份真实 PC 重连状态已在 Android 组件回放通过，Game 设备握手与恢复仍未验收；兼容模式的当前连接确认仅替代旧 API 目标，不代表总线上预算或 SDK 回执。
+连接生命周期以 connection epoch 区分，客户端保留最近确认的总预算用于新握手时，不得继承旧控制代次、pending、回执或自动授权。重连先核对主机当前运行的应用，再选择 launch/resume；每次连接尝试使用新串流密钥及独立回调配置。新连接收到真实 decode unit 后才能判为视频已开始，push/pull 路径分别覆盖。以上是客户端实施约束；具体实现与通过范围见实施文档的连接生命周期验收及验证记录，不增加 API 字段或修改 HTTP 状态含义。Android 只保存最后通过应用证据确认的 confirmed 总预算用于新握手，停止时清空旧 view；同 revision 的完整已知 v2 策略须一致，最近 64 项历史中的 SDK/首发回执不能倒退。缺少可空状态字段与显式 null 分别处理，回复丢失不推断原请求身份。44 份真实 PC 重连状态已在 Android 组件回放通过，Game 设备握手与恢复仍未验收；兼容模式的当前连接确认仅替代旧 API 目标，不代表总线上预算或 SDK 回执。
 
-FEC 字段是相对数据分片的名义目标，实际冗余受取整、最小冗余与块限制影响；接受目标不等于恢复概率或播放期限已经达标。历史回放选择器已删除，不能从较高保护比例推断目标已满足。归一化会话不能把控制来源改回无版本的旧 ABR，以免迟到旧请求重新生效；当前返回兼容模式仍需重连。Android 已实施连接内旧请求串行化和停止排空，新 launch/resume 等待原连接的客户端工作终态；PC 已校验旧 XML 回复并在明确确认时清除旧预算记忆。旧端点仍无 connection epoch，客户端 HTTP 超时不代表主机处理已取消，不据此承诺跨重连的迟到写入隔离；有身份的兼容操作与实际应用故障仍待交付。这些客户端实现未改变现有 v2 字段或 HTTP 状态含义。完成 SDK 失败、重建成本及完整客户端消费验证之前，不将本接口视为完整自动联动已验收。
+FEC 字段是相对数据分片的名义目标，实际冗余受取整、最小冗余与块限制影响；接受目标不等于恢复概率或播放期限已经达标。历史回放选择器已删除，不能从较高保护比例推断目标已满足。归一化会话不能把控制来源改回无版本的旧 ABR，以免迟到旧请求重新生效；当前返回兼容模式仍需重连。Android 已实施连接内旧请求串行化和停止排空，新 launch/resume 等待原连接的客户端工作终态；PC 已校验旧 XML 回复并在明确确认时清除旧预算记忆。未绑定身份的旧请求仍无 connection epoch，客户端 HTTP 超时不代表主机处理已取消，不据此承诺跨重连的迟到写入隔离；有身份的兼容操作与实际应用故障仍待交付。这些客户端实现未改变现有 v2 字段或 HTTP 状态含义。完成 SDK 失败、重建成本及完整客户端消费验证之前，不将本接口视为完整自动联动已验收。
