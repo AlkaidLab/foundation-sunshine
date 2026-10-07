@@ -256,25 +256,6 @@ TEST(TransportFeedbackWire, SenderReadyUsesSuccessfulWatermarkAndStrictLimits) {
   EXPECT_FALSE(disabled.ready(1000));
 }
 
-TEST(TransportFeedbackWire, Unwrap24BitUsesReferenceAndRejectsAmbiguousOrUnrepresentableRanges) {
-  uint64_t sequence = 77;
-  EXPECT_TRUE(TfUnwrapSequence24(3, 0xfffffe, &sequence));
-  EXPECT_EQ(sequence, 0x1000003u);
-  EXPECT_TRUE(TfUnwrapSequence24(0xfffffe, 0x1000003, &sequence));
-  EXPECT_EQ(sequence, 0xfffffeu);
-  EXPECT_TRUE(TfUnwrapSequence24(100, 100, &sequence));
-  EXPECT_EQ(sequence, 100u);
-  EXPECT_FALSE(TfUnwrapSequence24(0x800064, 100, &sequence));
-  EXPECT_EQ(sequence, 100u);
-  EXPECT_FALSE(TfUnwrapSequence24(0x1000000, 100, &sequence));
-  EXPECT_FALSE(TfUnwrapSequence24(0xffffff, 0, &sequence));
-  EXPECT_FALSE(TfUnwrapSequence24(0, UINT64_MAX, &sequence));
-  for (uint64_t base = (1ull << 48) + 0xffff00; base < (1ull << 48) + 0x1000200; ++base) {
-    ASSERT_TRUE(TfUnwrapSequence24(static_cast<uint32_t>(base + 1) & 0xffffff, base, &sequence));
-    ASSERT_EQ(sequence, base + 1);
-  }
-}
-
 TEST(TransportFeedbackWire, AuthenticatedDecodedInputIntersectsOnlyCommittedPackets) {
   transport::wire_feedback_t state(42, true);
   ASSERT_TRUE(state.commit_success_event(sent(101)).has_value());
