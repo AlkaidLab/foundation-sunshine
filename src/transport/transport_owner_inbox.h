@@ -41,7 +41,6 @@ namespace transport {
     mutable std::condition_variable drain_cv_;
   };
   using owner_flow_ref_t = std::shared_ptr<const owner_flow_t>;
-  using flow_ref_t = owner_flow_ref_t;
 
   struct owner_frame_t {
     owner_flow_ref_t flow;

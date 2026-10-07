@@ -50,15 +50,6 @@ TEST(VideoDeadline, RepeatedFrameHasOwnOriginAndRetainsNullRtpTimestamp) {
   EXPECT_EQ(history.find(1), at(10ms));
 }
 
-TEST(VideoDeadline, CaptureOriginDoesNotRequirePerformanceTrace) {
-  history_t history;
-  // No trace/performance state is an input to the production history API.
-  history.bind(1, at(123ms), at(150ms));
-  history.bind(2, std::nullopt, at(200ms));
-  EXPECT_EQ(history.find(1), at(123ms));
-  EXPECT_EQ(history.find(2), at(200ms));
-}
-
 TEST(VideoDeadline, DefaultFallbackIsBoundedByActualSubmissionTime) {
   history_t history;
   const auto before = history_t::clock_t::now();

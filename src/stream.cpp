@@ -4343,6 +4343,7 @@ namespace stream {
       }
 #endif
       auto peer_address = active.context->peer.address();
+      std::optional<transport::session_send_budget_t::permit_t> budget_permit;
       const auto can_send = [&](std::size_t index) {
         if (!probe_authorized()) {
           cancel_controlled_work();
@@ -4352,7 +4353,7 @@ namespace stream {
         // native submission. The authoritative receipt still uses its actual
         // return time; a late OS return remains an expired frame.
         constexpr auto submission_reserve_us = 1000;
-        return !active.flow->is_closed() &&
+        return !active.flow->is_closed() && (!budget_permit || budget_permit->allowed_to_send()) &&
                packets[index].deadline_us - transport_now_us() > submission_reserve_us;
       };
       bool equal_size = !packets.empty();
@@ -4364,7 +4365,6 @@ namespace stream {
       }
       bool fallback = !equal_size;
       std::size_t prefix = 0;
-      std::optional<transport::session_send_budget_t::permit_t> budget_permit;
       if (const auto &budget = active.context->session->send_budget) {
         std::uint64_t maximum_bytes = 0;
         for (const auto &packet : packets) maximum_bytes += packet.metadata.ip_bytes;
@@ -4900,10 +4900,7 @@ namespace stream {
     };
     std::deque<queued_audio_t> pending;
     std::size_t pending_bytes = 0;
-#ifdef _WIN32
-    bool bounded_socket = false;
-#endif
-    // Experimental bounds, pending V6 calibration. These do not extend the
+    // Shared-socket retry bounds, pending V6 calibration. These do not extend the
     // receiver's playback wait and do not promise an end-to-end audio deadline.
     constexpr std::size_t maximum_pending_packets = 256;
     constexpr std::size_t maximum_pending_bytes = 256 * 1024;
@@ -4949,11 +4946,12 @@ namespace stream {
             auto target_address = packet.peer.address();
             auto info = platf::send_info_t { nullptr, 0, reinterpret_cast<const char *>(packet.payload.data()), packet.payload.size(),
               static_cast<uintptr_t>(sock.native_handle()), target_address, packet.peer.port(), packet.source };
-#ifdef _WIN32
-            // The shared socket stays nonblocking after the first bounded
-            // submission. Legacy sessions must then use this same retry queue.
-            bounded_socket = true;
-#endif
+            // Recheck after native setup, including stop/deadline changes while
+            // acquiring the shared permit. The socket outlives this sender.
+            info.before_send = [&] {
+              return !packet.policy->stopped() && transport_now_us() < packet.deadline_us &&
+                     (!reservation.permit || reservation.permit->allowed_to_send());
+            };
             const auto attempt = platf::try_send(info);
             const bool shape_valid = attempt.submitted_datagrams <= 1 &&
                                      attempt.submitted_payload_bytes == attempt.submitted_datagrams * packet.payload.size();
@@ -5068,14 +5066,6 @@ namespace stream {
 
       auto peer_address = session->audio.peer.address();
       const auto submit_audio = [&](platf::send_info_t &info) {
-#ifdef _WIN32
-        if (!session->send_budget && !bounded_socket) {
-#else
-        if (!session->send_budget) {
-#endif
-          platf::send(info);
-          return;
-        }
         const auto size = info.header_size + info.payload_size;
         queued_audio_t owned { {}, session->audio.peer, session->localAddress, session->send_budget,
           session->transport_state, session->transport_state->active()->connection_epoch,
@@ -5231,8 +5221,6 @@ namespace stream {
     ctx.io_context.stop();
     ctx.mic_io_context.stop();
 
-    ctx.audio_sock.close();
-
     if (disable_mic_socket(ctx)) {
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
     }
@@ -5249,6 +5237,7 @@ namespace stream {
     ctx.video_inbox.reset();
     BOOST_LOG(debug) << "Waiting for main audio thread to end..."sv;
     ctx.audio_thread.join();
+    ctx.audio_sock.close();  // No native audio send may race socket close.
     BOOST_LOG(debug) << "Waiting for main control thread to end..."sv;
     ctx.control_thread.join();
     BOOST_LOG(debug) << "Waiting for microphone thread to end..."sv;
@@ -6009,16 +5998,6 @@ namespace stream {
               effective_param.type == video::dynamic_param_type_e::FEC_PERCENTAGE) {
             return queue_transport_parameter(*session_p, effective_param);
           }
-          // Update session's current total bitrate if this is a bitrate change
-          if (effective_param.type == video::dynamic_param_type_e::BITRATE && effective_param.valid) {
-            effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
-            // The param.value.int_value is the total bitrate (user-configured, including FEC)
-            session_p->current_total_bitrate = effective_param.value.int_value;
-            perf::update_session_bitrate(session_p->launch_session_id, effective_param.value.int_value);
-            BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
-                            << "': " << effective_param.value.int_value << " Kbps (including FEC)";
-          }
-
           session_p->video.dynamic_param_change_events->raise(effective_param);
           BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
                           << "': type=" << (int) effective_param.type;
