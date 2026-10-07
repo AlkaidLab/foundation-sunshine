@@ -3256,8 +3256,9 @@ independent proxy, including IPv6 capacity changes and reverse-control delay. Ac
 The current client requests 10,000 kbps on a restored 20 Mbps virtual link; this does not prove measurement of the full link capacity.
 Multiple-session fairness, non-loopback IPv6 paths, real OS partial-send faults, large audio payload fragmentation,
 complete probe behavior, application/device validation and performance gates remain incomplete.
-Audio currently has experimental limits of 256 queued packets/256 KiB and 40 ms
-from enqueue; these are not frozen playback guarantees. The formal v2 API capability
+All shared-socket audio, including legacy sessions, now uses the existing bounded nonblocking retry queue
+(256 packets/256 KiB, 40 ms from enqueue). Shutdown joins the sender before closing its socket; these
+limits are validation parameters, not frozen playback guarantees. The formal v2 API capability
 flags remain false; experimental negotiation and policy ownership have separate status fields. Raw traces can contain
 private session data and should be kept with local validation evidence.
 
