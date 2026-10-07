@@ -187,13 +187,6 @@ namespace transport {
     order_.pop_front();
   }
 
-  void
-  send_ledger_t::expire_before(std::int64_t send_time_us) {
-    while (!order_.empty() && entries_.at(order_.front()).packet.send_time_us < send_time_us) {
-      evict_oldest();
-    }
-  }
-
   std::optional<sent_packet_t>
   send_ledger_t::find(std::uint64_t sequence) const {
     const auto iterator = entries_.find(sequence);

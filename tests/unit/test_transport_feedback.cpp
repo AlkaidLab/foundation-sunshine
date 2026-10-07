@@ -192,11 +192,6 @@ namespace {
     EXPECT_TRUE(report(ledger, 1, observations).changes.empty());
     EXPECT_EQ(ledger.snapshot().missing_declarations, 0);
     EXPECT_EQ(ledger.snapshot().data_in_flight_bytes, 2560);
-    ledger.expire_before(101);
-    EXPECT_EQ(ledger.size(), 0);
-    EXPECT_EQ(ledger.snapshot().unresolved_evictions, 2);
-    EXPECT_EQ(ledger.snapshot().missing_declarations, 0);
-    EXPECT_EQ(ledger.snapshot().data_in_flight_bytes, 0);
   }
 
   TEST(TransportFeedback, HistoryPressureAndExpiredTailsStayUnknown) {
@@ -209,8 +204,6 @@ namespace {
     const std::array observations {missing(1), received(2)};
     EXPECT_EQ(report(ledger, 1, observations).unmatched_packets, 1);
     EXPECT_EQ(ledger.snapshot().missing_declarations, 0);
-    ledger.expire_before(102);
-    EXPECT_EQ(ledger.size(), 1);
     EXPECT_EQ(ledger.snapshot().unresolved_evictions, 1);
     EXPECT_EQ(ledger.snapshot().data_in_flight_bytes, 1280);
   }

@@ -173,8 +173,6 @@ namespace transport {
     commit_success(const sent_packet_t &packet);
     feedback_result_t
     apply(const packet_report_t &report);
-    void
-    expire_before(std::int64_t send_time_us);
     std::optional<sent_packet_t>
     find(std::uint64_t sequence) const;
     const send_ledger_snapshot_t &
