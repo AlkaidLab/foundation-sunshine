@@ -201,6 +201,8 @@ namespace video {
     platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
     platf::pre_encode_filter_config_t pre_encode_filter_config;
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
+    // Local diagnostics only; never serialized into the media protocol.
+    std::uint32_t perf_session_id = 0;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {
@@ -628,7 +630,8 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt);
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt,
+    int packet_size = 0);
 
   bool
   validate_encoder(

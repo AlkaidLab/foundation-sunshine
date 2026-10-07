@@ -7,3 +7,5 @@ find_path(MINHOOK_INCLUDE_DIR MinHook.h PATH_SUFFIXES include REQUIRED)
 add_library(minhook::minhook STATIC IMPORTED)
 set_property(TARGET minhook::minhook PROPERTY IMPORTED_LOCATION ${MINHOOK_LIBRARY})
 target_include_directories(minhook::minhook INTERFACE ${MINHOOK_INCLUDE_DIR})
+
+include("${CMAKE_MODULE_PATH}/dependencies/Pyrowave_Sunshine.cmake")

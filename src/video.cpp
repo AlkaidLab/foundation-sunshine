@@ -46,6 +46,9 @@ extern "C" {
 
 #ifdef _WIN32
   #include "nvenc/win/nvenc_dynamic_factory.h"
+  #include "platform/windows/pyrowave/cpu_encoder.h"
+  #include "platform/windows/pyrowave/gpu_encoder.h"
+  #include "platform/windows/display.h"
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
@@ -1154,6 +1157,9 @@ namespace video {
     std::thread capture_thread;
 
     safe::signal_t reinit_event;
+    // A backend failure can request a shared-display reinitialization without
+    // making the encoder thread own or replace the capture display directly.
+    std::atomic_bool force_system_capture { false };
     const encoder_t *encoder_p;
     sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
   };
@@ -1733,6 +1739,23 @@ namespace video {
     for (int x = 0; x < 2; ++x) {
       disp.reset();
       disp = platf::display(type, display_name, config);
+#ifdef _WIN32
+      // PyroWave can consume either a D3D11 image (GPU backend) or a system
+      // image (CPU staging backend). If the preferred display type is not
+      // available, keep the shared capture coordinator alive and retry the
+      // system-memory display instead of maintaining a second capture loop.
+      if (!disp &&
+          config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
+          type != platf::mem_type_e::system) {
+        auto system_config = config;
+        // Windows' display factory selects a backend name (ddx/wgc/vdd),
+        // while mem_type_e::system selects the system-memory implementation.
+        // "system" is not a backend name and would make the factory try no
+        // implementation at all.
+        system_config.capture_backend_override = "ddx";
+        disp = platf::display(platf::mem_type_e::system, display_name, system_config);
+      }
+#endif
       if (disp) {
         BOOST_LOG(debug) << "[reset_display] 成功重置显示器: " << display_name;
         break;
@@ -1805,6 +1828,7 @@ namespace video {
     std::shared_ptr<safe::queue_t<capture_ctx_t>> capture_ctx_queue,
     sync_util::sync_t<std::weak_ptr<platf::display_t>> &display_wp,
     safe::signal_t &reinit_event,
+    std::atomic_bool &force_system_capture,
     const encoder_t &encoder) {
     std::vector<capture_ctx_t> capture_ctxs;
 
@@ -1838,7 +1862,12 @@ namespace video {
 
     // Use client-specified display_name if provided, otherwise use the selected display
     std::string target_display_name;
-    const auto &config = capture_ctxs.front().config;
+    auto config = capture_ctxs.front().config;
+    const auto requested_mem_type = force_system_capture.load(std::memory_order_acquire) ?
+      platf::mem_type_e::system : encoder.platform_formats->dev_type;
+    if (requested_mem_type == platf::mem_type_e::system) {
+      config.capture_backend_override = "ddx";
+    }
     if (!config.display_name.empty()) {
       // config.display_name may be a device ID (e.g., {xxx-xxx-xxx}) rather than display name (e.g., \\.\DISPLAY1)
       // Try to convert device ID to display name first
@@ -1868,7 +1897,8 @@ namespace video {
       target_display_name = display_names[display_p];
     }
 
-    auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
+    std::shared_ptr<platf::display_t> disp;
+    reset_display(disp, requested_mem_type, target_display_name, config);
     if (!disp) {
       return;
     }
@@ -2019,6 +2049,11 @@ namespace video {
           return false;
         }
 
+        if (force_system_capture.load(std::memory_order_acquire)) {
+          artificial_reinit = true;
+          return false;
+        }
+
         // 先接入新会话，再分发本次真实画面。若本次只是捕获超时，则给新会话
         // 补发上一张真实画面，保证它与现有会话看到同一个活动显示器内容。
         if (!append_pending_capture_contexts(frame_captured ? std::shared_ptr<platf::img_t> {} : latest_captured_img)) {
@@ -2136,8 +2171,14 @@ namespace video {
               }
             }
 
+            if (force_system_capture.load(std::memory_order_acquire)) {
+              config.capture_backend_override = "ddx";
+            }
+
             // reset_display() will sleep between retries
-            reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
+            const auto requested_mem_type = force_system_capture.load(std::memory_order_acquire) ?
+              platf::mem_type_e::system : encoder.platform_formats->dev_type;
+            reset_display(disp, requested_mem_type, target_display_name, config);
             if (disp) {
               active_display_event->raise(target_display_name);
               break;
@@ -2148,6 +2189,8 @@ namespace video {
           }
 
           display_wp = disp;
+
+          force_system_capture.store(false, std::memory_order_release);
 
           reinit_event.reset();
           continue;
@@ -2538,6 +2581,20 @@ namespace video {
     else if (auto amf_session = dynamic_cast<amf_encode_session_t *>(&session)) {
       return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
+#ifdef _WIN32
+    else if (platf::pyrowave_windows::is_gpu_encoder_session(session)) {
+      if (!pipeline_trace) pipeline_trace.emplace();
+      pipeline_trace->pyrowave = true;
+      return platf::pyrowave_windows::encode_gpu_frame(
+        frame_nr, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+    }
+    else {
+      if (!pipeline_trace) pipeline_trace.emplace();
+      pipeline_trace->pyrowave = true;
+      return platf::pyrowave_windows::encode_frame(
+        frame_nr, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+    }
+#endif
 
     return -1;
   }
@@ -3379,9 +3436,20 @@ namespace video {
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
-    auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    std::function<std::unique_ptr<encode_session_t>()> session_factory = {},
+    std::function<void()> backend_failure_handler = {}) {
+    auto session = session_factory ? session_factory() :
+      make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
+      if (backend_failure_handler) {
+        BOOST_LOG(warning) << "Encoder session could not be initialized; requesting backend recovery"sv;
+        backend_failure_handler();
+      }
+      else if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT)) {
+        BOOST_LOG(error) << "PyroWave encoder session could not be initialized; ending video session"sv;
+        mail->event<bool>(mail::shutdown)->raise(true);
+      }
       return;
     }
 
@@ -3479,6 +3547,10 @@ namespace video {
       // in a separate scope.
       auto dummy_img = disp->alloc_img();
       if (!dummy_img || disp->dummy_img(dummy_img.get()) || session->convert(*dummy_img)) {
+        if (backend_failure_handler) {
+          BOOST_LOG(warning) << "Encoder rejected the initial frame; requesting backend recovery"sv;
+          backend_failure_handler();
+        }
         return;
       }
     }
@@ -3511,9 +3583,26 @@ namespace video {
       // 处理动态参数调整
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
+          if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
+              param->type != dynamic_param_type_e::BITRATE &&
+              param->type != dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+            // PyroWave supports a bounded next-frame bitrate budget, but not
+            // the other encoder reconfiguration knobs yet. Do not consume a
+            // QP/FPS/VBV request and pretend it applied; reconnect so the
+            // client can negotiate a backend that owns that setting.
+            BOOST_LOG(warning) << "PyroWave does not support dynamic parameter type "
+                               << static_cast<int>(param->type)
+                               << "; ending video session for renegotiation"sv;
+            shutdown_event->raise(true);
+            break;
+          }
           BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
           session->set_dynamic_param(*param);
         }
+      }
+
+      if (shutdown_event->peek()) {
+        break;
       }
 
       if (requested_idr_frame) {
@@ -3547,6 +3636,9 @@ namespace video {
           }
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
+            if (backend_failure_handler) {
+              backend_failure_handler();
+            }
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
@@ -3582,6 +3674,9 @@ namespace video {
 
       if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
+        if (backend_failure_handler) {
+          backend_failure_handler();
+        }
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
       }
@@ -3996,7 +4091,8 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    int packet_size) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<captured_frame_event_t::element_type>();
@@ -4028,6 +4124,13 @@ namespace video {
 
     // Cache window capture mode check outside the loop
     const bool is_window_capture = (config::video.capture_target == "window");
+    const bool is_pyrowave = config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT);
+#ifdef _WIN32
+    bool pyrowave_gpu_disabled = false;
+    bool pyrowave_session_is_gpu = false;
+    bool pyrowave_fallback_reinit_pending = false;
+    bool pyrowave_terminal_failure_pending = false;
+#endif
 
     // Track display dimensions for resolution change detection
     int last_display_width = 0;
@@ -4147,11 +4250,167 @@ namespace video {
       }
 
       auto &encoder = *chosen_encoder;
+      std::unique_ptr<platf::encode_device_t> encode_device;
+      std::function<std::unique_ptr<encode_session_t>()> session_factory;
+      std::function<void()> backend_failure_handler;
 
-      strip_unusable_pre_encode_filter(*display, config);
-      auto encode_device = make_encode_device(*display, encoder, config);
-      if (!encode_device) {
-        return;
+      if (is_pyrowave) {
+        const auto pyrowave_colorspace = colorspace_from_client_config(config, display->is_hdr());
+        const auto pyrowave_colorspace_name =
+          pyrowave_colorspace.colorspace == colorspace_e::bt2020 ? "BT.2020/PQ"sv :
+          pyrowave_colorspace.colorspace == colorspace_e::bt2020hlg ? "BT.2020/HLG"sv :
+          pyrowave_colorspace.colorspace == colorspace_e::rec709 ? "BT.709"sv : "unknown"sv;
+        BOOST_LOG(info) << "[PyroWaveSession] encode color contract"
+                        << ": colorspace=" << pyrowave_colorspace_name
+                        << ", range=" << (pyrowave_colorspace.full_range ? "full"sv : "limited"sv)
+                        << ", bitDepth=" << pyrowave_colorspace.bit_depth
+                        << ", chroma=" << (config.chromaSamplingType == 0 ? "4:2:0"sv : "4:4:4"sv)
+                        << ", dynamicRange=" << config.dynamicRange
+                        << ", encoderCscMode=" << config.encoderCscMode;
+#ifdef _WIN32
+        const auto pyrowave_frame_rate_num = config.frameRateNum > 0 ? config.frameRateNum : config.framerate;
+        const auto pyrowave_frame_rate_den = config.frameRateNum > 0 && config.frameRateDen > 0 ? config.frameRateDen : 1;
+        // A capture wait timeout is not an encoding rate limit: queued images
+        // are returned immediately. Budget at the negotiated rate, not the
+        // static-content refresh floor or a per-frame measured interval.
+        BOOST_LOG(info) << "[PyroWaveSession] rate-control budget frame rate="
+                        << pyrowave_frame_rate_num << '/' << pyrowave_frame_rate_den
+                        << " fps (negotiated)";
+        // videoBroadcastThread inserts a 32-byte video packet header into an
+        // outer payload whose budget is packetsize + 16 bytes. Keep each
+        // PyroWave wire packet inside exactly one outer RTP payload so that
+        // the client can recover a missing inner block before frame copy.
+        constexpr std::size_t pyrowave_outer_header_overhead = 16u;
+        const auto outer_packet_size = packet_size > 0 ? static_cast<std::size_t>(packet_size) : 0u;
+        const auto outer_payload_capacity = outer_packet_size > pyrowave_outer_header_overhead
+          ? outer_packet_size - pyrowave_outer_header_overhead
+          : 0u;
+        const auto pyrowave_packet_boundary = outer_payload_capacity > LI_PYROWAVE_WIRE_FEC_HEADER_SIZE
+          ? outer_payload_capacity - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE
+          : 0u;
+        BOOST_LOG(debug) << "[PyroWaveSession] transport geometry"
+                            << ", frame_size=" << config.width << 'x' << config.height
+                            << ", frame_rate=" << (config.frameRateNum > 0 ? config.frameRateNum : config.framerate)
+                            << '/' << (config.frameRateNum > 0 && config.frameRateDen > 0 ? config.frameRateDen : 1)
+                            << ", requested_packet_size=" << packet_size
+                            << ", outer_payload_capacity=" << outer_payload_capacity
+                            << ", inner_payload_boundary=" << pyrowave_packet_boundary
+                            << ", wire_packet_boundary="
+                            << (pyrowave_packet_boundary == 0 ? 0u : pyrowave_packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE);
+        if (pyrowave_packet_boundary <= LI_PYROWAVE_WIRE_FEC_HEADER_SIZE ||
+            pyrowave_packet_boundary > LI_PYROWAVE_MAX_PACKET_SIZE - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE) {
+          BOOST_LOG(error) << "PyroWave backend rejected invalid transport packet boundary: "
+                           << pyrowave_packet_boundary;
+          return;
+        }
+        const bool pyrowave_cpu_fallback_allowed =
+          config.dynamicRange == 0 &&
+          config.pre_encode_filter == platf::pre_encode_filter_e::none;
+        // These callbacks run after this branch ends. Copy branch-local
+        // invariants; only the enclosing capture state may be referenced.
+        session_factory = [&config, &display, &ref,
+                           &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
+                           &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
+                           pyrowave_packet_boundary,
+                           pyrowave_frame_rate_num, pyrowave_frame_rate_den,
+                           pyrowave_cpu_fallback_allowed]() -> std::unique_ptr<encode_session_t> {
+          pyrowave_session_is_gpu = false;
+          if (!pyrowave_gpu_disabled) {
+            if (auto base_display = std::dynamic_pointer_cast<platf::dxgi::display_base_t>(display)) {
+              auto gpu_session = platf::pyrowave_windows::make_gpu_encoder(
+                base_display, config, pyrowave_packet_boundary,
+                pyrowave_frame_rate_num,
+                pyrowave_frame_rate_den);
+              if (gpu_session) {
+                pyrowave_session_is_gpu = true;
+                return gpu_session;
+              }
+
+              if (!pyrowave_cpu_fallback_allowed) {
+                pyrowave_fallback_reinit_pending = false;
+                pyrowave_terminal_failure_pending = true;
+                BOOST_LOG(error) << "PyroWave GPU backend could not be initialized; "
+                                 << "the requested HDR or enhancement path has no CPU fallback"sv;
+                return nullptr;
+              }
+
+              BOOST_LOG(warning) << "PyroWave GPU backend could not be initialized; requesting shared capture fallback"sv;
+              pyrowave_gpu_disabled = true;
+              pyrowave_fallback_reinit_pending = true;
+              ref->force_system_capture.store(true, std::memory_order_release);
+              ref->reinit_event.raise(true);
+              return nullptr;
+            }
+          }
+
+          if (!pyrowave_cpu_fallback_allowed) {
+            pyrowave_fallback_reinit_pending = false;
+            pyrowave_terminal_failure_pending = true;
+            BOOST_LOG(error) << "PyroWave GPU backend is unavailable; CPU staging cannot satisfy "
+                             << "the requested HDR or enhancement path"sv;
+            return nullptr;
+          }
+          // The first CPU attempt after a GPU failure is reached only after
+          // the shared capture thread has been asked to reinitialize.  Once
+          // this factory is entered, a later CPU failure is a real terminal
+          // failure rather than the pending fallback transition.
+          pyrowave_fallback_reinit_pending = false;
+          auto cpu_session = platf::pyrowave_windows::make_encoder(
+            config.width, config.height, pyrowave_packet_boundary,
+            (config.encoderCscMode & 0x1) != 0,
+            config.dynamicRange,
+            config.bitrate,
+            pyrowave_frame_rate_num,
+            pyrowave_frame_rate_den,
+            config.perf_session_id);
+          if (!cpu_session) {
+            BOOST_LOG(error) << "PyroWave CPU backend could not be initialized"sv;
+          }
+          return cpu_session;
+        };
+        backend_failure_handler = [&ref, &shutdown_event,
+                                   &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
+                                   &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
+                                   pyrowave_cpu_fallback_allowed]() {
+          if (pyrowave_terminal_failure_pending) {
+            pyrowave_terminal_failure_pending = false;
+            BOOST_LOG(error) << "PyroWave backend initialization failed with no supported fallback; ending video session"sv;
+            shutdown_event->raise(true);
+          }
+          else if (pyrowave_session_is_gpu && !pyrowave_cpu_fallback_allowed) {
+            pyrowave_session_is_gpu = false;
+            pyrowave_fallback_reinit_pending = false;
+            BOOST_LOG(error) << "PyroWave GPU backend failed; the requested HDR or enhancement path "
+                             << "cannot fall back to CPU staging"sv;
+            shutdown_event->raise(true);
+          }
+          else if (pyrowave_session_is_gpu) {
+            pyrowave_session_is_gpu = false;
+            pyrowave_gpu_disabled = true;
+            pyrowave_fallback_reinit_pending = true;
+            ref->force_system_capture.store(true, std::memory_order_release);
+            ref->reinit_event.raise(true);
+            BOOST_LOG(warning) << "PyroWave GPU backend failed; requesting shared system-memory capture reinitialization"sv;
+          }
+          else if (pyrowave_fallback_reinit_pending) {
+            // A failed GPU factory has already requested display reinit. The
+            // encoder loop must return and let the shared capture owner finish
+            // that transition; shutting down here would defeat the fallback.
+            BOOST_LOG(debug) << "PyroWave fallback reinitialization is pending; waiting for the shared capture thread"sv;
+          }
+          else {
+            BOOST_LOG(error) << "PyroWave CPU backend failed; ending video session"sv;
+            shutdown_event->raise(true);
+          }
+        };
+#endif
+      }
+      else {
+        strip_unusable_pre_encode_filter(*display, config);
+        encode_device = make_encode_device(*display, encoder, config);
+        if (!encode_device) {
+          return;
+        }
       }
 
       // Absolute mouse coordinates require that the dimensions of the screen are known
@@ -4159,9 +4418,20 @@ namespace video {
 
       // Update client with our current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-      if (colorspace_is_hdr(encode_device->colorspace)) {
+      const auto hdr_colorspace = is_pyrowave
+        ? colorspace_from_client_config(config, display->is_hdr())
+        : encode_device->colorspace;
+      if (colorspace_is_hdr(hdr_colorspace)) {
         if (get_effective_hdr_metadata(display.get(), config, hdr_info->metadata)) {
           hdr_info->enabled = true;
+        }
+        else if (is_pyrowave) {
+          // Static mastering metadata is optional for the PyroWave
+          // presentation path. Keep the negotiated PQ/HLG signal active and
+          // let the client present a degraded HDR colorspace without
+          // fabricating mastering or content-light values.
+          hdr_info->enabled = true;
+          BOOST_LOG(warning) << "PyroWave HDR metadata unavailable; keeping the HDR colorspace and presenting without static metadata"sv;
         }
         else {
           BOOST_LOG(error) << "Couldn't get display HDR metadata when colorspace indicates it should have one";
@@ -4175,7 +4445,8 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_param_events);
+        channel_data, dynamic_param_events,
+        std::move(session_factory), std::move(backend_failure_handler));
     }
   }
 
@@ -4184,12 +4455,23 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    int packet_size) {
+#ifdef _WIN32
+    if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT)) {
+      // PyroWave uses the same shared capture coordinator and encoder-loop
+      // pacing as the legacy backends. Its session factory is selected inside
+      // capture_async, so display reinit and system-memory fallback remain
+      // owned by the capture thread.
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, packet_size);
+      return;
+    }
+#endif
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events);
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, packet_size);
     }
     else {
       safe::signal_t join_event;
@@ -4969,6 +5251,7 @@ namespace video {
       capture_thread_ctx.capture_ctx_queue,
       std::ref(capture_thread_ctx.display_wp),
       std::ref(capture_thread_ctx.reinit_event),
+      std::ref(capture_thread_ctx.force_system_capture),
       std::ref(*capture_thread_ctx.encoder_p)
     };
 

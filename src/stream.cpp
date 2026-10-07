@@ -3414,14 +3414,23 @@ namespace stream {
         }
       }
 
+      const bool is_pyrowave = session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT;
+      if (is_pyrowave && payload.empty()) {
+        BOOST_LOG(error) << "[PyroWaveTransport] discarding empty video frame " << packet->frame_index();
+        perf::record_pyrowave_failure(session->launch_session_id, perf::pyrowave_failure_stage_e::packetize);
+        continue;
+      }
       video_short_frame_header_t frame_header = {};
       frame_header.headerType = 0x01;  // Short header type
       frame_header.frameType = packet->is_idr()                     ? 2 :
                                packet->after_ref_frame_invalidation ? 5 :
                                                                       1;
-      frame_header.lastPayloadLen = (payload.size() + sizeof(frame_header)) % (session->config.packetsize - sizeof(NV_VIDEO_PACKET));
-      if (frame_header.lastPayloadLen == 0) {
-        frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
+      if (!is_pyrowave) {
+        frame_header.lastPayloadLen = (payload.size() + sizeof(frame_header)) %
+          (session->config.packetsize - sizeof(NV_VIDEO_PACKET));
+        if (frame_header.lastPayloadLen == 0) {
+          frame_header.lastPayloadLen = session->config.packetsize - sizeof(NV_VIDEO_PACKET);
+        }
       }
 
       const auto frame_dequeue_time = std::chrono::steady_clock::now();
@@ -3464,16 +3473,44 @@ namespace stream {
         sample.encode_ms = elapsed_ms(trace.encode_submit, trace.packet_ready);
         sample.packet_to_broadcast_ms = elapsed_ms(trace.packet_ready, std::optional { frame_dequeue_time });
         sample.total_ms = elapsed_ms(trace.capture_ready, std::optional { frame_dequeue_time });
+        sample.pyrowave = trace.pyrowave;
         perf::record_pipeline_sample(session->launch_session_id, sample, frame_dequeue_time);
       }
 
       auto fecPercentage = config::stream.fec_percentage;
+      // PyroWave carries its own block-aware parity packets and the client
+      // bypasses the legacy RTP FEC queue for this format. Legacy parity
+      // shards would not contain a valid NV_VIDEO_PACKET header and must not
+      // be forwarded to the PyroWave depacketizer as data.
+      if (is_pyrowave) {
+        fecPercentage = 0;
+      }
 
-      // Insert space for packet headers
+      // Insert space for packet headers. PyroWave packets already carry their
+      // own framing and must stay aligned to the outer RTP payload boundary;
+      // the legacy short frame header would shift the first inner block by
+      // eight bytes and make one lost RTP packet contain fragments of two
+      // different inner FEC blocks. The PyroWave client obtains frame
+      // boundaries from PYRF instead of the legacy frame header, but the
+      // outer NV_VIDEO_PACKET headers are still required by RTP transport.
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
       auto payload_blocksize = blocksize - sizeof(video_packet_raw_t);
-      auto payload_new = concat_and_insert(sizeof(video_packet_raw_t), payload_blocksize,
-        std::string_view { (char *) &frame_header, sizeof(frame_header) }, payload);
+      std::vector<uint8_t> payload_new;
+      if (is_pyrowave) {
+        const auto packet_count = (payload.size() + payload_blocksize - 1) / payload_blocksize;
+        payload_new.resize(packet_count * sizeof(video_packet_raw_t) + payload.size());
+        for (std::size_t index = 0; index < packet_count; ++index) {
+          const auto offset = index * payload_blocksize;
+          const auto chunk_size = std::min(payload_blocksize, payload.size() - offset);
+          auto *destination = payload_new.data() + index * (sizeof(video_packet_raw_t) + payload_blocksize);
+          std::memset(destination, 0, sizeof(video_packet_raw_t));
+          std::memcpy(destination + sizeof(video_packet_raw_t), payload.data() + offset, chunk_size);
+        }
+      }
+      else {
+        payload_new = concat_and_insert(sizeof(video_packet_raw_t), payload_blocksize,
+          std::string_view { (char *) &frame_header, sizeof(frame_header) }, payload);
+      }
 
       payload = std::string_view { (char *) payload_new.data(), payload_new.size() };
 
@@ -3496,7 +3533,9 @@ namespace stream {
       // If the number of FEC blocks needed exceeds the protocol limit, turn off FEC for this frame.
       // For normal FEC percentages, this should only happen for enormous frames (over 800 packets at 20%).
       if (fec_blocks_needed > MAX_FEC_BLOCKS) {
-        BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
+        if (!is_pyrowave) {
+          BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
+        }
         fecPercentage = 0;
         fec_blocks_needed = MAX_FEC_BLOCKS;
       }
@@ -4053,7 +4092,10 @@ namespace stream {
     BOOST_LOG(debug) << "Start capturing Video"sv;
     // Debug: Log the display_name before calling video::capture
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
-    video::capture(session->mail, session->config.monitor, session, session->video.dynamic_param_change_events);
+    auto video_config = session->config.monitor;
+    video_config.perf_session_id = session->launch_session_id;
+    video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
+      session->config.packetsize);
   }
 
   void
@@ -4176,7 +4218,6 @@ namespace stream {
                       << " [client_uuid="sv << session.client_cert_uuid
                       << ", reason="sv << stop_reason_name(reason) << ']';
 
-      perf::end_session(session.launch_session_id);
       session.shutdown_event->raise(true);
     }
 
@@ -4496,6 +4537,9 @@ namespace stream {
       // We need to convert it to total bitrate (including FEC)
       int encoding_bitrate = config.monitor.bitrate;
       int fec_percentage = config::stream.fec_percentage;
+      if (config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) {
+        fec_percentage = 0;
+      }
       if (fec_percentage > 0 && fec_percentage <= 80) {
         // Convert encoding bitrate to total bitrate: total = encoding * 100 / (100 - fec_percentage)
         session->current_total_bitrate = (int) (encoding_bitrate * 100.f / (100 - fec_percentage));

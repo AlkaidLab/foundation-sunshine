@@ -16,6 +16,7 @@
 #include <d3dcompiler.h>
 #include <directxmath.h>
 #include <winuser.h>
+#include <wrl/client.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -248,6 +249,7 @@ namespace platf::dxgi {
   blob_t convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hdr_analysis_hlsl;
   blob_t convert_yuv420_nv12_cs_passthrough_scaled_hlsl;
   blob_t convert_yuv420_nv12_cs_linear_scaled_hlsl;
+  blob_t pyrowave_split_yuv_cs_hlsl;
 
   blob_t
   compile_shader(
@@ -3013,6 +3015,171 @@ namespace platf::dxgi {
     platf::hdr_frame_luminance_stats_t hdr_luminance_stats_out;
   };
 
+  class d3d_shared_yuv_encode_device_t final: public shared_yuv_encode_device_t {
+  public:
+    ~d3d_shared_yuv_encode_device_t() override {
+      for (auto &plane : planes_) {
+        if (plane.shared_handle) {
+          CloseHandle(plane.shared_handle);
+          plane.shared_handle = nullptr;
+        }
+      }
+    }
+
+    bool
+    init(std::shared_ptr<display_base_t> display, const ::video::config_t &config) {
+      if (!display || config.width <= 0 || config.height <= 0 ||
+          (config.width & 1) != 0 || (config.height & 1) != 0) {
+        return false;
+      }
+
+      colorspace = ::video::colorspace_from_client_config(config, display->is_hdr());
+      video_format = config.videoFormat;
+      const bool hdr_output = config.dynamicRange != 0 ||
+        config.pre_encode_filter == ::platf::pre_encode_filter_e::external_sdr_to_hdr;
+      const auto pixel_format = hdr_output ? pix_fmt_e::p010 : pix_fmt_e::nv12;
+      const auto output_format = hdr_output ? DXGI_FORMAT_P010 : DXGI_FORMAT_NV12;
+      const auto plane_format = hdr_output ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
+
+      if (base_.init(display, display->adapter.get(), pixel_format, {}, config) != 0) {
+        return false;
+      }
+
+      D3D11_TEXTURE2D_DESC desc {};
+      desc.Width = static_cast<UINT>(config.width);
+      desc.Height = static_cast<UINT>(config.height);
+      desc.MipLevels = 1;
+      desc.ArraySize = 1;
+      desc.Format = output_format;
+      desc.SampleDesc.Count = 1;
+      desc.Usage = D3D11_USAGE_DEFAULT;
+      // The local conversion target is not exported. It still needs RTV/SRV
+      // bindings for Sunshine's existing pixel/compute conversion path; the
+      // separately exported R8/R16 planes below are the cross-API boundary.
+      desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+      desc.MiscFlags = 0;
+      if (FAILED(base_.device->CreateTexture2D(&desc, nullptr, &conversion_output_))) {
+        return false;
+      }
+
+      D3D11_SHADER_RESOURCE_VIEW_DESC y_view_desc {};
+      y_view_desc.Format = hdr_output ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
+      y_view_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+      y_view_desc.Texture2D.MipLevels = 1;
+      D3D11_SHADER_RESOURCE_VIEW_DESC uv_view_desc = y_view_desc;
+      uv_view_desc.Format = hdr_output ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM;
+      if (FAILED(base_.device->CreateShaderResourceView(
+            conversion_output_.get(), &y_view_desc, &conversion_y_srv_)) ||
+          FAILED(base_.device->CreateShaderResourceView(
+            conversion_output_.get(), &uv_view_desc, &conversion_uv_srv_))) {
+        return false;
+      }
+
+      if (!pyrowave_split_yuv_cs_hlsl) {
+        return false;
+      }
+      if (FAILED(base_.device->CreateComputeShader(
+            pyrowave_split_yuv_cs_hlsl->GetBufferPointer(),
+            pyrowave_split_yuv_cs_hlsl->GetBufferSize(), nullptr, &split_shader_))) {
+        return false;
+      }
+
+      for (std::size_t index = 0; index < planes_.size(); ++index) {
+        const bool chroma = index != 0;
+        D3D11_TEXTURE2D_DESC plane_desc {};
+        plane_desc.Width = static_cast<UINT>(chroma ? config.width / 2 : config.width);
+        plane_desc.Height = static_cast<UINT>(chroma ? config.height / 2 : config.height);
+        plane_desc.MipLevels = 1;
+        plane_desc.ArraySize = 1;
+        plane_desc.Format = plane_format;
+        plane_desc.SampleDesc.Count = 1;
+        plane_desc.Usage = D3D11_USAGE_DEFAULT;
+        plane_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+        plane_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+        if (FAILED(base_.device->CreateTexture2D(&plane_desc, nullptr, &plane_textures_[index]))) {
+          return false;
+        }
+        if (FAILED(base_.device->CreateShaderResourceView(
+              plane_textures_[index].get(), nullptr, &plane_srvs_[index])) ||
+            FAILED(base_.device->CreateUnorderedAccessView(
+              plane_textures_[index].get(), nullptr, &plane_uavs_[index]))) {
+          return false;
+        }
+        Microsoft::WRL::ComPtr<IDXGIResource1> resource;
+        if (FAILED(plane_textures_[index]->QueryInterface(IID_PPV_ARGS(&resource))) ||
+            FAILED(resource->CreateSharedHandle(
+              nullptr,
+              DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+              nullptr,
+              &planes_[index].shared_handle)) ||
+            planes_[index].shared_handle == nullptr) {
+          return false;
+        }
+        planes_[index].width = static_cast<std::uint32_t>(plane_desc.Width);
+        planes_[index].height = static_cast<std::uint32_t>(plane_desc.Height);
+        planes_[index].ten_bit = hdr_output;
+      }
+
+      base_.apply_colorspace(colorspace);
+      return base_.init_output(
+               conversion_output_.get(), config.width, config.height, colorspace, video_format) == 0;
+    }
+
+    int
+    convert(platf::img_t &image) override {
+      const auto result = base_.convert(image);
+      hdr_luminance_stats = base_.hdr_luminance_stats_out;
+      if (result != 0) {
+        return result;
+      }
+
+      ID3D11ShaderResourceView *inputs[] = { conversion_y_srv_.get(), conversion_uv_srv_.get() };
+      ID3D11UnorderedAccessView *outputs[] = {
+        plane_uavs_[0].get(), plane_uavs_[1].get(), plane_uavs_[2].get() };
+      ID3D11RenderTargetView *null_rtvs[] = { nullptr, nullptr };
+      base_.device_ctx->OMSetRenderTargets(2, null_rtvs, nullptr);
+      base_.device_ctx->CSSetShader(split_shader_.get(), nullptr, 0);
+      base_.device_ctx->CSSetShaderResources(0, 2, inputs);
+      base_.device_ctx->CSSetUnorderedAccessViews(0, 3, outputs, nullptr);
+      base_.device_ctx->Dispatch(
+        (planes_[0].width + 15u) / 16u,
+        (planes_[0].height + 15u) / 16u,
+        1);
+      ID3D11ShaderResourceView *null_inputs[] = { nullptr, nullptr };
+      ID3D11UnorderedAccessView *null_outputs[] = { nullptr, nullptr, nullptr };
+      base_.device_ctx->CSSetShaderResources(0, 2, null_inputs);
+      base_.device_ctx->CSSetUnorderedAccessViews(0, 3, null_outputs, nullptr);
+      base_.device_ctx->CSSetShader(nullptr, nullptr, 0);
+      return 0;
+    }
+
+    ID3D11Device *d3d_device() noexcept override { return base_.device.get(); }
+    ID3D11DeviceContext *d3d_context() noexcept override { return base_.device_ctx.get(); }
+    const std::array<shared_yuv_plane_t, 3> &yuv_planes() const noexcept override { return planes_; }
+
+  private:
+    d3d_base_encode_device base_;
+    texture2d_t conversion_output_;
+    shader_res_t conversion_y_srv_;
+    shader_res_t conversion_uv_srv_;
+    cs_t split_shader_;
+    std::array<texture2d_t, 3> plane_textures_;
+    std::array<shader_res_t, 3> plane_srvs_;
+    std::array<uav_t, 3> plane_uavs_;
+    std::array<shared_yuv_plane_t, 3> planes_;
+  };
+
+  std::unique_ptr<shared_yuv_encode_device_t>
+  make_shared_yuv_encode_device(
+    std::shared_ptr<display_base_t> display,
+    const ::video::config_t &config) {
+    auto device = std::make_unique<d3d_shared_yuv_encode_device_t>();
+    if (!device->init(std::move(display), config)) {
+      return {};
+    }
+    return device;
+  }
+
   class d3d_avcodec_encode_device_t: public avcodec_encode_device_t {
   public:
     int
@@ -4625,6 +4792,11 @@ namespace platf::dxgi {
     }
     convert_yuv420_nv12_cs_linear_scaled_hlsl = compile_compute_shader(
       SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear_scaled.hlsl");
+    pyrowave_split_yuv_cs_hlsl = compile_compute_shader(
+      SUNSHINE_SHADERS_DIR "/pyrowave_split_yuv_cs.hlsl");
+    if (!pyrowave_split_yuv_cs_hlsl) {
+      BOOST_LOG(warning) << "Failed to compile PyroWave shared-plane split shader"sv;
+    }
     if (!convert_yuv420_nv12_cs_linear_scaled_hlsl) {
       BOOST_LOG(warning) << "Failed to compile NV12 linear scaled compute shader, SDR scaled fast path disabled";
     }

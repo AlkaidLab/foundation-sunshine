@@ -188,10 +188,11 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
 file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
         DESTINATION "${CMAKE_BINARY_DIR}/assets"
         PATTERN "shaders" EXCLUDE)
-# use junction for shaders directory
-cmake_path(CONVERT "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
-        TO_NATIVE_PATH_LIST shaders_in_build_src_native)
-cmake_path(CONVERT "${CMAKE_BINARY_DIR}/assets/shaders" TO_NATIVE_PATH_LIST shaders_in_build_dest_native)
+# Keep shader sources available for an uninstalled local Sunshine binary too.
+# A plain copy works on Windows without requiring Developer Mode or symlink
+# privileges and ensures newly added compute shaders are visible immediately.
+file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
+        DESTINATION "${CMAKE_BINARY_DIR}/assets")
 
 set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
 
