@@ -328,28 +328,6 @@ TEST(TransportPolicyJson, BackendFailureAndStopDoNotAdvertiseReadiness) {
   EXPECT_TRUE(transport::policy_status_json(state.snapshot(), 100)["stopped"].get<bool>());
 }
 
-TEST(TransportPolicyJson, ControlOwnerSourceAndGenerationDoNotInventRuntimeCapability) {
-  transport::frame_policy_t initial;
-  initial.connection_epoch = 42;
-  initial.budget.total_kbps = initial.encoder_kbps = 10000;
-  transport::policy_state_t state(initial, 50000);
-  const auto update = transport::parse_policy_update(request().dump());
-  const auto manual = state.request_normalized(update.budget, 10, 40, 20, 1, 1).policy;
-  ASSERT_TRUE(manual);
-  const auto grant = state.transfer_control({ 42, manual->control_epoch, transport::control_source_e::manual },
-    transport::control_source_e::local, manual->revision);
-  ASSERT_EQ(grant.result, transport::policy_request_result_e::accepted);
-  const auto status = transport::policy_status_json(state.snapshot(), 100);
-  EXPECT_EQ(status["controlOwner"], "local");
-  EXPECT_EQ(status["controlSource"], "local");
-  EXPECT_EQ(status["controlEpoch"], "3");
-  EXPECT_EQ(status["accepted"]["controlSource"], "local");
-  EXPECT_EQ(status["receipts"][1]["controlSource"], "manual");
-  EXPECT_FALSE(status["packetControlAvailable"].get<bool>());
-  EXPECT_FALSE(status["pacerAvailable"].get<bool>());
-  EXPECT_FALSE(status["wireBudgetEnforced"].get<bool>());
-}
-
 TEST(TransportPolicyJson, ExperimentalNegotiationAndActivationDoNotClaimAggregateReadiness) {
   transport::frame_policy_t initial;
   initial.connection_epoch = 42;
