@@ -341,9 +341,13 @@ HANDLE
 OpenLogFileHandle() {
   WCHAR log_file_name[MAX_PATH];
 
-  // Create sunshine.log in the Temp folder (usually %SYSTEMROOT%\Temp)
+  // Create sunshine.log in the Temp folder (usually %SYSTEMROOT%\Temp).
+  // Reserve room for the suffix and its NUL: wcscat_s invokes the invalid
+  // parameter handler (process termination by default) when the buffer is
+  // too small, which would defeat the caller's fallback path.
+  constexpr auto suffix_length = sizeof(L"sunshine.log") / sizeof(WCHAR) - 1;
   const auto temp_path_length = GetTempPathW(_countof(log_file_name), log_file_name);
-  if (temp_path_length == 0 || temp_path_length >= _countof(log_file_name)) {
+  if (temp_path_length == 0 || temp_path_length + suffix_length >= _countof(log_file_name)) {
     // Unusable temp path: report failure so the caller can fall back.
     return INVALID_HANDLE_VALUE;
   }
