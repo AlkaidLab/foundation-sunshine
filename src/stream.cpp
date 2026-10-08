@@ -1268,6 +1268,7 @@ namespace stream {
         clamp_total_bitrate_to_host_cap(param.value.int_value, session.client_name), std::nullopt);
     }
     else if (param.type == video::dynamic_param_type_e::FEC_PERCENTAGE) {
+      if (session.config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) return false;
       if (param.value.int_value < 0 || param.value.int_value > 100) return false;
       result = session.transport_state->request_legacy_change(std::nullopt, static_cast<unsigned>(param.value.int_value));
     }

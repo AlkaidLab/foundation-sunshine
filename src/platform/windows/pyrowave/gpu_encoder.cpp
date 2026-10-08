@@ -311,6 +311,13 @@ namespace platf::pyrowave_windows {
                          << ", budget_fps=" << frame_rate_num_ << '/' << frame_rate_den_;
       }
 
+      bitrate_result_e
+      apply_encoder_bitrate(int encoder_kbps) override {
+        if (encoder_kbps <= 0) return bitrate_result_e::failed;
+        set_bitrate(encoder_kbps);
+        return bitrate_kbps_ == encoder_kbps ? bitrate_result_e::applied : bitrate_result_e::failed;
+      }
+
       void
       set_dynamic_param(const video::dynamic_param_t &param) override {
         if (param.valid && param.type == video::dynamic_param_type_e::BITRATE) {
