@@ -233,6 +233,25 @@ jobs:
           ./scripts/fetch-paired-gui.ps1 @arguments
           "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
 
+      - name: Select the validated compiler for a GoogCC test package
+        if: github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master'
+        shell: msys2 {0}
+        run: |
+          mkdir -p .deps/validated-gcc
+          cd .deps/validated-gcc
+          for package in gcc gcc-libs gcc-libgfortran; do
+            file="mingw-w64-ucrt-x86_64-${package}-15.2.0-8-any.pkg.tar.zst"
+            wget "https://repo.msys2.org/mingw/ucrt64/$file"
+            wget "https://repo.msys2.org/mingw/ucrt64/$file.sig"
+          done
+          sha256sum --check <<'CHECKSUMS'
+          96f3e0ffb2863f47f7471af7b57a4d4b1a7f823c85a5eea36dd1e03c6e8fc6f0  mingw-w64-ucrt-x86_64-gcc-15.2.0-8-any.pkg.tar.zst
+          7e660afc9c49d7b55aec94c289564a2b32240c41a7937cbe77912320bdf63458  mingw-w64-ucrt-x86_64-gcc-libs-15.2.0-8-any.pkg.tar.zst
+          6a60fc13e2502363e02a6197608dc196d376a9f2f929af0fc4316a9caec9d01b  mingw-w64-ucrt-x86_64-gcc-libgfortran-15.2.0-8-any.pkg.tar.zst
+          CHECKSUMS
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          test "$(gcc -dumpfullversion)" = '15.2.0'
+
       - name: Prepare pinned GoogCC for a development test package
         if: github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master'
         shell: msys2 {0}
