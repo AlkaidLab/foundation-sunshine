@@ -3915,7 +3915,7 @@ namespace stream {
       if (is_pyrowave && payload.empty()) {
         BOOST_LOG(error) << "[PyroWaveTransport] discarding empty video frame " << packet->frame_index();
         perf::record_pyrowave_failure(session->launch_session_id, perf::pyrowave_failure_stage_e::packetize);
-        continue;
+        return std::nullopt;
       }
       video_short_frame_header_t frame_header = {};
       frame_header.headerType = 0x01;  // Short header type
