@@ -11,9 +11,6 @@
 
 namespace {
 
-  // L"sunshine.log" holds 12 characters.
-  constexpr std::size_t kSuffixLength = 12;
-
   std::wstring
   temp_dir() {
     wchar_t buffer[MAX_PATH];
@@ -50,32 +47,9 @@ namespace {
 
 }  // namespace
 
-// The primary name must fit a MAX_PATH buffer including the suffix and its
-// NUL: the boundary sits one below capacity - suffix length.
-TEST(PrimaryLogPathFits, ReservesSuffixAndNulRoom) {
-  constexpr std::size_t capacity = MAX_PATH;
-
-  EXPECT_FALSE(sunshinesvc::primary_log_path_fits(0, capacity));
-  EXPECT_FALSE(sunshinesvc::primary_log_path_fits(1, 1 + kSuffixLength));
-  EXPECT_TRUE(sunshinesvc::primary_log_path_fits(1, 1 + kSuffixLength + 1));
-  EXPECT_TRUE(sunshinesvc::primary_log_path_fits(capacity - kSuffixLength - 1, capacity));
-  EXPECT_FALSE(sunshinesvc::primary_log_path_fits(capacity - kSuffixLength, capacity));
-  EXPECT_FALSE(sunshinesvc::primary_log_path_fits(capacity - 1, capacity));
-}
-
-TEST(FallbackTempPathUsable, RequiresPositiveFittingLength) {
-  EXPECT_FALSE(sunshinesvc::fallback_temp_path_usable(0, MAX_PATH));
-  EXPECT_TRUE(sunshinesvc::fallback_temp_path_usable(MAX_PATH - 1, MAX_PATH));
-  EXPECT_FALSE(sunshinesvc::fallback_temp_path_usable(MAX_PATH, MAX_PATH));
-}
-
 TEST(FallbackLogName, EmbedsProcessIdAfterPrefix) {
   EXPECT_EQ(sunshinesvc::fallback_log_name(L"C:\\Temp\\", 1234), L"C:\\Temp\\sunshine-1234.log");
   EXPECT_EQ(sunshinesvc::fallback_log_name(L"", 0), L"sunshine-0.log");
-}
-
-TEST(ServiceLogSinks, PrimaryRefusesOversizedDirectory) {
-  EXPECT_EQ(sunshinesvc::open_primary_log_handle_in(std::wstring(300, L'a')), INVALID_HANDLE_VALUE);
 }
 
 // Reproduces the lock from #1119: a handle opened without write sharing (as

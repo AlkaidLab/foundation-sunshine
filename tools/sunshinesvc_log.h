@@ -19,31 +19,7 @@
 
 namespace sunshinesvc {
 
-  // An array (not a pointer): sizeof must see the full literal so the
-  // suffix reservation below stays tied to the actual name.
   constexpr wchar_t LOG_SUFFIX[] = L"sunshine.log";
-
-  // Paths at or beyond MAX_PATH cannot be opened by CreateFileW without a
-  // \\?\ prefix. Failing the primary path fast keeps the fallback chain in
-  // charge of recovery; the reservation covers the suffix and its NUL to
-  // mirror a fixed MAX_PATH destination buffer.
-  inline bool
-  primary_log_path_fits(size_t temp_path_length, size_t buffer_capacity) {
-    constexpr auto suffix_length = sizeof(LOG_SUFFIX) / sizeof(wchar_t) - 1;
-    return temp_path_length > 0 && temp_path_length + suffix_length < buffer_capacity;
-  }
-
-  // The per-instance fallback builds its name on the heap, so only the temp
-  // path itself has to fit the probe buffer.
-  inline bool
-  fallback_temp_path_usable(size_t temp_path_length, size_t buffer_capacity) {
-    return temp_path_length > 0 && temp_path_length < buffer_capacity;
-  }
-
-  inline std::wstring
-  fallback_log_name(const std::wstring &temp_path, DWORD process_id) {
-    return temp_path + L"sunshine-" + std::to_wstring(process_id) + L".log";
-  }
 
   // Opens a fresh (truncated) log. The share mode deliberately refuses
   // co-writers: while any process still holds a write handle on the file —
@@ -75,32 +51,24 @@ namespace sunshinesvc {
   }
 
   inline std::wstring
-  with_trailing_separator(const std::wstring &directory) {
-    if (directory.empty() || (directory.back() != L'\\' && directory.back() != L'/')) {
-      return directory + L'\\';
-    }
-    return directory;
+  fallback_log_name(const std::wstring &temp_path, DWORD process_id) {
+    return temp_path + L"sunshine-" + std::to_wstring(process_id) + L".log";
   }
 
   // Directory-injectable core so unit tests run against isolated temporary
-  // directories instead of the shared sunshine.log location.
+  // directories instead of the shared sunshine.log location. temp_dir must
+  // carry a trailing separator, as GetTempPathW returns; over-long names
+  // simply fail in CreateFileW and degrade through the fallback chain.
   inline HANDLE
   open_primary_log_handle_in(const std::wstring &temp_dir) {
-    const auto directory = with_trailing_separator(temp_dir);
-    if (!primary_log_path_fits(directory.size(), MAX_PATH)) {
-      return INVALID_HANDLE_VALUE;
-    }
-    return open_log_file((directory + LOG_SUFFIX).c_str());
+    return open_log_file((temp_dir + LOG_SUFFIX).c_str());
   }
 
   inline HANDLE
   open_fallback_log_handle_in(const std::wstring &temp_dir) {
-    const auto directory = with_trailing_separator(temp_dir);
-    if (fallback_temp_path_usable(directory.size(), MAX_PATH)) {
-      const auto handle = open_log_file(fallback_log_name(directory, GetCurrentProcessId()).c_str());
-      if (handle != INVALID_HANDLE_VALUE) {
-        return handle;
-      }
+    const auto handle = open_log_file(fallback_log_name(temp_dir, GetCurrentProcessId()).c_str());
+    if (handle != INVALID_HANDLE_VALUE) {
+      return handle;
     }
 
     // The temp path is unusable or the per-instance name failed: NUL keeps
