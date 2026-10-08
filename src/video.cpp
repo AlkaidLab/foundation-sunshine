@@ -4386,8 +4386,8 @@ namespace video {
         config.height = compute_aligned_resolution(current_height, initial_scale_y);
 
         resolution_change_event->raise(std::make_pair(
-          static_cast<std::uint32_t>(current_width),
-          static_cast<std::uint32_t>(current_height)));
+          static_cast<std::uint32_t>(config.width),
+          static_cast<std::uint32_t>(config.height)));
 
         if (orientation_mismatch) {
           idr_events->raise(true);
@@ -4424,8 +4424,8 @@ namespace video {
                           << " (scale: " << initial_scale_x << "x" << initial_scale_y << ")";
 
           resolution_change_event->raise(std::make_pair(
-            static_cast<std::uint32_t>(current_width),
-            static_cast<std::uint32_t>(current_height)));
+            static_cast<std::uint32_t>(config.width),
+            static_cast<std::uint32_t>(config.height)));
 
           idr_events->raise(true);
           std::this_thread::sleep_for(100ms);
