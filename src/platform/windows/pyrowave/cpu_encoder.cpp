@@ -359,7 +359,7 @@ namespace platf::pyrowave_windows {
     const pyrowave_rate_control rate_control {
       .maximum_bitstream_size = session->frame_budget()
     };
-    const auto encode_result = pyrowave_encoder_encode_cpu_synchronous(session->encoder(), &buffer, &rate_control);
+    const auto encode_result = pyrowave_encoder_encode_cpu(session->encoder(), &buffer, &rate_control);
     if (encode_result != PYROWAVE_SUCCESS) {
       return session->report_encode_failure(frame_number, "pyrowave-cpu-encode", static_cast<int>(encode_result));
     }

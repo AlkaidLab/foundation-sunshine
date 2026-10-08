@@ -9,6 +9,10 @@
 #include <optional>
 #include <vector>
 
+namespace pyrowave {
+  struct hdr_frame_metadata_t;
+}
+
 namespace platf::pyrowave_windows {
 
   struct transport_publish_result_t {
@@ -27,6 +31,7 @@ namespace platf::pyrowave_windows {
     safe::mail_raw_t::queue_t<video::packet_t> &packets,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) noexcept;
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
+    const pyrowave::hdr_frame_metadata_t *dynamic_metadata = nullptr) noexcept;
 
 }  // namespace platf::pyrowave_windows

@@ -1268,7 +1268,8 @@ namespace rtsp_stream {
              LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE |
              LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE |
              LI_PYROWAVE_CAPABILITY_HDR10_PQ_BT2020 |
-             LI_PYROWAVE_CAPABILITY_HLG_BT2020)
+             LI_PYROWAVE_CAPABILITY_HLG_BT2020 |
+             LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING)
          << std::endl;
       ss << "a=x-ss-pyrowave.maxPacketSize:" << LI_PYROWAVE_MAX_PACKET_SIZE << std::endl;
     }
@@ -1740,7 +1741,7 @@ namespace rtsp_stream {
           .bitstreamVersion = LI_PYROWAVE_BITSTREAM_VERSION,
           .payloadVersion = LI_PYROWAVE_PAYLOAD_VERSION,
           .reserved = 0,
-          .capabilityFlags = required_capabilities,
+          .capabilityFlags = required_capabilities | LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING,
           .maxPacketSize = LI_PYROWAVE_MAX_PACKET_SIZE,
         };
         LI_PYROWAVE_CAPABILITIES client_capabilities {
@@ -1762,6 +1763,9 @@ namespace rtsp_stream {
           respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
           return;
         }
+        monitor.pyrowave_dynamic_hdr_mapping =
+          (negotiated_capabilities.capabilityFlags & LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING) != 0;
+
         // The encoder and outer RTP broadcaster must use the same reduced
         // boundary; clamping only the inner packetizer would break alignment.
         config.packetsize = pyrowave::limit_rtp_packet_size(
@@ -1963,6 +1967,7 @@ namespace rtsp_stream {
         .video_format = config.monitor.videoFormat,
         .dynamic_range_mode = config.monitor.dynamicRange,
         .synthetic_hdr_enabled = session.synthetic_hdr.enabled,
+        .pyrowave_dynamic_hdr_mapping = config.monitor.pyrowave_dynamic_hdr_mapping,
       });
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
     session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;
@@ -1971,8 +1976,16 @@ namespace rtsp_stream {
         ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
         : std::string {};
     if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(config.monitor.videoFormat)) &&
-        dynamic_hdr_selection.format != hdr::dynamic_hdr_format_e::none) {
-      BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: dynamic HDR metadata is not part of the static color contract"sv;
+        dynamic_hdr_request.caps_mask != 0 &&
+        dynamic_hdr_request.preference != hdr::dynamic_hdr_preference_e::hdr10_only &&
+        dynamic_hdr_selection.format == hdr::dynamic_hdr_format_e::none) {
+      BOOST_LOG(warning) << "Rejecting PyroWave dynamic HDR request: frame metadata mapping contract is unavailable"sv;
+      respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+      return;
+    }
+    if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(config.monitor.videoFormat)) &&
+        config.monitor.dynamic_hdr_format != 0 && config::video.hdr_luminance_analysis == "off") {
+      BOOST_LOG(warning) << "Rejecting PyroWave dynamic HDR request: HDR luminance analysis is disabled"sv;
       respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
       return;
     }

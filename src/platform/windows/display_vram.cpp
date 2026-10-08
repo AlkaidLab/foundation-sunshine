@@ -389,7 +389,8 @@ namespace platf::dxgi {
     }
 
     int
-    convert(platf::img_t &img_base) {
+    convert(platf::img_t &img_base, bool *output_changed = nullptr) {
+      if (output_changed) *output_changed = false;
       apply_nr_request();
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
@@ -706,6 +707,7 @@ namespace platf::dxgi {
         if (hdr_analysis_source) {
           dispatch_hdr_analysis(hdr_analysis_source);
         }
+        if (output_changed) *output_changed = true;
       }
 
       return 0;
@@ -1983,6 +1985,7 @@ namespace platf::dxgi {
     uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
+    bool hdr_analysis_every_frame = false; // PyroWave frame-associated metadata only
     bool hdr_analysis_pending = false;     // Prevents overwriting a readback the GPU has not completed
     bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
     bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
@@ -2057,7 +2060,8 @@ namespace platf::dxgi {
 
     bool
     should_dispatch_hdr_analysis() {
-      const bool should_dispatch = (hdr_analysis_frame_index % HDR_ANALYSIS_INTERVAL) == 0;
+      const bool should_dispatch = hdr_analysis_every_frame ||
+                                   (hdr_analysis_frame_index % HDR_ANALYSIS_INTERVAL) == 0;
       ++hdr_analysis_frame_index;
       return should_dispatch;
     }
@@ -3040,9 +3044,12 @@ namespace platf::dxgi {
       const auto output_format = hdr_output ? DXGI_FORMAT_P010 : DXGI_FORMAT_NV12;
       const auto plane_format = hdr_output ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
 
-      if (base_.init(display, display->adapter.get(), pixel_format, {}, config) != 0) {
+      const bool dynamic_metadata = config.dynamic_hdr_format != 0;
+      if (base_.init(display, display->adapter.get(), pixel_format,
+            { .hdr10plus = dynamic_metadata, .vivid = dynamic_metadata }, config) != 0) {
         return false;
       }
+      base_.hdr_analysis_every_frame = dynamic_metadata;
 
       D3D11_TEXTURE2D_DESC desc {};
       desc.Width = static_cast<UINT>(config.width);
@@ -3120,13 +3127,20 @@ namespace platf::dxgi {
       }
 
       base_.apply_colorspace(colorspace);
-      return base_.init_output(
-               conversion_output_.get(), config.width, config.height, colorspace, video_format) == 0;
+      if (base_.init_output(conversion_output_.get(), config.width, config.height, colorspace, video_format) != 0) {
+        return false;
+      }
+      if (dynamic_metadata && !base_.hdr_luminance_analysis_available()) {
+        BOOST_LOG(warning) << "PyroWave dynamic HDR requires the HDR luminance analyzer";
+        return false;
+      }
+      return true;
     }
 
     int
     convert(platf::img_t &image) override {
-      const auto result = base_.convert(image);
+      const auto result = base_.convert(image, &output_changed_);
+      analysis_sequence_before_frame_ = base_.hdr_luminance_stats_out.sample_sequence;
       hdr_luminance_stats = base_.hdr_luminance_stats_out;
       if (result != 0) {
         return result;
@@ -3156,8 +3170,17 @@ namespace platf::dxgi {
     ID3D11DeviceContext *d3d_context() noexcept override { return base_.device_ctx.get(); }
     const std::array<shared_yuv_plane_t, 3> &yuv_planes() const noexcept override { return planes_; }
 
+    bool collect_hdr_luminance_stats() override {
+      base_.read_hdr_analysis_results();
+      hdr_luminance_stats = base_.hdr_luminance_stats_out;
+      return hdr_luminance_stats.valid && !base_.hdr_analysis_pending &&
+             (!output_changed_ || hdr_luminance_stats.sample_sequence != analysis_sequence_before_frame_);
+    }
+
   private:
     d3d_base_encode_device base_;
+    std::uint64_t analysis_sequence_before_frame_ = 0;
+    bool output_changed_ = false;
     texture2d_t conversion_output_;
     shader_res_t conversion_y_srv_;
     shader_res_t conversion_uv_srv_;
