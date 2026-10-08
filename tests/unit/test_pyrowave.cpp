@@ -374,12 +374,13 @@ TEST(PyrowavePacketizerTest, RoundTripsMetadataThatFillsFrameHeaderPayload) {
 namespace {
   struct pyrowave_test_sink_t final: video::packet_sink_t {
     video::packet_t packet;
-    bool submit(video::packet_t value) override {
+    bool
+    submit(video::packet_t value) override {
       packet = std::move(value);
       return true;
     }
   };
-}
+}  // namespace
 TEST(PyrowaveTransportTest, PublishesFrameWithProtectedRuntimeMetadata) {
   auto packets = std::make_shared<pyrowave_test_sink_t>();
   auto source = std::make_shared<const std::vector<std::uint8_t>>(323933, 0x5a);
