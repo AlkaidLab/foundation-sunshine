@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "sunshinesvc_log.h"
 #include "sunshinesvc_state.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
@@ -337,74 +338,6 @@ RetryWaitTimeout(ULONGLONG retry_at_ms) {
   return static_cast<DWORD>(std::min<ULONGLONG>(retry_at_ms - now, MAXDWORD - 1));
 }
 
-HANDLE
-OpenLogFileHandle() {
-  WCHAR log_file_name[MAX_PATH];
-
-  // Create sunshine.log in the Temp folder (usually %SYSTEMROOT%\Temp).
-  // Reserve room for the suffix and its NUL: wcscat_s invokes the invalid
-  // parameter handler (process termination by default) when the buffer is
-  // too small, which would defeat the caller's fallback path.
-  constexpr auto suffix_length = sizeof(L"sunshine.log") / sizeof(WCHAR) - 1;
-  const auto temp_path_length = GetTempPathW(_countof(log_file_name), log_file_name);
-  if (temp_path_length == 0 || temp_path_length + suffix_length >= _countof(log_file_name)) {
-    // Unusable temp path: report failure so the caller can fall back.
-    return INVALID_HANDLE_VALUE;
-  }
-  wcscat_s(log_file_name, L"sunshine.log");
-
-  // The file handle must be inheritable for our child process to use it
-  SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
-
-  // Overwrite the old sunshine.log. The handle is inherited by Sunshine.exe
-  // and outlives us when the core lingers, so allow other writers: with
-  // FILE_SHARE_READ only, the next service instance could not reopen this
-  // file and would refuse to start with ERROR_SHARING_VIOLATION.
-  return CreateFileW(log_file_name,
-    GENERIC_WRITE,
-    FILE_SHARE_READ | FILE_SHARE_WRITE,
-    &security_attributes,
-    CREATE_ALWAYS,
-    0,
-    NULL);
-}
-
-// A core process left over from a build that opened the log with
-// FILE_SHARE_READ only still blocks the primary name, so fall back to a
-// per-instance file before giving up on logging entirely.
-HANDLE
-OpenFallbackLogHandle() {
-  SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
-
-  WCHAR temp_path[MAX_PATH];
-  const auto temp_path_length = GetTempPathW(_countof(temp_path), temp_path);
-  if (temp_path_length > 0 && temp_path_length < _countof(temp_path)) {
-    std::wstring log_file_name(temp_path, temp_path_length);
-    log_file_name += L"sunshine-" + std::to_wstring(GetCurrentProcessId()) + L".log";
-
-    auto handle = CreateFileW(log_file_name.c_str(),
-      GENERIC_WRITE,
-      FILE_SHARE_READ | FILE_SHARE_WRITE,
-      &security_attributes,
-      CREATE_ALWAYS,
-      0,
-      NULL);
-    if (handle != INVALID_HANDLE_VALUE) {
-      return handle;
-    }
-  }
-
-  // The temp path is unusable or the per-instance name failed: NUL keeps the
-  // service startable even without a log sink.
-  return CreateFileW(L"NUL",
-    GENERIC_WRITE,
-    FILE_SHARE_READ | FILE_SHARE_WRITE,
-    &security_attributes,
-    OPEN_EXISTING,
-    0,
-    NULL);
-}
-
 bool
 RunTerminationHelper(HANDLE console_token, DWORD pid) {
   WCHAR module_path[MAX_PATH];
@@ -491,13 +424,13 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     return;
   }
 
-  auto log_file_handle = OpenLogFileHandle();
+  auto log_file_handle = sunshinesvc::open_primary_log_handle();
   if (log_file_handle == INVALID_HANDLE_VALUE) {
     // A lingering Sunshine.exe holds the inherited log handle open, which can
     // fail the open above with ERROR_SHARING_VIOLATION. The service must
     // never refuse to start over a log file: degrade to a fallback sink so
     // the core can still be launched and recovered.
-    log_file_handle = OpenFallbackLogHandle();
+    log_file_handle = sunshinesvc::open_fallback_log_handle();
   }
   if (log_file_handle == INVALID_HANDLE_VALUE) {
     // Tell SCM we failed to start

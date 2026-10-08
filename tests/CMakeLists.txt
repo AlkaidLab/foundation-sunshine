@@ -54,6 +54,18 @@ if (WIN32)
 endif ()
 add_test(NAME sunshinesvc_state_unit_tests COMMAND sunshinesvc_state_unit_tests)
 
+# The log sink tests exercise Windows file-sharing behavior from the service wrapper.
+if (WIN32)
+    add_executable(sunshinesvc_log_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_log.cpp)
+    target_include_directories(sunshinesvc_log_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(sunshinesvc_log_unit_tests gtest_main)
+    target_compile_options(sunshinesvc_log_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(sunshinesvc_log_unit_tests PROPERTIES CXX_STANDARD 23)
+    set_target_properties(sunshinesvc_log_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    add_test(NAME sunshinesvc_log_unit_tests COMMAND sunshinesvc_log_unit_tests)
+endif ()
+
 add_executable(video_probe_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp)
 target_include_directories(video_probe_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
