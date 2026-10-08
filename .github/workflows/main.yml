@@ -28,6 +28,10 @@ on:
           - 'AUTO'
           - 'ON'
           - 'OFF'
+      experimental_googcc:
+        description: 'Include the pinned GoogCC controller in a development test package'
+        type: boolean
+        default: false
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
@@ -229,6 +233,11 @@ jobs:
           ./scripts/fetch-paired-gui.ps1 @arguments
           "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
 
+      - name: Prepare pinned GoogCC for a development test package
+        if: github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master'
+        shell: msys2 {0}
+        run: python third-party/webrtc-googcc/bootstrap.py --output .deps/googcc
+
       - name: Configure Windows
         id: configure_windows
         shell: msys2 {0}
@@ -240,6 +249,7 @@ jobs:
           RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
           RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
           SUNSHINE_RTX_HDR: ${{ !(github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && 'OFF' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master') && 'ON' || inputs.rtx_hdr || 'AUTO' }}
+          SUNSHINE_EXPERIMENTAL_GOOGCC: ${{ github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master' && 'ON' || 'OFF' }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
@@ -269,6 +279,8 @@ jobs:
             "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
+            -DSUNSHINE_EXPERIMENTAL_GOOGCC="$SUNSHINE_EXPERIMENTAL_GOOGCC" \
+            -DSUNSHINE_GOOGCC_DEPS_DIR="$PWD/.deps/googcc" \
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
