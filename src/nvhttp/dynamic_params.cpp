@@ -1,4 +1,5 @@
 #include "dynamic_params.h"
+#include "src/fec.h"
 
 #include <sstream>
 #include <stdexcept>
@@ -210,14 +211,13 @@ namespace nvhttp::dynamic_params {
           break;
         }
         case video::dynamic_param_type_e::FEC_PERCENTAGE: {
-          size_t parsed = 0;
-          int fec = std::stoi(param_value, &parsed);
-          if (parsed != param_value.size() || fec < -2 || fec > 100) {
+          const auto fec = video_fec::parse_preference(param_value);
+          if (!fec) {
             BOOST_LOG(warning) << "Change dynamic param error: invalid FEC percentage value";
             set_error(tree, 400, "Invalid FEC preference: -2=host, -1=automatic, 0..100=fixed");
             return;
           }
-          param.value.int_value = fec;
+          param.value.int_value = *fec;
           break;
         }
         case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {

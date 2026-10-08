@@ -2,9 +2,18 @@
 
 #include <algorithm>
 #include <boost/math/distributions/binomial.hpp>
+#include <charconv>
 #include <cmath>
 
 namespace video_fec {
+  std::optional<int>
+  parse_preference(std::string_view text) noexcept {
+    if (text.empty()) return {};
+    int value = 0;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc() || result.ptr != text.data() + text.size() || value < -2 || value > 100) return {};
+    return value;
+  }
   std::optional<block_t>
   plan_block(std::size_t data, unsigned percentage, unsigned minimum_parity) {
     if (!data || data > 1023 || percentage > 255 || minimum_parity > 255) return {};

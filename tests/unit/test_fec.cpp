@@ -1,6 +1,15 @@
 #include "src/fec.h"
 #include <gtest/gtest.h>
 
+TEST(VideoFec, PreferenceParserRejectsInvalidAndOutOfRangeInput) {
+  for (const auto input : { "", "4x", "-3", "101", "999999999999999999999", " 1", "+1" })
+    EXPECT_FALSE(video_fec::parse_preference(input));
+  EXPECT_EQ(video_fec::parse_preference("-2"), -2);
+  EXPECT_EQ(video_fec::parse_preference("-1"), -1);
+  EXPECT_EQ(video_fec::parse_preference("0"), 0);
+  EXPECT_EQ(video_fec::parse_preference("100"), 100);
+}
+
 TEST(VideoFec, ClientFixedPreferenceOverridesFeedbackAndOtherSessions) {
   video_fec::controller_t first, second;
   first.initialize(20, true, 50);

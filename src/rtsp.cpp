@@ -44,6 +44,7 @@ extern "C" {
 #include "pyrowave/packet.h"
 #include "rtsp.h"
 #include "stream.h"
+#include "fec.h"
 #include "sync.h"
 #include "video.h"
 
@@ -1643,13 +1644,12 @@ namespace rtsp_stream {
       const auto fec_summary = args.find("x-ml-video.fecSummaryVersion"sv);
       config.fec_feedback = fec_summary != args.end() && fec_summary->second == "1" && config.controlProtocolType == 13;
       if (const auto requested = args.find("x-ml-video.fecPercentage"sv); requested != args.end()) {
-        size_t parsed = 0;
-        const auto value = std::stoi(std::string {requested->second}, &parsed);
-        if (parsed != requested->second.size() || value < -2 || value > 100 || !config.fec_feedback) {
+        const auto value = video_fec::parse_preference(requested->second);
+        if (!value || !config.fec_feedback) {
           respond(sock, session, &option, 400, "Invalid FEC preference", req->sequenceNumber, {});
           return;
         }
-        config.client_fec = value;
+        config.client_fec = *value;
       }
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption

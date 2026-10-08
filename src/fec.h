@@ -8,8 +8,11 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string_view>
 
 namespace video_fec {
+  std::optional<int>
+  parse_preference(std::string_view text) noexcept;
   enum class mode_e { host = 0,
     automatic = 1,
     fixed = 2 };
