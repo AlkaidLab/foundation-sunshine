@@ -1,11 +1,8 @@
 #include "dynamic_params.h"
-#include "legacy_control.h"
 
 #include <sstream>
-#include <limits>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 #include <Simple-Web-Server/server_http.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -14,99 +11,12 @@
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
-#include "src/transport/transport_policy_json.h"
 #include "src/utility.h"
 #include "src/video.h"
 
 using namespace std::literals;
 
 namespace nvhttp::dynamic_params {
-
-  static void
-  transport_request(resp_https_t response, req_https_t request, bool automatic_control) {
-    using json = nlohmann::json;
-    const SimpleWeb::CaseInsensitiveMultimap headers {{"Content-Type", "application/json"}, {"Cache-Control", "no-store"}};
-    const auto write = [&](SimpleWeb::StatusCode code, json body) {
-      response->write(code, body.dump(), headers);
-      response->close_connection_after_response = true;
-    };
-    const auto identity = get_client_cert_uuid_from_request(request);
-    // The TLS identity cache does not by itself prove that pairing is still
-    // valid after revocation. Recheck it before each session policy operation.
-    bool paired = false;
-    for (const auto &client : nvhttp::get_all_clients()) {
-      if (client.contains("uuid") && client.at("uuid").is_string() && client.at("uuid").get<std::string>() == identity) paired = true;
-    }
-    if (identity.empty() || !paired) {
-      write(SimpleWeb::StatusCode::client_error_forbidden, {{"error", "paired_identity_required"}});
-      return;
-    }
-    try {
-      if (request->method == "GET") {
-        const auto args = request->parse_query_string();
-        if (args.count("sessionId") != 1 || args.count("connectionEpoch") > 1) throw std::invalid_argument("Invalid session query");
-        const auto session_id = transport::parse_policy_identity(args.find("sessionId")->second);
-        if (session_id > std::numeric_limits<uint32_t>::max()) throw std::invalid_argument("Invalid session identity");
-        std::optional<uint64_t> epoch;
-        if (const auto found = args.find("connectionEpoch"); found != args.end()) epoch = transport::parse_policy_identity(found->second);
-        const auto state = stream::session::get_transport_policy(identity, static_cast<uint32_t>(session_id), epoch);
-        if (!state) {
-          write(SimpleWeb::StatusCode::client_error_not_found, {{"error", "session_not_found"}});
-          return;
-        }
-        const auto snapshot = state->snapshot();
-        auto status = transport::policy_status_json(snapshot, static_cast<uint32_t>(session_id));
-        const auto statistics = stream::session::get_transport_network_statistics(identity,
-          static_cast<uint32_t>(session_id), snapshot.accepted->connection_epoch);
-        status["networkStatistics"] = statistics ? transport::network_statistics_json(*statistics) : json(nullptr);
-        write(SimpleWeb::StatusCode::success_ok, std::move(status));
-        return;
-      }
-      if (request->content.size() > 8192) throw std::invalid_argument("Policy body exceeds limit");
-      const auto submit = [&](const auto &update, const auto &queue) {
-        const auto state = stream::session::get_transport_policy(identity, update.session_id, update.connection_epoch);
-        if (!state) {
-          write(SimpleWeb::StatusCode::client_error_not_found, { { "error", "session_not_found" } });
-          return;
-        }
-        const auto result = queue(identity, update);
-        auto status = transport::policy_status_json(state->snapshot(), update.session_id);
-        if (result.result == transport::policy_request_result_e::accepted) {
-          status["requestRevision"] = std::to_string(result.policy->revision);
-          status["requestId"] = update.request_id;
-          write(SimpleWeb::StatusCode::success_accepted, std::move(status));
-        }
-        else {
-          status["error"] = result.result == transport::policy_request_result_e::conflict ? "revision_or_request_conflict" :
-                            result.result == transport::policy_request_result_e::stopped  ? "session_stopped" :
-                                                                                            "invalid_policy";
-          write(result.result == transport::policy_request_result_e::invalid ? SimpleWeb::StatusCode::client_error_bad_request :
-                                                                               SimpleWeb::StatusCode::client_error_conflict,
-            std::move(status));
-        }
-      };
-      if (automatic_control)
-        submit(transport::parse_control_update(request->content.string()), stream::session::queue_transport_control);
-      else
-        submit(transport::parse_policy_update(request->content.string()), stream::session::queue_transport_policy);
-    }
-    catch (const std::invalid_argument &error) {
-      write(SimpleWeb::StatusCode::client_error_bad_request, {{"error", "invalid_request"}, {"reason", error.what()}});
-    }
-    catch (const json::exception &) {
-      write(SimpleWeb::StatusCode::client_error_bad_request, {{"error", "invalid_json"}});
-    }
-  }
-
-  void
-  transport_policy(resp_https_t response, req_https_t request) {
-    transport_request(std::move(response), std::move(request), false);
-  }
-
-  void
-  transport_control(resp_https_t response, req_https_t request) {
-    transport_request(std::move(response), std::move(request), true);
-  }
 
   namespace {
 
@@ -166,7 +76,6 @@ namespace nvhttp::dynamic_params {
         return;
       }
 
-      if (args.count("bitrate") != 1 || args.count("clientname") != 1) throw std::invalid_argument("Duplicate bitrate query");
       int bitrate = std::stoi(bitrate_param->second);
       std::string client_name = clientname_param->second;
 
@@ -182,8 +91,7 @@ namespace nvhttp::dynamic_params {
       param.value.int_value = bitrate;
       param.valid = true;
 
-      const auto target = legacy_control::resolve(request, legacy_control::query_scope(args), client_name);
-      bool success = legacy_control::submit(target, param);
+      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
 
       if (success) {
         tree.put("root.bitrate", 1);
@@ -199,11 +107,6 @@ namespace nvhttp::dynamic_params {
         tree.put("root.<xmlattr>.status_code", 404);
         tree.put("root.<xmlattr>.status_message", "No active streaming session found for client: " + client_name);
       }
-    }
-    catch (const legacy_control::error_t &error) {
-      tree.put("root.bitrate", 0);
-      tree.put("root.<xmlattr>.status_code", error.code);
-      tree.put("root.<xmlattr>.status_message", error.what());
     }
     catch (const std::invalid_argument &) {
       tree.put("root.bitrate", 0);
@@ -307,10 +210,11 @@ namespace nvhttp::dynamic_params {
           break;
         }
         case video::dynamic_param_type_e::FEC_PERCENTAGE: {
-          int fec = std::stoi(param_value);
-          if (fec < 0 || fec > 100) {
+          size_t parsed = 0;
+          int fec = std::stoi(param_value, &parsed);
+          if (parsed != param_value.size() || fec < -2 || fec > 100) {
             BOOST_LOG(warning) << "Change dynamic param error: invalid FEC percentage value";
-            set_error(tree, 400, "Invalid FEC percentage. Must be between 0 and 100");
+            set_error(tree, 400, "Invalid FEC preference: -2=host, -1=automatic, 0..100=fixed");
             return;
           }
           param.value.int_value = fec;
@@ -355,12 +259,9 @@ namespace nvhttp::dynamic_params {
           return;
       }
 
-      bool success;
-      if (param.type == video::dynamic_param_type_e::BITRATE || param.type == video::dynamic_param_type_e::FEC_PERCENTAGE) {
-        const auto target = legacy_control::resolve(request, legacy_control::query_scope(args), client_name);
-        success = legacy_control::submit(target, param);
-      }
-      else success = stream::session::change_dynamic_param_for_client(client_name, param);
+      bool success = param.type == video::dynamic_param_type_e::FEC_PERCENTAGE ?
+        stream::session::change_fec_for_client(get_client_cert_uuid_from_request(request), client_name, param.value.int_value) :
+        stream::session::change_dynamic_param_for_client(client_name, param);
 
       if (success) {
         tree.put("root.success", 1);
@@ -376,9 +277,6 @@ namespace nvhttp::dynamic_params {
         BOOST_LOG(warning) << "Change dynamic param error: no active streaming session found for client";
         set_error(tree, 404, "No active streaming session found for client: " + client_name);
       }
-    }
-    catch (const legacy_control::error_t &error) {
-      set_error(tree, error.code, error.what());
     }
     catch (const std::invalid_argument &) {
       set_error(tree, 400, "Invalid numeric parameter");

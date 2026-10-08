@@ -998,23 +998,23 @@ namespace nvenc {
     return true;
   }
 
-  bool
+  void
   nvenc_base::set_bitrate(int bitrate_kbps) {
     if (!encoder) {
       BOOST_LOG(warning) << "NvEnc: 编码器未初始化，无法设置码率";
-      return false;
+      return;
     }
     if (!nvenc) {
       BOOST_LOG(warning) << "NvEnc: NVENC接口未初始化，无法设置码率";
-      return false;
+      return;
     }
     if (NVENC_INT_VERSION < 1100) {
       BOOST_LOG(error) << "NvEnc: NVENC API版本过低(" << NVENC_INT_VERSION << ")，不支持动态码率调整";
-      return false;
+      return;
     }
     if (bitrate_kbps <= 0 || bitrate_kbps > 800000) {
       BOOST_LOG(error) << "NvEnc: 码率无效: " << bitrate_kbps << " Kbps (有效范围: 1~800000)";
-      return false;
+      return;
     }
 
     bool is_hevc = (saved_init_params.encodeGUID == NV_ENC_CODEC_HEVC_GUID);
@@ -1034,10 +1034,7 @@ namespace nvenc {
       uint32_t old_vbv_size = current_enc_config.rcParams.vbvBufferSize;
       uint32_t new_vbv_size = old_vbv_size;
 
-      if (prev_bitrate) {
-        const auto scaled = static_cast<uint64_t>(bitrate_kbps) * 1000 * old_vbv_size / prev_bitrate;
-        new_vbv_size = static_cast<uint32_t>(std::min<uint64_t>(scaled, std::numeric_limits<uint32_t>::max()));
-      }
+      new_vbv_size = static_cast<uint32_t>((static_cast<uint64_t>(bitrate_kbps) * 1000 * old_vbv_size) / prev_bitrate);
 
       // 防止VBV缓冲区过小
       if (new_vbv_size < 1000 * 100) new_vbv_size = 1000 * 100;  // 至少100K
@@ -1059,7 +1056,7 @@ namespace nvenc {
 
     if (nvenc_failed(nvenc->nvEncReconfigureEncoder(encoder, &reconfigure_params))) {
       BOOST_LOG(error) << "NvEnc: 设置码率失败(" << bitrate_kbps << " Kbps): " << last_nvenc_error_string;
-      return false;
+      return;
     }
 
     // 更新当前配置
@@ -1071,7 +1068,6 @@ namespace nvenc {
 
     const char *codec_name = is_hevc ? "HEVC" : (is_av1 ? "AV1" : "AVC");
     BOOST_LOG(info) << "NvEnc: " << codec_name << " 码率已成功调整为 " << bitrate_kbps << " Kbps";
-    return true;
   }
 
   void

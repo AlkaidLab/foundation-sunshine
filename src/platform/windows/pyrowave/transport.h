@@ -24,10 +24,9 @@ namespace platf::pyrowave_windows {
     std::shared_ptr<const std::vector<std::uint8_t>> bitstream,
     std::size_t packet_boundary,
     std::uint32_t rtp_timestamp,
-    const video::packet_sink_ref_t &sink,
+    safe::mail_raw_t::queue_t<video::packet_t> &packets,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
-    video::encode_session_t *session = nullptr) noexcept;
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) noexcept;
 
 }  // namespace platf::pyrowave_windows

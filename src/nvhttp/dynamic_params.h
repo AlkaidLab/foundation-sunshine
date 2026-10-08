@@ -15,9 +15,4 @@ namespace nvhttp::dynamic_params {
   void
   change(resp_https_t response, req_https_t request);
 
-  void
-  transport_policy(resp_https_t response, req_https_t request);
-  void
-  transport_control(resp_https_t response, req_https_t request);
-
 }  // namespace nvhttp::dynamic_params

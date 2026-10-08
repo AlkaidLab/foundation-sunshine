@@ -184,10 +184,6 @@ namespace platf::dxgi {
         &actual_size,
         &shape_info
       );
-      // Duplication can be invalidated after AcquireNextFrame succeeded.
-      if (status == DXGI_ERROR_ACCESS_LOST) {
-        return capture_e::reinit;
-      }
       if (FAILED(status) || actual_size > img_data.size()) {
         BOOST_LOG(error) << "Failed to get new pointer shape [0x"sv
                          << util::hex(status).to_string_view() << ']';

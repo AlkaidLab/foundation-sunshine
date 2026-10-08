@@ -1788,7 +1788,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>Range</td>
-        <td colspan="2">0-255; 0 disables Reed Solomon parity</td>
+        <td colspan="2">1-255</td>
     </tr>
     <tr>
         <td>Example</td>
@@ -2030,17 +2030,6 @@ editing the `conf` file in a text editor. Use the examples as reference.
 </table>
 
 ## [NVIDIA NVENC Encoder](https://localhost:47990/config/#nvidia-nvenc-encoder)
-
-### nvenc_manage_driver_settings
-
-Controls whether Sunshine manages NVIDIA application and global driver profiles. The default is `enabled`.
-Set this to `disabled` when running an isolated host or managing driver profiles separately. This setting
-does not disable NVENC encoding. Restart Sunshine after changing it. An instance that already owns driver
-changes still restores its own changes during shutdown.
-
-```text
-nvenc_manage_driver_settings = disabled
-```
 
 ### [nvenc_preset](https://localhost:47990/config/#nvenc_preset)
 
@@ -3191,79 +3180,6 @@ nvenc_manage_driver_settings = disabled
         <td>good for fast encoding and low-latency streaming</td>
     </tr>
 </table>
-
-## Experimental packet control
-
-These file configuration options apply to the explicitly negotiated packet-control experiment. The host must be built
-with `SUNSHINE_EXPERIMENTAL_GOOGCC=ON`; the currently validated build is Windows x64 with UCRT GCC 15.2.
-The client must explicitly request control and confirm profile 2 with encrypted video, encrypted control v2 and a nonzero
-connection epoch. Enabling measurement alone does not grant control.
-
-| Option | Default | Behavior |
-| --- | --- | --- |
-| `experimental_transport_pacer` | disabled | Enables the bounded experimental video sender. |
-| `experimental_packet_control` | disabled | Allows control capability advertisement and explicit negotiation when the build and pacer gates also pass. |
-| `experimental_packet_bitrate` | enabled | Lets the negotiated controller adjust the network budget; has no effect without the other control gates. Disabling it retains the current fixed budget. |
-| `experimental_packet_queue_pushback` | disabled | Feeds the actual owned video queue to native congestion-window pushback and applies a separate encoder ceiling. The pacer continues draining at the network budget. Requires the negotiated experimental controller. |
-| `experimental_packet_probe` | disabled | Schedules native probes and requested loss-recovery padding within the existing shared IP budget. Requires automatic bitrate control, fresh feedback and a valid controller lease. Authenticated padding requires separate client negotiation; legacy peers use owned media probes and the native recovery profile without padding. |
-| `experimental_transport_trace` | disabled | Emits private packet, policy and controller traces for bounded validation runs. |
-
-Automatic bitrate and encoder queue pushback can be enabled independently. With bitrate adjustment disabled,
-explicit queue pushback can reduce encoder production while retaining the fixed network budget. Its read-only
-`encoderCeilingKbps` field is nullable; consult the separate application and first-send receipts.
-Automatic FEC is unavailable: historical burst-replay selection and its configuration option have been removed.
-Manual FEC and existing RS coding remain. Status reports `experimentalAutomaticFecAvailable: false`; a paired
-`POST /api/v2/transport-control` request with `automaticFec: true` returns 400 without changing the policy.
-PC and Android disable this switch unless the host explicitly reports a boolean true capability. Automatic bitrate
-and manual budget operations remain available. Startup bitrate intent is frozen in the negotiated policy; the live
-operation updates bitrate mode and the user's total ceiling. Its new generation revokes the old instance and waits
-for actual apply/send/feedback before a fresh handoff. Queue pushback and probes remain startup settings.
-Editing file configuration is not a live mode request. Full application and device acceptance is recorded separately.
-Each frame uses an encoder-confirmed immutable manual FEC policy; pending or failed configuration cannot enable
-extra protection. Manual preemption revokes the old controller instance. A mature dynamic FEC replacement requires
-separate same-budget, same-deadline validation before it can enter production.
-The probe prototype keeps at most 32 pending requests for one second and schedules one cluster per flow. It preserves
-media identities and data/FEC semantics; only actual OS successes acquire probe metadata. Insufficient media, credit,
-deadline, freshness or authority cancels or rejects a cluster. Completed submission does not prove a valid capacity estimate. Private controller traces separately expose
-upstream native estimate success/failure counts and the last result; counts are estimate updates, not clusters.
-Feedback freshness requires both recent processing of newly mapped changes and a recent actual send time covered
-by those changes. Delayed old coverage still contributes raw accounting and upstream feedback; it cannot renew
-handoff, probe or budget-upstep authority by processing liveness alone. Clock resets invalidate
-coverage until new mapped changes arrive. The current one-second timeout remains an experimental validation parameter.
-After a receiver clock/route reset, old-cluster feedback retains its raw delivery accounting but loses its
-upstream probe tag. Actual post-recovery probe feedback and later higher SDK/pacer policies have been checked
-against on-wire versions in a single-session experiment; full capacity recovery and QoE improvement still require separate validation.
-With authenticated padding negotiated, native loss recovery can request real padding at the SDK's requested rate.
-The already-linked WebRTC `IntervalBudget` tracks a bounded deficit, debited by every successful video, FEC and probe IP receipt.
-The owner submits padding only into an empty media queue, in bounded batches under the existing shared budget and a 50 ms deadline.
-Revocation, stale feedback, clock reset or withdrawal of the native request retires its owned unsent suffix without advancing codec state.
-Clients without the extension retain the upstream `WebRTC-Bwe-LossBasedBweV2/Enabled,PaddingDuration:0ms/` profile
-when automatic bitrate and probing are enabled. Private traces expose the mode, deficit credit,
-requested padding and native `NetworkEstimate` loss/RTT fields. Those fields must not be interpreted as raw packet loss
-or measured RTT; zero values in current experiments do not establish lossless or zero-latency delivery.
-The current scheduler requires a sufficient prefix in one owned frame. A group may span bounded batches,
-rotating between flows and rechecking the existing budget after every submission. Its whole cost must fit the
-existing burst/debt limits; a partial group is not counted as complete. Synthetic 100 Mbps tests cover this scheduling contract;
-sparse/static media, continuous padding recovery, cost and the full high-bitrate range still require actual owner validation.
-Short active-probe waits use the existing platform timer in requested slices of at most 1 ms, with no send permit held.
-Active probe delay tolerance comes from the pinned SDK. V6 cost and response-tail acceptance remain incomplete.
-
-For newly negotiated packet-control sessions with the experimental pacer enabled, video, audio data/FEC and bound ENet
-datagrams share one IP budget at the actual nonblocking send boundaries. Unbound handshake traffic is reported separately.
-Windows single-session IPv4, pure IPv6 and IPv4-mapped dual-stack loopback tests have matched all three outlets against an
-independent proxy, including IPv6 capacity changes and reverse-control delay. Accounting uses the actual wire family:
-48 base-header bytes for IPv6 and 28 for IPv4, including mapped routes; audio keeps its native route address.
-The current client requests 10,000 kbps on a restored 20 Mbps virtual link; this does not prove measurement of the full link capacity.
-Multiple-session fairness, non-loopback IPv6 paths, real OS partial-send faults, large audio payload fragmentation,
-complete probe behavior, application/device validation and performance gates remain incomplete.
-All shared-socket audio, including legacy sessions, now uses the existing bounded nonblocking retry queue
-(256 packets/256 KiB, 40 ms from enqueue). Shutdown joins the sender before closing its socket; these
-limits are validation parameters, not frozen playback guarantees. The formal v2 API capability
-flags remain false; experimental negotiation and policy ownership have separate status fields. Raw traces can contain
-private session data and should be kept with local validation evidence.
-
-See the [implementation plan](adaptive-fec-implementation.zh-CN.md) and
-[validation scope](adaptive-fec-validation.zh-CN.md) for the current evidence and completion gates.
 
 <div class="section_buttons">
 

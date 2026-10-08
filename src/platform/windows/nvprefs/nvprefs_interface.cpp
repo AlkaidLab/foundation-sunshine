@@ -9,7 +9,6 @@
 #include "driver_settings.h"
 #include "nvprefs_interface.h"
 #include "undo_file.h"
-#include "src/config.h"
 
 namespace {
 
@@ -42,13 +41,6 @@ namespace nvprefs {
 
   bool
   nvprefs_interface::load() {
-    // An owner must still be able to restore changes made before management
-    // was disabled. A host started with opt-out never loads NVAPI preferences
-    // or opens another host's global undo file.
-    if (!config::video.nv_manage_driver_settings && !pimpl->undo_file) {
-      info_message("NVIDIA driver profile management disabled by configuration");
-      return false;
-    }
     if (!pimpl->loaded) {
       // Check %ProgramData% variable, need it for storing undo file
       wchar_t program_data_env[MAX_PATH];
@@ -114,7 +106,7 @@ namespace nvprefs {
 
   bool
   nvprefs_interface::modify_application_profile() {
-    if (!pimpl->loaded || !config::video.nv_manage_driver_settings) return false;
+    if (!pimpl->loaded) return false;
 
     // Modify and save sunshine.exe application profile settings, if needed
     bool modified = false;
@@ -140,7 +132,7 @@ namespace nvprefs {
 
   bool
   nvprefs_interface::modify_global_profile() {
-    if (!pimpl->loaded || !config::video.nv_manage_driver_settings) return false;
+    if (!pimpl->loaded) return false;
 
     // Modify but not save global profile settings, if needed
     std::optional<undo_data_t> undo_data;

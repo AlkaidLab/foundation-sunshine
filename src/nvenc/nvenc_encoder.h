@@ -72,7 +72,7 @@ namespace nvenc {
      * @brief Set the bitrate for the encoder.
      * @param bitrate_kbps Bitrate in kilobits per second.
      */
-    virtual bool
+    virtual void
     set_bitrate(int bitrate_kbps) = 0;
 
     /**

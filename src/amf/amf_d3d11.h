@@ -46,7 +46,7 @@ namespace amf {
     bool
     invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) override;
 
-    bool
+    void
     set_bitrate(int bitrate_kbps) override;
 
     void

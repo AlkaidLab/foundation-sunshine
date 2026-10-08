@@ -133,7 +133,7 @@ namespace amf {
     auto bitrate = static_cast<int64_t>(client_config.bitrate) * 1000;
     auto framerate = AMFConstructRate(client_config.framerate, 1);
     avcodec_compat_profile = config.avcodec_compat;
-    user_configured_rate_control = config.rc_mode.has_value() || client_config.paced_rate_control;
+    user_configured_rate_control = config.rc_mode.has_value();
     hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
 
     auto configure_multi_hw_instance = [&](const wchar_t *multi_hw_property,
@@ -260,7 +260,7 @@ namespace amf {
         return false;
       }
       hwsurfaces_in_queue_max = compat.hwsurfaces_in_queue_max;
-      user_configured_rate_control = compat.manages_rate_control || client_config.paced_rate_control;
+      user_configured_rate_control = compat.manages_rate_control;
 
       if (video_format == 0) {
         configure_multi_hw_instance(
@@ -641,28 +641,6 @@ namespace amf {
       if (config.pa_activity_type) {
         encoder->SetProperty(AMF_PA_ACTIVITY_TYPE, (amf_int64) *config.pa_activity_type);
       }
-    }
-
-    if (client_config.paced_rate_control) {
-      // The negotiated transport budget requires bitrate control, including
-      // recovery frames. Apply the native CBR/HRD contract after optional
-      // encoder settings so quality-based modes cannot bypass that budget.
-      const auto *mode = video_format == 0 ? AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD :
-                         video_format == 1 ? AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD : AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD;
-      const auto cbr = video_format == 0 ? static_cast<amf_int64>(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR) :
-                       video_format == 1 ? static_cast<amf_int64>(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CBR) :
-                                           static_cast<amf_int64>(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR);
-      const auto *hrd = video_format == 0 ? AMF_VIDEO_ENCODER_ENFORCE_HRD :
-                        video_format == 1 ? AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD : AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD;
-      amf_int64 applied_mode = -1;
-      amf_bool applied_hrd = false;
-      if (encoder->SetProperty(mode, cbr) != AMF_OK || encoder->SetProperty(hrd, true) != AMF_OK ||
-          !set_bitrate(client_config.bitrate) || encoder->GetProperty(mode, &applied_mode) != AMF_OK ||
-          encoder->GetProperty(hrd, &applied_hrd) != AMF_OK || applied_mode != cbr || !applied_hrd) {
-        BOOST_LOG(warning) << "AMF: cannot establish paced CBR/HRD rate control";
-        return false;
-      }
-      BOOST_LOG(info) << "AMF: paced rate control enabled (CBR, HRD, one-frame VBV)";
     }
 
     // NOTE: LOWLATENCY_MODE is intentionally NOT forced here.
@@ -1334,58 +1312,42 @@ namespace amf {
     return true;
   }
 
-  bool
+  void
   amf_d3d11::set_bitrate(int bitrate_kbps) {
-    if (!encoder || bitrate_kbps <= 0 || bitrate_kbps > 800000) return false;
+    if (!encoder) return;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
     auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : bitrate;
-    if (current_config.paced_rate_control) {
-      vbv_size = std::max<int64_t>(amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config), 1000);
-    }
-    const wchar_t *properties[3];
+    AMF_RESULT res;
+
     if (video_format == 0) {
-      properties[0] = AMF_VIDEO_ENCODER_TARGET_BITRATE;
-      properties[1] = AMF_VIDEO_ENCODER_PEAK_BITRATE;
-      properties[2] = AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE;
+      res = encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_size);
+      }
     }
     else if (video_format == 1) {
-      properties[0] = AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE;
-      properties[1] = AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE;
-      properties[2] = AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE;
+      res = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_size);
+      }
     }
     else {
-      properties[0] = AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE;
-      properties[1] = AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE;
-      properties[2] = AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE;
-    }
-    const int count = user_configured_rate_control ? 3 : 1;
-    ::amf::AMFVariant previous[3];
-    for (int i = 0; i < count; ++i) {
-      if (encoder->GetProperty(properties[i], &previous[i]) != AMF_OK) {
-        BOOST_LOG(warning) << "AMF: cannot read bitrate properties for a safe update";
-        return false;
+      res = encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
+      if (user_configured_rate_control) {
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_size);
       }
     }
-    const int64_t values[] = {bitrate, bitrate, vbv_size};
-    for (int i = 0; i < count; ++i) {
-      const auto result = encoder->SetProperty(properties[i], values[i]);
-      ::amf::AMFVariant applied;
-      const bool confirmed = !current_config.paced_rate_control ||
-                             (encoder->GetProperty(properties[i], &applied) == AMF_OK && applied.ToInt64() == values[i]);
-      if (result != AMF_OK || !confirmed) {
-        // Include the failed property: an error must not be assumed to mean
-        // that the SDK left it untouched. The caller reinitializes on failure.
-        bool restored = true;
-        for (int j = 0; j <= i; ++j) {
-          restored = encoder->SetProperty(properties[j], previous[j]) == AMF_OK && restored;
-        }
-        BOOST_LOG(warning) << "AMF: bitrate reconfiguration failed: " << result << ", rollback=" << restored;
-        return false;
-      }
+
+    if (res == AMF_OK) {
+      BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
     }
-    BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
-    return true;
+    else {
+      BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << res;
+    }
   }
 
   void

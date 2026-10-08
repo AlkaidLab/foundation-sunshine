@@ -311,13 +311,6 @@ namespace platf::pyrowave_windows {
                          << ", budget_fps=" << frame_rate_num_ << '/' << frame_rate_den_;
       }
 
-      bitrate_result_e
-      apply_encoder_bitrate(int encoder_kbps) override {
-        if (encoder_kbps <= 0) return bitrate_result_e::failed;
-        set_bitrate(encoder_kbps);
-        return bitrate_kbps_ == encoder_kbps ? bitrate_result_e::applied : bitrate_result_e::failed;
-      }
-
       void
       set_dynamic_param(const video::dynamic_param_t &param) override {
         if (param.valid && param.type == video::dynamic_param_type_e::BITRATE) {
@@ -328,7 +321,7 @@ namespace platf::pyrowave_windows {
       int
       encode(
         int64_t frame_number,
-        const video::packet_sink_ref_t &sink,
+        safe::mail_raw_t::queue_t<video::packet_t> &packets,
         void *channel_data,
         std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
         std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
@@ -431,10 +424,10 @@ namespace platf::pyrowave_windows {
           std::move(storage),
           packet_boundary_,
           rtp_timestamp(frame_number),
-          sink,
+          packets,
           channel_data,
           frame_timestamp,
-          std::move(pipeline_trace), this);
+          std::move(pipeline_trace));
         if (!publish_result.success) {
           return encode_failure(
             frame_number,
@@ -538,7 +531,7 @@ namespace platf::pyrowave_windows {
   encode_gpu_frame(
     int64_t frame_number,
     video::encode_session_t &base_session,
-    const video::packet_sink_ref_t &sink,
+    safe::mail_raw_t::queue_t<video::packet_t> &packets,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
@@ -547,6 +540,6 @@ namespace platf::pyrowave_windows {
       return -1;
     }
     return session->encode(
-      frame_number, sink, channel_data, frame_timestamp, std::move(pipeline_trace));
+      frame_number, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
   }
 }  // namespace platf::pyrowave_windows

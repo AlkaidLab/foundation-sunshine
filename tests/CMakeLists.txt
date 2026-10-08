@@ -100,9 +100,7 @@ target_compile_options(pyrowave_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${S
 set_target_properties(pyrowave_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     target_sources(pyrowave_unit_tests PRIVATE
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp
-            ${CMAKE_SOURCE_DIR}/src/transport/transport_policy.cpp
-            ${CMAKE_SOURCE_DIR}/src/transport/transport_budget.cpp)
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp)
     target_link_libraries(pyrowave_unit_tests Pyrowave::Runtime ${FFMPEG_LIBRARIES})
     set_target_properties(pyrowave_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
@@ -263,9 +261,6 @@ if (NOT BUILD_TESTS)
     return()
 endif ()
 
-# Reuse the standalone transport entry point so target/source lists have one owner.
-include("${CMAKE_CURRENT_LIST_DIR}/transport/CMakeLists.txt")
-
 set(REMOTE_USB_SOCKET_LIBRARIES)
 if (WIN32)
     list(APPEND REMOTE_USB_SOCKET_LIBRARIES mswsock ws2_32)
@@ -379,14 +374,6 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
-# GoogCC validation owns a separate pinned dependency/toolchain entry point.
-# Do not glob its adapter/runtime fixtures into the normal host test executable,
-# which must build with experimental GoogCC disabled and on other platforms.
-list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/googcc/")
-# The dedicated transport target owns these cases, including native probe
-# coverage when the production SDK is enabled.
-get_target_property(TRANSPORT_UNIT_TEST_SOURCES transport_unit_tests SOURCES)
-list(REMOVE_ITEM TEST_SOURCES ${TRANSPORT_UNIT_TEST_SOURCES})
 # The touchscreen device test has a dedicated target that links the device
 # implementation; do not compile a second copy into the aggregate suite.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
@@ -394,19 +381,16 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)
-    # Dedicated targets own these cases; avoid compiling and running them again.
+    # These tests depend on shader or generated backend paths and run in dedicated
+    # targets above; do not compile a second copy into the aggregate suite.
     list(REMOVE_ITEM TEST_SOURCES
             ${HDR_ENCODING_TEST_SOURCE}
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
-            ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE}
-            ${CMAKE_SOURCE_DIR}/tests/unit/test_platform_udp_send.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/test_enet_send_admission.cpp)
+            ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
 endif ()
 
 set(SUNSHINE_SOURCES
         ${SUNSHINE_TARGET_FILES}
-        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoNetwork.c
-        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/VideoPacketFeedback.c
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
 
 # remove main.cpp from the list of sources
@@ -645,9 +629,3 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
-
-# The production helper is tested with real Windows UDP and injected native
-# results. POSIX wrappers remain source-only until their own toolchain checks.
-if(WIN32)
-    add_subdirectory(udp)
-endif()

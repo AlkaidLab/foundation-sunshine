@@ -92,11 +92,11 @@ namespace audio {
   };
 
   using buffer_t = util::buffer_t<std::uint8_t>;
-  using packet_t = std::pair<std::shared_ptr<void>, buffer_t>;
+  using packet_t = std::pair<void *, buffer_t>;
   using audio_ctx_ref_t = safe::shared_t<audio_ctx_t>::ptr_t;
 
   void
-  capture(safe::mail_t mail, config_t config, std::shared_ptr<void> channel_data);
+  capture(safe::mail_t mail, config_t config, void *channel_data);
 
   /**
    * @brief Get the reference to the audio context.

@@ -7,7 +7,6 @@
 extern "C" {
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include <moonlight-common-c/src/Rtsp.h>
-#include <moonlight-common-c/src/TransportFeedbackWire.h>
 #include <libavcodec/avcodec.h>
 }
 
@@ -1225,12 +1224,7 @@ namespace rtsp_stream {
 
     // Report supported and required encryption flags
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
-    ss << "a=x-ss-video[0].packetFeedbackVersion:" << TF_PACKET_FEEDBACK_PROFILE_VERSION << std::endl;
-    ss << "a=x-ss-video[0].policyStatusVersion:1" << std::endl;
-    if (stream::experimental_packet_control_available())
-      ss << "a=x-ss-video[0].packetControlVersion:1" << std::endl;
-    if (stream::experimental_packet_control_available() && config::stream.experimental_packet_probe)
-      ss << "a=x-ss-video[0].packetProbeVersion:1" << std::endl;
+    ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
     
     // 记录加密请求状态用于调试
@@ -1427,42 +1421,6 @@ namespace rtsp_stream {
    * from the result stored on the launch session. The strings live in this
    * object, which must outlive the respond() call it is attached to.
    */
-  struct packet_feedback_response_headers_t {
-    std::string epoch_value;
-    OPTION_ITEM version {}, epoch {}, control {}, policy_status {}, probe {};
-    explicit packet_feedback_response_headers_t(uint64_t connection_epoch, bool packet_control = false, bool notifications = false, bool padding = false): epoch_value(connection_epoch ? std::to_string(connection_epoch) : "") {
-      version.option = const_cast<char *>("X-SS-Packet-Feedback");
-      version.content = const_cast<char *>(TF_PACKET_FEEDBACK_PROFILE_VERSION_STRING);
-      version.next = &epoch;
-      epoch.option = const_cast<char *>("X-SS-Transport-Epoch");
-      epoch.content = epoch_value.data();
-      auto *tail = &epoch;
-      if (packet_control && connection_epoch) {
-        tail->next = &control;
-        tail = &control;
-        control.option = const_cast<char *>("X-SS-Packet-Control");
-        control.content = const_cast<char *>("1");
-      }
-      if (notifications && connection_epoch) {
-        tail->next = &policy_status;
-        tail = &policy_status;
-        policy_status.option = const_cast<char *>("X-SS-Policy-Status");
-        policy_status.content = const_cast<char *>("1");
-      }
-      if (padding && connection_epoch) {
-        tail->next = &probe;
-        probe.option = const_cast<char *>("X-SS-Packet-Probe");
-        probe.content = const_cast<char *>("1");
-      }
-    }
-    void attach(OPTION_ITEM &root) {
-      if (epoch_value.empty()) return;
-      auto *last = &root;
-      while (last->next) last = last->next;
-      last->next = &version;
-    }
-  };
-
   struct dynamic_hdr_response_headers_t {
     std::string format_value;
     std::string fallback_value;
@@ -1509,8 +1467,6 @@ namespace rtsp_stream {
           session.negotiated_dynamic_hdr_format,
           session.negotiated_dynamic_hdr_fallback);
         dynamic_hdr_headers.attach(option);
-        packet_feedback_response_headers_t packet_feedback_headers(session.packet_feedback_epoch, session.packet_control_negotiated, session.policy_status_negotiated, session.packet_probe_negotiated);
-        packet_feedback_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1684,18 +1640,17 @@ namespace rtsp_stream {
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
-      const auto packet_feedback = args.find("x-ss-video[0].packetFeedbackVersion"sv);
-      config.packet_feedback = packet_feedback != args.end() && packet_feedback->second == TF_PACKET_FEEDBACK_PROFILE_VERSION_STRING &&
-        config.controlProtocolType == 13 && (config.encryptionFlagsEnabled & SS_ENC_CONTROL_V2) &&
-        (config.encryptionFlagsEnabled & SS_ENC_VIDEO);
-      const auto packet_control = args.find("x-ss-video[0].packetControlVersion"sv);
-      config.packet_control = stream::experimental_packet_control_available() && config.packet_feedback &&
-                              packet_control != args.end() && packet_control->second == "1";
-      const auto packet_probe = args.find("x-ss-video[0].packetProbeVersion"sv);
-      config.packet_probe = stream::experimental_packet_control_available() && config::stream.experimental_packet_probe && config.packet_control &&
-                            packet_probe != args.end() && packet_probe->second == "1";
-      const auto policy_status = args.find("x-ss-video[0].policyStatusVersion"sv);
-      config.policy_status = config.packet_feedback && policy_status != args.end() && policy_status->second == "1";
+      const auto fec_summary = args.find("x-ml-video.fecSummaryVersion"sv);
+      config.fec_feedback = fec_summary != args.end() && fec_summary->second == "1" && config.controlProtocolType == 13;
+      if (const auto requested = args.find("x-ml-video.fecPercentage"sv); requested != args.end()) {
+        size_t parsed = 0;
+        const auto value = std::stoi(std::string {requested->second}, &parsed);
+        if (parsed != requested->second.size() || value < -2 || value > 100 || !config.fec_feedback) {
+          respond(sock, session, &option, 400, "Invalid FEC preference", req->sequenceNumber, {});
+          return;
+        }
+        config.client_fec = value;
+      }
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (getArg("x-nv-general.featureFlags"sv) & 0x20) {
@@ -1712,11 +1667,6 @@ namespace rtsp_stream {
       monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
       monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
-      if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat))) {
-        // The legacy packet identity and RS policy contract does not cover
-        // PyroWave's block-aware payload and encoder budget.
-        config.packet_feedback = config.packet_control = config.packet_probe = config.policy_status = false;
-      }
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat))) {
@@ -1964,15 +1914,7 @@ namespace rtsp_stream {
     // by using FEC percentage and audio quality settings. If the calculated bitrate ends up
     // too low, we'll allow it to exceed the limits rather than reducing the encoding bitrate
     // down to nearly nothing.
-    if (config.packet_control) {
-      const auto requested = configuredBitrateKbps ? configuredBitrateKbps : config.monitor.bitrate;
-      if (requested <= 0 || requested > 800000) {
-        respond(sock, session, &option, 400, "Invalid Transport Budget", req->sequenceNumber, {});
-        return;
-      }
-      config.transport_budget_kbps = static_cast<int>(requested);
-    }
-    if (configuredBitrateKbps && !config.packet_control) {
+    if (configuredBitrateKbps) {
       BOOST_LOG(debug) << "Client configured bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
 
       // If the FEC percentage isn't too high, adjust the configured bitrate to ensure video
@@ -2058,9 +2000,6 @@ namespace rtsp_stream {
     // 检测是否仅控制流会话（只有 control 流被设置，没有 video 和 audio）
     session.control_only = session.setup_control && !session.setup_video && !session.setup_audio;
     if (session.control_only) {
-      config.packet_control = false;
-      config.packet_probe = false;
-      config.policy_status = false;
       BOOST_LOG(info) << "Control-only session detected: client ["sv << session.client_name << "] will only provide input control"sv;
     }
 
@@ -2078,11 +2017,7 @@ namespace rtsp_stream {
     }
 
     std::string announce_payload { payload };
-    auto stream_session = stream::session::alloc(config, session, net::normalize_address(sock.remote_endpoint().address()).is_v6());
-    if (!stream_session) {
-      respond(sock, session, &option, 400, "Invalid Transport Budget", req->sequenceNumber, {});
-      return;
-    }
+    auto stream_session = stream::session::alloc(config, session);
     server->insert(stream_session);
 
     if (stream::session::start(*stream_session, sock.remote_endpoint().address().to_string())) {
@@ -2100,8 +2035,6 @@ namespace rtsp_stream {
       session.negotiated_dynamic_hdr_format,
       session.negotiated_dynamic_hdr_fallback);
     dynamic_hdr_headers.attach(option);
-    packet_feedback_response_headers_t packet_feedback_headers(session.packet_feedback_epoch, session.packet_control_negotiated, session.policy_status_negotiated, session.packet_probe_negotiated);
-    packet_feedback_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

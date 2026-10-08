@@ -14,9 +14,6 @@ option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in yo
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
 
-# Compilation only; controller ownership still requires separate session opt-in.
-option(SUNSHINE_EXPERIMENTAL_GOOGCC "Build the pinned experimental GoogCC controller (validated Windows toolchain only)." OFF)
-
 # if this option is set, the build will exit after configuring special package configuration files
 option(SUNSHINE_CONFIGURE_ONLY "Configure special files only, then exit." OFF)
 

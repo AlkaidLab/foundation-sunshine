@@ -28,10 +28,6 @@ on:
           - 'AUTO'
           - 'ON'
           - 'OFF'
-      experimental_googcc:
-        description: 'Include the pinned GoogCC controller in a development test package'
-        type: boolean
-        default: false
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
@@ -233,28 +229,6 @@ jobs:
           ./scripts/fetch-paired-gui.ps1 @arguments
           "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
 
-      - name: Select the validated compiler for a GoogCC test package
-        if: github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master'
-        shell: msys2 {0}
-        run: |
-          mkdir -p .deps/validated-gcc
-          cd .deps/validated-gcc
-          file='mingw-w64-ucrt-x86_64-gcc-15.2.0-8-any.pkg.tar.zst'
-          wget "https://repo.msys2.org/mingw/ucrt64/$file"
-          sha256sum --check <<'CHECKSUMS'
-          96f3e0ffb2863f47f7471af7b57a4d4b1a7f823c85a5eea36dd1e03c6e8fc6f0  mingw-w64-ucrt-x86_64-gcc-15.2.0-8-any.pkg.tar.zst
-          CHECKSUMS
-          # Select the verified compiler/headers in this ephemeral runner.
-          # Keep the current shared runtimes: GCC 16 split them into packages
-          # that cannot participate in the old gcc-libs downgrade transaction.
-          tar --extract --file "$file" --directory / --wildcards 'ucrt64/*'
-          test "$(gcc -dumpfullversion)" = '15.2.0'
-
-      - name: Prepare pinned GoogCC for a development test package
-        if: github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master'
-        shell: msys2 {0}
-        run: python third-party/webrtc-googcc/bootstrap.py --output .deps/googcc
-
       - name: Configure Windows
         id: configure_windows
         shell: msys2 {0}
@@ -266,7 +240,6 @@ jobs:
           RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
           RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
           SUNSHINE_RTX_HDR: ${{ !(github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && 'OFF' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master') && 'ON' || inputs.rtx_hdr || 'AUTO' }}
-          SUNSHINE_EXPERIMENTAL_GOOGCC: ${{ github.event_name == 'workflow_dispatch' && inputs.experimental_googcc && github.ref != 'refs/heads/master' && 'ON' || 'OFF' }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
@@ -296,8 +269,6 @@ jobs:
             "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
-            -DSUNSHINE_EXPERIMENTAL_GOOGCC="$SUNSHINE_EXPERIMENTAL_GOOGCC" \
-            -DSUNSHINE_GOOGCC_DEPS_DIR="$PWD/.deps/googcc" \
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \

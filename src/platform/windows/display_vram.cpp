@@ -3500,9 +3500,8 @@ namespace platf::dxgi {
     }
 
     bool shape_updated;
-    capture_status = dup.update_cursor(frame_info, shape_updated);
-    if (capture_status != capture_e::ok) {
-      return capture_status;
+    if (dup.update_cursor(frame_info, shape_updated) != capture_e::ok) {
+      return capture_e::error;
     }
     auto &cursor = dup.cursor;
     if (use_local_cursor) {

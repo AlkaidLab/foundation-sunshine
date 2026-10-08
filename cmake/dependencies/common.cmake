@@ -1,11 +1,6 @@
 # load common dependencies
 # this file will also load platform specific dependencies
 
-if(SUNSHINE_EXPERIMENTAL_GOOGCC)
-    include("${CMAKE_MODULE_PATH}/dependencies/googcc.cmake")
-    sunshine_add_pinned_googcc(FALSE)
-endif()
-
 # boost, this should be before Simple-Web-Server as it also depends on boost
 include(dependencies/Boost_Sunshine)
 
@@ -22,11 +17,6 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-audio-haptics" EXCLU
 # web server
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/Simple-Web-Server")
 target_link_libraries(simple-web-server INTERFACE Boost::asio)
-if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    # Match Sunshine's static C++ runtime, including standalone vendor tests.
-    # The selected compiler can differ from MSYS2's shared runtime version.
-    target_link_options(simple-web-server INTERFACE -static-libgcc -static-libstdc++)
-endif()
 
 # common dependencies
 include("${CMAKE_MODULE_PATH}/dependencies/nlohmann_json.cmake")
