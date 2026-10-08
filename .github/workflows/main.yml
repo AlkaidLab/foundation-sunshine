@@ -241,11 +241,9 @@ jobs:
           cd .deps/validated-gcc
           file='mingw-w64-ucrt-x86_64-gcc-15.2.0-8-any.pkg.tar.zst'
           wget "https://repo.msys2.org/mingw/ucrt64/$file"
-          wget "https://repo.msys2.org/mingw/ucrt64/$file.sig"
           sha256sum --check <<'CHECKSUMS'
           96f3e0ffb2863f47f7471af7b57a4d4b1a7f823c85a5eea36dd1e03c6e8fc6f0  mingw-w64-ucrt-x86_64-gcc-15.2.0-8-any.pkg.tar.zst
           CHECKSUMS
-          pacman-key --verify "$file.sig" "$file"
           # Select the verified compiler/headers in this ephemeral runner.
           # Keep the current shared runtimes: GCC 16 split them into packages
           # that cannot participate in the old gcc-libs downgrade transaction.
