@@ -322,7 +322,7 @@ namespace platf::pyrowave_windows {
   encode_frame(
     int64_t frame_number,
     video::encode_session_t &base_session,
-    safe::mail_raw_t::queue_t<video::packet_t> &packets,
+    const video::packet_sink_ref_t &sink,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
@@ -407,10 +407,10 @@ namespace platf::pyrowave_windows {
       std::move(storage),
       session->packet_boundary(),
       session->rtp_timestamp(frame_number),
-      packets,
+      sink,
       channel_data,
       frame_timestamp,
-      std::move(pipeline_trace));
+      std::move(pipeline_trace), &base_session);
     if (!publish_result.success) {
       return session->report_encode_failure(
         frame_number,

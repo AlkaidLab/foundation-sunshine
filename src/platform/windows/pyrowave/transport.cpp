@@ -58,10 +58,11 @@ namespace platf::pyrowave_windows {
     std::shared_ptr<const std::vector<std::uint8_t>> bitstream,
     std::size_t packet_boundary,
     std::uint32_t rtp_timestamp,
-    safe::mail_raw_t::queue_t<video::packet_t> &packets,
+    const video::packet_sink_ref_t &sink,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) noexcept {
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
+    video::encode_session_t *session) noexcept {
     transport_publish_result_t result;
     const auto input_bytes = bitstream ? bitstream->size() : 0u;
     const auto boundary_overflow = packet_boundary >
@@ -76,7 +77,7 @@ namespace platf::pyrowave_windows {
                         << (boundary_overflow ? 0u : packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE)
                         << ", rtp_timestamp=" << rtp_timestamp
                         << ", block_aware_fec=1";
-    if (frame_number <= 0 || !bitstream || bitstream->empty() ||
+    if (!sink || frame_number <= 0 || !bitstream || bitstream->empty() ||
         boundary_overflow || boundary_invalid) {
       BOOST_LOG(warning) << "[PyroWaveTransport] rejected frame before packetizer"
                          << ", frame=" << frame_number
@@ -138,7 +139,13 @@ namespace platf::pyrowave_windows {
         pipeline_trace->packet_ready = std::chrono::steady_clock::now();
       }
       output->pipeline_trace = std::move(pipeline_trace);
-      packets->raise(std::move(output));
+      if (session) {
+        const auto index = static_cast<std::uint64_t>(frame_number);
+        output->deadline_origin = session->frame_deadlines.find(index);
+        output->transport_policy = session->frame_policies.find(index);
+      }
+      // A sink discard is owned by the transport; it is not a codec failure.
+      sink->submit(std::move(output));
       result.success = true;
       return result;
     }

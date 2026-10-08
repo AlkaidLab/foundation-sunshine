@@ -2638,13 +2638,13 @@ namespace video {
       if (!pipeline_trace) pipeline_trace.emplace();
       pipeline_trace->pyrowave = true;
       return platf::pyrowave_windows::encode_gpu_frame(
-        frame_nr, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+        frame_nr, session, sink, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
     else {
       if (!pipeline_trace) pipeline_trace.emplace();
       pipeline_trace->pyrowave = true;
       return platf::pyrowave_windows::encode_frame(
-        frame_nr, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+        frame_nr, session, sink, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
 #endif
 

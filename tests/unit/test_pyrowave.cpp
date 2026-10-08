@@ -371,17 +371,25 @@ TEST(PyrowavePacketizerTest, RoundTripsMetadataThatFillsFrameHeaderPayload) {
 }
 
 #ifdef _WIN32
+namespace {
+  struct pyrowave_test_sink_t final: video::packet_sink_t {
+    video::packet_t packet;
+    bool submit(video::packet_t value) override {
+      packet = std::move(value);
+      return true;
+    }
+  };
+}
 TEST(PyrowaveTransportTest, PublishesFrameWithProtectedRuntimeMetadata) {
-  auto mail = std::make_shared<safe::mail_raw_t>();
-  auto packets = mail->queue<video::packet_t>("pyrowave-test-video");
+  auto packets = std::make_shared<pyrowave_test_sink_t>();
   auto source = std::make_shared<const std::vector<std::uint8_t>>(323933, 0x5a);
   const auto timestamp = std::chrono::steady_clock::now() - std::chrono::milliseconds(12);
   const auto result = platf::pyrowave_windows::publish_transport_frame(
     1, source, 1312, 0, packets, nullptr, timestamp, std::nullopt);
 
   ASSERT_TRUE(result.success);
-  ASSERT_TRUE(packets->peek());
-  auto packet = packets->pop(std::chrono::milliseconds(0));
+  ASSERT_TRUE(static_cast<bool>(packets->packet));
+  auto packet = std::move(packets->packet);
   ASSERT_TRUE(packet);
   const auto &output = packet;
   ASSERT_EQ(output->data_size(), result.bytes);
@@ -422,14 +430,13 @@ TEST(PyrowaveTransportTest, PublishesFrameWithProtectedRuntimeMetadata) {
 }
 
 TEST(PyrowaveTransportTest, PublishesReplayWithoutMetadataFlags) {
-  auto mail = std::make_shared<safe::mail_raw_t>();
-  auto packets = mail->queue<video::packet_t>("pyrowave-test-video");
+  auto packets = std::make_shared<pyrowave_test_sink_t>();
   auto source = std::make_shared<const std::vector<std::uint8_t>>(9000, 0x3c);
   const auto result = platf::pyrowave_windows::publish_transport_frame(
     2, source, 1312, 1500, packets, nullptr, std::nullopt, std::nullopt);
 
   ASSERT_TRUE(result.success);
-  auto packet = packets->pop(std::chrono::milliseconds(0));
+  auto packet = std::move(packets->packet);
   ASSERT_TRUE(packet);
   LI_PYROWAVE_PACKET_HEADER header {};
   const std::uint8_t *payload = nullptr;
@@ -440,8 +447,7 @@ TEST(PyrowaveTransportTest, PublishesReplayWithoutMetadataFlags) {
 }
 
 TEST(PyrowaveTransportTest, DoesNotQueueFailedPacketization) {
-  auto mail = std::make_shared<safe::mail_raw_t>();
-  auto packets = mail->queue<video::packet_t>("pyrowave-test-video");
+  auto packets = std::make_shared<pyrowave_test_sink_t>();
   auto source = std::make_shared<const std::vector<std::uint8_t>>(9000, 0x4d);
   // This positive host frame ID cannot be represented by the wire header and
   // makes the real packetizer return a valid, payload-free failure result.
@@ -453,7 +459,7 @@ TEST(PyrowaveTransportTest, DoesNotQueueFailedPacketization) {
   EXPECT_NE(result.result_code, 0);
   EXPECT_EQ(result.bytes, 0u);
   EXPECT_EQ(result.blocks, 0u);
-  EXPECT_FALSE(packets->peek());
+  EXPECT_FALSE(static_cast<bool>(packets->packet));
 }
 
 TEST(PyrowaveRateControlTest, KeepsLowBitrateBudgetBelowLegacyFloor) {

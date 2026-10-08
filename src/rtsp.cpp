@@ -1712,6 +1712,11 @@ namespace rtsp_stream {
       monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
       monitor.encoderCscMode = getArg("x-nv-video[0].encoderCscMode"sv);
       monitor.videoFormat = getArg("x-nv-vqos[0].bitStreamFormat"sv);
+      if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat))) {
+        // The legacy packet identity and RS policy contract does not cover
+        // PyroWave's block-aware payload and encoder budget.
+        config.packet_feedback = config.packet_control = config.packet_probe = config.policy_status = false;
+      }
       monitor.dynamicRange = getArg("x-nv-video[0].dynamicRangeMode"sv);
       monitor.chromaSamplingType = getArg("x-ss-video[0].chromaSamplingType"sv);
       if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat))) {
