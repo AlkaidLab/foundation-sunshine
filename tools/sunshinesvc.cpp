@@ -342,7 +342,11 @@ OpenLogFileHandle() {
   WCHAR log_file_name[MAX_PATH];
 
   // Create sunshine.log in the Temp folder (usually %SYSTEMROOT%\Temp)
-  GetTempPathW(_countof(log_file_name), log_file_name);
+  const auto temp_path_length = GetTempPathW(_countof(log_file_name), log_file_name);
+  if (temp_path_length == 0 || temp_path_length >= _countof(log_file_name)) {
+    // Unusable temp path: report failure so the caller can fall back.
+    return INVALID_HANDLE_VALUE;
+  }
   wcscat_s(log_file_name, L"sunshine.log");
 
   // The file handle must be inheritable for our child process to use it
@@ -366,24 +370,28 @@ OpenLogFileHandle() {
 // per-instance file before giving up on logging entirely.
 HANDLE
 OpenFallbackLogHandle() {
+  SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
+
   WCHAR temp_path[MAX_PATH];
   const auto temp_path_length = GetTempPathW(_countof(temp_path), temp_path);
+  if (temp_path_length > 0 && temp_path_length < _countof(temp_path)) {
+    std::wstring log_file_name(temp_path, temp_path_length);
+    log_file_name += L"sunshine-" + std::to_wstring(GetCurrentProcessId()) + L".log";
 
-  SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
-  std::wstring log_file_name(temp_path, temp_path_length);
-  log_file_name += L"sunshine-" + std::to_wstring(GetCurrentProcessId()) + L".log";
-
-  auto handle = CreateFileW(log_file_name.c_str(),
-    GENERIC_WRITE,
-    FILE_SHARE_READ | FILE_SHARE_WRITE,
-    &security_attributes,
-    CREATE_ALWAYS,
-    0,
-    NULL);
-  if (handle != INVALID_HANDLE_VALUE) {
-    return handle;
+    auto handle = CreateFileW(log_file_name.c_str(),
+      GENERIC_WRITE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE,
+      &security_attributes,
+      CREATE_ALWAYS,
+      0,
+      NULL);
+    if (handle != INVALID_HANDLE_VALUE) {
+      return handle;
+    }
   }
 
+  // The temp path is unusable or the per-instance name failed: NUL keeps the
+  // service startable even without a log sink.
   return CreateFileW(L"NUL",
     GENERIC_WRITE,
     FILE_SHARE_READ | FILE_SHARE_WRITE,

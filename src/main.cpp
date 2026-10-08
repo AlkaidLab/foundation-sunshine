@@ -195,6 +195,36 @@ probe_encoders_with_watchdog() {
   }
 }
 
+/**
+ * @brief Force-shutdown task body shared by the SIGINT/SIGTERM watchdogs.
+ *
+ * debug_trap() ends the process through unhandled-exception dispatch, and
+ * that chain can stall when a wedged thread holds a lock the dispatcher
+ * needs. The detached backup thread terminates independently of that chain
+ * (and of debug_trap() returning), so the process cannot linger holding the
+ * service log handle. WER gets a grace period to record the crash first, and
+ * under an attached debugger the backup stays out of the way so hangs remain
+ * inspectable.
+ */
+void
+force_shutdown_task() {
+  BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
+  logging::log_flush();
+
+  std::thread([]() {
+    std::this_thread::sleep_for(5s);
+#ifdef _WIN32
+    if (IsDebuggerPresent()) {
+      return;
+    }
+#endif
+    lifetime::force_terminate();
+  }).detach();
+
+  lifetime::debug_trap();
+  lifetime::force_terminate();
+}
+
 int
 main(int argc, char *argv[]) {
   lifetime::argv = argv;
@@ -400,13 +430,7 @@ main(int argc, char *argv[]) {
   on_signal(SIGINT, [&force_shutdown, shutdown_event]() {
     BOOST_LOG(info) << "Interrupt handler called"sv;
 
-    auto task = []() {
-      BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
-      logging::log_flush();
-      lifetime::debug_trap();
-      lifetime::force_terminate();
-    };
-    force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
+    force_shutdown = task_pool.pushDelayed(force_shutdown_task, 10s).task_id;
 
     shutdown_event->raise(true);
   });
@@ -414,13 +438,7 @@ main(int argc, char *argv[]) {
   on_signal(SIGTERM, [&force_shutdown, shutdown_event]() {
     BOOST_LOG(info) << "Terminate handler called"sv;
 
-    auto task = []() {
-      BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
-      logging::log_flush();
-      lifetime::debug_trap();
-      lifetime::force_terminate();
-    };
-    force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
+    force_shutdown = task_pool.pushDelayed(force_shutdown_task, 10s).task_id;
 
     shutdown_event->raise(true);
   });
