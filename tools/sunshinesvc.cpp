@@ -348,12 +348,47 @@ OpenLogFileHandle() {
   // The file handle must be inheritable for our child process to use it
   SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
 
-  // Overwrite the old sunshine.log
+  // Overwrite the old sunshine.log. The handle is inherited by Sunshine.exe
+  // and outlives us when the core lingers, so allow other writers: with
+  // FILE_SHARE_READ only, the next service instance could not reopen this
+  // file and would refuse to start with ERROR_SHARING_VIOLATION.
   return CreateFileW(log_file_name,
     GENERIC_WRITE,
-    FILE_SHARE_READ,
+    FILE_SHARE_READ | FILE_SHARE_WRITE,
     &security_attributes,
     CREATE_ALWAYS,
+    0,
+    NULL);
+}
+
+// A core process left over from a build that opened the log with
+// FILE_SHARE_READ only still blocks the primary name, so fall back to a
+// per-instance file before giving up on logging entirely.
+HANDLE
+OpenFallbackLogHandle() {
+  WCHAR temp_path[MAX_PATH];
+  const auto temp_path_length = GetTempPathW(_countof(temp_path), temp_path);
+
+  SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
+  std::wstring log_file_name(temp_path, temp_path_length);
+  log_file_name += L"sunshine-" + std::to_wstring(GetCurrentProcessId()) + L".log";
+
+  auto handle = CreateFileW(log_file_name.c_str(),
+    GENERIC_WRITE,
+    FILE_SHARE_READ | FILE_SHARE_WRITE,
+    &security_attributes,
+    CREATE_ALWAYS,
+    0,
+    NULL);
+  if (handle != INVALID_HANDLE_VALUE) {
+    return handle;
+  }
+
+  return CreateFileW(L"NUL",
+    GENERIC_WRITE,
+    FILE_SHARE_READ | FILE_SHARE_WRITE,
+    &security_attributes,
+    OPEN_EXISTING,
     0,
     NULL);
 }
@@ -445,6 +480,13 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   }
 
   auto log_file_handle = OpenLogFileHandle();
+  if (log_file_handle == INVALID_HANDLE_VALUE) {
+    // A lingering Sunshine.exe holds the inherited log handle open, which can
+    // fail the open above with ERROR_SHARING_VIOLATION. The service must
+    // never refuse to start over a log file: degrade to a fallback sink so
+    // the core can still be launched and recovered.
+    log_file_handle = OpenFallbackLogHandle();
+  }
   if (log_file_handle == INVALID_HANDLE_VALUE) {
     // Tell SCM we failed to start
     service_status.dwWin32ExitCode = GetLastError();
@@ -713,6 +755,16 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
               WaitForSingleObject(process_info.hProcess, 20000) != WAIT_OBJECT_0) {
             // If it won't terminate gracefully, kill it now
             TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED);
+            // TerminateProcess only initiates termination: threads stuck in
+            // kernel calls keep the process (and the ports/files it holds)
+            // alive with no user-mode way to reclaim them. Record it so an
+            // unkillable core is diagnosable from the service log instead of
+            // failing silently.
+            if (WaitForSingleObject(process_info.hProcess, 5000) != WAIT_OBJECT_0) {
+              WriteServiceLog(log_file_handle,
+                "Core process did not fully terminate after force kill; "
+                "it is likely stuck in the kernel and may keep holding ports and files until reboot");
+            }
           }
           still_running = false;
           break;

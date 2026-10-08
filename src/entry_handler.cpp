@@ -4,6 +4,7 @@
  */
 // standard includes
 #include <csignal>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 
@@ -24,6 +25,7 @@
 
 extern "C" {
 #ifdef _WIN32
+  #include <Windows.h>
   #include <iphlpapi.h>
 #endif
 }
@@ -105,6 +107,15 @@ namespace lifetime {
     DebugBreak();
 #else
     std::raise(SIGTRAP);
+#endif
+  }
+
+  void
+  force_terminate() {
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(desired_exit_code.load()));
+#else
+    std::_Exit(desired_exit_code.load());
 #endif
   }
 

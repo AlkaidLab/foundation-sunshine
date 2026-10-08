@@ -102,6 +102,17 @@ namespace lifetime {
   debug_trap();
 
   /**
+   * @brief Unconditionally terminates Sunshine immediately.
+   *
+   * Backstop for `debug_trap()`: the breakpoint relies on unhandled-exception
+   * dispatch to end the process, and that chain can stall or be swallowed.
+   * This cannot preempt threads stuck in the kernel, but it closes every
+   * user-mode path and preserves the exit code.
+   */
+  void
+  force_terminate();
+
+  /**
    * @brief Get the argv array passed to main().
    */
   char **
