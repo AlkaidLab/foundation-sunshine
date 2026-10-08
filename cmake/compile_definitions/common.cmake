@@ -117,6 +117,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/pyrowave/packet.cpp"
         "${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.h"
         "${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.cpp"
+        "${CMAKE_SOURCE_DIR}/src/pyrowave/dynamic_hdr.h"
+        "${CMAKE_SOURCE_DIR}/src/pyrowave/dynamic_hdr.cpp"
         "${CMAKE_SOURCE_DIR}/src/pyrowave/encoder.h"
         "${CMAKE_SOURCE_DIR}/src/pyrowave/session.h"
         "${CMAKE_SOURCE_DIR}/src/pyrowave/session.cpp"

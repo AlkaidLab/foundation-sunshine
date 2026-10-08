@@ -203,6 +203,7 @@ namespace video {
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     // Local diagnostics only; never serialized into the media protocol.
     std::uint32_t perf_session_id = 0;
+    bool pyrowave_dynamic_hdr_mapping = false;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {
@@ -220,6 +221,10 @@ namespace video {
       return static_cast<double>(framerate);
     }
   };
+
+  // Resolve source mastering metadata after optional HDR pixel processing.
+  bool
+  get_effective_hdr_metadata(platf::display_t *display, const config_t &config, SS_HDR_METADATA &metadata);
 
   // Convert a total video transport budget (including FEC) to encoder bitrate.
   int

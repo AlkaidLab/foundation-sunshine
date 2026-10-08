@@ -144,7 +144,8 @@ namespace pyrowave {
         };
 
         std::vector<std::uint8_t> frame_header_payload(payload_boundary, 0);
-        std::copy(request.metadata.begin(), request.metadata.end(), frame_header_payload.begin());
+        std::copy_n(request.metadata.begin(), std::min(metadata_length, payload_boundary),
+          frame_header_payload.begin());
         const auto common_flags = static_cast<std::uint8_t>(
           (metadata_length != 0 ? LI_PYROWAVE_FLAG_METADATA_PRESENT : 0) |
           (request.mark_critical ? LI_PYROWAVE_FLAG_CRITICAL : 0));

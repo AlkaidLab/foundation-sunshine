@@ -1,6 +1,7 @@
 #include "transport.h"
 
 #include "src/pyrowave/packetizer.h"
+#include "src/pyrowave/dynamic_hdr.h"
 #include "src/logging.h"
 
 extern "C" {
@@ -61,7 +62,8 @@ namespace platf::pyrowave_windows {
     safe::mail_raw_t::queue_t<video::packet_t> &packets,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) noexcept {
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
+    const pyrowave::hdr_frame_metadata_t *dynamic_metadata) noexcept {
     transport_publish_result_t result;
     const auto input_bytes = bitstream ? bitstream->size() : 0u;
     const auto boundary_overflow = packet_boundary >
@@ -98,7 +100,30 @@ namespace platf::pyrowave_windows {
         .bitstream = { std::move(bitstream) },
       };
       auto metadata = build_runtime_metadata(frame_timestamp);
-      const auto metadata_flags = static_cast<std::uint16_t>(metadata.empty() ? 0 : runtime_metadata_flags);
+      auto metadata_flags = static_cast<std::uint16_t>(metadata.empty() ? 0 : runtime_metadata_flags);
+      if (dynamic_metadata) {
+        const std::size_t hdr_header_bytes = 8u + (dynamic_metadata->hlg_nominal_peak_nits != 0 ? 10u : 0u);
+        if (dynamic_metadata->type == 0 || dynamic_metadata->payload.empty() ||
+            metadata.size() + hdr_header_bytes > LI_PYROWAVE_MAX_METADATA_SIZE ||
+            dynamic_metadata->payload.size() > LI_PYROWAVE_MAX_METADATA_SIZE - metadata.size() - hdr_header_bytes) {
+          result.result_code = -1;
+          return result;
+        }
+        append_u16(metadata, dynamic_metadata->type);
+        append_u16(metadata, LI_PYROWAVE_METADATA_FLAG_PROTECTED | LI_PYROWAVE_METADATA_FLAG_REQUIRED);
+        append_u32(metadata, static_cast<std::uint32_t>(dynamic_metadata->payload.size()));
+        metadata.insert(metadata.end(), dynamic_metadata->payload.begin(), dynamic_metadata->payload.end());
+        if (dynamic_metadata->hlg_nominal_peak_nits != 0) {
+          append_u16(metadata, LI_PYROWAVE_METADATA_HLG_NOMINAL_PEAK);
+          append_u16(metadata, LI_PYROWAVE_METADATA_FLAG_PROTECTED | LI_PYROWAVE_METADATA_FLAG_REQUIRED);
+          append_u32(metadata, 2);
+          append_u16(metadata, dynamic_metadata->hlg_nominal_peak_nits);
+        }
+        // Optional runtime TLVs and required HDR TLVs coexist. Requiredness
+        // belongs to each TLV, not to every item in the metadata area.
+        metadata_flags = LI_PYROWAVE_METADATA_FLAG_PROTECTED |
+          (frame_timestamp ? LI_PYROWAVE_METADATA_FLAG_RUNTIME : 0);
+      }
       auto packetized = pyrowave::make_transport_packetizer()->packetize(frame, {
         .packet_boundary = packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE,
         .rtp_timestamp = rtp_timestamp,
