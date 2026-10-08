@@ -100,7 +100,9 @@ target_compile_options(pyrowave_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${S
 set_target_properties(pyrowave_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     target_sources(pyrowave_unit_tests PRIVATE
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp)
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp
+            ${CMAKE_SOURCE_DIR}/src/transport/transport_policy.cpp
+            ${CMAKE_SOURCE_DIR}/src/transport/transport_budget.cpp)
     target_link_libraries(pyrowave_unit_tests Pyrowave::Runtime ${FFMPEG_LIBRARIES})
     set_target_properties(pyrowave_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
