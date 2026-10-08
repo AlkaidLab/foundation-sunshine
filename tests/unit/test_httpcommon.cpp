@@ -47,21 +47,22 @@ INSTANTIATE_TEST_SUITE_P(
     std::make_tuple("http://localhost:8080", "localhost"),
     std::make_tuple("nonsense!!}{::", "")));
 
-struct DownloadFileTest: testing::TestWithParam<std::tuple<std::string, std::string>> {};
+struct DownloadFileTest: testing::TestWithParam<std::tuple<std::string, std::string, bool>> {};
 
 TEST_P(DownloadFileTest, Run) {
-  const auto &[url, filename] = GetParam();
+  const auto &[url, filename, expected_success] = GetParam();
   const std::string test_dir = platf::appdata().string() + "/tests/";
   std::string path = test_dir + filename;
-  ASSERT_TRUE(http::download_file(url, path, CURL_SSLVERSION_TLSv1_0));
+  ASSERT_EQ(http::download_file(url, path, CURL_SSLVERSION_TLSv1_0), expected_success);
 }
 
 INSTANTIATE_TEST_SUITE_P(
   DownloadFileTests,
   DownloadFileTest,
   testing::Values(
-    std::make_tuple("https://httpbin.org/base64/aGVsbG8h", "hello.txt"),
-    std::make_tuple("https://httpbin.org/redirect-to?url=/base64/aGVsbG8h", "hello-redirect.txt")));
+    std::make_tuple("https://httpbin.org/base64/aGVsbG8h", "hello.txt", true),
+    // The download helper deliberately rejects redirects.
+    std::make_tuple("https://httpbin.org/redirect-to?url=/base64/aGVsbG8h", "hello-redirect.txt", false)));
 
 TEST(ImageDownloadTest, FailedDownloadPreservesExistingFile) {
   const auto root = std::filesystem::temp_directory_path() /
