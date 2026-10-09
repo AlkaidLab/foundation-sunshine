@@ -448,7 +448,7 @@
     "external_ip": "Externe IP",
     "external_ip_desc": "Wenn keine externe IP-Adresse angegeben ist, erkennt Sunshine automatisch externe IP",
     "fec_auto": "Automatic FEC",
-    "fec_auto_desc": "Automatically select video FEC for clients following host settings. Clients can also request automatic FEC themselves. A client’s fixed percentage always takes priority.",
+    "fec_auto_desc": "Automatically select video FEC from network feedback and balance video quality within the stream bitrate budget. Clients can also request automatic mode. A client’s fixed percentage always takes priority.",
     "fec_auto_max_percentage": "Automatic FEC limit (%)",
     "fec_auto_max_percentage_desc": "Maximum requested percentage for automatic FEC, including clients that request automatic mode. Fixed client percentages are not limited by this setting. Rounding and minimum parity may increase actual overhead.",
     "fec_apply_note": "Save and apply these settings, then reconnect the stream. These options affect video RS FEC; PyroWave uses its own protection.",

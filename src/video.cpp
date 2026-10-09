@@ -674,13 +674,18 @@ namespace video {
     }
 
     bool
+    supports_bitrate_update() const {
+      const std::string_view codec = avcodec_ctx && avcodec_ctx->codec ? avcodec_ctx->codec->name : "";
+      return codec == "libx264" || codec.ends_with("_qsv") || codec.ends_with("_nvenc");
+    }
+
+    bool
     set_bitrate(int bitrate_kbps) override {
       if (!avcodec_ctx || bitrate_kbps <= 0) return false;
       // These FFmpeg backends consume bitrate changes during encoding. Merely
       // writing AVCodecContext fields is not a reconfiguration contract for
       // other backends (e.g. libx265/libsvtav1).
-      const std::string_view codec = avcodec_ctx->codec ? avcodec_ctx->codec->name : "";
-      if (codec != "libx264" && !codec.ends_with("_qsv") && !codec.ends_with("_nvenc")) return false;
+      if (!supports_bitrate_update()) return false;
       auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
 
       // Update AVCodecContext fields (for software encoders and as fallback).
@@ -2561,21 +2566,39 @@ namespace video {
     return 0;
   }
 
+  struct encoder_rebuild_context_t {
+    platf::display_t &display;
+    const encoder_t &encoder;
+    const config_t &config;
+    platf::img_t &image;
+  };
+
+  bool
+  rebuild_bitrate_session(std::unique_ptr<encode_session_t> &session, const encoder_rebuild_context_t &context, int bitrate_kbps);
+
   int
   encode(
     int64_t frame_nr,
-    encode_session_t &session,
+    std::unique_ptr<encode_session_t> &session_ptr,
     safe::mail_raw_t::queue_t<packet_t> &packets,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
-    if (session.bitrate_budget) {
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
+    const encoder_rebuild_context_t *rebuild_context = nullptr) {
+    // Keep the budget alive if a backend without runtime updates is replaced.
+    const auto budget = session_ptr->bitrate_budget;
+    if (budget) {
       const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch())
                          .count();
-      if (const auto next = session.bitrate_budget->pending(now)) {
-        if (next->encoder_kbps == session.bitrate_budget->applied().encoder_kbps || session.set_bitrate(next->encoder_kbps)) {
-          session.bitrate_budget->commit(*next);
+      if (const auto next = budget->pending(now)) {
+        auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(session_ptr.get());
+        const bool needs_rebuild = avcodec_session && !avcodec_session->supports_bitrate_update();
+        const bool applied = next->encoder_kbps == budget->applied().encoder_kbps ||
+                             (needs_rebuild ? rebuild_context && rebuild_bitrate_session(session_ptr, *rebuild_context, next->encoder_kbps) :
+                                              session_ptr->set_bitrate(next->encoder_kbps));
+        if (applied) {
+          budget->commit(*next);
           BOOST_LOG(info) << "Applied video budget: total=" << next->total_kbps
                           << " Kbps, encoder=" << next->encoder_kbps << " Kbps, FEC=" << next->fec_percentage << '%';
         }
@@ -2584,6 +2607,7 @@ namespace video {
         }
       }
     }
+    auto &session = *session_ptr;
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
@@ -3304,10 +3328,10 @@ namespace video {
   }
 
   std::unique_ptr<encode_session_t>
-  make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+  make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false, std::optional<int> bitrate_override = {}) {
     auto effective_config = config;
-    effective_config.bitrate = config.bitrate_budget ? config.bitrate_budget->applied().encoder_kbps :
-                                                       cap_initial_encoder_bitrate(config.bitrate, config::video.max_bitrate, 0);
+    effective_config.bitrate = bitrate_override.value_or(config.bitrate_budget ? config.bitrate_budget->applied().encoder_kbps :
+                                                                                 cap_initial_encoder_bitrate(config.bitrate, config::video.max_bitrate, 0));
     std::unique_ptr<encode_session_t> session;
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
@@ -3552,11 +3576,13 @@ namespace video {
       return {};
     };
 
+    const auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(session.get());
+    const bool needs_bitrate_rebuild = avcodec_session && !avcodec_session->supports_bitrate_update();
+    std::shared_ptr<platf::img_t> current_img;
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
-      // even if we timeout waiting on the first frame. This is a relatively large
-      // allocation which can be freed immediately after convert(), so we do this
-      // in a separate scope.
+      // even if we timeout waiting on the first frame. Only backends requiring
+      // bitrate rebuilds retain the image to prepare a replacement encoder.
       auto dummy_img = disp->alloc_img();
       if (!dummy_img || disp->dummy_img(dummy_img.get()) || session->convert(*dummy_img)) {
         if (backend_failure_handler) {
@@ -3565,6 +3591,7 @@ namespace video {
         }
         return;
       }
+      if (needs_bitrate_rebuild) current_img = std::move(dummy_img);
     }
 
     while (true) {
@@ -3658,6 +3685,7 @@ namespace video {
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          if (needs_bitrate_rebuild) current_img = img;
           if (pipeline_trace) {
             pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
@@ -3688,7 +3716,9 @@ namespace video {
         // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
+      std::optional<encoder_rebuild_context_t> rebuild_context;
+      if (current_img) rebuild_context.emplace(*disp, encoder, config, *current_img);
+      if (encode(frame_nr++, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace), rebuild_context ? &*rebuild_context : nullptr)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         if (backend_failure_handler) {
           backend_failure_handler();
@@ -3815,6 +3845,20 @@ namespace video {
     }
 
     return result;
+  }
+
+  bool
+  rebuild_bitrate_session(std::unique_ptr<encode_session_t> &session, const encoder_rebuild_context_t &context, int bitrate_kbps) {
+    auto device = make_encode_device(context.display, context.encoder, context.config);
+    if (!device) return false;
+    auto replacement = make_encode_session(&context.display, context.encoder, context.config,
+      context.display.width, context.display.height, std::move(device), false, bitrate_kbps);
+    // Prepare the current image before replacing the working encoder. A failed
+    // rebuild leaves both the old encoder and its FEC allowance intact.
+    if (!replacement || replacement->convert(context.image)) return false;
+    replacement->request_idr_frame();
+    session = std::move(replacement);
+    return true;
   }
 
   std::optional<sync_session_t>
@@ -4032,7 +4076,9 @@ namespace video {
             pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
+          std::optional<encoder_rebuild_context_t> rebuild_context;
+          if (img) rebuild_context.emplace(*disp, encoder, ctx->config, *img);
+          if (encode(ctx->frame_nr++, pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace), rebuild_context ? &*rebuild_context : nullptr)) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
@@ -4579,7 +4625,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto encode_start = std::chrono::steady_clock::now();
     while (!packets->peek()) {
-      if (encode(1, *session, packets, nullptr, {}, {})) {
+      if (encode(1, session, packets, nullptr, {}, {})) {
         return -1;
       }
       // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
