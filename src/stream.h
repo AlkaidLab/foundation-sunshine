@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -20,6 +21,10 @@
 
 namespace rtsp_stream {
   struct launch_session_t;
+}
+
+namespace video_fec {
+  class controller_t;
 }
 
 namespace stream {
@@ -46,7 +51,7 @@ namespace stream {
 
     int packetsize;
     int minRequiredFecPackets;
-    int client_fec = -2;  // Host default; optional client preference from RTSP.
+    std::shared_ptr<video_fec::controller_t> fec_control;
     bool fec_feedback = false;
     int mlFeatureFlags;
     int controlProtocolType;

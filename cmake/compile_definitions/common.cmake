@@ -212,6 +212,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.h"
         "${CMAKE_SOURCE_DIR}/src/streaming/abr.cpp"
         "${CMAKE_SOURCE_DIR}/src/streaming/abr.h"
+        "${CMAKE_SOURCE_DIR}/src/streaming/bitrate.cpp"
+        "${CMAKE_SOURCE_DIR}/src/streaming/bitrate.h"
         "${CMAKE_SOURCE_DIR}/src/streaming/fec.cpp"
         "${CMAKE_SOURCE_DIR}/src/streaming/fec.h"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.cpp"

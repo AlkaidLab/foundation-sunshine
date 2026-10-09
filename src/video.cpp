@@ -228,11 +228,7 @@ namespace video {
 
   int
   encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage) {
-    if (fec_percentage > 0 && fec_percentage <= 80) {
-      return total_bitrate_kbps * (100 - fec_percentage) / 100;
-    }
-
-    return total_bitrate_kbps;
+    return streaming::encoder_bitrate(total_bitrate_kbps, std::max(0, fec_percentage));
   }
 
   int
@@ -559,11 +555,12 @@ namespace video {
     store(
       uint64_t frame_index,
       std::optional<std::chrono::steady_clock::time_point> timestamp,
-      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace, unsigned fec_percentage) {
       auto &entry = entries[frame_index % entries.size()];
       entry.frame_index = frame_index;
       entry.timestamp = timestamp;
       entry.pipeline_trace = std::move(pipeline_trace);
+      entry.fec_percentage = fec_percentage;
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -584,12 +581,19 @@ namespace video {
       return entry.pipeline_trace;
     }
 
+    unsigned
+    lookup_fec(uint64_t frame_index) const {
+      const auto &entry = entries[frame_index % entries.size()];
+      return entry.frame_index == frame_index ? entry.fec_percentage : 0;
+    }
+
   private:
     // Encoder output can lag submission; keep recent per-frame timing data without heap churn.
     struct entry_t {
       uint64_t frame_index = std::numeric_limits<uint64_t>::max();
       std::optional<std::chrono::steady_clock::time_point> timestamp;
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
+      unsigned fec_percentage = 0;
     };
 
     std::array<entry_t, 256> entries {};
@@ -624,6 +628,7 @@ namespace video {
     // Ensure objects are destroyed in the correct order
     avcodec_encode_session_t &
     operator=(avcodec_encode_session_t &&other) {
+      bitrate_budget = std::move(other.bitrate_budget);
       device = std::move(other.device);
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
@@ -668,17 +673,15 @@ namespace video {
       request_idr_frame();
     }
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override {
-      if (!avcodec_ctx) return;
-
-      const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
-        bitrate_kbps,
-        config::video.max_bitrate,
-        config::stream.fec_percentage
-      );
-
-      auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
+      if (!avcodec_ctx || bitrate_kbps <= 0) return false;
+      // These FFmpeg backends consume bitrate changes during encoding. Merely
+      // writing AVCodecContext fields is not a reconfiguration contract for
+      // other backends (e.g. libx265/libsvtav1).
+      const std::string_view codec = avcodec_ctx->codec ? avcodec_ctx->codec->name : "";
+      if (codec != "libx264" && !codec.ends_with("_qsv") && !codec.ends_with("_nvenc")) return false;
+      auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
 
       // Update AVCodecContext fields (for software encoders and as fallback).
       // Note: dynamic bitrate changes for the AMF path are handled inside the
@@ -688,9 +691,8 @@ namespace video {
       avcodec_ctx->rc_max_rate = bitrate;
       avcodec_ctx->rc_min_rate = bitrate;
 
-      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
-                      << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                      << config::stream.fec_percentage << "%)";
+      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << bitrate_kbps << " Kbps";
+      return true;
     }
 
     void
@@ -864,22 +866,9 @@ namespace video {
       }
     }
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override {
-      if (device && device->nvenc) {
-        // 考虑FEC影响，调整编码码率
-        // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
-          bitrate_kbps,
-          config::video.max_bitrate,
-          config::stream.fec_percentage
-        );
-
-        device->nvenc->set_bitrate(adjusted_bitrate_kbps);
-        BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps
-                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                        << config::stream.fec_percentage << "%)";
-      }
+      return device && device->nvenc && device->nvenc->set_bitrate(bitrate_kbps);
     }
 
     void
@@ -966,7 +955,7 @@ namespace video {
       uint64_t frame_index,
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
-      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace), fec_percentage());
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -977,6 +966,11 @@ namespace video {
     std::optional<platf::frame_pipeline_trace_t>
     resolve_frame_trace(uint64_t frame_index) const {
       return frame_timestamps.lookup_trace(frame_index);
+    }
+
+    unsigned
+    resolve_frame_fec(uint64_t frame_index) const {
+      return frame_timestamps.lookup_fec(frame_index);
     }
 
   private:
@@ -1036,20 +1030,9 @@ namespace video {
       }
     }
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override {
-      if (device && device->amf) {
-        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
-          bitrate_kbps,
-          config::video.max_bitrate,
-          config::stream.fec_percentage
-        );
-
-        device->amf->set_bitrate(adjusted_bitrate_kbps);
-        BOOST_LOG(info) << "AMF standalone encoder bitrate changed to: " << adjusted_bitrate_kbps
-                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                        << config::stream.fec_percentage << "%)";
-      }
+      return device && device->amf && device->amf->set_bitrate(bitrate_kbps);
     }
 
     void
@@ -1101,7 +1084,7 @@ namespace video {
       uint64_t frame_index,
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
-      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace), fec_percentage());
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -1112,6 +1095,11 @@ namespace video {
     std::optional<platf::frame_pipeline_trace_t>
     resolve_frame_trace(uint64_t frame_index) const {
       return frame_timestamps.lookup_trace(frame_index);
+    }
+
+    unsigned
+    resolve_frame_fec(uint64_t frame_index) const {
+      return frame_timestamps.lookup_fec(frame_index);
     }
 
   private:
@@ -2366,7 +2354,7 @@ namespace video {
     if (pipeline_trace) {
       pipeline_trace->encode_submit = std::chrono::steady_clock::now();
     }
-    session.frame_timestamps.store(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
+    session.frame_timestamps.store(submitted_frame_index, frame_timestamp, std::move(pipeline_trace), session.fec_percentage());
 
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
@@ -2447,6 +2435,7 @@ namespace video {
       if (av_packet && av_packet->pts >= 0) {
         const auto encoded_frame_index = static_cast<uint64_t>(av_packet->pts);
         packet->frame_timestamp = session.frame_timestamps.lookup(encoded_frame_index);
+        packet->fec_percentage = session.frame_timestamps.lookup_fec(encoded_frame_index);
         auto encoded_trace = session.frame_timestamps.lookup_trace(encoded_frame_index);
         if (encoded_trace) {
           encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2501,6 +2490,7 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->fec_percentage = session.resolve_frame_fec(encoded_frame.frame_index);
     auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
     if (encoded_trace) {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2560,6 +2550,7 @@ namespace video {
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->fec_percentage = session.resolve_frame_fec(encoded_frame.frame_index);
     auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
     if (encoded_trace) {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2578,6 +2569,21 @@ namespace video {
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+    if (session.bitrate_budget) {
+      const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+      if (const auto next = session.bitrate_budget->pending(now)) {
+        if (next->encoder_kbps == session.bitrate_budget->applied().encoder_kbps || session.set_bitrate(next->encoder_kbps)) {
+          session.bitrate_budget->commit(*next);
+          BOOST_LOG(info) << "Applied video budget: total=" << next->total_kbps
+                          << " Kbps, encoder=" << next->encoder_kbps << " Kbps, FEC=" << next->fec_percentage << '%';
+        }
+        else {
+          BOOST_LOG(warning) << "Encoder rejected bitrate allocation; retaining previous FEC allowance";
+        }
+      }
+    }
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
@@ -3300,17 +3306,9 @@ namespace video {
   std::unique_ptr<encode_session_t>
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
     auto effective_config = config;
-    effective_config.bitrate = cap_initial_encoder_bitrate(
-      config.bitrate,
-      config::video.max_bitrate,
-      config::stream.fec_percentage
-    );
-    if (!is_probe && effective_config.bitrate != config.bitrate) {
-      BOOST_LOG(info) << "Capping initial encoder bitrate from " << config.bitrate
-                      << " Kbps to " << effective_config.bitrate
-                      << " Kbps (host maximum total bitrate: " << config::video.max_bitrate
-                      << " Kbps, FEC: " << config::stream.fec_percentage << "%)";
-    }
+    effective_config.bitrate = config.bitrate_budget ? config.bitrate_budget->applied().encoder_kbps :
+                                                       cap_initial_encoder_bitrate(config.bitrate, config::video.max_bitrate, 0);
+    std::unique_ptr<encode_session_t> session;
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
       // The RPU splice needs to grow the encoded access unit, which only the
@@ -3324,18 +3322,19 @@ namespace video {
                               "streaming HDR10 without RPU"sv;
       }
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
+      session = make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
+      session = make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
     }
     else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
       auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
-      return make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
+      session = make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
     }
 
-    return nullptr;
+    if (session) session->bitrate_budget = config.bitrate_budget;
+    return session;
   }
 
   /**
@@ -3457,6 +3456,13 @@ namespace video {
         mail->event<bool>(mail::shutdown)->raise(true);
       }
       return;
+    }
+
+    if (session_factory && config.bitrate_budget) {
+      // PyroWave factories bypass make_encode_session; initialize their encoder
+      // target from the same session budget after a backend reinitialization.
+      if (!session->set_bitrate(config.bitrate_budget->applied().encoder_kbps)) return;
+      session->bitrate_budget = config.bitrate_budget;
     }
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
@@ -3589,6 +3595,10 @@ namespace video {
       // 处理动态参数调整
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
+          if (param->valid && param->type == dynamic_param_type_e::BITRATE && session->bitrate_budget) {
+            session->bitrate_budget->request(param->value.int_value);
+            continue;
+          }
           if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
               param->type != dynamic_param_type_e::BITRATE &&
               param->type != dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {

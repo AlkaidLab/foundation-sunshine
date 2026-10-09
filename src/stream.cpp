@@ -695,10 +695,6 @@ namespace stream {
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
 
-    // Requested total bitrate for this session (including FEC allowance) in Kbps.
-    // This is the user-configured budget, not the live automatic-FEC wire rate.
-    std::atomic<int> current_total_bitrate { 0 };
-    video_fec::controller_t fec_control;
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
@@ -2041,7 +2037,7 @@ namespace stream {
       if (!session->config.fec_feedback || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT || payload.size() != 12) return;
       uint32_t values[3];
       std::memcpy(values, payload.data(), sizeof(values));
-      session->fec_control.report(util::endian::big(values[0]), util::endian::big(values[1]), util::endian::big(values[2]), steady_now_ms());
+      session->config.fec_control->report(util::endian::big(values[0]), util::endian::big(values[1]), util::endian::big(values[2]), steady_now_ms());
     });
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
@@ -2159,9 +2155,14 @@ namespace stream {
       switch (param_type_enum) {
         case video::dynamic_param_type_e::BITRATE: {
           const auto valid_bitrate = param_value > 0 && param_value <= 800000;
-          const auto capped_bitrate = valid_bitrate ? clamp_total_bitrate_to_host_cap(param_value, session->client_name) : param_value;
-          if (validate_and_raise(valid_bitrate, capped_bitrate, "bitrate", " Kbps")) {
-            session->current_total_bitrate = capped_bitrate;
+          if (valid_bitrate) {
+            const auto total = session->config.monitor.bitrate_budget->request(
+              clamp_total_bitrate_to_host_cap(param_value, session->client_name));
+            perf::update_session_bitrate(session->launch_session_id, total);
+            BOOST_LOG(info) << "Dynamic bitrate budget: " << total << " Kbps";
+          }
+          else {
+            BOOST_LOG(warning) << "Invalid bitrate value: " << param_value;
           }
           break;
         }
@@ -3481,14 +3482,11 @@ namespace stream {
         perf::record_pipeline_sample(session->launch_session_id, sample, frame_dequeue_time);
       }
 
-      auto fecPercentage = config::stream.fec_percentage;
+      unsigned fecPercentage = 0;
       // PyroWave carries its own block-aware parity packets and the client
       // bypasses the legacy RTP FEC queue for this format. Legacy parity
       // shards would not contain a valid NV_VIDEO_PACKET header and must not
       // be forwarded to the PyroWave depacketizer as data.
-      if (is_pyrowave) {
-        fecPercentage = 0;
-      }
 
       // Insert space for packet headers. PyroWave packets already carry their
       // own framing and must stay aligned to the outer RTP payload boundary;
@@ -3519,7 +3517,14 @@ namespace stream {
       payload = std::string_view { (char *) payload_new.data(), payload_new.size() };
 
       const auto frame_data = (payload.size() + blocksize - 1) / blocksize;
-      if (!is_pyrowave) fecPercentage = session->fec_control.percentage(frame_data, session->config.minRequiredFecPackets, steady_now_ms());
+      if (!is_pyrowave) {
+        const auto now = steady_now_ms();
+        const auto requested = session->config.fec_control->percentage(frame_data, session->config.minRequiredFecPackets, now);
+        session->config.monitor.bitrate_budget->observe_fec(requested, now);
+        // Higher protection requires a successfully lowered encoder target.
+        // Buffered frames retain the allowance from their own submission.
+        fecPercentage = std::min(requested, packet->fec_percentage);
+      }
       const auto layout = video_fec::plan(frame_data, fecPercentage, session->config.minRequiredFecPackets);
       if (!layout) {
         BOOST_LOG(error) << "Encoded frame exceeds the existing RS wire limits";
@@ -4410,7 +4415,7 @@ namespace stream {
         session.config.monitor.width,
         session.config.monitor.height,
         session.config.monitor.framerate,
-        session.current_total_bitrate.load(std::memory_order_relaxed),
+        session.config.monitor.bitrate_budget->total(),
         ::config::video.encoder.empty() ? "auto" : ::config::video.encoder,
         ::config::video.capture.empty() ? "auto" : ::config::video.capture,
         session.control_only,
@@ -4502,31 +4507,6 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
-      session->fec_control.initialize(config::stream.fec_percentage,
-        config::stream.fec_auto, config::stream.fec_auto_max_percentage);
-      if (config.client_fec >= video_fec::automatic_preference) {
-        const auto mode = config.client_fec == video_fec::automatic_preference ?
-                            video_fec::mode_e::automatic : video_fec::mode_e::fixed;
-        session->fec_control.set_mode(mode, config.client_fec >= 0 ? config.client_fec : 0);
-      }
-
-      // Initialize current total bitrate (including FEC) from config
-      // config.monitor.bitrate is the encoding bitrate (excluding FEC)
-      // We need to convert it to total bitrate (including FEC)
-      int encoding_bitrate = config.monitor.bitrate;
-      // Fixed client preferences override the host; automatic FEC keeps the host budget baseline.
-      int fec_percentage = config.client_fec >= 0 ? config.client_fec : config::stream.fec_percentage;
-      if (config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) {
-        fec_percentage = 0;
-      }
-      if (fec_percentage > 0 && fec_percentage <= 80) {
-        // Convert encoding bitrate to total bitrate: total = encoding * 100 / (100 - fec_percentage)
-        session->current_total_bitrate = (int) (encoding_bitrate * 100.f / (100 - fec_percentage));
-      }
-      else {
-        // If FEC percentage is 0 or > 80%, encoding bitrate equals total bitrate
-        session->current_total_bitrate = encoding_bitrate;
-      }
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
@@ -4624,10 +4604,11 @@ namespace stream {
           if (effective_param.type == video::dynamic_param_type_e::BITRATE && effective_param.valid) {
             effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
             // The param.value.int_value is the total bitrate (user-configured, including FEC)
-            session_p->current_total_bitrate = effective_param.value.int_value;
+            effective_param.value.int_value = session_p->config.monitor.bitrate_budget->request(effective_param.value.int_value);
             perf::update_session_bitrate(session_p->launch_session_id, effective_param.value.int_value);
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
                             << "': " << effective_param.value.int_value << " Kbps (including FEC)";
+            return true;
           }
 
           session_p->video.dynamic_param_change_events->raise(effective_param);
@@ -4720,9 +4701,7 @@ namespace stream {
           info.height = session_p->config.monitor.height;
           info.fps = session_p->config.monitor.framerate;
 
-          // Get current total bitrate (including FEC) from session-specific field
-          // This is the user-configured bitrate, which may have been changed dynamically
-          info.bitrate = session_p->current_total_bitrate.load(std::memory_order_relaxed);
+          info.bitrate = session_p->config.monitor.bitrate_budget->total();
 
           // Get audio and other settings
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];

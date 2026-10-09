@@ -998,23 +998,23 @@ namespace nvenc {
     return true;
   }
 
-  void
+  bool
   nvenc_base::set_bitrate(int bitrate_kbps) {
     if (!encoder) {
       BOOST_LOG(warning) << "NvEnc: 编码器未初始化，无法设置码率";
-      return;
+      return false;
     }
     if (!nvenc) {
       BOOST_LOG(warning) << "NvEnc: NVENC接口未初始化，无法设置码率";
-      return;
+      return false;
     }
     if (NVENC_INT_VERSION < 1100) {
       BOOST_LOG(error) << "NvEnc: NVENC API版本过低(" << NVENC_INT_VERSION << ")，不支持动态码率调整";
-      return;
+      return false;
     }
     if (bitrate_kbps <= 0 || bitrate_kbps > 800000) {
       BOOST_LOG(error) << "NvEnc: 码率无效: " << bitrate_kbps << " Kbps (有效范围: 1~800000)";
-      return;
+      return false;
     }
 
     bool is_hevc = (saved_init_params.encodeGUID == NV_ENC_CODEC_HEVC_GUID);
@@ -1056,7 +1056,7 @@ namespace nvenc {
 
     if (nvenc_failed(nvenc->nvEncReconfigureEncoder(encoder, &reconfigure_params))) {
       BOOST_LOG(error) << "NvEnc: 设置码率失败(" << bitrate_kbps << " Kbps): " << last_nvenc_error_string;
-      return;
+      return false;
     }
 
     // 更新当前配置
@@ -1068,6 +1068,7 @@ namespace nvenc {
 
     const char *codec_name = is_hevc ? "HEVC" : (is_av1 ? "AV1" : "AVC");
     BOOST_LOG(info) << "NvEnc: " << codec_name << " 码率已成功调整为 " << bitrate_kbps << " Kbps";
+    return true;
   }
 
   void
