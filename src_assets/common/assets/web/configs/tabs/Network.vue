@@ -156,15 +156,43 @@ const effectivePort = computed(() => +config.value?.port ?? defaultMoonlightPort
 
     <!-- Forward Error Correction -->
     <div class="mb-3">
+      <label for="fec_auto" class="form-label">{{ $t('config.fec_auto') }}</label>
+      <select id="fec_auto" class="form-select" v-model="config.fec_auto">
+        <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+        <option value="enabled">{{ $t('_common.enabled') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.fec_auto_desc') }}</div>
+    </div>
+
+    <div class="mb-3">
       <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
       <input
         id="fec_percentage"
-        v-model="config.fec_percentage"
+        v-model.number="config.fec_percentage"
         class="form-control"
-        type="text"
+        type="number"
+        min="0"
+        max="255"
+        step="1"
         placeholder="20"
       />
       <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
+    </div>
+
+    <div class="mb-3">
+      <label for="fec_auto_max_percentage" class="form-label">{{ $t('config.fec_auto_max_percentage') }}</label>
+      <input
+        id="fec_auto_max_percentage"
+        v-model.number="config.fec_auto_max_percentage"
+        class="form-control"
+        type="number"
+        min="0"
+        max="100"
+        step="1"
+        placeholder="50"
+      />
+      <div class="form-text">{{ $t('config.fec_auto_max_percentage_desc') }}</div>
+      <div class="form-text">{{ $t('config.fec_apply_note') }}</div>
     </div>
 
     <!-- CLOSE VERIFY SAFE -->

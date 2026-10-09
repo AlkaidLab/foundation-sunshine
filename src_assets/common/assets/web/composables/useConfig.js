@@ -101,6 +101,8 @@ const DEFAULT_TABS = [
       ping_timeout: 10000,
       pair_max_attempts: 10,
       fec_percentage: 20,
+      fec_auto: 'disabled',
+      fec_auto_max_percentage: 50,
     },
   },
   {
@@ -426,6 +428,7 @@ export function useConfig() {
 
       const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
+      configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
       config.value = configData
 
       fillDefaultValues()
