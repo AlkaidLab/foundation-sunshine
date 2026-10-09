@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
+
 #include "platform/common.h"
 #include "video_colorspace.h"
 
@@ -229,14 +231,17 @@ namespace video::hdr_metadata {
    * The codec decides what may be written. HDR Vivid defines a carriage only for
    * AVS2 (clause 8) and HEVC/VVC (annex B) — the standard never mentions AV1 or
    * OBUs, so emitting it there invents a mapping no decoder is obliged to accept.
-   * HDR10+ does have one, from AOMedia's HDR10+ AV1 Metadata Handling
+   * PyroWave carries the same registered payload in its protected frame TLV,
+   * not in an invented AV1 OBU. HDR10+ has an AV1 mapping, from AOMedia's
+   * HDR10+ AV1 Metadata Handling
    * Specification, so it is not codec-gated here.
    *
    * video_format follows the config_t::videoFormat convention: 0 H.264, 1 HEVC, 2 AV1.
    */
   inline formats_t
   formats_for(const sunshine_colorspace_t &colorspace, int video_format) {
-    const bool vivid_carriable = (video_format == 1);
+    const bool vivid_carriable = video_format == 1 ||
+                                video_format == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT);
     switch (colorspace.colorspace) {
       case colorspace_e::bt2020:
         return { .hdr10plus = true, .vivid = vivid_carriable };

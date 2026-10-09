@@ -11,6 +11,7 @@
 #include "../display_vram_internal.h"
 #include "src/config.h"
 #include "src/pyrowave/packetizer.h"
+#include "src/pyrowave/dynamic_hdr.h"
 #include "src/perf_recorder.h"
 #include "transport.h"
 
@@ -132,7 +133,7 @@ namespace platf::pyrowave_windows {
 
         pyrowave_device raw_device = nullptr;
         const auto device_result = pyrowave_create_device_by_compat(
-          0, 0, nullptr, nullptr, &luid, &raw_device);
+          0, 0, nullptr, nullptr, &luid, VK_QUEUE_GLOBAL_PRIORITY_MEDIUM, &raw_device);
         if (device_result != PYROWAVE_SUCCESS || raw_device == nullptr) {
           init_failure("PyroWave device creation", static_cast<int>(device_result));
           if (raw_device) pyrowave_device_destroy(raw_device);
@@ -256,6 +257,21 @@ namespace platf::pyrowave_windows {
           return;
         }
 
+        if (config.dynamic_hdr_format != 0) {
+          SS_HDR_METADATA source_metadata {};
+          if (!video::get_effective_hdr_metadata(display.get(), config, source_metadata)) source_metadata = {};
+          const auto target_peak = video::hdr_metadata::resolve_target_display_luminance(
+            config.hdr_capabilities.reported, config.hdr_capabilities.max_nits,
+            source_metadata.maxDisplayLuminance);
+          if (!hdr_producer_.configure(config.dynamic_hdr_format, source_metadata, target_peak)) {
+            init_failure("dynamic HDR metadata producer");
+            return;
+          }
+          hdr_startup_deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+          BOOST_LOG(info) << "[PyroWaveEncoder][GPU] dynamic HDR metadata enabled: format="
+                          << config.dynamic_hdr_format << ", target_peak_nits=" << target_peak;
+        }
+
         bitstream_.resize(maximum_bitstream_size);
         const auto initial_frame_budget = pyrowave_frame_budget(
           bitrate_kbps_, frame_rate_num_, frame_rate_den_);
@@ -375,7 +391,7 @@ namespace platf::pyrowave_windows {
         const pyrowave_rate_control rate_control {
           .maximum_bitstream_size = frame_budget,
         };
-        const auto encode_result = pyrowave_encoder_encode_gpu_synchronous(
+        const auto encode_result = pyrowave_encoder_encode_gpu(
           encoder_.get(), &acquire, &release, &buffers_, &rate_control);
         if (encode_result != PYROWAVE_SUCCESS) {
           return encode_failure(frame_number, "pyrowave-gpu-encode", static_cast<int>(encode_result));
@@ -385,6 +401,20 @@ namespace platf::pyrowave_windows {
           return encode_failure(frame_number, "pyrowave-fence-wait", static_cast<int>(wait_result));
         }
         sync_value_ = release_value;
+
+        const pyrowave::hdr_frame_metadata_t *dynamic_metadata = nullptr;
+        if (hdr_producer_.enabled()) {
+          // The fence covers D3D11 conversion, analysis and plane splitting.
+          // Read this frame's statistics, never the previous async sample.
+          if (conversion_->collect_hdr_luminance_stats()) {
+            dynamic_metadata = hdr_producer_.build(conversion_->hdr_luminance_stats);
+          }
+          if (dynamic_metadata == nullptr) {
+            if (!hdr_metadata_started_ && std::chrono::steady_clock::now() < hdr_startup_deadline_) return 0;
+            return encode_failure(frame_number, "dynamic-hdr-analysis-unavailable");
+          }
+          hdr_metadata_started_ = true;
+        }
 
         std::size_t packet_count = 0;
         const auto count_result = pyrowave_encoder_compute_num_packets(
@@ -427,7 +457,8 @@ namespace platf::pyrowave_windows {
           packets,
           channel_data,
           frame_timestamp,
-          std::move(pipeline_trace));
+          std::move(pipeline_trace),
+          dynamic_metadata);
         if (!publish_result.success) {
           return encode_failure(
             frame_number,
@@ -493,6 +524,9 @@ namespace platf::pyrowave_windows {
       std::uint64_t sync_value_ = 0;
       std::vector<pyrowave_packet> source_packets_;
       std::vector<std::uint8_t> bitstream_;
+      pyrowave::hdr_metadata_producer_t hdr_producer_;
+      std::chrono::steady_clock::time_point hdr_startup_deadline_ {};
+      bool hdr_metadata_started_ = false;
     };
   }  // namespace
 
@@ -539,7 +573,17 @@ namespace platf::pyrowave_windows {
     if (session == nullptr) {
       return -1;
     }
-    return session->encode(
-      frame_number, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+    try {
+      return session->encode(
+        frame_number, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+    }
+    catch (const std::exception &error) {
+      BOOST_LOG(warning) << "PyroWave GPU frame failed: frame=" << frame_number << ", exception=" << error.what();
+      return -1;
+    }
+    catch (...) {
+      BOOST_LOG(warning) << "PyroWave GPU frame failed: frame=" << frame_number << ", unknown exception";
+      return -1;
+    }
   }
 }  // namespace platf::pyrowave_windows

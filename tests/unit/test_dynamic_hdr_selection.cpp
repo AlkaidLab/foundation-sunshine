@@ -8,6 +8,7 @@
  * clients that report no capabilities.
  */
 #include <src/hdr/dynamic_hdr_selection.h>
+#include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
 
 #include <string_view>
 #include <vector>
@@ -47,6 +48,37 @@ namespace {
   }
 
 }  // namespace
+
+TEST(DynamicHdrSelection, PyrowaveMappingSelectsOnlyTheRequestedBaseCompatibleFormat) {
+  struct entry_t { std::uint32_t caps; int mode; dynamic_hdr_format_e format; };
+  const entry_t cases[] {
+    { hdr::DYNAMIC_HDR_CAPS_HDR10_PLUS, 1, dynamic_hdr_format_e::hdr10_plus },
+    { hdr::DYNAMIC_HDR_CAPS_VIVID_PQ, 1, dynamic_hdr_format_e::vivid_pq },
+    { hdr::DYNAMIC_HDR_CAPS_VIVID_HLG, 2, dynamic_hdr_format_e::vivid_hlg },
+    { hdr::DYNAMIC_HDR_CAPS_DOLBY_VISION_81, 1, dynamic_hdr_format_e::dolby_vision_profile_81 },
+    { hdr::DYNAMIC_HDR_CAPS_DOLBY_VISION_84, 2, dynamic_hdr_format_e::dolby_vision_profile_84 },
+  };
+  for (const auto &entry : cases) {
+    const dynamic_hdr_request_t request { .caps_mask = entry.caps, .caps_reported = true };
+    const dynamic_hdr_host_gates_t gates {
+      .video_format = LI_PYROWAVE_VIDEO_FORMAT, .dynamic_range_mode = entry.mode,
+      .pyrowave_dynamic_hdr_mapping = true,
+    };
+    EXPECT_EQ(select_dynamic_hdr(request, gates).format, entry.format);
+    auto unsupported = gates;
+    unsupported.pyrowave_dynamic_hdr_mapping = false;
+    EXPECT_EQ(select_dynamic_hdr(request, unsupported).format, dynamic_hdr_format_e::none);
+    unsupported = gates;
+    unsupported.dynamic_range_mode = 0;
+    EXPECT_EQ(select_dynamic_hdr(request, unsupported).format, dynamic_hdr_format_e::none);
+    auto disabled = request;
+    disabled.preference = dynamic_hdr_preference_e::hdr10_only;
+    EXPECT_EQ(select_dynamic_hdr(disabled, gates).format, dynamic_hdr_format_e::none);
+    disabled = request;
+    disabled.caps_reported = false;
+    EXPECT_EQ(select_dynamic_hdr(disabled, gates).format, dynamic_hdr_format_e::none);
+  }
+}
 
 TEST(DynamicHdrSelection, SelectsDolbyVisionWhenEveryGatePasses) {
   const auto selection = select_dynamic_hdr(full_dv_client(), hevc_pq_host());

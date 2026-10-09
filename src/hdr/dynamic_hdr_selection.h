@@ -84,6 +84,9 @@ namespace hdr {
     /// even when the filter itself stays off because the client requested HLG
     /// (docs/dolby_vision_profile84.md §2).
     bool synthetic_hdr_enabled = false;
+    // The PyroWave renderer consumes frame metadata through application-side
+    // mapping, independently of a vendor MediaCodec/direct-Surface decoder.
+    bool pyrowave_dynamic_hdr_mapping = false;
   };
 
   struct dynamic_hdr_selection_t {

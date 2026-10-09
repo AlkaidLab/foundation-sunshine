@@ -27,8 +27,8 @@ Windows 构建直接使用仓库中的 PyroWave CMake 子项目，将 C API、�
 PyroWave 现在使用独立的 `PYRF` Frame Envelope。当前合同字段固定为
 `protocolVersion=2`、`bitstreamVersion=2`、`payloadVersion=3`；每个内层包使用固定
 Frame Header，并区分 Frame Header、data 和 parity 包。metadata 使用 TLV，受保护 metadata
-与 PyroWave bitstream 一起参与 block-aware FEC。PyroWave 尚未发布旧 wire，因此不实现旧格式兼容或
-迁移分支；没有声明该能力的客户端继续使用传统编码格式。
+与 PyroWave bitstream 一起参与 block-aware FEC。两端共享这一份合同，不提供早期实验包格式的
+解析分支；没有声明该能力的客户端继续使用传统编码格式。
 
 客户端与服务端必须同时支持：
 
@@ -41,8 +41,8 @@ Frame Header，并区分 Frame Header、data 和 parity 包。metadata 使用 TL
 仍通过现有控制通道传递，不能把 `SS_HDR_METADATA` 混入 PyroWave color metadata。
 
 旧版 Moonlight 不声明 PyroWave 能力，因此继续使用 H.264、HEVC 或 AV1。实验客户端
-显式选择 PyroWave 但不满足协议或设备条件时，应在媒体开始前拒绝本次连接并记录原因，
-不在同一次连接中自动切换传统编码格式。
+初始能力协商未选中 PyroWave 时，可沿用 common-c 的 H.264 兼容兜底，并提示实际格式。
+PyroWave 预检失败、ANNOUNCE 拒绝及运行中故障不因此新增自动 codec 重试。
 
 ## HDR 处理边界
 
@@ -54,8 +54,13 @@ PyroWave 的码流颜色信息与 Sunshine 的静态 HDR 呈现信息不是同�
 - HLG 没有完整 mastering metadata 时仍保持 HLG 呈现，不伪造 HDR10 metadata；
 - `maxFullFrameLuminance` 会随 `SS_HDR_METADATA` 传递并校验，但 Vulkan 的 `VkHdrMetadataEXT`
   没有独立字段，因此当前呈现层只保留该值，不把它错误映射为 MaxFALL；
-- 动态 HDR10+ 的 TLV 类型已经预留，但当前不产生也不由 Vulkan 呈现；HDR10+、HDR Vivid 和
-  Dolby Vision 仍不属于当前可用能力。
+- HDR10+、Vivid PQ/HLG、DV 8.1/8.4 的桌面生成子集独立协商，并通过同帧受保护 TLV
+  交给客户端应用内亮度映射，输出仍为 PQ/HLG；不是厂商原生 Dolby Vision 显示模式。
+
+动态元数据与图像由同一帧分配拥有，参与相同的 FEC 和 deadline。主机逐帧分析编码画面，
+在 GPU Fence 完成后取得当前统计；客户端只消费随当前 decode unit 到达的完整 payload，
+不能在丢帧、重建或 Surface 变化后套用另一帧的动态状态。生成范围不含影片 authored curves、
+Dolby trim/增强层或任意 Profile。
 
 缺少必要能力时，媒体开始前拒绝本次 PyroWave 连接。静态 HDR 元数据缺失或无法校验时，
 不伪造默认值，保留已协商的 PQ/HLG 色彩空间并明确记录降级状态；运行中的 Vulkan/Surface
@@ -65,7 +70,7 @@ PyroWave 的码流颜色信息与 Sunshine 的静态 HDR 呈现信息不是同�
 
 PyroWave 的资源、设备和协议错误必须限定在当前视频会话：
 
-1. 协商失败，或初始化失败且没有支持的恢复路径：结束当前 PyroWave 连接，不静默改用传统编码格式；
+1. 已选中 PyroWave 后的协商失败，或初始化失败且没有支持的恢复路径：结束当前连接，不静默改用传统编码格式；初始能力协商的 H.264 兼容兜底与此分开；
 2. 没有 GPU 专属增强且独占共享捕获的 SDR 会话允许重建为 CPU PyroWave；存在其他会话时不改变共享捕获类型，只结束失败会话。CPU 捕获期间拒绝不兼容的新 GPU 会话，显示重建继续使用 CPU 图像；HDR、增强路径和 CPU 恢复失败时结束当前视频会话；
 3. 客户端解码或呈现发生不可恢复错误时结束当前视频会话，不在运行中切换传统编码器；
 4. 会话结束后释放本次视频资源；
@@ -87,7 +92,9 @@ GPU、驱动、显示设备、虚拟显示器和混合显卡会影响 GPU 编解
 
 ### 上游变化
 
-PyroWave API/ABI 仍处于 0.x，项目必须固定版本并在升级时重新验证 Sunshine 与客户端的合同。
+上游 PyroWave 已冻结 1.0.0 C API/ABI。本项目使用保留颜色/HLG 扩展的 101.0.0，
+通过子模块固定源码版本；升级时仍需分别核对原生 ABI、码流扩展和网络传输合同。
+上游的 `PWV1Header` 是文件/容器头，不替代 common-c Frame Envelope。
 
 ## 当前范围
 
@@ -95,11 +102,11 @@ PyroWave API/ABI 仍处于 0.x，项目必须固定版本并在升级时重新�
 
 - Windows Sunshine；
 - 配套 Moonlight V+ Android 实验版本；
-- SDR、静态 HDR10/PQ、静态 HLG；
+- SDR、HDR10/PQ、HLG，以及桌面生成 HDR10+/Vivid/DV 子集的应用内动态映射；
 - 4:2:0、limited/full range；
 - SDR 8-bit、HDR10/PQ 与 HLG 10-bit；不提供独立的 SDR 10-bit 模式；
 - 高带宽局域网；
-- 未选择 PyroWave 时，传统视频格式仍按既有规则协商；这不表示显式 PyroWave 连接会自动改用其他编码器。
+- 未选择 PyroWave 时，传统视频格式仍按既有规则协商。显式选择 PyroWave 的初始能力协商可沿用 H.264 兼容兜底，客户端明确提示实际格式；预检失败、ANNOUNCE 拒绝和运行中故障不因此新增自动 codec 重试。
 
 PyroWave 的位深与传输模式固定为：
 
@@ -112,7 +119,7 @@ PyroWave 的位深与传输模式固定为：
 协议没有独立的 SDR 10-bit 选项；编码器探针显示的 SDR 10-bit 能力不代表该模式可由
 Moonlight 选择。
 
-Linux、其他客户端、动态 HDR、4K、4:4:4、高帧率全覆盖以及正式发行承诺，均不在当前范围内。
+Linux、其他客户端、厂商原生动态 HDR、4K/高帧率全覆盖、4:4:4 以及正式发行承诺，均不在当前范围内。
 
 ## 参考资料
 
