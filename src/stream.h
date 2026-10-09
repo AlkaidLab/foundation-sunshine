@@ -197,7 +197,6 @@ namespace stream {
      */
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param);
-    bool change_fec_for_client(const std::string &paired_uuid, const std::string &client_name, int percentage);
 
     /**
      * @brief Get information about all active sessions.

@@ -2043,15 +2043,6 @@ namespace stream {
       std::memcpy(values, payload.data(), sizeof(values));
       session->fec_control.report(util::endian::big(values[0]), util::endian::big(values[1]), util::endian::big(values[2]), steady_now_ms());
     });
-    server->map(0x5511, [](session_t *session, const std::string_view &payload) {
-      if (!session->config.fec_feedback || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT || payload.size() != 4) return;
-      int32_t wire;
-      std::memcpy(&wire, payload.data(), sizeof(wire));
-      const int value = util::endian::little(wire);
-      if (value < -2 || value > 100) return;
-      session->fec_control.set_mode(value == -2 ? video_fec::mode_e::host : value == -1 ? video_fec::mode_e::automatic : video_fec::mode_e::fixed,
-                                    value >= 0 ? value : 0);
-    });
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)
     // Payload 格式：
@@ -4647,21 +4638,6 @@ namespace stream {
 
       BOOST_LOG(warning) << "No active session found for client: " << client_name;
       return false;
-    }
-
-    bool change_fec_for_client(const std::string &owner, const std::string &name, int value) {
-      if (owner.empty() || value < -2 || value > 100 || !broadcast_shared.has_ref()) return false;
-      auto ref = broadcast_shared.ref();
-      if (!ref) return false;
-      auto sessions = ref->control_server._sessions.lock();
-      session_t *match = nullptr;
-      for (auto *session : *ref->control_server._sessions) {
-        if (session->client_cert_uuid != owner || session->client_name != name || session->lifecycle.state() != state_e::RUNNING) continue;
-        if (match || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) return false;
-        match = session;
-      }
-      return match && match->fec_control.set_mode(value == -2 ? video_fec::mode_e::host : value == -1 ? video_fec::mode_e::automatic : video_fec::mode_e::fixed,
-                                                value >= 0 ? value : 0);
     }
 
     std::vector<session_info_t>

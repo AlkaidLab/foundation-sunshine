@@ -16,7 +16,7 @@ PC 的基本设置、Android 的基本设置提供 FEC 模式：跟随主机、�
 
 默认行为仍是主机固定比例。客户端选择自动后，在有新鲜反馈时自动选择；客户端固定值优先。主机 `fec_auto` 仅决定“跟随主机”模式是否自动，`fec_auto_max_percentage` 是自动选择上限，不限制客户端明确指定的固定值。
 
-公共库 `STREAM_CONFIGURATION.videoFecPercentage` 为 -2（跟随主机）、-1（自动）或 0–100（固定）。调用 `LiInitializeStreamConfiguration` 获取兼容默认值。运行中的控制连接可调用 `LiRequestVideoFec` 修改；成功仅表示可靠控制消息已提交。现有配对 HTTPS `/stream/settings` 的 FEC 参数类型 4 接受相同数值，仅允许修改证书所属、名称匹配且唯一的活动会话。
+公共库 `STREAM_CONFIGURATION.videoFecPercentage` 为 -2（跟随主机）、-1（自动）或 0–100（固定）。调用 `LiInitializeStreamConfiguration` 获取兼容默认值，设置在下一次连接时协商提交。
 
 ## 自动比例选择
 
@@ -37,9 +37,8 @@ FEC 增加实际发送数据量。本实现不重新分配编码器码率，也�
 主机 DESCRIBE 广告 `x-ss-video[0].fecControlVersion:1`。客户端仅在版本匹配且为旧 RS 视频格式时提交 `x-ml-video.fecSummaryVersion:1` 和 `x-ml-video.fecPercentage`。
 
 - `0x5510`：客户端 FEC 汇总，三个大端 uint32：序号、数据分片数、缺失数据分片数。
-- `0x5511`：客户端模式请求，一个小端 int32，数值为 -2、-1 或 0–100。
 
-汇总使用普通非可靠控制消息，每条仅结算自身窗口；丢失报告不扩大下一条分母。序号用于拒绝重复和倒退，并允许 uint32 回绕。无效数量、旧报告及错误长度被拒绝。固定模式请求使用可靠控制消息。消息归属复用现有控制连接和认证，不引入新的控制租约。
+汇总使用普通非可靠控制消息，每条仅结算自身窗口；丢失报告不扩大下一条分母。序号用于拒绝重复和倒退，并允许 uint32 回绕。无效数量、旧报告及错误长度被拒绝。消息归属复用现有控制连接和认证，不引入新的控制租约。
 
 ## 验证
 

@@ -1,5 +1,4 @@
 #include "dynamic_params.h"
-#include "src/streaming/fec.h"
 
 #include <sstream>
 #include <stdexcept>
@@ -211,13 +210,13 @@ namespace nvhttp::dynamic_params {
           break;
         }
         case video::dynamic_param_type_e::FEC_PERCENTAGE: {
-          const auto fec = video_fec::parse_preference(param_value);
-          if (!fec) {
+          int fec = std::stoi(param_value);
+          if (fec < 0 || fec > 100) {
             BOOST_LOG(warning) << "Change dynamic param error: invalid FEC percentage value";
-            set_error(tree, 400, "Invalid FEC preference: -2=host, -1=automatic, 0..100=fixed");
+            set_error(tree, 400, "Invalid FEC percentage. Must be between 0 and 100");
             return;
           }
-          param.value.int_value = *fec;
+          param.value.int_value = fec;
           break;
         }
         case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
@@ -259,9 +258,7 @@ namespace nvhttp::dynamic_params {
           return;
       }
 
-      bool success = param.type == video::dynamic_param_type_e::FEC_PERCENTAGE ?
-        stream::session::change_fec_for_client(get_client_cert_uuid_from_request(request), client_name, param.value.int_value) :
-        stream::session::change_dynamic_param_for_client(client_name, param);
+      bool success = stream::session::change_dynamic_param_for_client(client_name, param);
 
       if (success) {
         tree.put("root.success", 1);
