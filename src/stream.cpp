@@ -28,7 +28,7 @@
 #include <boost/thread/lock_guard.hpp>
 #include <boost/thread/mutex.hpp>
 
-#include "abr.h"
+#include "streaming/abr.h"
 
 extern "C" {
 // clang-format off
@@ -42,7 +42,7 @@ extern "C" {
 
 #include "client_fingerprint.h"
 #include "config.h"
-#include "fec.h"
+#include "streaming/fec.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "globals.h"

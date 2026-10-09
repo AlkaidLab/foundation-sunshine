@@ -44,7 +44,7 @@ extern "C" {
 #include "pyrowave/packet.h"
 #include "rtsp.h"
 #include "stream.h"
-#include "fec.h"
+#include "streaming/fec.h"
 #include "sync.h"
 #include "video.h"
 

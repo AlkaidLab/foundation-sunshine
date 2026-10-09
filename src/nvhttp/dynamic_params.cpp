@@ -1,5 +1,5 @@
 #include "dynamic_params.h"
-#include "src/fec.h"
+#include "src/streaming/fec.h"
 
 #include <sstream>
 #include <stdexcept>

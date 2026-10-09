@@ -1,4 +1,4 @@
-/** @file src/fec.h
+/** @file src/streaming/fec.h
  * @brief Per-session RS protection, without changing the video send path.
  */
 #pragma once

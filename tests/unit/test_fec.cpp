@@ -1,4 +1,4 @@
-#include "src/fec.h"
+#include "src/streaming/fec.h"
 #include <gtest/gtest.h>
 
 TEST(VideoFec, PreferenceParserRejectsInvalidAndOutOfRangeInput) {

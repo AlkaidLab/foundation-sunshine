@@ -1,5 +1,5 @@
 /**
- * @file src/abr.cpp
+ * @file src/streaming/abr.cpp
  * @brief Adaptive Bitrate (ABR) decision engine using LLM AI.
  *
  * Architecture: two-tier bitrate control —
@@ -13,9 +13,9 @@
  */
 
 #include "abr.h"
-#include "config.h"
-#include "confighttp.h"
-#include "logging.h"
+#include "src/config.h"
+#include "src/confighttp.h"
+#include "src/logging.h"
 
 #include <algorithm>
 #include <cctype>
