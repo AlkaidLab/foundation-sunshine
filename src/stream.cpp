@@ -2169,9 +2169,7 @@ namespace stream {
           validate_and_raise(param_value >= 0 && param_value <= 51, param_value, "QP");
           break;
         case video::dynamic_param_type_e::FEC_PERCENTAGE:
-          if (param_value >= -2 && param_value <= 100 && session->config.monitor.videoFormat != LI_PYROWAVE_VIDEO_FORMAT)
-            session->fec_control.set_mode(param_value == -2 ? video_fec::mode_e::host : param_value == -1 ? video_fec::mode_e::automatic : video_fec::mode_e::fixed,
-                                          param_value >= 0 ? param_value : 0);
+          validate_and_raise(param_value >= 0 && param_value <= 100, param_value, "FEC percentage", "%");
           break;
         case video::dynamic_param_type_e::ADAPTIVE_QUANTIZATION: {
           bool enabled = (param_value != 0);
@@ -3532,7 +3530,7 @@ namespace stream {
         fecPercentage = 0;
       }
       const auto fec_blocks_needed = layout->count;
-      std::array<std::string_view, 4> fec_blocks;
+      std::array<std::string_view, video_fec::max_blocks> fec_blocks;
       auto fec_blocks_begin = fec_blocks.begin();
       auto fec_blocks_end = fec_blocks.begin() + fec_blocks_needed;
       size_t offset = 0;
@@ -4506,9 +4504,11 @@ namespace stream {
       session->config = config;
       session->fec_control.initialize(config::stream.fec_percentage,
         config::stream.fec_auto, config::stream.fec_auto_max_percentage);
-      if (config.client_fec >= -1) session->fec_control.set_mode(
-        config.client_fec == -1 ? video_fec::mode_e::automatic : video_fec::mode_e::fixed,
-        config.client_fec >= 0 ? config.client_fec : 0);
+      if (config.client_fec >= video_fec::automatic_preference) {
+        const auto mode = config.client_fec == video_fec::automatic_preference ?
+                            video_fec::mode_e::automatic : video_fec::mode_e::fixed;
+        session->fec_control.set_mode(mode, config.client_fec >= 0 ? config.client_fec : 0);
+      }
 
       // Initialize current total bitrate (including FEC) from config
       // config.monitor.bitrate is the encoding bitrate (excluding FEC)

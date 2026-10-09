@@ -11,18 +11,26 @@
 #include <string_view>
 
 namespace video_fec {
+  // Client preferences are negotiated once when the stream connects.
+  constexpr int host_preference = -2;
+  constexpr int automatic_preference = -1;
+  constexpr unsigned max_client_percentage = 100;
+  constexpr std::size_t max_blocks = 4;  // Two-bit FEC block count on the wire.
+
   std::optional<int>
   parse_preference(std::string_view text) noexcept;
-  enum class mode_e { host = 0,
+  enum class mode_e {
+    host = 0,
     automatic = 1,
-    fixed = 2 };
+    fixed = 2,
+  };
   struct block_t {
     std::uint16_t data = 0;
     std::uint16_t parity = 0;
     std::uint8_t percentage = 0;
   };
   struct frame_t {
-    std::array<block_t, 4> blocks {};
+    std::array<block_t, max_blocks> blocks {};
     std::size_t count = 0;
     bool skipped = false;
   };

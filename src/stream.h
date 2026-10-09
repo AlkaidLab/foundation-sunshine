@@ -46,7 +46,7 @@ namespace stream {
 
     int packetsize;
     int minRequiredFecPackets;
-    int client_fec = -2;
+    int client_fec = -2;  // Host default; optional client preference from RTSP.
     bool fec_feedback = false;
     int mlFeatureFlags;
     int controlProtocolType;
