@@ -192,12 +192,10 @@ namespace platf::pyrowave_windows {
       void request_idr_frame() override {}
       void request_normal_frame() override {}
       void invalidate_ref_frames(int64_t, int64_t) override {}
-      void
+      bool
       set_bitrate(int bitrate_kbps) override {
-        bitrate_kbps_ = std::max(0, video::encoder_bitrate_for_total_request(
-          bitrate_kbps,
-          config::video.max_bitrate,
-          0));
+        if (bitrate_kbps <= 0) return false;
+        bitrate_kbps_ = bitrate_kbps;
         const auto frame_budget = pyrowave_frame_budget(
           bitrate_kbps_, frame_rate_num_, frame_rate_den_);
         BOOST_LOG(debug) << "[PyroWaveEncoder][CPU] rate-control update: bitrate="
@@ -206,6 +204,7 @@ namespace platf::pyrowave_windows {
                          << ", bits_per_pixel="
                          << pyrowave_frame_bits_per_pixel(frame_budget, width_, height_)
                          << ", budget_fps=" << frame_rate_num_ << '/' << frame_rate_den_;
+        return true;
       }
       void set_dynamic_param(const video::dynamic_param_t &param) override {
         if (param.type == video::dynamic_param_type_e::BITRATE && param.valid) {

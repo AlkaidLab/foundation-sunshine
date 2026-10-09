@@ -44,6 +44,7 @@ extern "C" {
 #include "pyrowave/packet.h"
 #include "rtsp.h"
 #include "stream.h"
+#include "streaming/fec.h"
 #include "sync.h"
 #include "video.h"
 
@@ -1224,6 +1225,7 @@ namespace rtsp_stream {
 
     // Report supported and required encryption flags
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
+    ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
     
     // 记录加密请求状态用于调试
@@ -1552,6 +1554,7 @@ namespace rtsp_stream {
     stream::config_t config;
 
     std::int64_t configuredBitrateKbps;
+    int client_fec = video_fec::host_preference;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     // Set inside the SDP parse below; consumed by the dynamic HDR selection.
     bool post_process_hdr_active = false;
@@ -1640,6 +1643,16 @@ namespace rtsp_stream {
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
+      const auto fec_summary = args.find("x-ml-video.fecSummaryVersion"sv);
+      config.fec_feedback = fec_summary != args.end() && fec_summary->second == "1" && config.controlProtocolType == 13;
+      if (const auto requested = args.find("x-ml-video.fecPercentage"sv); requested != args.end()) {
+        const auto value = video_fec::parse_preference(requested->second);
+        if (!value || !config.fec_feedback) {
+          respond(sock, session, &option, 400, "Invalid FEC preference", req->sequenceNumber, {});
+          return;
+        }
+        client_fec = *value;
+      }
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (getArg("x-nv-general.featureFlags"sv) & 0x20) {
@@ -1902,36 +1915,39 @@ namespace rtsp_stream {
       config.audio.flags[audio::config_t::CONTINUOUS_AUDIO] = true;
     }
 
-    // If the client sent a configured bitrate, we will choose the actual bitrate ourselves
-    // by using FEC percentage and audio quality settings. If the calculated bitrate ends up
-    // too low, we'll allow it to exceed the limits rather than reducing the encoding bitrate
-    // down to nearly nothing.
-    if (configuredBitrateKbps) {
-      BOOST_LOG(debug) << "Client configured bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
-
-      // If the FEC percentage isn't too high, adjust the configured bitrate to ensure video
-      // traffic doesn't exceed the user's selected bitrate when the FEC shards are included.
-      // PyroWave disables the legacy RTP FEC layer and carries its own
-      // block-aware parity. Do not subtract the legacy FEC percentage from
-      // its encoder budget; the shared video pipeline accounts for the
-      // PyroWave transport contract separately.
-      if (config.monitor.videoFormat != LI_PYROWAVE_VIDEO_FORMAT &&
-          config::stream.fec_percentage <= 80) {
-        configuredBitrateKbps /= 100.f / (100 - config::stream.fec_percentage);
+    // Resolve the session's protection once. PyroWave owns its separate parity;
+    // legacy clients without a total request retain their initial encoder target.
+    const bool legacy_rs = config.monitor.videoFormat != LI_PYROWAVE_VIDEO_FORMAT;
+    const auto host_fec = config::stream.fec_percentage;
+    const auto host_automatic = config::stream.fec_auto;
+    if (legacy_rs) {
+      config.fec_control = std::make_shared<video_fec::controller_t>();
+      config.fec_control->initialize(host_fec, host_automatic, config::stream.fec_auto_max_percentage);
+      if (client_fec >= video_fec::automatic_preference) {
+        config.fec_control->set_mode(client_fec == video_fec::automatic_preference ?
+                                       video_fec::mode_e::automatic :
+                                       video_fec::mode_e::fixed,
+          std::max(0, client_fec));
       }
-
-      // Adjust the bitrate to account for audio traffic bandwidth usage (capped at 20% reduction).
-      // The bitrate per channel is 256 Kbps for high quality mode and 96 Kbps for normal quality.
-      auto audioBitrateAdjustment = (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels;
-      configuredBitrateKbps -= std::min((std::int64_t) audioBitrateAdjustment, configuredBitrateKbps / 5);
-
-      // Reduce it by another 500Kbps to account for A/V packet overhead and control data
-      // traffic (capped at 10% reduction).
-      configuredBitrateKbps -= std::min((std::int64_t) 500, configuredBitrateKbps / 10);
-
-      BOOST_LOG(debug) << "Final adjusted video encoding bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
-      config.monitor.bitrate = configuredBitrateKbps;
     }
+    const unsigned initial_fec = !legacy_rs      ? 0 :
+                                 client_fec >= 0 ? client_fec :
+                                                   host_fec;
+    const bool automatic_fec = legacy_rs && client_fec < 0 &&
+                               (client_fec == video_fec::automatic_preference || host_automatic);
+    const bool has_total_request = configuredBitrateKbps > 0;
+    const auto total_request = has_total_request ? configuredBitrateKbps :
+                                                   streaming::total_bitrate(config.monitor.bitrate, initial_fec);
+    const auto audio_reserve = has_total_request ?
+                                 (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels :
+                                 0;
+    config.monitor.bitrate_budget = std::make_shared<streaming::bitrate_budget_t>(
+      static_cast<int>(std::min<std::int64_t>(total_request, std::numeric_limits<int>::max())),
+      config::video.max_bitrate, audio_reserve, has_total_request ? 500 : 0,
+      initial_fec, automatic_fec);
+    config.monitor.bitrate = config.monitor.bitrate_budget->applied().encoder_kbps;
+    BOOST_LOG(debug) << "Session bitrate budget: " << config.monitor.bitrate_budget->total()
+                     << " Kbps, encoder: " << config.monitor.bitrate << " Kbps, FEC: " << initial_fec << '%';
 
     if (config.monitor.videoFormat == 1 && video::active_hevc_mode == 1) {
       BOOST_LOG(warning) << "HEVC is disabled, yet the client requested HEVC"sv;

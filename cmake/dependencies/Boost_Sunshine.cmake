@@ -12,6 +12,7 @@ set(BOOST_COMPONENTS
         filesystem
         function
         locale
+        math
         log
         process
         program_options
