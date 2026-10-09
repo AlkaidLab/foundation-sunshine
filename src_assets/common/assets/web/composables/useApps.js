@@ -1,4 +1,5 @@
 import { computed, reactive, ref } from 'vue'
+import { translateFallback } from '../utils/localizedMessage.js'
 import { AppService } from '../services/appService.js'
 import { APP_CONSTANTS, ENV_VARS_CONFIG } from '../utils/constants.js'
 import { debounce, deepClone } from '../utils/helpers.js'
@@ -188,7 +189,7 @@ export function useApps() {
 
     Object.assign(scanProgress, {
       active: true,
-      stage: next.stage || scanProgress.stage || '正在处理扫描结果',
+      stage: next.stage || scanProgress.stage || translate('apps.feedback.enriching'),
       detail: next.detail || '',
       current: Number.isFinite(Number(next.current)) ? Number(next.current) : scanProgress.current,
       total: Number.isFinite(Number(next.total)) ? Number(next.total) : scanProgress.total,
@@ -211,9 +212,9 @@ export function useApps() {
     })
   }
 
-  const completeScanProgress = (detail = 'AI 增强完成') => {
+  const completeScanProgress = (detail = translate('apps.feedback.complete')) => {
     setScanProgress({
-      stage: 'AI 增强完成',
+      stage: translate('apps.feedback.complete'),
       detail,
       current: scanProgress.total || scanProgress.current,
       total: scanProgress.total || scanProgress.current,
@@ -231,8 +232,8 @@ export function useApps() {
 
     if (progress.skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
       setScanProgress({
-        stage: 'AI 正在清洗游戏名称',
-        detail: progress.detail || progress.message || (total ? `正在处理第 ${current}/${total} 批` : '正在整理游戏名称和搜索关键词'),
+        stage: translate('apps.scan_options.ai_name_cleanup'),
+        detail: progress.detail || progress.message || (total ? `${current}/${total}` : translate('apps.scan_options.ai_name_cleanup')),
         current,
         total,
         indeterminate: !total,
@@ -242,8 +243,8 @@ export function useApps() {
 
     if (progress.skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
       setScanProgress({
-        stage: 'AI 正在匹配游戏封面',
-        detail: progress.detail || progress.message || (total ? `已处理 ${current}/${total} 个游戏` : '正在搜索候选封面'),
+        stage: translate('apps.scan_options.ai_cover_matching'),
+        detail: progress.detail || progress.message || (total ? `${current}/${total}` : translate('apps.cover_search_loading')),
         current,
         total,
         indeterminate: !total,
@@ -252,7 +253,7 @@ export function useApps() {
     }
 
     setScanProgress({
-      stage: progress.stage || '正在处理扫描结果',
+      stage: progress.stage || translate('apps.feedback.enriching'),
       detail: progress.detail || progress.message || '',
       current,
       total,
@@ -315,7 +316,7 @@ export function useApps() {
 
     const platforms = getSelectedScanPlatforms()
     if (platforms.length === 0) {
-      showMessage('请至少选择一个游戏平台', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      showMessage(translate('apps.feedback.platform_required'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
       return
     }
 
@@ -323,20 +324,21 @@ export function useApps() {
     await scanGameLibraries({ platforms })
   }
 
-  const getScanEnhancementMessage = (count, itemLabel) => {
+  const getScanEnhancementMessage = (count) => {
+    const found = translate('apps.feedback.found', { count })
     const titleEnabled = isGameLibrarySkillEnabled(GAME_LIBRARY_SKILL_IDS.titleNormalize)
     const coverEnabled = isGameLibrarySkillEnabled(GAME_LIBRARY_SKILL_IDS.coverSelection)
 
     if (titleEnabled && coverEnabled) {
-      return `找到 ${count} 个${itemLabel}，正在清洗名称并搜索封面...`
+      return `${found} ${translate('apps.scan_options.ai_name_cleanup')} / ${translate('apps.scan_options.ai_cover_matching')}…`
     }
     if (titleEnabled) {
-      return `找到 ${count} 个${itemLabel}，正在清洗名称...`
+      return `${found} ${translate('apps.scan_options.ai_name_cleanup')}…`
     }
     if (coverEnabled) {
-      return `找到 ${count} 个${itemLabel}，正在搜索封面...`
+      return `${found} ${translate('apps.scan_options.ai_cover_matching')}…`
     }
-    return `找到 ${count} 个${itemLabel}`
+    return found
   }
 
   const createDefaultApp = (overrides = {}) => ({
@@ -345,7 +347,7 @@ export function useApps() {
     ...overrides,
   })
 
-  let translate = (key, params) => (params ? `${key} ${JSON.stringify(params)}` : key)
+  let translate = translateFallback
 
   // 初始化
   const init = (t) => {
@@ -363,7 +365,7 @@ export function useApps() {
       originalApps.value = deepClone(apps.value)
     } catch (error) {
       console.error('加载应用失败:', error)
-      showMessage('加载应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.load_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     }
   }
 
@@ -424,10 +426,10 @@ export function useApps() {
       await loadApps()
       scannedEditSource.value = null
       editingApp.value = null
-      showMessage('应用保存成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      showMessage(translate('apps.feedback.save_success'), APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
     } catch (error) {
       console.error('保存应用失败:', error)
-      showMessage('保存应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.save_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     } finally {
       isSaving.value = false
     }
@@ -454,11 +456,11 @@ export function useApps() {
       apps.value.splice(index, 1)
       await AppService.saveApps(apps.value, null)
       await loadApps()
-      showMessage('应用删除成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      showMessage(translate('apps.feedback.delete_success'), APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       trackEvents.appDeleted(appName)
     } catch (error) {
       console.error('删除应用失败:', error)
-      showMessage('删除应用失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.delete_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     }
   }
 
@@ -521,7 +523,7 @@ export function useApps() {
     } catch (error) {
       console.error('批量删除失败:', error)
       showMessage(
-        error?.message || translate('apps.batch_delete_failed'),
+        translate('apps.batch_delete_failed'),
         APP_CONSTANTS.MESSAGE_TYPES.ERROR
       )
     } finally {
@@ -545,7 +547,7 @@ export function useApps() {
   const save = async () => {
     // 如果没有更改，直接返回
     if (!hasUnsavedChanges.value) {
-      showMessage('没有需要保存的更改', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      showMessage(translate('_common.no_changes'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
       return
     }
 
@@ -554,11 +556,11 @@ export function useApps() {
       await AppService.saveApps(apps.value, null)
       // 保存成功后更新原始列表
       originalApps.value = deepClone(apps.value)
-      showMessage('应用列表保存成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      showMessage(translate('apps.feedback.save_success'), APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       trackEvents.userAction('apps_saved', { count: apps.value.length })
     } catch (error) {
       console.error('保存应用列表失败:', error)
-      showMessage('保存应用列表失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.save_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     } finally {
       isSaving.value = false
     }
@@ -624,12 +626,12 @@ export function useApps() {
   const scanDirectory = async (extractIcons = true) => {
     const tauri = window.__TAURI__
     if (!tauri?.core?.invoke) {
-      showMessage('扫描功能仅在 Tauri 环境下可用', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      showMessage(translate('apps.feedback.scan_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
       return
     }
 
     if (!tauri?.dialog?.open) {
-      showMessage('无法打开文件对话框', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.file_selection.dialog_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
       return
     }
 
@@ -637,13 +639,13 @@ export function useApps() {
       const selectedDir = await tauri.dialog.open({
         directory: true,
         multiple: false,
-        title: '选择要扫描的目录',
+        title: translate('apps.file_selection.select_directory'),
       })
 
       if (!selectedDir) return
 
       isScanning.value = true
-      showMessage('正在扫描目录...', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      showMessage(`${translate('apps.scan_options.directory_scan')}…`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
       const foundApps = await tauri.core.invoke('scan_directory_for_apps', {
         directory: selectedDir,
@@ -653,13 +655,13 @@ export function useApps() {
       if (foundApps.length === 0) {
         scannedApps.value = []
         showScanResult.value = true
-        showMessage('未找到可添加的应用程序', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        showMessage(translate('apps.scan_result_no_apps'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
       } else {
         // 先显示扫描结果（无封面）
         const overriddenApps = withScanKeys(applyGameLibraryOverrides(foundApps))
         scannedApps.value = overriddenApps
         showScanResult.value = true
-        showMessage(getScanEnhancementMessage(foundApps.length, '应用程序'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        showMessage(getScanEnhancementMessage(foundApps.length), APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
         // 异步更新封面图片
         asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
@@ -668,7 +670,7 @@ export function useApps() {
       trackEvents.userAction('directory_scanned', { count: foundApps.length, extractIcons })
     } catch (error) {
       console.error('扫描目录失败:', error)
-      showMessage(`扫描失败: ${error}`, APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.scan_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     } finally {
       isScanning.value = false
     }
@@ -678,13 +680,13 @@ export function useApps() {
   const scanGameLibraries = async (options = {}) => {
     const tauri = window.__TAURI__
     if (!tauri?.core?.invoke) {
-      showMessage('扫描功能仅在 Tauri 环境下可用', APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+      showMessage(translate('apps.feedback.scan_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
       return
     }
 
     try {
       isScanning.value = true
-      showMessage('正在扫描游戏平台库...', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      showMessage(`${translate('apps.scan_library')}…`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
       const requestedPlatforms = options.platforms || scanPlatformOptions.map((platformOption) => platformOption.id)
       const result = await tauri.core.invoke('scan_game_libraries', {
@@ -701,7 +703,7 @@ export function useApps() {
       if (allGames.length === 0) {
         scannedApps.value = []
         showScanResult.value = true
-        showMessage('未检测到已安装的游戏', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+        showMessage(translate('apps.scan_result_no_apps'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
       } else {
         const mapped = allGames.map((game) => ({
           name: game.name,
@@ -722,7 +724,7 @@ export function useApps() {
         if (epicGames.length) parts.push(`Epic ${epicGames.length}`)
         if (gogGames.length) parts.push(`GOG ${gogGames.length}`)
         showMessage(
-          `找到 ${result.total ?? allGames.length} 个游戏 (${parts.join(', ')})，耗时 ${result.scan_time_ms ?? 0}ms`,
+          `${translate('apps.feedback.found', { count: result.total ?? allGames.length })} (${parts.join(', ')}, ${result.scan_time_ms ?? 0} ms)`,
           APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
         )
         asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
@@ -736,7 +738,7 @@ export function useApps() {
       })
     } catch (error) {
       console.error('扫描游戏库失败:', error)
-      showMessage(`扫描游戏库失败: ${error}`, APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.scan_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     } finally {
       isScanning.value = false
     }
@@ -774,8 +776,8 @@ export function useApps() {
     }
 
     setScanProgress({
-      stage: '准备 AI 增强',
-      detail: `将处理 ${appList.length} 个扫描结果`,
+      stage: translate('apps.feedback.enriching'),
+      detail: translate('apps.feedback.found', { count: appList.length }),
       current: 0,
       total: appList.length,
       indeterminate: true,
@@ -784,11 +786,12 @@ export function useApps() {
     try {
       result = await runGameLibraryCuratorAgent(appList, {
         enabledSkills: enabled,
+        translate,
         onSkillProgress: updateScanEnhancementProgress,
         onTitlesEnhanced(enhanced, { changed }) {
           applyEnhancedScannedApps(appList, enhanced)
           if (changed > 0) {
-            showMessage(`AI 已清洗 ${changed} 个游戏名称`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+            showMessage(`${translate('apps.scan_options.ai_name_cleanup')}: ${changed}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
           }
         },
         onCoverResolved(next, { key }) {
@@ -803,7 +806,7 @@ export function useApps() {
         onSkillError(skillId, error) {
           if (skillId === GAME_LIBRARY_SKILL_IDS.titleNormalize) {
             console.warn('AI name cleanup failed; falling back to original names:', error)
-            showMessage('AI 名称清洗不可用，已回退到原始名称搜索', APP_CONSTANTS.MESSAGE_TYPES.INFO)
+            showMessage(translate('apps.feedback.name_fallback'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
           } else if (skillId === GAME_LIBRARY_SKILL_IDS.coverSelection) {
             console.warn('AI cover selection failed:', error)
           }
@@ -811,8 +814,8 @@ export function useApps() {
       })
     } catch (error) {
       console.warn('Game library enrichment failed:', error)
-      showMessage('游戏资源增强不可用，已保留原始扫描结果', APP_CONSTANTS.MESSAGE_TYPES.INFO)
-      completeScanProgress('AI 增强不可用，已保留扫描结果')
+      showMessage(translate('apps.feedback.enrichment_failed'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      completeScanProgress(translate('apps.feedback.enrichment_failed'))
       return
     }
 
@@ -820,12 +823,12 @@ export function useApps() {
       const coversFound = result.stats?.coversFound || 0
       const total = appList.length
       showMessage(
-        `已匹配 ${coversFound}/${total} 个封面`,
+        `${translate('apps.covers_found')}: ${coversFound}/${total}`,
         coversFound > 0 ? APP_CONSTANTS.MESSAGE_TYPES.SUCCESS : APP_CONSTANTS.MESSAGE_TYPES.INFO
       )
     }
 
-    completeScanProgress('扫描结果已更新')
+    completeScanProgress(translate('apps.feedback.complete'))
   }
 
   // 扫描应用字段处理
@@ -897,7 +900,7 @@ export function useApps() {
   const showCoverLocalizationMessage = (localizedApp, successMessage, successType) => {
     const failed = didCoverLocalizationFail(localizedApp)
     showMessage(
-      failed ? `${successMessage}，但封面本地化失败，已保留原始封面地址` : successMessage,
+      failed ? translate('apps.feedback.cover_warning', { message: successMessage }) : successMessage,
       failed ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : successType
     )
   }
@@ -914,7 +917,7 @@ export function useApps() {
     scannedEditSource.value = { ...localizedApp }
 
     removeScannedApp(scannedApp)
-    showCoverLocalizationMessage(localizedApp, `正在编辑应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
+    showCoverLocalizationMessage(localizedApp, translate('apps.feedback.editing', { name: scannedApp.name }), APP_CONSTANTS.MESSAGE_TYPES.INFO)
     trackEvents.userAction('scanned_app_edit', { name: scannedApp.name })
   }
 
@@ -930,11 +933,11 @@ export function useApps() {
 
       removeScannedApp(scannedApp)
 
-      showCoverLocalizationMessage(localizedApp, `已添加应用: ${scannedApp.name}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+      showCoverLocalizationMessage(localizedApp, translate('apps.feedback.added', { name: scannedApp.name }), APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
       trackEvents.userAction('scanned_app_quick_added', { name: scannedApp.name })
     } catch (error) {
       console.error('快速添加应用失败:', error)
-      showMessage('添加失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.add_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     }
   }
 
@@ -959,8 +962,8 @@ export function useApps() {
       const coverLocalizationFailureCount = localizedScannedApps.filter(didCoverLocalizationFail).length
       showMessage(
         coverLocalizationFailureCount > 0
-          ? `已添加 ${appsToAdd.length} 个应用，其中 ${coverLocalizationFailureCount} 个封面本地化失败，已保留原始封面地址`
-          : `已添加 ${appsToAdd.length} 个应用`,
+          ? translate('apps.feedback.added_count_cover_failed', { count: appsToAdd.length, failed: coverLocalizationFailureCount })
+          : translate('apps.feedback.added_count', { count: appsToAdd.length }),
         coverLocalizationFailureCount > 0 ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
       )
       trackEvents.userAction('scanned_apps_batch_added', { count: appsToAdd.length })
@@ -969,7 +972,7 @@ export function useApps() {
       showScanResult.value = false
     } catch (error) {
       console.error('批量添加应用失败:', error)
-      showMessage('批量添加失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+      showMessage(translate('apps.feedback.add_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
     } finally {
       isSaving.value = false
     }
@@ -980,8 +983,8 @@ export function useApps() {
     scannedApps.value = []
   }
 
-  const handleCopySuccess = () => showMessage('复制成功', APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
-  const handleCopyError = () => showMessage('复制失败', APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+  const handleCopySuccess = () => showMessage(translate('_common.copied'), APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+  const handleCopyError = () => showMessage(translate('apps.copy_failed_manual'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
 
   return {
     // 状态

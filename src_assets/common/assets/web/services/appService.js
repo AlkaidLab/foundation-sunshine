@@ -1,3 +1,4 @@
+import { translateFallback } from '../utils/localizedMessage.js'
 import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
 import { deepClone, formatError } from '../utils/helpers.js';
@@ -69,7 +70,7 @@ export class AppService {
     try {
       const data = await apiPostJson(API_ENDPOINTS.APPS_BATCH_DELETE, { indices });
       if (data.status === false || data.status === 'false') {
-        throw new Error(data.error || '批量删除失败');
+        throw new Error(data.error || translateFallback('apps.batch_delete_failed'));
       }
       return {
         deleted: Number(data.deleted) || 0,
@@ -162,21 +163,21 @@ export class AppService {
    * @param {Object} app 应用对象
    * @returns {Object} 验证结果
    */
-  static validateApp(app) {
+  static validateApp(app, translate = translateFallback) {
     const errors = [];
     
     if (!app.name || !app.name.trim()) {
-      errors.push('应用名称不能为空');
+      errors.push(translate('apps.validation.required'));
     }
     
     if (!app.cmd || !app.cmd.trim()) {
-      errors.push('应用命令不能为空');
+      errors.push(translate('apps.validation.required'));
     }
     
     // 验证退出超时时间
     if (app['exit-timeout'] !== undefined && 
         (isNaN(app['exit-timeout']) || app['exit-timeout'] < 0)) {
-      errors.push('退出超时时间必须是非负数');
+      errors.push(translate('apps.validation.min_value', { value: 0 }));
     }
     
     return {

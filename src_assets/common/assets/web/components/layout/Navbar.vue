@@ -42,6 +42,7 @@
 
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import ThemeToggle from '../common/ThemeToggle.vue'
 import AccountMenu from '../common/AccountMenu.vue'
 import { useBackground } from '../../composables/useBackground.js'
@@ -55,7 +56,8 @@ const navItems = Object.freeze([
 ])
 
 // 使用背景管理 composable
-const { loadBackground, addDragListeners } = useBackground()
+const { t } = useI18n()
+const { loadBackground, addDragListeners } = useBackground({ translate: t })
 const isEmbeddedGui = window.isTauri === true && window.parent !== window
 
 if (isEmbeddedGui) {

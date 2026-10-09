@@ -1,4 +1,5 @@
 import { findBestCoverForApp } from '../../../coverSelectionAi.js'
+import { translateFallback } from '../../../localizedMessage.js'
 
 export const COVER_SELECTION_SKILL_ID = 'game.cover.select'
 const DEFAULT_COVER_CONCURRENCY = 4
@@ -41,6 +42,7 @@ export function createCoverSelectionSkill(options = {}) {
     },
 
     async run(context) {
+      const translate = context.options?.translate || translateFallback
       const apps = [...(context.apps || [])]
       let coversFound = 0
       let cursor = 0
@@ -58,7 +60,7 @@ export function createCoverSelectionSkill(options = {}) {
           phase: 'item:start',
           current: completed,
           total: apps.length,
-          detail: `正在匹配：${app?.name || '未命名游戏'}`,
+          detail: translate('apps.feedback.matching_name', { name: app?.name || translate('apps.scan_result_game') }),
         })
 
         try {
@@ -87,7 +89,7 @@ export function createCoverSelectionSkill(options = {}) {
             phase: 'item:done',
             current: completed,
             total: apps.length,
-            detail: `已处理 ${completed}/${apps.length} 个游戏`,
+            detail: `${completed}/${apps.length}`,
           })
         }
       }

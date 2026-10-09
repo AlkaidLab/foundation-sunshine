@@ -6,3 +6,7 @@ export function localizedMessage(translate, key, params = {}) {
   const message = key.split('.').reduce((value, part) => value?.[part], en)
   return (message ?? key).replace(/\{(\w+)\}/g, (match, name) => params[name] ?? match)
 }
+
+export function translateFallback(key, params) {
+  return localizedMessage(null, key, params)
+}
