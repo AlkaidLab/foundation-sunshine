@@ -695,8 +695,8 @@ namespace stream {
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
 
-    // Current total bitrate for this session (including FEC overhead) in Kbps
-    // This is the user-configured bitrate, not the encoding bitrate
+    // Requested total bitrate for this session (including FEC allowance) in Kbps.
+    // This is the user-configured budget, not the live automatic-FEC wire rate.
     std::atomic<int> current_total_bitrate { 0 };
     video_fec::controller_t fec_control;
 
@@ -4514,7 +4514,8 @@ namespace stream {
       // config.monitor.bitrate is the encoding bitrate (excluding FEC)
       // We need to convert it to total bitrate (including FEC)
       int encoding_bitrate = config.monitor.bitrate;
-      int fec_percentage = config::stream.fec_percentage;
+      // Fixed client preferences override the host; automatic FEC keeps the host budget baseline.
+      int fec_percentage = config.client_fec >= 0 ? config.client_fec : config::stream.fec_percentage;
       if (config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) {
         fec_percentage = 0;
       }
