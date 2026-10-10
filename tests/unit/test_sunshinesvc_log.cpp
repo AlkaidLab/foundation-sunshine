@@ -2,6 +2,8 @@
  * @file tests/unit/test_sunshinesvc_log.cpp
  * @brief Tests for the service log sink selection used by sunshinesvc.
  */
+#ifdef _WIN32
+
 #include <tools/sunshinesvc_log.h>
 
 #include <gtest/gtest.h>
@@ -158,3 +160,5 @@ TEST(ServiceLogSinks, UnusableDirectoryFallsBackToWritableInheritableNul) {
   EXPECT_EQ(written, 1u);
   CloseHandle(handle);
 }
+
+#endif
