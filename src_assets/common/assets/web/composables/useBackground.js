@@ -1,4 +1,5 @@
 import { getCurrentScope, onScopeDispose } from 'vue'
+import { translateFallback } from '../utils/localizedMessage.js'
 import { extractColors, rgbToHsl as rgbToHslValues, selectAccentColor } from '../utils/colorPalette.js'
 
 const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
@@ -32,7 +33,7 @@ const loadImage = (imageUrl) =>
   new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('图片加载失败'))
+    img.onerror = () => reject(new Error(translateFallback('apps.image_load_failed')))
     img.src = imageUrl
   })
 
@@ -176,6 +177,7 @@ export function useBackground(options = {}) {
     maxWidth = 1920,
     maxHeight = 1080,
     maxSizeMB = 2,
+    translate = translateFallback,
   } = options
 
   const getCurrentBackground = () => localStorage.getItem(storageKey) ?? defaultBackground
@@ -232,7 +234,7 @@ export function useBackground(options = {}) {
         try {
           localStorage.setItem(storageKey, imageData)
         } catch {
-          throw new Error('图片太大，无法存储。请选择更小的图片或降低图片质量。')
+          throw new Error(translate('apps.feedback.image_too_large'))
         }
       } else {
         throw error
@@ -269,12 +271,12 @@ export function useBackground(options = {}) {
         img.onload = () => {
           const { width, height } = calculateResizedDimensions(img.width, img.height)
           const result = compressWithQuality(img, width, height, initialQuality)
-          result ? resolve(result) : reject(new Error('图片太大，无法存储。请选择更小的图片。'))
+          result ? resolve(result) : reject(new Error(translate('apps.feedback.image_too_large')))
         }
-        img.onerror = () => reject(new Error('图片加载失败'))
+        img.onerror = () => reject(new Error(translate('apps.image_load_failed')))
         img.src = event.target.result
       }
-      reader.onerror = () => reject(new Error('文件读取失败'))
+      reader.onerror = () => reject(new Error(translate('apps.feedback.file_read_failed')))
       reader.readAsDataURL(file)
     })
 
@@ -297,7 +299,7 @@ export function useBackground(options = {}) {
     try {
       await saveBackground(await compressImage(file))
     } catch (error) {
-      onError?.(error) ?? alert(error.message || '处理图片时发生错误')
+      onError?.(error) ?? alert(error.message || translate('apps.feedback.image_process_failed'))
     }
   }
 

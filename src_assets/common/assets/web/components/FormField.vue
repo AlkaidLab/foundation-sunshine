@@ -3,7 +3,7 @@
     <label :for="id" class="form-label-enhanced" :class="{ 'required-field': required }">{{ label }}</label>
     <slot></slot>
     <div v-if="validation && !validation.isValid" class="invalid-feedback">{{ validation.message }}</div>
-    <div v-if="validation && validation.isValid && value" class="valid-feedback">有效</div>
+    <div v-if="validation && validation.isValid && value" class="valid-feedback">{{ $t('_common.valid') }}</div>
     <div v-if="$slots.hint" class="field-hint"><slot name="hint"></slot></div>
     <div v-else-if="hint" class="field-hint">{{ hint }}</div>
   </div>

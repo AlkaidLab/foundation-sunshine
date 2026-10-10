@@ -1,3 +1,4 @@
+import { translateFallback } from './localizedMessage.js'
 import { API_ENDPOINTS } from './constants.js'
 import { buildLocalizedInstruction, getCurrentLocale, getPromptLanguageName } from './aiLocale.js'
 import { createAiCache } from './aiCache.js'
@@ -158,6 +159,7 @@ async function callAiForBatch(batch) {
 }
 
 export async function enhanceScannedGameNames(apps, options = {}) {
+  const translate = options.translate || translateFallback
   if (!Array.isArray(apps) || apps.length === 0) {
     return apps
   }
@@ -188,8 +190,8 @@ export async function enhanceScannedGameNames(apps, options = {}) {
     current: 0,
     total: batches.length,
     detail: batches.length > 0
-      ? `需要清洗 ${misses.length} 个游戏名称`
-      : '名称已从缓存命中',
+      ? `${translate('apps.scan_options.ai_name_cleanup')}: ${misses.length}`
+      : translate('apps.feedback.cache_hit'),
   })
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
@@ -199,7 +201,7 @@ export async function enhanceScannedGameNames(apps, options = {}) {
       phase: 'batch:start',
       current: batchIndex,
       total: batches.length,
-      detail: `正在清洗第 ${batchIndex + 1}/${batches.length} 批 (${batch.length} 个游戏)`,
+      detail: `${translate('apps.scan_options.ai_name_cleanup')}: ${batchIndex + 1}/${batches.length} (${batch.length})`,
     })
 
     try {
@@ -210,7 +212,7 @@ export async function enhanceScannedGameNames(apps, options = {}) {
         phase: 'batch:error',
         current: batchIndex + 1,
         total: batches.length,
-        detail: `第 ${batchIndex + 1}/${batches.length} 批清洗失败，继续后续步骤`,
+        detail: `${translate('apps.feedback.name_fallback')} (${batchIndex + 1}/${batches.length})`,
       })
       continue
     }
@@ -229,7 +231,7 @@ export async function enhanceScannedGameNames(apps, options = {}) {
       phase: 'batch:done',
       current: batchIndex + 1,
       total: batches.length,
-      detail: `已完成 ${batchIndex + 1}/${batches.length} 批名称清洗`,
+      detail: `${translate('apps.scan_options.ai_name_cleanup')}: ${batchIndex + 1}/${batches.length}`,
     })
   }
 
