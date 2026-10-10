@@ -4,20 +4,29 @@
  */
 #ifdef _WIN32
 
-#include <tools/sunshinesvc_log.h>
+  #include <tools/sunshinesvc_log.h>
 
-#include <gtest/gtest.h>
+  #include <gtest/gtest.h>
 
-#include <atomic>
-#include <string>
+  #include <atomic>
+  #include <stdexcept>
+  #include <string>
 
 namespace {
 
   std::wstring
   temp_dir() {
-    wchar_t buffer[MAX_PATH];
-    const auto length = GetTempPathW(_countof(buffer), buffer);
-    return std::wstring(buffer, length);
+    std::wstring buffer(MAX_PATH, L'\0');
+    auto length = GetTempPathW(static_cast<DWORD>(buffer.size()), buffer.data());
+    if (length >= buffer.size()) {
+      buffer.resize(length);
+      length = GetTempPathW(static_cast<DWORD>(buffer.size()), buffer.data());
+    }
+    if (length == 0 || length >= buffer.size()) {
+      throw std::runtime_error("Unable to obtain a valid test temporary directory");
+    }
+    buffer.resize(length);
+    return buffer;
   }
 
   // Each test runs against its own directory so the shared sunshine.log
