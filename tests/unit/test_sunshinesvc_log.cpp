@@ -26,7 +26,7 @@ namespace {
     IsolatedLogDir() {
       static std::atomic<unsigned> counter { 0 };
       path_ = temp_dir() + L"sunshine-log-test-" + std::to_wstring(GetCurrentProcessId()) +
-        L"-" + std::to_wstring(counter.fetch_add(1)) + L"\\";
+              L"-" + std::to_wstring(counter.fetch_add(1)) + L"\\";
       CreateDirectoryW(path_.c_str(), NULL);
     }
 
@@ -140,4 +140,21 @@ TEST(ServiceLogSinks, PrimaryOpensUnlocked) {
   ASSERT_NE(handle, INVALID_HANDLE_VALUE);
   CloseHandle(handle);
   DeleteFileW((dir.path() + L"sunshine.log").c_str());
+}
+
+TEST(ServiceLogSinks, UnusableDirectoryFallsBackToWritableInheritableNul) {
+  IsolatedLogDir dir;
+  const auto missing = dir.path() + L"missing\\";
+  EXPECT_EQ(sunshinesvc::open_primary_log_handle_in(missing), INVALID_HANDLE_VALUE);
+
+  const auto handle = sunshinesvc::open_fallback_log_handle_in(missing);
+  ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+  EXPECT_EQ(GetFileType(handle), static_cast<DWORD>(FILE_TYPE_CHAR));
+  DWORD flags = 0;
+  EXPECT_TRUE(GetHandleInformation(handle, &flags));
+  EXPECT_NE(flags & HANDLE_FLAG_INHERIT, 0u);
+  DWORD written = 0;
+  EXPECT_TRUE(WriteFile(handle, "x", 1, &written, NULL));
+  EXPECT_EQ(written, 1u);
+  CloseHandle(handle);
 }

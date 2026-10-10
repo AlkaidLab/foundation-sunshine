@@ -195,41 +195,9 @@ probe_encoders_with_watchdog() {
   }
 }
 
-/**
- * @brief Force-shutdown task body shared by the SIGINT/SIGTERM watchdogs.
- *
- * debug_trap() ends the process through unhandled-exception dispatch, and
- * that chain can stall when a wedged thread holds a lock the dispatcher
- * needs. The detached backup thread terminates independently of that chain
- * (and of debug_trap() returning), so the process cannot linger holding the
- * service log handle. WER gets a grace period to record the crash first, and
- * under an attached debugger the backup stays out of the way so hangs remain
- * inspectable.
- */
-void
-force_shutdown_task() {
-  BOOST_LOG(fatal) << "10 seconds passed, yet Sunshine's still running: Forcing shutdown"sv;
-  logging::log_flush();
-
-  std::thread([]() {
-    std::this_thread::sleep_for(5s);
-#ifdef _WIN32
-    if (IsDebuggerPresent()) {
-      return;
-    }
-#endif
-    lifetime::force_terminate();
-  }).detach();
-
-  lifetime::debug_trap();
-  lifetime::force_terminate();
-}
-
 int
 main(int argc, char *argv[]) {
   lifetime::argv = argv;
-
-  task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
 
 #ifdef _WIN32
   // Note: this only fires on a normal `return` from main. If the program
@@ -427,19 +395,11 @@ main(int argc, char *argv[]) {
 
   // Create signal handler after logging has been initialized
   auto shutdown_event = mail::man->event<bool>(mail::shutdown);
-  on_signal(SIGINT, [&force_shutdown, shutdown_event]() {
-    BOOST_LOG(info) << "Interrupt handler called"sv;
-
-    force_shutdown = task_pool.pushDelayed(force_shutdown_task, 10s).task_id;
-
+  on_signal(SIGINT, [shutdown_event]() {
     shutdown_event->raise(true);
   });
 
-  on_signal(SIGTERM, [&force_shutdown, shutdown_event]() {
-    BOOST_LOG(info) << "Terminate handler called"sv;
-
-    force_shutdown = task_pool.pushDelayed(force_shutdown_task, 10s).task_id;
-
+  on_signal(SIGTERM, [shutdown_event]() {
     shutdown_event->raise(true);
   });
 
@@ -614,6 +574,10 @@ main(int argc, char *argv[]) {
 #endif
 
   mainThreadLoop(shutdown_event);
+
+  // Cover tray/HTTP requests and signals before any cleanup can block.
+  lifetime::start_shutdown_watchdog();
+  BOOST_LOG(info) << "Shutdown requested; allowing up to 10 seconds for cleanup"sv;
 
   client_fingerprint_deinit_guard.reset();
 

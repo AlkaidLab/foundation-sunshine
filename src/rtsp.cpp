@@ -44,6 +44,7 @@ extern "C" {
 #include "pyrowave/packet.h"
 #include "rtsp.h"
 #include "stream.h"
+#include "streaming/fec.h"
 #include "sync.h"
 #include "video.h"
 
@@ -1224,6 +1225,7 @@ namespace rtsp_stream {
 
     // Report supported and required encryption flags
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
+    ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
     
     // 记录加密请求状态用于调试
@@ -1268,7 +1270,8 @@ namespace rtsp_stream {
              LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE |
              LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE |
              LI_PYROWAVE_CAPABILITY_HDR10_PQ_BT2020 |
-             LI_PYROWAVE_CAPABILITY_HLG_BT2020)
+             LI_PYROWAVE_CAPABILITY_HLG_BT2020 |
+             LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING)
          << std::endl;
       ss << "a=x-ss-pyrowave.maxPacketSize:" << LI_PYROWAVE_MAX_PACKET_SIZE << std::endl;
     }
@@ -1551,6 +1554,7 @@ namespace rtsp_stream {
     stream::config_t config;
 
     std::int64_t configuredBitrateKbps;
+    int client_fec = video_fec::host_preference;
     config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
     // Set inside the SDP parse below; consumed by the dynamic HDR selection.
     bool post_process_hdr_active = false;
@@ -1639,6 +1643,16 @@ namespace rtsp_stream {
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
+      const auto fec_summary = args.find("x-ml-video.fecSummaryVersion"sv);
+      config.fec_feedback = fec_summary != args.end() && fec_summary->second == "1" && config.controlProtocolType == 13;
+      if (const auto requested = args.find("x-ml-video.fecPercentage"sv); requested != args.end()) {
+        const auto value = video_fec::parse_preference(requested->second);
+        if (!value || !config.fec_feedback) {
+          respond(sock, session, &option, 400, "Invalid FEC preference", req->sequenceNumber, {});
+          return;
+        }
+        client_fec = *value;
+      }
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (getArg("x-nv-general.featureFlags"sv) & 0x20) {
@@ -1740,7 +1754,7 @@ namespace rtsp_stream {
           .bitstreamVersion = LI_PYROWAVE_BITSTREAM_VERSION,
           .payloadVersion = LI_PYROWAVE_PAYLOAD_VERSION,
           .reserved = 0,
-          .capabilityFlags = required_capabilities,
+          .capabilityFlags = required_capabilities | LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING,
           .maxPacketSize = LI_PYROWAVE_MAX_PACKET_SIZE,
         };
         LI_PYROWAVE_CAPABILITIES client_capabilities {
@@ -1762,6 +1776,9 @@ namespace rtsp_stream {
           respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
           return;
         }
+        monitor.pyrowave_dynamic_hdr_mapping =
+          (negotiated_capabilities.capabilityFlags & LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING) != 0;
+
         // The encoder and outer RTP broadcaster must use the same reduced
         // boundary; clamping only the inner packetizer would break alignment.
         config.packetsize = pyrowave::limit_rtp_packet_size(
@@ -1898,36 +1915,39 @@ namespace rtsp_stream {
       config.audio.flags[audio::config_t::CONTINUOUS_AUDIO] = true;
     }
 
-    // If the client sent a configured bitrate, we will choose the actual bitrate ourselves
-    // by using FEC percentage and audio quality settings. If the calculated bitrate ends up
-    // too low, we'll allow it to exceed the limits rather than reducing the encoding bitrate
-    // down to nearly nothing.
-    if (configuredBitrateKbps) {
-      BOOST_LOG(debug) << "Client configured bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
-
-      // If the FEC percentage isn't too high, adjust the configured bitrate to ensure video
-      // traffic doesn't exceed the user's selected bitrate when the FEC shards are included.
-      // PyroWave disables the legacy RTP FEC layer and carries its own
-      // block-aware parity. Do not subtract the legacy FEC percentage from
-      // its encoder budget; the shared video pipeline accounts for the
-      // PyroWave transport contract separately.
-      if (config.monitor.videoFormat != LI_PYROWAVE_VIDEO_FORMAT &&
-          config::stream.fec_percentage <= 80) {
-        configuredBitrateKbps /= 100.f / (100 - config::stream.fec_percentage);
+    // Resolve the session's protection once. PyroWave owns its separate parity;
+    // legacy clients without a total request retain their initial encoder target.
+    const bool legacy_rs = config.monitor.videoFormat != LI_PYROWAVE_VIDEO_FORMAT;
+    const auto host_fec = config::stream.fec_percentage;
+    const auto host_automatic = config::stream.fec_auto;
+    if (legacy_rs) {
+      config.fec_control = std::make_shared<video_fec::controller_t>();
+      config.fec_control->initialize(host_fec, host_automatic, config::stream.fec_auto_max_percentage);
+      if (client_fec >= video_fec::automatic_preference) {
+        config.fec_control->set_mode(client_fec == video_fec::automatic_preference ?
+                                       video_fec::mode_e::automatic :
+                                       video_fec::mode_e::fixed,
+          std::max(0, client_fec));
       }
-
-      // Adjust the bitrate to account for audio traffic bandwidth usage (capped at 20% reduction).
-      // The bitrate per channel is 256 Kbps for high quality mode and 96 Kbps for normal quality.
-      auto audioBitrateAdjustment = (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels;
-      configuredBitrateKbps -= std::min((std::int64_t) audioBitrateAdjustment, configuredBitrateKbps / 5);
-
-      // Reduce it by another 500Kbps to account for A/V packet overhead and control data
-      // traffic (capped at 10% reduction).
-      configuredBitrateKbps -= std::min((std::int64_t) 500, configuredBitrateKbps / 10);
-
-      BOOST_LOG(debug) << "Final adjusted video encoding bitrate is "sv << configuredBitrateKbps << " Kbps"sv;
-      config.monitor.bitrate = configuredBitrateKbps;
     }
+    const unsigned initial_fec = !legacy_rs      ? 0 :
+                                 client_fec >= 0 ? client_fec :
+                                                   host_fec;
+    const bool automatic_fec = legacy_rs && client_fec < 0 &&
+                               (client_fec == video_fec::automatic_preference || host_automatic);
+    const bool has_total_request = configuredBitrateKbps > 0;
+    const auto total_request = has_total_request ? configuredBitrateKbps :
+                                                   streaming::total_bitrate(config.monitor.bitrate, initial_fec);
+    const auto audio_reserve = has_total_request ?
+                                 (config.audio.flags[audio::config_t::HIGH_QUALITY] ? 256 : 96) * config.audio.channels :
+                                 0;
+    config.monitor.bitrate_budget = std::make_shared<streaming::bitrate_budget_t>(
+      static_cast<int>(std::min<std::int64_t>(total_request, std::numeric_limits<int>::max())),
+      config::video.max_bitrate, audio_reserve, has_total_request ? 500 : 0,
+      initial_fec, automatic_fec);
+    config.monitor.bitrate = config.monitor.bitrate_budget->applied().encoder_kbps;
+    BOOST_LOG(debug) << "Session bitrate budget: " << config.monitor.bitrate_budget->total()
+                     << " Kbps, encoder: " << config.monitor.bitrate << " Kbps, FEC: " << initial_fec << '%';
 
     if (config.monitor.videoFormat == 1 && video::active_hevc_mode == 1) {
       BOOST_LOG(warning) << "HEVC is disabled, yet the client requested HEVC"sv;
@@ -1963,6 +1983,7 @@ namespace rtsp_stream {
         .video_format = config.monitor.videoFormat,
         .dynamic_range_mode = config.monitor.dynamicRange,
         .synthetic_hdr_enabled = session.synthetic_hdr.enabled,
+        .pyrowave_dynamic_hdr_mapping = config.monitor.pyrowave_dynamic_hdr_mapping,
       });
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
     session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;
@@ -1971,8 +1992,16 @@ namespace rtsp_stream {
         ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
         : std::string {};
     if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(config.monitor.videoFormat)) &&
-        dynamic_hdr_selection.format != hdr::dynamic_hdr_format_e::none) {
-      BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: dynamic HDR metadata is not part of the static color contract"sv;
+        dynamic_hdr_request.caps_mask != 0 &&
+        dynamic_hdr_request.preference != hdr::dynamic_hdr_preference_e::hdr10_only &&
+        dynamic_hdr_selection.format == hdr::dynamic_hdr_format_e::none) {
+      BOOST_LOG(warning) << "Rejecting PyroWave dynamic HDR request: frame metadata mapping contract is unavailable"sv;
+      respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
+      return;
+    }
+    if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(config.monitor.videoFormat)) &&
+        config.monitor.dynamic_hdr_format != 0 && config::video.hdr_luminance_analysis == "off") {
+      BOOST_LOG(warning) << "Rejecting PyroWave dynamic HDR request: HDR luminance analysis is disabled"sv;
       respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
       return;
     }

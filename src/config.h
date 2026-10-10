@@ -157,6 +157,8 @@ namespace config {
     // Video encryption settings for LAN and WAN streams
     int lan_encryption_mode;
     int wan_encryption_mode;
+    bool fec_auto = false;
+    int fec_auto_max_percentage = 50;
   };
 
   // Sleep mode options for PC sleep command

@@ -104,13 +104,19 @@ namespace lifetime {
   /**
    * @brief Unconditionally terminates Sunshine immediately.
    *
-   * Backstop for `debug_trap()`: the breakpoint relies on unhandled-exception
-   * dispatch to end the process, and that chain can stall or be swallowed.
-   * This cannot preempt threads stuck in the kernel, but it closes every
-   * user-mode path and preserves the exit code.
+   * Bypasses user-mode exception dispatch and preserves the requested exit code.
+   * Windows may still wait for pending kernel I/O to complete or be canceled.
    */
   void
   force_terminate();
+
+  /**
+   * @brief Starts the independent ten-second deadline for process shutdown.
+   * Call once before cleanup. Normal process exit ends the detached thread;
+   * a Windows debugger attached at the deadline suppresses forced termination.
+   */
+  void
+  start_shutdown_watchdog();
 
   /**
    * @brief Get the argv array passed to main().

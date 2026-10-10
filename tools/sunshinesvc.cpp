@@ -12,6 +12,7 @@
 #include <wtsapi32.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -323,6 +324,9 @@ AcquireGuiAgent(DWORD console_session_id, GuiAgentProcess &agent, bool &attached
 
 void
 WriteServiceLog(HANDLE log_file, const std::string &message) {
+  if (log_file == NULL || log_file == INVALID_HANDLE_VALUE) {
+    return;
+  }
   DWORD bytes_written;
   const auto line = "[sunshinesvc] " + message + "\r\n";
   WriteFile(log_file, line.data(), static_cast<DWORD>(line.size()), &bytes_written, NULL);
@@ -339,7 +343,7 @@ RetryWaitTimeout(ULONGLONG retry_at_ms) {
 }
 
 bool
-RunTerminationHelper(HANDLE console_token, DWORD pid) {
+RunTerminationHelper(HANDLE console_token, DWORD pid, HANDLE service_log) {
   WCHAR module_path[MAX_PATH];
   GetModuleFileNameW(NULL, module_path, _countof(module_path));
   std::wstring command;
@@ -367,22 +371,33 @@ RunTerminationHelper(HANDLE console_token, DWORD pid) {
         NULL,
         &startup_info,
         &process_info)) {
+    const auto error = GetLastError();
+    WriteServiceLog(service_log, "Unable to launch termination helper (Win32 error " + std::to_string(error) + ")");
     return false;
   }
 
-  // Wait for the termination helper to complete
-  WaitForSingleObject(process_info.hProcess, INFINITE);
-
-  // Check the exit status of the helper process
-  DWORD exit_code;
-  GetExitCodeProcess(process_info.hProcess, &exit_code);
+  // Leave room for the Core's 20-second graceful wait and 5-second force wait
+  // within the service's 30-second stop hint.
+  const auto wait_result = WaitForSingleObject(process_info.hProcess, 3000);
+  DWORD exit_code = ERROR_PROCESS_ABORTED;
+  bool succeeded = false;
+  if (wait_result == WAIT_OBJECT_0) {
+    succeeded = GetExitCodeProcess(process_info.hProcess, &exit_code) && exit_code == 0;
+  }
+  else {
+    const auto error = wait_result == WAIT_FAILED ? GetLastError() : ERROR_TIMEOUT;
+    WriteServiceLog(service_log, "Termination helper did not complete (Win32 error " + std::to_string(error) + ")");
+    if (!TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED)) {
+      const auto terminate_error = GetLastError();
+      WriteServiceLog(service_log, "Unable to terminate helper (Win32 error " + std::to_string(terminate_error) + ")");
+    }
+  }
 
   // Cleanup handles
   CloseHandle(process_info.hProcess);
   CloseHandle(process_info.hThread);
 
-  // If the helper process returned 0, it succeeded
-  return exit_code == 0;
+  return succeeded;
 }
 
 VOID WINAPI
@@ -404,11 +419,25 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   service_status.dwCurrentState = SERVICE_START_PENDING;
   SetServiceStatus(service_status_handle, &service_status);
 
+  // Append service diagnostics independently of the Core's inherited stdout.
+  // A missing diagnostics sink must not prevent service startup.
+  const auto diagnostic_handle = CreateFileW(L"sunshinesvc.log",
+    FILE_APPEND_DATA,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    NULL,
+    OPEN_ALWAYS,
+    FILE_ATTRIBUTE_NORMAL,
+    NULL);
+  std::unique_ptr<void, decltype(&CloseHandle)> service_log(
+    diagnostic_handle == INVALID_HANDLE_VALUE ? NULL : diagnostic_handle, &CloseHandle);
+
   // Create a manual-reset stop event
   stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
   if (stop_event == NULL) {
     // Tell SCM we failed to start
     service_status.dwWin32ExitCode = GetLastError();
+    WriteServiceLog(service_log.get(), "CreateEvent(stop) failed (Win32 error " + std::to_string(service_status.dwWin32ExitCode) + ")");
+    service_log.reset();
     service_status.dwCurrentState = SERVICE_STOPPED;
     SetServiceStatus(service_status_handle, &service_status);
     return;
@@ -419,6 +448,9 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   if (session_change_event == NULL) {
     // Tell SCM we failed to start
     service_status.dwWin32ExitCode = GetLastError();
+    WriteServiceLog(service_log.get(), "CreateEvent(session change) failed (Win32 error " + std::to_string(service_status.dwWin32ExitCode) + ")");
+    CloseHandle(stop_event);
+    service_log.reset();
     service_status.dwCurrentState = SERVICE_STOPPED;
     SetServiceStatus(service_status_handle, &service_status);
     return;
@@ -426,15 +458,24 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
 
   auto log_file_handle = sunshinesvc::open_primary_log_handle();
   if (log_file_handle == INVALID_HANDLE_VALUE) {
+    const auto primary_error = GetLastError();
     // A lingering Sunshine.exe holds the inherited log handle open, which can
     // fail the open above with ERROR_SHARING_VIOLATION. The service must
     // never refuse to start over a log file: degrade to a fallback sink so
     // the core can still be launched and recovered.
     log_file_handle = sunshinesvc::open_fallback_log_handle();
+    const auto fallback_error = GetLastError();
+    WriteServiceLog(service_log.get(), "Primary stdout log unavailable (Win32 error " + std::to_string(primary_error) +
+                                         "); using fallback sink");
+    SetLastError(fallback_error);
   }
   if (log_file_handle == INVALID_HANDLE_VALUE) {
     // Tell SCM we failed to start
     service_status.dwWin32ExitCode = GetLastError();
+    WriteServiceLog(service_log.get(), "Unable to open stdout sink (Win32 error " + std::to_string(service_status.dwWin32ExitCode) + ")");
+    CloseHandle(session_change_event);
+    CloseHandle(stop_event);
+    service_log.reset();
     service_status.dwCurrentState = SERVICE_STOPPED;
     SetServiceStatus(service_status_handle, &service_status);
     return;
@@ -454,6 +495,11 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   if (startup_info.lpAttributeList == NULL) {
     // Tell SCM we failed to start
     service_status.dwWin32ExitCode = GetLastError();
+    WriteServiceLog(service_log.get(), "AllocateProcThreadAttributeList failed (Win32 error " + std::to_string(service_status.dwWin32ExitCode) + ")");
+    CloseHandle(log_file_handle);
+    CloseHandle(session_change_event);
+    CloseHandle(stop_event);
+    service_log.reset();
     service_status.dwCurrentState = SERVICE_STOPPED;
     SetServiceStatus(service_status_handle, &service_status);
     return;
@@ -696,19 +742,21 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         case WAIT_OBJECT_0:
           // The service is shutting down, so try to gracefully terminate Sunshine.exe.
           // If it doesn't terminate in 20 seconds, we will forcefully terminate it.
-          if (!RunTerminationHelper(console_token, process_info.dwProcessId) ||
+          if (!RunTerminationHelper(console_token, process_info.dwProcessId, service_log.get()) ||
               WaitForSingleObject(process_info.hProcess, 20000) != WAIT_OBJECT_0) {
             // If it won't terminate gracefully, kill it now
-            TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED);
-            // TerminateProcess only initiates termination: threads stuck in
-            // kernel calls keep the process (and the ports/files it holds)
-            // alive with no user-mode way to reclaim them. Record it so an
-            // unkillable core is diagnosable from the service log instead of
-            // failing silently.
-            if (WaitForSingleObject(process_info.hProcess, 5000) != WAIT_OBJECT_0) {
-              WriteServiceLog(log_file_handle,
-                "Core process did not fully terminate after force kill; "
-                "it is likely stuck in the kernel and may keep holding ports and files until reboot");
+            const auto core_name = "Core PID " + std::to_string(process_info.dwProcessId);
+            if (!TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED)) {
+              const auto error = GetLastError();
+              WriteServiceLog(service_log.get(), core_name + " force termination failed (Win32 error " + std::to_string(error) + ")");
+            }
+            const auto wait_result = WaitForSingleObject(process_info.hProcess, 5000);
+            if (wait_result == WAIT_TIMEOUT) {
+              WriteServiceLog(service_log.get(), core_name + " did not exit within 5 seconds after force termination; ports and files may remain held");
+            }
+            else if (wait_result == WAIT_FAILED) {
+              const auto error = GetLastError();
+              WriteServiceLog(service_log.get(), core_name + " exit wait failed (Win32 error " + std::to_string(error) + ")");
             }
           }
           still_running = false;
@@ -746,6 +794,13 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   }
 
   CloseGuiAgentHandle(gui_agent);
+
+  DeleteProcThreadAttributeList(startup_info.lpAttributeList);
+  HeapFree(GetProcessHeap(), 0, startup_info.lpAttributeList);
+  CloseHandle(log_file_handle);
+  CloseHandle(session_change_event);
+  CloseHandle(stop_event);
+  service_log.reset();
 
   // Let SCM know we've stopped
   service_status.dwCurrentState = SERVICE_STOPPED;

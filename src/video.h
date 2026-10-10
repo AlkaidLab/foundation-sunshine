@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "hdr/client_display_capabilities.h"
+#include "streaming/bitrate.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -203,6 +204,8 @@ namespace video {
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     // Local diagnostics only; never serialized into the media protocol.
     std::uint32_t perf_session_id = 0;
+    bool pyrowave_dynamic_hdr_mapping = false;
+    std::shared_ptr<streaming::bitrate_budget_t> bitrate_budget;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {
@@ -220,6 +223,10 @@ namespace video {
       return static_cast<double>(framerate);
     }
   };
+
+  // Resolve source mastering metadata after optional HDR pixel processing.
+  bool
+  get_effective_hdr_metadata(platf::display_t *display, const config_t &config, SS_HDR_METADATA &metadata);
 
   // Convert a total video transport budget (including FEC) to encoder bitrate.
   int
@@ -447,11 +454,19 @@ namespace video {
     virtual void
     invalidate_ref_frames(int64_t first_frame, int64_t last_frame) = 0;
 
-    virtual void
-    set_bitrate(int bitrate_kbps) = 0;  // 新增：动态码率调整方法
+    // Accepts an encoder target; transport/FEC allocation happens once upstream.
+    virtual bool
+    set_bitrate(int bitrate_kbps) = 0;
+
+    std::shared_ptr<streaming::bitrate_budget_t> bitrate_budget;
 
     virtual void
     set_dynamic_param(const dynamic_param_t &param) = 0;  // 新增：通用动态参数调整方法
+
+    unsigned
+    fec_percentage() const {
+      return bitrate_budget ? bitrate_budget->applied().fec_percentage : 0;
+    }
   };
 
   // encoders
@@ -502,6 +517,7 @@ namespace video {
     std::vector<replace_t> *replacements = nullptr;
     void *channel_data = nullptr;
     bool after_ref_frame_invalidation = false;
+    unsigned fec_percentage = 0;  // Protection budget when this frame was submitted.
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
   };

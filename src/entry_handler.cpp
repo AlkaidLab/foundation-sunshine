@@ -119,6 +119,26 @@ namespace lifetime {
 #endif
   }
 
+  void
+  start_shutdown_watchdog() {
+    try {
+      std::thread([]() {
+        std::this_thread::sleep_for(10s);
+#ifdef _WIN32
+        if (IsDebuggerPresent()) {
+          return;
+        }
+#endif
+        // Do not log or flush here: either can be the reason shutdown is stuck.
+        force_terminate();
+      }).detach();
+    }
+    catch (...) {
+      // Without a watchdog we cannot safely enter potentially blocking cleanup.
+      force_terminate();
+    }
+  }
+
   char **
   get_argv() {
     return argv;

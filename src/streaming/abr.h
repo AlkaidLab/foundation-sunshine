@@ -1,5 +1,5 @@
 /**
- * @file src/abr.h
+ * @file src/streaming/abr.h
  * @brief Adaptive Bitrate (ABR) decision engine for server-side bitrate control.
  *
  * Two-tier architecture:

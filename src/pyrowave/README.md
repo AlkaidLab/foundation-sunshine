@@ -38,13 +38,20 @@ CPU staging 回退。切换共享捕获内存类型只允许在当前会话独�
 GPU 图像；不兼容的新 GPU 会话在接入时被拒绝，避免读取错误类型的图像。捕获后端覆盖只作用于
 本次创建，不改写会话保存的捕获设置。HDR10/PQ、HLG 和 GPU 专属增强初始化失败时结束当前视频会话，
 不尝试 CPU 回退。实际资源检查发生在编码器工厂中，不代表 ANNOUNCE 已完成全部 GPU 预检。显式选择
-PyroWave 时不会在同一次连接中自动切换到 HEVC/AV1；用户需要修复能力或手动选择
-其他编码器后重新连接。
+PyroWave 已建立后的运行故障不会在同一次活动连接中切换到 HEVC/AV1；用户需要修复能力或
+手动选择其他编码器后重新连接。初始客户端能力协商未选中 PyroWave 时保留 common-c 的
+H.264 兼容兜底，并由客户端在连接成功后提示实际格式。
 设备兼容性由实际资源检查决定，不能从进程级探针推导所有显示器和 GPU 都可用。
 
-PyroWave 的 HDR 合同目前覆盖 HDR10/PQ 和 HLG，并通过公共能力字段和 SDP 属性
-传递色彩元数据。动态 HDR10+、Dolby Vision、HDR Vivid 等格式不在当前合同中，
-不能因为系统或客户端报告了 HDR 就假定它们已经可用。
+PyroWave 的 HDR 合同覆盖 HDR10/PQ 和 HLG。动态 HDR10+、Vivid PQ/HLG、DV 8.1/8.4
+由独立的动态类型与 `DYNAMIC_HDR_MAPPING` 能力协商；后者表示客户端应用内消费并输出
+PQ/HLG，不表示厂商原生 Dolby Vision 输出。动态会话要求开启 HDR 亮度分析；未请求动态
+metadata 的会话不增加分析成本。
+
+`dynamic_hdr.*` 复用现有桌面亮度统计、HDR10+/Vivid 序列化和 DV RPU 生产器。动态
+PyroWave 每个转换帧执行分析，在现有 GPU 完成 Fence 后读取该帧统计；生产器保留时间
+平滑，transport 在推进下一帧前复制完整 payload。HDR10+ 只发送单窗口统计，Vivid
+只发送统计字段，DV 只发送 identity mapping 与 CM2.9 L1/L5/L6，不接受任意电影曲线或增强层。
 
 像素转换、平面位深和码流颜色元数据都以实际解析的输出色彩空间为准。若请求 HDR 而
 捕获结果仍为 SDR，且没有产生 HDR 的增强管线，则拒绝创建该 PyroWave 会话；不能把 SDR
@@ -64,8 +71,9 @@ block 容量，保证它与一个外层 RTP payload 对齐。客户端先恢复�
 data block，先提取 metadata，再依据 codec payload 长度去掉 metadata 和末尾填充，将纯编码
 数据交给 decoder。恢复不了的帧在 deadline 后丢弃。
 块级 FEC 是协商的必需能力；恢复规则与帧时限由公共协议实现统一校验。
-Frame Header 还携带完整 metadata 副本，因此 metadata 必须能放入扣除 64 字节封套头后的
-单包容量。使用默认包长时遵守相同限制；超限请求在复制前拒绝，不截断 TLV。
+完整 metadata 作为受保护 payload 的前缀，可以跨多个 DATA 包。Frame Header 的单包
+副本不是权威载荷，接收端必须从 DATA/PARITY 恢复完整 metadata，不能应用截断的 TLV。
+总 metadata 上限为 65535 字节，Runtime、动态 HDR 和 HLG 名义峰值的 TLV 头均计入上限。
 
 主机处理耗时使用受保护的可选 Runtime TLV。只有 metadata 非空时才设置外层 metadata
 标记；重复帧不携带该 TLV。发布层区分分包成功与合法的失败结果，失败不入队，也不发送空帧。
@@ -111,12 +119,21 @@ Surface、尺寸和实际 Vulkan 创建预检，避免仅凭默认设备探针�
 
 ## API 与可复现构建
 
-当前 Sunshine 适配器使用 PyroWave API `0.6.1`、protocol version `2`、bitstream version `2`
+当前 Sunshine 适配器使用 PyroWave API `101.0.0`（基于上游 `1.0.0`）、protocol version `2`、bitstream version `2`
 和 payload version `3`。源版本由 `third-party/pyrowave` 的子模块 gitlink 固定，Granite、
 Volk 和 Vulkan-Headers 由其嵌套子模块固定。Sunshine 使用 `add_subdirectory()` 直接构建
 `pyrowave-c-api-static`，通过 CMake target 链接 C API、核心和必要的 Granite 静态依赖。
 不复制源码、不应用本地补丁，也不在构建脚本中维护另一份提交 SHA。源文件修改由
 CMake/Ninja 的依赖图跟踪，所有产物位于构建目录，不需要单独运行 PowerShell 脚本。
+
+`101.0.0` 是 AlkaidLab fork 的原生 API 版本，不是上游版本号，也不改变网络协议版本。
+两端精确校验该版本和必需函数入口，不将上游 1.x 运行库视为本项目运行库的替代品。
+
+编码器采用上游 `encode_cpu` / `encode_gpu` 接口，保留默认 frame context 0 的同步交付。
+按 GPU LUID 创建设备时使用普通 `MEDIUM` 队列优先级，不请求提权或实时优先级。
+客户端 GPU HDR 输出精度由 R16 平面格式决定；CPU 输出精度由 buffer format 决定，
+不再扩展 decoder create-info。HLG 的协商扩展和 `SS_HDR_METADATA` 呈现通道保持独立。
+上游 `PWV1Header` 用于文件/容器封装，不替代 common-c Frame Envelope，网络合同版本不变。
 
 common-c 协议、PyroWave 子模块和分裂着色器均由版本控制固定；构建基线不依赖本地补丁
 或手工生成的运行库副本。
@@ -133,4 +150,4 @@ common-c 协议、PyroWave 子模块和分裂着色器均由版本控制固定�
 PyroWave、Granite、Volk 和 Vulkan-Headers 的许可证通知随安装/发布流程保留。Granite
 由 PyroWave 的嵌套子模块提供，不成为 Sunshine 的独立运行时依赖；PyroWave C API、
 核心和 Granite 静态归档会在链接阶段合并进 Sunshine，不需要额外的
-`libpyrowave-shared-0.dll`。
+PyroWave 运行库 DLL。

@@ -16,7 +16,7 @@ namespace pyrowave {
     bool require_external_interop = false;
     bool require_format_conversion = false;
     bool require_timeline_sync = false;
-    api_version_t expected_api_version { 0, 6, 1 };
+    api_version_t expected_api_version { 101, 0, 0 };
     std::uint32_t max_width = 1920;
     std::uint32_t max_height = 1080;
     std::uint32_t max_framerate = 60;

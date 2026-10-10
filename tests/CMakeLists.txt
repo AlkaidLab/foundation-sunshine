@@ -112,6 +112,10 @@ target_compile_options(pyrowave_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${S
 set_target_properties(pyrowave_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     target_sources(pyrowave_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/pyrowave/dynamic_hdr.cpp
+            ${CMAKE_SOURCE_DIR}/src/video_hdr_metadata.cpp
+            ${CMAKE_SOURCE_DIR}/src/video_dolby_vision.cpp
+            ${CMAKE_SOURCE_DIR}/src/video_hdr_bitstream.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp)
     target_link_libraries(pyrowave_unit_tests Pyrowave::Runtime ${FFMPEG_LIBRARIES})
     set_target_properties(pyrowave_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
@@ -458,7 +462,7 @@ add_test(NAME ${PROJECT_NAME}
 set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/abr.cpp
+        ${CMAKE_SOURCE_DIR}/src/streaming/abr.cpp
         ${ABR_TEST_STUB_SOURCE})
 target_include_directories(abr_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(abr_unit_tests
