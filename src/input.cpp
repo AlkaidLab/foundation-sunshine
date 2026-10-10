@@ -23,6 +23,7 @@ extern "C" {
 #include "input.h"
 #include "text_context/bridge.h"
 #include "input_activity.h"
+#include "pen_barrel_roll.h"
 #include "logging.h"
 #include "platform/common.h"
 #include "display_device/session.h"
@@ -217,6 +218,9 @@ namespace input {
 
     std::vector<gamepad_t> gamepads;
     activity::tracker_t activity_tracker;
+    pen_wire::roll_probe_t pen_roll_probe;
+    bool input_stopped = false;
+    std::chrono::steady_clock::time_point next_invalid_pen_warning {};
     std::unique_ptr<platf::client_input_t> client_context;
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
@@ -614,6 +618,10 @@ namespace input {
         break;
       case SS_PEN_MAGIC:
         print((PSS_PEN_PACKET) payload);
+        break;
+      case pen_wire::magic:
+        print(&reinterpret_cast<pen_wire::packet_t *>(payload)->pen);
+        BOOST_LOG(debug) << "barrelRoll: " << pen_wire::decode_roll(reinterpret_cast<pen_wire::packet_t *>(payload)->barrelRoll);
         break;
       case SS_CONTROLLER_ARRIVAL_MAGIC:
         print((PSS_CONTROLLER_ARRIVAL_PACKET) payload);
@@ -1352,7 +1360,7 @@ namespace input {
    * @param packet The pen packet.
    */
   void
-  passthrough(std::shared_ptr<input_t> &input, PSS_PEN_PACKET packet) {
+  passthrough(std::shared_ptr<input_t> &input, PSS_PEN_PACKET packet, std::uint16_t barrel_roll = pen_wire::unknown) {
     if (!config::input.mouse) {
       return;
     }
@@ -1400,6 +1408,7 @@ namespace input {
       from_clamped_netfloat(packet->pressureOrDistance, 0.0f, 1.0f),
       contact_area.first,
       contact_area.second,
+      barrel_roll == pen_wire::unknown ? rotation : barrel_roll,
     };
 
 #ifdef SUNSHINE_TESTS
@@ -2006,6 +2015,16 @@ namespace input {
         return batch((PSS_TOUCHPAD_FRAME_PACKET) dest, (PSS_TOUCHPAD_FRAME_PACKET) src);
       case SS_PEN_MAGIC:
         return batch((PSS_PEN_PACKET) dest, (PSS_PEN_PACKET) src);
+      case pen_wire::magic: {
+        auto *dest_pen = reinterpret_cast<pen_wire::packet_t *>(dest);
+        auto *src_pen = reinterpret_cast<pen_wire::packet_t *>(src);
+        auto result = batch(&dest_pen->pen, &src_pen->pen);
+        if (result == batch_result_e::batched) {
+          dest_pen->barrelRoll = src_pen->barrelRoll;
+          dest_pen->reserved = src_pen->reserved;
+        }
+        return result;
+      }
       case SS_CONTROLLER_TOUCH_MAGIC:
         return batch((PSS_CONTROLLER_TOUCH_PACKET) dest, (PSS_CONTROLLER_TOUCH_PACKET) src);
       case SS_CONTROLLER_MOTION_MAGIC:
@@ -2120,6 +2139,11 @@ namespace input {
       case SS_PEN_MAGIC:
         passthrough(input, (PSS_PEN_PACKET) payload);
         break;
+      case pen_wire::magic: {
+        auto *packet = reinterpret_cast<pen_wire::packet_t *>(payload);
+        passthrough(input, &packet->pen, pen_wire::decode_roll(packet->barrelRoll));
+        break;
+      }
       case SS_CONTROLLER_ARRIVAL_MAGIC:
         passthrough(input, (PSS_CONTROLLER_ARRIVAL_PACKET) payload);
         break;
@@ -2148,6 +2172,41 @@ namespace input {
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      if (input->input_stopped) {
+        return;
+      }
+      if (input_data.size() >= sizeof(NV_INPUT_HEADER)) {
+        const auto *header = reinterpret_cast<const NV_INPUT_HEADER *>(input_data.data());
+        if (util::endian::little(header->magic) == pen_wire::magic &&
+            !pen_wire::valid_size(input_data.size(), header->size)) {
+          const auto now = std::chrono::steady_clock::now();
+          if (now >= input->next_invalid_pen_warning) {
+            input->next_invalid_pen_warning = now + std::chrono::seconds(5);
+            BOOST_LOG(warning) << "Dropping invalid barrel-roll pen packet [session_id=" << input->session_id
+                               << ", payload_bytes=" << input_data.size()
+                               << ", header.size=" << util::endian::big(header->size)
+                               << ", expected_payload_bytes=" << sizeof(pen_wire::packet_t)
+                               << ", expected_header.size=" << sizeof(pen_wire::packet_t) - sizeof(std::uint32_t)
+                               << "] (warnings limited to one per 5 seconds per session)";
+          }
+          return;
+        }
+      }
+      if (input_data.size() >= sizeof(SS_PEN_PACKET) &&
+          util::endian::little(reinterpret_cast<PNV_INPUT_HEADER>(input_data.data())->magic) == SS_PEN_MAGIC) {
+        input->pen_roll_probe.reset();
+      }
+      // Observe every received sample before hover batching can discard it.
+      // Keep the probe under the session queue lock and queue the resolved twist.
+      if (input_data.size() == sizeof(pen_wire::packet_t)) {
+        auto *packet = reinterpret_cast<pen_wire::packet_t *>(input_data.data());
+        if (util::endian::little(packet->pen.header.magic) == pen_wire::magic &&
+            pen_wire::valid_size(input_data.size(), packet->pen.header.size)) {
+          auto azimuth = pen_wire::decode_roll(packet->pen.rotation);
+          auto roll = input->pen_roll_probe.select(pen_wire::decode_roll(packet->barrelRoll), azimuth);
+          packet->barrelRoll = util::endian::little(roll);
+        }
+      }
       input->input_queue.push_back(std::move(input_data));
     }
     task_pool.push(passthrough_next_message, input);
@@ -2179,11 +2238,26 @@ namespace input {
 
   void
   reset(std::shared_ptr<input_t> &input) {
+    {
+      std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      input->input_stopped = true;
+      input->input_queue.clear();
+      input->pen_roll_probe.reset();
+    }
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
 
     // Ensure input is synchronous, by using the task_pool
-    task_pool.push(reset_input_state);
+    task_pool.push([input]() {
+#ifdef _WIN32
+      if (input->client_context) {
+        platf::pen_input_t cancel {};
+        cancel.eventType = LI_TOUCH_EVENT_CANCEL_ALL;
+        platf::pen_update(input->client_context.get(), {}, cancel);
+      }
+#endif
+      reset_input_state();
+    });
   }
 
   class deinit_t: public platf::deinit_t {

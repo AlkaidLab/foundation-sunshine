@@ -13,7 +13,21 @@
 #include <src/config.h>
 #include <src/cursor_channel.h>
 #include <src/input_activity.h>
+#include <src/pen_barrel_roll.h>
 #include <src/utility.h>
+
+TEST(PenBarrelRollActivity, ValidatesExtendedPacketsBeforeDispatch) {
+  input::activity::tracker_t tracker;
+  input::pen_wire::packet_t packet {};
+  packet.pen.header.magic = util::endian::little(input::pen_wire::magic);
+  packet.pen.header.size = util::endian::big(std::uint32_t {36});
+  auto result = tracker.evaluate(&packet.pen.header, sizeof(packet));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_FALSE(*result);
+  EXPECT_FALSE(tracker.evaluate(&packet.pen.header, 36).has_value());
+  packet.pen.header.size = util::endian::big(std::uint32_t {32});
+  EXPECT_FALSE(tracker.evaluate(&packet.pen.header, sizeof(packet)).has_value());
+}
 
 #ifdef INPUT_ACTIVITY_STANDALONE_TEST
 namespace config {
