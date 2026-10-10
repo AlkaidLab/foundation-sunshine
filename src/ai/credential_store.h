@@ -39,4 +39,14 @@ namespace credential_store {
   mutation_result_t
   erase_llm_api_key(const std::filesystem::path &path);
 
+  /** A separate DPAPI file for the OpenAI account refresh and access tokens. */
+  read_result_t
+  read_codex_credential(const std::filesystem::path &path);
+
+  mutation_result_t
+  write_codex_credential(const std::filesystem::path &path, const std::string &secret);
+
+  mutation_result_t
+  erase_codex_credential(const std::filesystem::path &path);
+
 }  // namespace credential_store

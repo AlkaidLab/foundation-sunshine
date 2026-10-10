@@ -20,10 +20,9 @@ namespace credential_store {
   namespace {
 #if defined(_WIN32)
     DATA_BLOB
-    entropy_blob() {
-      static constexpr char entropy[] = "Sunshine/LLM/APIKey/v1";
+    entropy_blob(const char *entropy) {
       return {
-        static_cast<DWORD>(sizeof(entropy) - 1),
+        static_cast<DWORD>(std::char_traits<char>::length(entropy)),
         reinterpret_cast<BYTE *>(const_cast<char *>(entropy))
       };
     }
@@ -83,40 +82,71 @@ namespace credential_store {
       }
       return { true, {} };
     }
+
+    read_result_t
+    read_dpapi_secret(const std::filesystem::path &path, const char *entropy_text) {
+      std::ifstream file(path, std::ios::binary | std::ios::ate);
+      if (!file.is_open()) {
+        std::error_code ec;
+        return std::filesystem::exists(path, ec)
+                 ? read_result_t { read_status_e::error, {}, "Could not open the protected credential file" }
+                 : read_result_t { read_status_e::not_found, {}, {} };
+      }
+      const auto length = file.tellg();
+      if (length <= 0 || length > 64 * 1024) {
+        return { read_status_e::error, {}, "Protected credential file has an invalid size" };
+      }
+      std::vector<BYTE> protected_data(static_cast<std::size_t>(length));
+      file.seekg(0);
+      file.read(reinterpret_cast<char *>(protected_data.data()), length);
+      if (!file.good()) {
+        return { read_status_e::error, {}, "Could not read the protected credential file" };
+      }
+
+      DATA_BLOB input { static_cast<DWORD>(protected_data.size()), protected_data.data() };
+      DATA_BLOB output {};
+      auto entropy = entropy_blob(entropy_text);
+      if (!CryptUnprotectData(&input, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)) {
+        return { read_status_e::error, {}, windows_error("Decrypting credential", GetLastError()) };
+      }
+      std::string secret(reinterpret_cast<const char *>(output.pbData), output.cbData);
+      SecureZeroMemory(output.pbData, output.cbData);
+      LocalFree(output.pbData);
+      return { read_status_e::success, std::move(secret), {} };
+    }
+
+    mutation_result_t
+    write_dpapi_secret(const std::filesystem::path &path, const std::string &secret,
+                       const char *entropy_text, const wchar_t *description, DWORD flags) {
+      DATA_BLOB input {
+        static_cast<DWORD>(secret.size()),
+        reinterpret_cast<BYTE *>(const_cast<char *>(secret.data()))
+      };
+      DATA_BLOB output {};
+      auto entropy = entropy_blob(entropy_text);
+      if (!CryptProtectData(&input, description, &entropy, nullptr, nullptr,
+                            flags | CRYPTPROTECT_UI_FORBIDDEN, &output)) {
+        return { false, windows_error("Encrypting credential", GetLastError()) };
+      }
+      auto result = write_blob_atomically(path, output.pbData, output.cbData);
+      SecureZeroMemory(output.pbData, output.cbData);
+      LocalFree(output.pbData);
+      return result;
+    }
 #endif
+    mutation_result_t
+    erase_credential_file(const std::filesystem::path &path) {
+      std::error_code ec;
+      std::filesystem::remove(path, ec);
+      if (ec) return { false, "Could not remove the protected credential file: " + ec.message() };
+      return { true, {} };
+    }
   }  // namespace
 
   read_result_t
   read_llm_api_key(const std::filesystem::path &path) {
 #if defined(_WIN32)
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-      std::error_code ec;
-      return std::filesystem::exists(path, ec)
-               ? read_result_t { read_status_e::error, {}, "Could not open the protected credential file" }
-               : read_result_t { read_status_e::not_found, {}, {} };
-    }
-    const auto length = file.tellg();
-    if (length <= 0 || length > 64 * 1024) {
-      return { read_status_e::error, {}, "Protected credential file has an invalid size" };
-    }
-    std::vector<BYTE> protected_data(static_cast<std::size_t>(length));
-    file.seekg(0);
-    file.read(reinterpret_cast<char *>(protected_data.data()), length);
-    if (!file.good()) {
-      return { read_status_e::error, {}, "Could not read the protected credential file" };
-    }
-
-    DATA_BLOB input { static_cast<DWORD>(protected_data.size()), protected_data.data() };
-    DATA_BLOB output {};
-    auto entropy = entropy_blob();
-    if (!CryptUnprotectData(&input, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)) {
-      return { read_status_e::error, {}, windows_error("Decrypting LLM credential", GetLastError()) };
-    }
-    std::string secret(reinterpret_cast<const char *>(output.pbData), output.cbData);
-    SecureZeroMemory(output.pbData, output.cbData);
-    LocalFree(output.pbData);
-    return { read_status_e::success, std::move(secret), {} };
+    return read_dpapi_secret(path, "Sunshine/LLM/APIKey/v1");
 #else
     (void) path;
     const char *value = std::getenv("SUNSHINE_LLM_API_KEY");
@@ -130,22 +160,8 @@ namespace credential_store {
     if (secret.empty()) return erase_llm_api_key(path);
     if (secret.size() > 16 * 1024) return { false, "The LLM API key is too large" };
 #if defined(_WIN32)
-    DATA_BLOB input {
-      static_cast<DWORD>(secret.size()),
-      reinterpret_cast<BYTE *>(const_cast<char *>(secret.data()))
-    };
-    DATA_BLOB output {};
-    auto entropy = entropy_blob();
-    if (!CryptProtectData(
-          &input, L"Sunshine LLM API key", &entropy, nullptr, nullptr,
-          CRYPTPROTECT_LOCAL_MACHINE | CRYPTPROTECT_UI_FORBIDDEN,
-          &output)) {
-      return { false, windows_error("Encrypting LLM credential", GetLastError()) };
-    }
-    auto result = write_blob_atomically(path, output.pbData, output.cbData);
-    SecureZeroMemory(output.pbData, output.cbData);
-    LocalFree(output.pbData);
-    return result;
+    return write_dpapi_secret(path, secret, "Sunshine/LLM/APIKey/v1",
+                              L"Sunshine LLM API key", CRYPTPROTECT_LOCAL_MACHINE);
 #else
     (void) path;
     const char *configured = std::getenv("SUNSHINE_LLM_API_KEY");
@@ -163,11 +179,7 @@ namespace credential_store {
   mutation_result_t
   erase_llm_api_key(const std::filesystem::path &path) {
 #if defined(_WIN32)
-    std::error_code ec;
-    const bool removed = std::filesystem::remove(path, ec);
-    if (ec) return { false, "Could not remove the protected credential file: " + ec.message() };
-    (void) removed;
-    return { true, {} };
+    return erase_credential_file(path);
 #else
     (void) path;
     const char *configured = std::getenv("SUNSHINE_LLM_API_KEY");
@@ -176,6 +188,35 @@ namespace credential_store {
     }
     return { true, {} };
 #endif
+  }
+
+  read_result_t
+  read_codex_credential(const std::filesystem::path &path) {
+#if defined(_WIN32)
+    return read_dpapi_secret(path, "Sunshine/AI/CodexAccount/v1");
+#else
+    (void) path;
+    return { read_status_e::error, {}, "Secure OpenAI account persistence is only supported on Windows" };
+#endif
+  }
+
+  mutation_result_t
+  write_codex_credential(const std::filesystem::path &path, const std::string &secret) {
+    if (secret.empty() || secret.size() > 32 * 1024) {
+      return { false, "OpenAI account credential has an invalid size" };
+    }
+#if defined(_WIN32)
+    return write_dpapi_secret(path, secret, "Sunshine/AI/CodexAccount/v1",
+                              L"Sunshine OpenAI account", 0);
+#else
+    (void) path;
+    return { false, "Secure OpenAI account persistence is only supported on Windows" };
+#endif
+  }
+
+  mutation_result_t
+  erase_codex_credential(const std::filesystem::path &path) {
+    return erase_credential_file(path);
   }
 
 }  // namespace credential_store
