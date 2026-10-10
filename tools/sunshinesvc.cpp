@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "sunshinesvc_log.h"
 #include "sunshinesvc_state.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
@@ -337,27 +338,6 @@ RetryWaitTimeout(ULONGLONG retry_at_ms) {
   return static_cast<DWORD>(std::min<ULONGLONG>(retry_at_ms - now, MAXDWORD - 1));
 }
 
-HANDLE
-OpenLogFileHandle() {
-  WCHAR log_file_name[MAX_PATH];
-
-  // Create sunshine.log in the Temp folder (usually %SYSTEMROOT%\Temp)
-  GetTempPathW(_countof(log_file_name), log_file_name);
-  wcscat_s(log_file_name, L"sunshine.log");
-
-  // The file handle must be inheritable for our child process to use it
-  SECURITY_ATTRIBUTES security_attributes = { sizeof(security_attributes), NULL, TRUE };
-
-  // Overwrite the old sunshine.log
-  return CreateFileW(log_file_name,
-    GENERIC_WRITE,
-    FILE_SHARE_READ,
-    &security_attributes,
-    CREATE_ALWAYS,
-    0,
-    NULL);
-}
-
 bool
 RunTerminationHelper(HANDLE console_token, DWORD pid) {
   WCHAR module_path[MAX_PATH];
@@ -390,19 +370,20 @@ RunTerminationHelper(HANDLE console_token, DWORD pid) {
     return false;
   }
 
-  // Wait for the termination helper to complete
-  WaitForSingleObject(process_info.hProcess, INFINITE);
-
-  // Check the exit status of the helper process
-  DWORD exit_code;
-  GetExitCodeProcess(process_info.hProcess, &exit_code);
+  // Bound the helper wait before the Core's 20-second graceful wait.
+  const auto wait_result = WaitForSingleObject(process_info.hProcess, 3000);
+  DWORD exit_code = ERROR_PROCESS_ABORTED;
+  const bool succeeded = wait_result == WAIT_OBJECT_0 &&
+                         GetExitCodeProcess(process_info.hProcess, &exit_code) && exit_code == 0;
+  if (wait_result != WAIT_OBJECT_0) {
+    TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED);
+  }
 
   // Cleanup handles
   CloseHandle(process_info.hProcess);
   CloseHandle(process_info.hThread);
 
-  // If the helper process returned 0, it succeeded
-  return exit_code == 0;
+  return succeeded;
 }
 
 VOID WINAPI
@@ -444,7 +425,14 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     return;
   }
 
-  auto log_file_handle = OpenLogFileHandle();
+  auto log_file_handle = sunshinesvc::open_primary_log_handle();
+  if (log_file_handle == INVALID_HANDLE_VALUE) {
+    // A lingering Sunshine.exe holds the inherited log handle open, which can
+    // fail the open above with ERROR_SHARING_VIOLATION. The service must
+    // never refuse to start over a log file: degrade to a fallback sink so
+    // the core can still be launched and recovered.
+    log_file_handle = sunshinesvc::open_fallback_log_handle();
+  }
   if (log_file_handle == INVALID_HANDLE_VALUE) {
     // Tell SCM we failed to start
     service_status.dwWin32ExitCode = GetLastError();
@@ -713,6 +701,13 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
               WaitForSingleObject(process_info.hProcess, 20000) != WAIT_OBJECT_0) {
             // If it won't terminate gracefully, kill it now
             TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED);
+            // Termination may still wait for pending I/O. Record an incomplete
+            // exit without assuming the cause of the stalled process.
+            if (WaitForSingleObject(process_info.hProcess, 5000) != WAIT_OBJECT_0) {
+              WriteServiceLog(log_file_handle,
+                "Core PID " + std::to_string(process_info.dwProcessId) +
+                  " did not exit within 5 seconds after force termination; ports and files may remain held");
+            }
           }
           still_running = false;
           break;
