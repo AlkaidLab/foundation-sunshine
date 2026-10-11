@@ -52,21 +52,54 @@ TEST(VideoFec, InvalidDuplicateAndOldFeedbackCannotChangeSelection) {
   EXPECT_EQ(control.percentage(200, 2, 2000), 0);
 }
 
-TEST(VideoFec, SustainedCleanFeedbackReleasesProtectionAndRearmsAfterLoss) {
+TEST(VideoFecWindow, WeightsPacketsWithinBucketsAndKeepsObservationsSeparate) {
+  video_fec::loss_window_t window;
+  EXPECT_FALSE(window.estimate(0));
+  window.record(10, 1, 1000);
+  window.record(990, 0, 1500);
+  window.record(99000, 0, 2000);
+  const auto estimate = window.estimate(2000);
+  ASSERT_TRUE(estimate);
+  EXPECT_EQ(estimate->data_packets, 100000);
+  EXPECT_EQ(estimate->missing_packets, 1);
+  EXPECT_DOUBLE_EQ(estimate->peak_rate, 0.001);
+}
+
+TEST(VideoFecWindow, ExpiresHistoryAndDistinguishesCleanFromMissingFeedback) {
+  video_fec::loss_window_t window;
+  window.record(1000, 20, 0);
+  window.record(1000, 0, 9000);
+  ASSERT_TRUE(window.estimate(9999));
+  EXPECT_DOUBLE_EQ(window.estimate(9999)->peak_rate, 0.02);
+  const auto clean = window.estimate(10000);
+  ASSERT_TRUE(clean);
+  EXPECT_EQ(clean->data_packets, 1000);
+  EXPECT_EQ(clean->missing_packets, 0);
+  EXPECT_FALSE(window.estimate(19000));
+  // Reusing a bucket replaces the old counts; large aggregates stay 64-bit.
+  for (unsigned i = 0; i < 5000; ++i) window.record(1000000, 1, 20000);
+  const auto reused = window.estimate(20000);
+  ASSERT_TRUE(reused);
+  EXPECT_EQ(reused->data_packets, 5000000000ULL);
+  EXPECT_EQ(reused->missing_packets, 5000);
+  EXPECT_DOUBLE_EQ(reused->peak_rate, 0.000001);
+}
+
+TEST(VideoFec, FiniteCleanWindowReleasesProtectionAndRearmsAfterLoss) {
   video_fec::controller_t control;
   control.initialize(20, true, 50);
   ASSERT_TRUE(control.report(1, 10000, 300, 0));
-  for (unsigned second = 1; second <= 5; ++second) {
+  for (unsigned second = 1; second <= 9; ++second) {
     ASSERT_TRUE(control.report(second + 1, 10000, 0, second * 1000));
     EXPECT_GT(control.percentage(100, 2, second * 1000), 0);
   }
-  ASSERT_TRUE(control.report(7, 10000, 0, 6000));
-  EXPECT_EQ(control.percentage(100, 2, 6000), 0);
-  const auto frame = video_fec::plan(100, control.percentage(100, 2, 6000), 2);
+  ASSERT_TRUE(control.report(11, 10000, 0, 10000));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 0);
+  const auto frame = video_fec::plan(100, control.percentage(100, 2, 10000), 2);
   ASSERT_TRUE(frame);
   EXPECT_EQ(frame->blocks[0].parity, 0);
-  ASSERT_TRUE(control.report(8, 10000, 300, 7000));
-  EXPECT_GT(control.percentage(100, 2, 7000), 0);
+  ASSERT_TRUE(control.report(12, 10000, 300, 11000));
+  EXPECT_GT(control.percentage(100, 2, 11000), 0);
 }
 
 TEST(VideoFec, LossAndInvalidFeedbackCannotCompleteCleanRecovery) {
@@ -79,15 +112,15 @@ TEST(VideoFec, LossAndInvalidFeedbackCannotCompleteCleanRecovery) {
   EXPECT_FALSE(control.report(4, 10000, 0, 6000));
   EXPECT_FALSE(control.report(3, 10000, 0, 6000));
   EXPECT_FALSE(control.report(5, 0, 0, 6000));
-  ASSERT_TRUE(control.report(5, 10000, 0, 6000));
-  ASSERT_TRUE(control.report(6, 10000, 0, 8000));
-  ASSERT_TRUE(control.report(7, 10000, 0, 10000));
-  EXPECT_GT(control.percentage(100, 2, 10000), 0);
-  ASSERT_TRUE(control.report(8, 10000, 0, 11000));
-  EXPECT_EQ(control.percentage(100, 2, 11000), 0);
-  EXPECT_EQ(control.percentage(100, 2, 14001), 20);
+  for (unsigned second = 6; second <= 14; ++second) {
+    ASSERT_TRUE(control.report(second - 1, 10000, 0, second * 1000));
+    EXPECT_GT(control.percentage(100, 2, second * 1000), 0);
+  }
+  ASSERT_TRUE(control.report(14, 10000, 0, 15000));
+  EXPECT_EQ(control.percentage(100, 2, 15000), 0);
+  EXPECT_EQ(control.percentage(100, 2, 18001), 20);
   control.initialize(20, false, 50);
-  EXPECT_EQ(control.percentage(100, 2, 11000), 20);
+  EXPECT_EQ(control.percentage(100, 2, 15000), 20);
 }
 
 TEST(VideoFec, FeedbackTimeoutRestartsCleanRecoveryWithoutReleasingProtection) {
@@ -97,16 +130,39 @@ TEST(VideoFec, FeedbackTimeoutRestartsCleanRecoveryWithoutReleasingProtection) {
   ASSERT_TRUE(control.report(2, 10000, 0, 1000));
   EXPECT_EQ(control.percentage(100, 2, 4001), 20);
   ASSERT_TRUE(control.report(3, 10000, 0, 4001));
-  EXPECT_GT(control.percentage(100, 2, 4001), 0);
+  EXPECT_EQ(control.percentage(100, 2, 4001), 20);
   ASSERT_TRUE(control.report(4, 10000, 0, 6001));
-  EXPECT_GT(control.percentage(100, 2, 6001), 0);
+  EXPECT_EQ(control.percentage(100, 2, 6001), 20);
   ASSERT_TRUE(control.report(5, 10000, 0, 8001));
-  EXPECT_GT(control.percentage(100, 2, 8001), 0);
-  ASSERT_TRUE(control.report(6, 10000, 0, 9001));
-  EXPECT_EQ(control.percentage(100, 2, 9001), 0);
+  EXPECT_EQ(control.percentage(100, 2, 8001), 20);
+  ASSERT_TRUE(control.report(6, 10000, 0, 10000));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 20);
+  ASSERT_TRUE(control.report(7, 10000, 0, 12000));
+  ASSERT_TRUE(control.report(8, 10000, 0, 14000));
+  EXPECT_EQ(control.percentage(100, 2, 14000), 20);
+  ASSERT_TRUE(control.report(9, 10000, 0, 14001));
+  EXPECT_EQ(control.percentage(100, 2, 14001), 0);
   control.initialize(20, true, 50);
-  ASSERT_TRUE(control.report(1, 10000, 0, 10000));
-  EXPECT_EQ(control.percentage(100, 2, 10000), 0);
+  ASSERT_TRUE(control.report(1, 10000, 0, 15000));
+  EXPECT_EQ(control.percentage(100, 2, 15000), 0);
+}
+
+TEST(VideoFec, MissingSummaryRestartsObservationAndFixedZeroStillWins) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  ASSERT_TRUE(control.report(1, 1000, 0, 0));
+  EXPECT_EQ(control.percentage(100, 2, 0), 0);
+  ASSERT_TRUE(control.report(3, 1000, 0, 1000));  // Report 2 was not received.
+  EXPECT_EQ(control.percentage(100, 2, 1000), 20);
+  ASSERT_TRUE(control.set_mode(video_fec::mode_e::fixed, 0));
+  EXPECT_EQ(control.percentage(100, 2, 1000), 0);
+  ASSERT_TRUE(control.set_mode(video_fec::mode_e::automatic, 0));
+  for (unsigned second = 2; second <= 10; ++second) {
+    ASSERT_TRUE(control.report(second + 2, 1000, 0, second * 1000));
+    EXPECT_EQ(control.percentage(100, 2, second * 1000), 20);
+  }
+  ASSERT_TRUE(control.report(13, 1000, 0, 11000));
+  EXPECT_EQ(control.percentage(100, 2, 11000), 0);
 }
 
 TEST(VideoFec, MinimumParityAndWirePercentageAgree) {

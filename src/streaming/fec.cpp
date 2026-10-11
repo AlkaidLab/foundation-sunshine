@@ -13,9 +13,36 @@ namespace video_fec {
     constexpr std::uint32_t max_feedback_data_packets = 1000000;
     constexpr std::uint32_t sequence_half_range = 0x80000000U;
     constexpr std::int64_t feedback_timeout_ms = 3000;
-    constexpr std::int64_t healthy_feedback_ms = 5000;
-    constexpr double loss_sample_weight = 0.25;
     constexpr double frame_failure_target = 0.001;
+
+    unsigned
+    select_percentage(const loss_estimate_t &estimate, std::size_t data, unsigned minimum_parity, unsigned maximum) {
+      // A recent peak raises protection promptly; finite history lets it fall.
+      // This conservative statistic is not a confidence bound.
+      const double loss = estimate.peak_rate;
+      if (loss == 0) return 0;
+      unsigned best = 0;
+      for (unsigned ratio = 1; ratio <= maximum; ++ratio) {
+        const auto frame = plan(data, ratio, minimum_parity);
+        if (!frame || frame->skipped) continue;
+        best = ratio;
+        bool sufficient = true;
+        for (std::size_t i = 0; i < frame->count; ++i) {
+          const auto &block = frame->blocks[i];
+          const boost::math::binomial_distribution<double> distribution(block.data + block.parity, loss);
+          // Independent-loss model and union bound, not a measured guarantee.
+          const auto failure = boost::math::cdf(boost::math::complement(distribution, block.parity));
+          if (failure > frame_failure_target / frame->count) {
+            sufficient = false;
+            break;
+          }
+        }
+        if (sufficient) return ratio;
+      }
+      // A cap is not a guarantee. Keep representable protection rather than
+      // selecting a ratio that disables FEC for this frame.
+      return best;
+    }
   }  // namespace
 
   std::optional<int>
@@ -79,6 +106,32 @@ namespace video_fec {
   }
 
   void
+  loss_window_t::record(std::uint32_t data, std::uint32_t missing, std::int64_t now) {
+    const auto second = now / 1000;
+    auto &bucket = buckets_[static_cast<std::size_t>(second) % buckets_.size()];
+    if (bucket.second != second) bucket = { second, 0, 0 };
+    bucket.data += data;
+    bucket.missing += missing;
+  }
+
+  std::optional<loss_estimate_t>
+  loss_window_t::estimate(std::int64_t now) const {
+    if (now < 0) return {};
+    const auto second = now / 1000;
+    loss_estimate_t result;
+    for (const auto &bucket : buckets_) {
+      if (bucket.second >= 0 && bucket.second <= second &&
+          second - bucket.second < static_cast<std::int64_t>(buckets_.size())) {
+        result.data_packets += bucket.data;
+        result.missing_packets += bucket.missing;
+        if (bucket.data) result.peak_rate = std::max(result.peak_rate, static_cast<double>(bucket.missing) / bucket.data);
+      }
+    }
+    if (!result.data_packets) return {};
+    return result;
+  }
+
+  void
   controller_t::initialize(unsigned host_percentage, bool host_automatic, unsigned maximum) {
     std::lock_guard lock(mutex_);
     host_percentage_ = std::min(host_percentage, max_wire_percentage);
@@ -88,7 +141,8 @@ namespace video_fec {
     mode_ = mode_e::host;
     has_report_ = false;
     last_report_ms_ = -1;
-    clean_since_ms_ = -1;
+    resume_since_ms_ = -1;
+    loss_window_ = {};
   }
 
   bool
@@ -111,27 +165,11 @@ namespace video_fec {
     if (has_report_ && (now < last_report_ms_ || delta == 0 || delta >= sequence_half_range)) {
       return false;
     }
-    const double sample = static_cast<double>(missing) / data;
-    const bool fresh = has_report_ && now - last_report_ms_ <= feedback_timeout_ms;
-    // Periodic aggregate samples include clean blocks. There is no burst detector.
-    if (!fresh) {
-      // A clean report after a gap restarts recovery; it must not erase
-      // known loss before the new healthy feedback interval completes.
-      if (!has_report_ || missing) loss_ = sample;
-      clean_since_ms_ = -1;
+    if (has_report_ && (delta != 1 || now - last_report_ms_ > feedback_timeout_ms)) {
+      resume_since_ms_ = now;
+      loss_window_ = {};  // Do not combine observations across an unknown gap.
     }
-    else {
-      loss_ = (1 - loss_sample_weight) * loss_ + loss_sample_weight * sample;
-    }
-    if (missing) {
-      clean_since_ms_ = -1;
-    }
-    else {
-      if (clean_since_ms_ < 0) clean_since_ms_ = now;
-      // EWMA decay alone never reaches zero after loss. Require sustained,
-      // fresh clean feedback before releasing protection and its bitrate reserve.
-      if (now - clean_since_ms_ >= healthy_feedback_ms) loss_ = 0;
-    }
+    loss_window_.record(data, missing, now);
     last_sequence_ = sequence;
     last_report_ms_ = now;
     has_report_ = true;
@@ -141,7 +179,7 @@ namespace video_fec {
   unsigned
   controller_t::percentage(std::size_t data, unsigned minimum_parity, std::int64_t now) const {
     unsigned fallback, maximum;
-    double loss;
+    loss_estimate_t loss;
     {
       std::lock_guard lock(mutex_);
       if (mode_ == mode_e::fixed) return fixed_percentage_;
@@ -153,29 +191,15 @@ namespace video_fec {
         return fallback;
       }
       maximum = maximum_;
-      loss = loss_;
-    }
-    if (loss == 0) return 0;
-    unsigned best = 0;
-    for (unsigned ratio = 1; ratio <= maximum; ++ratio) {
-      const auto frame = plan(data, ratio, minimum_parity);
-      if (!frame || frame->skipped) continue;
-      best = ratio;
-      bool sufficient = true;
-      for (std::size_t i = 0; i < frame->count; ++i) {
-        const auto &block = frame->blocks[i];
-        const boost::math::binomial_distribution<double> distribution(block.data + block.parity, loss);
-        // Union bound: modeled probability of any unrecoverable block <= 0.1%.
-        const auto failure = boost::math::cdf(boost::math::complement(distribution, block.parity));
-        if (failure > frame_failure_target / frame->count) {
-          sufficient = false;
-          break;
-        }
+      const auto estimate = loss_window_.estimate(now);
+      // A missing report or feedback timeout is unknown, not clean. Before releasing protection,
+      // require a new observation period after resumption. Startup is distinct.
+      if (!estimate || (estimate->missing_packets == 0 && resume_since_ms_ >= 0 &&
+                         now - resume_since_ms_ < loss_window_t::duration_ms)) {
+        return fallback;
       }
-      if (sufficient) return ratio;
+      loss = *estimate;
     }
-    // A cap is not a guarantee. Keep the highest representable protection,
-    // rather than selecting a ratio that disables FEC for this frame.
-    return best;
+    return select_percentage(loss, data, minimum_parity, maximum);
   }
 }  // namespace video_fec
