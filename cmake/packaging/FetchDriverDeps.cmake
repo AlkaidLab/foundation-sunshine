@@ -192,13 +192,20 @@ function(_download_github_release_metadata repository version output_path)
 
   set(_url "https://api.github.com/repos/${repository}/releases/tags/${version}")
   set(_temporary_path "${output_path}.download")
+  set(_headers
+    "Accept: application/vnd.github+json"
+    "X-GitHub-Api-Version: 2022-11-28"
+    "User-Agent: Sunshine-Foundation-CMake")
+  # CI already scopes this token to trusted events. Authenticate metadata
+  # requests to avoid the shared runner IP's anonymous API rate limit.
+  if(DEFINED ENV{GITHUB_TOKEN} AND NOT "$ENV{GITHUB_TOKEN}" STREQUAL "")
+    list(APPEND _headers "Authorization: Bearer $ENV{GITHUB_TOKEN}")
+  endif()
   _driver_download_with_retries(
     "${_url}"
     "${_temporary_path}"
     ""
-    "Accept: application/vnd.github+json"
-    "X-GitHub-Api-Version: 2022-11-28"
-    "User-Agent: Sunshine-Foundation-CMake")
+    ${_headers})
 
   if(EXISTS "${_temporary_path}")
     file(RENAME "${_temporary_path}" "${output_path}")
