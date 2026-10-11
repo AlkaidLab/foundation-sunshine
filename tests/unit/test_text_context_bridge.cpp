@@ -30,6 +30,40 @@ namespace {
   }
 }
 
+TEST(TextContextBridge, AgentPresenceDoesNotRequireObserverCapability) {
+  auto &bridge = text_context::bridge_t::instance();
+
+  bridge.notify_gui_alive(false, false, true);
+  EXPECT_TRUE(bridge.gui_alive());
+  EXPECT_FALSE(bridge.input_pane_available());
+  EXPECT_FALSE(bridge.uia_available());
+
+  bridge.notify_gui_alive(false, false, false);
+  EXPECT_FALSE(bridge.gui_alive());
+}
+
+TEST(TextContextBridge, RejectsStaleObserverGeneration) {
+  constexpr text_context::session_id sid = 0x5445585447454e31ULL;
+  auto &bridge = text_context::bridge_t::instance();
+  bridge.notify_gui_alive(false, true, true, true, 2, "agent-a");
+  bridge.session_started(sid);
+  bridge.record_mouse_button(sid, false, 200, 180, 0, 0, 1920, 1080);
+  bridge.record_mouse_button(sid, true, 200, 180, 0, 0, 1920, 1080);
+
+  text_context::observation_t stale;
+  stale.agent_id = "agent-a";
+  stale.generation = 1;
+  stale.source = text_context::source_e::uia;
+  stale.active = true;
+  stale.editable = true;
+  stale.element_rect = text_context::screen_rect_t {100, 100, 300, 250};
+  EXPECT_FALSE(bridge.observe(stale));
+
+  stale.generation = 2;
+  EXPECT_TRUE(bridge.observe(stale));
+  bridge.session_stopped(sid);
+}
+
 TEST(TextContextBridge, UiaRequiresEditableHitAndEncodesCaptureCoordinates) {
   constexpr text_context::session_id sid = 0x54455854554941ULL;
   auto &bridge = text_context::bridge_t::instance();
