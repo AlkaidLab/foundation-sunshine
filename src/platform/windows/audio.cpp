@@ -937,6 +937,26 @@ namespace platf::audio {
       return std::nullopt;
     }
 
+    /**
+     * @brief Get the bit depth of the default audio device.
+     * @return Valid bits per sample, `std::nullopt` if the device format can't be read.
+     */
+    std::optional<int>
+    default_device_bits_per_sample() {
+      auto current_default_dev = default_device(device_enum);
+      if (current_default_dev) {
+        audio::prop_t prop;
+        prop_var_t current_device_format;
+
+        if (SUCCEEDED(current_default_dev->OpenPropertyStore(STGM_READ, &prop)) && SUCCEEDED(prop->GetValue(PKEY_AudioEngine_DeviceFormat, &current_device_format.prop))) {
+          auto *format = (WAVEFORMATEXTENSIBLE *) current_device_format.prop.blob.pBlobData;
+          return format->Samples.wValidBitsPerSample;
+        }
+      }
+
+      return std::nullopt;
+    }
+
     bool
     is_sink_format_supported(const std::string &sink) override {
       auto virtual_sink_info = extract_virtual_sink_info(sink);
@@ -951,8 +971,13 @@ namespace platf::audio {
         return true;
       }
 
-      // Only a device that rejects every waveformat of the layout counts as unsupported
+      // Only the waveformats set_format() would try, a device that rejects all of them counts as unsupported
+      auto wanted_bits_per_sample = default_device_bits_per_sample().value_or(32);
       for (const auto &waveformat : virtual_sink_info->second.get().virtual_sink_waveformats) {
+        if (wanted_bits_per_sample != waveformat.Samples.wValidBitsPerSample) {
+          continue;
+        }
+
         if (audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, (const WAVEFORMATEX *) &waveformat, nullptr) != AUDCLNT_E_UNSUPPORTED_FORMAT) {
           return true;
         }
@@ -1187,16 +1212,9 @@ namespace platf::audio {
       // default audio device. Switching from a 16-bit device to a 24-bit one has been known to
       // cause glitches for some users.
       int wanted_bits_per_sample = 32;
-      auto current_default_dev = default_device(device_enum);
-      if (current_default_dev) {
-        audio::prop_t prop;
-        prop_var_t current_device_format;
-
-        if (SUCCEEDED(current_default_dev->OpenPropertyStore(STGM_READ, &prop)) && SUCCEEDED(prop->GetValue(PKEY_AudioEngine_DeviceFormat, &current_device_format.prop))) {
-          auto *format = (WAVEFORMATEXTENSIBLE *) current_device_format.prop.blob.pBlobData;
-          wanted_bits_per_sample = format->Samples.wValidBitsPerSample;
-          BOOST_LOG(info) << "Virtual audio device will use "sv << wanted_bits_per_sample << "-bit to match default device"sv;
-        }
+      if (auto bits = default_device_bits_per_sample()) {
+        wanted_bits_per_sample = *bits;
+        BOOST_LOG(info) << "Virtual audio device will use "sv << wanted_bits_per_sample << "-bit to match default device"sv;
       }
 
       auto &device_id = virtual_sink_info->first;
