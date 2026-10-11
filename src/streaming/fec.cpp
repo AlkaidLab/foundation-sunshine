@@ -16,10 +16,7 @@ namespace video_fec {
     constexpr double frame_failure_target = 0.001;
 
     unsigned
-    select_percentage(const loss_estimate_t &estimate, std::size_t data, unsigned minimum_parity, unsigned maximum) {
-      // A recent peak raises protection promptly; finite history lets it fall.
-      // This conservative statistic is not a confidence bound.
-      const double loss = estimate.peak_rate;
+    select_percentage(double loss, std::size_t data, unsigned minimum_parity, unsigned maximum) {
       if (loss == 0) return 0;
       unsigned best = 0;
       for (unsigned ratio = 1; ratio <= maximum; ++ratio) {
@@ -114,20 +111,17 @@ namespace video_fec {
     bucket.missing += missing;
   }
 
-  std::optional<loss_estimate_t>
+  std::optional<double>
   loss_window_t::estimate(std::int64_t now) const {
     if (now < 0) return {};
     const auto second = now / 1000;
-    loss_estimate_t result;
+    std::optional<double> result;
     for (const auto &bucket : buckets_) {
-      if (bucket.second >= 0 && bucket.second <= second &&
+      if (bucket.data && bucket.second >= 0 && bucket.second <= second &&
           second - bucket.second < static_cast<std::int64_t>(buckets_.size())) {
-        result.data_packets += bucket.data;
-        result.missing_packets += bucket.missing;
-        if (bucket.data) result.peak_rate = std::max(result.peak_rate, static_cast<double>(bucket.missing) / bucket.data);
+        result = std::max(result.value_or(0), static_cast<double>(bucket.missing) / bucket.data);
       }
     }
-    if (!result.data_packets) return {};
     return result;
   }
 
@@ -139,7 +133,6 @@ namespace video_fec {
     maximum_ = std::min(maximum, max_client_percentage);
     host_automatic_ = host_automatic;
     mode_ = mode_e::host;
-    has_report_ = false;
     last_report_ms_ = -1;
     resume_since_ms_ = -1;
     loss_window_ = {};
@@ -162,30 +155,29 @@ namespace video_fec {
     if (!data || data > max_feedback_data_packets || missing > data || now < 0) return false;
     std::lock_guard lock(mutex_);
     const auto delta = sequence - last_sequence_;
-    if (has_report_ && (now < last_report_ms_ || delta == 0 || delta >= sequence_half_range)) {
+    if (last_report_ms_ >= 0 && (now < last_report_ms_ || delta == 0 || delta >= sequence_half_range)) {
       return false;
     }
-    if (has_report_ && (delta != 1 || now - last_report_ms_ > feedback_timeout_ms)) {
+    if (last_report_ms_ >= 0 && (delta != 1 || now - last_report_ms_ > feedback_timeout_ms)) {
       resume_since_ms_ = now;
       loss_window_ = {};  // Do not combine observations across an unknown gap.
     }
     loss_window_.record(data, missing, now);
     last_sequence_ = sequence;
     last_report_ms_ = now;
-    has_report_ = true;
     return true;
   }
 
   unsigned
   controller_t::percentage(std::size_t data, unsigned minimum_parity, std::int64_t now) const {
     unsigned fallback, maximum;
-    loss_estimate_t loss;
+    double loss;
     {
       std::lock_guard lock(mutex_);
       if (mode_ == mode_e::fixed) return fixed_percentage_;
       fallback = host_percentage_;
       const bool automatic = mode_ == mode_e::automatic || host_automatic_;
-      const bool fresh_report = has_report_ && now >= last_report_ms_ &&
+      const bool fresh_report = last_report_ms_ >= 0 && now >= last_report_ms_ &&
                                 now - last_report_ms_ <= feedback_timeout_ms;
       if (!automatic || !fresh_report) {
         return fallback;
@@ -194,8 +186,8 @@ namespace video_fec {
       const auto estimate = loss_window_.estimate(now);
       // A missing report or feedback timeout is unknown, not clean. Before releasing protection,
       // require a new observation period after resumption. Startup is distinct.
-      if (!estimate || (estimate->missing_packets == 0 && resume_since_ms_ >= 0 &&
-                         now - resume_since_ms_ < loss_window_t::duration_ms)) {
+      if (!estimate || (*estimate == 0 && resume_since_ms_ >= 0 &&
+                        now - resume_since_ms_ < loss_window_t::duration_ms)) {
         return fallback;
       }
       loss = *estimate;

@@ -60,9 +60,7 @@ TEST(VideoFecWindow, WeightsPacketsWithinBucketsAndKeepsObservationsSeparate) {
   window.record(99000, 0, 2000);
   const auto estimate = window.estimate(2000);
   ASSERT_TRUE(estimate);
-  EXPECT_EQ(estimate->data_packets, 100000);
-  EXPECT_EQ(estimate->missing_packets, 1);
-  EXPECT_DOUBLE_EQ(estimate->peak_rate, 0.001);
+  EXPECT_DOUBLE_EQ(*estimate, 0.001);
 }
 
 TEST(VideoFecWindow, ExpiresHistoryAndDistinguishesCleanFromMissingFeedback) {
@@ -70,19 +68,16 @@ TEST(VideoFecWindow, ExpiresHistoryAndDistinguishesCleanFromMissingFeedback) {
   window.record(1000, 20, 0);
   window.record(1000, 0, 9000);
   ASSERT_TRUE(window.estimate(9999));
-  EXPECT_DOUBLE_EQ(window.estimate(9999)->peak_rate, 0.02);
+  EXPECT_DOUBLE_EQ(*window.estimate(9999), 0.02);
   const auto clean = window.estimate(10000);
   ASSERT_TRUE(clean);
-  EXPECT_EQ(clean->data_packets, 1000);
-  EXPECT_EQ(clean->missing_packets, 0);
+  EXPECT_DOUBLE_EQ(*clean, 0);
   EXPECT_FALSE(window.estimate(19000));
   // Reusing a bucket replaces the old counts; large aggregates stay 64-bit.
   for (unsigned i = 0; i < 5000; ++i) window.record(1000000, 1, 20000);
   const auto reused = window.estimate(20000);
   ASSERT_TRUE(reused);
-  EXPECT_EQ(reused->data_packets, 5000000000ULL);
-  EXPECT_EQ(reused->missing_packets, 5000);
-  EXPECT_DOUBLE_EQ(reused->peak_rate, 0.000001);
+  EXPECT_DOUBLE_EQ(*reused, 0.000001);
 }
 
 TEST(VideoFec, FiniteCleanWindowReleasesProtectionAndRearmsAfterLoss) {
@@ -131,15 +126,11 @@ TEST(VideoFec, FeedbackTimeoutRestartsCleanRecoveryWithoutReleasingProtection) {
   EXPECT_EQ(control.percentage(100, 2, 4001), 20);
   ASSERT_TRUE(control.report(3, 10000, 0, 4001));
   EXPECT_EQ(control.percentage(100, 2, 4001), 20);
-  ASSERT_TRUE(control.report(4, 10000, 0, 6001));
-  EXPECT_EQ(control.percentage(100, 2, 6001), 20);
-  ASSERT_TRUE(control.report(5, 10000, 0, 8001));
-  EXPECT_EQ(control.percentage(100, 2, 8001), 20);
-  ASSERT_TRUE(control.report(6, 10000, 0, 10000));
-  EXPECT_EQ(control.percentage(100, 2, 10000), 20);
-  ASSERT_TRUE(control.report(7, 10000, 0, 12000));
-  ASSERT_TRUE(control.report(8, 10000, 0, 14000));
-  EXPECT_EQ(control.percentage(100, 2, 14000), 20);
+  unsigned sequence = 4;
+  for (const auto now : { 6001, 8001, 10000, 12000, 14000 }) {
+    ASSERT_TRUE(control.report(sequence++, 10000, 0, now));
+    EXPECT_EQ(control.percentage(100, 2, now), 20);
+  }
   ASSERT_TRUE(control.report(9, 10000, 0, 14001));
   EXPECT_EQ(control.percentage(100, 2, 14001), 0);
   control.initialize(20, true, 50);
@@ -217,7 +208,9 @@ TEST(VideoFecBudget, RepairRatioAndEncodingBudgetUseTheSameDenominator) {
     for (int total : { 1, 10000, 800000, std::numeric_limits<int>::max() }) {
       const auto encoder = streaming::encoder_bitrate(total, ratio);
       EXPECT_GT(encoder, 0);
-      if (total >= 4) EXPECT_LE(static_cast<std::int64_t>(encoder) * (100 + ratio), static_cast<std::int64_t>(total) * 100);
+      if (total >= 4) {
+        EXPECT_LE(static_cast<std::int64_t>(encoder) * (100 + ratio), static_cast<std::int64_t>(total) * 100);
+      }
       EXPECT_GE(streaming::total_bitrate(encoder, ratio), encoder);
     }
   }
