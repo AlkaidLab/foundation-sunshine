@@ -115,7 +115,9 @@ namespace video_fec {
     const bool fresh = has_report_ && now - last_report_ms_ <= feedback_timeout_ms;
     // Periodic aggregate samples include clean blocks. There is no burst detector.
     if (!fresh) {
-      loss_ = sample;
+      // A clean report after a gap restarts recovery; it must not erase
+      // known loss before the new healthy feedback interval completes.
+      if (!has_report_ || missing) loss_ = sample;
       clean_since_ms_ = -1;
     }
     else {

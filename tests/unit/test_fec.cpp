@@ -90,6 +90,25 @@ TEST(VideoFec, LossAndInvalidFeedbackCannotCompleteCleanRecovery) {
   EXPECT_EQ(control.percentage(100, 2, 11000), 20);
 }
 
+TEST(VideoFec, FeedbackTimeoutRestartsCleanRecoveryWithoutReleasingProtection) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  ASSERT_TRUE(control.report(1, 10000, 300, 0));
+  ASSERT_TRUE(control.report(2, 10000, 0, 1000));
+  EXPECT_EQ(control.percentage(100, 2, 4001), 20);
+  ASSERT_TRUE(control.report(3, 10000, 0, 4001));
+  EXPECT_GT(control.percentage(100, 2, 4001), 0);
+  ASSERT_TRUE(control.report(4, 10000, 0, 6001));
+  EXPECT_GT(control.percentage(100, 2, 6001), 0);
+  ASSERT_TRUE(control.report(5, 10000, 0, 8001));
+  EXPECT_GT(control.percentage(100, 2, 8001), 0);
+  ASSERT_TRUE(control.report(6, 10000, 0, 9001));
+  EXPECT_EQ(control.percentage(100, 2, 9001), 0);
+  control.initialize(20, true, 50);
+  ASSERT_TRUE(control.report(1, 10000, 0, 10000));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 0);
+}
+
 TEST(VideoFec, MinimumParityAndWirePercentageAgree) {
   for (unsigned data = 1; data <= 255; ++data) {
     for (unsigned ratio : { 1U, 20U, 50U, 100U }) {
