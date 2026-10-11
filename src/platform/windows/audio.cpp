@@ -924,16 +924,41 @@ namespace platf::audio {
       if (current.find(prefix) == 0) {
         current = current.substr(prefix.size(), current.size() - prefix.size());
 
-        for (const auto &format : formats) {
-          auto &name = format.name;
+        // Reverse order, "Surround 7.1.4" has to be tried before its prefix "Surround 7.1"
+        for (auto format = formats.rbegin(); format != formats.rend(); ++format) {
+          auto &name = format->name;
           if (current.find(name) == 0) {
             auto device_id = from_utf8(current.substr(name.size(), current.size() - name.size()));
-            return std::make_pair(device_id, std::reference_wrapper(format));
+            return std::make_pair(device_id, std::reference_wrapper(*format));
           }
         }
       }
 
       return std::nullopt;
+    }
+
+    bool
+    is_sink_format_supported(const std::string &sink) override {
+      auto virtual_sink_info = extract_virtual_sink_info(sink);
+      if (!virtual_sink_info) {
+        return true;
+      }
+
+      device_t device;
+      audio_client_t audio_client;
+      if (FAILED(device_enum->GetDevice(virtual_sink_info->first.c_str(), &device)) ||
+          FAILED(device->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr, (void **) &audio_client))) {
+        return true;
+      }
+
+      // Only a device that rejects every waveformat of the layout counts as unsupported
+      for (const auto &waveformat : virtual_sink_info->second.get().virtual_sink_waveformats) {
+        if (audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, (const WAVEFORMATEX *) &waveformat, nullptr) != AUDCLNT_E_UNSUPPORTED_FORMAT) {
+          return true;
+        }
+      }
+
+      return false;
     }
 
     std::optional<std::wstring>
