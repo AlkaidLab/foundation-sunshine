@@ -100,7 +100,6 @@ namespace platf::pyrowave_windows {
           width_ { config.width },
           height_ { config.height },
           perf_session_id_ { config.perf_session_id },
-          probe_enabled_ { ::config::sunshine.pyrowave_probe },
           frame_rate_num_ { frame_rate_num },
           frame_rate_den_ { frame_rate_den },
           bitrate_kbps_ {
@@ -400,7 +399,6 @@ namespace platf::pyrowave_windows {
         if (encode_result != PYROWAVE_SUCCESS) {
           return encode_failure(frame_number, "pyrowave-gpu-encode", static_cast<int>(encode_result));
         }
-        const auto gpu_wait_started = probe_enabled_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
         const auto wait_result = pyrowave_sync_object_cpu_wait(sync_.get(), release_value, 1000000000ull);
         if (wait_result != PYROWAVE_SUCCESS) {
           return encode_failure(frame_number, "pyrowave-fence-wait", static_cast<int>(wait_result));
@@ -409,7 +407,6 @@ namespace platf::pyrowave_windows {
           return encode_failure(frame_number, "vulkan-to-d3d11-fence-probe");
         }
         sync_value_ = release_value;
-        const auto packetize_started = probe_enabled_ ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
 
         const pyrowave::hdr_frame_metadata_t *dynamic_metadata = nullptr;
         if (hdr_producer_.enabled()) {
@@ -497,14 +494,6 @@ namespace platf::pyrowave_windows {
             publish_result.bytes,
             publish_result.blocks,
             true);
-        }
-        if (probe_enabled_) {
-          const auto completed = std::chrono::steady_clock::now();
-          perf::record_pyrowave_probe(perf_session_id_, {
-            .frame_id = frame_number,
-            .gpu_completion_wait_ms = std::chrono::duration<double, std::milli>(packetize_started - gpu_wait_started).count(),
-            .packetize_ms = std::chrono::duration<double, std::milli>(completed - packetize_started).count(),
-          }, completed);
         }
         return 0;
       }
@@ -601,7 +590,6 @@ namespace platf::pyrowave_windows {
       int width_ = 0;
       int height_ = 0;
       std::uint32_t perf_session_id_ = 0;
-      bool probe_enabled_ = false;
       int frame_rate_num_ = 0;
       int frame_rate_den_ = 1;
       int bitrate_kbps_ = 0;

@@ -7,7 +7,6 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
-#include <cstdint>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -21,16 +20,6 @@ namespace safe {
   public:
     using status_t = util::optional_t<T>;
 
-    struct snapshot_t {
-      std::size_t pending;
-      std::uint64_t overwritten;
-    };
-
-    snapshot_t snapshot() {
-      std::lock_guard lock { _lock };
-      return { _status ? 1u : 0u, _overwritten };
-    }
-
     template <class... Args>
     void
     raise(Args &&...args) {
@@ -39,16 +28,12 @@ namespace safe {
         return;
       }
 
-      const bool overwritten = static_cast<bool>(_status);
-
       if constexpr (std::is_same_v<std::optional<T>, status_t>) {
         _status = std::make_optional<T>(std::forward<Args>(args)...);
       }
       else {
         _status = status_t { std::forward<Args>(args)... };
       }
-
-      _overwritten += overwritten;
 
       _cv.notify_all();
     }
@@ -166,7 +151,6 @@ namespace safe {
   private:
     bool _continue { true };
     status_t _status { util::false_v<status_t> };
-    std::uint64_t _overwritten = 0;
 
     std::condition_variable _cv;
     std::mutex _lock;
@@ -278,17 +262,6 @@ namespace safe {
   public:
     using status_t = util::optional_t<T>;
 
-    struct snapshot_t {
-      std::size_t pending;
-      std::uint32_t capacity;
-      std::uint64_t discarded;
-    };
-
-    snapshot_t snapshot() {
-      std::lock_guard lock { _lock };
-      return { _queue.size(), _max_elements, _discarded };
-    }
-
     queue_t(std::uint32_t max_elements = 32):
         _max_elements { max_elements } {}
 
@@ -302,7 +275,6 @@ namespace safe {
       }
 
       if (_queue.size() == _max_elements) {
-        _discarded += _queue.size();
         _queue.clear();
       }
 
@@ -381,7 +353,6 @@ namespace safe {
   private:
     bool _continue { true };
     std::uint32_t _max_elements;
-    std::uint64_t _discarded = 0;
 
     std::mutex _lock;
     std::condition_variable _cv;

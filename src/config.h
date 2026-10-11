@@ -282,7 +282,6 @@ namespace config {
     bool notify_pre_releases;
     bool system_tray;
     std::vector<prep_cmd_t> prep_cmds;
-    bool pyrowave_probe = false;
   };
 
   extern video_t video;

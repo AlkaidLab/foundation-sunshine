@@ -53,7 +53,6 @@ extern "C" {
 #include "mic_mixer.h"
 #include "network.h"
 #include "perf_recorder.h"
-#include "file_handler.h"
 #include "stream.h"
 #include "sync.h"
 #include "tray/system_tray.h"
@@ -3400,12 +3399,6 @@ namespace stream {
       frame_network_latency_logger.first_point_now();
 
       auto session = (session_t *) packet->channel_data;
-      const bool collect_pyrowave_probe = ::config::sunshine.pyrowave_probe &&
-                                         session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT;
-      const auto probe_send_started = collect_pyrowave_probe ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
-      const auto probe_queue = collect_pyrowave_probe ? packets->snapshot() : decltype(packets->snapshot()) {};
-      double probe_pacing_ms = 0.0;
-      std::uint64_t probe_wire_bytes = 0;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
 
@@ -3676,9 +3669,6 @@ namespace stream {
                 auto now = std::chrono::steady_clock::now();
                 if (now < due) {
                   timer->sleep_for(due - now);
-                  if (collect_pyrowave_probe) {
-                    probe_pacing_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - now).count();
-                  }
                 }
 
                 ratecontrol_group_packets_sent = 0;
@@ -3709,9 +3699,6 @@ namespace stream {
                 }
               }
               frame_send_batch_latency_logger.second_point_now_and_log();
-              if (collect_pyrowave_probe) {
-                probe_wire_bytes += current_batch_size * (shards.blocksize + shards.prefixsize);
-              }
 
               ratecontrol_group_packets_sent += current_batch_size;
               ratecontrol_frame_packets_sent += current_batch_size;
@@ -3737,22 +3724,6 @@ namespace stream {
         });
 
         session->video.lowseq = lowseq;
-        if (collect_pyrowave_probe) {
-          const auto completed = std::chrono::steady_clock::now();
-          perf::pyrowave_probe_sample_t sample {
-            .frame_id = packet->frame_index(),
-            .send_dispatch_ms = std::chrono::duration<double, std::milli>(completed - probe_send_started).count(),
-            .pacing_ms = probe_pacing_ms,
-            .send_queue_frames = static_cast<double>(probe_queue.pending),
-            .shared_queue_discards = probe_queue.discarded,
-            .wire_bytes = probe_wire_bytes,
-          };
-          if (packet->pipeline_trace && packet->pipeline_trace->packet_ready) {
-            sample.send_queue_wait_ms = std::chrono::duration<double, std::milli>(
-              probe_send_started - *packet->pipeline_trace->packet_ready).count();
-          }
-          perf::record_pyrowave_probe(session->launch_session_id, sample, completed);
-        }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast video failed "sv << e.what();
@@ -4448,11 +4419,6 @@ namespace stream {
         ::config::video.encoder.empty() ? "auto" : ::config::video.encoder,
         ::config::video.capture.empty() ? "auto" : ::config::video.capture,
         session.control_only,
-        ::config::sunshine.pyrowave_probe && !session.control_only &&
-          session.config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT,
-        ::config::sunshine.pyrowave_probe
-          ? file_handler::path_to_utf8(file_handler::path_from_utf8(::config::sunshine.config_file).parent_path() / "pyrowave-probes")
-          : std::string {},
       });
       tray_state::add_session(
         session.launch_session_id,
