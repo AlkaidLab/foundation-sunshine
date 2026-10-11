@@ -39,6 +39,26 @@ namespace video_fec {
   std::optional<frame_t>
   plan(std::size_t data, unsigned percentage, unsigned minimum_parity);
 
+  // Finite history of aggregate feedback. No feedback is distinct from zero
+  // loss; controller_t owns validation, monotonic time and synchronization.
+  class loss_window_t {
+  public:
+    static constexpr std::int64_t duration_ms = 10000;
+    void
+    record(std::uint32_t data, std::uint32_t missing, std::int64_t now_ms);
+    // Highest packet-weighted one-second loss rate, or no valid observation.
+    std::optional<double>
+    estimate(std::int64_t now_ms) const;
+
+  private:
+    struct bucket_t {
+      std::int64_t second = -1;
+      std::uint64_t data = 0;
+      std::uint64_t missing = 0;
+    };
+    std::array<bucket_t, duration_ms / 1000> buckets_ {};
+  };
+
   class controller_t {
   public:
     void
@@ -57,9 +77,9 @@ namespace video_fec {
     unsigned fixed_percentage_ = 20;
     unsigned maximum_ = 50;
     bool host_automatic_ = false;
-    bool has_report_ = false;
     std::uint32_t last_sequence_ = 0;
     std::int64_t last_report_ms_ = -1;
-    double loss_ = 0;
+    std::int64_t resume_since_ms_ = -1;
+    loss_window_t loss_window_;
   };
 }  // namespace video_fec
