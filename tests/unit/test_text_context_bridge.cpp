@@ -62,6 +62,7 @@ TEST(TextContextBridge, RejectsStaleObserverGeneration) {
   stale.generation = 2;
   EXPECT_TRUE(bridge.observe(stale));
   bridge.session_stopped(sid);
+  bridge.notify_gui_alive(false, false, false, false, 0, {});
 }
 
 TEST(TextContextBridge, UiaRequiresEditableHitAndEncodesCaptureCoordinates) {

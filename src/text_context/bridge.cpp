@@ -420,6 +420,14 @@ namespace text_context {
                                   std::string_view agent_id) {
     std::lock_guard lock(_impl->mu);
     const auto now = clock_t::now();
+    if (agent_id.empty() && !agent_present && !observer_active) {
+      // A legacy/disabled agent can explicitly clear protocol state. This
+      // also prevents a later GUI instance from inheriting stale identity.
+      _impl->gui_agent_id.clear();
+      _impl->gui_generation = 0;
+      _impl->observer_active = false;
+      _impl->current_uia.reset();
+    }
     const bool different_agent_instance = !agent_id.empty() && _impl->gui_agent_id != agent_id;
     const bool new_agent_instance = different_agent_instance &&
                                     (_impl->gui_agent_id.empty() ||
