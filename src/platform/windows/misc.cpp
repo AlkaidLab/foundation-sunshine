@@ -1133,6 +1133,26 @@ namespace platf {
   bp::child
   run_command(bool elevated, bool interactive, const std::string &cmd, boost::filesystem::path &working_dir, const bp::environment &env, FILE *file, std::error_code &ec, bp::group *group) {
     std::wstring start_dir = working_dir.wstring();
+
+    // CreateProcess() only reports a cryptic ERROR_DIRECTORY (267) when lpCurrentDirectory
+    // is invalid, so probe the directory up front and log the exact path that will be used.
+    // This makes encoding/typo problems in the configured working directory visible in the log.
+    if (!start_dir.empty()) {
+      // Strip trailing separators (but keep root paths like "C:\") before probing the directory.
+      std::wstring probe_dir = start_dir;
+      while (probe_dir.size() > 1 && (probe_dir.back() == L'\\' || probe_dir.back() == L'/') && probe_dir[probe_dir.size() - 2] != L':') {
+        probe_dir.pop_back();
+      }
+
+      const auto probe_attributes = GetFileAttributesW(probe_dir.c_str());
+      if (probe_attributes == INVALID_FILE_ATTRIBUTES) {
+        // Capture the error code before logging, since logging may invoke Win32 APIs itself.
+        const auto probe_error = GetLastError();
+        BOOST_LOG(warning) << "Working directory ["sv << to_utf8(start_dir) << "] does not exist or is not accessible (error "
+                           << util::hex(probe_error).to_string_view() << ")."sv;
+      }
+    }
+
     HANDLE job = group ? group->native_handle() : nullptr;
     STARTUPINFOEXW startup_info = create_startup_info(file, job ? &job : nullptr, ec);
     PROCESS_INFORMATION process_info;
