@@ -30,6 +30,7 @@ extern "C" {
 // lib includes
 #include "cbs.h"
 #include "config.h"
+#include "perf_recorder.h"
 #include "display_device/display_device.h"
 #include "globals.h"
 #include "hdr/dynamic_hdr_selection.h"
@@ -2374,7 +2375,8 @@ namespace video {
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
-        const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
+        const auto filtered = session.dynamic_metadata_temporal.update(
+          raw_stats, session.dynamic_metadata_target_peak_nits);
 
         update_hdr_dynamic_metadata(
           frame,

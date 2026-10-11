@@ -13,6 +13,7 @@
 #include "src/pyrowave/packetizer.h"
 #include "src/pyrowave/dynamic_hdr.h"
 #include "src/perf_recorder.h"
+#include "src/utility.h"
 #include "transport.h"
 
 extern "C" {
@@ -32,6 +33,7 @@ extern "C" {
 #include <exception>
 #include <memory>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -183,6 +185,9 @@ namespace platf::pyrowave_windows {
           return;
         }
         sync_.reset(raw_sync);
+        if (!verify_fence_interop()) {
+          return;
+        }
 
         const auto &planes = conversion_->yuv_planes();
         for (std::size_t plane = 0; plane < planes.size(); ++plane) {
@@ -267,7 +272,6 @@ namespace platf::pyrowave_windows {
             init_failure("dynamic HDR metadata producer");
             return;
           }
-          hdr_startup_deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
           BOOST_LOG(info) << "[PyroWaveEncoder][GPU] dynamic HDR metadata enabled: format="
                           << config.dynamic_hdr_format << ", target_peak_nits=" << target_peak;
         }
@@ -399,20 +403,37 @@ namespace platf::pyrowave_windows {
         if (wait_result != PYROWAVE_SUCCESS) {
           return encode_failure(frame_number, "pyrowave-fence-wait", static_cast<int>(wait_result));
         }
+        if (!fence_return_verified_ && !verify_fence_return(release_value)) {
+          return encode_failure(frame_number, "vulkan-to-d3d11-fence-probe");
+        }
         sync_value_ = release_value;
 
         const pyrowave::hdr_frame_metadata_t *dynamic_metadata = nullptr;
         if (hdr_producer_.enabled()) {
-          // The fence covers D3D11 conversion, analysis and plane splitting.
-          // Read this frame's statistics, never the previous async sample.
-          if (conversion_->collect_hdr_luminance_stats()) {
-            dynamic_metadata = hdr_producer_.build(conversion_->hdr_luminance_stats);
-          }
+          // Analysis is asynchronous, like HEVC. Every delivered frame still
+          // gets a payload built from the latest valid scene state.
+          const bool statistics_ready = conversion_->collect_hdr_luminance_stats();
+          dynamic_metadata = hdr_producer_.build(conversion_->hdr_luminance_stats);
           if (dynamic_metadata == nullptr) {
-            if (!hdr_metadata_started_ && std::chrono::steady_clock::now() < hdr_startup_deadline_) return 0;
-            return encode_failure(frame_number, "dynamic-hdr-analysis-unavailable");
+            if (hdr_metadata_started_) {
+              return encode_failure(frame_number, "dynamic-hdr-metadata-generation");
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (!hdr_startup_deadline_) {
+              hdr_startup_deadline_ = now + std::chrono::milliseconds(1500);
+              BOOST_LOG(debug) << "[PyroWaveEncoder][GPU] waiting for the first valid dynamic HDR scene sample"
+                               << ", stage=" << (statistics_ready ? "invalid-metadata-payload" : "statistics-unavailable")
+                               << ", frame=" << frame_number << ", sample=" << conversion_->hdr_luminance_stats.sample_sequence;
+            }
+            if (now < *hdr_startup_deadline_) return 0;
+            return encode_failure(frame_number, "dynamic-hdr-startup-analysis-timeout");
+          }
+          if (!hdr_metadata_started_) {
+            BOOST_LOG(debug) << "[PyroWaveEncoder][GPU] dynamic HDR scene metadata ready"
+                             << ", frame=" << frame_number << ", sample=" << conversion_->hdr_luminance_stats.sample_sequence;
           }
           hdr_metadata_started_ = true;
+          hdr_startup_deadline_.reset();
         }
 
         std::size_t packet_count = 0;
@@ -432,12 +453,19 @@ namespace platf::pyrowave_windows {
         }
 
         std::vector<std::uint8_t> encoded;
+        std::size_t encoded_size = 0;
         for (std::size_t index = 0; index < written_packets; ++index) {
           const auto &packet = source_packets_[index];
           if (packet.offset > bitstream_.size() ||
-              packet.size > bitstream_.size() - packet.offset) {
+              packet.size > bitstream_.size() - packet.offset ||
+              packet.size > maximum_bitstream_size - encoded_size) {
             return encode_failure(frame_number, "packet-bounds", 0, packet.size, written_packets, true);
           }
+          encoded_size += packet.size;
+        }
+        encoded.reserve(encoded_size);
+        for (std::size_t index = 0; index < written_packets; ++index) {
+          const auto &packet = source_packets_[index];
           encoded.insert(
             encoded.end(),
             bitstream_.begin() + packet.offset,
@@ -471,6 +499,62 @@ namespace platf::pyrowave_windows {
       }
 
     private:
+      bool
+      verify_fence_interop() {
+        // Verify the real shared payload before queueing GPU work that waits
+        // on it. Successful import alone does not prove the handle is usable.
+        constexpr std::uint64_t d3d_signal_value = 1;
+        constexpr std::uint64_t timeout_ns = 1000000000ull;
+        const auto d3d_result = context4_->Signal(fence_.Get(), d3d_signal_value);
+        if (FAILED(d3d_result)) {
+          init_failure("D3D11-to-Vulkan fence probe signal", static_cast<int>(d3d_result));
+          return false;
+        }
+        context4_->Flush();
+        const auto wait_result = pyrowave_sync_object_cpu_wait(sync_.get(), d3d_signal_value, timeout_ns);
+        if (wait_result != PYROWAVE_SUCCESS) {
+          init_failure("D3D11-to-Vulkan fence probe wait", static_cast<int>(wait_result));
+          return false;
+        }
+        sync_value_ = d3d_signal_value;
+        return true;
+      }
+
+      bool
+      verify_fence_return(std::uint64_t value) {
+        // Check the first normal GPU release before publishing a video frame;
+        // do not require an additional, unused host-signal path to work.
+        constexpr DWORD timeout_ms = 1000;
+        if (fence_->GetCompletedValue() < value) {
+          util::safe_ptr_v2<void, BOOL, CloseHandle> completion_event {
+            CreateEventW(nullptr, FALSE, FALSE, nullptr)
+          };
+          if (!completion_event) {
+            init_failure("Vulkan-to-D3D11 fence probe event", static_cast<int>(GetLastError()));
+            return false;
+          }
+          const auto event_result = fence_->SetEventOnCompletion(value, completion_event.get());
+          if (FAILED(event_result)) {
+            init_failure("Vulkan-to-D3D11 fence probe completion", static_cast<int>(event_result));
+            return false;
+          }
+          const auto completion_result = WaitForSingleObject(completion_event.get(), timeout_ms);
+          if (completion_result != WAIT_OBJECT_0) {
+            init_failure("Vulkan-to-D3D11 fence probe wait",
+              static_cast<int>(completion_result == WAIT_FAILED ? GetLastError() : completion_result));
+            return false;
+          }
+        }
+        const auto completed_value = fence_->GetCompletedValue();
+        if (completed_value == UINT64_MAX || completed_value < value) {
+          init_failure("Vulkan-to-D3D11 fence probe value");
+          return false;
+        }
+        fence_return_verified_ = true;
+        BOOST_LOG(debug) << "[PyroWaveEncoder][GPU] shared fence verified in both directions";
+        return true;
+      }
+
       int
       encode_failure(std::int64_t frame_number, std::string_view stage, int result = 0, std::size_t bytes = 0, std::size_t blocks = 0, bool packetization = false) const {
         perf::record_pyrowave_failure(perf_session_id_, packetization ? perf::pyrowave_failure_stage_e::packetize : perf::pyrowave_failure_stage_e::encode);
@@ -521,10 +605,11 @@ namespace platf::pyrowave_windows {
       std::array<image_ptr, 3> images_;
       pyrowave_gpu_buffers buffers_ {};
       std::uint64_t sync_value_ = 0;
+      bool fence_return_verified_ = false;
       std::vector<pyrowave_packet> source_packets_;
       std::vector<std::uint8_t> bitstream_;
       pyrowave::hdr_metadata_producer_t hdr_producer_;
-      std::chrono::steady_clock::time_point hdr_startup_deadline_ {};
+      std::optional<std::chrono::steady_clock::time_point> hdr_startup_deadline_;
       bool hdr_metadata_started_ = false;
     };
   }  // namespace

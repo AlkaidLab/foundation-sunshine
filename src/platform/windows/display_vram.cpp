@@ -389,8 +389,7 @@ namespace platf::dxgi {
     }
 
     int
-    convert(platf::img_t &img_base, bool *output_changed = nullptr) {
-      if (output_changed) *output_changed = false;
+    convert(platf::img_t &img_base) {
       apply_nr_request();
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
@@ -707,7 +706,6 @@ namespace platf::dxgi {
         if (hdr_analysis_source) {
           dispatch_hdr_analysis(hdr_analysis_source);
         }
-        if (output_changed) *output_changed = true;
       }
 
       return 0;
@@ -1985,7 +1983,6 @@ namespace platf::dxgi {
     uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
-    bool hdr_analysis_every_frame = false; // PyroWave frame-associated metadata only
     bool hdr_analysis_pending = false;     // Prevents overwriting a readback the GPU has not completed
     bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
     bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
@@ -2060,8 +2057,7 @@ namespace platf::dxgi {
 
     bool
     should_dispatch_hdr_analysis() {
-      const bool should_dispatch = hdr_analysis_every_frame ||
-                                   (hdr_analysis_frame_index % HDR_ANALYSIS_INTERVAL) == 0;
+      const bool should_dispatch = (hdr_analysis_frame_index % HDR_ANALYSIS_INTERVAL) == 0;
       ++hdr_analysis_frame_index;
       return should_dispatch;
     }
@@ -2398,7 +2394,7 @@ namespace platf::dxgi {
     }
 
     /**
-     * @brief Read HDR analysis results from the staging buffer (previous frame).
+     * @brief Read the pending HDR analysis sample from the staging buffer.
      * GPU has already reduced all groups to one FinalResult — CPU just reads it
      * and computes PQ-domain percentiles from the histogram.
      */
@@ -3049,7 +3045,6 @@ namespace platf::dxgi {
             { .hdr10plus = dynamic_metadata, .vivid = dynamic_metadata }, config) != 0) {
         return false;
       }
-      base_.hdr_analysis_every_frame = dynamic_metadata;
 
       D3D11_TEXTURE2D_DESC desc {};
       desc.Width = static_cast<UINT>(config.width);
@@ -3139,8 +3134,7 @@ namespace platf::dxgi {
 
     int
     convert(platf::img_t &image) override {
-      const auto result = base_.convert(image, &output_changed_);
-      analysis_sequence_before_frame_ = base_.hdr_luminance_stats_out.sample_sequence;
+      const auto result = base_.convert(image);
       hdr_luminance_stats = base_.hdr_luminance_stats_out;
       if (result != 0) {
         return result;
@@ -3173,14 +3167,12 @@ namespace platf::dxgi {
     bool collect_hdr_luminance_stats() override {
       base_.read_hdr_analysis_results();
       hdr_luminance_stats = base_.hdr_luminance_stats_out;
-      return hdr_luminance_stats.valid && !base_.hdr_analysis_pending &&
-             (!output_changed_ || hdr_luminance_stats.sample_sequence != analysis_sequence_before_frame_);
+      // A pending readback does not invalidate the previous scene sample.
+      return hdr_luminance_stats.valid;
     }
 
   private:
     d3d_base_encode_device base_;
-    std::uint64_t analysis_sequence_before_frame_ = 0;
-    bool output_changed_ = false;
     texture2d_t conversion_output_;
     shader_res_t conversion_y_srv_;
     shader_res_t conversion_uv_srv_;
