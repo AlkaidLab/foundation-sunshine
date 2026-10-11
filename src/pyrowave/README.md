@@ -43,15 +43,33 @@ PyroWave 已建立后的运行故障不会在同一次活动连接中切换到 H
 H.264 兼容兜底，并由客户端在连接成功后提示实际格式。
 设备兼容性由实际资源检查决定，不能从进程级探针推导所有显示器和 GPU 都可用。
 
-PyroWave 的 HDR 合同覆盖 HDR10/PQ 和 HLG。动态 HDR10+、Vivid PQ/HLG、DV 8.1/8.4
-由独立的动态类型与 `DYNAMIC_HDR_MAPPING` 能力协商；后者表示客户端应用内消费并输出
-PQ/HLG，不表示厂商原生 Dolby Vision 输出。动态会话要求开启 HDR 亮度分析；未请求动态
-metadata 的会话不增加分析成本。
+外部信号量能力查询只用于诊断；缺少能力位仍尝试实际创建和导入。Windows 前置检查不
+要求用不到的 KMT、opaque 或 D3D12 内存类型，实际会话仍分别导入所需的 R8/R16 平面。
+编码器初始化时先用同一共享 Fence 验证 D3D11→Vulkan，在首个正常 GPU 编码完成、
+发布视频帧前验证 Vulkan→D3D11 的返回值，各自最多等待 1 秒。不额外要求生产流程
+未使用的 Vulkan 主机 Signal 路径。验证只判断同步有效性，不设性能门槛，也不逐帧
+重复；创建、导入或验证失败时记录真实阶段并走既有失败处理。
 
-`dynamic_hdr.*` 复用现有桌面亮度统计、HDR10+/Vivid 序列化和 DV RPU 生产器。动态
-PyroWave 每个转换帧执行分析，在现有 GPU 完成 Fence 后读取该帧统计；生产器保留时间
-平滑，transport 在推进下一帧前复制完整 payload。HDR10+ 只发送单窗口统计，Vivid
-只发送统计字段，DV 只发送 identity mapping 与 CM2.9 L1/L5/L6，不接受任意电影曲线或增强层。
+PyroWave 的 HDR 合同覆盖 HDR10/PQ 和 HLG。Vivid 在实际 Vulkan device 同时具备
+`VK_HUAWEI_hdr_vivid`、`hdrVivid` feature、`VK_EXT_hdr_metadata` 和可用入口时走原生
+Vivid PQ/HLG；HDR10+ 与 Dolby Vision 8.1/8.4 在客户端使用应用映射 shader，输出仍为
+协商的 PQ/HLG 基础信号。应用映射不代表厂商认证输出。动态会话要求开启 HDR 亮度分析；
+未请求动态 metadata 的会话不增加分析成本。
+
+`dynamic_hdr.*` 复用现有桌面亮度统计和动态 HDR 序列化。与 HEVC 一样，共享分析器每四个
+可分析的转换帧调度一次分析，并以非阻塞方式轮询读回。生产器保存本编码会话最近有效的
+场景统计，每个已协商的动态 HDR 编码帧都生成独立 payload；新样本到达后更新场景状态。没有
+新样本或新统计无效时继续使用有效状态，不阻塞采集、不丢帧，也不将这种采样间隔当成
+编码后端故障。transport 在推进下一帧前复制完整 payload，客户端不缓存缺失的 TLV。
+
+首次没有有效场景统计时暂缓发布，最多等待 1.5 秒；超时则结束该视频会话，不伪造动态
+metadata，也不在活动连接中切换编码器。有效状态随编码器重建或重新配置清空，不继承其他
+会话或旧显示器的统计。原生 Vivid 使用 Sunshine 生成的统计和 UWA base curve 参数，
+通过受保护 TLV 交给客户端的原生 Vulkan metadata 接口；HDR10+ 和 Dolby Vision 由客户端
+执行受限 LUT、reshape 和矩阵映射。这里不接受任意
+影片曲线、Profile 5/7、NLQ 或增强层。
+Vivid/PQ 的 system_start_code 为 0x01，Vivid/HLG 按 UWA 005.1 附录 B.3 使用 0x02；
+该修正须由两端生产/消费配套，不改 Frame Envelope 的字段、版本或 FEC。
 
 像素转换、平面位深和码流颜色元数据都以实际解析的输出色彩空间为准。若请求 HDR 而
 捕获结果仍为 SDR，且没有产生 HDR 的增强管线，则拒绝创建该 PyroWave 会话；不能把 SDR
@@ -139,6 +157,15 @@ common-c 协议、PyroWave 子模块和分裂着色器均由版本控制固定�
 或手工生成的运行库副本。
 
 ## 验证范围
+
+临时积压探针默认关闭。配置 `pyrowave_probe = true` 并重启 Sunshine 后，PyroWave 会话
+增加发送队列深度、队列等待、GPU 完成等待、分包、发送及 pacing 统计；正常结束后写入
+配置目录下的 `pyrowave-probes/*.json`，开启时记录一条 ERROR。最近 240 个样本用于窗口
+P95，趋势最多保留最近 600 个秒窗口，另保留全会话平均值与峰值。共享发送队列的深度与
+溢出计数跨所有视频会话，不能全部归因于一个客户端；CPU Fence 等待也不是纯 GPU 执行时间。
+本探针不改网络合同、码率、队列容量或排队策略。
+记录锁内只复制有界快照，JSON 和分位排序在锁外生成；报告配置对应会话最后一次设置，
+不代表每帧配置。文件导出仍在正常结束时同步执行。
 
 - `pyrowave_unit_tests`：CPU-only 合同、能力和生命周期校验。
 - 静态链接验证：主程序、单元测试和安装暂存树不依赖额外 PyroWave DLL。

@@ -87,17 +87,14 @@ namespace pyrowave {
           return failure(failure_e::configuration_invalid);
         }
 
-        std::vector<std::uint8_t> protected_payload;
-        protected_payload.reserve(metadata_length + input.size());
-        protected_payload.insert(protected_payload.end(), request.metadata.begin(), request.metadata.end());
-        protected_payload.insert(protected_payload.end(), input.begin(), input.end());
-        if (protected_payload.size() > std::numeric_limits<std::uint32_t>::max() ||
-            input.size() > std::numeric_limits<std::uint32_t>::max()) {
+        if (input.size() > std::numeric_limits<std::uint32_t>::max() ||
+            metadata_length > std::numeric_limits<std::uint32_t>::max() - input.size()) {
           return failure(failure_e::packetization_failed);
         }
+        const auto protected_size = metadata_length + input.size();
 
         const auto payload_boundary = boundary - header_size;
-        const auto data_block_count = (protected_payload.size() + payload_boundary - 1) / payload_boundary;
+        const auto data_block_count = protected_size / payload_boundary + (protected_size % payload_boundary != 0);
         const auto fec_group_count = request.block_aware_fec
           ? (data_block_count + LI_PYROWAVE_FEC_DATA_PER_GROUP - 1) /
               LI_PYROWAVE_FEC_DATA_PER_GROUP
@@ -108,7 +105,7 @@ namespace pyrowave {
             block_count > std::numeric_limits<std::uint16_t>::max() ||
             payload_boundary > std::numeric_limits<std::uint16_t>::max()) {
           BOOST_LOG(warning) << "[PyroWavePacketizer] failed for frame " << frame.frame_id
-                             << ": protected_bytes=" << protected_payload.size()
+                             << ": protected_bytes=" << protected_size
                              << ", payload_boundary=" << payload_boundary
                              << ", data_blocks=" << data_block_count
                              << ", wire_blocks=" << block_count;
@@ -159,7 +156,7 @@ namespace pyrowave {
           .frameId = static_cast<std::uint32_t>(frame.frame_id),
           .rtpTimestamp = request.rtp_timestamp,
           .codecPayloadLength = static_cast<std::uint32_t>(input.size()),
-          .protectedPayloadLength = static_cast<std::uint32_t>(protected_payload.size()),
+          .protectedPayloadLength = static_cast<std::uint32_t>(protected_size),
           .metadataLength = static_cast<std::uint16_t>(metadata_length),
           .fecScheme = static_cast<std::uint8_t>(fec_scheme),
           .reserved2 = 0,
@@ -182,16 +179,32 @@ namespace pyrowave {
           return failure(failure_e::packetization_failed);
         }
 
+        std::vector<std::uint8_t> scratch;
         for (std::size_t index = 0; index < data_block_count; ++index) {
           const auto offset = index * payload_boundary;
-          const auto source_payload_size = std::min(payload_boundary, protected_payload.size() - offset);
+          const auto source_payload_size = std::min(payload_boundary, protected_size - offset);
           const auto payload_size = request.block_aware_fec ? payload_boundary : source_payload_size;
-          std::vector<std::uint8_t> padded_payload;
-          const auto *payload = protected_payload.data() + offset;
-          if (source_payload_size != payload_size) {
-            padded_payload.assign(payload_size, 0);
-            std::copy_n(payload, source_payload_size, padded_payload.data());
-            payload = padded_payload.data();
+          const std::uint8_t *payload = nullptr;
+          const auto metadata_bytes = offset < metadata_length ? std::min(source_payload_size, metadata_length - offset) : 0u;
+          if (source_payload_size == payload_size && metadata_bytes == source_payload_size) {
+            payload = request.metadata.data() + offset;
+          }
+          else if (source_payload_size == payload_size && metadata_bytes == 0) {
+            payload = input.data() + (offset - metadata_length);
+          }
+          else {
+            // Only a metadata/codec boundary or final padding needs scratch.
+            // Do not allocate and copy a concatenated full-frame buffer.
+            scratch.assign(payload_size, 0);
+            if (metadata_bytes != 0) {
+              std::copy_n(request.metadata.data() + offset, metadata_bytes, scratch.data());
+            }
+            const auto codec_bytes = source_payload_size - metadata_bytes;
+            if (codec_bytes != 0) {
+              std::copy_n(input.data() + (offset + metadata_bytes - metadata_length),
+                codec_bytes, scratch.data() + metadata_bytes);
+            }
+            payload = scratch.data();
           }
           const auto group_index = request.block_aware_fec
             ? index / LI_PYROWAVE_FEC_DATA_PER_GROUP : 0;
@@ -211,7 +224,7 @@ namespace pyrowave {
             .frameId = static_cast<std::uint32_t>(frame.frame_id),
             .rtpTimestamp = request.rtp_timestamp,
             .codecPayloadLength = static_cast<std::uint32_t>(input.size()),
-            .protectedPayloadLength = static_cast<std::uint32_t>(protected_payload.size()),
+            .protectedPayloadLength = static_cast<std::uint32_t>(protected_size),
             .metadataLength = static_cast<std::uint16_t>(metadata_length),
             .fecScheme = static_cast<std::uint8_t>(fec_scheme),
             .reserved2 = 0,
@@ -244,11 +257,11 @@ namespace pyrowave {
             const auto group_end = std::min(data_block_count,
               group_start + LI_PYROWAVE_FEC_DATA_PER_GROUP);
             for (std::size_t index = group_start; index < group_end; ++index) {
-              const auto offset = index * payload_boundary;
+              // DATA was already padded and copied into output storage. XOR
+              // those exact wire payloads; no second full-frame source exists.
+              const auto *data = storage->data() + spans[index + 1].offset + header_size;
               for (std::size_t byte = 0; byte < payload_boundary; ++byte) {
-                if (offset + byte < protected_payload.size()) {
-                  parity[byte] ^= protected_payload[offset + byte];
-                }
+                parity[byte] ^= data[byte];
               }
             }
             const auto group_data_count = group_end - group_start;
@@ -262,7 +275,7 @@ namespace pyrowave {
               .frameId = static_cast<std::uint32_t>(frame.frame_id),
               .rtpTimestamp = request.rtp_timestamp,
               .codecPayloadLength = static_cast<std::uint32_t>(input.size()),
-              .protectedPayloadLength = static_cast<std::uint32_t>(protected_payload.size()),
+              .protectedPayloadLength = static_cast<std::uint32_t>(protected_size),
               .metadataLength = static_cast<std::uint16_t>(metadata_length),
               .fecScheme = static_cast<std::uint8_t>(fec_scheme),
               .reserved2 = 0,

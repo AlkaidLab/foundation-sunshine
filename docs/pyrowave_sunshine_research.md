@@ -54,13 +54,14 @@ PyroWave 的码流颜色信息与 Sunshine 的静态 HDR 呈现信息不是同�
 - HLG 没有完整 mastering metadata 时仍保持 HLG 呈现，不伪造 HDR10 metadata；
 - `maxFullFrameLuminance` 会随 `SS_HDR_METADATA` 传递并校验，但 Vulkan 的 `VkHdrMetadataEXT`
   没有独立字段，因此当前呈现层只保留该值，不把它错误映射为 MaxFALL；
-- HDR10+、Vivid PQ/HLG、DV 8.1/8.4 的桌面生成子集独立协商，并通过同帧受保护 TLV
-  交给客户端应用内亮度映射，输出仍为 PQ/HLG；不是厂商原生 Dolby Vision 显示模式。
+- PyroWave 的动态呈现包括原生 Vivid PQ/HLG 以及 HDR10+/Dolby Vision 应用映射，并通过同帧受保护
+  TLV 提交 metadata。Vivid 在实际扩展、feature、入口和有效静态快照都满足时使用原生 swapchain
+  metadata 提交；HDR10+/Dolby Vision 输出保持协商的 PQ/HLG 基础信号，不声称是厂商认证模式。
 
-动态元数据与图像由同一帧分配拥有，参与相同的 FEC 和 deadline。主机逐帧分析编码画面，
-在 GPU Fence 完成后取得当前统计；客户端只消费随当前 decode unit 到达的完整 payload，
-不能在丢帧、重建或 Surface 变化后套用另一帧的动态状态。生成范围不含影片 authored curves、
-Dolby trim/增强层或任意 Profile。
+动态 metadata 与图像由同一帧分配拥有，参与相同的 FEC 和 deadline。PyroWave 在协商的
+动态 HDR 会话中发送对应 payload；HDR10+ 与 Dolby Vision 的异步分析和 RPU/曲线由客户端
+应用映射消费。客户端只消费随当前 decode unit 到达的完整 payload，不能
+在丢帧、重建或 Surface 变化后套用另一帧的动态状态。
 
 缺少必要能力时，媒体开始前拒绝本次 PyroWave 连接。静态 HDR 元数据缺失或无法校验时，
 不伪造默认值，保留已协商的 PQ/HLG 色彩空间并明确记录降级状态；运行中的 Vulkan/Surface
@@ -102,7 +103,7 @@ GPU、驱动、显示设备、虚拟显示器和混合显卡会影响 GPU 编解
 
 - Windows Sunshine；
 - 配套 Moonlight V+ Android 实验版本；
-- SDR、HDR10/PQ、HLG，以及桌面生成 HDR10+/Vivid/DV 子集的应用内动态映射；
+- SDR、HDR10/PQ、HLG，以及具备设备条件时的原生 Vivid PQ/HLG 提交和 HDR10+/Dolby Vision 应用映射；
 - 4:2:0、limited/full range；
 - SDR 8-bit、HDR10/PQ 与 HLG 10-bit；不提供独立的 SDR 10-bit 模式；
 - 高带宽局域网；

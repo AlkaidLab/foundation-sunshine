@@ -30,7 +30,7 @@ namespace platf::dxgi {
     virtual ID3D11Device *d3d_device() noexcept = 0;
     virtual ID3D11DeviceContext *d3d_context() noexcept = 0;
     virtual const std::array<shared_yuv_plane_t, 3> &yuv_planes() const noexcept = 0;
-    // Read the current analysis only after the caller's GPU completion fence.
+    // Poll without blocking and retain the latest completed scene sample.
     virtual bool collect_hdr_luminance_stats() = 0;
   };
 

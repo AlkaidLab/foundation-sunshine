@@ -625,6 +625,7 @@ namespace config {
     false,  // notify_pre_releases
     true,  // system_tray
     {},  // prep commands
+    false,  // pyrowave_probe (temporary performance diagnostics)
   };
 
   bool
@@ -1448,6 +1449,7 @@ namespace config {
     string_f(vars, "sunshine_name", nvhttp.sunshine_name);
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
+    bool_f(vars, "pyrowave_probe", sunshine.pyrowave_probe);
     path_f(vars, "file_state", nvhttp.file_state);
     string_f(vars, "file_mappings", nvhttp.file_mappings);
     int file_mapping_port = nvhttp.file_mapping_port;
