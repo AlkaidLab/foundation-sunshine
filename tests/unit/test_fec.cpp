@@ -52,6 +52,44 @@ TEST(VideoFec, InvalidDuplicateAndOldFeedbackCannotChangeSelection) {
   EXPECT_EQ(control.percentage(200, 2, 2000), 0);
 }
 
+TEST(VideoFec, SustainedCleanFeedbackReleasesProtectionAndRearmsAfterLoss) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  ASSERT_TRUE(control.report(1, 10000, 300, 0));
+  for (unsigned second = 1; second <= 5; ++second) {
+    ASSERT_TRUE(control.report(second + 1, 10000, 0, second * 1000));
+    EXPECT_GT(control.percentage(100, 2, second * 1000), 0);
+  }
+  ASSERT_TRUE(control.report(7, 10000, 0, 6000));
+  EXPECT_EQ(control.percentage(100, 2, 6000), 0);
+  const auto frame = video_fec::plan(100, control.percentage(100, 2, 6000), 2);
+  ASSERT_TRUE(frame);
+  EXPECT_EQ(frame->blocks[0].parity, 0);
+  ASSERT_TRUE(control.report(8, 10000, 300, 7000));
+  EXPECT_GT(control.percentage(100, 2, 7000), 0);
+}
+
+TEST(VideoFec, LossAndInvalidFeedbackCannotCompleteCleanRecovery) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  ASSERT_TRUE(control.report(1, 10000, 300, 0));
+  ASSERT_TRUE(control.report(2, 10000, 0, 1000));
+  ASSERT_TRUE(control.report(3, 10000, 0, 3000));
+  ASSERT_TRUE(control.report(4, 10000, 1, 5000));
+  EXPECT_FALSE(control.report(4, 10000, 0, 6000));
+  EXPECT_FALSE(control.report(3, 10000, 0, 6000));
+  EXPECT_FALSE(control.report(5, 0, 0, 6000));
+  ASSERT_TRUE(control.report(5, 10000, 0, 6000));
+  ASSERT_TRUE(control.report(6, 10000, 0, 8000));
+  ASSERT_TRUE(control.report(7, 10000, 0, 10000));
+  EXPECT_GT(control.percentage(100, 2, 10000), 0);
+  ASSERT_TRUE(control.report(8, 10000, 0, 11000));
+  EXPECT_EQ(control.percentage(100, 2, 11000), 0);
+  EXPECT_EQ(control.percentage(100, 2, 14001), 20);
+  control.initialize(20, false, 50);
+  EXPECT_EQ(control.percentage(100, 2, 11000), 20);
+}
+
 TEST(VideoFec, MinimumParityAndWirePercentageAgree) {
   for (unsigned data = 1; data <= 255; ++data) {
     for (unsigned ratio : { 1U, 20U, 50U, 100U }) {

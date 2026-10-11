@@ -60,6 +60,7 @@ namespace video_fec {
     bool has_report_ = false;
     std::uint32_t last_sequence_ = 0;
     std::int64_t last_report_ms_ = -1;
+    std::int64_t clean_since_ms_ = -1;
     double loss_ = 0;
   };
 }  // namespace video_fec

@@ -13,6 +13,7 @@ namespace video_fec {
     constexpr std::uint32_t max_feedback_data_packets = 1000000;
     constexpr std::uint32_t sequence_half_range = 0x80000000U;
     constexpr std::int64_t feedback_timeout_ms = 3000;
+    constexpr std::int64_t healthy_feedback_ms = 5000;
     constexpr double loss_sample_weight = 0.25;
     constexpr double frame_failure_target = 0.001;
   }  // namespace
@@ -87,6 +88,7 @@ namespace video_fec {
     mode_ = mode_e::host;
     has_report_ = false;
     last_report_ms_ = -1;
+    clean_since_ms_ = -1;
   }
 
   bool
@@ -110,12 +112,23 @@ namespace video_fec {
       return false;
     }
     const double sample = static_cast<double>(missing) / data;
+    const bool fresh = has_report_ && now - last_report_ms_ <= feedback_timeout_ms;
     // Periodic aggregate samples include clean blocks. There is no burst detector.
-    if (!has_report_ || now - last_report_ms_ > feedback_timeout_ms) {
+    if (!fresh) {
       loss_ = sample;
+      clean_since_ms_ = -1;
     }
     else {
       loss_ = (1 - loss_sample_weight) * loss_ + loss_sample_weight * sample;
+    }
+    if (missing) {
+      clean_since_ms_ = -1;
+    }
+    else {
+      if (clean_since_ms_ < 0) clean_since_ms_ = now;
+      // EWMA decay alone never reaches zero after loss. Require sustained,
+      // fresh clean feedback before releasing protection and its bitrate reserve.
+      if (now - clean_since_ms_ >= healthy_feedback_ms) loss_ = 0;
     }
     last_sequence_ = sequence;
     last_report_ms_ = now;
