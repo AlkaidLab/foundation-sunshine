@@ -20,11 +20,11 @@
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
           <component
-            :is="statusActionAvailable ? 'button' : 'div'"
+            :is="showVersionDetails ? 'button' : 'div'"
             class="home-status"
-            :class="[`home-status-${statusState}`, { 'home-status-action': statusActionAvailable }]"
-            :type="statusActionAvailable ? 'button' : undefined"
-            :role="statusActionAvailable ? 'button' : 'status'"
+            :class="[`home-status-${statusState}`, { 'home-status-action': showVersionDetails }]"
+            :type="showVersionDetails ? 'button' : undefined"
+            :role="showVersionDetails ? 'button' : 'status'"
             :aria-live="statusState === 'loading' ? 'polite' : 'off'"
             :aria-label="statusAriaLabel"
             :aria-controls="showVersionDetails ? 'version-details' : undefined"
@@ -175,7 +175,6 @@ const statusState = computed(() => {
   ) {
     return 'loading'
   }
-  if (versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'unavailable'
   if (hasStableUpdate.value || hasPreReleaseUpdate.value) return 'update'
   return 'ready'
 })
@@ -183,17 +182,12 @@ const statusState = computed(() => {
 const statusLabel = computed(() => {
   if (statusState.value === 'loading') return t('index.loading_latest')
   if (statusState.value === 'error') return t('_common.error')
-  if (statusState.value === 'unavailable') return t('index.check_updates')
   if (hasStableUpdate.value) return t('index.new_stable')
   if (hasPreReleaseUpdate.value) return t('index.new_pre_release')
   return t('index.version_latest')
 })
 
-const statusTitle = computed(() =>
-  versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR ? t('welcome.network_error') : undefined,
-)
-
-const statusAriaLabel = computed(() => statusTitle.value || statusLabel.value)
+const statusAriaLabel = computed(() => statusLabel.value)
 
 const versionLabel = computed(() => {
   const currentVersion = version.value?.version || hostConfig.value?.version
@@ -208,15 +202,7 @@ const showVersionDetails = computed(
     hasPreReleaseUpdate.value,
 )
 
-const statusActionAvailable = computed(
-  () => showVersionDetails.value || versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR,
-)
-
 const handleStatusClick = () => {
-  if (versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR && hostConfig.value) {
-    void fetchVersions(hostConfig.value)
-    return
-  }
   if (!showVersionDetails.value) return
   document.getElementById('version-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
