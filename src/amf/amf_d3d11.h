@@ -44,6 +44,12 @@ namespace amf {
     encode_frame(uint64_t frame_index, bool force_idr) override;
 
     bool
+    has_pending_output() const override;
+
+    amf_encoded_frame
+    receive_frame() override;
+
+    bool
     invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) override;
 
     bool
@@ -59,6 +65,9 @@ namespace amf {
     get_input_texture() override;
 
   private:
+    amf_encoded_frame
+    make_encoded_frame(const ::amf::AMFDataPtr &output_data);
+
     bool
     init_amf_library();
 

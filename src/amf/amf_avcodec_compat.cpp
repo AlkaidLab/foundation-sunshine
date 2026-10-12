@@ -275,6 +275,24 @@ namespace amf {
     return hwsurfaces_in_queue;
   }
 
+  bool
+  amf_avcodec_scheduler::has_pending_output() const {
+    return !output_list.empty() || hwsurfaces_in_queue > 0;
+  }
+
+  AMF_RESULT
+  amf_avcodec_scheduler::receive_output(::amf::AMFComponent *encoder, ::amf::AMFDataPtr &output_data) {
+    output_data = nullptr;
+    if (!output_list.empty()) {
+      output_data = output_list.front();
+      output_list.pop_front();
+      // query_once() already accounted for these outputs when they were stashed.
+      return AMF_OK;
+    }
+    if (hwsurfaces_in_queue == 0) return AMF_REPEAT;
+    return query_once(encoder, output_data);
+  }
+
   AMF_RESULT
   amf_avcodec_scheduler::query_once(::amf::AMFComponent *encoder, ::amf::AMFDataPtr &output_data) {
     output_data = nullptr;
