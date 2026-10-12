@@ -20,6 +20,7 @@
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
           <component
+            v-if="hostStatus === 'error' || versionCheckStatus !== VERSION_CHECK_STATUS.ERROR"
             :is="showVersionDetails ? 'button' : 'div'"
             class="home-status"
             :class="[`home-status-${statusState}`, { 'home-status-action': showVersionDetails }]"
@@ -175,13 +176,14 @@ const statusState = computed(() => {
   ) {
     return 'loading'
   }
+  if (versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'unavailable'
   if (hasStableUpdate.value || hasPreReleaseUpdate.value) return 'update'
   return 'ready'
 })
 
 const statusLabel = computed(() => {
   if (statusState.value === 'loading') return t('index.loading_latest')
-  if (statusState.value === 'error') return t('_common.error')
+  if (statusState.value === 'error' || statusState.value === 'unavailable') return t('_common.error')
   if (hasStableUpdate.value) return t('index.new_stable')
   if (hasPreReleaseUpdate.value) return t('index.new_pre_release')
   return t('index.version_latest')

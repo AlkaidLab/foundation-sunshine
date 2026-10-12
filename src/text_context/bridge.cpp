@@ -441,9 +441,12 @@ namespace text_context {
     // turn off the currently active observer. The agent id separates GUI
     // process restarts, where the local generation counter starts over.
     if (!new_agent_instance && generation < _impl->gui_generation) {
-      _impl->last_gui_alive = now;
-      _impl->agent_alive = agent_present;
       return;
+    }
+    const bool generation_changed = _impl->gui_generation != 0 &&
+                                    generation != _impl->gui_generation;
+    if (generation_changed) {
+      _impl->current_uia.reset();
     }
     // A cached focused rectangle belongs to a specific GUI instance and only
     // stays trustworthy while that instance keeps heartbeating. Drop it when
