@@ -125,6 +125,15 @@ namespace proc {
 #endif
   }
 
+  std::string
+  boost_path_to_utf8(const boost::filesystem::path &path) {
+#ifdef _WIN32
+    return file_handler::path_to_utf8(std::filesystem::path { path.wstring() });
+#else
+    return file_handler::path_to_utf8(std::filesystem::path { path.string() });
+#endif
+  }
+
   boost::filesystem::path
   find_working_directory(const std::string &cmd, boost::process::v1::environment &env) {
     // Parse the raw command string into parts to get the actual command portion
@@ -161,7 +170,7 @@ namespace proc {
       }
     }
 
-    BOOST_LOG(debug) << "Resolved target ["sv << parts.at(0) << "] to path ["sv << cmd_path << ']';
+    BOOST_LOG(debug) << "Resolved target ["sv << parts.at(0) << "] to path ["sv << boost_path_to_utf8(cmd_path) << ']';
 
     // Now that we have a complete path, we can just use parent_path()
     return cmd_path.parent_path();
@@ -294,7 +303,7 @@ namespace proc {
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(cmd, _env) :
                                               boost_path_from_utf8(_app.working_dir);
-      BOOST_LOG(info) << "Spawning ["sv << cmd << "] in ["sv << working_dir << ']';
+      BOOST_LOG(info) << "Spawning ["sv << cmd << "] in ["sv << boost_path_to_utf8(working_dir) << ']';
       auto child = platf::run_command(_app.elevated, true, cmd, working_dir, _env, _pipe.get(), ec, nullptr);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't spawn ["sv << cmd << "]: System: "sv << ec.message();
@@ -312,7 +321,7 @@ namespace proc {
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(_app.cmd, _env) :
                                               boost_path_from_utf8(_app.working_dir);
-      BOOST_LOG(info) << "Executing: ["sv << _app.cmd << "] in ["sv << working_dir << ']';
+      BOOST_LOG(info) << "Executing: ["sv << _app.cmd << "] in ["sv << boost_path_to_utf8(working_dir) << ']';
       _process = platf::run_command(_app.elevated, true, _app.cmd, working_dir, _env, _pipe.get(), ec, &_process_group);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't run ["sv << _app.cmd << "]: System: "sv << ec.message();
