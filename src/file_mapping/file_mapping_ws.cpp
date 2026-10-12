@@ -41,21 +41,6 @@ namespace file_mapping_ws {
       return {};
     }
 
-    std::uint64_t
-    request_id(const nlohmann::json &body) {
-      if (!body.contains("id")) {
-        return 0;
-      }
-      if (body["id"].is_number_unsigned()) {
-        return body["id"].get<std::uint64_t>();
-      }
-      if (body["id"].is_number_integer()) {
-        const auto id = body["id"].get<std::int64_t>();
-        return id < 0 ? 0 : static_cast<std::uint64_t>(id);
-      }
-      return 0;
-    }
-
     std::string
     optional_string(const nlohmann::json &body, const char *name) {
       if (body.contains(name) && body[name].is_string()) {
@@ -179,19 +164,20 @@ namespace file_mapping_ws {
 
   inbound_result_t
   session_core_t::handle_job_status(const nlohmann::json &body) {
+    const auto id = file_mapping::rpc::request_id(body);
     const auto job_id = require_job_id(body);
     if (job_id.empty()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "bad_request", "missing string field: job_id")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(id, "bad_request", "missing string field: job_id")) };
     }
 
     auto it = jobs_.find(job_id);
     if (it == jobs_.end()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "job_not_found", "job was not found")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(id, "job_not_found", "job was not found")) };
     }
 
     nlohmann::json reply;
     reply["type"] = "result";
-    reply["id"] = request_id(body);
+    reply["id"] = id;
     reply["ok"] = true;
     reply["job_id"] = job_id;
     reply["job"] = file_mapping::rpc::job_to_json(it->second);
@@ -200,14 +186,15 @@ namespace file_mapping_ws {
 
   inbound_result_t
   session_core_t::handle_cancel(const nlohmann::json &body) {
+    const auto id = file_mapping::rpc::request_id(body);
     const auto job_id = require_job_id(body);
     if (job_id.empty()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "bad_request", "missing string field: job_id")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(id, "bad_request", "missing string field: job_id")) };
     }
 
     auto it = jobs_.find(job_id);
     if (it == jobs_.end()) {
-      return { false, false, {}, text_frame(file_mapping::rpc::make_error(request_id(body), "job_not_found", "job was not found")) };
+      return { false, false, {}, text_frame(file_mapping::rpc::make_error(id, "job_not_found", "job was not found")) };
     }
     if (it->second.state == file_mapping::rpc::job_state_e::queued ||
         it->second.state == file_mapping::rpc::job_state_e::running) {
@@ -216,7 +203,7 @@ namespace file_mapping_ws {
 
     nlohmann::json reply;
     reply["type"] = "result";
-    reply["id"] = request_id(body);
+    reply["id"] = id;
     reply["ok"] = true;
     reply["job_id"] = job_id;
     reply["job"] = file_mapping::rpc::job_to_json(it->second);

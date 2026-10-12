@@ -47,6 +47,11 @@ namespace platf {
   }
 
   void
+  set_global_gamepad_mode(std::string_view) {
+    // Runtime gamepad selection is currently implemented by the Windows backend.
+  }
+
+  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     platf::mouse::move(raw, deltaX, deltaY);
@@ -111,7 +116,8 @@ namespace platf {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view) {
     auto raw = (input_raw_t *) input.get();
     return platf::gamepad::alloc(raw, id, metadata, feedback_queue);
   }
@@ -120,6 +126,16 @@ namespace platf {
   free_gamepad(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
     platf::gamepad::free(raw, nr);
+  }
+
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &) {
+    return false;
   }
 
   void
@@ -147,7 +163,7 @@ namespace platf {
   }
 
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view) {
     platform_caps::caps_t caps = 0;
     // TODO: if has_uinput
     caps |= platform_caps::pen_touch;

@@ -126,3 +126,31 @@ test('formatAppData normalizes per-app RTX HDR settings', () => {
     'peak-nits': 850,
   })
 })
+
+test('editing an app preserves DLSS NR settings, including zero intensity', () => {
+  const dlssnr = {
+    mode: 'on', style: 3, 'motion-quality': 0, intensity: 0,
+    'local-tone-strength': 0.25, 'local-structure-strength': 0.5,
+    'skin-structure-strength': 0, 'auto-mask': true, 'ui-correction': true,
+  }
+  const saved = AppService.formatAppData({ name: 'Genshin', dlssnr })
+  assert.deepEqual(saved.dlssnr, dlssnr)
+  assert.deepEqual(AppService.formatAppData(saved).dlssnr, dlssnr)
+  assert.notEqual(saved.dlssnr, dlssnr)
+})
+
+test('DLSS NR stays disabled by default and normalizes invalid input', () => {
+  assert.equal(AppService.formatAppData({ name: 'Game' }).dlssnr.mode, 'inherit')
+  const saved = AppService.formatAppData({ name: 'Game', dlssnr: {
+    mode: 'invalid', style: 99, intensity: -1,
+    'local-tone-strength': 'invalid', 'skin-structure-strength': Infinity,
+    'auto-mask': 'false', 'ui-correction': 'true',
+  } }).dlssnr
+  assert.equal(saved.mode, 'inherit')
+  assert.equal(saved.style, 4)
+  assert.equal(saved.intensity, 0)
+  assert.equal(saved['local-tone-strength'], 1)
+  assert.equal(saved['skin-structure-strength'], 0)
+  assert.equal(saved['auto-mask'], false)
+  assert.equal(saved['ui-correction'], true)
+})

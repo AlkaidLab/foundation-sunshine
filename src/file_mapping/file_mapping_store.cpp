@@ -8,11 +8,12 @@
 #include <cctype>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <sstream>
 #include <string_view>
 #include <system_error>
 
+#include "file_mapping_base64.h"
+#include "file_mapping_rpc.h"
 #include "src/config.h"
 #include "src/file_handler.h"
 
@@ -111,46 +112,14 @@ namespace file_mapping_store {
 
     bool
     read_uintmax_patch_value(const nlohmann::json &json, std::uintmax_t &out) {
-      std::uint64_t value = 0;
-      if (json.is_number_unsigned()) {
-        value = json.get<std::uint64_t>();
-      }
-      else if (json.is_number_integer()) {
-        const auto signed_value = json.get<std::int64_t>();
-        if (signed_value < 0) {
-          return false;
-        }
-        value = static_cast<std::uint64_t>(signed_value);
-      }
-      else {
+      const auto value = file_mapping::rpc::parse_nonnegative_uintmax(json);
+      if (!value) {
         return false;
       }
-      if (value > std::numeric_limits<std::uintmax_t>::max()) {
-        return false;
-      }
-      out = static_cast<std::uintmax_t>(value);
+      out = *value;
       return true;
     }
 
-    std::string
-    base64_encode(std::string_view text) {
-      static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      std::string out;
-      out.reserve(((text.size() + 2) / 3) * 4);
-
-      for (std::size_t i = 0; i < text.size(); i += 3) {
-        const auto b0 = static_cast<unsigned char>(text[i]);
-        const auto b1 = i + 1 < text.size() ? static_cast<unsigned char>(text[i + 1]) : 0;
-        const auto b2 = i + 2 < text.size() ? static_cast<unsigned char>(text[i + 2]) : 0;
-
-        out.push_back(alphabet[(b0 >> 2) & 0x3f]);
-        out.push_back(alphabet[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)]);
-        out.push_back(i + 1 < text.size() ? alphabet[((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)] : '=');
-        out.push_back(i + 2 < text.size() ? alphabet[b2 & 0x3f] : '=');
-      }
-
-      return out;
-    }
   }  // namespace
 
   void
@@ -359,13 +328,16 @@ namespace file_mapping_store {
 
   std::string
   serialize_config_value(const std::vector<file_mapping::mapping_t> &mappings) {
-    return "base64:" + base64_encode(serialize_config_json(mappings));
+    return "base64:" + file_mapping::base64::encode(serialize_config_json(mappings));
   }
 
   bool
   persist_to_config(const store_t &store) {
     auto mappings = store.snapshot();
     const auto serialized = serialize_config_value(mappings);
+    if (serialized == "base64:") {
+      return false;
+    }
     if (config::nvhttp.file_mappings == serialized) {
       return true;
     }

@@ -108,6 +108,7 @@ namespace platf {
   struct gamepad_context_t {
     target_t gp;
     feedback_queue_t feedback_queue;
+    bool back_as_touchpad_click = false;
 
     union {
       XUSB_REPORT x360;
@@ -260,15 +261,18 @@ namespace platf {
      * @param id The gamepad ID.
      * @param feedback_queue The queue for posting messages back to the client.
      * @param gp_type The type of gamepad.
+     * @param back_as_touchpad_click Whether Back should remain mapped to the DS4 touchpad click for this device.
      * @return 0 on success.
      */
     int
-    alloc_gamepad_internal(const gamepad_id_t &id, feedback_queue_t &feedback_queue, VIGEM_TARGET_TYPE gp_type) {
+    alloc_gamepad_internal(const gamepad_id_t &id, feedback_queue_t &feedback_queue, VIGEM_TARGET_TYPE gp_type,
+                           bool back_as_touchpad_click) {
       auto &gamepad = gamepads[id.globalIndex];
       assert(!gamepad.gp);
 
       gamepad.client_relative_index = id.clientRelativeIndex;
       gamepad.last_report_ts = std::chrono::steady_clock::now();
+      gamepad.back_as_touchpad_click = back_as_touchpad_click;
 
       // Establish a connect to the ViGEm driver if we don't have one yet
       if (!client) {
@@ -481,6 +485,16 @@ namespace platf {
   static std::atomic<int> current_mouse_mode { 0 };
   // Per-app gamepad mode: 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4, 4=DualSense
   static std::atomic<int> current_gamepad_mode { 0 };
+  // Runtime copy of the persisted global policy. 0 means the startup config is authoritative.
+  static std::atomic<int> current_global_gamepad_mode { 0 };
+
+  static int
+  gamepad_mode_from_preference(std::string_view preference) {
+    if (preference == "x360"sv) return 2;
+    if (preference == "ds4"sv) return 3;
+    if (preference == "ds5"sv) return 4;
+    return 1;
+  }
 
   void
   set_mouse_mode(int mode) {
@@ -498,19 +512,40 @@ namespace platf {
     BOOST_LOG(info) << "Gamepad mode set to: "sv << names[mode];
   }
 
+  void
+  set_global_gamepad_mode(std::string_view preference) {
+    const auto mode = gamepad_mode_from_preference(preference);
+    const auto runtime_mode = current_global_gamepad_mode.load(std::memory_order_relaxed);
+    const auto previous_mode = runtime_mode == 0 ? gamepad_mode_from_preference(config::input.gamepad) : runtime_mode;
+    if (previous_mode == mode) {
+      return;
+    }
+    current_global_gamepad_mode.store(mode, std::memory_order_relaxed);
+    constexpr std::array<std::string_view, 5> names { "startup config", "auto", "Xbox 360", "DualShock 4", "DualSense" };
+    BOOST_LOG(info) << "Global gamepad mode hot-applied to: "sv << names[mode]
+                    << "; active virtual controllers are unchanged"sv;
+  }
+
   static int
   effective_gamepad_mode() {
     const auto app_mode = current_gamepad_mode.load(std::memory_order_relaxed);
     if (app_mode != 0) {
       return app_mode;
     }
-    if (ds5_config::current().enabled && ds5::component_available()) return 4;
+    const auto global_mode = current_global_gamepad_mode.load(std::memory_order_relaxed);
+    if (global_mode != 0) {
+      return global_mode;
+    }
     if (config::input.gamepad == "x360"sv) return 2;
     if (config::input.gamepad == "ds4"sv) return 3;
-    // Legacy sunshine.conf may still contain gamepad=ds5. The independent
-    // DS5 switch now owns that preference; disabled falls back to auto.
-    if (config::input.gamepad == "ds5"sv) return 1;
+    if (config::input.gamepad == "ds5"sv) return 4;
     return 1;
+  }
+
+  static int
+  selected_gamepad_mode(std::string_view client_gamepad) {
+    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
+    return client_declared ? gamepad_mode_from_preference(client_gamepad) : effective_gamepad_mode();
   }
 
   struct input_raw_t {
@@ -540,9 +575,23 @@ namespace platf {
       }
     }
 
+    /**
+     * @brief 在 DSU 服务已启用但未成功启动时输出一次告警。
+     */
+    void
+    log_dsu_uninitialized() {
+      if (dsu_uninitialized_warning_logged) {
+        return;
+      }
+
+      dsu_uninitialized_warning_logged = true;
+      BOOST_LOG(warning) << "DSU服务器未初始化，无法发送运动数据";
+    }
+
     vigem_t *vigem;
     std::unique_ptr<ds5::sidecar_client_t> ds5_sidecar;
     dsu_server_t *dsu_server;
+    bool dsu_uninitialized_warning_logged = false;
     vmouse::device_t *vmouse_dev;
     int vmouse_vscroll_accum = 0;
     int vmouse_hscroll_accum = 0;
@@ -1909,22 +1958,30 @@ namespace platf {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view client_gamepad) {
     auto raw = (input_raw_t *) input.get();
 
     // Component files may have been installed while Sunshine stayed running.
     // Refresh once per allocation; the input packet hot path reads only the cache.
     ds5::refresh_component_availability();
-    const auto gamepad_mode = effective_gamepad_mode();
-    const auto per_app_override = current_gamepad_mode.load(std::memory_order_relaxed) != 0;
+    const bool ds5_available = raw->ds5_sidecar && ds5::component_available();
+    // Client-declared preference (Sunshine /launch extension) outranks the
+    // per-app and global host-side selection while client_gamepad_override is on.
+    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
+    auto gamepad_mode = selected_gamepad_mode(client_gamepad);
+    const auto per_app_override = !client_declared && current_gamepad_mode.load(std::memory_order_relaxed) != 0;
+    const char *selection_source = client_declared ? "client selection" : (per_app_override ? "per-app selection" : "global selection");
+
+    if (gamepad_mode == 4 && !ds5_available) {
+      BOOST_LOG(warning) << "DualSense emulation was requested by "sv << selection_source
+                         << ", but its optional component is unavailable; falling back to automatic gamepad selection"sv;
+      gamepad_mode = 1;
+    }
 
     if (gamepad_mode == 4) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
-                      << (per_app_override ? "per-app selection" : "global selection") << ')';
-      if (!raw->ds5_sidecar || !raw->ds5_sidecar->configured()) {
-        BOOST_LOG(error) << "DualSense emulation is selected but its optional sidecar component is unavailable"sv;
-        return -1;
-      }
+                      << selection_source << ')';
       const auto ds5_settings = ds5_config::current();
       const auto result = raw->ds5_sidecar->alloc(
         id,
@@ -1935,8 +1992,11 @@ namespace platf {
       if (result == 0) {
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
         feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+        return 0;
       }
-      return result;
+      BOOST_LOG(warning) << "DualSense allocation failed for "sv << selection_source
+                         << "; falling back to automatic gamepad selection"sv;
+      gamepad_mode = 1;
     }
 
     if (!raw->vigem) {
@@ -1946,11 +2006,11 @@ namespace platf {
     VIGEM_TARGET_TYPE selectedGamepadType;
 
     if (gamepad_mode == 2) {
-      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be Xbox 360 controller ("sv << selection_source << ')';
       selectedGamepadType = Xbox360Wired;
     }
     else if (gamepad_mode == 3) {
-      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller ("sv << (per_app_override ? "per-app selection" : "global selection") << ')';
+      BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualShock 4 controller ("sv << selection_source << ')';
       selectedGamepadType = DualShock4Wired;
     }
     else if (metadata.type == LI_CTYPE_PS) {
@@ -1998,7 +2058,10 @@ namespace platf {
       }
     }
 
-    return raw->vigem->alloc_gamepad_internal(id, feedback_queue, selectedGamepadType);
+    const bool back_as_touchpad_click = selectedGamepadType == DualShock4Wired &&
+                                         gamepad_mode == 3 &&
+                                         config::input.ds4_back_as_touchpad_click;
+    return raw->vigem->alloc_gamepad_internal(id, feedback_queue, selectedGamepadType, back_as_touchpad_click);
   }
 
   void
@@ -2015,6 +2078,18 @@ namespace platf {
     }
 
     raw->vigem->free_target(nr);
+  }
+
+  bool
+  gamepad_is_ds5(input_t &input, int nr) {
+    auto raw = (input_raw_t *) input.get();
+    return raw->ds5_sidecar && raw->ds5_sidecar->owns(nr);
+  }
+
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &input) {
+    auto raw = (input_raw_t *) input.get();
+    return raw->ds5_sidecar && raw->ds5_sidecar->audio_haptics_active();
   }
 
   /**
@@ -2130,7 +2205,7 @@ namespace platf {
   }
 
   static DS4_SPECIAL_BUTTONS
-  ds4_special_buttons(const gamepad_state_t &gamepad_state) {
+  ds4_special_buttons(const gamepad_context_t &gamepad, const gamepad_state_t &gamepad_state) {
     int buttons {};
 
     if (gamepad_state.buttonFlags & HOME) buttons |= DS4_SPECIAL_BUTTON_PS;
@@ -2138,8 +2213,7 @@ namespace platf {
     // Allow either PS4/PS5 clickpad button or Xbox Series X share button to activate DS4 clickpad
     if (gamepad_state.buttonFlags & (TOUCHPAD_BUTTON | MISC_BUTTON)) buttons |= DS4_SPECIAL_BUTTON_TOUCHPAD;
 
-    // Manual DS4 emulation: check if BACK button should also trigger DS4 touchpad click
-    if (effective_gamepad_mode() == 3 && config::input.ds4_back_as_touchpad_click && (gamepad_state.buttonFlags & BACK)) buttons |= DS4_SPECIAL_BUTTON_TOUCHPAD;
+    if (gamepad.back_as_touchpad_click && (gamepad_state.buttonFlags & BACK)) buttons |= DS4_SPECIAL_BUTTON_TOUCHPAD;
 
     return (DS4_SPECIAL_BUTTONS) buttons;
   }
@@ -2166,7 +2240,7 @@ namespace platf {
     auto &report = gamepad.report.ds4.Report;
 
     report.wButtons = static_cast<uint16_t>(ds4_buttons(gamepad_state)) | static_cast<uint16_t>(ds4_dpad(gamepad_state));
-    report.bSpecial = ds4_special_buttons(gamepad_state);
+    report.bSpecial = ds4_special_buttons(gamepad, gamepad_state);
 
     report.bTriggerL = gamepad_state.lt;
     report.bTriggerR = gamepad_state.rt;
@@ -2429,8 +2503,8 @@ namespace platf {
         BOOST_LOG(debug) << "未知的运动数据类型: " << (int) motion.motionType;
       }
     }
-    else {
-      BOOST_LOG(warning) << "DSU服务器未初始化，无法发送运动数据";
+    else if (config::input.enable_dsu_server) {
+      raw->log_dsu_uninitialized();
     }
   }
 
@@ -2539,7 +2613,7 @@ namespace platf {
     auto dsu_server = ((input_raw_t *) input)->dsu_server;
     auto enabled = vigem != nullptr;
     auto switch_enabled = dsu_server != nullptr;
-    auto ds5_enabled = ((input_raw_t *) input)->ds5_sidecar->configured();
+    auto ds5_available = ((input_raw_t *) input)->ds5_sidecar->configured();
     auto reason = enabled ? "" : "gamepads.vigem-not-available";
     auto switch_reason = switch_enabled ? "" : "gamepads.motion-server-not-available";
 
@@ -2551,7 +2625,7 @@ namespace platf {
     gps[0] = { "auto", true, reason };
     gps[1] = { "x360", enabled, reason };
     gps[2] = { "ds4", enabled, reason };
-    gps[3] = { "ds5", ds5_enabled, ds5_enabled ? "" : "gamepads.ds5-sidecar-not-available" };
+    gps[3] = { "ds5", ds5_available, ds5_available ? "" : "gamepads.ds5-sidecar-not-available" };
     gps[4] = { "switch", switch_enabled, switch_reason };
 
     for (auto &[name, is_enabled, reason_disabled] : gps) {
@@ -2568,17 +2642,21 @@ namespace platf {
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view client_gamepad) {
     platform_caps::caps_t caps = 0;
 
-    // We support controller touchpad input as long as we're not emulating X360
-    if (effective_gamepad_mode() != 2) {
+    const auto selected_mode = selected_gamepad_mode(client_gamepad);
+    const auto ds5_available = ds5::refresh_component_availability();
+    // 能力声明必须与可选 DS5 组件不可用时的创建前回退保持一致。
+    const auto gamepad_mode = selected_mode == 4 && !ds5_available ? 1 : selected_mode;
+
+    // 与手柄分配使用同一会话选择；强制模拟 Xbox 360 时不声明触控板能力。
+    if (gamepad_mode != 2) {
       caps |= platform_caps::controller_touch;
     }
 
     const auto ds5_settings = ds5_config::current();
-    if (ds5_settings.enabled && ds5_settings.audio_haptics &&
-        ds5::refresh_component_availability()) {
+    if (gamepad_mode == 4 && ds5_settings.audio_haptics && ds5_available) {
       caps |= platform_caps::ds5_haptics_pcm;
     }
 

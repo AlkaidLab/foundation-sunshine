@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
+
 #include "platform/common.h"
 #include "video_colorspace.h"
 
@@ -79,6 +81,11 @@ namespace video::hdr_metadata {
   // without exposing FFmpeg headers to this shared, unit-testable header.
   constexpr size_t hdr10plus_t35_max_payload_size = 1024;
 
+  // Declared here because the HDR10+ and Vivid serializers below are defined
+  // before the conversion helper's full implementation.
+  inline float
+  nits_to_pq(float nits);
+
   /**
    * The maxRGB percentages ST 2094-40 deployment profiles carry.
    *
@@ -126,6 +133,13 @@ namespace video::hdr_metadata {
     /// Normalized maxRGB at each entry of hdr10plus_percentages.
     std::array<int, hdr10plus_percentages.size()> distribution_maxrgb {};
     uint16_t targeted_system_display_maximum_luminance = 1000;
+    bool tone_mapping = false;
+    uint16_t knee_point_x = 0;
+    uint16_t knee_point_y = 0;
+    std::array<uint16_t, 15> bezier_curve_anchors {};
+    uint8_t bezier_curve_anchor_count = 0;
+    bool saturation_mapping = false;
+    uint8_t saturation_weight = 8;
     bool valid = false;
   };
 
@@ -174,6 +188,42 @@ namespace video::hdr_metadata {
       .targeted_system_display_maximum_luminance = target_nits,
       .valid = true,
     };
+
+    const auto to_u12 = [](float value) {
+      return static_cast<uint16_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 4095.0f));
+    };
+    const auto source_peak_pq = to_u12(nits_to_pq(std::max(peak_maxrgb, average_maxrgb)));
+    const auto target_pq = to_u12(nits_to_pq(static_cast<float>(target_nits)));
+    if (source_peak_pq > target_pq + 8) {
+      // ST 2094-40 single-window curve: keep a linear toe and compress the
+      // highlight segment with three monotone Bezier anchors. The coordinates
+      // are generated from the same scene statistics as maxSCL, not invented
+      // defaults, and are consumed by the PyroWave client LUT.
+      // ST 2094-40 transmits the scene statistics as absolute maxRGB values,
+      // while the receiver applies the curve to the PQ signal.  Keep the
+      // metadata coordinates in that same PQ signal domain; a linear-light
+      // average/peak ratio would move the knee far too low (for example,
+      // 500/4000 nits is 0.125, while PQ(500 nits) is about 0.68).
+      const auto peak_pq = nits_to_pq(std::max(peak_maxrgb, average_maxrgb));
+      const auto average_pq = nits_to_pq(std::max(average_maxrgb, 0.0f));
+      const auto knee_upper = std::clamp(peak_pq, 0.001f, 0.75f);
+      const auto knee_lower = std::min(0.35f, knee_upper);
+      const auto knee_x = static_cast<uint16_t>(std::clamp<int>(
+        std::lround(std::clamp(average_pq, knee_lower, knee_upper) * 4095.0f), 1, 4094));
+      const auto knee_y = static_cast<uint16_t>(std::clamp<int>(
+        std::min<int>(knee_x, std::max<int>(1, target_pq * 8 / 10)), 1, 4094));
+      result.tone_mapping = true;
+      result.knee_point_x = knee_x;
+      result.knee_point_y = knee_y;
+      result.bezier_curve_anchor_count = 3;
+      const auto room = static_cast<int>(1023 - knee_y * 1023 / 4095);
+      const auto base = static_cast<int>(knee_y * 1023 / 4095);
+      result.bezier_curve_anchors[0] = static_cast<uint16_t>(std::clamp(base + room / 3, 0, 1023));
+      result.bezier_curve_anchors[1] = static_cast<uint16_t>(std::clamp(base + room * 2 / 3, 0, 1023));
+      result.bezier_curve_anchors[2] = 1023;
+      result.saturation_mapping = true;
+      result.saturation_weight = 8; // neutral saturation, explicitly carried with the curve
+    }
 
     if (distribution) {
       for (size_t i = 0; i < hdr10plus_percentages.size(); ++i) {
@@ -229,14 +279,17 @@ namespace video::hdr_metadata {
    * The codec decides what may be written. HDR Vivid defines a carriage only for
    * AVS2 (clause 8) and HEVC/VVC (annex B) — the standard never mentions AV1 or
    * OBUs, so emitting it there invents a mapping no decoder is obliged to accept.
-   * HDR10+ does have one, from AOMedia's HDR10+ AV1 Metadata Handling
+   * PyroWave carries the same registered payload in its protected frame TLV,
+   * not in an invented AV1 OBU. HDR10+ has an AV1 mapping, from AOMedia's
+   * HDR10+ AV1 Metadata Handling
    * Specification, so it is not codec-gated here.
    *
    * video_format follows the config_t::videoFormat convention: 0 H.264, 1 HEVC, 2 AV1.
    */
   inline formats_t
   formats_for(const sunshine_colorspace_t &colorspace, int video_format) {
-    const bool vivid_carriable = (video_format == 1);
+    const bool vivid_carriable = video_format == 1 ||
+                                video_format == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT);
     switch (colorspace.colorspace) {
       case colorspace_e::bt2020:
         return { .hdr10plus = true, .vivid = vivid_carriable };
@@ -461,15 +514,30 @@ namespace video::hdr_metadata {
     uint16_t average_maxrgb_pq = 0;
     uint16_t variance_maxrgb_pq = 0;
     uint16_t maximum_maxrgb_pq = 0;
+    bool tone_mapping = false;
+    uint16_t targeted_display_pq = 2080;
+    bool base_enabled = false;
+    uint16_t base_m_p = 0;
+    uint8_t base_m_m = 0;
+    uint16_t base_m_a = 0;
+    uint16_t base_m_b = 0;
+    uint8_t base_m_n = 0;
+    uint8_t base_k1 = 0;
+    uint8_t base_k2 = 0;
+    uint8_t base_k3 = 0;
+    uint8_t base_delta_mode = 0;
+    uint8_t base_delta = 0;
+    bool saturation_mapping = false;
+    uint8_t saturation_gain = 128;
     bool valid = false;
   };
 
   /**
    * Generate the four statistics-mode HDR Vivid fields from content values.
    *
-   * The fields describe the content in the PQ signal domain. Target display
-   * luminance is intentionally not an input: it belongs to display adaptation
-   * and optional curve parameters, not to these content statistics.
+   * The four statistics and the optional tone-mapping parameters use the PQ
+   * signal domain defined by UWA 005.1. Target display luminance is carried
+   * separately as a PQ code and participates in the base-curve calculation.
    *
    * All four are PQ-domain statistics, which is why the average comes from
    * stats.avg_maxrgb_pq rather than the linear-light mean beside it: min and max
@@ -486,9 +554,18 @@ namespace video::hdr_metadata {
    * average. A genuinely black frame reports zero in both and is passed through.
    */
   inline vivid_metadata_t
-  vivid_from_stats(const platf::hdr_frame_luminance_stats_t &stats) {
-    if (!stats.valid || !std::isfinite(stats.avg_maxrgb_pq) ||
-        stats.avg_maxrgb_pq < 0.0f || stats.avg_maxrgb_pq > 1.0f) {
+  vivid_from_stats(const platf::hdr_frame_luminance_stats_t &stats,
+    uint16_t target_display_luminance = 1000) {
+    const auto valid_nits = [](float value) {
+      return std::isfinite(value) && value >= 0.0f;
+    };
+    const auto valid_pq = [](float value) {
+      return std::isfinite(value) && value >= 0.0f && value <= 1.0f;
+    };
+    if (!stats.valid || !valid_nits(stats.min_maxrgb) ||
+        !valid_nits(stats.max_maxrgb) || !valid_nits(stats.avg_maxrgb) ||
+        !valid_pq(stats.avg_maxrgb_pq) || !valid_pq(stats.percentile_10_pq) ||
+        !valid_pq(stats.percentile_90_pq)) {
       return {};
     }
     if (stats.avg_maxrgb_pq == 0.0f && !(std::isfinite(stats.avg_maxrgb) && stats.avg_maxrgb <= 0.0f)) {
@@ -496,11 +573,50 @@ namespace video::hdr_metadata {
     }
 
     vivid_metadata_t result;
+    const auto target_nits = std::clamp<uint16_t>(
+      target_display_luminance > 0 ? target_display_luminance : 1000,
+      1,
+      10000);
     result.minimum_maxrgb_pq = pq_to_u12(nits_to_pq(stats.min_maxrgb));
     result.average_maxrgb_pq = pq_to_u12(stats.avg_maxrgb_pq);
     result.variance_maxrgb_pq = pq_to_u12(
       std::max(stats.percentile_90_pq - stats.percentile_10_pq, 0.0f));
     result.maximum_maxrgb_pq = pq_to_u12(nits_to_pq(stats.max_maxrgb));
+    result.targeted_display_pq = target_display_pq_u12(target_nits);
+    if (result.maximum_maxrgb_pq > result.targeted_display_pq + 8) {
+      // UWA 005.1 §9.2/§9.4: solve the base curve in the PQ signal domain.
+      // Use the normative base exponents m_m=2.4 and m_n=1 with K1=K2=K3=1;
+      // the desktop producer still uses one curve segment and no spline.
+      const auto source = std::clamp(result.maximum_maxrgb_pq / 4095.0F, 0.0001F, 1.0F);
+      const auto middle = std::clamp(stats.avg_maxrgb_pq, 0.0001F, source);
+      const auto target = std::clamp(result.targeted_display_pq / 4095.0F, 0.0001F, 1.0F);
+      const auto ratio = std::clamp(middle / target, 0.0001F, 1.0F);
+      const auto mapping_denominator = middle * source * (1.0F - ratio);
+      auto m_p = 1.0F;
+      if (mapping_denominator > 0.000001F) {
+        m_p = 1.0F + (ratio * source - middle) / mapping_denominator;
+      }
+      m_p = std::clamp(std::isfinite(m_p) ? m_p : 1.0F, 0.01F, 10.0F);
+      constexpr float base_m_m = 2.4F;
+      constexpr float base_m_n = 1.0F;
+      const auto base = std::pow(std::max(middle, 0.0001F), base_m_n);
+      const auto curve_denominator = std::pow(std::max(middle, 0.0001F), base_m_m) - base + 1.0F;
+      const auto curve = curve_denominator > 0.000001F
+          ? std::pow(std::clamp(m_p * base / curve_denominator, 0.0F, 1.0F), base_m_m)
+          : 0.0F;
+      const auto m_a = std::clamp(std::isfinite(curve) && curve > 0.000001F
+          ? target / curve : 1.0F, 0.0F, 1.0F);
+      result.tone_mapping = true;
+      result.base_enabled = true;
+      result.base_m_p = static_cast<uint16_t>(std::lround(m_p * 16383.0F / 10.0F));
+      result.base_m_m = 24;
+      result.base_m_a = static_cast<uint16_t>(std::lround(m_a * 1023.0F));
+      result.base_m_b = 0;
+      result.base_m_n = 10;
+      result.base_k1 = 1;
+      result.base_k2 = 1;
+      result.base_k3 = 1;
+    }
     result.valid = true;
     return result;
   }
@@ -611,8 +727,9 @@ namespace video::hdr_metadata {
   class vivid_temporal_filter_t {
   public:
     vivid_metadata_t
-    update(const platf::hdr_frame_luminance_stats_t &stats) {
-      return update(vivid_from_stats(stats));
+    update(const platf::hdr_frame_luminance_stats_t &stats,
+      uint16_t target_display_luminance = 1000) {
+      return update(vivid_from_stats(stats, target_display_luminance));
     }
 
     vivid_metadata_t
@@ -637,6 +754,21 @@ namespace video::hdr_metadata {
       result.average_maxrgb_pq = static_cast<uint16_t>(average_sum_ / count_);
       result.variance_maxrgb_pq = static_cast<uint16_t>(variance_sum_ / count_);
       result.maximum_maxrgb_pq = static_cast<uint16_t>(maximum_sum_ / count_);
+      result.tone_mapping = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].tone_mapping;
+      result.targeted_display_pq = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].targeted_display_pq;
+      result.base_enabled = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_enabled;
+      result.base_m_p = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_m_p;
+      result.base_m_m = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_m_m;
+      result.base_m_a = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_m_a;
+      result.base_m_b = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_m_b;
+      result.base_m_n = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_m_n;
+      result.base_k1 = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_k1;
+      result.base_k2 = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_k2;
+      result.base_k3 = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_k3;
+      result.base_delta_mode = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_delta_mode;
+      result.base_delta = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].base_delta;
+      result.saturation_mapping = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].saturation_mapping;
+      result.saturation_gain = samples_[next_ == 0 ? WINDOW_SIZE - 1 : next_ - 1].saturation_gain;
       result.valid = true;
       return result;
     }
@@ -687,7 +819,8 @@ namespace video::hdr_metadata {
   class dynamic_metadata_temporal_state_t {
   public:
     dynamic_metadata_temporal_result_t
-    update(const platf::hdr_frame_luminance_stats_t &stats) {
+    update(const platf::hdr_frame_luminance_stats_t &stats,
+      uint16_t target_display_luminance = 1000) {
       if (!detail::has_valid_scene_metrics(stats)) {
         return {};
       }
@@ -698,7 +831,7 @@ namespace video::hdr_metadata {
         vivid_filter_.reset();
       }
 
-      const auto vivid = vivid_filter_.update(stats);
+      const auto vivid = vivid_filter_.update(stats, target_display_luminance);
       hdr10plus_ema_.update(stats);
       return {
         .hdr10plus_stats = hdr10plus_ema_.smoothed(stats),
@@ -1005,8 +1138,33 @@ namespace video::hdr_metadata {
     writer.write(metadata.average_maxrgb_pq, 12);
     writer.write(metadata.variance_maxrgb_pq, 12);
     writer.write(metadata.maximum_maxrgb_pq, 12);
-    writer.write(0, 1);  // tone_mapping_mode_flag
-    writer.write(0, 1);  // color_saturation_mapping_flag
+    writer.write(metadata.tone_mapping ? 1 : 0, 1);  // tone_mapping_mode_flag
+    if (metadata.tone_mapping) {
+      writer.write(0, 1);  // one tone-mapping parameter set
+      writer.write(metadata.targeted_display_pq, 12);
+      writer.write(metadata.base_enabled ? 1 : 0, 1);
+      if (metadata.base_enabled) {
+        writer.write(1, 1);  // marker_bit
+        writer.write(metadata.base_m_p, 14);
+        writer.write(metadata.base_m_m, 6);
+        writer.write(1, 1);  // marker_bit
+        writer.write(metadata.base_m_a, 10);
+        writer.write(metadata.base_m_b, 10);
+        writer.write(1, 1);  // marker_bit
+        writer.write(metadata.base_m_n, 6);
+        writer.write(metadata.base_k1, 2);
+        writer.write(metadata.base_k2, 2);
+        writer.write(metadata.base_k3, 4);
+        writer.write(metadata.base_delta_mode, 3);
+        writer.write(metadata.base_delta, 7);
+      }
+      writer.write(0, 1);  // no 3Spline extension
+    }
+    writer.write(metadata.saturation_mapping ? 1 : 0, 1);
+    if (metadata.saturation_mapping) {
+      writer.write(0, 3); // one gain value
+      writer.write(metadata.saturation_gain, 8);
+    }
     writer.flush();
 
     return payload.size();
@@ -1066,7 +1224,7 @@ namespace video::hdr_metadata {
         return payloads;
       }
 
-      const auto filtered = temporal_state_.update(stats);
+      const auto filtered = temporal_state_.update(stats, max_display_luminance);
 
       if (formats_.hdr10plus) {
         const auto size = serialize_hdr10plus_t35(

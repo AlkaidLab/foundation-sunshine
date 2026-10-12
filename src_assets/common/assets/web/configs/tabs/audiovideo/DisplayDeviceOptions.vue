@@ -3,14 +3,12 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import Checkbox from '../../../components/Checkbox.vue'
-import DisplayModeRemapping from './DisplayModeRemapping.vue'
 import DisplayPreparationPicker from './DisplayPreparationPicker.vue'
 import DisplayRuleRadioGroup from './DisplayRuleRadioGroup.vue'
 
 const props = defineProps({
   platform: String,
   config: Object,
-  displayModeRemapping: Array,
 })
 
 const config = ref(props.config)
@@ -244,11 +242,6 @@ onUnmounted(() => {
                 v-model="config.dynamic_resolution_follow_display"
                 default="true"
               ></Checkbox>
-
-              <DisplayModeRemapping
-                :config="config"
-                :display-mode-remapping="displayModeRemapping"
-              />
 
               <div
                 class="hdr-feature-card mb-3"

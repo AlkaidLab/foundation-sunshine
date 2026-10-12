@@ -576,7 +576,7 @@ trackEvents.gpuReported({ platform: 'windows', adapters: [...] })
 - `vue` - Vue 3 框架
 - `vue-i18n` - 国际化（Composition API 模式）
 - `bootstrap` - UI 框架
-- `vuedraggable` - 拖拽功能
+- `vuedraggable-es` - 拖拽功能
 - `marked` - Markdown 解析
 
 ## 🐛 调试技巧

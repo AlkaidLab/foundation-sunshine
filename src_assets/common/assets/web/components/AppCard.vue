@@ -113,8 +113,8 @@ export default {
           key: 'exclude-global-prep-cmd',
           className: 'tag-exclude-global-prep-cmd',
           icon: 'fa-ellipsis-h',
-          label: '跳过预处理',
-          title: '全局预处理命令',
+          label: this.$t('apps.tag_skip_prep'),
+          title: this.$t('apps.tag_skip_prep_desc'),
         });
       }
 
@@ -123,8 +123,8 @@ export default {
           key: 'menu-cmd',
           className: 'tag-menu',
           count: this.app['menu-cmd'].length,
-          label: '菜单',
-          title: '菜单命令',
+          label: this.$t('apps.tag_menu'),
+          title: this.$t('apps.menu_cmd_name'),
         });
       }
 
@@ -133,8 +133,8 @@ export default {
           key: 'elevated',
           className: 'tag-elevated',
           icon: 'fa-shield-alt',
-          label: '管理员',
-          title: '管理员',
+          label: this.$t('apps.tag_admin'),
+          title: this.$t('_common.run_as'),
         });
       }
 
@@ -143,8 +143,8 @@ export default {
           key: 'auto-detach',
           className: 'tag-detach',
           icon: 'fa-unlink',
-          label: '分离运行',
-          title: '关闭时不退出串流',
+          label: this.$t('apps.tag_auto_detach'),
+          title: this.$t('apps.auto_detach'),
         });
       }
 
@@ -196,7 +196,7 @@ export default {
      */
     async copyToClipboard(text, appName, event) {
       if (!text) {
-        this.$emit('copy-error', '没有可复制的命令');
+        this.$emit('copy-error', this.$t('apps.copy_no_command'));
         return;
       }
       
@@ -223,14 +223,14 @@ export default {
             this.showCopySuccess(targetElement, appName);
           } catch (err) {
             console.error('复制失败:', err);
-            this.$emit('copy-error', '复制失败，请手动复制');
+            this.$emit('copy-error', this.$t('apps.copy_failed_manual'));
           } finally {
             document.body.removeChild(textArea);
           }
         }
       } catch (err) {
         console.error('复制到剪贴板失败:', err);
-        this.$emit('copy-error', '复制失败，请检查浏览器权限');
+        this.$emit('copy-error', this.$t('apps.copy_failed_permissions'));
       }
     },
     
@@ -242,7 +242,7 @@ export default {
       element.classList.add('copy-success');
       
       // 发出成功事件
-      this.$emit('copy-success', `📋 已复制 "${appName}" 的命令`);
+      this.$emit('copy-success', this.$t('apps.copy_command_success', { name: appName }));
       
       // 400ms后移除动画类
       setTimeout(() => {

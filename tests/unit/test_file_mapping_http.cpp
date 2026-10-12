@@ -56,6 +56,18 @@ TEST(FileMappingHttp, CapabilityDoesNotBuildSessionUrlFromRequestHost) {
   EXPECT_EQ(body["session_token"].get<std::string>(), "abc123");
 }
 
+TEST(FileMappingHttp, CapabilityReportsErrorsAsUnsuccessful) {
+  file_mapping_http::capability_state_t state;
+  state.enabled = true;
+  state.error = "file mapping session token rate limited";
+
+  auto response = file_mapping_http::make_capability_response(state);
+  auto body = nlohmann::json::parse(response.body);
+
+  EXPECT_FALSE(body["ok"].get<bool>());
+  EXPECT_EQ(body["error"].get<std::string>(), state.error);
+}
+
 TEST(FileMappingHttp, CapabilityStripsTokenFromExplicitSessionUrl) {
   file_mapping_http::capability_state_t state;
   state.enabled = true;

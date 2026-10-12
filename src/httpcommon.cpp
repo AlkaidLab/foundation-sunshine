@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <initializer_list>
 #include <utility>
@@ -22,8 +23,6 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
-
-#include <cstring>
 
 #include <boost/asio/ssl/context.hpp>
 
@@ -107,6 +106,10 @@ namespace http {
     }
 
     auto salt = crypto::rand_alphabet(16);
+    if (salt.size() != 16) {
+      BOOST_LOG(error) << "Couldn't generate a random salt for the credentials file"sv;
+      return -1;
+    }
     outputTree.put("username", username);
     outputTree.put("salt", salt);
     outputTree.put("password", util::hex(crypto::hash(password + salt)).to_string());
@@ -940,4 +943,3 @@ namespace http {
     return false;
   }
 }
-

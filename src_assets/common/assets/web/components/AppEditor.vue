@@ -7,7 +7,7 @@
             <i class="fas fa-edit me-2"></i>
             {{ isNewApp ? t('apps.add_new') : t('apps.edit') }}
           </h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" :aria-label="t('_common.close')"></button>
         </div>
         <div class="modal-body">
           <input type="file" ref="fileInput" style="display: none" />
@@ -109,7 +109,7 @@
                         </span>
                         <span class="cmd-tag">
                           <code>"C:\Program Files\...\game.exe"</code>
-                          <span class="cmd-tag-desc">Start program directly</span>
+                          <span class="cmd-tag-desc">{{ t('apps.launch_program_directly') }}</span>
                         </span>
                       </div>
                     </div>
@@ -237,6 +237,33 @@
                 </template>
               </AccordionItem>
 
+              <AccordionItem v-if="isWindows" id="dlssnr" icon="fa-wand-magic-sparkles" title="DLSS NR" parent-id="appFormAccordion">
+                <FormField id="appDlssnrMode" :label="t('apps.dlssnr_mode')" :hint="t('apps.dlssnr_desc')">
+                  <select id="appDlssnrMode" class="form-select form-control-enhanced" v-model="formData.dlssnr.mode">
+                    <option value="inherit">{{ t('apps.rtx_hdr_inherit') }}</option>
+                    <option value="on">{{ t('apps.rtx_hdr_on') }}</option>
+                    <option value="off">{{ t('apps.rtx_hdr_off') }}</option>
+                  </select>
+                </FormField>
+                <template v-if="formData.dlssnr.mode === 'on'">
+                  <FormField id="appDlssnrIntensity" :label="t('apps.dlssnr_intensity')">
+                    <input id="appDlssnrIntensity" type="number" min="0" max="1" step="0.05" class="form-control form-control-enhanced" v-model.number="formData.dlssnr.intensity" />
+                  </FormField>
+                  <FormField id="appDlssnrStyle" :label="t('apps.dlssnr_style')">
+                    <input id="appDlssnrStyle" type="number" min="0" max="4" step="1" class="form-control form-control-enhanced" v-model.number="formData.dlssnr.style" />
+                  </FormField>
+                  <CheckboxField id="appDlssnrUi" v-model="formData.dlssnr['ui-correction']" :label="t('apps.dlssnr_ui')" />
+                  <FormField id="appDlssnrMotion" :label="t('apps.dlssnr_motion')" :hint="t('apps.dlssnr_motion_hint')">
+                    <select id="appDlssnrMotion" class="form-select form-control-enhanced" v-model.number="formData.dlssnr['motion-quality']">
+                      <option :value="0">{{ t('apps.dlssnr_motion_off') }}</option>
+                      <option :value="1">{{ t('apps.dlssnr_motion_fast') }}</option>
+                      <option :value="2">{{ t('apps.dlssnr_motion_balanced') }}</option>
+                      <option :value="3">{{ t('apps.dlssnr_motion_quality') }}</option>
+                    </select>
+                  </FormField>
+                </template>
+              </AccordionItem>
+
               <AccordionItem id="advanced" icon="fa-cogs" :title="t('apps.advanced_options')" parent-id="appFormAccordion">
                 <CheckboxField
                   v-if="isWindows"
@@ -266,6 +293,15 @@
                     </option>
                   </select>
                 </FormField>
+
+                <div
+                  v-if="isWindows && formData.gamepad === 'ds5'"
+                  class="alert alert-warning mt-2 mb-3"
+                  role="note"
+                >
+                  <i class="fas fa-info-circle me-2" aria-hidden="true"></i>
+                  {{ t('config.gamepad_ds5_component_hint_windows') }}
+                </div>
 
                 <FormField
                   v-if="isWindows"
@@ -363,8 +399,10 @@ import { createFileSelector } from '../utils/fileSelection.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
 import { PER_APP_GAMEPAD_MODES } from '../utils/gamepadModes.js'
+import { normalizeDlssnrConfig } from '../utils/dlssnr.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
+  dlssnr: normalizeDlssnrConfig(),
   name: '',
   output: '',
   cmd: '',
@@ -463,6 +501,7 @@ const initializeFileSelector = () => {
   const notify = (type) => (message) => showMessage(message, type)
   fileSelector.value = createFileSelector({
     platform: props.platform,
+    translate: t,
     onSuccess: notify('info'),
     onError: notify('error'),
     onInfo: notify('info'),
@@ -500,6 +539,7 @@ const ensureDefaultValues = () => {
   if (isWindows.value && formData.value.gamepad === undefined) {
     formData.value.gamepad = ''
   }
+  formData.value.dlssnr = normalizeDlssnrConfig(formData.value.dlssnr)
   const rtxHdr = formData.value['rtx-hdr']
   formData.value['rtx-hdr'] = {
     ...DEFAULT_FORM_DATA['rtx-hdr'],
@@ -551,7 +591,7 @@ const cleanup = () => {
 
 const validateField = (fieldName) => {
   const validationKey = FIELD_VALIDATION_MAP[fieldName] || fieldName
-  const result = validateFieldHelper(validationKey, formData.value[fieldName])
+  const result = validateFieldHelper(validationKey, formData.value[fieldName], {}, t)
   validation.value[fieldName] = result
   return result
 }
@@ -676,7 +716,8 @@ const getPlaceholderText = (fieldName) => fileSelector.value?.getPlaceholderText
 const getButtonTitle = (type) => fileSelector.value?.getButtonTitle(type) || t('apps.select')
 
 const saveApp = async () => {
-  const formValidation = validateAppForm(formData.value)
+  formData.value.dlssnr = normalizeDlssnrConfig(formData.value.dlssnr)
+  const formValidation = validateAppForm(formData.value, t)
   if (!formValidation.isValid) {
     if (formValidation.errors.length) alert(formValidation.errors[0])
     return

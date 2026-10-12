@@ -41,7 +41,7 @@ option(DRIVER_DEPS_REQUIRED "Treat missing driver dependencies as a fatal error"
 # Version pins
 set(VMOUSE_DRIVER_VERSION "v1.3.2" CACHE STRING "ZakoVirtualMouse driver version tag")
 set(VDD_DRIVER_VERSION "v0.17.5" CACHE STRING "ZakoVDD driver version tag")
-set(VDD_WIN10_DRIVER_VERSION "v0.15.8" CACHE STRING "Win10-pinned ZakoVDD driver version tag")
+set(VDD_WIN10_DRIVER_VERSION "v0.15.10" CACHE STRING "Win10-pinned ZakoVDD driver version tag")
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
 set(NEFCON_VERSION "v1.18.74" CACHE STRING "nefcon version tag")
@@ -192,13 +192,20 @@ function(_download_github_release_metadata repository version output_path)
 
   set(_url "https://api.github.com/repos/${repository}/releases/tags/${version}")
   set(_temporary_path "${output_path}.download")
+  set(_headers
+    "Accept: application/vnd.github+json"
+    "X-GitHub-Api-Version: 2022-11-28"
+    "User-Agent: Sunshine-Foundation-CMake")
+  # CI already scopes this token to trusted events. Authenticate metadata
+  # requests to avoid the shared runner IP's anonymous API rate limit.
+  if(DEFINED ENV{GITHUB_TOKEN} AND NOT "$ENV{GITHUB_TOKEN}" STREQUAL "")
+    list(APPEND _headers "Authorization: Bearer $ENV{GITHUB_TOKEN}")
+  endif()
   _driver_download_with_retries(
     "${_url}"
     "${_temporary_path}"
     ""
-    "Accept: application/vnd.github+json"
-    "X-GitHub-Api-Version: 2022-11-28"
-    "User-Agent: Sunshine-Foundation-CMake")
+    ${_headers})
 
   if(EXISTS "${_temporary_path}")
     file(RENAME "${_temporary_path}" "${output_path}")

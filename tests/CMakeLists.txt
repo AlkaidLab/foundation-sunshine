@@ -54,6 +54,18 @@ if (WIN32)
 endif ()
 add_test(NAME sunshinesvc_state_unit_tests COMMAND sunshinesvc_state_unit_tests)
 
+# The log sink tests exercise Windows file-sharing behavior from the service wrapper.
+if (WIN32)
+    add_executable(sunshinesvc_log_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_log.cpp)
+    target_include_directories(sunshinesvc_log_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(sunshinesvc_log_unit_tests gtest_main)
+    target_compile_options(sunshinesvc_log_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(sunshinesvc_log_unit_tests PROPERTIES CXX_STANDARD 23)
+    set_target_properties(sunshinesvc_log_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    add_test(NAME sunshinesvc_log_unit_tests COMMAND sunshinesvc_log_unit_tests)
+endif ()
+
 add_executable(video_probe_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp)
 target_include_directories(video_probe_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -81,20 +93,83 @@ if (WIN32)
 endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
 
+add_executable(pyrowave_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/config.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/capabilities.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/gpu_interop.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packet.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/session.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/runtime.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveProtocol.c
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c
+        ${CMAKE_SOURCE_DIR}/tests/tools/pyrowave_test_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pyrowave.cpp)
+target_include_directories(pyrowave_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(pyrowave_unit_tests Boost::log Boost::format gtest_main)
+target_compile_options(pyrowave_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(pyrowave_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
+    target_sources(pyrowave_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/pyrowave/dynamic_hdr.cpp
+            ${CMAKE_SOURCE_DIR}/src/video_hdr_metadata.cpp
+            ${CMAKE_SOURCE_DIR}/src/video_dolby_vision.cpp
+            ${CMAKE_SOURCE_DIR}/src/video_hdr_bitstream.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp)
+    target_link_libraries(pyrowave_unit_tests Pyrowave::Runtime ${FFMPEG_LIBRARIES})
+    set_target_properties(pyrowave_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME pyrowave_unit_tests COMMAND pyrowave_unit_tests)
+
+add_executable(pyrowave_packetizer_probe
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packet.cpp
+        ${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveProtocol.c
+        ${CMAKE_SOURCE_DIR}/tests/tools/pyrowave_test_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/tools/pyrowave_packetizer_probe.cpp)
+target_include_directories(pyrowave_packetizer_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(pyrowave_packetizer_probe Boost::log Boost::format)
+target_compile_options(pyrowave_packetizer_probe PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(pyrowave_packetizer_probe PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+if (WIN32)
+    set_target_properties(pyrowave_packetizer_probe PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME pyrowave_packetizer_probe COMMAND pyrowave_packetizer_probe)
+
+if (WIN32)
+    set(HDR_ENCODING_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_hdr_encoding.cpp)
+    add_executable(hdr_encoding_unit_tests
+            ${HDR_ENCODING_TEST_SOURCE})
+    target_link_libraries(hdr_encoding_unit_tests PRIVATE d3d11 d3dcompiler dxgi gtest_main)
+    target_compile_definitions(hdr_encoding_unit_tests PRIVATE
+            SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
+    set_target_properties(hdr_encoding_unit_tests PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+    add_test(NAME hdr_encoding_unit_tests COMMAND hdr_encoding_unit_tests)
+
     set(PRE_ENCODE_FILTER_TEST_SOURCE
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_pre_encode_filter.cpp)
-    set(TRUEHDR_BACKEND_LOADER_TEST_SOURCE
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_backend_loader.cpp)
+    set(TRUEHDR_ADAPTER_LOADER_TEST_SOURCE
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_truehdr_adapter_loader.cpp)
 
     add_executable(pre_encode_filter_unit_tests
             ${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/backend_factory.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/truehdr_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/dlssnr_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/hdr_filter.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_loader.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/pre_encode_filter_test_stubs.cpp
             ${PRE_ENCODE_FILTER_TEST_SOURCE})
     target_include_directories(pre_encode_filter_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_link_libraries(pre_encode_filter_unit_tests
             Boost::log
+            Boost::thread
             d3d11
             d3dcompiler
             dxgi
@@ -107,51 +182,69 @@ if (WIN32)
             LINK_SEARCH_START_STATIC 1)
     add_test(NAME pre_encode_filter_unit_tests COMMAND pre_encode_filter_unit_tests)
 
-    add_library(fake_truehdr_backend SHARED
-            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
-    target_include_directories(fake_truehdr_backend PRIVATE "${CMAKE_SOURCE_DIR}")
-    set_target_properties(fake_truehdr_backend PROPERTIES
+    if (SUNSHINE_DLSSNR_AVAILABLE)
+        # Hardware/runtime are supplied explicitly; do not add to ordinary CTest.
+        get_target_property(_nr_filter_sources pre_encode_filter_unit_tests SOURCES)
+        list(REMOVE_ITEM _nr_filter_sources "${PRE_ENCODE_FILTER_TEST_SOURCE}")
+        add_executable(dlssnr_pipeline_smoke ${_nr_filter_sources}
+                ${CMAKE_SOURCE_DIR}/tests/tools/dlssnr_pipeline_smoke.cpp)
+        target_include_directories(dlssnr_pipeline_smoke PRIVATE "${CMAKE_SOURCE_DIR}" "${DLSSNR_TRUST_INCLUDE}")
+        target_compile_definitions(dlssnr_pipeline_smoke PRIVATE SUNSHINE_DLSSNR_ADAPTER
+                SUNSHINE_SHADERS_DIR="${CMAKE_SOURCE_DIR}/src_assets/windows/assets/shaders/directx")
+        target_link_libraries(dlssnr_pipeline_smoke Boost::log Boost::thread d3d11 d3dcompiler dxgi bcrypt)
+        set_target_properties(dlssnr_pipeline_smoke PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+        add_dependencies(dlssnr_pipeline_smoke sunshine_dlssnr_adapter)
+    endif ()
+
+    add_library(fake_truehdr_adapter SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_adapter.cpp)
+    target_include_directories(fake_truehdr_adapter PRIVATE "${CMAKE_SOURCE_DIR}")
+    set_target_properties(fake_truehdr_adapter PROPERTIES
+            CXX_STANDARD 23
+            PREFIX "")
+    add_custom_command(TARGET fake_truehdr_adapter POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E touch "$<TARGET_FILE_DIR:fake_truehdr_adapter>/nvngx_truehdr.dll")
+
+    add_library(fake_truehdr_bad_adapter SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_adapter.cpp)
+    target_include_directories(fake_truehdr_bad_adapter PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_bad_adapter PRIVATE FAKE_TRUEHDR_BAD_ABI)
+    set_target_properties(fake_truehdr_bad_adapter PROPERTIES
             CXX_STANDARD 23
             PREFIX "")
 
-    add_library(fake_truehdr_bad_backend SHARED
-            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
-    target_include_directories(fake_truehdr_bad_backend PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_compile_definitions(fake_truehdr_bad_backend PRIVATE FAKE_TRUEHDR_BAD_ABI)
-    set_target_properties(fake_truehdr_bad_backend PROPERTIES
+    add_library(fake_truehdr_failing_adapter SHARED
+            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_adapter.cpp)
+    target_include_directories(fake_truehdr_failing_adapter PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(fake_truehdr_failing_adapter PRIVATE FAKE_TRUEHDR_PROCESS_FAILS)
+    set_target_properties(fake_truehdr_failing_adapter PROPERTIES
             CXX_STANDARD 23
             PREFIX "")
 
-    add_library(fake_truehdr_failing_backend SHARED
-            ${CMAKE_SOURCE_DIR}/tests/tools/fake_truehdr_backend.cpp)
-    target_include_directories(fake_truehdr_failing_backend PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_compile_definitions(fake_truehdr_failing_backend PRIVATE FAKE_TRUEHDR_PROCESS_FAILS)
-    set_target_properties(fake_truehdr_failing_backend PROPERTIES
-            CXX_STANDARD 23
-            PREFIX "")
-
-    add_executable(truehdr_backend_loader_unit_tests
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/rtx_hdr/backend_loader.cpp
-            ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
-    target_include_directories(truehdr_backend_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(truehdr_backend_loader_unit_tests gtest_main)
-    target_compile_definitions(truehdr_backend_loader_unit_tests PRIVATE
-            FAKE_TRUEHDR_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_backend>"
-            FAKE_TRUEHDR_BAD_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_bad_backend>")
-    target_compile_options(truehdr_backend_loader_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-    set_target_properties(truehdr_backend_loader_unit_tests PROPERTIES
+    add_executable(truehdr_adapter_loader_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp
+            ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
+    target_include_directories(truehdr_adapter_loader_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(truehdr_adapter_loader_unit_tests gtest_main)
+    target_compile_definitions(truehdr_adapter_loader_unit_tests PRIVATE
+            FAKE_TRUEHDR_ADAPTER_PATH="$<TARGET_FILE:fake_truehdr_adapter>"
+            FAKE_TRUEHDR_BAD_ADAPTER_PATH="$<TARGET_FILE:fake_truehdr_bad_adapter>"
+            FAKE_TRUEHDR_RUNTIME_PATH="$<TARGET_FILE_DIR:fake_truehdr_adapter>/nvngx_truehdr.dll")
+    target_compile_options(truehdr_adapter_loader_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(truehdr_adapter_loader_unit_tests PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
-    add_dependencies(truehdr_backend_loader_unit_tests
-            fake_truehdr_backend
-            fake_truehdr_bad_backend)
+    add_dependencies(truehdr_adapter_loader_unit_tests
+            fake_truehdr_adapter
+            fake_truehdr_bad_adapter)
     add_dependencies(pre_encode_filter_unit_tests
-            fake_truehdr_backend
-            fake_truehdr_failing_backend)
+            fake_truehdr_adapter
+            fake_truehdr_failing_adapter)
     target_compile_definitions(pre_encode_filter_unit_tests PRIVATE
-            FAKE_TRUEHDR_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_backend>"
-            FAKE_TRUEHDR_FAILING_BACKEND_PATH="$<TARGET_FILE:fake_truehdr_failing_backend>")
-    add_test(NAME truehdr_backend_loader_unit_tests COMMAND truehdr_backend_loader_unit_tests)
+            FAKE_TRUEHDR_ADAPTER_PATH="$<TARGET_FILE:fake_truehdr_adapter>"
+            FAKE_TRUEHDR_FAILING_ADAPTER_PATH="$<TARGET_FILE:fake_truehdr_failing_adapter>"
+            FAKE_TRUEHDR_RUNTIME_PATH="$<TARGET_FILE_DIR:fake_truehdr_adapter>/nvngx_truehdr.dll")
+    add_test(NAME truehdr_adapter_loader_unit_tests COMMAND truehdr_adapter_loader_unit_tests)
 
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)
@@ -191,12 +284,14 @@ endif ()
 
 add_executable(loopback_usbip_bridge_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp)
 target_include_directories(loopback_usbip_bridge_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(loopback_usbip_bridge_unit_tests
         Boost::asio
         Boost::system
+        OpenSSL::Crypto
         ${CMAKE_THREAD_LIBS_INIT}
         ${REMOTE_USB_SOCKET_LIBRARIES}
         gtest_main)
@@ -302,11 +397,12 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)
-    # These tests depend on generated fake backend paths and run in dedicated
+    # These tests depend on shader or generated backend paths and run in dedicated
     # targets above; do not compile a second copy into the aggregate suite.
     list(REMOVE_ITEM TEST_SOURCES
+            ${HDR_ENCODING_TEST_SOURCE}
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
-            ${TRUEHDR_BACKEND_LOADER_TEST_SOURCE})
+            ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
     # vdd_edid, foreground_app and mic_queue are Linux-only target files (EDID
     # synthesis for the KMS virtual display, compositor focus producers, the
     # PulseAudio staging queue); their tests have nothing to link on Windows.
@@ -333,6 +429,21 @@ list(REMOVE_ITEM SUNSHINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
 add_executable(${PROJECT_NAME}
         ${TEST_SOURCES}
         ${SUNSHINE_SOURCES})
+target_sources(${PROJECT_NAME} PRIVATE
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c)
+if (WIN32)
+    target_link_libraries(${PROJECT_NAME} Pyrowave::Runtime)
+endif ()
+if (TARGET sunshine_rtx_video_adapter)
+    add_dependencies(${PROJECT_NAME} sunshine_rtx_video_adapter)
+    target_include_directories(${PROJECT_NAME} PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
+endif ()
+if (TARGET sunshine_dlssnr_adapter)
+    add_dependencies(${PROJECT_NAME} sunshine_dlssnr_adapter)
+    target_include_directories(${PROJECT_NAME} PRIVATE "${DLSSNR_TRUST_INCLUDE}")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SUNSHINE_DLSSNR_ADAPTER)
+endif ()
 
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(${PROJECT_NAME} ${dep})  # compile these before sunshine
@@ -365,7 +476,7 @@ add_test(NAME ${PROJECT_NAME}
 set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/abr.cpp
+        ${CMAKE_SOURCE_DIR}/src/streaming/abr.cpp
         ${ABR_TEST_STUB_SOURCE})
 target_include_directories(abr_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(abr_unit_tests

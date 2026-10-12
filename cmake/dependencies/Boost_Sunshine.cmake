@@ -12,6 +12,7 @@ set(BOOST_COMPONENTS
         filesystem
         function
         locale
+        math
         log
         process
         program_options
@@ -21,12 +22,11 @@ set(BOOST_COMPONENTS
 )
 # system is not used by Sunshine, but by Simple-Web-Server, added here for convenience
 
-# algorithm, preprocessor, scope, and uuid are not used by Sunshine, but by libdisplaydevice, added here for convenience
+# Additional components used by the Windows sources.
 if(WIN32)
     list(APPEND BOOST_COMPONENTS
             algorithm
             preprocessor
-            scope
             uuid
     )
 endif()
@@ -57,6 +57,13 @@ if(NOT Boost_FOUND)
             property_tree)
 
     set(BOOST_ENABLE_CMAKE ON)
+
+    if(WIN32)
+        # The Windows backend already provides the locale services Sunshine uses.
+        # Enabling a host MSYS2 ICU installation makes the portable executable
+        # depend on versioned development-environment DLLs that are not shipped.
+        set(BOOST_LOCALE_ENABLE_ICU OFF CACHE BOOL "Build Boost.Locale without ICU on Windows" FORCE)
+    endif()
 
     # Limit boost to the required libraries only
     set(BOOST_INCLUDE_LIBRARIES ${BOOST_COMPONENTS})
@@ -106,6 +113,15 @@ if(NOT Boost_FOUND)
     foreach(component ${BOOST_COMPONENTS})
         list(APPEND Boost_LIBRARIES "Boost::${component}")
     endforeach()
+endif()
+
+# Boost.Format became header-only and stopped shipping a CMake package, so the
+# system-package path (find_package(Boost CONFIG ...)) leaves Boost::format
+# undefined even though <boost/format.hpp> is installed. The Windows
+# FetchContent path still defines the target, so this only fills the gap.
+if(NOT TARGET Boost::format AND TARGET Boost::headers)
+    add_library(Boost::format INTERFACE IMPORTED)
+    target_link_libraries(Boost::format INTERFACE Boost::headers)
 endif()
 
 message(STATUS "Boost include dirs: ${Boost_INCLUDE_DIRS}")

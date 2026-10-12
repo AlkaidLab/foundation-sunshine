@@ -298,7 +298,8 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view) {
     BOOST_LOG(info) << "alloc_gamepad: Gamepad not yet implemented for MacOS."sv;
     return -1;
   }
@@ -306,6 +307,16 @@ const KeyCodeMap kKeyCodesMap[] = {
   void
   free_gamepad(input_t &input, int nr) {
     BOOST_LOG(info) << "free_gamepad: Gamepad not yet implemented for MacOS."sv;
+  }
+
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &) {
+    return false;
   }
 
   void
@@ -388,6 +399,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   void
   set_gamepad_mode(int mode) {
     // Per-app virtual gamepad selection is currently Windows-only.
+  }
+
+  void
+  set_global_gamepad_mode(std::string_view) {
+    // Runtime gamepad selection is currently implemented by the Windows backend.
   }
 
   void
@@ -622,7 +638,7 @@ const KeyCodeMap kKeyCodesMap[] = {
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view) {
     return 0;
   }
 }  // namespace platf

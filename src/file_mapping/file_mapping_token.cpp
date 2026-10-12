@@ -4,28 +4,15 @@
  */
 #include "file_mapping_token.h"
 
-#include <array>
-#include <random>
-#include <sstream>
+#include "src/crypto.h"
 
 namespace file_mapping_token {
   namespace {
     std::string
     random_token() {
-      std::array<unsigned char, 32> bytes {};
-      std::random_device random;
-      for (auto &byte : bytes) {
-        byte = static_cast<unsigned char>(random());
-      }
-
-      std::ostringstream out;
-      out << std::hex;
-      for (const auto byte : bytes) {
-        out.width(2);
-        out.fill('0');
-        out << static_cast<unsigned int>(byte);
-      }
-      return out.str();
+      // Keep the existing 256-bit, URL-safe hexadecimal representation while
+      // using the project's OpenSSL-backed CSPRNG.
+      return crypto::rand_alphabet(64, "0123456789abcdef");
     }
   }  // namespace
 
@@ -60,8 +47,14 @@ namespace file_mapping_token {
     }
 
     auto token = random_token();
+    if (token.empty()) {
+      return {};
+    }
     while (tokens_.contains(token)) {
       token = random_token();
+      if (token.empty()) {
+        return {};
+      }
     }
 
     last_issue_by_client_[client_uuid] = now;

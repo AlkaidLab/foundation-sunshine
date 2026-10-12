@@ -36,7 +36,7 @@
         @dragleave="handleDragLeave"
         @dragover.prevent
         @drop.prevent.stop="handleDrop"
-        placeholder="选择图片文件或拖拽到此处"
+        :placeholder="$t('apps.image_path_placeholder')"
       />
       <button
         class="btn btn-outline-secondary"
@@ -51,10 +51,10 @@
     <!-- 图片预览 -->
     <div v-if="!isDesktopImage && imagePath" class="image-preview-container mt-3">
       <div class="image-preview">
-        <img :src="previewUrl" alt="图片预览" @error="handleImageError" />
+        <img :src="previewUrl" :alt="$t('apps.image_preview')" @error="handleImageError" />
       </div>
       <div class="image-preview-circle">
-        <img :src="previewUrl" alt="图片预览" @error="handleImageError" />
+        <img :src="previewUrl" :alt="$t('apps.image_preview')" @error="handleImageError" />
       </div>
     </div>
 
@@ -139,7 +139,7 @@ export default {
     handleDragEnter(event) {
       event.preventDefault()
       this.dragCounter++
-      this.$emit('image-error', '杂鱼~快放进来呀~')
+      this.$emit('image-error', this.$t('apps.image_drop_hint'))
     },
 
     /**
@@ -162,7 +162,7 @@ export default {
 
       const file = event.dataTransfer.files[0]
       if (!file) {
-        this.$emit('image-error', '其他地方不可以！')
+        this.$emit('image-error', this.$t('apps.image_drop_empty'))
         return
       }
 
@@ -173,20 +173,20 @@ export default {
      * 处理文件上传
      */
     async processFile(file) {
-      const validation = validateFile(file)
+      const validation = validateFile(file, { translate: this.$t })
       if (!validation.isValid) {
         this.$emit('image-error', validation.message)
         return
       }
 
       try {
-        this.$emit('image-error', '正在上传图片...')
+        this.$emit('image-error', this.$t('apps.image_uploading'))
         const path = await this.uploadImageToSunshine(file)
         this.$emit('update-image', path)
         this.$emit('image-error', '')
       } catch (error) {
         console.error('上传图片失败:', error)
-        this.$emit('image-error', `上传图片失败: ${error.message}`)
+        this.$emit('image-error', this.$t('apps.image_upload_failed', { error: error.message }))
       }
     },
 
@@ -235,7 +235,7 @@ export default {
      * 处理图片加载错误
      */
     handleImageError() {
-      this.$emit('image-error', '图片加载失败，请检查文件路径')
+      this.$emit('image-error', this.$t('apps.image_load_failed'))
     },
 
     /**
@@ -243,7 +243,7 @@ export default {
      */
     openCoverFinder() {
       if (!this.appName) {
-        this.$emit('image-error', '请先输入应用名称')
+        this.$emit('image-error', this.$t('apps.image_app_name_required'))
         return
       }
       this.showCoverFinder = true

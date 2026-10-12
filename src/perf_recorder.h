@@ -32,6 +32,13 @@ namespace perf {
     std::optional<double> encode_ms;
     std::optional<double> packet_to_broadcast_ms;
     std::optional<double> total_ms;
+    bool pyrowave = false;
+  };
+
+  enum class pyrowave_failure_stage_e {
+    encode,
+    packetize,
+    recovery,
   };
 
   void begin_session(const session_metadata_t &metadata);
@@ -40,6 +47,7 @@ namespace perf {
   void update_session_display(std::uint32_t session_id, int width, int height, int fps);
   void record_host_latency(std::uint32_t session_id, double latency_ms, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   void record_pipeline_sample(std::uint32_t session_id, const pipeline_sample_t &sample, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+  void record_pyrowave_failure(std::uint32_t session_id, pyrowave_failure_stage_e stage);
 
   nlohmann::json current_snapshot_json();
 

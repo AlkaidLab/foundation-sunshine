@@ -8,7 +8,6 @@
 
 #include <Simple-Web-Server/server_http.hpp>
 
-#include "url_utils.h"
 #include "src/logging.h"
 
 #ifdef _WIN32
@@ -195,8 +194,9 @@ namespace nvhttp::display_scale {
       const auto args = request->parse_query_string();
       const auto display_name_it = args.find("display_name");
       const auto device_id_it = args.find("device_id");
-      const std::string display_name = display_name_it != args.end() ? url_utils::decode(display_name_it->second) : std::string {};
-      const std::string device_id = device_id_it != args.end() ? url_utils::decode(device_id_it->second) : std::string {};
+      // parse_query_string() already percent-decodes query values.
+      const std::string display_name = display_name_it != args.end() ? display_name_it->second : std::string {};
+      const std::string device_id = device_id_it != args.end() ? device_id_it->second : std::string {};
 
       const auto scale_info = display_device::w_utils::get_display_scale_info(display_name, device_id);
       if (!scale_info) {

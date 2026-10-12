@@ -40,9 +40,8 @@ namespace platf::dxgi {
   public:
     virtual ~pre_encode_filter_t() = default;
 
-    virtual bool
-    requires_detached_input() const = 0;
-
+    // The capture pipeline supplies a private handoff texture to isolate filters
+    // from capture-owned resources, including when a filter falls back to passthrough.
     virtual filter_result_t
     process(const gpu_frame_view_t &input) = 0;
 
@@ -69,5 +68,7 @@ namespace platf::dxgi {
     ID3D11Device *device,
     ID3D11DeviceContext *device_context,
     const std::filesystem::path &backend_path = {},
-    const pre_encode_filter_config_t &config = {});
+    const pre_encode_filter_config_t &config = {},
+    std::string_view backend_id = {},
+    std::string_view runtime_digest = {});
 }  // namespace platf::dxgi

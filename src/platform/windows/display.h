@@ -211,9 +211,6 @@ namespace platf::dxgi {
 
     DXGI_FORMAT capture_format;
     capture_contract_t capture_contract;
-    pre_encode_filter_e pre_encode_filter = pre_encode_filter_e::none;
-    pre_encode_filter_config_t pre_encode_filter_config;
-    std::filesystem::path pre_encode_filter_backend_path;
 
     captured_frame_desc_t
     describe_captured_frame(DXGI_FORMAT format, bool borrowed) const;
@@ -388,13 +385,14 @@ namespace platf::dxgi {
     std::unique_ptr<amf_encode_device_t>
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
-    /**
-     * @brief Current captured SDR white level in nits. Prefer producer metadata
-     *        when VDD supplies it, otherwise query the selected Windows output.
-     *        The legacy 300-nit value is used only if neither source is available.
-     */
-    std::optional<float>
-    capture_sdr_white_nits() const;
+    std::unique_ptr<avcodec_encode_device_t>
+    make_avcodec_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
+
+    std::unique_ptr<nvenc_encode_device_t>
+    make_nvenc_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
+
+    std::unique_ptr<amf_encode_device_t>
+    make_amf_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
 
     std::atomic<uint32_t> next_image_id;
 
@@ -418,9 +416,6 @@ namespace platf::dxgi {
     gpu_cursor_t cursor_xor;
     // Written from the capture/cursor thread and used by cursor rendering.
     std::atomic<float> cursor_white_multiplier_value { 300.0f / 80.0f };
-    // Producer-reported capture white is independent of cursor rendering. Keep
-    // it separate so a cursor constant-buffer failure cannot corrupt encoding.
-    std::atomic<float> producer_sdr_white_nits { 0.0f };
     bool cursor_white_normalization_enabled = false;
     bool cursor_pipeline_ready = false;
 

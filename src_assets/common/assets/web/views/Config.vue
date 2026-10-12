@@ -212,7 +212,6 @@
           :platform="platform"
           :resolutions="resolutions"
           :fps="fps"
-          :display-mode-remapping="display_mode_remapping"
         />
         <Network v-if="currentTab === 'network'" :config="config" :platform="platform" />
         <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
@@ -255,7 +254,6 @@ const {
   resolutions,
   currentTab,
   global_prep_cmd,
-  display_mode_remapping,
   tabs,
   initTabs,
   loadConfig,
@@ -281,7 +279,6 @@ const hasUnsaved = computed(() => {
   void fps.value
   void resolutions.value
   void global_prep_cmd.value
-  void display_mode_remapping.value
   return hasUnsavedChanges()
 })
 

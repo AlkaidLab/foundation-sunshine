@@ -10,6 +10,8 @@ extern "C" {
 }
 
 #include <bitset>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <list>
@@ -52,6 +54,7 @@ namespace input {
   constexpr auto VKEY_MENU = 0x12;
   constexpr auto VKEY_LMENU = 0xA4;
   constexpr auto VKEY_RMENU = 0xA5;
+  constexpr auto VKEY_LWIN = 0x5B;
 
   enum class button_state_e {
     NONE,  ///< No button state
@@ -114,6 +117,14 @@ namespace input {
     return std::clamp(from_netfloat(f), min, max);
   }
 
+#ifdef SUNSHINE_TESTS
+  std::function<void(const testing::keyboard_event_t &)> &
+  keyboard_sink() {
+    static std::function<void(const testing::keyboard_event_t &)> sink;
+    return sink;
+  }
+#endif
+
   static task_pool_util::TaskPool::task_id_t key_press_repeat_id {};
   static std::unordered_map<key_press_id_t, bool> key_press {};
   static std::array<std::uint8_t, 5> mouse_press {};
@@ -132,12 +143,15 @@ namespace input {
     gamepad_t():
         gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
     ~gamepad_t() {
+      ds5 = false;
       if (id >= 0) {
         task_pool.push([id = this->id]() {
           free_gamepad(platf_input, id);
         });
       }
     }
+
+    std::atomic_bool ds5 { false };
 
     platf::gamepad_state_t gamepad_state;
 
@@ -153,6 +167,17 @@ namespace input {
     button_state_e back_button_state;
   };
 
+  struct modifier_state_t {
+    [[nodiscard]] bool
+    any_pressed() const {
+      return generic_pressed || left_pressed || right_pressed;
+    }
+
+    bool generic_pressed = false;
+    bool left_pressed = false;
+    bool right_pressed = false;
+  };
+
   struct input_t {
     enum shortkey_e {
       CTRL = 0x1,  ///< Control key
@@ -165,14 +190,20 @@ namespace input {
       safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event,
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
-      std::uint64_t session_id):
+      std::uint64_t session_id,
+      std::string client_gamepad):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
+#ifdef SUNSHINE_TESTS
+        client_context {},
+#else
         client_context { platf::allocate_client_input_context(platf_input) },
+#endif
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
         session_id {session_id},
+        client_gamepad {std::move(client_gamepad)},
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
@@ -180,6 +211,9 @@ namespace input {
 
     // Keep track of alt+ctrl+shift key combo
     int shortcutFlags;
+    modifier_state_t shift_keys;
+    modifier_state_t control_keys;
+    modifier_state_t alt_keys;
 
     std::vector<gamepad_t> gamepads;
     activity::tracker_t activity_tracker;
@@ -189,6 +223,7 @@ namespace input {
     platf::feedback_queue_t feedback_queue;
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
+    std::string client_gamepad;
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -199,7 +234,61 @@ namespace input {
 
     int32_t accumulated_vscroll_delta;
     int32_t accumulated_hscroll_delta;
+
+    std::array<std::chrono::steady_clock::time_point, MAX_GAMEPADS> last_unallocated_controller_log {};
   };
+
+  constexpr auto CONTROLLER_WARNING_INTERVAL = 5s;
+
+  /**
+   * @brief 记录手柄未分配的告警，并按控制器编号限频。
+   * @param input 当前会话的输入上下文。
+   * @param controller_number 客户端上报的控制器编号。
+   */
+  void
+  log_unallocated_controller(input_t &input, int controller_number) {
+    if (controller_number < 0 || controller_number >= static_cast<int>(input.last_unallocated_controller_log.size())) {
+      return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    auto &last_log = input.last_unallocated_controller_log[controller_number];
+    if (last_log != std::chrono::steady_clock::time_point {} && now - last_log < CONTROLLER_WARNING_INTERVAL) {
+      return;
+    }
+
+    last_log = now;
+    BOOST_LOG(warning) << "ControllerNumber ["sv << controller_number << "] not allocated"sv;
+  }
+
+  bool
+  has_ds5_gamepad(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool
+  has_ds5_audio_haptics(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return false;
+    }
+
+    for (const auto &gamepad : input->gamepads) {
+      if (gamepad.ds5.load(std::memory_order_relaxed) &&
+          platf::gamepad_has_ds5_audio_haptics(platf_input)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   /**
    * @brief Apply shortcut based on VKEY
@@ -750,17 +839,56 @@ namespace input {
     return keycode;
   }
 
+  void
+  update_modifier_state(input_t &input, uint16_t key_code, bool release) {
+    const bool pressed = !release;
+    switch (key_code) {
+      case VKEY_SHIFT:
+        input.shift_keys.generic_pressed = pressed;
+        break;
+      case VKEY_LSHIFT:
+        input.shift_keys.left_pressed = pressed;
+        break;
+      case VKEY_RSHIFT:
+        input.shift_keys.right_pressed = pressed;
+        break;
+      case VKEY_CONTROL:
+        input.control_keys.generic_pressed = pressed;
+        break;
+      case VKEY_LCONTROL:
+        input.control_keys.left_pressed = pressed;
+        break;
+      case VKEY_RCONTROL:
+        input.control_keys.right_pressed = pressed;
+        break;
+      case VKEY_MENU:
+        input.alt_keys.generic_pressed = pressed;
+        break;
+      case VKEY_LMENU:
+        input.alt_keys.left_pressed = pressed;
+        break;
+      case VKEY_RMENU:
+        input.alt_keys.right_pressed = pressed;
+        break;
+      default:
+        break;
+    }
+  }
+
   /**
    * @brief Update flags for keyboard shortcut combo's
    */
   inline void
-  update_shortcutFlags(int *flags, short keyCode, bool release) {
+  update_shortcutFlags(input_t &input, uint16_t keyCode, bool release) {
+    int *flags = &input.shortcutFlags;
     switch (keyCode) {
       case VKEY_SHIFT:
       case VKEY_LSHIFT:
       case VKEY_RSHIFT:
         if (release) {
-          *flags &= ~input_t::SHIFT;
+          if (!input.shift_keys.any_pressed()) {
+            *flags &= ~input_t::SHIFT;
+          }
         }
         else {
           *flags |= input_t::SHIFT;
@@ -770,7 +898,9 @@ namespace input {
       case VKEY_LCONTROL:
       case VKEY_RCONTROL:
         if (release) {
-          *flags &= ~input_t::CTRL;
+          if (!input.control_keys.any_pressed()) {
+            *flags &= ~input_t::CTRL;
+          }
         }
         else {
           *flags |= input_t::CTRL;
@@ -780,7 +910,9 @@ namespace input {
       case VKEY_LMENU:
       case VKEY_RMENU:
         if (release) {
-          *flags &= ~input_t::ALT;
+          if (!input.alt_keys.any_pressed()) {
+            *flags &= ~input_t::ALT;
+          }
         }
         else {
           *flags |= input_t::ALT;
@@ -808,32 +940,43 @@ namespace input {
   }
 
   void
+  emit_keyboard_update(uint16_t key_code, bool release, uint8_t flags) {
+#ifdef SUNSHINE_TESTS
+    if (keyboard_sink()) {
+      keyboard_sink()(testing::keyboard_event_t { key_code, release, flags });
+      return;
+    }
+#endif
+    platf::keyboard_update(platf_input, key_code, release, flags);
+  }
+
+  void
   send_key_and_modifiers(uint16_t key_code, bool release, uint8_t flags, uint8_t synthetic_modifiers) {
     if (!release) {
       // Press any synthetic modifiers required for this key
       if (synthetic_modifiers & MODIFIER_SHIFT) {
-        platf::keyboard_update(platf_input, VKEY_SHIFT, false, flags);
+        emit_keyboard_update(VKEY_SHIFT, false, flags);
       }
       if (synthetic_modifiers & MODIFIER_CTRL) {
-        platf::keyboard_update(platf_input, VKEY_CONTROL, false, flags);
+        emit_keyboard_update(VKEY_CONTROL, false, flags);
       }
       if (synthetic_modifiers & MODIFIER_ALT) {
-        platf::keyboard_update(platf_input, VKEY_MENU, false, flags);
+        emit_keyboard_update(VKEY_MENU, false, flags);
       }
     }
 
-    platf::keyboard_update(platf_input, map_keycode(key_code), release, flags);
+    emit_keyboard_update(map_keycode(key_code), release, flags);
 
     if (!release) {
       // Raise any synthetic modifier keys we pressed
       if (synthetic_modifiers & MODIFIER_SHIFT) {
-        platf::keyboard_update(platf_input, VKEY_SHIFT, true, flags);
+        emit_keyboard_update(VKEY_SHIFT, true, flags);
       }
       if (synthetic_modifiers & MODIFIER_CTRL) {
-        platf::keyboard_update(platf_input, VKEY_CONTROL, true, flags);
+        emit_keyboard_update(VKEY_CONTROL, true, flags);
       }
       if (synthetic_modifiers & MODIFIER_ALT) {
-        platf::keyboard_update(platf_input, VKEY_MENU, true, flags);
+        emit_keyboard_update(VKEY_MENU, true, flags);
       }
     }
   }
@@ -860,17 +1003,27 @@ namespace input {
     auto release = util::endian::little(packet->header.magic) == KEY_UP_EVENT_MAGIC;
     auto keyCode = packet->keyCode & 0x00FF;
 
+    update_modifier_state(*input, keyCode, release);
+
+    // Right Alt is optionally remapped to Left Win by the configuration UI. In that mode,
+    // the client Alt bit describes the remapped key and must not trigger a synthetic Alt.
+    int modifiers = packet->modifiers;
+    if (map_keycode(VKEY_RMENU) == VKEY_LWIN &&
+        input->alt_keys.right_pressed && !input->alt_keys.left_pressed) {
+      modifiers &= ~MODIFIER_ALT;
+    }
+
     // Set synthetic modifier flags if the keyboard packet is requesting modifier
     // keys that are not current pressed.
     uint8_t synthetic_modifiers = 0;
     if (!release && !is_modifier(keyCode)) {
-      if (!(input->shortcutFlags & input_t::SHIFT) && (packet->modifiers & MODIFIER_SHIFT)) {
+      if (!(input->shortcutFlags & input_t::SHIFT) && (modifiers & MODIFIER_SHIFT)) {
         synthetic_modifiers |= MODIFIER_SHIFT;
       }
-      if (!(input->shortcutFlags & input_t::CTRL) && (packet->modifiers & MODIFIER_CTRL)) {
+      if (!(input->shortcutFlags & input_t::CTRL) && (modifiers & MODIFIER_CTRL)) {
         synthetic_modifiers |= MODIFIER_CTRL;
       }
-      if (!(input->shortcutFlags & input_t::ALT) && (packet->modifiers & MODIFIER_ALT)) {
+      if (!(input->shortcutFlags & input_t::ALT) && (modifiers & MODIFIER_ALT)) {
         synthetic_modifiers |= MODIFIER_ALT;
       }
     }
@@ -906,7 +1059,7 @@ namespace input {
 
     send_key_and_modifiers(keyCode, release, packet->flags, synthetic_modifiers);
 
-    update_shortcutFlags(&input->shortcutFlags, map_keycode(keyCode), release);
+    update_shortcutFlags(*input, keyCode, release);
   }
 
   /**
@@ -1008,11 +1161,14 @@ namespace input {
     }
 
     // Allocate a new gamepad
-    if (platf::alloc_gamepad(platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue)) {
+    if (platf::alloc_gamepad(
+          platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue, input->client_gamepad)) {
       free_id(gamepadMask, id);
       return;
     }
 
+    input->gamepads[packet->controllerNumber].ds5.store(
+      platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
     input->gamepads[packet->controllerNumber].id = id;
   }
 
@@ -1086,6 +1242,13 @@ namespace input {
       abs_port.offset_x, abs_port.offset_y,
       static_cast<std::uint32_t>(touch_port.display_width), static_cast<std::uint32_t>(touch_port.display_height));
 
+#ifdef SUNSHINE_TESTS
+    // Unit-test inputs do not allocate a platform client context. Do not pass a
+    // null context into platform handlers that expect their concrete state.
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::touch_update(input->client_context.get(), abs_port, touch);
   }
 
@@ -1119,6 +1282,11 @@ namespace input {
       from_clamped_netfloat(packet->contactAreaMinor, 0.0f, 1.0f),
     };
 
+#ifdef SUNSHINE_TESTS
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::touchpad_update(input->client_context.get(), touchpad);
   }
 
@@ -1170,6 +1338,11 @@ namespace input {
       };
     }
 
+#ifdef SUNSHINE_TESTS
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::touchpad_frame_update(input->client_context.get(), touchpad);
   }
 
@@ -1229,6 +1402,11 @@ namespace input {
       contact_area.second,
     };
 
+#ifdef SUNSHINE_TESTS
+    if (!input->client_context) {
+      return;
+    }
+#endif
     platf::pen_update(input->client_context.get(), abs_port, pen);
   }
 
@@ -1250,7 +1428,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1284,7 +1462,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1317,7 +1495,7 @@ namespace input {
 
     auto &gamepad = input->gamepads[packet->controllerNumber];
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1352,16 +1530,19 @@ namespace input {
         return;
       }
 
-      if (platf::alloc_gamepad(platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue)) {
+      if (platf::alloc_gamepad(
+            platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
         return;
       }
 
+      gamepad.ds5.store(platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
       gamepad.id = id;
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
       free_gamepad(platf_input, gamepad.id);
+      gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
       return;
     }
@@ -1369,7 +1550,7 @@ namespace input {
     // If this gamepad has not been initialized, ignore it.
     // This could happen when platf::alloc_gamepad fails
     if (gamepad.id < 0) {
-      BOOST_LOG(warning) << "ControllerNumber ["sv << packet->controllerNumber << "] not allocated"sv;
+      log_unallocated_controller(*input, packet->controllerNumber);
       return;
     }
 
@@ -1973,28 +2154,36 @@ namespace input {
   }
 
   void
+  reset_keyboard_keys() {
+    for (auto &[key, pressed] : key_press) {
+      if (!pressed) {
+        continue;
+      }
+
+      emit_keyboard_update(map_keycode(vk_from_kpid(key) & 0x00FF), true, flags_from_kpid(key));
+      pressed = false;
+    }
+  }
+
+  void
+  reset_input_state() {
+    for (int x = 0; x < mouse_press.size(); ++x) {
+      if (mouse_press[x]) {
+        platf::button_mouse(platf_input, x, true);
+        mouse_press[x] = false;
+      }
+    }
+
+    reset_keyboard_keys();
+  }
+
+  void
   reset(std::shared_ptr<input_t> &input) {
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
 
     // Ensure input is synchronous, by using the task_pool
-    task_pool.push([]() {
-      for (int x = 0; x < mouse_press.size(); ++x) {
-        if (mouse_press[x]) {
-          platf::button_mouse(platf_input, x, true);
-          mouse_press[x] = false;
-        }
-      }
-
-      for (auto &kp : key_press) {
-        if (!kp.second) {
-          // already released
-          continue;
-        }
-        platf::keyboard_update(platf_input, vk_from_kpid(kp.first) & 0x00FF, true, flags_from_kpid(kp.first));
-        key_press[kp.first] = false;
-      }
-    });
+    task_pool.push(reset_input_state);
   }
 
   class deinit_t: public platf::deinit_t {
@@ -2024,12 +2213,13 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
-      session_id);
+      session_id,
+      std::move(client_gamepad));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {
@@ -2040,4 +2230,51 @@ namespace input {
 
     return input;
   }
+
+#ifdef SUNSHINE_TESTS
+  namespace testing {
+    std::shared_ptr<input_t>
+    make_input() {
+      auto mail = std::make_shared<safe::mail_raw_t>();
+      return std::make_shared<input_t>(
+        mail->event<input::touch_port_t>(mail::touch_port),
+        mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
+        mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
+        0,
+        std::string {});
+    }
+
+    void
+    set_keyboard_sink(std::function<void(const keyboard_event_t &)> sink) {
+      keyboard_sink() = std::move(sink);
+    }
+
+    void
+    send_keyboard_packet(std::shared_ptr<input_t> &input, std::uint16_t key_code,
+                         std::uint8_t modifiers, std::uint8_t flags, bool release) {
+      const auto magic = release ? KEY_UP_EVENT_MAGIC : KEY_DOWN_EVENT_MAGIC;
+
+      NV_KEYBOARD_PACKET packet {};
+      packet.header.size = util::endian::big<std::uint32_t>(sizeof(packet) - sizeof(packet.header.size));
+      packet.header.magic = util::endian::little(magic);
+      packet.keyCode = static_cast<short>(key_code);
+      packet.modifiers = static_cast<char>(modifiers);
+      packet.flags = static_cast<char>(flags);
+
+      passthrough(input, &packet);
+    }
+
+    void
+    release_held_keys() {
+      reset_keyboard_keys();
+    }
+
+    void
+    reset_keyboard_state() {
+      task_pool.cancel(key_press_repeat_id);
+      key_press_repeat_id = nullptr;
+      key_press.clear();
+    }
+  }  // namespace testing
+#endif
 }  // namespace input

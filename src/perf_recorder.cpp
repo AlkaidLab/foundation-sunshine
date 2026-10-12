@@ -16,6 +16,7 @@ namespace perf {
     using clock_t = std::chrono::steady_clock;
 
     constexpr std::size_t SAMPLE_WINDOW_SIZE = 240;
+    constexpr std::size_t MAX_RETAINED_COMPLETED_SESSIONS = 8;
     constexpr auto RECENT_FPS_STALE_AFTER = std::chrono::seconds(2);
 
     struct latency_window_t {
@@ -46,6 +47,13 @@ namespace perf {
       clock_t::time_point ended_at {};
       latency_window_t host_latency;
       pipeline_windows_t pipeline;
+      struct {
+        bool enabled = false;
+        std::uint64_t frames = 0;
+        std::uint64_t encode_failures = 0;
+        std::uint64_t packetization_failures = 0;
+        std::uint64_t recovery_failures = 0;
+      } pyrowave;
     };
 
     std::mutex recorder_mutex;
@@ -182,7 +190,34 @@ namespace perf {
       item["uptime_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>((session.active ? now : session.ended_at) - session.started_at).count();
       item["host_latency"] = make_latency_json(session.host_latency, now);
       item["pipeline"] = make_pipeline_json(session.pipeline, now);
+      item["pyrowave"] = {
+        { "enabled", session.pyrowave.enabled },
+        { "frames", session.pyrowave.frames },
+        { "encode_failures", session.pyrowave.encode_failures },
+        { "packetization_failures", session.pyrowave.packetization_failures },
+        { "recovery_failures", session.pyrowave.recovery_failures },
+      };
       return item;
+    }
+
+    void prune_completed_sessions() {
+      while (std::count_if(sessions.begin(), sessions.end(), [](const auto &entry) {
+        return !entry.second.active;
+      }) > MAX_RETAINED_COMPLETED_SESSIONS) {
+        auto oldest = sessions.end();
+        for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+          if (it->second.active || it->first == latest_session_id) {
+            continue;
+          }
+          if (oldest == sessions.end() || it->second.ended_at < oldest->second.ended_at) {
+            oldest = it;
+          }
+        }
+        if (oldest == sessions.end()) {
+          break;
+        }
+        sessions.erase(oldest);
+      }
     }
   }  // namespace
 
@@ -212,14 +247,10 @@ namespace perf {
       return;
     }
 
-    sessions.erase(it);
-    if (latest_session_id == session_id) {
-      latest_session_id = 0;
-      for (const auto &[candidate_id, session] : sessions) {
-        if (session.active && candidate_id > latest_session_id) {
-          latest_session_id = candidate_id;
-        }
-      }
+    if (it->second.active) {
+      it->second.active = false;
+      it->second.ended_at = clock_t::now();
+      prune_completed_sessions();
     }
   }
 
@@ -274,6 +305,32 @@ namespace perf {
     record_optional_window_sample(pipeline.packet_to_broadcast, sample.packet_to_broadcast_ms, now);
     if (sample.total_ms) {
       record_window_sample(pipeline.total, *sample.total_ms, now, true);
+    }
+    if (sample.pyrowave) {
+      it->second.pyrowave.enabled = true;
+      ++it->second.pyrowave.frames;
+    }
+  }
+
+  void record_pyrowave_failure(std::uint32_t session_id, pyrowave_failure_stage_e stage) {
+    std::lock_guard lock { recorder_mutex };
+
+    auto it = sessions.find(session_id);
+    if (it == sessions.end()) {
+      return;
+    }
+
+    it->second.pyrowave.enabled = true;
+    switch (stage) {
+      case pyrowave_failure_stage_e::encode:
+        ++it->second.pyrowave.encode_failures;
+        break;
+      case pyrowave_failure_stage_e::packetize:
+        ++it->second.pyrowave.packetization_failures;
+        break;
+      case pyrowave_failure_stage_e::recovery:
+        ++it->second.pyrowave.recovery_failures;
+        break;
     }
   }
 

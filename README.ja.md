@@ -5,7 +5,7 @@
 <div align="center">
 
 [![English](https://img.shields.io/badge/English-README.en.md-blue?style=for-the-badge)](README.en.md)
-[![中文简体](https://img.shields.io/badge/中文简体-README.zh--CN.md-red?style=for-the-badge)](README.md)
+[![中文简体](https://img.shields.io/badge/中文简体-README.md-red?style=for-the-badge)](README.md)
 [![Français](https://img.shields.io/badge/Français-README.fr.md-green?style=for-the-badge)](README.fr.md)
 [![Deutsch](https://img.shields.io/badge/Deutsch-README.de.md-yellow?style=for-the-badge)](README.de.md)
 [![日本語](https://img.shields.io/badge/日本語-README.ja.md-purple?style=for-the-badge)](README.ja.md)
@@ -18,13 +18,30 @@ LizardByte/Sunshineをベースにしたフォークで、完全なドキュメ�
 
 **Sunshine-Foundation** はMoonlight用のセルフホスト型ゲームストリームホストです。このフォークバージョンはオリジナルのSunshineに基づき、様々なストリーミング端末とWindowsホスト間のゲームストリーミング体験を向上させることに重点を置いた大幅な改良が加えられています：
 
+### 🚀 クイックスタート
+
+1. [Foundation Sunshine のリリース](https://github.com/AlkaidLab/foundation-sunshine/releases)から Windows 用インストーラーをダウンロードしてインストールし、Sunshine を起動します。プレリリースを選ぶ場合はリリースノートを確認してください。
+2. ホストのブラウザーで [https://localhost:47990](https://localhost:47990) を開きます。初回起動時にログイン情報を作成して保管してください。ローカルの自己署名証明書について警告が表示される場合があります。
+3. Sunshine にアプリを追加し、Moonlight にホストを登録します。Moonlight に表示された PIN を Sunshine に入力してペアリングします。
+
+仮想ディスプレイ、DualSense、USB 転送、NVIDIA 画質向上機能には、それぞれ専用のドライバーまたはコンポーネントが必要です。有効化する前にコントロールパネルで状態を確認してください。
+
 ### 🌟 コア機能
 - **HDR フルパイプラインサポート** - HDR10 (PQ) + HLG デュアルフォーマットエンコーディングとアダプティブメタデータにより、幅広い端末デバイスをカバー
-- **仮想ディスプレイ** - 内蔵の仮想ディスプレイ管理により、追加ソフトウェアなしで仮想ディスプレイの作成と管理が可能
+- **仮想ディスプレイ** - ZakoVDD を統合して仮想ディスプレイを管理。対応ドライバーが必要
 - **リモートマイク** - クライアントマイクの受信をサポートし、高音質の音声パススルー機能を提供
 - **高度なコントロールパネル** - 直感的なWebコントロールインターフェースで、リアルタイム監視と設定管理を提供
 - **低遅延伝送** - 最新のハードウェア能力を活用した最適化されたエンコード処理
 - **インテリジェントペアリング** - ペアリングデバイスの対応プロファイルをインテリジェントに管理
+- **コントローラーとデバイス** - グローバルまたはアプリ別のゲームパッド種類選択、音声ハプティクス対応のオプション仮想 DualSense、ペアリング済みクライアント向け USB 転送
+- **NVIDIA 画質向上** - オプションの RTX HDR と DLSS NR。対応ハードウェアとコンポーネントがあれば、DLSS NR は SDR とネイティブ HDR に対応し、配信中に切り替えと処理スケールの調整が可能
+- **配信状態** - 交渉された Dolby Vision Profile 8.1 / 8.4 とホスト側 RPU 挿入状態の表示、最後の映像セッション終了後にアプリを終了するオプション
+
+### オプション機能
+
+- **仮想 DualSense：** コントロールパネルのコントローラーセンターでゲームパッドの種類を選択します。オプションの DualSense コンポーネントを先にインストールしてください。音声ハプティクスには USB/IP 転送と対応クライアントも必要です。コンポーネントが利用できない場合は自動選択に戻ります。
+- **NVIDIA 画質向上：** 画質向上管理で RTX HDR または DLSS NR のコンポーネントを設定し、アプリごとに有効化します。RTX HDR は SDR 入力を PQ HDR に変換し、ネイティブ HDR 入力や HLG 出力には適用されません。有効化すると HLG セッションで Dolby Vision Profile 8.4 を交渉できない場合があります。DLSS NR は配信中にも調整できます。Dolby Vision 表示はホスト側の RPU 挿入状態を示し、クライアントやディスプレイでの出力確認ではありません。Profile 8.4 には実機でのエンドツーエンド検証が必要です。
+- **USB 転送：** Windows ホストで USB 転送を有効にし、USB/IP 転送コンポーネントを利用可能にしてから、ペアリング済みクライアントで実行時の転送を設定できます。
 
 ### 🎬 HDR フルパイプライン技術アーキテクチャ
 

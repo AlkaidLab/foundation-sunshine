@@ -4,6 +4,7 @@
  */
 // standard includes
 #include <csignal>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 
@@ -26,6 +27,7 @@
 
 extern "C" {
 #ifdef _WIN32
+  #include <Windows.h>
   #include <iphlpapi.h>
 #endif
 }
@@ -34,13 +36,15 @@ using namespace std::literals;
 
 void
 launch_ui() {
-  std::string url = "https://localhost:" + std::to_string(net::map_port(confighttp::PORT_HTTPS));
+  std::string url = "https://" + net::get_web_ui_host() + ':' +
+                    std::to_string(net::map_port(confighttp::PORT_HTTPS));
   platf::open_url(url);
 }
 
 void
 launch_ui_with_path(std::string path) {
-  std::string url = "https://localhost:" + std::to_string(net::map_port(confighttp::PORT_HTTPS)) + path;
+  std::string url = "https://" + net::get_web_ui_host() + ':' +
+                    std::to_string(net::map_port(confighttp::PORT_HTTPS)) + path;
   platf::open_url(url);
 }
 
@@ -106,6 +110,35 @@ namespace lifetime {
 #else
     std::raise(SIGTRAP);
 #endif
+  }
+
+  void
+  force_terminate() {
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(desired_exit_code.load()));
+#else
+    std::_Exit(desired_exit_code.load());
+#endif
+  }
+
+  void
+  start_shutdown_watchdog() {
+    try {
+      std::thread([]() {
+        std::this_thread::sleep_for(10s);
+#ifdef _WIN32
+        if (IsDebuggerPresent()) {
+          return;
+        }
+#endif
+        // Do not log or flush here: either can be the reason shutdown is stuck.
+        force_terminate();
+      }).detach();
+    }
+    catch (...) {
+      // Without a watchdog we cannot safely enter potentially blocking cleanup.
+      force_terminate();
+    }
   }
 
   char **

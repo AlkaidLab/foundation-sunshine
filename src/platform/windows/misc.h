@@ -56,6 +56,13 @@ namespace platf {
   is_running_as_system();
 
   /**
+   * @brief 返回操作系统报告的 Windows 版本。
+   * @return Windows 版本字符串；无法获取时返回 "unknown"。
+   */
+  std::string
+  windows_version();
+
+  /**
    * @brief Launch the bundled GUI user agent in hidden mode.
    * @return An error code when the agent cannot be started.
    */

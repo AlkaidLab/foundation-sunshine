@@ -13,7 +13,7 @@ import AutomaticNumberSetting from './audiovideo/AutomaticNumberSetting.vue'
 import Checkbox from '../../components/Checkbox.vue'
 import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
-const props = defineProps(['platform', 'config', 'resolutions', 'fps', 'displayModeRemapping'])
+const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
 
 const { t } = useI18n()
 const config = ref(props.config)
@@ -157,6 +157,14 @@ onBeforeUnmount(() => {
           />
           <div class="form-text">{{ $t('config.virtual_sink_desc') }}</div>
         </div>
+
+        <Checkbox
+          class="mb-3"
+          id="keep_sink_default"
+          locale-prefix="config"
+          v-model="config.keep_sink_default"
+          :default="false"
+        ></Checkbox>
 
         <!-- Install Steam Audio Drivers -->
         <div class="mb-3">
@@ -309,7 +317,6 @@ onBeforeUnmount(() => {
     <DisplayDeviceOptions
       :platform="platform"
       :config="config"
-      :display-mode-remapping="displayModeRemapping"
     />
 
     <!-- Display Modes Tab Navigation -->

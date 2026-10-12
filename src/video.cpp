@@ -30,6 +30,7 @@ extern "C" {
 // lib includes
 #include "cbs.h"
 #include "config.h"
+#include "perf_recorder.h"
 #include "display_device/display_device.h"
 #include "globals.h"
 #include "hdr/dynamic_hdr_selection.h"
@@ -38,6 +39,7 @@ extern "C" {
 #include "nvenc/nvenc_encoder.h"
 #include "amf/amf_encoder.h"
 #include "platform/common.h"
+#include "pyrowave/capture_policy.h"
 #include "sync.h"
 #include "video.h"
 #include "video_dolby_vision.h"
@@ -45,6 +47,11 @@ extern "C" {
 #include "video_probe.h"
 
 #ifdef _WIN32
+  #include "nvenc/win/nvenc_dynamic_factory.h"
+  #include "platform/windows/pyrowave/cpu_encoder.h"
+  #include "platform/windows/pyrowave/gpu_encoder.h"
+  #include "platform/windows/pyrowave/color_metadata.h"
+  #include "platform/windows/display.h"
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
@@ -133,8 +140,70 @@ namespace video {
     updated.id = id;
     std::lock_guard lock { hdr_pipeline_status_mutex };
     if (hdr_pipeline_statuses.contains(id)) {
+      updated.nr_requested_enabled = hdr_pipeline_statuses[id].nr_requested_enabled;
+      updated.nr_requested_scale_percent = hdr_pipeline_statuses[id].nr_requested_scale_percent;
+      updated.nr_requested_intensity = hdr_pipeline_statuses[id].nr_requested_intensity;
+      updated.nr_requested_ui_correction = hdr_pipeline_statuses[id].nr_requested_ui_correction;
+      updated.nr_requested_motion_quality = hdr_pipeline_statuses[id].nr_requested_motion_quality;
+      updated.nr_requested_style = hdr_pipeline_statuses[id].nr_requested_style;
+      updated.nr_requested_skin_structure_strength = hdr_pipeline_statuses[id].nr_requested_skin_structure_strength;
+      updated.nr_requested_auto_mask = hdr_pipeline_statuses[id].nr_requested_auto_mask;
+      updated.nr_request_revision = hdr_pipeline_statuses[id].nr_request_revision;
       hdr_pipeline_statuses[id] = std::move(updated);
     }
+  }
+
+  int
+  request_nr_enabled(std::uint64_t id, bool enabled, std::optional<int> scale_percent,
+    std::optional<float> intensity, std::optional<bool> ui_correction, std::optional<int> motion_quality, std::optional<int> style,
+    std::optional<float> skin_structure_strength, std::optional<bool> auto_mask) {
+    if (scale_percent && !platf::valid_nr_scale(*scale_percent)) return 400;
+    if (intensity && (!std::isfinite(*intensity) || *intensity < 0.0f || *intensity > 1.0f)) return 400;
+    if (style && (*style < 0 || *style > 4)) return 400;
+    if (skin_structure_strength && (!std::isfinite(*skin_structure_strength) || *skin_structure_strength < 0 || *skin_structure_strength > 1)) return 400;
+    if (motion_quality && (*motion_quality < 0 || *motion_quality > 3)) return 400;
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_statuses.find(id);
+    if (it == hdr_pipeline_statuses.end()) return 404;
+    if (!it->second.nr_toggle_supported) return 409;
+    it->second.nr_requested_enabled = enabled;
+    if (scale_percent) it->second.nr_requested_scale_percent = *scale_percent;
+    if (intensity) it->second.nr_requested_intensity = *intensity;
+    if (ui_correction) it->second.nr_requested_ui_correction = *ui_correction;
+    if (motion_quality) it->second.nr_requested_motion_quality = *motion_quality;
+    if (style) it->second.nr_requested_style = *style;
+    if (skin_structure_strength) it->second.nr_requested_skin_structure_strength = *skin_structure_strength;
+    if (auto_mask) it->second.nr_requested_auto_mask = *auto_mask;
+    ++it->second.nr_request_revision;
+    return 202;
+  }
+
+  std::optional<nr_request_t>
+  requested_nr_settings(std::uint64_t id) {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_statuses.find(id);
+    if (it == hdr_pipeline_statuses.end() || !it->second.nr_toggle_supported) return std::nullopt;
+    return nr_request_t { it->second.nr_requested_enabled, it->second.nr_requested_scale_percent,
+      it->second.nr_requested_intensity, it->second.nr_requested_ui_correction,
+      it->second.nr_requested_motion_quality, it->second.nr_request_revision,
+      it->second.nr_requested_style, it->second.nr_requested_skin_structure_strength, it->second.nr_requested_auto_mask };
+  }
+
+  bool
+  rollback_nr_settings(std::uint64_t id, const nr_request_t &failed, const nr_request_t &previous) {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_statuses.find(id);
+    if (it == hdr_pipeline_statuses.end() || !it->second.nr_requested_enabled ||
+        it->second.nr_request_revision != failed.revision) return false;
+    it->second.nr_requested_scale_percent = previous.scale_percent;
+    it->second.nr_requested_intensity = previous.intensity;
+    it->second.nr_requested_ui_correction = previous.ui_correction;
+    it->second.nr_requested_motion_quality = previous.motion_quality;
+    it->second.nr_requested_style = previous.style;
+    it->second.nr_requested_skin_structure_strength = previous.skin_structure_strength;
+    it->second.nr_requested_auto_mask = previous.auto_mask;
+    ++it->second.nr_request_revision;
+    return true;
   }
 
   void
@@ -160,11 +229,7 @@ namespace video {
 
   int
   encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage) {
-    if (fec_percentage > 0 && fec_percentage <= 80) {
-      return total_bitrate_kbps * (100 - fec_percentage) / 100;
-    }
-
-    return total_bitrate_kbps;
+    return streaming::encoder_bitrate(total_bitrate_kbps, std::max(0, fec_percentage));
   }
 
   int
@@ -655,11 +720,12 @@ namespace video {
     store(
       uint64_t frame_index,
       std::optional<std::chrono::steady_clock::time_point> timestamp,
-      std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+      std::optional<platf::frame_pipeline_trace_t> pipeline_trace, unsigned fec_percentage) {
       auto &entry = entries[frame_index % entries.size()];
       entry.frame_index = frame_index;
       entry.timestamp = timestamp;
       entry.pipeline_trace = std::move(pipeline_trace);
+      entry.fec_percentage = fec_percentage;
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -680,12 +746,19 @@ namespace video {
       return entry.pipeline_trace;
     }
 
+    unsigned
+    lookup_fec(uint64_t frame_index) const {
+      const auto &entry = entries[frame_index % entries.size()];
+      return entry.frame_index == frame_index ? entry.fec_percentage : 0;
+    }
+
   private:
     // Encoder output can lag submission; keep recent per-frame timing data without heap churn.
     struct entry_t {
       uint64_t frame_index = std::numeric_limits<uint64_t>::max();
       std::optional<std::chrono::steady_clock::time_point> timestamp;
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
+      unsigned fec_percentage = 0;
     };
 
     std::array<entry_t, 256> entries {};
@@ -725,6 +798,7 @@ namespace video {
     // Ensure objects are destroyed in the correct order
     avcodec_encode_session_t &
     operator=(avcodec_encode_session_t &&other) {
+      bitrate_budget = std::move(other.bitrate_budget);
       device = std::move(other.device);
       avcodec_ctx = std::move(other.avcodec_ctx);
       replacements = std::move(other.replacements);
@@ -780,17 +854,20 @@ namespace video {
       request_idr_frame();
     }
 
-    void
+    bool
+    supports_bitrate_update() const {
+      const std::string_view codec = avcodec_ctx && avcodec_ctx->codec ? avcodec_ctx->codec->name : "";
+      return codec == "libx264" || codec.ends_with("_qsv") || codec.ends_with("_nvenc");
+    }
+
+    bool
     set_bitrate(int bitrate_kbps) override {
-      if (!avcodec_ctx) return;
-
-      const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
-        bitrate_kbps,
-        config::video.max_bitrate,
-        config::stream.fec_percentage
-      );
-
-      auto bitrate = static_cast<int64_t>(adjusted_bitrate_kbps) * 1000;  // Convert to bps
+      if (!avcodec_ctx || bitrate_kbps <= 0) return false;
+      // These FFmpeg backends consume bitrate changes during encoding. Merely
+      // writing AVCodecContext fields is not a reconfiguration contract for
+      // other backends (e.g. libx265/libsvtav1).
+      if (!supports_bitrate_update()) return false;
+      auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
 
       // Scale the VBV window with the new rate, the way the native Windows NVENC
       // path does (nvEncReconfigureEncoder with a proportional vbvBufferSize).
@@ -813,10 +890,12 @@ namespace video {
       // FFmpeg's nvenc reads these per frame (reconfig_encoder() ->
       // nvEncReconfigureEncoder, resetEncoder + forceIDR), so logging the
       // encoder-visible values is what proves the request reached rate control.
-      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << adjusted_bitrate_kbps
-                      << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                      << config::stream.fec_percentage << "%), VBV: "
-                      << avcodec_ctx->rc_buffer_size << " bits";
+      // The rate handed in is already the encoder share of the session budget:
+      // streaming::bitrate_budget_t deducts audio, overhead and FEC upstream, so
+      // re-applying the FEC percentage here would double-count it.
+      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << bitrate_kbps
+                      << " Kbps, VBV: " << avcodec_ctx->rc_buffer_size << " bits";
+      return true;
     }
 
     void
@@ -858,9 +937,6 @@ namespace video {
           }
           break;
         }
-        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
-          device->set_client_sdr_white_nits(param.value.float_value);
-          break;
         default:
           BOOST_LOG(warning) << "AVCodec encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -1072,6 +1148,10 @@ namespace video {
     /// enables it in make_nvenc_encode_session().
     dolby_vision::rpu_injector_t dolby_vision_;
 
+    void report_dolby_vision_output(bool injected) {
+      if (device) device->report_dolby_vision_output(injected, dolby_vision_.enabled());
+    }
+
     int
     convert(platf::img_t &img) override {
       if (!device) return -1;
@@ -1097,22 +1177,9 @@ namespace video {
       }
     }
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override {
-      if (device && device->nvenc) {
-        // 考虑FEC影响，调整编码码率
-        // 当FEC百分比为X%时，实际编码码率需要调整为原始码率的(100-X)%
-        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
-          bitrate_kbps,
-          config::video.max_bitrate,
-          config::stream.fec_percentage
-        );
-
-        device->nvenc->set_bitrate(adjusted_bitrate_kbps);
-        BOOST_LOG(info) << "NVENC encoder bitrate changed to: " << adjusted_bitrate_kbps
-                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                        << config::stream.fec_percentage << "%)";
-      }
+      return device && device->nvenc && device->nvenc->set_bitrate(bitrate_kbps);
     }
 
     void
@@ -1155,9 +1222,6 @@ namespace video {
           BOOST_LOG(info) << "NVENC encoder VBV buffer size change requested: " << param.value.int_value << " Kbps";
           break;
         }
-        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
-          device->set_client_sdr_white_nits(param.value.float_value);
-          break;
         default:
           BOOST_LOG(warning) << "NVENC encoder: Unsupported dynamic parameter type: " << (int) param.type;
           break;
@@ -1202,7 +1266,7 @@ namespace video {
       uint64_t frame_index,
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
-      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace), fec_percentage());
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -1213,6 +1277,11 @@ namespace video {
     std::optional<platf::frame_pipeline_trace_t>
     resolve_frame_trace(uint64_t frame_index) const {
       return frame_timestamps.lookup_trace(frame_index);
+    }
+
+    unsigned
+    resolve_frame_fec(uint64_t frame_index) const {
+      return frame_timestamps.lookup_fec(frame_index);
     }
 
   private:
@@ -1243,6 +1312,10 @@ namespace video {
     /// enables it in make_amf_encode_session().
     dolby_vision::rpu_injector_t dolby_vision_;
 
+    void report_dolby_vision_output(bool injected) {
+      if (device) device->report_dolby_vision_output(injected, dolby_vision_.enabled());
+    }
+
     int
     convert(platf::img_t &img) override {
       if (!device) return -1;
@@ -1268,20 +1341,9 @@ namespace video {
       }
     }
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override {
-      if (device && device->amf) {
-        const auto adjusted_bitrate_kbps = encoder_bitrate_for_total_request(
-          bitrate_kbps,
-          config::video.max_bitrate,
-          config::stream.fec_percentage
-        );
-
-        device->amf->set_bitrate(adjusted_bitrate_kbps);
-        BOOST_LOG(info) << "AMF standalone encoder bitrate changed to: " << adjusted_bitrate_kbps
-                        << " Kbps (requested: " << bitrate_kbps << " Kbps, FEC: "
-                        << config::stream.fec_percentage << "%)";
-      }
+      return device && device->amf && device->amf->set_bitrate(bitrate_kbps);
     }
 
     void
@@ -1291,9 +1353,6 @@ namespace video {
       switch (param.type) {
         case dynamic_param_type_e::BITRATE:
           set_bitrate(param.value.int_value);
-          break;
-        case dynamic_param_type_e::CLIENT_SDR_WHITE_NITS:
-          device->set_client_sdr_white_nits(param.value.float_value);
           break;
         default:
           break;
@@ -1336,7 +1395,7 @@ namespace video {
       uint64_t frame_index,
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
-      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace));
+      frame_timestamps.store(frame_index, frame_timestamp, std::move(pipeline_trace), fec_percentage());
     }
 
     std::optional<std::chrono::steady_clock::time_point>
@@ -1347,6 +1406,11 @@ namespace video {
     std::optional<platf::frame_pipeline_trace_t>
     resolve_frame_trace(uint64_t frame_index) const {
       return frame_timestamps.lookup_trace(frame_index);
+    }
+
+    unsigned
+    resolve_frame_fec(uint64_t frame_index) const {
+      return frame_timestamps.lookup_fec(frame_index);
     }
 
   private:
@@ -1394,6 +1458,10 @@ namespace video {
     std::thread capture_thread;
 
     safe::signal_t reinit_event;
+    // A backend failure can request a shared-display reinitialization without
+    // making the encoder thread own or replace the capture display directly.
+    std::atomic_bool force_system_capture { false };
+    sync_util::sync_t<pyrowave::capture_policy_t> capture_policy;
     const encoder_t *encoder_p;
     sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
   };
@@ -1978,22 +2046,6 @@ namespace video {
     return encoder ? std::string { encoder->name } : std::string {};
   }
 
-  bool
-  active_encoder_supports_dynamic_sdr_white() {
-    const auto *encoder = active_encoder_for_status.load(std::memory_order_acquire);
-    if (!encoder) {
-      return false;
-    }
-
-    return dynamic_cast<const encoder_platform_formats_nvenc *>(encoder->platform_formats.get()) != nullptr ||
-           dynamic_cast<const encoder_platform_formats_amf *>(encoder->platform_formats.get()) != nullptr;
-  }
-
-  bool
-  is_valid_client_sdr_white_nits(float nits) {
-    return std::isfinite(nits) && nits >= 50.0f && nits <= 1000.0f;
-  }
-
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
     // We try this twice, in case we still get an error on reinitialization
@@ -2072,6 +2124,8 @@ namespace video {
     std::shared_ptr<safe::queue_t<capture_ctx_t>> capture_ctx_queue,
     sync_util::sync_t<std::weak_ptr<platf::display_t>> &display_wp,
     safe::signal_t &reinit_event,
+    std::atomic_bool &force_system_capture,
+    sync_util::sync_t<pyrowave::capture_policy_t> &capture_policy,
     const encoder_t &encoder) {
     std::vector<capture_ctx_t> capture_ctxs;
 
@@ -2097,6 +2151,36 @@ namespace video {
     }
     capture_ctxs.emplace_back(std::move(*initial_capture_ctx));
 
+    auto reset_capture_display = [&](std::shared_ptr<platf::display_t> &display,
+                                     const std::string &name, const config_t &client_config) {
+      bool system_capture;
+      {
+        auto lock = capture_policy.lock();
+        system_capture = capture_policy->system_capture();
+      }
+      auto capture_config = client_config;
+      if (system_capture) {
+        capture_config.capture_backend_override = "ddx";
+      }
+      reset_display(display, system_capture ? platf::mem_type_e::system : encoder.platform_formats->dev_type,
+        name, capture_config);
+#ifdef _WIN32
+      if (!display && !system_capture &&
+          client_config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
+          client_config.dynamicRange == 0 &&
+          client_config.pre_encode_filter == platf::pre_encode_filter_e::none) {
+        {
+          auto lock = capture_policy.lock();
+          if (!capture_policy->request_system_capture()) {
+            return;
+          }
+        }
+        capture_config.capture_backend_override = "ddx";
+        reset_display(display, platf::mem_type_e::system, name, capture_config);
+      }
+#endif
+    };
+
     // Get all the monitor names now, rather than at boot, to
     // get the most up-to-date list available monitors
     std::vector<std::string> display_names;
@@ -2105,7 +2189,7 @@ namespace video {
 
     // Use client-specified display_name if provided, otherwise use the selected display
     std::string target_display_name;
-    const auto &config = capture_ctxs.front().config;
+    auto config = capture_ctxs.front().config;
     if (!config.display_name.empty()) {
       // config.display_name may be a device ID (e.g., {xxx-xxx-xxx}) rather than display name (e.g., \\.\DISPLAY1)
       // Try to convert device ID to display name first
@@ -2135,7 +2219,8 @@ namespace video {
       target_display_name = display_names[display_p];
     }
 
-    auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
+    std::shared_ptr<platf::display_t> disp;
+    reset_capture_display(disp, target_display_name, config);
     if (!disp) {
       return;
     }
@@ -2286,6 +2371,11 @@ namespace video {
           return false;
         }
 
+        if (force_system_capture.load(std::memory_order_acquire)) {
+          artificial_reinit = true;
+          return false;
+        }
+
         // 先接入新会话，再分发本次真实画面。若本次只是捕获超时，则给新会话
         // 补发上一张真实画面，保证它与现有会话看到同一个活动显示器内容。
         if (!append_pending_capture_contexts(frame_captured ? std::shared_ptr<platf::img_t> {} : latest_captured_img)) {
@@ -2404,7 +2494,7 @@ namespace video {
             }
 
             // reset_display() will sleep between retries
-            reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
+            reset_capture_display(disp, target_display_name, config);
             if (disp) {
               active_display_event->raise(target_display_name);
               break;
@@ -2415,6 +2505,8 @@ namespace video {
           }
 
           display_wp = disp;
+
+          force_system_capture.store(false, std::memory_order_release);
 
           reinit_event.reset();
           continue;
@@ -2640,7 +2732,7 @@ namespace video {
     if (pipeline_trace) {
       pipeline_trace->encode_submit = std::chrono::steady_clock::now();
     }
-    session.frame_timestamps.store(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
+    session.frame_timestamps.store(submitted_frame_index, frame_timestamp, std::move(pipeline_trace), session.fec_percentage());
 
     auto &frame = session.device->frame;
     frame->pts = frame_nr;
@@ -2661,7 +2753,8 @@ namespace video {
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
-        const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
+        const auto filtered = session.dynamic_metadata_temporal.update(
+          raw_stats, session.dynamic_metadata_target_peak_nits);
 
         update_hdr_dynamic_metadata(
           frame,
@@ -2805,6 +2898,7 @@ namespace video {
       if (av_packet && av_packet->pts >= 0) {
         const auto encoded_frame_index = static_cast<uint64_t>(av_packet->pts);
         packet->frame_timestamp = session.frame_timestamps.lookup(encoded_frame_index);
+        packet->fec_percentage = session.frame_timestamps.lookup_fec(encoded_frame_index);
         auto encoded_trace = session.frame_timestamps.lookup_trace(encoded_frame_index);
         if (encoded_trace) {
           encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2852,12 +2946,14 @@ namespace video {
 
     // The RPU rides with the access unit it was generated for, matched by the
     // encoder's own frame index round trip — never by callback order.
-    session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    const bool dv_injected = session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    session.report_dolby_vision_output(dv_injected);
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->fec_percentage = session.resolve_frame_fec(encoded_frame.frame_index);
     auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
     if (encoded_trace) {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2910,12 +3006,14 @@ namespace video {
 
     // AMF may return an older frame than the one submitted; the RPU splice
     // keys on the encoder's own output index, so pipeline lag cannot mismatch.
-    session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    const bool dv_injected = session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    session.report_dolby_vision_output(dv_injected);
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
     packet->channel_data = channel_data;
     packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
     packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->fec_percentage = session.resolve_frame_fec(encoded_frame.frame_index);
     auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
     if (encoded_trace) {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
@@ -2926,14 +3024,48 @@ namespace video {
     return 0;
   }
 
+  struct encoder_rebuild_context_t {
+    platf::display_t &display;
+    const encoder_t &encoder;
+    const config_t &config;
+    platf::img_t &image;
+  };
+
+  bool
+  rebuild_bitrate_session(std::unique_ptr<encode_session_t> &session, const encoder_rebuild_context_t &context, int bitrate_kbps);
+
   int
   encode(
     int64_t frame_nr,
-    encode_session_t &session,
+    std::unique_ptr<encode_session_t> &session_ptr,
     safe::mail_raw_t::queue_t<packet_t> &packets,
     void *channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
+    const encoder_rebuild_context_t *rebuild_context = nullptr) {
+    // Keep the budget alive if a backend without runtime updates is replaced.
+    const auto budget = session_ptr->bitrate_budget;
+    if (budget) {
+      const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+      if (const auto next = budget->pending(now)) {
+        auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(session_ptr.get());
+        const bool needs_rebuild = avcodec_session && !avcodec_session->supports_bitrate_update();
+        const bool applied = next->encoder_kbps == budget->applied().encoder_kbps ||
+                             (needs_rebuild ? rebuild_context && rebuild_bitrate_session(session_ptr, *rebuild_context, next->encoder_kbps) :
+                                              session_ptr->set_bitrate(next->encoder_kbps));
+        if (applied) {
+          budget->commit(*next);
+          BOOST_LOG(info) << "Applied video budget: total=" << next->total_kbps
+                          << " Kbps, encoder=" << next->encoder_kbps << " Kbps, FEC=" << next->fec_percentage << '%';
+        }
+        else {
+          BOOST_LOG(warning) << "Encoder rejected bitrate allocation; retaining previous FEC allowance";
+        }
+      }
+    }
+    auto &session = *session_ptr;
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
@@ -2943,6 +3075,20 @@ namespace video {
     else if (auto amf_session = dynamic_cast<amf_encode_session_t *>(&session)) {
       return encode_amf(frame_nr, *amf_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
     }
+#ifdef _WIN32
+    else if (platf::pyrowave_windows::is_gpu_encoder_session(session)) {
+      if (!pipeline_trace) pipeline_trace.emplace();
+      pipeline_trace->pyrowave = true;
+      return platf::pyrowave_windows::encode_gpu_frame(
+        frame_nr, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+    }
+    else {
+      if (!pipeline_trace) pipeline_trace.emplace();
+      pipeline_trace->pyrowave = true;
+      return platf::pyrowave_windows::encode_frame(
+        frame_nr, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
+    }
+#endif
 
     return -1;
   }
@@ -3734,19 +3880,11 @@ namespace video {
   }
 
   std::unique_ptr<encode_session_t>
-  make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false) {
+  make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false, std::optional<int> bitrate_override = {}) {
     auto effective_config = config;
-    effective_config.bitrate = cap_initial_encoder_bitrate(
-      config.bitrate,
-      config::video.max_bitrate,
-      config::stream.fec_percentage
-    );
-    if (!is_probe && effective_config.bitrate != config.bitrate) {
-      BOOST_LOG(info) << "Capping initial encoder bitrate from " << config.bitrate
-                      << " Kbps to " << effective_config.bitrate
-                      << " Kbps (host maximum total bitrate: " << config::video.max_bitrate
-                      << " Kbps, FEC: " << config::stream.fec_percentage << "%)";
-    }
+    effective_config.bitrate = bitrate_override.value_or(config.bitrate_budget ? config.bitrate_budget->applied().encoder_kbps :
+                                                                                 cap_initial_encoder_bitrate(config.bitrate, config::video.max_bitrate, 0));
+    std::unique_ptr<encode_session_t> session;
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
       // The avcodec path injects the Dolby Vision RPU itself (by pts, growing
@@ -3756,18 +3894,19 @@ namespace video {
       // used to claim avcodec cannot carry an RPU at all, which the P8.1
       // splice above made untrue.
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
-      return make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
+      session = make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }
     else if (dynamic_cast<platf::nvenc_encode_device_t *>(encode_device.get())) {
       auto nvenc_encode_device = boost::dynamic_pointer_cast<platf::nvenc_encode_device_t>(std::move(encode_device));
-      return make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
+      session = make_nvenc_encode_session(disp, effective_config, std::move(nvenc_encode_device), is_probe);
     }
     else if (dynamic_cast<platf::amf_encode_device_t *>(encode_device.get())) {
       auto amf_encode_device = boost::dynamic_pointer_cast<platf::amf_encode_device_t>(std::move(encode_device));
-      return make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
+      session = make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
     }
 
-    return nullptr;
+    if (session) session->bitrate_budget = config.bitrate_budget;
+    return session;
   }
 
   /**
@@ -3874,10 +4013,28 @@ namespace video {
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
-    auto session = make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    std::function<std::unique_ptr<encode_session_t>()> session_factory = {},
+    std::function<void()> backend_failure_handler = {}) {
+    auto session = session_factory ? session_factory() :
+      make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
+      if (backend_failure_handler) {
+        BOOST_LOG(warning) << "Encoder session could not be initialized; requesting backend recovery"sv;
+        backend_failure_handler();
+      }
+      else if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT)) {
+        BOOST_LOG(error) << "PyroWave encoder session could not be initialized; ending video session"sv;
+        mail->event<bool>(mail::shutdown)->raise(true);
+      }
       return;
+    }
+
+    if (session_factory && config.bitrate_budget) {
+      // PyroWave factories bypass make_encode_session; initialize their encoder
+      // target from the same session budget after a backend reinitialization.
+      if (!session->set_bitrate(config.bitrate_budget->applied().encoder_kbps)) return;
+      session->bitrate_budget = config.bitrate_budget;
     }
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
@@ -3967,15 +4124,22 @@ namespace video {
       return {};
     };
 
+    const auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(session.get());
+    const bool needs_bitrate_rebuild = avcodec_session && !avcodec_session->supports_bitrate_update();
+    std::shared_ptr<platf::img_t> current_img;
     {
       // Load a dummy image into the AVFrame to ensure we have something to encode
-      // even if we timeout waiting on the first frame. This is a relatively large
-      // allocation which can be freed immediately after convert(), so we do this
-      // in a separate scope.
+      // even if we timeout waiting on the first frame. Only backends requiring
+      // bitrate rebuilds retain the image to prepare a replacement encoder.
       auto dummy_img = disp->alloc_img();
       if (!dummy_img || disp->dummy_img(dummy_img.get()) || session->convert(*dummy_img)) {
+        if (backend_failure_handler) {
+          BOOST_LOG(warning) << "Encoder rejected the initial frame; requesting backend recovery"sv;
+          backend_failure_handler();
+        }
         return;
       }
+      if (needs_bitrate_rebuild) current_img = std::move(dummy_img);
     }
 
     while (true) {
@@ -4006,15 +4170,30 @@ namespace video {
       // 处理动态参数调整
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
-          BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
-          if (param->type == dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
-            // Keep the latest value in the video-thread-owned config. If the
-            // encoder is recreated after a display/capture reinit, device
-            // construction will apply this value again.
-            config.hdr_capabilities.sdr_white_nits = param->value.float_value;
+          if (param->valid && param->type == dynamic_param_type_e::BITRATE && session->bitrate_budget) {
+            session->bitrate_budget->request(param->value.int_value);
+            continue;
           }
+          if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
+              param->type != dynamic_param_type_e::BITRATE &&
+              param->type != dynamic_param_type_e::CLIENT_SDR_WHITE_NITS) {
+            // PyroWave supports a bounded next-frame bitrate budget, but not
+            // the other encoder reconfiguration knobs yet. Do not consume a
+            // QP/FPS/VBV request and pretend it applied; reconnect so the
+            // client can negotiate a backend that owns that setting.
+            BOOST_LOG(warning) << "PyroWave does not support dynamic parameter type "
+                               << static_cast<int>(param->type)
+                               << "; ending video session for renegotiation"sv;
+            shutdown_event->raise(true);
+            break;
+          }
+          BOOST_LOG(info) << "Applying dynamic parameter change: type=" << (int) param->type;
           session->set_dynamic_param(*param);
         }
+      }
+
+      if (shutdown_event->peek()) {
+        break;
       }
 
       if (requested_idr_frame) {
@@ -4048,9 +4227,13 @@ namespace video {
           }
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
+            if (backend_failure_handler) {
+              backend_failure_handler();
+            }
             // Don't exit permanently — break to let the outer reinit loop handle recovery
             break;
           }
+          if (needs_bitrate_rebuild) current_img = img;
           if (pipeline_trace) {
             pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
@@ -4081,8 +4264,13 @@ namespace video {
         // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
       }
 
-      if (encode(frame_nr++, *session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
+      std::optional<encoder_rebuild_context_t> rebuild_context;
+      if (current_img) rebuild_context.emplace(*disp, encoder, config, *current_img);
+      if (encode(frame_nr++, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace), rebuild_context ? &*rebuild_context : nullptr)) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
+        if (backend_failure_handler) {
+          backend_failure_handler();
+        }
         // Don't exit permanently — break to let the outer reinit loop handle recovery
         break;
       }
@@ -4127,8 +4315,8 @@ namespace video {
   /**
    * @brief Disable the pre-encode filter when the opened display cannot satisfy
    *        its preconditions, keeping the wire signal consistent with the pixels
-   *        actually produced (rtx_hdr_stream_implementation.md §5.3
-   *        source_display_not_sdr / §6.3 capability-probe degradation).
+   *        actually produced. HDR sources allow signal-preserving NR but cannot
+   *        feed an SDR-to-HDR filter. Unsupported capture paths bypass all filters.
    */
   void
   strip_unusable_pre_encode_filter(platf::display_t &disp, config_t &config) {
@@ -4136,9 +4324,9 @@ namespace video {
       return;
     }
     if (!disp.supports_pre_encode_filter()) {
-      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling RTX HDR for this session"sv;
+      BOOST_LOG(warning) << "Pre-encode filter is not supported by this capture/encode path; disabling image enhancement for this session"sv;
     }
-    else if (disp.is_hdr()) {
+    else if (disp.is_hdr() && config.pre_encode_filter != platf::pre_encode_filter_e::external_neural_enhancement) {
       BOOST_LOG(warning) << "Source display is already in HDR mode (source_display_not_sdr); disabling RTX HDR for this session"sv;
     }
     else {
@@ -4190,13 +4378,13 @@ namespace video {
     }
 
     if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
-      result = disp.make_avcodec_encode_device(pix_fmt);
+      result = disp.make_avcodec_encode_device(pix_fmt, config);
     }
     else if (dynamic_cast<const encoder_platform_formats_nvenc *>(encoder.platform_formats.get())) {
-      result = disp.make_nvenc_encode_device(pix_fmt);
+      result = disp.make_nvenc_encode_device(pix_fmt, config);
     }
     else if (dynamic_cast<const encoder_platform_formats_amf *>(encoder.platform_formats.get())) {
-      result = disp.make_amf_encode_device(pix_fmt);
+      result = disp.make_amf_encode_device(pix_fmt, config);
     }
 
     if (result) {
@@ -4205,6 +4393,20 @@ namespace video {
     }
 
     return result;
+  }
+
+  bool
+  rebuild_bitrate_session(std::unique_ptr<encode_session_t> &session, const encoder_rebuild_context_t &context, int bitrate_kbps) {
+    auto device = make_encode_device(context.display, context.encoder, context.config);
+    if (!device) return false;
+    auto replacement = make_encode_session(&context.display, context.encoder, context.config,
+      context.display.width, context.display.height, std::move(device), false, bitrate_kbps);
+    // Prepare the current image before replacing the working encoder. A failed
+    // rebuild leaves both the old encoder and its FEC allowance intact.
+    if (!replacement || replacement->convert(context.image)) return false;
+    replacement->request_idr_frame();
+    session = std::move(replacement);
+    return true;
   }
 
   std::optional<sync_session_t>
@@ -4422,7 +4624,9 @@ namespace video {
             pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
 
-          if (encode(ctx->frame_nr++, *pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
+          std::optional<encoder_rebuild_context_t> rebuild_context;
+          if (img) rebuild_context.emplace(*disp, encoder, ctx->config, *img);
+          if (encode(ctx->frame_nr++, pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace), rebuild_context ? &*rebuild_context : nullptr)) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 
@@ -4497,7 +4701,8 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    int packet_size) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<captured_frame_event_t::element_type>();
@@ -4510,6 +4715,22 @@ namespace video {
     if (!ref) {
       return;
     }
+
+    const bool accepts_system_capture = ref->encoder_p->platform_formats->dev_type == platf::mem_type_e::system ||
+      (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
+       config.dynamicRange == 0 && config.pre_encode_filter == platf::pre_encode_filter_e::none);
+    {
+      auto lock = ref->capture_policy.lock();
+      if (!ref->capture_policy->attach(accepts_system_capture)) {
+        BOOST_LOG(error) << "Cannot attach a GPU encoder while shared capture is serving a PyroWave CPU fallback"sv;
+        return;
+      }
+    }
+    auto admission_guard = util::fail_guard([&]() {
+      images->stop();
+      auto lock = ref->capture_policy.lock();
+      ref->capture_policy->detach();
+    });
 
     ref->capture_ctx_queue->raise(capture_ctx_t { images, config });
 
@@ -4529,6 +4750,13 @@ namespace video {
 
     // Cache window capture mode check outside the loop
     const bool is_window_capture = (config::video.capture_target == "window");
+    const bool is_pyrowave = config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT);
+#ifdef _WIN32
+    bool pyrowave_gpu_disabled = false;
+    bool pyrowave_session_is_gpu = false;
+    bool pyrowave_fallback_reinit_pending = false;
+    bool pyrowave_terminal_failure_pending = false;
+#endif
 
     // Track display dimensions for resolution change detection
     int last_display_width = 0;
@@ -4648,11 +4876,192 @@ namespace video {
       }
 
       auto &encoder = *chosen_encoder;
+      std::unique_ptr<platf::encode_device_t> encode_device;
+      std::function<std::unique_ptr<encode_session_t>()> session_factory;
+      std::function<void()> backend_failure_handler;
 
-      strip_unusable_pre_encode_filter(*display, config);
-      auto encode_device = make_encode_device(*display, encoder, config);
-      if (!encode_device) {
-        return;
+      if (is_pyrowave) {
+        const auto pyrowave_colorspace = colorspace_from_client_config(config, display->is_hdr());
+        const auto pyrowave_colorspace_name =
+          pyrowave_colorspace.colorspace == colorspace_e::bt2020 ? "BT.2020/PQ"sv :
+          pyrowave_colorspace.colorspace == colorspace_e::bt2020hlg ? "BT.2020/HLG"sv :
+          pyrowave_colorspace.colorspace == colorspace_e::bt2020sdr ? "BT.2020/SDR"sv :
+          pyrowave_colorspace.colorspace == colorspace_e::rec709 ? "BT.709"sv : "unknown"sv;
+        BOOST_LOG(info) << "[PyroWaveSession] encode color contract"
+                        << ": colorspace=" << pyrowave_colorspace_name
+                        << ", range=" << (pyrowave_colorspace.full_range ? "full"sv : "limited"sv)
+                        << ", bitDepth=" << pyrowave_colorspace.bit_depth
+                        << ", chroma=" << (config.chromaSamplingType == 0 ? "4:2:0"sv : "4:4:4"sv)
+                        << ", dynamicRange=" << config.dynamicRange
+                        << ", encoderCscMode=" << config.encoderCscMode;
+#ifdef _WIN32
+        if (!platf::pyrowave_windows::color_metadata_for(pyrowave_colorspace)) {
+          BOOST_LOG(error) << "PyroWave capture color space cannot satisfy the negotiated signal; "
+                           << "HDR requires an HDR display or an HDR-producing enhancement pipeline"sv;
+          return;
+        }
+        const auto pyrowave_frame_rate_num = config.frameRateNum > 0 ? config.frameRateNum : config.framerate;
+        const auto pyrowave_frame_rate_den = config.frameRateNum > 0 && config.frameRateDen > 0 ? config.frameRateDen : 1;
+        // A capture wait timeout is not an encoding rate limit: queued images
+        // are returned immediately. Budget at the negotiated rate, not the
+        // static-content refresh floor or a per-frame measured interval.
+        BOOST_LOG(info) << "[PyroWaveSession] rate-control budget frame rate="
+                        << pyrowave_frame_rate_num << '/' << pyrowave_frame_rate_den
+                        << " fps (negotiated)";
+        // videoBroadcastThread inserts a 32-byte video packet header into an
+        // outer payload whose budget is packetsize + 16 bytes. Keep each
+        // PyroWave wire packet inside exactly one outer RTP payload so that
+        // the client can recover a missing inner block before frame copy.
+        constexpr std::size_t pyrowave_outer_header_overhead = 16u;
+        const auto outer_packet_size = packet_size > 0 ? static_cast<std::size_t>(packet_size) : 0u;
+        const auto outer_payload_capacity = outer_packet_size > pyrowave_outer_header_overhead
+          ? outer_packet_size - pyrowave_outer_header_overhead
+          : 0u;
+        const auto pyrowave_packet_boundary = outer_payload_capacity > LI_PYROWAVE_WIRE_FEC_HEADER_SIZE
+          ? outer_payload_capacity - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE
+          : 0u;
+        BOOST_LOG(debug) << "[PyroWaveSession] transport geometry"
+                            << ", frame_size=" << config.width << 'x' << config.height
+                            << ", frame_rate=" << (config.frameRateNum > 0 ? config.frameRateNum : config.framerate)
+                            << '/' << (config.frameRateNum > 0 && config.frameRateDen > 0 ? config.frameRateDen : 1)
+                            << ", requested_packet_size=" << packet_size
+                            << ", outer_payload_capacity=" << outer_payload_capacity
+                            << ", inner_payload_boundary=" << pyrowave_packet_boundary
+                            << ", wire_packet_boundary="
+                            << (pyrowave_packet_boundary == 0 ? 0u : pyrowave_packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE);
+        if (pyrowave_packet_boundary <= LI_PYROWAVE_WIRE_FEC_HEADER_SIZE ||
+            pyrowave_packet_boundary > LI_PYROWAVE_MAX_PACKET_SIZE - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE) {
+          BOOST_LOG(error) << "PyroWave backend rejected invalid transport packet boundary: "
+                           << pyrowave_packet_boundary;
+          return;
+        }
+        const bool pyrowave_cpu_fallback_allowed =
+          config.dynamicRange == 0 &&
+          config.pre_encode_filter == platf::pre_encode_filter_e::none;
+        // These callbacks run after this branch ends. Copy branch-local
+        // invariants; only the enclosing capture state may be referenced.
+        session_factory = [&config, &display, &ref,
+                           &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
+                           &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
+                           pyrowave_packet_boundary,
+                           pyrowave_frame_rate_num, pyrowave_frame_rate_den,
+                           pyrowave_cpu_fallback_allowed]() -> std::unique_ptr<encode_session_t> {
+          pyrowave_session_is_gpu = false;
+          if (!pyrowave_gpu_disabled) {
+            if (auto base_display = std::dynamic_pointer_cast<platf::dxgi::display_vram_t>(display)) {
+              auto gpu_session = platf::pyrowave_windows::make_gpu_encoder(
+                base_display, config, pyrowave_packet_boundary,
+                pyrowave_frame_rate_num,
+                pyrowave_frame_rate_den);
+              if (gpu_session) {
+                pyrowave_session_is_gpu = true;
+                return gpu_session;
+              }
+
+              if (!pyrowave_cpu_fallback_allowed) {
+                pyrowave_fallback_reinit_pending = false;
+                pyrowave_terminal_failure_pending = true;
+                BOOST_LOG(error) << "PyroWave GPU backend could not be initialized; "
+                                 << "the requested HDR or enhancement path has no CPU fallback"sv;
+                return nullptr;
+              }
+
+              pyrowave_gpu_disabled = true;
+            }
+          }
+
+          if (!pyrowave_cpu_fallback_allowed) {
+            pyrowave_fallback_reinit_pending = false;
+            pyrowave_terminal_failure_pending = true;
+            BOOST_LOG(error) << "PyroWave GPU backend is unavailable; CPU staging cannot satisfy "
+                             << "the requested HDR or enhancement path"sv;
+            return nullptr;
+          }
+          if (!std::dynamic_pointer_cast<platf::dxgi::display_ram_t>(display)) {
+            auto lock = ref->capture_policy.lock();
+            if (!std::dynamic_pointer_cast<platf::dxgi::display_vram_t>(display) ||
+                !ref->capture_policy->request_system_capture()) {
+              pyrowave_fallback_reinit_pending = false;
+              pyrowave_terminal_failure_pending = true;
+              BOOST_LOG(error) << "PyroWave CPU fallback cannot change the capture type of other active sessions"sv;
+              return nullptr;
+            }
+            pyrowave_fallback_reinit_pending = true;
+            ref->force_system_capture.store(true, std::memory_order_release);
+            ref->reinit_event.raise(true);
+            BOOST_LOG(warning) << "PyroWave GPU backend unavailable; requesting system-memory capture for this session"sv;
+            return nullptr;
+          }
+          // The first CPU attempt after a GPU failure is reached only after
+          // the shared capture thread has been asked to reinitialize.  Once
+          // this factory is entered, a later CPU failure is a real terminal
+          // failure rather than the pending fallback transition.
+          pyrowave_fallback_reinit_pending = false;
+          auto cpu_session = platf::pyrowave_windows::make_encoder(
+            config.width, config.height, pyrowave_packet_boundary,
+            (config.encoderCscMode & 0x1) != 0,
+            config.dynamicRange,
+            config.bitrate,
+            pyrowave_frame_rate_num,
+            pyrowave_frame_rate_den,
+            config.perf_session_id);
+          if (!cpu_session) {
+            BOOST_LOG(error) << "PyroWave CPU backend could not be initialized"sv;
+          }
+          return cpu_session;
+        };
+        backend_failure_handler = [&ref, &shutdown_event,
+                                   &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
+                                   &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
+                                   pyrowave_cpu_fallback_allowed]() {
+          if (pyrowave_terminal_failure_pending) {
+            pyrowave_terminal_failure_pending = false;
+            BOOST_LOG(error) << "PyroWave backend initialization failed with no supported fallback; ending video session"sv;
+            shutdown_event->raise(true);
+          }
+          else if (pyrowave_session_is_gpu && !pyrowave_cpu_fallback_allowed) {
+            pyrowave_session_is_gpu = false;
+            pyrowave_fallback_reinit_pending = false;
+            BOOST_LOG(error) << "PyroWave GPU backend failed; the requested HDR or enhancement path "
+                             << "cannot fall back to CPU staging"sv;
+            shutdown_event->raise(true);
+          }
+          else if (pyrowave_session_is_gpu) {
+            pyrowave_session_is_gpu = false;
+            pyrowave_gpu_disabled = true;
+            {
+              auto lock = ref->capture_policy.lock();
+              if (!ref->capture_policy->request_system_capture()) {
+                pyrowave_fallback_reinit_pending = false;
+                BOOST_LOG(error) << "PyroWave GPU backend failed; preserving capture for other active sessions"sv;
+                shutdown_event->raise(true);
+                return;
+              }
+            }
+            pyrowave_fallback_reinit_pending = true;
+            ref->force_system_capture.store(true, std::memory_order_release);
+            ref->reinit_event.raise(true);
+            BOOST_LOG(warning) << "PyroWave GPU backend failed; requesting shared system-memory capture reinitialization"sv;
+          }
+          else if (pyrowave_fallback_reinit_pending) {
+            // A failed GPU factory has already requested display reinit. The
+            // encoder loop must return and let the shared capture owner finish
+            // that transition; shutting down here would defeat the fallback.
+            BOOST_LOG(debug) << "PyroWave fallback reinitialization is pending; waiting for the shared capture thread"sv;
+          }
+          else {
+            BOOST_LOG(error) << "PyroWave CPU backend failed; ending video session"sv;
+            shutdown_event->raise(true);
+          }
+        };
+#endif
+      }
+      else {
+        strip_unusable_pre_encode_filter(*display, config);
+        encode_device = make_encode_device(*display, encoder, config);
+        if (!encode_device) {
+          return;
+        }
       }
 
       // Absolute mouse coordinates require that the dimensions of the screen are known
@@ -4660,9 +5069,20 @@ namespace video {
 
       // Update client with our current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-      if (colorspace_is_hdr(encode_device->colorspace)) {
+      const auto hdr_colorspace = is_pyrowave
+        ? colorspace_from_client_config(config, display->is_hdr())
+        : encode_device->colorspace;
+      if (colorspace_is_hdr(hdr_colorspace)) {
         if (get_effective_hdr_metadata(display.get(), config, hdr_info->metadata)) {
           hdr_info->enabled = true;
+        }
+        else if (is_pyrowave) {
+          // Static mastering metadata is optional for the PyroWave
+          // presentation path. Keep the negotiated PQ/HLG signal active and
+          // let the client present a degraded HDR colorspace without
+          // fabricating mastering or content-light values.
+          hdr_info->enabled = true;
+          BOOST_LOG(warning) << "PyroWave HDR metadata unavailable; keeping the HDR colorspace and presenting without static metadata"sv;
         }
         else {
           BOOST_LOG(error) << "Couldn't get display HDR metadata when colorspace indicates it should have one";
@@ -4676,7 +5096,8 @@ namespace video {
         config, display,
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
-        channel_data, dynamic_param_events);
+        channel_data, dynamic_param_events,
+        std::move(session_factory), std::move(backend_failure_handler));
     }
   }
 
@@ -4685,12 +5106,23 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
-    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
+    std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
+    int packet_size) {
+#ifdef _WIN32
+    if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT)) {
+      // PyroWave uses the same shared capture coordinator and encoder-loop
+      // pacing as the legacy backends. Its session factory is selected inside
+      // capture_async, so display reinit and system-memory fallback remain
+      // owned by the capture thread.
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, packet_size);
+      return;
+    }
+#endif
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events);
+      capture_async(std::move(mail), config, channel_data, dynamic_param_events, packet_size);
     }
     else {
       safe::signal_t join_event;
@@ -4741,7 +5173,7 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto encode_start = std::chrono::steady_clock::now();
     while (!packets->peek()) {
-      if (encode(1, *session, packets, nullptr, {}, {})) {
+      if (encode(1, session, packets, nullptr, {}, {})) {
         return -1;
       }
       // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
@@ -5071,6 +5503,15 @@ namespace video {
     }
 
     const auto probe_capture_override = capture_override_for_encoder_probe();
+
+#ifdef _WIN32
+    // Reuse CUDA interop across this probe's short-lived 10-bit 4:4:4
+    // candidates, but release it on every exit when no real encoder needs it.
+    // The token itself does not initialize CUDA or create a GPU context.
+    const auto nvenc_factory = nvenc::nvenc_dynamic_factory::get();
+    const auto cuda_probe_contexts = nvenc_factory ? nvenc_factory->retain_cuda_interop_contexts() : nullptr;
+#endif
+
     const auto configured_output_name = target ? target->output_name : config::video.output_name;
     const bool target_requires_exact_resolution = target && target->policy == probe_target_policy_e::exact;
     const auto configured_display_name = display_device::get_display_name(configured_output_name);
@@ -5453,6 +5894,7 @@ namespace video {
   start_capture_async(capture_thread_async_ctx_t &capture_thread_ctx) {
     capture_thread_ctx.encoder_p = chosen_encoder;
     capture_thread_ctx.reinit_event.reset();
+    capture_thread_ctx.force_system_capture.store(false, std::memory_order_release);
 
     capture_thread_ctx.capture_ctx_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
 
@@ -5461,6 +5903,8 @@ namespace video {
       capture_thread_ctx.capture_ctx_queue,
       std::ref(capture_thread_ctx.display_wp),
       std::ref(capture_thread_ctx.reinit_event),
+      std::ref(capture_thread_ctx.force_system_capture),
+      std::ref(capture_thread_ctx.capture_policy),
       std::ref(*capture_thread_ctx.encoder_p)
     };
 

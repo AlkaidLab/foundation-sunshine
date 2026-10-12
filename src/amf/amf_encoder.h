@@ -62,7 +62,7 @@ namespace amf {
      * @brief Set the bitrate for the encoder dynamically.
      * @param bitrate_kbps Bitrate in kilobits per second.
      */
-    virtual void
+    virtual bool
     set_bitrate(int bitrate_kbps) = 0;
 
     /**

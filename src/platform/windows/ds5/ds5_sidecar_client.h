@@ -8,6 +8,8 @@
 #include <memory>
 #include <optional>
 
+#include <boost/atomic.hpp>
+
 #include "src/platform/common.h"
 
 namespace platf::ds5 {
@@ -30,6 +32,8 @@ namespace platf::ds5 {
 
     bool configured() const;
     bool owns(int global_index) const;
+    /** @brief Check whether negotiated audio haptics remain online without accessing the replaceable implementation. */
+    bool audio_haptics_active() const noexcept;
     int alloc(const gamepad_id_t &id, feedback_queue_t feedback_queue, bool audio_haptics,
               bool genshin_compatibility = false);
     void free(int global_index);
@@ -40,6 +44,10 @@ namespace platf::ds5 {
 
   private:
     struct impl_t;
+
+    // 必须比 _impl 后析构，保证 reader 退出前发布目标始终有效。
+    // 分配、释放及输入提交仍在输入线程串行执行，控制线程只读取这个原子状态。
+    boost::atomic<bool> published_audio_haptics { false };
     std::unique_ptr<impl_t> _impl;
   };
 }  // namespace platf::ds5

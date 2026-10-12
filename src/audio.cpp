@@ -3,6 +3,7 @@
  * @brief Definitions for audio capture and encoding.
  */
 // standard includes
+#include <algorithm>
 #include <thread>
 
 // lib includes
@@ -502,6 +503,9 @@ namespace audio {
       sink = &config::audio.sink;
     }
 
+    int capture_channels = stream.channelCount;
+    const std::uint8_t *capture_mapping = stream.mapping;
+
     // Prefer the virtual sink if host playback is disabled or there's no other sink
     if (ref->sink.null && (!config.flags[config_t::HOST_AUDIO] || sink->empty())) {
       auto &null = *ref->sink.null;
@@ -518,6 +522,12 @@ namespace audio {
         case 12:
           if (!null.surround714.empty()) {
             sink = &null.surround714;
+            if (!null.surround71.empty() && !control->is_sink_format_supported(null.surround714)) {
+              BOOST_LOG(info) << "Virtual audio sink doesn't support 7.1.4, capturing 7.1 with silent height channels"sv;
+              sink = &null.surround71;
+              capture_channels = 8;
+              capture_mapping = platf::speaker::map_surround71;
+            }
           }
           break;
       }
@@ -527,8 +537,13 @@ namespace audio {
     if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
       // If the selected sink is different than the current one, change sinks.
       ref->restore_sink = ref->sink.host != *sink;
-      if (ref->restore_sink) {
-        if (control->set_sink(*sink)) {
+      // Record the selected sink even when it already is the default so forced
+      // retention can restore it after another application changes the default.
+      if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {
+        const auto sink_status = control->set_sink(*sink);
+        // If this was already the active default, a policy failure must not
+        // prevent an otherwise valid audio capture from starting.
+        if (sink_status && ref->restore_sink) {
           return;
         }
       }
@@ -536,7 +551,10 @@ namespace audio {
 
     auto frame_size = config.packetDuration * stream.sampleRate / 1000;
     bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
-    auto mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio);
+    // An explicitly configured sink remains the capture endpoint across default-device
+    // changes. An empty sink keeps the existing behavior of following the current default.
+    const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
+    auto mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -559,7 +577,7 @@ namespace audio {
       shutdown_event->view();
     });
 
-    int samples_per_frame = frame_size * stream.channelCount;
+    int samples_per_frame = frame_size * capture_channels;
 
     while (!shutdown_event->peek()) {
       std::vector<float> sample_buffer;
@@ -575,7 +593,7 @@ namespace audio {
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
           do {
-            mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio);
+            mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
             if (!mic) {
               BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
             }
@@ -583,6 +601,15 @@ namespace audio {
           continue;
         default:
           return;
+      }
+
+      if (capture_channels != stream.channelCount) {
+        // 7.1 is the leading part of the 7.1.4 layout, the remaining channels stay zero
+        std::vector<float> widened(frame_size * stream.channelCount);
+        for (int frame = 0; frame < frame_size; ++frame) {
+          std::copy_n(&sample_buffer[frame * capture_channels], capture_channels, &widened[frame * stream.channelCount]);
+        }
+        sample_buffer = std::move(widened);
       }
 
       samples->raise(std::move(sample_buffer));
@@ -672,10 +699,6 @@ namespace audio {
   }
 
   void stop_audio_control(audio_ctx_t &ctx) {
-    // restore audio-sink if applicable
-    if (!ctx.restore_sink) {
-      return;
-    }
 
     // 检查 control 是否存在，如果不存在则无法恢复 sink
     if (!ctx.control) {
@@ -683,11 +706,22 @@ namespace audio {
       return;
     }
 
+    const bool restore_assigned_sink = config::audio.keep_sink_default && ctx.control->has_assigned_sink();
+    if (!ctx.restore_sink && !restore_assigned_sink) {
+      return;
+    }
+
     // Change back to the host sink, unless there was none
     const std::string &sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
     if (!sink.empty()) {
-      // Best effort, it's allowed to fail
-      ctx.control->set_sink(sink);
+      // Windows can skip restoration when the user changed the default sink.
+      if (!ctx.control->restore_sink_if_assigned(sink)) {
+        // Platforms without ownership-aware restoration retain the previous behavior
+        // when Sunshine actually changed the default sink.
+        if (ctx.restore_sink) {
+          ctx.control->set_sink(sink);
+        }
+      }
     }
   }
 

@@ -9,6 +9,7 @@ const DEFAULT_CONFIG = {
   provider: 'openai',
   apiBase: 'https://api.openai.com/v1',
   apiKey: '',
+  apiKeyConfigured: false,
   model: 'gpt-4.1-mini',
   compatibility: 'openai-chat',
   temperature: 0.3,
@@ -133,7 +134,8 @@ export function useAiDiagnosis() {
     if (!config.model) {
       return 'Please configure a model first.'
     }
-    if (!config.apiKey && isApiKeyRequired(config)) {
+    // The shared AI config exposes only key presence; the proxy reads the secret.
+    if (!(config.apiKeyConfigured || config.apiKey) && isApiKeyRequired(config)) {
       return 'Please configure an API key first.'
     }
     if (config.provider === 'custom' || config.provider === 'ollama') {
@@ -215,8 +217,6 @@ export function useAiDiagnosis() {
       isLoading.value = false
     }
   }
-
-  loadConfig()
 
   return {
     config,

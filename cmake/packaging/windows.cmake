@@ -5,6 +5,33 @@ include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 
+# The first-party adapter is optional at process startup. Its MSVC runtime is
+# deliberately not bundled; the Control Panel reports when the system runtime
+# must be installed by the user.
+if (TARGET sunshine_rtx_video_adapter)
+  install(FILES "${RTX_VIDEO_ADAPTER_DLL}"
+          DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+          COMPONENT application)
+endif ()
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter/THIRD_PARTY_NOTICES.md"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        RENAME "RTX_VIDEO_THIRD_PARTY_NOTICES.md"
+        COMPONENT application)
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/README.md"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        COMPONENT application)
+
+# The DLSS NR adapter ships first-party; the NVIDIA runtime DLL must be
+# imported by the user and is never part of the package.
+if (TARGET sunshine_dlssnr_adapter)
+  install(FILES "${DLSSNR_ADAPTER_DLL}"
+          "${_dlssnr_build}/NVIDIA-DLSS-LICENSE.txt"
+          "${_dlssnr_source}/NVIDIA-OPTICAL-FLOW-NOTICES.txt"
+          DESTINATION "tools/hdr_enhanced/nvidia_dlssnr"
+          COMPONENT application)
+endif ()
+
+
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)
 install(FILES "${ZLIB}" DESTINATION "." COMPONENT application)
 
@@ -161,10 +188,11 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
 file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
         DESTINATION "${CMAKE_BINARY_DIR}/assets"
         PATTERN "shaders" EXCLUDE)
-# use junction for shaders directory
-cmake_path(CONVERT "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
-        TO_NATIVE_PATH_LIST shaders_in_build_src_native)
-cmake_path(CONVERT "${CMAKE_BINARY_DIR}/assets/shaders" TO_NATIVE_PATH_LIST shaders_in_build_dest_native)
+# Keep shader sources available for an uninstalled local Sunshine binary too.
+# A plain copy works on Windows without requiring Developer Mode or symlink
+# privileges and ensures newly added compute shaders are visible immediately.
+file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
+        DESTINATION "${CMAKE_BINARY_DIR}/assets")
 
 set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
 

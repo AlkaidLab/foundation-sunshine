@@ -21,7 +21,6 @@ option(SUNSHINE_ENABLE_TRAY "Enable system tray icon. This option will be ignore
 option(SUNSHINE_REQUIRE_TRAY "Require system tray icon. Fail the build if tray requirements are not met." ON)
 option(SUNSHINE_ENABLE_LEGACY_TRAY "Use the in-process C++ tray instead of the Windows GUI user agent." OFF)
 
-option(SUNSHINE_SYSTEM_NLOHMANN_JSON "Use system installation of nlohmann_json rather than the submodule." OFF)
 option(SUNSHINE_SYSTEM_WAYLAND_PROTOCOLS "Use system installation of wayland-protocols rather than the submodule." OFF)
 
 if(APPLE)

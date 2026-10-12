@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 
+#include <boost/atomic.hpp>
 #include <nlohmann/json.hpp>
 
 #include "bridge.h"
@@ -17,6 +18,8 @@
 namespace text_context::http {
   namespace {
     constexpr std::size_t kMaxBodyBytes = 4096;
+
+    boost::atomic_uint8_t last_capability_state {0xff};
 
     void write_json(resp_https_t &resp, SimpleWeb::StatusCode status, const nlohmann::json &body) {
       SimpleWeb::CaseInsensitiveMultimap headers;
@@ -98,10 +101,16 @@ namespace text_context::http {
         write_json(resp, SimpleWeb::StatusCode::client_error_bad_request, {{"error", "invalid_body"}});
         return;
       }
-      BOOST_LOG(debug) << "Remote text context GUI capability: input_pane="
-                      << bridge.input_pane_available() << ", uia=" << bridge.uia_available();
+      const auto input_pane_available = bridge.input_pane_available();
+      const auto uia_available = bridge.uia_available();
+      const auto capability_state = static_cast<std::uint8_t>((input_pane_available ? 0x01 : 0) |
+                                                               (uia_available ? 0x02 : 0));
+      if (last_capability_state.exchange(capability_state, boost::memory_order_relaxed) != capability_state) {
+        BOOST_LOG(debug) << "Remote text context GUI capability: input_pane="
+                         << input_pane_available << ", uia=" << uia_available;
+      }
       write_json(resp, SimpleWeb::StatusCode::success_ok, {
-        {"ok", true}, {"input_pane", bridge.input_pane_available()}, {"uia", bridge.uia_available()},
+        {"ok", true}, {"input_pane", input_pane_available}, {"uia", uia_available},
       });
     };
 
@@ -141,11 +150,13 @@ namespace text_context::http {
 
       auto &bridge = text_context::bridge_t::instance();
       const bool matched = bridge.observe(observation);
-      BOOST_LOG(debug) << "Remote text context observation: source=" << source
-                      << ", active=" << observation.active
-                      << ", editable=" << observation.editable
-                      << ", has_element_rect=" << observation.element_rect.has_value()
-                      << ", matched=" << matched;
+      if (matched) {
+        BOOST_LOG(debug) << "Remote text context observation: source=" << source
+                         << ", active=" << observation.active
+                         << ", editable=" << observation.editable
+                         << ", has_element_rect=" << observation.element_rect.has_value()
+                         << ", matched=" << matched;
+      }
       write_json(resp, SimpleWeb::StatusCode::success_accepted, {{"ok", true}, {"matched", matched}});
     };
   }

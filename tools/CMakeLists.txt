@@ -78,6 +78,7 @@ if(WIN32)
 
     add_executable(vtouch-poc
             vtouch_poc.cpp
+            "${CMAKE_SOURCE_DIR}/src/crypto.cpp"
             "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.cpp")
     set_target_properties(vtouch-poc PROPERTIES
@@ -93,7 +94,8 @@ if(WIN32)
             user32
             advapi32
             ws2_32
-            mswsock)
+            mswsock
+            OpenSSL::Crypto)
     target_compile_options(vtouch-poc PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
     if(MINGW)

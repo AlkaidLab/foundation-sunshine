@@ -10,23 +10,33 @@
 [![Deutsch](https://img.shields.io/badge/Deutsch-yellow?style=flat-square)](README.de.md)
 [![日本語](https://img.shields.io/badge/日本語-purple?style=flat-square)](README.ja.md)
 
-基于 [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine) 的增强分支，专注于 Windows 游戏串流体验
+基于 [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine) 的增强分支，专注于 Windows 主机的游戏串流体验
 
-[使用文档](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB) · [LizardByte 文档](https://docs.lizardbyte.dev/projects/sunshine/latest/) · [QQ 交流群](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)
+[下载发行版](https://github.com/AlkaidLab/foundation-sunshine/releases) · [使用文档](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB) · [QQ 交流群](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)
 
 </div>
 
 ---
 
+### ░▒▓ 快速开始
+
+1. 从 [Foundation Sunshine Releases](https://github.com/AlkaidLab/foundation-sunshine/releases) 下载适合 Windows 的安装包，安装并启动 Sunshine。发行页可能包含预发布版本，请先阅读对应版本说明。
+2. 在主机浏览器打开 [https://localhost:47990](https://localhost:47990)，首次使用时创建并保存登录凭据。浏览器可能提示本地自签名证书。
+3. 在控制界面添加要串流的应用，然后在 Moonlight 客户端添加主机；按客户端显示的 PIN 在 Sunshine 中完成配对。
+
+虚拟显示器、DualSense、USB 转发和 NVIDIA 画质增强各有独立的驱动或组件要求；需要时在控制面板中查看状态并安装。更完整的步骤见[使用文档](https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=YTpMj5JNNdB5hEKJhhqlSB)。
+
 ### ░▒▓ 核心特性
 
-- **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・完整静态元数据透传
+- **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・Dolby Vision 主机侧注入状态展示
 - **虚拟显示器** — 深度集成 [ZakoVDD](https://github.com/qiin2333/zako-vdd)・Zako Direct 零拷贝借帧・5 种屏幕模式・多客户端 GUID 会话
 - **音频增强** — 7.1.4 环绕声 (12ch)・Opus DRED 丢包恢复・持续音频流・远程麦克风・虚拟扬声器位深匹配
-- **编码优化** — NVENC SDK 13.0・AMF QVBR/HQVBR/多硬件实例・编码器结果缓存 (260x)・自适应下采样・Vulkan 编码器
+- **编码优化** — NVENC SDK 13.0・AMF QVBR/HQVBR/多硬件实例・编码器探测结果缓存・自适应下采样・NVENC 帧预算自适应降档
+- **NVIDIA 画质增强** — 可选 RTX HDR 与 DLSS NR；DLSS NR 支持 SDR / 原生 HDR、串流中开关和处理比例调节，需兼容硬件及相应组件
 - **文件夹共享** — Windows 主机目录映射・资源管理器右键共享・只读安全默认值・已配对设备授权
-- **控制面板** — Tauri 2 + Vue 3 + Vite・深色模式・QR 配对・实时监控・WebUI 渲染优化
-- **输入增强** — 客户端独立配置・原生精密触摸板适配・虚拟鼠标驱动 (vmouse)
+- **控制面板** — Tauri 2 + Vue 3 + Vite・深色模式・QR 配对・实时监控・画质增强组件管理
+- **输入增强** — 全局及应用级手柄类型选择・可选虚拟 DualSense 与音频触觉・原生精密触摸板适配・虚拟鼠标驱动 (vmouse)
+- **设备扩展** — 已配对客户端的 USB 转发配置・可选在最后一个视频会话结束后清理应用
 
 ### ░▒▓ 技术细节
 
@@ -105,7 +115,7 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 - **多硬件实例编码**：支持 AMF Multi-HW Instance / Smart Access Video 相关开关，允许驱动在支持的平台上拆分编码负载
 
 **通用**
-- **编码器结果缓存**：探测结果持久化，后续连接 26s → <100ms (260x 加速)
+- **编码器结果缓存**：复用进程内探测结果，减少后续连接时重复探测的等待
 - **自适应下采样**：支持双线性 / 双三次 / 高质量三档分辨率缩放，适配 4K 主机→1080p 串流场景
 - **Vulkan 编码器**：实验性 Vulkan 视频编码支持
 - **无锁证书链**：`shared_mutex` 替代 mutex，消除 TLS 队列开销
@@ -115,6 +125,14 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 <br>
 
 ---
+
+### ░▒▓ 按需启用的功能
+
+- **虚拟 DualSense**：在控制面板的控制器中心选择手柄类型。可设全局默认值，也可为单个应用覆盖；需要先安装可选 DualSense 组件。音频触觉还需相应 USB/IP 传输及客户端能力。组件不可用时会回退到自动手柄选择，具体状态以控制面板提示为准。
+- **NVIDIA 画质增强**：在画质增强管理页配置 RTX HDR 或 DLSS NR 所需组件，再为应用开启相应功能。RTX HDR 将 SDR 输入转换为 PQ HDR，不作用于原生 HDR 或 HLG 输出；启用后也可能阻止 HLG 会话协商 Dolby Vision Profile 8.4。DLSS NR 支持串流中的即时开关和处理比例调整。界面可显示协商的 Dolby Vision Profile 8.1 / 8.4 及主机侧 RPU 注入状态；这不代表客户端或显示设备已成功呈现 Dolby Vision，Profile 8.4 仍需真机端到端验证。
+- **USB 转发**：Windows 主机须启用 USB 转发并具备可用的 USB/IP 传输组件，已配对客户端才能配置运行时转发。安装和设备授权请以控制面板中的状态与提示为准。
+
+相关开发说明：[DualSense 组件](docs/windows_dualsense_component_lifecycle.md) · [NVIDIA RTX HDR 构建](docs/rtx_hdr_build.md) · [串流性能调节](docs/performance_tuning.md)
 
 ### ░▒▓ 推荐客户端
 
@@ -134,13 +152,13 @@ HDR10 静态元数据（Mastering Display Info + Content Light Level）完整透
 
 | 组件 | 最低要求 | 4K 推荐 |
 |------|----------|---------|
-| **GPU** | AMD VCE 1.0+ / Intel VAAPI / NVIDIA NVENC | AMD VCE 3.1+ / Intel HD 510+ / GTX 1080+ |
+| **GPU** | 支持硬件视频编码的 AMD / Intel / NVIDIA 显卡 | 具备适合目标分辨率、帧率及编码格式的硬件编码能力 |
 | **CPU** | Ryzen 3 / Core i3 | Ryzen 5 / Core i5 |
 | **RAM** | 4 GB | 8 GB |
 | **系统** | Windows 10 22H2+ | Windows 10 22H2+ |
 | **网络** | 5GHz 802.11ac | CAT5e 以太网 |
 
-GPU 兼容性：[NVENC](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new) · [AMD VCE](https://github.com/obsproject/obs-amd-encoder/wiki/Hardware-Support) · [Intel VAAPI](https://www.intel.com/content/www/us/en/developer/articles/technical/linuxmedia-vaapi.html)
+实际可用的编码格式、HDR 与画质增强能力取决于显卡、驱动和客户端；安装后请以 Sunshine 的编码器探测与控制面板状态为准。GPU 兼容性可参考 [NVIDIA NVENC 支持矩阵](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new)。
 
 </details>
 

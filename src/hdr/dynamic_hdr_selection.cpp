@@ -7,6 +7,8 @@
 #include <charconv>
 #include <string_view>
 
+#include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
+
 namespace hdr {
 
   namespace {
@@ -29,6 +31,38 @@ namespace hdr {
   select_dynamic_hdr(
     const dynamic_hdr_request_t &request,
     const dynamic_hdr_host_gates_t &gates) noexcept {
+    if (gates.video_format == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT)) {
+      if (!gates.pyrowave_dynamic_hdr_mapping || !request.caps_reported ||
+          request.preference == dynamic_hdr_preference_e::hdr10_only) {
+        return {};
+      }
+      const auto has = [&](dynamic_hdr_caps_e capability) {
+        return (request.caps_mask & capability) != 0;
+      };
+      const bool pq = gates.dynamic_range_mode == 1;
+      const bool hlg = gates.dynamic_range_mode == 2;
+      const bool prefer_dv = request.preference == dynamic_hdr_preference_e::automatic ||
+                             request.preference == dynamic_hdr_preference_e::dolby_vision;
+      if (prefer_dv && pq && has(DYNAMIC_HDR_CAPS_DOLBY_VISION_81)) {
+        return { dynamic_hdr_format_e::dolby_vision_profile_81, dynamic_hdr_fallback_e::none };
+      }
+      if (prefer_dv && hlg && !gates.synthetic_hdr_enabled &&
+          !has(DYNAMIC_HDR_CAPS_DOLBY_VISION_81) && has(DYNAMIC_HDR_CAPS_DOLBY_VISION_84)) {
+        return { dynamic_hdr_format_e::dolby_vision_profile_84, dynamic_hdr_fallback_e::none };
+      }
+      if (pq && has(DYNAMIC_HDR_CAPS_HDR10_PLUS)) {
+        return { dynamic_hdr_format_e::hdr10_plus, dynamic_hdr_fallback_e::none };
+      }
+      if (request.preference != dynamic_hdr_preference_e::hdr10_plus) {
+        if (pq && has(DYNAMIC_HDR_CAPS_VIVID_PQ)) {
+          return { dynamic_hdr_format_e::vivid_pq, dynamic_hdr_fallback_e::none };
+        }
+        if (hlg && has(DYNAMIC_HDR_CAPS_VIVID_HLG)) {
+          return { dynamic_hdr_format_e::vivid_hlg, dynamic_hdr_fallback_e::none };
+        }
+      }
+      return { dynamic_hdr_format_e::none, dynamic_hdr_fallback_e::client_caps_missing };
+    }
     const bool dv_preferred = request.preference == dynamic_hdr_preference_e::automatic ||
                               request.preference == dynamic_hdr_preference_e::dolby_vision;
     const bool caps_81 = (request.caps_mask & DYNAMIC_HDR_CAPS_DOLBY_VISION_81) != 0;

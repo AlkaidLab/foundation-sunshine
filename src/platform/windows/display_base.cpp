@@ -591,9 +591,6 @@ namespace platf::dxgi {
     static std::once_flag windows_cpp_once_flag;
 
     capture_contract = config.effective_frame_pipeline_policy().capture;
-    pre_encode_filter = config.pre_encode_filter;
-    pre_encode_filter_config = config.pre_encode_filter_config;
-    pre_encode_filter_backend_path = config.pre_encode_filter_backend_path;
     capture_source_generation =
       next_capture_source_generation.fetch_add(1, std::memory_order_relaxed);
 

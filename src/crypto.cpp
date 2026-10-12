@@ -3,6 +3,9 @@
  * @brief Definitions for cryptography functions.
  */
 #include "crypto.h"
+
+#include <limits>
+
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 
@@ -493,10 +496,16 @@ namespace crypto {
 
   std::string
   rand(std::size_t bytes) {
+    if (bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+      return {};
+    }
+
     std::string r;
     r.resize(bytes);
 
-    RAND_bytes((uint8_t *) r.data(), r.size());
+    if (RAND_bytes(reinterpret_cast<unsigned char *>(r.data()), static_cast<int>(r.size())) != 1) {
+      return {};
+    }
 
     return r;
   }
@@ -610,10 +619,17 @@ namespace crypto {
 
   std::string
   rand_alphabet(std::size_t bytes, const std::string_view &alphabet) {
+    if (alphabet.empty()) {
+      return {};
+    }
+
     auto value = rand(bytes);
+    if (value.size() != bytes) {
+      return {};
+    }
 
     for (std::size_t i = 0; i != value.size(); ++i) {
-      value[i] = alphabet[value[i] % alphabet.length()];
+      value[i] = alphabet[static_cast<unsigned char>(value[i]) % alphabet.length()];
     }
     return value;
   }

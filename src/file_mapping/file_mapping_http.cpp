@@ -106,7 +106,7 @@ namespace file_mapping_http {
   make_capability_response(const capability_state_t &state, std::string_view request_host) {
     (void) request_host;
     nlohmann::json body;
-    body["ok"] = true;
+    body["ok"] = state.error.empty();
     body["enabled"] = state.enabled;
     body["listening"] = state.listening;
     body["version"] = file_mapping::rpc::kProtocolVersion;

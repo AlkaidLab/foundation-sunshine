@@ -4,7 +4,8 @@ import { apiFetch, apiJson } from '../utils/apiFetch.js'
 
 const LOG_REFRESH_INTERVAL = 5000
 const STATUS_RESET_DELAY = 5000
-const MAX_LOG_DISPLAY_SIZE = 4 * 1024 * 1024 // 4 MB cap for in-memory log string
+const MAX_LOG_DISPLAY_SIZE = 256 * 1024 // Live-view cap; downloads still fetch the complete file
+const MAX_RENDERED_LOG_LINES = 2000
 
 /**
  * Creates a delayed status reset helper
@@ -36,7 +37,10 @@ const withPressedState = async (pressedRef, action, autoReset = false) => {
 /**
  * Troubleshooting composable
  */
-export function useTroubleshooting() {
+const fetchLogsFromApi = (offset) =>
+  apiFetch('/api/logs', { headers: { 'X-Log-Offset': String(offset) } })
+
+export function useTroubleshooting({ fetchLogs = fetchLogsFromApi } = {}) {
   const platform = ref('')
   const closeAppPressed = ref(false)
   const closeAppStatus = ref(null)
@@ -52,11 +56,11 @@ export function useTroubleshooting() {
   const logInterval = ref(null)
 
   const actualLogs = computed(() => {
-    if (!logFilter.value) return logs.value
+    const lines = logs.value.split('\n')
+    if (lines.at(-1) === '') lines.pop()
+    if (!logFilter.value) return lines.slice(-MAX_RENDERED_LOG_LINES).join('\n')
 
     const filter = ignoreCase.value ? logFilter.value.toLowerCase() : logFilter.value
-    const lines = logs.value.split('\n')
-
     const filterFn = (() => {
       switch (matchMode.value) {
         case 'exact':
@@ -79,15 +83,18 @@ export function useTroubleshooting() {
       }
     })()
 
-    return lines.filter(filterFn).join('\n')
+    return lines.filter(filterFn).slice(-MAX_RENDERED_LOG_LINES).join('\n')
   })
 
+  let refreshingLogs = false
   const refreshLogs = async () => {
+    if (refreshingLogs) return
+
+    refreshingLogs = true
     try {
       const offset = Number(logOffset.value)
       // Always send X-Log-Offset to use cached tail mode (without it, server returns full file for download)
-      const headers = { 'X-Log-Offset': String(Number.isNaN(offset) ? 0 : offset) }
-      const response = await apiFetch('/api/logs', { headers })
+      const response = await fetchLogs(Number.isNaN(offset) ? 0 : offset)
 
       if (response.status === 304) {
         const sizeHeader = response.headers.get('X-Log-Size')
@@ -119,6 +126,8 @@ export function useTroubleshooting() {
       logOffset.value = newSize
     } catch (e) {
       console.error('Failed to refresh logs:', e)
+    } finally {
+      refreshingLogs = false
     }
   }
 
@@ -206,6 +215,7 @@ export function useTroubleshooting() {
   }
 
   const startLogRefresh = () => {
+    stopLogRefresh()
     logInterval.value = setInterval(refreshLogs, LOG_REFRESH_INTERVAL)
   }
 
@@ -242,6 +252,7 @@ export function useTroubleshooting() {
     resetDisplayDevicePressed,
     resetDisplayDeviceStatus,
     logs,
+    logOffset,
     logFilter,
     matchMode,
     ignoreCase,

@@ -1312,9 +1312,9 @@ namespace amf {
     return true;
   }
 
-  void
+  bool
   amf_d3d11::set_bitrate(int bitrate_kbps) {
-    if (!encoder) return;
+    if (!encoder || bitrate_kbps <= 0) return false;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
     auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : bitrate;
@@ -1348,6 +1348,7 @@ namespace amf {
     else {
       BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << res;
     }
+    return res == AMF_OK;
   }
 
   void

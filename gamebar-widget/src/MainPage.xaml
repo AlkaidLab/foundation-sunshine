@@ -1,0 +1,19 @@
+<Page
+    x:Class="FoundationSunshineWidget.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Background="#1E1E20">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420">
+            <TextBlock Text="Foundation Sunshine 串流仪表盘"
+                       FontSize="18" FontWeight="SemiBold" Foreground="#EBEBEB"
+                       HorizontalAlignment="Center" Margin="0,0,0,8"/>
+            <TextBlock Text="本应用是 Xbox Game Bar 小部件。按 Win+G 打开 Game Bar,在小组件列表中添加「Foundation Sunshine 串流仪表盘」即可使用。"
+                       FontSize="13" Foreground="#9E9E9E" TextWrapping="Wrap"
+                       HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Page>

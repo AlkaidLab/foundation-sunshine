@@ -8,7 +8,9 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -52,6 +54,35 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+
+    std::optional<std::string>
+    read_config_file_contents() {
+      const auto path = file_handler::path_from_utf8(sunshine.config_file);
+      std::error_code error;
+      const auto exists = fs::exists(path, error);
+      if (error) {
+        BOOST_LOG(warning) << "Failed to inspect config file: " << error.message();
+        return std::nullopt;
+      }
+      if (!exists) {
+        return std::string {};
+      }
+
+      std::ifstream input(path, std::ios::binary);
+      if (!input.is_open()) {
+        BOOST_LOG(warning) << "Failed to open config file for reading"sv;
+        return std::nullopt;
+      }
+      std::string contents {
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()
+      };
+      if (input.bad()) {
+        BOOST_LOG(warning) << "Failed while reading config file"sv;
+        return std::nullopt;
+      }
+      return contents;
+    }
   }
 
   namespace nv {
@@ -476,7 +507,6 @@ namespace config {
     (int) display_device::parsed_config_t::refresh_rate_change_e::automatic,  // refresh_rate_change
     {},  // manual_refresh_rate
     (int) display_device::parsed_config_t::hdr_prep_e::automatic,  // hdr_prep
-    {},  // display_mode_remapping
     false,  // variable_refresh_rate
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
     true,  // input_activity_boost
@@ -487,13 +517,12 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
-    "off"s,  // rtx_hdr: off | per_app
-    {},  // rtx_hdr_backend_path (absolute path to the versioned backend DLL)
   };
 
   audio_t audio {
     {},  // audio_sink
     {},  // virtual_sink
+    false,  // keep_sink_default
     "vb_cable"s,  // microphone_redirect_backend
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
@@ -502,6 +531,7 @@ namespace config {
 
   stream_t stream {
     10s,  // ping_timeout
+    false,  // stop_on_last_video_session
 
     APPS_JSON_PATH,
 
@@ -580,6 +610,7 @@ namespace config {
     true,  // virtual mouse (use driver if available)
     false, // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
+    true,  // client_gamepad_override (client-declared type wins; no official client sends it today)
   };
 
   sunshine_t sunshine {
@@ -591,6 +622,7 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
+    {},  // widget_token (Game Bar 小部件;为空=功能关闭)
     file_handler::path_to_utf8(platf::appdata() / "sunshine.conf"),  // config file
     {},  // cmd args
     47989,  // Base port number
@@ -1048,40 +1080,6 @@ namespace config {
   }
 
   void
-  list_display_mode_remapping_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::vector<video_t::display_mode_remapping_t> &input) {
-    std::string string;
-    string_f(vars, name, string);
-
-    std::stringstream jsonStream;
-
-    // check if string is empty, i.e. when the value doesn't exist in the config file
-    if (string.empty()) {
-      return;
-    }
-
-    // We need to add a wrapping object to make it valid JSON, otherwise ptree cannot parse it.
-    jsonStream << "{\"display_mode_remapping\":" << string << "}";
-
-    boost::property_tree::ptree jsonTree;
-    boost::property_tree::read_json(jsonStream, jsonTree);
-
-    for (auto &[_, entry] : jsonTree.get_child("display_mode_remapping"s)) {
-      auto type = entry.get_optional<std::string>("type"s);
-      auto received_resolution = entry.get_optional<std::string>("received_resolution"s);
-      auto received_fps = entry.get_optional<std::string>("received_fps"s);
-      auto final_resolution = entry.get_optional<std::string>("final_resolution"s);
-      auto final_refresh_rate = entry.get_optional<std::string>("final_refresh_rate"s);
-
-      input.push_back(video_t::display_mode_remapping_t {
-        type.value_or(""),
-        received_resolution.value_or(""),
-        received_fps.value_or(""),
-        final_resolution.value_or(""),
-        final_refresh_rate.value_or("") });
-    }
-  }
-
-  void
   list_prep_cmd_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::vector<prep_cmd_t> &input) {
     std::string string;
     string_f(vars, name, string);
@@ -1204,7 +1202,7 @@ namespace config {
 
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
-      const auto log_value = name == "file_mappings" && !val.empty() ? "<redacted>"s : val;
+      const auto log_value = (name == "file_mappings" || name == "widget_token") && !val.empty() ? "<redacted>"s : val;
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
       modified_config_settings[name] = val;
     }
@@ -1220,9 +1218,9 @@ namespace config {
     string_f(vars, "sw_tune", video.sw.sw_tune);
 
     int_between_f(vars, "nvenc_preset", video.nv.quality_preset, { 1, 7 });
+    bool_f(vars, "nvenc_frame_budget_guard", video.nv.frame_budget_guard);
     int_between_f(vars, "nvenc_vbv_increase", video.nv.vbv_percentage_increase, { 0, 400 });
     bool_f(vars, "nvenc_spatial_aq", video.nv.adaptive_quantization);
-    bool_f(vars, "nvenc_temporal_aq", video.nv.enable_temporal_aq);
     generic_f(vars, "nvenc_twopass", video.nv.two_pass, nv::twopass_from_view);
     bool_f(vars, "nvenc_h264_cavlc", video.nv.h264_cavlc);
     generic_f(vars, "nvenc_split_encode", video.nv.split_frame_encoding, nv::split_encode_from_view);
@@ -1380,7 +1378,6 @@ namespace config {
     int_f(vars, "display_device_prep", video.display_device_prep, display_device::parsed_config_t::device_prep_from_view);
     int_f(vars, "resolution_change", video.resolution_change, display_device::parsed_config_t::resolution_change_from_view);
     string_f(vars, "manual_resolution", video.manual_resolution);
-    list_display_mode_remapping_f(vars, "display_mode_remapping", video.display_mode_remapping);
     int_f(vars, "refresh_rate_change", video.refresh_rate_change, display_device::parsed_config_t::refresh_rate_change_from_view);
     string_f(vars, "manual_refresh_rate", video.manual_refresh_rate);
     int_f(vars, "hdr_prep", video.hdr_prep, display_device::parsed_config_t::hdr_prep_from_view);
@@ -1422,19 +1419,6 @@ namespace config {
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
-    string_f(vars, "rtx_hdr", video.rtx_hdr);
-    if (video.rtx_hdr == "true" || video.rtx_hdr == "on" || video.rtx_hdr == "enabled" || video.rtx_hdr == "1") {
-      video.rtx_hdr = "per_app";
-    }
-    if (video.rtx_hdr.empty()) {
-      video.rtx_hdr = "off";
-    }
-    if (video.rtx_hdr != "off" && video.rtx_hdr != "per_app") {
-      BOOST_LOG(warning) << "Invalid rtx_hdr mode: ["sv << video.rtx_hdr
-                         << "], valid options are: off, per_app. Defaulting to 'off'"sv;
-      video.rtx_hdr = "off";
-    }
-    string_f(vars, "rtx_hdr_backend_path", video.rtx_hdr_backend_path);
 
     // Whether to composite the host mouse cursor into the captured frames.
     // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
@@ -1516,6 +1500,7 @@ namespace config {
 
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
+    bool_f(vars, "keep_sink_default", audio.keep_sink_default);
     string_restricted_f(
       vars,
       "microphone_redirect_backend",
@@ -1533,6 +1518,7 @@ namespace config {
     if (to != -1) {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
+    bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -1552,7 +1538,9 @@ namespace config {
     }
 #endif
 
-    int_between_f(vars, "fec_percentage", stream.fec_percentage, {1, 255});
+    int_between_f(vars, "fec_percentage", stream.fec_percentage, {0, 255});
+    bool_f(vars, "fec_auto", stream.fec_auto);
+    int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, {0, 100});
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 
@@ -1590,6 +1578,7 @@ namespace config {
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
+    bool_f(vars, "client_gamepad_override", input.client_gamepad_override);
     
     int temp_port = static_cast<int>(input.dsu_server_port);
     int_between_f(vars, "dsu_server_port", temp_port, { 1024, 65535 });
@@ -1671,6 +1660,9 @@ namespace config {
                                                                    "zh"sv,  // Chinese (Simplified)
                                                                    "ja"sv,  // Japanese
                                                                  });
+
+    // Game Bar 小部件本地端点的访问令牌(X-Sunshine-Token);为空表示功能关闭
+    string_f(vars, "widget_token"s, sunshine.widget_token);
 
     std::string log_level_string;
     string_f(vars, "min_log_level", log_level_string);
@@ -1883,16 +1875,12 @@ namespace config {
   update_config(const std::map<std::string, std::string> &updates) {
     std::lock_guard lock { config_file_mutex };
     try {
-      // 读取现有配置文件
-      std::map<std::string, std::string> configMap;
-      try {
-        std::string fileContent = file_handler::read_file(sunshine.config_file.c_str());
-        auto existingConfig = parse_config(fileContent);
-        configMap.insert(existingConfig.begin(), existingConfig.end());
+      const auto file_content = read_config_file_contents();
+      if (!file_content) {
+        return false;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
-      }
+      const auto existing_config = parse_config(*file_content);
+      std::map<std::string, std::string> configMap {existing_config.begin(), existing_config.end()};
 
       // 更新配置项，同时检查是否有变化
       bool hasChanged = false;
@@ -1916,7 +1904,7 @@ namespace config {
 
       if (!hasChanged) {
         BOOST_LOG(info) << "Config unchanged, skip writing";
-        return false;
+        return true;
       }
 
       // 按字母顺序写入配置文件
@@ -1931,12 +1919,33 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
+      if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
+        const auto gamepad = configMap.find("gamepad");
+        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});
+      }
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to update config: " << e.what();
       return false;
+    }
+  }
+
+  std::optional<std::map<std::string, std::string>>
+  get_config_snapshot() {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto file_content = read_config_file_contents();
+      if (!file_content) {
+        return std::nullopt;
+      }
+      const auto config = parse_config(*file_content);
+      return std::map<std::string, std::string> {config.begin(), config.end()};
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read config snapshot: " << e.what();
+      return std::nullopt;
     }
   }
 
@@ -1950,6 +1959,7 @@ namespace config {
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
         "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读
         "pair_name",        // 配对名称，由系统生成，只读
@@ -1960,18 +1970,15 @@ namespace config {
         "vdd_keep_enabled",       // 由系统托盘控制，不通过Web UI修改
         "vdd_headless_create",    // 由系统托盘控制，不通过Web UI修改
         "tray_locale",            // 由系统托盘控制，不通过Web UI修改
+        "widget_token",           // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
       };
 
-      // 读取现有配置文件（用于获取受保护字段的值和后续对比）
-      std::map<std::string, std::string> originalMap;
-      try {
-        std::string originalFileContent = file_handler::read_file(sunshine.config_file.c_str());
-        auto existingConfig = parse_config(originalFileContent);
-        originalMap.insert(existingConfig.begin(), existingConfig.end());
+      const auto original_file_content = read_config_file_contents();
+      if (!original_file_content) {
+        return false;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
-      }
+      const auto existing_config = parse_config(*original_file_content);
+      std::map<std::string, std::string> originalMap {existing_config.begin(), existing_config.end()};
 
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
@@ -2017,6 +2024,9 @@ namespace config {
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
+
+      const auto gamepad = resultMap.find("gamepad");
+      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
 
       return true;
     }

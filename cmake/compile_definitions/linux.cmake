@@ -108,6 +108,15 @@ foreach(_nvenc_sdk IN ITEMS 1301 1300 1200 1100)
     endif()
 endforeach()
 
+# Frame budget guard report. src/nvenc/*.cpp is otherwise globbed on Windows only,
+# but frame_budget.cpp deliberately carries no NVENC SDK dependency and the shared
+# confighttp.cpp getConfig() calls get_frame_budget_report() on every platform, so
+# build it here to satisfy that link. Nothing publishes a report on Linux (no
+# native nvenc session), so the config API simply omits the block.
+list(APPEND PLATFORM_TARGET_FILES
+        "${CMAKE_SOURCE_DIR}/src/nvenc/frame_budget.h"
+        "${CMAKE_SOURCE_DIR}/src/nvenc/frame_budget.cpp")
+
 # drm
 if(${SUNSHINE_ENABLE_DRM})
     find_package(LIBDRM)

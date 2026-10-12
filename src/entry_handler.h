@@ -102,6 +102,23 @@ namespace lifetime {
   debug_trap();
 
   /**
+   * @brief Unconditionally terminates Sunshine immediately.
+   *
+   * Bypasses user-mode exception dispatch and preserves the requested exit code.
+   * Windows may still wait for pending kernel I/O to complete or be canceled.
+   */
+  void
+  force_terminate();
+
+  /**
+   * @brief Starts the independent ten-second deadline for process shutdown.
+   * Call once before cleanup. Normal process exit ends the detached thread;
+   * a Windows debugger attached at the deadline suppresses forced termination.
+   */
+  void
+  start_shutdown_watchdog();
+
+  /**
    * @brief Get the argv array passed to main().
    */
   char **

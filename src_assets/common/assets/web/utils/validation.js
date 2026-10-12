@@ -3,6 +3,8 @@
  * 提供应用表单的各种验证规则和方法
  */
 
+import { localizedMessage } from './localizedMessage.js'
+
 /**
  * 验证规则对象
  */
@@ -12,36 +14,32 @@ export const validationRules = {
     minLength: 1,
     maxLength: 100,
     pattern: /^[^<>:"\\|?*\x00-\x1F]+$/,
-    message: '应用名称不能为空，且不能包含特殊字符',
+    messageKey: 'apps.validation.app_name',
   },
   command: {
     required: false,
     minLength: 0,
     maxLength: 1000,
-    message: '命令不规范，请输入正确的命令',
   },
   workingDir: {
     required: false,
     maxLength: 500,
-    message: '工作目录路径过长',
   },
   outputName: {
     required: false,
     maxLength: 100,
     pattern: /^[a-zA-Z0-9_\-\.]*$/,
-    message: '输出名称只能包含字母、数字、下划线、连字符和点',
+    messageKey: 'apps.validation.output_name',
   },
   timeout: {
     required: false,
     min: 0,
     max: 3600,
-    message: '超时时间必须在0-3600秒之间',
   },
   imagePath: {
     required: false,
     maxLength: 500,
     allowedTypes: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'],
-    message: '图片路径无效或格式不支持',
   },
 }
 
@@ -50,21 +48,20 @@ export const validationRules = {
  * @param {string} fieldName 字段名称
  * @param {any} value 字段值
  * @param {Object} customRules 自定义验证规则
+ * @param {Function} [translate] 当前界面的翻译函数；省略时使用英文
  * @returns {Object} 验证结果 {isValid: boolean, message: string}
  */
-export function validateField(fieldName, value, customRules = {}) {
+export function validateField(fieldName, value, customRules = {}, translate) {
   const rules = { ...validationRules[fieldName], ...customRules }
-
-  if (!rules) {
-    return { isValid: true, message: '' }
-  }
+  const message = (key, params) => localizedMessage(translate, key, params)
+  const ruleMessage = (fallback) => rules.message || message(rules.messageKey || fallback)
 
   const strValue = value?.toString().trim() ?? ''
   const isEmpty = strValue === ''
 
   // 必填验证
   if (rules.required && isEmpty) {
-    return { isValid: false, message: rules.message || '此字段为必填项' }
+    return { isValid: false, message: rules.message || message('apps.validation.required') }
   }
 
   // 如果字段为空且不是必填，则跳过其他验证
@@ -74,30 +71,30 @@ export function validateField(fieldName, value, customRules = {}) {
 
   // 长度验证
   if (rules.minLength && strValue.length < rules.minLength) {
-    return { isValid: false, message: `最少需要${rules.minLength}个字符` }
+    return { isValid: false, message: message('apps.validation.min_length', { count: rules.minLength }) }
   }
 
   if (rules.maxLength && strValue.length > rules.maxLength) {
-    return { isValid: false, message: `最多允许${rules.maxLength}个字符` }
+    return { isValid: false, message: message('apps.validation.max_length', { count: rules.maxLength }) }
   }
 
   // 数值验证
   if (rules.min !== undefined || rules.max !== undefined) {
     const numValue = Number(value)
     if (isNaN(numValue)) {
-      return { isValid: false, message: '请输入有效的数字' }
+      return { isValid: false, message: message('apps.validation.number') }
     }
     if (rules.min !== undefined && numValue < rules.min) {
-      return { isValid: false, message: `最小值为${rules.min}` }
+      return { isValid: false, message: message('apps.validation.min_value', { value: rules.min }) }
     }
     if (rules.max !== undefined && numValue > rules.max) {
-      return { isValid: false, message: `最大值为${rules.max}` }
+      return { isValid: false, message: message('apps.validation.max_value', { value: rules.max }) }
     }
   }
 
   // 正则表达式验证
   if (rules.pattern && !rules.pattern.test(strValue)) {
-    return { isValid: false, message: rules.message || '格式不正确' }
+    return { isValid: false, message: ruleMessage('apps.validation.format') }
   }
 
   // 文件类型验证
@@ -111,7 +108,7 @@ export function validateField(fieldName, value, customRules = {}) {
       if (extension && !rules.allowedTypes.includes(extension)) {
         return {
           isValid: false,
-          message: `只支持以下格式：${rules.allowedTypes.join(', ')}`,
+          message: message('apps.validation.image_types', { types: rules.allowedTypes.join(', ') }),
         }
       }
     }
@@ -122,53 +119,55 @@ export function validateField(fieldName, value, customRules = {}) {
 
 // 字段映射配置
 const FIELD_MAPPINGS = [
-  { key: 'name', rule: 'appName', label: '应用名称' },
-  { key: 'cmd', rule: 'command', label: '命令' },
-  { key: 'working-dir', rule: 'workingDir', label: '工作目录' },
-  { key: 'output', rule: 'outputName', label: '输出名称' },
-  { key: 'exit-timeout', rule: 'timeout', label: '超时时间' },
-  { key: 'image-path', rule: 'imagePath', label: '图片路径' },
+  { key: 'name', rule: 'appName', label: 'apps.app_name' },
+  { key: 'cmd', rule: 'command', label: 'apps.cmd' },
+  { key: 'working-dir', rule: 'workingDir', label: 'apps.working_dir' },
+  { key: 'output', rule: 'outputName', label: 'apps.output_name' },
+  { key: 'exit-timeout', rule: 'timeout', label: 'apps.exit_timeout' },
+  { key: 'image-path', rule: 'imagePath', label: 'apps.image' },
 ]
 
 /**
  * 验证应用表单
  * @param {Object} formData 表单数据
+ * @param {Function} [translate] 当前界面的翻译函数；省略时使用英文
  * @returns {Object} 验证结果
  */
-export function validateAppForm(formData) {
+export function validateAppForm(formData, translate) {
   const results = {}
   const errors = []
+  const message = (key, params) => localizedMessage(translate, key, params)
 
   // 验证基础字段
   for (const { key, rule, label } of FIELD_MAPPINGS) {
-    const result = validateField(rule, formData[key])
+    const result = validateField(rule, formData[key], {}, translate)
     results[key] = result
     if (!result.isValid) {
-      errors.push(`${label}: ${result.message}`)
+      errors.push(`${message(label)}: ${result.message}`)
     }
   }
 
   // 验证准备命令
   formData['prep-cmd']?.forEach((cmd, index) => {
     if (!cmd.do?.trim() && !cmd.undo?.trim()) {
-      errors.push(`准备命令 ${index + 1}: 打开时执行命令或退出应用时要执行的命令至少需要填写一个`)
+      errors.push(message('apps.validation.prep_command', { index: index + 1 }))
     }
   })
 
   // 验证菜单命令
   formData['menu-cmd']?.forEach((cmd, index) => {
     if (!cmd.name?.trim()) {
-      errors.push(`菜单命令 ${index + 1}: 显示名称不能为空`)
+      errors.push(message('apps.validation.menu_name', { index: index + 1 }))
     }
     if (!cmd.cmd?.trim()) {
-      errors.push(`菜单命令 ${index + 1}: 命令不能为空`)
+      errors.push(message('apps.validation.menu_command', { index: index + 1 }))
     }
   })
 
   // 验证独立命令
   formData.detached?.forEach((cmd, index) => {
     if (cmd && !cmd.trim()) {
-      errors.push(`独立命令 ${index + 1}: 命令不能为空`)
+      errors.push(message('apps.validation.detached_command', { index: index + 1 }))
     }
   })
 
@@ -190,30 +189,32 @@ export function validateFile(file, options = {}) {
     allowedTypes = ['image/png', 'image/jpg', 'image/jpeg', 'image/gif', 'image/bmp', 'image/webp'],
     maxSize = 10 * 1024 * 1024,
     minSize = 0,
+    translate,
   } = options
+  const message = (key, params) => localizedMessage(translate, key, params)
 
   if (!file) {
-    return { isValid: false, message: '请选择文件' }
+    return { isValid: false, message: message('apps.validation.select_file') }
   }
 
   if (!allowedTypes.includes(file.type)) {
     return {
       isValid: false,
-      message: `不支持的文件类型。支持的格式：${allowedTypes.join(', ')}`,
+      message: message('apps.validation.file_types', { types: allowedTypes.join(', ') }),
     }
   }
 
   if (file.size > maxSize) {
     return {
       isValid: false,
-      message: `文件大小不能超过 ${(maxSize / (1024 * 1024)).toFixed(1)}MB`,
+      message: message('apps.validation.file_max_size', { size: (maxSize / (1024 * 1024)).toFixed(1) }),
     }
   }
 
   if (file.size < minSize) {
     return {
       isValid: false,
-      message: `文件大小不能小于 ${(minSize / 1024).toFixed(1)}KB`,
+      message: message('apps.validation.file_min_size', { size: (minSize / 1024).toFixed(1) }),
     }
   }
 
@@ -226,18 +227,18 @@ export function validateFile(file, options = {}) {
  * @param {Array} watchFields 需要监听的字段
  * @returns {Object} 验证状态
  */
-export function createFormValidator(formData, watchFields = []) {
+export function createFormValidator(formData, watchFields = [], translate) {
   const validationStates = Object.fromEntries(watchFields.map((field) => [field, { isValid: true, message: '' }]))
 
   return {
     validateField(fieldName, value) {
-      const result = validateField(fieldName, value)
+      const result = validateField(fieldName, value, {}, translate)
       validationStates[fieldName] = result
       return result
     },
 
     validateForm() {
-      return validateAppForm(formData)
+      return validateAppForm(formData, translate)
     },
 
     getFieldState(fieldName) {

@@ -79,6 +79,16 @@ namespace net {
   std::string get_bind_address(af_e af);
 
   /**
+   * @brief Get the loopback host used to open the local Web UI.
+   * @details The configuration HTTPS service keeps an IPv4 loopback listener
+   *          for local GUI/tray access even when a concrete interface address
+   *          is configured.
+   * @return URL-safe host name or address.
+   */
+  std::string
+  get_web_ui_host();
+
+  /**
    * @brief Convert an address to a normalized form.
    * @details Normalization converts IPv4-mapped IPv6 addresses into IPv4 addresses.
    * @param address The address to normalize.

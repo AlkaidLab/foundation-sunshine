@@ -45,8 +45,8 @@ namespace nvenc {
    * @brief CUDA interop context shared by every 4:4:4 encoder on one adapter.
    *        Creating and destroying a CUDA context per encoder object exercised
    *        the driver lifecycle several times per probe/session start for no
-   *        benefit, so contexts are cached per adapter for the lifetime of the
-   *        process instead.
+   *        benefit, so contexts are shared per adapter by active encoders and
+   *        explicitly retained for the duration of an encoder probe.
    */
   struct cuda_interop_context {
     ~cuda_interop_context();

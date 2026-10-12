@@ -133,6 +133,20 @@ namespace file_mapping::rpc {
   nlohmann::json
   make_error(std::uint64_t id, std::string code, std::string message);
 
+  /**
+   * Read a request id from a JSON message, treating missing, negative, and
+   * non-integer values as the protocol's zero id.
+   */
+  std::uint64_t
+  request_id(const nlohmann::json &body);
+
+  /**
+   * Parse a JSON integer that is representable as a non-negative uintmax.
+   * Returns nullopt for signed negatives, non-integers, or overflow.
+   */
+  std::optional<std::uintmax_t>
+  parse_nonnegative_uintmax(const nlohmann::json &value);
+
   nlohmann::json
   job_to_json(const transfer_job_t &job);
 

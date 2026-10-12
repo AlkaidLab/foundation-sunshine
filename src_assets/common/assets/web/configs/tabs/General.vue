@@ -136,6 +136,15 @@ function handleCommandOrderChanged(newOrder) {
         v-model="config.system_tray"
         default="true"
       ></Checkbox>
+
+      <!-- Stop when the last video session ends -->
+      <Checkbox
+        container-class="settings-field settings-toggle-field"
+        id="stop_on_last_video_session"
+        locale-prefix="config"
+        v-model="config.stop_on_last_video_session"
+        default="false"
+      ></Checkbox>
     </div>
   </div>
 </template>

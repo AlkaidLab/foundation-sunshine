@@ -4,6 +4,15 @@ cmake_minimum_required(VERSION 3.20)
 # `cmake_path(CONVERT ... TO_NATIVE_PATH_LIST ...)` requires 3.20
 # todo - set this conditionally
 
+# Keep the private download credential out of compiler probes and build children.
+# This is a normal, non-cache variable, consumed only by the SDK downloader.
+set(_SUNSHINE_RTX_VIDEO_SDK_TOKEN "$ENV{RTX_VIDEO_SDK_TOKEN}")
+if (_SUNSHINE_RTX_VIDEO_SDK_TOKEN STREQUAL "")
+    set(_SUNSHINE_RTX_VIDEO_SDK_TOKEN "$ENV{DRIVER_DOWNLOAD_TOKEN}")
+endif ()
+unset(ENV{RTX_VIDEO_SDK_TOKEN})
+unset(ENV{DRIVER_DOWNLOAD_TOKEN})
+
 project(Sunshine VERSION 0.0.0
         DESCRIPTION "Self-hosted game stream host for Moonlight"
         HOMEPAGE_URL "https://alkaidlab.com/sunshine")
