@@ -16,7 +16,6 @@ test('uses mainland links only for simplified Chinese', () => {
     'https://apps.apple.com/cn/app/voidlink/id6747717070',
   )
 })
-
 test('uses international links for every other locale', () => {
   const website = OFFICIAL_RESOURCES.find((resource) => resource.id === 'official-website')
   const voidlink = CLIENT_RESOURCES.find((resource) => resource.id === 'voidlink')
@@ -29,3 +28,4 @@ test('uses international links for every other locale', () => {
     )
   }
 })
+
