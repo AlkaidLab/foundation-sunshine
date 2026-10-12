@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import {
   CLIENT_RESOURCES,
   OFFICIAL_RESOURCES,
+  QUICK_START_RESOURCES,
+  resolveRandomResourceHref,
   resolveResourceHref,
 } from '../config/resources.js'
 
@@ -28,4 +30,13 @@ test('uses international links for every other locale', () => {
       'https://apps.apple.com/us/app/voidlink-extreme/id6755103808',
     )
   }
+})
+
+test('selects streaming group links with a 1:9 probability split', () => {
+  const community = QUICK_START_RESOURCES.find((resource) => resource.id === 'community-group')
+
+  assert.equal(resolveRandomResourceHref(community, 0), 'https://qm.qq.com/q/AfMQoyKrkc')
+  assert.equal(resolveRandomResourceHref(community, 0.099999), 'https://qm.qq.com/q/AfMQoyKrkc')
+  assert.equal(resolveRandomResourceHref(community, 0.1), 'https://qm.qq.com/q/vIVhpjDMic')
+  assert.equal(resolveRandomResourceHref(community, 0.999999), 'https://qm.qq.com/q/vIVhpjDMic')
 })

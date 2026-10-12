@@ -4,6 +4,10 @@ const ALKAIDLAB_WEBSITE_URL = 'https://www.alkaidlab.com/'
 const ALKAIDLAB_WEBSITE_ZH_URL = 'https://www.alkaidlab.cn/'
 const VOIDLINK_APP_STORE_URL = 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808'
 const VOIDLINK_APP_STORE_ZH_URL = 'https://apps.apple.com/cn/app/voidlink/id6747717070'
+const STREAMING_GROUP_URLS = [
+  'https://qm.qq.com/q/AfMQoyKrkc',
+  'https://qm.qq.com/q/vIVhpjDMic',
+]
 
 export const OFFICIAL_RESOURCES = [
   {
@@ -37,7 +41,8 @@ export const QUICK_START_RESOURCES = [
   },
   {
     id: 'community-group',
-    href: 'https://qm.qq.com/q/3tWBFVNZ',
+    href: STREAMING_GROUP_URLS[0],
+    randomHrefs: STREAMING_GROUP_URLS,
     icon: 'fab fa-qq',
     titleKey: 'resource_card.join_group',
     descriptionKey: 'resource_card.join_group_desc',
@@ -185,4 +190,10 @@ export function resolveResourceText(translate, resource, field) {
 
 export function resolveResourceHref(resource, locale) {
   return locale === 'zh' ? resource.zhHref || resource.href : resource.href
+}
+
+export function resolveRandomResourceHref(resource, randomValue = Math.random()) {
+  const hrefs = resource.randomHrefs
+  if (!Array.isArray(hrefs) || hrefs.length === 0) return resolveResourceHref(resource)
+  return hrefs[randomValue < 0.1 ? 0 : 1] || hrefs[0]
 }
