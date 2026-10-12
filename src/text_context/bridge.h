@@ -84,9 +84,9 @@ namespace text_context {
     /// Records the GUI agent heartbeat. `agent_present` is separate from the
     /// observer capabilities so an idle GUI can still participate in the
     /// first RTSP capability negotiation without running UIA.
-    void notify_gui_alive(bool input_pane, bool uia, bool agent_present = true,
-                          bool observer_active = true, std::uint64_t generation = 0,
-                          std::string_view agent_id = {});
+    void notify_gui_alive(bool input_pane, bool uia, bool agent_present,
+                          bool observer_active, std::uint64_t generation,
+                          std::string_view agent_id);
     bool gui_alive() const;
     bool input_pane_available() const;
     bool uia_available() const;

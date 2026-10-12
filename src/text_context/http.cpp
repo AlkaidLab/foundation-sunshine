@@ -95,17 +95,16 @@ namespace text_context::http {
       }
       auto &bridge = text_context::bridge_t::instance();
       try {
-        const auto input_pane = body.value("input_pane", false);
-        const auto uia = body.value("uia", false);
-        // New GUI agents report presence independently from observer
-        // readiness. Older agents do not send `agent`, so retain the legacy
-        // inference from their advertised observer capabilities.
-        const auto agent_present = body.contains("agent")
-                                      ? body.value("agent", false)
-                                      : (input_pane || uia);
-        const auto observer_active = body.value("observer_active", true);
-        const auto generation = body.value("generation", std::uint64_t {0});
-        const auto agent_id = body.value("agent_id", std::string {});
+        const auto input_pane = body.at("input_pane").get<bool>();
+        const auto uia = body.at("uia").get<bool>();
+        const auto agent_present = body.at("agent").get<bool>();
+        const auto observer_active = body.at("observer_active").get<bool>();
+        const auto generation = body.at("generation").get<std::uint64_t>();
+        const auto agent_id = body.at("agent_id").get<std::string>();
+        if (agent_id.empty() || generation == 0) {
+          write_json(resp, SimpleWeb::StatusCode::client_error_bad_request, {{"error", "invalid_body"}});
+          return;
+        }
         bridge.notify_gui_alive(input_pane, uia, agent_present, observer_active,
                                 generation, agent_id);
       }
@@ -137,8 +136,12 @@ namespace text_context::http {
       text_context::observation_t observation;
       std::string source;
       try {
-        observation.agent_id = body.value("agent_id", std::string {});
-        observation.generation = body.value("generation", std::uint64_t {0});
+        observation.agent_id = body.at("agent_id").get<std::string>();
+        observation.generation = body.at("generation").get<std::uint64_t>();
+        if (observation.agent_id.empty() || observation.generation == 0) {
+          write_json(resp, SimpleWeb::StatusCode::client_error_bad_request, {{"error", "invalid_body"}});
+          return;
+        }
         source = body.value("source", std::string {});
         if (source == "input_pane") observation.source = text_context::source_e::input_pane;
         else if (source == "uia") observation.source = text_context::source_e::uia;

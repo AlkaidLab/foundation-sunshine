@@ -20,11 +20,11 @@
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
           <component
-            :is="showVersionDetails ? 'button' : 'div'"
+            :is="statusActionAvailable ? 'button' : 'div'"
             class="home-status"
-            :class="[`home-status-${statusState}`, { 'home-status-action': showVersionDetails }]"
-            :type="showVersionDetails ? 'button' : undefined"
-            :role="showVersionDetails ? 'button' : 'status'"
+            :class="[`home-status-${statusState}`, { 'home-status-action': statusActionAvailable }]"
+            :type="statusActionAvailable ? 'button' : undefined"
+            :role="statusActionAvailable ? 'button' : 'status'"
             :aria-live="statusState === 'loading' ? 'polite' : 'off'"
             :aria-label="statusAriaLabel"
             :aria-controls="showVersionDetails ? 'version-details' : undefined"
@@ -167,7 +167,7 @@ const hasStableUpdate = computed(() => stableBuildAvailable.value)
 const hasPreReleaseUpdate = computed(() => notifyPreReleases.value && preReleaseBuildAvailable.value)
 
 const statusState = computed(() => {
-  if (hostStatus.value === 'error' || versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'error'
+  if (hostStatus.value === 'error') return 'error'
   if (
     hostStatus.value === 'loading' ||
     versionCheckStatus.value === VERSION_CHECK_STATUS.IDLE ||
@@ -175,6 +175,7 @@ const statusState = computed(() => {
   ) {
     return 'loading'
   }
+  if (versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'unavailable'
   if (hasStableUpdate.value || hasPreReleaseUpdate.value) return 'update'
   return 'ready'
 })
@@ -182,6 +183,7 @@ const statusState = computed(() => {
 const statusLabel = computed(() => {
   if (statusState.value === 'loading') return t('index.loading_latest')
   if (statusState.value === 'error') return t('_common.error')
+  if (statusState.value === 'unavailable') return t('index.check_updates')
   if (hasStableUpdate.value) return t('index.new_stable')
   if (hasPreReleaseUpdate.value) return t('index.new_pre_release')
   return t('index.version_latest')
@@ -206,7 +208,15 @@ const showVersionDetails = computed(
     hasPreReleaseUpdate.value,
 )
 
+const statusActionAvailable = computed(
+  () => showVersionDetails.value || versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR,
+)
+
 const handleStatusClick = () => {
+  if (versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR && hostConfig.value) {
+    void fetchVersions(hostConfig.value)
+    return
+  }
   if (!showVersionDetails.value) return
   document.getElementById('version-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
@@ -440,6 +450,12 @@ onMounted(async () => {
   border-color: var(--ui-danger-border, rgba(255, 107, 107, 0.34));
   background: var(--ui-danger-soft, rgba(255, 107, 107, 0.12));
   color: var(--ui-danger-text, #b4233a);
+}
+
+.home-status-unavailable {
+  border-color: var(--ui-border, rgba(74, 158, 255, 0.22));
+  background: var(--ui-surface, rgba(255, 255, 255, 0.08));
+  color: var(--ui-text-secondary, #64748b);
 }
 
 .home-status-update {

@@ -419,19 +419,13 @@ namespace text_context {
                                   bool observer_active, std::uint64_t generation,
                                   std::string_view agent_id) {
     std::lock_guard lock(_impl->mu);
+    if (agent_id.empty() || generation == 0) return;
     const auto now = clock_t::now();
-    if (agent_id.empty() && !agent_present && !observer_active) {
-      // A legacy/disabled agent can explicitly clear protocol state. This
-      // also prevents a later GUI instance from inheriting stale identity.
-      _impl->gui_agent_id.clear();
-      _impl->gui_generation = 0;
-      _impl->observer_active = false;
-      _impl->current_uia.reset();
-    }
-    const bool different_agent_instance = !agent_id.empty() && _impl->gui_agent_id != agent_id;
+    const bool current_agent_alive = _impl->agent_alive &&
+                                     now - _impl->last_gui_alive < kGuiAliveWindow;
+    const bool different_agent_instance = _impl->gui_agent_id != agent_id;
     const bool new_agent_instance = different_agent_instance &&
-                                    (_impl->gui_agent_id.empty() ||
-                                     (generation == 0 && !observer_active));
+                                    (_impl->gui_agent_id.empty() || !current_agent_alive);
     if (different_agent_instance && !new_agent_instance) {
       // A delayed request from a previous GUI process must not take ownership
       // back from the currently registered agent.
@@ -446,8 +440,7 @@ namespace text_context {
     // A delayed capability update from an older observer generation must not
     // turn off the currently active observer. The agent id separates GUI
     // process restarts, where the local generation counter starts over.
-    if (!new_agent_instance && !agent_id.empty() && generation != 0 &&
-        _impl->gui_generation != 0 && generation < _impl->gui_generation) {
+    if (!new_agent_instance && generation < _impl->gui_generation) {
       _impl->last_gui_alive = now;
       _impl->agent_alive = agent_present;
       return;
@@ -463,7 +456,7 @@ namespace text_context {
     _impl->last_gui_alive = now;
     _impl->agent_alive = agent_present;
     _impl->observer_active = observer_active;
-    if (generation != 0) _impl->gui_generation = generation;
+    _impl->gui_generation = generation;
     _impl->input_pane = input_pane;
     _impl->uia = uia;
   }
