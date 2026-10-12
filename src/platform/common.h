@@ -824,6 +824,16 @@ namespace platf {
     virtual bool
     is_sink_available(const std::string &sink) = 0;
 
+    /**
+     * @brief Check if a virtual sink supports the channel layout encoded in its name.
+     * @param sink Sink to be checked, as returned by sink_info().
+     * @returns False only when the platform knows the layout is unsupported.
+     */
+    virtual bool
+    is_sink_format_supported(const std::string &sink) {
+      return true;
+    }
+
     virtual std::optional<sink_t>
     sink_info() = 0;
 
