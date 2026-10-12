@@ -445,6 +445,7 @@ namespace platf {
     float pressureOrDistance;  // Distance for hover and pressure for contact
     float contactAreaMajor;
     float contactAreaMinor;
+    std::uint16_t barrelRoll = 0xffff;  // Independent axial twist, or unknown
   };
 
   class deinit_t {
