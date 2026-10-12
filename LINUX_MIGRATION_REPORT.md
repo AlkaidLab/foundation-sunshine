@@ -909,6 +909,48 @@ SDK API，直连的增益主要是 fork 的细粒度码控/lookahead（探测缓
      - 修掉 kscreen-doctor **退出码 0 但 `applying config failed!`** 的假成功判定（`display_off` prep
        曾据此误报"已关闭 eDP-1"——KWin 拒绝禁用唯一输出）。
 
+46. **第二十三轮：同步上游 50 个提交（2026-10-12，pkgrel 65）**：`origin/master` 前进
+    `86aa4415..ed415026`（50 个非 merge 提交），以 merge（`08213376`）并入 `linux-migration`，
+    分支侧 165 个提交全部保留。上游内容：PyroWave 编码/块级传输与动态 HDR、动态 RS-FEC
+    （`src/streaming/fec.*`）、会话码率预算（`src/streaming/bitrate.*`）、widget HTTP 端点、
+    perf recorder、NVENC 帧预算守卫（`src/nvenc/frame_budget.*`）、在线 NR/DLSS 控制、
+    remote-USB 修复、WebUI/多语言整理，以及"下线显示模式重映射"重构。
+    - **冲突仅 2 处，均已按语义解**：
+      - `src/video.cpp` 的 FFmpeg avcodec `set_bitrate`：取上游的新契约
+        （`supports_bitrate_update()` 门控 + `bool` 返回值），**删掉我们这边从入参反推 FEC 的写法** ——
+        上游新增的 `streaming::bitrate_budget_t` 在调用前已扣掉音频/开销/FEC，`set_bitrate` 收到的
+        就是编码器份额，再乘一次 `(100-FEC)%` 会**双重扣减**。本地 VBV 窗口按比例缩放（`c22ba19e`）
+        保留，日志改记编码器可见的码率 + VBV 位。
+      - `tests/CMakeLists.txt`：接受上游把 `TRUEHDR_BACKEND_LOADER_TEST_SOURCE` 更名为
+        `TRUEHDR_ADAPTER_LOADER_TEST_SOURCE`，同时保留我们的 `WIN32`/非 Windows 测试源排除。
+    - **合并后必须补的 Linux 构建面**（上游共享代码新引入的跨平台引用）：
+      - `cmake/compile_definitions/linux.cmake`：把 `src/nvenc/frame_budget.cpp` 加入
+        `PLATFORM_TARGET_FILES`。该 TU 的头文件明确声明**不依赖 NVENC SDK**，但上游共享的
+        `confighttp.cpp` 的 `getConfig()` 在所有平台调用 `nvenc::get_frame_budget_report()`，
+        而 `src/nvenc/*.cpp` 此前只在 `windows.cmake` 里 GLOB —— Linux 链接报
+        `undefined reference to nvenc::get_frame_budget_report()`。Linux 无原生 nvenc 会话，
+        没人 `publish`，config API 自然省略该块。
+      - `cmake/dependencies/Boost_Sunshine.cmake`：系统 Boost 包路径下 `Boost::format` 可能未定义
+        （Format 已成 header-only、不再随 CMake 包发布），补一个指向 `Boost::headers` 的
+        INTERFACE 目标即可；Windows 的 FetchContent 路径仍会正常定义同名目标，故该块只在缺失时生效。
+      - `tests/unit/abr_test_stubs.cpp`：为 `abr_unit_tests` 链接目标补
+        `platf::foreground_app::detect()` 桩（`#ifndef _WIN32` 门控）。这是 `d504fa11` 起就存在的
+        **既有缺口**（只跑 `ninja sunshine` 时看不见），本轮"全目标构建"才暴露。
+    - **顺带修掉的 Windows 链接缺陷（本次审计发现，非合并引入）**：`src/main.cpp` 里 SIGINT/SIGTERM
+      处理函数中的两处 `system_tray::end_tray()` 调用**没加守卫**。`system_tray.cpp` 整体位于
+      `#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1` 内，而 Windows 在 GUI agent 接管托盘时把
+      `SUNSHINE_TRAY` 设为 0 —— 无守卫的调用会让 Windows CI 链接失败。已按其它调用点的写法加守卫。
+    - **验证（Linux，CUDA=ON，sm_86）**：全量 `ninja` 链接通过（含 `test_sunshine` 聚合目标、
+      `abr_unit_tests`、`pyrowave_*` 等全部目标）；`ctest` 15 个套件 14 通过，`test_sunshine`
+      内 629 个用例通过、**0 断言失败**，唯一失败仍是既载的三套无头环境套件
+      （Audio/MouseHID/Encoder 的 `SetUpTestSuite`），与基线一致。二进制版本戳
+      `2026.1012.*.<HEAD 短哈希>`（版本戳由 HEAD 推导，见 pkgrel 65 构建树），与 HEAD 一致。
+    - **Windows 中立性审计**：逐文件对 `origin/master` 求差，分支新增的每一处共享代码改动要么是
+      `#ifdef _WIN32` / `#if !defined(_WIN32)` 门控，要么在 Windows 上取同值（如 `display_vram.cpp`
+      把三个分析常量改为引用 `video_hdr_metadata.h` 的共享常量，值不变）；Windows 侧
+      `vdd_utils.cpp` 的 Linux 专用调用全部落在 `#else // !_WIN32` 半区，`clipboard_host.cpp`
+      只在 `linux.cmake` 里编译。
+
 **测试基线复核（2026-09-11，pkgrel 53 构建树；终局核验：全量重建 + 全套测试通过，见进度 38）**：`ctest` 13 个套件
 12 个通过。聚合套件 `test_sunshine` 共 519 个用例：507 通过、12 跳过（1 个 Unicode 路径用例 +
 Audio/MouseHID/Encoder 三个环境套件的用例）、**0 个断言失败**；AudioTest / MouseHIDTest /
@@ -943,7 +985,8 @@ Range Limits 描述符（写死 preferred±20 → 40–80 Hz），而 `4ad74c90`
 `v0.8.3-linux-manual-vdd` / `v0.8.4-linux-vdd-mode-list`（手动模式参数化）→
 `v0.8.5-linux-vdd-name` / `v0.8.6-linux-parity-audit`（命名与边界对齐）→
 `v0.8.7-linux-vdd-refresh-ladder`（刷新率阶梯）→ `v0.9.0-linux-full-mode-table`（链式 CTA 全模式表）→
-`v0.9.1-linux-full-cross-product`（**当前**，pkgrel 38）。此后每完成一个功能里程碑继续打 tag。
+`v0.9.1-linux-full-cross-product` → `v0.9.2-linux-nvenc-yuv444`（4:4:4 解禁）→
+`v0.9.3-linux-upstream-sync`（**当前**，上游 50 提交合并，pkgrel 65）。此后每完成一个功能里程碑继续打 tag。
 
 **增强迁移（§十一）**：P0 虚拟显示器已完成（见进度 7）。后续按 物理 display_device 后端 →
 P1（剪贴板主机侧、远程麦克风）→ P2（HDR 动态元数据、ABR 前台检测）→ P3 的顺序推进；

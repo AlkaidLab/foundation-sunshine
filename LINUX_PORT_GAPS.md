@@ -1,6 +1,7 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支，tag `v0.9.1-linux-full-cross-product`（pkgrel 38，2026-09-11）
+- **基线**：`linux-migration` 分支，tag `v0.9.3-linux-upstream-sync`（pkgrel 65，2026-10-12；
+  已并入上游 `origin/master` `ed415026`，50 个提交，见 `LINUX_MIGRATION_REPORT.md` §十二进度 46）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
 - **约定**：🔶 部分实现（有偏差）｜○ 未实现但可行｜⛔ 本质不可移植
@@ -17,6 +18,10 @@
 剩余：**7 项部分实现（1.2 已解决，不再计入）、10 项可行未做、9 项本质不可移植**。另完成两轮
 **已移植部分的 Windows 对齐审计与修复（§五）**：高优先级项**已全部清零**，中/低项除 F4（HLG 分析源）
 与 C5（跨语言常量同步）外，均已修复或转为**有理由的决策记录**（§5.18）。
+
+**2026-10-12 上游同步后的新增缺口（§六）**：并入上游 50 个提交后，带来若干**上游侧新特性**，
+它们在 Linux 上要么只编译了共享层、要么完全没有 Linux 后端。已单列 §六 记录现状与可行性，
+不计入上面的 §一/§二 编号，避免与 Windows 对齐审计的历史结论混在一起。
 
 ---
 
@@ -773,3 +778,66 @@ sunshine` 启动。在 plasmalogin 界面和 niri 里，客户端建立连接都
 6. **`wait_for_mode_publication()` 的锁粒度已修**（原第 5 条 hazard 已消除）：锁内只取路径与模式快照，
    CRTC 强制指派、合成器命令与发布轮询都在锁外执行，因此不再有"持 `state_mutex` 最长 10 s"的窗口。
 7. **合成器未重探测 EDID 改写的可能**（低）：若实机出现"模式可行但始终未生效"，即为此因（见 §5.21 末）。
+
+---
+
+## 六、上游同步引入的新特性缺口（2026-10-12，tag `v0.9.3-linux-upstream-sync`）
+
+合并上游 `ed415026`（50 提交）后新增的上游特性。与 §一/§二 的区别：这些**不是 fork 的 Windows
+增强**，而是上游自己的新功能，Linux 侧尚未跟进。均已确认**不会破坏 Linux 构建**（共享层能编译，
+平台后端缺失处以 `#ifdef _WIN32` 门控或探测拒绝兜底）。
+
+### 6.1 ○ PyroWave 编码后端仅 Windows（高）
+
+- **现状**：共享层完整编译——`src/pyrowave/{types,config,capabilities,gpu_interop,packet,packetizer,
+  dynamic_hdr,session,runtime}.cpp` 都在 `cmake/compile_definitions/common.cmake`，
+  且 `tests/unit/test_pyrowave.cpp` 在 Linux 跑通（本轮实测 28 个用例全通过）。缺的是**平台后端**：
+  `src/platform/windows/pyrowave/{cpu_encoder,gpu_encoder,transport}.cpp` 只在 `windows.cmake`；
+  `video.cpp` 的 PyroWave 编码派发整块（`pyrowave_windows::encode_frame` / `encode_gpu_frame` /
+  `is_gpu_encoder_session`）位于 `#ifdef _WIN32`。
+- **Linux 行为**：本分支从未把 PyroWave 编码器注册进 `v0.0.0.0` 编码器表（表项本身是 fork 侧
+  Windows 特性），客户端不会协商到它；即便协商到，`encode()` 的派发链会落到末尾 `return -1`，
+  会话按既有的"PyroWave 会话初始化失败 → shutdown"路径结束，不会静默出坏流。
+- **若要做**：Linux 需要 CPU 后端（x264/x265 软件编码 + 块级封装，`cpu_encoder.cpp` 无 D3D 依赖，
+  是最可行的一块）与传输层（`transport.cpp` 的 socket/重建路径）。GPU 互操作
+  （`gpu_interop.cpp`）在 Linux 需对应 CUDA/EGL 纹理导入。
+- **工作量**：中-高（CPU 后端中）。**验收**：Linux 客户端协商 PyroWave 后能出画且 RS 重传生效。
+
+### 6.2 ○ 上游动态 RS-FEC 已随共享层落地，但 Linux 未接入码率预算的外层（低）
+
+- **现状**：`src/streaming/fec.cpp`（动态 RS 保护 + 客户端覆盖）与 `src/streaming/bitrate.cpp`
+  （会话码率预算，含音频/开销扣除与 FEC 折算）都在共享列表里，Linux 与 Windows 同源编译。
+  本轮已把冲突处（`video.cpp::set_bitrate`）对齐到该预算模型，**Linux 的 FFmpeg avcodec
+  动态码率因此现在也走统一的预算链路**。
+- **剩余**：`perf_recorder`、`widget_http` 同样在共享列表（Linux 可用）。真正平台相关的是
+  NVENC 原生帧预算守卫（§6.3）。
+- **工作量**：低（已基本完成）。**验收**：Linux 客户端改码率时日志出现
+  `Applied video budget: total=... encoder=... FEC=...`。
+
+### 6.3 ○ NVENC 帧预算守卫对 Linux 无意义（本质不可移植 → 记录为决策）
+
+- **现状**：`src/nvenc/frame_budget.{h,cpp}` 是**纯函数**（无 SDK、无硬件访问），本轮已加入
+  `PLATFORM_TARGET_FILES` 以满足共享 `confighttp.cpp` 的链接需求。但**发布者**
+  `publish_frame_budget_report()` 的调用点在 `src/nvenc/common_impl/nvenc_base.cpp`，而整个
+  `src/nvenc/` 原生 SDK 路径（含 `common_impl/`）只在 Windows 编译。
+- **Linux 行为**：`GET /api/config` 不含 `active_nvenc_frame_budget` 块——因为 Linux 的 NVENC 是
+  FFmpeg 的 `*_nvenc` 封装，不经过原生 SDK 的 `create_encoder()`，没有"配置预设 vs 有效预设"的概念。
+  这是**正确行为**，不是缺口。若将来要在 Linux 上报，需要在 FFmpeg avcodec 路径里自行评估预设。
+- **工作量**：不适用。**验收**：Linux `/api/config` 不出现该块，且不报错。
+
+### 6.4 ⛔ DLSS NR / RTX HDR / Game Bar 小部件等（Windows 专有 SDK）
+
+- **现状**：`sunshine_dlssnr_adapter` / `sunshine_rtx_video_adapter`（`cmake/dependencies/
+  dlssnr_adapter.cmake`、`rtx_video_adapter.cmake`）与 `src/platform/windows/image_enhancement/**`
+  全部 Windows-only；`src/widget_http.cpp` 共享层在 Linux 编译，但其 UWP 端点骨架是 Windows 概念。
+- **Linux 对应物**：图像增强在 Linux 无等价物（CUDA/Vulkan 自研滤波属独立大特性，
+  见 §1.3 亮度分析器的讨论）；Game Bar 小部件与 Windows 外壳绑定，无移植意义。
+- **工作量**：不适用。
+
+### 6.5 ○ "下线显示模式重映射"重构（已完成，无需跟进）
+
+- **现状**：上游 `8b905e2c` 删除了 `src/display_device/parsed_config.cpp` 的
+  `remap_display_modes_if_needed()` 与配置键 `display_mode_remapping`。已核实全树无残留引用
+  （`grep -rn "remap_display_modes\|display_mode_remapping" src/` 为空），Linux 的
+  `explicit_vdd` 分支（`ZAKO_DEVICE_ID`/`ZAKO_NAME`）完好保留。
+- **工作量**：无。**验收**：Linux 客户端指定虚拟屏仍走 VDD 目标。
