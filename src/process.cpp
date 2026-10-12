@@ -113,22 +113,15 @@ namespace proc {
     }
   }
 
-  /**
-   * @brief Convert a UTF-8 encoded string into a native filesystem path.
-   * @details On Windows, boost::filesystem::path interprets narrow strings using the
-   *          process ANSI code page (CP_ACP/CP_OEMCP), not UTF-8. All configuration
-   *          strings are UTF-8, so constructing a boost path directly from them
-   *          corrupts non-ASCII characters (e.g. a Chinese working directory) and
-   *          CreateProcess() then fails with ERROR_DIRECTORY (267).
-   * @param path The UTF-8 encoded path string.
-   * @return The equivalent native filesystem path.
-   */
+  // Convert the UTF-8 configuration path with the shared platform-aware helper
+  // before passing it to Boost.Filesystem.
   boost::filesystem::path
-  native_path_from_utf8(const std::string &path) {
+  boost_path_from_utf8(std::string_view path) {
+    const auto native_path = file_handler::path_from_utf8(path);
 #ifdef _WIN32
-    return boost::filesystem::path { platf::from_utf8(path) };
+    return boost::filesystem::path { native_path.wstring() };
 #else
-    return boost::filesystem::path { path };
+    return boost::filesystem::path { native_path.string() };
 #endif
   }
 
@@ -159,9 +152,9 @@ namespace proc {
     }
 
     // If the cmd path is not an absolute path, resolve it using our PATH variable
-    boost::filesystem::path cmd_path = native_path_from_utf8(parts.at(0));
+    boost::filesystem::path cmd_path = boost_path_from_utf8(parts.at(0));
     if (!cmd_path.is_absolute()) {
-      cmd_path = boost::process::v1::search_path(parts.at(0));
+      cmd_path = boost::process::v1::search_path(cmd_path);
       if (cmd_path.empty()) {
         BOOST_LOG(error) << "Unable to find executable ["sv << parts.at(0) << "]. Is it in your PATH?"sv;
         return boost::filesystem::path();
@@ -265,7 +258,7 @@ namespace proc {
 
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(cmd.do_cmd, _env) :
-                                              native_path_from_utf8(_app.working_dir);
+                                              boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Executing Do Cmd: ["sv << cmd.do_cmd << ']';
       auto child = platf::run_command(cmd.elevated, true, cmd.do_cmd, working_dir, _env, _pipe.get(), ec, nullptr);
 
@@ -300,7 +293,7 @@ namespace proc {
     for (auto &cmd : _app.detached) {
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(cmd, _env) :
-                                              native_path_from_utf8(_app.working_dir);
+                                              boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Spawning ["sv << cmd << "] in ["sv << working_dir << ']';
       auto child = platf::run_command(_app.elevated, true, cmd, working_dir, _env, _pipe.get(), ec, nullptr);
       if (ec) {
@@ -318,7 +311,7 @@ namespace proc {
     else {
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(_app.cmd, _env) :
-                                              native_path_from_utf8(_app.working_dir);
+                                              boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Executing: ["sv << _app.cmd << "] in ["sv << working_dir << ']';
       _process = platf::run_command(_app.elevated, true, _app.cmd, working_dir, _env, _pipe.get(), ec, &_process_group);
       if (ec) {
@@ -391,7 +384,7 @@ namespace proc {
 
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(cmd.undo_cmd, _env) :
-                                              native_path_from_utf8(_app.working_dir);
+                                              boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Executing Undo Cmd: ["sv << cmd.undo_cmd << ']';
       auto child = platf::run_command(cmd.elevated, true, cmd.undo_cmd, working_dir, _env, _pipe.get(), ec, nullptr);
 
@@ -555,7 +548,7 @@ namespace proc {
 
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(cmd, _env) :
-                                              native_path_from_utf8(_app.working_dir);
+                                              boost_path_from_utf8(_app.working_dir);
       auto child = platf::run_command(iter->elevated, true, cmd, working_dir, _env, nullptr, ec, nullptr);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't run cmd ["sv << cmd << "]: System: "sv << ec.message();
