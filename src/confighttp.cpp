@@ -2840,6 +2840,45 @@ namespace confighttp {
   }
 
   void
+  setPerfFrameRates(resp_https_t response, req_https_t request) {
+    if (!check_content_type(response, request, "application/json")) return;
+    if (!authenticate(response, request)) return;
+    if (!require_localhost(response, request, "controlling frame-rate collection")) return;
+
+    try {
+      if (request->content.size() > 1024) {
+        throw std::invalid_argument("frame-rate subscription body must not exceed 1024 bytes");
+      }
+      std::stringstream content;
+      content << request->content.rdbuf();
+      const auto body = json::parse(content.str());
+      if (!body.is_object() || !body.contains("consumer_id") || !body["consumer_id"].is_string() ||
+          !body.contains("enabled") || !body["enabled"].is_boolean() ||
+          (body.contains("lease_ms") && !body["lease_ms"].is_number_integer())) {
+        throw std::invalid_argument("expected consumer_id (string), enabled (boolean), and optional lease_ms (integer)");
+      }
+      const auto lease_ms = body.value("lease_ms", std::int64_t { 30000 });
+      if (lease_ms < 1000 || lease_ms > 30000) {
+        throw std::invalid_argument("lease_ms must be between 1000 and 30000");
+      }
+      const auto state = perf::set_frame_rate_subscription(body["consumer_id"].get<std::string>(), body["enabled"].get<bool>(),
+        std::chrono::milliseconds { lease_ms });
+      response->write(json { { "success", true }, { "frame_rate_collection", state } }.dump(), { { "Content-Type", "application/json" } });
+      response->close_connection_after_response = true;
+    }
+    catch (const json::exception &e) {
+      write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, e.what());
+    }
+    catch (const std::invalid_argument &e) {
+      write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, e.what());
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "setPerfFrameRates: " << e.what();
+      write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+    }
+  }
+
+  void
   changeRuntimeBitrate(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
 
@@ -4213,6 +4252,7 @@ namespace confighttp {
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
+    server.resource["^/api/perf/frame-rates$"]["POST"] = setPerfFrameRates;
     server.resource["^/steam-api/.+$"]["GET"] = proxySteamApi;
     server.resource["^/steam-store/.+$"]["GET"] = proxySteamStore;
     server.resource["^/api/ai/config$"]["GET"] = getAiConfig;

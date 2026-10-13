@@ -11,6 +11,13 @@
 #include <optional>
 
 namespace perf {
+  // Zero means disabled. A new nonzero epoch starts each collection interval.
+  extern std::atomic<std::uint64_t> frame_rate_collection_generation;
+
+  inline std::uint64_t frame_rate_collection_epoch() {
+    return frame_rate_collection_generation.load(std::memory_order_acquire);
+  }
+
   enum class capture_source_kind_e {
     unavailable,
     dxgi_updates,
@@ -25,12 +32,20 @@ namespace perf {
     std::atomic<std::uint64_t> frames { 0 };
 
     void record(std::uint64_t count = 1) {
+      if (!frame_rate_collection_epoch()) return;
       frames.fetch_add(count, std::memory_order_relaxed);
     }
 
     // Only the VDD capture thread calls this. Count skipped publications too,
     // without treating the driver's pre-stream counter as newly arrived frames.
     void observe_sequence(std::uint64_t sequence) {
+      const auto generation = frame_rate_collection_epoch();
+      if (!generation) return;
+      if (generation != last_generation) {
+        last_sequence = sequence;
+        last_generation = generation;
+        return;
+      }
       if (last_sequence && sequence >= *last_sequence) {
         record(sequence - *last_sequence);
       }
@@ -39,6 +54,7 @@ namespace perf {
 
   private:
     std::optional<std::uint64_t> last_sequence;
+    std::uint64_t last_generation = 0;
   };
 
   // Source, capture delivery, encode submission, encoded output, repeat submission.

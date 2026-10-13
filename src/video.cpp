@@ -2079,7 +2079,9 @@ namespace video {
         if (frame_captured) {
           latest_captured_img = img;
           for (auto &capture_ctx : capture_ctxs) {
-            perf::record_capture_frame(capture_ctx.config.perf_session_id, disp->frame_rate_source());
+            if (perf::frame_rate_collection_epoch()) {
+              perf::record_capture_frame(capture_ctx.config.perf_session_id, disp->frame_rate_source());
+            }
             capture_ctx.images->raise(captured_frame_t {
               .image = img,
             });
@@ -4138,7 +4140,9 @@ namespace video {
           }
 
           if (frame_captured) {
-            perf::record_capture_frame(ctx->config.perf_session_id, disp->frame_rate_source());
+            if (perf::frame_rate_collection_epoch()) {
+              perf::record_capture_frame(ctx->config.perf_session_id, disp->frame_rate_source());
+            }
             pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
             if (!pipeline_trace->capture_ready) {
               pipeline_trace->capture_ready = frame_timestamp;

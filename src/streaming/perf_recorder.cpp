@@ -7,11 +7,16 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <condition_variable>
 #include <mutex>
+#include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 namespace perf {
+  std::atomic<std::uint64_t> frame_rate_collection_generation { 0 };
+
   namespace {
     using clock_t = std::chrono::steady_clock;
 
@@ -48,6 +53,8 @@ namespace perf {
       latency_window_t host_latency;
       pipeline_windows_t pipeline;
       std::shared_ptr<capture_source_counter_t> capture_source;
+      std::uint64_t source_baseline = 0;
+      std::uint64_t frame_rate_generation = 0;
       frame_rate_window_t::counts_t frame_counts {};
       frame_rate_window_t frame_rates;
       struct {
@@ -62,6 +69,66 @@ namespace perf {
     std::mutex recorder_mutex;
     std::unordered_map<std::uint32_t, session_state_t> sessions;
     std::uint32_t latest_session_id = 0;
+    std::unordered_map<std::string, clock_t::time_point> frame_rate_subscriptions;
+    std::condition_variable subscription_changed;
+    std::uint64_t next_collection_generation = 0;
+
+    void refresh_source_total(session_state_t &session) {
+      if (session.capture_source) {
+        const auto frames = session.capture_source->frames.load(std::memory_order_relaxed);
+        session.frame_counts[0] = frames >= session.source_baseline ? frames - session.source_baseline : 0;
+      }
+    }
+
+    // Called with recorder_mutex held; frame callbacks never manage subscriptions.
+    void update_collection_state(clock_t::time_point now) {
+      const bool enabled = !frame_rate_subscriptions.empty();
+      if (enabled == (frame_rate_collection_epoch() != 0)) return;
+      if (!enabled) {
+        frame_rate_collection_generation.store(0, std::memory_order_release);
+        for (auto &[id, session] : sessions) {
+          if (session.active) refresh_source_total(session);
+        }
+        return;
+      }
+      const auto generation = ++next_collection_generation;
+      for (auto &[id, session] : sessions) {
+        if (!session.active) continue;
+        session.frame_counts = {};
+        session.source_baseline = session.capture_source ? session.capture_source->frames.load(std::memory_order_relaxed) : 0;
+        session.frame_rate_generation = generation;
+        session.frame_rates.reset(now, session.frame_counts);
+      }
+      frame_rate_collection_generation.store(generation, std::memory_order_release);
+    }
+
+    void expire_subscriptions(clock_t::time_point now) {
+      std::erase_if(frame_rate_subscriptions, [now](const auto &entry) { return entry.second <= now; });
+      update_collection_state(now);
+    }
+
+    void start_subscription_expiry_worker() {
+      // Constructed on first acquisition; destroyed before the recorder globals.
+      static std::jthread worker([](std::stop_token stop) {
+        std::stop_callback wake_on_stop(stop, []() {
+          std::lock_guard lock { recorder_mutex };
+          subscription_changed.notify_all();
+        });
+        std::unique_lock lock { recorder_mutex };
+        while (!stop.stop_requested()) {
+          expire_subscriptions(clock_t::now());
+          if (frame_rate_subscriptions.empty()) {
+            subscription_changed.wait(lock, [&]() { return stop.stop_requested() || !frame_rate_subscriptions.empty(); });
+          }
+          else {
+            const auto earliest = std::min_element(frame_rate_subscriptions.begin(), frame_rate_subscriptions.end(),
+              [](const auto &left, const auto &right) { return left.second < right.second; });
+            const auto deadline = earliest->second;
+            subscription_changed.wait_until(lock, deadline);
+          }
+        }
+      });
+    }
 
     double round_ms(double value) {
       return std::round(value * 100.0) / 100.0;
@@ -179,11 +246,13 @@ namespace perf {
     }
 
     nlohmann::json make_frame_rates_json(session_state_t &session, clock_t::time_point now) {
+      const auto generation = frame_rate_collection_epoch();
+      const bool enabled = generation && session.frame_rate_generation == generation;
       auto kind = capture_source_kind_e::unavailable;
       if (session.capture_source) {
         kind = session.capture_source->kind.load(std::memory_order_relaxed);
-        if (session.active) {
-          session.frame_counts[0] = session.capture_source->frames.load(std::memory_order_relaxed);
+        if (session.active && enabled) {
+          refresh_source_total(session);
         }
       }
       const char *source_kind = "unavailable";
@@ -200,17 +269,18 @@ namespace perf {
         default:
           break;
       }
-      const auto &rates = session.frame_rates.sample(now, session.frame_counts);
+      const auto rates = enabled ? session.frame_rates.sample(now, session.frame_counts) : std::nullopt;
       nlohmann::json result = {
+        { "enabled", enabled },
         { "source_kind", source_kind },
         { "ready", rates.has_value() },
-        { "window_ms", round_ms(session.frame_rates.duration_seconds() * 1000.0) },
+        { "window_ms", enabled ? round_ms(session.frame_rates.duration_seconds() * 1000.0) : 0.0 },
       };
       constexpr std::array keys { "source", "capture", "submitted", "encoded", "repeated" };
       for (std::size_t i = 0; i < keys.size(); ++i) {
         auto &stage = result[keys[i]];
         stage["frames_total"] = session.frame_counts[i];
-        if (i == 0 && kind == capture_source_kind_e::unavailable) {
+        if (!enabled || (i == 0 && kind == capture_source_kind_e::unavailable)) {
           stage["fps"] = nullptr;
         }
         else if (!session.active) {
@@ -280,6 +350,7 @@ namespace perf {
     session = {};
     session.metadata = metadata;
     session.active = true;
+    session.frame_rate_generation = frame_rate_collection_epoch();
     session.started_at = clock_t::now();
     session.frame_rates.reset(session.started_at, session.frame_counts);
     session.host_latency.fps_bucket_started_at = session.started_at;
@@ -301,8 +372,8 @@ namespace perf {
     }
 
     if (it->second.active) {
-      if (it->second.capture_source) {
-        it->second.frame_counts[0] = it->second.capture_source->frames.load(std::memory_order_relaxed);
+      if (frame_rate_collection_epoch()) {
+        refresh_source_total(it->second);
       }
       it->second.active = false;
       it->second.ended_at = clock_t::now();
@@ -391,13 +462,18 @@ namespace perf {
   }
 
   void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source, clock_t::time_point now) {
+    const auto generation = frame_rate_collection_epoch();
+    if (!generation) return;
     std::lock_guard lock { recorder_mutex };
+    if (frame_rate_collection_epoch() != generation) return;
     const auto it = sessions.find(session_id);
     if (it == sessions.end() || !it->second.active) return;
     auto &session = it->second;
+    if (now == clock_t::time_point {}) now = clock_t::now();
     if (session.capture_source != source) {
       session.capture_source = source;
-      session.frame_counts[0] = source ? source->frames.load(std::memory_order_relaxed) : 0;
+      session.source_baseline = source ? source->frames.load(std::memory_order_relaxed) : 0;
+      session.frame_counts[0] = 0;
       // A new display/channel needs a fresh baseline, including on reinit.
       session.frame_rates.reset(now, session.frame_counts);
     }
@@ -405,7 +481,10 @@ namespace perf {
   }
 
   void record_encode_submission(std::uint32_t session_id, bool repeat) {
+    const auto generation = frame_rate_collection_epoch();
+    if (!generation) return;
     std::lock_guard lock { recorder_mutex };
+    if (frame_rate_collection_epoch() != generation) return;
     const auto it = sessions.find(session_id);
     if (it == sessions.end() || !it->second.active) return;
     ++it->second.frame_counts[2];
@@ -413,9 +492,41 @@ namespace perf {
   }
 
   void record_encoded_frame(std::uint32_t session_id) {
+    const auto generation = frame_rate_collection_epoch();
+    if (!generation) return;
     std::lock_guard lock { recorder_mutex };
+    if (frame_rate_collection_epoch() != generation) return;
     const auto it = sessions.find(session_id);
     if (it != sessions.end() && it->second.active) ++it->second.frame_counts[3];
+  }
+
+  nlohmann::json set_frame_rate_subscription(const std::string &consumer_id, bool enabled, std::chrono::milliseconds lease) {
+    const auto valid_character = [](unsigned char ch) {
+      return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+             ch == '-' || ch == '_' || ch == '.' || ch == ':';
+    };
+    if (consumer_id.empty() || consumer_id.size() > 128 || !std::all_of(consumer_id.begin(), consumer_id.end(), valid_character)) {
+      throw std::invalid_argument("consumer_id must contain 1-128 ASCII identifier characters");
+    }
+    if (lease < std::chrono::seconds(1) || lease > std::chrono::seconds(30)) {
+      throw std::invalid_argument("lease_ms must be between 1000 and 30000");
+    }
+    if (enabled) start_subscription_expiry_worker();
+    std::lock_guard lock { recorder_mutex };
+    const auto now = clock_t::now();
+    expire_subscriptions(now);
+    if (enabled) {
+      if (!frame_rate_subscriptions.contains(consumer_id) && frame_rate_subscriptions.size() >= 64) {
+        throw std::invalid_argument("too many frame-rate subscribers");
+      }
+      frame_rate_subscriptions[consumer_id] = now + lease;
+    }
+    else {
+      frame_rate_subscriptions.erase(consumer_id);
+    }
+    update_collection_state(now);
+    subscription_changed.notify_all();
+    return { { "enabled", frame_rate_collection_epoch() != 0 }, { "subscribers", frame_rate_subscriptions.size() }, { "lease_ms", lease.count() } };
   }
 
   nlohmann::json current_snapshot_json(clock_t::time_point now) {
@@ -429,6 +540,10 @@ namespace perf {
     result["sessions"] = nlohmann::json::array();
     result["active_sessions"] = 0;
     result["latest_session_id"] = latest_session_id;
+    result["frame_rate_collection"] = {
+      { "enabled", frame_rate_collection_epoch() != 0 },
+      { "subscribers", frame_rate_subscriptions.size() },
+    };
 
     for (auto &[session_id, session] : sessions) {
       if (session.active) {
