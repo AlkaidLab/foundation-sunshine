@@ -90,17 +90,17 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 
 # application icon
 if(NOT ${SUNSHINE_BUILD_FLATPAK})
-    install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
+    install(FILES "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps")
 else()
-    install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
+    install(FILES "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps"
             RENAME "${PROJECT_FQDN}.svg")
 endif()
 
 # tray icon
 if(${SUNSHINE_TRAY} STREQUAL 1)
-    install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
+    install(FILES "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status"
             RENAME "sunshine-tray.svg")
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing.svg"

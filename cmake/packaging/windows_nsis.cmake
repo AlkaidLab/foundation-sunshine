@@ -12,8 +12,8 @@ set(CPACK_NSIS_INSTALLED_ICON_NAME "${PROJECT__DIR}\\\\${PROJECT_EXE}")
 
 set(CPACK_NSIS_INSTALLER_MUI_ICON_CODE "
 ; 定义安装程序图标
-!define MUI_ICON \\\"${CMAKE_SOURCE_DIR}/sunshine.ico\\\"
-!define MUI_UNICON \\\"${CMAKE_SOURCE_DIR}/sunshine.ico\\\"
+!define MUI_ICON \\\"${CMAKE_SOURCE_DIR}/assets/brand/sunshine.ico\\\"
+!define MUI_UNICON \\\"${CMAKE_SOURCE_DIR}/assets/brand/sunshine.ico\\\"
 
 ; 定义在目录页面显示前执行的函数
 !define MUI_PAGE_CUSTOMFUNCTION_PRE PreDirectoryPage
@@ -97,13 +97,13 @@ ManifestDPIAware true
 ")
 
 # Basic installer configuration
-set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
-set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
+set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
+set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
 
 # 设置DPI感知
 set(CPACK_NSIS_MANIFEST_DPI_AWARE ON)
-set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bmp")
-set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bmp")
+set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\assets\\\\installer\\\\welcome.bmp")
+set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\assets\\\\installer\\\\welcome.bmp")
 
 # 头部图像（需要150x57像素）
 # set(CPACK_NSIS_MUI_HEADERIMAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\cmake\\\\packaging\\\\welcome.bmp")

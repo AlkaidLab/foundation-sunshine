@@ -25,8 +25,8 @@
 DOCSET_BUNDLE_ID = dev.lizardbyte.Sunshine
 DOCSET_PUBLISHER_ID = dev.lizardbyte.Sunshine.documentation
 PROJECT_BRIEF = "Self-hosted game stream host for Moonlight."
-PROJECT_ICON = ../sunshine.ico
-PROJECT_LOGO = ../sunshine.png
+PROJECT_ICON = ../assets/brand/sunshine.ico
+PROJECT_LOGO = ../assets/brand/sunshine.png
 PROJECT_NAME = Sunshine
 
 # project specific settings
@@ -44,7 +44,6 @@ USE_MDFILE_AS_MAINPAGE = ../README.md
 INPUT = ../README.md \
         getting_started.md \
         changelog.md \
-        ../DOCKER_README.md \
         third_party_packages.md \
         gamestream_migration.md \
         legal.md \
@@ -54,6 +53,6 @@ INPUT = ../README.md \
         performance_tuning.md \
         troubleshooting.md \
         building.md \
-        contributing.md \
+        contributing-workflow.md \
         ../third-party/doxyconfig/docs/source_code.md \
         ../src

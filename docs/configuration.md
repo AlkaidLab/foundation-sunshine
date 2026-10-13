@@ -16,7 +16,6 @@ location by modifying the configuration file.
 
 | OS      | Location                                        |
 |---------|-------------------------------------------------|
-| Docker  | @code{}/config@endcode                          |
 | Linux   | @code{}~/.config/sunshine@endcode               |
 | macOS   | @code{}~/.config/sunshine@endcode               |
 | Windows | @code{}%ProgramFiles%\\Sunshine\\config@endcode |

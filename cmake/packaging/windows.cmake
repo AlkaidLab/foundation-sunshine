@@ -194,7 +194,7 @@ file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
 file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
         DESTINATION "${CMAKE_BINARY_DIR}/assets")
 
-set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
+set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
 
 # The name of the directory that will be created in C:/Program files/
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "${CPACK_PACKAGE_NAME}")
