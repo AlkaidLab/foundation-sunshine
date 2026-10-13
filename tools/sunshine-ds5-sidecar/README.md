@@ -7,12 +7,21 @@ process now uses a `VirtualDeviceHostServer` and `DeviceRegistry` internally.
 It owns virtual devices and exposes the versioned `SDS5` named-pipe protocol.
 The helper does not contain HIDMaestro binaries.
 
-Build against the pinned upstream v1.7.3 runtime:
+Build the compatible Foundation Core patch and the sidecar:
 
 ```powershell
-dotnet build -c Release `
-  -p:HIDMaestroCorePath=C:\path\to\HIDMaestro.Core.dll
+scripts/build-ds5-sidecar.ps1
 ```
+
+The main Sunshine package carries `tools/hidmaestro-core-patch/`. New component
+installs apply it in staging before probing. Older GUIs can perform read-only
+capability probes against the stock SDK; device operations require the fix.
+Sunshine verifies and atomically
+replaces the stock v1.7.3 Core before launching an already-installed sidecar, so
+existing users do not need to update the optional component separately. A newer
+sidecar refuses to run against an unpatched Core. The upstream SDK API, assembly
+version and all embedded drivers/profiles/tools are preserved; see
+[`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
 
 Read-only capability probe:
 

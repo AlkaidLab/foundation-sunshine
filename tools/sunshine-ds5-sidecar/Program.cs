@@ -31,6 +31,14 @@ for (var i = 0; i < args.Length; i++)
         return Fail($"Unknown argument: {args[i]}");
 }
 
+// Capability probing creates no controllers and must also work while an
+// older GUI is staging the upstream runtime. Device operations require the
+// fix; Sunshine applies it before launch and current GUIs prepare it at install.
+var corePatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
+    attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "registry-isolation-1");
+if (!corePatched && !(probe && !selfCheck))
+    return Fail("The Core fix is not active. Sunshine applies it automatically before streaming; update Sunshine if needed");
+
 if (selfCheck)
 {
     ProtocolSelfTest.RunDeterministicChecks();
@@ -62,6 +70,7 @@ if (probe)
     {
         protocol = Protocol.Version,
         runtime_version = typeof(HMContext).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version,
+        core_patch = corePatched ? "registry-isolation-1" : "",
         elevated = IsElevated(),
         standard = standard is not null,
         composite = composite is not null,

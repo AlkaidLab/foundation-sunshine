@@ -106,6 +106,12 @@ if (
     throw $dotnetSdkError
 }
 
+# Preserve the upstream ABI and payload; also ship Core in the main package
+# so existing optional sidecars receive the fix without a component update.
+& (Join-Path $PSScriptRoot 'build-hidmaestro-core-patch.ps1') -PackageCache $PackageCache -DotnetPath $dotnet
+if ($LASTEXITCODE -ne 0) { throw 'HIDMaestro Core patch build failed' }
+$core = Join-Path $buildRoot 'hidmaestro-core-patch/HIDMaestro.Core.dll'
+
 & $dotnet publish (Join-Path $root 'tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.csproj') `
     --configuration Release `
     --runtime win-x64 `
@@ -118,8 +124,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "DualSense sidecar publish failed with exit code $LASTEXITCODE"
 }
 
-# HIDMaestro is installed by the GUI from the independently verified upstream
-# package. Excluding it here keeps the Sunshine installer first-party-only.
+# The optional package contains no second Core. The main package carries the
+# hash-bound patch; the GUI applies it after extracting the upstream ZIP.
 Remove-Item -LiteralPath (Join-Path $output 'HIDMaestro.Core.dll') -Force
 $runtimeMetadata = @{
     component_version = '1.2.0'
@@ -127,6 +133,7 @@ $runtimeMetadata = @{
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version
     hidmaestro_build_sha256 = $expectedSha256.ToLowerInvariant()
+    hidmaestro_core_patch = 'registry-isolation-1'
 } | ConvertTo-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

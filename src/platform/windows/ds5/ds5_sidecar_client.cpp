@@ -28,6 +28,7 @@
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
+#include "core_patch.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 #include "src/platform/windows/virtual_device_host/protocol.h"
@@ -259,6 +260,21 @@ namespace platf::ds5 {
         BOOST_LOG(error) << "The active DualSense sidecar failed manifest digest verification"sv;
         return std::nullopt;
       }
+#ifdef SUNSHINE_DS5_CORE_PATCH_SHA256
+      std::string core_patch_error;
+      if (manifest.get<std::string>("hidmaestro_version", "") != "v1.7.3" ||
+          !ensure_core_patch(install_root / "tools" / "hidmaestro-core-patch" / "HIDMaestro.Core.dll",
+                             expected_active_root / "HIDMaestro.Core.dll",
+                             SUNSHINE_DS5_ORIGINAL_CORE_SHA256,
+                             SUNSHINE_DS5_CORE_PATCH_SHA256,
+                             sha256_file, core_patch_error)) {
+        BOOST_LOG(error) << "Unable to apply the bundled HIDMaestro Core fix: "sv << core_patch_error;
+        return std::nullopt;
+      }
+#else
+      BOOST_LOG(error) << "This build does not contain the required HIDMaestro Core fix"sv;
+      return std::nullopt;
+#endif
       return candidate;
 #endif
     }

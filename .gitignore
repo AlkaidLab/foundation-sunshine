@@ -109,4 +109,6 @@ build.sh
 # Sunshine DualSense .NET build outputs
 tools/sunshine-ds5-sidecar/bin/
 tools/sunshine-ds5-sidecar/obj/
+tools/hidmaestro-core-patch/**/bin/
+tools/hidmaestro-core-patch/**/obj/
 .claude/

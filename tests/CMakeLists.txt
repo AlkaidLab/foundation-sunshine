@@ -32,6 +32,12 @@ endif ()
 if (WIN32)
     # For Windows: Prevent overriding the parent project's compiler/linker settings
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)  # cmake-lint: disable=C0103
+    add_executable(ds5_core_patch_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_core_patch.cpp)
+    target_include_directories(ds5_core_patch_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(ds5_core_patch_unit_tests gtest_main)
+    set_target_properties(ds5_core_patch_unit_tests PROPERTIES CXX_STANDARD 20)
+    add_test(NAME ds5_core_patch_unit_tests COMMAND ds5_core_patch_unit_tests)
 endif ()
 
 add_executable(tray_state_unit_tests
