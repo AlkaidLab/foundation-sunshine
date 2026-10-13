@@ -1,5 +1,5 @@
 /**
- * @file src/perf_recorder.cpp
+ * @file src/streaming/perf_recorder.cpp
  * @brief Runtime performance snapshot recorder.
  */
 #include "perf_recorder.h"
@@ -47,6 +47,9 @@ namespace perf {
       clock_t::time_point ended_at {};
       latency_window_t host_latency;
       pipeline_windows_t pipeline;
+      std::shared_ptr<capture_source_counter_t> capture_source;
+      frame_rate_window_t::counts_t frame_counts {};
+      frame_rate_window_t frame_rates;
       struct {
         bool enabled = false;
         std::uint64_t frames = 0;
@@ -175,7 +178,53 @@ namespace perf {
       return result;
     }
 
-    nlohmann::json make_session_json(const session_state_t &session, clock_t::time_point now) {
+    nlohmann::json make_frame_rates_json(session_state_t &session, clock_t::time_point now) {
+      auto kind = capture_source_kind_e::unavailable;
+      if (session.capture_source) {
+        kind = session.capture_source->kind.load(std::memory_order_relaxed);
+        session.frame_counts[0] = session.capture_source->frames.load(std::memory_order_relaxed);
+      }
+      const char *source_kind = "unavailable";
+      switch (kind) {
+        case capture_source_kind_e::dxgi_updates:
+          source_kind = "dxgi_updates";
+          break;
+        case capture_source_kind_e::wgc_arrivals:
+          source_kind = "wgc_arrivals";
+          break;
+        case capture_source_kind_e::vdd_published:
+          source_kind = "vdd_published";
+          break;
+        default:
+          break;
+      }
+      const auto &rates = session.frame_rates.sample(now, session.frame_counts);
+      nlohmann::json result = {
+        { "source_kind", source_kind },
+        { "ready", rates.has_value() },
+        { "window_ms", round_ms(session.frame_rates.duration_seconds() * 1000.0) },
+      };
+      constexpr std::array keys { "source", "capture", "submitted", "encoded", "repeated" };
+      for (std::size_t i = 0; i < keys.size(); ++i) {
+        auto &stage = result[keys[i]];
+        stage["frames_total"] = session.frame_counts[i];
+        if (i == 0 && kind == capture_source_kind_e::unavailable) {
+          stage["fps"] = nullptr;
+        }
+        else if (!session.active) {
+          stage["fps"] = 0.0;
+        }
+        else if (rates) {
+          stage["fps"] = round_ms((*rates)[i]);
+        }
+        else {
+          stage["fps"] = nullptr;
+        }
+      }
+      return result;
+    }
+
+    nlohmann::json make_session_json(session_state_t &session, clock_t::time_point now) {
       nlohmann::json item;
       item["session_id"] = session.metadata.session_id;
       item["client_name"] = session.metadata.client_name;
@@ -190,6 +239,7 @@ namespace perf {
       item["uptime_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>((session.active ? now : session.ended_at) - session.started_at).count();
       item["host_latency"] = make_latency_json(session.host_latency, now);
       item["pipeline"] = make_pipeline_json(session.pipeline, now);
+      item["frame_rates"] = make_frame_rates_json(session, now);
       item["pyrowave"] = {
         { "enabled", session.pyrowave.enabled },
         { "frames", session.pyrowave.frames },
@@ -229,6 +279,7 @@ namespace perf {
     session.metadata = metadata;
     session.active = true;
     session.started_at = clock_t::now();
+    session.frame_rates.reset(session.started_at, session.frame_counts);
     session.host_latency.fps_bucket_started_at = session.started_at;
     session.pipeline.capture_to_convert.fps_bucket_started_at = session.started_at;
     session.pipeline.convert.fps_bucket_started_at = session.started_at;
@@ -334,10 +385,37 @@ namespace perf {
     }
   }
 
-  nlohmann::json current_snapshot_json() {
+  void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source, clock_t::time_point now) {
+    std::lock_guard lock { recorder_mutex };
+    const auto it = sessions.find(session_id);
+    if (it == sessions.end() || !it->second.active) return;
+    auto &session = it->second;
+    if (session.capture_source != source) {
+      session.capture_source = source;
+      session.frame_counts[0] = source ? source->frames.load(std::memory_order_relaxed) : 0;
+      // A new display/channel needs a fresh baseline, including on reinit.
+      session.frame_rates.reset(now, session.frame_counts);
+    }
+    ++session.frame_counts[1];
+  }
+
+  void record_encode_submission(std::uint32_t session_id, bool repeat) {
+    std::lock_guard lock { recorder_mutex };
+    const auto it = sessions.find(session_id);
+    if (it == sessions.end() || !it->second.active) return;
+    ++it->second.frame_counts[2];
+    if (repeat) ++it->second.frame_counts[4];
+  }
+
+  void record_encoded_frame(std::uint32_t session_id) {
+    std::lock_guard lock { recorder_mutex };
+    const auto it = sessions.find(session_id);
+    if (it != sessions.end() && it->second.active) ++it->second.frame_counts[3];
+  }
+
+  nlohmann::json current_snapshot_json(clock_t::time_point now) {
     std::lock_guard lock { recorder_mutex };
 
-    const auto now = clock_t::now();
     nlohmann::json result;
     result["success"] = true;
     result["status_code"] = 200;
@@ -347,7 +425,7 @@ namespace perf {
     result["active_sessions"] = 0;
     result["latest_session_id"] = latest_session_id;
 
-    for (const auto &[session_id, session] : sessions) {
+    for (auto &[session_id, session] : sessions) {
       if (session.active) {
         result["active_sessions"] = result["active_sessions"].get<int>() + 1;
       }

@@ -44,6 +44,10 @@ struct AVHWFramesContext;
 struct AVCodecContext;
 struct AVDictionary;
 
+namespace perf {
+  struct capture_source_counter_t;
+}
+
 #ifdef _WIN32
 // Forward declarations of boost classes to avoid having to include boost headers
 // here, which results in issues with Windows.h and WinSock2.h include order.
@@ -669,6 +673,12 @@ namespace platf {
      * @retval false When capture has been interrupted, img_out contains nullptr
      */
     using pull_free_image_cb_t = std::function<bool(std::shared_ptr<img_t> &img_out)>;
+
+    // Optional raw-source telemetry, shared by sessions using this display.
+    virtual std::shared_ptr<perf::capture_source_counter_t>
+    frame_rate_source() const {
+      return {};
+    }
 
     display_t() noexcept:
         offset_x { 0 },

@@ -14,7 +14,7 @@
 #include "src/config.h"
 #include "src/http_util.h"
 #include "src/logging.h"
-#include "src/perf_recorder.h"
+#include "src/streaming/perf_recorder.h"
 #include "src/platform/common.h"
 #include "src/rtsp.h"
 #include "src/stream.h"

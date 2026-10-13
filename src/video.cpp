@@ -30,7 +30,7 @@ extern "C" {
 // lib includes
 #include "cbs.h"
 #include "config.h"
-#include "perf_recorder.h"
+#include "streaming/perf_recorder.h"
 #include "display_device/display_device.h"
 #include "globals.h"
 #include "hdr/dynamic_hdr_selection.h"
@@ -2079,6 +2079,7 @@ namespace video {
         if (frame_captured) {
           latest_captured_img = img;
           for (auto &capture_ctx : capture_ctxs) {
+            perf::record_capture_frame(capture_ctx.config.perf_session_id, disp->frame_rate_source());
             capture_ctx.images->raise(captured_frame_t {
               .image = img,
             });
@@ -2462,6 +2463,7 @@ namespace video {
 
       packet->replacements = &session.replacements;
       packet->channel_data = channel_data;
+      perf::record_encoded_frame(session.perf_session_id);
       packets->raise(std::move(packet));
     }
 
@@ -2513,6 +2515,7 @@ namespace video {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
       packet->pipeline_trace = std::move(encoded_trace);
     }
+    perf::record_encoded_frame(session.perf_session_id);
     packets->raise(std::move(packet));
 
     return 0;
@@ -2551,6 +2554,7 @@ namespace video {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
       packet->pipeline_trace = std::move(encoded_trace);
     }
+    perf::record_encoded_frame(session.perf_session_id);
     packets->raise(std::move(packet));
 
     return 0;
@@ -3396,7 +3400,10 @@ namespace video {
       session = make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
     }
 
-    if (session) session->bitrate_budget = config.bitrate_budget;
+    if (session) {
+      session->bitrate_budget = config.bitrate_budget;
+      session->perf_session_id = config.perf_session_id;
+    }
     return session;
   }
 
@@ -3527,6 +3534,7 @@ namespace video {
       if (!session->set_bitrate(config.bitrate_budget->applied().encoder_kbps)) return;
       session->bitrate_budget = config.bitrate_budget;
     }
+    session->perf_session_id = config.perf_session_id;
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -3726,12 +3734,14 @@ namespace video {
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
       bool has_new_frame = false;
+      bool replayed_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
         if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           auto &img = frame->image;
+          replayed_frame = frame->is_replay;
           if (!frame->is_replay) {
             frame_timestamp = img->frame_timestamp;
             pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
@@ -3797,6 +3807,7 @@ namespace video {
       }
 
       session->request_normal_frame();
+      perf::record_encode_submission(config.perf_session_id, !has_new_frame || replayed_frame);
     }
   }
 
@@ -4127,6 +4138,7 @@ namespace video {
           }
 
           if (frame_captured) {
+            perf::record_capture_frame(ctx->config.perf_session_id, disp->frame_rate_source());
             pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
             if (!pipeline_trace->capture_ready) {
               pipeline_trace->capture_ready = frame_timestamp;
@@ -4155,6 +4167,7 @@ namespace video {
           }
 
           pos->session->request_normal_frame();
+          perf::record_encode_submission(ctx->config.perf_session_id, !frame_captured);
 
           ++pos;
         })

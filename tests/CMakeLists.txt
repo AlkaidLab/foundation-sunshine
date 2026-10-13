@@ -14,6 +14,17 @@ set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
 
+add_executable(perf_frame_rate_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp)
+target_include_directories(perf_frame_rate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(perf_frame_rate_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json)
+set_target_properties(perf_frame_rate_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
+
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
 target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main)

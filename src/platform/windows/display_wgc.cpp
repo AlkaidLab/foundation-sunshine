@@ -444,6 +444,8 @@ namespace platf::dxgi {
    */
   int
   wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
+    frame_counter = display->frame_rate_source();
+    frame_counter->kind.store(perf::capture_source_kind_e::wgc_arrivals, std::memory_order_relaxed);
     // WGC is not supported in service mode (running as SYSTEM user)
     // Fail fast to avoid unnecessary attempts and potential deadlocks
     if (is_running_as_system_user) {
@@ -708,6 +710,8 @@ namespace platf::dxgi {
       return;
     }
     if (frame != nullptr) {
+      // Count arrivals before the latest-frame mailbox can overwrite a frame.
+      frame_counter->record();
       AcquireSRWLockExclusive(&frame_lock);
       if (produced_frame) {
         produced_frame.Close();

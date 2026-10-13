@@ -12,7 +12,7 @@
 #include "src/config.h"
 #include "src/pyrowave/packetizer.h"
 #include "src/pyrowave/dynamic_hdr.h"
-#include "src/perf_recorder.h"
+#include "src/streaming/perf_recorder.h"
 #include "src/utility.h"
 #include "transport.h"
 
@@ -495,6 +495,7 @@ namespace platf::pyrowave_windows {
             publish_result.blocks,
             true);
         }
+        perf::record_encoded_frame(perf_session_id_);
         return 0;
       }
 

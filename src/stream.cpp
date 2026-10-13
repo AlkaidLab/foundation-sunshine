@@ -52,7 +52,7 @@ extern "C" {
 #include "logging.h"
 #include "mic_mixer.h"
 #include "network.h"
-#include "perf_recorder.h"
+#include "streaming/perf_recorder.h"
 #include "stream.h"
 #include "sync.h"
 #include "tray/system_tray.h"
