@@ -93,6 +93,31 @@ TEST(PerfFrameRates, SharedCaptureSourceDoesNotMergeSessionRates) {
   perf::end_session(second_id);
 }
 
+TEST(PerfFrameRates, CompletedSessionFreezesSourceTotalWhileSharedCaptureContinues) {
+  constexpr auto first_id = 91006u, second_id = 91007u;
+  begin(first_id);
+  begin(second_id);
+  const auto start = std::chrono::steady_clock::now();
+  auto source = std::make_shared<perf::capture_source_counter_t>();
+  source->kind = perf::capture_source_kind_e::wgc_arrivals;
+  perf::record_capture_frame(first_id, source, start);
+  perf::record_capture_frame(second_id, source, start);
+  source->record(120);
+  // Ending before any snapshot must still save the final source count.
+  perf::end_session(first_id);
+  source->record(120);
+  perf::end_session(first_id);  // Repeated cleanup must not refresh the saved count.
+  auto finished = rates_for(first_id, start + 2s);
+  EXPECT_EQ(finished["source"]["frames_total"], 120);
+  EXPECT_EQ(finished["source"]["fps"], 0.0);
+  EXPECT_EQ(finished["capture"]["frames_total"], 1);
+  EXPECT_EQ(rates_for(second_id, start + 2s)["source"]["frames_total"], 240);
+  source->record(120);
+  EXPECT_EQ(rates_for(first_id, start + 3s)["source"]["frames_total"], 120);
+  EXPECT_EQ(rates_for(second_id, start + 3s)["source"]["frames_total"], 360);
+  perf::end_session(second_id);
+}
+
 TEST(PerfFrameRates, UnsupportedSourceIsNullInsteadOfTheTargetRate) {
   constexpr auto id = 91005u;
   begin(id);

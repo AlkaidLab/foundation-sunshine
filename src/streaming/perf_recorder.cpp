@@ -182,7 +182,9 @@ namespace perf {
       auto kind = capture_source_kind_e::unavailable;
       if (session.capture_source) {
         kind = session.capture_source->kind.load(std::memory_order_relaxed);
-        session.frame_counts[0] = session.capture_source->frames.load(std::memory_order_relaxed);
+        if (session.active) {
+          session.frame_counts[0] = session.capture_source->frames.load(std::memory_order_relaxed);
+        }
       }
       const char *source_kind = "unavailable";
       switch (kind) {
@@ -299,6 +301,9 @@ namespace perf {
     }
 
     if (it->second.active) {
+      if (it->second.capture_source) {
+        it->second.frame_counts[0] = it->second.capture_source->frames.load(std::memory_order_relaxed);
+      }
       it->second.active = false;
       it->second.ended_at = clock_t::now();
       prune_completed_sessions();
