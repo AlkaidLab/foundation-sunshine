@@ -5,6 +5,7 @@ import {
   filterValidFps,
   normalizeEnabledDisabledValue,
   parseResolutions,
+  parseHevcGopSize,
   serializeFps,
   serializeResolutions,
 } from '../composables/useConfig.js'
@@ -14,6 +15,15 @@ test('resolution config round-trips Sunshine bracket syntax', () => {
 
   assert.deepEqual(parsed, ['1280x720', '1920x1080'])
   assert.equal(serializeResolutions(parsed), '[1280x720,1920x1080]')
+})
+
+test('HEVC GOP preserves driver default and explicit on-demand zero', () => {
+  for (const value of [-1, '-1', 0, '0', 60, '60', 1000, '1000']) {
+    assert.equal(parseHevcGopSize(value), Number(value))
+  }
+  for (const value of [undefined, null, '', ' ', true, -2, 1001, 1.5, '1.5', '60frames', NaN, Infinity]) {
+    assert.equal(parseHevcGopSize(value), undefined)
+  }
 })
 
 test('parseResolutions falls back to an empty array for invalid input', () => {

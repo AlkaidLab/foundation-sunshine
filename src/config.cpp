@@ -472,6 +472,7 @@ namespace config {
       0,  // ltr_frames
       0,  // slices_per_frame
       false,  // avcodec_compat: keep clean standalone AMF path by default
+      -1,  // hevc_gop_size: leave periodic refresh to the driver
     },  // amd
 
     {
@@ -1295,6 +1296,7 @@ namespace config {
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
     bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
+    int_between_f(vars, "amd_hevc_gop_size", video.amd.amd_hevc_gop_size, { -1, 1000 });
     bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
     // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
     // matches FFmpeg amfenc.c behavior of never setting the property unless

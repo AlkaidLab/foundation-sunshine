@@ -187,8 +187,10 @@ namespace amf {
       if (config.enforce_hrd) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd), "HEVC enforce_hrd");
       res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1, "HEVC num_gops_per_idr");
       if (res != AMF_OK) return res;
-      res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) ctx.gop_size, "HEVC gop_size");
-      if (res != AMF_OK) return res;
+      if (config.hevc_gop_size >= 0) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) config.hevc_gop_size, "HEVC gop_size");
+        if (res != AMF_OK) return res;
+      }
       if (config.preanalysis) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis), "HEVC preanalysis");
       if (config.vbaq) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq), "HEVC vbaq");
       if (config.lowlatency_mode) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, !!(*config.lowlatency_mode), "HEVC lowlatency_mode");

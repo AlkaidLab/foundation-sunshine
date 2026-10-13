@@ -39,6 +39,8 @@ namespace amf {
     // enabled, AMF properties are derived from AVCodecContext-like state and
     // FFmpeg amfenc behavior; when disabled, the standalone path stays clean.
     bool avcodec_compat = false;
+    // Negative leaves the driver GOP untouched; zero disables periodic IDRs.
+    int hevc_gop_size = -1;
 
     // Usage preset (AMF_VIDEO_ENCODER_USAGE_ENUM values)
     std::optional<int> usage;

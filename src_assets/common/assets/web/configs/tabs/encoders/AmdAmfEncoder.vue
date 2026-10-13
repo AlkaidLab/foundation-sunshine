@@ -1,9 +1,19 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps(['platform', 'config'])
 
 const config = ref(props.config)
+const hevcGopMode = computed({
+  get() {
+    const value = config.value.amd_hevc_gop_size
+    if (value === undefined || String(value) === '-1') return 'driver'
+    return String(value) === '0' ? 'on-demand' : 'fixed'
+  },
+  set(mode) {
+    config.value.amd_hevc_gop_size = mode === 'driver' ? -1 : mode === 'on-demand' ? 0 : 60
+  },
+})
 </script>
 
 <template>
@@ -209,10 +219,36 @@ const config = ref(props.config)
                 config.amd_multi_hw_instance = '';
                 config.amd_input_queue_size = '';
                 config.amd_av1_latency_mode = '';
+                config.amd_hevc_gop_size = -1;
               "
             >
               {{ $t('config.amd_advanced_reset') }}
             </button>
+
+            <!-- HEVC keyframe interval -->
+            <div class="mb-3">
+              <label for="amd_hevc_gop_size" class="form-label">{{ $t('config.amd_hevc_gop_size') }}</label>
+              <select id="amd_hevc_gop_size" class="form-select" v-model="hevcGopMode" aria-describedby="amd_hevc_gop_desc">
+                <option value="driver">{{ $t('config.amd_driver_default') }}</option>
+                <option value="on-demand">{{ $t('config.amd_hevc_gop_on_demand') }}</option>
+                <option value="fixed">{{ $t('config.amd_hevc_gop_fixed') }}</option>
+              </select>
+              <input
+                v-if="hevcGopMode === 'fixed'"
+                id="amd_hevc_gop_frames"
+                type="number"
+                class="form-control mt-2"
+                min="1"
+                max="1000"
+                step="1"
+                required
+                :aria-label="$t('config.amd_hevc_gop_fixed')"
+                aria-describedby="amd_hevc_gop_desc"
+                v-model.number="config.amd_hevc_gop_size"
+                @change="$event.target.reportValidity()"
+              />
+              <div id="amd_hevc_gop_desc" class="form-text">{{ $t('config.amd_hevc_gop_size_desc') }}</div>
+            </div>
 
             <!-- High Motion Quality Boost -->
             <div class="mb-3">
