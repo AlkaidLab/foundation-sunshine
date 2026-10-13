@@ -5,6 +5,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "assets.h"
+#include "asset_paths.h"
 #include "src/confighttp.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
@@ -149,15 +150,6 @@ namespace confighttp::assets {
       getStaticResource(response, request, WEB_DIR "images/logo-natpierce.png", "image/png");
     }
 
-    /**
-     * @brief 检查 child 是否是 parent 目录的子路径（防止路径穿越）
-     */
-    bool
-    isChildPath(fs::path const &child, fs::path const &parent) {
-      auto relPath = fs::relative(child, parent);
-      return *(relPath.begin()) != fs::path("..");
-    }
-
     void
     getBoxArt(resp_https_t response, req_https_t request) {
       print_req(request);
@@ -171,43 +163,21 @@ namespace confighttp::assets {
 
       BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
-      static const fs::path assetsRoot = fs::weakly_canonical(file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR));
-      static const fs::path coversRoot = fs::weakly_canonical(platf::appdata() / "covers");
-
-      // First try to find in SUNSHINE_ASSETS_DIR
-      const auto requestedPath = file_handler::path_from_utf8(path);
-      fs::path targetPath = fs::weakly_canonical(assetsRoot / requestedPath);
+      const auto assetsRoot = file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR);
+      const auto coversRoot = platf::appdata() / "covers";
+      const auto resolved = resolve_boxart_path(assetsRoot, coversRoot, file_handler::path_from_utf8(path));
       fs::path finalPath;
-      bool found = false;
-
-      // Strict check: Allow only files directly in assets root, no subdirectories
-      if (targetPath.parent_path() == assetsRoot && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
-        finalPath = targetPath;
-        found = true;
-        BOOST_LOG(debug) << "Found in boxart: " << file_handler::path_to_utf8(finalPath);
+      if (resolved) {
+        finalPath = *resolved;
       }
-
-      // If not found in boxart, try covers directory
-      if (!found) {
-        targetPath = fs::weakly_canonical(coversRoot / requestedPath);
-        // For covers, we use isChildPath which allows subdirectories but prevents traversal out of root
-        if (isChildPath(targetPath, coversRoot) && fs::exists(targetPath) && fs::is_regular_file(targetPath)) {
-          finalPath = targetPath;
-          found = true;
-          BOOST_LOG(debug) << "Found in covers: " << file_handler::path_to_utf8(finalPath);
-        }
-      }
-
-      if (!found) {
-        // If still not found or invalid path, use default image
-        BOOST_LOG(debug) << "Not found or invalid path, using default box.png";
-        finalPath = assetsRoot / "box.png";
-        // Ensure default file exists, otherwise we might fail later
-        if (!fs::exists(finalPath)) {
-          BOOST_LOG(warning) << "Default box.png not found at: " << file_handler::path_to_utf8(finalPath);
+      else {
+        // Preserve the placeholder for invalid and missing image names.
+        const auto fallback = resolve_boxart_path(assetsRoot, assetsRoot, "box.png");
+        if (!fallback) {
           response->write(SimpleWeb::StatusCode::client_error_not_found, "Image not found");
           return;
         }
+        finalPath = *fallback;
       }
 
       const auto imagePath = file_handler::path_to_utf8(finalPath);
@@ -260,10 +230,16 @@ namespace confighttp::assets {
 
       // .relative_path is needed to shed any leading slash that might exist in the request path
       const auto decodedRequestPath = SimpleWeb::Percent::decode(request->path);
-      auto filePath = fs::weakly_canonical(webDirPath / file_handler::path_from_utf8(decodedRequestPath).relative_path());
+      std::error_code path_error;
+      nodeModulesPath = fs::weakly_canonical(nodeModulesPath, path_error);
+      if (path_error) {
+        response->write(SimpleWeb::StatusCode::client_error_bad_request, "Bad Request");
+        return;
+      }
+      auto filePath = fs::weakly_canonical(webDirPath / file_handler::path_from_utf8(decodedRequestPath).relative_path(), path_error);
 
       // Don't do anything if file does not exist or is outside the assets directory
-      if (!isChildPath(filePath, nodeModulesPath)) {
+      if (path_error || !is_child_path(filePath, nodeModulesPath)) {
         BOOST_LOG(warning) << "Someone requested a path " << filePath << " that is outside the assets folder";
         response->write(SimpleWeb::StatusCode::client_error_bad_request, "Bad Request");
       }
@@ -274,7 +250,7 @@ namespace confighttp::assets {
         auto relPath = fs::relative(filePath, webDirPath);
         // get the mime type from the file extension mime_types map
         // remove the leading period from the extension
-        auto mimeType = mime_types.find(relPath.extension().string().substr(1));
+        auto mimeType = mime_types.find(relPath.extension().string().empty() ? "" : relPath.extension().string().substr(1));
         // check if the extension is in the map at the x position
         if (mimeType != mime_types.end()) {
           // if it is, set the content type to the mime type

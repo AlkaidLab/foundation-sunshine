@@ -42,6 +42,7 @@
 #include "config.h"
 #include "confighttp.h"
 #include "ai/proxy.h"
+#include "ai/http_stream.h"
 #include "display_device/session.h"
 #include "display_device/vdd_capability.h"
 #include "file_handler.h"
@@ -1356,6 +1357,7 @@ namespace nvhttp {
     /* Stop the public HTTP listeners first.  Once their worker threads have
      * joined, no capability request or route callback can race broker/host
      * teardown below. */
+    ai::http::shutdown_streams();
     https_server.stop();
     http_server.stop();
     ssl.join();

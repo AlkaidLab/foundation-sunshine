@@ -34,11 +34,14 @@ namespace ai {
    * @brief Process an AI chat completion request with streaming (SSE).
    * Calls chunkCallback for each SSE chunk received from upstream.
    * @param requestBody OpenAI-compatible JSON request body
-   * @param chunkCallback Called with each data chunk from upstream
+   * @param chunkCallback Called with each data chunk; false aborts the upstream request.
+   * @param isCancelled Optional cancellation poll, also called while upstream is idle.
+   * Callback exceptions are caught before returning to libcurl.
    * @return AiProxyResult (httpCode=200 if streaming started, error otherwise)
    */
   AiProxyResult
   processAiChatStream(
     const std::string &requestBody,
-    std::function<void(const char *, size_t)> chunkCallback);
+    std::function<bool(const char *, size_t)> chunkCallback,
+    std::function<bool()> isCancelled = {});
 }  // namespace ai

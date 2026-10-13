@@ -8,6 +8,7 @@
 #include "config_store.h"
 #include "provider.h"
 #include "proxy.h"
+#include "src/ai/http_stream.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/httpcommon.h"
@@ -135,27 +136,7 @@ namespace ai::http {
       }
 
       if (isStream) {
-        bool headerSent = false;
-        auto result = ai::processAiChatStream(requestBody, [&](const char *data, size_t len) {
-          if (!headerSent) {
-            *response << "HTTP/1.1 200 OK\r\n";
-            *response << "Content-Type: text/event-stream\r\n";
-            *response << "Cache-Control: no-cache\r\n";
-            *response << "Connection: keep-alive\r\n";
-            *response << "\r\n";
-            response->send();
-            headerSent = true;
-          }
-          std::string chunk(data, len);
-          *response << chunk;
-          response->send();
-        });
-
-        if (result.httpCode != 200 && !headerSent) {
-          SimpleWeb::CaseInsensitiveMultimap headers;
-          headers.emplace("Content-Type", "application/json");
-          response->write(SimpleWeb::StatusCode::server_error_bad_gateway, result.body, headers);
-        }
+        ai::http::stream_response(response, std::move(requestBody));
       }
       else {
         auto result = ai::processAiChat(requestBody);

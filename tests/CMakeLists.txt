@@ -41,6 +41,24 @@ target_link_libraries(ai_provider_unit_tests PRIVATE gtest_main nlohmann_json::n
 set_target_properties(ai_provider_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ai_provider_unit_tests COMMAND ai_provider_unit_tests)
 
+# Exercise real curl transfers and a single-threaded HTTPS listener in isolation.
+add_executable(http_safety_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/tools/test_http_safety.cpp
+        ${CMAKE_SOURCE_DIR}/src/ai/proxy.cpp
+        ${CMAKE_SOURCE_DIR}/src/ai/provider.cpp
+        ${CMAKE_SOURCE_DIR}/src/ai/http_stream.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+target_include_directories(http_safety_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(http_safety_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main)
+target_compile_definitions(http_safety_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+set_target_properties(http_safety_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(http_safety_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME http_safety_unit_tests COMMAND http_safety_unit_tests)
+set_tests_properties(http_safety_unit_tests PROPERTIES TIMEOUT 45)
+
+
 # coverage
 # https://gcovr.com/en/stable/guide/compiling.html#compiler-options
 option(SUNSHINE_TESTS_ENABLE_COVERAGE "Enable gcov coverage instrumentation for tests" OFF)

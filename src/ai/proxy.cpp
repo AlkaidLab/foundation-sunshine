@@ -19,7 +19,8 @@ namespace ai {
 
   namespace {
     struct StreamCallbackContext {
-      std::function<void(const char *, size_t)> callback;
+      std::function<bool(const char *, size_t)> callback;
+      std::function<bool()> is_cancelled;
     };
 
   }  // namespace
@@ -149,17 +150,33 @@ namespace ai {
   }
 
   static size_t
-  stream_func_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+  stream_func_callback(char *ptr, size_t size, size_t nmemb, void *userdata) noexcept {
     size_t realsize = size * nmemb;
     auto *ctx = static_cast<StreamCallbackContext *>(userdata);
-    ctx->callback(ptr, realsize);
-    return realsize;
+    try {
+      return ctx->callback(ptr, realsize) ? realsize : 0;
+    }
+    catch (...) {
+      return 0;
+    }
+  }
+
+  static int
+  stream_progress_callback(void *userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) noexcept {
+    auto *ctx = static_cast<StreamCallbackContext *>(userdata);
+    try {
+      return ctx->is_cancelled && ctx->is_cancelled() ? 1 : 0;
+    }
+    catch (...) {
+      return 1;
+    }
   }
 
   AiProxyResult
   processAiChatStream(
     const std::string &requestBody,
-    std::function<void(const char *, size_t)> chunkCallback) {
+    std::function<bool(const char *, size_t)> chunkCallback,
+    std::function<bool()> isCancelled) {
     std::string targetUrl, processedBody;
     std::map<std::string, std::string> proxyHeaders;
     bool isAnthropic = false, isStream = false;
@@ -176,6 +193,7 @@ namespace ai {
 
     StreamCallbackContext ctx;
     ctx.callback = std::move(chunkCallback);
+    ctx.is_cancelled = std::move(isCancelled);
 
     struct curl_slist *header_list = nullptr;
     header_list = curl_slist_append(header_list, "Content-Type: application/json");
@@ -191,6 +209,9 @@ namespace ai {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_func_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, stream_progress_callback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
