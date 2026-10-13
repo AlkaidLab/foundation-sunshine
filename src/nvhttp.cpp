@@ -41,6 +41,7 @@
 #include "client_fingerprint.h"
 #include "config.h"
 #include "confighttp.h"
+#include "ai/proxy.h"
 #include "display_device/session.h"
 #include "display_device/vdd_capability.h"
 #include "file_handler.h"
@@ -637,7 +638,7 @@ namespace nvhttp {
     tree.put("root.appListEtag", proc::proc.get_apps_etag());
 
     // AI capability: inform client if AI proxy is available
-    tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
+    tree.put("root.AiCapability", ai::isAiEnabled() ? 1 : 0);
 
 #ifdef _WIN32
     tree.put("root.VddCapabilityVersion", display_device::vdd_capability::capability_version);

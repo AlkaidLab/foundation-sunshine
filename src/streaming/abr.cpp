@@ -14,7 +14,7 @@
 
 #include "abr.h"
 #include "src/config.h"
-#include "src/confighttp.h"
+#include "src/ai/proxy.h"
 #include "src/logging.h"
 
 #include <algorithm>
@@ -632,7 +632,7 @@ namespace abr {
    */
   static void
   llm_worker(const std::string &client_name, uint64_t generation, std::string request_body) {
-    auto result = confighttp::processAiChat(request_body);
+    auto result = ai::processAiChat(request_body);
 
     std::lock_guard lock(sessions_mutex);
     auto it = sessions.find(client_name);
@@ -756,7 +756,7 @@ namespace abr {
     // ── Phase 3: LLM trigger (event-driven, NOT periodic) ──
     bool should_trigger_llm = (state.app_changed || state.network_recovered)
                               && !state.llm_in_flight
-                              && confighttp::isAiEnabled()
+                              && ai::isAiEnabled()
                               && !load_prompt_template().empty();
 
     if (should_trigger_llm) {

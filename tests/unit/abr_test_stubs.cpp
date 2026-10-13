@@ -1,7 +1,7 @@
 #include <boost/log/sources/severity_logger.hpp>
 
 #include "src/config.h"
-#include "src/confighttp.h"
+#include "src/ai/proxy.h"
 
 boost::log::sources::severity_logger<int> verbose;
 boost::log::sources::severity_logger<int> debug;
@@ -22,7 +22,7 @@ namespace config {
   sunshine_t sunshine;
 }  // namespace config
 
-namespace confighttp {
+namespace ai {
 
   bool
   isAiEnabled() {
@@ -39,4 +39,4 @@ namespace confighttp {
     return {200, "", "text/event-stream"};
   }
 
-}  // namespace confighttp
+}  // namespace ai

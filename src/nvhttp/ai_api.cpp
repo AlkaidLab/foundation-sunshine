@@ -6,7 +6,7 @@
 #include <Simple-Web-Server/server_http.hpp>
 #include <nlohmann/json.hpp>
 
-#include "src/confighttp.h"
+#include "src/ai/proxy.h"
 
 namespace nvhttp::ai_api {
 
@@ -37,7 +37,7 @@ namespace nvhttp::ai_api {
 
     if (isStream) {
       bool headerSent = false;
-      auto result = confighttp::processAiChatStream(requestBody, [&](const char *data, size_t len) {
+      auto result = ai::processAiChatStream(requestBody, [&](const char *data, size_t len) {
         if (!headerSent) {
           *response << "HTTP/1.1 200 OK\r\n";
           *response << "Content-Type: text/event-stream\r\n";
@@ -63,7 +63,7 @@ namespace nvhttp::ai_api {
       }
     }
     else {
-      auto result = confighttp::processAiChat(requestBody);
+      auto result = ai::processAiChat(requestBody);
 
       SimpleWeb::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", result.contentType);

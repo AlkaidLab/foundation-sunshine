@@ -31,6 +31,16 @@ target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main)
 set_target_properties(pen_barrel_roll_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME pen_barrel_roll_unit_tests COMMAND pen_barrel_roll_unit_tests)
 
+
+# Keep compatibility conversion tests independent of the platform host backends.
+add_executable(ai_provider_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/ai/provider.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp)
+target_include_directories(ai_provider_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ai_provider_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json)
+set_target_properties(ai_provider_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ai_provider_unit_tests COMMAND ai_provider_unit_tests)
+
 # coverage
 # https://gcovr.com/en/stable/guide/compiling.html#compiler-options
 option(SUNSHINE_TESTS_ENABLE_COVERAGE "Enable gcov coverage instrumentation for tests" OFF)
@@ -460,6 +470,7 @@ target_link_libraries(${PROJECT_NAME}
         gtest
         ${PLATFORM_LIBRARIES})
 target_compile_definitions(${PROJECT_NAME} PUBLIC
+        SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         ${SUNSHINE_DEFINITIONS}
         ${TEST_DEFINITIONS})
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
