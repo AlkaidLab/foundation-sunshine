@@ -46,6 +46,8 @@ PC 的基本设置、Android 的基本设置提供 FEC 模式：跟随主机、�
 
 ## 协议边界
 
+RS 容量超限日志记录会话、帧编号、IDR 标志、编码大小和协商包长；跳过 FEC 的警告另记录控制器请求比例、受提交额度限制后的规划比例、帧提交时的 FEC 额度和已生效的编码码率。这些信息用于区分关键帧峰值、包长和保护比例的影响，不改变编码器、周期刷新、分块或发送回退。
+
 主机 DESCRIBE 广告 `x-ss-video[0].fecControlVersion:1`。客户端仅在版本匹配且为旧 RS 视频格式时提交 `x-ml-video.fecSummaryVersion:1` 和 `x-ml-video.fecPercentage`。
 
 - `0x5510`：客户端 FEC 汇总，三个大端 uint32：序号、数据分片数、缺失数据分片数。
