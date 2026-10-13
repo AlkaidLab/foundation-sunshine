@@ -55,6 +55,9 @@ namespace platf::dxgi {
   duplication_t::init(display_base_t *display, const ::video::config_t &config) {
     HRESULT status;
 
+    frame_counter = display->frame_rate_source();
+    frame_counter->kind.store(perf::capture_source_kind_e::dxgi_updates, std::memory_order_relaxed);
+
     // Capture format will be determined from the first call to AcquireNextFrame()
     display->capture_format = DXGI_FORMAT_UNKNOWN;
 
@@ -141,6 +144,12 @@ namespace platf::dxgi {
     }
 
     auto status = dup->AcquireNextFrame(timeout.count(), &frame_info, res_p);
+
+    if (SUCCEEDED(status) && frame_counter && frame_info.LastPresentTime.QuadPart != 0) {
+      // DXGI may coalesce several desktop updates into the returned surface.
+      // Pointer-only notifications do not count as source image updates.
+      frame_counter->record(std::max<UINT>(1, frame_info.AccumulatedFrames));
+    }
 
     switch (status) {
       case S_OK:

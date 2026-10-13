@@ -66,7 +66,7 @@
 #include "network.h"
 #include "nvhttp.h"
 #include "nvenc/frame_budget.h"
-#include "perf_recorder.h"
+#include "streaming/perf_recorder.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
 #include "rtsp.h"

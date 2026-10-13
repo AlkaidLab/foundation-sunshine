@@ -902,6 +902,10 @@ namespace platf::dxgi {
     }
 
     UINT32 slot = meta_snapshot.SlotIndex;
+    if (frame_rate_counter) {
+      // Observe the producer counter before acquiring a possibly busy slot.
+      frame_rate_counter->observe_sequence(meta_snapshot.FrameCounter);
+    }
     if (slot >= m_keyedMutex.size()) {
       BOOST_LOG(warning) << "[vdd_capture] producer slot "sv << slot
                          << " outside opened slot count "sv << m_keyedMutex.size()
@@ -1443,6 +1447,9 @@ namespace platf::dxgi {
     // Use producer-reported format as our capture format. complete_img() / image
     // pool will be created against this format.
     capture_format = dup.format();
+    dup.frame_rate_counter = frame_rate_source();
+    dup.frame_rate_counter->kind.store(perf::capture_source_kind_e::vdd_published, std::memory_order_relaxed);
+    dup.frame_rate_counter->observe_sequence(dup.frame_counter());
     capture_linear_gamma = capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT;
     vdd_borrow_enabled = config::video.vdd_borrowed_texture;
     if (auto env_override = vdd_borrowed_texture_env_override()) {

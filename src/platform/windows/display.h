@@ -25,6 +25,7 @@
 #include <AMF/core/CurrentTime.h>
 
 #include "src/platform/common.h"
+#include "src/streaming/frame_rate_tracker.h"
 #include "src/platform/windows/frame_contract.h"
 #include "src/utility.h"
 #include "src/video.h"
@@ -186,6 +187,13 @@ namespace platf::dxgi {
 
   class display_base_t: public display_t {
   public:
+    std::shared_ptr<perf::capture_source_counter_t> capture_frame_counter = std::make_shared<perf::capture_source_counter_t>();
+
+    std::shared_ptr<perf::capture_source_counter_t>
+    frame_rate_source() const override {
+      return capture_frame_counter;
+    }
+
     int
     init(const ::video::config_t &config, const std::string &display_name);
 
@@ -451,6 +459,7 @@ namespace platf::dxgi {
    */
   class duplication_t {
   public:
+    std::shared_ptr<perf::capture_source_counter_t> frame_counter;
     dup_t dup;
     bool has_frame {};
     bool local_cursor_mode_was_active {};
@@ -516,6 +525,7 @@ namespace platf::dxgi {
    * Display duplicator that uses the Windows.Graphics.Capture API.
    */
   class wgc_capture_t {
+    std::shared_ptr<perf::capture_source_counter_t> frame_counter;
     winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice uwp_device { nullptr };
     winrt::Windows::Graphics::Capture::GraphicsCaptureItem item { nullptr };
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool frame_pool { nullptr };
@@ -655,6 +665,8 @@ namespace platf::dxgi {
      */
     int
     init(ID3D11Device *d3d_device, unsigned int monitor_idx);
+
+    std::shared_ptr<perf::capture_source_counter_t> frame_rate_counter;
 
     /**
      * @brief Wait for the next frame (event-driven, no polling).

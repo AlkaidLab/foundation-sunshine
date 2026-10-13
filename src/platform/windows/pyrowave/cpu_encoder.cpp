@@ -8,7 +8,7 @@
 #include "cpu_encoder.h"
 
 #include "src/pyrowave/packetizer.h"
-#include "src/perf_recorder.h"
+#include "src/streaming/perf_recorder.h"
 #include "src/config.h"
 #include "transport.h"
 
@@ -419,6 +419,7 @@ namespace platf::pyrowave_windows {
         publish_result.blocks,
         true);
     }
+    perf::record_encoded_frame(base_session.perf_session_id);
     return 0;
   }
 }  // namespace platf::pyrowave_windows

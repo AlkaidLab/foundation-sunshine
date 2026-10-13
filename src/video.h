@@ -442,6 +442,8 @@ namespace video {
   struct encode_session_t {
     virtual ~encode_session_t() = default;
 
+    std::uint32_t perf_session_id = 0;
+
     virtual int
     convert(platf::img_t &img) = 0;
 

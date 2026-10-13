@@ -1,15 +1,18 @@
 /**
- * @file src/perf_recorder.h
+ * @file src/streaming/perf_recorder.h
  * @brief Lightweight runtime performance snapshots for active streaming sessions.
  */
 #pragma once
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 
 #include <nlohmann/json.hpp>
+
+#include "frame_rate_tracker.h"
 
 namespace perf {
 
@@ -49,6 +52,11 @@ namespace perf {
   void record_pipeline_sample(std::uint32_t session_id, const pipeline_sample_t &sample, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   void record_pyrowave_failure(std::uint32_t session_id, pyrowave_failure_stage_e stage);
 
-  nlohmann::json current_snapshot_json();
+  void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source,
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+  void record_encode_submission(std::uint32_t session_id, bool repeat);
+  void record_encoded_frame(std::uint32_t session_id);
+
+  nlohmann::json current_snapshot_json(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
 }  // namespace perf
