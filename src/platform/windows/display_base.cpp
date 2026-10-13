@@ -143,12 +143,13 @@ namespace platf::dxgi {
       return capture_status;
     }
 
+    const auto source_collection_epoch = perf::frame_rate_collection_epoch();
     auto status = dup->AcquireNextFrame(timeout.count(), &frame_info, res_p);
 
     if (SUCCEEDED(status) && frame_counter && frame_info.LastPresentTime.QuadPart != 0) {
       // DXGI may coalesce several desktop updates into the returned surface.
       // Pointer-only notifications do not count as source image updates.
-      frame_counter->record(std::max<UINT>(1, frame_info.AccumulatedFrames));
+      frame_counter->record(std::max<UINT>(1, frame_info.AccumulatedFrames), source_collection_epoch);
     }
 
     switch (status) {

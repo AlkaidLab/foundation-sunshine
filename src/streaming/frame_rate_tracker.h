@@ -18,6 +18,48 @@ namespace perf {
     return frame_rate_collection_generation.load(std::memory_order_acquire);
   }
 
+  namespace detail {
+    extern std::atomic<std::uint32_t> source_updates_in_flight;
+    extern std::atomic<bool> source_drain_requested;
+    void notify_source_drain();
+
+    // Enrollment and the epoch recheck must be sequentially consistent with
+    // disable's cutoff/drain. A late enrollment is rejected; accepted source
+    // writes finish before totals freeze or the next epoch becomes visible.
+    class source_update_guard_t {
+    public:
+      explicit source_update_guard_t(std::uint64_t expected_epoch) {
+        if (!expected_epoch) return;
+        source_updates_in_flight.fetch_add(1, std::memory_order_seq_cst);
+        if (frame_rate_collection_generation.load(std::memory_order_seq_cst) == expected_epoch) {
+          generation = expected_epoch;
+        }
+        else {
+          finish_update();
+        }
+      }
+
+      ~source_update_guard_t() {
+        if (generation) finish_update();
+      }
+
+      source_update_guard_t(const source_update_guard_t &) = delete;
+      source_update_guard_t &operator=(const source_update_guard_t &) = delete;
+
+      std::uint64_t epoch() const { return generation; }
+
+    private:
+      static void finish_update() {
+        if (source_updates_in_flight.fetch_sub(1, std::memory_order_seq_cst) == 1 &&
+            source_drain_requested.load(std::memory_order_seq_cst)) {
+          notify_source_drain();
+        }
+      }
+
+      std::uint64_t generation = 0;
+    };
+  }  // namespace detail
+
   enum class capture_source_kind_e {
     unavailable,
     dxgi_updates,
@@ -25,21 +67,23 @@ namespace perf {
     vdd_published,
   };
 
-  // One counter per display lifetime. Source threads only increment atomics;
-  // they never wait for the performance API or the RTSS monitor.
+  // One counter per display lifetime. Source updates never take recorder_mutex;
+  // the collection transition drains accepted writes before freezing totals.
   struct capture_source_counter_t {
     std::atomic<capture_source_kind_e> kind { capture_source_kind_e::unavailable };
     std::atomic<std::uint64_t> frames { 0 };
 
-    void record(std::uint64_t count = 1) {
-      if (!frame_rate_collection_epoch()) return;
+    void record(std::uint64_t count = 1, std::uint64_t expected_epoch = frame_rate_collection_epoch()) {
+      const detail::source_update_guard_t update { expected_epoch };
+      if (!update.epoch()) return;
       frames.fetch_add(count, std::memory_order_relaxed);
     }
 
     // Only the VDD capture thread calls this. Count skipped publications too,
     // without treating the driver's pre-stream counter as newly arrived frames.
-    void observe_sequence(std::uint64_t sequence) {
-      const auto generation = frame_rate_collection_epoch();
+    void observe_sequence(std::uint64_t sequence, std::uint64_t expected_epoch = frame_rate_collection_epoch()) {
+      const detail::source_update_guard_t update { expected_epoch };
+      const auto generation = update.epoch();
       if (!generation) return;
       if (generation != last_generation) {
         last_sequence = sequence;
@@ -47,7 +91,7 @@ namespace perf {
         return;
       }
       if (last_sequence && sequence >= *last_sequence) {
-        record(sequence - *last_sequence);
+        frames.fetch_add(sequence - *last_sequence, std::memory_order_relaxed);
       }
       last_sequence = sequence;
     }

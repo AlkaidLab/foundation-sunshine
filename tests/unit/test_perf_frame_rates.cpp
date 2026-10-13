@@ -1,6 +1,7 @@
 #include "src/streaming/perf_recorder.h"
 
 #include <gtest/gtest.h>
+#include <future>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -328,4 +329,78 @@ TEST(PerfFrameRateCollection, ConcurrentFrameHooksStopAfterLastRelease) {
   stop = true;
   producer.join();
   perf::end_session(id);
+}
+
+TEST(PerfFrameRateCollection, DisableDrainsAcceptedSourceWritesBeforeReenable) {
+  constexpr auto id = 92004u;
+  begin(id);
+  perf::set_frame_rate_subscription("drain-test", true);
+  auto source = std::make_shared<perf::capture_source_counter_t>();
+  source->kind = perf::capture_source_kind_e::wgc_arrivals;
+  perf::record_capture_frame(id, source);
+  std::promise<bool> admitted;
+  auto admitted_result = admitted.get_future();
+  std::promise<void> allow_write;
+  auto write_signal = allow_write.get_future();
+  std::thread delayed_source([&]() {
+    const perf::detail::source_update_guard_t update { perf::frame_rate_collection_epoch() };
+    admitted.set_value(update.epoch() != 0);
+    write_signal.wait();
+    // Model a source hook preempted between its epoch check and atomic update.
+    if (update.epoch()) source->frames.fetch_add(120, std::memory_order_relaxed);
+  });
+  EXPECT_TRUE(admitted_result.get());
+  auto disable = std::async(std::launch::async, []() {
+    return perf::set_frame_rate_subscription("drain-test", false);
+  });
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (perf::frame_rate_collection_epoch() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+  EXPECT_EQ(perf::frame_rate_collection_epoch(), 0u);
+  EXPECT_EQ(disable.wait_for(20ms), std::future_status::timeout);
+  auto enable = std::async(std::launch::async, []() {
+    return perf::set_frame_rate_subscription("drain-test", true);
+  });
+  allow_write.set_value();
+  delayed_source.join();
+  EXPECT_FALSE(disable.get()["enabled"]);
+  EXPECT_TRUE(enable.get()["enabled"]);
+  EXPECT_EQ(source->frames, 120u);
+  auto resumed = rates_for(id, std::chrono::steady_clock::now());
+  EXPECT_EQ(resumed["source"]["frames_total"], 0);
+  source->record();
+  resumed = rates_for(id, std::chrono::steady_clock::now());
+  EXPECT_EQ(resumed["source"]["frames_total"], 1);
+  perf::set_frame_rate_subscription("drain-test", false);
+  perf::end_session(id);
+}
+
+TEST(PerfFrameRateCollection, EnrollmentWithAnObsoleteEpochIsRejected) {
+  perf::set_frame_rate_subscription("old-epoch-test", true);
+  const auto old_epoch = perf::frame_rate_collection_epoch();
+  perf::set_frame_rate_subscription("old-epoch-test", false);
+  perf::set_frame_rate_subscription("old-epoch-test", true);
+  EXPECT_NE(perf::frame_rate_collection_epoch(), old_epoch);
+  {
+    const perf::detail::source_update_guard_t stale { old_epoch };
+    EXPECT_EQ(stale.epoch(), 0u);
+  }
+  EXPECT_EQ(perf::detail::source_updates_in_flight.load(), 0u);
+  perf::set_frame_rate_subscription("old-epoch-test", false);
+}
+
+TEST(PerfFrameRateCollection, LateSourceMetadataCannotPrimeOrIncrementTheNewWindow) {
+  perf::set_frame_rate_subscription("metadata-test", true);
+  perf::capture_source_counter_t source;
+  const auto old_epoch = perf::frame_rate_collection_epoch();
+  source.observe_sequence(10000, old_epoch);
+  perf::set_frame_rate_subscription("metadata-test", false);
+  perf::set_frame_rate_subscription("metadata-test", true);
+  // The APIs can finish acquiring old data after a quick lease transition.
+  source.record(120, old_epoch);
+  source.observe_sequence(10120, old_epoch);
+  EXPECT_EQ(source.frames, 0u);
+  source.observe_sequence(20000);  // Prime using metadata from the current epoch.
+  source.observe_sequence(20120);
+  EXPECT_EQ(source.frames, 120u);
+  perf::set_frame_rate_subscription("metadata-test", false);
 }

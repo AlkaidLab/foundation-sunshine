@@ -59,6 +59,11 @@ Capture dispatch also skips the source-pointer lookup. Counter totals freeze and
 rate values become unavailable (`collection off` in RTSS). Re-enabling resets active
 session totals and measurement windows; VDD re-primes its producer sequence so
 publications during the disabled interval never appear as a burst after enabling.
+Disabling first rejects new source updates, drains already accepted counter writes,
+and then freezes totals. Each backend binds acquired data to the collection epoch
+observed before acquisition/metadata read; stale callbacks cannot increment or prime
+the next interval. Source hooks never take the recorder mutex, and drain notification
+is needed only during a collection transition.
 
 - **Src[VDD pub]** counts driver frame-channel publications using producer
   sequence deltas, including publications skipped by the consumer. It does not

@@ -16,6 +16,10 @@
 
 namespace perf {
   std::atomic<std::uint64_t> frame_rate_collection_generation { 0 };
+  namespace detail {
+    std::atomic<std::uint32_t> source_updates_in_flight { 0 };
+    std::atomic<bool> source_drain_requested { false };
+  }
 
   namespace {
     using clock_t = std::chrono::steady_clock;
@@ -67,6 +71,8 @@ namespace perf {
     };
 
     std::mutex recorder_mutex;
+    std::mutex source_drain_mutex;
+    std::condition_variable source_updates_finished;
     std::unordered_map<std::uint32_t, session_state_t> sessions;
     std::uint32_t latest_session_id = 0;
     std::unordered_map<std::string, clock_t::time_point> frame_rate_subscriptions;
@@ -85,7 +91,17 @@ namespace perf {
       const bool enabled = !frame_rate_subscriptions.empty();
       if (enabled == (frame_rate_collection_epoch() != 0)) return;
       if (!enabled) {
-        frame_rate_collection_generation.store(0, std::memory_order_release);
+        detail::source_drain_requested.store(true, std::memory_order_seq_cst);
+        frame_rate_collection_generation.store(0, std::memory_order_seq_cst);
+        // Source hooks never take recorder_mutex, so they can complete while
+        // the transition holds it. No new epoch can begin until this drain ends.
+        {
+          std::unique_lock lock { source_drain_mutex };
+          source_updates_finished.wait(lock, []() {
+            return detail::source_updates_in_flight.load(std::memory_order_seq_cst) == 0;
+          });
+        }
+        detail::source_drain_requested.store(false, std::memory_order_seq_cst);
         for (auto &[id, session] : sessions) {
           if (session.active) refresh_source_total(session);
         }
@@ -107,18 +123,14 @@ namespace perf {
       update_collection_state(now);
     }
 
-    void start_subscription_expiry_worker() {
-      // Constructed on first acquisition; destroyed before the recorder globals.
-      static std::jthread worker([](std::stop_token stop) {
-        std::stop_callback wake_on_stop(stop, []() {
-          std::lock_guard lock { recorder_mutex };
-          subscription_changed.notify_all();
-        });
+    class subscription_expiry_worker_t {
+    public:
+      subscription_expiry_worker_t(): worker([this]() {
         std::unique_lock lock { recorder_mutex };
-        while (!stop.stop_requested()) {
+        while (!stopping) {
           expire_subscriptions(clock_t::now());
           if (frame_rate_subscriptions.empty()) {
-            subscription_changed.wait(lock, [&]() { return stop.stop_requested() || !frame_rate_subscriptions.empty(); });
+            subscription_changed.wait(lock, [&]() { return stopping || !frame_rate_subscriptions.empty(); });
           }
           else {
             const auto earliest = std::min_element(frame_rate_subscriptions.begin(), frame_rate_subscriptions.end(),
@@ -127,7 +139,26 @@ namespace perf {
             subscription_changed.wait_until(lock, deadline);
           }
         }
-      });
+      }) {}
+
+      ~subscription_expiry_worker_t() {
+        {
+          std::lock_guard lock { recorder_mutex };
+          stopping = true;
+          subscription_changed.notify_all();
+        }
+        worker.join();
+      }
+
+    private:
+      bool stopping = false;
+      std::thread worker;
+    };
+
+    void start_subscription_expiry_worker() {
+      // Owned shutdown completes before recorder globals are destroyed, without
+      // relying on a stop-token/atomic-wait pool with a later static lifetime.
+      static subscription_expiry_worker_t worker;
     }
 
     double round_ms(double value) {
@@ -342,6 +373,14 @@ namespace perf {
       }
     }
   }  // namespace
+
+  namespace detail {
+    void notify_source_drain() {
+      // Pair notification with the waiter's predicate check to avoid lost wakes.
+      std::lock_guard lock { source_drain_mutex };
+      source_updates_finished.notify_all();
+    }
+  }
 
   void begin_session(const session_metadata_t &metadata) {
     std::lock_guard lock { recorder_mutex };
