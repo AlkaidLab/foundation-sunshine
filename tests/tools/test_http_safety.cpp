@@ -114,8 +114,10 @@ namespace {
     boost::asio::io_context io;
     tcp::acceptor acceptor { io, { tcp::v4(), 0 } };
     std::thread worker;
-    bool send_event;
     bool finite;
+    int response_code = 200;
+    std::string response_body;
+    bool interim_continue = false;
     void
     accept() {
       auto connection = std::make_shared<Connection>(io, *this);
@@ -125,10 +127,13 @@ namespace {
         boost::asio::async_read_until(connection->socket, connection->request, "\r\n\r\n", [this, connection](auto ec, auto) {
           if (ec) return;
           ++accepted;
-          auto data = std::make_shared<std::string>("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n");
-          if (finite) *data += std::string("Content-Length: ") + (send_event ? "13" : "0") + "\r\n";
-          *data += "\r\n";
-          if (send_event) *data += "data: hello\n\n";
+          auto data = std::make_shared<std::string>();
+          if (interim_continue) *data += "HTTP/1.1 100 Continue\r\n\r\n";
+          *data += "HTTP/1.1 " + SimpleWeb::status_code(static_cast<SimpleWeb::StatusCode>(response_code));
+          *data += response_code == 200 ? "\r\nContent-Type: text/event-stream\r\n" : "\r\nContent-Type: application/json\r\n";
+          *data += "Connection: close\r\n";
+          if (finite) *data += "Content-Length: " + std::to_string(response_body.size()) + "\r\n";
+          *data += "\r\n" + response_body;
           boost::asio::async_write(connection->socket, boost::asio::buffer(*data), [this, connection, data](auto ec, auto) {
             if (!ec && finite) {
               boost::system::error_code ignored;
@@ -143,10 +148,17 @@ namespace {
 
   public:
     std::atomic_int accepted { 0 }, closed { 0 };
-    explicit Upstream(bool send_event = true, bool finite = false): send_event(send_event), finite(finite) {
+    void
+    start() {
       upstream_url = "http://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port());
       accept();
       worker = std::thread([this] { io.run(); });
+    }
+    explicit Upstream(bool send_event = true, bool finite = false): finite(finite), response_body(send_event ? "data: hello\n\n" : "") {
+      start();
+    }
+    Upstream(int status, std::string body, bool interim = false): finite(true), response_code(status), response_body(std::move(body)), interim_continue(interim) {
+      start();
     }
     ~Upstream() {
       io.stop();
@@ -157,6 +169,27 @@ namespace {
   class HttpSafety: public testing::Test {
   protected:
     fs::path directory;
+    std::unique_ptr<SimpleWeb::Server<SimpleWeb::HTTPS>> server;
+    std::thread listener;
+    unsigned short
+    start_https() {
+      const auto credentials = crypto::gen_creds("localhost", 2048);
+      std::ofstream(directory / "cert.pem") << credentials.x509;
+      std::ofstream(directory / "key.pem") << credentials.pkey;
+      server = std::make_unique<SimpleWeb::Server<SimpleWeb::HTTPS>>((directory / "cert.pem").string(), (directory / "key.pem").string());
+      server->config.address = "127.0.0.1";
+      server->config.port = 0;
+      server->config.thread_pool_size = 1;
+      server->resource["^/stream$"]["POST"] = [](auto response, auto request) {
+        ai::http::stream_response(response, request->content.string());
+      };
+      server->resource["^/ping$"]["GET"] = [](auto response, auto) { response->write("pong"); };
+      auto ready = std::make_shared<std::promise<unsigned short>>();
+      auto port = ready->get_future();
+      listener = std::thread([this, ready] { server->start([ready](auto port) { ready->set_value(port); }); });
+      if (port.wait_for(5s) != std::future_status::ready) throw std::runtime_error("HTTPS startup timed out");
+      return port.get();
+    }
     void
     SetUp() override {
       directory = fs::temp_directory_path() / ("sunshine-http-safety-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -170,6 +203,9 @@ namespace {
     }
     void
     TearDown() override {
+      if (server) server->stop();
+      if (listener.joinable()) listener.join();
+      server.reset();
       std::error_code ec;
       fs::remove_all(directory, ec);
     }
@@ -241,6 +277,47 @@ TEST(AiStreamSafety, SuccessfulStreamPreservesBytesAndStatus) {
   EXPECT_EQ(received, "data: hello\n\n");
 }
 
+TEST(AiStreamSafety, UpstreamErrorsNeverInvokeTheChunkCallback) {
+  const std::string body = R"({"error":{"message":"upstream rejected request"}})";
+  for (const int code : { 401, 429, 503 }) {
+    SCOPED_TRACE(code);
+    Upstream upstream(code, body, true);
+    bool called = false;
+    const auto result = ai::processAiChatStream(R"({"stream":true})", [&](auto, auto) { called = true; return true; });
+    EXPECT_FALSE(called);
+    EXPECT_EQ(result.httpCode, code == 503 ? 502 : code);
+    EXPECT_EQ(result.body, body);
+    EXPECT_EQ(result.contentType, "application/json");
+  }
+}
+
+TEST(AiStreamSafety, OversizedErrorBodiesAbortWithoutStartingSse) {
+  Upstream upstream(401, std::string(1024 * 1024 + 1, 'x'));
+  bool called = false;
+  const auto result = ai::processAiChatStream(R"({"stream":true})", [&](auto, auto) { called = true; return true; });
+  EXPECT_FALSE(called);
+  EXPECT_EQ(result.httpCode, 502);
+  EXPECT_EQ(nlohmann::json::parse(result.body)["error"]["type"], "upstream_error");
+}
+
+TEST_F(HttpSafety, Upstream401And429KeepTheirBodyWithoutAnSseResponse) {
+  const auto port = start_https();
+  const std::string body = R"({"error":{"message":"upstream rejected request"}})";
+  for (const int code : { 401, 429 }) {
+    for (const auto &error_body : { body, std::string() }) {
+      SCOPED_TRACE(code);
+      Upstream upstream(code, error_body, true);
+      SimpleWeb::Client<SimpleWeb::HTTPS> client("127.0.0.1:" + std::to_string(port), false);
+      client.config.timeout = 3;
+      const auto response = client.request("POST", "/stream", R"({"stream":true})");
+      EXPECT_EQ(response->status_code, code == 401 ? "401 Unauthorized" : "429 Too Many Requests");
+      EXPECT_EQ(response->content.string(), error_body);
+      ASSERT_NE(response->header.find("Content-Type"), response->header.end());
+      EXPECT_EQ(response->header.find("Content-Type")->second, "application/json");
+    }
+  }
+}
+
 TEST(AiStreamSafety, ChunkExceptionsDoNotEscapeCurl) {
   Upstream upstream;
   EXPECT_NO_THROW({
@@ -272,30 +349,7 @@ TEST(AiStreamSafety, CancellationExceptionsDoNotEscapeCurl) {
 
 TEST_F(HttpSafety, SingleHttpsThreadRemainsResponsiveAndDisconnectCancelsAllStreams) {
   Upstream upstream;
-  const auto credentials = crypto::gen_creds("localhost", 2048);
-  std::ofstream(directory / "cert.pem") << credentials.x509;
-  std::ofstream(directory / "key.pem") << credentials.pkey;
-  SimpleWeb::Server<SimpleWeb::HTTPS> server((directory / "cert.pem").string(), (directory / "key.pem").string());
-  server.config.address = "127.0.0.1";
-  server.config.port = 0;
-  server.config.thread_pool_size = 1;
-  server.resource["^/stream$"]["POST"] = [](auto response, auto request) {
-    ai::http::stream_response(response, request->content.string());
-  };
-  server.resource["^/ping$"]["GET"] = [](auto response, auto) { response->write("pong"); };
-  std::promise<unsigned short> ready;
-  auto port_ready = ready.get_future();
-  std::thread listener([&] { server.start([&](auto port) { ready.set_value(port); }); });
-  struct Stop {
-    decltype(server) &server;
-    std::thread &listener;
-    ~Stop() {
-      server.stop();
-      listener.join();
-    }
-  } stop { server, listener };
-  ASSERT_EQ(port_ready.wait_for(5s), std::future_status::ready);
-  const auto port = port_ready.get();
+  const auto port = start_https();
 
   boost::asio::io_context io;
   boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);

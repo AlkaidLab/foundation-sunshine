@@ -19,8 +19,10 @@ namespace ai {
 
   namespace {
     struct StreamCallbackContext {
+      CURL *curl = nullptr;
       std::function<bool(const char *, size_t)> callback;
       std::function<bool()> is_cancelled;
+      std::string error_body;
     };
 
   }  // namespace
@@ -154,6 +156,16 @@ namespace ai {
     size_t realsize = size * nmemb;
     auto *ctx = static_cast<StreamCallbackContext *>(userdata);
     try {
+      long http_code = 0;
+      if (curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &http_code) != CURLE_OK) return 0;
+      if (http_code < 200 || http_code >= 300) {
+        // Do not let an error payload trigger a downstream 200/SSE header.
+        // Keep buffering bounded even if a failing upstream sends a large body.
+        constexpr size_t max_error_body = 1024 * 1024;
+        if (realsize > max_error_body - ctx->error_body.size()) return 0;
+        ctx->error_body.append(ptr, realsize);
+        return realsize;
+      }
       return ctx->callback(ptr, realsize) ? realsize : 0;
     }
     catch (...) {
@@ -192,6 +204,7 @@ namespace ai {
     }
 
     StreamCallbackContext ctx;
+    ctx.curl = curl;
     ctx.callback = std::move(chunkCallback);
     ctx.is_cancelled = std::move(isCancelled);
 
@@ -218,11 +231,17 @@ namespace ai {
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
 
     CURLcode curlResult = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     curl_slist_free_all(header_list);
     curl_easy_cleanup(curl);
 
     if (curlResult != CURLE_OK) {
       return { 502, R"({"error":{"message":"Failed to connect to upstream LLM API","type":"upstream_error"}})", "application/json" };
+    }
+    if (http_code < 200 || http_code >= 300) {
+      const int status = http_code == 401 || http_code == 429 ? static_cast<int>(http_code) : 502;
+      return { status, std::move(ctx.error_body), "application/json" };
     }
     return { 200, "", "text/event-stream" };
   }

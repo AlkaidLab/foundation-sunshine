@@ -11,7 +11,7 @@
 namespace ai {
   // AI LLM Proxy — shared interface for nvhttp
   struct AiProxyResult {
-    int httpCode;  // HTTP status code to return (200, 400, 403, 502, 500)
+    int httpCode;  // HTTP status code to return (200, 400, 401, 403, 429, 502, 500)
     std::string body;  // JSON response body
     std::string contentType;  // "application/json" or "text/event-stream"
   };

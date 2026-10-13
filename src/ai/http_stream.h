@@ -76,7 +76,9 @@ namespace ai::http {
         });
         if (!header_sent) {
           const auto status = result.httpCode == 400 ? SimpleWeb::StatusCode::client_error_bad_request :
+                              result.httpCode == 401 ? SimpleWeb::StatusCode::client_error_unauthorized :
                               result.httpCode == 403 ? SimpleWeb::StatusCode::client_error_forbidden :
+                              result.httpCode == 429 ? SimpleWeb::StatusCode::client_error_too_many_requests :
                               result.httpCode == 200 ? SimpleWeb::StatusCode::success_ok :
                                                        SimpleWeb::StatusCode::server_error_bad_gateway;
           response->write(status, result.body, { { "Content-Type", result.contentType } });
