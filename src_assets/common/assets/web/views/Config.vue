@@ -24,7 +24,16 @@
       >
         <i class="fas fa-check"></i>
       </button>
-      <div class="floating-toast-container">
+      <div class="floating-toast-container" :class="{ 'has-validation-error': validationError }">
+        <div v-if="validationError" class="toast text-bg-danger border-0 show" role="alert" aria-live="assertive">
+          <div class="toast-body">
+            <strong>{{ $t('_common.error') }}: {{ $t('config.amd_hevc_gop_size') }}</strong>
+            <p class="my-2">{{ $t(validationError) }}</p>
+            <button type="button" class="btn btn-outline-light btn-sm" @click="currentTab = 'amd'">
+              {{ $t('tabs.amd') }} — {{ $t('config.amd_advanced_group') }}
+            </button>
+          </div>
+        </div>
         <Transition name="toast">
           <div
             v-if="showSaveToast"
@@ -246,6 +255,7 @@ const ContainerEncoders = defineAsyncComponent(() => import('../configs/tabs/Con
 const ENCODER_TAB_IDS = new Set(['nv', 'qsv', 'amd', 'vt', 'sw'])
 
 const {
+  validationError,
   platform,
   saved,
   restarted,
@@ -956,6 +966,13 @@ onUnmounted(() => {
     width: max-content;
     max-width: 300px;
 
+    &.has-validation-error {
+      top: auto;
+      bottom: 0;
+      max-height: calc(80vh - 2rem);
+      overflow-y: auto;
+    }
+
     .toast {
       margin-bottom: 0.5rem;
     }
@@ -1074,6 +1091,11 @@ onUnmounted(() => {
       top: auto;
       bottom: calc(100% + 1rem);
       max-width: calc(100vw - 2rem);
+
+      &.has-validation-error {
+        right: 0;
+        bottom: calc(100% + 1rem);
+      }
     }
 
     .cute-btn {

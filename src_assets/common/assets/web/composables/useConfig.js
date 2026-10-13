@@ -345,6 +345,7 @@ const createRisk = (
  * 配置管理组合式函数
  */
 export function useConfig() {
+  const validationError = ref('')
   const platform = ref('')
   const saved = ref(false)
   const restarted = ref(false)
@@ -610,8 +611,9 @@ export function useConfig() {
   const save = async () => {
     saved.value = false
     restarted.value = false
+    validationError.value = ''
     if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
-      console.error('HEVC GOP must be -1 (driver default), 0 (on demand), or an integer from 1 to 1000')
+      validationError.value = 'config.amd_hevc_gop_size_desc'
       return false
     }
     serialize()
@@ -749,6 +751,7 @@ export function useConfig() {
   }
 
   return {
+    validationError,
     platform,
     saved,
     restarted,
