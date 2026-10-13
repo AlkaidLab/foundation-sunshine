@@ -5,14 +5,24 @@ HIDMaestro runtime. The shipping executable remains
 `Sunshine.Ds5Sidecar.exe` for component-upgrade compatibility, while the
 process now uses a `VirtualDeviceHostServer` and `DeviceRegistry` internally.
 It owns virtual devices and exposes the versioned `SDS5` named-pipe protocol.
-The helper does not contain HIDMaestro binaries.
+The optional component package includes patched HIDMaestro Core and its notices.
 
-Build against the pinned upstream v1.7.3 runtime:
+Build the compatible Foundation Core patch and the sidecar:
 
 ```powershell
-dotnet build -c Release `
-  -p:HIDMaestroCorePath=C:\path\to\HIDMaestro.Core.dll
+scripts/build-ds5-sidecar.ps1
 ```
+
+The version 1.3.0 component ZIP includes patched `HIDMaestro.Core.dll`, its
+licenses, and the complete .NET runtime. The main Sunshine package contains only
+the pinned ZIP download manifest. The Control Panel automatically updates older
+installed components when streaming is idle, using the existing administrator
+helper, verified staging and whole-component rollback. Optional USB/IP transport
+installation remains part of explicit install/repair, not automatic updates.
+The sidecar uses normal .NET loading and requires the Core patch marker even for
+`--probe`. Sunshine validates the installed component without replacing DLLs.
+The upstream SDK API, assembly version and embedded resources are preserved; see
+[`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
 
 Read-only capability probe:
 

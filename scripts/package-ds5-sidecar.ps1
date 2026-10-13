@@ -29,6 +29,13 @@ $assetName = 'Sunshine.Ds5Sidecar.x64.zip'
 if (-not (Test-Path -LiteralPath (Join-Path $runtime 'Sunshine.Ds5Sidecar.exe') -PathType Leaf)) {
     throw "DualSense sidecar runtime is incomplete: $runtime"
 }
+foreach ($name in @('HIDMaestro.Core.dll', 'LICENSE.HIDMaestro', 'THIRD-PARTY-NOTICES.txt')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $runtime $name) -PathType Leaf)) {
+        throw "DualSense component is missing $name"
+    }
+}
+& (Join-Path $runtime 'Sunshine.Ds5Sidecar.exe') --self-check
+if ($LASTEXITCODE -ne 0) { throw 'DualSense component self-check failed before packaging' }
 $runtimeMetadataPath = Join-Path $runtime 'runtime.json'
 if (-not (Test-Path -LiteralPath $runtimeMetadataPath -PathType Leaf)) {
     throw "DualSense sidecar runtime metadata is missing: $runtimeMetadataPath"
