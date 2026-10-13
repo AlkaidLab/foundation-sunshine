@@ -3,7 +3,7 @@
 # todo - bundle doesn't produce a valid .app use cpack -G DragNDrop
 set(CPACK_BUNDLE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_BUNDLE_PLIST "${APPLE_PLIST_FILE}")
-set(CPACK_BUNDLE_ICON "${PROJECT_SOURCE_DIR}/sunshine.icns")
+set(CPACK_BUNDLE_ICON "${PROJECT_SOURCE_DIR}/assets/brand/sunshine.icns")
 # set(CPACK_BUNDLE_STARTUP_COMMAND "${INSTALL_RUNTIME_DIR}/sunshine")
 
 if(SUNSHINE_PACKAGE_MACOS)  # todo

@@ -141,7 +141,7 @@ include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/include"
 
 # sunshine icon
 if(NOT DEFINED SUNSHINE_ICON_PATH)
-    set(SUNSHINE_ICON_PATH "${CMAKE_SOURCE_DIR}/sunshine.ico")
+    set(SUNSHINE_ICON_PATH "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.ico")
 endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/platform/windows/windows.rc.in" windows.rc @ONLY)

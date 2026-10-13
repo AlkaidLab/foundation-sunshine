@@ -9,9 +9,9 @@
 #define MyAppExeName "@CMAKE_PROJECT_NAME@.exe"
 #define MyAppGUIExeName "sunshine-gui.exe"
 #define MySourceDir "@INNO_STAGING_DIR@"
-#define MyIconFile "@CMAKE_SOURCE_DIR@\sunshine.ico"
-#define MyWelcomeBmp "@CMAKE_SOURCE_DIR@\welcome.bmp"
-#define MySmallBmp "@CMAKE_SOURCE_DIR@\wizard_small.bmp"
+#define MyIconFile "@CMAKE_SOURCE_DIR@\assets\brand\sunshine.ico"
+#define MyWelcomeBmp "@CMAKE_SOURCE_DIR@\assets\installer\welcome.bmp"
+#define MySmallBmp "@CMAKE_SOURCE_DIR@\assets\installer\wizard_small.bmp"
 #define MyLicenseFile "@CMAKE_SOURCE_DIR@\LICENSE"
 
 [Setup]
