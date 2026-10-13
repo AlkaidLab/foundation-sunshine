@@ -60,7 +60,7 @@ encoding are always enabled.
   `_boost_version` (and the `boost=`/`boost-libs=` depends entries) whenever Arch
   bumps boost.
 * **Submodules cannot be fetched by makepkg.** makepkg does not check out gitlinks
-  and the AUR build chroot has no network, so all 28 submodules (including nested
+  and the AUR build chroot has no network, so all 26 submodules (including nested
   ones under `third-party/{doxyconfig,moonlight-common-c,tray}`) are declared as
   `source=()` entries pinned by `#commit=` and placed into the tree by
   `prepare()`. `third-party/build-deps` supplies the pre-built static

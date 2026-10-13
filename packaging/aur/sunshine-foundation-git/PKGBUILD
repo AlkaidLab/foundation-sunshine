@@ -107,8 +107,6 @@ options=(!strip)
 source=(
   "foundation-sunshine::git+https://github.com/QiE2035/foundation-sunshine.git#branch=linux-migration"
   # --- direct submodules -----------------------------------------------------
-  'flatpak-builder-tools::git+https://github.com/flatpak/flatpak-builder-tools.git#commit=db39dc0f75a3b24cfb09906f3aba2c13b0c48afe'
-  'shared-modules::git+https://github.com/flathub/shared-modules.git#commit=d1a2cf59d137b47abc07297ecd35a5af9b5e16f4'
   'sunshine-control-panel::git+https://github.com/qiin2333/sunshine-control-panel.git#commit=beb6a3e61fe52e97c2fa60cec3df6d77ef0ae278'
   'AMF::git+https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git#commit=eadd00804d5f7e5cd8c85d540073198312870776'
   'Simple-Web-Server::git+https://gitlab.com/eidheim/Simple-Web-Server.git#commit=546895a93a29062bb178367b46c7afb72da9881e'
@@ -142,7 +140,7 @@ source=(
 sha256sums=('SKIP'
             'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
             'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 # ---------------------------------------------------------------------------
 # Submodule placement
@@ -151,8 +149,6 @@ sha256sums=('SKIP'
 # $srcdir under their basename. This list maps each of those directory names
 # back to its path inside the repository.
 _submodule_paths=(
-  'packaging/linux/flatpak/deps/flatpak-builder-tools'
-  'packaging/linux/flatpak/deps/shared-modules'
   'src_assets/common/sunshine-control-panel'
   'third-party/AMF'
   'third-party/Simple-Web-Server'

@@ -45,8 +45,6 @@ pkgbase = sunshine-foundation-git
 	conflicts = sunshine-bin
 	options = !strip
 	source = foundation-sunshine::git+https://github.com/QiE2035/foundation-sunshine.git#branch=linux-migration
-	source = flatpak-builder-tools::git+https://github.com/flatpak/flatpak-builder-tools.git#commit=db39dc0f75a3b24cfb09906f3aba2c13b0c48afe
-	source = shared-modules::git+https://github.com/flathub/shared-modules.git#commit=d1a2cf59d137b47abc07297ecd35a5af9b5e16f4
 	source = sunshine-control-panel::git+https://github.com/qiin2333/sunshine-control-panel.git#commit=beb6a3e61fe52e97c2fa60cec3df6d77ef0ae278
 	source = AMF::git+https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git#commit=eadd00804d5f7e5cd8c85d540073198312870776
 	source = Simple-Web-Server::git+https://gitlab.com/eidheim/Simple-Web-Server.git#commit=546895a93a29062bb178367b46c7afb72da9881e
@@ -73,8 +71,6 @@ pkgbase = sunshine-foundation-git
 	source = tray-doxyconfig::git+https://github.com/LizardByte/doxyconfig.git#commit=e552f7c9f00cd0cf24764a37d0905935b3d2c188
 	source = tray-googletest::git+https://github.com/google/googletest.git#commit=f8d7d77c06936315286eb55f8de22cd23c188571
 	source = lizardbyte-common::git+https://github.com/LizardByte/lizardbyte-common.git#commit=8d7dcc97d0795e4eb2efdb50a86f83060ed47934
-	sha256sums = SKIP
-	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = SKIP
