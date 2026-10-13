@@ -12,10 +12,14 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 
 #include "src/config.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/round_robin.h"
@@ -151,6 +155,9 @@ namespace platf {
       std::uint32_t type;
       std::uint32_t index;
 
+      // Connector-style name, e.g. "DP-1"
+      std::string name;
+
       // Monitor index in the global list
       std::uint32_t monitor_index;
 
@@ -220,6 +227,29 @@ namespace platf {
 
       BOOST_LOG(error) << "Unknown Monitor connector type ["sv << string << "]: Please report this to the GitHub issue tracker"sv;
       return DRM_MODE_CONNECTOR_Unknown;
+    }
+
+    /**
+     * @brief Inverse of from_view(): the sysfs/wayland-style name prefix for
+     *        a DRM connector type, e.g. DisplayPort -> "DP".
+     */
+    std::string_view
+    connector_type_prefix(std::uint32_t type) {
+#define _PREFIX(x, y) \
+  if (type == DRM_MODE_CONNECTOR_##y) return x##sv
+
+      _PREFIX("DP", DisplayPort);
+      _PREFIX("HDMI-A", HDMIA);
+      _PREFIX("HDMI-B", HDMIB);
+      _PREFIX("eDP", eDP);
+      _PREFIX("VGA", VGA);
+      _PREFIX("DVI-I", DVII);
+      _PREFIX("DVI-D", DVID);
+      _PREFIX("DVI-A", DVIA);
+      _PREFIX("VIRTUAL", VIRTUAL);
+#undef _PREFIX
+
+      return "Unknown"sv;
     }
 
     class plane_it_t: public round_robin_util::it_wrap_t<plane_t::element_type, plane_it_t> {
@@ -552,6 +582,7 @@ namespace platf {
           monitor_t {
             connector.type,
             connector.index,
+            std::string { connector_type_prefix(connector.type) } + '-' + std::to_string(connector.index),
           });
       }
 
@@ -610,6 +641,20 @@ namespace platf {
         int monitor_index = util::from_view(display_name);
         int monitor = 0;
 
+        // The wizard's GPU selection (adapter_name holds a kernel driver
+        // name like "nvidia") narrows the capture to matching cards.
+        std::string preferred_adapter = config::video.adapter_name;
+        boost::algorithm::trim(preferred_adapter);
+
+        // Displays are named after their DRM connector ("eDP-1", "DP-1", ...).
+        // When a virtual display session is live, the virtual connector takes
+        // priority; otherwise a non-numeric display_name selects the connector
+        // by name and a numeric one keeps the legacy enumeration index.
+        const auto vdd_connector = display_device::vdd_utils::live_virtual_display_connector();
+        const bool name_is_index = !display_name.empty() && std::all_of(display_name.begin(), display_name.end(), ::isdigit);
+        const std::string target_connector = !vdd_connector.empty() ? vdd_connector :
+          (name_is_index ? std::string {} : display_name);
+
         fs::path card_dir { "/dev/dri"sv };
         for (auto &entry : fs::directory_iterator { card_dir }) {
           auto file = entry.path().filename();
@@ -633,6 +678,63 @@ namespace platf {
             }
           }
 
+          if (!preferred_adapter.empty()) {
+            std::error_code driver_ec;
+            const auto driver = fs::read_symlink(entry.path() / "device" / "driver", driver_ec);
+            if (!driver_ec && driver.filename().string() != preferred_adapter) {
+              BOOST_LOG(debug) << file << " does not match the configured adapter ["sv << preferred_adapter << ']';
+              continue;
+            }
+          }
+
+          std::map<std::uint32_t, std::string> crtc_to_connector_name;
+          {
+            auto build_map = [&]() {
+              crtc_to_connector_name.clear();
+              kms::conn_type_count_t conn_type_count;
+              for (auto &conn : card.monitors(conn_type_count)) {
+                if (conn.crtc_id) {
+                  crtc_to_connector_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
+                }
+              }
+            };
+
+            build_map();
+
+            // A freshly created virtual display may not have its CRTC
+            // assigned by the compositor yet; give it a moment instead of
+            // failing the whole session 200ms after the connector came up.
+            // If the connector is not even connected anymore, fail fast.
+            if (!target_connector.empty()) {
+              auto target_present = [&]() {
+                return std::any_of(std::begin(crtc_to_connector_name), std::end(crtc_to_connector_name),
+                  [&](const auto &entry) { return entry.second == target_connector; });
+              };
+
+              for (int attempt = 0; attempt < 2 && !target_present(); ++attempt) {
+                bool still_connected = false;
+                for (auto &status_path : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+                  auto n = status_path.path().filename().string();
+                  if (n.rfind("card", 0) == 0 && n.find('-') != std::string::npos &&
+                      n.substr(n.find('-') + 1) == target_connector) {
+                    std::ifstream sf { status_path.path() / "status" };
+                    std::string v;
+                    std::getline(sf, v);
+                    still_connected = v == "connected";
+                    break;
+                  }
+                }
+                if (!still_connected) {
+                  BOOST_LOG(debug) << "Connector ["sv << target_connector << "] is gone; not waiting"sv;
+                  break;
+                }
+                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/2)"sv;
+                std::this_thread::sleep_for(std::chrono::milliseconds { 250 });
+                build_map();
+              }
+            }
+          }
+
           auto end = std::end(card);
           for (auto plane = std::begin(card); plane != end; ++plane) {
             // Skip unused planes
@@ -644,7 +746,16 @@ namespace platf {
               continue;
             }
 
-            if (monitor != monitor_index) {
+            bool selected;
+            if (!target_connector.empty()) {
+              auto pos = crtc_to_connector_name.find(plane->crtc_id);
+              selected = pos != std::end(crtc_to_connector_name) && pos->second == target_connector;
+            }
+            else {
+              selected = monitor == monitor_index;
+            }
+
+            if (!selected) {
               ++monitor;
               continue;
             }
@@ -1707,12 +1818,21 @@ namespace platf {
           it->second.monitor_index = count;
         }
 
+        // Name displays after their connector; the session layer and clients
+        // match on these names, and kmsgrab_t::init() resolves them back.
+        if (it != std::end(crtc_to_monitor) && !it->second.name.empty()) {
+          display_names.emplace_back(it->second.name);
+        }
+        else {
+          display_names.emplace_back(std::to_string(count));
+        }
+
         kms::env_width = std::max(kms::env_width, (int) (crtc->x + crtc->width));
         kms::env_height = std::max(kms::env_height, (int) (crtc->y + crtc->height));
 
         kms::print(plane.get(), fb.get(), crtc.get());
 
-        display_names.emplace_back(std::to_string(count++));
+        ++count;
       }
 
       cds.emplace_back(kms::card_descriptor_t {

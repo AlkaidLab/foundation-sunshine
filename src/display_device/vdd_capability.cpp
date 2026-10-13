@@ -1,16 +1,14 @@
 #include "vdd_capability.h"
 
-#ifdef _WIN32
-  #include "vdd_utils.h"
-#endif
+#include "vdd_utils.h"
 
 namespace display_device::vdd_capability {
 
   state_e
   query_state() {
-#ifndef _WIN32
-    return state_e::unsupported_platform;
-#else
+    // Windows asks the ZakoVDD driver; Linux maps the external virtual
+    // display helper (sunshineVD daemon) onto the same status surface, so
+    // clients may request a virtual display when the helper is running.
     const auto status = vdd_utils::get_vdd_status();
     if (!status.installed) {
       return state_e::driver_missing;
@@ -20,7 +18,6 @@ namespace display_device::vdd_capability {
       return state_e::ready;
     }
     return state_e::driver_unreachable;
-#endif
   }
 
   std::string_view

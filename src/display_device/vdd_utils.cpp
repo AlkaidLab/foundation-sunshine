@@ -1,3 +1,22 @@
+// Shared includes for the platform-neutral mode-list helpers defined at the
+// end of this file (outside the platform guards), plus headers both platform
+// halves need. Platform-only includes stay inside their own half.
+#include "vdd_utils.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <boost/algorithm/string/trim.hpp>
+
+#include "src/config.h"
+#include "src/logging.h"
+
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 
 #include "vdd_utils.h"
@@ -53,9 +72,6 @@ namespace display_device {
     static std::string last_used_client_uuid;
 
     namespace {
-      constexpr auto kModePublicationTimeout = 3s;
-      constexpr auto kModePublicationInitialPoll = 50ms;
-      constexpr auto kModePublicationMaxPoll = 500ms;
       std::atomic_bool hardware_cursor_live_enable_confirmed { false };
 
       bool
@@ -305,105 +321,9 @@ namespace display_device {
       return true;
     }
 
-    bool
-    same_resolution(const resolution_t &a, const resolution_t &b) {
-      return a.width == b.width && a.height == b.height;
-    }
-
-    void
-    append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution) {
-      if (std::find_if(resolutions.begin(), resolutions.end(), [&](const auto &cached) {
-            return same_resolution(cached, resolution);
-          }) == resolutions.end()) {
-        resolutions.push_back(resolution);
-      }
-    }
-
-    void
-    append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz) {
-      if (refresh_hz > 0 && std::find(refresh_rates_hz.begin(), refresh_rates_hz.end(), refresh_hz) == refresh_rates_hz.end()) {
-        refresh_rates_hz.push_back(refresh_hz);
-      }
-    }
-
-    boost::optional<resolution_t>
-    parse_vdd_resolution(const std::string &value) {
-      std::string trimmed = value;
-      boost::algorithm::trim(trimmed);
-      if (trimmed.empty()) {
-        return {};
-      }
-
-      std::stringstream input(trimmed);
-      unsigned int width = 0;
-      unsigned int height = 0;
-      char separator = '\0';
-      input >> width >> separator >> height;
-
-      if (!input || !input.eof() || (separator != 'x' && separator != 'X') || width == 0 || height == 0) {
-        BOOST_LOG(warning) << "Skipping invalid VDD resolution entry: " << value;
-        return {};
-      }
-
-      return resolution_t { width, height };
-    }
-
-    boost::optional<unsigned int>
-    rounded_vdd_refresh_hz(double refresh_hz) {
-      constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
-      constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
-
-      if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
-        return {};
-      }
-
-      const auto rounded = std::lround(refresh_hz);
-      if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
-        return {};
-      }
-
-      return static_cast<unsigned int>(rounded);
-    }
-
-    boost::optional<unsigned int>
-    rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
-      if (refresh_rate.denominator == 0) {
-        return {};
-      }
-
-      const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
-      return rounded_vdd_refresh_hz(refresh_hz);
-    }
-
-    boost::optional<unsigned int>
-    parse_vdd_refresh_hz(const std::string &value) {
-      std::string trimmed = value;
-      boost::algorithm::trim(trimmed);
-      if (trimmed.empty()) {
-        return {};
-      }
-
-      try {
-        std::size_t parsed_len = 0;
-        const double refresh_hz = std::stod(trimmed, &parsed_len);
-        if (parsed_len != trimmed.size()) {
-          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
-          return {};
-        }
-
-        const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
-        if (!rounded) {
-          BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
-          return {};
-        }
-
-        return *rounded;
-      }
-      catch (const std::exception &) {
-        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
-        return {};
-      }
-    }
+    // The mode-list parsing helpers (same_resolution, append_unique_*,
+    // parse_vdd_resolution/parse_vdd_refresh_hz, rounded_*) are shared with the
+    // Linux backend and defined at the end of this file.
 
     set_vdd_result
     set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
@@ -491,13 +411,6 @@ namespace display_device {
         return {};
       }
 
-      // 预定义尺寸映射表
-      static const std::unordered_map<std::string, physical_size_t> size_map = {
-        { "small", { 13.3f, 7.5f } },  // 小型设备：约6英寸，16:9比例
-        { "medium", { 34.5f, 19.4f } },  // 中型设备：约15.6英寸，16:9比例
-        { "large", { 70.8f, 39.8f } }  // 大型设备：约32英寸，16:9比例
-      };
-
       try {
         pt::ptree clientArray;
         std::stringstream ss(config::get_clients_config());
@@ -506,8 +419,8 @@ namespace display_device {
         for (const auto &client : clientArray) {
           if (client.second.get<std::string>("name", "") == client_name) {
             const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
-            auto it = size_map.find(device_size);
-            return (it != size_map.end()) ? it->second : size_map.at("medium");
+            // Size classes come from the canonical shared table.
+            return client_physical_size_for_class(device_size);
           }
         }
       }
@@ -754,34 +667,8 @@ namespace display_device {
       return true;
     }
 
-    VddSettings
-    prepare_vdd_settings(const parsed_config_t &config) {
-      std::vector<resolution_t> resolution_modes;
-      std::vector<unsigned int> refresh_rates_hz;
-
-      for (const auto &res : config::nvhttp.resolutions) {
-        if (const auto parsed_resolution = parse_vdd_resolution(res)) {
-          append_unique_resolution(resolution_modes, *parsed_resolution);
-        }
-      }
-
-      for (const auto &fps : config::nvhttp.fps) {
-        if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
-          append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
-        }
-      }
-
-      if (config.resolution) {
-        append_unique_resolution(resolution_modes, *config.resolution);
-      }
-      if (config.refresh_rate) {
-        if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
-          append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
-        }
-      }
-
-      return { std::move(resolution_modes), std::move(refresh_rates_hz) };
-    }
+    // prepare_vdd_settings() is shared with the Linux backend and defined at
+    // the end of this file.
 
     bool
     is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode) {
@@ -1108,3 +995,1894 @@ namespace display_device {
     }
   }  // namespace vdd_utils
 }  // namespace display_device
+
+#else  // !_WIN32
+
+// Linux virtual display backend (native).
+//
+// ZakoVDD is a Windows driver; on Linux the same session semantics are
+// implemented directly: generate an EDID for the requested mode and override
+// a spare connector with it via debugfs, then force the connector on so the
+// compositor gains an extra output that KMS capture can target. Physical
+// displays are never touched. Writing debugfs/sysfs requires elevated file
+// capabilities on the sunshine binary (see the packaging install hook).
+
+#include "vdd_utils.h"
+
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/capability.h>
+#include <sys/stat.h>
+
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <sstream>
+#include <tuple>
+#include <unordered_map>
+
+#include "src/config.h"
+#include "src/logging.h"
+#include "src/platform/common.h"
+#include "src/platform/linux/compositor_output.h"
+#include "src/platform/linux/kscreen_backend.h"
+#include "src/platform/linux/kscreen_modes.h"
+#include "src/platform/linux/vdd_edid.h"
+
+namespace pt = boost::property_tree;
+
+namespace display_device::vdd_utils {
+
+  using namespace std::literals;
+
+  namespace {
+    namespace fs = std::filesystem;
+
+    constexpr auto k_debugfs_dri = "/sys/kernel/debug/dri";
+
+    std::mutex state_mutex;
+
+    /**
+     * @brief RAII: lift the permitted file capabilities (granted by the
+     *        packaging install hook) into the effective set for the duration
+     *        of the scope, restoring the previous state on destruction.
+     */
+    class elevated_caps {
+    public:
+      elevated_caps() {
+        caps = cap_get_proc();
+        if (!caps) {
+          return;
+        }
+        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_SYS_PTRACE };
+        if (cap_set_flag(caps, CAP_EFFECTIVE, 4, values, CAP_SET) || cap_set_proc(caps)) {
+          BOOST_LOG(debug) << "vdd: failed to raise capabilities (unprivileged build?)"sv;
+        }
+      }
+
+      ~elevated_caps() {
+        if (!caps) {
+          return;
+        }
+        const cap_value_t values[] = { CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_SYS_PTRACE };
+        if (cap_set_flag(caps, CAP_EFFECTIVE, 4, values, CAP_CLEAR) || cap_set_proc(caps)) {
+          BOOST_LOG(debug) << "vdd: failed to drop capabilities"sv;
+        }
+        cap_free(caps);
+      }
+
+      elevated_caps(const elevated_caps &) = delete;
+      elevated_caps &
+      operator=(const elevated_caps &) = delete;
+
+      cap_t caps {};
+    };
+
+    // Virtual display session state, guarded by state_mutex.
+    bool active { false };
+    std::string active_card;        // e.g. "card1"
+    std::string active_connector;   // e.g. "DP-1"
+    std::string active_status_path; // e.g. /sys/class/drm/card1-DP-1/status
+    std::string active_edid_path;   // e.g. /sys/kernel/debug/dri/0000:01:00.0/DP-1/edid_override
+    std::string active_edid_content;  // Last written EDID, for mode-switch dedup
+    // Connectors whose physical outputs were turned off for an exclusive
+    // (display_off) session, by name ("eDP-1"): the name works for both the
+    // sysfs status node and the compositor's output, and it survives a crash
+    // through the state file below.
+    std::vector<std::string> offlined_physical_outputs;
+    parsed_config_t::vdd_prep_e last_prep { parsed_config_t::vdd_prep_e::no_operation };
+    vdd_edid::edid_options active_edid_opts;  // Personalization captured at create
+    unsigned int cached_width { 1920 };
+    unsigned int cached_height { 1080 };
+    unsigned int cached_refresh_hz { 60 };
+    // Set once a client session has configured the cached mode; before that,
+    // manual creation (tray/headless) applies config::video.vdd_manual_*.
+    bool cached_from_session { false };
+    // Mode lists the session prepared, including the resolution and refresh
+    // rate the client asked for. Windows keeps the equivalent list in the
+    // driver (SETMODES) and the created monitor advertises it; on Linux the
+    // EDID built at creation must use the same cross product, so the settings
+    // have to survive from set_vdd_session_mode() to create_vdd_monitor().
+    std::optional<VddSettings> session_mode_settings;
+
+    bool
+    write_text_file(const std::string &path, const std::string &content) {
+      std::ofstream out { path, std::ios::binary | std::ios::trunc };
+      if (!out) {
+        return false;
+      }
+      out << content;
+      out.flush();
+      return static_cast<bool>(out);
+    }
+
+    /**
+     * @brief Record the connectors an exclusive session switched off.
+     * @details A forced-off connector reads as plain "disconnected" in sysfs,
+     *          so a process that did not do the switching cannot tell it from an
+     *          unplugged one. Persisting the list is what lets a later process
+     *          put the screen back after a crash.
+     */
+    std::string
+    offlined_state_path() {
+      return (std::filesystem::path { platf::appdata() } / "vdd_offlined_physicals.txt").string();
+    }
+
+    void
+    persist_offlined_physicals() {
+      std::ofstream out { offlined_state_path(), std::ios::trunc };
+      if (!out) {
+        BOOST_LOG(warning) << "vdd: cannot record the powered-off physical outputs in "sv << offlined_state_path();
+        return;
+      }
+      for (const auto &connector : offlined_physical_outputs) {
+        out << connector << '\n';
+      }
+    }
+
+    void
+    load_persisted_offlined_physicals() {
+      std::ifstream in { offlined_state_path() };
+      std::string line;
+      while (std::getline(in, line)) {
+        if (!line.empty() && std::find(offlined_physical_outputs.begin(), offlined_physical_outputs.end(), line) == offlined_physical_outputs.end()) {
+          offlined_physical_outputs.emplace_back(std::move(line));
+        }
+      }
+    }
+
+    void
+    clear_persisted_offlined_physicals() {
+      std::error_code ec;
+      std::filesystem::remove(offlined_state_path(), ec);
+    }
+
+    /**
+     * @brief The sysfs status node of a connector name, if the card exposes it.
+     */
+    std::string
+    status_path_for_connector(const std::string &connector) {
+      std::error_code ec;
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm", ec }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        if (name.substr(name.find('-') + 1) == connector) {
+          return (entry.path() / "status").string();
+        }
+      }
+      return {};
+    }
+
+    /**
+     * @brief Put the physical outputs of an exclusive session back.
+     * @details Runs on teardown and for anything a previous process left behind
+     *          (loaded from the state file). Safe to call multiple times.
+     */
+    void
+    restore_offlined_physicals() {
+      if (offlined_physical_outputs.empty()) {
+        load_persisted_offlined_physicals();
+      }
+
+      for (const auto &connector : offlined_physical_outputs) {
+        // "detect", not "on": clear any leftover DRM force from an older build
+        // and let the kernel re-detect, instead of forcing the connector
+        // connected (which would fabricate a phantom output for a panel that
+        // has since been unplugged).
+        if (const auto status_path = status_path_for_connector(connector); !status_path.empty()) {
+          write_text_file(status_path, "detect");
+        }
+
+        // A compositor-side disable is undone through the compositor, which
+        // owns the layout.
+        if (platf::kscreen::session_supports_kscreen()) {
+          platf::kscreen::run("output." + connector + ".enable", std::chrono::milliseconds { 10'000 });
+        }
+
+        BOOST_LOG(info) << "vdd: restored physical output "sv << connector;
+      }
+
+      offlined_physical_outputs.clear();
+      clear_persisted_offlined_physicals();
+    }
+
+    std::string
+    connector_name_for_status(const std::string &status_path) {
+      // status_path = /sys/class/drm/card1-DP-2/status
+      const auto dir = status_path.substr(0, status_path.find_last_of('/'));    // /sys/class/drm/card1-DP-2
+      const auto file = dir.substr(dir.find_last_of('/') + 1);                  // card1-DP-2
+      return file.substr(file.find('-') + 1);                                   // DP-2
+    }
+
+    std::string_view
+    kms_connector_prefix(std::uint32_t type) {
+      switch (type) {
+        case DRM_MODE_CONNECTOR_DisplayPort: return "DP"sv;
+        case DRM_MODE_CONNECTOR_HDMIA: return "HDMI-A"sv;
+        case DRM_MODE_CONNECTOR_HDMIB: return "HDMI-B"sv;
+        case DRM_MODE_CONNECTOR_eDP: return "eDP"sv;
+        case DRM_MODE_CONNECTOR_VGA: return "VGA"sv;
+        default: return "Unknown"sv;
+      }
+    }
+
+    drmModeConnectorPtr
+    find_connector_by_name(int fd, drmModeResPtr res, const std::string &connector) {
+      for (int i = 0; i < res->count_connectors; ++i) {
+        drmModeConnectorPtr conn = drmModeGetConnector(fd, res->connectors[i]);
+        if (!conn) {
+          continue;
+        }
+        const std::string name = std::string { kms_connector_prefix(conn->connector_type) } + "-" + std::to_string(conn->connector_type_id);
+        if (name == connector) {
+          return conn;
+        }
+        drmModeFreeConnector(conn);
+      }
+      return nullptr;
+    }
+
+    std::uint32_t
+    find_free_crtc(int fd, drmModeResPtr res, const std::string &connector) {
+      // A CRTC is free when no connected connector's encoder is driving it.
+      (void) connector;
+      for (int i = 0; i < res->count_crtcs; ++i) {
+        const std::uint32_t crtc_id = res->crtcs[i];
+        bool in_use = false;
+        for (int j = 0; j < res->count_connectors && !in_use; ++j) {
+          drmModeConnectorPtr conn = drmModeGetConnector(fd, res->connectors[j]);
+          if (!conn) {
+            continue;
+          }
+          if (conn->encoder_id) {
+            if (drmModeEncoderPtr enc = drmModeGetEncoder(fd, conn->encoder_id)) {
+              in_use = enc->crtc_id == crtc_id;
+              drmModeFreeEncoder(enc);
+            }
+          }
+          drmModeFreeConnector(conn);
+        }
+        if (!in_use) {
+          return crtc_id;
+        }
+      }
+      return 0;
+    }
+
+    bool
+    find_master_holder(const std::string &dev_path, pid_t *out_pid, int *out_fd) {
+      std::vector<std::pair<pid_t, int>> candidates;
+      std::error_code ec;
+      for (const auto &proc : fs::directory_iterator { "/proc", ec }) {
+        const auto name = proc.path().filename().string();
+        if (name.empty() || !std::all_of(name.begin(), name.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+          continue;
+        }
+        const auto pid = static_cast<pid_t>(std::atoi(name.c_str()));
+        if (pid == ::getpid()) {
+          continue;
+        }
+        for (const auto &fd_entry : fs::directory_iterator { proc.path() / "fd", ec }) {
+          std::error_code link_ec;
+          const auto target = fs::read_symlink(fd_entry.path(), link_ec);
+          if (link_ec || target.string() != dev_path) {
+            continue;
+          }
+          candidates.emplace_back(pid, std::atoi(fd_entry.path().filename().c_str()));
+        }
+      }
+
+      // The real DRM master is the candidate on which dropping master works.
+      for (const auto &[pid, target_fd] : candidates) {
+        const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+        if (pidfd < 0) {
+          continue;
+        }
+        const int dup_fd = static_cast<int>(::syscall(SYS_pidfd_getfd, pidfd, target_fd, 0));
+        ::close(pidfd);
+        if (dup_fd < 0) {
+          continue;
+        }
+        if (drmIoctl(dup_fd, DRM_IOCTL_DROP_MASTER, nullptr) == 0) {
+          drmIoctl(dup_fd, DRM_IOCTL_SET_MASTER, nullptr);  // restore while we keep looking
+          BOOST_LOG(debug) << "vdd: DRM master held by pid "sv << pid << " fd "sv << target_fd;
+          *out_pid = pid;
+          *out_fd = target_fd;
+          return true;
+        }
+        ::close(dup_fd);
+      }
+      return false;
+    }
+
+    /**
+     * @brief Ask the compositor to light up a connector.
+     * @details The DRM-level CRTC assignment is what actually brings the output
+     *          up; this is the compositor-side nudge that makes it paint. Which
+     *          command that is per desktop lives in
+     *          platf::compositor_output::enable_command() (pure, unit-tested --
+     *          a self-recursive dispatch here already cost one field crash).
+     *          Unknown sessions are a no-op: compositors normally enable a
+     *          newly connected output themselves, so this must never be treated
+     *          as a failure.
+     */
+    void
+    enable_output_via_compositor(const std::string &connector) {
+      const char *xdg_desktop = ::getenv("XDG_CURRENT_DESKTOP");
+      const std::string desktop = xdg_desktop ? xdg_desktop : "";
+      const bool niri = platf::compositor_output::niri_session();
+
+      // A session with NIRI_SOCKET is niri even when the desktop string claims
+      // KDE for toolkit compatibility; kscreen-doctor does not exist there and
+      // would block until the 10 s timeout.
+      const auto command = platf::compositor_output::enable_command(
+        niri ? std::string {} : desktop,
+        connector,
+        niri,
+        platf::compositor_output::tool_available("wlr-randr"),
+        ::getenv("DISPLAY") != nullptr,
+        platf::compositor_output::tool_available("xrandr"));
+
+      if (!command.empty()) {
+        run_logged(command);
+        return;
+      }
+
+      static std::atomic<bool> logged { false };
+      if (!logged.exchange(true)) {
+        BOOST_LOG(info) << "vdd: no compositor output control for ["sv << desktop
+                        << "]; relying on the compositor to auto-enable new outputs"sv;
+      }
+    }
+
+    /**
+     * @brief Whether the compositor currently exposes the connector as an
+     *        output. kscreen-doctor is the only observable; sessions without
+     *        KScreen cannot be queried and callers fall back to the DRM-level
+     *        signals.
+     */
+    bool
+    kscreen_sees_connector(const std::string &connector) {
+      if (!platf::kscreen::session_supports_kscreen() || !platf::kscreen::probe_allowed()) {
+        return false;
+      }
+
+      const auto result = platf::kscreen::run("-o", platf::kscreen::kProbeTimeout);
+      if (result.exit_code != 0) {
+        platf::kscreen::note_unavailable(result.exit_code < 0 ? "kscreen-doctor did not respond" : "kscreen-doctor failed");
+        return false;
+      }
+      platf::kscreen::note_available();
+
+      // Stripped lines look like "Output: 1 DP-2 <uuid>"; match the name field,
+      // not a substring — a connector-name substring could turn up inside the
+      // uuid of an unrelated output.
+      std::istringstream stream { result.output };
+      std::string line;
+      while (std::getline(stream, line)) {
+        if (line.rfind("Output:", 0) != 0) {
+          continue;
+        }
+        std::istringstream fields { line };
+        std::string tag, index, name;
+        fields >> tag >> index >> name;
+        if (name == connector) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * @brief Wait for the compositor to surface a freshly (re)connected
+     *        connector as an output.
+     * @details The status write emits a DRM uevent and current KWin reprobes,
+     *          enables the output and assigns the CRTC itself, usually within
+     *          a second. That activation is one-shot: racing it with the
+     *          master-steal modeset in force_crtc_assignment() fails KWin's
+     *          atomic commit and it drops the output for good, leaving every
+     *          compositor-mediated step after this (mode set, topology, HDR)
+     *          to die on an output kscreen never lists. Give the compositor
+     *          the first chance; the CRTC steal is the fallback for
+     *          compositors that ignore status-forced connectors.
+     */
+    bool
+    wait_for_compositor_output(const std::string &connector, std::chrono::milliseconds timeout) {
+      if (!platf::kscreen::session_supports_kscreen()) {
+        return false;
+      }
+
+      const auto deadline = std::chrono::steady_clock::now() + timeout;
+      while (true) {
+        if (kscreen_sees_connector(connector)) {
+          return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+          return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds { 200 });
+      }
+    }
+
+    /**
+     * @brief Best-effort "make this output the primary display" hint, keyed
+     *        by desktop environment. There is no DRM-level primary concept,
+     *        so each desktop gets its native mechanism; unsupported desktops
+     *        degrade to an extended-only layout (logged).
+     */
+    void
+    hint_primary_output(const std::string &connector, int priority) {
+      // KDE: kscreen priority, 1 = primary
+      const char *xdg_desktop = ::getenv("XDG_CURRENT_DESKTOP");
+      const std::string desktop = xdg_desktop ? xdg_desktop : "";
+
+      auto kde_hint = [&]() {
+        if (!platf::kscreen::session_supports_kscreen()) {
+          // No KScreen here (niri/wlroots/X11, or started before the desktop):
+          // the command would only hang for 10 s and then fail.
+          return;
+        }
+        if (priority == 1) {
+          run_logged("kscreen-doctor output." + connector + ".priority.1");
+        } else {
+          run_logged("kscreen-doctor output." + connector + ".priority.2");
+        }
+      };
+
+      if (desktop.find("KDE") != std::string::npos || desktop.find("plasma") != std::string::npos) {
+        kde_hint();
+        return;
+      }
+
+      if (desktop.find("GNOME") != std::string::npos || desktop.find("ubuntu:GNOME") != std::string::npos) {
+        // Mutter picks the primary from its DisplayConfig state; there is no
+        // simple one-shot setter, so only note the limitation.
+        BOOST_LOG(info) << "vdd: GNOME has no simple primary-output setter; "sv << connector
+                        << " stays in the extended layout"sv;
+        return;
+      }
+
+      if (platf::compositor_output::niri_session()) {
+        // niri has no primary-output concept at all: every output is part of
+        // one scrollable layout, so there is nothing to hint.
+        BOOST_LOG(info) << "vdd: niri has no primary-output concept; "sv << connector
+                        << " joins the layout"sv;
+        return;
+      }
+
+      BOOST_LOG(info) << "vdd: desktop environment ["sv << desktop << "] has no primary-output hint; "
+                      << connector << " remains part of the extended layout"sv;
+      (void) kde_hint;
+      (void) priority;
+    }
+
+    /**
+     * @brief Assign a CRTC to a connected connector: temporarily take DRM
+     *        master from the compositor (pidfd borrow), create a dumb
+     *        framebuffer in the connector's preferred mode and run the
+     *        modeset. Compositor-agnostic. The dumb fb intentionally outlives
+     *        the call - it backs the scanout of the virtual display.
+     */
+    bool
+    force_crtc_assignment(const std::string &dev_path, const std::string &connector) {
+      const int probe_fd = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
+      if (probe_fd < 0) {
+        return false;
+      }
+
+      std::uint32_t connector_id = 0;
+      std::uint32_t crtc_id = 0;
+      drmModeModeInfo mode {};
+      {
+        drmModeResPtr res = drmModeGetResources(probe_fd);
+        if (res) {
+          if (drmModeConnectorPtr conn = find_connector_by_name(probe_fd, res, connector)) {
+            if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
+              if (conn->encoder_id) {
+                drmModeFreeConnector(conn);
+                drmModeFreeResources(res);
+                ::close(probe_fd);
+                return true;  // already lit
+              }
+              connector_id = conn->connector_id;
+              mode = conn->modes[0];
+              crtc_id = find_free_crtc(probe_fd, res, connector);
+            }
+            drmModeFreeConnector(conn);
+          }
+          drmModeFreeResources(res);
+        }
+        ::close(probe_fd);
+      }
+
+      if (!connector_id || !crtc_id) {
+        return false;
+      }
+
+      pid_t holder_pid = -1;
+      int holder_fd = -1;
+      if (!find_master_holder(dev_path, &holder_pid, &holder_fd)) {
+        BOOST_LOG(warning) << "vdd: no DRM master holder found on "sv << dev_path;
+        return false;
+      }
+
+      const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, holder_pid, 0));
+      if (pidfd < 0) {
+        return false;
+      }
+      const int dup_fd = static_cast<int>(::syscall(SYS_pidfd_getfd, pidfd, holder_fd, 0));
+      ::close(pidfd);
+      if (dup_fd < 0) {
+        return false;
+      }
+
+      // Drop the compositor's master and take over for the modeset.
+      drmIoctl(dup_fd, DRM_IOCTL_DROP_MASTER, nullptr);
+      const int own_fd = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
+      bool assigned = false;
+      if (own_fd >= 0 && drmIoctl(own_fd, DRM_IOCTL_SET_MASTER, nullptr) == 0) {
+        drm_mode_create_dumb create {};
+        create.width = mode.hdisplay;
+        create.height = mode.vdisplay;
+        create.bpp = 32;
+        if (drmIoctl(own_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) == 0) {
+          drm_mode_fb_cmd fb_cmd {};
+          fb_cmd.width = mode.hdisplay;
+          fb_cmd.height = mode.vdisplay;
+          fb_cmd.pitch = create.pitch;
+          fb_cmd.bpp = 32;
+          fb_cmd.depth = 24;
+          fb_cmd.handle = create.handle;
+          if (drmIoctl(own_fd, DRM_IOCTL_MODE_ADDFB, &fb_cmd) == 0) {
+            assigned = drmModeSetCrtc(own_fd, crtc_id, fb_cmd.fb_id, 0, 0, &connector_id, 1, &mode) == 0;
+          } else {
+            drm_mode_destroy_dumb destroy {};
+            destroy.handle = create.handle;
+            drmIoctl(own_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+          }
+        }
+      }
+
+      if (own_fd >= 0) {
+        drmIoctl(own_fd, DRM_IOCTL_DROP_MASTER, nullptr);
+        ::close(own_fd);
+      }
+      drmIoctl(dup_fd, DRM_IOCTL_SET_MASTER, nullptr);  // hand master back to the compositor
+      ::close(dup_fd);
+
+      if (assigned) {
+        BOOST_LOG(info) << "vdd: assigned CRTC "sv << crtc_id << " to "sv << connector;
+      } else {
+        BOOST_LOG(warning) << "vdd: failed to assign a CRTC to "sv << connector;
+      }
+      return assigned;
+    }
+
+    /**
+     * @brief Whether the named connector has been given an encoder/CRTC by
+     *        the compositor. A non-master DRM open is enough to read this.
+     */
+    bool
+    connector_has_crtc(const std::string &card, const std::string &connector) {
+      const int fd = open(("/dev/dri/" + card).c_str(), O_RDWR);
+      if (fd < 0) {
+        return true;  // cannot verify - do not block the caller
+      }
+
+      bool has_crtc = false;
+      if (drmModeResPtr res = drmModeGetResources(fd)) {
+        for (int i = 0; i < res->count_connectors && !has_crtc; ++i) {
+          drmModeConnectorPtr conn = drmModeGetConnector(fd, res->connectors[i]);
+          if (!conn) {
+            continue;
+          }
+          const std::string name = std::string { kms_connector_prefix(conn->connector_type) } + "-" + std::to_string(conn->connector_type_id);
+          if (name == connector && conn->encoder_id) {
+            has_crtc = true;
+          }
+          drmModeFreeConnector(conn);
+        }
+        drmModeFreeResources(res);
+      }
+      close(fd);
+      return has_crtc;
+    }
+
+    bool
+    connector_status_is(const std::string &status_path, const std::string &value) {
+      std::ifstream in { status_path };
+      std::string current;
+      std::getline(in, current);
+      return current == value;
+    }
+
+    void
+    for_each_connected_physical(const std::string &vd_connector, const std::function<void(const std::string &status_path, const std::string &connector)> &fn) {
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        const auto status_path = (entry.path() / "status").string();
+        const auto connector = connector_name_for_status(status_path);
+        if (connector == vd_connector) {
+          continue;
+        }
+        if (connector_status_is(status_path, "connected")) {
+          fn(status_path, connector);
+        }
+      }
+    }
+
+    /**
+     * @brief Pick the card to host the virtual display: the one hosting the
+     *        most connected outputs, falling back to the first card.
+     * @return The /sys/class/drm card prefix, e.g. "card1".
+     */
+    std::string
+    card_driver(const std::string &card) {
+      std::error_code link_ec;
+      const auto driver = fs::read_symlink(fs::path { "/sys/class/drm" } / card / "device" / "driver", link_ec);
+      return link_ec ? std::string {} : driver.filename().string();
+    }
+
+    std::string
+    pick_card() {
+      std::string best_card;
+      std::size_t best_connected = 0;
+
+      // The wizard's GPU selection (config adapter_name, a kernel driver
+      // name like "nvidia") narrows the candidates when it matches a card.
+      std::string preferred_driver = config::video.adapter_name;
+      preferred_driver.erase(preferred_driver.begin(), std::find_if(preferred_driver.begin(), preferred_driver.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+      preferred_driver.erase(std::find_if(preferred_driver.rbegin(), preferred_driver.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), preferred_driver.end());
+      std::string preferred_card;
+      if (!preferred_driver.empty()) {
+        for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
+          const auto name = entry.path().filename().string();
+          if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+            continue;
+          }
+          if (card_driver(name) == preferred_driver) {
+            preferred_card = name;
+            break;
+          }
+        }
+      }
+
+      for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+          continue;
+        }
+        if (!preferred_card.empty() && name != preferred_card) {
+          continue;
+        }
+
+        std::size_t connected = 0;
+        for (const auto &conn : fs::directory_iterator { "/sys/class/drm/" + name }) {
+          auto conn_name = conn.path().filename().string();
+          if (conn_name.rfind(name + "-", 0) != 0) {
+            continue;
+          }
+          std::ifstream status { conn.path() / "status" };
+          std::string value;
+          std::getline(status, value);
+          if (value == "connected") {
+            ++connected;
+          }
+        }
+
+        if (connected > best_connected) {
+          best_connected = connected;
+          best_card = name;
+        }
+      }
+
+      std::error_code card_ec;
+      if (best_card.empty() && fs::exists("/sys/class/drm/card0", card_ec) && !card_ec) {
+        best_card = "card0";
+      }
+      return best_card;
+    }
+
+    /**
+     * @brief Locate the debugfs directory backing a card: the PCI name under
+     *        /sys/kernel/debug/dri that hosts per-connector overrides.
+     */
+    std::string
+    debugfs_dir_for_card(const std::string &card) {
+      std::error_code ec;
+      auto device = fs::canonical("/sys/class/drm/" + card + "/device", ec);
+      if (ec) {
+        return {};
+      }
+
+      // Every probe here must use the error_code overloads: without the file
+      // capabilities (a plain `./sunshine` run, or a distro that drops them)
+      // /sys/kernel/debug is unreadable and the throwing overload would take
+      // the whole display backend down with an uncaught filesystem_error.
+      const std::string pci_name = device.filename().string();
+      if (fs::exists(fs::path { k_debugfs_dri } / pci_name, ec) && !ec) {
+        return std::string { k_debugfs_dri } + "/" + pci_name;
+      }
+
+      // Some kernels number the debugfs dri entries instead; the connector
+      // scan in edid_override_path() covers that layout.
+      return {};
+    }
+
+    std::string
+    edid_override_path(const std::string &debugfs_dir, const std::string &connector) {
+      std::error_code ec;
+      fs::path direct = fs::path { debugfs_dir } / connector / "edid_override";
+      if (fs::exists(direct, ec) && !ec) {
+        return direct.string();
+      }
+
+      // Fallback: scan every debugfs dri entry for a matching connector dir.
+      for (const auto &entry : fs::directory_iterator { k_debugfs_dri, ec }) {
+        fs::path candidate = entry.path() / connector / "edid_override";
+        if (fs::exists(candidate, ec) && !ec) {
+          return candidate.string();
+        }
+      }
+      return {};
+    }
+
+    /**
+     * @brief First disconnected hotpluggable connector on the card, DP first.
+     */
+    std::string
+    pick_connector(const std::string &card) {
+      static constexpr std::string_view preferred_types[] = { "DP", "HDMI-A", "HDMI", "eDP", "VGA" };
+
+      std::string fallback;
+      for (const auto &type : preferred_types) {
+        for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
+          const auto name = entry.path().filename().string();
+          if (name.rfind(card + "-" + std::string(type) + "-", 0) != 0) {
+            continue;
+          }
+
+          std::ifstream status { entry.path() / "status" };
+          std::string value;
+          std::getline(status, value);
+          if (value != "disconnected") {
+            continue;
+          }
+          const std::string connector = name.substr(card.size() + 1);
+          if (type == "DP") {
+            return connector;
+          }
+          if (fallback.empty()) {
+            fallback = connector;
+          }
+        }
+      }
+      return fallback;
+    }
+
+    bool
+    wait_for_status(const std::string &status_path, const std::string &value, int attempts, std::chrono::milliseconds delay) {
+      for (int attempt = 0; attempt < attempts; ++attempt) {
+        if (connector_status_is(status_path, value)) {
+          return true;
+        }
+        std::this_thread::sleep_for(delay);
+      }
+      return connector_status_is(status_path, value);
+    }
+
+    /**
+     * @brief Apply an EDID to the active connector and force it on. When the
+     *        connector is already live with a different EDID, cycle it off
+     *        first so the kernel re-reads the override.
+     */
+    bool
+    apply_edid_and_enable(const std::string &edid_path, const std::string &status_path, const std::vector<std::uint8_t> &edid) {
+      const std::string connector_name = connector_name_for_status(status_path);
+      std::string current;
+      {
+        std::ifstream in { edid_path, std::ios::binary };
+        if (in) {
+          std::ostringstream buffer;
+          buffer << in.rdbuf();
+          current = buffer.str();
+        }
+      }
+
+      const std::string new_content(reinterpret_cast<const char *>(edid.data()), edid.size());
+      const bool needs_cycle = connector_status_is(status_path, "connected") && current != new_content;
+
+      if (needs_cycle) {
+        write_text_file(status_path, "off");
+        wait_for_status(status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+      }
+
+      {
+        std::ofstream out { edid_path, std::ios::binary | std::ios::trunc };
+        if (!out) {
+          BOOST_LOG(error) << "vdd: cannot open EDID override ["sv << edid_path << "]: "sv << strerror(errno);
+          return false;
+        }
+        out.write(reinterpret_cast<const char *>(edid.data()), static_cast<std::streamsize>(edid.size()));
+        out.flush();
+        if (!out) {
+          BOOST_LOG(error) << "vdd: cannot write EDID override ["sv << edid_path << "]"sv;
+          return false;
+        }
+      }
+
+      if (!write_text_file(status_path, "on")) {
+        BOOST_LOG(error) << "vdd: cannot force connector on ["sv << status_path << "]: "sv << strerror(errno);
+        return false;
+      }
+
+      return wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
+    }
+
+    /**
+     * @brief Adopt a virtual display left live by a previous process.
+     *
+     * The EDID override and forced connector state survive Sunshine's exit,
+     * but the in-memory bookkeeping does not: after a restart nothing
+     * remembered the virtual display was ours, so the tray offered "create"
+     * while one was already on screen and session teardown skipped it. Scan
+     * once for a connected connector carrying our VHD-signature EDID and
+     * restore the tracked state (preferred mode parsed back from the EDID).
+     * Caller holds state_mutex.
+     */
+    void
+    adopt_orphan_vdd_locked() {
+      static bool adoption_attempted = false;
+      if (adoption_attempted) {
+        return;
+      }
+      adoption_attempted = true;
+
+      // Reading debugfs needs the file capabilities raised to effective.
+      elevated_caps caps;
+
+      const std::uint8_t signature[] = { 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x56, 0x24 };
+      std::error_code ec;
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm", ec }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        const std::string status_path = (entry.path() / "status").string();
+        if (!connector_status_is(status_path, "connected")) {
+          continue;
+        }
+        const std::string connector = name.substr(name.find('-') + 1);
+        const auto edid_path = edid_override_path(debugfs_dir_for_card(name.substr(0, name.find('-'))), connector);
+        if (edid_path.empty()) {
+          continue;
+        }
+
+        std::ifstream in { edid_path, std::ios::binary };
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (content.size() < 72 || std::memcmp(content.data(), signature, sizeof(signature)) != 0) {
+          continue;
+        }
+
+        active = true;
+        active_connector = connector;
+        active_status_path = status_path;
+        active_edid_path = edid_path;
+
+        // Preferred timing descriptor: first DTD at EDID offset 54. Recover
+        // the mode so logging and any later regeneration see real values.
+        const auto byte = [&content](std::size_t i) { return (unsigned int) (std::uint8_t) content[i]; };
+        const unsigned int pixel_clock_10khz = byte(54) | (byte(55) << 8);
+        const unsigned int hactive = byte(56) | ((byte(58) >> 4) << 8);
+        const unsigned int hblank = byte(57) | ((byte(58) & 0x0F) << 8);
+        const unsigned int vactive = byte(59) | ((byte(60) >> 4) << 8);
+        const unsigned int vblank = byte(61) | ((byte(60) & 0x0F) << 8);
+        const unsigned int total = (hactive + hblank) * (vactive + vblank);
+        if (pixel_clock_10khz > 0 && total > 0) {
+          const auto refresh = (pixel_clock_10khz * 10000u + total / 2u) / total;
+          if (hactive >= 64 && hactive <= 8192 &&
+              vactive >= 64 && vactive <= 8192 &&
+              refresh >= 20 && refresh <= 250) {
+            cached_width = hactive;
+            cached_height = vactive;
+            cached_refresh_hz = refresh;
+          }
+        }
+
+        BOOST_LOG(info) << "vdd: adopted live virtual display on "sv << name << " ("sv
+                        << cached_width << "x"sv << cached_height << "@"sv << cached_refresh_hz << "Hz)"sv;
+        return;
+      }
+    }
+    /**
+     * @brief Mirror the Windows mode list: the full feasible cross product of
+     *        the configured resolutions and refresh rates becomes the EDID's
+     *        advertised ladder, letting the compositor switch among every
+     *        combination without an EDID rewrite. The preferred resolution's
+     *        rates land first for slot priority; chained CTA blocks make the
+     *        space effectively unbounded.
+     * @param settings Mode lists parsed by the shared prepare_vdd_settings()
+     *        (same acceptance as the Windows SETMODES list, including the
+     *        session mode when one is known).
+     * @note Caller holds state_mutex.
+     */
+    void
+    refresh_config_mode_ladder_locked(const VddSettings &settings) {
+      active_edid_opts.extra_modes.clear();
+
+      // Highest configured refresh rate first, so the preferred resolution's
+      // slots carry the rates a client is most likely to request.
+      std::vector<unsigned int> rates = settings.refresh_rates_hz;
+      std::sort(rates.begin(), rates.end(), [](unsigned int a, unsigned int b) { return a > b; });
+
+      // Configured resolutions, largest area first.
+      std::vector<resolution_t> resolutions = settings.resolution_modes;
+      std::stable_sort(resolutions.begin(), resolutions.end(), [](const auto &a, const auto &b) {
+        return (unsigned long long) a.width * a.height > (unsigned long long) b.width * b.height;
+      });
+
+      std::vector<std::tuple<unsigned int, unsigned int, unsigned int>> ladder;
+      const auto push_unique = [&](unsigned int w, unsigned int h, unsigned int fps) {
+        if (fps == 0 || !vdd_edid::mode_fits_pixel_clock_limit(w, h, fps)) {
+          return;
+        }
+        if (w == cached_width && h == cached_height && fps == cached_refresh_hz) {
+          return;  // the preferred timing already carries it
+        }
+        const auto mode = std::make_tuple(w, h, fps);
+        if (std::find(ladder.begin(), ladder.end(), mode) == ladder.end()) {
+          ladder.push_back(mode);
+        }
+      };
+
+      // The preferred resolution keeps every configured refresh rate.
+      for (const auto &fps : rates) {
+        push_unique(cached_width, cached_height, fps);
+      }
+      // Every other resolution contributes every configured refresh rate too.
+      for (const auto &res : resolutions) {
+        if (res.width == cached_width && res.height == cached_height) {
+          continue;
+        }
+        for (const auto &fps : rates) {
+          push_unique(res.width, res.height, fps);
+        }
+      }
+      // Chained CTA blocks scale with the mode list; the cap only guards
+      // against pathological config lists.
+      if (ladder.size() > 40) {
+        ladder.resize(40);
+      }
+      active_edid_opts.extra_modes = std::move(ladder);
+    }
+
+    /**
+     * @brief Derive the preferred mode for out-of-session creation from the
+     *        configured resolution/refresh lists - the same WebUI-editable
+     *        lists that drive the Windows SETMODES mode table: the largest
+     *        resolution whose highest configured refresh rate fits the EDID
+     *        pixel-clock limit. Falls back to the 1920x1080@60 defaults when
+     *        the lists carry nothing usable.
+     * @param settings Mode lists parsed by the shared prepare_vdd_settings().
+     * @note Caller holds state_mutex.
+     */
+    void
+    apply_configured_preferred_mode_locked(const VddSettings &settings) {
+      if (cached_from_session) {
+        return;
+      }
+
+      std::vector<unsigned int> rates = settings.refresh_rates_hz;
+      std::sort(rates.begin(), rates.end(), [](unsigned int a, unsigned int b) { return a > b; });
+
+      std::vector<resolution_t> resolutions = settings.resolution_modes;
+      std::stable_sort(resolutions.begin(), resolutions.end(), [](const auto &a, const auto &b) {
+        return (unsigned long long) a.width * a.height > (unsigned long long) b.width * b.height;
+      });
+
+      for (const auto &res : resolutions) {
+        for (const auto &fps : rates) {
+          if (vdd_edid::mode_fits_pixel_clock_limit(res.width, res.height, fps)) {
+            cached_width = res.width;
+            cached_height = res.height;
+            cached_refresh_hz = fps;
+            return;
+          }
+        }
+      }
+    }
+
+    /**
+     * @brief Mode lists for the configured resolutions/refresh rates only.
+     * @details Used where no session mode is known (creation, live mode
+     *          switch); session-aware callers pass their prepared settings.
+     */
+    VddSettings
+    configured_mode_settings() {
+      return prepare_vdd_settings(parsed_config_t {});
+    }
+  }  // namespace
+
+  std::string
+  live_virtual_display_connector() {
+    std::lock_guard lock { state_mutex };
+    if (!active) {
+      adopt_orphan_vdd_locked();
+    }
+    if (active && !active_connector.empty() && connector_status_is(active_status_path, "connected")) {
+      return active_connector;
+    }
+
+    // Nothing live: a previous process may have died while its exclusive
+    // session had the physical outputs switched off, which is recorded on disk
+    // exactly because a forced-off connector is indistinguishable from an
+    // unplugged one. Restoring here means the screen comes back as soon as
+    // Sunshine (or anything querying the virtual display) starts again. No-op
+    // once the record is gone.
+    restore_offlined_physicals();
+    return {};
+  }
+
+  std::vector<std::string>
+  offlined_physical_connectors() {
+    std::lock_guard lock { state_mutex };
+    return offlined_physical_outputs;
+  }
+
+  exec_output_t
+  run_logged(const std::string &cmd, std::chrono::milliseconds timeout) {
+    exec_output_t result;
+
+    int pipe_fd[2];
+    if (pipe(pipe_fd) != 0) {
+      BOOST_LOG(error) << "vdd: pipe() failed for ["sv << cmd << "]";
+      return result;
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+      const auto saved_errno = errno;
+      close(pipe_fd[0]);
+      close(pipe_fd[1]);
+      BOOST_LOG(error) << "vdd: fork() failed for ["sv << cmd << "]: "sv << strerror(saved_errno);
+      return result;
+    }
+
+    if (pid == 0) {
+      // Child: never inherit Sunshine's sockets or files into helper
+      // processes — a lingering child would keep ports bound after we
+      // release them (seen live: a stuck kscreen-doctor pinned port 48020).
+      close(pipe_fd[0]);
+      dup2(pipe_fd[1], STDOUT_FILENO);
+      dup2(pipe_fd[1], STDERR_FILENO);
+      close(pipe_fd[1]);
+
+      const int openmax = static_cast<int>(sysconf(_SC_OPEN_MAX));
+      for (int fd = STDERR_FILENO + 1; fd < openmax; ++fd) {
+        close(fd);
+      }
+
+      execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char *>(nullptr));
+      _exit(127);
+    }
+
+    close(pipe_fd[1]);
+
+    // Read with an overall deadline; a compositor helper can block
+    // indefinitely on a wedged Wayland connection.
+    constexpr std::size_t kMaxCapturedOutput = 64 * 1024;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    bool timed_out = false;
+    char buf[512];
+    while (true) {
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+      if (remaining.count() <= 0) {
+        timed_out = true;
+        break;
+      }
+
+      pollfd pfd { pipe_fd[0], POLLIN, 0 };
+      const int pr = poll(&pfd, 1, static_cast<int>(remaining.count()));
+      if (pr < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        break;
+      }
+      if (pr == 0) {
+        timed_out = true;
+        break;
+      }
+
+      const auto n = read(pipe_fd[0], buf, sizeof(buf));
+      if (n <= 0) {
+        break;
+      }
+      if (result.output.size() < kMaxCapturedOutput) {
+        result.output.append(buf, static_cast<std::size_t>(n));
+      }
+    }
+    close(pipe_fd[0]);
+
+    if (timed_out) {
+      BOOST_LOG(warning) << "vdd: ["sv << cmd << "] timed out after "sv << timeout.count() << "ms; killing"sv;
+      kill(pid, SIGKILL);
+    }
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    result.exit_code = !timed_out && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+    BOOST_LOG(info) << "vdd: ["sv << cmd << "] exit="sv << result.exit_code
+                    << (result.output.empty() ? std::string {} : " output: " + result.output);
+    return result;
+  }
+
+  const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
+
+  bool
+  is_mode_advertised(const std::string &device_id, const display_mode_t &requested_mode) {
+    // The publication being verified belongs to the virtual display: the id the
+    // session passes was resolved before the VDD existed (or names the physical
+    // screen the client was looking at), so prefer the live VDD connector.
+    const std::string vdd_connector = live_virtual_display_connector();
+    const std::string output = vdd_connector.empty() ? device_id : vdd_connector;
+
+    // Windows asks the OS for the display's mode list (EnumDisplaySettings).
+    // The Wayland analogue is the compositor's list: on KDE it is the display
+    // server, so its answer decides whether the mode can be applied at all.
+    // An empty list means "no compositor query here" (niri/wlroots/X11), which
+    // must not be read as "not advertised" -- those sessions keep the previous
+    // answer based on the live connector.
+    const auto advertised = platf::kscreen::advertised_modes(output);
+    if (advertised.empty()) {
+      return !output.empty() && !vdd_connector.empty();
+    }
+
+    return std::any_of(advertised.begin(), advertised.end(), [&](const auto &mode) {
+      return advertised_mode_matches(mode.width, mode.height, mode.refresh_hz, requested_mode);
+    });
+  }
+
+  bool
+  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode) {
+    elevated_caps caps;
+    const auto refresh_hz = std::max(1u, (requested_mode.refresh_rate.numerator + requested_mode.refresh_rate.denominator / 2) / requested_mode.refresh_rate.denominator);
+
+    bool applied = true;
+    std::string status_path;
+    std::string card;
+    std::string connector;
+    {
+      // Only state is touched under the lock; the connector work below spawns
+      // processes (kscreen-doctor) and must not hold it.
+      std::lock_guard lock { state_mutex };
+      cached_width = requested_mode.resolution.width;
+      cached_height = requested_mode.resolution.height;
+      cached_refresh_hz = refresh_hz;
+
+      if (active) {
+        status_path = active_status_path;
+        card = active_card;
+        connector = connector_name_for_status(active_status_path);
+
+        if (!vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, refresh_hz)) {
+          // The EDID's detailed-timing field is 16 bits of 10 kHz, so a faster
+          // mode would be written with a saturated clock and advertise a
+          // different refresh than the client asked for. Keep the previous,
+          // valid EDID and report the failure instead.
+          BOOST_LOG(error) << "vdd: requested mode "sv << cached_width << 'x' << cached_height << '@' << refresh_hz
+                           << "Hz needs more than the EDID detailed-timing limit ("sv
+                           << static_cast<unsigned int>(vdd_edid::kMaxDtdPixelClockHz / 1000000.0)
+                           << "MHz); the virtual display cannot advertise it"sv;
+          return false;
+        }
+
+        // Live mode switch: cycle the connector with an EDID for the new mode.
+        const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
+        applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
+      }
+    }
+
+    if (!applied) {
+      return false;
+    }
+    if (connector.empty()) {
+      // No live connector to publish into (creation handles its own EDID).
+      return true;
+    }
+
+    // Same ordering as creation: the status cycle for the new mode handed the
+    // compositor a fresh connector event, and its one-shot activation must
+    // not be raced with a master steal.
+    if (!wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 }) &&
+        !connector_has_crtc(card, connector)) {
+      force_crtc_assignment("/dev/dri/" + card, connector);
+    }
+    enable_output_via_compositor(connector);
+
+    if (!wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 })) {
+      return false;
+    }
+
+    // Windows semantics: the mode list update is asynchronous, so poll until
+    // the OS publishes the requested mode and fail the session if it never
+    // does. Previously this returned success unconditionally, which turned a
+    // missing mode into a silently wrong stream resolution.
+    if (is_mode_advertised(device_id, requested_mode)) {
+      return true;
+    }
+
+    auto poll_delay = kModePublicationInitialPoll;
+    const auto deadline = std::chrono::steady_clock::now() + kModePublicationTimeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::min(poll_delay, std::chrono::milliseconds { 100 }));
+      if (is_mode_advertised(device_id, requested_mode)) {
+        return true;
+      }
+      poll_delay = std::min(kModePublicationMaxPoll, poll_delay * 2);
+    }
+
+    const auto advertised = platf::kscreen::advertised_modes(device_id);
+    if (!advertised.empty()) {
+      std::string list;
+      for (const auto &mode : advertised) {
+        if (!list.empty()) {
+          list += ", ";
+        }
+        list += std::to_string(mode.width) + "x" + std::to_string(mode.height) + "@" + std::to_string(mode.refresh_hz);
+      }
+      BOOST_LOG(error) << "vdd: " << connector << " does not advertise "sv
+                       << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                       << '@' << refresh_hz << "Hz; published modes: "sv << list;
+    }
+    else {
+      BOOST_LOG(error) << "vdd: " << connector << " did not publish "sv
+                       << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                       << '@' << refresh_hz << "Hz"sv;
+    }
+    return false;
+  }
+
+  vdd_status_t
+  get_vdd_status() {
+    elevated_caps caps;
+
+    vdd_status_t status;
+    // The native path is "installed" when the kernel exposes connector EDID
+    // overrides at all. Use the error-code overload: stat may fail with
+    // EACCES before the capabilities are proven to work.
+    std::error_code ec;
+    status.installed = fs::exists(k_debugfs_dri, ec) && !ec;
+    status.running = status.installed;
+    status.control_available = status.installed;
+    status.monitor_active = !live_virtual_display_connector().empty();
+    status.problem_code_valid = true;
+    status.problem_code = 0;
+    status.state = std::string { classify_vdd_state(status.installed, status.running, status.control_available, status.problem_code_valid, status.problem_code) };
+    return status;
+  }
+
+  bool
+  hardware_cursor_export_enabled(std::string value) {
+    return value == "1" || value == "true" || value == "on";
+  }
+
+  bool
+  ensure_hardware_cursor_enabled_for_capture(bool *) {
+    // KMS capture reads the cursor plane directly; nothing to enable.
+    return true;
+  }
+
+  set_vdd_result
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
+    elevated_caps caps;
+    if (!config.resolution || !config.refresh_rate) {
+      return set_vdd_result::invalid_config;
+    }
+
+    const auto refresh_hz = std::max(1u, (config.refresh_rate->numerator + config.refresh_rate->denominator / 2) / config.refresh_rate->denominator);
+    std::lock_guard lock { state_mutex };
+    cached_width = config.resolution->width;
+    cached_height = config.resolution->height;
+    cached_refresh_hz = refresh_hz;
+    cached_from_session = true;
+    // Keep the session list for a creation that happens later in this session
+    // (Windows SETMODES has the same lifetime: the driver holds it until the
+    // monitor is created or updated).
+    session_mode_settings = settings;
+
+    if (!active) {
+      // The EDID is generated from the cached mode when the display is created
+      // (create_vdd_monitor falls back to the configured mode if this one is
+      // too fast for a detailed timing to express).
+      return set_vdd_result::ok;
+    }
+
+    if (!vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, refresh_hz)) {
+      BOOST_LOG(error) << "vdd: session mode "sv << cached_width << 'x' << cached_height << '@' << refresh_hz
+                       << "Hz needs more than the EDID detailed-timing limit ("sv
+                       << static_cast<unsigned int>(vdd_edid::kMaxDtdPixelClockHz / 1000000.0)
+                       << "MHz); the live mode list keeps the modes it already advertises"sv;
+      return set_vdd_result::failed;
+    }
+
+    refresh_config_mode_ladder_locked(settings);
+    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
+    return apply_edid_and_enable(active_edid_path, active_status_path, edid) ? set_vdd_result::ok : set_vdd_result::failed;
+  }
+
+  std::string
+  generate_client_guid(const std::string &) {
+    // Per-client GUIDs are a ZakoVDD driver concept.
+    return {};
+  }
+
+  physical_size_t
+  get_client_physical_size(const std::string &client_name) {
+    if (client_name.empty()) {
+      return {};
+    }
+
+    // Size classes come from the canonical shared table (vdd_utils.cpp).
+    try {
+      pt::ptree clientArray;
+      std::stringstream ss(config::get_clients_config());
+      pt::read_json(ss, clientArray);
+
+      for (const auto &client : clientArray) {
+        if (client.second.get<std::string>("name", "") == client_name) {
+          const std::string device_size = client.second.get<std::string>("deviceSize", "medium");
+          return client_physical_size_for_class(device_size);
+        }
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(debug) << "Failed to get client physical size: "sv << e.what();
+    }
+
+    return {};
+  }
+
+  bool
+  create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
+    elevated_caps caps;
+    std::lock_guard lock { state_mutex };
+
+    // Personalization captured at creation, mirroring the Windows
+    // CREATEMONITOR payload [max_nits,min_nits,maxFALL][widthCm,heightCm]:
+    // the client's reported luminance and physical size are written into the
+    // EDID's HDR static metadata and screen-size descriptors. Non-positive
+    // values keep the generator's reference defaults; a minimum luminance that
+    // would encode to code 0 (undefined) also stays at the default, since the
+    // CTA-861-H minimum-luminance field cannot represent sub-0.02 nit values.
+    active_edid_opts.width_mm = physical_size.width_cm > 0.0f
+                                  ? static_cast<unsigned int>(std::lround(physical_size.width_cm * 10.0f))
+                                  : 0;
+    active_edid_opts.height_mm = physical_size.height_cm > 0.0f
+                                   ? static_cast<unsigned int>(std::lround(physical_size.height_cm * 10.0f))
+                                   : 0;
+    active_edid_opts.hdr_max_nits = hdr_brightness.max_nits > 0.0f
+                                      ? static_cast<int>(std::lround(hdr_brightness.max_nits))
+                                      : -1;
+    active_edid_opts.hdr_max_full_nits = hdr_brightness.max_full_nits > 0.0f
+                                           ? static_cast<int>(std::lround(hdr_brightness.max_full_nits))
+                                           : -1;
+    active_edid_opts.hdr_min_nits = hdr_brightness.min_nits >= 1.0f
+                                      ? static_cast<int>(std::lround(hdr_brightness.min_nits))
+                                      : -1;
+
+    const auto settings = session_mode_settings ? *session_mode_settings : configured_mode_settings();
+    if (cached_from_session && !vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, cached_refresh_hz)) {
+      // A session mode faster than a detailed timing can express must not
+      // become the EDID's preferred timing: the field would saturate and the
+      // display would advertise a different refresh than the client asked for.
+      // Fall back to the configured preferred mode and let the session's mode
+      // publication check report the failure.
+      BOOST_LOG(error) << "vdd: session mode "sv << cached_width << 'x' << cached_height << '@' << cached_refresh_hz
+                       << "Hz needs more than the EDID detailed-timing limit ("sv
+                       << static_cast<unsigned int>(vdd_edid::kMaxDtdPixelClockHz / 1000000.0)
+                       << "MHz); creating the virtual display with the configured preferred mode instead"sv;
+      cached_from_session = false;
+    }
+    apply_configured_preferred_mode_locked(settings);
+
+    BOOST_LOG(info) << "Creating virtual display " << cached_width << "x" << cached_height << "@" << cached_refresh_hz
+                    << "Hz" << (client_identifier.empty() ? std::string {} : " (client: " + client_identifier + ")")
+                    << ", EDID personalization: " << active_edid_opts.width_mm << "x" << active_edid_opts.height_mm
+                    << "mm, HDR [" << active_edid_opts.hdr_max_nits << "," << active_edid_opts.hdr_min_nits << ","
+                    << active_edid_opts.hdr_max_full_nits << "] nits";
+
+    if (active && connector_status_is(active_status_path, "connected")) {
+      BOOST_LOG(debug) << "vdd: virtual display already active on "sv << active_connector;
+      return true;
+    }
+
+    // Sweep virtual connectors left behind by crashed sessions or older
+    // runs: any forced-on connector still carrying our VHD-signature EDID
+    // is cleared so it does not accumulate and consume VRAM.
+    {
+      const std::uint8_t signature[] = { 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x56, 0x24 };
+      for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+        const auto name = entry.path().filename().string();
+        if (name.rfind("card", 0) != 0 || name.find('-') == std::string::npos) {
+          continue;
+        }
+        const std::string status_path = (entry.path() / "status").string();
+        if (!connector_status_is(status_path, "connected")) {
+          continue;
+        }
+        const std::string connector = name.substr(name.find('-') + 1);
+
+        const auto edid_path = edid_override_path(debugfs_dir_for_card(name.substr(0, name.find('-'))), connector);
+        if (edid_path.empty()) {
+          continue;
+        }
+        std::ifstream in { edid_path, std::ios::binary };
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (content.size() < sizeof(signature) || std::memcmp(content.data(), signature, sizeof(signature)) != 0) {
+          continue;
+        }
+        if (active && status_path == active_status_path) {
+          continue;
+        }
+
+        BOOST_LOG(warning) << "vdd: cleaning stale virtual display on "sv << name;
+        write_text_file(edid_path, "");
+        write_text_file(status_path, "off");
+      }
+    }
+
+    const std::string card = pick_card();
+    if (card.empty()) {
+      BOOST_LOG(error) << "vdd: no DRM card found"sv;
+      return false;
+    }
+
+    const std::string debugfs_dir = debugfs_dir_for_card(card);
+    const std::string connector = pick_connector(card);
+    if (connector.empty()) {
+      BOOST_LOG(error) << "vdd: no spare disconnected connector on "sv << card << " for the virtual display"sv;
+      return false;
+    }
+
+    auto edid_path = edid_override_path(debugfs_dir, connector);
+    if (edid_path.empty()) {
+      BOOST_LOG(error) << "vdd: no EDID override node for "sv << connector << " (debugfs mounted?)"sv;
+      return false;
+    }
+
+    const std::string status_path = "/sys/class/drm/" + card + "-" + connector + "/status";
+    refresh_config_mode_ladder_locked(settings);
+    const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, active_edid_opts);
+
+    if (!apply_edid_and_enable(edid_path, status_path, edid)) {
+      BOOST_LOG(error) << "vdd: failed to bring up "sv << card << '-' << connector;
+      return false;
+    }
+
+    // The status write emits a DRM uevent; current KWin reprobes, enables the
+    // output and assigns the CRTC itself. That activation is one-shot, so it
+    // must not be raced with the master steal below: a SETCRTC taken from
+    // under the compositor mid-activation fails its atomic commit and it
+    // drops the output for good, leaving the session to die on the mode set
+    // against an output kscreen never lists. Compositor first; the steal is
+    // the fallback for compositors that ignore status-forced connectors.
+    bool compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
+    bool crtc_assigned = connector_has_crtc(card, connector);
+
+    if (!compositor_live && !crtc_assigned) {
+      for (int attempt = 0; attempt < 4 && !crtc_assigned; ++attempt) {
+        force_crtc_assignment("/dev/dri/" + card, connector);
+        enable_output_via_compositor(connector);
+        crtc_assigned = connector_has_crtc(card, connector);
+        if (!crtc_assigned) {
+          std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+        }
+      }
+
+      if (crtc_assigned) {
+        // The steal may have landed inside the compositor's one-shot
+        // activation of this connector event. Recycling the connector hands
+        // it a fresh attempt; the EDID override survives the cycle.
+        compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 1000 });
+        if (!compositor_live) {
+          BOOST_LOG(warning) << "vdd: recycling "sv << connector
+                             << " so the compositor retries its activation"sv;
+          write_text_file(status_path, "off");
+          wait_for_status(status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+          write_text_file(status_path, "on");
+          wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
+          compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
+        }
+      }
+    }
+
+    if (compositor_live || crtc_assigned) {
+      // No-op when the compositor already enabled the output; needed for
+      // compositors that surface new outputs disabled.
+      enable_output_via_compositor(connector);
+    }
+    else if (platf::kscreen::session_supports_kscreen()) {
+      // The compositor is observable and still does not see the connector.
+      // Returning true here would only move the failure to the mode set with
+      // a bogus "live" log in front of it; fail where the cause is visible.
+      BOOST_LOG(error) << "vdd: compositor never surfaced "sv << connector
+                       << "; refusing to create a virtual display it cannot use"sv;
+      return false;
+    }
+    else {
+      BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
+    }
+
+    active = true;
+    active_card = card;
+    active_connector = connector;
+    active_status_path = status_path;
+    active_edid_path = edid_path;
+    active_edid_content.assign(reinterpret_cast<const char *>(edid.data()), edid.size());
+
+    BOOST_LOG(info) << "vdd: virtual display is live on "sv << card << '-' << connector;
+    return true;
+  }
+
+  bool
+  create_vdd_monitor_noninteractive() {
+    return create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {});
+  }
+
+  bool
+  destroy_vdd_monitor() {
+    elevated_caps caps;
+    std::lock_guard lock { state_mutex };
+    if (!active) {
+      return true;
+    }
+
+    write_text_file(active_edid_path, "");
+    write_text_file(active_status_path, "off");
+    const bool gone = wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+    if (!gone) {
+      BOOST_LOG(warning) << "vdd: connector "sv << active_connector << " did not turn off cleanly"sv;
+    }
+
+    restore_offlined_physicals();
+    if (last_prep == parsed_config_t::vdd_prep_e::vdd_as_primary || last_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
+      // Give the primary role back to the physical screen.
+      for_each_connected_physical(active_connector, [](const auto &, const auto &physical) {
+        hint_primary_output(physical, 1);
+      });
+    }
+
+    BOOST_LOG(info) << "vdd: virtual display on "sv << active_connector << " destroyed"sv;
+    active = false;
+    active_connector.clear();
+    // The session that owned this mode list is over: a later tray/headless
+    // creation must go back to deriving the preferred mode from the config
+    // instead of reusing the finished session's mode.
+    cached_from_session = false;
+    session_mode_settings.reset();
+    return gone;
+  }
+
+  void
+  destroy_vdd_monitor_nolog() {
+    elevated_caps caps;
+    std::lock_guard lock { state_mutex };
+    if (!active) {
+      return;
+    }
+
+    write_text_file(active_edid_path, "");
+    write_text_file(active_status_path, "off");
+    wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
+    restore_offlined_physicals();
+    active = false;
+    active_connector.clear();
+    cached_from_session = false;
+    session_mode_settings.reset();
+  }
+
+  void
+  disable_enable_vdd() {
+    // Driver-level disable/enable has no native equivalent.
+  }
+
+  bool
+  toggle_display_power() {
+    if (is_display_on()) {
+      return destroy_vdd_monitor();
+    }
+    return create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {});
+  }
+
+  bool
+  is_display_on() {
+    return !live_virtual_display_connector().empty();
+  }
+
+  bool
+  set_hdr_state(bool) {
+    // The generated EDID advertises HDR statically; there is no runtime toggle.
+    return true;
+  }
+
+  bool
+  ensure_vdd_extended_mode(const std::string &, const std::vector<std::string> &) {
+    return true;
+  }
+
+  bool
+  apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e vdd_prep, const boost::optional<device_info_map_t> &) {
+    elevated_caps caps;
+    std::lock_guard lock { state_mutex };
+    last_prep = vdd_prep;
+
+    if (vdd_prep != parsed_config_t::vdd_prep_e::display_off) {
+      // Whatever a previous run switched off for an exclusive session comes
+      // back before this one decides its own layout (an exclusive session
+      // disables what it needs right below anyway).
+      restore_offlined_physicals();
+    }
+
+    const std::string vd_connector = active_connector;
+
+    switch (vdd_prep) {
+      case parsed_config_t::vdd_prep_e::vdd_as_primary: {
+        // Mirrors the Windows topology: VDD first (primary), physicals as
+        // extended. The primary hint is desktop-specific (KWin models it as
+        // the kscreen priority); unsupported desktops keep the extended
+        // layout.
+        if (!vd_connector.empty()) {
+          hint_primary_output(vd_connector, 1);
+          for_each_connected_physical(vd_connector, [](const auto &, const auto &physical) {
+            hint_primary_output(physical, 2);
+          });
+        }
+        return true;
+      }
+
+      case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
+        // Physicals stay primary, VDD extends as secondary.
+        if (!vd_connector.empty()) {
+          hint_primary_output(vd_connector, 2);
+          for_each_connected_physical(vd_connector, [](const auto &, const auto &physical) {
+            hint_primary_output(physical, 1);
+          });
+        }
+        return true;
+      }
+
+      case parsed_config_t::vdd_prep_e::display_off: {
+        // Exclusive mode: ask the compositor to switch the physical outputs
+        // off, and never the DRM layer. Writing the sysfs `status` forced the
+        // panel off below the compositor, which survives a crash and (on
+        // NVIDIA) emits no hotplug to recover from -- the reported "the screen
+        // did not come back" failure. The compositor owns the layout, so it is
+        // also what puts it back.
+        offlined_physical_outputs.clear();
+        if (!platf::kscreen::session_supports_kscreen()) {
+          BOOST_LOG(warning) << "vdd: exclusive prep cannot switch the physical outputs off in this session "
+                                "(no compositor output backend yet); the host screen stays on"sv;
+          return true;
+        }
+
+        for_each_connected_physical(vd_connector, [&](const auto &, const auto &connector) {
+          const auto result = platf::kscreen::run("output." + connector + ".disable", std::chrono::milliseconds { 10'000 });
+          // kscreen-doctor exits 0 even when the config application fails
+          // ("applying config failed! <compositor reason>" — e.g. KWin
+          // refusing to disable the only output it knows about); the text is
+          // the only reliable verdict.
+          const bool switched_off = result.exit_code == 0 &&
+                                    result.output.find("applying config failed") == std::string::npos;
+          if (switched_off) {
+            offlined_physical_outputs.emplace_back(connector);
+            BOOST_LOG(info) << "vdd: display_off prep switched physical output "sv << connector << " off through the compositor"sv;
+          }
+          else {
+            BOOST_LOG(warning) << "vdd: could not switch physical output "sv << connector << " off: "sv << result.output;
+          }
+        });
+        persist_offlined_physicals();
+        return true;
+      }
+
+      case parsed_config_t::vdd_prep_e::no_operation:
+      default:
+        // no_operation: keep the current layout untouched. ensure_active is
+        // folded here: the virtual display is enabled as part of creation.
+        return true;
+    }
+  }
+
+
+}  // namespace display_device::vdd_utils
+#endif
+
+// ---------------------------------------------------------------------------
+// Platform-neutral mode-list helpers: one implementation for both the Windows
+// SETMODES path and the Linux EDID mode ladder. Kept outside the platform
+// guards so the two backends can never drift apart.
+// ---------------------------------------------------------------------------
+namespace display_device::vdd_utils {
+
+  bool
+  same_resolution(const resolution_t &a, const resolution_t &b) {
+    return a.width == b.width && a.height == b.height;
+  }
+
+  void
+  append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution) {
+    if (std::find_if(resolutions.begin(), resolutions.end(), [&](const auto &cached) {
+          return same_resolution(cached, resolution);
+        }) == resolutions.end()) {
+      resolutions.push_back(resolution);
+    }
+  }
+
+  void
+  append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz) {
+    if (refresh_hz > 0 && std::find(refresh_rates_hz.begin(), refresh_rates_hz.end(), refresh_hz) == refresh_rates_hz.end()) {
+      refresh_rates_hz.push_back(refresh_hz);
+    }
+  }
+
+  boost::optional<unsigned int>
+  rounded_vdd_refresh_hz(double refresh_hz) {
+    constexpr auto max_unsigned_refresh_hz = static_cast<double>(std::numeric_limits<unsigned int>::max());
+    constexpr auto max_lround_input = static_cast<double>(std::numeric_limits<long>::max());
+
+    if (!std::isfinite(refresh_hz) || refresh_hz <= 0.0 || refresh_hz > std::min(max_unsigned_refresh_hz, max_lround_input)) {
+      return {};
+    }
+
+    const auto rounded = std::lround(refresh_hz);
+    if (rounded <= 0 || static_cast<unsigned long>(rounded) > std::numeric_limits<unsigned int>::max()) {
+      return {};
+    }
+
+    return static_cast<unsigned int>(rounded);
+  }
+
+  boost::optional<unsigned int>
+  rounded_refresh_hz(const refresh_rate_t &refresh_rate) {
+    if (refresh_rate.denominator == 0) {
+      return {};
+    }
+
+    const double refresh_hz = static_cast<double>(refresh_rate.numerator) / refresh_rate.denominator;
+    return rounded_vdd_refresh_hz(refresh_hz);
+  }
+
+  boost::optional<resolution_t>
+  parse_vdd_resolution(const std::string &value) {
+    std::string trimmed = value;
+    boost::algorithm::trim(trimmed);
+    if (trimmed.empty()) {
+      return {};
+    }
+
+    std::stringstream input(trimmed);
+    unsigned int width = 0;
+    unsigned int height = 0;
+    char separator = '\0';
+    input >> width >> separator >> height;
+
+    if (!input || !input.eof() || (separator != 'x' && separator != 'X') || width == 0 || height == 0) {
+      BOOST_LOG(warning) << "Skipping invalid VDD resolution entry: " << value;
+      return {};
+    }
+
+    return resolution_t { width, height };
+  }
+
+  boost::optional<unsigned int>
+  parse_vdd_refresh_hz(const std::string &value) {
+    std::string trimmed = value;
+    boost::algorithm::trim(trimmed);
+    if (trimmed.empty()) {
+      return {};
+    }
+
+    try {
+      std::size_t parsed_len = 0;
+      const double refresh_hz = std::stod(trimmed, &parsed_len);
+      if (parsed_len != trimmed.size()) {
+        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+        return {};
+      }
+
+      const auto rounded = rounded_vdd_refresh_hz(refresh_hz);
+      if (!rounded) {
+        BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+        return {};
+      }
+
+      return *rounded;
+    }
+    catch (const std::exception &) {
+      BOOST_LOG(warning) << "Skipping invalid VDD refresh-rate entry: " << value;
+      return {};
+    }
+  }
+
+  physical_size_t
+  client_physical_size_for_class(const std::string &device_size) {
+    // Canonical per-client size classes (~6" / ~15.6" / ~32", 16:9).
+    static const std::unordered_map<std::string, physical_size_t> size_map = {
+      { "small", { 13.3f, 7.5f } },
+      { "medium", { 34.5f, 19.4f } },
+      { "large", { 70.8f, 39.8f } },
+    };
+
+    const auto it = size_map.find(device_size);
+    return it != size_map.end() ? it->second : size_map.at("medium");
+  }
+
+  VddSettings
+  prepare_vdd_settings(const parsed_config_t &config) {
+    std::vector<resolution_t> resolution_modes;
+    std::vector<unsigned int> refresh_rates_hz;
+
+    for (const auto &res : config::nvhttp.resolutions) {
+      if (const auto parsed_resolution = parse_vdd_resolution(res)) {
+        append_unique_resolution(resolution_modes, *parsed_resolution);
+      }
+    }
+
+    for (const auto &fps : config::nvhttp.fps) {
+      if (const auto parsed_refresh_hz = parse_vdd_refresh_hz(fps)) {
+        append_unique_refresh_rate(refresh_rates_hz, *parsed_refresh_hz);
+      }
+    }
+
+    if (config.resolution) {
+      append_unique_resolution(resolution_modes, *config.resolution);
+    }
+    if (config.refresh_rate) {
+      if (const auto session_refresh_hz = rounded_refresh_hz(*config.refresh_rate)) {
+        append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
+      }
+    }
+
+    return { std::move(resolution_modes), std::move(refresh_rates_hz) };
+  }
+
+}  // namespace display_device::vdd_utils

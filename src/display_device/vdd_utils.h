@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,13 +9,84 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 
 #include <boost/optional.hpp>
 
 #include "parsed_config.h"
 
+#ifndef _WIN32
+namespace display_device {
+
+  // Windows-only display session helpers that platform-neutral code still
+  // references; the Linux equivalents are no-ops (no WTS session events,
+  // no RDP session detection).
+  class SessionEventListener {
+  public:
+    template<typename Fn>
+    static void
+    add_unlock_task(Fn &&) {
+    }
+
+    static void
+    init() {
+    }
+
+    static void
+    deinit() {
+    }
+
+    static void
+    clear_unlock_task() {
+    }
+  };
+
+  namespace w_utils {
+    inline bool
+    is_any_rdp_session_active() {
+      return false;
+    }
+  }  // namespace w_utils
+}  // namespace display_device
+#endif
+
 namespace display_device::vdd_utils {
+
+#ifndef _WIN32
+  /**
+   * @brief Name of the live virtual output (e.g. "card1-DP-1") created by the
+   *        external virtual display helper, or empty when none is active.
+   */
+  std::string
+  live_virtual_display_connector();
+
+  /**
+   * @brief Names of the physical connectors this backend powered off for an
+   *        exclusive virtual display session (they read as disconnected in
+   *        sysfs while offlined, so callers cannot discover them there).
+   */
+  std::vector<std::string>
+  offlined_physical_connectors();
+
+  struct exec_output_t {
+    int exit_code = -1;
+    std::string output;
+  };
+
+  /**
+   * @brief Run a command via /bin/sh, capturing its combined output.
+   * @details The child inherits none of our file descriptors, and it is
+   *          killed once @p timeout has elapsed — compositor helpers can
+   *          block indefinitely on a wedged session, which must not wedge
+   *          the calling thread or pin our listening sockets.
+   */
+  exec_output_t
+  run_logged(const std::string &cmd, std::chrono::milliseconds timeout = std::chrono::milliseconds { 10'000 });
+#endif
 
   using namespace std::chrono_literals;
 
@@ -27,6 +96,14 @@ namespace display_device::vdd_utils {
   inline constexpr auto kMaxRetryDelay = 3000ms;
 
   extern const std::chrono::milliseconds kDefaultDebounceInterval;
+
+  // The OS publishes a mode list asynchronously after the mode list is set
+  // (Windows: SETMODES / IddCxMonitorUpdateModes2; Linux: the kernel re-reading
+  // the EDID override). Both platforms poll for the requested mode with the
+  // same bounds, so they live here instead of in one platform half.
+  inline constexpr auto kModePublicationTimeout = std::chrono::seconds { 3 };
+  inline constexpr auto kModePublicationInitialPoll = std::chrono::milliseconds { 50 };
+  inline constexpr auto kModePublicationMaxPoll = std::chrono::milliseconds { 500 };
 
   // HDR亮度范围结构
   struct hdr_brightness_t {
@@ -315,6 +392,57 @@ namespace display_device::vdd_utils {
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
+
+  // ---------------------------------------------------------------------------
+  // Shared (platform-neutral) mode-list helpers — defined once in vdd_utils.cpp
+  // outside the platform guards.
+  //
+  // The Windows backend forwards this list to the ZakoVDD driver via SETMODES;
+  // the Linux backend builds the virtual display's EDID mode ladder from it.
+  // Both must accept the exact same configuration syntax, so the parsing and
+  // de-duplication live here instead of being re-implemented per platform.
+  // ---------------------------------------------------------------------------
+
+  bool
+  same_resolution(const resolution_t &a, const resolution_t &b);
+
+  void
+  append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution);
+
+  void
+  append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz);
+
+  boost::optional<unsigned int>
+  rounded_vdd_refresh_hz(double refresh_hz);
+
+  boost::optional<unsigned int>
+  rounded_refresh_hz(const refresh_rate_t &refresh_rate);
+
+  /**
+   * @brief Parse a configured resolution entry ("1920x1080").
+   * @details Acceptance matches the Windows driver path exactly: surrounding
+   *          whitespace is trimmed, the separator must be 'x' or 'X', both
+   *          dimensions must be positive and no trailing characters allowed.
+   */
+  boost::optional<resolution_t>
+  parse_vdd_resolution(const std::string &value);
+
+  /**
+   * @brief Parse a configured refresh-rate entry ("60", "59.94").
+   * @details Acceptance matches the Windows driver path exactly: the whole
+   *          entry must be a positive number; fractional rates are rounded to
+   *          the nearest integer (the driver mode list is integral).
+   */
+  boost::optional<unsigned int>
+  parse_vdd_refresh_hz(const std::string &value);
+
+  /**
+   * @brief Physical size of a configured client device-size class.
+   * @details Canonical per-client size classes shared by both backends;
+   *          unknown classes fall back to "medium".
+   */
+  physical_size_t
+  client_physical_size_for_class(const std::string &device_size);
 
   // 重试函数模板
   template <typename Func>

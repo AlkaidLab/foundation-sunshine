@@ -40,6 +40,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include <boost/filesystem.hpp>
+#include <boost/regex.hpp>
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
 #include <Simple-Web-Server/server_https.hpp>
@@ -1921,10 +1922,12 @@ namespace confighttp {
     if (!authenticate(response, request)) return;
 
     print_req(request);
+#ifdef _WIN32
     if (GetConsoleWindow() == NULL) {
       lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
       return;
     }
+#endif
     lifetime::exit_sunshine(0, true);
   }
 
@@ -1999,7 +2002,8 @@ namespace confighttp {
 #endif
   }
 
-#ifdef _WIN32
+  // Cross-platform: on Linux the virtual display backend reports its own
+  // readiness through the same status surface.
   void
   getVddStatus(resp_https_t response, req_https_t request) {
     if (!authenticate(response, request)) return;
@@ -2018,6 +2022,7 @@ namespace confighttp {
     });
   }
 
+#ifdef _WIN32
   void
   writeVulkanHdrBridgeStatus(resp_https_t response, bool operation_status) {
     const auto bridge_status = platf::vulkan_hdr_bridge::status();
@@ -2665,11 +2670,10 @@ namespace confighttp {
         { "success", true },
         { "status_code", 200 },
         { "status_message", "Success" },
-#ifdef _WIN32
+        // Both platforms can report it: Windows from its capture pipeline, and
+        // Linux from the avcodec session (an empty pipeline list means no HDR
+        // session is active rather than "unsupported").
         { "available", true },
-#else
-        { "available", false },
-#endif
         { "configured_analysis_mode", config::video.hdr_luminance_analysis },
         { "configured_conversion_mode", config::video.capture_compute_shader },
         { "configured_hdr_backend", enhancement_status.value("selected_backend", std::string {}) },
@@ -4190,8 +4194,10 @@ namespace confighttp {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
-#ifdef _WIN32
+    // Virtual display status is cross-platform (the Linux backend reports
+    // its own readiness); the Vulkan HDR bridge stays Windows-only.
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
+#ifdef _WIN32
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
     server.resource["^/api/vulkan-hdr-bridge/validate$"]["POST"] = validateVulkanHdrBridge;
 #endif

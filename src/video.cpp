@@ -361,6 +361,154 @@ namespace video {
   util::Either<avcodec_buffer_t, int>
   vulkan_init_avcodec_hardware_input_buffer(platf::avcodec_encode_device_t *);
 
+  namespace {
+    /**
+     * @brief Whether the analyzer can read this pixel format.
+     * @details All of them are 10-bit; P010 and YUV444P16 keep their codes in
+     *          the high bits of each little-endian 16-bit word, while FFmpeg's
+     *          planar P10 formats (what the software encoder converts to, and
+     *          what VAAPI/CUDA download to) are LSB-aligned. Unpacking both
+     *          with the same shift would read bits 15..6 of the planar formats,
+     *          i.e. a black frame.
+     */
+    bool
+    luminance_analysis_format_supported(AVPixelFormat fmt) {
+      return fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV420P10LE || fmt == AV_PIX_FMT_YUV444P10LE || fmt == AV_PIX_FMT_YUV444P16LE;
+    }
+
+    /// Whether the format needs a 6-bit shift before the histogram counts it.
+    bool
+    luminance_analysis_format_is_msb_aligned(AVPixelFormat fmt) {
+      return fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV444P16LE;
+    }
+
+    /**
+     * @brief Per-frame luminance statistics for HDR10+ dynamic metadata,
+     *        analyzed on the CPU from the converted 10-bit luma plane.
+     *
+     * The Windows analyzer runs a compute shader over scRGB frames and sees
+     * true per-pixel max(R,G,B); the KMS capture path is PQ YUV, so luma
+     * stands in for maxRGB here. Saturated primaries can exceed luma, which
+     * the HDR10+ consumer already treats as approximate - it reports the 99th
+     * percentile as maxSCL rather than the frame maximum.
+     */
+    void
+    analyze_pq_luma_frame(AVFrame *sw_frame, platf::hdr_frame_luminance_stats_t &stats, std::uint64_t &sequence) {
+      const auto fmt = (AVPixelFormat) sw_frame->format;
+      if (!luminance_analysis_format_supported(fmt)) {
+        return;
+      }
+      if (!sw_frame->data[0] || sw_frame->linesize[0] <= 0 || sw_frame->width <= 0 || sw_frame->height <= 0) {
+        return;
+      }
+
+      const bool msb_aligned = luminance_analysis_format_is_msb_aligned(fmt);
+      const int shift = msb_aligned ? 6 : 0;
+      constexpr std::uint16_t kCodeMask = 0x3FF;
+      constexpr int kCodeMax = 1023;
+      // 10-bit limited-range luma spans [64, 940]; remap onto the PQ signal.
+      const bool limited_range = sw_frame->color_range != AVCOL_RANGE_JPEG;
+      constexpr int kLimitedLow = 64;
+      constexpr int kLimitedSpan = 940 - 64;
+
+      float signal_lut[kCodeMax + 1];
+      float nits_lut[kCodeMax + 1];
+      for (int code = 0; code <= kCodeMax; ++code) {
+        auto c = code;
+        if (limited_range) {
+          c = ((code - kLimitedLow) * kCodeMax) / kLimitedSpan;
+        }
+        signal_lut[code] = std::clamp(c, 0, kCodeMax) / float(kCodeMax);
+        nits_lut[code] = hdr_metadata::pq_to_nits(signal_lut[code]);
+      }
+
+      std::vector<std::uint32_t> histogram(kCodeMax + 1, 0);
+      const auto *base = reinterpret_cast<const std::uint16_t *>(sw_frame->data[0]);
+      const auto stride = sw_frame->linesize[0] / sizeof(std::uint16_t);
+      for (int row = 0; row < sw_frame->height; ++row) {
+        const auto *line = base + (size_t) row * stride;
+        for (int col = 0; col < sw_frame->width; ++col) {
+          ++histogram[(line[col] >> shift) & kCodeMask];
+        }
+      }
+
+      const auto total = (std::uint64_t) sw_frame->width * sw_frame->height;
+      if (!total) {
+        return;
+      }
+
+      auto code_at_percentile = [&](int pct) {
+        const auto target = (std::uint64_t) std::ceil(total * pct / 100.0);
+        std::uint64_t acc = 0;
+        for (int code = 0; code <= kCodeMax; ++code) {
+          acc += histogram[code];
+          if (acc >= target) {
+            return code;
+          }
+        }
+        return kCodeMax;
+      };
+
+      double nits_sum = 0.0;
+      double signal_sum = 0.0;
+      std::uint64_t near_black = 0;
+      int min_code = -1;
+      int max_code = 0;
+      for (int code = 0; code <= kCodeMax; ++code) {
+        const auto count = histogram[code];
+        if (!count) {
+          continue;
+        }
+        if (min_code < 0) {
+          min_code = code;
+        }
+        max_code = code;
+        nits_sum += (double) count * nits_lut[code];
+        signal_sum += (double) count * signal_lut[code];
+        if (signal_lut[code] < 1.0f / 256.0f) {
+          near_black += count;
+        }
+      }
+      if (min_code < 0) {
+        return;
+      }
+
+      stats.min_maxrgb = nits_lut[min_code];
+      stats.max_maxrgb = nits_lut[max_code];
+      stats.avg_maxrgb = (float) (nits_sum / total);
+      stats.avg_maxrgb_pq = (float) (signal_sum / total);
+      stats.near_black_fraction = (float) ((double) near_black / total);
+      stats.near_black_stats_valid = true;
+      // PQ's analysis clamp is the ST 2084 peak; when HLG analysis lands it
+      // must follow the Windows rule instead (min(display peak, this peak)).
+      stats.analysis_max_nits = hdr_metadata::st2084_peak_nits;
+      stats.sample_sequence = ++sequence;
+      stats.valid = true;
+
+      for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
+        const auto pct = hdr_metadata::hdr10plus_percentages[i];
+        const auto code = code_at_percentile(pct);
+        stats.distribution_maxrgb[i] = nits_lut[code];
+        switch (pct) {
+          case 1:
+            stats.percentile_1_pq = signal_lut[code];
+            break;
+          case 10:
+            stats.percentile_10_pq = signal_lut[code];
+            break;
+          case 90:
+            stats.percentile_90_pq = signal_lut[code];
+            break;
+          case 99:
+            stats.percentile_99 = nits_lut[code];
+            break;
+          default:
+            break;
+        }
+      }
+    }
+  }  // namespace
+
   class avcodec_software_encode_device_t: public platf::avcodec_encode_device_t {
   public:
     int
@@ -407,6 +555,16 @@ namespace video {
           BOOST_LOG(error) << "Failed to transfer image data to hardware frame: "sv << av_make_error_string(string, AV_ERROR_MAX_STRING_SIZE, status);
           return -1;
         }
+      }
+
+      if (luminance_analysis_enabled &&
+          ++luminance_analysis_counter >= hdr_metadata::hdr_analysis_interval) {
+        // Sample at the Windows cadence: the shared temporal filters key off
+        // sample_sequence, so analyzing every frame would advance them (and the
+        // Vivid startup gate) four times faster for the same content. The frames
+        // in between keep the previous statistics, which those filters ignore.
+        luminance_analysis_counter = 0;
+        analyze_pq_luma_frame(sw_frame.get(), hdr_luminance_stats, luminance_sequence);
       }
 
       return 0;
@@ -530,6 +688,12 @@ namespace video {
     avcodec_frame_t sws_output_frame;
     sws_t sws;
 
+    // Set alongside colorspace when HDR10+ dynamic metadata is enabled and
+    // this device can feed the analyzer (see make_avcodec_encode_session).
+    bool luminance_analysis_enabled = false;
+    std::uint64_t luminance_sequence = 0;
+    int luminance_analysis_counter = 0;
+
     // Offset of input image to output frame in pixels
     int offsetW;
     int offsetH;
@@ -615,6 +779,11 @@ namespace video {
 
     avcodec_encode_session_t(avcodec_encode_session_t &&other) noexcept = default;
     ~avcodec_encode_session_t() {
+      if (hdr_status_id != 0) {
+        unregister_hdr_pipeline_status(hdr_status_id);
+        hdr_status_id = 0;
+      }
+
       // Flush any remaining frames in the encoder
       if (avcodec_send_frame(avcodec_ctx.get(), nullptr) == 0) {
         packet_raw_avcodec pkt;
@@ -636,6 +805,17 @@ namespace video {
       frame_timestamps = std::move(other.frame_timestamps);
       dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
       dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
+      dolby_vision_ = std::move(other.dolby_vision_);
+      vivid_splice_enabled = other.vivid_splice_enabled;
+      vivid_codec = other.vivid_codec;
+      staged_vivid_units = std::move(other.staged_vivid_units);
+      hdr_status = std::move(other.hdr_status);
+      hdr_status_id = other.hdr_status_id;
+      other.hdr_status_id = 0;
+      hw_analysis_enabled = other.hw_analysis_enabled;
+      hw_analysis_counter = other.hw_analysis_counter;
+      hw_analysis_sequence = other.hw_analysis_sequence;
+      hw_analysis_frame = std::move(other.hw_analysis_frame);
       sps = std::move(other.sps);
       vps = std::move(other.vps);
 
@@ -689,6 +869,16 @@ namespace video {
       if (!supports_bitrate_update()) return false;
       auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
 
+      // Scale the VBV window with the new rate, the way the native Windows NVENC
+      // path does (nvEncReconfigureEncoder with a proportional vbvBufferSize).
+      // A window sized for the old rate starves a higher one and lets a lower
+      // one burst, which is what makes a client-side bitrate change look like it
+      // had no effect.
+      if (avcodec_ctx->rc_buffer_size > 0 && avcodec_ctx->bit_rate > 0) {
+        const auto scaled = static_cast<int64_t>(avcodec_ctx->rc_buffer_size) * bitrate / avcodec_ctx->bit_rate;
+        avcodec_ctx->rc_buffer_size = static_cast<int>(std::max<int64_t>(scaled, 100'000));  // floor: 100 kbit
+      }
+
       // Update AVCodecContext fields (for software encoders and as fallback).
       // Note: dynamic bitrate changes for the AMF path are handled inside the
       // native amf_d3d11 encoder via amf_d3d11::set_bitrate(), so the legacy
@@ -697,7 +887,14 @@ namespace video {
       avcodec_ctx->rc_max_rate = bitrate;
       avcodec_ctx->rc_min_rate = bitrate;
 
-      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << bitrate_kbps << " Kbps";
+      // FFmpeg's nvenc reads these per frame (reconfig_encoder() ->
+      // nvEncReconfigureEncoder, resetEncoder + forceIDR), so logging the
+      // encoder-visible values is what proves the request reached rate control.
+      // The rate handed in is already the encoder share of the session budget:
+      // streaming::bitrate_budget_t deducts audio, overhead and FEC upstream, so
+      // re-applying the FEC percentage here would double-count it.
+      BOOST_LOG(info) << "AVCodec encoder bitrate set to: " << bitrate_kbps
+                      << " Kbps, VBV: " << avcodec_ctx->rc_buffer_size << " bits";
       return true;
     }
 
@@ -762,6 +959,114 @@ namespace video {
 
     // inject sps/vps data into idr pictures
     int inject;
+
+    // Dolby Vision P8.1 RPU state; inert unless the session negotiated it and
+    // the analyzer can feed L1 (see make_avcodec_encode_session).
+    dolby_vision::rpu_injector_t dolby_vision_;
+
+    // HDR Vivid (CUVA) carriage. FFmpeg has no Vivid T.35 serializer (only a
+    // parser), so unlike HDR10+ the payload cannot ride the frame side data;
+    // it is built from the filtered analyzer output and spliced into the
+    // access unit, exactly like the Dolby Vision RPU above. Inert unless the
+    // negotiated colorspace/format can carry Vivid.
+    // Whether an HDR10+ side data block may be attached at all: without a
+    // usable analyzer there is nothing to carry, and attaching the block would
+    // ship its placeholder values as real metadata (see
+    // update_hdr_dynamic_metadata).
+    bool hdr10plus_side_data_wanted = false;
+
+    bool vivid_splice_enabled = false;
+    hdr_bitstream::codec_e vivid_codec {};
+    // Keyed by the submitted frame index, which comes back as the packet pts.
+    std::unordered_map<std::uint64_t, std::vector<std::uint8_t>> staged_vivid_units;
+
+    // Linux hardware encode devices (VAAPI/CUDA) convert inside the platform
+    // device, so the software device's CPU analyzer never sees a frame and
+    // those sessions would ship no dynamic HDR metadata at all. When that is
+    // the case the session samples the hardware frame and reuses the analyzer;
+    // any failure disables the path for the session (see
+    // analyze_hw_frame_if_due).
+    bool hw_analysis_enabled = false;
+    int hw_analysis_counter = 0;
+    std::uint64_t hw_analysis_sequence = 0;
+    avcodec_frame_t hw_analysis_frame;
+
+    /**
+     * @brief Feed the analyzer from a hardware frame.
+     * @details Downloads one in four frames - the interval the Windows capture
+     *          analysis uses - into a cached software frame and runs the same
+     *          CPU analyzer as the software device. The first failure disables
+     *          the path for this session, so the stream simply carries no
+     *          dynamic metadata instead of failing.
+     */
+    void
+    analyze_hw_frame_if_due() {
+      if (!hw_analysis_enabled || !device || !device->frame) {
+        return;
+      }
+      if (++hw_analysis_counter < hdr_metadata::hdr_analysis_interval) {
+        return;
+      }
+      hw_analysis_counter = 0;
+
+      if (!hw_analysis_frame) {
+        hw_analysis_frame.reset(av_frame_alloc());
+        if (!hw_analysis_frame) {
+          disable_hw_analysis("cannot allocate the sampling frame"sv);
+          return;
+        }
+      }
+
+      // An empty frame is allocated by the transfer itself, using the hardware
+      // frames context' sw_format; the buffers are then reused.
+      const int status = av_hwframe_transfer_data(hw_analysis_frame.get(), device->frame, 0);
+      if (status < 0) {
+        char error[AV_ERROR_MAX_STRING_SIZE] { 0 };
+        disable_hw_analysis(av_make_error_string(error, sizeof(error), status));
+        return;
+      }
+
+      const auto format = static_cast<AVPixelFormat>(hw_analysis_frame->format);
+      if (!luminance_analysis_format_supported(format)) {
+        // 8-bit hardware frames carry no PQ signal worth analyzing.
+        disable_hw_analysis("the hardware frame samples as a format without 10-bit luma"sv);
+        return;
+      }
+
+      analyze_pq_luma_frame(hw_analysis_frame.get(), device->hdr_luminance_stats, hw_analysis_sequence);
+    }
+
+    // Runtime HDR status published to the WebUI (GET /api/runtime/hdr). Only
+    // used on Linux, where the session - not a capture device - owns the
+    // analysis; Windows registers from its capture path instead.
+    hdr_pipeline_status_t hdr_status;
+    std::uint64_t hdr_status_id = 0;
+
+    /**
+     * @brief Register (first call) or refresh this session's runtime status.
+     */
+    void
+    publish_hdr_status() {
+      if (hdr_status.hdr_mode.empty() || hdr_status.hdr_mode == "sdr") {
+        return;
+      }
+
+      if (hdr_status_id == 0) {
+        hdr_status_id = register_hdr_pipeline_status(hdr_status);
+      }
+      else {
+        update_hdr_pipeline_status(hdr_status_id, hdr_status);
+      }
+    }
+
+    void
+    disable_hw_analysis(std::string_view reason) {
+      hw_analysis_enabled = false;
+      if (device) {
+        device->hdr_luminance_analysis_available = false;
+      }
+      BOOST_LOG(warning) << "HDR luminance analysis disabled for this session: "sv << reason;
+    }
   };
 
   /**
@@ -1236,7 +1541,9 @@ namespace video {
       AV_PIX_FMT_CUDA,
   #endif
       AV_PIX_FMT_NV12, AV_PIX_FMT_P010,
-      AV_PIX_FMT_NONE, AV_PIX_FMT_NONE,
+      // YUV 4:4:4 (probe-gated on hardware): planar input, with 10-bit carried
+      // in the 16-bit shifted container (NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
+      AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P16,
   #ifdef _WIN32
       dxgi_init_avcodec_hardware_input_buffer
   #else
@@ -1252,8 +1559,8 @@ namespace video {
         { "surfaces"s, 1 },
         { "cbr_padding"s, false },
         { "preset"s, &config::video.nv_legacy.preset },
-        { "tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY },
-        { "rc"s, NV_ENC_PARAMS_RC_CBR },
+        { "tune"s, 3 /* NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY */ },
+        { "rc"s, 0x2 /* NV_ENC_PARAMS_RC_CBR */ },
         { "multipass"s, &config::video.nv_legacy.multipass },
         { "aq"s, &config::video.nv_legacy.aq },
       },
@@ -1273,8 +1580,8 @@ namespace video {
         { "surfaces"s, 1 },
         { "cbr_padding"s, false },
         { "preset"s, &config::video.nv_legacy.preset },
-        { "tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY },
-        { "rc"s, NV_ENC_PARAMS_RC_CBR },
+        { "tune"s, 3 /* NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY */ },
+        { "rc"s, 0x2 /* NV_ENC_PARAMS_RC_CBR */ },
         { "multipass"s, &config::video.nv_legacy.multipass },
         { "aq"s, &config::video.nv_legacy.aq },
       },
@@ -1299,8 +1606,8 @@ namespace video {
         { "surfaces"s, 1 },
         { "cbr_padding"s, false },
         { "preset"s, &config::video.nv_legacy.preset },
-        { "tune"s, NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY },
-        { "rc"s, NV_ENC_PARAMS_RC_CBR },
+        { "tune"s, 3 /* NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY */ },
+        { "rc"s, 0x2 /* NV_ENC_PARAMS_RC_CBR */ },
         { "coder"s, &config::video.nv_legacy.h264_coder },
         { "multipass"s, &config::video.nv_legacy.multipass },
         { "aq"s, &config::video.nv_legacy.aq },
@@ -1310,12 +1617,21 @@ namespace video {
         { "profile"s, (int) nv::profile_h264_e::high },
       },
       {},  // HDR-specific options
-      {},  // YUV444 SDR-specific options
+      {
+        // YUV444 SDR-specific options
+        // The SDR profile override above applies to 4:4:4 sessions as well;
+        // replace it (same dict key) with the profile h264_nvenc needs for 4:4:4.
+        // That is NVENC's own enum (high444p = 3), not FFmpeg's generic
+        // AV_PROFILE_H264_HIGH_444_PREDICTIVE (244): the encoder's "profile"
+        // option only accepts 0-5, so 244 made h264_nvenc refuse to open
+        // ("Value 244.000000 for parameter 'profile' out of range").
+        { "profile"s, (int) nv::profile_h264_e::high_444p },
+      },
       {},  // YUV444 HDR-specific options
       {},  // Fallback options
       "h264_nvenc"s,
     },
-    PARALLEL_ENCODING
+    PARALLEL_ENCODING | YUV444_SUPPORT
   };
 #endif
 
@@ -2228,12 +2544,56 @@ namespace video {
    * @param vivid_metadata Filtered HDR Vivid statistics in normalized PQ space
    * @param max_display_luminance Mapped client display peak luminance in nits
    */
+  /**
+   * @brief Fill the HDR10+ fields that do not depend on the frame's analysis.
+   * @details The per-frame values (maxscl, average, percentile distribution,
+   *          targeted display luminance) are written by
+   *          update_hdr_dynamic_metadata() from real statistics; this only
+   *          establishes the window, ellipse and tone-mapping defaults the
+   *          metadata standard leaves fixed for a single full-frame window.
+   */
+  void
+  init_hdr10plus_side_data(AVDynamicHDRPlus &hdr10plus, int width, int height, uint16_t target_display_peak_nits) {
+    hdr10plus.itu_t_t35_country_code = 0xB5;  // USA
+    hdr10plus.application_version = hdr_metadata::hdr10plus_application_version;
+    hdr10plus.num_windows = 1;  // Single processing window covering the frame
+
+    auto &params = hdr10plus.params[0];
+    params.window_upper_left_corner_x = av_make_q(0, 1);
+    params.window_upper_left_corner_y = av_make_q(0, 1);
+    params.window_lower_right_corner_x = av_make_q(1, 1);
+    params.window_lower_right_corner_y = av_make_q(1, 1);
+
+    params.center_of_ellipse_x = static_cast<uint16_t>(width / 2);
+    params.center_of_ellipse_y = static_cast<uint16_t>(height / 2);
+    params.rotation_angle = 0;
+    params.semimajor_axis_internal_ellipse = static_cast<uint16_t>(width / 2);
+    params.semimajor_axis_external_ellipse = static_cast<uint16_t>(width / 2);
+    params.semiminor_axis_external_ellipse = static_cast<uint16_t>(height / 2);
+    params.overlap_process_option = AV_HDR_PLUS_OVERLAP_PROCESS_WEIGHTED_AVERAGING;
+
+    // No percentiles until real statistics arrive; the per-frame update sets the
+    // distribution along with maxscl and average_maxrgb.
+    params.num_distribution_maxrgb_percentiles = 0;
+    params.fraction_bright_pixels = av_make_q(0, 1);
+
+    params.tone_mapping_flag = 0;
+    params.knee_point_x = av_make_q(0, 1);
+    params.knee_point_y = av_make_q(0, 1);
+    params.num_bezier_curve_anchors = 0;
+
+    hdr10plus.targeted_system_display_maximum_luminance = av_make_q(target_display_peak_nits, 1);
+    hdr10plus.targeted_system_display_actual_peak_luminance_flag = 0;
+    hdr10plus.mastering_display_actual_peak_luminance_flag = 0;
+  }
+
   void
   update_hdr_dynamic_metadata(
     AVFrame *frame,
     const platf::hdr_frame_luminance_stats_t &hdr10plus_stats,
     const hdr_metadata::vivid_metadata_t &vivid_metadata,
-    uint16_t max_display_luminance) {
+    uint16_t max_display_luminance,
+    bool attach_hdr10plus) {
     if (!frame) return;
 
     // Update HDR Vivid (CUVA) dynamic metadata
@@ -2257,8 +2617,20 @@ namespace video {
       }
     }
 
-    // Update HDR10+ dynamic metadata
+    // Update HDR10+ dynamic metadata. The side data is attached on the first
+    // frame that actually has statistics: creating it at session setup shipped
+    // its fabricated "full brightness" defaults as a real SEI on every frame
+    // before the first analysis - and on every frame of a session whose encoder
+    // never produces statistics at all. The Windows native paths only build
+    // metadata from valid statistics for the same reason.
     auto hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
+    if (!hdr10plus_sd && attach_hdr10plus && hdr10plus_stats.valid) {
+      if (auto *added = av_dynamic_hdr_plus_create_side_data(frame)) {
+        init_hdr10plus_side_data(*added, frame->width, frame->height, max_display_luminance);
+        hdr10plus_sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
+      }
+    }
+
     if (hdr10plus_sd && hdr10plus_stats.valid) {
       auto *hdr10plus = reinterpret_cast<AVDynamicHDRPlus *>(hdr10plus_sd->data);
       if (hdr10plus && hdr10plus->num_windows > 0) {
@@ -2380,8 +2752,14 @@ namespace video {
     auto &sps = session.sps;
     auto &vps = session.vps;
 
+    // Linux hardware devices convert in the platform device, so refresh the
+    // analyzer from a sampled download before the metadata block below reads
+    // the statistics. Inert unless the session enabled the path.
+    session.analyze_hw_frame_if_due();
+
     // Update per-frame dynamic metadata. HDR10+ and HDR Vivid intentionally use
     // their own temporal models because their standards define different fields.
+    std::vector<std::uint8_t> vivid_units;
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
@@ -2392,11 +2770,54 @@ namespace video {
           frame,
           filtered.hdr10plus_stats,
           filtered.vivid,
-          session.dynamic_metadata_target_peak_nits);
+          session.dynamic_metadata_target_peak_nits,
+          session.hdr10plus_side_data_wanted);
+
+        // The first usable statistics are when dynamic metadata actually starts
+        // flowing; the WebUI runtime status reports that transition. Windows
+        // publishes its own status from the capture path, so the helper no-ops
+        // there (its hdr_mode stays "sdr").
+        if (!session.hdr_status.scene_metadata_active && filtered.hdr10plus_stats.valid) {
+          session.hdr_status.scene_metadata_active = true;
+          session.publish_hdr_status();
+        }
+
+        // HDR Vivid cannot ride the side data: FFmpeg ships a Vivid parser but
+        // no serializer, so build the registered T.35 payload here and stage it
+        // for the access unit that carries this frame's pts back. The temporal
+        // filtering above is shared with the side-data path, so both formats
+        // stay frame-aligned. HLG would additionally need the Vivid startup
+        // preroll gate the native paths use, but the analyzer is PQ-only, so
+        // HLG never yields valid stats here.
+        if (session.vivid_splice_enabled && filtered.vivid.valid) {
+          std::vector<std::uint8_t> payload;
+          if (hdr_metadata::serialize_vivid_t35(filtered.vivid, payload) > 0) {
+            if (!hdr_bitstream::append_t35_unit(session.vivid_codec, payload, vivid_units)) {
+              vivid_units.clear();
+            }
+          }
+        }
       }
     }
 
+    if (!vivid_units.empty()) {
+      // Bound the in-flight map: entries are consumed by pts when the encoder
+      // surfaces the packet, but a dropped frame would otherwise leak one.
+      constexpr std::uint64_t kMaxVividInFlight = 64;
+      if (session.staged_vivid_units.size() >= kMaxVividInFlight) {
+        session.staged_vivid_units.clear();
+        BOOST_LOG(warning) << "HDR Vivid: staged metadata queue overflowed; dropping pending units"sv;
+      }
+      session.staged_vivid_units[submitted_frame_index] = std::move(vivid_units);
+    }
+
     // send the frame to the encoder
+    // Stage the RPU for this frame index before submitting; the packet that
+    // surfaces below carries the same pts back and gets the NAL spliced in.
+    if (session.dolby_vision_.enabled()) {
+      session.dolby_vision_.stage(submitted_frame_index, session.device->hdr_luminance_stats);
+    }
+
     auto ret = avcodec_send_frame(ctx.get(), frame);
     if (ret < 0) {
       char err_str[AV_ERROR_MAX_STRING_SIZE] { 0 };
@@ -2419,6 +2840,41 @@ namespace video {
 
       if (av_packet->flags & AV_PKT_FLAG_KEY) {
         BOOST_LOG(debug) << "Frame "sv << frame_nr << ": IDR Keyframe (AV_FRAME_FLAG_KEY)"sv;
+      }
+
+      // Both dynamic-metadata carriages splice into the same access unit, so
+      // collect them into one buffer and grow the packet once.
+      std::vector<std::uint8_t> vivid_units;
+      if (session.vivid_splice_enabled && av_packet->pts >= 0) {
+        if (const auto it = session.staged_vivid_units.find(static_cast<std::uint64_t>(av_packet->pts));
+            it != session.staged_vivid_units.end()) {
+          vivid_units = std::move(it->second);
+          session.staged_vivid_units.erase(it);
+        }
+      }
+
+      if ((session.dolby_vision_.enabled() || !vivid_units.empty()) && av_packet->data && av_packet->size > 0) {
+        // The injectors append to the access unit; round-trip through a buffer
+        // since AVPacket owns a fixed allocation API.
+        std::vector<uint8_t> bitstream(av_packet->data, av_packet->data + av_packet->size);
+        if (session.dolby_vision_.enabled()) {
+          session.dolby_vision_.inject(av_packet->pts, bitstream);
+        }
+        if (!vivid_units.empty() &&
+            !hdr_bitstream::insert(session.vivid_codec, vivid_units, bitstream)) {
+          BOOST_LOG(debug) << "HDR Vivid: no SEI insertion point in this access unit; skipping"sv;
+        }
+        const auto injected_size = (int) bitstream.size();
+        if (injected_size != av_packet->size) {
+          if (injected_size > av_packet->size &&
+              av_grow_packet(av_packet, injected_size - av_packet->size) < 0) {
+            BOOST_LOG(warning) << "Dynamic metadata: cannot grow the packet; skipping"sv;
+          }
+          else {
+            memcpy(av_packet->data, bitstream.data(), injected_size);
+            av_packet->size = injected_size;
+          }
+        }
       }
 
       if ((frame->flags & AV_FRAME_FLAG_KEY) && !(av_packet->flags & AV_PKT_FLAG_KEY)) {
@@ -2673,6 +3129,9 @@ namespace video {
 
     return -1;
   }
+
+  std::optional<dolby_vision::session_config_t>
+  dolby_vision_config_for_session(platf::display_t *disp, const config_t &client_config);
 
   std::unique_ptr<avcodec_encode_session_t>
   make_avcodec_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::avcodec_encode_device_t> encode_device) {
@@ -3043,76 +3502,25 @@ namespace video {
           clm->MaxFALL = hdr_metadata.maxFrameAverageLightLevel;
         }
 
-        // HDR10+ dynamic metadata - PQ only (Samsung ST 2094-40, uses absolute luminance)
-        if (dynamic_hdr_formats.hdr10plus) {
-          auto hdr10plus = av_dynamic_hdr_plus_create_side_data(frame.get());
-          if (hdr10plus) {
-            // Set default values for HDR10+
-            hdr10plus->itu_t_t35_country_code = 0xB5;  // USA
-            hdr10plus->application_version = hdr_metadata::hdr10plus_application_version;
-            hdr10plus->num_windows = 1;  // Single processing window covering entire frame
-
-            // Initialize the first (and only) processing window
-            auto &params = hdr10plus->params[0];
-            params.window_upper_left_corner_x = av_make_q(0, 1);
-            params.window_upper_left_corner_y = av_make_q(0, 1);
-            params.window_lower_right_corner_x = av_make_q(1, 1);
-            params.window_lower_right_corner_y = av_make_q(1, 1);
-
-            // Set center of elliptical pixel selector to center of frame
-            params.center_of_ellipse_x = static_cast<uint16_t>(config.width / 2);
-            params.center_of_ellipse_y = static_cast<uint16_t>(config.height / 2);
-            params.rotation_angle = 0;  // 0 degrees
-            params.semimajor_axis_internal_ellipse = static_cast<uint16_t>(config.width / 2);
-            params.semimajor_axis_external_ellipse = static_cast<uint16_t>(config.width / 2);
-            params.semiminor_axis_external_ellipse = static_cast<uint16_t>(config.height / 2);
-            params.overlap_process_option = AV_HDR_PLUS_OVERLAP_PROCESS_WEIGHTED_AVERAGING;
-
-            // Set maxscl (maximum of R, G, B) to 1.0 (full brightness)
-            params.maxscl[0] = av_make_q(1, 1);
-            params.maxscl[1] = av_make_q(1, 1);
-            params.maxscl[2] = av_make_q(1, 1);
-
-            // Set average maxRGB to 1.0
-            params.average_maxrgb = av_make_q(1, 1);
-
-            // Initialize percentile distribution (simplified)
-            params.num_distribution_maxrgb_percentiles = 0;  // No percentiles for simplified metadata
-
-            // Set fraction brightness to 0 (no bright pixels)
-            params.fraction_bright_pixels = av_make_q(0, 1);
-
-            // Set tone mapping curve to linear (no adjustment)
-            params.tone_mapping_flag = 0;
-            params.knee_point_x = av_make_q(0, 1);
-            params.knee_point_y = av_make_q(0, 1);
-            params.num_bezier_curve_anchors = 0;
-
-            hdr10plus->targeted_system_display_maximum_luminance = av_make_q(
-              dynamic_metadata_target_peak_nits,
-              1);
-            hdr10plus->targeted_system_display_actual_peak_luminance_flag = 0;
-            hdr10plus->mastering_display_actual_peak_luminance_flag = 0;
-
-            BOOST_LOG(debug) << "Added HDR10+ dynamic metadata to frame";
-          }
-        }
-
+        // HDR10+ dynamic metadata is attached lazily, on the first frame with
+        // real analyzer output (see update_hdr_dynamic_metadata): there is
+        // nothing to carry before that, and the block's placeholder values must
+        // not reach the bitstream as if they were measurements.
         // HDR Vivid dynamic metadata (GB/T 46269.1-2025) - both PQ and HLG.
         //
-        // NOTE: this side data currently cannot reach the bitstream on the avcodec path.
         // FFmpeg ships a serializer for HDR10+ (av_dynamic_hdr_plus_to_t35) but has no
         // CUVA counterpart: libavcodec/dynamic_hdr_vivid.c defines only
         // ff_parse_itu_t_t35_to_dynamic_hdr_vivid, i.e. parsing for decode. So no FFmpeg
-        // encoder turns AV_FRAME_DATA_DYNAMIC_HDR_VIVID into an SEI/OBU today.
+        // encoder turns AV_FRAME_DATA_DYNAMIC_HDR_VIVID into an SEI/OBU, and on the
+        // avcodec path the payload is built and spliced by encode_avcodec() instead
+        // (Linux only: on Windows the avcodec family stays declared Vivid-incapable
+        // and the native NVENC/AMF paths hand-write the T.35 payload themselves).
         //
-        // We still attach and maintain it so the metadata is correct the moment a
-        // serializer exists, but HDR Vivid output is in practice only produced by the
-        // native NVENC path (see nvenc_base.cpp, which hand-writes the T.35 payload).
-        // Encoders routed through avcodec (QSV, AMF, software) will not emit it.
-        //
-        // Field values are deliberately left zero-initialized rather than filled with
-        // invented defaults: update_hdr_dynamic_metadata() populates them from real
+        // The side data is still attached and maintained: it keeps the frame's
+        // declared metadata correct, and is what a future FFmpeg serializer would
+        // consume. Field values are deliberately left zero-initialized rather than
+        // filled with invented defaults: update_hdr_dynamic_metadata() populates them
+        // from real
         // analyzer statistics once the 32-frame filter reports valid output, and a
         // fabricated "average 0.5 / maximum 1.0" frame is worse than an absent one.
         if (dynamic_hdr_formats.vivid) {
@@ -3150,6 +3558,9 @@ namespace video {
     }
 
     std::unique_ptr<platf::avcodec_encode_device_t> encode_device_final;
+    // Whether this session has a producer for the luminance statistics, needed
+    // for the runtime status below because the device is moved into the session.
+    bool software_analysis_enabled = false;
 
     if (!encode_device->data) {
       auto software_encode_device = std::make_unique<avcodec_software_encode_device_t>();
@@ -3159,6 +3570,14 @@ namespace video {
       }
       software_encode_device->colorspace = colorspace;
       software_encode_device->video_format = config.videoFormat;
+      const auto negotiated_dynamic = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+      software_encode_device->luminance_analysis_enabled =
+        colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv &&
+        (hdr_metadata::formats_for(colorspace, config.videoFormat).hdr10plus ||
+         negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81);
+      software_encode_device->hdr_luminance_analysis_available =
+        colorspace_is_pq(colorspace) && config::video.hdr_luminance_analysis != "off"sv;
+      software_analysis_enabled = software_encode_device->luminance_analysis_enabled;
 
       encode_device_final = std::move(software_encode_device);
     }
@@ -3172,6 +3591,55 @@ namespace video {
 
     encode_device_final->apply_colorspace();
 
+    // Linux hardware encode devices (VAAPI/CUDA) convert inside the platform
+    // device, so the software device's CPU analyzer never sees a frame and the
+    // session would ship no dynamic HDR metadata at all. Mark such a session
+    // for the sampled-download producer instead (encode_avcodec ->
+    // analyze_hw_frame_if_due), which is also what makes the Dolby Vision gate
+    // below usable. Windows is left alone: its capture device produces the
+    // statistics itself and reports the capability.
+    bool hw_download_analysis = false;
+#if !defined(_WIN32)
+    if (encode_device_final->data &&
+        !encode_device_final->hdr_luminance_analysis_available &&
+        colorspace_is_pq(encode_device_final->colorspace) &&
+        config::video.hdr_luminance_analysis != "off"sv) {
+      const auto negotiated = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+      hw_download_analysis =
+        hdr_metadata::formats_for(encode_device_final->colorspace, config.videoFormat).hdr10plus ||
+        negotiated == hdr::dynamic_hdr_format_e::dolby_vision_profile_81;
+      if (hw_download_analysis) {
+        encode_device_final->hdr_luminance_analysis_available = true;
+      }
+    }
+#endif
+
+    // Dolby Vision P8.1 rides PQ; the RPU's L1 needs the luminance analyzer,
+    // so a negotiated session without analysis streams an HDR10 base layer
+    // only (the client decoder falls back by design). P8.4 needs HLG, which
+    // the KMS capture path cannot produce.
+    const auto negotiated_dynamic = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
+    const bool dv_negotiated = negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 ||
+                               negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_84;
+    const bool dv_transfer_ok =
+      negotiated_dynamic == hdr::dynamic_hdr_format_e::dolby_vision_profile_81 &&
+      colorspace_is_pq(encode_device_final->colorspace);
+    const bool dv_analysis_usable = hdr_luminance_analysis_usable(encode_device_final->hdr_luminance_analysis_available);
+
+    // HDR Vivid carriage on the avcodec path. FFmpeg ships a Vivid parser but no
+    // serializer, so the CUVA T.35 payload is built in encode_avcodec() and
+    // spliced into the access unit. Linux is avcodec-only, so this is what makes
+    // Vivid reachable there at all; on Windows the avcodec family is deliberately
+    // declared Vivid-incapable (display_vram.cpp) and Vivid rides the native
+    // NVENC/AMF paths, so the behaviour there is left untouched.
+#if !defined(_WIN32)
+    const auto vivid_formats = hdr_metadata::formats_for(encode_device_final->colorspace, config.videoFormat);
+    const auto vivid_codec = hdr_bitstream::codec_for(config.videoFormat);
+#else
+    const hdr_metadata::formats_t vivid_formats {};
+    const std::optional<hdr_bitstream::codec_e> vivid_codec;
+#endif
+
     auto session = std::make_unique<avcodec_encode_session_t>(
       std::move(ctx),
       std::move(encode_device_final),
@@ -3179,6 +3647,88 @@ namespace video {
 
       // 0 ==> don't inject, 1 ==> inject for h264, 2 ==> inject for hevc
       config.videoFormat <= 1 ? (1 - (int) video_format[encoder_t::VUI_PARAMETERS]) * (1 + config.videoFormat) : 0);
+
+    // HDR10+ carriage needs both a codec/transfer-function carriage and an
+    // analyzer that can actually produce statistics. The side data is attached
+    // on the first frame with valid output (see update_hdr_dynamic_metadata),
+    // so a session without analysis carries no HDR10+ block at all instead of
+    // one holding placeholder values.
+    const bool session_analysis_usable = hdr_luminance_analysis_usable(session->device->hdr_luminance_analysis_available);
+    session->hdr10plus_side_data_wanted =
+      hdr_metadata::formats_for(session->device->colorspace, config.videoFormat).hdr10plus && session_analysis_usable;
+
+    if (vivid_formats.vivid && vivid_codec) {
+      session->vivid_splice_enabled = true;
+      session->vivid_codec = *vivid_codec;
+      BOOST_LOG(info) << "HDR Vivid dynamic metadata: CUVA T.35 will be spliced on the avcodec path"sv;
+    }
+
+    if (hw_download_analysis) {
+      session->hw_analysis_enabled = true;
+      BOOST_LOG(info) << "HDR luminance analysis: sampling the hardware frame (1 in 4) for dynamic metadata"sv;
+    }
+
+#if !defined(_WIN32)
+    // Publish what this stream can actually carry, so the WebUI runtime HDR
+    // panel (GET /api/runtime/hdr) has something truthful to show on Linux; the
+    // Windows capture device registers its own pipeline. SDR sessions register
+    // nothing, which leaves the endpoint with an empty pipeline list.
+    if (session->device && colorspace_is_hdr(session->device->colorspace)) {
+      hdr_pipeline_status_t runtime_status;
+      const bool use_pq = colorspace_is_pq(session->device->colorspace);
+      const bool use_hlg = colorspace_is_hlg(session->device->colorspace);
+      runtime_status.hdr_mode = use_pq ? "pq" : use_hlg ? "hlg" : "sdr";
+      runtime_status.analysis_mode = config::video.hdr_luminance_analysis;
+      runtime_status.analysis_active =
+        (use_pq || use_hlg) && (software_analysis_enabled || session->hw_analysis_enabled);
+      runtime_status.scene_metadata_active = false;
+      if (runtime_status.analysis_active) {
+        // Same rule as Windows: report the formats the stream can carry, not
+        // everything the transfer function would allow.
+        if (session->hdr10plus_side_data_wanted) {
+          runtime_status.metadata_formats.emplace_back("hdr10_plus");
+        }
+        if (session->vivid_splice_enabled) {
+          runtime_status.metadata_formats.emplace_back("hdr_vivid");
+        }
+      }
+      else if (config::video.hdr_luminance_analysis != "off"sv) {
+        runtime_status.analysis_failure_reason =
+          "no luminance statistics are available on this capture/encode path";
+      }
+      // Linux does not convert HDR with a shader: KMS capture already delivers
+      // PQ/HLG, so the conversion fields stay empty and the UI hides that line.
+      runtime_status.conversion_path.clear();
+
+      session->hdr_status = std::move(runtime_status);
+      session->publish_hdr_status();
+    }
+#endif
+
+    if (dv_negotiated) {
+      if (!dv_analysis_usable) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but luminance analysis is unavailable; "
+                              "streaming without RPU"sv;
+      }
+      else if (!dv_transfer_ok) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but the base layer does not match the "
+                              "negotiated profile (P8.4 needs HLG, unavailable on this capture path); "
+                              "streaming without RPU"sv;
+      }
+      else if (const auto dv_config = dolby_vision_config_for_session(disp, config);
+               !dv_config) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but no usable mastering metadata; "
+                              "streaming without RPU"sv;
+      }
+      else if (!session->dolby_vision_.configure(*dv_config)) {
+        BOOST_LOG(warning) << "Dolby Vision negotiated but the RPU config is out of range; "
+                              "streaming without RPU"sv;
+      }
+      else {
+        BOOST_LOG(info) << "Dolby Vision Profile 8.1 active (mastering peak "
+                        << dv_config->source_mastering_peak_nits << " nits)"sv;
+      }
+    }
 
     return session;
   }
@@ -3374,16 +3924,12 @@ namespace video {
     std::unique_ptr<encode_session_t> session;
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
-      // The RPU splice needs to grow the encoded access unit, which only the
-      // native NVENC/AMF paths own end to end; an AVPacket cannot be resized
-      // in place. The stream stays a valid HDR10-compatible HEVC base layer,
-      // so the client is served — just without the Dolby Vision metadata.
-      if (!is_probe &&
-          (effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_81) ||
-            effective_config.dynamic_hdr_format == static_cast<int>(hdr::dynamic_hdr_format_e::dolby_vision_profile_84))) {
-        BOOST_LOG(warning) << "Dolby Vision negotiated but an avcodec-family encoder was selected; "
-                              "streaming HDR10 without RPU"sv;
-      }
+      // The avcodec path injects the Dolby Vision RPU itself (by pts, growing
+      // the AVPacket) and logs the outcome of every gate - analysis
+      // availability, profile/transfer match, mastering metadata - inside the
+      // session's configure step. No pre-session warning is emitted here: it
+      // used to claim avcodec cannot carry an RPU at all, which the P8.1
+      // splice above made untrue.
       auto avcodec_encode_device = boost::dynamic_pointer_cast<platf::avcodec_encode_device_t>(std::move(encode_device));
       session = make_avcodec_encode_session(disp, encoder, effective_config, width, height, std::move(avcodec_encode_device));
     }

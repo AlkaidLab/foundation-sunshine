@@ -577,6 +577,14 @@ namespace platf {
      * Used by video.cpp to generate per-frame HDR dynamic metadata.
      */
     hdr_frame_luminance_stats_t hdr_luminance_stats;
+
+    /**
+     * @brief Whether this device produces hdr_luminance_stats at all.
+     * Gates the HDR Vivid startup path and Dolby Vision RPU emission on
+     * backends that can analyze frames; without it those formats stream
+     * without dynamic metadata.
+     */
+    bool hdr_luminance_analysis_available = false;
   };
 
   struct avcodec_encode_device_t: encode_device_t {
@@ -631,7 +639,6 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     nvenc::nvenc_encoder *nvenc = nullptr;
-    bool hdr_luminance_analysis_available = false;
   };
 
   struct amf_encode_device_t: encode_device_t {
@@ -639,7 +646,6 @@ namespace platf {
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
     amf::amf_encoder *amf = nullptr;
-    bool hdr_luminance_analysis_available = false;
   };
 
   enum class capture_e : int {

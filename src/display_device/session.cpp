@@ -10,8 +10,10 @@
 #include "session.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
-#include "src/platform/windows/display_device/session_listener.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/display_device/session_listener.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
+#endif
 #ifdef _WIN32
   #include "src/platform/windows/vulkan_hdr_bridge_session.h"
 #endif

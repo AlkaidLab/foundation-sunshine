@@ -112,3 +112,16 @@ tools/sunshine-ds5-sidecar/obj/
 tools/hidmaestro-core-patch/**/bin/
 tools/hidmaestro-core-patch/**/obj/
 .claude/
+
+# makepkg 产物与暂存目录（arch 本地调试包）
+packaging/arch-local/pkg/
+packaging/arch-local/src/
+packaging/arch-local/*.pkg.tar.zst
+# makepkg 产物（AUR 包）
+packaging/aur/*/pkg/
+packaging/aur/*/src/
+packaging/aur/*/*.pkg.tar.*
+logs_archive/
+
+# secondary build trees (CUDA / experiments)
+build-cuda/

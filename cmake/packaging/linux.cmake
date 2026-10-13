@@ -88,14 +88,23 @@ endif()
 # This should automatically figure out dependencies, doesn't work with the current config
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 
-# application icon
+# application icon: the fork's own logo set (PNG), not the upstream SVG
 if(NOT ${SUNSHINE_BUILD_FLATPAK})
     install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/logo-sunshine-16.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/apps"
+            RENAME "sunshine.png")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/logo-sunshine-256.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/apps"
+            RENAME "sunshine.png")
 else()
     install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps"
             RENAME "${PROJECT_FQDN}.svg")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/logo-sunshine-256.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/apps"
+            RENAME "${PROJECT_FQDN}.png")
 endif()
 
 # tray icon
@@ -103,12 +112,21 @@ if(${SUNSHINE_TRAY} STREQUAL 1)
     install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status"
             RENAME "sunshine-tray.svg")
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing.svg"
-            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status")
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-pausing.svg"
-            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status")
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-locked.svg"
-            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/logo-sunshine-256.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status"
+            RENAME "sunshine-tray.png")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing-16.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-pausing.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-pausing-16.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-locked.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-locked-16.png"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/status")
 
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "\
                     ${CPACK_DEBIAN_PACKAGE_DEPENDS}, \

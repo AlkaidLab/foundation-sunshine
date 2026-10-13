@@ -1,0 +1,303 @@
+# Maintainer: QiE2035 <qie2035@users.noreply.github.com>
+#
+# AUR package for AlkaidLab/qiin2333 "Foundation Sunshine" — the fork of
+# LizardByte/Sunshine carrying the Windows feature set, ported to Linux
+# (KDE Plasma/Wayland, niri, PipeWire/PulseAudio, VDD via EDID override).
+# Upstream project: https://github.com/AlkaidLab/foundation-sunshine
+#
+# This package compiles from source. It tracks the `linux-migration` branch,
+# because that is where all Linux work lands in this fork. To freeze a build,
+# change the `#branch=linux-migration` fragment below to
+# `#commit=<40-char sha>` and bump pkgver/pkgrel.
+#
+# ---------------------------------------------------------------------------
+# Build notes (things that bite)
+# ---------------------------------------------------------------------------
+# * Boost is pinned to an EXACT version by cmake/dependencies/Boost_Sunshine.cmake
+#   (`find_package(Boost CONFIG ${BOOST_VERSION} EXACT ...)`). If the Arch boost
+#   package is not that exact version, CMake silently falls back to downloading
+#   and building Boost from GitHub (FetchContent) — which breaks the "no network
+#   in build()" rule and makes the build slow. Bump `_boost_version` in sync
+#   with Arch's boost package, and bump the `boost=$_boost_version` depends
+#   entry with it.
+#   Same idea for nlohmann_json (>= 3.12): without the system package it is
+#   fetched. `nlohmann-json` is a makedepends so the system copy wins.
+# * The web UI is built by ninja (`web-ui` ALL target) and needs npm at build
+#   time. `npm ci` runs once in prepare(); `NPM_OFFLINE=ON` makes the npm
+#   invocation inside the build use that already-populated cache.
+# * FFmpeg plus x264/x265/SVT-AV1/hdr10plus are consumed as pre-built static
+#   archives from `third-party/build-deps/dist/Linux-<arch>` (submodule). No
+#   system ffmpeg is required or used.
+# * CUDA/NVENC is disabled by default; flip `_use_cuda` to true (and add `cuda`
+#   to makedepends) to build it. VAAPI (AMD/Intel) and the software encoder are
+#   always built.
+# * options=(!strip): makepkg's strip would drop the installed file
+#   capabilities that post_install sets. Sunshine needs cap_sys_admin (KMS
+#   capture) + cap_dac_read_search/cap_dac_override (DRM connector EDID/status
+#   under /sys/kernel/debug) + cap_sys_ptrace (borrow the compositor's DRM
+#   master for virtual-display CRTC assignment).
+# * Nested submodules (third-party/{doxyconfig,moonlight-common-c,tray}) are
+#   declared below as well; their SHAs are pinned in the parent gitlink, so they
+#   are only re-pinned when the parent commit changes.
+# ---------------------------------------------------------------------------
+
+pkgname=sunshine-foundation-git
+pkgver=0.9.1.r68.g6c2123f8
+pkgrel=1
+pkgdesc="Self-hosted game stream host for Moonlight (AlkaidLab/qiin2333 fork, Linux migration branch)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/AlkaidLab/foundation-sunshine"
+license=('GPL-3.0-only')
+install="$pkgname.install"
+
+# Set to true to build with CUDA/NVENC support. That adds a hard `cuda`
+# makedepends; VAAPI (AMD/Intel) and the software encoder are always built.
+_use_cuda=false
+
+# Keep in sync with cmake/dependencies/Boost_Sunshine.cmake
+_boost_version=1.92.0
+
+depends=(
+  "boost=$_boost_version"
+  "boost-libs=$_boost_version"
+  'curl'
+  'gcc-libs'
+  'libcap'
+  'libdrm'
+  'libevdev'
+  'libglvnd'   # libEGL / libGLdispatch (KMS + Wayland capture)
+  'libnotify'
+  'libpulse'
+  'libva'
+  'libx11'
+  'miniupnpc'
+  'numactl'
+  'openssl'
+  'opus'
+  'qt6-base'
+  'qt6-svg'
+  'systemd'
+  'udev'
+  'wayland'
+)
+
+makedepends=(
+  'boost'          # headers (the exact-version CONFIG package)
+  'cmake'
+  'git'
+  'nlohmann-json'  # >= 3.12, avoids a FetchContent download
+  'nodejs'
+  'npm'
+  'pkgconf'
+)
+
+optdepends=(
+  'cuda: NVENC hardware encoding on NVIDIA (rebuild with -DSUNSHINE_ENABLE_CUDA=ON)'
+  'libva-intel-driver: VAAPI encoding on older Intel GPUs'
+  'libva-mesa-driver: VAAPI encoding on AMD/Intel'
+  'nvidia-utils: NVENC/NVDEC driver stack'
+)
+
+provides=('sunshine')
+conflicts=('sunshine' 'sunshine-git' 'sunshine-bin')
+options=(!strip)
+
+# `source` mirrors the repository's gitlinks, including nested submodules.
+# Everything is pinned by commit so a rebuild of a given pkgver is reproducible.
+source=(
+  "foundation-sunshine::git+https://github.com/QiE2035/foundation-sunshine.git#branch=linux-migration"
+  # --- direct submodules -----------------------------------------------------
+  'flatpak-builder-tools::git+https://github.com/flatpak/flatpak-builder-tools.git#commit=db39dc0f75a3b24cfb09906f3aba2c13b0c48afe'
+  'shared-modules::git+https://github.com/flathub/shared-modules.git#commit=d1a2cf59d137b47abc07297ecd35a5af9b5e16f4'
+  'sunshine-control-panel::git+https://github.com/qiin2333/sunshine-control-panel.git#commit=beb6a3e61fe52e97c2fa60cec3df6d77ef0ae278'
+  'AMF::git+https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git#commit=eadd00804d5f7e5cd8c85d540073198312870776'
+  'Simple-Web-Server::git+https://gitlab.com/eidheim/Simple-Web-Server.git#commit=546895a93a29062bb178367b46c7afb72da9881e'
+  'TPCircularBuffer::git+https://github.com/michaeltyson/TPCircularBuffer.git#commit=cc520397504bb72bc6df79ff03eb72988a6dc50d'
+  'ViGEmClient::git+https://github.com/LizardByte/Virtual-Gamepad-Emulation-Client.git#commit=8d71f6740ffff4671cdadbca255ce528e3cd3fef'
+  'foundation-build-deps::git+https://github.com/AlkaidLab/foundation-build-deps.git#commit=8e569811b6c0d1e5273e441c9572a7d0ab079833'
+  'doxyconfig::git+https://github.com/LizardByte/doxyconfig.git#commit=7607aa992ca0770e06b735b8dfc15e36dc45649d'
+  'googletest::git+https://github.com/google/googletest.git#commit=d72f9c8aea6817cdf1ca0ac10887f328de7f3da2'
+  'inputtino::git+https://github.com/games-on-whales/inputtino.git#commit=d28ec79eb63324e68d73a7de22bcb5ff0a6f6bf8'
+  'moonlight-audio-haptics::git+https://github.com/AlkaidLab/moonlight-audio-haptics.git#commit=21aae5018e36397d45b3dffff4005c952592ec0b'
+  'moonlight-common-c::git+https://github.com/qiin2333/moonlight-common-c.git#commit=31a2a4589ea926988a08ca508bb317fbfbe2a177'
+  'nanors::git+https://github.com/sleepybishop/nanors.git#commit=57ee5e921bd5047bca7ad377b181b7c28ea09731'
+  'nvapi::git+https://github.com/NVIDIA/nvapi.git#commit=9296d671e71608d6d6b7749ed93989af4ada8858'
+  'nv-codec-headers-1100::git+https://github.com/FFmpeg/nv-codec-headers.git#commit=18024c477256555badd8d5f1c5dd45b1cbb31cf6'
+  'nv-codec-headers-1200::git+https://github.com/FFmpeg/nv-codec-headers.git#commit=fe32761e7a8bc79fcf560f356bf3898271bf4d56'
+  'nv-codec-headers-1300::git+https://github.com/FFmpeg/nv-codec-headers.git#commit=88fee5c37318c991a8762d423530f91681e32e3a'
+  'nv-codec-headers-1301::git+https://github.com/FFmpeg/nv-codec-headers.git#commit=0a6fba9a2820628b8103464f4c8753ee05838baa'
+  'tray::git+https://github.com/LizardByte/tray.git#commit=9a1c9540f10f3847c54af30d5060345e8e7634ed'
+  'wayland-protocols::git+https://github.com/LizardByte-infrastructure/wayland-protocols.git#commit=1f5f2b50ea2d88a9cc307902de2c8ed6b6d86f7d'
+  'wlr-protocols::git+https://gitlab.freedesktop.org/wlroots/wlr-protocols.git#commit=a741f0ac5d655338a5100fc34bc8cec87d237346'
+  # --- nested submodules -----------------------------------------------------
+  'doxygen-awesome-css::git+https://github.com/jothepro/doxygen-awesome-css.git#commit=1f3620084ff75734ed192101acf40e9dff01d848'
+  'enet::git+https://github.com/cgutman/enet.git#commit=aca87840b57f045a1f7f9299e4b1b9b8e2a5e2f1'
+  # same URL basename as the top-level third-party/nanors gitlink
+  'moonlight-common-c-nanors::git+https://github.com/sleepybishop/nanors.git#commit=b1e3c22ca0cdc0bb83e3cd6ed1a2fc77869ed99a'
+  'tray-doxyconfig::git+https://github.com/LizardByte/doxyconfig.git#commit=e552f7c9f00cd0cf24764a37d0905935b3d2c188'
+  'tray-googletest::git+https://github.com/google/googletest.git#commit=f8d7d77c06936315286eb55f8de22cd23c188571'
+  'lizardbyte-common::git+https://github.com/LizardByte/lizardbyte-common.git#commit=8d7dcc97d0795e4eb2efdb50a86f83060ed47934'
+)
+
+sha256sums=('SKIP'
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+# ---------------------------------------------------------------------------
+# Submodule placement
+# ---------------------------------------------------------------------------
+# makepkg cannot check out gitlinks, so the sources above are unpacked into
+# $srcdir under their basename. This list maps each of those directory names
+# back to its path inside the repository.
+_submodule_paths=(
+  'packaging/linux/flatpak/deps/flatpak-builder-tools'
+  'packaging/linux/flatpak/deps/shared-modules'
+  'src_assets/common/sunshine-control-panel'
+  'third-party/AMF'
+  'third-party/Simple-Web-Server'
+  'third-party/TPCircularBuffer'
+  'third-party/ViGEmClient'
+  'third-party/build-deps'
+  'third-party/doxyconfig'
+  'third-party/googletest'
+  'third-party/inputtino'
+  'third-party/moonlight-audio-haptics'
+  'third-party/moonlight-common-c'
+  'third-party/nanors'
+  'third-party/nvapi'
+  'third-party/nvenc-headers/1100'
+  'third-party/nvenc-headers/1200'
+  'third-party/nvenc-headers/1300'
+  'third-party/nvenc-headers/1301'
+  'third-party/tray'
+  'third-party/wayland-protocols'
+  'third-party/wlr-protocols'
+  'third-party/doxyconfig/doxygen-awesome-css'
+  'third-party/moonlight-common-c/enet'
+  'third-party/moonlight-common-c/nanors'
+  'third-party/tray/third-party/doxyconfig'
+  'third-party/tray/third-party/googletest'
+  'third-party/tray/third-party/lizardbyte-common'
+)
+
+# Only these differ from their source basename (source= supports a `name::url`
+# prefix, but the prefix must be unique, so the duplicates get a suffix).
+_submodule_srcname() {
+  case "$1" in
+    third-party/build-deps) printf 'foundation-build-deps' ;;
+    third-party/nvenc-headers/1100) printf 'nv-codec-headers-1100' ;;
+    third-party/nvenc-headers/1200) printf 'nv-codec-headers-1200' ;;
+    third-party/nvenc-headers/1300) printf 'nv-codec-headers-1300' ;;
+    third-party/nvenc-headers/1301) printf 'nv-codec-headers-1301' ;;
+    third-party/moonlight-common-c/nanors) printf 'moonlight-common-c-nanors' ;;
+    third-party/tray/third-party/doxyconfig) printf 'tray-doxyconfig' ;;
+    third-party/tray/third-party/googletest) printf 'tray-googletest' ;;
+    *) printf '%s' "${1##*/}" ;;
+  esac
+}
+
+pkgver() {
+  cd "$srcdir/foundation-sunshine"
+
+  # v0.9.1-linux-full-cross-product -> 0.9.1, then .r<commit count>.g<short sha>
+  local base
+  base="$(git describe --long --tags --match 'v[0-9]*' 2>/dev/null | sed -E 's/^v//; s/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+  [ -n "$base" ] || base=0
+
+  printf '%s.r%s.g%s' \
+    "$base" \
+    "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short=8 HEAD)"
+}
+
+prepare() {
+  cd "$srcdir/foundation-sunshine"
+
+  # The gitlink directories exist (empty) after makepkg's checkout; replace
+  # each with the corresponding pre-fetched source tree.
+  local path src
+  for path in "${_submodule_paths[@]}"; do
+    src="$srcdir/$(_submodule_srcname "$path")"
+    if [ ! -d "$src" ]; then
+      error "Submodule source for %s not found (%s)" "$path" "$src"
+      return 1
+    fi
+    rm -rf -- "$path"
+    mkdir -p -- "$(dirname "$path")"
+    cp -a -- "$src" "$path"
+  done
+
+  # AMF and build-deps are huge checkouts of which Linux uses a slice. Reduce
+  # them with sparse-checkout when the source is a git repo (it always is).
+  #
+  # AMF is Windows-only (~1.2 GB); Linux needs nothing from it, but the
+  # gitlink stays present so the tree matches .gitmodules.
+  if [ -d third-party/AMF/.git ]; then
+    if git -C third-party/AMF sparse-checkout set amf/public/include 2>/dev/null; then
+      rm -rf -- third-party/AMF/amf
+      git -C third-party/AMF checkout -- .
+    fi
+  fi
+
+  # build-deps ships pre-built FFmpeg/x264/x265/SVT-AV1/hdr10plus per platform;
+  # keep only this machine's slice (~66 MB instead of ~600 MB). If the path
+  # does not exist the full tree is used, so this cannot break the build.
+  local arch_slice
+  case "$(uname -m)" in
+    x86_64) arch_slice=Linux-x86_64 ;;
+    aarch64) arch_slice=Linux-aarch64 ;;
+    *) arch_slice="" ;;
+  esac
+  if [ -n "$arch_slice" ] && [ -d "third-party/build-deps/dist/$arch_slice" ]; then
+    if git -C third-party/build-deps sparse-checkout set "dist/$arch_slice" 2>/dev/null; then
+      local keep
+      for keep in third-party/build-deps/dist/*; do
+        [ "$keep" = "third-party/build-deps/dist/$arch_slice" ] || rm -rf -- "$keep"
+      done
+      git -C third-party/build-deps checkout -- "dist/$arch_slice"
+    fi
+  fi
+
+  # Deterministic web-UI dependencies; the ninja `web-ui` target also runs
+  # `npm install` during build(), using this cache thanks to NPM_OFFLINE=ON.
+  npm ci --no-audit --no-fund
+}
+
+build() {
+  # CMAKE_BUILD_TYPE=Release supplies -O3; keep the Arch flags for hardening
+  # (-fno-plt, -fexceptions, relro/now) but drop -Werror=format-security, which
+  # upstream also strips.
+  export CFLAGS="${CFLAGS/-Werror=format-security/}"
+  export CXXFLAGS="${CXXFLAGS/-Werror=format-security/}"
+
+  local _cmake_options=(
+    -S foundation-sunshine
+    -B build
+    -G Ninja
+    -Wno-dev
+    -D CMAKE_BUILD_TYPE=Release
+    -D CMAKE_INSTALL_PREFIX=/usr
+    -D SUNSHINE_ASSETS_DIR=share/sunshine
+    -D SUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine
+    -D SUNSHINE_PUBLISHER_NAME='QiE2035'
+    -D SUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine'
+    -D SUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
+    -D NPM_OFFLINE=ON
+    -D BUILD_DOCS=OFF
+    -D BUILD_TESTS=OFF
+  )
+
+  if [ "$_use_cuda" = true ]; then
+    _cmake_options+=(-D SUNSHINE_ENABLE_CUDA=ON)
+  else
+    _cmake_options+=(-D SUNSHINE_ENABLE_CUDA=OFF -D CUDA_FAIL_ON_MISSING=OFF)
+  fi
+
+  cmake "${_cmake_options[@]}"
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

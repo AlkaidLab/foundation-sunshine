@@ -10,7 +10,9 @@ if(APPLE)
     endif()
 elseif(UNIX)
     # configure the .desktop file
-    set(SUNSHINE_DESKTOP_ICON "sunshine.svg")
+    # "sunshine" resolves through the hicolor PNGs installed by
+    # cmake/packaging/linux.cmake (the fork's logo set, not the upstream SVG)
+    set(SUNSHINE_DESKTOP_ICON "sunshine")
     if(${SUNSHINE_BUILD_APPIMAGE})
         configure_file(packaging/linux/AppImage/sunshine.desktop sunshine.desktop @ONLY)
     elseif(${SUNSHINE_BUILD_FLATPAK})

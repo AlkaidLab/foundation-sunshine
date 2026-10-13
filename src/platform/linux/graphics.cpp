@@ -654,22 +654,35 @@ namespace egl {
     return nv12;
   }
 
+  bool
+  is_planar_yuv444(AVPixelFormat format) {
+    auto fmt_desc = av_pix_fmt_desc_get(format);
+    return fmt_desc &&
+           !fmt_desc->log2_chroma_w && !fmt_desc->log2_chroma_h &&
+           fmt_desc->nb_components >= 3 && fmt_desc->comp[2].plane == 2;
+  }
+
   /**
-   * @brief Create biplanar YUV textures to render into.
+   * @brief Create YUV textures to render into.
    * @param width Width of the target frame.
    * @param height Height of the target frame.
    * @param format Format of the target frame.
-   * @return The new RGB texture.
+   * @return The new YUV target.
    */
   std::optional<nv12_t>
   create_target(int width, int height, AVPixelFormat format) {
+    // Planar 4:4:4 formats render into three separate single-channel planes
+    // instead of a biplanar Y + interleaved UV pair.
+    const bool yuv444 = is_planar_yuv444(format);
+
     nv12_t nv12 {
       EGL_NO_DISPLAY,
       EGL_NO_IMAGE,
       EGL_NO_IMAGE,
-      gl::tex_t::make(2),
-      gl::frame_buf_t::make(2),
+      gl::tex_t::make(yuv444 ? 3 : 2),
+      gl::frame_buf_t::make(yuv444 ? 3 : 2),
     };
+    nv12->num_planes = yuv444 ? 3 : 2;
 
     GLint y_format;
     GLint uv_format;
@@ -692,18 +705,27 @@ namespace egl {
     gl::ctx.BindTexture(GL_TEXTURE_2D, nv12->tex[0]);
     gl::ctx.TexStorage2D(GL_TEXTURE_2D, 1, y_format, width, height);
 
-    gl::ctx.BindTexture(GL_TEXTURE_2D, nv12->tex[1]);
-    gl::ctx.TexStorage2D(GL_TEXTURE_2D, 1, uv_format,
-      width >> fmt_desc->log2_chroma_w, height >> fmt_desc->log2_chroma_h);
+    if (yuv444) {
+      for (int x = 1; x < nv12->num_planes; ++x) {
+        gl::ctx.BindTexture(GL_TEXTURE_2D, nv12->tex[x]);
+        gl::ctx.TexStorage2D(GL_TEXTURE_2D, 1, y_format, width, height);
+      }
+    }
+    else {
+      gl::ctx.BindTexture(GL_TEXTURE_2D, nv12->tex[1]);
+      gl::ctx.TexStorage2D(GL_TEXTURE_2D, 1, uv_format,
+        width >> fmt_desc->log2_chroma_w, height >> fmt_desc->log2_chroma_h);
+    }
 
-    nv12->buf.bind(std::begin(nv12->tex), std::end(nv12->tex));
+    nv12->buf.bind(std::begin(nv12->tex), std::begin(nv12->tex) + nv12->num_planes);
 
     GLenum attachments[] {
       GL_COLOR_ATTACHMENT0,
-      GL_COLOR_ATTACHMENT1
+      GL_COLOR_ATTACHMENT1,
+      GL_COLOR_ATTACHMENT2
     };
 
-    for (int x = 0; x < sizeof(attachments) / sizeof(decltype(attachments[0])); ++x) {
+    for (int x = 0; x < nv12->num_planes; ++x) {
       gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, nv12->buf[x]);
       gl::ctx.DrawBuffers(1, &attachments[x]);
 
@@ -734,6 +756,44 @@ namespace egl {
 
     program[0].bind(color_matrix);
     program[1].bind(color_matrix);
+
+    if (num_planes == 3) {
+      // The U/V planes are rendered by instances of the Y shader, which computes
+      // dot(color_vec_y.xyz, rgb) * range_y.x + range_y.y. Fold the UV range
+      // multiply and offset into the matrix so that yields the final U or V value:
+      // (dot(cu.xyz, rgb) + cu.w) * ru.x + ru.y == dot(cu.xyz * ru.x, rgb) + (cu.w * ru.x + ru.y)
+      for (int plane = 0; plane < 2; ++plane) {
+        const auto &color_vec = plane == 0 ? color_p->color_vec_u : color_p->color_vec_v;
+        const float range_mult = color_p->range_uv[0];
+        const float range_add = color_p->range_uv[1];
+
+        float folded_vec[4] {
+          color_vec[0] * range_mult,
+          color_vec[1] * range_mult,
+          color_vec[2] * range_mult,
+          0.0f,
+        };
+        float folded_range[2] { 1.0f, color_vec[3] * range_mult + range_add };
+
+        std::pair<const char *, std::string_view> folded_members[] {
+          { "color_vec_y", util::view(folded_vec) },
+          { "color_vec_u", util::view(color_p->color_vec_u) },
+          { "color_vec_v", util::view(color_p->color_vec_v) },
+          { "range_y", util::view(folded_range) },
+          { "range_uv", util::view(color_p->range_uv) },
+        };
+
+        auto uniform = program[3 + plane].uniform("ColorMatrix", folded_members,
+          sizeof(folded_members) / sizeof(decltype(folded_members[0])));
+        if (!uniform) {
+          return;
+        }
+
+        auto &buffer = plane == 0 ? color_matrix_u : color_matrix_v;
+        buffer = std::move(*uniform);
+        program[3 + plane].bind(buffer);
+      }
+    }
   }
 
   std::optional<sws_t>
@@ -823,6 +883,18 @@ namespace egl {
 
       // Y - shader
       sws.program[0] = std::move(program.left());
+
+      // U/V - shaders for planar 4:4:4 targets: the same Y shader driven by
+      // separate ColorMatrix instances holding the pre-folded U and V vectors.
+      for (int x = 0; x < 2; ++x) {
+        program = gl::program_t::link(compiled_sources[3].left(), compiled_sources[2].left());
+        if (program.has_right()) {
+          BOOST_LOG(error) << "GL linker: "sv << program.right();
+          return std::nullopt;
+        }
+
+        sws.program[3 + x] = std::move(program.left());
+      }
     }
 
     auto loc_width_i = gl::ctx.GetUniformLocation(sws.program[1].handle(), "width_i");
@@ -912,7 +984,13 @@ namespace egl {
     gl::ctx.BindTexture(GL_TEXTURE_2D, tex[0]);
     gl::ctx.TexStorage2D(GL_TEXTURE_2D, 1, gl_format, in_width, in_height);
 
-    return make(in_width, in_height, out_width, out_height, std::move(tex));
+    auto sws_opt = make(in_width, in_height, out_width, out_height, std::move(tex));
+    if (sws_opt) {
+      // Remember whether convert() must render a third full-resolution plane
+      sws_opt->num_planes = is_planar_yuv444(format) ? 3 : 2;
+    }
+
+    return sws_opt;
   }
 
   void
@@ -990,24 +1068,49 @@ namespace egl {
 
     GLenum attachments[] {
       GL_COLOR_ATTACHMENT0,
-      GL_COLOR_ATTACHMENT1
+      GL_COLOR_ATTACHMENT1,
+      GL_COLOR_ATTACHMENT2
     };
 
-    for (int x = 0; x < sizeof(attachments) / sizeof(decltype(attachments[0])); ++x) {
-      gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, fb[x]);
-      gl::ctx.DrawBuffers(1, &attachments[x]);
+    if (num_planes == 3) {
+      // Planar 4:4:4: Y, U and V are each rendered full-size into their own
+      // framebuffer by the Y shader with the corresponding ColorMatrix.
+      gl::program_t *plane_programs[] { &program[0], &program[3], &program[4] };
+
+      for (int x = 0; x < num_planes; ++x) {
+        gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, fb[x]);
+        gl::ctx.DrawBuffers(1, &attachments[x]);
 
 #ifndef NDEBUG
-      auto status = gl::ctx.CheckFramebufferStatus(GL_FRAMEBUFFER);
-      if (status != GL_FRAMEBUFFER_COMPLETE) {
-        BOOST_LOG(error) << "Pass "sv << x << ": CheckFramebufferStatus() --> [0x"sv << util::hex(status).to_string_view() << ']';
-        return -1;
-      }
+        auto status = gl::ctx.CheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+          BOOST_LOG(error) << "Pass "sv << x << ": CheckFramebufferStatus() --> [0x"sv << util::hex(status).to_string_view() << ']';
+          return -1;
+        }
 #endif
 
-      gl::ctx.UseProgram(program[x].handle());
-      gl::ctx.Viewport(offsetX / (x + 1), offsetY / (x + 1), out_width / (x + 1), out_height / (x + 1));
-      gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+        gl::ctx.UseProgram(plane_programs[x]->handle());
+        gl::ctx.Viewport(offsetX, offsetY, out_width, out_height);
+        gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+      }
+    }
+    else {
+      for (int x = 0; x < num_planes; ++x) {
+        gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, fb[x]);
+        gl::ctx.DrawBuffers(1, &attachments[x]);
+
+#ifndef NDEBUG
+        auto status = gl::ctx.CheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+          BOOST_LOG(error) << "Pass "sv << x << ": CheckFramebufferStatus() --> [0x"sv << util::hex(status).to_string_view() << ']';
+          return -1;
+        }
+#endif
+
+        gl::ctx.UseProgram(program[x].handle());
+        gl::ctx.Viewport(offsetX / (x + 1), offsetY / (x + 1), out_width / (x + 1), out_height / (x + 1));
+        gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+      }
     }
 
     gl::ctx.BindTexture(GL_TEXTURE_2D, 0);

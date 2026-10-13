@@ -19,6 +19,15 @@ if(${SUNSHINE_ENABLE_CUDA})
         enable_language(CUDA)
 
         message(STATUS "CUDA Compiler Version: ${CMAKE_CUDA_COMPILER_VERSION}")
+
+        # An explicit -DCMAKE_CUDA_ARCHITECTURES wins: building the whole
+        # compatibility ladder below costs minutes per CUDA object, and a modern
+        # toolkit dropped most of it anyway (CUDA 13 removed everything below
+        # Turing, and passing a dropped architecture aborts nvcc with
+        # "Unsupported gpu architecture"). Otherwise fall back to the ladder.
+        if(CMAKE_CUDA_ARCHITECTURES)
+            message(STATUS "CUDA Architectures (from the cache): ${CMAKE_CUDA_ARCHITECTURES}")
+        else()
         set(CMAKE_CUDA_ARCHITECTURES "")
 
         # https://tech.amikelive.com/node-930/cuda-compatibility-of-nvidia-display-gpu-drivers/
@@ -62,11 +71,20 @@ if(${SUNSHINE_ENABLE_CUDA})
             list(APPEND CMAKE_CUDA_ARCHITECTURES 35)
         endif()
 
+        # Architectures the toolkit itself no longer accepts would make every
+        # CUDA object fail to compile, so drop them after building the ladder.
+        if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0)
+            list(REMOVE_ITEM CMAKE_CUDA_ARCHITECTURES 10 11 20 30 35 37 50 52 60 61 62 70 72)
+        elseif(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.0)
+            list(REMOVE_ITEM CMAKE_CUDA_ARCHITECTURES 10 11 20 30 35 37)
+        endif()
+
         # sort the architectures
         list(SORT CMAKE_CUDA_ARCHITECTURES COMPARE NATURAL)
 
         # message(STATUS "CUDA NVCC Flags: ${CUDA_NVCC_FLAGS}")
         message(STATUS "CUDA Architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+        endif()
     endif()
 endif()
 if(CUDA_FOUND)
@@ -79,6 +97,25 @@ if(CUDA_FOUND)
 
     add_compile_definitions(SUNSHINE_BUILD_CUDA)
 endif()
+
+# NVENC SDK headers: the encoder option tables in video.cpp consume their
+# enums on every platform, though only Windows links the SDK itself. Pick the
+# newest pinned API line that is present.
+foreach(_nvenc_sdk IN ITEMS 1301 1300 1200 1100)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/${_nvenc_sdk}/include/ffnvcodec/nvEncodeAPI.h")
+        include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/${_nvenc_sdk}/include")
+        break()
+    endif()
+endforeach()
+
+# Frame budget guard report. src/nvenc/*.cpp is otherwise globbed on Windows only,
+# but frame_budget.cpp deliberately carries no NVENC SDK dependency and the shared
+# confighttp.cpp getConfig() calls get_frame_budget_report() on every platform, so
+# build it here to satisfy that link. Nothing publishes a report on Linux (no
+# native nvenc session), so the config API simply omits the block.
+list(APPEND PLATFORM_TARGET_FILES
+        "${CMAKE_SOURCE_DIR}/src/nvenc/frame_budget.h"
+        "${CMAKE_SOURCE_DIR}/src/nvenc/frame_budget.cpp")
 
 # drm
 if(${SUNSHINE_ENABLE_DRM})
@@ -175,28 +212,30 @@ if(NOT ${CUDA_FOUND}
 endif()
 
 # tray icon
+# The pinned third-party/tray implements Linux via Qt + libnotify
+# (src/tray_linux.cpp); link it as its tray::tray target like upstream does.
 if(${SUNSHINE_ENABLE_TRAY})
-    pkg_check_modules(APPINDICATOR ayatana-appindicator3-0.1)
-    if(APPINDICATOR_FOUND)
-        list(APPEND SUNSHINE_DEFINITIONS TRAY_AYATANA_APPINDICATOR=1)
-    else()
-        pkg_check_modules(APPINDICATOR appindicator3-0.1)
-        if(APPINDICATOR_FOUND)
-            list(APPEND SUNSHINE_DEFINITIONS TRAY_LEGACY_APPINDICATOR=1)
-        endif ()
-    endif()
     pkg_check_modules(LIBNOTIFY libnotify)
-    if(NOT APPINDICATOR_FOUND OR NOT LIBNOTIFY_FOUND)
+    if(NOT LIBNOTIFY_FOUND)
         set(SUNSHINE_TRAY 0)
-        message(WARNING "Missing appindicator or libnotify, disabling tray icon")
-        message(STATUS "APPINDICATOR_FOUND: ${APPINDICATOR_FOUND}")
+        message(WARNING "Missing libnotify, disabling tray icon")
         message(STATUS "LIBNOTIFY_FOUND: ${LIBNOTIFY_FOUND}")
     else()
-        include_directories(SYSTEM ${APPINDICATOR_INCLUDE_DIRS} ${LIBNOTIFY_INCLUDE_DIRS})
-        link_directories(${APPINDICATOR_LIBRARY_DIRS} ${LIBNOTIFY_LIBRARY_DIRS})
+        include_directories(SYSTEM ${LIBNOTIFY_INCLUDE_DIRS})
+        link_directories(${LIBNOTIFY_LIBRARY_DIRS})
 
-        list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_linux.c")
-        list(APPEND SUNSHINE_EXTERNAL_LIBRARIES ${APPINDICATOR_LIBRARIES} ${LIBNOTIFY_LIBRARIES})
+        # Tray message boxes (QMessageBox) need Widgets linked into sunshine,
+        # but the tray target links Qt PRIVATE and a second find_package(Qt6)
+        # in any scope breaks Qt6's config file - resolve Qt6Widgets through
+        # pkg-config instead.
+        pkg_check_modules(QT6WIDGETS QUIET Qt6Widgets)
+        if(QT6WIDGETS_FOUND)
+            include_directories(SYSTEM ${QT6WIDGETS_INCLUDE_DIRS})
+            link_directories(${QT6WIDGETS_LIBRARY_DIRS})
+            list(APPEND PLATFORM_LIBRARIES ${QT6WIDGETS_LIBRARIES})
+        endif()
+        add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/tray")
+        list(APPEND SUNSHINE_EXTERNAL_LIBRARIES tray::tray)
     endif()
 else()
     set(SUNSHINE_TRAY 0)
@@ -235,14 +274,34 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/display_device.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/linux/input.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/linux/display_device.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/foreground_app.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/foreground_app.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/compositor_output.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/compositor_output.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_modes.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_backend.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_backend.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/gl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/EGL/eglplatform.h"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/KHR/khrplatform.h"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/gl.h"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/egl.h")
+
+# host-side clipboard provider (klipper D-Bus); optional, needs libsystemd
+pkg_check_modules(LIBSYSTEMD libsystemd)
+if(LIBSYSTEMD_FOUND)
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/clipboard_host.h"
+            "${CMAKE_SOURCE_DIR}/src/clipboard_host.cpp")
+    list(APPEND PLATFORM_LIBRARIES ${LIBSYSTEMD_LIBRARIES})
+    include_directories(SYSTEM ${LIBSYSTEMD_INCLUDE_DIRS})
+    add_compile_definitions(SUNSHINE_CLIPBOARD_HOST)
+else()
+    message(STATUS "libsystemd not found - host clipboard sync disabled")
+endif()
 
 list(APPEND PLATFORM_LIBRARIES
         dl
