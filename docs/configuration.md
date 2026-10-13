@@ -2755,6 +2755,20 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [amd_hevc_gop_size](https://localhost:47990/config/#amd_hevc_gop_size)
+
+Windows AMF HEVC keyframe interval, available under AMD AMF advanced settings.
+The default `-1` leaves `HEVC_GOP_SIZE` unset so the driver selects its interval.
+`0` disables periodic refresh while preserving client-requested IDRs; `1`–`1000`
+sets a fixed interval in frames. Setting `60` restores the previous periodic
+refresh policy. The same option applies to the standalone and AVCodec-compatible
+AMF paths. Apply settings and start a new stream for changes to take effect.
+
+An interval is a frame count, so its elapsed time depends on the actual encoded
+frame rate. The encoder logs the driver's effective GOP after initialization.
+Driver defaults and long-running picture recovery still require validation on
+the affected hardware.
+
 ### [amd_rc](https://localhost:47990/config/#amd_rc)
 
 <table>

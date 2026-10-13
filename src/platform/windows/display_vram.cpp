@@ -3390,6 +3390,7 @@ namespace platf::dxgi {
 
       ::amf::amf_config amf_cfg;
       amf_cfg.avcodec_compat = config::video.amd.amd_avcodec_compat;
+      amf_cfg.hevc_gop_size = config::video.amd.amd_hevc_gop_size;
 
       // Pass AMF SDK integer values directly from config
       if (client_config.videoFormat == 0) {

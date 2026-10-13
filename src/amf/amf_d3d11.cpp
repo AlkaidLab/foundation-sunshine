@@ -385,7 +385,13 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) 60);
+      // Like FFmpeg's -g=-1, leave the driver GOP untouched by default.
+      if (config.hevc_gop_size >= 0) {
+        const auto gop_result = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) config.hevc_gop_size);
+        if (gop_result != AMF_OK) {
+          BOOST_LOG(warning) << "AMF: HEVC GOP override rejected, error: " << gop_result;
+        }
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
@@ -757,6 +763,17 @@ namespace amf {
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: encoder Init failed after fallbacks, error: " << res;
       return false;
+    }
+
+    if (video_format == 1) {
+      amf_int64 effective_gop = 0;
+      if (encoder->GetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, &effective_gop) == AMF_OK) {
+        BOOST_LOG(info) << "AMF: HEVC GOP " << effective_gop << " frames (requested " << config.hevc_gop_size
+                        << "; -1=driver default, 0=on-demand refresh)";
+      }
+      else {
+        BOOST_LOG(warning) << "AMF: HEVC GOP could not be read back";
+      }
     }
 
     // Derive runtime watchdog threshold from framerate so the fatal-error

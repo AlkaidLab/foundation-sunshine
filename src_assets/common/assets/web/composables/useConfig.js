@@ -14,6 +14,12 @@ const PLATFORM_EXCLUSIONS = {
 // 不参与默认值比较的键
 const EXCLUDED_DEFAULT_KEYS = new Set(['resolutions', 'fps', 'adapter_name'])
 
+export function parseHevcGopSize(value) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || value.trim() === '')) return undefined
+  const size = Number(value)
+  return Number.isInteger(size) && size >= -1 && size <= 1000 ? size : undefined
+}
+
 // 默认标签页配置
 const DEFAULT_TABS = [
   {
@@ -179,6 +185,7 @@ const DEFAULT_TABS = [
           amd_vbaq: '',
           amd_coder: 'auto',
           amd_avcodec_compat: 'disabled',
+          amd_hevc_gop_size: -1,
           // AMF advanced (driver workarounds): empty string = driver default
           // (FFmpeg-aligned). Users can override per-property if troubleshooting
           // freezes or tuning latency. See issue #666 (RDNA4 26.5.x).
@@ -338,6 +345,7 @@ const createRisk = (
  * 配置管理组合式函数
  */
 export function useConfig() {
+  const validationError = ref('')
   const platform = ref('')
   const saved = ref(false)
   const restarted = ref(false)
@@ -428,6 +436,7 @@ export function useConfig() {
 
       const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
+      configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
       configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
       config.value = configData
 
@@ -602,6 +611,11 @@ export function useConfig() {
   const save = async () => {
     saved.value = false
     restarted.value = false
+    validationError.value = ''
+    if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
+      validationError.value = 'config.amd_hevc_gop_size_desc'
+      return false
+    }
     serialize()
 
     const configData = deepClone(config.value)
@@ -737,6 +751,7 @@ export function useConfig() {
   }
 
   return {
+    validationError,
     platform,
     saved,
     restarted,

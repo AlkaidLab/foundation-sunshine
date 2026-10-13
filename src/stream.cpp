@@ -3419,6 +3419,7 @@ namespace stream {
         }
       }
 
+      const auto encoded_bytes = payload.size();
       const bool is_pyrowave = session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT;
       if (is_pyrowave && payload.empty()) {
         BOOST_LOG(error) << "[PyroWaveTransport] discarding empty video frame " << packet->frame_index();
@@ -3483,6 +3484,7 @@ namespace stream {
       }
 
       unsigned fecPercentage = 0;
+      unsigned requested_fec = 0;
       // PyroWave carries its own block-aware parity packets and the client
       // bypasses the legacy RTP FEC queue for this format. Legacy parity
       // shards would not contain a valid NV_VIDEO_PACKET header and must not
@@ -3519,19 +3521,28 @@ namespace stream {
       const auto frame_data = (payload.size() + blocksize - 1) / blocksize;
       if (!is_pyrowave) {
         const auto now = steady_now_ms();
-        const auto requested = session->config.fec_control->percentage(frame_data, session->config.minRequiredFecPackets, now);
-        session->config.monitor.bitrate_budget->observe_fec(requested, now);
+        requested_fec = session->config.fec_control->percentage(frame_data, session->config.minRequiredFecPackets, now);
+        session->config.monitor.bitrate_budget->observe_fec(requested_fec, now);
         // Higher protection requires a successfully lowered encoder target.
         // Buffered frames retain the allowance from their own submission.
-        fecPercentage = std::min(requested, packet->fec_percentage);
+        fecPercentage = std::min(requested_fec, packet->fec_percentage);
       }
       const auto layout = video_fec::plan(frame_data, fecPercentage, session->config.minRequiredFecPackets);
       if (!layout) {
-        BOOST_LOG(error) << "Encoded frame exceeds the existing RS wire limits";
+        BOOST_LOG(error) << "Encoded frame exceeds the existing RS wire limits: session=" << session->launch_session_id
+                         << ", frame=" << packet->frame_index()
+                         << ", idr=" << packet->is_idr() << ", encoded_bytes=" << encoded_bytes
+                         << ", data_packets=" << frame_data << ", packet_size=" << session->config.packetsize;
         continue;
       }
       if (layout->skipped) {
-        BOOST_LOG(warning) << "Skipping FEC for frame whose requested protection cannot fit the existing RS blocks";
+        BOOST_LOG(warning) << "Skipping FEC for frame whose requested protection cannot fit the existing RS blocks: session=" << session->launch_session_id
+                           << ", frame=" << packet->frame_index()
+                           << ", idr=" << packet->is_idr() << ", encoded_bytes=" << encoded_bytes
+                           << ", data_packets=" << frame_data << ", packet_size=" << session->config.packetsize
+                           << ", requested_fec=" << requested_fec << "%, planned_fec=" << fecPercentage
+                           << "% (submitted allowance=" << packet->fec_percentage
+                           << "%), encoder_kbps=" << session->config.monitor.bitrate_budget->applied().encoder_kbps;
         fecPercentage = 0;
       }
       const auto fec_blocks_needed = layout->count;
