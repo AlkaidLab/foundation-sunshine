@@ -464,7 +464,7 @@
                 type="button"
                 class="btn-close"
                 data-bs-dismiss="modal"
-                :aria-label="$t('_common.close') || '关闭'"
+                :aria-label="$t('_common.close')"
               ></button>
             </div>
             <div class="modal-body">
@@ -537,7 +537,7 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
                 <i class="fas fa-external-link-alt me-1"></i>{{ $t('_common.see_more') }}
               </a>
               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                <i class="fas fa-times me-1"></i>{{ $t('_common.close') || '关闭' }}
+                <i class="fas fa-times me-1"></i>{{ $t('_common.close') }}
               </button>
             </div>
           </div>
@@ -556,7 +556,7 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
             <button
               type="button"
               class="btn-close delete-app-close"
-              :aria-label="$t('_common.close') || '关闭'"
+              :aria-label="$t('_common.close')"
               @click="cancelDeleteApp"
             ></button>
           </div>
@@ -583,7 +583,7 @@ sh -c "displayplacer "id:&lt;screenId&gt; res:${SUNSHINE_CLIENT_WIDTH}x${SUNSHIN
             <button
               type="button"
               class="btn-close delete-app-close"
-              :aria-label="$t('_common.close') || '关闭'"
+              :aria-label="$t('_common.close')"
               @click="cancelBatchDelete"
             ></button>
           </div>

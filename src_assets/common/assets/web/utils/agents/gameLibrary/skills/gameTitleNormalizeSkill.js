@@ -20,6 +20,7 @@ export function createGameTitleNormalizeSkill(options = {}) {
     async run(context) {
       const before = context.apps || []
       const apps = await enhanceNames(before, {
+        translate: context.options?.translate,
         onProgress(progress) {
           context.options?.onSkillProgress?.({
             skillId: GAME_TITLE_NORMALIZE_SKILL_ID,
