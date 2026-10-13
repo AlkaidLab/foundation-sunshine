@@ -247,6 +247,7 @@ namespace platf::ds5 {
       const auto manifest_file = manifest.get<std::string>("sidecar_file", "");
       auto expected_digest = manifest.get<std::string>("sidecar_sha256", "");
       if (manifest.get<std::uint32_t>("protocol", 0) != VERSION ||
+          manifest.get<std::string>("component_version", "") != "1.3.0" ||
           manifest_file != "Sunshine.Ds5Sidecar.exe" || expected_digest.size() != 64) {
         BOOST_LOG(error) << "The active DualSense component manifest is incomplete or incompatible"sv;
         return std::nullopt;
@@ -266,8 +267,7 @@ namespace platf::ds5 {
         return static_cast<char>(std::tolower(character));
       });
       const auto actual_core = sha256_file(expected_active_root / "HIDMaestro.Core.dll");
-      if (manifest.get<std::string>("component_version", "") != "1.3.0" ||
-          expected_core.size() != 64 || !actual_core || *actual_core != expected_core) {
+      if (expected_core.size() != 64 || !actual_core || *actual_core != expected_core) {
         BOOST_LOG(error) << "The DualSense component requires an update or failed Core verification"sv;
         return std::nullopt;
       }

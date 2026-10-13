@@ -88,5 +88,4 @@ if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry isolation regression fai
 
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'THIRD-PARTY-NOTICES.txt') -Destination $output -Force
-Copy-Item -LiteralPath (Join-Path $patchRoot 'README.md') -Destination (Join-Path $output 'README.md') -Force
 Write-Host "Built $($pin.patch): $core"

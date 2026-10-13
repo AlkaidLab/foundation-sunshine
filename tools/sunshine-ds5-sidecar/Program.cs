@@ -69,7 +69,6 @@ if (probe)
     {
         protocol = Protocol.Version,
         runtime_version = typeof(HMContext).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version,
-        core_patch = corePatched ? "registry-isolation-1" : "",
         elevated = IsElevated(),
         standard = standard is not null,
         composite = composite is not null,
