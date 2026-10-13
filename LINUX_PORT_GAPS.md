@@ -1,27 +1,23 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支，tag `v0.9.3-linux-upstream-sync`（pkgrel 65，2026-10-12；
-  已并入上游 `origin/master` `ed415026`，50 个提交，见 `LINUX_MIGRATION_REPORT.md` §十二进度 46）
+- **基线**：`linux-migration` 分支，tag `v0.9.3-linux-upstream-sync`（pkgrel 65，2026-10-12，
+  HEAD `449021c7`；已并入上游 `origin/master` `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
 - **约定**：🔶 部分实现（有偏差）｜○ 未实现但可行｜⛔ 本质不可移植
+- **已完成项**：见 `LINUX_MIGRATION_REPORT.md` §六，本文档不再复述
 
 ---
 
 ## 总览
 
-核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 配置全组合模式表 + 6 模式 prep + 独占还原 +
+核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 配置全组合模式表 + prep 模式 + 独占还原 +
 残留 adopt）、物理显示器 display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 三件套
-（静态透传 / HDR10+ 动态 / DV P8.1 RPU）、剪贴板文本双向、远程麦克风、ABR 前台检测、
-托盘（状态实时化 + 消息框）/向导/打包。
+（静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
+（KDE + niri）、托盘/向导/打包。
 
-剩余：**7 项部分实现（1.2 已解决，不再计入）、10 项可行未做、9 项本质不可移植**。另完成两轮
-**已移植部分的 Windows 对齐审计与修复（§五）**：高优先级项**已全部清零**，中/低项除 F4（HLG 分析源）
-与 C5（跨语言常量同步）外，均已修复或转为**有理由的决策记录**（§5.18）。
-
-**2026-10-12 上游同步后的新增缺口（§六）**：并入上游 50 个提交后，带来若干**上游侧新特性**，
-它们在 Linux 上要么只编译了共享层、要么完全没有 Linux 后端。已单列 §六 记录现状与可行性，
-不计入上面的 §一/§二 编号，避免与 Windows 对齐审计的历史结论混在一起。
+剩余：**7 项部分实现**（§一）、**11 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+另有**有意保留的差异**（§四，决策记录）与**上游新特性的 Linux 缺口**（§五）。
 
 ---
 
@@ -29,105 +25,65 @@
 
 ### 1.1 虚拟显示器 per-client 隔离
 
-- **现状**：客户端切换时**销毁重建** VDD（`session.cpp` 的 `rebuild_old_vdd_id` 链路），
-  单虚拟屏共享；Windows 是多实例并存，每客户端独立 GUID（`vdd_utils::generate_client_guid`）。
+- **现状**：客户端切换时**销毁重建** VDD（`src/display_device/session.cpp` 的 `rebuild_old_vdd_id`
+  链路），单虚拟屏共享；Windows 是多实例并存，每客户端独立 GUID（`vdd_utils::generate_client_guid`）。
 - **差距**：两个客户端无法同时各用各的虚拟屏。
-- **若要做**：Linux 后端需要支持多个 EDID override 连接器并存（每个客户端占一个空闲物理
-  连接器），`create_vdd_monitor` 带 GUID 参数化显示名。受限于机器上的空闲连接器数量。
+- **若要做**：Linux 后端需支持多个 EDID override 连接器并存（每客户端占一个空闲物理连接器），
+  `create_vdd_monitor` 带 GUID 参数化显示名。受限于机器上的空闲连接器数量。
 - **工作量**：高。**验收**：两客户端同时各串各的虚拟屏互不干扰。
 
-### 1.2 VDD EDID 模式表 —— ✅ 已完全解决（2026-09-11，tag `v0.9.1-linux-full-cross-product`，pkgrel 38）
+### 1.2 HDR 亮度分析精度
 
-**链式 CTA 扩展块**突破单个扩展块 6 模式的上限：块 1 承载数据块 + 首选时序副本 + 4 个附加模式，
-后续 DTD-only 块各承载 6 个（`vdd_edid.cpp:256-275`，逐块校验和与 DTD 起始指针），
-**配置分辨率 × 刷新率的全部可行组合**（`vdd_edid::mode_fits_pixel_clock_limit()` 像素时钟可行性
-过滤）都能进 EDID，与 Windows SETMODES 的"全组合"语义等价；阶梯只剩一个防病态配置的 40 项保护
-（`vdd_utils.cpp:1900-1904`）。Range Limits 描述符同步覆盖全部通告刷新率（此前写死 preferred±20，
-与 144 Hz 模式自相矛盾）。
-
-演进三步（详见报告 §十二进度 21）：
-
-- `49800f6c`（v0.8.7）：阶梯从"每分辨率只配最高刷新率"改为可行组合叉积（首选分辨率保留全部配置
-  刷新率），并修掉首选模式选到 3840x2160@144 后像素时钟溢出、被静默回绕成 71.38 Hz 的 bug。
-- `4ad74c90`（v0.9.0）：链式 CTA 块——块 1 + 后续 DTD-only 块，模式空间实际不再受限。
-- `fbb1b911`（v0.9.1）：非首选分辨率也携带全部配置刷新率。
-
-**用户真实配置验证**（fps 60/90/120/144，720p…4K）：640 字节 / 4 扩展块 / 24 DTD / edid-decode
-零告警——4K@60 首选（144/120/90 超像素时钟上限被可行性过滤）+ 3440x1440@90/60 + 其余分辨率
-@144/120/90/60 全档。
-
-**配套已完成项**：
-
-- 手动创建参数化（`4e186f4b`/`2ce99874`，v0.8.3/v0.8.4）：偏好模式从 WebUI 可编辑的
-  `resolutions`/`fps` 列表推导（面积最大分辨率 × 其最高可行刷新率），客户端会话模式仍优先
-  （`cached_from_session`）；中途引入的 `vdd_manual_*` 键已删除，**无新增配置键**。
-- 显示名对齐 Windows（`89cd047c`/`e3d11b37`，v0.8.5/v0.8.6）：EDID 名描述符用共享常量
-  `ZAKO_NAME`（"Zako HDR"）；KDE 前缀的 "UQD" 是厂商 ID 字节的固有解码（该字节同时充当残留 VHD
-  清扫/adopt 签名）。配置解析撤掉自创夹取，对齐 Windows `parse_vdd_resolution`/
-  `parse_vdd_refresh_hz` 的宽松接受。
-- 残留虚拟屏 adopt（`387a97fd`，v0.8.1）：EDID override 与强制连接器状态是 DRM 持久的，新进程
-  首次查询时扫描 VHD 签名连接器、还原跟踪路径、从 DTD 解析回偏好模式。
-
-**剩余小项**：**已复核，原判断有误**——生成器空白模型并不比 CVT-R 保守：参考实现 `cvt -r` 对
-3440x1440@120 给出 658.25 MHz，本生成器给出 658.0 MHz（更紧），两者都超过 base block DTD 的
-16 位像素时钟上限 655.35 MHz。所以 3440x1440@120/144、3840x2160@90/120/144 这类模式**无法用
-一个 DTD 表达**（要表达需 DisplayID 扩展块，属独立特性，见 §5.21 第 3 条），不是校准问题。
-会话外 kscreen-doctor 热切已可用但未在 UI 暴露入口。
-（EDID 参考向量已随派生 Range Limits 更新，见 §5.1 P15。）
-
-### 1.3 HDR 亮度分析精度
-
-- **现状**：CPU 亮度直方图，PQ 亮度域（`video.cpp` `analyze_pq_luma_frame`）。
-- **差距**：Windows 是 D3D11 计算着色器逐像素 max(R,G,B)（scRGB）；亮度 ≤ maxRGB，
-  饱和纯色场景 maxSCL 略偏低。消费端已按近似处理（99 分位当 maxSCL）。
-- **若要做**：CUDA kernel（nvenc 会话有 CUDA hwdevice）或 Vulkan compute 对 YUV→RGB
-  逐像素求 maxRGB。需要引入 CUDA 编译依赖（本机构建目前 `SUNSHINE_ENABLE_CUDA=OFF`）。
+- **现状**：CPU 亮度直方图，PQ 亮度域（`src/video.cpp:396` `analyze_pq_luma_frame`）。
+- **差距**：Windows 是 D3D11 计算着色器逐像素 max(R,G,B)（scRGB）；亮度 ≤ maxRGB，饱和纯色场景
+  maxSCL 略偏低。消费端已按近似处理（99 分位当 maxSCL）。
+- **若要做**：CUDA kernel（nvenc 会话有 CUDA hwdevice）或 Vulkan compute 对 YUV→RGB 逐像素求
+  maxRGB。
 - **工作量**：高。**验收**：纯红/纯蓝测试图 maxSCL 接近真实值。实际观感收益存疑，优先级低。
 
-### 1.4 剪贴板非文本类 + 非 KDE provider
+### 1.3 剪贴板非文本类 + 非 KDE provider
 
-- **现状**：`clipboard_host.cpp` 仅处理 KIND_TEXT（klipper D-Bus 只支持文本读写）；
-  KIND_PNG / KIND_REF / KIND_FILE_OFFER 的**主机写入侧**缺失（客户端→主机方向的图片/
-  大文件不会落到主机剪贴板；主机→客户端方向的图片无人采集）。非 KDE 桌面无任何 provider。
+- **现状**：`src/clipboard_host.cpp` 仅处理 KIND_TEXT（klipper D-Bus 只支持文本读写）；
+  KIND_PNG / KIND_FILE_OFFER 的**主机写入侧**缺失；非 KDE 桌面无任何 provider。
+  大文本的 KIND_REF blob 回退**已实现**。
 - **若要做**：
-  - 图片：写 wlr-data-control Wayland 协议客户端（KWin 支持；wayland-scanner 生成协议码，
-    构建已有 wayland 依赖）。SELECTION 源设 PNG+text/uri-list，写入用 MIME 技巧。
-  - 大文件：主机侧也接 blob store（`clipboard_blob_store` 已跨平台），发 KIND_REF 帧。
+  - 图片：写 wlr-data-control Wayland 协议客户端（KWin 支持；wayland-scanner 生成协议码，构建已有
+    wayland 依赖）。SELECTION 源设 PNG+text/uri-list。
+  - 大文件：接 file-offer 语义（blob store 已跨平台）。
   - 非 KDE：X11 XFixes selection 监听（项目已链接 X11）。
 - **工作量**：中（wlr-data-control 客户端是大头）。**验收**：手机复制截图 → 主机粘贴为图片。
 
-### 1.5 display_device 复制拓扑 + 非 KDE 桌面
+### 1.4 display_device 复制拓扑 + 非 KDE 桌面
 
-- **现状**：`platform/linux/display_device.cpp` 拓扑每组单设备；`set_topology` 对多设备组
-  直接拒绝。模式/HDR/主屏/拓扑读写全部依赖 kscreen-doctor（KDE Plasma）；其他桌面查询
-  返回空 → 自动退化为历史 no-op 行为（不破坏，但无功能）。
+- **现状**：`src/platform/linux/display_device.cpp` 拓扑每组单设备；`set_topology` 对多设备组直接
+  拒绝。模式/HDR/主屏/拓扑读写全部依赖 kscreen-doctor（KDE Plasma）；其他桌面查询返回空 →
+  退化为 no-op 行为（不破坏，但无功能，有一条 warning）。
 - **若要做**：
-  - 复制拓扑：kscreen-doctor 无 replication 设置命令 → 需走 KWin 脚本（同 ABR 前台检测的
-    加载模式）或 libkscreen D-Bus。
-  - GNOME：Mutter DisplayConfig D-Bus（`org.gnome.Mutter.DisplayConfig`，SetMonitorsConfig
-    支持 mode/scale/primary），实现独立的 backend 类按 `XDG_CURRENT_DESKTOP` 分发。
+  - 复制拓扑：kscreen-doctor 无 replication 设置命令 → 需走 KWin 脚本（同 ABR 前台检测的加载模式）
+    或 libkscreen D-Bus。
+  - GNOME：Mutter DisplayConfig D-Bus（`org.gnome.Mutter.DisplayConfig`，SetMonitorsConfig 支持
+    mode/scale/primary），实现独立 backend 类按 `XDG_CURRENT_DESKTOP` 分发。
 - **工作量**：复制拓扑中；GNOME 后端中-高。**验收**：GNOME 会话下分辨率/HDR 切换可用。
 
-### 1.6 帧管线契约（frame_contract）
+### 1.5 帧管线契约（frame_contract）
 
-- **现状**：策略层跨平台（`platform/frame_contract.cpp`），只有 Windows 采集端消费。
-- **差距**：Linux 采集路径不消费契约（帧时间戳/管线追踪在 avcodec 路径已有
-  `frame_timestamps`，但契约的"合成 HDR 前置滤波"等阶段无 Linux 对应物——多数依赖
-  pre_encode_filter，见 ⛔ 表）。
-- **结论**：随 pre_encode_filter 一起评估（⛔ 3 的伴生项），单独无意义。
+- **现状**：策略层跨平台（`src/platform/frame_contract.cpp`），只有 Windows 采集端消费。
+- **差距**：Linux 采集路径不消费契约（帧时间戳在 avcodec 路径已有，但契约的"合成 HDR 前置滤波"等
+  阶段依赖 pre_encode_filter）。
+- **结论**：随 pre_encode_filter 一起评估（§三 的伴生项），单独无意义。
 
-### 1.7 AI API Key 加密存储
+### 1.6 AI API Key 加密存储
 
-- **现状**：Linux 明文环境变量 `SUNSHINE_LLM_API_KEY`（`ai/credential_store.cpp`）；
-  Windows 用 DPAPI。
-- **若要做**：libsecret（gnome-keyring/kwallet 后端）——KDE 环境有 kwallet 的 secret
-  service 兼容层。编译依赖 `libsecret`，可选发现（找不到回退环境变量）。
+- **现状**：Linux 明文环境变量 `SUNSHINE_LLM_API_KEY`（`src/ai/credential_store.cpp`）；Windows 用
+  DPAPI。
+- **若要做**：libsecret（gnome-keyring/kwallet 后端）——KDE 环境有 kwallet 的 secret service 兼容层。
+  编译依赖 `libsecret`，可选发现（找不到回退环境变量）。
 - **工作量**：低。**验收**：Key 存入 keyring，进程列表/env 里看不到明文。
 
-### 1.8 音频设备位深匹配
+### 1.7 音频设备位深匹配
 
-- **现状**：虚拟 sink 固定 `PA_SAMPLE_FLOAT32`（`platform/linux/audio.cpp:81`）。
-  Windows 用 PolicyConfig COM 按客户端位深建设备避免 WASAPI 重采样。
+- **现状**：虚拟 sink 固定 `PA_SAMPLE_FLOAT32`（`src/platform/linux/audio.cpp`）。Windows 用
+  PolicyConfig COM 按客户端位深建设备避免 WASAPI 重采样。
 - **实际影响**：PipeWire 服务端自适应转换，质量无损；仅多一次转换的 CPU 开销（可忽略）。
 - **结论**：**建议关闭**（不处理），除非实测发现问题。
 
@@ -135,129 +91,93 @@
 
 ## 二、○ 未实现但可行（按性价比排序）
 
-### 2.1 HDR Vivid T.35 序列化器 —— ✅ 已完成（2026-09-11，`4595e349`）
+### 2.1 剪贴板图片 + 大文件（中）⭐ 推荐下一个
 
-avcodec 路径的 Vivid side data 本来就逐帧更新，但 FFmpeg 只有 CUVA 解析器、没有序列化器
-（已用 bundled `libavutil.a` 符号核实：有 `av_dynamic_hdr_plus_to_t35`，无 Vivid 对应物）。
-现改为在 `encode_avcodec()` 里用共享的 `serialize_vivid_t35()` 构建 T.35 载荷，按提交帧序号
-暂存、在输出包按 pts 用 `hdr_bitstream::append_t35_unit()` + `insert()` 拼到首个 VCL NAL 之前，
-与 DV RPU 共用一次 AVPacket 扩容；暂存队列有上限并带告警。
-
-**Windows 不受影响**：Windows 的 avcodec 家族被显式标记为不能承载 Vivid
-（`display_vram.cpp`），Vivid 走 NVENC/AMF 直连；因此该拼接在 `#if !defined(_WIN32)` 内编译，
-Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧元数据——回归测试覆盖
-"序列化 → 包装 → 插到图像数据之前（prefix SEI type 39、CUVA T.35 头完整）"。
-
-### 2.2 剪贴板图片 + 大文件（中）⭐ 推荐下一个
-
-- 见 1.4 的路径。拆两步：先 wlr-data-control 图片双向（PNG），再 blob store 的 KIND_REF
-  （大文本的 KIND_REF 回退同样适用，见 §5.2 C4）。
+- 见 §1.3 的路径。拆两步：先 wlr-data-control 图片双向（PNG），再 file-offer。
 - **验收**：手机复制截图 → 主机 Ctrl+V 得到图片；主机复制图片 → 手机粘贴。
 
-### 2.3 USB/IP 主机（中高）
+### 2.2 USB/IP 主机（中高）
 
-- **现状**：`remote_usb/remote_usb_host_controller.cpp` 非 Windows 直接返回
+- **现状**：`src/remote_usb/remote_usb_host_controller.cpp` 非 Windows 直接返回
   `usbip_host_backend::unsupported`。
-- **路径**：Linux 是 usbip 的内核原生平台（`usbip-host` 内核模块 + `usbipd` 用户态工具）。
-  把 unsupported 后端替换为：枚举可导出的 USB 设备（sysfs busid）→ `usbip bind` →
-  TCP 3240 端口复用现有 reverse tunnel。fork 的协议层（`loopback_usbip_bridge`、
-  `reverse_tunnel_service`）是跨平台源码。
+- **路径**：Linux 是 usbip 的内核原生平台（`usbip-host` 内核模块 + `usbipd` 用户态工具）。把
+  unsupported 后端替换为：枚举可导出的 USB 设备（sysfs busid）→ `usbip bind` → TCP 3240 端口复用
+  现有 reverse tunnel。fork 的协议层（`loopback_usbip_bridge`、`reverse_tunnel_service`）是跨平台源码。
 - **前置**：内核 `usbip_host` 模块（`usbip` 包含用户态工具）。
 - **验收**：客户端挂载主机 U 盘/手柄，读写正常。
 
-### 2.4 GNOME Mutter 显示后端（中-高）
+### 2.3 GNOME Mutter 显示后端（中-高）
 
-- 见 1.5。独立 backend 类 + `XDG_CURRENT_DESKTOP` 分发（`vdd_utils::hint_primary_output`
-  已有分发骨架）。注意 `display_device.cpp` 当前所有读写函数都隐式假设 kscreen 存在。
+- 见 §1.4。独立 backend 类 + `XDG_CURRENT_DESKTOP` 分发（`vdd_utils::hint_primary_output` 已有
+  分发骨架）。注意 `display_device.cpp` 当前所有读写函数都隐式假设 kscreen 存在。
 - **验收**：GNOME Wayland 会话下客户端"优化游戏设置"能切分辨率/HDR 并还原。
 
-### 2.5 DSU 运动数据服务器（低中）
+### 2.4 DSU 运动数据服务器（低中）
 
-- **现状**：`platform/windows/dsu_server.cpp`（DSU/cemuhook UDP 协议，向模拟器等第三方
-  提供手柄运动数据）仅 Windows input.cpp 挂载。
+- **现状**：`src/platform/windows/dsu_server.cpp`（DSU/cemuhook UDP 协议）仅 Windows input.cpp 挂载。
 - **路径**：inputtino 的 DS5 (uhid) 有加速度/陀螺仪数据源；照协议（UDP 26760）实现广播。
 - **验收**：Cemu/模拟器识别到运动输入。
 
-### 2.6 非 KDE 前台检测（低）—— niri 已覆盖（2026-09-11），其余待做
+### 2.5 非 KDE 前台检测（低）—— niri 已覆盖，其余待做
 
-- **已完成**：niri（§2.11 / §5.5 R5）——轮询 `niri msg --json focused-window`，KWin 优先、niri 兜底。
-- **仍缺**：X11：XFixes + `_NET_ACTIVE_WINDOW`/`_NET_WM_PID`（X11 库已链接）；
-  wlroots 系（sway/Hyprland）：`ext-foreign-toplevel-list` / wlr-foreign-toplevel-management。
-  两者都只需接入 `foreground_app.cpp` 的同一 producer 选择与缓存。
+- **已完成**：niri（轮询 `niri msg --json focused-window`，KWin 优先、niri 兜底）。
+- **仍缺**：X11：XFixes + `_NET_ACTIVE_WINDOW`/`_NET_WM_PID`（X11 库已链接）；wlroots 系
+  （sway/Hyprland）：`ext-foreign-toplevel-list` / wlr-foreign-toplevel-management。两者都只需接入
+  `src/platform/linux/foreground_app.cpp` 的同一 producer 选择与缓存。
 - **验收**：Hyprland/X11 会话下 ABR 日志出现前台切换。
 
-### 2.7 AI Key libsecret 后端（低）
+### 2.6 AI Key libsecret 后端（低）
 
-- 见 1.7。
+- 见 §1.6。
 
-### 2.8 DS5 本地触觉播放 sidecar（高）
+### 2.7 DS5 本地触觉播放 sidecar（高）
 
-- Windows `ds5/ds5_sidecar_client.cpp` + `mic_write` 的触觉 PCM 在主机直连手柄上播放。
-- **路径**：`/dev/hidraw` 直写 DualSense 输出报告（udc3 打开 + 触觉报告格式），
-  权限走 udev tag。基础 rumble 已由 inputtino 覆盖，这里缺的是 authored IR PCM 高保真回放。
+- Windows `src/platform/windows/ds5/ds5_sidecar_client.cpp` + `mic_write` 的触觉 PCM 在主机直连手柄上播放。
+- **路径**：`/dev/hidraw` 直写 DualSense 输出报告（udc3 打开 + 触觉报告格式），权限走 udev tag。
+  基础 rumble 已由 inputtino 覆盖，缺的是 authored IR PCM 高保真回放。
 - **验收**：直连 DS5 玩支持触觉的游戏，波形与 Windows 版一致。
 
-### 2.9 NVENC SDK 直连（高，建议重估后可能降级/放弃）
+### 2.8 NVENC SDK 直连（高，建议搁置）
 
-- HDR10+/DV 已完成，avcodec 路径功能面已齐。直连的剩余增益：fork 的细粒度码控、
-  lookahed、多硬件实例。若 2.1 Vivid 也完成，T.35 手写序列化器反而是直连的*负资产*
-  （avcodec 不需要它）。
+- HDR10+/DV 已完成，avcodec 路径功能面已齐。直连的剩余增益：fork 的细粒度码控、lookahead、
+  多硬件实例。Vivid 的 T.35 手写序列化器反而是直连的*负资产*（avcodec 不需要它）。
 - **建议**：搁置，等实际画质/延迟瓶颈出现再评估。
 
-### 2.10 Tauri 控制面板选择性移植（高，收益低）
+### 2.9 Tauri 控制面板选择性移植（高，收益低）
 
-- 面板约 20 个系统模块仅 Windows 实现（vdd/vigem/vmouse/rtss/hwinfo(WMI)/elevation/
-  注册表自启/dualsense elevated/shell 右键菜单等）。WebUI 已覆盖大部分。
-- **若有需求**，只值得挑：QR 配对、实时监控（hwinfo/RTSS → Linux 对应物是
-  `nvidia-smi`/`amdgpu_top`/`_PIPEWIRE` 统计）、文件右键共享（KDE ServiceMenu 更自然）。
+- 面板约 20 个系统模块仅 Windows 实现（vdd/vigem/vmouse/rtss/hwinfo(WMI)/elevation/注册表自启/
+  dualsense elevated/shell 右键菜单等）。WebUI 已覆盖大部分。
+- **若有需求**，只值得挑：QR 配对、实时监控（→ `nvidia-smi`/`amdgpu_top`/PipeWire 统计）、
+  文件右键共享（KDE ServiceMenu 更自然）。
 - **建议**：搁置；文件右键共享若想要，走 KDE ServiceMenu（低工作量）单独立项。
 
-### 2.11 niri 支持（中）— 第二目标环境（2026-09-11 立项）
+### 2.10 niri / wlr-output-management 显示后端（中）— 第二目标环境
 
-- **背景**：目标是 **KDE + niri** 双环境、通用方案优先，而原实现基本是 KDE 专属：
-  - **物理显示器 display_device**：全部经 kscreen-doctor → niri 下 `query_outputs()` 为空，
-    `apply_config` 走"合成器不可用"分支静默成功（§5.2 D18），客户端的模式/HDR 请求被忽略。
-  - **VDD**：DRM 层（EDID override、强制连接、pidfd 借 master 指派 CRTC）与合成器无关，且 niri
-    默认自动启用新输出，虚拟屏本身可用；但 `kscreen-doctor output.X.enable` 与主屏 hint 在 niri
-    下无效（仅日志噪音）。
-  - **ABR 前台检测**：KWin 脚本在 niri 下不可用 → 降级为空结果（§5.2 F4）。
-- **已完成（2026-09-11，第三轮）**：
-  1. **前台检测 producer —— ✅**（`src/platform/linux/foreground_app.cpp`）：新增 niri 路径，
-     轮询 `niri msg --json focused-window`（2s，`run_logged` 有界执行），JSON 逐字段、带类型检查
-     地映射到 `info_t`（title/app_id/pid；`null` = 无焦点窗口，不更新缓存，与 KWin/Windows 语义
-     一致）；后端选择在启动时决定——**先探测 KWin（`org.kde.KWin` 的 NameHasOwner），KDE 保持
-     原路径**，无 KWin 且 niri 查询可用才启用 niri；解析器有 4 个单元测试（正常/`null`/字段缺失
-     或类型错误/畸形 JSON）。
-  2. **VDD 输出的合成器无关启用 —— ✅**：新增 `enable_output_via_compositor()`，
-     KDE → kscreen-doctor（行为不变）、niri → `niri msg output <name> on`、其他 Wayland →
-     `wlr-randr --output <name> --on`（wlr-output-management，覆盖 sway/Hyprland/river…）、
-     X11 → `xrandr --output <name> --auto`；都没有则只记一次 info 并依赖合成器自动启用。
-     `hint_primary_output` 对 niri 明确记录"niri 无主屏概念"。DRM 层的 CRTC 指派仍是真正点亮
-     输出的手段，这些命令只是合成器侧的推力，失败不影响现状。
-- **待做**：
-  1. **display_device 的 niri / 通用输出后端（中）**：`query_outputs()`/模式应用/HDR 目前只有
-     kscreen 实现。niri 需用其 IPC（`niri msg outputs` / `output <name> mode|on|off|scale|position`），
-     通用兜底用 wlr-output-management（`wlr-randr`，覆盖 sway/Hyprland 等）。注意 HDR 是否有
-     IPC/配置项需在 niri 上确认，无则报 unknown 而不是猜。
-  2. **前台检测的 wlroots/X11 兜底（低-中）**：`ext-foreign-toplevel` / X11 XFixes，接入同一
-     producer 选择。
-- **验收**：niri 会话下 ABR 前台 exe 正确切换；客户端分辨率请求能作用到目标输出；VDD 创建无
-  kscreen 报错噪音。**注意**：本机未装 niri，命令语法必须在 niri 环境实测；一律先做能力探测，
-  探测失败必须保持现有降级路径（不得影响 KDE 与非 KDE 现状）。
+- **背景**：目标是 **KDE + niri** 双环境、通用方案优先。VDD 本身与合成器无关（DRM 层 + niri 默认
+  自动启用新输出），但 **display_device 的模式/HDR/拓扑**全部经 kscreen-doctor → niri 下
+  `query_outputs()` 为空，客户端的模式/HDR 请求被忽略（降级为既有 no-op + warning）。
+- **已完成**：前台检测的 niri producer、VDD 输出的合成器无关启用
+  （`src/platform/linux/compositor_output.{h,cpp}`）、非 Plasma 会话不再被 kscreen-doctor 阻塞
+  （`src/platform/linux/kscreen_backend.{h,cpp}`）。
+- **待做**：`query_outputs()` / 模式应用 / HDR 目前只有 kscreen 实现。niri 需用其 IPC
+  （`niri msg outputs` / `output <name> mode|on|off|scale|position`），通用兜底用
+  wlr-output-management（`wlr-randr`，覆盖 sway/Hyprland 等）。**HDR 是否有 IPC/配置项需在 niri 上
+  确认，无则报 unknown 而不是猜**。
+- **验收**：niri 会话下客户端分辨率请求能作用到目标输出。**注意**：本机未装 niri，命令语法必须在
+  niri 环境实测；一律先做能力探测，探测失败必须保持现有降级路径（不得影响 KDE 与非 KDE 现状）。
 
-### 2.12 VAAPI 的 YUV 4:4:4（低，NVENC 已解禁）
+### 2.11 VAAPI 的 YUV 4:4:4（低，NVENC 已解禁）
 
-- **背景（2026-09-20，NVENC 444 解禁时核实）**：`vaapi.cpp` 的 `get_va_profile()` 已能把
-  `AV_PROFILE_HEVC_REXT` + 8/10-bit 映射到 `VAProfileHEVCMain444`/`Main444_10`，且
-  `is_va_profile_supported()` 会经 `vaQueryConfigProfiles()` 查驱动——这条 444 链路**代码已备**，
-  只是 vaapi encoder 条目（`video.cpp` `#ifdef __linux__` 段）的 444 格式仍为 `AV_PIX_FMT_NONE`
-  且无 `YUV444_SUPPORT`，走不到。
-- **做法**：条目 444 填 `AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P10`（hevc_vaapi 收平面格式）+
-  旗标，然后靠真实试编码探测兜底；`va_t::set_frame()` 的 VA surface 导出还要从写死的 2 层
+- **背景**：`src/platform/linux/vaapi.cpp` 的 `get_va_profile()` 已能把 `AV_PROFILE_HEVC_REXT` +
+  8/10-bit 映射到 `VAProfileHEVCMain444`/`Main444_10`，且 `is_va_profile_supported()` 会经
+  `vaQueryConfigProfiles()` 查驱动——这条 444 链路**代码已备**，只是 vaapi encoder 条目
+  （`src/video.cpp` 的 `#ifdef __linux__` 段）的 444 格式仍为 `AV_PIX_FMT_NONE` 且无
+  `YUV444_SUPPORT`，走不到。
+- **做法**：条目 444 填 `AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P10`（hevc_vaapi 收平面格式）+ 旗标，
+  然后靠真实试编码探测兜底；`va_t::set_frame()` 的 VA surface 导出还要从写死的 2 层
   （`prime.num_layers != 2` 拒绝）泛化到 3 平面 444 surface。
-- **收益/风险**：Intel/AMD iGPU 的 HEVC 444（h264 无 VAAPI 444 profile，天然只有 HEVC）；
-  NVIDIA 上 nvidia-vaapi-driver 无编码入口，探测自然拒绝。**本机（NVIDIA）无收益、无法实测**，
-  建议在有 Intel/AMD 核显的机器上做。
+- **收益/风险**：Intel/AMD iGPU 的 HEVC 444（h264 无 VAAPI 444 profile，天然只有 HEVC）；NVIDIA 上
+  nvidia-vaapi-driver 无编码入口，探测自然拒绝。**本机（NVIDIA）无收益、无法实测**。
 
 ---
 
@@ -267,7 +187,7 @@ Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧�
 |---|---|---|
 | Zako Direct 零拷贝借帧 | D3D11 共享纹理，无 Linux 对等机制 | KMS 捕获直读 DRM plane（功能面已覆盖） |
 | WGC 捕获 | Windows Graphics Capture API | kmsgrab ✅ |
-| rtx_hdr / TrueHDR 链 | RTX Video HDR = NVIDIA Windows 驱动 API + D3D11 合成管线 | ⛔ 无；且 rtsp.cpp 的 TrueHDR PQ 链路整体 Windows 门控 |
+| rtx_hdr / TrueHDR 链 | RTX Video HDR = NVIDIA Windows 驱动 API + D3D11 合成管线 | ⛔ 无；且 `rtsp.cpp` 的 TrueHDR PQ 链路整体 Windows 门控 |
 | AMF 硬件编码 | AMD Windows 运行时 | VAAPI（上游已有；N 卡不适用） |
 | HLG 捕获源 → DV P8.4 | 内核 `HDR_OUTPUT_METADATA` UAPI 只定义 PQ/SDR | ⛔ 等内核演进；P8.1 已覆盖 DV 主流 |
 | ZakoVDD 硬件光标导出通道 | Windows 驱动私有通道 | KMS 光标平面（合成器渲染光标进捕获）✅ |
@@ -277,567 +197,106 @@ Windows 会话标志恒为 false。**验收**：Vivid 客户端可解出逐帧�
 
 ---
 
-## 四、附带说明（审计时确认的 Windows 行为差异，非缺口）
-
-- avcodec 路径（Windows 上的 QSV/软编）现在也会跑 CPU 亮度分析器 + DV P8.1 注入
-  （与 NVENC 直连同门控）——fork 意图内的能力补齐，每帧 ~1-2ms CPU。
-- `main.cpp` SIGINT/SIGTERM 处理器无条件调 `end_tray()`——Windows 控制台停止时托盘图标
-  提前移除（幂等、线程安全）。
-- `main.cpp` 信号处理器、`vdd_capability` 的"真实版本上报"在 Windows 上均为行为恒等
-  或良性变化（审计详见 2026-09-10 提交 `3756caf6` 前后的分支审计记录）。
-- 托盘 VDD 子菜单项新增 `checkbox=1`（Qt 渲染勾选态所需）——Windows 托盘仅凭 `checked` 画
-  MFS_CHECKED，该字段在 Windows 上被忽略，行为恒等；VDD 菜单消息框（`QMessageBox`）整体在
-  `#ifndef _WIN32` 内，Windows 仍走 `MessageBoxW`。
-- 虚拟屏 EDID 名由 "Foundation VDD" 改为共享常量 `ZAKO_NAME`（"Zako HDR"）——用户可见命名对齐
-  Windows（KDE 显示的 "UQD" 前缀是厂商 ID 字节的固有解码，非命名分歧）。
-- **约定沉淀**：`AGENTS.md` 新增 Windows parity 三条（共享头文件提供规范常量、移植语义含边界与
-  默认值、用户可见命名与 Windows 一致），后续移植按此自查；报告侧证据见
-  `LINUX_MIGRATION_REPORT.md` §十二进度 20。
-- **测试基线（2026-09-11，pkgrel 38 构建树复核）**：`ctest` 13 套件 12 通过，聚合套件
-  `test_sunshine` 仅 AudioTest / MouseHIDTest / EncoderTest 的 `SetUpTestSuite` 失败
-  （0 个断言失败，需真实音频/输入/编码器环境），与既有基线一致。
-
----
-
-## 五、Windows 对齐审计（2026-09-11）
-
-对**已移植部分**做了逐行 Windows 对照审计（VDD / display_device / 剪贴板 / 麦克风 / ABR / 托盘 /
-HDR 编码七块），静态源码对照，未做 Windows 侧运行验证。过程提交：`f0f13e60`（VDD）、
-`b5e83d0e`（display_device）、`45e09e6a`（HDR 分析）、`89a588d6`（剪贴板/麦克风/ABR/托盘）。
-
-### 5.1 本轮已修复
-
-| # | 差距（审计证据） | 处置 |
-|---|---|---|
-| P1 | VDD 模式表解析自创语义：不 trim、不查尾随字符、小数刷新率被整型截断（59.94→59） | 8 个 helper 移入共享段（与 Windows 逐字一致）；Linux 阶梯改用 `prepare_vdd_settings()`（原为返回 `{}` 的桩），会话模式并入列表 |
-| P2 | per-client 尺寸类表在 Linux 重复硬编码（违反 AGENTS.md 规范常量约定） | 收敛为共享 `client_physical_size_for_class()`，两平台共用 |
-| P3 | `create_vdd_monitor` 丢弃客户端物理尺寸与 HDR 亮度，EDID 从未个性化 | 写入 EDID（cm→mm；max/min/maxFALL nits；非正值与 <0.02 nit 最小值保留参考默认） |
-| P4 | 剪贴板 SDP 在 Linux 通告 `clipboard_image`，而唯一 provider 只支持文本 | 仅 Windows 通告 image 位 |
-| P5 | 单口味文本帧 token 非零（GUI agent 契约：单口味 = 0，非零表示可合并突发） | 文本帧固定 token 0 |
-| P6 | `microphone_redirect_backend=disabled` 被忽略 | 生效（返回 -1，与 Windows 同） |
-| P7 | 麦克风写失败一律 -2 且释放设备 | 区分 -2（连接终止/被杀，释放）/ 0（超大帧，等同 `AUDCLNT_E_BUFFER_TOO_LARGE`）/ -1（其他，不释放） |
-| P8 | KWin 缺 pid 时 `foreground_exe` 冻结、`app_changed` 不触发 | 同类别保留上次 pid；共享消费端在 exe 变化且 pid=0 时也判定切换（Windows 中性） |
-| P9 | 托盘确认框默认按钮 No（Windows `MB_YESNO` 默认 Yes）；reset 提示的 warning 图标被忽略 | 默认 Yes；yes/no 框也按 `as_warning` 设图标 |
-| P10 | 模式匹配容差 0.051 Hz（Windows 1 Hz 模糊比较 + 取最近模式） | 1 Hz + 最近候选（59.94 面板 + 60 fps 不再配置失败） |
-| P11 | HDR 读回 enabled 即跳过（Windows 仅 disabled==disabled 跳过，使能总重发） | 对齐 Windows 条件 |
-| P12 | 空 device_id（Display: Auto）未解析为主屏 → 模式/HDR 作用于**所有**输出，`ensure_only_display` 空转 | `find_one_of_the_available_devices("")` 解析为 kscreen priority 1 的输出 |
-| P13 | 亮度分析器对平面 10-bit 用 P010 的 `>>6` 解包：YUV444P10LE 读成全黑却标记 valid；YUV420P10LE 被直接拒绝 | 平面格式改掩码 `&0x3FF`，接受 YUV420P10LE |
-| P14 | avcodec 路径仍打"DV 协商但无 RPU"的过时告警 | 删除（P8.1 RPU 已注入，门控在 session configure 内自报） |
-| P15 | VDD EDID 参考向量钉在旧 Range Limits（40–80 Hz） | 更新为派生值（55–65 Hz），并注明与 sunshineVD `generator.py` 的有意偏差 |
-
-### 5.2 待决策 / 未修（按影响排序）
-
-**高 —— 已清零**（A1 麦克风背压 §5.7、F1 分析覆盖面 §5.8、F3 Vivid §2.1 均已落地；余下为中/低）
-
-**中**
-
-- **F4 HLG 无分析源、P8.4 门控被拒**（= §2.1 的伴生项，需先有 HLG 域分析）。
-
-**低 —— 已清零**（C5 转为 §5.18 的决策记录）
-
-### 5.3 审计确认无差异（抽样）
-
-- 剪贴板：帧布局/版本与 kind 常量/短帧丢弃、60 KB 内联阈值、5 s 回声 TTL、30 s `gui_alive` 窗口、
-  会话起始基线行为。
-- 麦克风：mono 48 kHz S16LE、960 帧（20 ms）块、无部分写、返回码形状（0/-1/-2 语义）。
-- 前台：`info_t` 字段形状与默认值、消费端 10 s 限流、缓存加锁返回副本。
-- 托盘：菜单索引/文案/i18n key/回调、VDD 子菜单结构与共享 `ZAKO_NAME`、重启路径，
-  `checkbox` 字段在 Windows 被忽略（行为恒等）。
-- display_device：持久化文件名与 JSON schema（跨平台可互读）、apply/revert 编排与 fail_guard、
-  VDD destroy 决策、主屏检测（priority 1 ≡ 位置 (0,0)）、HDR 通用标志、SDR 会话还原、
-  `unknown` 状态跳过。
-- HDR：ST2084/PQ 常量全树唯一来源（无 `2399/4096×32`、无 m2×32 的再推导，HLSL 副本数值一致）；
-  统计字段完整；10-bit 限幅重映射；HDR10+ 字段推导；EMA/场景切换/32 帧 Vivid 窗口等时间策略共享；
-  DV L1 与 RPU 注入在三条编码路径共用同一实现。
-
-### 5.4 第二轮修复（2026-09-11，KDE + niri 目标立项后）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R1 | **HDR Vivid T.35 在 avcodec 路径缺失**（= §2.1，原"推荐下一项"） | `encode_avcodec()` 内构建 CUVA T.35、按 pts 拼接（与 DV RPU 共用一次 AVPacket 扩容），仅在 Linux 编译；新增回归测试 |
-| R2 | **麦克风未切换默认录音设备**（A3） | 复用文件内 pa_context helper：记住当前默认源 → 指向 null-sink monitor → 释放时还原；对 PulseAudio/PipeWire 通用 |
-| R3 | **规范标识符仍被重新硬编码**（AGENTS.md 约定） | `ZAKO_DEVICE_ID`（原先 Linux 分支裸写 `"23172"`）入 globals；剪贴板线协议常量入 `clipboard_bridge.h`，`clipboard_host.cpp` 全面改用 |
-| R4 | **目标环境只按 KDE 实现** | `AGENTS.md` 写明 KDE + niri 双目标与"通用兜底优先、后端必须探测并优雅降级"；niri 具体差距立项为 §2.11 |
-
-**测试基线**：本轮结束仍为 12/13 套件通过、聚合套件 0 断言失败（新增 1 个位流回归用例，
-`HdrBitstream` 共 21 个用例）。
-
-### 5.5 第三轮修复（niri 起步，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R5 | **niri 会话下 ABR 前台检测缺失**（§2.11 / F4） | `foreground_app` 新增 niri producer：轮询 `niri msg --json focused-window`，JSON 逐字段类型检查映射；后端选择"KWin 优先、niri 兜底"（探测 `org.kde.KWin` 的 NameHasOwner）；解析器 4 个单元测试 |
-| R6 | **VDD 输出启用与主屏 hint 硬绑 kscreen**（§2.11） | 新增 `enable_output_via_compositor()`：KDE 保持 kscreen-doctor，niri → `niri msg output <name> on`，其他 Wayland → `wlr-randr`，X11 → `xrandr`；`hint_primary_output` 对 niri 记录其无主屏概念；DRM CRTC 指派仍是主路径，命令失败不影响现状 |
-
-**测试基线**：12/13 套件通过、聚合套件 0 断言失败（新增 `ForegroundApp` 4 例）。
-
-**下一轮**：§2.11 待做第 1 项（display_device 的 niri / wlr-output-management 输出后端）、
-剪贴板图片与大文件（§2.2）、display_device 失败处理补齐（§5.2 D5/D7/D8/D9/D13/D14）。
-
-### 5.6 第四轮修复（display_device 失败处理，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R7 | **D5 模式无严格重试、部分失败不回滚** | `set_display_modes()` 重写为 Windows 的三段式：先按 1 Hz 模糊+最近模式应用 → 校验全部匹配 → 不匹配则以**精确刷新率**重试一次（对应去掉 `SDC_ALLOW_CHANGES`，让用户自定义模式也能选中）→ 仍失败则把进入时的快照 `original_modes` 整体回滚并返回 false |
-| R8 | **D9 HDR 部分失败不回滚** | `set_hdr_states()` 先快照 `original_states`，任一设备失败即回滚到快照并返回 false（Windows `device_hdr_states.cpp` 同构） |
-| R9 | **D10 未知 HDR 状态应快速失败** | 请求的设备在读回里没有 HDR 信息时，立即以明确日志返回 false，不再对注定失败的命令重试 3 次 |
-| R10 | **D14 拓扑 set 未校验** | `set_topology()` 拆出 `apply()`，应用后经 `wait_for_topology(3 s)` 收敛再复核；确实不一致则回滚到进入时的拓扑并返回 false（合成器完全无响应时保持历史容忍，不误判） |
-| R11 | **D8 HDR 前无稳定性等待** | 新增 `wait_for_display_stability()`（10 × 500 ms，上限 5 s）：本调用改过拓扑/模式时，等到目标设备都有可读的模式与 HDR 状态再切 HDR；超时只告警继续（与 Windows 一致），同时避免 R9 的快速失败被"读回滞后"误触发 |
-| — | **D13 还原顺序 + 还原后 HDR 复核** | **经复核 Linux 已由构造覆盖**：还原是"先恢复初始拓扑、再按当前已启用设备过滤后还原 HDR/模式"，被重新启用的显示器天然包含在过滤后的集合里，等价于 Windows 的"还原后再修 HDR"，无需改顺序（改动反而会动到用户已实测的还原路径） |
-| — | **D7 blank HDR toggle** | 有意不移植，理由见 §5.2 |
-
-**测试基线**：12/13 套件通过、聚合套件 0 断言失败。这些路径需要真实合成器才能端到端验证
-（本机 agent 会话无 WAYLAND_DISPLAY/bus），逻辑对照 Windows 实现逐条核对。
-
-### 5.7 第五轮修复（麦克风背压，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R12 | **A1 麦克风背压契约在 Linux 无生产者** | 新增 `src/platform/linux/mic_queue.h`（有界帧队列：容量 5 帧 = 100 ms，与 Windows 端点缓冲同量级）+ `audio.cpp` 内的 writer 线程：`write_mic_pcm()` 只入队（**永不阻塞共享混音线程**），队列满即返回文档约定的 `0`（丢帧，等价 Windows 的 padding 预检），`stream.cpp` 的 `wasapi_backpressure_drops` 因此变为真实计数；`pa_simple_write` 的阻塞写与错误码映射（-2 设备丢失 / -1 一般错误）移到 writer 线程，错误在下一次 `write_mic_pcm()` 上报，调用方的重初始化契约不变 |
-| — | 7 个队列单元测试 | FIFO 顺序与载荷、满队列报背压、空帧不算背压、stop 唤醒空队列等待者、stop 丢弃待发帧、pop 被 push 唤醒、reset 重新武装（全部有界，不会挂住测试） |
-
-**说明**：`release_mic_redirect_device()` 与析构都会先 stop+join writer 再销毁 `pa_simple`
-（顺序受控）；若 PipeWire/PulseAudio 服务端彻底僵死，`join` 仍可能被阻塞中的写卡住——这与改造前
-"写调用直接卡在会话线程上"的暴露面相同，未加重也未消除（无 timeout 版 pa_simple API 可用）。
-
-**测试基线**：12/13 套件通过、聚合套件 501 用例 489 通过 / 12 跳过 / 0 断言失败。
-
-### 5.8 第六轮修复（HDR 分析覆盖面，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R13 | **F1 亮度分析器只挂在 avcodec 软件设备** | 新增"采样下载"生产者：Linux 的硬件编码设备（VAAPI/CUDA，`data != nullptr` 且自报无分析能力）在 PQ + 请求了 HDR10+/DV P8.1 且 `hdr_luminance_analysis != off` 时，session 里用 `av_hwframe_transfer_data()` **每 4 帧下载一帧**到缓存的软件帧，复用同一个 CPU 分析器（Windows 的采样间隔也是 1/4）；下载格式不支持 10-bit 或传输失败时**关闭本会话的分析**并告警（退化到"无动态元数据"，不影响串流）。同时把分析器的格式判定抽成 `luminance_analysis_format_supported()` / `..._is_msb_aligned()`，避免新代码重复格式清单 |
-
-**Windows 中性**：整段能力判定与采样都在 `#if !defined(_WIN32)` 内；Windows 的采集设备自己产出统计并
-自报能力（`display_vram.cpp`），标志恒为 false，路径不会触发。Linux 软件设备路径（`data == nullptr`）
-也不受影响——它本来就在 `convert()` 里分析，且 `hdr_luminance_analysis_available` 为真。
-
-**残留与代价（如实记录）**：
-
-- 该路径**未在 VAAPI/CUDA 硬件上实测**（本机 NVIDIA 且按文档 `SUNSHINE_ENABLE_CUDA=OFF`，走的是软件
-  设备路径）——已按"失败即降级"设计，最坏情况回到改动前的行为。
-- 每 4 帧一次**全分辨率**显存→内存下载（1080p60 P010 约 6 MB/帧、约 90 MB/s），比 Windows 的 GPU
-  端分析 + 小缓冲回读重；如后续在 AMD/Intel 上觉得开销明显，可加采样降分辨率（swscale）或改用
-  shader 分析。
-- 软件设备路径仍是**每帧**分析（Windows 为 1/4 帧、≤1080p），因此两侧的时间滤波推进节奏不同
-  （§5.2 F7，仍开着）。
-
-### 5.9 第七轮修复（枚举语义与剪贴板写入，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R14 | **D12 枚举 `active` = "已连接"而非"已启用"** | `enum_available_devices()` 现在读 DRM sysfs 的 `enabled`（CRTC 已绑定的状态，语义等同 Windows 的 `DISPLAYCONFIG_PATH_ACTIVE`）：连上但被桌面禁用的显示器报 **inactive**，VDD 保活/断电列表不再把它重新点亮。属性不可读（老内核）时回退到原来的"已连接即 active"；**虚拟屏例外**——它的通路由本后端（pidfd 借 DRM master + CRTC 指派）管理，不由桌面决定，仍按"live 即 active"处理（`live_virtual_display_connector()` 在循环外解析一次，避免 `is_vdd_connector()` 递归枚举）。新增 2 个单元测试：sysfs 非 enabled 的连接器不得报 active；非 enabled 的连接器必须仍被枚举到（inactive） |
-| R15 | **C3 klipper 写操作在 enet 控制线程同步阻塞** | 客户端→主机的剪贴板写入改为**入队**（上限 8 条，溢出丢最旧并告警），由 provider 自己的 poll 线程在两次读取之间用它的 bus 执行 `klipper_set`；poll 线程的 1 s 等待改为条件变量 `wait_for`（有写入立即唤醒），`stop()` 也会唤醒它。enet 控制线程不再做同步 D-Bus 调用，klipper 僵死不会阻塞控制包处理；回声抑制仍在**入队时**记录（保持原有语义），写入成功后同步 `last_seen` 以免把自己写的内容当成主机侧变更回发 |
-
-**测试基线**：12/13 套件通过、聚合套件 503 用例 491 通过 / 12 跳过 / 0 断言失败。
-
-### 5.10 第八轮修复（剪贴板大文本 blob 回退，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R16 | **C4 60 KB 以上文本无 blob 回退（Linux 直接丢弃）** | 主机→客户端：超过 `kInlineThresholdBytes` 的文本改为 `clipboard_blob_store::put()` 后发 `kKindRef` 描述符帧（与 GUI agent 同路线，对端从本机 blob HTTP 端点取字节）；客户端→主机：新增 `kKindRef` 入站处理——按 agent 语义解析 `{"id","mime","size"}`、校验 id（非空且 ≤128）、只接受 `text/*`（图片/文件投递仍归 GUI agent）、从本地 blob store 取回后走既有回声抑制与 klipper 写入队列 |
-| R17 | **线协议编解码散落在 provider 内、无法测试** | 新增 `src/clipboard_wire.h`：帧编解码（`encode`/`encode_text`/`encode_ref`/`parse_header`/`payload_of`）与 REF 描述符解析（`parse_ref_descriptor`），语义逐条对照 Rust agent 的 `encode_frame`/`decode_frame`/`RefMeta`（含未知版本/未知 kind/负载截断/超长 id 的拒绝）。MIME 常量（`kMimeText`/`kMimePng`）与 id 上限进 `clipboard_bridge.h` 共享；新增 6 个**跨平台**单元测试（Windows CI 同样会跑） |
-
-**仍未覆盖**：图片类（KIND_PNG）双向与文件投递（KIND_FILE_OFFER）在 Linux 主机侧仍不支持（= §1.4/§2.2）。
-
-**测试基线**：12/13 套件通过、聚合套件 509 用例 497 通过 / 12 跳过 / 0 断言失败。
-
-### 5.11 第九轮修复（剪贴板回声与事件驱动，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R18 | **C6 回声抑制单槽 vs agent 的 16 项环形** | 新增 `src/clipboard_echo.h`：16 项 `(kind, payload-hash)` 环形 + TTL（默认取共享 `kEchoTtl`），语义逐条对照 Rust agent 的 `EchoState`（record 满则丢最旧、is_echo 先剪枝再按 kind+hash 比对；用 kind 字段合并 agent 的文本/图片两条环）。provider 的 echo 状态换成该环形并加锁使用；「连续两次客户端写入后主机复制旧值会被多广播一次」的问题消失。5 个跨平台单元测试（匹配/多写入/过期/容量淘汰与环绕/clear） |
-| R19 | **C7 1 秒轮询 vs klipper 变更信号** | 订阅 `org.kde.klipper.klipper` 的 `clipboardHistoryUpdated` 信号（`sd_bus_add_match`），每轮先 `sd_bus_process` 排空总线；等待从 1 s 改为 200 ms（有排队写入立即唤醒），读到变更信号即刻读取剪贴板，**1 s 周期读仍作兜底**（信号不可用时仅记 debug 并退回原行为）。已用独立小程序在**真实会话总线**上验证：匹配规则被总线接受、`sd_bus_get_fd`/`sd_bus_process` 行为符合循环预期（klipper 正在运行） |
-
-**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败。
-
-### 5.12 第十轮修复（托盘高级设置与文案，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R20 | **T1 托盘缺 Advanced Settings 子菜单（Linux）** | 子菜单在 Linux 打开，且**两平台布局完全一致**（导入配置 / 导出配置 / 重置为默认 / 分隔线 / 清理缓存 / 重置显示器）——顺带把 `update_menu_texts()` 的平台分叉合并成一份索引表，避免再出现索引漂移。三个原本是 Linux 桩的功能按 Windows 语义实现：**导入**（Qt 文件对话框 → `is_safe_config_path`/`is_safe_config_content` 校验 → 备份 `.backup` → 写 `.tmp` 后 `rename` 原子替换 → 询问是否重启应用）；**导出**（保存对话框 → 仅允许常规 `.conf`、拒绝符号链接 → 读当前配置 → `.tmp`+`rename` → 成功提示）；**重置为默认**（确认框 → 备份 → 清空配置文件 → 成功/失败提示）。原本不可达的两处 Linux 实现（重置显示器、清理缓存）现在都被菜单引用，且清理缓存补齐了 Windows 同款确认框 |
-| R21 | **T4 退出确认文案提到不存在的 GUI** | 新增 Linux 专用键 `KEY_QUIT_MESSAGE_NO_GUI`（EN/ZH/JA 三语，去掉"(This will also close the Sunshine GUI application.)"一句），Windows 仍用原键与原文案。另新增 `KEY_IMPORT_SUCCESS_MSG`、`KEY_EXPORT_ERROR_PATH` 两个键（同样三语），供上面的对话框使用 |
-
-**Windows 影响**：菜单数组与索引在两平台本就相同，Windows 的初始化语句、回调与文案**逐字未变**；
-新增的 i18n 键 Windows 不使用。**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 /
-0 断言失败（本轮无新增用例；托盘交互需图形会话，未做自动化）。
-
-### 5.13 第十一轮修复（占位 HDR10+ 元数据与前台缓存失效，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R22 | **F5 无统计时仍发占位 HDR10+ SEI** | avcodec 路径不再在会话建立时预挂 HDR10+ side data（那会把"满亮度"的占位值当成真实测量发出去）。改为**懒挂载**：`update_hdr_dynamic_metadata()` 在**第一帧拿到有效统计**时才 `av_dynamic_hdr_plus_create_side_data()` 并用 `init_hdr10plus_side_data()` 初始化窗口/椭圆/色调映射等静态字段，逐帧值仍由真实统计填充；会话上新增 `hdr10plus_side_data_wanted`（= 该 codec/传输函数能承载 **且** 分析器可用）。这样"完全没有分析器的会话"与"首帧尚无统计的头几帧"都不再发伪造元数据，与 Windows 原生路径"只有 valid 统计才构造元数据"一致 |
-| R23 | **F2 前台缓存无失效机制** | 新增 `clear_cache()`，在**生产者已知死亡**时清空缓存：KWin 脚本静默后重载失败（`install_kwin_script` 返回 false）即清空；niri 查询失败（niri 重启/socket 消失）同样清空。ABR 因此退回"基于启动器"的分类，而不是继续按已关闭的游戏调整码率；长时间不变的前台窗口仍不会因为"看起来陈旧"被误清（这是有意保留的语义） |
-
-**Windows 影响评估（R22，共享代码）**：默认配置（分析开启）下唯一差别是**首个有效统计到达前的几帧**
-不再携带伪造 SEI；显式关闭分析（`hdr_luminance_analysis=off`）时 Windows 的 ffmpeg 路径也不再发占位
-SEI——这与该平台原生路径（无有效统计就不构造元数据）一致，因此判定为修正而非破坏。R23 是
-Linux-only 文件（`src/platform/linux/foreground_app.cpp`），Windows 不涉及。
-
-**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败（本轮改动位于
-会话/编码路径，需真实编码器与合成器才能端到端验证）。
-
-### 5.14 第十二轮修复（分析节奏与上限，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R24 | **F7 分析节奏与 Windows 不一致** | 共享头新增 `hdr_analysis_interval = 4`（以及 Windows 采样上限 `hdr_analysis_max_width/height`），Windows 的 `display_vram.cpp` 与 Linux 的 CPU 分析器、硬件下载路径**统一引用同一常量**。CPU 路径因此从"每帧全分辨率"改为**每 4 帧一次**：共享时间滤波以 `sample_sequence` 识别新样本（`video_hdr_metadata.h` 明确写着"分析运行在帧率之下，只有新 sequence 才推进状态"），所以此前 Linux 的 EMA/场景检测/Vivid 启动门按帧推进得比 Windows 快 4 倍，现在两侧一致；帧间沿用上一次统计（这些滤波本就会忽略重复样本）。CPU 直方图开销随之降到 1/4 |
-| R25 | **F8 `analysis_max_nits` 硬编码** | 改为引用新的共享常量 `st2084_peak_nits`（PQ 的分析上限），并注明 HLG 落地时须按 Windows 规则取 `min(display peak, 该上限)`；数值不变，消除魔法数字 |
-
-**残留（如实记录）**：Linux CPU 路径仍读**整帧**（Windows 会在 GPU 端缩到 ≤1080p 再回读），
-所以 4K 下采样像素量仍约为 Windows 的 4 倍——CPU 端的缩放开销与直方图本身相当，故未加缩放；
-节奏对齐后开销已降为原来的 1/4。另外 Windows 的分析是**异步且陈旧一帧以上**，Linux 是同步当帧，
-这一差异保留（Linux 的元数据更"新"）。
-
-**测试基线**：12/13 套件通过、聚合套件 514 用例 502 通过 / 12 跳过 / 0 断言失败。
-
-### 5.15 第十三轮修复（friendly name 与合成器降级语义，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R26 | **D17 friendly name 只是连接器名** | 新增 Linux 专用 EDID 读取器 `src/platform/linux/edid.h`（校验头 + 解析基块四个描述符槽里的 Display Product Name（tag 0xFC），按 NUL/0x0A 截断并去除填充空格；纯字节变换、可单测）。`enum_available_devices()` 的 `friendly_name` 改为 EDID 名（无名字描述符时退回连接器名），`get_display_friendly_name()` 对物理屏同样返回 EDID 名，`find_device_by_friendlyname()` 改为**遍历所有设备**匹配（Windows 同语义），虚拟屏仍走 ZAKO_NAME 快路径。于是：WebUI 设备列表显示显示器型号而非 `DP-1`，配置里的"显示器"字段可用型号名解析（此前只有 VDD 能用 friendly name）。**本机实测**：内建面板的 EDID 是合法基块但**没有**名字描述符（真实世界的常见情况）→ 正确退回 `eDP-1`；断开连接器 EDID 为 0 字节 → 同样退回。带 5 个单元测试（含用自家生成器产出的 EDID 做往返、任意描述符槽、截断/填充、缺描述符、畸形 blob） |
-| R27 | **D18 合成器不可用时静默成功** | **判定为有意保留 + 提高可见性**：Linux 上"没有 kscreen-doctor"是**会话的持久属性**（非 KDE/无头），不是 Windows 那种"锁屏后重试"的暂时状态；返回失败会把每个非 KDE 会话推入 deferred-retry 并让客户端看到无法修复的报错。因此结果仍为 success，但日志从 info 提升为 **warning**，并明确写出"客户端的显示设置（分辨率/HDR/拓扑/主屏）**未被应用**，串流按当前桌面布局继续"——不再像成功那样含糊 |
-
-**测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
-
-### 5.16 第十四轮修复（WebUI HDR 运行时状态，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R28 | **F11 WebUI HDR 状态在 Linux 恒为不可用** | `GET /api/runtime/hdr` 的 `available` 不再按平台写死：Linux 由 **avcodec 会话**注册同一套共享状态（`video::hdr_pipeline_status_t`）——会话建立时按"实际能承载什么"填写（`hdr_mode` = pq/hlg/sdr、`analysis_mode` 取配置值、`analysis_active` = 本会话确有分析生产者、`metadata_formats` 只在分析激活时列出程序**确实能发**的格式 `hdr10_plus`/`hdr_vivid`），首帧有效统计到达时把 `scene_metadata_active` 置真并刷新，会话析构时注销；SDR 会话不注册（`pipelines` 为空即"当前无 HDR 会话"）。`conversion_path` 在 Linux 显式留空——Linux 不做 HDR 转换（KMS 直出 PQ/HLG），前端对空值不显示该行，避免误标成 "D3D11 Pixel Shader"；分析不可用且非用户关闭时填 `analysis_failure_reason` |
-
-**Windows 影响**：注册逻辑整段在 `#if !defined(_WIN32)` 内，Windows 仍由采集端注册自己的管线；`available`
-在 Windows 本就是 true（文案与结构未变）。共享的状态注册表**已有** `test_video.cpp` 的
-`HdrPipelineStatus.RegistersUpdatesAndRemovesPipelineState` 覆盖（本轮先新增了一个重复用例，发现后删除）。
-
-**测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
-
-### 5.17 第十五轮修复（拓扑校验一致性，2026-09-11）
-
-| # | 项 | 处置 |
-|---|---|---|
-| R29 | **D16 `is_topology_valid` 比自身 setter 宽松** | Linux 的校验器现在**拒绝多设备组**（与 `set_topology` 的既有拒绝一致）：调用方不会再"通过校验、然后在 setter 里以另一条消息失败"；Windows 允许每组 ≤2 台，Linux 在有合成器侧后端之前根本无法表达一个镜像组。VDD prep 构造的都是单设备组，因此行为不变 |
-| R30 | **A6 虚拟麦克风命名常量** | `Sunshine-Virtual-Microphone` 从内联字面量提为 `k_mic_sink_description`（与已收敛的 `k_mic_sink_name` 并列），并注明 Windows 侧没有可对齐的常量——它的录音设备名由 VB-Cable 驱动提供 |
-
-### 5.18 有意保留的差异（决策记录，2026-09-11）
+## 四、有意保留的差异（决策记录，非缺口）
 
 以下项经复核判定**保持现状**，理由记录在此，便于日后按需推翻：
 
-- **D11 空容器契约**：Linux 的 `get_current_*` 以"空集合 = 全部已启用输出"、setter 以"空 map = 无需
-  处理（true）"为准；Windows 分别返回 `{}`/false。复核结论：树内**没有任何调用方**传空集合查询
-  （`get_current_display_modes`/`get_current_hdr_states` 的调用点都传明确集合），而 setter 的空 map
+- **空容器契约**：Linux 的 `get_current_*` 以"空集合 = 全部已启用输出"、setter 以"空 map = 无需处理
+  （true）"为准；Windows 分别返回 `{}`/false。树内**没有调用方**传空集合查询，而 setter 的空 map
   语义被还原路径依赖（"没有要还原的" → 不能算失败）。改成 Windows 语义只会把无操作变成失败。
-- **A5 麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数
-  2 B/帧（Windows 端点相关 4 B）、缓冲属性留服务端默认（Windows 显式 100 ms）。复核结论：消费者
-  `stream.cpp` 只区分 `==0`（丢帧计数）与 `<0`（重初始化），实际调用点不会传 null、不会重复 init；
-  若把 null/重复 init 改成 -1，反而会触发**无意义的重初始化循环**；改缓冲属性会影响丢帧时机，而本机
-  无法做音频端到端验证，收益（多一次转换）与风险不成比例。**设备命名**见 R30。
-- **D19 日志文案**：同一事件 Windows 中文 / Linux 英文。复核结论：Linux 端整个日志面是英文，混语种
-  更差；**面向用户的 UI 文案走托盘 i18n（中/英/日）**，中文用户看到的对话框仍是中文。日志字符串不
-  参与行为或线协议契约。若希望 Linux 日志也中文化，这是一次独立的、纯文案的改动。
-- **D7 "blank HDR toggle"**：Windows 在切换 HDR 前把新启用显示器先切到相反状态、等 2333 ms 再设最终值，
+- **麦克风契约边界**：null samples → 0（Windows -1）、重复 init → 0（Windows -1）、返回字节数 2 B/帧
+  （Windows 端点相关 4 B）、缓冲属性留服务端默认（Windows 显式 100 ms）。消费者 `stream.cpp` 只区分
+  `==0`（丢帧计数）与 `<0`（重初始化）；改成 -1 反而会触发无意义的重初始化循环。
+- **日志语言**：同一事件 Windows 中文 / Linux 英文。Linux 端整个日志面是英文，混语种更差；**面向用户
+  的 UI 文案走托盘 i18n（中/英/日）**。日志字符串不参与行为或线协议契约。
+- **"blank HDR toggle"**：Windows 在切换 HDR 前把新启用显示器先切到相反状态、等 2333 ms 再设最终值，
   是 Windows 显示栈（IDD/VDD）的"颜色发白"清理手段；Linux 的 VDD 是真实 DRM 连接器、无对应症状，
-  移植只会给每次新启用显示器加 2.3 s 延迟与一次多余 HDR 翻转。如实测出现同症状再补。
-- **F3' 前台 exe 语义**：Linux 报 Wayland app class、Windows 报进程映像名（含 `.exe`）。复核结论：
-  Wayland 下没有等价的"进程映像名"来源（合成器只暴露 app_id/class），ABR 提示词里的 `.exe` 措辞是
-  共享资产；改成"猜进程名"会引入不可靠映射，保持现状。
-- **F9 直方图估计器**：Linux 精确 1024 码直方图 vs Windows 256 bin 单元采样——语义一致、数值不同，
-  且 Linux 更精确；不建议改（信息性）。
-- **C5 剪贴板线协议常量的跨语言同步**：C++ 侧已收敛到 `clipboard_bridge.h`（版本/kind/帧头/内联阈值/
-  TTL），Rust agent（`clipboard.rs`）是权威参考且无法包含 C++ 头文件。复核结论：为 5 个协议常量引入
-  代码生成步骤（跨语言、需要构建期工具链）不划算，且这些值属于线协议契约、极少变动；C++ 镜像由
-  `test_clipboard_wire.cpp` 的编解码测试守住。若线协议将来扩张，再考虑从单一 IDL 生成两侧。
-- **D15 复制拓扑**：**已核实 `kscreen-doctor` 没有任何 replication 设置命令**（只有 enable/disable/
-  mode/position/scale/rotation/hdr/brightness/wcg/icc/priority/custom mode 与 `--dpms`；`-o` 只能
-  *读出* "replication source: N"）。因此在 KDE 上实现镜像需要 **KWin 脚本**（与 ABR 前台检测同一套
-  D-Bus 加载模式）或 libkscreen/D-Bus。这是独立特性（工作量中-高），当前后端继续"复制组不可表示"。
+  移植只会给每次新启用显示器加 2.3 s 延迟。如实测出现同症状再补。
+- **前台 exe 语义**：Linux 报 Wayland app class、Windows 报进程映像名（含 `.exe`）。Wayland 下没有
+  等价的"进程映像名"来源（合成器只暴露 app_id/class），改成"猜进程名"会引入不可靠映射。
+- **直方图估计器**：Linux 精确 1024 码直方图 vs Windows 256 bin 采样——语义一致、数值不同，Linux 更
+  精确。
+- **剪贴板线协议常量的跨语言同步**：C++ 侧已收敛到 `src/clipboard_bridge.h`（版本/kind/帧头/内联阈值/
+  TTL），Rust agent（`clipboard.rs`）是权威参考且无法包含 C++ 头文件。为 5 个协议常量引入代码生成
+  步骤不划算；C++ 镜像由 `tests/unit/test_clipboard_wire.cpp` 的编解码测试守住。
+- **显示设置失败时的返回值**：合成器不可用时 display_device 保留 success 结果（Linux 上这是会话的持久
+  属性，返回失败会让所有非 KDE 会话进入无法修复的 deferred-retry），但日志提到 warning 并明确
+  "显示设置未被应用、串流按当前布局继续"。
 
-**测试基线**：12/13 套件通过、聚合套件 519 用例 507 通过 / 12 跳过 / 0 断言失败。
+---
 
-### 5.19 Windows 影响面审计（本轮全部改动的逐项核对）
+## 五、上游新特性在 Linux 的缺口
 
-工作区共 54 个提交（`c4f36395..HEAD`）。**在 Windows 上编译**的文件逐项核对影响面：
+上游 `ed415026`（并入本分支的 50 个提交）带来的新特性在 Linux 侧的现状。这些**不是 fork 的 Windows
+增强**，而是上游自己的新功能。均已确认**不会破坏 Linux 构建**（共享层能编译，平台后端缺失处以
+`#ifdef _WIN32` 门控或探测拒绝兜底）。
 
-| 共享文件 | 改动 | Windows 影响 |
-|---|---|---|
-| `display_device/vdd_utils.cpp` | 8 个模式解析/去重 helper 从 `_WIN32` 段移入共享段；per-client 尺寸表改共享函数 | **行为恒等**：8 个函数体做过逐字比对（脚本 `verbatim_body_present=True`）；尺寸类数值与回退相同 |
-| `display_device/vdd_utils.h` | 新增共享 helper 声明 | 纯增量 |
-| `display_device/parsed_config.cpp` | Linux 分支 `"23172"` → 共享 `ZAKO_DEVICE_ID` | Windows 分支未动（仍只接受 `VDD_NAME`） |
-| `globals.{h,cpp}` | 新增 `ZAKO_DEVICE_ID` | 纯增量 |
-| `clipboard_bridge.h` / `clipboard_wire.h` / `clipboard_echo.h` | 线协议常量、编解码、回声环 | 纯增量（Windows 侧不使用这些 C++ 工具；Rust agent 仍是权威参考） |
-| `rtsp.cpp` | `clipboard_image` 能力位改为 `#if defined(_WIN32)` 门控 | Windows 仍通告该位（不变） |
-| `abr.cpp` | 新增 `pid == 0 且 exe 变化` 的切换判定 | **恒不触发**：Windows 对有效窗口的 pid 恒 > 0 |
-| `video.cpp` | 分析器格式判定抽函数、平面 10-bit 解包修正、软件路径采样间隔、硬件下载、Vivid 拼接、HDR10+ 懒挂载、运行状态上报 | 除 HDR10+ 懒挂载外全部只在 Linux 生效——Windows 采集设备恒设置 `data`（`display_vram.cpp:2943`），故 `!data` 的软件设备分支与其 CPU 分析器/采样间隔在 Windows 上不可达；硬件下载、Vivid、状态上报整段 `#if !defined(_WIN32)`。**唯一可见变化**：HDR10+ side data 改为首帧有效统计时才挂载（默认配置仅少了"首个统计前的伪造 SEI"；分析关闭时不再发占位块，与原生路径一致，判定为修正） |
-| `video_hdr_metadata.h` | 新增 `hdr_analysis_interval` / `hdr_analysis_max_*` / `st2084_peak_nits` | 纯增量，数值与原字面量一致 |
-| `platform/windows/display_vram.cpp` | 三个采样常量改为引用共享常量 | **数值不变**（4/1920/1080），只是定义收敛 |
-| `confighttp.cpp` | HDR 状态端点 `available` 不再按平台写死 | Windows 原本即 true，结构与文案未变 |
-| `tray/system_tray.cpp` | 高级设置子菜单两平台统一布局、三个配置回调补齐 Linux、退出文案 Linux 专用键 | Windows 的菜单语句、回调与文案逐字未变（仅去掉包裹同一批语句的 `#ifdef`）；新增 i18n 键 Windows 不使用 |
-| `tray/system_tray_i18n.{h,cpp}` | 新增 3 个键（三语） | 纯增量 |
-| Linux-only（`platform/linux/*`、`clipboard_host.cpp`、`mic_queue.h`、`edid.h`） | 各轮修复 | 不进 Windows 构建 |
+### 5.1 ○ PyroWave 编码后端仅 Windows（高）
 
-**结论**：除"HDR10+ 元数据时序"这一处经论证的修正外，**Windows 行为保持不变**；未新增 Windows 源文件、
-未改动 `SUNSHINE_TARGET_FILES`，共享头改动均为增量。
+- **现状**：共享层完整编译——`src/pyrowave/{types,config,capabilities,gpu_interop,packet,packetizer,
+  dynamic_hdr,session,runtime}.cpp` 都在 `cmake/compile_definitions/common.cmake`，
+  `tests/unit/test_pyrowave.cpp` 在 Linux 跑通。缺的是**平台后端**：
+  `src/platform/windows/pyrowave/{cpu_encoder,gpu_encoder,transport}.cpp` 只在 `windows.cmake`；
+  `video.cpp` 的 PyroWave 编码派发整块位于 `#ifdef _WIN32`。
+- **Linux 行为**：本分支从未把 PyroWave 编码器注册进编码器表，客户端不会协商到它；即便协商到，
+  `encode()` 的派发链会落到末尾 `return -1`，会话按既有的"PyroWave 会话初始化失败 → shutdown"
+  路径结束，不会静默出坏流。
+- **若要做**：Linux 需要 CPU 后端（x264/x265 软件编码 + 块级封装，`cpu_encoder.cpp` 无 D3D 依赖，
+  是最可行的一块）与传输层（`transport.cpp` 的 socket/重建路径）。GPU 互操作（`gpu_interop.cpp`）
+  在 Linux 需对应 CUDA/EGL 纹理导入。
+- **工作量**：中-高（CPU 后端中）。**验收**：Linux 客户端协商 PyroWave 后能出画且 RS 重传生效。
 
-### 5.20 第十六轮修复（托盘创建虚拟显示器崩溃，2026-09-11）
+### 5.2 ○ 动态 RS-FEC 已随共享层落地（已基本完成）
 
-**现象**：KDE 下托盘"创建虚拟显示器"必崩。`journalctl --user -u sunshine.service` 里有三份
-`Main process exited, code=dumped, status=11/SEGV`，systemd-coredump 的栈顶是
-`display_device::vdd_utils::(anonymous)::enable_output_via_compositor`，且 `#1`–`#12` 为**同一个地址**
-——典型的自递归栈溢出，不是空指针。
+- **现状**：`src/streaming/fec.cpp`（动态 RS 保护 + 客户端覆盖）与 `src/streaming/bitrate.cpp`
+  （会话码率预算，含音频/开销扣除与 FEC 折算）都在共享列表里，Linux 与 Windows 同源编译。
+  `video.cpp::set_bitrate` 已对齐该预算模型——**Linux 的 FFmpeg avcodec 动态码率因此走统一的预算链路**。
+- **剩余**：`perf_recorder`、`widget_http` 同样在共享列表（Linux 可用）。真正平台相关的是 NVENC 原生
+  帧预算守卫（§5.3）。
+- **验收**：Linux 客户端改码率时日志出现 `Applied video budget: total=... encoder=... FEC=...`。
 
-**根因**：`ff16fdeb` 把三处 `run_logged("kscreen-doctor output." + connector + ".enable")` 换成新的
-`enable_output_via_compositor()` 时，KDE 分支被误写成**调用自己**（`enable_output_via_compositor(connector);`），
-而该提交信息声称"KDE 路径逐字未变"——与事实不符，这条声明本身也是错误。该函数的三个调用点位于
-`create_vdd_monitor()`（创建）与 `wait_for_mode_publication()`（模式切换），因此 Plasma 下**任何**
-创建/切换 VDD 的路径都会在第一次 `enable` 时爆栈；启动时复用残留 VDD（`adopt_orphan_vdd_locked()`）
-不经过该调用，所以"重启后看起来正常"，掩盖了问题。
+### 5.3 ○ NVENC 帧预算守卫对 Linux 无意义（决策）
 
-**修复**：
-- 桌面 → 命令的映射抽成**纯函数** `platf::compositor_output::enable_command()`（新文件
-  `src/platform/linux/compositor_output.{h,cpp}`）：KDE/plasma → `kscreen-doctor output.<c>.enable`
-  （与 `ff16fdeb` 之前逐字一致，且刻意**不**gate `tool_available("kscreen-doctor")`，保持历史行为——
-  工具缺失只花一条失败命令），niri → `niri msg output <c> on`，其后 `wlr-randr --output <c> --on`、
-  `xrandr --output <c> --auto`，未知会话返回空串。`enable_output_via_compositor()` 现在只做
-  "取探针 → 拼命令 → `run_logged`"，分支里不再有可递归的调用目标。
-- 探针 `niri_session()` / `tool_available()` 从 `vdd_utils.cpp` 的匿名命名空间移入该模块，只留一份实现
-  （`hint_primary_output()` 改为调用它）。
-- 新增 `tests/unit/test_compositor_output.cpp`（7 个用例：锁死每个桌面分支的命令字符串、
-  "未知会话必须为空"、`NIRI_SOCKET` 探针语义、bin 目录探针），Windows 下排除；`enable_command()` 无任何
-  依赖，测试不需要合成器在场。
+- **现状**：`src/nvenc/frame_budget.{h,cpp}` 是**纯函数**（无 SDK、无硬件访问），已加入
+  `PLATFORM_TARGET_FILES` 以满足共享 `confighttp.cpp` 的链接需求。但**发布者**
+  `publish_frame_budget_report()` 的调用点在 `src/nvenc/common_impl/nvenc_base.cpp`，而整个
+  `src/nvenc/` 原生 SDK 路径（含 `common_impl/`）只在 Windows 编译。
+- **Linux 行为**：`GET /api/config` 不含 `active_nvenc_frame_budget` 块——Linux 的 NVENC 是 FFmpeg
+  的 `*_nvenc` 封装，不经过原生 SDK 的 `create_encoder()`，没有"配置预设 vs 有效预设"的概念。
+  这是**正确行为**，不是缺口。
+- **验收**：Linux `/api/config` 不出现该块，且不报错。
 
-**验证**：`ctest` 13 个套件中 12 通过；`test_sunshine` 528 用例 515 通过 / 12 跳过 / **0 断言失败**，
-唯一失败是上游 `DownloadFileTests/DownloadFileTest.Run/1`（沙箱内 `httpbin.org` 被解析成黑洞地址
-`fdfe:dcba:9876::ec`，与本轮改动无关）。`git diff -U0` 确认 `vdd_utils.cpp` 的改动 hunk 全部落在
-`#else  // !_WIN32` 之后，Windows 半个文件逐字未动。
+### 5.4 ⛔ DLSS NR / RTX HDR / Game Bar 小部件等（Windows 专有 SDK）
 
-**教训（已加固）**：把"某个桌面分支"从直呼命令改成走 dispatcher 时，dispatcher 的分支必须能被单元测试
-直接断言；本轮起该映射是纯函数并被测试锁死，同类自递归不可能再静默复发。
+- **现状**：`sunshine_dlssnr_adapter` / `sunshine_rtx_video_adapter`
+  （`cmake/dependencies/dlssnr_adapter.cmake`、`rtx_video_adapter.cmake`）与
+  `src/platform/windows/image_enhancement/**` 全部 Windows-only；`src/widget_http.cpp` 共享层在 Linux
+  编译，但其 UWP 端点骨架是 Windows 概念。
+- **Linux 对应物**：图像增强在 Linux 无等价物（CUDA/Vulkan 自研滤波属独立大特性）；Game Bar 小部件与
+  Windows 外壳绑定，无移植意义。
 
-### 5.21 第十七轮修复（虚拟屏分辨率/HDR 未生效与 EDID 假设，2026-09-13）
+### 5.5 ○ "下线显示模式重映射"重构（已完成，无需跟进）
 
-用户报告："客户端虚拟屏（独占）连接，客户端申请的分辨率似乎没有自动追加到 EDID，导致分辨率设置
-没生效，与 Windows 实现不一致。" 复核确认**不是"没追加"，而是三个各自独立的真实缺陷**，其中一个
-让申请的模式根本没被应用：
+- **现状**：上游 `8b905e2c` 删除了 `src/display_device/parsed_config.cpp` 的
+  `remap_display_modes_if_needed()` 与配置键 `display_mode_remapping`。已核实全树无残留引用，
+  Linux 的 `explicit_vdd` 分支（`ZAKO_DEVICE_ID`/`ZAKO_NAME`）完好保留。
+- **验收**：Linux 客户端指定虚拟屏仍走 VDD 目标。
 
-1. **模式/HDR 目标指向物理屏（主因，`display_device.cpp`）**：`make_parsed_config()` 在
-   `prepare_vdd()` **之前**运行，此时 VDD 还不存在，`config.device_id` 解析出的是客户端看的物理屏
-   （或空）。`apply_config()` 用它做 modes/HDR 的唯一目标，而 VDD 会话的拓扑里只有虚拟屏，于是
-   `filter_stale_devices()` 把目标整条丢掉 → 两张 map 都为**空** → `set_display_modes({})` 直接
-   `return true`（空 map 视为无事可做）→ 客户端申请的分辨率与 HDR 状态**从未下发**到虚拟屏，而
-   容忍分支只记一句 "mode is guaranteed by the EDID" 把失败吞掉。
-   现场证据：`sunshine.log` 里 VDD 会话连续两行 `Changing display modes to:` / `Changing HDR states
-   to:` **内容为空**，而物理屏会话是 `eDP-1 -> 2400x1080x60`。
-   修复：VDD 模式下目标解析为 `vdd_utils::live_virtual_display_connector()`（会话的 VDD stage 本来
-   就负责拓扑），并在替换时记一行 info。
-2. **"EDID 保证模式"是错误假设（`vdd_utils.cpp`）**：Linux 的 `is_mode_advertised()` 原本是桩
-   （只要 VDD 活着就返回 true），`wait_for_mode_publication()` 也只等 sysfs `connected`，从不校验
-   模式是否真的发布。改为向合成器查询真实模式表（新增 `platf::kscreen::advertised_modes()`，复用
-   已有 kscreen-doctor 解析器），用共享的 ±1 Hz 语义匹配，按 `kModePublicationTimeout` 轮询，失败时
-   把"实际发布了哪些模式"打进日志并让会话以 `modes_fail` 收尾（Windows 语义）。非 KDE 会话查询为空
-   → 视为"未知"而非"未发布"，保持既有降级。
-3. **EDID 无法表达的模式被静默写坏**：DTD 的像素时钟字段是 16 位 ×10 kHz，> 655.35 MHz 的模式会被
-   `build_dtd()` **饱和**成 0xFFFF —— 4K120 于是被写成 3840x2160@**71.4 Hz**（`edid-decode` 实测），
-   请求的模式在系统里根本不存在。`49800f6c` 曾修过"配置选择首选模式"时的同一问题，但**客户端申请
-   的模式走的是另一条路**（`set_vdd_session_mode()` 直接写 `cached_*`），绕过了可行性检查。
-   现在三处（创建、live 更新、发布校验）都先判 `mode_fits_pixel_clock_limit()`，不通过就明确报错并
-   保留原 EDID（不写坏、不假装成功）。上限提为具名常量 `vdd_edid::kMaxDtdPixelClockHz`。
-4. **创建时的模式表缺少会话模式（真正的"没追加"）**：创建路径用 `configured_mode_settings()`（仅配置
-   列表），而 Windows 的 SETMODES 列表是"配置组合 **+ 客户端的分辨率/刷新率**"的叉积。现在
-   `set_vdd_session_mode()` 保存的会话设置会一直留到 `create_vdd_monitor()`，创建出的 EDID 与 Windows
-   的 SETMODES 列表等价；同时修掉 `cached_from_session` 从不清零导致"会话结束后托盘创建沿用上一次
-   会话模式"的陈旧状态。
-5. **顺带修掉一个崩溃级健壮性缺陷**：debugfs 探测用了会抛异常的 `std::filesystem` 重载，没有文件能力
-   的调用者（直接跑 `./sunshine`、能力被剥离的发行版）一遇到已连接连接器就抛
-   `filesystem_error` 终止进程——聚合测试套件即因此 abort（`DisplayDeviceEnum`）。四处探测改为
-   error_code 重载，读不到就当"没有 override 节点"。
+---
 
-**验证**：`cvt -r` 交叉核对（3440x1440@120 = 658.25 MHz vs 本生成器 658.0 MHz，均超 DTD 上限）→
-确认第 3 条是**格式限制**而非模型保守；用真实生成器对配置矩阵逐个生成 EDID、解析首选 DTD 反算刷新率，
-23 个可行模式的内核视角刷新率与请求值偏差均 ≤1 Hz（新校验不会误杀）；新探测在实机 KDE 会话里
-实测 `advertised_modes("eDP-1")` = `1920x1080@60`，匹配判定 1080p60 ✔ / 2560x1440@144 ✘ /
-4K120 ✘。`ctest`：532 用例 **519 通过 / 12 跳过 / 0 断言失败**（唯一失败仍是沙箱网络用例）。
+## 六、仍未完成（诚实清单）
 
-**仍存疑（待用户实测确认）**：若客户端申请的模式**可行**但仍未生效，剩余嫌疑是"EDID 已改写、合成器
-没重新探测"（NVIDIA 对 debugfs 强制连接的连接器不发 hotplug）。此时新校验会给出明确失败日志而不是
-静默——若真出现，再补一次合成器侧重探测（kscreen 重查/udev change）。
-
-**用户复测反馈（2026-09-13，pkgrel 55）**："分辨率对了，刷新率多了，按客户端申请的来，保持和 windows
-实现一致。" 实测日志完全对上：
-
-```
-DP-2 模式表：2400x1080: 60.00!（首选=客户端申请）, 144.00*（当前！）, 120.00, 90.00
-            3840x2160: 60.00 / 3440x1440: 90,60 / 2560x1600: 144,120,90,60 / ...
-```
-
-即：分辨率已按客户端申请（EDID 首选时序）✔，但**实际跑在 144 Hz**。根因是第 6 条：
-`filter_stale_devices()` 的 `|| is_vdd_connector(it->first)` 会把**所有**虚拟屏条目从 modes/HDR map
-里删掉（`09a49cf1` 引入的"EDID 保证模式，不必经合成器改"假设），于是客户端申请的 60 Hz 从未下发，
-KDE 保持自己挑的"该分辨率下最高刷新率"144 Hz。Windows 是用 CCD 把申请模式下发到 VDD 的，这一步在
-Linux 被整段跳过——这是**真正的 windows 不一致**，而不是模式表内容不同（Windows SETMODES 同样是
-"配置列表 ∪ 客户端模式"的叉积，所以 2400x1080 在 Windows 上也会有 60/90/120/144 四项；多出来的刷新率
-本身是符合 Windows 语义的）。
-
-修复（`44b0d1ea`）：`filter_stale_devices()` 增加 `keep_id` 参数，**apply 路径**保留本次要配置的那个虚拟屏；
-原始/回滚记录仍照旧剔除 VDD（还原不该去动一个即将销毁的虚拟屏）。同时把 set_display_modes 失败后的
-容忍条件从"广告里有这个模式"改成"**当前**就是这个模式"——KDE 会把 EDID 里所有刷新率都列出来，只看
-广告会把"请求 60 却跑 144"当成成功放过。
-
-### 5.22 第十八轮修复（非 Plasma 会话被 kscreen-doctor 阻塞，2026-09-15）
-
-**现象**（测试机）：plasmalogin + 实际登录 niri；Sunshine 通过 SSH 登录后 `systemctl --user start
-sunshine` 启动。在 plasmalogin 界面和 niri 里，客户端建立连接都要阻塞很久，日志里是 kscreen-doctor
-命中 `run_logged` 的 10000 ms 超时。
-
-**根因**：`kscreen-doctor` 是通过会话总线驱动 `org.kde.KScreen` 的 Plasma 工具。没有 KScreen 的会话里
-去问它，D-Bus 会**激活**一个 KScreen 服务，而该服务在等 Plasma 会话出现，于是进程自己永不返回，只能等
-`run_logged` 在 10 s 时杀掉。而旧实现**每次显示查询都 spawn 一次**（设备枚举、拓扑、模式、HDR……一次
-会话开始有几十次查询），原先那个 `failure_logged` 静态量只抑制了日志，**没有阻止 spawn** —— 于是每次
-连接都要等 N × 10 s。
-
-**修复**（`b15ba676`，新模块 `src/platform/linux/kscreen_backend.{h,cpp}`）：
-
-1. **会话判定**：`session_supports_kscreen()` 先看 `NIRI_SOCKET`（niri 没有 KScreen，即使
-   `XDG_CURRENT_DESKTOP` 被某些配置伪装成 KDE），否则要求 desktop 串里含 Plasma/KDE。**每次调用重新
-   判定、不缓存**，所以"先于桌面启动的服务"在用户登录后仍能自动接上。判定为不支持时**根本不 spawn**。
-2. **短探测 + 冷却**：查询用 1.5 s 探测超时；探测失败/超时则武装 20 s 冷却，期间查询立即返回空；
-   成功一次即清除冷却。于是"KScreen 存在但不应答"最坏是每 20 s 花 1.5 s，而不是每次查询 10 s。
-3. 变更类命令仍用 10 s 上限，且只在探测成功（或会话确实支持 KScreen）之后才会发出。
-4. VDD 层的 kscreen 命令同样加了这道闸：带 `NIRI_SOCKET` 的会话直接走 niri IPC，不再发一条只会挂 10 s
-   的命令。
-
-**实测**（真实代码，`platf::kscreen::advertised_modes("eDP-1")`）：
-
-| 场景 | 修复前 | 修复后 |
-| --- | --- | --- |
-| 正常 KDE 会话 | ~700 ms，1 个模式 | **699 ms / 1 个模式（不变）** |
-| niri 会话（`NIRI_SOCKET`） | 每次查询 10 s | **0 ms（不再 spawn）** |
-| 无桌面（SSH/开机服务） | 每次查询 10 s | **0 ms** |
-| 声称 KDE 但合成器不应答 | 每次查询 10 s | **首次 807 ms，随后 0 ms（冷却内）** |
-
-`tests/unit/test_kscreen_backend.cpp` 钉住判定（环境组合）与冷却状态迁移；模块本身 Linux-only。
-
-**说明**：niri 的**显示后端**仍缺（§2.11 待做 1 / §5.23 第 2 条）——本轮只保证"不因缺少后端而阻塞"，
-分辨率/HDR 在 niri 下依旧是"合成器不可用"的既有降级（该降级有一行明确 warning）。
-
-### 5.23 第二十一轮修复（动态码率 / 物理屏还原 / CUDA 构建，2026-09-23）
-
-用户三项反馈：
-
-1. **客户端动态调整码率不生效**。链路本身完整（控制流 `IDX_DYNAMIC_PARAM_CHANGE` → `set_dynamic_param` →
-   `set_bitrate`），但 Linux 的 `avcodec_encode_device_t::set_bitrate()` 只改 `bit_rate`/`rc_max_rate`/
-   `rc_min_rate`，**没有同步 VBV 窗口**（`rc_buffer_size`）——窗口仍按旧码率设定：新码率更高时被"饿"，
-   更低时又会突发，所以看起来"改了没用"。Windows 原生 NVENC 路径（`nvenc_base::set_bitrate()`）本来就
-   会按比例重算 `vbvBufferSize`，因此这里是**移植遗漏**而非平台差异。现已对齐（同 100 kbit 下限），并把
-   编码器可见的值（码率 + VBV）打进日志。FFmpeg 的 nvenc 会在每帧检查这些字段
-   （`reconfig_encoder()` → `nvEncReconfigureEncoder`，`resetEncoder + forceIDR`），所以字段一改就会生效。
-   *待用户实测确认*：日志里应出现 `Dynamic bitrate change: N Kbps`（控制流）→
-   `AVCodec encoder bitrate set to: N Kbps ... VBV: M bits`（编码器）两行；若只有第一行没有第二行，
-   说明参数没进编码线程；两行都有而码率仍不变，则是驱动 `NV_ENC_CAPS_SUPPORT_DYN_BITRATE_CHANGE`
-   或速率控制模式（constqp）的问题，需要再查。
-
-2. **退出偶尔无法还原物理屏**。`display_off`（独占）原先直接写 sysfs `status = off`：这是 **DRM 层强制**，
-   崩溃后没人还原（记录只在内存里），而 NVIDIA 对强制连接器**不发 hotplug**，所以也不会自愈。现在：
-   - **不再从 DRM 层 off 物理屏**（采纳用户建议）：改为让**合成器**关闭物理输出（KDE/kscreen），
-     合成器拥有布局也能恢复它；没有合成器输出后端时（niri/wlroots/X11）**保持物理屏开启**并明确告警。
-   - 被关闭的输出名列表**持久化**到 `<appdata>/vdd_offlined_physicals.txt`（强制关闭的连接器在 sysfs 里
-     与"拔掉"无法区分，只能靠自己记录），于是：会话结束、下一场非独占会话开始、以及**进程启动后发现没有
-     活动虚拟屏**时都会自动还原（崩溃场景无需等到开流）。
-   - 还原用 sysfs `detect`（清掉旧版本遗留的强制状态，让内核重新探测）**而不是 `on`**：对已经拔掉的屏幕
-     写 `on` 会造出一个幽灵输出。
-
-3. **CUDA 用起来**。环境侧：装好 `sccache 0.18.0` 与 CUDA 13.4（`nvcc`），构建侧修了三处：
-   - `src/platform/linux/cuda.cu` **根本无法编译**：fork 的同步提交 `468442f3` 把上游新版文件**接在旧版
-     后面**而不是替换，导致每个 helper/成员函数都有两份、花括号最终不平衡（深度 -1）。因为本地一直是
-     `SUNSHINE_ENABLE_CUDA=OFF`，从没人发现。现取最后一个自洽版本（`468442f3^`，与本仓库 `cuda.h` 的
-     `convert()/viewport/scale/threadsPerBlock` 匹配）并补上上游 PR 的唯一一行改动
-     （`color_vectors_from_colorspace(colorspace, true)`）。
-   - CMake 现在**尊重显式 `-DCMAKE_CUDA_ARCHITECTURES`**（一台真机只编一个 arch，比整条兼容阶梯快得多）。
-   - 兼容阶梯会**剔除工具链自己已删除的架构**（CUDA 13 不再接受 Turing 以下；传 `sm_50` 会让 nvcc 直接
-     以 `Unsupported gpu architecture` 失败）。
-   **验证**：CUDA 13.4 + `-DCMAKE_CUDA_ARCHITECTURES=86` 下 CUDA 目标编译通过、整个二进制链接成功
-   （`build-cuda/sunshine`）；`sccache` 作为 launcher 生效。**运行时**未在本沙箱验证（无 GPU）：
-   CUDA 捕获路径（kmsgrab 的 CUDA 分支）此前在本移植中从未跑过，建议先在非关键场景试，日志里
-   `Attempting to use NVENC without CUDA support. Reverting back to GPU -> RAM -> GPU` 应消失。
-
-### 5.24 仍未完成（诚实清单）
-
-1. **F4 HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
-   拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；本机
-   （PQ + NVIDIA）也无法端到端验证。
-2. **niri / wlr-output-management 输出后端**（§2.11 待做 1）：模式/HDR/拓扑在 niri 下仍走"合成器不可用"
-   降级。实现需要 niri IPC 的真实 JSON 结构（本机未装 niri，沙箱内也取不到 `niri-ipc` 源码/文档），
-   拿到 `niri msg --json outputs` 与 `niri msg --help` 的实测输出即可落地并配测试。
-3. **D15 复制拓扑**：kscreen-doctor 无 replication 命令（已实测确认），KDE 上实现镜像需 KWin 脚本或
-   libkscreen 后端，属独立特性。
-4. §5.18 中记录的**有意保留差异**（空容器契约、麦克风契约边界与缓冲属性、日志语言、前台 exe 语义、
-   直方图估计器、blank HDR toggle）如需翻转，按各条给出的理由逐项决策即可。
+1. **HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
+   拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；
+   本机（PQ + NVIDIA）也无法端到端验证。
+2. **niri / wlr-output-management 输出后端**（§2.10）：模式/HDR/拓扑在 niri 下仍走"合成器不可用"
+   降级。实现需要 niri IPC 的真实 JSON 结构（本机未装 niri），拿到 `niri msg --json outputs` 与
+   `niri msg --help` 的实测输出即可落地并配测试。
+3. **D15 复制拓扑**（§1.4）：kscreen-doctor 无 replication 命令（已实测确认），KDE 上实现镜像需 KWin
+   脚本或 libkscreen 后端，属独立特性。
+4. **§四的有意保留差异**：如需翻转，按各条给出的理由逐项决策即可。
 5. **DisplayID 扩展块（中，可选）**：> 655.35 MHz 的模式（3440x1440@120/144、3840x2160@90/120/144）
    目前只能明确拒绝。要真正支持，需要在 EDID 里追加 DisplayID 扩展块（24 位像素时钟），并让 base
    block 的首选 DTD 退回一个可行模式、由会话显式切到该模式；成败取决于内核 DRM 与 KWin 是否把
    DisplayID timing 纳入模式表，需实机验证。
-6. **`wait_for_mode_publication()` 的锁粒度已修**（原第 5 条 hazard 已消除）：锁内只取路径与模式快照，
-   CRTC 强制指派、合成器命令与发布轮询都在锁外执行，因此不再有"持 `state_mutex` 最长 10 s"的窗口。
-7. **合成器未重探测 EDID 改写的可能**（低）：若实机出现"模式可行但始终未生效"，即为此因（见 §5.21 末）。
-
----
-
-## 六、上游同步引入的新特性缺口（2026-10-12，tag `v0.9.3-linux-upstream-sync`）
-
-合并上游 `ed415026`（50 提交）后新增的上游特性。与 §一/§二 的区别：这些**不是 fork 的 Windows
-增强**，而是上游自己的新功能，Linux 侧尚未跟进。均已确认**不会破坏 Linux 构建**（共享层能编译，
-平台后端缺失处以 `#ifdef _WIN32` 门控或探测拒绝兜底）。
-
-### 6.1 ○ PyroWave 编码后端仅 Windows（高）
-
-- **现状**：共享层完整编译——`src/pyrowave/{types,config,capabilities,gpu_interop,packet,packetizer,
-  dynamic_hdr,session,runtime}.cpp` 都在 `cmake/compile_definitions/common.cmake`，
-  且 `tests/unit/test_pyrowave.cpp` 在 Linux 跑通（本轮实测 28 个用例全通过）。缺的是**平台后端**：
-  `src/platform/windows/pyrowave/{cpu_encoder,gpu_encoder,transport}.cpp` 只在 `windows.cmake`；
-  `video.cpp` 的 PyroWave 编码派发整块（`pyrowave_windows::encode_frame` / `encode_gpu_frame` /
-  `is_gpu_encoder_session`）位于 `#ifdef _WIN32`。
-- **Linux 行为**：本分支从未把 PyroWave 编码器注册进 `v0.0.0.0` 编码器表（表项本身是 fork 侧
-  Windows 特性），客户端不会协商到它；即便协商到，`encode()` 的派发链会落到末尾 `return -1`，
-  会话按既有的"PyroWave 会话初始化失败 → shutdown"路径结束，不会静默出坏流。
-- **若要做**：Linux 需要 CPU 后端（x264/x265 软件编码 + 块级封装，`cpu_encoder.cpp` 无 D3D 依赖，
-  是最可行的一块）与传输层（`transport.cpp` 的 socket/重建路径）。GPU 互操作
-  （`gpu_interop.cpp`）在 Linux 需对应 CUDA/EGL 纹理导入。
-- **工作量**：中-高（CPU 后端中）。**验收**：Linux 客户端协商 PyroWave 后能出画且 RS 重传生效。
-
-### 6.2 ○ 上游动态 RS-FEC 已随共享层落地，但 Linux 未接入码率预算的外层（低）
-
-- **现状**：`src/streaming/fec.cpp`（动态 RS 保护 + 客户端覆盖）与 `src/streaming/bitrate.cpp`
-  （会话码率预算，含音频/开销扣除与 FEC 折算）都在共享列表里，Linux 与 Windows 同源编译。
-  本轮已把冲突处（`video.cpp::set_bitrate`）对齐到该预算模型，**Linux 的 FFmpeg avcodec
-  动态码率因此现在也走统一的预算链路**。
-- **剩余**：`perf_recorder`、`widget_http` 同样在共享列表（Linux 可用）。真正平台相关的是
-  NVENC 原生帧预算守卫（§6.3）。
-- **工作量**：低（已基本完成）。**验收**：Linux 客户端改码率时日志出现
-  `Applied video budget: total=... encoder=... FEC=...`。
-
-### 6.3 ○ NVENC 帧预算守卫对 Linux 无意义（本质不可移植 → 记录为决策）
-
-- **现状**：`src/nvenc/frame_budget.{h,cpp}` 是**纯函数**（无 SDK、无硬件访问），本轮已加入
-  `PLATFORM_TARGET_FILES` 以满足共享 `confighttp.cpp` 的链接需求。但**发布者**
-  `publish_frame_budget_report()` 的调用点在 `src/nvenc/common_impl/nvenc_base.cpp`，而整个
-  `src/nvenc/` 原生 SDK 路径（含 `common_impl/`）只在 Windows 编译。
-- **Linux 行为**：`GET /api/config` 不含 `active_nvenc_frame_budget` 块——因为 Linux 的 NVENC 是
-  FFmpeg 的 `*_nvenc` 封装，不经过原生 SDK 的 `create_encoder()`，没有"配置预设 vs 有效预设"的概念。
-  这是**正确行为**，不是缺口。若将来要在 Linux 上报，需要在 FFmpeg avcodec 路径里自行评估预设。
-- **工作量**：不适用。**验收**：Linux `/api/config` 不出现该块，且不报错。
-
-### 6.4 ⛔ DLSS NR / RTX HDR / Game Bar 小部件等（Windows 专有 SDK）
-
-- **现状**：`sunshine_dlssnr_adapter` / `sunshine_rtx_video_adapter`（`cmake/dependencies/
-  dlssnr_adapter.cmake`、`rtx_video_adapter.cmake`）与 `src/platform/windows/image_enhancement/**`
-  全部 Windows-only；`src/widget_http.cpp` 共享层在 Linux 编译，但其 UWP 端点骨架是 Windows 概念。
-- **Linux 对应物**：图像增强在 Linux 无等价物（CUDA/Vulkan 自研滤波属独立大特性，
-  见 §1.3 亮度分析器的讨论）；Game Bar 小部件与 Windows 外壳绑定，无移植意义。
-- **工作量**：不适用。
-
-### 6.5 ○ "下线显示模式重映射"重构（已完成，无需跟进）
-
-- **现状**：上游 `8b905e2c` 删除了 `src/display_device/parsed_config.cpp` 的
-  `remap_display_modes_if_needed()` 与配置键 `display_mode_remapping`。已核实全树无残留引用
-  （`grep -rn "remap_display_modes\|display_mode_remapping" src/` 为空），Linux 的
-  `explicit_vdd` 分支（`ZAKO_DEVICE_ID`/`ZAKO_NAME`）完好保留。
-- **工作量**：无。**验收**：Linux 客户端指定虚拟屏仍走 VDD 目标。
+6. **合成器未重探测 EDID 改写的可能**（低）：若实机出现"模式可行但始终未生效"，即为此因。

@@ -24,7 +24,9 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON
 ninja -C build sunshine
-cd build && ctest          # baseline: 12/13 pass; Audio/MouseHID/Encoder fail headless (expected)
+cd build && ctest          # baseline: 15 suites, 14 pass; the 3 Audio/MouseHID/Encoder
+                           # SetUpTestSuite failures inside test_sunshine are headless-only
+                           # (640 cases, 628 pass, 12 skip, 0 assertion failures)
 ```
 
 CUDA is the default (`SUNSHINE_ENABLE_CUDA` defaults to ON on Linux; a missing
@@ -116,6 +118,6 @@ User installs packages themselves (sudo needs a password).
 ## Conventions
 
 - Commit per logical step; tag each feature milestone (`v0.1-linux-base` …
-  `v0.8.1-linux-tray-vdd-state` ladder — continue it). User reads Chinese.
+  `v0.9.3-linux-upstream-sync` ladder — continue it). User reads Chinese.
 - Commit messages: English, conventional-commit style (`feat(linux): …`).
 - Do not delete or "clean up" the two MD docs above; update them when landing work.
