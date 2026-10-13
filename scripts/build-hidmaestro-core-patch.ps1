@@ -89,13 +89,4 @@ if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry isolation regression fai
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'THIRD-PARTY-NOTICES.txt') -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $patchRoot 'README.md') -Destination (Join-Path $output 'README.md') -Force
-$metadata = [ordered]@{
-    schema = 1
-    upstream_version = $pin.version
-    upstream_commit = $pin.commit
-    patch = $pin.patch
-    original_sha256 = (Get-FileHash -LiteralPath $originalCore).Hash.ToLowerInvariant()
-    sha256 = (Get-FileHash -LiteralPath $core).Hash.ToLowerInvariant()
-}
-[IO.File]::WriteAllText((Join-Path $output 'core-patch.json'), ($metadata | ConvertTo-Json) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 Write-Host "Built $($pin.patch): $core"

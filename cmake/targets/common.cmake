@@ -23,7 +23,6 @@ if(WIN32)
 endif()
 include(${CMAKE_MODULE_PATH}/dependencies/rtx_video_adapter.cmake)
 include(${CMAKE_MODULE_PATH}/dependencies/dlssnr_adapter.cmake)
-include(${CMAKE_MODULE_PATH}/dependencies/hidmaestro_core_patch.cmake)
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(sunshine ${dep})  # compile these before sunshine
 endforeach()

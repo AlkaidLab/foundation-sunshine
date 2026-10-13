@@ -1,12 +1,12 @@
 # Foundation HIDMaestro Core patch
 
 This is a downstream managed-code patch for foundation-sunshine #1138. The
-upstream v1.7.3 API and assembly/file versions are preserved so already-installed
-sidecars can load it without a separate component update. The main Sunshine
-package carries this Core and installs it before any sidecar creates a device.
-The sidecar uses normal .NET dependency loading. It permits read-only capability
-probes against the stock SDK during staging, but requires the patch marker before
-any device operation. Sunshine verifies and replaces Core before launching it.
+upstream v1.7.3 API and assembly/file versions are preserved. The patched Core
+ships inside Sidecar component version 1.3.0, together with its runtime and
+licenses. The Control Panel updates installed older components through its
+existing package verification, staging and rollback flow when streaming is idle.
+The sidecar uses normal .NET dependency loading and rejects a missing patch
+marker before any SDK operation. Sunshine never replaces a DLL at launch.
 
 Foundation uses a Joystick UMDF2 persona and USB/IP composite personas. Neither
 needs a global GameInput mapping or a shared Joystick OEM override. This build
@@ -25,9 +25,11 @@ tests both Joystick and Game Pad registry writers in a process-local redirected
 registry hive. Driver deployment, PnP cleanup and live device creation are not
 run by these tests.
 
-The DLL is hash-bound to the Sunshine build. Do not sign or rewrite it after
-generating its trust header. Preserve the upstream MIT license and third-party
-notices when distributing it. The original source is available at
+The release ZIP's digest binds the complete component, including signed Core.
+Installation records its executable and Core digests for probing and rollback.
+There is no separately shipped Core patch manifest or runtime activation manager.
+Preserve the upstream MIT license and third-party notices when distributing it.
+The original source is available at
 https://github.com/hifihedgehog/HIDMaestro/tree/00b7303f8533c3fe10687a765c84e929b34a5e9c.
 
 Existing, unowned GameInput mappings are deliberately preserved. Older SDKs did

@@ -28,7 +28,6 @@
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
-#include "core_patch.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 #include "src/platform/windows/virtual_device_host/protocol.h"
@@ -260,21 +259,18 @@ namespace platf::ds5 {
         BOOST_LOG(error) << "The active DualSense sidecar failed manifest digest verification"sv;
         return std::nullopt;
       }
-#ifdef SUNSHINE_DS5_CORE_PATCH_SHA256
-      std::string core_patch_error;
-      if (manifest.get<std::string>("hidmaestro_version", "") != "v1.7.3" ||
-          !ensure_core_patch(install_root / "tools" / "hidmaestro-core-patch" / "HIDMaestro.Core.dll",
-                             expected_active_root / "HIDMaestro.Core.dll",
-                             SUNSHINE_DS5_ORIGINAL_CORE_SHA256,
-                             SUNSHINE_DS5_CORE_PATCH_SHA256,
-                             sha256_file, core_patch_error)) {
-        BOOST_LOG(error) << "Unable to apply the bundled HIDMaestro Core fix: "sv << core_patch_error;
+      // Older components use the unpatched SDK. Upgrade the complete optional
+      // package through the Control Panel; never modify a DLL at launch.
+      auto expected_core = manifest.get<std::string>("sha256", "");
+      std::ranges::transform(expected_core, expected_core.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+      });
+      const auto actual_core = sha256_file(expected_active_root / "HIDMaestro.Core.dll");
+      if (manifest.get<std::string>("component_version", "") != "1.3.0" ||
+          expected_core.size() != 64 || !actual_core || *actual_core != expected_core) {
+        BOOST_LOG(error) << "The DualSense component requires an update or failed Core verification"sv;
         return std::nullopt;
       }
-#else
-      BOOST_LOG(error) << "This build does not contain the required HIDMaestro Core fix"sv;
-      return std::nullopt;
-#endif
       return candidate;
 #endif
     }

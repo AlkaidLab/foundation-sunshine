@@ -202,9 +202,6 @@ Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignor
 
 ; Pinned manifest for the separately distributed first-party DualSense runtime.
 Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
-#if FileExists(MySourceDir + "\tools\hidmaestro-core-patch\core-patch.json")
-Source: "{#MySourceDir}\tools\hidmaestro-core-patch\*"; DestDir: "{app}\tools\hidmaestro-core-patch"; Flags: ignoreversion; Components: application
-#endif
 
 ; Optional HDR adapter shipped with Sunshine. List first-party files explicitly
 ; so a stale local staging directory cannot add a vendor runtime to the package.

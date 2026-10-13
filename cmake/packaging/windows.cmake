@@ -44,18 +44,10 @@ install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
 
 # The optional self-contained runtime is a separate release asset. The main
-# package carries its download manifest and the compatible managed Core fix,
-# keeping the complete .NET runtime in the separately installed component.
+# package carries only its pinned download manifest, keeping the feature
+# installable without adding the complete .NET runtime to every Sunshine copy.
 set(DS5_SIDECAR_PACKAGE_MANIFEST "${CMAKE_BINARY_DIR}/ds5-sidecar-package.json" CACHE FILEPATH
     "Path to the pinned Sunshine DualSense sidecar package manifest")
-if(SUNSHINE_HIDMAESTRO_CORE_PATCH_AVAILABLE)
-  install(FILES "${HIDMAESTRO_CORE_PATCH_DIR}/HIDMaestro.Core.dll"
-                "${HIDMAESTRO_CORE_PATCH_DIR}/core-patch.json"
-                "${HIDMAESTRO_CORE_PATCH_DIR}/LICENSE.HIDMaestro"
-                "${HIDMAESTRO_CORE_PATCH_DIR}/THIRD-PARTY-NOTICES.txt"
-                "${HIDMAESTRO_CORE_PATCH_DIR}/README.md"
-          DESTINATION "tools/hidmaestro-core-patch" COMPONENT application)
-endif()
 if(EXISTS "${DS5_SIDECAR_PACKAGE_MANIFEST}")
   install(FILES "${DS5_SIDECAR_PACKAGE_MANIFEST}"
           DESTINATION "tools"

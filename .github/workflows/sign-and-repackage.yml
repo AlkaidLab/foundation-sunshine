@@ -250,9 +250,6 @@ jobs:
             test -f "$ADAPTER"
             mkdir -p hash-bound-files
             mv "$ADAPTER" hash-bound-files/foundation_rtx_video_adapter.dll
-            # Core is also bound to Sunshine's compiled SHA-256. Keep its
-            # verified bytes outside signing, including its native resources.
-            mv unsigned-files/Sunshine/tools/hidmaestro-core-patch/HIDMaestro.Core.dll hash-bound-files/HIDMaestro.Core.dll
             mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging
             cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging/
             echo "Extracted files for signing:"
@@ -306,22 +303,13 @@ jobs:
 
       # The adapter's raw SHA-256 is compiled into Sunshine. Keep that exact
       # build artifact instead of changing it after the trust header is made.
-      - name: Restore hash-bound adapter and HIDMaestro Core
+      - name: Restore hash-bound RTX adapter
         shell: pwsh
         run: |
           $destination = 'signed-files/Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll'
           New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
           Copy-Item -LiteralPath 'hash-bound-files/foundation_rtx_video_adapter.dll' `
             -Destination $destination -Force
-          Copy-Item -LiteralPath 'hash-bound-files/HIDMaestro.Core.dll' `
-            -Destination 'signed-files/Sunshine/tools/hidmaestro-core-patch/HIDMaestro.Core.dll' -Force
-          $coreDirectory = 'signed-files/Sunshine/tools/hidmaestro-core-patch'
-          $metadata = Get-Content "$coreDirectory/core-patch.json" -Raw | ConvertFrom-Json
-          foreach ($corePath in @("$coreDirectory/HIDMaestro.Core.dll", 'build/inno_staging/tools/hidmaestro-core-patch/HIDMaestro.Core.dll')) {
-            if ((Get-FileHash -LiteralPath $corePath -Algorithm SHA256).Hash -ne $metadata.sha256) {
-              throw "Hash-bound Core changed during signing: $corePath"
-            }
-          }
 
       - name: Package signed DualSense component
         shell: pwsh

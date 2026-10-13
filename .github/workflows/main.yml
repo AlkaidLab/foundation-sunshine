@@ -412,7 +412,6 @@ jobs:
           # lightweight package manifest, not the self-contained runtime.
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
           grep -F "ds5-sidecar-package.json" inno-build.log
-          grep -F "hidmaestro-core-patch" inno-build.log
           if grep -Ei 'nvngx_(truehdr|dlssnr)\.dll' inno-build.log; then
             echo "NVIDIA enhancement runtimes must not be compiled into the installer"
             exit 1
@@ -430,8 +429,6 @@ jobs:
           cpack -G ZIP --config ./CPackConfig.cmake --verbose
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
-          grep -F "Sunshine/tools/hidmaestro-core-patch/HIDMaestro.Core.dll" portable-files.txt
-          grep -F "Sunshine/tools/hidmaestro-core-patch/LICENSE.HIDMaestro" portable-files.txt
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
           fi
