@@ -17,6 +17,9 @@
 #include "src/crypto.h"
 #include "src/httpcommon.h"
 #include "src/logging.h"
+#ifdef SUNSHINE_AI_BEAST_PILOT_TESTS
+  #include "src/ai/beast_server.h"
+#endif
 #ifdef _WIN32
   #include <windows.h>
   #include <winioctl.h>
@@ -380,6 +383,286 @@ TEST_F(HttpSafety, SingleHttpsThreadRemainsResponsiveAndDisconnectCancelsAllStre
   EXPECT_TRUE(wait_until([&] { return ai::http::submit_stream([] {}); }));
   EXPECT_EQ(client.request("POST", "/stream", "")->status_code, "400 Bad Request");
 }
+
+#ifdef SUNSHINE_AI_BEAST_PILOT_TESTS
+namespace {
+  class BeastAiPilot: public HttpSafety {
+  protected:
+    ai::beast_http::Options options;
+    std::unique_ptr<ai::beast_http::Server> pilot;
+    std::atomic_bool saw_client_certificate { false };
+    static constexpr const char *path = "/api/ai/chat/completions";
+    void
+    SetUp() override {
+      HttpSafety::SetUp();
+      const auto credentials = crypto::gen_creds("localhost", 2048);
+      std::ofstream(directory / "cert.pem") << credentials.x509;
+      std::ofstream(directory / "key.pem") << credentials.pkey;
+      options.certificate_file = (directory / "cert.pem").string();
+      options.private_key_file = (directory / "key.pem").string();
+      options.io_threads = 1;
+    }
+    void
+    TearDown() override {
+      if (pilot) pilot->stop();
+      pilot.reset();
+      HttpSafety::TearDown();
+    }
+    unsigned short
+    start(ai::beast_http::Backend backend = ai::processAiChatStream) {
+      pilot = std::make_unique<ai::beast_http::Server>(options, [this](const auto &request, const auto &peer) {
+        saw_client_certificate = peer.certificate_sha256.size() == 64;
+        return request[boost::beast::http::field::authorization] == "Bearer pilot-regression-token"; }, std::move(backend));
+      return pilot->start();
+    }
+    std::unique_ptr<SimpleWeb::Client<SimpleWeb::HTTPS>>
+    client(unsigned short port) {
+      auto result = std::make_unique<SimpleWeb::Client<SimpleWeb::HTTPS>>("127.0.0.1:" + std::to_string(port), false);
+      result->config.timeout = 3;
+      result->config.timeout_connect = 3;
+      return result;
+    }
+    SimpleWeb::CaseInsensitiveMultimap
+    headers() {
+      return { { "Authorization", "Bearer pilot-regression-token" }, { "Content-Type", "application/json" } };
+    }
+    using RawSocket = boost::asio::ssl::stream<tcp::socket>;
+    std::unique_ptr<RawSocket>
+    raw(boost::asio::io_context &io, boost::asio::ssl::context &tls, unsigned short port) {
+      auto socket = std::make_unique<RawSocket>(io, tls);
+      socket->set_verify_mode(boost::asio::ssl::verify_none);
+      socket->lowest_layer().connect({ boost::asio::ip::make_address("127.0.0.1"), port });
+      socket->handshake(boost::asio::ssl::stream_base::client);
+      const std::string request = "POST /api/ai/chat/completions HTTP/1.1\r\nHost: localhost\r\n"
+                                  "Authorization: Bearer pilot-regression-token\r\nContent-Type: application/json\r\n"
+                                  "Content-Length: 15\r\n\r\n{\"stream\":true}";
+      boost::asio::write(*socket, boost::asio::buffer(request));
+      return socket;
+    }
+    void
+    disconnect(RawSocket &socket) {
+      socket.lowest_layer().set_option(boost::asio::socket_base::linger(true, 0));
+      boost::system::error_code ignored;
+      socket.lowest_layer().close(ignored);
+    }
+  };
+}  // namespace
+
+TEST_F(BeastAiPilot, MatchesLegacySuccessfulStreamAndUsesBeastChunkFraming) {
+  Upstream upstream(true, true);
+  const auto legacy_port = start_https();
+  const auto beast_port = start();
+  SimpleWeb::Client<SimpleWeb::HTTPS> legacy("127.0.0.1:" + std::to_string(legacy_port), false);
+  legacy.config.timeout = 3;
+  const auto before = legacy.request("POST", "/stream", R"({"stream":true})");
+  const auto after = client(beast_port)->request("POST", path, R"({"stream":true})", headers());
+  EXPECT_EQ(after->status_code, before->status_code);
+  EXPECT_EQ(after->content.string(), before->content.string());
+  ASSERT_NE(after->header.find("Transfer-Encoding"), after->header.end());
+  EXPECT_EQ(after->header.find("Transfer-Encoding")->second, "chunked");
+  EXPECT_EQ(after->header.find("Content-Type")->second, "text/event-stream");
+}
+
+TEST_F(BeastAiPilot, MatchesLegacyUpstreamErrorsAndEmptyBodies) {
+  const auto legacy_port = start_https();
+  const auto beast_port = start();
+  for (const int status : { 401, 429, 503 }) {
+    for (const auto &body : { std::string(R"({"error":"rejected"})"), std::string() }) {
+      SCOPED_TRACE(status);
+      Upstream upstream(status, body, true);
+      SimpleWeb::Client<SimpleWeb::HTTPS> legacy("127.0.0.1:" + std::to_string(legacy_port), false);
+      legacy.config.timeout = 3;
+      const auto before = legacy.request("POST", "/stream", R"({"stream":true})");
+      const auto after = client(beast_port)->request("POST", path, R"({"stream":true})", headers());
+      EXPECT_EQ(after->status_code, before->status_code);
+      EXPECT_EQ(after->content.string(), before->content.string());
+      EXPECT_EQ(after->header.find("Content-Type")->second, "application/json");
+    }
+  }
+}
+
+TEST_F(BeastAiPilot, RequiresAuthorizationAndValidatesBeforeCallingUpstream) {
+  Upstream upstream(true, true);
+  const auto port = start();
+  EXPECT_EQ(client(port)->request("POST", path, R"({"stream":true})")->status_code, "401 Unauthorized");
+  auto duplicate = headers();
+  duplicate.emplace("Authorization", "Bearer forged");
+  EXPECT_EQ(client(port)->request("POST", path, R"({"stream":true})", duplicate)->status_code, "401 Unauthorized");
+  EXPECT_EQ(client(port)->request("POST", path, "not-json", headers())->status_code, "400 Bad Request");
+  EXPECT_EQ(client(port)->request("POST", path, "{}", headers())->status_code, "400 Bad Request");
+  EXPECT_EQ(client(port)->request("GET", path, "", headers())->status_code, "405 Method Not Allowed");
+  EXPECT_EQ(client(port)->request("OPTIONS", path)->status_code, "204 No Content");
+  EXPECT_EQ(upstream.accepted, 0);
+}
+
+TEST_F(BeastAiPilot, BoundsRequestBodies) {
+  options.body_limit = 32;
+  Upstream upstream(true, true);
+  const auto port = start();
+  EXPECT_EQ(client(port)->request("POST", path, std::string(100, 'x'), headers())->status_code, "413 Payload Too Large");
+  EXPECT_EQ(upstream.accepted, 0);
+}
+
+TEST_F(BeastAiPilot, CancelsDisconnectedClientBeforeFirstUpstreamChunk) {
+  Upstream upstream(false);
+  const auto port = start();
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  auto socket = raw(io, tls, port);
+  ASSERT_TRUE(wait_until([&] { return upstream.accepted == 1; }));
+  const auto before = std::chrono::steady_clock::now();
+  disconnect(*socket);
+  EXPECT_TRUE(wait_until([&] { return upstream.closed == 1; }, 3s));
+  EXPECT_LT(std::chrono::steady_clock::now() - before, 3s);
+}
+
+TEST_F(BeastAiPilot, BoundedStreamsKeepOneIoThreadResponsiveAndReleaseCapacity) {
+  Upstream upstream;
+  options.max_streams = 2;
+  const auto port = start();
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  std::vector<std::unique_ptr<RawSocket>> sockets;
+  for (int i = 0; i < 2; ++i) {
+    auto socket = raw(io, tls, port);
+    boost::asio::streambuf response;
+    boost::asio::read_until(*socket, response, "data: hello\n\n");
+    sockets.push_back(std::move(socket));
+  }
+  EXPECT_EQ(client(port)->request("OPTIONS", path)->status_code, "204 No Content");
+  EXPECT_EQ(client(port)->request("POST", path, R"({"stream":true})", headers())->status_code, "503 Service Unavailable");
+  for (auto &socket : sockets) disconnect(*socket);
+  ASSERT_TRUE(wait_until([&] { return upstream.closed == 2; }, 3s));
+  EXPECT_TRUE(wait_until([&] { return pilot->active_streams() == 0; }));
+}
+
+TEST_F(BeastAiPilot, SlowClientTimesOutWithoutQueuingUnboundedChunks) {
+  options.io_timeout = 1000ms;
+  options.send_buffer_bytes = 4096;
+  std::atomic_bool aborted { false };
+  std::atomic_int chunks { 0 };
+  const auto port = start([&](const auto &, auto sink, auto) {
+    const std::string data(16 * 1024, 'x');
+    for (; chunks < 1000; ++chunks) {
+      if (!sink(data.data(), data.size())) {
+        aborted = true;
+        break;
+      }
+    }
+    return ai::AiProxyResult { 502, "", "application/json" };
+  });
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  auto socket = raw(io, tls, port);
+  // Leave the downstream unread; the TCP/TLS buffers eventually apply backpressure.
+  EXPECT_TRUE(wait_until([&] { return aborted.load(); }, 5s));
+  EXPECT_LT(chunks, 1000);
+}
+
+TEST_F(BeastAiPilot, ShutdownCancelsIdleUpstreamAndJoinsWorkers) {
+  Upstream upstream(false);
+  const auto port = start();
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  auto socket = raw(io, tls, port);
+  ASSERT_TRUE(wait_until([&] { return upstream.accepted == 1; }));
+  const auto before = std::chrono::steady_clock::now();
+  pilot->stop();
+  EXPECT_LT(std::chrono::steady_clock::now() - before, 3s);
+  EXPECT_TRUE(wait_until([&] { return upstream.closed == 1; }));
+  pilot->stop();
+}
+
+TEST_F(BeastAiPilot, TlsCertificateAndClientIdentityAreVerified) {
+  Upstream upstream(true, true);
+  const auto credentials = crypto::gen_creds("pilot-client", 2048);
+  std::ofstream(directory / "client.pem") << credentials.x509;
+  std::ofstream(directory / "client-key.pem") << credentials.pkey;
+  options.client_ca_file = (directory / "client.pem").string();
+  const auto port = start();
+  auto missing_cert = client(port);
+  EXPECT_THROW(missing_cert->request("POST", path, R"({"stream":true})", headers()), boost::system::system_error);
+  const auto other = crypto::gen_creds("untrusted-client", 2048);
+  std::ofstream(directory / "other.pem") << other.x509;
+  std::ofstream(directory / "other-key.pem") << other.pkey;
+  SimpleWeb::Client<SimpleWeb::HTTPS> untrusted("127.0.0.1:" + std::to_string(port), false,
+    (directory / "other.pem").string(), (directory / "other-key.pem").string());
+  untrusted.config.timeout = 3;
+  EXPECT_THROW(untrusted.request("POST", path, R"({"stream":true})", headers()), boost::system::system_error);
+  SimpleWeb::Client<SimpleWeb::HTTPS> authenticated("localhost:" + std::to_string(port), true,
+    (directory / "client.pem").string(), (directory / "client-key.pem").string(), (directory / "cert.pem").string());
+  authenticated.config.timeout = 3;
+  EXPECT_EQ(authenticated.request("POST", path, R"({"stream":true})", headers())->content.string(), "data: hello\n\n");
+  EXPECT_TRUE(saw_client_certificate);
+  EXPECT_EQ(upstream.accepted, 1);
+}
+
+TEST_F(BeastAiPilot, RejectsPublicBindAndMissingAuthorizationPolicy) {
+  options.address = "0.0.0.0";
+  EXPECT_THROW(start(), std::invalid_argument);
+  options.address = "127.0.0.1";
+  EXPECT_THROW(ai::beast_http::Server(options, {}, ai::processAiChatStream), std::invalid_argument);
+  options.max_streams = 0;
+  EXPECT_THROW(start(), std::invalid_argument);
+  options.max_streams = 17;
+  EXPECT_THROW(start(), std::invalid_argument);
+}
+
+TEST_F(BeastAiPilot, CertificatePolicyCanAuthorizeWithoutBearerCredentials) {
+  Upstream upstream(true, true);
+  const auto credentials = crypto::gen_creds("paired-pilot-client", 2048);
+  std::ofstream(directory / "client.pem") << credentials.x509;
+  std::ofstream(directory / "client-key.pem") << credentials.pkey;
+  options.client_ca_file = (directory / "client.pem").string();
+  auto certificate = crypto::x509(credentials.x509);
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned length = 0;
+  ASSERT_EQ(X509_digest(certificate.get(), EVP_sha256(), digest, &length), 1);
+  std::string fingerprint;
+  constexpr char hex[] = "0123456789abcdef";
+  for (unsigned i = 0; i < length; ++i) {
+    fingerprint += hex[digest[i] >> 4];
+    fingerprint += hex[digest[i] & 15];
+  }
+  pilot = std::make_unique<ai::beast_http::Server>(options, [fingerprint](const auto &, const auto &peer) { return peer.certificate_sha256 == fingerprint; }, ai::processAiChatStream);
+  const auto port = pilot->start();
+  SimpleWeb::Client<SimpleWeb::HTTPS> authenticated("localhost:" + std::to_string(port), true,
+    (directory / "client.pem").string(), (directory / "client-key.pem").string(), (directory / "cert.pem").string());
+  authenticated.config.timeout = 3;
+  EXPECT_EQ(authenticated.request("POST", path, R"({"stream":true})", { { "Content-Type", "application/json" } })->content.string(), "data: hello\n\n");
+  EXPECT_EQ(upstream.accepted, 1);
+}
+
+TEST_F(BeastAiPilot, RejectsUnsupportedVersionAndAmbiguousHttpFraming) {
+  Upstream upstream(true, true);
+  const auto port = start();
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  for (const bool ambiguous : { false, true }) {
+    RawSocket socket(io, tls);
+    socket.set_verify_mode(boost::asio::ssl::verify_none);
+    socket.lowest_layer().connect({ boost::asio::ip::make_address("127.0.0.1"), port });
+    socket.handshake(boost::asio::ssl::stream_base::client);
+    std::string request = std::string("POST /api/ai/chat/completions HTTP/") + (ambiguous ? "1.1" : "1.0") +
+                          "\r\nHost: localhost\r\nAuthorization: Bearer pilot-regression-token\r\nContent-Type: application/json\r\nContent-Length: 15\r\n";
+    if (ambiguous) request += "Content-Length: 16\r\n";
+    request += "\r\n{\"stream\":true}";
+    boost::asio::write(socket, boost::asio::buffer(request));
+    std::string received;
+    std::array<char, 1024> data {};
+    boost::system::error_code ec;
+    do {
+      const auto bytes = socket.read_some(boost::asio::buffer(data), ec);
+      received.append(data.data(), bytes);
+    } while (!ec);
+    if (ambiguous)
+      EXPECT_TRUE(received.empty());
+    else
+      EXPECT_TRUE(received.starts_with("HTTP/1.1 505 HTTP Version Not Supported\r\n"));
+  }
+  EXPECT_EQ(upstream.accepted, 0);
+}
+#endif
 
 // Shutdown is intentionally last: it closes admission for the process lifetime.
 TEST(AiStreamShutdown, CancelsIdleJobsBeforeListenersAreDestroyed) {

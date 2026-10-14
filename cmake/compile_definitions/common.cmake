@@ -220,6 +220,7 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.h"
         "${CMAKE_SOURCE_DIR}/src/streaming/frame_rate_tracker.h"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.cpp"
+        "${CMAKE_SOURCE_DIR}/src/http_json.cpp"
         "${CMAKE_SOURCE_DIR}/src/httpcommon.h"
         "${CMAKE_SOURCE_DIR}/src/launch_session_manager.cpp"
         "${CMAKE_SOURCE_DIR}/src/launch_session_manager.h"
