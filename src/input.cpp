@@ -2285,6 +2285,14 @@ namespace input {
       }
 #endif
       reset_input_state();
+      // Delayed controller callbacks own the session, so destruction alone cannot
+      // cancel them. Invalidate them on the input worker while the session is alive.
+      for (auto &gamepad : input->gamepads) {
+        gamepad.reset_state();
+        if (gamepad.id >= 0) {
+          platf::gamepad_update(platf_input, gamepad.id, gamepad.gamepad_state);
+        }
+      }
     });
   }
 
