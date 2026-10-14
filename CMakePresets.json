@@ -21,7 +21,7 @@
     {
       "name": "test-win",
       "inherits": "dev-win",
-      "binaryDir": "${sourceDir}/build/tests",
+      "binaryDir": "${sourceDir}/build-tests",
       "cacheVariables": {
         "BUILD_TESTS": "ON",
         "BUILD_WEB_UI": "OFF",

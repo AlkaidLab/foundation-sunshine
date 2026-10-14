@@ -68,8 +68,10 @@ ctest --test-dir build --output-on-failure
 
 `sunshine::tls` / `sunshine::curl` 统一网络依赖；MinGW 在依赖发现时选择静态 OpenSSL，并迁移旧缓存中的 DLL 导入库选择。应用专用的 FFmpeg 和平台 include 位于 `sunshine_build_dependencies`，不进入共用 HTTP 目标。Windows 静态链接选项应用于项目自己的目标；资源文件由独立 object target 编译，避免把整个 C++ include 图传给 windres。
 
-`sunshine_crypto`、`sunshine_ai_provider`、`sunshine_ai_stream` 复用没有 `SUNSHINE_TESTS` 实现变体的源码。应用与独立测试通过共享库链接这些实现；日志、输入、编码后端和 Webhook 运行时保留各自测试变体。开启 coverage 时，共享模块与测试均参与插桩，不通过全局 C/C++ flags 改写第三方目标。
+`sunshine_crypto`、`sunshine_ai_provider`、`sunshine_ai_stream` 复用没有 `SUNSHINE_TESTS` 实现变体的源码。应用与独立测试在目标声明处显式链接这些共享库，不扫描或改写其他目标的源码；日志、输入、编码后端和 Webhook 运行时保留各自测试变体。开启 coverage 时，共享模块与测试均参与插桩，不通过全局 C/C++ flags 改写第三方目标。
 
 Web UI 使用锁文件安装依赖，安装和打包各有输出与输入依赖：源文件变化重建页面，锁文件变化重装依赖，缺失输出触发恢复，无改动构建跳过 npm。资源复制保留子目录，并跟踪编辑、新增和删除；仅清理规则自己记录的输出。Wayland 的两个生成命令位于构建图中，XML 变化触发重建，首个命令失败直接结束构建。
 
-`cmake_configuration_tests` 通过真实的小型 CMake/Ninja 项目验证 Debug 断言、系统 Boost 组件、Web UI 增量构建、资源复制与 Wayland 生成。Web UI/npm 和 Wayland/scanner 使用可记录调用的本地替身，无需下载依赖或安装 Wayland。
+`cmake_configuration_tests` 通过真实的小型 CMake/Ninja 项目验证独立 Preset 构建目录、Debug 断言、系统 Boost 组件、Web UI 增量构建、资源复制与 Wayland 生成。Web UI/npm 和 Wayland/scanner 使用可记录调用的本地替身，无需下载依赖或安装 Wayland。
+
+Windows `test-win` Preset 使用独立的 `build-tests` 目录，避免覆盖 `dev-win` 构建的 `build/tests` 子目录。

@@ -79,6 +79,17 @@ class Configuration(unittest.TestCase):
                 exe = self.build / ('Debug' if generator != 'Ninja' else '') / ('probe.exe' if os.name == 'nt' else 'probe')
                 self.assertEqual(self.run_command([str(exe)]).strip(), 'enabled')
 
+    def test_presets_keep_parent_test_install_rules_intact(self):
+        self.write('CMakePresets.json', (SOURCE / 'CMakePresets.json').read_text(encoding='utf-8'))
+        self.write('CMakeLists.txt', 'cmake_minimum_required(VERSION 3.25)\nproject(PresetDirectories NONE)\n'
+                   'add_custom_target(parent)\nadd_subdirectory(tests)\n')
+        self.write('tests/CMakeLists.txt', 'add_custom_target(child)\n')
+        self.run_command([args.cmake, '-S', str(self.project), '--preset', 'dev-win'])
+        install_rules = self.project / 'build/tests/cmake_install.cmake'
+        before = install_rules.read_text()
+        self.run_command([args.cmake, '-S', str(self.project), '--preset', 'test-win'])
+        self.assertEqual(install_rules.read_text(), before)
+
     def test_system_boost_path_defines_all_consumed_components(self):
         package = self.project / 'package'
         self.write('package/BoostConfigVersion.cmake', 'set(PACKAGE_VERSION 1.92.0)\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\nset(PACKAGE_VERSION_EXACT TRUE)\n')
@@ -159,6 +170,8 @@ else:
         first.unlink()
         self.build_project()
         self.assertFalse((self.build / 'assets/first/icon.txt').exists())
+        self.write(f'src_assets/{platform}/assets/added.txt', 'duplicate\n')
+        self.assertIn('Duplicate asset path', self.configure(success=False))
 
     def test_wayland_tracks_xml_and_reports_first_command_failure(self):
         scanner = self.launcher('scanner-stub', '''import pathlib, sys

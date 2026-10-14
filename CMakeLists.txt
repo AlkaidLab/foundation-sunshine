@@ -73,6 +73,3 @@ include(${CMAKE_MODULE_PATH}/targets/common.cmake)
 
 # packaging
 include(${CMAKE_MODULE_PATH}/packaging/common.cmake)
-
-# Apply project policy to our targets, never to vendored dependencies.
-sunshine_finalize_project()

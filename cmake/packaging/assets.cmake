@@ -7,25 +7,34 @@ elseif(APPLE)
 else()
     list(APPEND _asset_sources "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets")
 endif()
-set(_assets)
-foreach(_source_root IN LISTS _asset_sources)
-    file(GLOB_RECURSE _source_assets CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
-            RELATIVE "${_source_root}" "${_source_root}/*")
-    list(FILTER _source_assets EXCLUDE REGEX "^web(/|$)")
-    foreach(_asset IN LISTS _source_assets)
-        string(SHA256 _key "${_asset}")
-        set("_source_${_key}" "${_source_root}/${_asset}")
-        list(APPEND _assets "${_asset}")
-    endforeach()
-endforeach()
-list(REMOVE_DUPLICATES _assets)
-# Remove only outputs recorded by this copy rule, inside its own asset directory.
 set(_asset_root "${PROJECT_BINARY_DIR}/assets")
 # Earlier Linux builds linked this generated directory to source shaders.
 # Unlink it before copying so no command writes back through the old link.
 if(IS_SYMLINK "${_asset_root}/shaders")
     file(REMOVE "${_asset_root}/shaders")
 endif()
+set(_assets)
+set(_asset_outputs)
+foreach(_source_root IN LISTS _asset_sources)
+    file(GLOB_RECURSE _source_assets CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
+            RELATIVE "${_source_root}" "${_source_root}/*")
+    list(FILTER _source_assets EXCLUDE REGEX "^web(/|$)")
+    foreach(_asset IN LISTS _source_assets)
+        if(_asset IN_LIST _assets)
+            message(FATAL_ERROR "Duplicate asset path: ${_asset}")
+        endif()
+        list(APPEND _assets "${_asset}")
+        set(_output "${_asset_root}/${_asset}")
+        cmake_path(GET _output PARENT_PATH _directory)
+        add_custom_command(OUTPUT "${_output}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${_directory}"
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_source_root}/${_asset}" "${_output}"
+                DEPENDS "${_source_root}/${_asset}"
+                VERBATIM)
+        list(APPEND _asset_outputs "${_output}")
+    endforeach()
+endforeach()
+# Remove only outputs recorded by this copy rule, inside its own asset directory.
 set(_asset_manifest "${PROJECT_BINARY_DIR}/sunshine-assets-owned.txt")
 if(EXISTS "${_asset_manifest}")
     file(STRINGS "${_asset_manifest}" _previous_assets)
@@ -41,19 +50,5 @@ if(EXISTS "${_asset_manifest}")
 endif()
 string(REPLACE ";" "\n" _manifest_text "${_assets}")
 file(WRITE "${_asset_manifest}" "${_manifest_text}\n")
-set(_asset_outputs)
-foreach(_asset IN LISTS _assets)
-    string(SHA256 _key "${_asset}")
-    set(_source "${_source_${_key}}")
-    set(_output "${PROJECT_BINARY_DIR}/assets/${_asset}")
-    cmake_path(GET _output PARENT_PATH _directory)
-    add_custom_command(OUTPUT "${_output}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_directory}"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${_source}" "${_output}"
-            DEPENDS "${_source}"
-            VERBATIM)
-    list(APPEND _asset_outputs "${_output}")
-endforeach()
 add_custom_target(sunshine_assets ALL DEPENDS ${_asset_outputs})
 add_dependencies(sunshine sunshine_assets)

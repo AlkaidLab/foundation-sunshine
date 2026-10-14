@@ -9,7 +9,8 @@ set_target_properties(dxgi-info PROPERTIES CXX_STANDARD 23)
 target_link_libraries(dxgi-info
         PRIVATE Threads::Threads
         dxgi
-        ${PLATFORM_LIBRARIES})
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
 target_compile_options(dxgi-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
 add_executable(audio-info audio.cpp)
@@ -18,7 +19,8 @@ target_link_libraries(audio-info
         PRIVATE ${Boost_LIBRARIES}
         Threads::Threads
         ksuser
-        ${PLATFORM_LIBRARIES})
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
 target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
 add_executable(sunshinesvc sunshinesvc.cpp)
@@ -27,7 +29,8 @@ target_link_libraries(sunshinesvc
         PRIVATE Threads::Threads
         userenv
         wtsapi32
-        ${PLATFORM_LIBRARIES})
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
 target_compile_options(sunshinesvc PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
 add_executable(qiin-tabtip qiin-tabtip.cpp)
@@ -40,7 +43,8 @@ target_link_libraries(qiin-tabtip
         ole32
         oleaut32
         uuid
-        ${PLATFORM_LIBRARIES})
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
 target_compile_options(qiin-tabtip PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 # 为 MinGW 设置正确的入口点和子系统
 if(MINGW)
@@ -58,7 +62,8 @@ add_executable(test_args test_args.cpp)
 set_target_properties(test_args PROPERTIES CXX_STANDARD 23)
 target_link_libraries(test_args
         PRIVATE Threads::Threads
-        ${PLATFORM_LIBRARIES})
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
 if(WIN32)
     target_link_libraries(test_args PRIVATE advapi32 userenv)
 endif()
@@ -73,12 +78,12 @@ if(WIN32)
             CXX_STANDARD_REQUIRED ON)
     target_link_libraries(vdd-frame-channel-probe
             PRIVATE setupapi
-            ${PLATFORM_LIBRARIES})
+            ${PLATFORM_LIBRARIES}
+            sunshine_project_options)
     target_compile_options(vdd-frame-channel-probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
     add_executable(vtouch-poc
             vtouch_poc.cpp
-            "${CMAKE_SOURCE_DIR}/src/crypto.cpp"
             "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.cpp")
     set_target_properties(vtouch-poc PROPERTIES
@@ -95,7 +100,8 @@ if(WIN32)
             advapi32
             ws2_32
             mswsock
-            OpenSSL::Crypto)
+            OpenSSL::Crypto
+            sunshine_project_options sunshine_crypto)
     target_compile_options(vtouch-poc PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
     if(MINGW)

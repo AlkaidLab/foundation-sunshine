@@ -147,7 +147,6 @@ else()
 endif()
 
 set(PLATFORM_TARGET_FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/publish.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ftime_compat.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.h"

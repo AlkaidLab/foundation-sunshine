@@ -7,7 +7,7 @@ add_library(sunshine_http STATIC
         ${CMAKE_SOURCE_DIR}/src/http/tls_trust.cpp)
 target_include_directories(sunshine_http PUBLIC "${CMAKE_SOURCE_DIR}")
 target_link_libraries(sunshine_http PUBLIC Boost::asio Boost::beast sunshine::tls
-        PRIVATE sunshine::curl)
+        PRIVATE sunshine::curl sunshine_project_options sunshine_coverage)
 target_compile_features(sunshine_http PUBLIC cxx_std_23)
 if (WIN32)
     target_compile_definitions(sunshine_http PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN)

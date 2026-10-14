@@ -3,7 +3,7 @@
 
 add_executable(sunshine ${SUNSHINE_TARGET_FILES})
 if(WIN32)
-    target_link_libraries(sunshine PRIVATE Pyrowave::Runtime)
+    target_link_libraries(sunshine PRIVATE Pyrowave::Runtime sunshine_windows_resources)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSE"
             DESTINATION "tools/pyrowave" RENAME "LICENSE.pyrowave" COMPONENT application)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/NOTICE.md"
@@ -46,7 +46,9 @@ if(NOT DEFINED CMAKE_CUDA_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 
-target_link_libraries(sunshine PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
+target_link_libraries(sunshine PRIVATE
+        ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
+        sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(sunshine sunshine_rtx_video_adapter)
     target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
