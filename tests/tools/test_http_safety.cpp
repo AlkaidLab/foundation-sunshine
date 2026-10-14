@@ -10,6 +10,7 @@
 #include <future>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <thread>
 
 #include "src/ai/http_stream.h"
@@ -121,6 +122,7 @@ namespace {
     int response_code = 200;
     std::string response_body;
     bool interim_continue = false;
+    std::optional<size_t> declared_length;
     void
     accept() {
       auto connection = std::make_shared<Connection>(io, *this);
@@ -135,7 +137,7 @@ namespace {
           *data += "HTTP/1.1 " + SimpleWeb::status_code(static_cast<SimpleWeb::StatusCode>(response_code));
           *data += response_code == 200 ? "\r\nContent-Type: text/event-stream\r\n" : "\r\nContent-Type: application/json\r\n";
           *data += "Connection: close\r\n";
-          if (finite) *data += "Content-Length: " + std::to_string(response_body.size()) + "\r\n";
+          if (finite) *data += "Content-Length: " + std::to_string(declared_length.value_or(response_body.size())) + "\r\n";
           *data += "\r\n" + response_body;
           boost::asio::async_write(connection->socket, boost::asio::buffer(*data), [this, connection, data](auto ec, auto) {
             if (!ec && finite) {
@@ -160,7 +162,7 @@ namespace {
     explicit Upstream(bool send_event = true, bool finite = false): finite(finite), response_body(send_event ? "data: hello\n\n" : "") {
       start();
     }
-    Upstream(int status, std::string body, bool interim = false): finite(true), response_code(status), response_body(std::move(body)), interim_continue(interim) {
+    Upstream(int status, std::string body, bool interim = false, std::optional<size_t> length = {}): finite(true), response_code(status), response_body(std::move(body)), interim_continue(interim), declared_length(length) {
       start();
     }
     ~Upstream() {
@@ -215,6 +217,24 @@ namespace {
     auto
     resolve(const fs::path &request) {
       return confighttp::assets::resolve_boxart_path(directory / "assets", directory / "covers", request);
+    }
+    std::string
+    raw_stream(unsigned short port) {
+      boost::asio::io_context io;
+      boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+      boost::asio::ssl::stream<tcp::socket> socket(io, tls);
+      socket.set_verify_mode(boost::asio::ssl::verify_none);
+      socket.lowest_layer().connect({ boost::asio::ip::make_address("127.0.0.1"), port });
+      socket.handshake(boost::asio::ssl::stream_base::client);
+      const std::string request = "POST /stream HTTP/1.1\r\nHost: localhost\r\nContent-Length: 15\r\n\r\n{\"stream\":true}";
+      boost::asio::write(socket, boost::asio::buffer(request));
+      std::string wire;
+      std::array<char, 4096> buffer {};
+      boost::system::error_code ec;
+      do {
+        wire.append(buffer.data(), socket.read_some(boost::asio::buffer(buffer), ec));
+      } while (!ec);
+      return wire;
     }
   };
 }  // namespace
@@ -303,22 +323,80 @@ TEST(AiStreamSafety, OversizedErrorBodiesAbortWithoutStartingSse) {
   EXPECT_EQ(nlohmann::json::parse(result.body)["error"]["type"], "upstream_error");
 }
 
-TEST_F(HttpSafety, Upstream401And429KeepTheirBodyWithoutAnSseResponse) {
+TEST_F(HttpSafety, UpstreamErrorsKeepTheirBodyWithoutAnSseResponse) {
   const auto port = start_https();
   const std::string body = R"({"error":{"message":"upstream rejected request"}})";
-  for (const int code : { 401, 429 }) {
+  for (const int code : { 401, 429, 503 }) {
     for (const auto &error_body : { body, std::string() }) {
       SCOPED_TRACE(code);
       Upstream upstream(code, error_body, true);
       SimpleWeb::Client<SimpleWeb::HTTPS> client("127.0.0.1:" + std::to_string(port), false);
       client.config.timeout = 3;
       const auto response = client.request("POST", "/stream", R"({"stream":true})");
-      EXPECT_EQ(response->status_code, code == 401 ? "401 Unauthorized" : "429 Too Many Requests");
+      EXPECT_EQ(response->status_code, code == 401 ? "401 Unauthorized" : code == 429 ? "429 Too Many Requests" :
+                                                                                        "502 Bad Gateway");
       EXPECT_EQ(response->content.string(), error_body);
       ASSERT_NE(response->header.find("Content-Type"), response->header.end());
       EXPECT_EQ(response->header.find("Content-Type")->second, "application/json");
+      EXPECT_EQ(response->header.count("Transfer-Encoding"), 0);
+      ASSERT_NE(response->header.find("Content-Length"), response->header.end());
+      EXPECT_EQ(response->header.find("Content-Length")->second, std::to_string(error_body.size()));
     }
   }
+}
+
+TEST_F(HttpSafety, BeastFramingPreservesBinaryBytesAndTerminatesSuccessfulProductionStreams) {
+  const auto port = start_https();
+  for (const size_t length : { 1U, 15U, 16U * 1024, 48U * 1024 + 3 }) {
+    SCOPED_TRACE(length);
+    std::string body(length, 'x');
+    body[length / 2] = '\0';
+    Upstream upstream(200, body);
+    const auto wire = raw_stream(port);
+    EXPECT_TRUE(wire.ends_with("0\r\n\r\n"));
+    boost::beast::http::response_parser<boost::beast::http::string_body> parser;
+    parser.eager(true);
+    boost::system::error_code ec;
+    const auto consumed = parser.put(boost::asio::buffer(wire), ec);
+    ASSERT_FALSE(ec) << ec.message();
+    ASSERT_TRUE(parser.is_done());
+    EXPECT_EQ(consumed, wire.size());
+    EXPECT_EQ(parser.get().result_int(), 200);
+    EXPECT_TRUE(parser.get().chunked());
+    EXPECT_FALSE(parser.get().keep_alive());
+    EXPECT_EQ(parser.get()[boost::beast::http::field::content_type], "text/event-stream");
+    EXPECT_EQ(parser.get().body(), body);
+  }
+}
+
+TEST_F(HttpSafety, EmptySuccessfulUpstreamUsesAnEmptyHttpResponse) {
+  Upstream upstream(false, true);
+  const auto port = start_https();
+  SimpleWeb::Client<SimpleWeb::HTTPS> client("127.0.0.1:" + std::to_string(port), false);
+  client.config.timeout = 3;
+  const auto response = client.request("POST", "/stream", R"({"stream":true})");
+  EXPECT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(response->content.string(), "");
+  EXPECT_EQ(response->header.count("Transfer-Encoding"), 0);
+  ASSERT_NE(response->header.find("Content-Length"), response->header.end());
+  EXPECT_EQ(response->header.find("Content-Length")->second, "0");
+}
+
+TEST_F(HttpSafety, TruncatedUpstreamDoesNotCompleteTheDownstreamChunkedMessage) {
+  const std::string body = "data: partial\n\n";
+  Upstream upstream(200, body, false, body.size() + 100);
+  const auto wire = raw_stream(start_https());
+  EXPECT_FALSE(wire.ends_with("0\r\n\r\n"));
+  boost::beast::http::response_parser<boost::beast::http::string_body> parser;
+  parser.eager(true);
+  boost::system::error_code ec;
+  parser.put(boost::asio::buffer(wire), ec);
+  ASSERT_TRUE(!ec || ec == boost::beast::http::error::need_more) << ec.message();
+  EXPECT_EQ(parser.get().result_int(), 200);
+  EXPECT_EQ(parser.get().body(), body);
+  EXPECT_FALSE(parser.is_done());
+  parser.put_eof(ec);
+  EXPECT_EQ(ec, boost::beast::http::error::partial_message);
 }
 
 TEST(AiStreamSafety, ChunkExceptionsDoNotEscapeCurl) {

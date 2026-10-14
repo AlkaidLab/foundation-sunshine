@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include "beast_response.h"
 #include "proxy.h"
 #include <Simple-Web-Server/server_http.hpp>
 #include <chrono>
@@ -34,14 +35,8 @@ namespace ai::http {
       bool cancelled = false;
       response->close_connection_after_response = true;
 
-      auto send_chunk = [&](const char *data, size_t length) {
+      auto flush = [&] {
         if (cancelled || stream_shutdown_requested()) return false;
-        if (!header_sent) {
-          *response << "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-                       "Cache-Control: no-cache\r\nConnection: close\r\n\r\n";
-          header_sent = true;
-        }
-        response->write(data, static_cast<std::streamsize>(length));
         struct Completion {
           std::mutex mutex;
           std::condition_variable ready;
@@ -63,6 +58,17 @@ namespace ai::http {
         return !cancelled;
       };
 
+      auto send_chunk = [&](const char *data, size_t length) {
+        if (cancelled || stream_shutdown_requested()) return false;
+        if (!length) return true;
+        if (!header_sent) {
+          header_sent = true;
+          framing::sse_header(*response);
+        }
+        framing::sse_chunk(*response, data, length);
+        return flush();
+      };
+
       try {
         const auto result = processAiChatStream(body, send_chunk, [&] {
           if (cancelled || stream_shutdown_requested()) return true;
@@ -75,27 +81,29 @@ namespace ai::http {
           return false;
         });
         if (!header_sent) {
-          const auto status = result.httpCode == 400 ? SimpleWeb::StatusCode::client_error_bad_request :
-                              result.httpCode == 401 ? SimpleWeb::StatusCode::client_error_unauthorized :
-                              result.httpCode == 403 ? SimpleWeb::StatusCode::client_error_forbidden :
-                              result.httpCode == 429 ? SimpleWeb::StatusCode::client_error_too_many_requests :
-                              result.httpCode == 200 ? SimpleWeb::StatusCode::success_ok :
-                                                       SimpleWeb::StatusCode::server_error_bad_gateway;
-          response->write(status, result.body, { { "Content-Type", result.contentType } });
+          const auto status = result.httpCode == 400 || result.httpCode == 401 || result.httpCode == 403 || result.httpCode == 429 || result.httpCode == 200 ? result.httpCode : 502;
+          framing::reply(*response, status, result.body, result.contentType);
+        }
+        else if (!cancelled && !stream_shutdown_requested() && result.httpCode == 200) {
+          // Only a successful upstream transfer receives the terminating chunk.
+          // A cancelled or failed SSE remains visibly truncated to the client.
+          framing::sse_end(*response);
+          flush();
         }
       }
       catch (...) {
         if (!header_sent) {
-          response->write(SimpleWeb::StatusCode::server_error_internal_server_error,
+          framing::reply(*response, 500,
             R"({"error":{"message":"AI stream failed","type":"internal_error"}})",
-            { { "Content-Type", "application/json" } });
+            "application/json");
         }
       }
     };
     if (!submit_stream(std::move(task))) {
-      response->write(SimpleWeb::StatusCode::server_error_service_unavailable,
+      response->close_connection_after_response = true;
+      framing::reply(*response, 503,
         R"({"error":{"message":"Too many AI streams","type":"capacity_error"}})",
-        { { "Content-Type", "application/json" }, { "Retry-After", "1" } });
+        "application/json", true);
     }
   }
 }  // namespace ai::http
