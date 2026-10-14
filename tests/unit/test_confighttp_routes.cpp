@@ -213,6 +213,29 @@ TEST_F(ConfigHttpRoutes, AiPreflightRemainsAccessibleWithoutCredentials) {
   EXPECT_EQ(response->header.find("Access-Control-Allow-Methods")->second, "GET, POST, OPTIONS");
 }
 
+TEST_F(ConfigHttpRoutes, AiStreamStillRejectsCrossSiteAndDuplicateOriginBeforeStartingSse) {
+  auto client = connect();
+  for (const auto &headers : {
+         SimpleWeb::CaseInsensitiveMultimap { { "Content-Type", "application/json" }, { "Origin", "https://evil.example" } },
+         SimpleWeb::CaseInsensitiveMultimap { { "Content-Type", "application/json" }, { "Origin", "https://localhost" }, { "Origin", "https://evil.example" } } }) {
+    const auto response = client->request("POST", "/api/ai/chat/completions", R"({"stream":true})", headers);
+    EXPECT_EQ(response->status_code, "403 Forbidden");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string())["error"], "Cross-site request denied");
+    EXPECT_EQ(response->header.count("Transfer-Encoding"), 0);
+  }
+}
+
+TEST_F(ConfigHttpRoutes, AiStreamStillRequiresInitialCredentialsAndJson) {
+  config::sunshine.username.clear();
+  auto client = connect();
+  const auto response = client->request("POST", "/api/ai/chat/completions", R"({"stream":true})", { { "Content-Type", "application/json" } });
+  EXPECT_EQ(response->status_code, "307 Temporary Redirect");
+  ASSERT_NE(response->header.find("Location"), response->header.end());
+  EXPECT_EQ(response->header.find("Location")->second, "/welcome");
+  EXPECT_EQ(response->header.count("Transfer-Encoding"), 0);
+  EXPECT_EQ(client->request("POST", "/api/ai/chat/completions", R"({"stream":true})")->status_code, "400 Bad Request");
+}
+
 TEST_F(ConfigHttpRoutes, LocalLogoutAndUnknownRouteKeepTheirStatusCodes) {
   auto client = connect();
   EXPECT_EQ(client->request("POST", "/api/logout")->status_code, "200 OK");
