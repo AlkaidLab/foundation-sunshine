@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 
 project(sunshine_tools)
 
@@ -7,7 +7,7 @@ include_directories("${CMAKE_SOURCE_DIR}")
 add_executable(dxgi-info dxgi.cpp)
 set_target_properties(dxgi-info PROPERTIES CXX_STANDARD 23)
 target_link_libraries(dxgi-info
-        ${CMAKE_THREAD_LIBS_INIT}
+        PRIVATE Threads::Threads
         dxgi
         ${PLATFORM_LIBRARIES})
 target_compile_options(dxgi-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
@@ -15,8 +15,8 @@ target_compile_options(dxgi-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 add_executable(audio-info audio.cpp)
 set_target_properties(audio-info PROPERTIES CXX_STANDARD 23)
 target_link_libraries(audio-info
-        ${Boost_LIBRARIES}
-        ${CMAKE_THREAD_LIBS_INIT}
+        PRIVATE ${Boost_LIBRARIES}
+        Threads::Threads
         ksuser
         ${PLATFORM_LIBRARIES})
 target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
@@ -24,7 +24,7 @@ target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 add_executable(sunshinesvc sunshinesvc.cpp)
 set_target_properties(sunshinesvc PROPERTIES CXX_STANDARD 23)
 target_link_libraries(sunshinesvc
-        ${CMAKE_THREAD_LIBS_INIT}
+        PRIVATE Threads::Threads
         userenv
         wtsapi32
         ${PLATFORM_LIBRARIES})
@@ -34,7 +34,7 @@ add_executable(qiin-tabtip qiin-tabtip.cpp)
 set_target_properties(qiin-tabtip PROPERTIES CXX_STANDARD 23)
 target_compile_definitions(qiin-tabtip PRIVATE UNICODE _UNICODE)
 target_link_libraries(qiin-tabtip
-        ${CMAKE_THREAD_LIBS_INIT}
+        PRIVATE Threads::Threads
         shell32
         advapi32
         ole32
@@ -57,10 +57,10 @@ endif()
 add_executable(test_args test_args.cpp)
 set_target_properties(test_args PROPERTIES CXX_STANDARD 23)
 target_link_libraries(test_args
-        ${CMAKE_THREAD_LIBS_INIT}
+        PRIVATE Threads::Threads
         ${PLATFORM_LIBRARIES})
 if(WIN32)
-    target_link_libraries(test_args advapi32 userenv)
+    target_link_libraries(test_args PRIVATE advapi32 userenv)
 endif()
 target_compile_options(test_args PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 # 明确标记为不安装（开发测试工具），但可以正常构建
@@ -72,7 +72,7 @@ if(WIN32)
             CXX_STANDARD 23
             CXX_STANDARD_REQUIRED ON)
     target_link_libraries(vdd-frame-channel-probe
-            setupapi
+            PRIVATE setupapi
             ${PLATFORM_LIBRARIES})
     target_compile_options(vdd-frame-channel-probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
@@ -87,7 +87,7 @@ if(WIN32)
     target_include_directories(vtouch-poc PRIVATE
             "${CMAKE_SOURCE_DIR}")
     target_link_libraries(vtouch-poc
-            Boost::asio
+            PRIVATE Boost::asio
             Boost::system
             shell32
             ole32

@@ -3,7 +3,7 @@
 
 add_executable(sunshine ${SUNSHINE_TARGET_FILES})
 if(WIN32)
-    target_link_libraries(sunshine Pyrowave::Runtime)
+    target_link_libraries(sunshine PRIVATE Pyrowave::Runtime)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSE"
             DESTINATION "tools/pyrowave" RENAME "LICENSE.pyrowave" COMPONENT application)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/NOTICE.md"
@@ -46,7 +46,7 @@ if(NOT DEFINED CMAKE_CUDA_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 
-target_link_libraries(sunshine ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
+target_link_libraries(sunshine PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS})
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(sunshine sunshine_rtx_video_adapter)
     target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
@@ -82,26 +82,7 @@ else()
     set(NPM_BUILD_HOMEBREW "")
 endif()
 
-#WebUI build
-option(BUILD_WEB_UI "Build the web UI via npm" ON)
-
-if(BUILD_WEB_UI)
-    find_program(NPM npm REQUIRED)
-
-    if (NPM_OFFLINE)
-        set(NPM_INSTALL_FLAGS "--offline")
-    else()
-        set(NPM_INSTALL_FLAGS "")
-    endif()
-
-    add_custom_target(web-ui ALL
-            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            COMMENT "Installing NPM Dependencies and Building the Web UI"
-            COMMAND "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" install ${NPM_INSTALL_FLAGS}
-            COMMAND "${CMAKE_COMMAND}" -E env "SUNSHINE_BUILD_HOMEBREW=${NPM_BUILD_HOMEBREW}" "SUNSHINE_SOURCE_ASSETS_DIR=${NPM_SOURCE_ASSETS_DIR}" "SUNSHINE_ASSETS_DIR=${NPM_ASSETS_DIR}" "$<$<BOOL:${WIN32}>:cmd;/C>" "${NPM}" run build  # cmake-lint: disable=C0301
-            COMMAND_EXPAND_LISTS
-            VERBATIM)
-endif()
+include(${CMAKE_MODULE_PATH}/targets/web_ui.cmake)
 
 # docs
 if(BUILD_DOCS)
@@ -116,7 +97,7 @@ endif()
 
 # custom compile flags, must be after adding tests
 
-if (NOT BUILD_TESTS)
+if (NOT BUILD_TESTS AND NOT BUILD_TRAY_TESTS)
     set(TEST_DIR "")
 else()
     set(TEST_DIR "${CMAKE_SOURCE_DIR}/tests")
@@ -140,20 +121,10 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViG
         COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650"
         COMPILE_FLAGS ${VIGEM_COMPILE_FLAGS})
 
-# src/nvhttp
-string(TOUPPER "x${CMAKE_BUILD_TYPE}" BUILD_TYPE)
-if("${BUILD_TYPE}" STREQUAL "XDEBUG")
-    if(WIN32)
-        if (NOT BUILD_TESTS)
-            set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
-                    DIRECTORY "${CMAKE_SOURCE_DIR}"
-                    PROPERTIES COMPILE_FLAGS -O2)
-        else()
-            set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
-                    DIRECTORY "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/tests"
-                    PROPERTIES COMPILE_FLAGS -O2)
-        endif()
-    endif()
-else()
-    add_definitions(-DNDEBUG)
+# Preserve the Windows debug-handler optimization for every generator. CMake's
+# normal per-configuration flags own NDEBUG; Debug must keep assertions enabled.
+if(WIN32)
+    set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
+            DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
+            PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
 endif()
