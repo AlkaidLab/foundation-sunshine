@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-source = (ROOT / "src/input.cpp").read_text()
+source = (ROOT / "src/input.cpp").read_text(encoding="utf-8")
 slot = source[source.index("  struct gamepad_t {"):source.index("  struct modifier_state_t {")]
 start = source.index("  void\n  passthrough(std::shared_ptr<input_t> &input, PNV_MULTI_CONTROLLER_PACKET packet)")
 handler = source[start:source.index("  enum class batch_result_e", start)]
@@ -185,7 +185,7 @@ parser.add_argument("--compiler", help="GNU/Clang compiler selected by the paren
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="sunshine-controller-handoff-") as directory:
     path = pathlib.Path(directory)
-    (path / "probe.cpp").write_text(fixture)
+    (path / "probe.cpp").write_text(fixture, encoding="utf-8")
     compiler = args.compiler or shutil.which("clang++") or shutil.which("g++")
     if not compiler:
         raise RuntimeError("A C++ compiler is required")
