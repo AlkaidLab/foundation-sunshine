@@ -76,4 +76,4 @@ Web UI 使用锁文件安装依赖，安装和打包各有输出与输入依赖�
 
 Windows `test-win` Preset 使用独立的 `build-tests` 目录，避免覆盖 `dev-win` 构建的 `build/tests` 子目录。
 
-公共宿主文件在对应功能目录的 `sources.cmake` 中显式列举，`cmake/sources/host.cmake` 汇总绝对路径清单；第三方清单位于 `cmake/sources/third_party.cmake`，不修改第三方项目。`SUNSHINE_HOST_SOURCES` 仅包含编译文件，头文件通过独立的 `SUNSHINE_HOST_HEADERS` 清单以 `PRIVATE` 源文件保留 IDE 展示，不改变 include 顺序。`main.cpp` 只在应用目标中声明，主测试直接使用公共源码及平台清单，保持自己的 `SUNSHINE_TESTS` 编译定义；三个共享库继续拥有各自的实现文件。
+公共宿主文件在 `cmake/sources/host.cmake` 中按功能分组、以短路径显式列举，相关 `.cpp/.h` 成对排列；头文件作为私有源文件保留 IDE 展示，不改变 include 顺序。`main.cpp` 只在应用目标中声明，主测试直接使用公共源码及平台清单，保持自己的 `SUNSHINE_TESTS` 编译定义；三个共享库继续拥有各自的实现文件。

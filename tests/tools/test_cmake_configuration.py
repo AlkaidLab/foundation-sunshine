@@ -92,7 +92,7 @@ class Configuration(unittest.TestCase):
 
     def test_source_manifest_keeps_application_and_test_variants_separate(self):
         module = SOURCE / 'src/confighttp'
-        self.write('src/confighttp/sources.cmake', (module / 'sources.cmake').read_text(encoding='utf-8'))
+        self.write('cmake/sources/host.cmake', (SOURCE / 'cmake/sources/host.cmake').read_text(encoding='utf-8'))
         # Stand-ins keep this ownership check independent of HTTP dependencies.
         for path in module.iterdir():
             if path.suffix in ['.cpp', '.h']:
@@ -101,13 +101,12 @@ class Configuration(unittest.TestCase):
         self.write('app.cpp', '#include <cstdio>\nint variant();\nint main() { std::printf("%d", variant()); }\n')
         self.write('tests/main.cpp', (self.project / 'app.cpp').read_text())
         self.write('CMakeLists.txt', 'cmake_minimum_required(VERSION 3.25)\nproject(SourceVariants LANGUAGES CXX)\n'
-                   'include(src/confighttp/sources.cmake)\nadd_executable(application app.cpp)\n'
-                   'target_sources(application PRIVATE ${SUNSHINE_CONFIGHTTP_SOURCES})\n'
-                   'target_sources(application PRIVATE ${SUNSHINE_CONFIGHTTP_HEADERS})\n'
+                   'include(cmake/sources/host.cmake)\nset(module_sources ${SUNSHINE_HOST_SOURCES})\n'
+                   'list(FILTER module_sources INCLUDE REGEX "/src/confighttp/")\nadd_executable(application app.cpp)\n'
+                   'target_sources(application PRIVATE ${module_sources})\n'
                    'add_subdirectory(tests)\n')
         self.write('tests/CMakeLists.txt', 'add_executable(test_variant main.cpp)\n'
-                   'target_sources(test_variant PRIVATE ${SUNSHINE_CONFIGHTTP_SOURCES})\n'
-                   'target_sources(test_variant PRIVATE ${SUNSHINE_CONFIGHTTP_HEADERS})\n'
+                   'target_sources(test_variant PRIVATE ${module_sources})\n'
                    'target_compile_definitions(test_variant PRIVATE SUNSHINE_TESTS)\n')
         self.configure([f'-DCMAKE_CXX_COMPILER={args.compiler}'])
         self.build_project()

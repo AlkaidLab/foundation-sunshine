@@ -509,7 +509,6 @@ set(SUNSHINE_SOURCES
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
 
 add_executable(${PROJECT_NAME} ${TEST_SOURCES})
-target_sources(${PROJECT_NAME} PRIVATE ${SUNSHINE_HOST_HEADERS})
 target_sources(${PROJECT_NAME} PRIVATE
         ${SUNSHINE_SOURCES}
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c)
