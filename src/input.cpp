@@ -144,6 +144,7 @@ namespace input {
     gamepad_t():
         gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
     ~gamepad_t() {
+      reset_state();
       ds5 = false;
       if (id >= 0) {
         task_pool.push([id = this->id]() {
@@ -157,6 +158,9 @@ namespace input {
     platf::gamepad_state_t gamepad_state;
 
     thread_pool_util::ThreadPool::task_id_t back_timeout_id;
+    thread_pool_util::ThreadPool::task_id_t home_release_timeout_id {};
+    std::uint64_t generation {};
+    bool client_home_pressed = false;
 
     int id;
 
@@ -166,6 +170,18 @@ namespace input {
     // Sunshine forces the button to be in a specific state until the gamepad state matches that of
     // Moonlight once more.
     button_state_e back_button_state;
+
+    void
+    reset_state() {
+      ++generation;
+      task_pool.cancel(back_timeout_id);
+      task_pool.cancel(home_release_timeout_id);
+      back_timeout_id = nullptr;
+      home_release_timeout_id = nullptr;
+      gamepad_state = {};
+      client_home_pressed = false;
+      back_button_state = button_state_e::NONE;
+    }
   };
 
   struct modifier_state_t {
@@ -1169,6 +1185,7 @@ namespace input {
     }
 
     // Allocate a new gamepad
+    input->gamepads[packet->controllerNumber].reset_state();
     if (platf::alloc_gamepad(
           platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue, input->client_gamepad)) {
       free_id(gamepadMask, id);
@@ -1539,6 +1556,7 @@ namespace input {
         return;
       }
 
+      gamepad.reset_state();
       if (platf::alloc_gamepad(
             platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
@@ -1550,6 +1568,7 @@ namespace input {
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
+      gamepad.reset_state();
       free_gamepad(platf_input, gamepad.id);
       gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
@@ -1576,6 +1595,7 @@ namespace input {
     };
 
     auto bf_new = gamepad_state.buttonFlags;
+    gamepad.client_home_pressed = (bf_new & platf::HOME) != 0;
     switch (gamepad.back_button_state) {
       case button_state_e::UP:
         if (!(platf::BACK & bf_new)) {
@@ -1593,6 +1613,7 @@ namespace input {
         break;
     }
 
+    if (gamepad.home_release_timeout_id) gamepad_state.buttonFlags |= platf::HOME;
     bf = gamepad_state.buttonFlags ^ gamepad.gamepad_state.buttonFlags;
     bf_new = gamepad_state.buttonFlags;
 
@@ -1600,8 +1621,10 @@ namespace input {
       if (platf::BACK & bf_new) {
         // Don't emulate home button if timeout < 0
         if (config::input.back_button_timeout >= 0ms) {
-          auto f = [input, controller = packet->controllerNumber]() {
+          auto f = [input, controller = packet->controllerNumber, generation = gamepad.generation]() {
             auto &gamepad = input->gamepads[controller];
+            if (gamepad.id < 0 || gamepad.generation != generation) return;
+            gamepad.back_timeout_id = nullptr;
 
             auto &state = gamepad.gamepad_state;
 
@@ -1614,14 +1637,16 @@ namespace input {
             state.buttonFlags |= platf::HOME;
             platf::gamepad_update(platf_input, gamepad.id, state);
 
-            // Sleep for a short time to allow the input to be detected
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-            // Release Home button
-            state.buttonFlags &= ~platf::HOME;
-            platf::gamepad_update(platf_input, gamepad.id, state);
-
-            gamepad.back_timeout_id = nullptr;
+            // Keep the input worker responsive to removal during the Home press.
+            // A delayed release from the old device must never modify a reused slot.
+            auto release_home = [input, controller, generation]() {
+              auto &gamepad = input->gamepads[controller];
+              if (gamepad.id < 0 || gamepad.generation != generation) return;
+              gamepad.home_release_timeout_id = nullptr;
+              if (!gamepad.client_home_pressed) gamepad.gamepad_state.buttonFlags &= ~platf::HOME;
+              platf::gamepad_update(platf_input, gamepad.id, gamepad.gamepad_state);
+            };
+            gamepad.home_release_timeout_id = task_pool.pushDelayed(std::move(release_home), std::chrono::milliseconds(100)).task_id;
           };
 
           gamepad.back_timeout_id = task_pool.pushDelayed(std::move(f), config::input.back_button_timeout).task_id;
