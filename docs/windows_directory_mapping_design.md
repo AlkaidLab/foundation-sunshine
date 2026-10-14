@@ -640,7 +640,7 @@ Windows 特定测试：
 
 ## HTTP 与 WSS 实现分工
 
-Sunshine 现有 `Simple-Web-Server` 适合继续承担 Web UI、REST API、GameStream `nvhttp` 能力发现和轻量管理接口，但不应作为完整文件映射 WSS 数据通道的主要实现。
+Sunshine 的 Web UI、REST API、GameStream `nvhttp` 能力发现和轻量管理接口已使用 `src/http/` 共用 Beast HTTP 服务。完整文件映射 WSS 数据通道由独立 Beast WebSocket 会话负责，协议与生命周期分工见 [HTTP 架构](http-transport.zh-CN.md)。
 
 原因：
 
@@ -648,17 +648,17 @@ Sunshine 现有 `Simple-Web-Server` 适合继续承担 Web UI、REST API、GameS
 - 需要 WebSocket binary frame。
 - 需要 ping/pong、close handshake、fragment、mask、backpressure。
 - 需要大文件分块、取消、限速和弱网恢复。
-- `Simple-Web-Server` 只提供较底层的 `on_upgrade` 接管点，完整 WebSocket 协议仍需自行实现。
+- HTTP 请求/响应生命周期与长期双向 WebSocket 会话不同，管理路由不应承担文件传输状态机。
 
-因此推荐分工：
+当前分工：
 
 ```text
-Simple-Web-Server
+src/http (Boost.Beast HTTP)
   -> nvhttp HTTPS /api/v1/file-mapping/capability
   -> Web UI /api/v1/file-mapping/config
   -> Web UI 管理接口
 
-Boost.Beast / Boost.Asio
+src/file_mapping (Boost.Beast WebSocket / Boost.Asio)
   -> file mapping WebSocket session
   -> JSON control frame
   -> binary data frame

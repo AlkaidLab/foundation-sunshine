@@ -305,7 +305,12 @@ TEST_F(BeastHttp, CaClientCertificatePolicyAndServerHostnameVerificationWorkToge
   context.use_certificate_chain_file((directory / "client.pem").string());
   context.use_private_key_file((directory / "client-key.pem").string(), ssl::context::pem);
   encrypted = std::make_unique<web::Server<web::HTTPS>>((directory / "cert.pem").string(), (directory / "key.pem").string(), (directory / "client.pem").string());
-  encrypted->resource["^/echo$"]["POST"] = [](auto response, auto) { response->write("trusted"); };
+  auto calls = std::make_shared<std::atomic_int>(0);
+  encrypted->resource["^/echo$"]["POST"] = [calls](auto response, auto request) {
+    ++*calls;
+    EXPECT_EQ(request->certificate_sha256.size(), 64);
+    response->write("trusted");
+  };
   const auto port = start(*encrypted);
   auto client = socket(port);
   EXPECT_EQ(request(*client).body(), "trusted");
@@ -319,6 +324,14 @@ TEST_F(BeastHttp, CaClientCertificatePolicyAndServerHostnameVerificationWorkToge
     anonymous.read_some(net::buffer(byte), ec);
   }
   EXPECT_TRUE(ec);
+  const auto other = crypto::gen_creds("untrusted-client", 2048);
+  std::ofstream(directory / "other.pem") << other.x509;
+  std::ofstream(directory / "other-key.pem") << other.pkey;
+  web::Client<web::HTTPS> untrusted("127.0.0.1:" + std::to_string(port), false,
+    (directory / "other.pem").string(), (directory / "other-key.pem").string());
+  untrusted.config.timeout = 3;
+  EXPECT_THROW(untrusted.request("POST", "/echo", ""), boost::system::system_error);
+  EXPECT_EQ(*calls, 1);
 }
 
 TEST_F(BeastHttp, OversizedHeadersAreRejectedBeforeCallingHandlers) {

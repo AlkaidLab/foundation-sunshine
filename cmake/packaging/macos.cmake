@@ -20,6 +20,4 @@ endif()
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}")
-# copy assets to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets")
+# Uninstalled assets are tracked by the shared assets build target.

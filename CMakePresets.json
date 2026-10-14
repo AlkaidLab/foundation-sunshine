@@ -2,7 +2,7 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 20,
+    "minor": 25,
     "patch": 0
   },
   "configurePresets": [
@@ -17,6 +17,16 @@
         "SUNSHINE_ASSETS_DIR": "assets",
         "FETCH_DRIVER_DEPS": "OFF"
       }
+    },
+    {
+      "name": "test-win",
+      "inherits": "dev-win",
+      "binaryDir": "${sourceDir}/build-tests",
+      "cacheVariables": {
+        "BUILD_TESTS": "ON",
+        "BUILD_WEB_UI": "OFF",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -24,6 +34,19 @@
       "name": "dev",
       "displayName": "Dev Build",
       "configurePreset": "dev-win"
+    },
+    {
+      "name": "test-win",
+      "configurePreset": "test-win"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-win",
+      "configurePreset": "test-win",
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }
