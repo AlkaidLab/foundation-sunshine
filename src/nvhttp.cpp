@@ -41,6 +41,8 @@
 #include "client_fingerprint.h"
 #include "config.h"
 #include "confighttp.h"
+#include "ai/proxy.h"
+#include "ai/http_stream.h"
 #include "display_device/session.h"
 #include "display_device/vdd_capability.h"
 #include "file_handler.h"
@@ -637,7 +639,7 @@ namespace nvhttp {
     tree.put("root.appListEtag", proc::proc.get_apps_etag());
 
     // AI capability: inform client if AI proxy is available
-    tree.put("root.AiCapability", confighttp::isAiEnabled() ? 1 : 0);
+    tree.put("root.AiCapability", ai::isAiEnabled() ? 1 : 0);
 
 #ifdef _WIN32
     tree.put("root.VddCapabilityVersion", display_device::vdd_capability::capability_version);
@@ -1355,6 +1357,7 @@ namespace nvhttp {
     /* Stop the public HTTP listeners first.  Once their worker threads have
      * joined, no capability request or route callback can race broker/host
      * teardown below. */
+    ai::http::shutdown_streams();
     https_server.stop();
     http_server.stop();
     ssl.join();
