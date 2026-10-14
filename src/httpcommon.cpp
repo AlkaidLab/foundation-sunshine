@@ -26,8 +26,8 @@
 
 #include <boost/asio/ssl/context.hpp>
 
-#include <Simple-Web-Server/server_http.hpp>
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
+#include "src/http/server.h"
 #include <boost/asio/ssl/context_base.hpp>
 #include <curl/curl.h>
 

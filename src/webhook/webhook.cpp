@@ -8,11 +8,11 @@
 #include <algorithm>
 #include <atomic>
 #include <bitset>
+#include <cctype>
 #include <charconv>
 #include <chrono>
-#include <cctype>
-#include <ctime>
 #include <cstdint>
+#include <ctime>
 #include <deque>
 #include <functional>
 #include <iomanip>
@@ -28,7 +28,7 @@
 #include <thread>
 #include <utility>
 
-#include <Simple-Web-Server/client_http.hpp>
+#include "src/http/client.h"
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -40,8 +40,6 @@
 #include "src/platform/common.h"
 #include "src/uuid.h"
 #include "webhook_format.h"
-#include "webhook_httpclient.h"
-#include "webhook_httpsclient.h"
 
 using namespace std::literals;
 
@@ -59,7 +57,8 @@ namespace webhook {
       std::make_shared<const configuration_t>()
     };
 
-    bool use_chinese_content() {
+    bool
+    use_chinese_content() {
       return config::sunshine.locale == "zh"sv || config::sunshine.locale == "zh_TW"sv;
     }
 
@@ -84,7 +83,8 @@ namespace webhook {
       std::chrono::steady_clock::time_point accepted_at;
     };
 
-    bool get_url_part(CURLU *url, CURLUPart part, std::string &value, unsigned int flags = 0) {
+    bool
+    get_url_part(CURLU *url, CURLUPart part, std::string &value, unsigned int flags = 0) {
       char *raw = nullptr;
       if (curl_url_get(url, part, &raw, flags) != CURLUE_OK) {
         return false;
@@ -95,7 +95,8 @@ namespace webhook {
       return true;
     }
 
-    bool has_url_part(CURLU *url, CURLUPart part) {
+    bool
+    has_url_part(CURLU *url, CURLUPart part) {
       char *raw = nullptr;
       const auto result = curl_url_get(url, part, &raw, 0);
       if (raw) {
@@ -104,7 +105,8 @@ namespace webhook {
       return result == CURLUE_OK;
     }
 
-    bool parse_webhook_url(const std::string &value, parsed_url_t &parsed) {
+    bool
+    parse_webhook_url(const std::string &value, parsed_url_t &parsed) {
       if (value.empty() ||
           value.size() > MAX_URL_SIZE ||
           std::any_of(value.begin(), value.end(), [](unsigned char c) {
@@ -182,7 +184,8 @@ namespace webhook {
       return true;
     }
 
-    std::string normalize_header_value(const std::string &value) {
+    std::string
+    normalize_header_value(const std::string &value) {
       std::string sanitized;
       sanitized.reserve(std::min(value.size(), MAX_HEADER_VALUE_BYTES));
       for (const unsigned char c : value) {
@@ -194,13 +197,15 @@ namespace webhook {
       return sanitized;
     }
 
-    long timeout_seconds(std::chrono::milliseconds timeout) noexcept {
+    long
+    timeout_seconds(std::chrono::milliseconds timeout) noexcept {
       const auto milliseconds = std::max<std::int64_t>(1, timeout.count());
       const auto seconds = milliseconds / 1000 + (milliseconds % 1000 != 0 ? 1 : 0);
       return static_cast<long>(std::min<std::int64_t>(seconds, (std::numeric_limits<long>::max)()));
     }
 
-    int parse_status_code(const std::string &status_line) noexcept {
+    int
+    parse_status_code(const std::string &status_line) noexcept {
       const auto separator = status_line.find(' ');
       const char *begin = status_line.data();
       const char *end = begin + (separator == std::string::npos ? status_line.size() : separator);
@@ -209,11 +214,12 @@ namespace webhook {
       return result.ec == std::errc {} && result.ptr == end ? status : 0;
     }
 
-    std::optional<std::time_t> parse_http_date(const std::string &value) {
+    std::optional<std::time_t>
+    parse_http_date(const std::string &value) {
       static constexpr const char *HTTP_DATE_FORMATS[] {
         "%a, %d %b %Y %H:%M:%S GMT",  // IMF-fixdate
         "%A, %d-%b-%y %H:%M:%S GMT",  // obsolete RFC 850 date
-        "%a %b %d %H:%M:%S %Y",       // obsolete ANSI C asctime date
+        "%a %b %d %H:%M:%S %Y",  // obsolete ANSI C asctime date
       };
 
       for (const char *format : HTTP_DATE_FORMATS) {
@@ -245,7 +251,8 @@ namespace webhook {
       return std::nullopt;
     }
 
-    std::optional<std::chrono::seconds> parse_retry_after(const SimpleWeb::CaseInsensitiveMultimap &headers) noexcept {
+    std::optional<std::chrono::seconds>
+    parse_retry_after(const web::CaseInsensitiveMultimap &headers) noexcept {
       const auto it = headers.find("Retry-After");
       if (it == headers.end() || it->second.empty()) {
         return std::nullopt;
@@ -279,7 +286,8 @@ namespace webhook {
       }
     }
 
-    bool is_retryable_status(int status) noexcept {
+    bool
+    is_retryable_status(int status) noexcept {
       switch (status) {
         case 408:
         case 429:
@@ -293,25 +301,27 @@ namespace webhook {
       }
     }
 
-    bool is_success_status(int status) noexcept {
+    bool
+    is_success_status(int status) noexcept {
       return status >= 200 && status < 300;
     }
 
-    std::string generate_signature(long long timestamp, const std::string &hostname) {
+    std::string
+    generate_signature(long long timestamp, const std::string &hostname) {
       const std::string data = hostname + std::to_string(timestamp) + "Sunshine_Foundation";
       return std::to_string(std::hash<std::string> {}(data));
     }
 
-    SimpleWeb::CaseInsensitiveMultimap generate_webhook_headers(
+    web::CaseInsensitiveMultimap
+    generate_webhook_headers(
       const std::string &delivery_id,
       int event_id,
-      const std::string &event_type
-    ) {
+      const std::string &event_type) {
       const auto now = std::chrono::system_clock::now();
       const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
       const std::string hostname = normalize_header_value(platf::get_host_name());
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json; charset=utf-8");
       headers.emplace("Connection", "close");
       headers.emplace("User-Agent", "Sunshine_Foundation/1.0 (System Notification Service)");
@@ -338,7 +348,8 @@ namespace webhook {
       return headers;
     }
 
-    void invoke_completion(const std::shared_ptr<delivery_t> &delivery, delivery_result_t result) noexcept {
+    void
+    invoke_completion(const std::shared_ptr<delivery_t> &delivery, delivery_result_t result) noexcept {
       if (!delivery->completion) {
         return;
       }
@@ -355,7 +366,7 @@ namespace webhook {
     }
 
     class dispatcher_t {
-      using work_guard_t = boost::asio::executor_work_guard<SimpleWeb::io_context::executor_type>;
+      using work_guard_t = boost::asio::executor_work_guard<web::io_context::executor_type>;
 
       struct active_attempt_t {
         std::shared_ptr<delivery_t> delivery;
@@ -376,7 +387,8 @@ namespace webhook {
         stop();
       }
 
-      bool start() noexcept {
+      bool
+      start() noexcept {
         std::lock_guard<std::mutex> lock(lifecycle_mutex_);
         if (accepting_.load(std::memory_order_acquire)) {
           return true;
@@ -386,7 +398,7 @@ namespace webhook {
         }
 
         try {
-          io_ = std::make_shared<SimpleWeb::io_context>();
+          io_ = std::make_shared<web::io_context>();
           work_guard_ = std::make_unique<work_guard_t>(boost::asio::make_work_guard(*io_));
           stopping_ = false;
           accepting_.store(true, std::memory_order_release);
@@ -410,8 +422,9 @@ namespace webhook {
         return false;
       }
 
-      void stop() noexcept {
-        std::shared_ptr<SimpleWeb::io_context> io;
+      void
+      stop() noexcept {
+        std::shared_ptr<web::io_context> io;
         {
           std::lock_guard<std::mutex> lock(lifecycle_mutex_);
           shutdown_requested_ = true;
@@ -455,11 +468,13 @@ namespace webhook {
         pending_count_.store(0, std::memory_order_release);
       }
 
-      bool active() const noexcept {
+      bool
+      active() const noexcept {
         return accepting_.load(std::memory_order_acquire);
       }
 
-      delivery_error_t enqueue(std::shared_ptr<delivery_t> delivery) noexcept {
+      delivery_error_t
+      enqueue(std::shared_ptr<delivery_t> delivery) noexcept {
         std::lock_guard<std::mutex> lock(lifecycle_mutex_);
         if (!accepting_.load(std::memory_order_acquire) || !io_) {
           return delivery_error_t::NOT_RUNNING;
@@ -500,13 +515,13 @@ namespace webhook {
             catch (const std::exception &) {
               BOOST_LOG(error) << "Webhook queue handler failed"sv;
               if (delivery) {
-                finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::INTERNAL});
+                finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::INTERNAL });
               }
             }
             catch (...) {
               BOOST_LOG(error) << "Webhook queue handler failed with an unknown exception"sv;
               if (delivery) {
-                finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::INTERNAL});
+                finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::INTERNAL });
               }
             }
           });
@@ -520,7 +535,8 @@ namespace webhook {
       }
 
     private:
-      void run(const std::shared_ptr<SimpleWeb::io_context> &io) noexcept {
+      void
+      run(const std::shared_ptr<web::io_context> &io) noexcept {
         for (;;) {
           try {
             io->run();
@@ -535,14 +551,15 @@ namespace webhook {
         }
       }
 
-      void accept_on_io(const std::shared_ptr<delivery_t> &delivery) {
+      void
+      accept_on_io(const std::shared_ptr<delivery_t> &delivery) {
         if (stopping_) {
-          finalize(delivery, {false, 0, 0, delivery_error_t::CANCELLED});
+          finalize(delivery, { false, 0, 0, delivery_error_t::CANCELLED });
           return;
         }
 
         if (delivery->production && is_rate_limited_on_io()) {
-          finalize(delivery, {false, 0, 0, delivery_error_t::RATE_LIMITED});
+          finalize(delivery, { false, 0, 0, delivery_error_t::RATE_LIMITED });
           return;
         }
 
@@ -550,7 +567,8 @@ namespace webhook {
         pump();
       }
 
-      bool is_rate_limited_on_io() {
+      bool
+      is_rate_limited_on_io() {
         const auto now = std::chrono::steady_clock::now();
         const auto window_start = now - RATE_LIMIT_WINDOW;
         while (!accepted_events_.empty() && accepted_events_.front() < window_start) {
@@ -569,7 +587,8 @@ namespace webhook {
         return false;
       }
 
-      void pump() noexcept {
+      void
+      pump() noexcept {
         while (!stopping_ && active_.size() < MAX_IN_FLIGHT_DELIVERIES && !ready_.empty()) {
           auto delivery = std::move(ready_.front());
           ready_.pop_front();
@@ -587,52 +606,54 @@ namespace webhook {
         }
       }
 
-      void start_attempt(const std::shared_ptr<delivery_t> &delivery) {
+      void
+      start_attempt(const std::shared_ptr<delivery_t> &delivery) {
         ++delivery->attempt;
         if (delivery->destination.https) {
           if (delivery->settings.skip_ssl_verify && !skip_tls_warning_logged_) {
             BOOST_LOG(warning) << "Webhook TLS certificate verification is disabled by configuration"sv;
             skip_tls_warning_logged_ = true;
           }
-          auto client = std::make_shared<WebhookHttpsClient>(
+          auto client = std::make_shared<web::Client<web::HTTPS>>(
             delivery->destination.server,
-            !delivery->settings.skip_ssl_verify
-          );
+            !delivery->settings.skip_ssl_verify);
           start_client(delivery, std::move(client));
         }
         else {
-          auto client = std::make_shared<WebhookHttpClient>(delivery->destination.server);
+          auto client = std::make_shared<web::Client<web::HTTP>>(delivery->destination.server);
           start_client(delivery, std::move(client));
         }
       }
 
       template <class Client>
-      void start_client(const std::shared_ptr<delivery_t> &delivery, std::shared_ptr<Client> client) {
+      void
+      start_client(const std::shared_ptr<delivery_t> &delivery, std::shared_ptr<Client> client) {
         const long seconds = timeout_seconds(delivery->settings.timeout);
         client->io_service = io_;
         client->config.timeout = seconds;
         client->config.timeout_connect = seconds;
         client->config.max_response_streambuf_size = MAX_RESPONSE_BYTES;
+        client->config.headers_only = true;
 
         const int attempt = delivery->attempt;
         const std::string id = delivery->id;
         auto deadline = std::make_shared<boost::asio::steady_timer>(*io_);
-        deadline->expires_after(std::chrono::seconds {seconds});
+        deadline->expires_after(std::chrono::seconds { seconds });
         const bool inserted = active_.emplace(id, active_attempt_t {
-          delivery,
-          attempt,
-          [client]() noexcept {
-            client->stop();
-          },
-          deadline
-        }).second;
+                                                    delivery,
+                                                    attempt,
+                                                    [client]() noexcept {
+                                                      client->stop();
+                                                    },
+                                                    deadline })
+                                .second;
         if (!inserted) {
           throw std::runtime_error("duplicate Webhook delivery ID");
         }
 
         using response_t = typename Client::Response;
-        std::function<void(std::shared_ptr<response_t>, const SimpleWeb::error_code &)> callback =
-          [this, id, attempt, client](std::shared_ptr<response_t> response, const SimpleWeb::error_code &) noexcept {
+        std::function<void(std::shared_ptr<response_t>, const web::error_code &)> callback =
+          [this, id, attempt, client](std::shared_ptr<response_t> response, const web::error_code &) noexcept {
             try {
               const int status = response ? parse_status_code(response->status_code) : 0;
               const auto retry_after = response ? parse_retry_after(response->header) : std::optional<std::chrono::seconds> {};
@@ -654,7 +675,7 @@ namespace webhook {
               BOOST_LOG(error) << "Webhook response handler failed with an unknown exception"sv;
               complete_attempt_on_io(id, attempt, true, 0, std::nullopt);
             }
-        };
+          };
 
         try {
           deadline->async_wait([this, id, attempt](const boost::system::error_code &ec) noexcept {
@@ -665,7 +686,8 @@ namespace webhook {
             if (active == active_.end() || active->second.attempt != attempt) {
               return;
             }
-            active->second.stop();
+            auto stop_client = active->second.stop;
+            stop_client();
             complete_attempt_on_io(id, attempt, true, 0, std::nullopt);
           });
           client->request(
@@ -673,8 +695,7 @@ namespace webhook {
             delivery->destination.target,
             delivery->payload,
             generate_webhook_headers(delivery->id, delivery->event_id, delivery->event_type),
-            std::move(callback)
-          );
+            std::move(callback));
         }
         catch (...) {
           try {
@@ -687,7 +708,8 @@ namespace webhook {
         }
       }
 
-      void complete_attempt_on_io(const std::string &id, int attempt, bool transport_error, int status, std::optional<std::chrono::seconds> retry_after) noexcept {
+      void
+      complete_attempt_on_io(const std::string &id, int attempt, bool transport_error, int status, std::optional<std::chrono::seconds> retry_after) noexcept {
         const auto it = active_.find(id);
         if (it == active_.end() || it->second.attempt != attempt) {
           return;
@@ -703,15 +725,15 @@ namespace webhook {
         handle_attempt_result(delivery, transport_error, status, retry_after);
       }
 
-      void handle_attempt_result(const std::shared_ptr<delivery_t> &delivery, bool transport_error, int status, std::optional<std::chrono::seconds> retry_after) noexcept {
+      void
+      handle_attempt_result(const std::shared_ptr<delivery_t> &delivery, bool transport_error, int status, std::optional<std::chrono::seconds> retry_after) noexcept {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now() - delivery->accepted_at
-        );
+          std::chrono::steady_clock::now() - delivery->accepted_at);
 
         if (!transport_error && is_success_status(status)) {
           BOOST_LOG(info) << "Webhook delivery "sv << delivery->id << " succeeded with HTTP "sv << status
                           << " after "sv << delivery->attempt << " attempt(s), "sv << elapsed.count() << " ms"sv;
-          finalize(delivery, {true, status, delivery->attempt, delivery_error_t::NONE});
+          finalize(delivery, { true, status, delivery->attempt, delivery_error_t::NONE });
           pump();
           return;
         }
@@ -735,11 +757,12 @@ namespace webhook {
           BOOST_LOG(warning) << "Webhook delivery "sv << delivery->id << " failed with a transport error after "sv
                              << delivery->attempt << " attempt(s), "sv << elapsed.count() << " ms"sv;
         }
-        finalize(delivery, {false, status, delivery->attempt, error});
+        finalize(delivery, { false, status, delivery->attempt, error });
         pump();
       }
 
-      void schedule_retry(const std::shared_ptr<delivery_t> &delivery, std::optional<std::chrono::seconds> retry_after) noexcept {
+      void
+      schedule_retry(const std::shared_ptr<delivery_t> &delivery, std::optional<std::chrono::seconds> retry_after) noexcept {
         try {
           std::chrono::milliseconds delay;
           if (retry_after) {
@@ -752,7 +775,7 @@ namespace webhook {
 
           auto timer = std::make_shared<boost::asio::steady_timer>(*io_);
           timer->expires_after(delay);
-          retry_waits_[delivery->id] = retry_wait_t {delivery, timer};
+          retry_waits_[delivery->id] = retry_wait_t { delivery, timer };
           const std::string id = delivery->id;
           timer->async_wait([this, id](const boost::system::error_code &ec) noexcept {
             std::shared_ptr<delivery_t> delivery;
@@ -765,7 +788,7 @@ namespace webhook {
               delivery = std::move(it->second.delivery);
               retry_waits_.erase(it);
               if (ec || stopping_) {
-                finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::CANCELLED});
+                finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::CANCELLED });
                 return;
               }
 
@@ -775,13 +798,13 @@ namespace webhook {
             catch (const std::exception &) {
               BOOST_LOG(error) << "Webhook retry handler failed"sv;
               if (delivery) {
-                finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::INTERNAL});
+                finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::INTERNAL });
               }
             }
             catch (...) {
               BOOST_LOG(error) << "Webhook retry handler failed with an unknown exception"sv;
               if (delivery) {
-                finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::INTERNAL});
+                finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::INTERNAL });
               }
             }
           });
@@ -789,23 +812,25 @@ namespace webhook {
         catch (const std::exception &) {
           retry_waits_.erase(delivery->id);
           BOOST_LOG(warning) << "Webhook retry scheduling failed"sv;
-          finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::INTERNAL});
+          finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::INTERNAL });
         }
         catch (...) {
           retry_waits_.erase(delivery->id);
           BOOST_LOG(warning) << "Webhook retry scheduling failed with an unknown exception"sv;
-          finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::INTERNAL});
+          finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::INTERNAL });
         }
       }
 
-      unsigned next_jitter() noexcept {
+      unsigned
+      next_jitter() noexcept {
         jitter_state_ ^= jitter_state_ << 13;
         jitter_state_ ^= jitter_state_ >> 17;
         jitter_state_ ^= jitter_state_ << 5;
         return jitter_state_ % 251;
       }
 
-      void finalize(const std::shared_ptr<delivery_t> &delivery, delivery_result_t result) noexcept {
+      void
+      finalize(const std::shared_ptr<delivery_t> &delivery, delivery_result_t result) noexcept {
         if (delivery->finalized) {
           return;
         }
@@ -814,7 +839,8 @@ namespace webhook {
         invoke_completion(delivery, result);
       }
 
-      void shutdown_on_io() noexcept {
+      void
+      shutdown_on_io() noexcept {
         if (stopping_) {
           return;
         }
@@ -827,13 +853,13 @@ namespace webhook {
         }
         for (auto &entry : pending_posts) {
           auto &delivery = entry.second;
-          finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::CANCELLED});
+          finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::CANCELLED });
         }
 
         while (!ready_.empty()) {
           auto delivery = std::move(ready_.front());
           ready_.pop_front();
-          finalize(delivery, {false, 0, delivery->attempt, delivery_error_t::CANCELLED});
+          finalize(delivery, { false, 0, delivery->attempt, delivery_error_t::CANCELLED });
         }
 
         for (auto &entry : retry_waits_) {
@@ -847,11 +873,13 @@ namespace webhook {
           catch (...) {
             // Continue finalizing all pending deliveries during shutdown.
           }
-          finalize(retry.delivery, {false, 0, retry.delivery->attempt, delivery_error_t::CANCELLED});
+          finalize(retry.delivery, { false, 0, retry.delivery->attempt, delivery_error_t::CANCELLED });
         }
         retry_waits_.clear();
 
-        for (auto &entry : active_) {
+        auto cancelling = std::move(active_);
+        active_.clear();
+        for (auto &entry : cancelling) {
           auto &active = entry.second;
           try {
             active.deadline->cancel();
@@ -859,18 +887,18 @@ namespace webhook {
           catch (...) {
           }
           active.stop();
-          finalize(active.delivery, {false, 0, active.delivery->attempt, delivery_error_t::CANCELLED});
+          finalize(active.delivery, { false, 0, active.delivery->attempt, delivery_error_t::CANCELLED });
         }
         active_.clear();
 
         accepted_events_.clear();
+        // Keep the event loop alive until Beast cancellation completions have
+        // released their buffers, callbacks and TLS contexts.
         work_guard_.reset();
-        if (io_) {
-          io_->stop();
-        }
       }
 
-      void report_queue_full() noexcept {
+      void
+      report_queue_full() noexcept {
         const auto now = std::chrono::steady_clock::now();
         auto previous = last_queue_full_log_.load(std::memory_order_relaxed);
         const auto current = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
@@ -880,13 +908,13 @@ namespace webhook {
       }
 
       std::mutex lifecycle_mutex_;
-      std::shared_ptr<SimpleWeb::io_context> io_;
+      std::shared_ptr<web::io_context> io_;
       std::unique_ptr<work_guard_t> work_guard_;
       std::thread thread_;
-      std::atomic<bool> accepting_ {false};
+      std::atomic<bool> accepting_ { false };
       bool shutdown_requested_ = false;
-      std::atomic<std::size_t> pending_count_ {0};
-      std::atomic<long long> last_queue_full_log_ {0};
+      std::atomic<std::size_t> pending_count_ { 0 };
+      std::atomic<long long> last_queue_full_log_ { 0 };
       std::map<std::string, std::shared_ptr<delivery_t>> pending_posts_;
 
       // The following state is owned exclusively by the I/O thread.
@@ -900,20 +928,21 @@ namespace webhook {
       bool skip_tls_warning_logged_ = false;
     };
 
-    dispatcher_t &dispatcher() {
+    dispatcher_t &
+    dispatcher() {
       static dispatcher_t instance;
       return instance;
     }
 
-    std::shared_ptr<delivery_t> make_delivery(
+    std::shared_ptr<delivery_t>
+    make_delivery(
       const settings_t &settings,
       std::string payload,
       int event_id,
       std::string event_type,
       bool production,
       int max_attempts,
-      completion_handler_t completion
-    ) {
+      completion_handler_t completion) {
       parsed_url_t destination;
       if (!parse_webhook_url(settings.url, destination)) {
         return nullptr;
@@ -933,12 +962,13 @@ namespace webhook {
       return delivery;
     }
 
-    void complete_rejected(completion_handler_t &completion, delivery_error_t error) noexcept {
+    void
+    complete_rejected(completion_handler_t &completion, delivery_error_t error) noexcept {
       if (!completion) {
         return;
       }
       try {
-        completion({false, 0, 0, error});
+        completion({ false, 0, 0, error });
       }
       catch (...) {
       }
@@ -949,7 +979,8 @@ namespace webhook {
     dispatcher().stop();
   }
 
-  std::unique_ptr<deinit_t> init() noexcept {
+  std::unique_ptr<deinit_t>
+  init() noexcept {
     try {
       auto guard = std::unique_ptr<deinit_t>(new deinit_t());
       init_webhook_format();
@@ -965,7 +996,8 @@ namespace webhook {
     return nullptr;
   }
 
-  bool ensure_running() noexcept {
+  bool
+  ensure_running() noexcept {
     try {
       return dispatcher().start();
     }
@@ -974,11 +1006,13 @@ namespace webhook {
     }
   }
 
-  bool runtime_active() noexcept {
+  bool
+  runtime_active() noexcept {
     return dispatcher().active();
   }
 
-  bool validate_configuration(const configuration_t &configuration) noexcept {
+  bool
+  validate_configuration(const configuration_t &configuration) noexcept {
     try {
       if (configuration.url.size() > MAX_URL_SIZE ||
           configuration.timeout < MIN_TIMEOUT ||
@@ -1034,22 +1068,24 @@ namespace webhook {
 
     active_configuration.store(
       std::move(configuration.configuration_),
-      std::memory_order_release
-    );
+      std::memory_order_release);
     return true;
   }
 
-  bool configure(configuration_t configuration) noexcept {
+  bool
+  configure(configuration_t configuration) noexcept {
     auto prepared = prepare_configuration(std::move(configuration));
     return commit_configuration(std::move(prepared));
   }
 
-  configuration_t current_configuration() {
+  configuration_t
+  current_configuration() {
     const auto configuration = active_configuration.load(std::memory_order_acquire);
     return *configuration;
   }
 
-  void send_event_async(const event_t &event) noexcept {
+  void
+  send_event_async(const event_t &event) noexcept {
     try {
       const auto configuration = current_configuration();
       const auto event_id = event_type_id(event.type);
@@ -1071,8 +1107,7 @@ namespace webhook {
         event_type_name(event.type),
         true,
         MAX_PRODUCTION_ATTEMPTS,
-        {}
-      );
+        {});
       if (!delivery) {
         BOOST_LOG(warning) << "Webhook event was rejected because the configured URL is invalid"sv;
         return;
@@ -1091,11 +1126,11 @@ namespace webhook {
     }
   }
 
-  bool send_test_async(
+  bool
+  send_test_async(
     const settings_t &settings,
     int retry_count,
-    completion_handler_t completion
-  ) noexcept {
+    completion_handler_t completion) noexcept {
     try {
       if (retry_count < 0 ||
           retry_count > MAX_TEST_RETRIES ||
@@ -1115,8 +1150,7 @@ namespace webhook {
         "webhook_test",
         false,
         retry_count + 1,
-        completion
-      );
+        completion);
       if (!delivery) {
         complete_rejected(completion, delivery_error_t::INVALID_URL);
         return false;
@@ -1135,7 +1169,8 @@ namespace webhook {
     }
   }
 
-  bool is_enabled() {
+  bool
+  is_enabled() {
     try {
       const auto configuration = current_configuration();
       return configuration.enabled && !configuration.url.empty();
@@ -1145,7 +1180,8 @@ namespace webhook {
     }
   }
 
-  bool is_event_enabled(event_type_t type) noexcept {
+  bool
+  is_event_enabled(event_type_t type) noexcept {
     try {
       const auto configuration = current_configuration();
       const auto id = event_type_id(type);
@@ -1156,11 +1192,13 @@ namespace webhook {
     }
   }
 
-  int event_type_id(event_type_t type) noexcept {
+  int
+  event_type_id(event_type_t type) noexcept {
     return static_cast<int>(type);
   }
 
-  const char *event_type_name(event_type_t type) noexcept {
+  const char *
+  event_type_name(event_type_t type) noexcept {
     switch (type) {
       case event_type_t::CONFIG_PIN_SUCCESS:
         return "config_pair_success";
@@ -1181,7 +1219,8 @@ namespace webhook {
     }
   }
 
-  std::string get_alert_message(event_type_t type, bool is_chinese) {
+  std::string
+  get_alert_message(event_type_t type, bool is_chinese) {
     switch (type) {
       case event_type_t::CONFIG_PIN_SUCCESS:
         return is_chinese ? "🔗 配置配对成功" : "🔗 Config pairing successful";
@@ -1202,7 +1241,8 @@ namespace webhook {
     }
   }
 
-  std::string sanitize_json_string(const std::string &str) {
+  std::string
+  sanitize_json_string(const std::string &str) {
     std::string result;
     result.reserve(str.size());
     for (const unsigned char c : str) {
@@ -1232,7 +1272,8 @@ namespace webhook {
     return result;
   }
 
-  std::string get_current_timestamp() {
+  std::string
+  get_current_timestamp() {
     const auto now = std::chrono::system_clock::now();
     const auto time = std::chrono::system_clock::to_time_t(now);
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
@@ -1249,11 +1290,13 @@ namespace webhook {
     return stream.str();
   }
 
-  std::string generate_webhook_json(const event_t &event, bool is_chinese) {
+  std::string
+  generate_webhook_json(const event_t &event, bool is_chinese) {
     return g_webhook_format.generate_json_payload(event, is_chinese);
   }
 
-  const char *delivery_error_name(delivery_error_t error) noexcept {
+  const char *
+  delivery_error_name(delivery_error_t error) noexcept {
     switch (error) {
       case delivery_error_t::NONE:
         return "none";
@@ -1279,7 +1322,8 @@ namespace webhook {
 
 #ifdef SUNSHINE_TESTS
   namespace test_support {
-    bool parse_url(const std::string &url, parsed_url_t &parsed) {
+    bool
+    parse_url(const std::string &url, parsed_url_t &parsed) {
       webhook::parsed_url_t internal;
       if (!parse_webhook_url(url, internal)) {
         return false;
@@ -1290,24 +1334,29 @@ namespace webhook {
       return true;
     }
 
-    std::string sanitize_header_value(const std::string &value) {
+    std::string
+    sanitize_header_value(const std::string &value) {
       return normalize_header_value(value);
     }
 
-    long timeout_seconds(std::chrono::milliseconds timeout) noexcept {
+    long
+    timeout_seconds(std::chrono::milliseconds timeout) noexcept {
       return webhook::timeout_seconds(timeout);
     }
 
-    bool is_success_status(int status) noexcept {
+    bool
+    is_success_status(int status) noexcept {
       return webhook::is_success_status(status);
     }
 
-    bool is_retryable_status(int status) noexcept {
+    bool
+    is_retryable_status(int status) noexcept {
       return webhook::is_retryable_status(status);
     }
 
-    std::optional<long> retry_after_seconds(const std::string &value) {
-      const SimpleWeb::CaseInsensitiveMultimap headers {{"Retry-After", value}};
+    std::optional<long>
+    retry_after_seconds(const std::string &value) {
+      const web::CaseInsensitiveMultimap headers { { "Retry-After", value } };
       const auto parsed = parse_retry_after(headers);
       return parsed ? std::optional<long>(parsed->count()) : std::nullopt;
     }

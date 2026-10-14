@@ -4,7 +4,7 @@
 #include <array>
 #include <string>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <nlohmann/json.hpp>
 
 #include "src/crypto.h"
@@ -15,7 +15,7 @@ using json = nlohmann::json;
 
 namespace nvhttp::network_probe {
   namespace {
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
       return {
         { "Content-Type", "application/json" },
@@ -24,7 +24,7 @@ namespace nvhttp::network_probe {
     }
 
     void
-    write_error(resp_https_t response, SimpleWeb::StatusCode status, std::string_view error, std::uint32_t retry_after_ms = 0) {
+    write_error(resp_https_t response, web::StatusCode status, std::string_view error, std::uint32_t retry_after_ms = 0) {
       json body { { "error", error } };
       auto headers = json_headers();
       if (retry_after_ms > 0) {
@@ -112,7 +112,7 @@ namespace nvhttp::network_probe {
         const auto count = std::min(remaining, owner->payload.size());
         response->write(owner->payload.data(), static_cast<std::streamsize>(count));
         auto self = shared_from_this();
-        response->send([self, count](const SimpleWeb::error_code &ec) {
+        response->send([self, count](const web::error_code &ec) {
           if (ec) {
             self->finish("cancelled");
             return;
@@ -132,7 +132,7 @@ namespace nvhttp::network_probe {
     void
     capabilities(resp_https_t response, req_https_t request) {
       if (get_client_cert_uuid_from_request(request).empty()) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_forbidden, "not_paired");
+        write_error(std::move(response), web::StatusCode::forbidden, "not_paired");
         return;
       }
       json body {
@@ -146,18 +146,18 @@ namespace nvhttp::network_probe {
             { "cooldownMs", COOLDOWN_MS },
           } },
       };
-      response->write(SimpleWeb::StatusCode::success_ok, body.dump(), json_headers());
+      response->write(web::StatusCode::ok, body.dump(), json_headers());
     }
 
     void
     probe(resp_https_t response, req_https_t request) {
       const auto client = get_client_cert_uuid_from_request(request);
       if (client.empty()) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_forbidden, "not_paired");
+        write_error(std::move(response), web::StatusCode::forbidden, "not_paired");
         return;
       }
       if (request->header.contains("Range")) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "range_not_supported");
+        write_error(std::move(response), web::StatusCode::bad_request, "range_not_supported");
         return;
       }
 
@@ -167,11 +167,11 @@ namespace nvhttp::network_probe {
       std::size_t bytes = 0;
       if (bytes_it == args.end() || nonce_it == args.end() ||
           !parse_payload_bytes(bytes_it->second, bytes) || !valid_nonce(nonce_it->second)) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid_request");
+        write_error(std::move(response), web::StatusCode::bad_request, "invalid_request");
         return;
       }
       if (stream::session::has_active_video_sessions()) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_conflict, "stream_active");
+        write_error(std::move(response), web::StatusCode::conflict, "stream_active");
         BOOST_LOG(info) << "event=bandwidth_probe client=" << client_log_id(client)
                         << " requested_bytes=" << bytes << " sent_bytes=0 duration_ms=0 result=stream_active";
         return;
@@ -179,20 +179,20 @@ namespace nvhttp::network_probe {
 
       const auto admission = limiter.admit(client, nonce_it->second, bytes);
       if (!admission) {
-        write_error(std::move(response), SimpleWeb::StatusCode::client_error_too_many_requests, "rate_limited", admission.retry_after_ms);
+        write_error(std::move(response), web::StatusCode::too_many_requests, "rate_limited", admission.retry_after_ms);
         BOOST_LOG(info) << "event=bandwidth_probe client=" << client_log_id(client)
                         << " requested_bytes=" << bytes << " sent_bytes=0 duration_ms=0 result=rate_limited";
         return;
       }
 
-      SimpleWeb::CaseInsensitiveMultimap headers {
+      web::CaseInsensitiveMultimap headers {
         { "Content-Type", "application/octet-stream" },
         { "Content-Length", std::to_string(bytes) },
         { "Cache-Control", "no-store, no-transform" },
         { "X-Bandwidth-Probe-Version", "1" },
         { "X-Bandwidth-Probe-Nonce", nonce_it->second },
       };
-      response->write(SimpleWeb::StatusCode::success_ok, headers);
+      response->write(web::StatusCode::ok, headers);
 
       auto state = std::make_shared<send_state_t>();
       state->owner = shared_from_this();

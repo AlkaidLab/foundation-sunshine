@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 
 #include "config.h"
 
@@ -39,8 +39,8 @@ namespace ds5_config::api {
     config_state_t state;
   };
 
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<web::HTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<web::HTTPS>::Request>;
 
   /** Query one serialized disk/runtime view and its strong validator. */
   config_state_t query_state(const std::filesystem::path &path);

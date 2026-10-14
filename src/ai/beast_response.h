@@ -4,46 +4,14 @@
  */
 #pragma once
 
+#include "src/http/ostream.h"
 #include <boost/asio/write.hpp>
 #include <boost/beast/http.hpp>
 #include <ostream>
 #include <string>
 
 namespace ai::http::framing {
-  // This SyncWriteStream only fills an ostream buffer. The owning transport
-  // still flushes asynchronously and waits for its send completion.
-  class BufferedWriteStream {
-    std::ostream &output;
-
-  public:
-    explicit BufferedWriteStream(std::ostream &output): output(output) {}
-
-    template <class ConstBufferSequence>
-    size_t
-    write_some(const ConstBufferSequence &buffers, boost::system::error_code &ec) {
-      ec.clear();
-      size_t written = 0;
-      for (auto it = boost::asio::buffer_sequence_begin(buffers); it != boost::asio::buffer_sequence_end(buffers); ++it) {
-        const boost::asio::const_buffer buffer = *it;
-        output.write(static_cast<const char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
-        if (!output) {
-          ec = make_error_code(boost::system::errc::io_error);
-          return written;
-        }
-        written += buffer.size();
-      }
-      return written;
-    }
-
-    template <class ConstBufferSequence>
-    size_t
-    write_some(const ConstBufferSequence &buffers) {
-      boost::system::error_code ec;
-      const auto written = write_some(buffers, ec);
-      if (ec) throw boost::system::system_error(ec);
-      return written;
-    }
-  };
+  using BufferedWriteStream = web::BufferedWriteStream;
 
   inline void
   sse_header(std::ostream &output) {

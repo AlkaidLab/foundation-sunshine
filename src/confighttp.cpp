@@ -35,7 +35,7 @@ namespace confighttp {
     // file upload, etc.) doesn't block other web UI requests on the same
     // single-threaded io_service.
     server.config.thread_pool_size = 2;
-    // Enforce the limit while Simple-Web-Server is buffering the request, before
+    // Enforce the limit while Beast is parsing and buffering the request, before
     // individual handlers parse it. This still leaves headroom for the 10 MiB
     // base64 cover-upload endpoint.
     server.config.max_request_streambuf_size = 16 * 1024 * 1024;

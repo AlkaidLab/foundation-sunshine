@@ -62,7 +62,7 @@ namespace confighttp {
    */
   void
   send_response(resp_https_t response, const nlohmann::json &output_tree) {
-    SimpleWeb::CaseInsensitiveMultimap headers;
+    web::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
     headers.emplace("X-Frame-Options", "DENY");
     headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
@@ -87,9 +87,9 @@ namespace confighttp {
       tree["status_code"] = 400;
       tree["status"] = false;
       tree["error"] = error_message;
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, tree.dump(), headers);
+      response->write(web::StatusCode::bad_request, tree.dump(), headers);
     };
     auto requestContentType = request->header.find("content-type");
     if (requestContentType == request->header.end()) {
@@ -111,20 +111,17 @@ namespace confighttp {
     std::ostringstream data;
 
     pt::write_xml(data, tree);
-    response->write(data.str());
-
-    *response << "HTTP/1.1 404 NOT FOUND\r\n"
-              << data.str();
+    response->write(web::StatusCode::not_found, data.str());
   }
 
   void
   close_connection(resp_https_t response, req_https_t request) {
-    *response << "HTTP/1.1 444 No Response\r\n";
     response->close_connection_after_response = true;
+    response->write(static_cast<web::StatusCode>(444));
     return;
   }
 
-  SimpleWeb::CaseInsensitiveMultimap
+  web::CaseInsensitiveMultimap
   json_headers() {
     return {
       { "Content-Type", "application/json" },
@@ -134,12 +131,12 @@ namespace confighttp {
   }
 
   void
-  write_json(resp_https_t response, SimpleWeb::StatusCode status, const json &body) {
+  write_json(resp_https_t response, web::StatusCode status, const json &body) {
     response->write(status, body.dump(), json_headers());
   }
 
   void
-  write_json_error(resp_https_t response, SimpleWeb::StatusCode status, std::string error) {
+  write_json_error(resp_https_t response, web::StatusCode status, std::string error) {
     json body;
     body["ok"] = false;
     body["error"] = std::move(error);
@@ -155,13 +152,13 @@ namespace confighttp {
       return true;
     }
     catch (const std::exception &e) {
-      write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, std::string { "Invalid JSON: " } + e.what());
+      write_json_error(std::move(response), web::StatusCode::bad_request, std::string { "Invalid JSON: " } + e.what());
       return false;
     }
   }
 
   void
-  write_runtime_error(resp_https_t response, SimpleWeb::StatusCode http_status, int status_code, const std::string &status_message) {
+  write_runtime_error(resp_https_t response, web::StatusCode http_status, int status_code, const std::string &status_message) {
     json error_json;
     error_json["success"] = false;
     error_json["status_code"] = status_code;

@@ -4,7 +4,7 @@
 #include <sstream>
 #include <string>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <nlohmann/json.hpp>
 
 #include "src/streaming/abr.h"
@@ -37,9 +37,9 @@ namespace nvhttp::abr_api {
                        << ", PATH: " << request->path;
     }
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       return headers;
     }
@@ -109,7 +109,7 @@ namespace nvhttp::abr_api {
     resp_json["llmEnabled"] = ai::isAiEnabled();
     resp_json["hostMaxBitrate"] = host_max_bitrate_kbps();
 
-    response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), json_headers());
+    response->write(web::StatusCode::ok, resp_json.dump(), json_headers());
   }
 
   void
@@ -124,7 +124,7 @@ namespace nvhttp::abr_api {
         json err;
         err["success"] = false;
         err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        response->write(web::StatusCode::bad_request, err.dump(), headers);
         return;
       }
 
@@ -139,7 +139,7 @@ namespace nvhttp::abr_api {
         json resp_json;
         resp_json["success"] = true;
         resp_json["enabled"] = false;
-        response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+        response->write(web::StatusCode::ok, resp_json.dump(), headers);
         return;
       }
 
@@ -158,7 +158,7 @@ namespace nvhttp::abr_api {
         json err;
         err["success"] = false;
         err["error"] = "Invalid mode: must be 'balanced', 'quality', or 'lowLatency'";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        response->write(web::StatusCode::bad_request, err.dump(), headers);
         return;
       }
 
@@ -174,14 +174,14 @@ namespace nvhttp::abr_api {
         json err;
         err["success"] = false;
         err["error"] = "minBitrate and maxBitrate must be non-negative";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        response->write(web::StatusCode::bad_request, err.dump(), headers);
         return;
       }
       if (cfg.min_bitrate_kbps > 0 && cfg.max_bitrate_kbps > 0 && cfg.min_bitrate_kbps > cfg.max_bitrate_kbps) {
         json err;
         err["success"] = false;
         err["error"] = "minBitrate must not exceed maxBitrate";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        response->write(web::StatusCode::bad_request, err.dump(), headers);
         return;
       }
 
@@ -220,21 +220,21 @@ namespace nvhttp::abr_api {
       if (!bitrate_applied) {
         resp_json["bitrateApplyError"] = "ABR configured, but failed to apply bitrate to the active session";
       }
-      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+      response->write(web::StatusCode::ok, resp_json.dump(), headers);
     }
     catch (const json::exception &e) {
       BOOST_LOG(warning) << "ABR configure: JSON parse error: " << e.what();
       json err;
       err["success"] = false;
       err["error"] = "Invalid JSON body";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+      response->write(web::StatusCode::bad_request, err.dump(), headers);
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "ABR configure: " << e.what();
       json err;
       err["success"] = false;
       err["error"] = e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, err.dump(), headers);
     }
   }
 
@@ -247,14 +247,14 @@ namespace nvhttp::abr_api {
       if (client_name.empty()) {
         json err;
         err["error"] = "No active streaming session for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        response->write(web::StatusCode::bad_request, err.dump(), headers);
         return;
       }
 
       if (!abr::is_enabled(client_name)) {
         json err;
         err["error"] = "ABR not enabled for this client";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+        response->write(web::StatusCode::bad_request, err.dump(), headers);
         return;
       }
 
@@ -289,18 +289,18 @@ namespace nvhttp::abr_api {
         resp_json["bitrateApplyError"] = "Failed to apply ABR bitrate update to the active session";
       }
       resp_json["reason"] = action.reason;
-      response->write(SimpleWeb::StatusCode::success_ok, resp_json.dump(), headers);
+      response->write(web::StatusCode::ok, resp_json.dump(), headers);
     }
     catch (const json::exception &e) {
       json err;
       err["error"] = "Invalid JSON body";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, err.dump(), headers);
+      response->write(web::StatusCode::bad_request, err.dump(), headers);
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "ABR feedback: " << e.what();
       json err;
       err["error"] = e.what();
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, err.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, err.dump(), headers);
     }
   }
 

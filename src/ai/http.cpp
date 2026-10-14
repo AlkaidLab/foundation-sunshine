@@ -37,9 +37,9 @@ namespace ai::http {
       cfg.erase("apiKey");
       cfg["apiKeyConfigured"] = !key.empty();
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
-      response->write(SimpleWeb::StatusCode::success_ok, cfg.dump(), headers);
+      response->write(web::StatusCode::ok, cfg.dump(), headers);
     }
 
     /**
@@ -56,9 +56,9 @@ namespace ai::http {
 
       const auto output = ai::save_config(ss.str());
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
-      response->write(SimpleWeb::StatusCode::success_ok, output.dump(), headers);
+      response->write(web::StatusCode::ok, output.dump(), headers);
     }
 
     void
@@ -69,7 +69,7 @@ namespace ai::http {
       const auto cfg = ai::loadAiConfig();
       if (!cfg.value("enabled", false)) {
         response->write(
-          SimpleWeb::StatusCode::client_error_forbidden,
+          web::StatusCode::forbidden,
           R"({"error":{"message":"AI proxy is not enabled","type":"invalid_request_error"}})",
           json_headers());
         return;
@@ -78,13 +78,13 @@ namespace ai::http {
       std::string api_base = cfg.value("apiBase", "");
       if (api_base.empty() || (api_key.empty() && ai::isApiKeyRequired(cfg))) {
         response->write(
-          SimpleWeb::StatusCode::client_error_bad_request,
+          web::StatusCode::bad_request,
           R"({"error":{"message":"AI proxy not configured","type":"invalid_request_error"}})",
           json_headers());
         return;
       }
       if (ai::isAnthropicProvider(cfg)) {
-        response->write(SimpleWeb::StatusCode::success_ok, R"({"data":[]})", json_headers());
+        response->write(web::StatusCode::ok, R"({"data":[]})", json_headers());
         return;
       }
 
@@ -100,12 +100,12 @@ namespace ai::http {
       long http_code = 0;
       if (!::http::get_json(target_url, headers, body, http_code)) {
         response->write(
-          SimpleWeb::StatusCode::server_error_bad_gateway,
+          web::StatusCode::bad_gateway,
           R"({"error":{"message":"Failed to connect to upstream LLM API","type":"upstream_error"}})",
           json_headers());
         return;
       }
-      const auto status = http_code >= 200 && http_code < 300 ? SimpleWeb::StatusCode::success_ok : SimpleWeb::StatusCode::server_error_bad_gateway;
+      const auto status = http_code >= 200 && http_code < 300 ? web::StatusCode::ok : web::StatusCode::bad_gateway;
       response->write(status, body, json_headers());
     }
 
@@ -140,12 +140,12 @@ namespace ai::http {
       }
       else {
         auto result = ai::processAiChat(requestBody);
-        SimpleWeb::CaseInsensitiveMultimap headers;
+        web::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", result.contentType);
 
-        auto statusCode = (result.httpCode == 200) ? SimpleWeb::StatusCode::success_ok : (result.httpCode == 403) ? SimpleWeb::StatusCode::client_error_forbidden :
-                                                                                       (result.httpCode == 400)   ? SimpleWeb::StatusCode::client_error_bad_request :
-                                                                                                                    SimpleWeb::StatusCode::server_error_bad_gateway;
+        auto statusCode = (result.httpCode == 200) ? web::StatusCode::ok : (result.httpCode == 403) ? web::StatusCode::forbidden :
+                                                                                       (result.httpCode == 400)   ? web::StatusCode::bad_request :
+                                                                                                                    web::StatusCode::bad_gateway;
 
         response->write(statusCode, result.body, headers);
       }
@@ -156,10 +156,10 @@ namespace ai::http {
      */
     void
     handleAiCors(resp_https_t response, req_https_t request) {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
       headers.emplace("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      response->write(SimpleWeb::StatusCode::success_no_content, "", headers);
+      response->write(web::StatusCode::no_content, "", headers);
     }
 
   }  // namespace

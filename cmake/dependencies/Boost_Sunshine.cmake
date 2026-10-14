@@ -19,7 +19,7 @@ set(BOOST_COMPONENTS
         system
         thread
 )
-# system is not used by Sunshine, but by Simple-Web-Server, added here for convenience
+# Networking uses Boost.System error codes and their compatibility target.
 
 # Additional components used by the Windows sources.
 if(WIN32)

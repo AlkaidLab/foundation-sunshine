@@ -43,7 +43,7 @@ namespace confighttp::proxies {
       // 安全检查：防止SSRF，确保目标主机确实是api.steampowered.com
       if (http::url_get_host(targetUrl) != "api.steampowered.com") {
         BOOST_LOG(warning) << "Blocked Steam API proxy request to unauthorized host";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, "Invalid Host");
+        response->write(web::StatusCode::bad_request, "Invalid Host");
         return;
       }
 
@@ -53,19 +53,19 @@ namespace confighttp::proxies {
       try {
         if (http::fetch_url(targetUrl, content)) {
           // 设置响应头
-          SimpleWeb::CaseInsensitiveMultimap headers;
+          web::CaseInsensitiveMultimap headers;
           headers.emplace("Content-Type", "application/json");
 
-          response->write(SimpleWeb::StatusCode::success_ok, content, headers);
+          response->write(web::StatusCode::ok, content, headers);
         }
         else {
           BOOST_LOG(error) << "Steam API request failed for path: " << http_util::sanitize_request_log_value(path);
-          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API request failed");
+          response->write(web::StatusCode::internal_server_error, "Steam API request failed");
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Steam API proxy exception: " << e.what();
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam API proxy exception");
+        response->write(web::StatusCode::internal_server_error, "Steam API proxy exception");
       }
     }
 
@@ -93,7 +93,7 @@ namespace confighttp::proxies {
       // 安全检查：防止SSRF，确保目标主机确实是store.steampowered.com
       if (http::url_get_host(targetUrl) != "store.steampowered.com") {
         BOOST_LOG(warning) << "Blocked Steam Store proxy request to unauthorized host";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, "Invalid Host");
+        response->write(web::StatusCode::bad_request, "Invalid Host");
         return;
       }
 
@@ -103,19 +103,19 @@ namespace confighttp::proxies {
       try {
         if (http::fetch_url(targetUrl, content)) {
           // 设置响应头
-          SimpleWeb::CaseInsensitiveMultimap headers;
+          web::CaseInsensitiveMultimap headers;
           headers.emplace("Content-Type", "application/json");
 
-          response->write(SimpleWeb::StatusCode::success_ok, content, headers);
+          response->write(web::StatusCode::ok, content, headers);
         }
         else {
           BOOST_LOG(error) << "Steam Store request failed for path: " << http_util::sanitize_request_log_value(path);
-          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store request failed");
+          response->write(web::StatusCode::internal_server_error, "Steam Store request failed");
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Steam Store proxy exception: " << e.what();
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Steam Store proxy exception");
+        response->write(web::StatusCode::internal_server_error, "Steam Store proxy exception");
       }
     }
 

@@ -50,18 +50,18 @@
 #include <sstream>
 #include <string>
 
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 
 namespace clipboard_http {
-  using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
+  using https_server_t = web::Server<web::HTTPS>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<web::HTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<web::HTTPS>::Request>;
   using auth_fn = std::function<bool(resp_https_t, req_https_t)>;
 
   struct blob_response_t {
-    SimpleWeb::StatusCode status;
+    web::StatusCode status;
     std::string body;
-    SimpleWeb::CaseInsensitiveMultimap headers;
+    web::CaseInsensitiveMultimap headers;
   };
 
   /// Build the HTTP response for POST /api/v1/clipboard/blob.
@@ -71,20 +71,20 @@ namespace clipboard_http {
   /// HTTPS servers (e.g. confighttp for the local GUI agent and nvhttp for
   /// paired Moonlight clients) without duplicating validation or storage logic.
   blob_response_t make_blob_upload_response(
-    const SimpleWeb::CaseInsensitiveMultimap &request_headers,
+    const web::CaseInsensitiveMultimap &request_headers,
     const std::string &body);
 
   /// Validate upload headers that must be checked before reading the request
   /// body. Returns a response to send immediately when the request is rejected.
   std::optional<blob_response_t> make_blob_upload_preflight_response(
-    const SimpleWeb::CaseInsensitiveMultimap &request_headers);
+    const web::CaseInsensitiveMultimap &request_headers);
 
   /// Build the HTTP response for GET /api/v1/clipboard/blob/<id>.
   blob_response_t make_blob_get_response(const std::string &id);
 
   /// End-to-end blob upload handler: runs preflight, reads body iff preflight
   /// passes, then invokes `make_blob_upload_response`. Templated on the
-  /// request type so confighttp's `SimpleWeb::HTTPS` and nvhttp's bespoke
+  /// request type so confighttp's `web::HTTPS` and nvhttp's bespoke
   /// `SunshineHTTPS` Request types can share one definition.
   template <typename Request>
   inline blob_response_t process_blob_upload(const Request &req) {

@@ -36,9 +36,9 @@ namespace image_enhancement::api {
     void
     write(response_t response, int status, const json &body, const std::string &etag = {}) noexcept {
       try {
-        SimpleWeb::CaseInsensitiveMultimap headers { { "Content-Type", "application/json" }, { "Cache-Control", "no-store" } };
+        web::CaseInsensitiveMultimap headers { { "Content-Type", "application/json" }, { "Cache-Control", "no-store" } };
         if (!etag.empty()) headers.emplace("ETag", etag);
-        response->write(static_cast<SimpleWeb::StatusCode>(status), body.dump(), headers);
+        response->write(static_cast<web::StatusCode>(status), body.dump(), headers);
       }
       catch (...) { /* 连接退出不能让可选管理模块终止主进程。 */
       }

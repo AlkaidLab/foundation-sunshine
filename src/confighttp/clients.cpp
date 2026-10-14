@@ -228,9 +228,9 @@ namespace confighttp::clients {
       j["status"] = nvhttp::get_qr_pair_status();
 
       std::string content = j.dump();
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
-      response->write(SimpleWeb::StatusCode::success_ok, content, headers);
+      response->write(web::StatusCode::ok, content, headers);
     }
 
     void

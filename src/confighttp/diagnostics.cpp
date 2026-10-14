@@ -115,16 +115,11 @@ namespace confighttp::diagnostics {
       // --- Mode 1: No X-Log-Offset header → stream full file from disk (download) ---
       auto offset_it = request->header.find("X-Log-Offset");
       if (offset_it == request->header.end()) {
-        std::ifstream in(log_path, std::ios::binary);
-        if (!in.is_open()) {
-          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open log file");
-          return;
-        }
-        SimpleWeb::CaseInsensitiveMultimap headers;
+        web::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "text/plain; charset=utf-8");
         headers.emplace("Content-Disposition", "attachment; filename=\"sunshine.log\"");
-        // Omit Content-Length: log file is actively written (TOCTOU risk)
-        response->write(SimpleWeb::StatusCode::success_ok, in, headers);
+        if (!response->write_file(web::StatusCode::ok, log_path, headers))
+          response->write(web::StatusCode::internal_server_error, "Failed to open log file");
         return;
       }
 
@@ -140,12 +135,12 @@ namespace confighttp::diagnostics {
       std::error_code ec;
       auto current_size = std::filesystem::file_size(log_path, ec);
       if (ec) {
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+        response->write(web::StatusCode::internal_server_error, "Failed to read log file");
         return;
       }
       auto current_mtime = std::filesystem::last_write_time(log_path, ec);
       if (ec) {
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+        response->write(web::StatusCode::internal_server_error, "Failed to read log file");
         return;
       }
       auto current_mtime_ns = current_mtime.time_since_epoch().count();
@@ -172,7 +167,7 @@ namespace confighttp::diagnostics {
           }
           if (!new_content) {
             if (current_size > 0) {
-              response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+              response->write(web::StatusCode::internal_server_error, "Failed to read log file");
               return;
             }
             new_content = std::make_shared<const std::string>();
@@ -211,7 +206,7 @@ namespace confighttp::diagnostics {
         client_offset = 0;
       }
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/plain");
       headers.emplace("X-Log-Size", std::to_string(snapshot->file_size));
       headers.emplace("X-Frame-Options", "DENY");
@@ -220,7 +215,7 @@ namespace confighttp::diagnostics {
       // No change in logs → 304
       if (client_offset > 0 && client_offset == snapshot->file_size) {
         headers.emplace("X-Log-Range", "unchanged");
-        response->write(SimpleWeb::StatusCode::redirection_not_modified, headers);
+        response->write(web::StatusCode::not_modified, headers);
         return;
       }
 
@@ -230,11 +225,11 @@ namespace confighttp::diagnostics {
           auto cache_pos = client_offset - snapshot->start_offset;
           headers.emplace("X-Log-Range", "incremental");
           auto delta = snapshot->content->substr(static_cast<std::size_t>(cache_pos));
-          response->write(SimpleWeb::StatusCode::success_ok, delta, headers);
+          response->write(web::StatusCode::ok, delta, headers);
         }
         else {
           headers.emplace("X-Log-Range", "full");
-          response->write(SimpleWeb::StatusCode::success_ok, *snapshot->content, headers);
+          response->write(web::StatusCode::ok, *snapshot->content, headers);
         }
       }
       else {
@@ -245,7 +240,7 @@ namespace confighttp::diagnostics {
             auto data = read_file_range(log_path, client_offset, delta_size);
             if (data) {
               headers.emplace("X-Log-Range", "incremental");
-              response->write(SimpleWeb::StatusCode::success_ok, *data, headers);
+              response->write(web::StatusCode::ok, *data, headers);
               return;
             }
           }
@@ -255,11 +250,11 @@ namespace confighttp::diagnostics {
         auto tail_start = snapshot->file_size - tail_len;
         auto tail = read_file_range(log_path, tail_start, tail_len);
         if (!tail) {
-          response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read log file");
+          response->write(web::StatusCode::internal_server_error, "Failed to read log file");
           return;
         }
         headers.emplace("X-Log-Range", "full");
-        response->write(SimpleWeb::StatusCode::success_ok, *tail, headers);
+        response->write(web::StatusCode::ok, *tail, headers);
       }
     }
 

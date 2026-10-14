@@ -19,14 +19,14 @@ namespace confighttp {
   not_found(resp_https_t response, req_https_t request);
   void
   close_connection(resp_https_t response, req_https_t request);
-  SimpleWeb::CaseInsensitiveMultimap
+  web::CaseInsensitiveMultimap
   json_headers();
   void
-  write_json(resp_https_t response, SimpleWeb::StatusCode status, const nlohmann::json &body);
+  write_json(resp_https_t response, web::StatusCode status, const nlohmann::json &body);
   void
-  write_json_error(resp_https_t response, SimpleWeb::StatusCode status, std::string error);
+  write_json_error(resp_https_t response, web::StatusCode status, std::string error);
   bool
   read_json_body(resp_https_t response, req_https_t request, nlohmann::json &body);
   void
-  write_runtime_error(resp_https_t response, SimpleWeb::StatusCode http_status, int status_code, const std::string &status_message);
+  write_runtime_error(resp_https_t response, web::StatusCode http_status, int status_code, const std::string &status_message);
 }  // namespace confighttp

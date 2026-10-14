@@ -25,7 +25,7 @@
 #include <utility>
 
 // lib includes
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <boost/atomic.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -66,7 +66,6 @@
 #include "nvhttp/network_probe.h"
 #include "nvhttp/pairing.h"
 #include "nvhttp/sessions.h"
-#include "nvhttp/tls_client_identity_store.h"
 #include "nvhttp_stream_start.h"
 #include "platform/common.h"
 #include "platform/run_command.h"
@@ -95,142 +94,19 @@ namespace nvhttp {
   };
 
   boost::atomic<uint32_t> session_id_counter {0};
-  static tls_client_identity_store_t tls_client_identities;
+  using https_server_t = web::Server<SunshineHTTPS>;
+  using http_server_t = web::Server<web::HTTP>;
 
-  template <class Request>
-  std::string
-  get_tls_connection_key(const std::shared_ptr<Request> &request) {
-    const auto remote = request->remote_endpoint();
-    const auto local = request->local_endpoint();
-    if (remote.port() == 0 || local.port() == 0) {
-      return {};
-    }
-
-    std::ostringstream key;
-    key << '[' << remote.address().to_string() << "]:" << remote.port()
-        << ">[" << local.address().to_string() << "]:" << local.port();
-    return key.str();
-  }
-
-  class SunshineHTTPSServer: public SimpleWeb::ServerBase<SunshineHTTPS> {
-  public:
-    SunshineHTTPSServer(const std::string &certification_file, const std::string &private_key_file):
-        ServerBase<SunshineHTTPS>::ServerBase(443),
-        context(boost::asio::ssl::context::tls_server) {
-      // Disabling TLS 1.0 and 1.1 (see RFC 8996)
-      context.set_options(boost::asio::ssl::context::no_tlsv1);
-      context.set_options(boost::asio::ssl::context::no_tlsv1_1);
-      context.use_certificate_chain_file(certification_file);
-      context.use_private_key_file(private_key_file, boost::asio::ssl::context::pem);
-    }
-
-    std::function<int(SSL *)> verify;
-    std::function<void(std::shared_ptr<Response>, std::shared_ptr<Request>)> on_verify_failed;
-
-  protected:
-    boost::asio::ssl::context context;
-
-    void
-    after_bind() override {
-      if (verify) {
-        context.set_verify_mode(boost::asio::ssl::verify_peer | boost::asio::ssl::verify_fail_if_no_peer_cert | boost::asio::ssl::verify_client_once);
-        context.set_verify_callback([](int verified, boost::asio::ssl::verify_context &ctx) {
-          // To respond with an error message, a connection must be established
-          return 1;
-        });
-      }
-    }
-
-    // This is Server<HTTPS>::accept() with SSL validation support added
-    void
-    accept() override {
-      auto connection = create_connection(*io_service, context);
-
-      acceptor->async_accept(connection->socket->lowest_layer(), [this, connection](const SimpleWeb::error_code &ec) {
-        auto lock = connection->handler_runner->continue_lock();
-        if (!lock)
-          return;
-
-        if (ec != SimpleWeb::error::operation_aborted)
-          this->accept();
-
-        auto session = std::make_shared<Session>(config.max_request_streambuf_size, connection);
-
-        if (!ec) {
-          boost::asio::ip::tcp::no_delay option(true);
-          SimpleWeb::error_code ec;
-          session->connection->socket->lowest_layer().set_option(option, ec);
-
-          session->connection->set_timeout(config.timeout_request);
-          session->connection->socket->async_handshake(boost::asio::ssl::stream_base::server, [this, session](const SimpleWeb::error_code &ec) {
-            session->connection->cancel_timeout();
-            auto lock = session->connection->handler_runner->continue_lock();
-            if (!lock)
-              return;
-            if (!ec) {
-              // Extract and store certificate UUID during handshake
-              try {
-                SSL *ssl = session->connection->socket->native_handle();
-                if (ssl) {
-                  crypto::x509_t x509 {
-#if OPENSSL_VERSION_MAJOR >= 3
-                    SSL_get1_peer_certificate(ssl)
-#else
-                    SSL_get_peer_certificate(ssl)
-#endif
-                  };
-                  if (x509) {
-                    if (auto uuid = pairing::client_uuid_for_cert(x509.get()); !uuid.empty()) {
-                      // Client authentication belongs to the TLS connection,
-                      // not to the first HTTP Request object created for it.
-                      // Simple-Web-Server replaces Request objects between
-                      // keep-alive requests while retaining the connection.
-                      tls_client_identities.remember(
-                        get_tls_connection_key(session->request),
-                        std::weak_ptr<void>(std::static_pointer_cast<void>(session->connection)),
-                        std::move(uuid));
-                    }
-                  }
-                }
-              }
-              catch (const std::exception &e) {
-                BOOST_LOG(debug) << "Failed to extract certificate UUID during handshake: " << e.what();
-              }
-
-              if (verify && !verify(session->connection->socket->native_handle()))
-                this->write(session, on_verify_failed);
-              else
-                this->read(session);
-            }
-            else if (this->on_error)
-              this->on_error(session->request, ec);
-          });
-        }
-        else if (this->on_error)
-          this->on_error(session->request, ec);
-      });
-    }
-  };
-
-  using https_server_t = SunshineHTTPSServer;
-  using http_server_t = SimpleWeb::Server<SimpleWeb::HTTP>;
-
-  using args_t = SimpleWeb::CaseInsensitiveMultimap;
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
-  using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
-  using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
+  using args_t = web::CaseInsensitiveMultimap;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Request>;
+  using resp_http_t = std::shared_ptr<typename web::ServerBase<web::HTTP>::Response>;
+  using req_http_t = std::shared_ptr<typename web::ServerBase<web::HTTP>::Request>;
 
   // Get the client certificate UUID authenticated on this request's TLS connection.
   std::string
   get_client_cert_uuid_from_request(req_https_t request) {
-    try {
-      return tls_client_identities.lookup(get_tls_connection_key(request));
-    }
-    catch (const std::exception &e) {
-      BOOST_LOG(debug) << "Failed to get client certificate UUID: " << e.what();
-    }
-    return "";
+    return request ? request->client_uuid : std::string {};
   }
 
   std::string
@@ -445,13 +321,13 @@ namespace nvhttp {
   };
 
   template <>
-  struct tunnel<SimpleWeb::HTTP> {
+  struct tunnel<web::HTTP> {
     static auto constexpr to_string = "NONE"sv;
   };
 
   template <class T>
   void
-  print_req(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+  print_req(std::shared_ptr<typename web::ServerBase<T>::Request> request) {
     auto debug_flag = debug.open_record();
     auto verbose_flag = verbose.open_record();
     if (!debug_flag && !verbose_flag) {
@@ -514,26 +390,26 @@ namespace nvhttp {
 
   template <class T>
   void
-  print_request_ip(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request, const std::string &message) {
+  print_request_ip(std::shared_ptr<typename web::ServerBase<T>::Request> request, const std::string &message) {
     BOOST_LOG(info) << message << " from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
   }
 
   template <class T>
   void
-  print_request_warning_ip(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request, const std::string &message) {
+  print_request_warning_ip(std::shared_ptr<typename web::ServerBase<T>::Request> request, const std::string &message) {
     // Query strings may contain launch keys, so warnings only include routing context.
     BOOST_LOG(warning) << message << " from IP: " << request->remote_endpoint().address().to_string() << ", Port: " << request->remote_endpoint().port();
   }
 
   template <class T>
   void
-  not_found(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+  not_found(std::shared_ptr<typename web::ServerBase<T>::Response> response, std::shared_ptr<typename web::ServerBase<T>::Request> request) {
     print_req<T>(request);
 
     // Security hardening: Return 444 for root paths to prevent probing
     if (blocked_paths.count(request->path)) {
-      *response << "HTTP/1.1 444 No Response\r\n";
       response->close_connection_after_response = true;
+      response->write(static_cast<web::StatusCode>(444));
       return;
     }
 
@@ -543,13 +419,13 @@ namespace nvhttp {
     std::ostringstream data;
 
     pt::write_xml(data, tree);
-    response->write(SimpleWeb::StatusCode::client_error_not_found, data.str());
+    response->write(web::StatusCode::not_found, data.str());
     response->close_connection_after_response = true;
   }
 
   template <class T>
   void
-  serverinfo(std::shared_ptr<typename SimpleWeb::ServerBase<T>::Response> response, std::shared_ptr<typename SimpleWeb::ServerBase<T>::Request> request) {
+  serverinfo(std::shared_ptr<typename web::ServerBase<T>::Response> response, std::shared_ptr<typename web::ServerBase<T>::Request> request) {
     print_req<T>(request);
 
     int pair_status = 0;
@@ -1183,6 +1059,8 @@ namespace nvhttp {
       return verified;
     };
 
+    https_server.identify = [](X509 *cert) { return pairing::client_uuid_for_cert(cert); };
+
     https_server.on_verify_failed = [](resp_https_t resp, req_https_t req) {
       pt::ptree tree;
       auto g = util::fail_guard([&]() {
@@ -1204,14 +1082,14 @@ namespace nvhttp {
     https_server.resource["^/applist$"]["GET"] = apps::list;
     https_server.resource["^/api/v1/usb-forwarding$"]["GET"] =
       [&](resp_https_t resp, req_https_t req) {
-        const SimpleWeb::CaseInsensitiveMultimap headers {
+        const web::CaseInsensitiveMultimap headers {
           { "Content-Type", "application/json" },
           { "Cache-Control", "no-store" },
         };
         // Do not trust the caller-supplied uniqueid, or relaxed TLS verification.
         // Keep-alive identity is cached at handshake; pairing may since be revoked.
         if (!is_client_paired(get_client_cert_uuid_from_request(req))) {
-          resp->write(SimpleWeb::StatusCode::client_error_unauthorized,
+          resp->write(web::StatusCode::unauthorized,
             "{\"error\":\"pairing_required\"}", headers);
           return;
         }
@@ -1226,7 +1104,7 @@ namespace nvhttp {
           body["port"] = reverse_tunnel_service.bound_port();
           body["token"] = usb_forwarding_token;
         }
-        resp->write(SimpleWeb::StatusCode::success_ok, body.dump(), headers);
+        resp->write(web::StatusCode::ok, body.dump(), headers);
       };
     https_server.resource["^/appasset$"]["GET"] = apps::asset;
     https_server.resource["^/displays$"]["GET"] = display_control::get_displays;
@@ -1251,7 +1129,7 @@ namespace nvhttp {
 
     https_server.resource["^/api/v1/file-mapping/capability$"]["GET"] =
       [&](resp_https_t resp, req_https_t req) {
-        auto header_value = [](const SimpleWeb::CaseInsensitiveMultimap &headers, const std::string &name) {
+        auto header_value = [](const web::CaseInsensitiveMultimap &headers, const std::string &name) {
           auto it = headers.find(name);
           return it == headers.end() ? std::string {} : it->second;
         };
@@ -1302,14 +1180,8 @@ namespace nvhttp {
     // threads keep the listener responsive under such conditions.
     https_server.config.thread_pool_size = 4;
 
-    // A transport error ends the authenticated connection context. Expired
-    // identities for any other connections are pruned opportunistically too.
-    https_server.on_error = [](req_https_t request, const SimpleWeb::error_code & /*ec*/) {
-      tls_client_identities.forget(get_tls_connection_key(request));
-    };
-
-    http_server.default_resource["GET"] = not_found<SimpleWeb::HTTP>;
-    http_server.resource["^/serverinfo$"]["GET"] = serverinfo<SimpleWeb::HTTP>;
+    http_server.default_resource["GET"] = not_found<web::HTTP>;
+    http_server.resource["^/serverinfo$"]["GET"] = serverinfo<web::HTTP>;
     http_server.resource["^/pair$"]["GET"] = pairing::pair_http;
 
     http_server.config.reuse_address = true;
