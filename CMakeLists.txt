@@ -71,7 +71,6 @@ include(${CMAKE_MODULE_PATH}/compile_definitions/common.cmake)
 # target definitions
 include(${CMAKE_MODULE_PATH}/targets/beast_http.cmake)
 include(${CMAKE_MODULE_PATH}/targets/common.cmake)
-include(${CMAKE_MODULE_PATH}/targets/ai_beast_pilot.cmake)
 
 # packaging
 include(${CMAKE_MODULE_PATH}/packaging/common.cmake)
