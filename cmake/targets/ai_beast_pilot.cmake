@@ -1,12 +1,14 @@
-# The pilot is independent of the Sunshine listeners and is opt-in even in test builds.
+# The opt-in loopback harness exercises the same HTTP/SSE transport as Sunshine.
 option(SUNSHINE_AI_BEAST_PILOT "Build the independent loopback Beast AI/SSE pilot" OFF)
 if (NOT SUNSHINE_AI_BEAST_PILOT)
     return()
 endif ()
 
-add_library(ai_beast_transport STATIC ${CMAKE_SOURCE_DIR}/src/ai/beast_server.cpp)
-target_include_directories(ai_beast_transport PUBLIC "${CMAKE_SOURCE_DIR}")
-target_link_libraries(ai_beast_transport PUBLIC Boost::beast Boost::asio OpenSSL::SSL OpenSSL::Crypto)
+add_library(ai_beast_transport STATIC
+        ${CMAKE_SOURCE_DIR}/src/ai/beast_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/ai/http_stream.cpp)
+target_include_directories(ai_beast_transport PUBLIC "${CMAKE_SOURCE_DIR}" ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(ai_beast_transport PUBLIC sunshine_http)
 set_target_properties(ai_beast_transport PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     target_compile_definitions(ai_beast_transport PUBLIC _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -28,7 +30,6 @@ if (BUILD_TESTS)
             ${CMAKE_SOURCE_DIR}/tests/tools/test_http_safety.cpp
             ${CMAKE_SOURCE_DIR}/src/ai/proxy.cpp
             ${CMAKE_SOURCE_DIR}/src/ai/provider.cpp
-            ${CMAKE_SOURCE_DIR}/src/ai/http_stream.cpp
             ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
     target_link_libraries(ai_beast_pilot_tests PRIVATE ai_beast_transport ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main)
     target_compile_definitions(ai_beast_pilot_tests PRIVATE ${SUNSHINE_DEFINITIONS} SUNSHINE_AI_BEAST_PILOT_TESTS)

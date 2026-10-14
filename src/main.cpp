@@ -487,7 +487,7 @@ main(int argc, char *argv[]) {
     upnp_unmap = upnp::start();
   });
 
-  // FIXME: Temporary workaround: Simple-Web_server needs to be updated or replaced
+  // Do not start network services after shutdown has already been requested.
   if (shutdown_event->peek()) {
     return lifetime::desired_exit_code;
   }

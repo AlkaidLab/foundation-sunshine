@@ -9,6 +9,7 @@
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/file_handler.h"
+#include "src/http/types.h"
 #include "src/httpcommon.h"
 #include "src/logging.h"
 #include "src/network.h"
@@ -16,7 +17,6 @@
 #include "src/platform/run_command.h"
 #include "src/process.h"
 #include "src/utility.h"
-#include <Simple-Web-Server/crypto.hpp>
 #include <atomic>
 #include <boost/property_tree/json_parser.hpp>
 #include <filesystem>
@@ -25,6 +25,7 @@
 #include <openssl/evp.h>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 
 using namespace std::literals;
 using json = nlohmann::json;
@@ -46,7 +47,7 @@ namespace confighttp::apps {
       print_req(request);
 
       std::string content = file_handler::read_file(config::stream.file_apps.c_str());
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       response->write(content, headers);
     }
@@ -66,7 +67,7 @@ namespace confighttp::apps {
         outputTree.put("error", "Another save operation is in progress");
         std::ostringstream data;
         pt::write_json(data, outputTree);
-        response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+        response->write(web::StatusCode::conflict, data.str());
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
@@ -189,7 +190,7 @@ namespace confighttp::apps {
         outputTree.put("error", "Another operation is in progress");
         std::ostringstream data;
         pt::write_json(data, outputTree);
-        response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+        response->write(web::StatusCode::conflict, data.str());
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
@@ -277,7 +278,7 @@ namespace confighttp::apps {
         busy.put("error", "Another operation is in progress");
         std::ostringstream data;
         pt::write_json(data, busy);
-        response->write(SimpleWeb::StatusCode::client_error_conflict, data.str());
+        response->write(web::StatusCode::conflict, data.str());
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
@@ -287,9 +288,9 @@ namespace confighttp::apps {
         // Mirror uploadCover's convention in this file: when fail_guard fires
         // with an 'error' field, emit 4xx so clients can distinguish business
         // failures from success rather than parsing status:"false" out of a 200.
-        SimpleWeb::StatusCode code = SimpleWeb::StatusCode::success_ok;
+        web::StatusCode code = web::StatusCode::ok;
         if (outputTree.get_child_optional("error").has_value()) {
-          code = SimpleWeb::StatusCode::client_error_bad_request;
+          code = web::StatusCode::bad_request;
         }
         std::ostringstream data;
         pt::write_json(data, outputTree);
@@ -410,9 +411,9 @@ namespace confighttp::apps {
       auto g = util::fail_guard([&]() {
         std::ostringstream data;
 
-        SimpleWeb::StatusCode code = SimpleWeb::StatusCode::success_ok;
+        web::StatusCode code = web::StatusCode::ok;
         if (outputTree.get_child_optional("error").has_value()) {
-          code = SimpleWeb::StatusCode::client_error_bad_request;
+          code = web::StatusCode::bad_request;
         }
 
         pt::write_json(data, outputTree);
@@ -456,7 +457,14 @@ namespace confighttp::apps {
           outputTree.put("error", "Cover image too large (max 10MB)");
           return;
         }
-        auto data = SimpleWeb::Crypto::Base64::decode(base64_str);
+        std::string data;
+        try {
+          data = web::decode_base64(base64_str);
+        }
+        catch (const std::invalid_argument &e) {
+          outputTree.put("error", e.what());
+          return;
+        }
 
         std::ofstream imgfile(file_handler::path_from_utf8(path), std::ios::binary);
         if (!imgfile.is_open()) {
@@ -595,9 +603,9 @@ namespace confighttp::apps {
           { "error", "Test command execution is temporarily disabled" },
           { "error_code", "TEST_COMMAND_DISABLED" },
         };
-        SimpleWeb::CaseInsensitiveMultimap headers;
+        web::CaseInsensitiveMultimap headers;
         headers.emplace("Content-Type", "application/json");
-        response->write(SimpleWeb::StatusCode::server_error_service_unavailable, body.dump(), headers);
+        response->write(web::StatusCode::service_unavailable, body.dump(), headers);
         return;
       }
 

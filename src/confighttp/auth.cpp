@@ -13,7 +13,7 @@
 #include "src/logging.h"
 #include "src/network.h"
 #include "src/utility.h"
-#include <Simple-Web-Server/crypto.hpp>
+#include "src/http/types.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <optional>
@@ -52,11 +52,11 @@ namespace confighttp {
         { "status", false },
         { "error", "Cross-site request denied" },
       };
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       headers.emplace("X-Frame-Options", "DENY");
       headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
-      response->write(SimpleWeb::StatusCode::client_error_forbidden, body.dump(), headers);
+      response->write(web::StatusCode::forbidden, body.dump(), headers);
     }
 
   }  // namespace
@@ -93,10 +93,10 @@ namespace confighttp {
   send_unauthorized(resp_https_t response, req_https_t request) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     BOOST_LOG(error) << "Web UI: ["sv << address << "] -- not authorized"sv;
-    const SimpleWeb::CaseInsensitiveMultimap headers {
+    const web::CaseInsensitiveMultimap headers {
       { "WWW-Authenticate", R"(Basic realm="Sunshine Gamestream Host", charset="UTF-8")" }
     };
-    response->write(SimpleWeb::StatusCode::client_error_unauthorized, headers);
+    response->write(web::StatusCode::unauthorized, headers);
   }
 
   /**
@@ -113,13 +113,13 @@ namespace confighttp {
 
     if (ip_type > http::origin_web_ui_allowed) {
       BOOST_LOG(error) << "Web UI: ["sv << address << "] -- logout denied"sv;
-      response->write(SimpleWeb::StatusCode::client_error_forbidden);
+      response->write(web::StatusCode::forbidden);
       return;
     }
 
     if (ip_type == net::PC) {
       BOOST_LOG(info) << "Web UI: ["sv << address << "] -- logout (local), responding 200"sv;
-      response->write(SimpleWeb::StatusCode::success_ok, "");
+      response->write(web::StatusCode::ok, "");
       return;
     }
 
@@ -131,10 +131,10 @@ namespace confighttp {
   send_redirect(resp_https_t response, req_https_t request, const char *path) {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     BOOST_LOG(error) << "Web UI: ["sv << address << "] -- not authorized, redirect"sv;
-    const SimpleWeb::CaseInsensitiveMultimap headers {
+    const web::CaseInsensitiveMultimap headers {
       { "Location", path }
     };
-    response->write(SimpleWeb::StatusCode::redirection_temporary_redirect, headers);
+    response->write(web::StatusCode::temporary_redirect, headers);
   }
 
   bool
@@ -146,7 +146,7 @@ namespace confighttp {
 
     if (ip_type > http::origin_web_ui_allowed) {
       BOOST_LOG(error) << "Web UI: ["sv << address << "] -- denied"sv;
-      response->write(SimpleWeb::StatusCode::client_error_forbidden);
+      response->write(web::StatusCode::forbidden);
       return false;
     }
 
@@ -178,7 +178,7 @@ namespace confighttp {
 
     std::string authData;
     try {
-      authData = SimpleWeb::Crypto::Base64::decode(rawAuth.substr(basicPrefix.length()));
+      authData = web::decode_base64(rawAuth.substr(basicPrefix.length()));
     }
     catch (const std::exception &e) {
       BOOST_LOG(debug) << "Authentication: Base64 decode failed: " << e.what();
@@ -292,7 +292,7 @@ namespace confighttp {
     std::ostringstream msg_stream;
     msg_stream << "Access denied when " << action << ". Only localhost requests are allowed. Client IP: " << client_address.to_string();
     BOOST_LOG(warning) << msg_stream.str();
-    write_runtime_error(response, SimpleWeb::StatusCode::client_error_forbidden, 403, msg_stream.str());
+    write_runtime_error(response, web::StatusCode::forbidden, 403, msg_stream.str());
     return false;
   }
 

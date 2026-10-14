@@ -41,6 +41,34 @@ target_link_libraries(ai_provider_unit_tests PRIVATE gtest_main nlohmann_json::n
 set_target_properties(ai_provider_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ai_provider_unit_tests COMMAND ai_provider_unit_tests)
 
+add_executable(beast_http_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/tools/test_beast_http.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+target_include_directories(beast_http_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(beast_http_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main)
+target_compile_definitions(beast_http_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+set_target_properties(beast_http_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(beast_http_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME beast_http_unit_tests COMMAND beast_http_unit_tests)
+set_tests_properties(beast_http_unit_tests PROPERTIES TIMEOUT 60)
+
+add_executable(webhook_transport_tests
+        ${CMAKE_SOURCE_DIR}/tests/tools/test_webhook_transport.cpp
+        ${CMAKE_SOURCE_DIR}/src/webhook/webhook.cpp
+        ${CMAKE_SOURCE_DIR}/src/webhook/webhook_format.cpp
+        ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+target_include_directories(webhook_transport_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(webhook_transport_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main)
+target_compile_definitions(webhook_transport_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+set_target_properties(webhook_transport_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(webhook_transport_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME webhook_transport_tests COMMAND webhook_transport_tests)
+set_tests_properties(webhook_transport_tests PROPERTIES TIMEOUT 60)
+
 # Exercise real curl transfers and a single-threaded HTTPS listener in isolation.
 add_executable(http_safety_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/tools/test_http_safety.cpp

@@ -11,7 +11,7 @@
 // lib includes
 #include <boost/property_tree/ptree.hpp>
 #include <nlohmann/json.hpp>
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 // local includes
 #include "crypto.h"
 #include "thread_safe.h"
@@ -64,20 +64,9 @@ namespace nvhttp {
    */
   void setup(const std::string &pkey, const std::string &cert);
 
-  class SunshineHTTPS: public SimpleWeb::HTTPS {
-  public:
-    SunshineHTTPS(boost::asio::io_context &io_context, boost::asio::ssl::context &ctx):
-        SimpleWeb::HTTPS(io_context, ctx) {
-    }
+  using SunshineHTTPS = web::PairedHTTPS;
 
-    virtual ~SunshineHTTPS() {
-      // Gracefully shutdown the TLS connection
-      SimpleWeb::error_code ec;
-      shutdown(ec);
-    }
-  };
-
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Request>;
 
   /// Return the UUID authenticated by the paired client certificate on this
   /// request's TLS connection. An empty value means no paired identity exists.
@@ -106,8 +95,8 @@ namespace nvhttp {
 
     struct {
       util::Either<
-        std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>,
-        std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>>
+        std::shared_ptr<typename web::ServerBase<web::HTTP>::Response>,
+        std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Response>>
         response;
       std::string salt = {};
     } async_insert_pin;

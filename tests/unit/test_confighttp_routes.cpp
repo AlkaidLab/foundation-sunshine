@@ -2,9 +2,12 @@
  * @file tests/unit/test_confighttp_routes.cpp
  * @brief Route inventory and HTTPS authorization regression tests.
  */
-#include <Simple-Web-Server/client_https.hpp>
+#include "src/http/client.h"
 #include <array>
 #include <atomic>
+#include <boost/asio/ssl.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -13,10 +16,16 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <thread>
+#include <vector>
 
 #include "src/config.h"
+#include "src/confighttp/auth.h"
 #include "src/confighttp/routes.h"
 #include "src/crypto.h"
+#include "src/file_handler.h"
+#include "src/httpcommon.h"
+#include "src/platform/common.h"
+#include "src/utility.h"
 
 namespace {
   class ConfigHttpRoutes: public testing::Test {
@@ -55,7 +64,7 @@ namespace {
       std::filesystem::remove_all(directory, ignored);
     }
 
-    std::unique_ptr<SimpleWeb::Client<SimpleWeb::HTTPS>>
+    std::unique_ptr<web::Client<web::HTTPS>>
     connect() {
       server->config.address = "127.0.0.1";
       server->config.port = 0;
@@ -80,7 +89,7 @@ namespace {
         throw std::runtime_error("test HTTPS listener did not start");
       }
       bound_port = port.get();
-      auto client = std::make_unique<SimpleWeb::Client<SimpleWeb::HTTPS>>("127.0.0.1:" + std::to_string(bound_port), false);
+      auto client = std::make_unique<web::Client<web::HTTPS>>("127.0.0.1:" + std::to_string(bound_port), false);
       client->config.timeout = 5;
       client->config.timeout_connect = 5;
       return client;
@@ -216,8 +225,8 @@ TEST_F(ConfigHttpRoutes, AiPreflightRemainsAccessibleWithoutCredentials) {
 TEST_F(ConfigHttpRoutes, AiStreamStillRejectsCrossSiteAndDuplicateOriginBeforeStartingSse) {
   auto client = connect();
   for (const auto &headers : {
-         SimpleWeb::CaseInsensitiveMultimap { { "Content-Type", "application/json" }, { "Origin", "https://evil.example" } },
-         SimpleWeb::CaseInsensitiveMultimap { { "Content-Type", "application/json" }, { "Origin", "https://localhost" }, { "Origin", "https://evil.example" } } }) {
+         web::CaseInsensitiveMultimap { { "Content-Type", "application/json" }, { "Origin", "https://evil.example" } },
+         web::CaseInsensitiveMultimap { { "Content-Type", "application/json" }, { "Origin", "https://localhost" }, { "Origin", "https://evil.example" } } }) {
     const auto response = client->request("POST", "/api/ai/chat/completions", R"({"stream":true})", headers);
     EXPECT_EQ(response->status_code, "403 Forbidden");
     EXPECT_EQ(nlohmann::json::parse(response->content.string())["error"], "Cross-site request denied");
@@ -239,7 +248,195 @@ TEST_F(ConfigHttpRoutes, AiStreamStillRequiresInitialCredentialsAndJson) {
 TEST_F(ConfigHttpRoutes, LocalLogoutAndUnknownRouteKeepTheirStatusCodes) {
   auto client = connect();
   EXPECT_EQ(client->request("POST", "/api/logout")->status_code, "200 OK");
-  // The legacy default writes only a status line and closes the socket, so
-  // inspect the wire response rather than expecting a complete HTTP message.
-  EXPECT_EQ(raw_get("/does-not-exist"), "HTTP/1.1 444 No Response\r\n");
+  // Preserve the nonstandard status while using a complete Beast message.
+  const auto wire = raw_get("/does-not-exist");
+  EXPECT_TRUE(wire.starts_with("HTTP/1.1 444 No Response\r\n"));
+  boost::beast::http::response_parser<boost::beast::http::string_body> parser;
+  parser.eager(true);
+  boost::system::error_code ec;
+  parser.put(boost::asio::buffer(wire), ec);
+  ASSERT_FALSE(ec) << ec.message();
+  EXPECT_TRUE(parser.is_done());
+  EXPECT_EQ(parser.get().result_int(), 444);
+  EXPECT_FALSE(parser.get().keep_alive());
+}
+
+TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesOverTls) {
+  auto replace = [](std::string &value, const std::string &from, const std::string &to) {
+    size_t pos = 0;
+    while ((pos = value.find(from, pos)) != std::string::npos) {
+      value.replace(pos, from.size(), to);
+      pos += to.size();
+    }
+  };
+  struct Case {
+    std::string path, method, marker, capture;
+  };
+  std::vector<Case> cases;
+  for (auto &[pattern, methods] : server->resource) {
+    auto path = pattern.str.substr(1, pattern.str.size() - 2);
+    replace(path, "([0-9]+)", "42");
+    // The remaining captures are component and clipboard/file-mapping IDs.
+    path = std::regex_replace(path, std::regex(R"(\([^)]*\))"), "id_1");
+    replace(path, "\\/", "/");
+    replace(path, "/?", "/");
+    replace(path, ".+", "file.bin");
+    std::smatch match;
+    ASSERT_TRUE(std::regex_match(path, match, pattern.regex)) << pattern.str << " => " << path;
+    for (auto &[method, handler] : methods) {
+      const auto marker = pattern.str + ' ' + method;
+      cases.push_back({ path, method, marker, match.size() > 1 ? match[1].str() : "" });
+      // Verify transport dispatch without executing restart, device, upload or
+      // other business mutations during a route compatibility inventory test.
+      handler = [marker](auto response, auto request) {
+        response->write(nlohmann::json { { "marker", marker }, { "query", request->query_string },
+          { "capture", request->path_match.size() > 1 ? request->path_match[1].str() : "" } }
+            .dump());
+      };
+    }
+  }
+  auto client = connect();
+  for (const auto &entry : cases) {
+    SCOPED_TRACE(entry.marker);
+    const auto response = client->request(entry.method, entry.path + "?transport=beast");
+    ASSERT_EQ(response->status_code, "200 OK");
+    const auto body = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(body["marker"], entry.marker);
+    EXPECT_EQ(body["query"], "transport=beast");
+    EXPECT_EQ(body["capture"], entry.capture);
+  }
+}
+
+TEST_F(ConfigHttpRoutes, BasicCredentialsStillAuthenticateRemoteRequestsAndRejectMalformedBase64) {
+  const auto old_salt = config::sunshine.salt;
+  const auto old_password = config::sunshine.password;
+  const auto old_origin = http::origin_web_ui_allowed;
+  auto restore = util::fail_guard([&] {
+    config::sunshine.salt = old_salt;
+    config::sunshine.password = old_password;
+    http::origin_web_ui_allowed = old_origin;
+  });
+  config::sunshine.salt = "beast-test-salt";
+  config::sunshine.password = util::hex(crypto::hash("wire-password" + config::sunshine.salt)).to_string();
+  http::origin_web_ui_allowed = net::WAN;
+  server->resource["^/api/test-remote-auth$"]["GET"] = [](auto response, auto request) {
+    // Simulate the remote address for business authentication while headers
+    // and response framing still traverse a real TLS connection.
+    request->remote.address(boost::asio::ip::make_address("192.0.2.1"));
+    if (confighttp::authenticate(response, request)) response->write("authenticated");
+  };
+  auto client = connect();
+  const std::string good = "Basic cm91dGUtcmVncmVzc2lvbi10ZXN0OndpcmUtcGFzc3dvcmQ=";
+  EXPECT_EQ(client->request("GET", "/api/test-remote-auth", "", { { "Authorization", good } })->content.string(), "authenticated");
+  for (const auto &bad : { "Basic !!!=", "Basic d3Jvbmc=", "Basic cm91dGUtcmVncmVzc2lvbi10ZXN0Ondyb25n", "Bearer token" }) {
+    const auto response = client->request("GET", "/api/test-remote-auth", "", { { "Authorization", bad } });
+    EXPECT_EQ(response->status_code, "401 Unauthorized");
+    EXPECT_EQ(response->header.count("WWW-Authenticate"), 1);
+  }
+}
+
+TEST_F(ConfigHttpRoutes, ChunkedCoverUploadPreservesDecodedBinaryAndRejectsCrossSiteBeforeWriting) {
+  const auto key = directory.filename().string();
+  const auto path = platf::appdata() / "covers" / (key + ".png");
+  ASSERT_FALSE(std::filesystem::exists(path));
+  auto cleanup = util::fail_guard([&] { std::error_code ec; std::filesystem::remove(path, ec); });
+  auto client = connect();
+  const auto body = nlohmann::json { { "key", key }, { "data", "AAEC/3RhaWw=" } }.dump();
+  const auto denied = client->request("POST", "/api/covers/upload", body,
+    { { "Content-Type", "application/json" }, { "Origin", "https://evil.example" } });
+  EXPECT_EQ(denied->status_code, "403 Forbidden");
+  EXPECT_FALSE(std::filesystem::exists(path));
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  boost::asio::ssl::stream<boost::asio::ip::tcp::socket> socket(io, tls);
+  socket.set_verify_mode(boost::asio::ssl::verify_none);
+  socket.lowest_layer().connect({ boost::asio::ip::make_address("127.0.0.1"), bound_port });
+  socket.handshake(boost::asio::ssl::stream_base::client);
+  namespace wire = boost::beast::http;
+  wire::request<wire::string_body> request { wire::verb::post, "/api/covers/upload", 11 };
+  request.set(wire::field::host, "localhost");
+  request.set(wire::field::content_type, "application/json");
+  request.keep_alive(false);
+  request.body() = body;
+  request.chunked(true);
+  wire::write(socket, request);
+  boost::beast::flat_buffer buffer;
+  wire::response<wire::string_body> response;
+  wire::read(socket, buffer, response);
+  ASSERT_EQ(response.result_int(), 200) << response.body();
+  std::ifstream file(path, std::ios::binary);
+  ASSERT_TRUE(file.is_open());
+  const std::string decoded((std::istreambuf_iterator<char>(file)), {});
+  EXPECT_EQ(decoded, std::string("\0\1\2\xfftail", 8));
+}
+
+TEST_F(ConfigHttpRoutes, InvalidBase64CoverReturnsBadRequestWithoutCreatingAFile) {
+  const auto key = directory.filename().string();
+  const auto path = platf::appdata() / "covers" / (key + ".png");
+  ASSERT_FALSE(std::filesystem::exists(path));
+  auto cleanup = util::fail_guard([&] { std::error_code ec; std::filesystem::remove(path, ec); });
+  auto client = connect();
+  for (const auto *data : { "!@#$", "A" }) {
+    SCOPED_TRACE(data);
+    const auto body = nlohmann::json { { "key", key }, { "data", data } }.dump();
+    std::shared_ptr<web::Client<web::HTTPS>::Response> response;
+    ASSERT_NO_THROW(response = client->request("POST", "/api/covers/upload", body, { { "Content-Type", "application/json" } }));
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status_code, "400 Bad Request");
+    const auto json = nlohmann::json::parse(response->content.string());
+    ASSERT_TRUE(json.contains("error"));
+    EXPECT_FALSE(json["error"].get<std::string>().empty());
+    EXPECT_FALSE(std::filesystem::exists(path));
+  }
+}
+
+TEST_F(ConfigHttpRoutes, FullLogDownloadStreamsFilesBeyondTheResponseBufferLimit) {
+  const auto path = directory / std::filesystem::path(u8"large-日志.log");
+  constexpr std::uint64_t length = 65 * 1024 * 1024;
+  {
+    std::ofstream file(path, std::ios::binary);
+    file << "begin";
+  }
+  std::filesystem::resize_file(path, length);
+  // Keep a writer open: downloading the log must not deny active writers.
+  std::ofstream active(path, std::ios::binary | std::ios::app);
+  ASSERT_TRUE(active.is_open());
+  active << "end";
+  active.flush();
+  const auto old_path = config::sunshine.log_file;
+  auto restore = util::fail_guard([&] { config::sunshine.log_file = old_path; });
+  config::sunshine.log_file = file_handler::path_to_utf8(path);
+  server->config.max_response_buffer_size = 64 * 1024;
+  auto client = connect();
+  boost::asio::io_context io;
+  boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+  boost::asio::ssl::stream<boost::asio::ip::tcp::socket> socket(io, tls);
+  socket.set_verify_mode(boost::asio::ssl::verify_none);
+  socket.lowest_layer().connect({ boost::asio::ip::make_address("127.0.0.1"), bound_port });
+  socket.handshake(boost::asio::ssl::stream_base::client);
+  namespace wire = boost::beast::http;
+  wire::request<wire::empty_body> request { wire::verb::get, "/api/logs", 11 };
+  request.set(wire::field::host, "localhost");
+  request.keep_alive(false);
+  wire::write(socket, request);
+  boost::beast::flat_buffer buffer;
+  wire::response_parser<wire::file_body> response;
+  response.body_limit(length + 3);
+  web::error_code ec;
+  response.get().body().open(file_handler::path_to_utf8(directory / "received.log").c_str(), boost::beast::file_mode::write, ec);
+  ASSERT_FALSE(ec) << ec.message();
+  wire::read(socket, buffer, response, ec);
+  ASSERT_FALSE(ec) << ec.message();
+  EXPECT_EQ(response.get().result_int(), 200);
+  response.get().body().close();
+  const auto output = directory / "received.log";
+  ASSERT_EQ(std::filesystem::file_size(output), length + 3);
+  std::ifstream file(output, std::ios::binary);
+  std::string bytes(5, '\0');
+  file.read(bytes.data(), bytes.size());
+  EXPECT_EQ(bytes, "begin");
+  file.seekg(length);
+  bytes.resize(3);
+  file.read(bytes.data(), bytes.size());
+  EXPECT_EQ(bytes, "end");
 }

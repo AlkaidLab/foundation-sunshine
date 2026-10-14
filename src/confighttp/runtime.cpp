@@ -90,11 +90,11 @@ namespace confighttp::runtime {
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "getRuntimeSessions: " << e.what();
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
       }
       catch (...) {
         BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
 
@@ -152,11 +152,11 @@ namespace confighttp::runtime {
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "getRuntimeHdrStatus: " << e.what();
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
       }
       catch (...) {
         BOOST_LOG(error) << "getRuntimeHdrStatus: Unknown exception";
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
 
@@ -221,11 +221,11 @@ namespace confighttp::runtime {
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "getRuntimeHdrCalibration: " << e.what();
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, e.what());
       }
       catch (...) {
         BOOST_LOG(error) << "getRuntimeHdrCalibration: Unknown exception";
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
 
@@ -256,11 +256,11 @@ namespace confighttp::runtime {
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "stopRuntimeSessions: " << e.what();
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, e.what());
       }
       catch (...) {
         BOOST_LOG(error) << "stopRuntimeSessions: Unknown exception";
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
 
@@ -281,11 +281,11 @@ namespace confighttp::runtime {
       catch (const std::exception &e) {
         BOOST_LOG(error) << "getPerfCurrent: " << e.what();
 
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
       }
       catch (...) {
         BOOST_LOG(error) << "getPerfCurrent: Unknown exception";
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
 
@@ -317,14 +317,14 @@ namespace confighttp::runtime {
         response->close_connection_after_response = true;
       }
       catch (const json::exception &e) {
-        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, e.what());
+        write_runtime_error(response, web::StatusCode::bad_request, 400, e.what());
       }
       catch (const std::invalid_argument &e) {
-        write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, e.what());
+        write_runtime_error(response, web::StatusCode::bad_request, 400, e.what());
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "setPerfFrameRates: " << e.what();
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, e.what());
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, e.what());
       }
     }
 
@@ -348,7 +348,7 @@ namespace confighttp::runtime {
           std::ostringstream msg_stream;
           msg_stream << "Missing bitrate parameter when changing bitrate";
           BOOST_LOG(warning) << msg_stream.str();
-          write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
+          write_runtime_error(response, web::StatusCode::bad_request, 400, msg_stream.str());
           return;
         }
 
@@ -356,7 +356,7 @@ namespace confighttp::runtime {
           std::ostringstream msg_stream;
           msg_stream << "Missing clientname parameter when changing bitrate";
           BOOST_LOG(warning) << msg_stream.str();
-          write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
+          write_runtime_error(response, web::StatusCode::bad_request, 400, msg_stream.str());
           return;
         }
 
@@ -366,7 +366,7 @@ namespace confighttp::runtime {
           bitrate = std::stoi(bitrate_param->second);
         }
         catch (...) {
-          write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, "Invalid bitrate parameter format");
+          write_runtime_error(response, web::StatusCode::bad_request, 400, "Invalid bitrate parameter format");
           return;
         }
 
@@ -377,7 +377,7 @@ namespace confighttp::runtime {
           std::ostringstream msg_stream;
           msg_stream << "Invalid bitrate value when changing bitrate. Must be between 1 and 800000 Kbps";
           BOOST_LOG(warning) << msg_stream.str();
-          write_runtime_error(response, SimpleWeb::StatusCode::client_error_bad_request, 400, msg_stream.str());
+          write_runtime_error(response, web::StatusCode::bad_request, 400, msg_stream.str());
           return;
         }
 
@@ -437,17 +437,17 @@ namespace confighttp::runtime {
         }
 
         response->write(
-          success ? SimpleWeb::StatusCode::success_ok : SimpleWeb::StatusCode::client_error_not_found,
+          success ? web::StatusCode::ok : web::StatusCode::not_found,
           response_json.dump());
         response->close_connection_after_response = true;
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "changeRuntimeBitrate: " << e.what();
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, std::string(e.what()));
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
       }
       catch (...) {
         BOOST_LOG(error) << "changeRuntimeBitrate: Unknown exception";
-        write_runtime_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, 500, "Unknown error");
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
 

@@ -38,7 +38,7 @@ namespace file_mapping::config_http {
       json body;
       body["ok"] = true;
       body["mappings"] = file_mapping_store::global().to_json();
-      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+      write_json(std::move(response), web::StatusCode::ok, body);
     }
 
     void
@@ -50,7 +50,7 @@ namespace file_mapping::config_http {
       json input;
       if (!read_json_body(response, request, input)) return;
       if (!input.is_object() || !input.contains("path") || !input["path"].is_string()) {
-        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "missing string field: path");
+        write_json_error(std::move(response), web::StatusCode::bad_request, "missing string field: path");
         return;
       }
 
@@ -60,11 +60,11 @@ namespace file_mapping::config_http {
         auto previous_mappings = file_mapping_store::global().snapshot();
         result = file_mapping_store::global().add_quick_share(input["path"].get<std::string>());
         if (!result.ok) {
-          write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, result.error);
+          write_json_error(std::move(response), web::StatusCode::bad_request, result.error);
           return;
         }
         if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
-          write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+          write_json_error(std::move(response), web::StatusCode::internal_server_error, "failed to persist mapping configuration");
           return;
         }
       }
@@ -72,7 +72,7 @@ namespace file_mapping::config_http {
       json body;
       body["ok"] = true;
       body["mapping"] = file_mapping_store::mapping_to_config_json(result.mapping);
-      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+      write_json(std::move(response), web::StatusCode::ok, body);
     }
 
     void
@@ -83,7 +83,7 @@ namespace file_mapping::config_http {
 
       const auto id = request->path_match.size() > 1 ? request->path_match[1].str() : std::string {};
       if (!file_mapping::is_valid_mapping_id(id)) {
-        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
+        write_json_error(std::move(response), web::StatusCode::bad_request, "invalid mapping id");
         return;
       }
 
@@ -95,12 +95,12 @@ namespace file_mapping::config_http {
         auto previous_mappings = file_mapping_store::global().snapshot();
         result = file_mapping_store::global().update(id, input);
         if (!result.ok) {
-          const auto status = result.error == "mapping was not found" ? SimpleWeb::StatusCode::client_error_not_found : SimpleWeb::StatusCode::client_error_bad_request;
+          const auto status = result.error == "mapping was not found" ? web::StatusCode::not_found : web::StatusCode::bad_request;
           write_json_error(std::move(response), status, result.error);
           return;
         }
         if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
-          write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+          write_json_error(std::move(response), web::StatusCode::internal_server_error, "failed to persist mapping configuration");
           return;
         }
       }
@@ -108,7 +108,7 @@ namespace file_mapping::config_http {
       json body;
       body["ok"] = true;
       body["mapping"] = file_mapping_store::mapping_to_config_json(result.mapping);
-      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+      write_json(std::move(response), web::StatusCode::ok, body);
     }
 
     void
@@ -118,18 +118,18 @@ namespace file_mapping::config_http {
 
       const auto id = request->path_match.size() > 1 ? request->path_match[1].str() : std::string {};
       if (!file_mapping::is_valid_mapping_id(id)) {
-        write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "invalid mapping id");
+        write_json_error(std::move(response), web::StatusCode::bad_request, "invalid mapping id");
         return;
       }
       {
         std::scoped_lock transaction_lock { file_mapping_store_transaction_mutex };
         auto previous_mappings = file_mapping_store::global().snapshot();
         if (!file_mapping_store::global().remove(id)) {
-          write_json_error(std::move(response), SimpleWeb::StatusCode::client_error_not_found, "mapping was not found");
+          write_json_error(std::move(response), web::StatusCode::not_found, "mapping was not found");
           return;
         }
         if (!persistFileMappingStoreOrRestore(std::move(previous_mappings))) {
-          write_json_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, "failed to persist mapping configuration");
+          write_json_error(std::move(response), web::StatusCode::internal_server_error, "failed to persist mapping configuration");
           return;
         }
       }
@@ -137,7 +137,7 @@ namespace file_mapping::config_http {
       json body;
       body["ok"] = true;
       body["id"] = id;
-      write_json(std::move(response), SimpleWeb::StatusCode::success_ok, body);
+      write_json(std::move(response), web::StatusCode::ok, body);
     }
 
   }  // namespace

@@ -49,7 +49,7 @@ namespace confighttp {
       [](text_context::http::resp_https_t resp, text_context::http::req_https_t req) {
         const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
         if (net::from_address(address) != net::PC) {
-          resp->write(SimpleWeb::StatusCode::client_error_forbidden);
+          resp->write(web::StatusCode::forbidden);
           return false;
         }
         return authenticate(std::move(resp), std::move(req));
@@ -67,7 +67,7 @@ namespace confighttp {
     widget_http::register_routes(server, [](widget_http::resp_https_t resp, widget_http::req_https_t req) {
       const auto address = net::addr_to_normalized_string(req->remote_endpoint().address());
       if (net::from_address(address) != net::PC) {
-        resp->write(SimpleWeb::StatusCode::client_error_forbidden);
+        resp->write(web::StatusCode::forbidden);
         return false;
       }
       return true;

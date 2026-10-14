@@ -4,11 +4,11 @@
  */
 #pragma once
 
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 #include <memory>
 
 namespace confighttp {
-  using https_server_t = SimpleWeb::Server<SimpleWeb::HTTPS>;
+  using https_server_t = web::Server<web::HTTPS>;
   using resp_https_t = std::shared_ptr<https_server_t::Response>;
   using req_https_t = std::shared_ptr<https_server_t::Request>;
 }  // namespace confighttp

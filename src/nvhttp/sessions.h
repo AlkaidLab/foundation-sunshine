@@ -12,8 +12,8 @@ namespace stream {
 
 namespace nvhttp::sessions {
 
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Request>;
 
   nlohmann::json
   make_session_json(const stream::session_info_t &session_info);

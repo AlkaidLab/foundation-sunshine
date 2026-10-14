@@ -7,11 +7,11 @@
 #include <memory>
 #include <string>
 
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 
 namespace webhook::api {
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<web::HTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<web::HTTPS>::Request>;
 
   /**
    * Handle already-authenticated Webhook requests.

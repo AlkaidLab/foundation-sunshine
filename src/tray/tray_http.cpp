@@ -76,7 +76,7 @@ namespace tray_http {
           return;
         }
         *subscriber->response << event;
-        subscriber->response->send([subscriber](const SimpleWeb::error_code &error) {
+        subscriber->response->send([subscriber](const web::error_code &error) {
           if (error) {
             subscriber->alive.store(false, std::memory_order_release);
           }
@@ -119,9 +119,9 @@ namespace tray_http {
         30s);
     }
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_response_headers() {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       headers.emplace("X-Frame-Options", "DENY");
       headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
@@ -145,7 +145,7 @@ namespace tray_http {
     void
     send_bad_request(resp_https_t response, const std::string &error) {
       auto headers = json_response_headers();
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, nlohmann::json {
+      response->write(web::StatusCode::bad_request, nlohmann::json {
                                                                          { "status", false },
                                                                          { "error", error },
                                                                        }
@@ -567,7 +567,7 @@ namespace tray_http {
       subscriber->response = std::move(response);
       subscriber->response->close_connection_after_response = true;
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/event-stream");
       headers.emplace("Cache-Control", "no-cache");
       headers.emplace("Connection", "keep-alive");

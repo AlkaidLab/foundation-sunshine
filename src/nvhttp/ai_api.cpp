@@ -3,7 +3,7 @@
 #include <sstream>
 #include <string>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <nlohmann/json.hpp>
 
 #include "src/ai/http_stream.h"
@@ -31,16 +31,16 @@ namespace nvhttp::ai_api {
     else {
       auto result = ai::processAiChat(requestBody);
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", result.contentType);
 
-      auto statusCode = SimpleWeb::StatusCode::success_ok;
+      auto statusCode = web::StatusCode::ok;
       if (result.httpCode == 403)
-        statusCode = SimpleWeb::StatusCode::client_error_forbidden;
+        statusCode = web::StatusCode::forbidden;
       else if (result.httpCode == 400)
-        statusCode = SimpleWeb::StatusCode::client_error_bad_request;
+        statusCode = web::StatusCode::bad_request;
       else if (result.httpCode >= 500)
-        statusCode = SimpleWeb::StatusCode::server_error_bad_gateway;
+        statusCode = web::StatusCode::bad_gateway;
 
       response->write(statusCode, result.body, headers);
     }

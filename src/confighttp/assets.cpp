@@ -51,7 +51,7 @@ namespace confighttp::assets {
       print_req(request);
 
       std::string content = file_handler::read_file((std::string(WEB_DIR) + pageName).c_str());
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/html; charset=utf-8");
       if (pageName == "apps.html") {
         headers.emplace("Access-Control-Allow-Origin", "https://images.igdb.com/");
@@ -117,15 +117,12 @@ namespace confighttp::assets {
     getStaticResource(resp_https_t response, req_https_t request, const std::string &path, const std::string &contentType) {
       // print_req(request);
 
-      std::ifstream in(file_handler::path_from_utf8(path), std::ios::binary);
-      if (!in.is_open()) {
-        BOOST_LOG(error) << "Failed to open Web UI resource: " << path;
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
-        return;
-      }
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", contentType);
-      response->write(SimpleWeb::StatusCode::success_ok, in, headers);
+      if (!response->write_file(web::StatusCode::ok, file_handler::path_from_utf8(path), headers)) {
+        BOOST_LOG(error) << "Failed to open Web UI resource: " << path;
+        response->write(web::StatusCode::internal_server_error);
+      }
     }
 
     void
@@ -159,7 +156,7 @@ namespace confighttp::assets {
       if (path.find("/boxart/") == 0) {
         path = path.substr(8);  // Remove "/boxart/" prefix
       }
-      path = SimpleWeb::Percent::decode(path);
+      path = web::Percent::decode(path);
 
       BOOST_LOG(debug) << "getBoxArt: Requested file: " << path;
 
@@ -174,7 +171,7 @@ namespace confighttp::assets {
         // Preserve the placeholder for invalid and missing image names.
         const auto fallback = resolve_boxart_path(assetsRoot, assetsRoot, "box.png");
         if (!fallback) {
-          response->write(SimpleWeb::StatusCode::client_error_not_found, "Image not found");
+          response->write(web::StatusCode::not_found, "Image not found");
           return;
         }
         finalPath = *fallback;
@@ -187,7 +184,7 @@ namespace confighttp::assets {
       auto fileSize = fs::file_size(finalPath, ec);
       if (ec) {
         BOOST_LOG(warning) << "Failed to get file size for: " << imagePath;
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to read image file");
+        response->write(web::StatusCode::internal_server_error, "Failed to read image file");
         return;
       }
 
@@ -207,19 +204,15 @@ namespace confighttp::assets {
       BOOST_LOG(debug) << "Serving boxart: " << imagePath << " (Content-Type: " << contentType << ", Size: " << fileSize << " bytes)";
 
       // Return image resource
-      std::ifstream in(finalPath, std::ios::binary);
-      if (!in.is_open()) {
-        BOOST_LOG(warning) << "Failed to open image file: " << imagePath;
-        response->write(SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to open image file");
-        return;
-      }
-
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", contentType);
       headers.emplace("Content-Length", std::to_string(fileSize));
       headers.emplace("Cache-Control", "max-age=3600");  // Add caching to reduce load
 
-      response->write(SimpleWeb::StatusCode::success_ok, in, headers);
+      if (!response->write_file(web::StatusCode::ok, finalPath, headers)) {
+        BOOST_LOG(warning) << "Failed to open image file: " << imagePath;
+        response->write(web::StatusCode::internal_server_error, "Failed to open image file");
+      }
     }
 
     void
@@ -229,11 +222,11 @@ namespace confighttp::assets {
       fs::path nodeModulesPath(webDirPath / "assets");
 
       // .relative_path is needed to shed any leading slash that might exist in the request path
-      const auto decodedRequestPath = SimpleWeb::Percent::decode(request->path);
+      const auto decodedRequestPath = web::Percent::decode(request->path);
       std::error_code path_error;
       nodeModulesPath = fs::weakly_canonical(nodeModulesPath, path_error);
       if (path_error) {
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, "Bad Request");
+        response->write(web::StatusCode::bad_request, "Bad Request");
         return;
       }
       auto filePath = fs::weakly_canonical(webDirPath / file_handler::path_from_utf8(decodedRequestPath).relative_path(), path_error);
@@ -241,10 +234,10 @@ namespace confighttp::assets {
       // Don't do anything if file does not exist or is outside the assets directory
       if (path_error || !is_child_path(filePath, nodeModulesPath)) {
         BOOST_LOG(warning) << "Someone requested a path " << filePath << " that is outside the assets folder";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, "Bad Request");
+        response->write(web::StatusCode::bad_request, "Bad Request");
       }
       else if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
-        response->write(SimpleWeb::StatusCode::client_error_not_found);
+        response->write(web::StatusCode::not_found);
       }
       else {
         auto relPath = fs::relative(filePath, webDirPath);
@@ -254,15 +247,12 @@ namespace confighttp::assets {
         // check if the extension is in the map at the x position
         if (mimeType != mime_types.end()) {
           // if it is, set the content type to the mime type
-          SimpleWeb::CaseInsensitiveMultimap headers;
+          web::CaseInsensitiveMultimap headers;
           headers.emplace("Content-Type", mimeType->second);
-          std::ifstream in(filePath, std::ios::binary);
-          if (!in.is_open()) {
+          if (!response->write_file(web::StatusCode::ok, filePath, headers)) {
             BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(filePath);
-            response->write(SimpleWeb::StatusCode::server_error_internal_server_error);
-            return;
+            response->write(web::StatusCode::internal_server_error);
           }
-          response->write(SimpleWeb::StatusCode::success_ok, in, headers);
         }
         // do not return any file if the type is not in the map
       }

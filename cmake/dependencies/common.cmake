@@ -1,7 +1,7 @@
 # load common dependencies
 # this file will also load platform specific dependencies
 
-# boost, this should be before Simple-Web-Server as it also depends on boost
+# Shared networking and application dependencies
 include(dependencies/Boost_Sunshine)
 
 # submodules
@@ -14,9 +14,6 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet")
 set(MOONLIGHT_HAPTICS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-audio-haptics" EXCLUDE_FROM_ALL)
 
-# web server
-add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/Simple-Web-Server")
-target_link_libraries(simple-web-server INTERFACE Boost::asio)
 
 # common dependencies
 include("${CMAKE_MODULE_PATH}/dependencies/nlohmann_json.cmake")
