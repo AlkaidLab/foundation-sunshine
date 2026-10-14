@@ -160,6 +160,7 @@ namespace input {
     thread_pool_util::ThreadPool::task_id_t back_timeout_id;
     thread_pool_util::ThreadPool::task_id_t home_release_timeout_id {};
     std::uint64_t generation {};
+    std::uint64_t home_press_generation {};
     bool client_home_pressed = false;
 
     int id;
@@ -1625,6 +1626,8 @@ namespace input {
             auto &gamepad = input->gamepads[controller];
             if (gamepad.id < 0 || gamepad.generation != generation) return;
             gamepad.back_timeout_id = nullptr;
+            task_pool.cancel(gamepad.home_release_timeout_id);
+            const auto home_press_generation = ++gamepad.home_press_generation;
 
             auto &state = gamepad.gamepad_state;
 
@@ -1639,9 +1642,9 @@ namespace input {
 
             // Keep the input worker responsive to removal during the Home press.
             // A delayed release from the old device must never modify a reused slot.
-            auto release_home = [input, controller, generation]() {
+            auto release_home = [input, controller, generation, home_press_generation]() {
               auto &gamepad = input->gamepads[controller];
-              if (gamepad.id < 0 || gamepad.generation != generation) return;
+              if (gamepad.id < 0 || gamepad.generation != generation || gamepad.home_press_generation != home_press_generation) return;
               gamepad.home_release_timeout_id = nullptr;
               if (!gamepad.client_home_pressed) gamepad.gamepad_state.buttonFlags &= ~platf::HOME;
               platf::gamepad_update(platf_input, gamepad.id, gamepad.gamepad_state);

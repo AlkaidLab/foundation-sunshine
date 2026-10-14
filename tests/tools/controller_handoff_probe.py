@@ -116,6 +116,26 @@ int main() {
   task_pool.run(slot.home_release_timeout_id);
   assert(slot.gamepad_state.buttonFlags & platf::HOME);
   send(0, 0);
+
+  // Two Back long presses within the Home pulse must not share a release task.
+  config::input.back_button_timeout = 0ms;
+  send(1, platf::BACK);
+  task_pool.run(slot.back_timeout_id);
+  auto previous_release_job = slot.home_release_timeout_id;
+  old_home = previous_release_job->action;
+  send(1, 0);
+  send(1, platf::BACK);
+  task_pool.run(slot.back_timeout_id);
+  auto latest_release_job = slot.home_release_timeout_id;
+  assert(previous_release_job->cancelled && latest_release_job != previous_release_job);
+  count = platf::writes.size();
+  old_home(); // A callback already dequeued before cancellation must also be harmless.
+  assert(platf::writes.size() == count && slot.home_release_timeout_id == latest_release_job);
+  send(1, 0);
+  assert(slot.gamepad_state.buttonFlags & platf::HOME);
+  task_pool.run(latest_release_job);
+  assert(!(slot.gamepad_state.buttonFlags & platf::HOME));
+  send(0, 0);
   old_back = {}; old_home = {};
   for (auto& job : task_pool.jobs) job->action = {};
   std::cout << "Controller retirement and delayed Home regression checks passed\n";
