@@ -11,6 +11,15 @@ if(MINGW)
     target_compile_options(sunshine_project_options INTERFACE $<$<COMPILE_LANGUAGE:RC>:--use-temp-file>)
 endif()
 
+# Keep per-configuration source policy in one place for both host variants.
+function(sunshine_configure_debug_sources test_directory)
+    if(WIN32)
+        set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
+                DIRECTORY "${CMAKE_SOURCE_DIR}" "${test_directory}"
+                PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
+    endif()
+endfunction()
+
 add_library(sunshine_coverage INTERFACE)
 if(SUNSHINE_TESTS_ENABLE_COVERAGE)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

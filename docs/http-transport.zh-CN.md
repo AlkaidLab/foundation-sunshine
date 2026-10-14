@@ -72,7 +72,7 @@ ctest --test-dir build --output-on-failure
 
 Web UI 使用锁文件安装依赖，安装和打包各有输出与输入依赖：源文件变化重建页面，锁文件变化重装依赖，缺失输出触发恢复，无改动构建跳过 npm。资源复制保留子目录，并跟踪编辑、新增和删除；仅清理规则自己记录的输出。Wayland 的两个生成命令位于构建图中，XML 变化触发重建，首个命令失败直接结束构建。
 
-`cmake_configuration_tests` 通过真实的小型 CMake/Ninja 项目验证独立 Preset 构建目录、Debug 断言、源码清单在应用与测试中的独立编译、系统 Boost 组件、Web UI 增量构建、资源复制与 Wayland 生成。Web UI/npm 和 Wayland/scanner 使用可记录调用的本地替身，无需下载依赖或安装 Wayland。
+`cmake_configuration_tests` 保留六组行为回归：Preset 构建目录隔离、Debug 断言、系统 Boost 组件、Web UI 增量构建、资源复制与 Wayland 生成。Debug 探针直接使用生产构建规则，发现 `NDEBUG` 时编译失败，无需截取 CMake 文本。Web UI/npm 和 Wayland/scanner 使用可记录调用的本地替身，无需下载依赖或安装 Wayland。
 
 Windows `test-win` Preset 使用独立的 `build-tests` 目录，避免覆盖 `dev-win` 构建的 `build/tests` 子目录。
 

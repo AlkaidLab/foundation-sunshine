@@ -124,10 +124,4 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViG
         COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650"
         COMPILE_FLAGS ${VIGEM_COMPILE_FLAGS})
 
-# Preserve the Windows debug-handler optimization for every generator. CMake's
-# normal per-configuration flags own NDEBUG; Debug must keep assertions enabled.
-if(WIN32)
-    set_source_files_properties("${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
-            DIRECTORY "${CMAKE_SOURCE_DIR}" "${TEST_DIR}"
-            PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
-endif()
+sunshine_configure_debug_sources("${TEST_DIR}")
