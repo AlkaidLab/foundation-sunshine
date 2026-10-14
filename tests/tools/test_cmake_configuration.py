@@ -90,6 +90,31 @@ class Configuration(unittest.TestCase):
         self.run_command([args.cmake, '-S', str(self.project), '--preset', 'test-win'])
         self.assertEqual(install_rules.read_text(), before)
 
+    def test_source_manifest_keeps_application_and_test_variants_separate(self):
+        module = SOURCE / 'src/confighttp'
+        self.write('src/confighttp/sources.cmake', (module / 'sources.cmake').read_text(encoding='utf-8'))
+        # Stand-ins keep this ownership check independent of HTTP dependencies.
+        for path in module.iterdir():
+            if path.suffix in ['.cpp', '.h']:
+                self.write('src/confighttp/' + path.name, '// fixture\n')
+        self.write('src/confighttp/auth.cpp', 'int variant() {\n#ifdef SUNSHINE_TESTS\nreturn 1;\n#else\nreturn 0;\n#endif\n}\n')
+        self.write('app.cpp', '#include <cstdio>\nint variant();\nint main() { std::printf("%d", variant()); }\n')
+        self.write('tests/main.cpp', (self.project / 'app.cpp').read_text())
+        self.write('CMakeLists.txt', 'cmake_minimum_required(VERSION 3.25)\nproject(SourceVariants LANGUAGES CXX)\n'
+                   'include(src/confighttp/sources.cmake)\nadd_executable(application app.cpp)\n'
+                   'target_sources(application PRIVATE ${SUNSHINE_CONFIGHTTP_SOURCES})\n'
+                   'target_sources(application PRIVATE ${SUNSHINE_CONFIGHTTP_HEADERS})\n'
+                   'add_subdirectory(tests)\n')
+        self.write('tests/CMakeLists.txt', 'add_executable(test_variant main.cpp)\n'
+                   'target_sources(test_variant PRIVATE ${SUNSHINE_CONFIGHTTP_SOURCES})\n'
+                   'target_sources(test_variant PRIVATE ${SUNSHINE_CONFIGHTTP_HEADERS})\n'
+                   'target_compile_definitions(test_variant PRIVATE SUNSHINE_TESTS)\n')
+        self.configure([f'-DCMAKE_CXX_COMPILER={args.compiler}'])
+        self.build_project()
+        suffix = '.exe' if os.name == 'nt' else ''
+        self.assertEqual(self.run_command([str(self.build / ('application' + suffix))]), '0')
+        self.assertEqual(self.run_command([str(self.build / 'tests' / ('test_variant' + suffix))]), '1')
+
     def test_system_boost_path_defines_all_consumed_components(self):
         package = self.project / 'package'
         self.write('package/BoostConfigVersion.cmake', 'set(PACKAGE_VERSION 1.92.0)\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\nset(PACKAGE_VERSION_EXACT TRUE)\n')

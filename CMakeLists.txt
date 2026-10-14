@@ -63,6 +63,9 @@ include(${CMAKE_MODULE_PATH}/macros/common.cmake)
 # load dependencies
 include(${CMAKE_MODULE_PATH}/dependencies/common.cmake)
 
+# Explicit inventories are shared by the host and its test variant.
+include(${CMAKE_MODULE_PATH}/sources/host.cmake)
+
 # setup compile definitions
 include(${CMAKE_MODULE_PATH}/compile_definitions/common.cmake)
 

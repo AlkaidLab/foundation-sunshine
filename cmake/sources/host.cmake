@@ -1,0 +1,61 @@
+# Keep the host inventory separate from compile options and target definitions.
+include("${CMAKE_SOURCE_DIR}/cmake/sources/third_party.cmake")
+include("${CMAKE_SOURCE_DIR}/src/haptics/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/hdr/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/display_device/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/ds5/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/image_enhancement/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/pyrowave/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/file_mapping/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/remote_usb/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/ai/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/webhook/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/nvhttp/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/streaming/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/confighttp/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/text_context/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/platform/sources.cmake")
+include("${CMAKE_SOURCE_DIR}/src/tray/sources.cmake")
+
+set(SUNSHINE_HOST_SOURCES
+    ${SUNSHINE_THIRD_PARTY_SOURCES}
+    ${SUNSHINE_HAPTICS_SOURCES}
+    ${SUNSHINE_HDR_SOURCES}
+    ${SUNSHINE_DISPLAY_DEVICE_SOURCES}
+    ${SUNSHINE_CORE_SOURCES}
+    ${SUNSHINE_DS5_SOURCES}
+    ${SUNSHINE_IMAGE_ENHANCEMENT_SOURCES}
+    ${SUNSHINE_PYROWAVE_SOURCES}
+    ${SUNSHINE_FILE_MAPPING_SOURCES}
+    ${SUNSHINE_REMOTE_USB_SOURCES}
+    ${SUNSHINE_AI_SOURCES}
+    ${SUNSHINE_WEBHOOK_SOURCES}
+    ${SUNSHINE_NVHTTP_SOURCES}
+    ${SUNSHINE_STREAMING_SOURCES}
+    ${SUNSHINE_CONFIGHTTP_SOURCES}
+    ${SUNSHINE_TEXT_CONTEXT_SOURCES}
+    ${SUNSHINE_PLATFORM_COMMON_SOURCES}
+    ${SUNSHINE_TRAY_SOURCES}
+)
+
+set(SUNSHINE_HOST_HEADERS
+    ${SUNSHINE_THIRD_PARTY_HEADERS}
+    ${SUNSHINE_HAPTICS_HEADERS}
+    ${SUNSHINE_HDR_HEADERS}
+    ${SUNSHINE_DISPLAY_DEVICE_HEADERS}
+    ${SUNSHINE_CORE_HEADERS}
+    ${SUNSHINE_DS5_HEADERS}
+    ${SUNSHINE_IMAGE_ENHANCEMENT_HEADERS}
+    ${SUNSHINE_PYROWAVE_HEADERS}
+    ${SUNSHINE_FILE_MAPPING_HEADERS}
+    ${SUNSHINE_REMOTE_USB_HEADERS}
+    ${SUNSHINE_AI_HEADERS}
+    ${SUNSHINE_WEBHOOK_HEADERS}
+    ${SUNSHINE_NVHTTP_HEADERS}
+    ${SUNSHINE_STREAMING_HEADERS}
+    ${SUNSHINE_CONFIGHTTP_HEADERS}
+    ${SUNSHINE_TEXT_CONTEXT_HEADERS}
+    ${SUNSHINE_PLATFORM_COMMON_HEADERS}
+    ${SUNSHINE_TRAY_HEADERS}
+)

@@ -504,16 +504,14 @@ if (WIN32)
 endif ()
 
 set(SUNSHINE_SOURCES
-        ${SUNSHINE_TARGET_FILES}
+        ${SUNSHINE_HOST_SOURCES}
+        ${PLATFORM_TARGET_FILES}
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
 
-# remove main.cpp from the list of sources
-list(REMOVE_ITEM SUNSHINE_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
-
-add_executable(${PROJECT_NAME}
-        ${TEST_SOURCES}
-        ${SUNSHINE_SOURCES})
+add_executable(${PROJECT_NAME} ${TEST_SOURCES})
+target_sources(${PROJECT_NAME} PRIVATE ${SUNSHINE_HOST_HEADERS})
 target_sources(${PROJECT_NAME} PRIVATE
+        ${SUNSHINE_SOURCES}
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c)
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE Pyrowave::Runtime sunshine_windows_resources)

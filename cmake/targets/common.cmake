@@ -1,7 +1,9 @@
 # common target definitions
 # this file will also load platform specific macros
 
-add_executable(sunshine ${SUNSHINE_TARGET_FILES})
+add_executable(sunshine "${CMAKE_SOURCE_DIR}/src/main.cpp")
+target_sources(sunshine PRIVATE ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
+target_sources(sunshine PRIVATE ${SUNSHINE_HOST_HEADERS})
 if(WIN32)
     target_link_libraries(sunshine PRIVATE Pyrowave::Runtime sunshine_windows_resources)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSE"
