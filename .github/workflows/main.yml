@@ -270,6 +270,7 @@ jobs:
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DBUILD_TESTS=ON \
+            -DSUNSHINE_AI_BEAST_PILOT=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
