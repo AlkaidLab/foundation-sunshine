@@ -131,12 +131,12 @@ else if (args[0] == "test")
         var ownsInterface = orchestrator.GetMethod("IsOwnedInterfaceKey", BindingFlags.NonPublic | BindingFlags.Static)!;
         using (var foreign = isolated.CreateSubKey(@"SYSTEM\CurrentControlSet\Enum\ROOT\HIDCLASS\0000"))
             foreign.SetValue("HardwareID", new[] { @"root\vJoy" }, RegistryValueKind.MultiString);
-        Require(!(bool)ownsInterface.Invoke(null, new[] { $"##?#ROOT#HIDCLASS#0000#{guid}" })!, "foreign ROOT interface claimed");
-        Require(!(bool)ownsInterface.Invoke(null, new[] { $"##?#SWD#VID_054C&PID_0CE6#missing#{guid}" })!, "unknown SWD interface claimed");
+        Require(!(bool)ownsInterface.Invoke(null, new object?[] { $"##?#ROOT#HIDCLASS#0000#{guid}", null })!, "foreign ROOT interface claimed");
+        Require(!(bool)ownsInterface.Invoke(null, new object?[] { $"##?#SWD#VID_054C&PID_0CE6#missing#{guid}", null })!, "unknown SWD interface claimed");
         using (var owned = isolated.CreateSubKey(@"SYSTEM\CurrentControlSet\Enum\ROOT\HIDCLASS\0001"))
             owned.SetValue("HardwareID", new[] { @"root\HIDMaestroGamepad" }, RegistryValueKind.MultiString);
-        Require((bool)ownsInterface.Invoke(null, new[] { $"##?#ROOT#HIDCLASS#0001#{guid}" })!, "owned shared interface missed");
-        Require((bool)ownsInterface.Invoke(null, new[] { $"##?#swd#HIDMAESTRO#0000#{guid}" })!, "reserved SDK interface missed");
+        Require((bool)ownsInterface.Invoke(null, new object?[] { $"##?#ROOT#HIDCLASS#0001#{guid}", null })!, "owned shared interface missed");
+        Require((bool)ownsInterface.Invoke(null, new object?[] { $"##?#swd#HIDMAESTRO#0000#{guid}", null })!, "reserved SDK interface missed");
         using (var child = isolated.CreateSubKey(@"SYSTEM\CurrentControlSet\Enum\HID\HIDCLASS\unknown"))
             child.SetValue("HardwareID", new[] { "HID_DEVICE_SYSTEM_GAME" }, RegistryValueKind.MultiString);
         using (var child = isolated.CreateSubKey(@"SYSTEM\CurrentControlSet\Enum\HID\HIDCLASS\owned"))
@@ -167,7 +167,19 @@ else if (args[0] == "test")
         using (var classes = isolated.CreateSubKey(classPath))
             foreach (var name in new[] { foreignInterface, missingInterface, ownedInterface })
                 classes.CreateSubKey(name).Dispose();
-        orchestrator.GetMethod("RemoveOwnedInterfaceEntries", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null);
+        var collectInterfaces = orchestrator.GetMethod("CollectOwnedInterfaceInstances", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var ownedInterfaces = (HashSet<string>)collectInterfaces.Invoke(null, null)!;
+        Require(ownedInterfaces.Contains(@"ROOT\HIDCLASS\0001"), "owned interface evidence was not captured");
+        Require(!ownedInterfaces.Contains(@"ROOT\HIDCLASS\0000") && !ownedInterfaces.Contains(@"ROOT\HIDCLASS\missing"),
+            "foreign or unknown interface entered ownership snapshot");
+        // Match production ordering: remove the shared-enumerator parent first.
+        isolated.DeleteSubKeyTree(@"SYSTEM\CurrentControlSet\Enum\ROOT\HIDCLASS\0001");
+        Require(!(bool)ownsInterface.Invoke(null, new object?[] { ownedInterface, null })!,
+            "missing parent unexpectedly proved ownership without evidence");
+        Require((bool)ownsInterface.Invoke(null, new object?[] { ownedInterface, ownedInterfaces })!,
+            "pre-removal interface evidence was lost");
+        orchestrator.GetMethod("RemoveOwnedInterfaceEntries", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { ownedInterfaces });
         using (var classes = isolated.OpenSubKey(classPath)!)
         {
             using var foreign = classes.OpenSubKey(foreignInterface);

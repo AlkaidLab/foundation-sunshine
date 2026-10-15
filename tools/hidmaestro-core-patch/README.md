@@ -17,7 +17,9 @@ longer disable these upstream writers or cleanup paths.
 `device-ownership.patch` retains the remaining stricter cleanup rules:
 
 - Interface keys under shared ROOT/SWD enumerators require a positive SDK
-  ownership record. A missing devnode does not establish ownership.
+  ownership record, or an interface instance snapshot captured before parent
+  removal. Both launch cleanup and full cleanup keep this evidence local to
+  the sweep. A missing devnode does not establish ownership.
 - HID child ownership is captured before parent removal. The later orphan
   sweep requires that snapshot or a positively owned parent; an unknown or
   missing parent alone is insufficient.
