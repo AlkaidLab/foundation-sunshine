@@ -34,8 +34,8 @@ for (var i = 0; i < args.Length; i++)
 // A component package includes its patched Core. Refuse incomplete or mixed
 // packages before any SDK operation, including capability probes.
 var corePatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
-    attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "registry-isolation-1");
-if (!corePatched)
+    attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "device-ownership-1");
+if (!corePatched || !DeviceRegistry.HasPinnedMicrophoneRuntime)
     return Fail("The Sidecar package is incomplete; reinstall the current DualSense component");
 
 if (selfCheck)

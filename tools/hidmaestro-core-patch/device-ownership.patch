@@ -1,0 +1,230 @@
+--- a/sdk/HIDMaestro.Core/Internal/DeviceOrchestrator.cs
++++ b/sdk/HIDMaestro.Core/Internal/DeviceOrchestrator.cs
+@@ -413,8 +413,9 @@
+     }
+ 
+     private static void CleanupGhostDevices()
+     {
++        var ownedInterfaceInstances = CollectOwnedInterfaceInstances();
+         // Issue #28 (v1.3.16): every sweep here is gated on
+         // DeviceManager.IsHidMaestroOwned (HardwareID multi-sz contains
+         // "HIDMaestro") for any path that shares its enumerator with
+         // third-party drivers. The HIDMAESTRO* enumerators are exclusive
+@@ -479,9 +480,9 @@
+         }
+         catch { }
+ 
+         // Clean ghost XUSB and WinExInput interface registrations
+-        RemoveOwnedInterfaceEntries();
++        RemoveOwnedInterfaceEntries(ownedInterfaceInstances);
+ 
+         // Sweep accumulated HIDMaestro phantom devnodes from prior sessions.
+         // v1.1.30's per-call unique SwD instance suffix prevents the
+         // empty-shell bug at create time, but Windows preserves a per-
+@@ -493,21 +494,11 @@
+         // safe to call while a session is live.
+         try { DeviceManager.RemoveAccumulatedHmPhantoms(); } catch { }
+     }
+ 
+-    /// <summary>Delete the XUSB and WinExInput interface registrations of
+-    /// HIDMaestro devnodes. Interface-class keys encode the devnode path with
+-    /// <c>#</c> in place of <c>\</c>. Issue #28 (v1.3.16): the exclusively-HM
+-    /// forms (ROOT#HIDMAESTRO*, SWD#HIDMAESTRO*, and the April 2026
+-    /// ROOT#HMCOMPANION) go without further proof. The shared forms
+-    /// (ROOT#VID_*, ROOT#HIDCLASS, ROOT#HID_IG_*, ROOT#XNACOMPOSITE,
+-    /// ROOT#SYSTEM#) need the owning devnode's HardwareID proof, or no
+-    /// devnode record at all: an entry whose instance key is gone describes
+-    /// no device, ours or anyone's. The prior `ROOT#SYSTEM#(N>=2)`
+-    /// heuristic tagged ViGEmBus / HidHide entries as ours, and the full
+-    /// cleanup used to delete every ROOT# entry of both classes
+-    /// (foundation-sunshine #1138). Any other form is not ours.</summary>
+-    private static void RemoveOwnedInterfaceEntries()
++    // Shared enumerators require a positive ownership record. An absent
++    // devnode or a name containing ROOT is not proof of SDK ownership.
++    private static void RemoveOwnedInterfaceEntries(ISet<string>? ownedInstances = null)
+     {
+         foreach (var guid in new[] {
+             "{ec87f1e3-c13b-4100-b5f7-8b84d54260cb}",
+             "{6c53d5fd-6480-440f-b618-476750c5e1a6}" })
+@@ -517,47 +508,10 @@
+                 using var classKey = Registry.LocalMachine.OpenSubKey(
+                     $@"SYSTEM\CurrentControlSet\Control\DeviceClasses\{guid}", writable: true);
+                 if (classKey == null) continue;
+                 foreach (var subName in classKey.GetSubKeyNames())
+-                {
+-                    bool exclusivelyOurs =
+-                        subName.Contains("ROOT#HIDMAESTRO", StringComparison.OrdinalIgnoreCase) ||
+-                        subName.Contains("SWD#HIDMAESTRO", StringComparison.OrdinalIgnoreCase) ||
+-                        subName.Contains("ROOT#HMCOMPANION", StringComparison.OrdinalIgnoreCase);
+-                    bool sharedShape =
+-                        subName.Contains("ROOT#VID_", StringComparison.OrdinalIgnoreCase) ||
+-                        subName.Contains("ROOT#HIDCLASS", StringComparison.OrdinalIgnoreCase) ||
+-                        subName.Contains("ROOT#HID_IG", StringComparison.OrdinalIgnoreCase) ||
+-                        subName.Contains("ROOT#XNACOMPOSITE", StringComparison.OrdinalIgnoreCase) ||
+-                        subName.Contains("ROOT#SYSTEM#", StringComparison.OrdinalIgnoreCase);
+-
+-                    bool isOurDevice = exclusivelyOurs;
+-                    if (!isOurDevice && sharedShape)
+-                    {
+-                        // Decode the symbolic-link form back to a devnode
+-                        // instance path. The leading `##?#` (or `\??\`) and
+-                        // trailing `#{guid}` are interface-link encoding;
+-                        // the middle is `Enumerator#Device#Instance`.
+-                        string devPath = subName;
+-                        int guidStart = devPath.LastIndexOf("#{");
+-                        if (guidStart > 0) devPath = devPath.Substring(0, guidStart);
+-                        devPath = devPath.Replace("##?#", string.Empty);
+-                        devPath = devPath.Replace('#', '\\');
+-                        bool recordExists;
+-                        try
+-                        {
+-                            using var rec = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{devPath}");
+-                            recordExists = rec != null;
+-                        }
+-                        catch { recordExists = true; }
+-                        isOurDevice = !recordExists || DeviceManager.IsHidMaestroOwned(devPath);
+-                    }
+-
+-                    if (isOurDevice)
+-                    {
++                    if (IsOwnedInterfaceKey(subName, ownedInstances))
+                         try { classKey.DeleteSubKeyTree(subName); } catch { }
+-                    }
+-                }
+             }
+             catch { }
+         }
+     }
+@@ -2141,8 +2095,82 @@
+         catch { unindexed = true; }
+         return unindexed ? null : indices;
+     }
+ 
++    // Interface registry names encode the devnode with '#' separators.
++    // A ROOT marker alone is not ownership; resolve the exact instance.
++    internal static string? InterfaceInstanceId(string keyName)
++    {
++        var parts = keyName.Split('#');
++        if (parts.Length != 7 || parts[0] != "" || parts[1] != "" || parts[2] != "?"
++            || (!parts[3].Equals("ROOT", StringComparison.OrdinalIgnoreCase)
++                && !parts[3].Equals("SWD", StringComparison.OrdinalIgnoreCase))
++            || parts[4].Length == 0 || parts[5].Length == 0
++            || !Guid.TryParse(parts[6], out _)) return null;
++        return $@"{parts[3]}\{parts[4]}\{parts[5]}";
++    }
++
++    private static bool IsOwnedInterfaceKey(string keyName, ISet<string>? ownedInstances = null)
++    {
++        string? instanceId = InterfaceInstanceId(keyName);
++        if (instanceId == null) return false;
++        return instanceId.StartsWith(@"SWD\HIDMAESTRO", StringComparison.OrdinalIgnoreCase)
++            || instanceId.StartsWith(@"ROOT\HIDMAESTRO", StringComparison.OrdinalIgnoreCase)
++            || (ownedInstances?.Contains(instanceId) ?? false)
++            || DeviceManager.IsHidMaestroOwned(instanceId);
++    }
++
++    // Capture only proven ownership, while shared-enumerator devnodes still
++    // exist. Keep evidence local to this cleanup, never across SDK sessions.
++    private static HashSet<string> CollectOwnedInterfaceInstances()
++    {
++        var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
++        foreach (var guid in new[] {
++            "{ec87f1e3-c13b-4100-b5f7-8b84d54260cb}",
++            "{6c53d5fd-6480-440f-b618-476750c5e1a6}" })
++        {
++            try
++            {
++                using var classKey = Registry.LocalMachine.OpenSubKey(
++                    $@"SYSTEM\CurrentControlSet\Control\DeviceClasses\{guid}");
++                if (classKey == null) continue;
++                foreach (var keyName in classKey.GetSubKeyNames())
++                {
++                    string? instanceId = InterfaceInstanceId(keyName);
++                    if (instanceId != null && IsOwnedInterfaceKey(keyName))
++                        owned.Add(instanceId);
++                }
++            }
++            catch { }
++        }
++        return owned;
++    }
++
++    private static HashSet<string> CollectOwnedHidChildren()
++    {
++        var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
++        try
++        {
++            using var hid = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\HID");
++            if (hid == null) return owned;
++            foreach (var sub in hid.GetSubKeyNames())
++            {
++                using var children = hid.OpenSubKey(sub);
++                if (children == null) continue;
++                foreach (var instance in children.GetSubKeyNames())
++                {
++                    string childId = $@"HID\{sub}\{instance}";
++                    string? parent = TryResolveHidChildParent(children, instance);
++                    if (DeviceManager.IsHidMaestroOwned(childId)
++                        || (parent != null && DeviceManager.IsHidMaestroOwned(parent)))
++                        owned.Add(childId);
++                }
++            }
++        }
++        catch { }
++        return owned;
++    }
++
+     public static void RemoveAllVirtualControllers()
+         => RemoveAllVirtualControllers(preserveInstall: false);
+ 
+     /// <summary>Core sweep. <paramref name="preserveInstall"/> = true is the
+@@ -2171,8 +2199,11 @@
+             lastMs = sweepSw.ElapsedMilliseconds;
+         }
+         LogDiag($">>> SWEEP ENTER preserveInstall={preserveInstall}");
+ 
++        // Preserve ownership evidence before removing the parents below.
++        var ownedHidChildren = CollectOwnedHidChildren();
++        var ownedInterfaceInstances = CollectOwnedInterfaceInstances();
+         SignalStopEventsAndDrain(CollectSweepTargetIndices());
+         Phase("stop-drain");
+ 
+         // Composite personas first (issue #44). They are USB devices behind
+@@ -2259,23 +2290,13 @@
+                     if (childEnum == null) continue;
+                     foreach (var inst in childEnum.GetSubKeyNames())
+                     {
+                         string childId = $@"HID\{sub}\{inst}";
+-                        // Prove ownership through the parent HM root /
+-                        // companion: read the child's ParentIdPrefix, find
+-                        // the parent under the appropriate enumerator,
+-                        // require IsHidMaestroOwned. If the parent is
+-                        // already gone (phantom-orphan case), fall back to
+-                        // accepting it: the only legitimate writer of HID
+-                        // children with HM-shape hwid + HM-shape parent
+-                        // pattern would have been us, and a phantom whose
+-                        // parent has been removed can't be matched to a
+-                        // live third-party owner.
++                        // Require the live parent's ownership or evidence captured
++                        // before this sweep removed it. An unknown parent is not ours.
+                         string? parentId = TryResolveHidChildParent(childEnum, inst);
+                         bool parentIsOurs = parentId != null && DeviceManager.IsHidMaestroOwned(parentId);
+-                        bool parentIsGone = parentId == null
+-                            || CM_Locate_DevNodeW(out _, parentId, CM_LOCATE_DEVNODE_PHANTOM) != 0;
+-                        if (!parentIsOurs && !parentIsGone) continue;
++                        if (!parentIsOurs && !ownedHidChildren.Contains(childId)) continue;
+                         if (CM_Locate_DevNodeW(out uint childInst, childId, 0) == 0)
+                         {
+                             bool parentGone = CM_Get_Parent(out uint _, childInst, 0) != 0;
+                             if (parentGone)
+@@ -2341,9 +2362,9 @@
+         Phase("device-params");
+ 
+         // Clean interface registries (XUSB + WinExInput), with the same
+         // ownership proof the once-per-session cleanup uses.
+-        RemoveOwnedInterfaceEntries();
++        RemoveOwnedInterfaceEntries(ownedInterfaceInstances);
+ 
+         Phase("interface-classes");
+ 
+         // Shared joy.cpl and GameInput keys (foundation-sunshine #1138).

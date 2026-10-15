@@ -5,11 +5,11 @@
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <AssemblyName>HIDMaestro.Core</AssemblyName>
     <RootNamespace>HIDMaestro</RootNamespace>
-    <Version>1.7.3</Version>
-    <AssemblyVersion>1.7.3.0</AssemblyVersion>
-    <FileVersion>1.7.3.0</FileVersion>
-    <InformationalVersion>1.7.3+foundation.registry-isolation.1</InformationalVersion>
-    <PlatformTarget>x64</PlatformTarget>
+    <Version>1.12.0</Version>
+    <AssemblyVersion>1.12.0.0</AssemblyVersion>
+    <FileVersion>1.12.0.0</FileVersion>
+    <InformationalVersion>1.12.0+foundation.device-ownership.1</InformationalVersion>
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
@@ -20,7 +20,7 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
   <ItemGroup>
-    <AssemblyMetadata Include="FoundationCorePatch" Value="registry-isolation-1" />
+    <AssemblyMetadata Include="FoundationCorePatch" Value="device-ownership-1" />
     <Compile Include="$(UpstreamSource)/sdk/HIDMaestro.Core/**/*.cs"
              Exclude="$(UpstreamSource)/sdk/HIDMaestro.Core/bin/**;$(UpstreamSource)/sdk/HIDMaestro.Core/obj/**" />
   </ItemGroup>

@@ -74,7 +74,7 @@ internal static class ProtocolSelfTest
     {
         if (!DeviceRegistry.HasPinnedMicrophoneRuntime)
             throw new InvalidOperationException(
-                "The composite microphone prototype requires the pinned HIDMaestro 1.7.3.0 runtime");
+                "The composite microphone prototype requires the pinned HIDMaestro 1.12.0.0 runtime");
 
         var pipeName = $"sunshine-microphone-prototype-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -383,7 +383,7 @@ internal static class ProtocolSelfTest
         var result = JsonSerializer.Serialize(new
         {
             protocol = Protocol.Version,
-            profile = composite ? "dualsense-composite" : "dualsense-hidonly",
+            profile = composite ? "dualsense-composite" : "dualsense",
             hello = true,
             attached = true,
             four_channel_audio = capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
@@ -737,8 +737,17 @@ internal static class ProtocolSelfTest
     private static void VerifyProfileSelection()
     {
         Require(DeviceRegistry.SelectProfileId(
-                0, Protocol.AttachFlags.None, true, true) == "dualsense-hidonly",
+                0, Protocol.AttachFlags.None, true, true) == "dualsense",
             "HID-only attach profile selection");
+        using var stream = typeof(ProtocolSelfTest).Assembly.GetManifestResourceStream(
+            "Sunshine.Ds5Sidecar.profiles.dualsense.json")
+            ?? throw new InvalidOperationException("Bundled HID-only profile is missing");
+        using var document = JsonDocument.Parse(stream);
+        var descriptor = document.RootElement.GetProperty("descriptor").GetString()!;
+        Require(descriptor.Length == 273 * 2 && descriptor.StartsWith("05010905", StringComparison.Ordinal),
+            "HID-only native Game Pad descriptor");
+        Require(document.RootElement.GetProperty("extendedReport").GetProperty("alwaysArmed").GetBoolean(),
+            "HID-only full input reports remain armed");
         Require(DeviceRegistry.SelectProfileId(
                 1, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true) ==
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,

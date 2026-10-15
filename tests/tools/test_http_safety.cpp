@@ -535,9 +535,13 @@ namespace {
       return result;
     }
     std::unique_ptr<RawSocket>
-    raw(boost::asio::io_context &io, boost::asio::ssl::context &tls, unsigned short port) {
+    raw(boost::asio::io_context &io, boost::asio::ssl::context &tls, unsigned short port, int receive_buffer_bytes = 0) {
       auto socket = std::make_unique<RawSocket>(io, tls);
       socket->set_verify_mode(boost::asio::ssl::verify_none);
+      if (receive_buffer_bytes > 0) {
+        socket->lowest_layer().open(tcp::v4());
+        socket->lowest_layer().set_option(boost::asio::socket_base::receive_buffer_size(receive_buffer_bytes));
+      }
       socket->lowest_layer().connect({ boost::asio::ip::make_address("127.0.0.1"), port });
       socket->handshake(boost::asio::ssl::stream_base::client);
       const std::string request = "POST /stream HTTP/1.1\r\nHost: localhost\r\nContent-Length: 15\r\n\r\n{\"stream\":true}";
@@ -625,8 +629,9 @@ TEST_F(AiStreamTransport, SlowClientTimesOutWithoutQueuingUnboundedChunks) {
   });
   boost::asio::io_context io;
   boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
-  auto socket = raw(io, tls, port);
-  // Leave downstream unread until the TCP/TLS buffers apply backpressure.
+  // Bound the receive window before connecting so OS buffer sizing cannot
+  // postpone backpressure beyond the timeout assertion. Leave it unread.
+  auto socket = raw(io, tls, port, 4096);
   EXPECT_TRUE(wait_until([&] { return state->aborted.load(); }, 5s));
   EXPECT_LT(state->chunks, 1000);
   EXPECT_TRUE(wait_until([&] { return streams.active() == 0; }));

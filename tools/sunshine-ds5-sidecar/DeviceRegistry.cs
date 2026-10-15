@@ -60,7 +60,7 @@ internal sealed class DeviceRegistry : IDisposable
         {
             var text = typeof(HMContext).Assembly
                 .GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
-            return Version.TryParse(text, out var version) && version == new Version(1, 7, 3, 0);
+            return Version.TryParse(text, out var version) && version == new Version(1, 12, 0, 0);
         }
     }
 
@@ -260,14 +260,9 @@ internal sealed class DeviceRegistry : IDisposable
 
         return profileMode switch
         {
-            // HID-only must not use the native Game Pad profile: the root device
-            // is off the USB bus, so GameInput reads it with the generic gamepad
-            // template, which decodes the Sony byte layout as a half-pressed
-            // right trigger and a full-up right stick at rest and win32k turns
-            // that into perpetual desktop navigation (issue #1056). The
-            // Joystick-usage copy keeps every byte correct for generic
-            // consumers while staying out of the gamepad template.
-            0 => "dualsense-hidonly",
+            // v1.12.0 leaves JSON profiles on Windows' native mapping path
+            // and removes exact legacy SDK tables; no usage override is needed.
+            0 => "dualsense",
             1 when genshinCompatibility && genshinCompatibilityAvailable =>
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
             1 when genshinCompatibility =>
@@ -351,7 +346,7 @@ internal sealed class DeviceRegistry : IDisposable
             var assembly = typeof(DeviceRegistry).Assembly;
             var directory = Path.Combine(Path.GetTempPath(), "sunshine-ds5-profiles");
             Directory.CreateDirectory(directory);
-            foreach (var id in new[] { "dualsense", "dualsense-composite", "dualsense-hidonly" })
+            foreach (var id in new[] { "dualsense", "dualsense-composite" })
             {
                 var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
                 using var stream = assembly.GetManifestResourceStream(resourceName)
@@ -371,7 +366,7 @@ internal sealed class DeviceRegistry : IDisposable
                         compatibilityProfile);
                 }
             }
-            if (_context.LoadProfilesFromDirectory(directory) < 4)
+            if (_context.LoadProfilesFromDirectory(directory) < 3)
                 throw new InvalidOperationException("Patched DualSense profiles did not fully register");
             return true;
         }
