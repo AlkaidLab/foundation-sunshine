@@ -451,6 +451,14 @@ target_link_libraries(reverse_tunnel_probe PRIVATE
         sunshine_project_options sunshine_coverage)
 set_target_properties(reverse_tunnel_probe PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 find_package(Python3 QUIET COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"
+        AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    add_test(NAME controller_handoff_probe
+            COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/tools/controller_handoff_probe.py"
+            --compiler "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(controller_handoff_probe PROPERTIES TIMEOUT 60)
+endif ()
 if(Python3_Interpreter_FOUND)
     add_test(NAME cmake_configuration_tests
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/tools/test_cmake_configuration.py"
