@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import VulkanHdrBridgeCard from './VulkanHdrBridgeCard.vue'
+import NvidiaVsyncCard from './NvidiaVsyncCard.vue'
 
 const props = defineProps({
   platform: String,
@@ -178,6 +179,7 @@ function removeFps(index) {
             {{ $t('config.vdd_borrowed_texture_desc') }}
           </div>
 
+          <NvidiaVsyncCard :config="config" :platform="platform" />
           <VulkanHdrBridgeCard class="mt-3" :config="config" />
         </div>
       </template>

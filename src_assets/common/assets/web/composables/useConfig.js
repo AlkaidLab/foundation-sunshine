@@ -77,6 +77,7 @@ const DEFAULT_TABS = [
       hdr_luminance_analysis: 'auto',
       vdd_borrowed_texture: 'enabled',
       vdd_vulkan_hdr_bridge: 'enabled',
+      nvenc_vdd_force_vsync: 'disabled',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
       resolution_change: 'automatic',
@@ -157,6 +158,7 @@ const DEFAULT_TABS = [
           nvenc_rate_control: 'cbr',
           nvenc_target_quality: 0,
           nvenc_realtime_hags: 'enabled',
+          nvenc_manage_driver_settings: 'enabled',
           nvenc_split_encode: 'driver_decides',
           nvenc_latency_over_power: 'enabled',
           nvenc_opengl_vulkan_on_dxgi: 'enabled',
@@ -438,6 +440,8 @@ export function useConfig() {
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
       configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
       configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
+      configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
+      configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
       config.value = configData
 
       fillDefaultValues()

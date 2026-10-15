@@ -241,3 +241,37 @@ TEST(LaunchSessionManager, AuthenticatesEncryptedClaimByGcmTagAcrossRouteChanges
   EXPECT_EQ(claim.session->id, 31U);
   EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(claim.plaintext.data()), claim.plaintext.size()), plaintext);
 }
+
+TEST(LaunchSessionManager, ExpiredTicketReleasesCompatibilityLease) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+  auto session = make_session(1001, "lease-cert", "192.0.2.1");
+  bool released = false;
+  session->nvidia_vsync_lease = std::shared_ptr<void>(new int {}, [&](void *value) {
+    delete static_cast<int *>(value);
+    released = true;
+  });
+  ASSERT_EQ(manager.register_session(session, 1s, now), rtsp_stream::launch_ticket_register_e::accepted);
+  session.reset();
+  EXPECT_FALSE(released);
+  EXPECT_EQ(manager.prune(now + 2s), 1U);
+  EXPECT_TRUE(released);
+}
+
+TEST(LaunchSessionManager, ActiveStreamRetainsCompatibilityLeaseAfterHandshakeClear) {
+  rtsp_stream::launch_session_manager_t manager;
+  auto session = make_session(1002, "lease-cert", "192.0.2.2");
+  bool released = false;
+  session->nvidia_vsync_lease = std::shared_ptr<void>(new int {}, [&](void *value) {
+    delete static_cast<int *>(value);
+    released = true;
+  });
+  ASSERT_EQ(manager.register_session(session, 1s), rtsp_stream::launch_ticket_register_e::accepted);
+  auto active_stream_lease = session->nvidia_vsync_lease;
+  session->nvidia_vsync_lease.reset();
+  EXPECT_TRUE(manager.erase(session->id));
+  session.reset();
+  EXPECT_FALSE(released);
+  active_stream_lease.reset();
+  EXPECT_TRUE(released);
+}

@@ -17,7 +17,7 @@ const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
 
 const { t } = useI18n()
 const config = ref(props.config)
-const currentSubTab = ref('display-modes')
+const currentSubTab = ref(window.location.hash === '#nvenc_vdd_force_vsync' ? 'virtual-display' : 'display-modes')
 const showDownloadConfirm = ref(false)
 const micTestRunning = ref(false)
 const micTestResult = ref(null)

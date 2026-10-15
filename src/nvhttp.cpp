@@ -44,6 +44,7 @@
 #include "ai/proxy.h"
 #include "ai/http_stream.h"
 #include "display_device/session.h"
+#include "display_device/parsed_config.h"
 #include "display_device/vdd_capability.h"
 #include "file_handler.h"
 #include "file_mapping/file_mapping_http.h"
@@ -641,6 +642,13 @@ namespace nvhttp {
       return;
     }
 
+#ifdef _WIN32
+    if (display_device::resolve_display_intent(config::video, *launch_session).target ==
+        display_device::display_intent_t::target_e::vdd) {
+      launch_session->nvidia_vsync_lease = nvprefs_instance.acquire_vsync();
+    }
+#endif
+
     if (appid > 0) {
       auto err = proc::proc.execute(appid, launch_session);
       if (err) {
@@ -815,6 +823,13 @@ namespace nvhttp {
 
       return;
     }
+
+#ifdef _WIN32
+    if (display_device::resolve_display_intent(config::video, *launch_session).target ==
+        display_device::display_intent_t::target_e::vdd) {
+      launch_session->nvidia_vsync_lease = nvprefs_instance.acquire_vsync();
+    }
+#endif
 
     if (!register_launch_ticket(tree, launch_session, "resume")) {
       return;

@@ -26,6 +26,12 @@ if (WIN32)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
 
+add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
+target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
+
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
 target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main
@@ -86,6 +92,22 @@ endif ()
 add_test(NAME http_safety_unit_tests COMMAND http_safety_unit_tests)
 set_tests_properties(http_safety_unit_tests PROPERTIES TIMEOUT 45)
 
+
+if (WIN32)
+    # Link fake NVAPI entrypoints from the fixture, never the real driver wrapper.
+    add_executable(nvprefs_unit_tests
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/driver_settings.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/nvprefs_interface.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/undo_data.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/undo_file.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_nvprefs.cpp)
+    target_include_directories(nvprefs_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/third-party/nvapi")
+    target_link_libraries(nvprefs_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+            sunshine_project_options sunshine_coverage dxgi advapi32)
+    target_compile_definitions(nvprefs_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+    set_target_properties(nvprefs_unit_tests PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+    add_test(NAME nvprefs_unit_tests COMMAND nvprefs_unit_tests)
+endif ()
 
 # if windows
 if (WIN32)
@@ -496,6 +518,8 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+# Fake NVAPI exports must never be linked beside the real driver wrapper.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "test_nvprefs\\.cpp")
 # The touchscreen device test has a dedicated target that links the device
 # implementation; do not compile a second copy into the aggregate suite.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")

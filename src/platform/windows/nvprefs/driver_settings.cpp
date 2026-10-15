@@ -50,6 +50,7 @@ namespace nvprefs {
     if (status != NVAPI_OK) {
       nvapi_error_message(status);
       error_message("NvAPI_DRS_CreateSession() failed");
+      destroy();
       return false;
     }
 
@@ -98,124 +99,111 @@ namespace nvprefs {
   driver_settings_t::restore_global_profile_to_undo(const undo_data_t &undo_data) {
     if (!session_handle) return false;
 
-    const auto &swapchain_data = undo_data.get_opengl_swapchain();
-    if (swapchain_data) {
-      NvAPI_Status status;
-
-      NvDRSProfileHandle profile_handle = 0;
-      status = NvAPI_DRS_GetBaseProfile(session_handle, &profile_handle);
+    // Restore only entries still carrying our explicit user override. Deleting an
+    // override restores the driver's inherited/predefined value.
+    const auto restore_setting = [&](NvU32 id, const auto &data) {
+      if (!data) return true;
+      NvDRSProfileHandle profile = 0;
+      auto status = NvAPI_DRS_GetBaseProfile(session_handle, &profile);
       if (status != NVAPI_OK) {
         nvapi_error_message(status);
-        error_message("NvAPI_DRS_GetBaseProfile() failed");
         return false;
       }
-
-      NVDRS_SETTING setting = {};
+      NVDRS_SETTING setting {};
       setting.version = NVDRS_SETTING_VER;
-      status = NvAPI_DRS_GetSetting(session_handle, profile_handle, OGL_CPL_PREFER_DXPRESENT_ID, &setting);
-
-      if (status == NVAPI_OK && setting.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION && setting.u32CurrentValue == swapchain_data->our_value) {
-        if (swapchain_data->undo_value) {
-          setting = {};
-          setting.version = NVDRS_SETTING_VER1;
-          setting.settingId = OGL_CPL_PREFER_DXPRESENT_ID;
-          setting.settingType = NVDRS_DWORD_TYPE;
-          setting.settingLocation = NVDRS_CURRENT_PROFILE_LOCATION;
-          setting.u32CurrentValue = *swapchain_data->undo_value;
-
-          status = NvAPI_DRS_SetSetting(session_handle, profile_handle, &setting);
-
-          if (status != NVAPI_OK) {
-            nvapi_error_message(status);
-            error_message("NvAPI_DRS_SetSetting() OGL_CPL_PREFER_DXPRESENT failed");
-            return false;
-          }
-        }
-        else {
-          status = NvAPI_DRS_DeleteProfileSetting(session_handle, profile_handle, OGL_CPL_PREFER_DXPRESENT_ID);
-
-          if (status != NVAPI_OK && status != NVAPI_SETTING_NOT_FOUND) {
-            nvapi_error_message(status);
-            error_message("NvAPI_DRS_DeleteProfileSetting() OGL_CPL_PREFER_DXPRESENT failed");
-            return false;
-          }
-        }
-
-        info_message("Restored OGL_CPL_PREFER_DXPRESENT for base profile");
+      status = NvAPI_DRS_GetSetting(session_handle, profile, id, &setting);
+      if (status == NVAPI_SETTING_NOT_FOUND) return true;
+      if (status != NVAPI_OK) {
+        nvapi_error_message(status);
+        return false;
       }
-      else if (status == NVAPI_OK || status == NVAPI_SETTING_NOT_FOUND) {
-        info_message("OGL_CPL_PREFER_DXPRESENT has been changed from our value in base profile, not restoring");
+      if (setting.settingLocation != NVDRS_CURRENT_PROFILE_LOCATION ||
+          setting.isCurrentPredefined || setting.u32CurrentValue != data->our_value) {
+        info_message("Global driver setting changed externally; preserving the current value");
+        return true;
+      }
+      if (data->undo_value) {
+        setting = {};
+        setting.version = NVDRS_SETTING_VER;
+        setting.settingId = id;
+        setting.settingType = NVDRS_DWORD_TYPE;
+        setting.u32CurrentValue = *data->undo_value;
+        status = NvAPI_DRS_SetSetting(session_handle, profile, &setting);
       }
       else {
-        error_message("NvAPI_DRS_GetSetting() OGL_CPL_PREFER_DXPRESENT failed");
+        status = NvAPI_DRS_DeleteProfileSetting(session_handle, profile, id);
+      }
+      if (status != NVAPI_OK && status != NVAPI_SETTING_NOT_FOUND) {
+        nvapi_error_message(status);
         return false;
       }
-    }
-
-    return true;
+      return true;
+    };
+    return restore_setting(OGL_CPL_PREFER_DXPRESENT_ID, undo_data.get_opengl_swapchain()) &&
+           restore_setting(VSYNCMODE_ID, undo_data.get_vsync());
   }
 
   bool
-  driver_settings_t::check_and_modify_global_profile(std::optional<undo_data_t> &undo_data) {
+  driver_settings_t::check_and_modify_global_profile(std::optional<undo_data_t> &undo_data, bool opengl_vulkan_on_dxgi, bool force_vsync) {
     if (!session_handle) return false;
-
     undo_data.reset();
-    NvAPI_Status status;
+    if (!opengl_vulkan_on_dxgi && !force_vsync) return true;
 
-    if (!get_nvprefs_options().opengl_vulkan_on_dxgi) {
-      // User requested to leave OpenGL/Vulkan DXGI swapchain setting alone
-      return true;
-    }
-
-    NvDRSProfileHandle profile_handle = 0;
-    status = NvAPI_DRS_GetBaseProfile(session_handle, &profile_handle);
+    NvDRSProfileHandle profile = 0;
+    auto status = NvAPI_DRS_GetBaseProfile(session_handle, &profile);
     if (status != NVAPI_OK) {
       nvapi_error_message(status);
-      error_message("NvAPI_DRS_GetBaseProfile() failed");
       return false;
     }
-
-    NVDRS_SETTING setting = {};
-    setting.version = NVDRS_SETTING_VER;
-    status = NvAPI_DRS_GetSetting(session_handle, profile_handle, OGL_CPL_PREFER_DXPRESENT_ID, &setting);
-
-    // Remember current OpenGL/Vulkan DXGI swapchain setting and change it if needed
-    if (status == NVAPI_SETTING_NOT_FOUND || (status == NVAPI_OK && setting.u32CurrentValue != OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED)) {
-      undo_data = undo_data_t();
-      if (status == NVAPI_OK) {
-        undo_data->set_opengl_swapchain(OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED, setting.u32CurrentValue);
-      }
-      else {
-        undo_data->set_opengl_swapchain(OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED, std::nullopt);
-      }
-
-      setting = {};
-      setting.version = NVDRS_SETTING_VER1;
-      setting.settingId = OGL_CPL_PREFER_DXPRESENT_ID;
-      setting.settingType = NVDRS_DWORD_TYPE;
-      setting.settingLocation = NVDRS_CURRENT_PROFILE_LOCATION;
-      setting.u32CurrentValue = OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED;
-
-      status = NvAPI_DRS_SetSetting(session_handle, profile_handle, &setting);
-      if (status != NVAPI_OK) {
-        nvapi_error_message(status);
-        error_message("NvAPI_DRS_SetSetting() OGL_CPL_PREFER_DXPRESENT failed");
+    const auto apply_setting = [&](NvU32 id, NvU32 value, bool vsync) {
+      NVDRS_SETTING setting {};
+      setting.version = NVDRS_SETTING_VER;
+      auto result = NvAPI_DRS_GetSetting(session_handle, profile, id, &setting);
+      if (result != NVAPI_OK && result != NVAPI_SETTING_NOT_FOUND) {
+        nvapi_error_message(result);
         return false;
       }
-
-      info_message("Changed OGL_CPL_PREFER_DXPRESENT to OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED for base profile");
-    }
-    else if (status != NVAPI_OK) {
-      nvapi_error_message(status);
-      error_message("NvAPI_DRS_GetSetting() OGL_CPL_PREFER_DXPRESENT failed");
-      return false;
-    }
-
-    return true;
+      if (result == NVAPI_OK && setting.u32CurrentValue == value) return true;
+      const std::optional<uint32_t> previous =
+        result == NVAPI_OK && setting.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION && !setting.isCurrentPredefined ?
+          std::optional<uint32_t> { setting.u32CurrentValue } :
+          std::nullopt;
+      if (!undo_data) undo_data.emplace();
+      if (vsync)
+        undo_data->set_vsync(value, previous);
+      else
+        undo_data->set_opengl_swapchain(value, previous);
+      setting = {};
+      setting.version = NVDRS_SETTING_VER;
+      setting.settingId = id;
+      setting.settingType = NVDRS_DWORD_TYPE;
+      setting.u32CurrentValue = value;
+      result = NvAPI_DRS_SetSetting(session_handle, profile, &setting);
+      if (result != NVAPI_OK) {
+        nvapi_error_message(result);
+        return false;
+      }
+      return true;
+    };
+    if (opengl_vulkan_on_dxgi &&
+        !apply_setting(OGL_CPL_PREFER_DXPRESENT_ID, OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED, false)) return false;
+    return !force_vsync || apply_setting(VSYNCMODE_ID, VSYNCMODE_FORCEON, true);
   }
 
   bool
-  driver_settings_t::check_and_modify_application_profile(bool &modified) {
+  driver_settings_t::verify_global_vsync() {
+    // Re-read the persisted DRS database, not the staged session settings.
+    if (!load_settings()) return false;
+    NvDRSProfileHandle profile = 0;
+    if (NvAPI_DRS_GetBaseProfile(session_handle, &profile) != NVAPI_OK) return false;
+    NVDRS_SETTING setting {};
+    setting.version = NVDRS_SETTING_VER;
+    return NvAPI_DRS_GetSetting(session_handle, profile, VSYNCMODE_ID, &setting) == NVAPI_OK &&
+           setting.u32CurrentValue == VSYNCMODE_FORCEON;
+  }
+
+  bool
+  driver_settings_t::check_and_modify_application_profile(bool &modified, bool sunshine_high_power_mode) {
     if (!session_handle) return false;
 
     modified = false;
@@ -269,7 +257,7 @@ namespace nvprefs {
     setting.version = NVDRS_SETTING_VER1;
     status = NvAPI_DRS_GetSetting(session_handle, profile_handle, PREFERRED_PSTATE_ID, &setting);
 
-    if (!get_nvprefs_options().sunshine_high_power_mode) {
+    if (!sunshine_high_power_mode) {
       if (status == NVAPI_OK &&
           setting.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION) {
         // User requested to not use high power mode for sunshine.exe,
