@@ -22,16 +22,15 @@ Webhook 是 Sunshine 的可选通知模块，用于把配对、应用和会话�
 | `src/webhook/webhook_auth.cpp` | 独立配置路径、严格 JSON 解析、备份和原子写入 |
 | `src/webhook/webhook_api.cpp` | 已认证的配置读取、配置保存和测试投递业务处理 |
 | `src/webhook/webhook_format.cpp` | 事件 payload、时间戳、UTF-8 截断和测试 payload |
-| `src/webhook/webhook_client_base.h` | HTTP/HTTPS 共用的响应头专用异步读取 |
-| `src/webhook/webhook_httpclient.*` | 禁止隐式重连的 HTTP Client |
-| `src/webhook/webhook_httpsclient.*` | TLS 配置、证书校验和禁止隐式重连的 HTTPS Client |
-| `src/confighttp.cpp` | 在现有 Web UI HTTPS 服务中注册并认证 Webhook 路由 |
+| `src/http/client.*` | 共用 Beast HTTP/HTTPS Client、响应头专用异步读取、截止时间及取消，不隐式重连 |
+| `src/http/tls_trust.*` | 共用系统信任加载和 Windows ROOT 存储导入 |
+| `src/confighttp/integrations.cpp` | 在现有 Web UI HTTPS 服务中注册并认证 Webhook 路由 |
 | `WebhookCard.vue` | 网络页中的 Webhook 卡片、懒加载弹窗、测试和独立保存 |
 | `webhookService.js` | Web UI 的同源 Webhook API 调用 |
 | `webhookConfig.js` | 前后端 DTO、秒/毫秒转换和事件编号规范化 |
 
-Webhook 沿用项目现有的 C++、Boost.Asio、Simple-Web-Server、libcurl URL API、
-nlohmann/json、Vue 3、vue-i18n 和请求工具，没有引入新的网络框架。
+Webhook 使用项目共用的 C++、Boost.Beast / Boost.Asio HTTP 传输，以及 libcurl URL API、
+nlohmann/json、Vue 3、vue-i18n 和请求工具。传输层职责见 [HTTP 架构](http-transport.zh-CN.md)。
 
 ## 3. 配置模型
 
@@ -402,7 +401,7 @@ Webhook 维护一个专属 `io_context` 工作线程。线程常驻以支持事�
 
 ### 8.2 超时
 
-配置继续使用毫秒，但 Simple-Web-Server 的底层秒级超时使用向上取整：
+配置继续使用毫秒，传给共用 Beast Client 的秒级超时使用向上取整：
 
 ```text
 timeout_seconds = max(1, ceil(webhook_timeout_ms / 1000))
@@ -440,8 +439,7 @@ Webhook 的接收确认契约只依赖 HTTP 状态码和响应头：
 - `429` 和 `503` 支持 `Retry-After` 的秒数或 HTTP-date，上限 60 秒。
 - 无 `Retry-After` 时使用约 1 秒、2 秒并带小幅抖动的退避。
 
-Simple-Web-Server 的底层隐式重连在 Webhook 专用 Client 中关闭，所有尝试都由
-dispatcher 明确计数。
+共用 Beast Client 不隐式重连或重放 POST，所有尝试都由 dispatcher 明确计数。
 
 POST 使用“至少一次”投递语义。如果远端已经处理请求、但响应头未被成功接收，
 Sunshine 可能重试。相同逻辑投递的 delivery ID 在重试之间保持不变，接收端应

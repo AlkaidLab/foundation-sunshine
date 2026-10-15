@@ -49,243 +49,6 @@ elseif(UNIX)
 endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
-include_directories("${CMAKE_CURRENT_BINARY_DIR}")  # required for importing version.h
-
-set(SUNSHINE_TARGET_FILES
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Input.h"
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Rtsp.h"
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/RtspParser.c"
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Video.h"
-        "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl/oblas_common.c"
-        "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl/oblas_lite.c"
-        "${CMAKE_SOURCE_DIR}/third-party/nanors/rs.c"
-        "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray.h"
-        "${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp"
-        "${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.h"
-        "${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp"
-        "${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.h"
-        "${CMAKE_SOURCE_DIR}/src/hdr/dynamic_hdr_selection.cpp"
-        "${CMAKE_SOURCE_DIR}/src/hdr/dynamic_hdr_selection.h"
-        "${CMAKE_SOURCE_DIR}/src/hdr/session_target.cpp"
-        "${CMAKE_SOURCE_DIR}/src/hdr/session_target.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/display_device.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/color_profile.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/session.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/session.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/settings.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/settings.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/to_string.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_capability.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_capability.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_utils.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_utils.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_ioctl.cpp"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_ioctl.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/vdd_control_ioctl.h"
-        "${CMAKE_SOURCE_DIR}/src/upnp.cpp"
-        "${CMAKE_SOURCE_DIR}/src/upnp.h"
-        "${CMAKE_SOURCE_DIR}/src/cbs.cpp"
-        "${CMAKE_SOURCE_DIR}/src/client_fingerprint.cpp"
-        "${CMAKE_SOURCE_DIR}/src/client_fingerprint.h"
-        "${CMAKE_SOURCE_DIR}/src/utility.h"
-        "${CMAKE_SOURCE_DIR}/src/uuid.h"
-        "${CMAKE_SOURCE_DIR}/src/config.h"
-        "${CMAKE_SOURCE_DIR}/src/config.cpp"
-        "${CMAKE_SOURCE_DIR}/src/ds5/config.h"
-        "${CMAKE_SOURCE_DIR}/src/ds5/config.cpp"
-        "${CMAKE_SOURCE_DIR}/src/ds5/config_api.h"
-        "${CMAKE_SOURCE_DIR}/src/ds5/config_api.cpp"
-        "${CMAKE_SOURCE_DIR}/src/image_enhancement/config.h"
-        "${CMAKE_SOURCE_DIR}/src/image_enhancement/config.cpp"
-        "${CMAKE_SOURCE_DIR}/src/image_enhancement/nr_defaults.h"
-        "${CMAKE_SOURCE_DIR}/src/image_enhancement/nr_defaults.cpp"
-        "${CMAKE_SOURCE_DIR}/src/image_enhancement/api.h"
-        "${CMAKE_SOURCE_DIR}/src/image_enhancement/api.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/types.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/config.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/config.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/capabilities.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/capabilities.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/gpu_interop.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/gpu_interop.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/packet.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/packet.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/packetizer.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/dynamic_hdr.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/dynamic_hdr.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/encoder.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/session.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/session.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/runtime.h"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/runtime.cpp"
-        "${CMAKE_SOURCE_DIR}/src/pyrowave/pyrowave.h"
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveProtocol.h"
-        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveProtocol.c"
-        "${CMAKE_SOURCE_DIR}/src/entry_handler.cpp"
-        "${CMAKE_SOURCE_DIR}/src/entry_handler.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_base64.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_config.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_config.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_http.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_http.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_operations.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_operations.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_rpc.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_rpc.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_store.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_store.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_token.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_token.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_ws.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_ws.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_ws_session.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_ws_session.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_ws_server.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/file_mapping_ws_server.h"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/service.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_mapping/service.h"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.h"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_endpoint.h"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/reverse_tunnel_service.cpp"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/reverse_tunnel_service.h"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp"
-        "${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.h"
-        "${CMAKE_SOURCE_DIR}/src/file_handler.cpp"
-        "${CMAKE_SOURCE_DIR}/src/file_handler.h"
-        "${CMAKE_SOURCE_DIR}/src/globals.cpp"
-        "${CMAKE_SOURCE_DIR}/src/globals.h"
-        "${CMAKE_SOURCE_DIR}/src/logging.cpp"
-        "${CMAKE_SOURCE_DIR}/src/logging.h"
-        "${CMAKE_SOURCE_DIR}/src/main.cpp"
-        "${CMAKE_SOURCE_DIR}/src/main.h"
-        "${CMAKE_SOURCE_DIR}/src/crypto.cpp"
-        "${CMAKE_SOURCE_DIR}/src/crypto.h"
-        "${CMAKE_SOURCE_DIR}/src/ai/credential_store.cpp"
-        "${CMAKE_SOURCE_DIR}/src/ai/credential_store.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_auth.cpp"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_auth.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_api.cpp"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_api.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_format.cpp"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_format.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_client_base.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_httpclient.cpp"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_httpclient.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_httpsclient.cpp"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook_httpsclient.h"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook.cpp"
-        "${CMAKE_SOURCE_DIR}/src/webhook/webhook.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/abr_api.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/abr_api.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/ai_api.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/ai_api.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/apps.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/apps.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/clipboard_api.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/clipboard_api.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/display_control.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/display_control.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/display_scale.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/display_scale.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/dynamic_params.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/dynamic_params.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/network_probe.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/network_probe.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/network_probe_limiter.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/network_probe_limiter.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/sessions.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp/sessions.h"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.cpp"
-        "${CMAKE_SOURCE_DIR}/src/nvhttp_stream_start.h"
-        "${CMAKE_SOURCE_DIR}/src/streaming/abr.cpp"
-        "${CMAKE_SOURCE_DIR}/src/streaming/abr.h"
-        "${CMAKE_SOURCE_DIR}/src/streaming/bitrate.cpp"
-        "${CMAKE_SOURCE_DIR}/src/streaming/bitrate.h"
-        "${CMAKE_SOURCE_DIR}/src/streaming/fec.cpp"
-        "${CMAKE_SOURCE_DIR}/src/streaming/fec.h"
-        "${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.cpp"
-        "${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.h"
-        "${CMAKE_SOURCE_DIR}/src/streaming/frame_rate_tracker.h"
-        "${CMAKE_SOURCE_DIR}/src/httpcommon.cpp"
-        "${CMAKE_SOURCE_DIR}/src/httpcommon.h"
-        "${CMAKE_SOURCE_DIR}/src/launch_session_manager.cpp"
-        "${CMAKE_SOURCE_DIR}/src/launch_session_manager.h"
-        "${CMAKE_SOURCE_DIR}/src/confighttp.cpp"
-        "${CMAKE_SOURCE_DIR}/src/confighttp.h"
-        "${CMAKE_SOURCE_DIR}/src/widget_http.cpp"
-        "${CMAKE_SOURCE_DIR}/src/widget_http.h"
-        "${CMAKE_SOURCE_DIR}/src/rtsp.cpp"
-        "${CMAKE_SOURCE_DIR}/src/rtsp.h"
-        "${CMAKE_SOURCE_DIR}/src/stream.cpp"
-        "${CMAKE_SOURCE_DIR}/src/stream.h"
-        "${CMAKE_SOURCE_DIR}/src/clipboard_bridge.cpp"
-        "${CMAKE_SOURCE_DIR}/src/clipboard_bridge.h"
-        "${CMAKE_SOURCE_DIR}/src/text_context/bridge.cpp"
-        "${CMAKE_SOURCE_DIR}/src/text_context/bridge.h"
-        "${CMAKE_SOURCE_DIR}/src/text_context/http.cpp"
-        "${CMAKE_SOURCE_DIR}/src/text_context/http.h"
-        "${CMAKE_SOURCE_DIR}/src/cursor_channel.cpp"
-        "${CMAKE_SOURCE_DIR}/src/cursor_channel.h"
-        "${CMAKE_SOURCE_DIR}/src/clipboard_blob_store.cpp"
-        "${CMAKE_SOURCE_DIR}/src/clipboard_blob_store.h"
-        "${CMAKE_SOURCE_DIR}/src/clipboard_http.cpp"
-        "${CMAKE_SOURCE_DIR}/src/clipboard_http.h"
-        "${CMAKE_SOURCE_DIR}/src/video.cpp"
-        "${CMAKE_SOURCE_DIR}/src/video.h"
-        "${CMAKE_SOURCE_DIR}/src/video_hdr_metadata.cpp"
-        "${CMAKE_SOURCE_DIR}/src/video_hdr_metadata.h"
-        "${CMAKE_SOURCE_DIR}/src/video_hdr_bitstream.cpp"
-        "${CMAKE_SOURCE_DIR}/src/video_hdr_bitstream.h"
-        "${CMAKE_SOURCE_DIR}/src/video_dolby_vision.cpp"
-        "${CMAKE_SOURCE_DIR}/src/video_dolby_vision.h"
-        "${CMAKE_SOURCE_DIR}/src/video_colorspace.cpp"
-        "${CMAKE_SOURCE_DIR}/src/video_colorspace.h"
-        "${CMAKE_SOURCE_DIR}/src/input.cpp"
-        "${CMAKE_SOURCE_DIR}/src/input.h"
-        "${CMAKE_SOURCE_DIR}/src/input_activity.cpp"
-        "${CMAKE_SOURCE_DIR}/src/input_activity.h"
-        "${CMAKE_SOURCE_DIR}/src/audio.cpp"
-        "${CMAKE_SOURCE_DIR}/src/audio.h"
-        "${CMAKE_SOURCE_DIR}/src/mic_mixer.cpp"
-        "${CMAKE_SOURCE_DIR}/src/mic_mixer.h"
-        "${CMAKE_SOURCE_DIR}/src/http_util.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/common.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/frame_contract.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/frame_contract.h"
-        "${CMAKE_SOURCE_DIR}/src/process.cpp"
-        "${CMAKE_SOURCE_DIR}/src/process.h"
-        "${CMAKE_SOURCE_DIR}/src/network.cpp"
-        "${CMAKE_SOURCE_DIR}/src/network.h"
-        "${CMAKE_SOURCE_DIR}/src/move_by_copy.h"
-        "${CMAKE_SOURCE_DIR}/src/tray/system_tray.cpp"
-        "${CMAKE_SOURCE_DIR}/src/tray/system_tray.h"
-        "${CMAKE_SOURCE_DIR}/src/tray/system_tray_i18n.cpp"
-        "${CMAKE_SOURCE_DIR}/src/tray/system_tray_i18n.h"
-        "${CMAKE_SOURCE_DIR}/src/tray/tray_http.cpp"
-        "${CMAKE_SOURCE_DIR}/src/tray/tray_http.h"
-        "${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp"
-        "${CMAKE_SOURCE_DIR}/src/tray/tray_state.h"
-        "${CMAKE_SOURCE_DIR}/src/task_pool.h"
-        "${CMAKE_SOURCE_DIR}/src/thread_pool.h"
-        "${CMAKE_SOURCE_DIR}/src/thread_safe.h"
-        "${CMAKE_SOURCE_DIR}/src/sync.h"
-        "${CMAKE_SOURCE_DIR}/src/round_robin.h"
-        "${CMAKE_SOURCE_DIR}/src/stat_trackers.h"
-        "${CMAKE_SOURCE_DIR}/src/stat_trackers.cpp"
-        ${PLATFORM_TARGET_FILES})
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
     set(SUNSHINE_ASSETS_DIR_DEF "${SUNSHINE_ASSETS_DIR}")
@@ -301,26 +64,44 @@ list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_PUBLISHER_NAME="${SUNSHINE_PUBLISHER_N
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_PUBLISHER_WEBSITE="${SUNSHINE_PUBLISHER_WEBSITE}")
 list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_PUBLISHER_ISSUE_URL="${SUNSHINE_PUBLISHER_ISSUE_URL}")
 
-include_directories("${CMAKE_SOURCE_DIR}")
-
-include_directories(
-        SYSTEM
+# Collect application-only platform includes without leaking them to HTTP or
+# other reusable modules. Keep project headers outside SYSTEM warning suppression.
+get_directory_property(_application_includes INCLUDE_DIRECTORIES)
+list(REMOVE_ITEM _application_includes "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+set_property(DIRECTORY PROPERTY INCLUDE_DIRECTORIES "")
+add_library(sunshine_build_dependencies INTERFACE)
+add_library(sunshine_ffmpeg_headers INTERFACE)
+add_library(sunshine::ffmpeg_headers ALIAS sunshine_ffmpeg_headers)
+target_include_directories(sunshine_ffmpeg_headers SYSTEM INTERFACE ${FFMPEG_INCLUDE_DIRS})
+add_library(sunshine_host_headers INTERFACE)
+add_library(sunshine::host_headers ALIAS sunshine_host_headers)
+target_include_directories(sunshine_host_headers SYSTEM INTERFACE
+        "${CMAKE_SOURCE_DIR}/third-party"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet/include")
+target_link_libraries(sunshine_host_headers INTERFACE sunshine::ffmpeg_headers)
+add_library(sunshine_ffmpeg INTERFACE)
+add_library(sunshine::ffmpeg ALIAS sunshine_ffmpeg)
+target_link_libraries(sunshine_ffmpeg INTERFACE sunshine::ffmpeg_headers ${FFMPEG_LIBRARIES})
+if(WIN32)
+    # libavutil uses BCrypt for random bytes; keep it after the static archive.
+    target_link_libraries(sunshine_ffmpeg INTERFACE bcrypt)
+endif()
+target_include_directories(sunshine_build_dependencies INTERFACE
+        "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(sunshine_build_dependencies SYSTEM INTERFACE
+        ${_application_includes}
         "${CMAKE_SOURCE_DIR}/third-party"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet/include"
         "${CMAKE_SOURCE_DIR}/third-party/nanors"
         "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl"
-        ${FFMPEG_INCLUDE_DIRS}
-        ${Boost_INCLUDE_DIRS}  # has to be the last, or we get runtime error on macOS ffmpeg encoder
-)
-
-list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
-        ${MINIUPNP_LIBRARIES}
-        ${CMAKE_THREAD_LIBS_INIT}
-        enet
-        moonlight::haptics
-        nlohmann_json::nlohmann_json
-        opus
-        ${FFMPEG_LIBRARIES}
-        ${Boost_LIBRARIES}
-        ${OPENSSL_LIBRARIES}
-        ${PLATFORM_LIBRARIES})
+        "$<$<PLATFORM_ID:Darwin>:${FFMPEG_INCLUDE_DIRS}>"
+        ${MINIUPNP_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+target_link_libraries(sunshine_build_dependencies INTERFACE
+        ${SUNSHINE_EXTERNAL_LIBRARIES}
+        ${MINIUPNP_LIBRARIES} Threads::Threads enet moonlight::haptics
+        nlohmann_json::nlohmann_json opus sunshine::ffmpeg ${Boost_LIBRARIES}
+        sunshine::tls sunshine::curl ${PLATFORM_LIBRARIES})
+if(WIN32)
+    target_compile_definitions(sunshine_build_dependencies INTERFACE MINIUPNP_STATICLIB)
+endif()
+set(SUNSHINE_EXTERNAL_LIBRARIES sunshine_build_dependencies)

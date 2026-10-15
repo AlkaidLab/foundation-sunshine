@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 

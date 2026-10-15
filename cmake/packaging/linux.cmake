@@ -3,13 +3,7 @@
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}")
 
-# copy assets (excluding shaders) to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets"
-        PATTERN "shaders" EXCLUDE)
-# use symbolic link for shaders directory
-file(CREATE_LINK "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/shaders"
-        "${CMAKE_BINARY_DIR}/assets/shaders" COPY_ON_ERROR SYMBOLIC)
+# Uninstalled assets are tracked by the shared assets build target.
 
 if(${SUNSHINE_BUILD_APPIMAGE} OR ${SUNSHINE_BUILD_FLATPAK})
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/misc/60-sunshine.rules"

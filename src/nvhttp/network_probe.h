@@ -6,8 +6,8 @@
 #include "src/nvhttp/network_probe_limiter.h"
 
 namespace nvhttp::network_probe {
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Request>;
 
   class service_t {
   public:

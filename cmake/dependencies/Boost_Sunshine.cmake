@@ -7,6 +7,9 @@ set(BOOST_VERSION "1.92.0")
 set(BOOST_RELEASE_VERSION "1.92.0")
 set(BOOST_COMPONENTS
         atomic
+        crc
+        format
+        property_tree
         asio
         beast
         filesystem
@@ -19,7 +22,7 @@ set(BOOST_COMPONENTS
         system
         thread
 )
-# system is not used by Sunshine, but by Simple-Web-Server, added here for convenience
+# Networking uses Boost.System error codes and their compatibility target.
 
 # Additional components used by the Windows sources.
 if(WIN32)
@@ -48,12 +51,6 @@ if(NOT Boost_FOUND)
     if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.31.0")
         cmake_policy(SET CMP0174 NEW)  # Handle empty variables
     endif()
-
-    # more components required for compiling boost targets
-    list(APPEND BOOST_COMPONENTS
-            crc
-            format
-            property_tree)
 
     set(BOOST_ENABLE_CMAKE ON)
 

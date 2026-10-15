@@ -1,0 +1,379 @@
+[
+  {
+    "pattern": "^/$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/pin/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/apps/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/clients/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/config/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/password/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/welcome/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/troubleshooting/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/pin$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/qr-pair$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/qr-pair/cancel$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/qr-pair$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/apps$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/logs$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/apps$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/gamepad/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gamepad/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/status$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/sessions$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/session-nr$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/session-nr/remember$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/webhook/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/webhook/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/webhook/test$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/dualsense/config$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/dualsense/config$",
+    "method": "POST",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/configLocale$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/logout$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/logout$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/restart$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/restart$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/boom$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/reset-display-device-persistence$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/microphone/test$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/microphone/status$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/vdd/status$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/vulkan-hdr-bridge$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/vulkan-hdr-bridge/validate$",
+    "method": "POST",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/password$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/([0-9]+)$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/apps/batch-delete$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/unpair-all$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/list$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/clients/list$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/color-profiles$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/clients/unpair$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/rename$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/close$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/covers/upload$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/test-menu-cmd$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/runtime/sessions$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/sessions/stop$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/runtime/hdr$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/hdr-calibration$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/bitrate$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/perf/current$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/perf/frame-rates$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/steam-api/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/steam-store/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/ai/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/ai/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/ai/models$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/ai/chat/completions$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/ai/chat/completions$",
+    "method": "OPTIONS"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$",
+    "method": "PATCH"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/images/sunshine.ico$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/images/logo-sunshine-256.png$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/images/logo-alkaidlab.png$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/images/logo-natpierce.png$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/boxart/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/assets\\/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/capability$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/item$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/events$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/blob$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/text-context/capability$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/text-context/observation$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/tray/state$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/tray/events$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/tray/action$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/tray/client-fingerprint-rules$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/tray/client-fingerprint-rules$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/widget/state$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/widget/action$",
+    "method": "POST"
+  }
+]
