@@ -56,7 +56,10 @@ namespace nvprefs {
     restore_global_profile_to_undo(const undo_data_t &undo_data);
 
     bool
-    check_and_modify_global_profile(std::optional<undo_data_t> &undo_data);
+    check_and_modify_global_profile(std::optional<undo_data_t> &undo_data, bool force_vsync = false);
+
+    bool
+    verify_global_vsync();
 
     bool
     check_and_modify_application_profile(bool &modified);

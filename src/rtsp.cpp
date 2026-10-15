@@ -2052,6 +2052,7 @@ namespace rtsp_stream {
 
     session.stream_announce_payload = std::move(announce_payload);
     session.stream_session_started = true;
+    session.nvidia_vsync_lease.reset();
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,

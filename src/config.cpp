@@ -439,6 +439,8 @@ namespace config {
 
     {},  // nv
     true,  // nv_realtime_hags
+    true,  // nv_manage_driver_settings
+    false,  // nv_vdd_force_vsync
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
     false,  // vdd_keep_enabled
@@ -1223,6 +1225,8 @@ namespace config {
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
     bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
+    bool_f(vars, "nvenc_manage_driver_settings", video.nv_manage_driver_settings);
+    bool_f(vars, "nvenc_vdd_force_vsync", video.nv_vdd_force_vsync);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
 
@@ -1952,6 +1956,7 @@ namespace config {
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
         "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "nvidia_vsync",  // NVIDIA compatibility capability and runtime state, read-only
         "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读

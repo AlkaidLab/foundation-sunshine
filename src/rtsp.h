@@ -60,6 +60,9 @@ namespace rtsp_stream {
 
     boost::process::v1::environment env;
 
+    // Shared with the active stream after RTSP allocation; released on failure/expiry.
+    std::shared_ptr<void> nvidia_vsync_lease;
+
     bool host_audio;
     std::string unique_id;
     std::string client_name;

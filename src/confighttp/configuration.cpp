@@ -6,6 +6,7 @@
 
 #include "configuration.h"
 #include "src/config.h"
+#include "src/globals.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/display_device/session.h"
@@ -78,6 +79,12 @@ namespace confighttp::configuration {
       }
       outputTree.put("widget_token_configured", !config::sunshine.widget_token.empty());
 
+#ifdef _WIN32
+      const auto vsync = nvprefs_instance.status();
+      outputTree.put("nvidia_vsync.supported", vsync.supported);
+      outputTree.put("nvidia_vsync.state", vsync.state);
+      outputTree.put("nvidia_vsync.version", 1);
+#endif
       outputTree.put("active_encoder", video::active_encoder_name());
       if (auto frame_budget = nvenc::get_frame_budget_report()) {
         pt::ptree budget_node;

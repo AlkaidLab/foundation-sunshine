@@ -116,6 +116,7 @@ namespace nvprefs {
 
     if (!FlushFileBuffers(file_handle.get())) {
       error_message("Failed to flush undo file");
+      return false;
     }
 
     return true;
@@ -145,7 +146,7 @@ namespace nvprefs {
 
     undo_data_t undo_data;
     try {
-      undo_data.read(buffer);
+      if (!undo_data.read(buffer)) return std::nullopt;
     }
     catch (...) {
       error_message("Couldn't parse undo file");

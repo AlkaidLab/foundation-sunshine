@@ -2477,6 +2477,48 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### nvenc_manage_driver_settings
+
+Windows / NVIDIA only. Allow Sunshine to manage its NVIDIA application power profile
+and temporary global driver compatibility settings. Defaults to `enabled`.
+Set to `disabled` to prevent new driver changes; Sunshine still restores changes it
+already owns. The management switch and VSync policy are read again at the next
+launch, so saving these options does not require restarting Sunshine.
+
+### nvenc_vdd_force_vsync
+
+Windows / NVIDIA only. Defaults to `disabled`. Temporarily force NVIDIA **global
+vertical sync ON** for virtual-display streams to address reduced capture frame rates
+observed in some DLSS Frame Generation games. Independent of the encoder, capture
+backend, RTSS and frame-rate telemetry. Physical-display launches do not acquire this
+setting.
+
+Sunshine applies and verifies the setting before launching the game. If a game is
+already running (including a resumed game), restart it after the virtual-display
+session starts. The policy does not detect whether DLSS Frame Generation is enabled.
+Games with explicit per-application driver overrides can ignore the global setting.
+
+The global change may affect other games launched during the stream. The last
+participating pending handshake or active session releases the setting, even when
+the game or persistent VDD remains running. Original user overrides are restored;
+inherited/predefined settings are restored by removing Sunshine's override. Changes
+made by the user while streaming are preserved. Recovery data is flushed before
+committing driver settings and retained on restoration failure for a later retry.
+Abandoned changes are recovered on the next managed startup. A failure is reported
+in the log and the configuration status; it does not block streaming.
+
+Web UI: **Audio / Video → Virtual display**. Desktop control panel: **Streaming →
+Virtual display**. Hosts without NVIDIA hide the option unless an enabled preference
+was saved; that preference remains visible but disabled after changing hardware.
+
+```ini
+nvenc_manage_driver_settings = enabled
+nvenc_vdd_force_vsync = enabled
+```
+
+Compare capture/output FPS and end-to-end latency when testing. Full capture FPS
+alone does not establish that the presentation latency is acceptable.
+
 ### [nvenc_latency_over_power](https://localhost:47990/config/#nvenc_latency_over_power)
 
 <table>

@@ -681,6 +681,7 @@ namespace stream {
     } control;
 
     std::uint32_t launch_session_id;
+    std::shared_ptr<void> nvidia_vsync_lease;
 
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
@@ -4299,6 +4300,7 @@ namespace stream {
         }
       }
 
+      session.nvidia_vsync_lease.reset();
       perf::end_session(session.launch_session_id);
 
       // Clean up ABR state for this client
@@ -4495,6 +4497,7 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->nvidia_vsync_lease = launch_session.nvidia_vsync_lease;
       session->created_at_ms = steady_now_ms();
 
       // 设置客户端名称

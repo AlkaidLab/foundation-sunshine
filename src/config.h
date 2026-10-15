@@ -36,6 +36,8 @@ namespace config {
 
     nvenc::nvenc_config nv;
     bool nv_realtime_hags;
+    bool nv_manage_driver_settings;
+    bool nv_vdd_force_vsync;
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_sunshine_high_power_mode;
     bool vdd_keep_enabled;
