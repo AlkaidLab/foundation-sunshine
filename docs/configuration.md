@@ -2483,7 +2483,8 @@ Windows / NVIDIA only. Allow Sunshine to manage its NVIDIA application power pro
 and temporary global driver compatibility settings. Defaults to `enabled`.
 Set to `disabled` to prevent new driver changes; Sunshine still restores changes it
 already owns. The management switch and VSync policy are read again at the next
-launch, so saving these options does not require restarting Sunshine.
+launch, so saving these options does not require restarting Sunshine. Explicit command-line overrides
+retain priority over saved settings during these reloads.
 
 ### nvenc_vdd_force_vsync
 

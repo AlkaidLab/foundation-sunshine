@@ -305,6 +305,17 @@ namespace config {
   std::optional<std::map<std::string, std::string>>
   get_config_snapshot();
 
+  /** Overlay immutable startup command-line values on a newly read configuration. */
+  template <typename Settings>
+  void
+  apply_command_line_overrides(Settings &settings, const std::unordered_map<std::string, std::string> &overrides) {
+    for (const auto &[name, value] : overrides) settings.insert_or_assign(name, value);
+  }
+
+  /** Read saved settings while retaining command-line precedence for runtime policies. */
+  std::optional<std::map<std::string, std::string>>
+  get_effective_config_snapshot();
+
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);
 

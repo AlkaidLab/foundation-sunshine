@@ -42,7 +42,7 @@ namespace nvprefs {
     options.sunshine_high_power_mode = config::video.nv_sunshine_high_power_mode;
     // These lifecycle settings apply to the next launch after saving, without
     // restarting Sunshine or touching a running game's presentation state.
-    if (const auto snapshot = config::get_config_snapshot()) {
+    if (const auto snapshot = config::get_effective_config_snapshot()) {
       const auto enabled = [&](const char *name, bool fallback) {
         const auto it = snapshot->find(name);
         if (it == snapshot->end() || it->second.empty()) return fallback;

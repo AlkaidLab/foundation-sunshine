@@ -26,6 +26,12 @@ if (WIN32)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
 
+add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
+target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
+
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
 target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main

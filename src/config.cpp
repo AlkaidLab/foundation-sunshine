@@ -54,6 +54,7 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+    std::unordered_map<std::string, std::string> command_line_config_overrides;
 
     std::optional<std::string>
     read_config_file_contents() {
@@ -1785,9 +1786,11 @@ namespace config {
       // Read config file
       auto vars = parse_config(file_handler::read_file(sunshine.config_file.c_str()));
 
-      for (auto &[name, value] : cmd_vars) {
-        vars.insert_or_assign(std::move(name), std::move(value));
+      {
+        std::lock_guard lock { config_file_mutex };
+        command_line_config_overrides = cmd_vars;
       }
+      apply_command_line_overrides(vars, cmd_vars);
 
       // Apply the config. Note: This will try to create any paths
       // referenced in the config, so we may receive exceptions if
@@ -1944,6 +1947,16 @@ namespace config {
       BOOST_LOG(warning) << "Failed to read config snapshot: " << e.what();
       return std::nullopt;
     }
+  }
+
+  std::optional<std::map<std::string, std::string>>
+  get_effective_config_snapshot() {
+    auto snapshot = get_config_snapshot();
+    if (snapshot) {
+      std::lock_guard lock { config_file_mutex };
+      apply_command_line_overrides(*snapshot, command_line_config_overrides);
+    }
+    return snapshot;
   }
 
   bool

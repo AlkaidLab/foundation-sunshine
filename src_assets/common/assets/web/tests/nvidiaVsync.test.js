@@ -94,3 +94,15 @@ test('failed host responses report a query failure and allow a later retry', asy
   assert.equal(statuses, 0)
   stop()
 })
+
+test('active overrides and restoration failures stay visible after management opt-out', () => {
+  for (const state of ['active', 'error']) {
+    const view = nvidiaVsyncUi({
+      nvenc_manage_driver_settings: 'disabled', nvenc_vdd_force_vsync: 'disabled',
+      nvidia_vsync: { supported: false, detection_known: false, state },
+    })
+    assert.equal(view.state, state)
+    assert.equal(view.visible, true)
+    assert.equal(view.disabled, true)
+  }
+})

@@ -8,11 +8,11 @@ export function nvidiaVsyncUi(config, platform = 'windows') {
   // Hosts predating detection_known still provide an explicit supported field.
   const known = capability?.detection_known == null ? capability?.supported != null : enabled(capability.detection_known)
   const managed = config.nvenc_manage_driver_settings == null || enabled(config.nvenc_manage_driver_settings)
-  const state = !known ? 'unknown' : !supported ? 'unsupported' : !managed ? 'unmanaged' :
-    capability?.state === 'active' ? 'active' : capability?.state === 'error' ? 'error' :
-    checked ? 'next_launch' : 'disabled'
+  const lifecycle = ['active', 'error'].includes(capability?.state)
+  const state = lifecycle ? capability.state : !known ? 'unknown' : !supported ? 'unsupported' :
+    !managed ? 'unmanaged' : checked ? 'next_launch' : 'disabled'
   return {
-    visible: platform === 'windows' && (supported || checked || (capability != null && !known)),
+    visible: platform === 'windows' && (lifecycle || supported || checked || (capability != null && !known)),
     disabled: !known || !supported || !managed,
     checked,
     state,

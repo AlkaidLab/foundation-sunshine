@@ -11,7 +11,7 @@ onMounted(() => {
   stopStatus = observeNvidiaVsyncStatus({
     load: options => apiJson('/api/config', options),
     onStatus: data => { capability.value = data.nvidia_vsync },
-    onError: () => { capability.value = { ...capability.value, detection_known: false } },
+    onError: () => { capability.value = { ...capability.value, detection_known: false, state: 'unknown' } },
   })
 })
 onBeforeUnmount(() => stopStatus())
