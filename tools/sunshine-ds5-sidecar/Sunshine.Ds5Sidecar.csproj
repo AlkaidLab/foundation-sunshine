@@ -19,7 +19,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <!-- Upstream v1.6.2 USB DualSense profiles with extendedReport.alwaysArmed
+    <!-- Native USB DualSense profiles with extendedReport.alwaysArmed
          added. The stock profiles never arm the vendor-blob encoder, so the
          Sony-specific tail of report 0x01 (touch fingers at bytes 33/37 among
          others) is never written and idles at 0x00, which every raw consumer
@@ -28,6 +28,5 @@
          hardware behaviour. -->
     <EmbeddedResource Include="profiles\dualsense.json" LogicalName="Sunshine.Ds5Sidecar.profiles.dualsense.json" />
     <EmbeddedResource Include="profiles\dualsense-composite.json" LogicalName="Sunshine.Ds5Sidecar.profiles.dualsense-composite.json" />
-    <EmbeddedResource Include="profiles\dualsense-hidonly.json" LogicalName="Sunshine.Ds5Sidecar.profiles.dualsense-hidonly.json" />
   </ItemGroup>
 </Project>

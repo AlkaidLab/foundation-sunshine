@@ -83,7 +83,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Patched Core build failed' }
 $core = Join-Path $output 'HIDMaestro.Core.dll'
 & $DotnetPath $payloadTool verify $originalCore $core
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core changed the upstream ABI or embedded payload' }
-& $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense-hidonly.json')
+& $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense.json')
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership regressions failed' }
 
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force

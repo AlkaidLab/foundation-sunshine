@@ -45,13 +45,12 @@ ending the sidecar.
 Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
-HID-only attaches actually serve the derived `dualsense-hidonly` profile:
-its top-level collection usage remains Joystick (0x04) instead of Game Pad
-(0x05). This compatibility profile originally avoided the incorrect global
-GameInput mapping older HIDMaestro versions wrote (issue #1056). v1.12.0 no
-longer writes that mapping for JSON profiles and removes exact legacy tables;
-we retain the Joystick persona pending physical HID-only/composite comparisons.
-It is exposed through RawGameController/generic HID.
+HID-only attaches use `dualsense` with the native 273-byte descriptor and
+Game Pad usage (0x05). HIDMaestro v1.12.0 no longer writes the incorrect global
+GameInput mapping for JSON profiles and removes exact legacy SDK tables
+(issue #1056), so the former Joystick usage override is unnecessary. Input
+reports retain `alwaysArmed` for touch and motion data. Windows decides how
+to expose the device; native Game Pad usage does not guarantee a WGI Gamepad.
 The optional Genshin compatibility attach flag derives a third profile from
 `dualsense-composite` at runtime. It preserves the Sony VID/PID, descriptors,
 and four-channel layout while changing only the USB product string from

@@ -62,6 +62,8 @@ else if (args[0] == "test")
     var orchestrator = assembly.GetType("HIDMaestro.Internal.DeviceOrchestrator", throwOnError: true)!;
     var profileType = assembly.GetType("HIDMaestro.Internal.ControllerProfile", throwOnError: true)!;
     var profileDocument = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(args[2]))!.AsObject();
+    Require(profileDocument["descriptor"]!.GetValue<string>().StartsWith("05010905", StringComparison.Ordinal),
+        "native DualSense Game Pad descriptor missing");
     // Layout's polymorphic converter belongs to ProfileDatabase. These writer
     // tests need the real descriptor and identity, not the UI layout.
     profileDocument.Remove("layout");
@@ -79,7 +81,7 @@ else if (args[0] == "test")
         redirected = true;
         foreach (var descriptorUsage in new[] { "05010904", "05010905" })
         {
-            var json = profileJson.Replace("05010904", descriptorUsage);
+            var json = profileJson.Replace("05010905", descriptorUsage);
             var profile = JsonSerializer.Deserialize(json, profileType)!;
             writeGameInput.Invoke(null, new object[] { 0, profile });
             writeInstance.Invoke(null, new object[] { 0, profile });
@@ -102,7 +104,7 @@ else if (args[0] == "test")
         isolated.DeleteSubKeyTree(gameInputPath);
         foreach (var descriptorUsage in new[] { "05010904", "05010905" })
         {
-            var profile = JsonSerializer.Deserialize(profileJson.Replace("05010904", descriptorUsage), profileType)!;
+            var profile = JsonSerializer.Deserialize(profileJson.Replace("05010905", descriptorUsage), profileType)!;
             writeGameInput.Invoke(null, new object[] { 0, profile });
             using (var absent = isolated.OpenSubKey(gameInputPath))
                 Require(absent == null, "JSON profile acquired a GameInput table");
