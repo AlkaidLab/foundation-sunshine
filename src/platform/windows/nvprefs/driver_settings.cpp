@@ -144,10 +144,10 @@ namespace nvprefs {
   }
 
   bool
-  driver_settings_t::check_and_modify_global_profile(std::optional<undo_data_t> &undo_data, bool force_vsync) {
+  driver_settings_t::check_and_modify_global_profile(std::optional<undo_data_t> &undo_data, bool opengl_vulkan_on_dxgi, bool force_vsync) {
     if (!session_handle) return false;
     undo_data.reset();
-    if (!get_nvprefs_options().opengl_vulkan_on_dxgi && !force_vsync) return true;
+    if (!opengl_vulkan_on_dxgi && !force_vsync) return true;
 
     NvDRSProfileHandle profile = 0;
     auto status = NvAPI_DRS_GetBaseProfile(session_handle, &profile);
@@ -185,7 +185,7 @@ namespace nvprefs {
       }
       return true;
     };
-    if (get_nvprefs_options().opengl_vulkan_on_dxgi &&
+    if (opengl_vulkan_on_dxgi &&
         !apply_setting(OGL_CPL_PREFER_DXPRESENT_ID, OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED, false)) return false;
     return !force_vsync || apply_setting(VSYNCMODE_ID, VSYNCMODE_FORCEON, true);
   }
@@ -203,7 +203,7 @@ namespace nvprefs {
   }
 
   bool
-  driver_settings_t::check_and_modify_application_profile(bool &modified) {
+  driver_settings_t::check_and_modify_application_profile(bool &modified, bool sunshine_high_power_mode) {
     if (!session_handle) return false;
 
     modified = false;
@@ -257,7 +257,7 @@ namespace nvprefs {
     setting.version = NVDRS_SETTING_VER1;
     status = NvAPI_DRS_GetSetting(session_handle, profile_handle, PREFERRED_PSTATE_ID, &setting);
 
-    if (!get_nvprefs_options().sunshine_high_power_mode) {
+    if (!sunshine_high_power_mode) {
       if (status == NVAPI_OK &&
           setting.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION) {
         // User requested to not use high power mode for sunshine.exe,

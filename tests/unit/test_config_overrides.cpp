@@ -4,6 +4,18 @@
 #include "src/config.h"
 #include <gtest/gtest.h>
 
+TEST(ConfigBooleans, TruthyTokensAreCaseInsensitive) {
+  for (const auto value : { "true", "TRUE", "TrUe", "yes", "YES", "enable", "Enable", "enabled", "ENABLED", "on", "ON", "1" }) {
+    EXPECT_TRUE(config::to_bool(value)) << value;
+  }
+}
+
+TEST(ConfigBooleans, OtherValuesAreFalseIncludingStringsContainingOne) {
+  for (const auto value : { "", "false", "FALSE", "no", "disabled", "off", "0", "10", "-1", "false1", "enabled1", "trueish", "\xFF" }) {
+    EXPECT_FALSE(config::to_bool(value)) << value;
+  }
+}
+
 TEST(ConfigOverrides, ExplicitOptOutSurvivesMissingAndChangedDiskSettings) {
   const std::unordered_map<std::string, std::string> cli { { "nvenc_manage_driver_settings", "disabled" } };
   auto startup = std::unordered_map<std::string, std::string> {};

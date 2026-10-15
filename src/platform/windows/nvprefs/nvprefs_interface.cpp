@@ -29,19 +29,19 @@ namespace nvprefs {
 
     ~impl();
     bool
-    load(bool recovery = false);
+    load();
     void
     unload();
     bool
     restore_from_and_delete_undo_file_if_exists();
     bool
-    modify_application_profile();
+    modify_application_profile(const nvprefs_options &options);
     bool
-    modify_global_profile(bool force_vsync = false);
+    modify_global_profile(const nvprefs_options &options, bool force_vsync = false);
     bool
     owning_undo_file();
     bool
-    restore();
+    restore(bool manage_driver_settings);
     bool
     restore_global_profile(bool vsync_only = false);
     void
@@ -62,8 +62,7 @@ namespace nvprefs {
   }
 
   bool
-  nvprefs_interface::impl::load(bool recovery) {
-    if (!get_nvprefs_options().manage_driver_settings && !undo_file && !recovery) return false;
+  nvprefs_interface::impl::load() {
     if (!loaded) {
       // Check %ProgramData% variable, need it for storing undo file
       wchar_t program_data_env[MAX_PATH];
@@ -130,12 +129,12 @@ namespace nvprefs {
   }
 
   bool
-  nvprefs_interface::impl::modify_application_profile() {
-    if (!loaded || !get_nvprefs_options().manage_driver_settings) return false;
+  nvprefs_interface::impl::modify_application_profile(const nvprefs_options &options) {
+    if (!loaded || !options.manage_driver_settings) return false;
 
     // Modify and save sunshine.exe application profile settings, if needed
     bool modified = false;
-    if (!driver_settings.check_and_modify_application_profile(modified)) {
+    if (!driver_settings.check_and_modify_application_profile(modified, options.sunshine_high_power_mode)) {
       error_message("Failed to modify application profile settings");
       return false;
     }
@@ -156,12 +155,12 @@ namespace nvprefs {
   }
 
   bool
-  nvprefs_interface::impl::modify_global_profile(bool force_vsync) {
-    if (!loaded || !get_nvprefs_options().manage_driver_settings) return false;
+  nvprefs_interface::impl::modify_global_profile(const nvprefs_options &options, bool force_vsync) {
+    if (!loaded || !options.manage_driver_settings) return false;
 
     // Modify but not save global profile settings, if needed
     std::optional<undo_data_t> pending_undo;
-    if (!driver_settings.check_and_modify_global_profile(pending_undo, force_vsync)) {
+    if (!driver_settings.check_and_modify_global_profile(pending_undo, options.opengl_vulkan_on_dxgi, force_vsync)) {
       error_message("Couldn't modify global profile settings");
       driver_settings.load_settings();
       return false;
@@ -268,31 +267,32 @@ namespace nvprefs {
   bool
   nvprefs_interface::configure() {
     std::lock_guard lock { pimpl->mutex };
-    if (!get_nvprefs_options().manage_driver_settings) {
+    const auto options = get_nvprefs_options();
+    if (!options.manage_driver_settings) {
       // Recover abandoned changes, but keep an active session's ownership until
       // its last lease ends even when management was disabled in the meantime.
-      if (pimpl->vsync_users == 0) pimpl->restore();
+      if (pimpl->vsync_users == 0) pimpl->restore(options.manage_driver_settings);
       return false;
     }
     if (!pimpl->load()) return false;
     auto unload = util::fail_guard([&]() { pimpl->unload(); });
     if (!pimpl->owning_undo_file() && !pimpl->restore_from_and_delete_undo_file_if_exists()) return false;
-    const bool application_ok = pimpl->modify_application_profile();
+    const bool application_ok = pimpl->modify_application_profile(options);
     // Discard any partial application edits before an independent global save.
     if (!application_ok && !pimpl->driver_settings.load_settings()) return false;
-    const bool global_ok = pimpl->modify_global_profile();
+    const bool global_ok = pimpl->modify_global_profile(options);
     return application_ok && global_ok;
   }
 
   bool
   nvprefs_interface::restore() {
     std::lock_guard lock { pimpl->mutex };
-    return pimpl->restore();
+    return pimpl->restore(get_nvprefs_options().manage_driver_settings);
   }
 
   bool
-  nvprefs_interface::impl::restore() {
-    if (!owning_undo_file() && !get_nvprefs_options().manage_driver_settings) {
+  nvprefs_interface::impl::restore(bool manage_driver_settings) {
+    if (!owning_undo_file() && !manage_driver_settings) {
       wchar_t program_data[MAX_PATH] {};
       const auto length = GetEnvironmentVariableW(L"ProgramData", program_data, MAX_PATH);
       if (!length || length >= MAX_PATH) return false;
@@ -302,7 +302,7 @@ namespace nvprefs {
         return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
       }
     }
-    if (!load(true)) return false;
+    if (!load()) return false;
     auto unload_guard = util::fail_guard([&]() { unload(); });
     const bool restored = owning_undo_file() ? restore_global_profile() :
                                                restore_from_and_delete_undo_file_if_exists();
@@ -313,13 +313,14 @@ namespace nvprefs {
   std::shared_ptr<void>
   nvprefs_interface::acquire_vsync() {
     std::lock_guard lock { pimpl->mutex };
-    if (!get_nvprefs_options().manage_driver_settings || !get_nvprefs_options().vdd_force_vsync) return {};
+    const auto options = get_nvprefs_options();
+    if (!options.manage_driver_settings || !options.vdd_force_vsync) return {};
     if (pimpl->vsync_users == 0) {
       pimpl->vsync_state = "error";
       if (!pimpl->load()) return {};
       auto unload = util::fail_guard([&]() { pimpl->unload(); });
       if ((!pimpl->owning_undo_file() && !pimpl->restore_from_and_delete_undo_file_if_exists()) ||
-          !pimpl->modify_global_profile(true) || !pimpl->driver_settings.verify_global_vsync()) {
+          !pimpl->modify_global_profile(options, true) || !pimpl->driver_settings.verify_global_vsync()) {
         error_message("Virtual-display VSync compatibility failed; continuing without the workaround");
         // SaveSettings can fail after making changes. Keep the undo record if
         // rollback cannot complete, and retry at shutdown or next startup.

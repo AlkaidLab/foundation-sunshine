@@ -949,18 +949,6 @@ namespace config {
     }
   }
 
-  bool
-  to_bool(std::string &boolean) {
-    std::for_each(std::begin(boolean), std::end(boolean), [](char ch) { return (char) std::tolower(ch); });
-
-    return boolean == "true"sv ||
-           boolean == "yes"sv ||
-           boolean == "enable"sv ||
-           boolean == "enabled"sv ||
-           boolean == "on"sv ||
-           (std::find(std::begin(boolean), std::end(boolean), '1') != std::end(boolean));
-  }
-
   void
   bool_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, bool &input) {
     std::string tmp;

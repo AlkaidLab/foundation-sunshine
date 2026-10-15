@@ -4,12 +4,15 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <bitset>
+#include <cctype>
 #include <chrono>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -298,6 +301,15 @@ namespace config {
   parse(int argc, char *argv[]);
   std::unordered_map<std::string, std::string>
   parse_config(const std::string_view &file_content);
+
+  /** Parse the same boolean tokens for startup settings and saved-setting reloads. */
+  inline bool
+  to_bool(std::string_view boolean) {
+    std::string value { boolean };
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return std::tolower(ch); });
+    return value == "true" || value == "yes" || value == "enable" ||
+           value == "enabled" || value == "on" || value == "1";
+  }
 
   bool
   update_config(const std::map<std::string, std::string> &updates);

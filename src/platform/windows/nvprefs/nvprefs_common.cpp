@@ -5,8 +5,6 @@
 // local includes
 #include "nvprefs_common.h"
 #include "src/logging.h"
-#include <algorithm>
-#include <cctype>
 
 // read user override preferences from global sunshine config
 #include "src/config.h"
@@ -46,10 +44,7 @@ namespace nvprefs {
       const auto enabled = [&](const char *name, bool fallback) {
         const auto it = snapshot->find(name);
         if (it == snapshot->end() || it->second.empty()) return fallback;
-        auto value = it->second;
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return std::tolower(ch); });
-        return value == "true" || value == "yes" || value == "enable" ||
-               value == "enabled" || value == "on" || value == "1";
+        return config::to_bool(it->second);
       };
       options.manage_driver_settings = enabled("nvenc_manage_driver_settings", true);
       options.vdd_force_vsync = enabled("nvenc_vdd_force_vsync", false);

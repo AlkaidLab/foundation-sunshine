@@ -20,6 +20,8 @@ namespace {
   settings_t persisted;
   settings_t defaults;
   nvprefs::nvprefs_options options;
+  std::optional<nvprefs::nvprefs_options> next_options;
+  int option_reads = 0;
   int initializes = 0;
   int saves = 0;
   int deletes = 0;
@@ -60,7 +62,13 @@ namespace nvprefs {
   void
   error_message(const std::wstring &) {}
   nvprefs_options
-  get_nvprefs_options() { return options; }
+  get_nvprefs_options() {
+    ++option_reads;
+    const auto snapshot = options;
+    // Model a settings save immediately after the transaction reads its policy.
+    if (next_options) options = *std::exchange(next_options, std::nullopt);
+    return snapshot;
+  }
 }  // namespace nvprefs
 
 #undef NVAPI_INTERFACE
@@ -165,6 +173,8 @@ namespace {
       options.vdd_force_vsync = true;
       options.opengl_vulkan_on_dxgi = false;
       options.sunshine_high_power_mode = false;
+      next_options.reset();
+      option_reads = 0;
       persisted = { { VSYNCMODE_ID, setting(VSYNCMODE_ID, VSYNCMODE_FORCEOFF) } };
       defaults.clear();
       initializes = saves = deletes = 0;
@@ -190,6 +200,43 @@ namespace {
       persisted[VSYNCMODE_ID] = setting(VSYNCMODE_ID, VSYNCMODE_FORCEON);
     }
   };
+
+  TEST_F(NvPrefs, ConfigurationUsesOnePolicySnapshotAndNextCallSeesSavedChanges) {
+    options.opengl_vulkan_on_dxgi = true;
+    options.sunshine_high_power_mode = true;
+    next_options = nvprefs::nvprefs_options { false, false, false, false };
+    ASSERT_TRUE(prefs->configure());
+    EXPECT_EQ(option_reads, 1);
+    EXPECT_EQ(persisted.at(OGL_CPL_PREFER_DXPRESENT_ID).u32CurrentValue, OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED);
+    EXPECT_EQ(persisted.at(PREFERRED_PSTATE_ID).u32CurrentValue, PREFERRED_PSTATE_PREFER_MAX);
+    EXPECT_EQ(persisted.at(VSYNCMODE_ID).u32CurrentValue, VSYNCMODE_FORCEOFF);
+
+    EXPECT_FALSE(prefs->configure());
+    EXPECT_EQ(option_reads, 2);
+    EXPECT_FALSE(persisted.contains(OGL_CPL_PREFER_DXPRESENT_ID));
+    EXPECT_FALSE(std::filesystem::exists(journal()));
+  }
+
+  TEST_F(NvPrefs, VsyncUsesOnePolicySnapshotAndReleaseNeedsNoPolicyRead) {
+    options.opengl_vulkan_on_dxgi = true;
+    next_options = nvprefs::nvprefs_options { false, false, false, false };
+    auto lease = prefs->acquire_vsync();
+    ASSERT_TRUE(lease);
+    EXPECT_EQ(option_reads, 1);
+    EXPECT_EQ(persisted.at(VSYNCMODE_ID).u32CurrentValue, VSYNCMODE_FORCEON);
+    EXPECT_EQ(persisted.at(OGL_CPL_PREFER_DXPRESENT_ID).u32CurrentValue, OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED);
+
+    EXPECT_FALSE(prefs->acquire_vsync());
+    EXPECT_EQ(option_reads, 2);
+    lease.reset();
+    EXPECT_EQ(option_reads, 2);
+    EXPECT_EQ(persisted.at(VSYNCMODE_ID).u32CurrentValue, VSYNCMODE_FORCEOFF);
+    EXPECT_TRUE(std::filesystem::exists(journal()));
+    ASSERT_TRUE(prefs->restore());
+    EXPECT_EQ(option_reads, 3);
+    EXPECT_FALSE(persisted.contains(OGL_CPL_PREFER_DXPRESENT_ID));
+    EXPECT_FALSE(std::filesystem::exists(journal()));
+  }
 
   TEST_F(NvPrefs, ApplicationFailureDoesNotSkipIndependentGlobalSettings) {
     fail_application = true;
