@@ -1,41 +1,43 @@
 # Foundation HIDMaestro Core patch
 
-This is a downstream managed-code patch for foundation-sunshine #1138. The
-upstream v1.7.3 API and assembly/file versions are preserved. The patched Core
-ships inside Sidecar component version 1.3.0, together with its runtime and
-licenses. The Control Panel updates installed older components through its
-existing package verification, staging and rollback flow when streaming is idle.
-The sidecar uses normal .NET dependency loading and rejects a missing patch
-marker before any SDK operation. Sunshine never replaces a DLL at launch.
+Sidecar component 1.4.0 uses HIDMaestro v1.12.0 with a small managed-code
+device-cleanup ownership patch. The v1.12.0 API, assembly/file versions and all
+official embedded resources are preserved. The complete component includes Core,
+runtime, licenses and notices; the Control Panel uses verified staging and
+whole-component rollback. Sidecar checks the exact runtime version and
+`FoundationCorePatch=device-ownership-1` before any SDK operation, even probing.
 
-Foundation uses a Joystick UMDF2 persona and USB/IP composite personas. Neither
-needs a global GameInput mapping or a shared Joystick OEM override. This build
-therefore disables **all** default VID/PID-wide GameInput and OEM writes, including
-the unused legacy Game Pad path. It retains per-controller registry configuration.
-Launch recovery and full cleanup preserve shared OEM/slot settings. Device
-parameter and interface cleanup require SDK ownership, and an unknown parent is
-not accepted as proof of ownership of a phantom HID child.
+Upstream v1.12.0 replaces the old registry-isolation patch's GameInput/OEM/slot
+changes. JSON profiles receive no GameInput table. The upstream ledger captures
+and restores OEM names, preserves foreign OEM/axis settings and limits slot
+cleanup to identities created by virtual devices. It also removes old GameInput
+tables only when their entire contents match the legacy SDK template. We no
+longer disable these upstream writers or cleanup paths.
 
-`registry-isolation.patch` is applied exactly to the source commit and archive
-hash in `upstream.json`. `scripts/build-hidmaestro-core-patch.ps1` extracts every
-embedded resource from the separately hash-verified upstream release and
-rebuilds only C# code. No WDK or native-driver rebuild is needed. Build validation
-compares the entire public API and every embedded resource byte for byte, then
-tests both Joystick and Game Pad registry writers in a process-local redirected
-registry hive. Driver deployment, PnP cleanup and live device creation are not
-run by these tests.
+`device-ownership.patch` retains the remaining stricter cleanup rules:
 
-The release ZIP's digest binds the complete component, including signed Core.
-Installation records its executable and Core digests for probing and rollback.
-There is no separately shipped Core patch manifest or runtime activation manager.
-Preserve the upstream MIT license and third-party notices when distributing it.
-The original source is available at
-https://github.com/hifihedgehog/HIDMaestro/tree/00b7303f8533c3fe10687a765c84e929b34a5e9c.
+- Interface keys under shared ROOT/SWD enumerators require a positive SDK
+  ownership record. A missing devnode does not establish ownership.
+- HID child ownership is captured before parent removal. The later orphan
+  sweep requires that snapshot or a positively owned parent; an unknown or
+  missing parent alone is insufficient.
 
-Existing, unowned GameInput mappings are deliberately preserved. Older SDKs did
-not record their original values or ownership, so deleting by VID/PID or guessing
-from a template would risk destroying another controller's configuration.
-Previously deleted OEM/axis settings cannot be reconstructed without a backup.
+The patch applies to the exact source commit and archive digest in
+`upstream.json`. `scripts/build-hidmaestro-core-patch.ps1` extracts all embedded
+resources from the separately hash-verified official release and rebuilds only
+C# code. No upstream build targets, WDK or native-driver rebuild are needed.
+Validation compares the public API, assembly identity and every embedded
+resource against the v1.12.0 release. Registry regressions run in a redirected,
+disposable HKCU hive and exercise JSON mappings, exact legacy-table removal,
+foreign edits, OEM claim/release, interface cleanup and HID ownership evidence.
+They do not deploy drivers or remove PnP devices.
 
-When upstream ships an equivalent fix, verify the shared-setting paths and ABI
-before removing this patch. A version bump alone does not establish equivalence.
+The component ZIP digest binds the whole package. Installation records the
+executable and Core digests for probing and rollback. Preserve the upstream MIT
+license and notices when distributing it. Previously deleted calibration/axis
+values cannot be reconstructed without a backup. Upstream's legacy mapping
+cleanup cannot restore a Windows mapping an older SDK already deleted.
+
+Before dropping the remaining patch, verify that upstream cleanup also rejects
+unknown-parent HID children and shared interface keys without ownership proof.
+Source: https://github.com/hifihedgehog/HIDMaestro/tree/v1.12.0

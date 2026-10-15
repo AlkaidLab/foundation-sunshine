@@ -10,7 +10,7 @@
   </PropertyGroup>
   <Target Name="RequireHIDMaestro" BeforeTargets="ResolveReferences"
           Condition="!Exists('$(HIDMaestroCorePath)')">
-    <Error Text="HIDMaestro.Core.dll was not found. Build the Foundation v1.7.3 Core patch and set HIDMaestroCorePath to its output." />
+    <Error Text="HIDMaestro.Core.dll was not found. Build the Foundation v1.12.0 Core patch and set HIDMaestroCorePath to its output." />
   </Target>
   <ItemGroup>
     <Reference Include="HIDMaestro.Core">

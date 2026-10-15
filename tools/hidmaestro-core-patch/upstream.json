@@ -1,7 +1,7 @@
 {
-  "version": "v1.7.3",
-  "commit": "00b7303f8533c3fe10687a765c84e929b34a5e9c",
-  "source_sha256": "67c90d575fca91da493a65d01a7933c5f495bf9513096ddf3e7ad7234bbae812",
-  "release_sha256": "a337ddc70e90ff969deaaaad8c3f3f8b7a0ee5b61a6a9ff6183ca35950bd8503",
-  "patch": "registry-isolation-1"
+  "version": "v1.12.0",
+  "commit": "b4d29d9f4b1b91ced6b4755f095184b66339b8be",
+  "source_sha256": "b4806275cb129afa72c16f02c1eb27bd7b283f2915d43f94fe323fe18e840191",
+  "release_sha256": "cf03347a0bc88bfb198a606c0ff8375bc4a9420fa80c07ef336186986d79b244",
+  "patch": "device-ownership-1"
 }

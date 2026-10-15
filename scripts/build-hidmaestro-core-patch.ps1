@@ -64,7 +64,7 @@ foreach ($directory in @($sourceDirectory, $payload)) {
 }
 Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceDirectory
 $source = Join-Path $sourceDirectory "HIDMaestro-$($pin.commit)"
-$patch = Join-Path $patchRoot 'registry-isolation.patch'
+$patch = Join-Path $patchRoot 'device-ownership.patch'
 & git apply --check --unsafe-paths "--directory=$source" $patch
 if ($LASTEXITCODE -ne 0) { throw 'Core patch no longer applies exactly to the pinned source' }
 & git apply --unsafe-paths "--directory=$source" $patch
@@ -84,7 +84,7 @@ $core = Join-Path $output 'HIDMaestro.Core.dll'
 & $DotnetPath $payloadTool verify $originalCore $core
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core changed the upstream ABI or embedded payload' }
 & $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense-hidonly.json')
-if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry isolation regression failed' }
+if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership regressions failed' }
 
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'THIRD-PARTY-NOTICES.txt') -Destination $output -Force
