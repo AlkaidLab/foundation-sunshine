@@ -41,6 +41,7 @@ namespace confighttp::assets {
       { "svg", "image/svg+xml" },
       { "ttf", "font/ttf" },
       { "txt", "text/plain" },
+      { "webp", "image/webp" },
       { "woff2", "font/woff2" },
       { "xml", "text/xml" },
     };
@@ -75,8 +76,8 @@ namespace confighttp::assets {
     }
 
     void
-    getClientsPage(resp_https_t response, req_https_t request) {
-      getHtmlPage(response, request, "clients.html");
+    getDownloadsPage(resp_https_t response, req_https_t request) {
+      getHtmlPage(response, request, "downloads.html");
     }
 
     void
@@ -265,7 +266,7 @@ namespace confighttp::assets {
     server.resource["^/$"]["GET"] = getIndexPage;
     server.resource["^/pin/?$"]["GET"] = getPinPage;
     server.resource["^/apps/?$"]["GET"] = getAppsPage;
-    server.resource["^/clients/?$"]["GET"] = getClientsPage;
+    server.resource["^/downloads/?$"]["GET"] = getDownloadsPage;
     server.resource["^/config/?$"]["GET"] = getConfigPage;
     server.resource["^/password/?$"]["GET"] = getPasswordPage;
     server.resource["^/welcome/?$"]["GET"] = getWelcomePage;

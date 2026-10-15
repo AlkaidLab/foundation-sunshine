@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "Ordinateur",
+    "other": "Autres",
+    "phone": "Téléphone / Tablette",
+    "tv": "Téléviseur"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "Personnaliser les dispositions, combinaisons de touches et commandes",
+        "Viser en bougeant l’appareil ou la manette",
+        "HDR sur les hôtes et appareils compatibles",
+        "Transmettre la voix locale au PC de jeu"
+      ],
+      "description": "Personnalisez les boutons virtuels et jouez au toucher, par mouvements ou à la manette. Utilisez le clavier, le microphone et le presse-papiers du téléphone avec votre PC distant.",
+      "detail": "Client pour téléphones et tablettes Android",
+      "features": [
+        "Boutons virtuels personnalisables",
+        "Visée par mouvements",
+        "Image HDR",
+        "Microphone distant"
+      ],
+      "name": "Android",
+      "note": "L’aide au clavier, le presse-papiers et le microphone nécessitent des autorisations et la prise en charge de l’hôte. Le HDR exige du matériel et des écrans compatibles.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "Utilisez V+ sur un téléviseur ou un boîtier TV pour jouer à la manette. Réglez l’image et consultez les performances pendant le streaming.",
+      "detail": "Client Android TV · Pour téléviseurs",
+      "features": [
+        "Commandes à la manette",
+        "Image HDR",
+        "Commandes en cours de streaming",
+        "Statistiques en temps réel"
+      ],
+      "name": "Android TV",
+      "note": "Le HDR, l’audio et le retour des manettes dépendent du téléviseur, du système, des appareils connectés et de l’hôte.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Naviguez et jouez à la manette sur Apple TV pour retrouver votre PC de jeu sur le téléviseur du salon.",
+      "detail": "Client Apple TV · Installation depuis l’App Store",
+      "features": [
+        "Commandes à la manette",
+        "Image HDR",
+        "Streaming sur téléviseur"
+      ],
+      "name": "Apple TV",
+      "note": "La version tvOS nécessite une manette. Le HDR exige un hôte et une Apple TV compatibles. Installez la version officielle depuis l’App Store.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "Modifier les panneaux de boutons, zones de caméra et dispositions",
+        "Intégration native des manettes et commandes par mouvements",
+        "HDR10, HLG et HDR Vivid sur les appareils compatibles",
+        "Convertir les variations sonores du jeu en retour haptique"
+      ],
+      "description": "Jouez aux jeux PC au toucher, avec des boutons virtuels ou des manettes HarmonyOS natives, avec mouvements, retour haptique audio et HDR.",
+      "detail": "Client HarmonyOS NEXT · Installation depuis AppGallery",
+      "features": [
+        "Boutons virtuels personnalisables",
+        "Mouvements et manettes natives",
+        "Image HDR",
+        "Retour haptique piloté par le son"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "Le HDR et les extensions nécessitent des appareils compatibles et Foundation Sunshine. Le renvoi du microphone est actuellement disponible en mode développeur.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "Configurer les combinaisons, groupes de dispositions et pavés tactiles",
+        "Mappage des mouvements, navigation à la manette et raccourcis",
+        "HDR sur les appareils compatibles",
+        "Regarder en multitâche ou diffuser vers un autre écran"
+      ],
+      "description": "Personnalisez les boutons virtuels, le toucher et les mouvements sur iPhone et iPad. Profitez de la navigation à la manette, de l’image dans l’image, des écrans externes et du microphone pris en charge par l’hôte.",
+      "detail": "Client iPhone / iPad · Installation depuis l’App Store",
+      "features": [
+        "Boutons virtuels personnalisables",
+        "Mouvements et manettes",
+        "Image HDR",
+        "Image dans l’image et écrans externes"
+      ],
+      "name": "iPhone / iPad",
+      "note": "Le HDR, l’image dans l’image, l’interpolation et le stylet dépendent de l’appareil et du système. Certaines fonctions de dessin avancées nécessitent un achat intégré.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "Le HDR dépend du GPU, du moteur de rendu et de l’affichage",
+        "Commandes de bureau et à la manette",
+        "Régler le streaming et le mode de souris",
+        "Consulter les mesures réseau, de décodage et d’affichage"
+      ],
+      "description": "Installez une AppImage et diffusez votre PC en fenêtre ou plein écran. Jouez au clavier ou à la manette et réglez les sessions avec les commandes et statistiques intégrées.",
+      "detail": "Client de bureau pour Linux",
+      "features": [
+        "Image HDR",
+        "Clavier et manettes",
+        "Commandes en cours de streaming",
+        "Statistiques en temps réel"
+      ],
+      "name": "Linux",
+      "note": "Choisissez le paquet adapté à votre architecture et votre système. Le HDR et le presse-papiers dépendent de l’environnement de bureau Linux.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "HDR sur les écrans compatibles",
+        "Commandes de bureau familières",
+        "Synchroniser textes et images",
+        "Accéder aux dossiers partagés de l’hôte"
+      ],
+      "description": "Retrouvez l’interface de bureau familière, jouez au clavier, à la souris ou à la manette, en fenêtre ou plein écran, avec des fonctions de collaboration.",
+      "detail": "Client de bureau pour macOS",
+      "features": [
+        "Image HDR",
+        "Clavier et manettes",
+        "Presse-papiers bidirectionnel",
+        "Fichiers partagés de l’hôte"
+      ],
+      "name": "macOS",
+      "note": "Les téléchargements actuels ciblent Apple Silicon. Le presse-papiers, le microphone et les fichiers partagés nécessitent la prise en charge de l’hôte.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "Régler la luminosité, les couleurs et l’image",
+        "Saisie locale, adaptation des raccourcis et commandes du trackpad",
+        "Égaliseur, correction du casque et options surround",
+        "Régler l’image, le son et l’hôte pendant le streaming"
+      ],
+      "description": "Profitez d’une interface Mac native, de la saisie locale et du trackpad. Réglez l’image HDR, le son du casque et les paramètres du streaming.",
+      "detail": "Client natif amélioré pour macOS",
+      "features": [
+        "Réglages HDR et couleurs",
+        "Saisie Mac et trackpad",
+        "Réglages casque et audio",
+        "Commandes en cours de streaming"
+      ],
+      "name": "macOS",
+      "note": "macOS 12+, Apple Silicon et Intel. Le presse-papiers, le microphone et les commandes de l’hôte nécessitent sa prise en charge.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Utilisez le client Android V+ sur Quest pour recevoir l’image du PC, régler le streaming et consulter les performances.",
+      "detail": "Client pour casque Quest · Réception de l’image du PC",
+      "features": [
+        "Streaming de l’image du PC",
+        "Commandes en cours de streaming",
+        "Statistiques en temps réel"
+      ],
+      "name": "Quest VR",
+      "note": "Ce téléchargement est une APK Android. Les commandes, l’affichage et le HDR dépendent de l’environnement du casque.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "Une version dédiée au matériel Valve Steam Link. Connectez votre PC de jeu et jouez à la manette sur votre téléviseur.",
+      "detail": "Client pour appareils Steam Link",
+      "features": [
+        "Commandes à la manette",
+        "Association à l’hôte",
+        "Statistiques de performances"
+      ],
+      "name": "Steam Link",
+      "note": "Cette version cible le matériel Steam Link et ne prend pas en charge le HDR ni le renvoi du microphone.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "HDR avec codecs et écrans compatibles",
+        "Synchroniser textes et images",
+        "Transmettre la voix locale au PC de jeu",
+        "Accéder aux dossiers partagés par l’hôte"
+      ],
+      "description": "Connectez-vous avec clavier, souris et manette. Changez de mode de souris, réglez le streaming et utilisez le presse-papiers et les fichiers partagés de l’hôte.",
+      "detail": "Client de bureau pour Windows",
+      "features": [
+        "Image HDR",
+        "Presse-papiers bidirectionnel",
+        "Microphone distant",
+        "Fichiers partagés de l’hôte"
+      ],
+      "name": "Windows",
+      "note": "Le presse-papiers, le microphone, les réglages d’affichage et l’accès aux fichiers nécessitent la prise en charge correspondante de Foundation Sunshine.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "Client",
+    "close": "Fermer",
+    "desktopHint": "Installez le téléchargement sur l’appareil de jeu choisi.",
+    "download": "Télécharger",
+    "downloadAddress": "Adresse de téléchargement",
+    "enhanced": "Améliorée",
+    "failed": "Le code QR est indisponible. Utilisez le bouton de téléchargement.",
+    "friendLink": "Lien partenaire",
+    "getApp": "Obtenir l’application",
+    "mirror": "Téléchargement alternatif",
+    "more": "Autres actions",
+    "newLabel": "NEW",
+    "openFailed": "Impossible d’ouvrir le navigateur. Copiez l’adresse de téléchargement dans votre navigateur.",
+    "openPage": "Ouvrir la page de téléchargement",
+    "openStore": "Ouvrir la boutique d’applications",
+    "project": "Projet",
+    "recommended": "Recommandé",
+    "releases": "Toutes les versions",
+    "resolveFailed": "Impossible de préparer le téléchargement. Fermez cette fenêtre et réessayez.",
+    "resolving": "Préparation du téléchargement…",
+    "scan": "Scannez avec votre téléphone pour télécharger",
+    "setup": "Se connecter après l’installation",
+    "setupSteps": [
+      "Installez et ouvrez le client sur votre appareil de jeu",
+      "Ajoutez ce PC de jeu et effectuez l’association par code PIN",
+      "Choisissez le bureau ou une application pour jouer"
+    ],
+    "setupTitles": [
+      "Télécharger et installer",
+      "Ajouter et associer",
+      "Démarrer le streaming"
+    ],
+    "standard": "Standard",
+    "step": "Choisir l’appareil de jeu",
+    "system": "Choisir le système d’exploitation",
+    "title": "Télécharger les clients"
+  }
+}
