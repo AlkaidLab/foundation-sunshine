@@ -82,6 +82,7 @@ namespace confighttp::configuration {
 #ifdef _WIN32
       const auto vsync = nvprefs_instance.status();
       outputTree.put("nvidia_vsync.supported", vsync.supported);
+      outputTree.put("nvidia_vsync.detection_known", vsync.detection_known);
       outputTree.put("nvidia_vsync.state", vsync.state);
       outputTree.put("nvidia_vsync.version", 1);
 #endif

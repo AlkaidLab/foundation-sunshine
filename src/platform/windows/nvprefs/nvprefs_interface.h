@@ -12,6 +12,7 @@ namespace nvprefs {
     struct status_t {
       bool supported;
       std::string state;
+      bool detection_known { true };
     };
 
     nvprefs_interface();

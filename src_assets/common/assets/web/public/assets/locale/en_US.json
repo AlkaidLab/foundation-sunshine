@@ -680,6 +680,7 @@
     "nvenc_vdd_force_vsync_error": "The driver setting could not be applied or restored. Check the Sunshine log; streaming can continue.",
     "nvenc_vdd_force_vsync_next_launch": "Saved changes apply to the next virtual-display session, before the game starts.",
     "nvenc_vdd_force_vsync_unmanaged": "Enable NVIDIA driver settings management to use this option.",
+    "nvenc_vdd_force_vsync_unknown": "Cannot check NVIDIA support. Refocus this window or reopen the page to retry.",
     "nvenc_vdd_force_vsync_unsupported": "The host has no supported NVIDIA adapter. Your saved preference is retained.",
     "network_streaming_title": "Stream reliability",
     "network_streaming_desc": "Balance video loss recovery and additional traffic for your connection.",

@@ -5,6 +5,7 @@
 #include "src/platform/windows/nvprefs/driver_settings.h"
 #include "src/platform/windows/nvprefs/nvprefs_common.h"
 #include "src/platform/windows/nvprefs/nvprefs_interface.h"
+#include "src/platform/windows/nvprefs/undo_file.h"
 #include <barrier>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +25,7 @@ namespace {
   int deletes = 0;
   bool available = true;
   bool fail_set = false;
+  bool fail_application = false;
   bool fail_save = false;
   bool fail_verify = false;
   bool fail_next_load = false;
@@ -106,6 +108,7 @@ NvAPI_DRS_GetBaseProfile(NvDRSSessionHandle, NvDRSProfileHandle *profile) {
 }
 NVAPI_INTERFACE
 NvAPI_DRS_FindProfileByName(NvDRSSessionHandle, NvAPI_UnicodeString, NvDRSProfileHandle *profile) {
+  if (fail_application) return NVAPI_ERROR;
   *profile = reinterpret_cast<NvDRSProfileHandle>(2);
   return NVAPI_OK;
 }
@@ -166,7 +169,7 @@ namespace {
       defaults.clear();
       initializes = saves = deletes = 0;
       available = true;
-      fail_set = fail_save = fail_verify = fail_next_load = false;
+      fail_application = fail_set = fail_save = fail_verify = fail_next_load = false;
       prefs = std::make_unique<nvprefs::nvprefs_interface>();
     }
     void
@@ -187,6 +190,63 @@ namespace {
       persisted[VSYNCMODE_ID] = setting(VSYNCMODE_ID, VSYNCMODE_FORCEON);
     }
   };
+
+  TEST_F(NvPrefs, ApplicationFailureDoesNotSkipIndependentGlobalSettings) {
+    fail_application = true;
+    options.opengl_vulkan_on_dxgi = true;
+    EXPECT_FALSE(prefs->configure());
+    EXPECT_EQ(persisted.at(OGL_CPL_PREFER_DXPRESENT_ID).u32CurrentValue, OGL_CPL_PREFER_DXPRESENT_PREFER_ENABLED);
+    EXPECT_TRUE(std::filesystem::exists(journal()));
+  }
+
+  TEST_F(NvPrefs, FailedJournalReplacementPreservesLastCommittedSnapshot) {
+    std::filesystem::create_directories(journal().parent_path());
+    auto file = nvprefs::undo_file_t::create_new_file(journal());
+    ASSERT_TRUE(file);
+    nvprefs::undo_data_t original;
+    original.set_vsync(VSYNCMODE_FORCEON, VSYNCMODE_FORCEOFF);
+    ASSERT_TRUE(file->write_undo_data(original));
+    auto temporary_path = journal();
+    temporary_path += L".tmp";
+    nvprefs::safe_handle blocked(CreateFileW(temporary_path.c_str(), GENERIC_WRITE | DELETE, 0,
+      nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr));
+    ASSERT_TRUE(blocked);
+    nvprefs::undo_data_t replacement;
+    replacement.set_vsync(VSYNCMODE_FORCEON, VSYNCMODE_PASSIVE);
+    EXPECT_FALSE(file->write_undo_data(replacement));
+    file.reset();
+    bool denied = false;
+    auto reopened = nvprefs::undo_file_t::open_existing_file(journal(), denied);
+    ASSERT_TRUE(reopened);
+    const auto recovered = reopened->read_undo_data();
+    ASSERT_TRUE(recovered);
+    EXPECT_EQ(recovered->get_vsync()->undo_value, VSYNCMODE_FORCEOFF);
+    EXPECT_TRUE(reopened->delete_file());
+    blocked.reset();
+  }
+
+  TEST_F(NvPrefs, AtomicJournalReplacementPersistsCompleteNewSnapshot) {
+    std::filesystem::create_directories(journal().parent_path());
+    auto file = nvprefs::undo_file_t::create_new_file(journal());
+    ASSERT_TRUE(file);
+    nvprefs::undo_data_t undo;
+    undo.set_opengl_swapchain(1, std::nullopt);
+    ASSERT_TRUE(file->write_undo_data(undo));
+    undo.set_vsync(VSYNCMODE_FORCEON, VSYNCMODE_FORCEOFF);
+    ASSERT_TRUE(file->write_undo_data(undo));
+    bool other_denied = false;
+    EXPECT_FALSE(nvprefs::undo_file_t::open_existing_file(journal(), other_denied));
+    EXPECT_TRUE(other_denied);
+    file.reset();
+    bool denied = false;
+    auto reopened = nvprefs::undo_file_t::open_existing_file(journal(), denied);
+    ASSERT_TRUE(reopened);
+    const auto recovered = reopened->read_undo_data();
+    ASSERT_TRUE(recovered);
+    EXPECT_TRUE(recovered->get_opengl_swapchain());
+    EXPECT_EQ(recovered->get_vsync()->undo_value, VSYNCMODE_FORCEOFF);
+    EXPECT_TRUE(reopened->delete_file());
+  }
 
   TEST_F(NvPrefs, DisabledPolicyDoesNotLoadNvapi) {
     options.vdd_force_vsync = false;

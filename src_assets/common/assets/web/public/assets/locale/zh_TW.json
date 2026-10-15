@@ -680,6 +680,7 @@
     "nvenc_vdd_force_vsync_error": "無法套用或還原驅動程式設定，請查看 Sunshine 記錄；串流可繼續。",
     "nvenc_vdd_force_vsync_next_launch": "儲存後將在下次虛擬螢幕工作階段中、啟動遊戲前套用。",
     "nvenc_vdd_force_vsync_unmanaged": "請先允許管理 NVIDIA 驅動程式設定。",
+    "nvenc_vdd_force_vsync_unknown": "無法確認 NVIDIA 支援狀態，請重新切回此視窗或開啟頁面重試。",
     "nvenc_vdd_force_vsync_unsupported": "主機沒有受支援的 NVIDIA 顯示卡，已儲存的偏好仍會保留。",
     "network_streaming_title": "串流穩定性",
     "network_streaming_desc": "根據網路狀況調整視訊保護，平衡封包遺失恢復與額外流量。",

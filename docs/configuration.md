@@ -2502,14 +2502,17 @@ The global change may affect other games launched during the stream. The last
 participating pending handshake or active session releases the setting, even when
 the game or persistent VDD remains running. Original user overrides are restored;
 inherited/predefined settings are restored by removing Sunshine's override. Changes
-made by the user while streaming are preserved. Recovery data is flushed before
-committing driver settings and retained on restoration failure for a later retry.
+made by the user while streaming are preserved. Recovery data is flushed to a separate file and atomically replaces the prior
+snapshot before committing driver settings. Failed writes leave the committed
+snapshot intact. Restoration failures retain recovery data for a later retry.
 Abandoned changes are recovered on the next managed startup. A failure is reported
 in the log and the configuration status; it does not block streaming.
 
 Web UI: **Audio / Video → Virtual display**. Desktop control panel: **Streaming →
 Virtual display**. Hosts without NVIDIA hide the option unless an enabled preference
-was saved; that preference remains visible but disabled after changing hardware.
+was saved; that preference remains visible but disabled after changing hardware. Detection failures are shown separately from confirmed
+unsupported hardware. Status refreshes when the page regains focus, without
+replacing unsaved settings.
 
 ```ini
 nvenc_manage_driver_settings = enabled

@@ -277,7 +277,11 @@ namespace nvprefs {
     if (!pimpl->load()) return false;
     auto unload = util::fail_guard([&]() { pimpl->unload(); });
     if (!pimpl->owning_undo_file() && !pimpl->restore_from_and_delete_undo_file_if_exists()) return false;
-    return pimpl->modify_application_profile() && pimpl->modify_global_profile();
+    const bool application_ok = pimpl->modify_application_profile();
+    // Discard any partial application edits before an independent global save.
+    if (!application_ok && !pimpl->driver_settings.load_settings()) return false;
+    const bool global_ok = pimpl->modify_global_profile();
+    return application_ok && global_ok;
   }
 
   bool
@@ -362,20 +366,32 @@ namespace nvprefs {
   nvprefs_interface::status() {
     // Read hardware capability without loading or changing DRS preferences.
     bool supported = false;
+    bool detection_known = false;
     IDXGIFactory1 *factory = nullptr;
     if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void **>(&factory)))) {
+      detection_known = true;
       for (UINT index = 0;; ++index) {
         IDXGIAdapter1 *adapter = nullptr;
-        if (factory->EnumAdapters1(index, &adapter) != S_OK) break;
+        const auto result = factory->EnumAdapters1(index, &adapter);
+        if (result == DXGI_ERROR_NOT_FOUND) break;
+        if (FAILED(result)) {
+          detection_known = false;
+          break;
+        }
         DXGI_ADAPTER_DESC1 desc {};
-        if (SUCCEEDED(adapter->GetDesc1(&desc)) && desc.VendorId == 0x10DE) supported = true;
+        if (FAILED(adapter->GetDesc1(&desc)))
+          detection_known = false;
+        else if (desc.VendorId == 0x10DE) {
+          supported = true;
+          detection_known = true;
+        }
         adapter->Release();
         if (supported) break;
       }
       factory->Release();
     }
     std::lock_guard lock { pimpl->mutex };
-    return { supported, pimpl->vsync_state };
+    return { supported, pimpl->vsync_state, detection_known };
   }
 
 }  // namespace nvprefs

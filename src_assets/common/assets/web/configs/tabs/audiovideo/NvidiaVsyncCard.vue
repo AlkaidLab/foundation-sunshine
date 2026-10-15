@@ -1,9 +1,20 @@
 <script setup>
-import { computed } from 'vue'
-import { nvidiaVsyncUi } from '../../../utils/nvidiaVsync.js'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { apiJson } from '../../../utils/apiFetch.js'
+import { nvidiaVsyncUi, observeNvidiaVsyncStatus } from '../../../utils/nvidiaVsync.js'
 
 const props = defineProps({ config: Object, platform: String })
-const view = computed(() => nvidiaVsyncUi(props.config, props.platform))
+const capability = ref(props.config.nvidia_vsync)
+const view = computed(() => nvidiaVsyncUi({ ...props.config, nvidia_vsync: capability.value }, props.platform))
+let stopStatus = () => {}
+onMounted(() => {
+  stopStatus = observeNvidiaVsyncStatus({
+    load: options => apiJson('/api/config', options),
+    onStatus: data => { capability.value = data.nvidia_vsync },
+    onError: () => { capability.value = { ...capability.value, detection_known: false } },
+  })
+})
+onBeforeUnmount(() => stopStatus())
 function toggle(event) {
   props.config.nvenc_vdd_force_vsync = event.target.checked ? 'enabled' : 'disabled'
 }
