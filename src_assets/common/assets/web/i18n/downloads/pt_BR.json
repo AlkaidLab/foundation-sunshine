@@ -29,7 +29,7 @@
       "description": "Use V+ num televisor ou box TV para jogar com controle. Abra os controles na transmissão para ajustar o vídeo e consultar o desempenho.",
       "detail": "Cliente Android TV · Para televisores",
       "features": [
-        "Controlo por controle",
+        "Entrada de controle",
         "Vídeo HDR",
         "Controles durante a transmissão",
         "Estatísticas em tempo real"
@@ -39,10 +39,10 @@
       "product": "Moonlight V+"
     },
     "apple-tv": {
-      "description": "Navegue e jogue com controle na Apple TV, levando o PC de jogos ao tela da sala.",
+      "description": "Navegue e jogue com controle na Apple TV, levando o PC de jogos à tela da sala.",
       "detail": "Cliente Apple TV · Instalar pela App Store",
       "features": [
-        "Controlo por controle",
+        "Entrada de controle",
         "Vídeo HDR",
         "Transmissão na TV"
       ],
@@ -52,7 +52,7 @@
     },
     "harmony": {
       "captions": [
-        "Edite painéis de botões, áreas de câmara e disposições",
+        "Edite painéis de botões, áreas de câmera e disposições",
         "Integração nativa de controles e entrada por movimento",
         "HDR10, HLG e HDR Vivid em dispositivos compatíveis",
         "Converta alterações do áudio do jogo em resposta háptica"
@@ -74,18 +74,18 @@
         "Configure combinações, grupos de disposições e painéis táteis",
         "Mapeamento de movimento, navegação por controle e atalhos",
         "HDR em dispositivos compatíveis",
-        "Veja em multitarefa ou transmita para outro tela"
+        "Veja em multitarefa ou transmita para outra tela"
       ],
-      "description": "Personalize botões, toque e movimento no iPhone e iPad. Use navegação por controle, imagem em imagem, telas externos e microfone suportado pelo anfitrião.",
+      "description": "Personalize botões, toque e movimento no iPhone e iPad. Use navegação por controle, imagem em imagem, telas externas e microfone suportado pelo anfitrião.",
       "detail": "Cliente iPhone / iPad · Instalar pela App Store",
       "features": [
         "Botões virtuais personalizáveis",
         "Movimento e controles",
         "Vídeo HDR",
-        "Imagem em imagem e telas externos"
+        "Imagem em imagem e telas externas"
       ],
       "name": "iPhone / iPad",
-      "note": "HDR, imagem em imagem, interpolação e caneta dependem do dispositivo e sistema. Algumas funções avançadas de desenho requerem compra na aplicativo.",
+      "note": "HDR, imagem em imagem, interpolação e caneta dependem do dispositivo e sistema. Algumas funções avançadas de desenho requerem compra no aplicativo.",
       "product": "VoidLink"
     },
     "linux": {
@@ -95,7 +95,7 @@
         "Ajuste a transmissão e o modo do mouse",
         "Consulte métricas de rede, decodificação e apresentação"
       ],
-      "description": "Instale uma AppImage e transmita o PC numa janela ou em tela inteiro. Jogue com teclado ou controle e ajuste sessões com controles e estatísticas.",
+      "description": "Instale uma AppImage e transmita o PC numa janela ou em tela inteira. Jogue com teclado ou controle e ajuste sessões com controles e estatísticas.",
       "detail": "Cliente de desktop para Linux",
       "features": [
         "Vídeo HDR",
@@ -112,9 +112,9 @@
         "HDR em telas compatíveis",
         "Controles de desktop familiares",
         "Sincronize texto e imagens",
-        "Acesse às pastas comcompartilhadas do anfitrião"
+        "Acesse as pastas compartilhadas do anfitrião"
       ],
-      "description": "Mantenha a interface de desktop habitual, jogue com teclado, mouse ou controle e transmita em janela ou tela inteiro com funções de colaboração.",
+      "description": "Mantenha a interface de desktop habitual, jogue com teclado, mouse ou controle e transmita em janela ou tela inteira com funções de colaboração.",
       "detail": "Cliente de desktop para macOS",
       "features": [
         "Vídeo HDR",
@@ -154,14 +154,14 @@
         "Estatísticas em tempo real"
       ],
       "name": "Quest VR",
-      "note": "Esto download é um APK Android. Entrada, visualização e HDR dependem do ambiente do visor.",
+      "note": "Este download é um APK Android. Entrada, visualização e HDR dependem do ambiente do visor.",
       "product": "Moonlight V+"
     },
     "steam": {
       "description": "Versão dedicada ao hardware Valve Steam Link. Conecte o PC de jogos e jogue no televisor com controle.",
       "detail": "Cliente para dispositivos Steam Link",
       "features": [
-        "Controlo por controle",
+        "Entrada de controle",
         "Pareamento com o anfitrião",
         "Estatísticas de desempenho"
       ],
@@ -174,7 +174,7 @@
         "HDR com codecs e telas compatíveis",
         "Sincronize texto e imagens",
         "Envie a voz local para o PC de jogos",
-        "Acesse às pastas comcompartilhadas pelo anfitrião"
+        "Acesse as pastas compartilhadas pelo anfitrião"
       ],
       "description": "Conecte-se com teclado, mouse e controle. Mude os modos do mouse, ajuste a transmissão e use a área de transferência e arquivos compartilhados.",
       "detail": "Cliente de desktop para Windows",

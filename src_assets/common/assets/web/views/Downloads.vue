@@ -122,7 +122,8 @@ const download = async () => {
   const requestId = downloadRequestId
   openFailed.value = false
   try {
-    await openExternalUrl(downloadUrls.value.primary)
+    const opened = await openExternalUrl(downloadUrls.value.primary)
+    if (requestId === downloadRequestId) openFailed.value = opened === false
   } catch (error) {
     if (requestId === downloadRequestId) openFailed.value = true
     console.error('Failed to open client download URL:', error)
