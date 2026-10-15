@@ -27,7 +27,7 @@ function htmlExtensionMiddleware(htmlFiles) {
 }
 
 // 需要支持的html页面
-const htmlPages = ['apps', 'config', 'index', 'password', 'pin', 'troubleshooting', 'welcome']
+const htmlPages = ['apps', 'downloads', 'config', 'index', 'password', 'pin', 'troubleshooting', 'welcome']
 
 // 代理配置复用函数
 function createProxyLogger(prefix, target, rewritePath) {

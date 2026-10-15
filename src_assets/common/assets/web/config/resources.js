@@ -91,7 +91,7 @@ export const CLIENT_RESOURCES = [
     zhHref: VOIDLINK_APP_STORE_ZH_URL,
     icon: 'fab fa-apple',
     titleKey: 'resource_card.voidlink_title',
-    description: 'iOS / iPadOS',
+    description: 'iOS / iPadOS / Apple TV',
     variant: 'apple',
   },
 ]

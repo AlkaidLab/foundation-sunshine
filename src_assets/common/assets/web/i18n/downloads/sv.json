@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "Dator",
+    "other": "Övrigt",
+    "phone": "Mobil / Surfplatta",
+    "tv": "TV"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "Anpassa layout, knappkombinationer och inmatning",
+        "Sikta genom att röra enheten eller handkontrollen",
+        "HDR på kompatibla värdar och enheter",
+        "Skicka lokal röst till speldatorn"
+      ],
+      "description": "Anpassa skärmknappar och spela med pekskärm, rörelse eller handkontroll. Använd mobilens tangentbord, mikrofon och urklipp med fjärrdatorn.",
+      "detail": "Klient för Android-mobiler och surfplattor",
+      "features": [
+        "Anpassade skärmknappar",
+        "Rörelsesiktning",
+        "HDR-bild",
+        "Fjärrmikrofon"
+      ],
+      "name": "Android",
+      "note": "Tangentbordshjälp, urklipp och mikrofon kräver behörigheter och värdstöd. HDR kräver kompatibel hårdvara och skärmar.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "Använd V+ på TV eller TV-box för att spela med handkontroll. Justera bilden och granska prestandan under strömningen.",
+      "detail": "Android TV-klient · För TV-enheter",
+      "features": [
+        "Handkontroll",
+        "HDR-bild",
+        "Kontroller under strömning",
+        "Prestanda i realtid"
+      ],
+      "name": "Android TV",
+      "note": "HDR, ljud och handkontrollens återkoppling beror på TV, system, anslutna enheter och värdstöd.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Navigera och spela med handkontroll på Apple TV och ta speldatorn till vardagsrummets skärm.",
+      "detail": "Apple TV-klient · Installera från App Store",
+      "features": [
+        "Handkontroll",
+        "HDR-bild",
+        "TV-strömning"
+      ],
+      "name": "Apple TV",
+      "note": "tvOS-versionen kräver en handkontroll. HDR kräver kompatibel värd och Apple TV. Installera den officiella versionen från App Store.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "Redigera knapppaneler, kamerazoner och layouter",
+        "Inbyggt stöd för handkontroller och rörelseinmatning",
+        "HDR10, HLG och HDR Vivid på kompatibla enheter",
+        "Omvandla ändringar i spelljud till haptik"
+      ],
+      "description": "Spela PC-spel med pekskärm, skärmknappar och inbyggda HarmonyOS-handkontroller, med rörelse, ljudstyrd haptik och HDR.",
+      "detail": "HarmonyOS NEXT-klient · Installera från AppGallery",
+      "features": [
+        "Anpassade skärmknappar",
+        "Rörelse och inbyggda handkontroller",
+        "HDR-bild",
+        "Ljudstyrd haptik"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "HDR och värdtillägg kräver kompatibla enheter och Foundation Sunshine. Mikrofonvidarebefordran finns för närvarande i utvecklarläge.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "Ställ in kombinationer, layoutgrupper och pekplattepaneler",
+        "Rörelsemappning, navigering med handkontroll och genvägar",
+        "HDR på kompatibla enheter",
+        "Titta vid multitasking eller strömma till en annan skärm"
+      ],
+      "description": "Anpassa knappar, pek- och rörelseinmatning på iPhone och iPad. Använd handkontrollnavigering, bild-i-bild, externa skärmar och mikrofon med värdstöd.",
+      "detail": "iPhone-/iPad-klient · Installera från App Store",
+      "features": [
+        "Anpassade skärmknappar",
+        "Rörelse och handkontroller",
+        "HDR-bild",
+        "Bild-i-bild och externa skärmar"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR, bild-i-bild, interpolering och pennfunktioner beror på enhet och system. Vissa avancerade ritfunktioner kräver köp i appen.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "HDR beror på GPU, renderare och skärmmiljö",
+        "Skrivbords- och handkontrollinmatning",
+        "Justera strömningsinställningar och musläge",
+        "Visa mått för nätverk, avkodning och presentation"
+      ],
+      "description": "Installera en AppImage och strömma datorn i fönster eller helskärm. Spela med tangentbord eller handkontroll och justera med kontroller och statistik.",
+      "detail": "Skrivbordsklient för Linux",
+      "features": [
+        "HDR-bild",
+        "Tangentbord och handkontroller",
+        "Kontroller under strömning",
+        "Prestanda i realtid"
+      ],
+      "name": "Linux",
+      "note": "Välj paket för din arkitektur och ditt system. HDR och urklipp beror på Linux-skrivbordsmiljön.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "HDR på kompatibla skärmar",
+        "Välbekanta skrivbordskontroller",
+        "Synkronisera text och bilder",
+        "Öppna delade mappar på värden"
+      ],
+      "description": "Behåll det välbekanta skrivbordsgränssnittet och spela med tangentbord, mus eller handkontroll, i fönster eller helskärm med samarbetsfunktioner.",
+      "detail": "Skrivbordsklient för macOS",
+      "features": [
+        "HDR-bild",
+        "Tangentbord och handkontroller",
+        "Dubbelriktat urklipp",
+        "Delade värdfiler"
+      ],
+      "name": "macOS",
+      "note": "Nuvarande nedladdningar är för Apple Silicon. Urklipp, mikrofon och delade filer kräver värdstöd.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "Justera ljusstyrka, färg och bildvisning",
+        "Lokala inmatningsmetoder, genvägsöversättning och styrplatta",
+        "Equalizer, hörlurskorrigering och surroundalternativ",
+        "Justera bild, ljud och värdinställningar under strömning"
+      ],
+      "description": "Förbättra strömningen med ett inbyggt Mac-gränssnitt, lokal textinmatning och styrplatta. Justera HDR, hörlursljud och strömningsinställningar.",
+      "detail": "Utökad inbyggd klient för macOS",
+      "features": [
+        "HDR- och färgkontroller",
+        "Mac-inmatning och styrplatta",
+        "Hörlurs- och ljudjustering",
+        "Kontroller under strömning"
+      ],
+      "name": "macOS",
+      "note": "macOS 12+, Apple Silicon och Intel. Urklipp, mikrofon och värdkontroller kräver värdstöd.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Använd V+ för Android på Quest för att ta emot datorbild, justera strömning och se prestanda.",
+      "detail": "Quest-klient · Ta emot bild från datorn",
+      "features": [
+        "Strömning av PC-bild",
+        "Kontroller under strömning",
+        "Prestanda i realtid"
+      ],
+      "name": "Quest VR",
+      "note": "Nedladdningen är en Android-APK. Inmatning, bild och HDR beror på headsetmiljön.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "En särskild version för Valve Steam Link-hårdvara. Anslut till speldatorn och spela på TV:n med handkontroll.",
+      "detail": "Klient för Steam Link-enheter",
+      "features": [
+        "Handkontroll",
+        "Parkoppling med värd",
+        "Prestandastatistik"
+      ],
+      "name": "Steam Link",
+      "note": "Denna version är för Steam Link-hårdvara och stöder inte HDR eller mikrofonvidarebefordran.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "HDR med kompatibla kodekar och skärmar",
+        "Synkronisera text och bilder",
+        "Skicka lokal röst till speldatorn",
+        "Öppna mappar som delas av värden"
+      ],
+      "description": "Anslut med tangentbord, mus och handkontroll. Byt musläge, justera strömningen och använd urklipp och delade värdfiler.",
+      "detail": "Skrivbordsklient för Windows",
+      "features": [
+        "HDR-bild",
+        "Dubbelriktat urklipp",
+        "Fjärrmikrofon",
+        "Delade värdfiler"
+      ],
+      "name": "Windows",
+      "note": "Urklipp, mikrofon, skärmkontroller och filåtkomst kräver motsvarande stöd i Foundation Sunshine.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "Klient",
+    "close": "Stäng",
+    "desktopHint": "Installera nedladdningen på den valda spelenheten.",
+    "download": "Ladda ned",
+    "downloadAddress": "Nedladdningsadress",
+    "enhanced": "Utökad",
+    "failed": "QR-koden är inte tillgänglig. Använd nedladdningsknappen.",
+    "friendLink": "Partnerlänk",
+    "getApp": "Hämta app",
+    "mirror": "Alternativ nedladdning",
+    "more": "Fler åtgärder",
+    "newLabel": "NEW",
+    "openFailed": "Det gick inte att öppna webbläsaren. Kopiera nedladdningsadressen till webbläsaren.",
+    "openPage": "Öppna nedladdningssidan",
+    "openStore": "Öppna appbutiken",
+    "project": "Projekt",
+    "recommended": "Rekommenderad",
+    "releases": "Alla versioner",
+    "resolveFailed": "Det gick inte att förbereda nedladdningen. Stäng dialogrutan och försök igen.",
+    "resolving": "Förbereder nedladdning…",
+    "scan": "Skanna med mobilen för att ladda ned",
+    "setup": "Anslut efter installationen",
+    "setupSteps": [
+      "Installera och öppna klienten på spelenheten",
+      "Lägg till den här speldatorn och parkoppla med PIN",
+      "Välj skrivbordet eller en app för att börja spela"
+    ],
+    "setupTitles": [
+      "Ladda ned och installera",
+      "Lägg till och parkoppla",
+      "Starta strömning"
+    ],
+    "standard": "Standard",
+    "step": "Välj spelenhet",
+    "system": "Välj operativsystem",
+    "title": "Ladda ned klienter"
+  }
+}

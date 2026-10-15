@@ -29,5 +29,19 @@
     "dest": "/sunshine.json",
     "translation": "/src_assets/common/assets/web/public/assets/locale/%two_letters_code%.%file_extension%",
     "update_option": "update_as_unapproved"
+  },
+  {
+    "source": "/src_assets/common/assets/web/i18n/downloads/en.json",
+    "dest": "/downloads.json",
+    "translation": "/src_assets/common/assets/web/i18n/downloads/%two_letters_code%.%file_extension%",
+    "languages_mapping": {
+      "two_letters_code": {
+        "en-GB": "en_GB",
+        "en-US": "en_US",
+        "pt-BR": "pt_BR",
+        "zh-TW": "zh_TW"
+      }
+    },
+    "update_option": "update_as_unapproved"
   }
 ]

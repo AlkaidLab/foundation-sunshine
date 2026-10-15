@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "컴퓨터",
+    "other": "기타",
+    "phone": "휴대전화 / 태블릿",
+    "tv": "TV"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "레이아웃, 버튼 조합 및 입력 방식 조정",
+        "기기 또는 컨트롤러의 움직임으로 조준",
+        "호환 호스트 및 기기에서 HDR 사용",
+        "로컬 음성을 게임용 PC로 전송"
+      ],
+      "description": "가상 버튼을 배치하고 터치, 모션 또는 컨트롤러로 플레이하세요. 휴대전화의 키보드, 마이크, 클립보드를 원격 PC와 함께 사용할 수 있습니다.",
+      "detail": "Android 휴대전화 및 태블릿용 클라이언트",
+      "features": [
+        "가상 버튼 사용자 지정",
+        "모션 조준",
+        "HDR 영상",
+        "원격 마이크"
+      ],
+      "name": "Android",
+      "note": "키보드 보조, 클립보드 및 마이크에는 권한과 호스트 지원이 필요합니다. HDR에는 호환 하드웨어와 디스플레이가 필요합니다.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "TV 또는 TV 박스에서 V+로 PC 게임을 컨트롤러로 즐기세요. 스트리밍 중 메뉴에서 영상을 조절하고 성능을 확인할 수 있습니다.",
+      "detail": "Android TV 클라이언트 · TV 기기용",
+      "features": [
+        "컨트롤러 입력",
+        "HDR 영상",
+        "스트리밍 중 제어",
+        "실시간 성능 통계"
+      ],
+      "name": "Android TV",
+      "note": "HDR, 오디오 및 컨트롤러 피드백은 TV, 운영체제, 연결 기기 및 호스트 지원에 따라 다릅니다.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Apple TV에서 컨트롤러로 탐색하고 플레이하여 게임용 PC의 화면을 거실 TV로 가져옵니다.",
+      "detail": "Apple TV 클라이언트 · App Store에서 설치",
+      "features": [
+        "컨트롤러 입력",
+        "HDR 영상",
+        "TV 스트리밍"
+      ],
+      "name": "Apple TV",
+      "note": "tvOS 버전에는 컨트롤러가 필요합니다. HDR에는 호환 호스트와 Apple TV가 필요합니다. App Store에서 정식 버전을 설치하세요.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "버튼 패널, 카메라 영역 및 레이아웃 편집",
+        "네이티브 컨트롤러 통합 및 모션 입력",
+        "호환 기기의 HDR10, HLG 및 HDR Vivid",
+        "게임 오디오 변화를 햅틱 피드백으로 변환"
+      ],
+      "description": "터치, 가상 버튼, HarmonyOS 네이티브 컨트롤러로 PC 게임을 즐기세요. 모션 입력, 오디오 기반 햅틱 및 HDR을 지원합니다.",
+      "detail": "HarmonyOS NEXT 클라이언트 · AppGallery에서 설치",
+      "features": [
+        "가상 버튼 사용자 지정",
+        "모션 및 네이티브 컨트롤러",
+        "HDR 영상",
+        "오디오 기반 햅틱"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "HDR 및 호스트 확장에는 호환 기기와 Foundation Sunshine이 필요합니다. 마이크 전송은 현재 개발자 모드에서 제공됩니다.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "버튼 조합, 레이아웃 그룹 및 터치패드 위젯 설정",
+        "모션 매핑, 컨트롤러 탐색 및 단축키",
+        "호환 기기에서 HDR 사용",
+        "다른 작업 중 시청하거나 외부 화면으로 전송"
+      ],
+      "description": "iPhone과 iPad에서 가상 버튼, 터치 및 모션 입력을 조정하세요. 컨트롤러 탐색, 화면 속 화면, 외부 디스플레이 및 호스트 지원 마이크 입력을 사용합니다.",
+      "detail": "iPhone / iPad 클라이언트 · App Store에서 설치",
+      "features": [
+        "가상 버튼 사용자 지정",
+        "모션 및 컨트롤러",
+        "HDR 영상",
+        "화면 속 화면 및 외부 디스플레이"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR, 화면 속 화면, 프레임 보간 및 펜 기능은 기기와 운영체제에 따라 다릅니다. 일부 고급 그리기 기능은 앱 내 구매가 필요합니다.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "HDR 지원은 GPU, 렌더러 및 디스플레이 환경에 따라 다름",
+        "데스크톱 및 컨트롤러 입력",
+        "스트리밍 설정 및 마우스 모드 조정",
+        "네트워크, 디코딩 및 표시 지표 확인"
+      ],
+      "description": "AppImage를 설치하여 PC를 창 또는 전체 화면으로 스트리밍하세요. 키보드나 컨트롤러로 플레이하고 스트리밍 제어와 통계를 활용하세요.",
+      "detail": "Linux 데스크톱 클라이언트",
+      "features": [
+        "HDR 영상",
+        "키보드 및 컨트롤러",
+        "스트리밍 중 제어",
+        "실시간 성능 통계"
+      ],
+      "name": "Linux",
+      "note": "아키텍처와 시스템에 맞는 패키지를 선택하세요. HDR과 클립보드 지원은 Linux 데스크톱 환경에 따라 다릅니다.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "호환 디스플레이에서 HDR 사용",
+        "익숙한 데스크톱 조작",
+        "텍스트 및 이미지 동기화",
+        "호스트 공유 폴더 접근"
+      ],
+      "description": "익숙한 데스크톱 인터페이스에서 키보드, 마우스 또는 컨트롤러로 플레이하세요. 창과 전체 화면 스트리밍 및 데스크톱 협업 기능을 제공합니다.",
+      "detail": "macOS 데스크톱 클라이언트",
+      "features": [
+        "HDR 영상",
+        "키보드 및 컨트롤러",
+        "양방향 클립보드",
+        "호스트 공유 파일"
+      ],
+      "name": "macOS",
+      "note": "현재 다운로드는 Apple Silicon용입니다. 클립보드, 마이크 및 공유 파일에는 호스트 지원이 필요합니다.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "밝기, 색상 및 영상 표시 조정",
+        "로컬 입력기, 단축키 변환 및 트랙패드 제어",
+        "이퀄라이저, 헤드폰 보정 및 서라운드 옵션",
+        "스트리밍 중 영상, 오디오 및 호스트 설정 조정"
+      ],
+      "description": "네이티브 Mac 인터페이스, 로컬 문자 입력 및 트랙패드로 스트리밍을 개선하세요. HDR 영상, 헤드폰 오디오 및 스트리밍 설정을 조절할 수 있습니다.",
+      "detail": "macOS 네이티브 확장 클라이언트",
+      "features": [
+        "HDR 및 색상 조절",
+        "Mac 입력 및 트랙패드",
+        "헤드폰 및 오디오 조절",
+        "스트리밍 중 제어"
+      ],
+      "name": "macOS",
+      "note": "macOS 12 이상, Apple Silicon 및 Intel 지원. 클립보드, 마이크 및 호스트 제어에는 호스트 지원이 필요합니다.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Quest에서 V+ Android 클라이언트로 PC 영상을 수신하고 스트리밍 설정과 성능을 확인하세요.",
+      "detail": "Quest 헤드셋 클라이언트 · PC 영상 수신",
+      "features": [
+        "PC 영상 스트리밍",
+        "스트리밍 중 제어",
+        "실시간 성능 통계"
+      ],
+      "name": "Quest VR",
+      "note": "Android APK를 제공합니다. 입력, 디스플레이 및 HDR 지원은 헤드셋 환경에 따라 다릅니다.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "Valve Steam Link 하드웨어 전용 빌드입니다. 게임용 PC에 연결하고 TV에서 컨트롤러로 플레이하세요.",
+      "detail": "Steam Link 기기용 클라이언트",
+      "features": [
+        "컨트롤러 입력",
+        "호스트 페어링",
+        "성능 통계"
+      ],
+      "name": "Steam Link",
+      "note": "Steam Link 하드웨어용 빌드이며 HDR 및 마이크 전송을 지원하지 않습니다.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "호환 코덱 및 디스플레이의 HDR",
+        "텍스트 및 이미지 동기화",
+        "로컬 음성을 게임용 PC로 전송",
+        "호스트에서 공유한 폴더 접근"
+      ],
+      "description": "익숙한 키보드, 마우스 및 컨트롤러로 연결하세요. 마우스 모드를 전환하고 스트리밍을 조정하며 클립보드 동기화와 호스트 공유 파일을 사용합니다.",
+      "detail": "Windows 데스크톱 클라이언트",
+      "features": [
+        "HDR 영상",
+        "양방향 클립보드",
+        "원격 마이크",
+        "호스트 공유 파일"
+      ],
+      "name": "Windows",
+      "note": "클립보드, 마이크, 디스플레이 제어 및 파일 접근에는 Foundation Sunshine의 해당 기능 지원이 필요합니다.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "클라이언트",
+    "close": "닫기",
+    "desktopHint": "선택한 플레이 기기에 다운로드한 앱을 설치하세요.",
+    "download": "다운로드",
+    "downloadAddress": "다운로드 주소",
+    "enhanced": "확장판",
+    "failed": "QR 코드를 사용할 수 없습니다. 다운로드 버튼을 이용하세요.",
+    "friendLink": "관련 링크",
+    "getApp": "앱 받기",
+    "mirror": "대체 다운로드",
+    "more": "추가 작업",
+    "newLabel": "NEW",
+    "openFailed": "브라우저를 열 수 없습니다. 다운로드 주소를 복사하여 브라우저에서 여세요.",
+    "openPage": "다운로드 페이지 열기",
+    "openStore": "앱 스토어 열기",
+    "project": "프로젝트",
+    "recommended": "추천",
+    "releases": "모든 버전",
+    "resolveFailed": "다운로드를 준비할 수 없습니다. 창을 닫고 다시 시도하세요.",
+    "resolving": "다운로드 준비 중…",
+    "scan": "휴대전화로 스캔하여 다운로드",
+    "setup": "설치 후 연결 방법",
+    "setupSteps": [
+      "플레이 기기에 클라이언트를 설치하고 실행하세요",
+      "이 게임용 PC를 추가하고 PIN 페어링을 완료하세요",
+      "데스크톱 또는 앱을 선택하여 플레이하세요"
+    ],
+    "setupTitles": [
+      "다운로드 및 설치",
+      "추가 및 페어링",
+      "스트리밍 시작"
+    ],
+    "standard": "일반판",
+    "step": "플레이 기기 선택",
+    "system": "운영체제 선택",
+    "title": "클라이언트 다운로드"
+  }
+}

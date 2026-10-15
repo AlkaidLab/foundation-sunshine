@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "Počítač",
+    "other": "Ostatní",
+    "phone": "Telefon / Tablet",
+    "tv": "Televizor"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "Upravte rozložení, kombinace tlačítek a vstup",
+        "Miřte pohybem zařízení nebo gamepadu",
+        "HDR na kompatibilních hostitelích a zařízeních",
+        "Odesílejte místní hlas do herního PC"
+      ],
+      "description": "Upravte tlačítka na obrazovce a hrajte dotykem, pohybem nebo gamepadem. Používejte klávesnici, mikrofon a schránku telefonu se vzdáleným PC.",
+      "detail": "Klient pro telefony a tablety Android",
+      "features": [
+        "Vlastní tlačítka na obrazovce",
+        "Míření pohybem",
+        "HDR obraz",
+        "Vzdálený mikrofon"
+      ],
+      "name": "Android",
+      "note": "Pomoc klávesnice, schránka a mikrofon vyžadují oprávnění a podporu hostitele. HDR vyžaduje kompatibilní hardware a displeje.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "Používejte V+ na TV nebo TV boxu a hrajte PC hry gamepadem. Během streamu upravujte obraz a sledujte výkon.",
+      "detail": "Klient Android TV · Pro televizory",
+      "features": [
+        "Ovládání gamepadem",
+        "HDR obraz",
+        "Ovládání během streamu",
+        "Statistiky v reálném čase"
+      ],
+      "name": "Android TV",
+      "note": "HDR, zvuk a odezva gamepadu závisí na TV, systému, připojených zařízeních a hostiteli.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Procházejte a hrajte gamepadem na Apple TV a přeneste herní počítač na televizor v obýváku.",
+      "detail": "Klient Apple TV · Instalace z App Storu",
+      "features": [
+        "Ovládání gamepadem",
+        "HDR obraz",
+        "Streamování na TV"
+      ],
+      "name": "Apple TV",
+      "note": "Verze tvOS vyžaduje gamepad. HDR vyžaduje kompatibilního hostitele a Apple TV. Oficiální verzi instalujte z App Storu.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "Upravte panely tlačítek, oblasti kamery a rozložení",
+        "Nativní integrace gamepadů a pohybový vstup",
+        "HDR10, HLG a HDR Vivid na kompatibilních zařízeních",
+        "Převádějte změny herního zvuku na haptickou odezvu"
+      ],
+      "description": "Hrajte PC hry dotykem, tlačítky a nativními gamepady HarmonyOS, s pohybovým vstupem, haptikou podle zvuku a HDR.",
+      "detail": "Klient HarmonyOS NEXT · Instalace z AppGallery",
+      "features": [
+        "Vlastní tlačítka na obrazovce",
+        "Pohyb a nativní gamepady",
+        "HDR obraz",
+        "Haptika podle zvuku"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "HDR a rozšíření vyžadují kompatibilní zařízení a Foundation Sunshine. Přenos mikrofonu je nyní v režimu pro vývojáře.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "Nastavte kombinace, skupiny rozložení a touchpady",
+        "Mapování pohybu, navigace gamepadem a zkratky",
+        "HDR na kompatibilních zařízeních",
+        "Sledujte při multitaskingu nebo streamujte na další displej"
+      ],
+      "description": "Upravte tlačítka, dotyk a pohyb na iPhonu a iPadu. Využijte navigaci gamepadem, obraz v obraze, externí displeje a mikrofon podporovaný hostitelem.",
+      "detail": "Klient iPhone / iPad · Instalace z App Storu",
+      "features": [
+        "Vlastní tlačítka na obrazovce",
+        "Pohyb a gamepady",
+        "HDR obraz",
+        "Obraz v obraze a externí displeje"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR, obraz v obraze, interpolace a stylus závisí na zařízení a systému. Některé pokročilé kreslicí funkce vyžadují nákup v aplikaci.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "HDR závisí na GPU, vykreslovači a zobrazovacím prostředí",
+        "Vstup plochy a gamepadu",
+        "Upravte stream a režim myši",
+        "Sledujte metriky sítě, dekódování a zobrazení"
+      ],
+      "description": "Nainstalujte AppImage a streamujte PC v okně nebo na celé obrazovce. Hrajte klávesnicí nebo gamepadem a upravujte stream pomocí ovládání a statistik.",
+      "detail": "Desktopový klient pro Linux",
+      "features": [
+        "HDR obraz",
+        "Klávesnice a gamepady",
+        "Ovládání během streamu",
+        "Statistiky v reálném čase"
+      ],
+      "name": "Linux",
+      "note": "Vyberte balíček pro svou architekturu a systém. HDR a schránka závisí na desktopovém prostředí Linuxu.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "HDR na kompatibilních displejích",
+        "Známé ovládání plochy",
+        "Synchronizujte text a obrázky",
+        "Přistupujte ke sdíleným složkám hostitele"
+      ],
+      "description": "Zachovejte známé desktopové rozhraní, hrajte klávesnicí, myší nebo gamepadem, v okně či na celé obrazovce s funkcemi spolupráce.",
+      "detail": "Desktopový klient pro macOS",
+      "features": [
+        "HDR obraz",
+        "Klávesnice a gamepady",
+        "Obousměrná schránka",
+        "Sdílené soubory hostitele"
+      ],
+      "name": "macOS",
+      "note": "Aktuální balíčky jsou pro Apple Silicon. Schránka, mikrofon a sdílené soubory vyžadují podporu hostitele.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "Upravte jas, barvy a zobrazení videa",
+        "Místní vstupní metody, převod zkratek a trackpad",
+        "Ekvalizér, korekce sluchátek a prostorový zvuk",
+        "Upravte obraz, zvuk a hostitele během streamu"
+      ],
+      "description": "Využijte nativní rozhraní Mac, místní zadávání textu a trackpad. Upravte HDR obraz, zvuk sluchátek a nastavení streamu.",
+      "detail": "Nativní rozšířený klient pro macOS",
+      "features": [
+        "Nastavení HDR a barev",
+        "Vstup Mac a trackpad",
+        "Nastavení sluchátek a zvuku",
+        "Ovládání během streamu"
+      ],
+      "name": "macOS",
+      "note": "macOS 12+, Apple Silicon a Intel. Schránka, mikrofon a ovládání hostitele vyžadují jeho podporu.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Používejte Android klienta V+ na Questu pro příjem obrazu PC, úpravu streamu a sledování výkonu.",
+      "detail": "Klient pro Quest · Příjem obrazu z PC",
+      "features": [
+        "Streamování obrazu PC",
+        "Ovládání během streamu",
+        "Statistiky v reálném čase"
+      ],
+      "name": "Quest VR",
+      "note": "Tento balíček je Android APK. Vstup, obraz a HDR závisí na prostředí headsetu.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "Speciální sestavení pro hardware Valve Steam Link. Připojte herní PC a hrajte gamepadem na televizi.",
+      "detail": "Klient pro zařízení Steam Link",
+      "features": [
+        "Ovládání gamepadem",
+        "Párování s hostitelem",
+        "Statistiky výkonu"
+      ],
+      "name": "Steam Link",
+      "note": "Tato sestava je pro hardware Steam Link a nepodporuje HDR ani přenos mikrofonu.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "HDR s kompatibilními kodeky a displeji",
+        "Synchronizujte text a obrázky",
+        "Odesílejte místní hlas do herního PC",
+        "Přistupujte ke složkám sdíleným hostitelem"
+      ],
+      "description": "Připojte se klávesnicí, myší a gamepadem. Přepínejte režimy myši, upravujte stream a používejte schránku a sdílené soubory hostitele.",
+      "detail": "Desktopový klient pro Windows",
+      "features": [
+        "HDR obraz",
+        "Obousměrná schránka",
+        "Vzdálený mikrofon",
+        "Sdílené soubory hostitele"
+      ],
+      "name": "Windows",
+      "note": "Schránka, mikrofon, ovládání displeje a přístup k souborům vyžadují příslušnou podporu Foundation Sunshine.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "Klient",
+    "close": "Zavřít",
+    "desktopHint": "Staženou aplikaci nainstalujte na vybrané herní zařízení.",
+    "download": "Stáhnout",
+    "downloadAddress": "Adresa ke stažení",
+    "enhanced": "Rozšířená",
+    "failed": "QR kód není dostupný. Použijte tlačítko pro stažení.",
+    "friendLink": "Partnerský odkaz",
+    "getApp": "Získat aplikaci",
+    "mirror": "Alternativní stažení",
+    "more": "Další akce",
+    "newLabel": "NEW",
+    "openFailed": "Prohlížeč se nepodařilo otevřít. Zkopírujte do něj adresu ke stažení.",
+    "openPage": "Otevřít stránku ke stažení",
+    "openStore": "Otevřít obchod s aplikacemi",
+    "project": "Projekt",
+    "recommended": "Doporučeno",
+    "releases": "Všechny verze",
+    "resolveFailed": "Stažení se nepodařilo připravit. Zavřete dialog a zkuste to znovu.",
+    "resolving": "Příprava stažení…",
+    "scan": "Naskenujte telefonem a stáhněte",
+    "setup": "Připojení po instalaci",
+    "setupSteps": [
+      "Nainstalujte a otevřete klienta na herním zařízení",
+      "Přidejte tento herní počítač a spárujte jej pomocí PIN",
+      "Vyberte plochu nebo aplikaci a začněte hrát"
+    ],
+    "setupTitles": [
+      "Stažení a instalace",
+      "Přidání a párování",
+      "Spuštění streamování"
+    ],
+    "standard": "Běžná",
+    "step": "Vyberte herní zařízení",
+    "system": "Vyberte operační systém",
+    "title": "Stáhnout klienty"
+  }
+}

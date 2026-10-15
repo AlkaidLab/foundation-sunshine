@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "Bilgisayar",
+    "other": "Diğer",
+    "phone": "Telefon / Tablet",
+    "tv": "Televizyon"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "Düzenleri, tuş birleşimlerini ve giriş yöntemini özelleştirin",
+        "Cihaz veya kumanda hareketiyle nişan alın",
+        "Uyumlu ana bilgisayar ve cihazlarda HDR",
+        "Yerel sesi oyun bilgisayarına gönderin"
+      ],
+      "description": "Ekran tuşlarını özelleştirip dokunma, hareket veya kumandayla oynayın. Telefonunuzun klavyesini, mikrofonunu ve panosunu uzak bilgisayarla kullanın.",
+      "detail": "Android telefon ve tablet istemcisi",
+      "features": [
+        "Özelleştirilebilir ekran tuşları",
+        "Hareketle nişan alma",
+        "HDR görüntü",
+        "Uzak mikrofon"
+      ],
+      "name": "Android",
+      "note": "Klavye yardımı, pano ve mikrofon izin ve ana bilgisayar desteği gerektirir. HDR için uyumlu donanım ve ekran gerekir.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "TV veya TV kutusunda V+ ile kumanda kullanarak bilgisayar oyunları oynayın. Yayın içi kontrollerle görüntüyü ayarlayıp performansı inceleyin.",
+      "detail": "Android TV istemcisi · Televizyonlar için",
+      "features": [
+        "Oyun kumandası girişi",
+        "HDR görüntü",
+        "Yayın içi kontroller",
+        "Canlı performans istatistikleri"
+      ],
+      "name": "Android TV",
+      "note": "HDR, ses ve kumanda geri bildirimi TV, sistem, bağlı cihazlar ve ana bilgisayar desteğine bağlıdır.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Apple TV’de kumandayla gezinin ve oynayın; oyun bilgisayarınızı salon ekranına taşıyın.",
+      "detail": "Apple TV istemcisi · App Store’dan kurun",
+      "features": [
+        "Oyun kumandası girişi",
+        "HDR görüntü",
+        "TV yayını"
+      ],
+      "name": "Apple TV",
+      "note": "tvOS sürümü kumanda gerektirir. HDR için uyumlu ana bilgisayar ve Apple TV gerekir. Resmî sürümü App Store’dan kurun.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "Tuş panellerini, kamera alanlarını ve düzenleri düzenleyin",
+        "Yerel kumanda entegrasyonu ve hareket girişi",
+        "Uyumlu cihazlarda HDR10, HLG ve HDR Vivid",
+        "Oyun sesindeki değişimleri titreşime dönüştürün"
+      ],
+      "description": "Dokunma, ekran tuşları ve yerel HarmonyOS kumandalarıyla bilgisayar oyunları oynayın. Hareket, sese bağlı titreşim ve HDR desteğinden yararlanın.",
+      "detail": "HarmonyOS NEXT istemcisi · AppGallery’den kurun",
+      "features": [
+        "Özelleştirilebilir ekran tuşları",
+        "Hareket ve yerel kumandalar",
+        "HDR görüntü",
+        "Sese bağlı titreşim"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "HDR ve ana bilgisayar eklentileri uyumlu cihazlar ve Foundation Sunshine gerektirir. Mikrofon iletimi şu anda geliştirici modundadır.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "Tuş birleşimlerini, düzen gruplarını ve dokunmatik yüzeyleri ayarlayın",
+        "Hareket eşleme, kumandayla gezinme ve kısayollar",
+        "Uyumlu cihazlarda HDR",
+        "Çoklu görev sırasında izleyin veya başka ekrana yayınlayın"
+      ],
+      "description": "iPhone ve iPad’de ekran tuşlarını, dokunmayı ve hareketi özelleştirin. Kumandayla gezinme, resim içinde resim, harici ekran ve ana bilgisayar destekli mikrofon kullanın.",
+      "detail": "iPhone / iPad istemcisi · App Store’dan kurun",
+      "features": [
+        "Özelleştirilebilir ekran tuşları",
+        "Hareket ve kumandalar",
+        "HDR görüntü",
+        "Resim içinde resim ve harici ekranlar"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR, resim içinde resim, kare enterpolasyonu ve kalem özellikleri cihaza ve sisteme bağlıdır. Bazı gelişmiş çizim özellikleri uygulama içi satın alma gerektirir.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "HDR; GPU, işleyici ve ekran ortamına bağlıdır",
+        "Masaüstü ve kumanda girişi",
+        "Yayın ayarlarını ve fare modunu değiştirin",
+        "Ağ, kod çözme ve görüntü sunumu ölçümlerini inceleyin"
+      ],
+      "description": "AppImage kurup bilgisayarınızı pencerede veya tam ekranda yayınlayın. Klavye veya kumandayla oynayıp yayın içi kontroller ve istatistiklerle ayarlayın.",
+      "detail": "Linux masaüstü istemcisi",
+      "features": [
+        "HDR görüntü",
+        "Klavye ve kumandalar",
+        "Yayın içi kontroller",
+        "Canlı performans istatistikleri"
+      ],
+      "name": "Linux",
+      "note": "Mimarinize ve sisteminize uygun paketi seçin. HDR ve pano desteği Linux masaüstü ortamına bağlıdır.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "Uyumlu ekranlarda HDR",
+        "Alışılmış masaüstü kontrolleri",
+        "Metin ve görüntüleri eşitleyin",
+        "Ana bilgisayarın paylaşılan klasörlerine erişin"
+      ],
+      "description": "Alışılmış masaüstü arayüzünü koruyun; klavye, fare veya kumandayla pencerede ya da tam ekranda, masaüstü iş birliği özellikleriyle oynayın.",
+      "detail": "macOS masaüstü istemcisi",
+      "features": [
+        "HDR görüntü",
+        "Klavye ve kumandalar",
+        "Çift yönlü pano",
+        "Ana bilgisayarın paylaşılan dosyaları"
+      ],
+      "name": "macOS",
+      "note": "Mevcut indirmeler Apple Silicon içindir. Pano, mikrofon ve paylaşılan dosyalar ana bilgisayar desteği gerektirir.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "Parlaklık, renk ve görüntü sunumunu ayarlayın",
+        "Yerel giriş yöntemleri, kısayol dönüştürme ve izleme dörtgeni",
+        "Ekolayzır, kulaklık düzeltmesi ve çevresel ses seçenekleri",
+        "Yayın sırasında görüntü, ses ve ana bilgisayar ayarlarını değiştirin"
+      ],
+      "description": "Yerel Mac arayüzü, yerel metin girişi ve izleme dörtgeniyle yayını geliştirin. HDR görüntüyü, kulaklık sesini ve yayın ayarlarını düzenleyin.",
+      "detail": "macOS için yerel geliştirilmiş istemci",
+      "features": [
+        "HDR ve renk ayarları",
+        "Mac girişi ve izleme dörtgeni",
+        "Kulaklık ve ses ayarları",
+        "Yayın içi kontroller"
+      ],
+      "name": "macOS",
+      "note": "macOS 12+, Apple Silicon ve Intel. Pano, mikrofon ve ana bilgisayar kontrolleri ana bilgisayar desteği gerektirir.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Quest’te V+ Android istemcisiyle bilgisayar görüntüsünü alın, yayın ayarlarını değiştirip performansı inceleyin.",
+      "detail": "Quest istemcisi · Bilgisayar görüntüsünü alın",
+      "features": [
+        "Bilgisayar görüntüsü yayını",
+        "Yayın içi kontroller",
+        "Canlı performans istatistikleri"
+      ],
+      "name": "Quest VR",
+      "note": "Bu indirme bir Android APK’sıdır. Giriş, ekran ve HDR desteği başlığın ortamına bağlıdır.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "Valve Steam Link donanımı için özel sürüm. Oyun bilgisayarınıza bağlanıp televizyonda kumandayla oynayın.",
+      "detail": "Steam Link cihazları için istemci",
+      "features": [
+        "Oyun kumandası girişi",
+        "Ana bilgisayarla eşleştirme",
+        "Performans istatistikleri"
+      ],
+      "name": "Steam Link",
+      "note": "Bu sürüm Steam Link donanımı içindir; HDR ve mikrofon iletimini desteklemez.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "Uyumlu kodek ve ekranlarla HDR",
+        "Metin ve görüntüleri eşitleyin",
+        "Yerel sesi oyun bilgisayarına gönderin",
+        "Ana bilgisayar tarafından paylaşılan klasörlere erişin"
+      ],
+      "description": "Klavye, fare ve kumandayla bağlanın. Fare modunu değiştirin, yayını ayarlayın, pano eşitleme ve paylaşılan dosyaları kullanın.",
+      "detail": "Windows masaüstü istemcisi",
+      "features": [
+        "HDR görüntü",
+        "Çift yönlü pano",
+        "Uzak mikrofon",
+        "Ana bilgisayarın paylaşılan dosyaları"
+      ],
+      "name": "Windows",
+      "note": "Pano, mikrofon, ekran kontrolleri ve dosya erişimi ilgili Foundation Sunshine desteğini gerektirir.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "İstemci",
+    "close": "Kapat",
+    "desktopHint": "İndirilen uygulamayı seçtiğiniz oyun cihazına kurun.",
+    "download": "İndir",
+    "downloadAddress": "İndirme adresi",
+    "enhanced": "Geliştirilmiş",
+    "failed": "QR kodu kullanılamıyor. İndirme düğmesini kullanın.",
+    "friendLink": "Dost bağlantı",
+    "getApp": "Uygulamayı al",
+    "mirror": "Alternatif indirme",
+    "more": "Diğer işlemler",
+    "newLabel": "NEW",
+    "openFailed": "Tarayıcı açılamadı. İndirme adresini tarayıcınıza kopyalayın.",
+    "openPage": "İndirme sayfasını aç",
+    "openStore": "Uygulama mağazasını aç",
+    "project": "Proje",
+    "recommended": "Önerilen",
+    "releases": "Tüm sürümler",
+    "resolveFailed": "İndirme hazırlanamadı. Pencereyi kapatıp yeniden deneyin.",
+    "resolving": "İndirme hazırlanıyor…",
+    "scan": "İndirmek için telefonunuzla tarayın",
+    "setup": "Kurulumdan sonra bağlanma",
+    "setupSteps": [
+      "İstemciyi oyun cihazınıza kurup açın",
+      "Bu oyun bilgisayarını ekleyip PIN ile eşleştirin",
+      "Oynamak için masaüstünü veya bir uygulamayı seçin"
+    ],
+    "setupTitles": [
+      "İndir ve kur",
+      "Ekle ve eşleştir",
+      "Yayını başlat"
+    ],
+    "standard": "Standart",
+    "step": "Oyun cihazınızı seçin",
+    "system": "İşletim sistemi seçin",
+    "title": "İstemcileri indir"
+  }
+}

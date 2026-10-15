@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "电脑",
+    "other": "其他",
+    "phone": "手机/平板",
+    "tv": "电视"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "调整布局、组合键和操作方式",
+        "通过设备或手柄体感控制视角",
+        "在支持的主机与设备上使用 HDR",
+        "将本机语音传回游戏电脑"
+      ],
+      "description": "按自己的习惯摆放模拟按键，用触屏、体感或手柄游玩；手机键盘、麦克风与剪贴板也能配合远程电脑使用。",
+      "detail": "Android 手机 / 平板客户端",
+      "features": [
+        "自定义模拟按键",
+        "体感瞄准",
+        "HDR 画面",
+        "远程麦克风"
+      ],
+      "name": "Android",
+      "note": "键盘辅助、剪贴板与麦克风需对应系统权限及主机支持；HDR 需设备和显示链路支持。",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "在电视或盒子上使用 V+，通过手柄游玩电脑游戏；串流中打开快捷菜单，调整画面并查看运行状态。",
+      "detail": "Android TV 客户端 · 适用于电视设备",
+      "features": [
+        "手柄操作",
+        "HDR 画面",
+        "串流快捷菜单",
+        "实时性能统计"
+      ],
+      "name": "Android TV",
+      "note": "HDR、音频和手柄反馈取决于电视、系统、连接的设备及主机支持。",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "在 Apple TV 上通过手柄浏览和游玩，将游戏电脑画面带到客厅电视。",
+      "detail": "Apple TV 客户端 · 通过 App Store 安装",
+      "features": [
+        "手柄操作",
+        "HDR 画面",
+        "电视端串流"
+      ],
+      "name": "Apple TV",
+      "note": "tvOS 版本需要游戏手柄；HDR 需支持的主机与 Apple TV。通过 App Store 安装正式版。",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "编辑按键面板、视角滑动区和操作布局",
+        "接入鸿蒙手柄能力与体感操作",
+        "支持 HDR10、HLG 与 HDR Vivid 的设备链路",
+        "将游戏音频变化转换为触觉反馈"
+      ],
+      "description": "为鸿蒙手机和平板适配触屏、模拟按键与原生手柄，结合体感、声音振动和 HDR 显示能力游玩电脑游戏。",
+      "detail": "鸿蒙 NEXT 客户端 · 通过应用市场安装",
+      "features": [
+        "自定义模拟按键",
+        "体感与原生手柄",
+        "HDR 画面",
+        "声音驱动振动"
+      ],
+      "name": "鸿蒙 NEXT",
+      "note": "HDR 与主机扩展需支持的设备及 Foundation Sunshine；麦克风回传目前在开发者模式中提供。",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "设置按键组合、布局分组与触控板控件",
+        "体感映射、手柄导航与快捷操作",
+        "在支持的设备上使用 HDR",
+        "多任务观看或将画面发送到外屏"
+      ],
+      "description": "为 iPhone 和 iPad 定制模拟按键、触控与体感操作，支持手柄导航、画中画和外接屏，也可配合主机使用麦克风。",
+      "detail": "iPhone / iPad 客户端 · 通过 App Store 安装",
+      "features": [
+        "自定义模拟按键",
+        "体感与手柄操作",
+        "HDR 画面",
+        "画中画与外接屏"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR、画中画、插帧和手写笔功能依赖系统与设备；部分绘画进阶功能包含内购。",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "HDR 取决于 GPU、渲染器与显示环境",
+        "桌面输入与手柄操作",
+        "调整串流设置和鼠标模式",
+        "查看网络、解码与画面呈现指标"
+      ],
+      "description": "以 AppImage 安装，在窗口或全屏中接收游戏电脑画面；用键鼠与手柄游玩，并通过快捷菜单和性能统计调整串流。",
+      "detail": "Linux 桌面客户端",
+      "features": [
+        "HDR 画面",
+        "键鼠与手柄",
+        "串流快捷菜单",
+        "实时性能统计"
+      ],
+      "name": "Linux",
+      "note": "请选择对应架构和系统要求的安装包；HDR 与剪贴板等能力取决于 Linux 桌面环境。",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "在支持的显示设备上呈现 HDR",
+        "保持熟悉的桌面操控方式",
+        "同步文本与图片",
+        "访问主机共享目录"
+      ],
+      "description": "沿用熟悉的桌面客户端界面，使用键鼠或手柄游玩，支持窗口与全屏串流，以及常用的桌面协作功能。",
+      "detail": "macOS 桌面客户端",
+      "features": [
+        "HDR 画面",
+        "键鼠与手柄",
+        "双向剪贴板",
+        "主机文件访问"
+      ],
+      "name": "macOS",
+      "note": "当前下载包适用于 Apple Silicon；剪贴板、麦克风与主机文件等扩展需主机支持。",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "调整亮度、色彩和画面呈现",
+        "本地输入法、快捷键翻译与触控板操作",
+        "均衡器、耳机校正与环绕声选项",
+        "串流中调整画面、声音和主机设置"
+      ],
+      "description": "以原生 Mac 界面增强串流体验：按 Mac 的习惯输入文字、使用触控板，调节 HDR 画面、耳机音效与串流参数。",
+      "detail": "macOS 原生增强客户端",
+      "features": [
+        "HDR 画面与色彩调节",
+        "Mac 输入法与触控板",
+        "耳机与音效调节",
+        "串流快捷控制"
+      ],
+      "name": "macOS",
+      "note": "适用于 macOS 12+，支持 Apple Silicon 与 Intel；剪贴板、麦克风和主机控制等扩展需主机支持。",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "在 Quest 中使用 V+ Android 客户端接收游戏电脑画面，通过串流菜单调整设置并查看性能状态。",
+      "detail": "Quest 头显客户端 · 用于接收电脑画面",
+      "features": [
+        "电脑画面串流",
+        "串流快捷菜单",
+        "实时性能统计"
+      ],
+      "name": "Quest VR",
+      "note": "当前提供 Android APK；可用的输入、显示与 HDR 能力以头显运行环境为准。",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "面向 Valve Steam Link 硬件的专用构建，用手柄连接游戏电脑，在电视上游玩。",
+      "detail": "Steam Link 设备客户端",
+      "features": [
+        "手柄输入",
+        "主机配对",
+        "性能统计"
+      ],
+      "name": "Steam Link",
+      "note": "此版本面向 Steam Link 硬件，不支持 HDR 与麦克风回传。",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "在支持的编码与显示设备上呈现 HDR",
+        "同步文本与图片",
+        "将本地语音传回游戏电脑",
+        "访问主机配置的共享目录"
+      ],
+      "description": "用熟悉的键鼠与手柄连接游戏电脑，在串流中切换鼠标模式、调整设置，并使用剪贴板和主机共享文件。",
+      "detail": "Windows 桌面客户端",
+      "features": [
+        "HDR 画面",
+        "双向剪贴板",
+        "远程麦克风",
+        "主机文件访问"
+      ],
+      "name": "Windows",
+      "note": "剪贴板、麦克风、显示控制和文件访问需 Foundation Sunshine 开启相应支持。",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "客户端",
+    "close": "关闭",
+    "desktopHint": "下载后，请在所选游玩设备上安装。",
+    "download": "点击下载",
+    "downloadAddress": "下载地址",
+    "enhanced": "增强版",
+    "failed": "暂时无法生成二维码，请使用下载按钮。",
+    "friendLink": "友情链接",
+    "getApp": "获取应用",
+    "mirror": "备用下载",
+    "more": "更多操作",
+    "newLabel": "新增",
+    "openFailed": "无法打开浏览器，请复制下载地址到浏览器中打开。",
+    "openPage": "打开下载页",
+    "openStore": "打开应用商店",
+    "project": "项目主页",
+    "recommended": "推荐使用",
+    "releases": "所有版本",
+    "resolveFailed": "暂时无法准备下载地址，请关闭后重试。",
+    "resolving": "正在准备下载地址…",
+    "scan": "使用手机扫描二维码下载",
+    "setup": "安装后如何连接",
+    "setupSteps": [
+      "在游玩设备上安装并打开客户端",
+      "添加这台游戏电脑，并完成 PIN 配对",
+      "选择桌面或应用，开始游玩"
+    ],
+    "setupTitles": [
+      "下载安装",
+      "添加与配对",
+      "开始串流"
+    ],
+    "standard": "普通版",
+    "step": "选择游玩设备",
+    "system": "选择操作系统",
+    "title": "下载客户端"
+  }
+}
