@@ -88,14 +88,40 @@ class Configuration(unittest.TestCase):
     def test_system_boost_path_defines_all_consumed_components(self):
         package = self.project / 'package'
         self.write('package/BoostConfigVersion.cmake', 'set(PACKAGE_VERSION 1.92.0)\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\nset(PACKAGE_VERSION_EXACT TRUE)\n')
-        self.write('package/BoostConfig.cmake', 'foreach(component IN LISTS Boost_FIND_COMPONENTS)\n'
-                   'add_library(Boost::${component} INTERFACE IMPORTED)\n'
-                   'endforeach()\n')
         self.cmake_project(self.include('cmake/dependencies/Boost_Sunshine.cmake')
-                   + 'foreach(component IN ITEMS asio beast crc format property_tree)\n'
+                   + 'foreach(component IN ITEMS boost ${BOOST_COMPONENTS})\n'
                      'if(NOT TARGET Boost::${component})\nmessage(FATAL_ERROR "Missing ${component}")\nendif()\nendforeach()\n'
                      'if(FETCH_CONTENT_BOOST_USED)\nmessage(FATAL_ERROR "Unexpected fallback")\nendif()\n')
-        self.configure([f'-DBoost_DIR={package.as_posix()}', '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'])
+        # Real system packages export the modern headers target or legacy boost target.
+        for headers in ['headers', 'boost']:
+            with self.subTest(headers=headers):
+                self.build = self.root / f'build-{headers}'
+                self.write('package/BoostConfig.cmake', f'add_library(Boost::{headers} INTERFACE IMPORTED)\n'
+                           'foreach(component IN LISTS Boost_FIND_COMPONENTS)\n'
+                           'add_library(Boost::${component} INTERFACE IMPORTED)\n'
+                           'endforeach()\n')
+                self.configure([f'-DBoost_DIR={package.as_posix()}', '-DFETCHCONTENT_FULLY_DISCONNECTED=ON'])
+
+    def test_stale_boost_redirect_restores_cached_targets_on_reconfigure(self):
+        package = self.project / 'stale-package'
+        self.write('stale-package/BoostConfigVersion.cmake', 'set(PACKAGE_VERSION 1.92.0)\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\nset(PACKAGE_VERSION_EXACT TRUE)\n')
+        self.write('stale-package/BoostConfig.cmake', 'set(Boost_FOUND TRUE)\n')
+        cached = self.write('cached-boost/CMakeLists.txt',
+                            'add_library(Boost::headers INTERFACE IMPORTED GLOBAL)\n'
+                            'foreach(component IN LISTS BOOST_INCLUDE_LIBRARIES)\n'
+                            'add_library(Boost::${component} INTERFACE IMPORTED GLOBAL)\n'
+                            'endforeach()\n').parent
+        self.cmake_project(self.include('cmake/dependencies/Boost_Sunshine.cmake')
+                   + 'if(NOT FETCH_CONTENT_BOOST_USED)\nmessage(FATAL_ERROR "Stale package was accepted")\nendif()\n'
+                     'foreach(component IN ITEMS headers boost ${BOOST_COMPONENTS})\n'
+                     'if(NOT TARGET Boost::${component})\nmessage(FATAL_ERROR "Missing ${component}")\nendif()\nendforeach()\n'
+                     'get_target_property(headers_link sunshine_boost_headers INTERFACE_LINK_LIBRARIES)\n'
+                     'if(NOT headers_link STREQUAL "Boost::headers")\nmessage(FATAL_ERROR "Broken headers compatibility target")\nendif()\n')
+        options = [f'-DBoost_DIR={package.as_posix()}', f'-DFETCHCONTENT_SOURCE_DIR_BOOST={cached.as_posix()}',
+                   '-DFETCHCONTENT_FULLY_DISCONNECTED=ON']
+        self.configure(options)
+        # FetchContent creates its own package redirect; the next configure must restore targets again.
+        self.configure(options)
 
     def test_web_ui_is_incremental_and_recovers_missing_outputs(self):
         log = self.project / 'npm-calls.txt'
