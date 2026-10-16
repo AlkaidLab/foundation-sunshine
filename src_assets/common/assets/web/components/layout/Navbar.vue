@@ -51,7 +51,7 @@ import { useBackground } from '../../composables/useBackground.js'
 const navItems = Object.freeze([
   { path: '/', icon: 'fa-home', label: 'navbar.home' },
   { path: '/downloads', icon: 'fa-download', label: 'resource_card.client_downloads' },
-  { path: '/pin', icon: 'fa-qrcode', label: 'navbar.pin' },
+  { path: '/pin', icon: 'fa-qrcode', label: 'connections.title' },
   { path: '/apps', icon: 'fa-stream', label: 'navbar.applications' },
   { path: '/config', icon: 'fa-cog', label: 'navbar.configuration' },
 ])

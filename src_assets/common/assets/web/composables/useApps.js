@@ -399,6 +399,12 @@ export function useApps() {
     return key
   }
 
+  const reorderApps = (entries) => {
+    // A filtered or selected subset must never replace the complete application list.
+    if (searchQuery.value || selectionMode.value || entries.length !== apps.value.length) return
+    apps.value = entries.map(({ app }) => app)
+  }
+
   const newApp = () => {
     trackEvents.userAction('new_app_clicked')
     scannedEditSource.value = null
@@ -603,7 +609,7 @@ export function useApps() {
 
   const onDragEnd = async () => {
     isDragging.value = false
-    await save()
+    if (!searchQuery.value && !selectionMode.value) await save()
   }
 
   // 封面搜索相关（使用共享的 coverSearch 模块）
@@ -1021,6 +1027,7 @@ export function useApps() {
     loadPlatform,
     clearSearch,
     getAppRenderKey,
+    reorderApps,
     newApp,
     editApp,
     closeAppEditor,

@@ -15,6 +15,7 @@
 #include "src/network.h"
 #include "src/nvhttp.h"
 #include "src/process.h"
+#include "src/rtsp.h"
 #include "src/stream.h"
 #include "src/utility.h"
 #include "src/webhook/webhook.h"
@@ -417,6 +418,7 @@ namespace confighttp::clients {
 
         const bool removed = nvhttp::unpair_client(uuid);
         outputTree.put("status", removed);
+        if (removed) rtsp_stream::terminate_client_sessions(uuid);
 
         if (removed && nvhttp::get_all_clients().empty()) {
           proc::proc.terminate();
@@ -428,6 +430,35 @@ namespace confighttp::clients {
         outputTree.put("error", e.what());
         return;
       }
+    }
+
+    void
+    updateClient(resp_https_t response, req_https_t request) {
+      if (!check_content_type(response, request, "application/json")) return;
+      if (!authenticate(response, request)) return;
+      json output { { "status", false } };
+      try {
+        const auto input = json::parse(request->content.string());
+        if (!input.is_object() || !input.contains("uuid") || !input["uuid"].is_string() ||
+            !input.contains("enabled") || !input["enabled"].is_boolean()) {
+          throw std::invalid_argument("uuid and a boolean enabled value are required");
+        }
+        const auto uuid = input["uuid"].get<std::string>();
+        if (uuid.empty() || uuid.size() > 64) throw std::invalid_argument("Invalid client UUID");
+        const bool enabled = input["enabled"].get<bool>();
+        if (!nvhttp::set_client_enabled(uuid, enabled)) {
+          output["error"] = "Client not found or permission could not be saved";
+        }
+        else {
+          if (!enabled) rtsp_stream::terminate_client_sessions(uuid);
+          output["status"] = true;
+          output["enabled"] = enabled;
+        }
+      }
+      catch (const std::exception &error) {
+        output["error"] = error.what();
+      }
+      send_response(response, output);
     }
 
     void
@@ -483,11 +514,14 @@ namespace confighttp::clients {
         if (!client.is_object()) continue;
         const auto uuid = client.value("uuid", std::string {});
         const auto name = client.value("name", std::string {});
+        client["streaming"] = false;
         const auto session = std::find_if(sessions.begin(), sessions.end(), [&](const auto &candidate) {
           return (!uuid.empty() && candidate.client_uuid == uuid) ||
                  (uuid.empty() && !name.empty() && candidate.client_name == name);
         });
         if (session == sessions.end()) continue;
+
+        client["streaming"] = true;
 
         client["hdrBrightnessRuntime"] = {
           { "active", true },
@@ -575,6 +609,7 @@ namespace confighttp::clients {
     server.resource["^/api/color-profiles$"]["GET"] = listColorProfiles;
     server.resource["^/api/clients/unpair$"]["POST"] = unpair;
     server.resource["^/api/clients/rename$"]["POST"] = renameClient;
+    server.resource["^/api/clients/update$"]["POST"] = updateClient;
   }
 
 }  // namespace confighttp::clients

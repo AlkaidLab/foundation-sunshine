@@ -31,6 +31,7 @@ namespace rtsp_stream {
     global_limit,
     client_limit,
     client_busy,
+    denied,
   };
 
   struct encrypted_launch_claim_t {
@@ -80,6 +81,8 @@ namespace rtsp_stream {
 
     bool
     erase(std::uint32_t launch_session_id);
+
+    std::size_t erase_client(std::string_view client_uuid);
 
     std::size_t
     prune(clock_t::time_point now = clock_t::now());

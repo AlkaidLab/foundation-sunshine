@@ -25,11 +25,13 @@
         <i class="fas fa-check"></i>
       </button>
       <div class="floating-toast-container" :class="{ 'has-validation-error': validationError }">
+        <div v-if="saveError" class="toast text-bg-danger border-0 show" role="alert"><div class="toast-body"><strong>{{ $t('_common.error') }}</strong><p class="my-2">{{ saveError }}</p><button type="button" class="btn btn-outline-light btn-sm" @click="saveError = ''">{{ $t('_common.dismiss') }}</button></div></div>
         <div v-if="validationError" class="toast text-bg-danger border-0 show" role="alert" aria-live="assertive">
           <div class="toast-body">
-            <strong>{{ $t('_common.error') }}: {{ $t('config.amd_hevc_gop_size') }}</strong>
+            <strong>{{ $t('_common.error') }}</strong>
             <p class="my-2">{{ $t(validationError) }}</p>
-            <button type="button" class="btn btn-outline-light btn-sm" @click="currentTab = 'amd'">
+            <button v-if="validationError.startsWith('connections.')" type="button" class="btn btn-outline-light btn-sm" @click="currentTab = 'network'">{{ $t('connections.network_link') }}</button>
+            <button v-else type="button" class="btn btn-outline-light btn-sm" @click="currentTab = 'amd'">
               {{ $t('tabs.amd') }} — {{ $t('config.amd_advanced_group') }}
             </button>
           </div>
@@ -208,29 +210,33 @@
           </ul>
         </div>
 
-        <General
-          v-if="currentTab === 'general'"
-          :config="config"
-          :global-prep-cmd="global_prep_cmd"
-          :platform="platform"
-        />
-        <Inputs v-if="currentTab === 'input'" :config="config" :platform="platform" />
-        <AudioVideo
-          v-if="currentTab === 'av'"
-          :config="config"
-          :platform="platform"
-          :resolutions="resolutions"
-          :fps="fps"
-        />
-        <Network v-if="currentTab === 'network'" :config="config" :platform="platform" />
-        <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
-        <Advanced v-if="currentTab === 'advanced'" :config="config" :platform="platform" />
-        <ContainerEncoders
-          v-if="isEncoderCurrentTab"
-          :current-tab="currentTab"
-          :config="config"
-          :platform="platform"
-        />
+        <Suspense>
+          <div :key="currentTab">
+            <General
+              v-if="currentTab === 'general'"
+              :config="config"
+              :global-prep-cmd="global_prep_cmd"
+              :platform="platform"
+            />
+            <Inputs v-if="currentTab === 'input'" :config="config" :platform="platform" />
+            <AudioVideo
+              v-if="currentTab === 'av'"
+              :config="config"
+              :platform="platform"
+              :resolutions="resolutions"
+              :fps="fps"
+            />
+            <Network v-if="currentTab === 'network'" :config="config" />
+            <Files v-if="currentTab === 'files'" :config="config" :platform="platform" />
+            <Advanced v-if="currentTab === 'advanced'" :config="config" :platform="platform" />
+            <ContainerEncoders
+              v-if="isEncoderCurrentTab"
+              :current-tab="currentTab"
+              :config="config"
+              :platform="platform"
+            />
+          </div>
+        </Suspense>
       </div>
     </div>
   </div>
@@ -256,6 +262,7 @@ const ENCODER_TAB_IDS = new Set(['nv', 'qsv', 'amd', 'vt', 'sw'])
 
 const {
   validationError,
+  saveError,
   platform,
   saved,
   restarted,
@@ -308,9 +315,16 @@ const preferredEncoderTab = (children = []) =>
 
 const scrollActiveTabIntoView = async () => {
   await nextTick()
-  const activeTab = configTabsRef.value?.querySelector('.nav-link.active')
+  const strip = configTabsRef.value
+  const activeTab = strip?.querySelector('.nav-link.active')
+  if (!activeTab || strip.scrollWidth <= strip.clientWidth) return
+
+  const bounds = strip.getBoundingClientRect()
+  const tabBounds = activeTab.getBoundingClientRect()
+  const offset = tabBounds.left < bounds.left ? tabBounds.left - bounds.left
+    : tabBounds.right > bounds.right ? tabBounds.right - bounds.right : 0
   const behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
-  activeTab?.scrollIntoView?.({ behavior, block: 'nearest', inline: 'center' })
+  if (offset) strip.scrollBy({ left: offset, behavior })
 }
 
 const toggleEncoderDropdown = (tabId, event) => {
@@ -731,7 +745,7 @@ onUnmounted(() => {
       background: transparent;
       position: relative;
       overflow: hidden;
-      .transition();
+      transition: color 140ms ease-out, background-color 140ms ease-out, box-shadow 140ms ease-out;
 
       &::before {
         content: '';
@@ -743,7 +757,7 @@ onUnmounted(() => {
         height: 3px;
         background: var(--ui-accent);
         border-radius: 3px 3px 0 0;
-        .transition(transform);
+        transition: transform 140ms ease-out;
       }
 
       &:hover {
@@ -797,7 +811,7 @@ onUnmounted(() => {
         padding: 0.5rem 1.5rem;
         font-weight: 500;
         text-decoration: none;
-        .transition();
+        transition: color 140ms ease-out, background-color 140ms ease-out;
 
         &.encoder-item-nv {
           color: @color-nvidia;
@@ -1086,7 +1100,7 @@ onUnmounted(() => {
     gap: 0.75rem;
 
     .floating-toast-container {
-      right: auto;
+      right: 0;
       left: auto;
       top: auto;
       bottom: calc(100% + 1rem);
@@ -1112,7 +1126,6 @@ onUnmounted(() => {
     overflow-y: hidden;
     flex-wrap: nowrap;
     scroll-padding-inline: 2rem;
-    scroll-snap-type: x proximity;
     scrollbar-width: thin;
     -webkit-overflow-scrolling: touch;
 
@@ -1121,7 +1134,6 @@ onUnmounted(() => {
       padding: 0.625rem 1rem;
       font-size: 0.875rem;
       white-space: nowrap;
-      scroll-snap-align: center;
     }
   }
 
@@ -1151,6 +1163,13 @@ onUnmounted(() => {
 
 // 无障碍：减少动态效果
 @media (prefers-reduced-motion: reduce) {
+  .page-config .config-tabs .nav-link,
+  .page-config .config-tabs .nav-link::before,
+  .page-config .config-tabs .nav-link::after,
+  .page-config .config-tabs .dropdown-item {
+    transition: none;
+  }
+
   .config-floating-buttons .cute-btn {
     animation: none !important;
     transition: none !important;

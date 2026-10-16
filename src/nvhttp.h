@@ -194,6 +194,10 @@ namespace nvhttp {
   bool
   rename_client(const std::string &uuid, const std::string &new_name);
 
+  /// Change connection permission without removing pairing or display settings.
+  bool set_client_enabled(const std::string &uuid, bool enabled);
+  bool is_client_enabled(const std::string &uuid);
+
   /**
    * @brief Get all paired clients.
    * @return The list of all paired clients.

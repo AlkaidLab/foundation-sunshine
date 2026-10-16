@@ -176,6 +176,8 @@ namespace stream {
     state_e
     state(session_t &session);
 
+    bool belongs_to_client(const session_t &session, const std::string &uuid);
+
     bool
     has_active_video_sessions();
 
