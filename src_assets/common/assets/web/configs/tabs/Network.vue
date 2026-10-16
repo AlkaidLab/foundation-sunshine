@@ -10,6 +10,7 @@ const networkPage = ref(null)
 const listenerInfo = ref(null)
 const listenerError = ref('')
 const manualAddress = ref(false)
+let listenerRequest = 0
 const knownAddresses = computed(() => listenerInfo.value?.addresses || [])
 const addressChoice = computed({
   get: () => {
@@ -38,13 +39,15 @@ const listenerPending = computed(
     ),
 )
 const loadListeners = async () => {
+  const request = ++listenerRequest
   try {
     const data = await apiJson('/api/network/listeners')
-    listenerInfo.value = data
+    if (request !== listenerRequest) return
     if (data.status !== true) throw new Error(data.error || 'Unable to enumerate listeners')
+    listenerInfo.value = data
     listenerError.value = ''
   } catch (error) {
-    listenerError.value = error.message
+    if (request === listenerRequest) listenerError.value = error.message
   }
 }
 const effectivePort = computed(() => {
@@ -68,6 +71,7 @@ onMounted(() => {
   window.addEventListener('sunshine:config-saved', loadListeners)
 })
 onBeforeUnmount(() => {
+  listenerRequest++
   window.removeEventListener('hashchange', revealLinkedSetting)
   window.removeEventListener('sunshine:config-saved', loadListeners)
 })

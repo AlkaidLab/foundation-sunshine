@@ -1050,6 +1050,7 @@
     "permission_saved": "Connection permission updated.",
     "pin_help": "Select this host in your client, then enter the four-digit PIN shown by the client.",
     "proposed": "Proposed listener settings",
+    "rename_partial": "Client name saved, but display settings were not saved: {error}",
     "settings_for": "Settings for {name}",
     "source_note": "This limits local listening addresses, not the client source IP or subnet.",
     "streaming": "Streaming",

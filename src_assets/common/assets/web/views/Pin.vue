@@ -325,7 +325,7 @@ const {
   pairClient,
   loadConfig,
   loadColorProfiles,
-} = usePin()
+} = usePin(t)
 const { qrDataUrl, qrPin, qrRemaining, qrLoading, qrError, qrPaired, qrActive, generateQrCode, cancelQrCode } =
   useQrPair()
 const showPairing = ref(false)

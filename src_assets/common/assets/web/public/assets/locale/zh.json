@@ -1050,6 +1050,7 @@
     "permission_saved": "连接权限已更新。",
     "pin_help": "在客户端选择这台主机，再输入客户端显示的 4 位 PIN。",
     "proposed": "拟应用的监听设置",
+    "rename_partial": "名称已保存，但显示设置未保存：{error}",
     "settings_for": "设置 {name}",
     "source_note": "此项限制本机监听地址，不等同于客户端来源 IP 或网段白名单。",
     "streaming": "正在串流",

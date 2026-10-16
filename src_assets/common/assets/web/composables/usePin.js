@@ -25,7 +25,7 @@ const isSuccessfulStatus = (status) => {
 /**
  * 客户端配对、权限与显示设置。
  */
-export function usePin() {
+export function usePin(translate = (_key, { error }) => `Client name saved, but display settings were not saved: ${error}`) {
   const pairingDeviceName = ref('')
   const config = ref(null)
   const clients = ref([])
@@ -167,14 +167,19 @@ export function usePin() {
     if (!config.value) return false
 
     saving.value = true
+    clientError.value = ''
+    let renamed = false
     try {
       const tmpClients = parseClients()
       const client = clients.value.find((c) => c.uuid === uuid)
       if (!client) return false
 
       if (originalValues[uuid] && client.name !== originalValues[uuid].name) {
-        const rename = await apiPostJson('/api/clients/rename', { uuid, name: client.name })
+        const name = client.name
+        const rename = await apiPostJson('/api/clients/rename', { uuid, name })
         if (!isSuccessfulStatus(rename.status)) throw new Error(rename.error || 'Client rename failed')
+        originalValues[uuid].name = name
+        renamed = true
       }
 
       const index = tmpClients.findIndex((c) => c.uuid === uuid)
@@ -194,7 +199,7 @@ export function usePin() {
       return true
     } catch (error) {
       console.error('Failed to save client:', error)
-      clientError.value = error.message
+      clientError.value = renamed ? translate('connections.rename_partial', { error: error.message }) : error.message
       return false
     } finally {
       saving.value = false

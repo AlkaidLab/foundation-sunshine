@@ -1050,6 +1050,7 @@
     "permission_saved": "連線權限已更新。",
     "pin_help": "在用戶端選擇這台主機，再輸入用戶端顯示的 4 位 PIN。",
     "proposed": "預計套用的監聽設定",
+    "rename_partial": "名稱已儲存，但顯示設定未儲存：{error}",
     "settings_for": "設定 {name}",
     "source_note": "此項限制本機監聽位址，不等同於用戶端來源 IP 或網段白名單。",
     "streaming": "正在串流",

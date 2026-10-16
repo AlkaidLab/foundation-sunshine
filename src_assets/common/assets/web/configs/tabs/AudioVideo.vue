@@ -26,6 +26,7 @@ const micStatus = ref(null)
 let micStatusTimer
 let micStatusPending = false
 let micStatusActive = false
+let micStatusRetry = null
 
 const microphoneBackend = computed(() => config.value.microphone_redirect_backend || 'vb_cable')
 const showVbCableActions = computed(() => ['vb_cable', 'auto'].includes(microphoneBackend.value))
@@ -37,8 +38,12 @@ const micStatusClass = computed(() => {
   return 'text-bg-secondary'
 })
 
-const refreshMicrophoneStatus = async ({ quiet = false } = {}) => {
-  if (props.platform !== 'windows' || document.hidden || !micStatusActive || micStatusPending) return
+const refreshMicrophoneStatus = async ({ quiet = false, afterPending = false } = {}) => {
+  if (props.platform !== 'windows' || document.hidden || !micStatusActive) return
+  if (micStatusPending) {
+    if (!quiet || afterPending) micStatusRetry = micStatusRetry === false ? false : quiet
+    return
+  }
   micStatusPending = true
   if (!quiet) micStatusLoading.value = true
   try {
@@ -49,6 +54,11 @@ const refreshMicrophoneStatus = async ({ quiet = false } = {}) => {
   } finally {
     micStatusPending = false
     if (!quiet) micStatusLoading.value = false
+    if (micStatusRetry !== null) {
+      const quiet = micStatusRetry
+      micStatusRetry = null
+      void refreshMicrophoneStatus({ quiet })
+    }
   }
 }
 
@@ -100,7 +110,7 @@ const testMicrophoneRoute = async () => {
     }
   } finally {
     micTestRunning.value = false
-    await refreshMicrophoneStatus({ quiet: true })
+    await refreshMicrophoneStatus({ quiet: true, afterPending: true })
   }
 }
 
@@ -124,6 +134,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   micStatusActive = false
+  micStatusRetry = null
   window.clearInterval(micStatusTimer)
   document.removeEventListener('visibilitychange', syncMicrophonePolling)
 })

@@ -179,6 +179,68 @@ test('unpair all preserves clients when a 200 response reports failure', async (
   }
 })
 
+test('partial device saves keep the persisted name when cancelling unsaved display edits', async (t) => {
+  for (const httpFailure of [false, true]) {
+    await t.test(httpFailure ? 'HTTP error' : 'application error', async (t) => {
+      t.mock.method(globalThis, 'fetch', async (url) => url === '/api/clients/rename'
+        ? jsonResponse({ status: true })
+        : jsonResponse({ status: false, error: 'Display settings rejected' }, { ok: !httpFailure, status: httpFailure ? 500 : 200 }))
+      const pin = usePin((key, { error }) => `${key}: ${error}`)
+      pin.config.value = { clients: '[]' }
+      pin.clients.value = [{ uuid: 'client-1', name: 'Old name', hdrProfile: 'old.icc', enabled: true }]
+      pin.startEdit('client-1')
+      pin.clients.value[0].name = 'Saved name'
+      pin.clients.value[0].hdrProfile = 'unsaved.icc'
+
+      assert.equal(await pin.saveClient('client-1'), false)
+      assert.equal(pin.clientError.value, 'connections.rename_partial: Display settings rejected')
+      assert.equal(pin.clients.value[0].hdrProfile, 'unsaved.icc')
+      assert.equal(pin.config.value.clients, '[]')
+      pin.cancelEdit('client-1')
+      assert.equal(pin.clients.value[0].name, 'Saved name')
+      assert.equal(pin.clients.value[0].hdrProfile, 'old.icc')
+      assert.equal(pin.clients.value[0].enabled, true)
+      assert.equal(pin.saving.value, false)
+    })
+  }
+})
+
+test('retrying a partial device save preserves the draft and does not rename twice', async (t) => {
+  let renames = 0
+  let saves = 0
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url === '/api/clients/rename') { renames++; return jsonResponse({ status: true }) }
+    return jsonResponse(++saves === 1 ? { status: false, error: 'Retry me' } : { status: true })
+  })
+  const pin = usePin()
+  pin.config.value = { clients: '[]' }
+  pin.clients.value = [{ uuid: 'client-1', name: 'Old name', hdrProfile: 'old.icc' }]
+  pin.startEdit('client-1')
+  pin.clients.value[0].name = 'Saved name'
+  pin.clients.value[0].hdrProfile = 'draft.icc'
+  assert.equal(await pin.saveClient('client-1'), false)
+  assert.equal(await pin.saveClient('client-1'), true)
+  assert.equal(renames, 1)
+  assert.equal(pin.clientError.value, '')
+  assert.equal(JSON.parse(pin.config.value.clients)[0].hdrProfile, 'draft.icc')
+})
+
+test('a failed rename leaves the original edit snapshot unchanged', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(url, '/api/clients/rename')
+    return jsonResponse({ status: false, error: 'Rename rejected' })
+  })
+  const pin = usePin()
+  pin.config.value = { clients: '[]' }
+  pin.clients.value = [{ uuid: 'client-1', name: 'Old name', hdrProfile: 'old.icc' }]
+  pin.startEdit('client-1')
+  pin.clients.value[0].name = 'Unsaved name'
+  assert.equal(await pin.saveClient('client-1'), false)
+  assert.equal(pin.clientError.value, 'Rename rejected')
+  pin.cancelEdit('client-1')
+  assert.equal(pin.clients.value[0].name, 'Old name')
+})
+
 test('unpair all clears the authoritative list without restarting the host', async () => {
   const originalFetch = globalThis.fetch
   const requests = []
