@@ -375,5 +375,13 @@
   {
     "pattern": "^/api/widget/action$",
     "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/update$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/network/listeners$",
+    "method": "GET"
   }
 ]

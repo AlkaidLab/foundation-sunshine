@@ -1,8 +1,8 @@
-import { ref, reactive } from 'vue'
+import { ref } from 'vue'
 import { getBootstrapConfig } from '../config/bootstrapData.js'
-import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
+import { apiJson, apiPostJson } from '../utils/apiFetch.js'
 
-const STATUS_RESET_DELAY = 5000
+const EDITABLE_CLIENT_FIELDS = ['name', 'hdrProfile', 'deviceSize', 'hdrBrightnessMode', 'hdrBrightnessMaxNits', 'hdrBrightnessMinNits', 'hdrBrightnessMaxFullFrameNits']
 
 export const isColorProfileFile = (fileName) =>
   typeof fileName === 'string' && /\.(?:icc|icm)$/i.test(fileName)
@@ -23,29 +23,21 @@ const isSuccessfulStatus = (status) => {
 }
 
 /**
- * PIN 配对组合式函数
+ * 客户端配对、权限与显示设置。
  */
-export function usePin() {
+export function usePin(translate = (_key, { error }) => `Client name saved, but display settings were not saved: ${error}`) {
   const pairingDeviceName = ref('')
-  const unpairAllPressed = ref(false)
-  const unpairAllStatus = ref(null)
-  const showApplyMessage = ref(false)
   const config = ref(null)
   const clients = ref([])
   const hdrProfileList = ref([])
   const hasIccFileList = ref(false)
   const loading = ref(false)
   const saving = ref(false)
-  const deleting = ref(new Set())
-  const editingStates = reactive({})
-  const originalValues = reactive({})
-
-  const initClientEditingState = (client) => {
-    if (!editingStates[client.uuid]) {
-      editingStates[client.uuid] = false
-      originalValues[client.uuid] = { ...client }
-    }
-  }
+  const updating = ref(new Set())
+  const clientError = ref('')
+  const listError = ref('')
+  const editingStates = {}
+  const originalValues = {}
 
   const clearEditingState = (uuid) => {
     delete editingStates[uuid]
@@ -65,13 +57,8 @@ export function usePin() {
   }
 
   const persistedClient = (client) => {
-    const { hdrBrightnessRuntime: _runtime, ...settings } = client
+    const { hdrBrightnessRuntime: _runtime, enabled: _enabled, streaming: _streaming, ...settings } = client
     return settings
-  }
-
-  const serialize = (listArray = []) => {
-    const nl = '\n'
-    return '[' + nl + '    ' + listArray.map((item) => JSON.stringify(item)).join(',' + nl + '    ') + nl + ']'
   }
 
   const refreshClients = async () => {
@@ -79,14 +66,15 @@ export function usePin() {
     try {
       const data = await apiJson('/api/clients/list')
 
-      if (data.status === 'true' && data.named_certs?.length) {
-        clients.value = data.named_certs
-      }
+      if (!isSuccessfulStatus(data.status) || !Array.isArray(data.named_certs)) throw new Error('Invalid client list response')
 
       const tmpClients = parseClients()
-      clients.value = clients.value.map((client) => {
+      clients.value = data.named_certs.map((client) => {
         const stored = tmpClients.find(({ uuid }) => uuid === client.uuid)
-        const merged = { ...client, ...(stored ? persistedClient(stored) : {}) }
+        const draft = editingStates[client.uuid] ? clients.value.find((item) => item.uuid === client.uuid) : null
+        const merged = { ...(stored ? persistedClient(stored) : {}), ...(draft ? persistedClient(draft) : {}), ...client }
+        merged.enabled = client.enabled !== false
+        merged.hdrProfile ??= ''
         // 如果客户端没有deviceSize，设置默认值为medium
         if (!merged.deviceSize) {
           merged.deviceSize = 'medium'
@@ -95,62 +83,73 @@ export function usePin() {
         merged.hdrBrightnessMaxNits ??= 1000
         merged.hdrBrightnessMinNits ??= 0.001
         merged.hdrBrightnessMaxFullFrameNits ??= 1000
-        initClientEditingState(merged)
         return merged
       })
+      listError.value = ''
+      return true
     } catch (error) {
       console.error('Failed to refresh clients:', error)
+      listError.value = error.message
+      return false
     } finally {
       loading.value = false
     }
   }
 
+  const setClientEnabled = async (uuid, enabled) => {
+    if (updating.value.has(uuid)) return false
+    updating.value.add(uuid)
+    clientError.value = ''
+    try {
+      const data = await apiPostJson('/api/clients/update', { uuid, enabled })
+      if (!isSuccessfulStatus(data.status)) throw new Error(data.error || 'Client permission update failed')
+      const client = clients.value.find((item) => item.uuid === uuid)
+      if (client) {
+        client.enabled = enabled
+        if (!enabled) client.streaming = false
+      }
+      return true
+    } catch (error) {
+      clientError.value = error.message
+      return false
+    } finally {
+      updating.value.delete(uuid)
+    }
+  }
+
   const unpairAll = async () => {
-    unpairAllPressed.value = true
+    clientError.value = ''
     try {
       const data = await apiJson('/api/clients/unpair-all', { method: 'POST' })
-      showApplyMessage.value = true
-      unpairAllStatus.value = data.status.toString() === 'true'
-
-      if (unpairAllStatus.value) {
-        clearAllEditingStates()
-        await refreshClients()
-      }
-
-      setTimeout(() => {
-        unpairAllStatus.value = null
-      }, STATUS_RESET_DELAY)
+      if (!isSuccessfulStatus(data.status)) throw new Error(data.error || 'Failed to unpair clients')
+      clearAllEditingStates()
+      await refreshClients()
+      return true
     } catch (error) {
       console.error('Failed to unpair all:', error)
-      unpairAllStatus.value = false
-    } finally {
-      unpairAllPressed.value = false
+      clientError.value = error.message
+      return false
     }
   }
 
   const unpairSingle = async (uuid) => {
-    deleting.value.add(uuid)
+    clientError.value = ''
     try {
       const data = await apiPostJson('/api/clients/unpair', { uuid })
-      const status = data.status?.toString().toLowerCase()
-      if (status === '1' || status === 'true') {
-        showApplyMessage.value = true
-        clearEditingState(uuid)
-        await refreshClients()
-        return true
-      }
-      return false
+      if (!isSuccessfulStatus(data.status)) throw new Error(data.error || 'Failed to unpair client')
+      clearEditingState(uuid)
+      await refreshClients()
+      return true
     } catch (error) {
       console.error('Failed to unpair client:', error)
+      clientError.value = error.message
       return false
-    } finally {
-      deleting.value.delete(uuid)
     }
   }
 
   const startEdit = (uuid) => {
     const client = clients.value.find((c) => c.uuid === uuid)
-    if (client && !originalValues[uuid]) {
+    if (client && !editingStates[uuid]) {
       originalValues[uuid] = { ...client }
     }
     editingStates[uuid] = true
@@ -159,7 +158,7 @@ export function usePin() {
   const cancelEdit = (uuid) => {
     const client = clients.value.find((c) => c.uuid === uuid)
     if (client && originalValues[uuid]) {
-      Object.assign(client, originalValues[uuid])
+      for (const field of EDITABLE_CLIENT_FIELDS) client[field] = originalValues[uuid][field]
     }
     editingStates[uuid] = false
   }
@@ -168,10 +167,20 @@ export function usePin() {
     if (!config.value) return false
 
     saving.value = true
+    clientError.value = ''
+    let renamed = false
     try {
       const tmpClients = parseClients()
       const client = clients.value.find((c) => c.uuid === uuid)
       if (!client) return false
+
+      if (originalValues[uuid] && client.name !== originalValues[uuid].name) {
+        const name = client.name
+        const rename = await apiPostJson('/api/clients/rename', { uuid, name })
+        if (!isSuccessfulStatus(rename.status)) throw new Error(rename.error || 'Client rename failed')
+        originalValues[uuid].name = name
+        renamed = true
+      }
 
       const index = tmpClients.findIndex((c) => c.uuid === uuid)
       if (index >= 0) {
@@ -180,107 +189,32 @@ export function usePin() {
         tmpClients.push(persistedClient(client))
       }
 
-      config.value.clients = serialize(tmpClients)
-      const data = await apiJson('/api/clients/list', {
-        method: 'POST',
-        body: config.value,
-      })
+      const serializedClients = JSON.stringify(tmpClients)
+      const data = await apiPostJson('/api/clients/list', { clients: serializedClients })
 
-      if (isSuccessfulStatus(data.status)) {
-        editingStates[uuid] = false
-        originalValues[uuid] = { ...client }
-        return true
-      }
-      return false
+      if (!isSuccessfulStatus(data.status)) throw new Error(data.error || 'Failed to save client settings')
+      config.value.clients = serializedClients
+      editingStates[uuid] = false
+      originalValues[uuid] = { ...client }
+      return true
     } catch (error) {
       console.error('Failed to save client:', error)
+      clientError.value = renamed ? translate('connections.rename_partial', { error: error.message }) : error.message
       return false
     } finally {
       saving.value = false
     }
   }
 
-  const save = async () => {
-    if (!config.value) return false
-
-    saving.value = true
+  const pairClient = async (pin, name) => {
+    clientError.value = ''
     try {
-      config.value.clients = serialize(clients.value.map(persistedClient))
-      const data = await apiJson('/api/clients/list', {
-        method: 'POST',
-        body: config.value,
-      })
-
-      if (isSuccessfulStatus(data.status)) {
-        clients.value.forEach((client) => {
-          editingStates[client.uuid] = false
-          originalValues[client.uuid] = { ...client }
-        })
-        return true
-      }
-      return false
+      const data = await apiPostJson('/api/pin', { pin, name })
+      if (!isSuccessfulStatus(data.status)) throw new Error(data.error || 'Pairing failed')
+      return true
     } catch (error) {
-      console.error('Failed to save clients:', error)
+      clientError.value = error.message
       return false
-    } finally {
-      saving.value = false
-    }
-  }
-
-  const hasUnsavedChanges = (uuid) => {
-    const client = clients.value.find((c) => c.uuid === uuid)
-    const original = originalValues[uuid]
-    const editableFields = [
-      'hdrProfile',
-      'deviceSize',
-      'hdrBrightnessMode',
-      'hdrBrightnessMaxNits',
-      'hdrBrightnessMinNits',
-      'hdrBrightnessMaxFullFrameNits',
-    ]
-    return client && original && editableFields.some((field) => client[field] !== original[field])
-  }
-
-  const initPinForm = (onSuccess) => {
-    const form = document.querySelector('#form')
-    if (!form) return
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault()
-      const pinInput = document.querySelector('#pin-input')
-      const nameInput = document.querySelector('#name-input')
-      const statusDiv = document.querySelector('#status')
-
-      if (!pinInput || !nameInput || !statusDiv) return
-
-      statusDiv.innerHTML = ''
-
-      try {
-        const data = await apiPostJson('/api/pin', { pin: pinInput.value, name: nameInput.value })
-
-        if (data.status.toString().toLowerCase() === 'true') {
-          statusDiv.innerHTML =
-            '<div class="alert alert-success" role="alert">Success! Please check Moonlight to continue</div>'
-          pinInput.value = ''
-          nameInput.value = ''
-          onSuccess?.()
-        } else {
-          statusDiv.innerHTML =
-            '<div class="alert alert-danger" role="alert">Pairing Failed: Check if the PIN is typed correctly</div>'
-        }
-      } catch (error) {
-        console.error('Pairing failed:', error)
-        statusDiv.innerHTML = '<div class="alert alert-danger" role="alert">Pairing Failed: Network error</div>'
-      }
-    })
-  }
-
-  const clickedApplyBanner = async () => {
-    showApplyMessage.value = false
-    try {
-      await apiFetch('/api/restart', { method: 'POST' })
-    } catch (error) {
-      console.error('Failed to restart:', error)
     }
   }
 
@@ -319,29 +253,23 @@ export function usePin() {
 
   return {
     pairingDeviceName,
-    unpairAllPressed,
-    unpairAllStatus,
-    showApplyMessage,
     config,
     clients,
     hdrProfileList,
     hasIccFileList,
     loading,
     saving,
-    deleting,
-    editingStates,
-    originalValues,
+    updating,
+    clientError,
+    listError,
+    setClientEnabled,
+    pairClient,
     refreshClients,
     unpairAll,
     unpairSingle,
-    save,
     saveClient,
     startEdit,
     cancelEdit,
-    hasUnsavedChanges,
-    serialize,
-    initPinForm,
-    clickedApplyBanner,
     loadConfig,
     loadColorProfiles,
   }

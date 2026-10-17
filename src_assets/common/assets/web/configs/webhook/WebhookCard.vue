@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { cycleDialogFocus, FOCUSABLE_SELECTOR, getFocusableElements } from '../../utils/focus.js'
 import {
   loadWebhookConfig,
   saveWebhookConfig,
@@ -432,41 +433,10 @@ const copyCurlCommand = async (template) => {
   copyResetTimer = timer
 }
 
-const getFocusableElements = () => {
-  if (!modalRef.value) return []
-  return Array.from(
-    modalRef.value.querySelectorAll(
-      [
-        'button:not([disabled])',
-        '[href]',
-        'input:not([disabled])',
-        'select:not([disabled])',
-        'textarea:not([disabled])',
-        'summary',
-        '[tabindex]:not([tabindex="-1"])',
-      ].join(','),
-    ),
-  ).filter((element) => element.offsetParent !== null)
-}
-
 const trapFocus = (event) => {
-  const focusable = getFocusableElements()
-  if (!focusable.length) {
-    event.preventDefault()
-    modalRef.value?.focus()
-    return
-  }
-
-  const currentIndex = focusable.indexOf(document.activeElement)
-  const lastIndex = focusable.length - 1
-  let nextIndex = currentIndex + 1
-  if (event.shiftKey) {
-    nextIndex = currentIndex <= 0 ? lastIndex : currentIndex - 1
-  } else if (currentIndex === -1 || currentIndex >= lastIndex) {
-    nextIndex = 0
-  }
-  event.preventDefault()
-  focusable[nextIndex].focus()
+  const focusable = getFocusableElements(modalRef.value, `${FOCUSABLE_SELECTOR}, summary, [href]`)
+    .filter((element) => element.offsetParent !== null)
+  cycleDialogFocus(event, modalRef.value, focusable)
 }
 
 onUnmounted(() => {

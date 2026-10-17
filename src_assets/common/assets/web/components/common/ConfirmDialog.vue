@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { getFocusableElements } from '../../utils/focus.js'
+import { cycleDialogFocus, getFocusableElements } from '../../utils/focus.js'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -36,6 +36,9 @@ const close = () => {
 }
 
 const handleKeydown = (event) => {
+  if (!props.show || !dialog.value || event.defaultPrevented) return
+  const panels = document.querySelectorAll('.confirm-dialog-panel')
+  if (panels[panels.length - 1] !== dialog.value) return
   if (event.key === 'Escape') {
     event.preventDefault()
     close()
@@ -44,22 +47,9 @@ const handleKeydown = (event) => {
   if (event.key !== 'Tab') return
 
   const focusable = getFocusableElements(dialog.value)
-
-  if (!focusable.length) {
-    event.preventDefault()
-    dialog.value?.focus()
-    return
-  }
-
-  const first = focusable[0]
-  const last = focusable[focusable.length - 1]
-  const activeIndex = focusable.indexOf(document.activeElement)
-  if (event.shiftKey && activeIndex <= 0) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && (activeIndex === -1 || document.activeElement === last)) {
-    event.preventDefault()
-    first.focus()
+  const index = focusable.indexOf(document.activeElement)
+  if (!focusable.length || (event.shiftKey ? index <= 0 : index === -1 || index === focusable.length - 1)) {
+    cycleDialogFocus(event, dialog.value, focusable)
   }
 }
 
@@ -68,10 +58,12 @@ watch(
   async (show) => {
     if (show) {
       setBodyScrollLock(true)
+      document.addEventListener('keydown', handleKeydown)
       previousFocus = document.activeElement
       await nextTick()
       dialog.value?.focus()
     } else {
+      document.removeEventListener('keydown', handleKeydown)
       setBodyScrollLock(false)
       if (previousFocus instanceof HTMLElement) {
         previousFocus.focus()
@@ -83,6 +75,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleKeydown)
   setBodyScrollLock(false)
   if (previousFocus instanceof HTMLElement) previousFocus.focus()
 })
@@ -101,7 +94,6 @@ onBeforeUnmount(() => {
           aria-modal="true"
           :aria-labelledby="`${dialogId}-title`"
           tabindex="-1"
-          @keydown="handleKeydown"
         >
           <header class="confirm-dialog-header">
             <h5 :id="`${dialogId}-title`">

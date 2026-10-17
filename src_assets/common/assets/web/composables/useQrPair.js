@@ -5,7 +5,6 @@ import { apiFetch, apiJson } from '../utils/apiFetch.js'
 export function useQrPair() {
   const qrDataUrl = ref('')
   const qrPin = ref('')
-  const qrUrl = ref('')
   const qrExpiresAt = ref(0)
   const qrRemaining = ref(0)
   const qrLoading = ref(false)
@@ -20,7 +19,6 @@ export function useQrPair() {
   const resetQrDisplay = () => {
     qrDataUrl.value = ''
     qrPin.value = ''
-    qrUrl.value = ''
   }
 
   const stopCountdown = () => {
@@ -70,7 +68,6 @@ export function useQrPair() {
       }
 
       qrPin.value = data.pin
-      qrUrl.value = data.url
       qrExpiresAt.value = Date.now() + data.expires_in * 1000
       qrRemaining.value = data.expires_in
 
@@ -107,7 +104,6 @@ export function useQrPair() {
   return {
     qrDataUrl,
     qrPin,
-    qrUrl,
     qrRemaining,
     qrLoading,
     qrError,

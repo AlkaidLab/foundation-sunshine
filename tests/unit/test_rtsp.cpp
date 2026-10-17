@@ -58,6 +58,17 @@ TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndRejectsCrossAddres
   EXPECT_EQ(same_address->id, 3U);
 }
 
+TEST(LaunchSessionManager, ClientRevocationRemovesItsPendingAndClaimedTicketsOnly) {
+  rtsp_stream::launch_session_manager_t manager;
+  EXPECT_EQ(manager.register_session(make_session(1, "cert-a", "192.0.2.10"), 10s), rtsp_stream::launch_ticket_register_e::accepted);
+  EXPECT_EQ(manager.register_session(make_session(2, "cert-b", "192.0.2.20"), 10s), rtsp_stream::launch_ticket_register_e::accepted);
+  ASSERT_TRUE(manager.claim_plaintext("192.0.2.10"));
+  EXPECT_EQ(manager.erase_client("cert-a"), 1U);
+  EXPECT_EQ(manager.erase_client(""), 0U);
+  EXPECT_FALSE(manager.claim_plaintext("192.0.2.10"));
+  EXPECT_TRUE(manager.claim_plaintext("192.0.2.20"));
+}
+
 TEST(LaunchSessionManager, ReplacesPendingRetryButDoesNotReplaceClaimedHandshake) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();

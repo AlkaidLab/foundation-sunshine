@@ -6,6 +6,7 @@
 
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include <boost/asio.hpp>
 
@@ -14,6 +15,13 @@
 #include "utility.h"
 
 namespace net {
+  struct local_address_t {
+    std::string name;
+    std::string address;
+  };
+  std::vector<local_address_t> local_addresses();
+  /// Validate a single local bind IP and its configured address family.
+  void validate_bind_address(const std::string &address, const std::string &family);
   void
   free_host(ENetHost *host);
 
@@ -43,6 +51,7 @@ namespace net {
     IPV4,  ///< IPv4 only
     BOTH  ///< IPv4 and IPv6
   };
+  bool bind_uses_ipv4(af_e af);
 
   net_e
   from_enum_string(const std::string_view &view);

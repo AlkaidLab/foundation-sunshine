@@ -16,6 +16,9 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+  #include <windows.h>
+#endif
 
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -70,6 +73,7 @@ namespace nvhttp {
       std::string name;
       std::string uuid;
       std::string cert;
+      bool enabled { true };
     };
 
     struct client_t {
@@ -132,6 +136,7 @@ namespace nvhttp {
     static std::string pending_pin_unique_id;
     static std::mutex map_id_sess_mutex;
     static std::shared_mutex client_state_mutex;
+    static std::recursive_mutex client_mutation_mutex;
     static pair_rate_limiter_t pair_rate_limit;
     constexpr auto pending_pin_timeout = 5min;
 
@@ -177,8 +182,9 @@ namespace nvhttp {
                        << ", PATH: " << request->path;
     }
 
-    void
-    save_state(bool preserve_existing = true) {
+    bool
+    save_state(bool preserve_existing = true, const client_t *snapshot = nullptr) {
+      std::lock_guard mutation_lock { client_mutation_mutex };
       pt::ptree root;
       const auto state_path = state_file_path();
 
@@ -194,7 +200,7 @@ namespace nvhttp {
         }
         catch (std::exception &e) {
           BOOST_LOG(error) << "Couldn't read "sv << config::nvhttp.file_state << ": "sv << e.what();
-          return;
+          return false;
         }
       }
 
@@ -202,20 +208,31 @@ namespace nvhttp {
 
       root.put("root.uniqueid", http::unique_id);
       pt::ptree named_cert_nodes;
-      {
-        std::shared_lock<std::shared_mutex> cl(client_state_mutex);
-        for (auto &named_cert : client_root.named_devices) {
+      const auto serialize_devices = [&](const client_t &state) {
+        for (const auto &named_cert : state.named_devices) {
           pt::ptree named_cert_node;
           named_cert_node.put("name"s, named_cert.name);
           named_cert_node.put("cert"s, named_cert.cert);
           named_cert_node.put("uuid"s, named_cert.uuid);
+          named_cert_node.put("enabled", named_cert.enabled);
           named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
         }
+      };
+      if (snapshot) serialize_devices(*snapshot);
+      else {
+        std::shared_lock<std::shared_mutex> cl(client_state_mutex);
+        serialize_devices(client_root);
       }
       root.add_child("root.named_devices"s, named_cert_nodes);
 
       try {
-        std::ofstream state_file { state_path };
+        auto temporary_path = state_path;
+        temporary_path += ".tmp";
+        auto cleanup = util::fail_guard([&]() {
+          std::error_code ignored;
+          fs::remove(temporary_path, ignored);
+        });
+        std::ofstream state_file { temporary_path };
         if (!state_file.is_open()) {
           throw std::runtime_error("unable to open state file for writing");
         }
@@ -224,15 +241,26 @@ namespace nvhttp {
         if (!state_file) {
           throw std::runtime_error("unable to write state file");
         }
+        state_file.close();
+        if (!state_file) throw std::runtime_error("unable to close state file");
+#ifdef _WIN32
+        if (!MoveFileExW(temporary_path.c_str(), state_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+          throw std::runtime_error("unable to replace state file");
+        }
+#else
+        fs::rename(temporary_path, state_path);
+#endif
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't write "sv << config::nvhttp.file_state << ": "sv << e.what();
-        return;
+        return false;
       }
+      return true;
     }
 
     void
     add_authorized_client(const std::string &name, std::string &&cert) {
+      std::lock_guard mutation_lock { client_mutation_mutex };
       named_cert_t named_cert;
       named_cert.name = name;
       named_cert.cert = std::move(cert);
@@ -418,6 +446,7 @@ namespace nvhttp {
 
     void
     load_state() {
+      std::lock_guard mutation_lock { client_mutation_mutex };
       const auto state_path = state_file_path();
       pt::ptree tree;
       try {
@@ -475,6 +504,7 @@ namespace nvhttp {
           named_cert.name = el.get_child("name").get_value<std::string>();
           named_cert.cert = el.get_child("cert").get_value<std::string>();
           named_cert.uuid = el.get_child("uuid").get_value<std::string>();
+          named_cert.enabled = el.get<bool>("enabled", true);
           client.named_devices.emplace_back(named_cert);
         }
       }
@@ -483,7 +513,7 @@ namespace nvhttp {
         std::unique_lock<std::shared_mutex> ul(client_state_mutex);
         cert_chain.clear();
         for (auto &named_cert : client.named_devices) {
-          cert_chain.add(crypto::x509(named_cert.cert));
+          if (named_cert.enabled) cert_chain.add(crypto::x509(named_cert.cert));
         }
         client_root = std::move(client);
       }
@@ -497,7 +527,7 @@ namespace nvhttp {
 
       std::shared_lock<std::shared_mutex> cl(client_state_mutex);
       for (const auto &named_cert : client_root.named_devices) {
-        if (crypto::x509_matches_pem(cert, named_cert.cert)) {
+        if (named_cert.enabled && crypto::x509_matches_pem(cert, named_cert.cert)) {
           return named_cert.uuid;
         }
       }
@@ -507,6 +537,12 @@ namespace nvhttp {
     const char *
     verify_client_certificate(X509 *cert, bool close_verify_safe) {
       std::shared_lock<std::shared_mutex> sl(client_state_mutex);
+      // Relaxed certificate verification must never bypass an explicit denial.
+      for (const auto &client : client_root.named_devices) {
+        if (!client.enabled && crypto::x509_matches_pem(cert, client.cert)) {
+          return "Client disabled";
+        }
+      }
       if (!close_verify_safe) {
         return cert_chain.verify_safe(cert);
       }
@@ -772,6 +808,7 @@ namespace nvhttp {
       nlohmann::json named_cert_node;
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
+      named_cert_node["enabled"] = named_cert.enabled;
       named_cert_nodes.push_back(named_cert_node);
     }
 
@@ -840,6 +877,7 @@ namespace nvhttp {
 
   void
   erase_all_clients() {
+    std::lock_guard mutation_lock { client_mutation_mutex };
     {
       std::unique_lock<std::shared_mutex> ul(client_state_mutex);
       client_root = client_t {};
@@ -850,6 +888,7 @@ namespace nvhttp {
 
   int
   unpair_client(std::string uuid) {
+    std::lock_guard mutation_lock { client_mutation_mutex };
     bool removed = false;
     {
       std::unique_lock<std::shared_mutex> ul(client_state_mutex);
@@ -871,7 +910,38 @@ namespace nvhttp {
   }
 
   bool
+  is_client_enabled(const std::string &uuid) {
+    std::shared_lock lock { client_state_mutex };
+    return std::any_of(client_root.named_devices.begin(), client_root.named_devices.end(), [&](const auto &client) {
+      return client.uuid == uuid && client.enabled;
+    });
+  }
+
+  bool
+  set_client_enabled(const std::string &uuid, bool enabled) {
+    std::lock_guard mutation_lock { client_mutation_mutex };
+    std::unique_lock lock { client_state_mutex };
+    auto found = std::find_if(client_root.named_devices.begin(), client_root.named_devices.end(), [&](const auto &client) {
+      return client.uuid == uuid;
+    });
+    if (found == client_root.named_devices.end()) return false;
+    const bool previous = found->enabled;
+    found->enabled = enabled;
+    // Readers must not observe a permission change until it is persisted.
+    if (!config::sunshine.flags[config::flag::FRESH_STATE] && !save_state(true, &client_root)) {
+      found->enabled = previous;
+      return false;
+    }
+    cert_chain.clear();
+    for (const auto &client : client_root.named_devices) {
+      if (client.enabled) cert_chain.add(crypto::x509(client.cert));
+    }
+    return true;
+  }
+
+  bool
   rename_client(const std::string &uuid, const std::string &new_name) {
+    std::lock_guard mutation_lock { client_mutation_mutex };
     bool renamed = false;
     {
       std::unique_lock<std::shared_mutex> ul(client_state_mutex);
