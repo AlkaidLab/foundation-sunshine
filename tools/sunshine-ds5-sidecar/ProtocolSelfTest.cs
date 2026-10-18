@@ -9,6 +9,8 @@ internal static class ProtocolSelfTest
 {
     internal static async Task RunHostProtocolChecksAsync()
     {
+        VerifyStandardAxisState();
+        await VerifyProtocolFrameReaderAsync();
         var pipeName = $"sunshine-device-host-contract-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var server = new VirtualDeviceHostServer(
@@ -67,6 +69,129 @@ internal static class ProtocolSelfTest
 
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static async Task VerifyProtocolFrameReaderAsync()
+    {
+        var messages = Enumerable.Range(0, 24).Select(index => new Protocol.Message(
+            index % 3 == 0 ? Protocol.MessageType.InputState : Protocol.MessageType.Motion,
+            (uint)index,
+            Enumerable.Repeat((byte)index, index % 3 == 0 ? 20 : 16).ToArray())).ToList();
+        messages.Insert(7, new Protocol.Message(Protocol.MessageType.MicFlush, 70, Array.Empty<byte>()));
+        messages.Insert(12, new Protocol.Message(Protocol.MessageType.MicPcm, 0,
+            CreateMicPcmPayload(1, 2, 3, 960, Protocol.MicPcmFlags.None)));
+        var wire = messages.SelectMany(Protocol.Encode).ToArray();
+        foreach (var chunk in new[] { 1, 7, 64, 4096 })
+        {
+            using var stream = new FragmentedProtocolStream(wire, chunk);
+            var reader = new ProtocolFrameReader(initialCapacity: 64);
+            foreach (var message in messages)
+            {
+                var frame = await reader.ReadAsync(stream, CancellationToken.None);
+                Require(frame.Header.Type == message.Type && frame.Header.RequestId == message.RequestId &&
+                        frame.Payload.Span.SequenceEqual(message.Payload),
+                    $"protocol frame reader fragmented/batched input (chunk {chunk})");
+            }
+            try
+            {
+                await reader.ReadAsync(stream, CancellationToken.None);
+                Require(false, "protocol frame reader EOF");
+            }
+            catch (EndOfStreamException) { }
+        }
+
+        // One read can contain multiple frames, with no wait or extra read to
+        // dispatch each already-available state. No timing-based coalescing.
+        using (var packed = new FragmentedProtocolStream(wire, int.MaxValue))
+        {
+            var reader = new ProtocolFrameReader(wire.Length);
+            foreach (var _ in messages)
+                await reader.ReadAsync(packed, CancellationToken.None);
+            Require(packed.ReadCount == 1, "protocol frame reader drains a packed read");
+        }
+
+        // A large valid frame must grow the buffer, preserve the next packed
+        // frame and stop at the protocol's advertised payload limit.
+        var maximumPayload = new byte[Protocol.MaxPayloadSize];
+        maximumPayload[^1] = 0x53;
+        var maximumFrame = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 99, maximumPayload));
+        using (var stream = new FragmentedProtocolStream(maximumFrame.Concat(wire).ToArray(), 4093))
+        {
+            var reader = new ProtocolFrameReader(64);
+            var frame = await reader.ReadAsync(stream, CancellationToken.None);
+            Require(frame.Header.RequestId == 99 && frame.Payload.Length == Protocol.MaxPayloadSize &&
+                    frame.Payload.Span[^1] == 0x53, "protocol frame reader maximum payload");
+            frame = await reader.ReadAsync(stream, CancellationToken.None);
+            Require(frame.Header == Protocol.DecodeHeader(wire.AsSpan(0, Protocol.HeaderSize)) &&
+                    frame.Payload.Span.SequenceEqual(messages[0].Payload),
+                "protocol frame reader preserves the frame after buffer growth");
+        }
+
+        foreach (var truncated in new[] { wire[..10], wire[..(Protocol.HeaderSize + 3)] })
+        {
+            using var stream = new MemoryStream(truncated);
+            try
+            {
+                await new ProtocolFrameReader().ReadAsync(stream, CancellationToken.None);
+                Require(false, "protocol frame reader truncated frame rejection");
+            }
+            catch (EndOfStreamException) { }
+        }
+        var oversized = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0, Array.Empty<byte>()));
+        BinaryPrimitives.WriteUInt32LittleEndian(oversized.AsSpan(8), Protocol.MaxPayloadSize + 1);
+        var invalidMagic = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0, Array.Empty<byte>()));
+        invalidMagic[0] = 0;
+        var invalidVersion = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0, Array.Empty<byte>()));
+        BinaryPrimitives.WriteUInt16LittleEndian(invalidVersion.AsSpan(4), Protocol.Version + 1);
+        foreach (var invalid in new[] { oversized, invalidMagic, invalidVersion })
+        {
+            using var stream = new MemoryStream(invalid);
+            try
+            {
+                await new ProtocolFrameReader().ReadAsync(stream, CancellationToken.None);
+                Require(false, "protocol frame reader invalid header rejection");
+            }
+            catch (InvalidDataException) { }
+        }
+
+        using (var canceled = new CancellationTokenSource())
+        using (var stream = new MemoryStream(wire))
+        {
+            canceled.Cancel();
+            try
+            {
+                await new ProtocolFrameReader().ReadAsync(stream, canceled.Token);
+                Require(false, "protocol frame reader cancellation");
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        // PCM decoding retains its array. Preserve it before the reusable
+        // receive buffer is overwritten by a later frame.
+        var pcmBytes = CreateMicPcmPayload(9, 10, 11, 2, Protocol.MicPcmFlags.None);
+        pcmBytes[20] = 0x5a;
+        var pcmFrame = Protocol.Encode(new Protocol.Message(Protocol.MessageType.MicPcm, 0, pcmBytes));
+        var nextFrame = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0,
+            Enumerable.Repeat((byte)0xa5, pcmBytes.Length).ToArray()));
+        using (var stream = new FragmentedProtocolStream(pcmFrame.Concat(nextFrame).ToArray(), pcmFrame.Length))
+        {
+            var reader = new ProtocolFrameReader(pcmFrame.Length);
+            var frame = await reader.ReadAsync(stream, CancellationToken.None);
+            var retained = Protocol.DecodeMicPcm(frame.Payload.ToArray());
+            await reader.ReadAsync(stream, CancellationToken.None);
+            Require(retained.Pcm.Span[0] == 0x5a, "protocol frame reader retained PCM ownership");
+        }
+    }
+
+    private sealed class FragmentedProtocolStream(byte[] bytes, int chunk) : MemoryStream(bytes, writable: false)
+    {
+        internal int ReadCount { get; private set; }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadCount++;
+            return base.ReadAsync(buffer[..Math.Min(buffer.Length, chunk)], cancellationToken);
+        }
     }
 
     internal static async Task<int> RunMicrophonePrototypeAsync(
@@ -416,10 +541,46 @@ internal static class ProtocolSelfTest
         VerifyHapticsChannelIsolation();
         VerifyDefaultAudioEndpointClassification();
         VerifyDefaultAudioEndpointPolicy();
-        VerifyControllerStateSubmissionPolicy();
         VerifySensorTimestampEncoding();
         VerifyOutputValidityFlags();
         VerifyOutputValidityGating();
+    }
+
+    private static void VerifyStandardAxisState()
+    {
+        using var context = new HMContext();
+        Require(context.LoadDefaultProfiles() > 0, "axis mapping profile catalog");
+        var random = new Random(5305);
+        foreach (var profile in context.AllProfiles)
+        {
+            var cached = new StandardAxisState(profile);
+            var initial = HMGamepadStateHelpers.StandardAxes(profile);
+            Require(initial.Count == cached.Values.Count && initial.All(
+                    pair => cached.Values.TryGetValue(pair.Key, out var actual) && actual == pair.Value),
+                $"cached standard axes preserve initial neutral state ({profile.Id})");
+            for (var i = 0; i < 34; i++)
+            {
+                var lx = i < 2 ? i : random.NextSingle();
+                var ly = i < 2 ? i : random.NextSingle();
+                var rx = i < 2 ? i : random.NextSingle();
+                var ry = i < 2 ? i : random.NextSingle();
+                var lt = i < 2 ? i : random.NextSingle();
+                var rt = i < 2 ? i : random.NextSingle();
+                var expected = HMGamepadStateHelpers.StandardAxes(profile, lx, ly, rx, ry, lt, rt);
+                cached.Update(lx, ly, rx, ry, lt, rt);
+                Require(cached.Values.Count == expected.Count && expected.All(
+                        pair => cached.Values.TryGetValue(pair.Key, out var actual) && actual == pair.Value),
+                    $"cached standard axes match SDK ({profile.Id})");
+            }
+
+            // Warm the dictionary update before checking the hot path.
+            cached.Update(.1f, .2f, .3f, .4f, .5f, .6f);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < 100; i++)
+                cached.Update(.2f, .3f, .4f, .5f, .6f, .7f);
+            Require(GC.GetAllocatedBytesForCurrentThread() == before,
+                $"cached standard axes allocate no per-frame objects ({profile.Id})");
+        }
     }
 
     private static void VerifyHidMaestroMicrophoneContract()
@@ -766,17 +927,6 @@ internal static class ProtocolSelfTest
         {
             // Expected.
         }
-    }
-
-    private static void VerifyControllerStateSubmissionPolicy()
-    {
-        var policy = new ControllerStateSubmissionPolicy();
-        Require(!policy.ObserveInput(0, true), "idle controller state coalescing");
-        Require(policy.ObserveInput(0, false), "analog activation boundary");
-        Require(!policy.ObserveInput(0, false), "continuous analog state coalescing");
-        Require(policy.ObserveInput(0, true), "analog neutral boundary");
-        Require(policy.ObserveInput(0x1000, true), "button press boundary");
-        Require(policy.ObserveInput(0, true), "button release boundary");
     }
 
     private static void VerifyDefaultAudioEndpointClassification()

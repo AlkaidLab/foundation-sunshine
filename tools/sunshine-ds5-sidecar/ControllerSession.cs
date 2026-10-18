@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using HIDMaestro;
 
@@ -25,28 +24,22 @@ internal sealed class ControllerSession : IDisposable
     private const uint Touchpad = 0x100000;
     private const uint Misc = 0x200000;
     private const int HapticsFramesPerPacket = 240;
-    private static readonly TimeSpan StateCoalesceWindow = TimeSpan.FromMilliseconds(4);
 
     private readonly object _stateLock = new();
     private readonly object _outputLock = new();
     private readonly HMController _controller;
-    private readonly HMProfile _profile;
+    private readonly StandardAxisState _axes;
     private readonly HMAudioOutput? _audioOutput;
     private readonly Action<Protocol.Message> _emit;
-    private readonly System.Threading.Timer _stateSubmitTimer;
     private DefaultAudioEndpointGuard? _audioEndpointGuard;
     private readonly AdaptiveTriggerState _adaptiveTriggers = new();
-    private readonly ControllerStateSubmissionPolicy _submissionPolicy = new();
     private HMGamepadState _state;
     private readonly Dictionary<uint, int> _touchSlots = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private int _hapticsSequence = -1;
     private int _hapticsStreaming;
     private int _hapticsNeedsStart;
-    private int _asyncSubmitFailureReported;
     private int _disposed;
-    private bool _stateDirty;
-    private bool _stateFlushScheduled;
     private byte[] _audioResidual = Array.Empty<byte>();
 
     internal ControllerSession(byte deviceId,
@@ -58,11 +51,11 @@ internal sealed class ControllerSession : IDisposable
         DeviceId = deviceId;
         ClientControllerNumber = clientControllerNumber;
         _controller = controller;
-        _profile = profile;
+        _axes = new StandardAxisState(profile);
         _emit = emit;
         _state = new HMGamepadState
         {
-            Axes = HMGamepadStateHelpers.StandardAxes(profile),
+            Axes = _axes.Values,
             BatteryLevel = 10,
             BatteryFull = true,
         };
@@ -80,11 +73,6 @@ internal sealed class ControllerSession : IDisposable
         // device reports an all-zero buffer until the first client input,
         // which raw consumers decode as a down touch contact at (0,0).
         _controller.SubmitState(in _state);
-        _stateSubmitTimer = new System.Threading.Timer(
-            _ => FlushScheduledState(),
-            null,
-            Timeout.InfiniteTimeSpan,
-            Timeout.InfiniteTimeSpan);
     }
 
     internal byte DeviceId { get; }
@@ -124,15 +112,13 @@ internal sealed class ControllerSession : IDisposable
         var leftY = Axis(rawLeftY, invert: true);
         var rightX = Axis(rawRightX);
         var rightY = Axis(rawRightY, invert: true);
-        var analogNeutral = payload[8] == 0 && payload[9] == 0 &&
-                            rawLeftX == 0 && rawLeftY == 0 && rawRightX == 0 && rawRightY == 0;
 
         lock (_stateLock)
         {
             _state.Buttons = MapButtons(buttons);
             _state.Hat = MapHat(buttons);
-            UpdateAxes(leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
-            QueueStateSubmissionLocked(_submissionPolicy.ObserveInput(buttons, analogNeutral));
+            _axes.Update(leftX, leftY, rightX, rightY, leftTrigger, rightTrigger);
+            SubmitStateLocked();
         }
     }
 
@@ -150,11 +136,9 @@ internal sealed class ControllerSession : IDisposable
         lock (_stateLock)
         {
             var stateChanged = false;
-            var stateBoundary = false;
             if (eventType == 7) // LI_TOUCH_EVENT_CANCEL_ALL
             {
                 stateChanged = _touchSlots.Count != 0;
-                stateBoundary = stateChanged;
                 foreach (var slot in _touchSlots.Values.Distinct().ToArray())
                     SetTouch(slot, false, 0, 0, 0);
                 _touchSlots.Clear();
@@ -167,7 +151,6 @@ internal sealed class ControllerSession : IDisposable
                     if (_touchSlots.ContainsValue(slot))
                         return;
                     _touchSlots[pointerId] = slot;
-                    stateBoundary = true;
                 }
                 SetTouch(slot, true, pointerId, x, y);
                 stateChanged = true;
@@ -184,14 +167,13 @@ internal sealed class ControllerSession : IDisposable
             {
                 SetTouch(slot, false, pointerId, x, y);
                 stateChanged = true;
-                stateBoundary = true;
             }
             else if (eventType is not (2 or 4 or 5 or 6))
             {
                 throw new InvalidDataException("Unsupported touch event type");
             }
             if (stateChanged)
-                QueueStateSubmissionLocked(stateBoundary);
+                SubmitStateLocked();
         }
     }
 
@@ -235,7 +217,7 @@ internal sealed class ControllerSession : IDisposable
                 throw new InvalidDataException("Unsupported motion type");
             }
             _state.SensorTimestamp = EncodeSensorTimestamp(ElapsedMicroseconds());
-            QueueStateSubmissionLocked();
+            SubmitStateLocked();
         }
     }
 
@@ -258,62 +240,18 @@ internal sealed class ControllerSession : IDisposable
                 : (byte)Math.Clamp((payload[2] + 5) / 10, 0, 10);
             _state.BatteryCharging = payload[1] == 3;
             _state.BatteryFull = payload[1] == 5;
-            QueueStateSubmissionLocked();
+            SubmitStateLocked();
         }
     }
 
-    private void QueueStateSubmissionLocked(bool immediate = false)
+    private void SubmitStateLocked()
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
-
-        _stateDirty = true;
-        if (immediate)
-        {
-            if (_stateFlushScheduled)
-            {
-                _stateFlushScheduled = false;
-                _stateSubmitTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            }
-            SubmitPendingStateLocked();
-        }
-        else if (!_stateFlushScheduled)
-        {
-            _stateFlushScheduled = true;
-            _stateSubmitTimer.Change(StateCoalesceWindow, Timeout.InfiniteTimeSpan);
-        }
-    }
-
-    private void FlushScheduledState()
-    {
-        try
-        {
-            lock (_stateLock)
-            {
-                if (Volatile.Read(ref _disposed) != 0 || !_stateFlushScheduled)
-                    return;
-                _stateFlushScheduled = false;
-                SubmitPendingStateLocked();
-            }
-        }
-        catch (Exception ex)
-        {
-            if (Interlocked.Exchange(ref _asyncSubmitFailureReported, 1) == 0)
-            {
-                _emit(new Protocol.Message(
-                    Protocol.MessageType.Error,
-                    0,
-                    Protocol.ErrorPayload(-1, $"Unable to submit a coalesced DualSense state: {ex.Message}")));
-            }
-        }
-    }
-
-    private void SubmitPendingStateLocked()
-    {
-        if (!_stateDirty)
-            return;
+        // A thread-pool timer rounded the old 4 ms merge window to about
+        // 15.6 ms on this Windows path. Publish every received state without
+        // waiting for another packet, including neutral and release frames.
         _controller.SubmitState(in _state);
-        _stateDirty = false;
     }
 
     private void OnOutputDecoded(object? sender, HMOutputDecodedEventArgs output)
@@ -437,13 +375,6 @@ internal sealed class ControllerSession : IDisposable
                ticks % Stopwatch.Frequency * 1_000_000 / Stopwatch.Frequency;
     }
 
-    private void UpdateAxes(float lx, float ly, float rx, float ry, float lt, float rt)
-    {
-        var values = HMGamepadStateHelpers.StandardAxes(_profile, lx, ly, rx, ry, lt, rt);
-        foreach (var (axis, value) in values)
-            _state.Axes![axis] = value;
-    }
-
     private void SetTouch(int slot, bool active, uint pointerId, float x, float y)
     {
         var px = (ushort)Math.Clamp((int)Math.Round(x * 1919), 0, 1919);
@@ -525,16 +456,12 @@ internal sealed class ControllerSession : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+        // Wait for an in-flight submission and prevent later input from being
+        // submitted. Release the lock before the SDK tears down its threads.
         lock (_stateLock)
         {
-            // Wait for an in-flight timer callback before disposing the HID
-            // controller, and prevent a stale state from crossing sessions.
-            _stateSubmitTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            _stateSubmitTimer.Dispose();
-            _stateDirty = false;
-            _stateFlushScheduled = false;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
         }
         _audioEndpointGuard?.Dispose();
         _audioEndpointGuard = null;

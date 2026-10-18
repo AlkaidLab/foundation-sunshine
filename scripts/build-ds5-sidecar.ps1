@@ -70,7 +70,7 @@ foreach ($name in @('LICENSE.HIDMaestro', 'THIRD-PARTY-NOTICES.txt')) {
     Copy-Item -LiteralPath (Join-Path $buildRoot "hidmaestro-core-patch/$name") -Destination $output -Force
 }
 $runtimeMetadata = @{
-    component_version = '1.4.0'
+    component_version = '1.4.1'
     protocol = 1
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version

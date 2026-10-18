@@ -28,7 +28,7 @@ namespace platf::ds5 {
       std::ifstream stream(active_root / "component.json", std::ios::binary);
       boost::property_tree::read_json(stream, manifest);
       if (manifest.get<std::uint32_t>("protocol", 0) != virtual_device_host::protocol::VERSION ||
-          manifest.get<std::string>("component_version", "") != "1.4.0" ||
+          manifest.get<std::string>("component_version", "") != "1.4.1" ||
           manifest.get<std::string>("sidecar_file", "") != "Sunshine.Ds5Sidecar.exe") {
         error = "The active DualSense component manifest is incomplete or incompatible";
         return false;

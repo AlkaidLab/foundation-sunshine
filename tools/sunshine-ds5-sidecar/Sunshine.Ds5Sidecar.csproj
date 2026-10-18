@@ -13,6 +13,11 @@
     <Error Text="HIDMaestro.Core.dll was not found. Build the Foundation v1.12.0 Core patch and set HIDMaestroCorePath to its output." />
   </Target>
   <ItemGroup>
+    <!-- Input arrives in short bursts separated by about 1 ms. The pinned
+         .NET 10 portable pool's default semaphore spin budget burns CPU
+         between those bursts. Sleep on the signal instead; this does not
+         throttle input or change timer resolution. -->
+    <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.UnfairSemaphoreSpinLimit" Value="0" />
     <Reference Include="HIDMaestro.Core">
       <HintPath>$(HIDMaestroCorePath)</HintPath>
       <Private>true</Private>
