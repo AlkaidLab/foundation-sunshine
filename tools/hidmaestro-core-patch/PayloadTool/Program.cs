@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Win32;
 
-if (args.Length < 2) throw new ArgumentException("extract <assembly> <directory> | verify <original> <patched> | test <patched> <profile>");
+if (args.Length < 3) throw new ArgumentException("extract <assembly> <directory> | verify <original> <patched> | test <patched> <profile> | audio-test <patched> <composite-profile>");
 var context = new AssemblyLoadContext("payload", isCollectible: true);
 var assembly = context.LoadFromAssemblyPath(Path.GetFullPath(args[1]));
 if (args[0] == "extract")
@@ -41,6 +41,8 @@ else if (args[0] == "verify")
     }
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
         a.Key == "FoundationCorePatch" && a.Value == "device-ownership-1"), "patch marker missing");
+    Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
+        a.Key == "FoundationUsbAudioPacing" && a.Value == "waitable-timer-1"), "USB audio pacing patch marker missing");
     Console.WriteLine($"SDK identity/API unchanged; {names.Length} resources byte-identical");
 }
 else if (args[0] == "test")
@@ -198,6 +200,10 @@ else if (args[0] == "test")
         isolated.Dispose();
         Registry.CurrentUser.DeleteSubKeyTree(isolatedPath);
     }
+}
+else if (args[0] == "audio-test")
+{
+    UsbAudioPacingChecks.Run(assembly, args[2]);
 }
 else throw new ArgumentException("Unknown command");
 
