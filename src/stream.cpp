@@ -864,7 +864,7 @@ namespace stream {
     ctx.mic_socket_enabled.store(false);
 
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
-    auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
+    auto protocol = net::bind_uses_ipv4(address_family) ? udp::v4() : udp::v6();
     auto mic_port = net::map_port(MIC_STREAM_PORT);
     boost::system::error_code ec;
 
@@ -3891,7 +3891,7 @@ namespace stream {
   int
   start_broadcast(broadcast_ctx_t &ctx) {
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
-    auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
+    auto protocol = net::bind_uses_ipv4(address_family) ? udp::v4() : udp::v6();
     auto control_port = net::map_port(CONTROL_PORT);
     auto video_port = net::map_port(VIDEO_STREAM_PORT);
     auto audio_port = net::map_port(AUDIO_STREAM_PORT);
@@ -4207,6 +4207,11 @@ namespace stream {
                       << ", reason="sv << stop_reason_name(reason) << ']';
 
       session.shutdown_event->raise(true);
+    }
+
+    bool
+    belongs_to_client(const session_t &session, const std::string &uuid) {
+      return !uuid.empty() && session.client_cert_uuid == uuid;
     }
 
     void

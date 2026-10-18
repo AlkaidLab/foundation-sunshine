@@ -1,6 +1,8 @@
 <template>
   <div class="form-group-enhanced">
-    <label :for="id" class="form-label-enhanced" :class="{ 'required-field': required }">{{ label }}</label>
+    <label :for="id" class="form-label-enhanced">
+      {{ label }}<span v-if="required" class="required-field" aria-hidden="true"></span>
+    </label>
     <slot></slot>
     <div v-if="validation && !validation.isValid" class="invalid-feedback">{{ validation.message }}</div>
     <div v-if="validation && validation.isValid && value" class="valid-feedback">{{ $t('_common.valid') }}</div>

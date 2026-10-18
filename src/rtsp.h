@@ -184,6 +184,9 @@ namespace rtsp_stream {
   void
   terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion);
 
+  /// Revoke pending tickets and stop only sessions authenticated as this client.
+  void terminate_client_sessions(const std::string &uuid);
+
   /**
    * @brief Terminates streaming sessions asynchronously when a predicate is still true.
    * @param reason Reason recorded for sessions that are still running.

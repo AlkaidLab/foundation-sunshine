@@ -3,6 +3,7 @@ import { trackEvents } from '../config/firebase.js'
 import { getBootstrapConfig } from '../config/bootstrapData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
+import { validateListenerSettings } from '../utils/listenerSettings.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -98,6 +99,7 @@ const DEFAULT_TABS = [
     options: {
       upnp: 'disabled',
       address_family: 'ipv4',
+      bind_address: '',
       port: 47989,
       origin_web_ui_allowed: 'lan',
       external_ip: '',
@@ -348,6 +350,7 @@ const createRisk = (
  */
 export function useConfig() {
   const validationError = ref('')
+  const saveError = ref('')
   const platform = ref('')
   const saved = ref(false)
   const restarted = ref(false)
@@ -616,6 +619,9 @@ export function useConfig() {
     saved.value = false
     restarted.value = false
     validationError.value = ''
+    saveError.value = ''
+    validationError.value = validateListenerSettings(config.value)
+    if (validationError.value) return false
     if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
       validationError.value = 'config.amd_hevc_gop_size_desc'
       return false
@@ -640,11 +646,13 @@ export function useConfig() {
       if (saved.value) {
         trackEvents.configChanged(currentTab.value, 'save')
         saveSnapshots()
+        window.dispatchEvent(new Event('sunshine:config-saved'))
       }
 
       return saved.value
     } catch (error) {
       console.error('Save failed:', error)
+      saveError.value = error.message
       trackEvents.errorOccurred('config_save', error.message)
       return false
     }
@@ -660,16 +668,17 @@ export function useConfig() {
     const result = await save()
     if (!result) return
 
-    restarted.value = true
-    setTimeout(() => {
-      saved.value = false
-      restarted.value = false
-    }, 5000)
-
     try {
-      await apiFetch('/api/restart', { method: 'POST' })
+      const response = await apiFetch('/api/restart', { method: 'POST' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      restarted.value = true
+      setTimeout(() => {
+        saved.value = false
+        restarted.value = false
+      }, 5000)
       trackEvents.userAction('config_applied')
     } catch (error) {
+      saveError.value = error.message
       console.error('Failed to restart:', error)
     }
   }
@@ -756,6 +765,7 @@ export function useConfig() {
 
   return {
     validationError,
+    saveError,
     platform,
     saved,
     restarted,

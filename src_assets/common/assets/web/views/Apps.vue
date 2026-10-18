@@ -149,11 +149,12 @@
 
       <!-- 应用卡片列表 -->
       <div class="apps-grid-container">
-        <!-- 网格视图 - 拖拽模式 -->
+        <!-- 网格视图 -->
         <draggable
-          v-if="viewMode === 'grid' && !searchQuery"
-          v-model="apps"
-          :item-key="getAppRenderKey"
+          v-if="viewMode === 'grid'"
+          :model-value="filteredAppsWithIndex"
+          @update:model-value="reorderApps"
+          :item-key="({ app }) => getAppRenderKey(app)"
           class="apps-grid"
           :animation="300"
           handle=".drag-handle"
@@ -161,14 +162,14 @@
           :delay-on-touch-only="true"
           :touch-start-threshold="8"
           :fallback-tolerance="8"
-          :disabled="false"
+          :disabled="!!searchQuery || selectionMode"
           ghost-class="app-card-ghost"
           chosen-class="app-card-chosen"
           drag-class="app-card-drag"
           @start="onDragStart"
           @end="onDragEnd"
         >
-          <template #item="{ element: app, index }">
+          <template #item="{ element: { app, index } }">
             <div class="app-card-wrapper" :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(index) }">
               <div
                 v-if="selectionMode"
@@ -185,7 +186,8 @@
               </div>
               <AppCard
                 :app="app"
-                :draggable="!selectionMode"
+                :draggable="!searchQuery && !selectionMode"
+                :is-search-result="!!searchQuery"
                 :is-dragging="isDragging"
                 @edit="selectionMode ? toggleAppSelection(index) : editApp(index)"
                 @delete="showDeleteForm(index)"
@@ -196,45 +198,12 @@
           </template>
         </draggable>
 
-        <!-- 网格视图 - 搜索模式 -->
-        <div v-else-if="viewMode === 'grid' && searchQuery" class="apps-grid">
-          <div
-            v-for="({ app, index: originalIndex }, index) in filteredAppsWithIndex"
-            :key="`search-grid-${app.name}-${originalIndex}-${index}`"
-            class="app-card-wrapper"
-            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(originalIndex) }"
-          >
-            <div
-              v-if="selectionMode"
-              class="app-select-checkbox"
-              role="checkbox"
-              tabindex="0"
-              :aria-checked="isAppSelected(originalIndex)"
-              :aria-label="$t('apps.batch_select_toggle')"
-              @click.stop="toggleAppSelection(originalIndex)"
-              @keydown.space.prevent="toggleAppSelection(originalIndex)"
-              @keydown.enter.prevent="toggleAppSelection(originalIndex)"
-            >
-              <i class="fas" :class="isAppSelected(originalIndex) ? 'fa-square-check' : 'fa-square'"></i>
-            </div>
-            <AppCard
-              :app="app"
-              :draggable="false"
-              :is-search-result="true"
-              :is-dragging="false"
-              @edit="selectionMode ? toggleAppSelection(originalIndex) : editApp(originalIndex)"
-              @delete="showDeleteForm(originalIndex)"
-              @copy-success="handleCopySuccess"
-              @copy-error="handleCopyError"
-            />
-          </div>
-        </div>
-
-        <!-- 列表视图 - 拖拽模式 -->
+        <!-- 列表视图 -->
         <draggable
-          v-else-if="viewMode === 'list' && !searchQuery"
-          v-model="apps"
-          :item-key="getAppRenderKey"
+          v-else-if="viewMode === 'list'"
+          :model-value="filteredAppsWithIndex"
+          @update:model-value="reorderApps"
+          :item-key="({ app }) => getAppRenderKey(app)"
           class="apps-list"
           :animation="300"
           handle=".drag-handle-list"
@@ -242,14 +211,14 @@
           :delay-on-touch-only="true"
           :touch-start-threshold="8"
           :fallback-tolerance="8"
-          :disabled="false"
+          :disabled="!!searchQuery || selectionMode"
           ghost-class="app-list-item-ghost"
           chosen-class="app-list-item-chosen"
           drag-class="app-list-item-drag"
           @start="onDragStart"
           @end="onDragEnd"
         >
-          <template #item="{ element: app, index }">
+          <template #item="{ element: { app, index } }">
             <div class="app-list-wrapper" :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(index) }">
               <div
                 v-if="selectionMode"
@@ -266,7 +235,8 @@
               </div>
               <AppListItem
                 :app="app"
-                :draggable="!selectionMode"
+                :draggable="!searchQuery && !selectionMode"
+                :is-search-result="!!searchQuery"
                 :is-dragging="isDragging"
                 @edit="selectionMode ? toggleAppSelection(index) : editApp(index)"
                 @delete="showDeleteForm(index)"
@@ -276,40 +246,6 @@
             </div>
           </template>
         </draggable>
-
-        <!-- 列表视图 - 搜索模式 -->
-        <div v-else-if="viewMode === 'list' && searchQuery" class="apps-list">
-          <div
-            v-for="({ app, index: originalIndex }, index) in filteredAppsWithIndex"
-            :key="`search-list-${app.name}-${originalIndex}-${index}`"
-            class="app-list-wrapper"
-            :class="{ 'selection-mode': selectionMode, 'is-selected': isAppSelected(originalIndex) }"
-          >
-            <div
-              v-if="selectionMode"
-              class="app-select-checkbox app-select-checkbox--list"
-              role="checkbox"
-              tabindex="0"
-              :aria-checked="isAppSelected(originalIndex)"
-              :aria-label="$t('apps.batch_select_toggle')"
-              @click.stop="toggleAppSelection(originalIndex)"
-              @keydown.space.prevent="toggleAppSelection(originalIndex)"
-              @keydown.enter.prevent="toggleAppSelection(originalIndex)"
-            >
-              <i class="fas" :class="isAppSelected(originalIndex) ? 'fa-square-check' : 'fa-square'"></i>
-            </div>
-            <AppListItem
-              :app="app"
-              :draggable="false"
-              :is-search-result="true"
-              :is-dragging="false"
-              @edit="selectionMode ? toggleAppSelection(originalIndex) : editApp(originalIndex)"
-              @delete="showDeleteForm(originalIndex)"
-              @copy-success="handleCopySuccess"
-              @copy-error="handleCopyError"
-            />
-          </div>
-        </div>
 
         <!-- 空状态 - 搜索无结果 -->
         <div v-if="searchQuery && filteredApps.length === 0" class="empty-state">
@@ -649,6 +585,7 @@ const {
   loadPlatform,
   clearSearch,
   getAppRenderKey,
+  reorderApps,
   newApp,
   editApp,
   closeAppEditor,
@@ -713,8 +650,9 @@ onMounted(async () => {
   isLoaded.value = true
 })
 
-watch(searchQuery, () => {
-  debouncedSearch.value?.()
+watch(searchQuery, (query) => {
+  if (query) debouncedSearch.value?.()
+  else clearSearch()
 })
 
 // 处理扫描结果编辑
