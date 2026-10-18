@@ -497,7 +497,9 @@ TEST_F(BeastHttp, CopiedRoutesRunOnTwoBoundAddressesAndStoppingOneDoesNotStopThe
   EXPECT_EQ(primary.request("POST", "/echo", "still-running")->content.string(), "127.0.0.1:still-running");
 }
 
-TEST_F(BeastHttp, ShutdownCancelsSuspendedHandshakeHeaderAndBodyReadsAndReleasesTheirRequests) {
+class BeastHttpShutdown: public BeastHttp, public testing::WithParamInterface<bool> {};
+
+TEST_P(BeastHttpShutdown, ShutdownCancelsSuspendedHandshakeHeaderAndBodyReadsAndReleasesTheirRequests) {
   encrypted = secure_server();
   std::mutex mutex;
   std::vector<std::weak_ptr<web::Request>> cancelled;
@@ -513,9 +515,18 @@ TEST_F(BeastHttp, ShutdownCancelsSuspendedHandshakeHeaderAndBodyReadsAndReleases
   auto headers = socket(port);
   auto body = socket(port);
   const std::string partial_header = "POST /echo HTTP/1.1\r\nHost: localhost\r\n";
-  const std::string partial_body = "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\none";
+  std::string partial_body = "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n";
+  if (GetParam()) partial_body += "Expect: 100-continue\r\n";
+  partial_body += "\r\none";
   net::write(*headers, net::buffer(partial_header));
   net::write(*body, net::buffer(partial_body));
+  if (GetParam()) {
+    // Also cover shutdown after the server has acknowledged the body read.
+    // The other variant keeps the immediate TLS-completion/shutdown race.
+    http::response<http::empty_body> interim;
+    http::read(*body, buffer, interim);
+    EXPECT_EQ(interim.result(), http::status::continue_);
+  }
   const auto before = std::chrono::steady_clock::now();
   encrypted->stop();
   listener.join();
@@ -524,6 +535,8 @@ TEST_F(BeastHttp, ShutdownCancelsSuspendedHandshakeHeaderAndBodyReadsAndReleases
   ASSERT_EQ(cancelled.size(), 3);
   for (const auto &request : cancelled) EXPECT_TRUE(request.expired());
 }
+
+INSTANTIATE_TEST_SUITE_P(ShutdownTiming, BeastHttpShutdown, testing::Bool());
 
 TEST_F(BeastHttp, Ipv6WildcardListenerAcceptsIpv4AndIpv6Clients) {
   {

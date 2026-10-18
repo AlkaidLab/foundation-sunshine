@@ -1,7 +1,7 @@
 # Foundation HIDMaestro Core patch
 
-Sidecar component 1.4.0 uses HIDMaestro v1.12.0 with a small managed-code
-device-cleanup ownership patch. The v1.12.0 API, assembly/file versions and all
+Sidecar component 1.4.1 uses HIDMaestro v1.12.0 with managed-code patches for
+device-cleanup ownership and USB audio pacing. The v1.12.0 API, assembly/file versions and all
 official embedded resources are preserved. The complete component includes Core,
 runtime, licenses and notices; the Control Panel uses verified staging and
 whole-component rollback. Sidecar checks the exact runtime version and
@@ -43,3 +43,8 @@ cleanup cannot restore a Windows mapping an older SDK already deleted.
 Before dropping the remaining patch, verify that upstream cleanup also rejects
 unknown-parent HID children and shared interface keys without ownership proof.
 Source: https://github.com/hifihedgehog/HIDMaestro/tree/v1.12.0
+
+`usb-audio-pacing.patch` replaces the audio pump's 200-microsecond spin tail
+with a full-deadline wait on its existing high-resolution timer. New work and
+shutdown still interrupt the wait; timer failures use a blocking fallback.
+Stream cursors, PCM handling and uncapped HID input remain unchanged.

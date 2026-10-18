@@ -1,0 +1,71 @@
+--- a/sdk/HIDMaestro.Core/Internal/Usbip/UsbAudioEngine.cs
++++ b/sdk/HIDMaestro.Core/Internal/Usbip/UsbAudioEngine.cs
+@@ -11,13 +11,13 @@
+ /// interval, delivers speaker/haptic PCM to the consumer, and sources
+ /// microphone PCM from the consumer's feed.
+ ///
+-/// <para>Pacing model, from the pacing spike this design gated on: a
+-/// dedicated highest-priority thread parks on a high-resolution waitable
+-/// timer armed at the next URB's absolute due time, with a short spin to
+-/// land the completion. A stream cursor advances one service interval per
+-/// isochronous packet, so an URB carrying N packets completes N ms after
+-/// the previous one, which makes this device the audio clock exactly the
+-/// way a real adaptive-sink pad is. The host's own multi-URB lead is the
++/// <para>Pacing model: a dedicated highest-priority thread parks on a
++/// high-resolution waitable timer for the next URB's full remaining
++/// deadline. A submit or disposal signal wakes it to re-evaluate work.
++/// A stream cursor advances one service interval per isochronous packet,
++/// so an URB carrying N packets completes N ms after the previous one.
++/// This makes the device the audio clock, like a real adaptive-sink pad.
++/// The host's multi-URB lead is the
+ /// jitter buffer; submit-side outliers are absorbed because due times
+ /// come from the cursor, not from arrival time. When nothing is pending
+ /// the thread parks on an event and costs nothing, which is what keeps
+@@ -60,7 +60,6 @@
+     private long _outCursor;
+     private long _inCursor;
+     private static readonly long TicksPerMs = Stopwatch.Frequency / 1000;
+-    private static readonly double TicksPerUs = Stopwatch.Frequency / 1_000_000.0;
+ 
+     // Virtual USB frame counter: milliseconds since engine start. Reported
+     // in ret_submit.start_frame, mirroring a real HC's running frame index.
+@@ -483,29 +482,18 @@
+             long remaining = nextDue - Stopwatch.GetTimestamp();
+             if (remaining > 0)
+             {
+-                // Land ~200 µs early on the timer, close the rest spinning.
+-                long timerTicks = remaining - (long)(200 * TicksPerUs);
+-                if (timerTicks > 0 && _timer != IntPtr.Zero)
++                // Sleep until the full deadline; do not reserve a CPU spin
++                // tail. A submit or stop signal re-evaluates the pending work.
++                if (_timer != IntPtr.Zero)
+                 {
+-                    long due = -(timerTicks * 10_000_000L / Stopwatch.Frequency); // relative 100 ns units
+-                    if (SetWaitableTimer(_timer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false))
+-                    {
+-                        WaitForMultipleObjects(2, _waitPair, false, 250);
+-                    }
+-                    else
+-                    {
+-                        _wake.WaitOne(1);
+-                    }
++                    long due = -Math.Max(1, remaining * 10_000_000L / Stopwatch.Frequency);
++                    if (SetWaitableTimer(_timer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false)
++                        && WaitForMultipleObjects(2, _waitPair, false, 250) != uint.MaxValue)
++                        continue;
+                 }
+-                while (Stopwatch.GetTimestamp() < nextDue && !_stop)
+-                {
+-                    if (nextDue - Stopwatch.GetTimestamp() > (long)(500 * TicksPerUs))
+-                    {
+-                        Thread.Yield();
+-                        break; // a new earlier submit may have arrived; re-evaluate
+-                    }
+-                    Thread.SpinWait(20);
+-                }
++                // Timer creation, arming or waiting failed: keep the pump
++                // functional without turning the fallback into a busy loop.
++                _wake.WaitOne(1);
+             }
+         }
+     }

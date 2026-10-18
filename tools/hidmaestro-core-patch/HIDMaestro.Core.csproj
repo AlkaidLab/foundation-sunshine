@@ -8,7 +8,7 @@
     <Version>1.12.0</Version>
     <AssemblyVersion>1.12.0.0</AssemblyVersion>
     <FileVersion>1.12.0.0</FileVersion>
-    <InformationalVersion>1.12.0+foundation.device-ownership.1</InformationalVersion>
+    <InformationalVersion>1.12.0+foundation.device-ownership.1.audio-pacing.1</InformationalVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

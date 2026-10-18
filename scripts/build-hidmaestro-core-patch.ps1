@@ -64,11 +64,13 @@ foreach ($directory in @($sourceDirectory, $payload)) {
 }
 Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceDirectory
 $source = Join-Path $sourceDirectory "HIDMaestro-$($pin.commit)"
-$patch = Join-Path $patchRoot 'device-ownership.patch'
-& git apply --check --unsafe-paths "--directory=$source" $patch
-if ($LASTEXITCODE -ne 0) { throw 'Core patch no longer applies exactly to the pinned source' }
-& git apply --unsafe-paths "--directory=$source" $patch
-if ($LASTEXITCODE -ne 0) { throw 'Unable to apply Core patch' }
+foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch')) {
+    $patch = Join-Path $patchRoot $name
+    & git apply --check --unsafe-paths "--directory=$source" $patch
+    if ($LASTEXITCODE -ne 0) { throw "Core patch $name no longer applies exactly to the pinned source" }
+    & git apply --unsafe-paths "--directory=$source" $patch
+    if ($LASTEXITCODE -ne 0) { throw "Unable to apply Core patch $name" }
+}
 
 $payloadToolProject = Join-Path $patchRoot 'PayloadTool/PayloadTool.csproj'
 & $DotnetPath build $payloadToolProject -c Release --nologo
@@ -88,4 +90,4 @@ if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership reg
 
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'THIRD-PARTY-NOTICES.txt') -Destination $output -Force
-Write-Host "Built $($pin.patch): $core"
+Write-Host "Built managed Core patches: $core"
