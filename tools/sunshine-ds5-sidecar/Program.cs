@@ -48,6 +48,8 @@ if (selfCheck)
         channel_isolation = true,
         protocol_abi = true,
         host_protocol = true,
+        protocol_frame_reader = true,
+        cached_standard_axes = true,
         microphone_pcm_queue = true,
         hidmaestro_microphone_contract = true,
         virtual_microphone_session = true,

@@ -13,7 +13,7 @@ Build the compatible Foundation Core patch and the sidecar:
 scripts/build-ds5-sidecar.ps1
 ```
 
-The version 1.4.0 component ZIP includes patched `HIDMaestro.Core.dll`, its
+The version 1.4.1 component ZIP includes patched `HIDMaestro.Core.dll`, its
 licenses, and the complete .NET runtime. The main Sunshine package contains only
 the pinned ZIP download manifest. The Control Panel automatically updates older
 installed components when streaming is idle, using the existing administrator
@@ -42,6 +42,29 @@ The production process must be launched elevated and placed in the Sunshine
 Job Object. The pipe accepts a single elevated client of the creating user;
 non-elevated callers are rejected at connect time and dropped without
 ending the sidecar.
+Input, touch, motion and battery updates submit their combined state directly
+on receipt under the session state lock. They do not use a thread-pool timer:
+even a 1 ms timer can run at roughly 15.6 ms intervals on Windows and reduce
+continuous input to about 64 Hz. The sidecar preserves the incoming update
+cadence; it does not synthesize repeated reports to inflate polling-rate tests.
+The pipe reader reuses a receive buffer for headers and payloads, dispatching
+complete frames as soon as they arrive. This removes separate header/body reads
+and per-input payload allocations without adding a batching delay. Microphone
+PCM retains its own copy because its queue outlives the receive buffer. The
+device-free `--self-check` covers fragmented/packed frames, length validation,
+EOF, cancellation and retained PCM ownership.
+The reader uses one async state machine per pending frame. Standard axis
+bindings are resolved once through the SDK at controller creation and update
+the existing state dictionary in place. This avoids rebuilding the SDK's
+stick/trigger lists and axis dictionary on every input update. `--self-check`
+compares the cached mapping against the SDK's complete bundled profile catalog
+and checks that steady-state axis updates allocate no managed objects.
+The pinned .NET 10 runtime config sets
+`System.Threading.ThreadPool.UnfairSemaphoreSpinLimit` to zero for this process.
+Pool workers wait for a signal instead of spinning between short input bursts.
+This adds no report-rate limiter or timer. Because it trades spinning for OS
+wakeups, CPU and report-interval tests should be repeated when changing the
+bundled runtime or enabling additional concurrent input/audio workloads.
 Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.

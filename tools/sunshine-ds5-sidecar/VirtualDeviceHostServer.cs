@@ -112,79 +112,81 @@ internal sealed class VirtualDeviceHostServer : IAsyncDisposable
     private async Task ReadLoopAsync(Stream pipe, CancellationToken cancellationToken)
     {
         var helloSeen = false;
-        var headerBytes = new byte[Protocol.HeaderSize];
+        var reader = new ProtocolFrameReader();
         while (!cancellationToken.IsCancellationRequested)
         {
-            await ReadExactlyAsync(pipe, headerBytes, cancellationToken);
-            var header = Protocol.DecodeHeader(headerBytes);
-            var payload = new byte[header.PayloadLength];
-            if (payload.Length != 0)
-                await ReadExactlyAsync(pipe, payload, cancellationToken);
+            var frame = await reader.ReadAsync(pipe, cancellationToken);
+            Dispatch(frame.Header, frame.Payload.Span, ref helloSeen);
+        }
+    }
 
-            if (!helloSeen && header.Type != Protocol.MessageType.Hello)
-                throw new InvalidDataException("hello must be the first sidecar message");
+    private void Dispatch(Protocol.Header header, ReadOnlySpan<byte> payload, ref bool helloSeen)
+    {
+        if (!helloSeen && header.Type != Protocol.MessageType.Hello)
+            throw new InvalidDataException("hello must be the first sidecar message");
 
-            try
+        try
+        {
+            switch (header.Type)
             {
-                switch (header.Type)
-                {
-                    case Protocol.MessageType.Hello:
-                        if (helloSeen || payload.Length != 4)
-                            throw new InvalidDataException("Invalid hello payload");
-                        helloSeen = true;
-                        Emit(new Protocol.Message(
-                            Protocol.MessageType.HelloReply,
-                            header.RequestId,
-                            Protocol.UInt32((uint)_devices.Capabilities)));
-                        break;
-                    case Protocol.MessageType.Attach:
-                        _devices.Attach(header.RequestId, payload);
-                        break;
-                    case Protocol.MessageType.Detach:
-                        _devices.Detach(header.RequestId, payload);
-                        break;
-                    case Protocol.MessageType.InputState:
-                        _devices.GetController(payload).SubmitInput(payload);
-                        break;
-                    case Protocol.MessageType.Touch:
-                        _devices.GetController(payload).SubmitTouch(payload);
-                        break;
-                    case Protocol.MessageType.Motion:
-                        _devices.GetController(payload).SubmitMotion(payload);
-                        break;
-                    case Protocol.MessageType.Battery:
-                        _devices.GetController(payload).SubmitBattery(payload);
-                        break;
-                    case Protocol.MessageType.MicCreate:
-                        RequireRequestId(header.RequestId, required: true);
-                        _devices.CreateMicrophone(header.RequestId, payload);
-                        break;
-                    case Protocol.MessageType.MicPcm:
-                        RequireRequestId(header.RequestId, required: false);
-                        _devices.SubmitMicrophonePcm(payload);
-                        break;
-                    case Protocol.MessageType.MicFlush:
-                        RequireRequestId(header.RequestId, required: true);
-                        _devices.FlushMicrophone(header.RequestId, payload);
-                        break;
-                    case Protocol.MessageType.MicDestroy:
-                        RequireRequestId(header.RequestId, required: true);
-                        _devices.DestroyMicrophone(header.RequestId, payload);
-                        break;
-                    case Protocol.MessageType.Shutdown:
-                        _sessionCancellation?.Cancel();
-                        return;
-                    default:
-                        throw new InvalidDataException($"Unsupported sidecar message {header.Type}");
-                }
+                case Protocol.MessageType.Hello:
+                    if (helloSeen || payload.Length != 4)
+                        throw new InvalidDataException("Invalid hello payload");
+                    helloSeen = true;
+                    Emit(new Protocol.Message(
+                        Protocol.MessageType.HelloReply,
+                        header.RequestId,
+                        Protocol.UInt32((uint)_devices.Capabilities)));
+                    break;
+                case Protocol.MessageType.Attach:
+                    _devices.Attach(header.RequestId, payload);
+                    break;
+                case Protocol.MessageType.Detach:
+                    _devices.Detach(header.RequestId, payload);
+                    break;
+                case Protocol.MessageType.InputState:
+                    _devices.GetController(payload).SubmitInput(payload);
+                    break;
+                case Protocol.MessageType.Touch:
+                    _devices.GetController(payload).SubmitTouch(payload);
+                    break;
+                case Protocol.MessageType.Motion:
+                    _devices.GetController(payload).SubmitMotion(payload);
+                    break;
+                case Protocol.MessageType.Battery:
+                    _devices.GetController(payload).SubmitBattery(payload);
+                    break;
+                case Protocol.MessageType.MicCreate:
+                    RequireRequestId(header.RequestId, required: true);
+                    _devices.CreateMicrophone(header.RequestId, payload);
+                    break;
+                case Protocol.MessageType.MicPcm:
+                    RequireRequestId(header.RequestId, required: false);
+                    // The PCM queue outlives this dispatch; unlike input
+                    // state, it cannot borrow the reader's next buffer.
+                    _devices.SubmitMicrophonePcm(payload.ToArray());
+                    break;
+                case Protocol.MessageType.MicFlush:
+                    RequireRequestId(header.RequestId, required: true);
+                    _devices.FlushMicrophone(header.RequestId, payload);
+                    break;
+                case Protocol.MessageType.MicDestroy:
+                    RequireRequestId(header.RequestId, required: true);
+                    _devices.DestroyMicrophone(header.RequestId, payload);
+                    break;
+                case Protocol.MessageType.Shutdown:
+                    _sessionCancellation?.Cancel();
+                    return;
+                default:
+                    throw new InvalidDataException($"Unsupported sidecar message {header.Type}");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Emit(new Protocol.Message(
-                    Protocol.MessageType.Error,
-                    header.RequestId,
-                    Protocol.ErrorPayload(-1, ex.Message)));
-            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Emit(new Protocol.Message(
+                Protocol.MessageType.Error,
+                header.RequestId,
+                Protocol.ErrorPayload(-1, ex.Message)));
         }
     }
 
@@ -241,18 +243,6 @@ internal sealed class VirtualDeviceHostServer : IAsyncDisposable
                     return;
                 }
             }
-        }
-    }
-
-    private static async Task ReadExactlyAsync(Stream stream, Memory<byte> destination, CancellationToken cancellationToken)
-    {
-        var read = 0;
-        while (read < destination.Length)
-        {
-            var count = await stream.ReadAsync(destination[read..], cancellationToken);
-            if (count == 0)
-                throw new EndOfStreamException();
-            read += count;
         }
     }
 
