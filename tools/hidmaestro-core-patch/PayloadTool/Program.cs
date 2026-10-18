@@ -5,7 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Win32;
 
-if (args.Length < 3) throw new ArgumentException("extract <assembly> <directory> | verify <original> <patched> | test <patched> <profile> | audio-test <patched> <composite-profile>");
+if (args.Length < 2) throw new ArgumentException("extract <assembly> <directory> | verify <original> <patched> | test <patched> <profile>");
 var context = new AssemblyLoadContext("payload", isCollectible: true);
 var assembly = context.LoadFromAssemblyPath(Path.GetFullPath(args[1]));
 if (args[0] == "extract")
@@ -41,8 +41,6 @@ else if (args[0] == "verify")
     }
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
         a.Key == "FoundationCorePatch" && a.Value == "device-ownership-1"), "patch marker missing");
-    Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
-        a.Key == "FoundationUsbAudioPacing" && a.Value == "waitable-timer-1"), "USB audio pacing patch marker missing");
     Console.WriteLine($"SDK identity/API unchanged; {names.Length} resources byte-identical");
 }
 else if (args[0] == "test")
@@ -201,19 +199,13 @@ else if (args[0] == "test")
         Registry.CurrentUser.DeleteSubKeyTree(isolatedPath);
     }
 }
-else if (args[0] == "audio-test")
-{
-    UsbAudioPacingChecks.Run(assembly, args[2]);
-}
 else throw new ArgumentException("Unknown command");
 
-/// <summary>Fails payload or ownership validation with a build-log diagnostic.</summary>
 static void Require(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
 }
 
-/// <summary>Returns a stable catalog of exported types and members for SDK compatibility comparison.</summary>
 static string[] Api(Assembly a) => a.GetExportedTypes().SelectMany(t =>
     t.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
         .Select(m => $"{t.FullName}: {m.MemberType} {m}"))
@@ -222,7 +214,6 @@ static string[] Api(Assembly a) => a.GetExportedTypes().SelectMany(t =>
 
 static class Native
 {
-    /// <summary>Redirects HKLM for the process-local registry regression fixture.</summary>
     [DllImport("advapi32.dll")]
     internal static extern int RegOverridePredefKey(nint key, nint replacement);
 }

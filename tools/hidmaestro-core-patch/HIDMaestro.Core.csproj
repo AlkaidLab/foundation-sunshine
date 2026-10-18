@@ -21,7 +21,6 @@
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="FoundationCorePatch" Value="device-ownership-1" />
-    <AssemblyMetadata Include="FoundationUsbAudioPacing" Value="waitable-timer-1" />
     <Compile Include="$(UpstreamSource)/sdk/HIDMaestro.Core/**/*.cs"
              Exclude="$(UpstreamSource)/sdk/HIDMaestro.Core/bin/**;$(UpstreamSource)/sdk/HIDMaestro.Core/obj/**" />
   </ItemGroup>

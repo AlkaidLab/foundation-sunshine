@@ -87,8 +87,6 @@ $core = Join-Path $output 'HIDMaestro.Core.dll'
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core changed the upstream ABI or embedded payload' }
 & $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense.json')
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership regressions failed' }
-& $DotnetPath $payloadTool audio-test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense-composite.json')
-if ($LASTEXITCODE -ne 0) { throw 'Patched Core USB audio pacing regressions failed' }
 
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'THIRD-PARTY-NOTICES.txt') -Destination $output -Force

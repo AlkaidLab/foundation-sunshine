@@ -65,17 +65,6 @@ Pool workers wait for a signal instead of spinning between short input bursts.
 This adds no report-rate limiter or timer. Because it trades spinning for OS
 wakeups, CPU and report-interval tests should be repeated when changing the
 bundled runtime or enabling additional concurrent input/audio workloads.
-The patched SDK's USB audio pump also waits on its high-resolution timer for
-the full URB deadline instead of waking early to spin for 200 microseconds.
-New audio work and shutdown interrupt that wait through the existing event.
-This preserves the audio stream cursor and leaves input submission uncapped.
-In a Windows WASAPI four-channel 48 kHz/16-bit test with concurrent 1000 Hz
-input, two 120-second trials per variant reduced mean Sidecar CPU from 10.20%
-to 8.54% of one logical core. HID arrivals remained about 999-1000 Hz; the
-checked PCM and haptics had no missing, repeated or unexpected zero frames.
-An Android V+ comparison also had normal sound, vibration and stopping in both
-variants. These are bounded validation results, not end-to-end latency or
-long-term reliability measurements.
 Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
