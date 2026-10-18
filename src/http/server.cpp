@@ -266,6 +266,8 @@ namespace web::detail {
     void
     close(error_code ec = {}) {
       if (closed.exchange(true)) return;
+      // A read/handshake completion can reach close before the posted cancel.
+      if (!ec && owner->stopping) ec = net::error::operation_aborted;
       response_timer.cancel();
       beast::get_lowest_layer(stream).close();
       for (auto &write : queue) write->complete(ec ? ec : net::error::operation_aborted);
