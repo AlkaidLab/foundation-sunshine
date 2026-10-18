@@ -207,11 +207,13 @@ else if (args[0] == "audio-test")
 }
 else throw new ArgumentException("Unknown command");
 
+/// <summary>Fails payload or ownership validation with a build-log diagnostic.</summary>
 static void Require(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
 }
 
+/// <summary>Returns a stable catalog of exported types and members for SDK compatibility comparison.</summary>
 static string[] Api(Assembly a) => a.GetExportedTypes().SelectMany(t =>
     t.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
         .Select(m => $"{t.FullName}: {m.MemberType} {m}"))
@@ -220,6 +222,7 @@ static string[] Api(Assembly a) => a.GetExportedTypes().SelectMany(t =>
 
 static class Native
 {
+    /// <summary>Redirects HKLM for the process-local registry regression fixture.</summary>
     [DllImport("advapi32.dll")]
     internal static extern int RegOverridePredefKey(nint key, nint replacement);
 }

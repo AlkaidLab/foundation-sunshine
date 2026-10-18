@@ -4,8 +4,10 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+/// <summary>Device-free regression checks against the pinned SDK's real audio engine.</summary>
 internal static class UsbAudioPacingChecks
 {
+    /// <summary>Checks audio data, deadline ordering, cancellation and pump shutdown without attaching devices.</summary>
     internal static void Run(Assembly assembly, string profilePath)
     {
         // Instantiate only the managed audio engine. No device, driver or
@@ -53,13 +55,16 @@ internal static class UsbAudioPacingChecks
         Console.WriteLine("PASS: audio deadlines, OUT PCM, IN silence, earlier-work wakeup, unlink/clear and idle/armed shutdown");
     }
 
+    /// <summary>Fails a regression check with a diagnostic carried by the build log.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
     }
 
+    /// <summary>A completion captured on the SDK's pacing thread.</summary>
     private sealed record Completion(uint Sequence, byte[]? Data, int PerPacket);
 
+    /// <summary>Adapts internal SDK methods for behavioral tests without creating a controller or transport.</summary>
     private sealed class Engine : IDisposable
     {
         private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public;
@@ -74,6 +79,7 @@ internal static class UsbAudioPacingChecks
         private readonly BlockingCollection<Completion> _completed = new();
         internal readonly ConcurrentQueue<byte[]> Output = new();
 
+        /// <summary>Creates the managed audio pump and observes its completion and OUT PCM callbacks.</summary>
         internal Engine(Assembly assembly, object profile)
         {
             var type = assembly.GetType("HIDMaestro.Internal.Usbip.UsbAudioEngine", true)!;
@@ -92,6 +98,7 @@ internal static class UsbAudioPacingChecks
                 (Action<ReadOnlyMemory<byte>>)(pcm => Output.Enqueue(pcm.ToArray())));
         }
 
+        /// <summary>Queues an ISO request with fixed 48 kHz packet sizes and optional OUT PCM.</summary>
         internal void Submit(uint sequence, bool isIn, int packets, byte[]? pcm = null)
         {
             var pending = Activator.CreateInstance(_pending)!;
@@ -105,9 +112,12 @@ internal static class UsbAudioPacingChecks
             _submit.Invoke(_instance, new[] { pending });
         }
 
+        /// <summary>Cancels a request and reports whether it was still pending.</summary>
         internal bool Unlink(uint sequence) => (bool)_unlink.Invoke(_instance, new object[] { sequence })!;
+        /// <summary>Drops pending requests while retaining the engine's per-direction stream cursors.</summary>
         internal void Clear() => _clear.Invoke(_instance, null);
 
+        /// <summary>Waits for progress and rejects completions that occurred before their deadline.</summary>
         internal Completion Next()
         {
             Require(_completed.TryTake(out var completion, TimeSpan.FromSeconds(3)), "audio completion timed out");
@@ -115,6 +125,7 @@ internal static class UsbAudioPacingChecks
             return completion!;
         }
 
+        /// <summary>Records data and checks the deadline at callback time, before the test consumes it.</summary>
         private void Completed<T>(T pending, byte[]? data, int perPacket)
         {
             // Assert on the calling thread via Next(), not on the SDK worker.
@@ -122,6 +133,7 @@ internal static class UsbAudioPacingChecks
             _completed.Add(new Completion(early ? uint.MaxValue : (uint)_sequence.GetValue(pending)!, data, perPacket));
         }
 
+        /// <summary>Stops the pacing thread before releasing its test completion queue.</summary>
         public void Dispose()
         {
             _instance.Dispose();
