@@ -360,6 +360,7 @@ namespace platf {
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
     constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
     constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
+    constexpr caps_t client_resolution_change = 0x400;  // Client-requested stream resolution changes (0x5506 RESOLUTION)
     constexpr caps_t endpoint_auto_refresh = 0x8000;  // Authenticated UDP endpoint migration v1
     constexpr caps_t host_session_state = 0x800;  // Session lock state updates (0x550E)
   };  // namespace platform_caps
