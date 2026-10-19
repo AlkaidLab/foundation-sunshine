@@ -1225,6 +1225,9 @@ namespace rtsp_stream {
       if (text_context::bridge_t::instance().gui_alive()) {
         caps |= platf::platform_caps::remote_text_context;
       }
+      if (stream::client_resolution_change_enabled(config::video, session.enable_sops)) {
+        caps |= platf::platform_caps::client_resolution_change;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
 #ifdef _WIN32
       if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,6 +19,10 @@
 #include "audio.h"
 #include "crypto.h"
 #include "video.h"
+
+namespace config {
+  struct video_t;
+}
 
 namespace rtsp_stream {
   struct launch_session_t;
@@ -43,6 +48,26 @@ namespace stream {
   video_rtp_timestamp(
     std::chrono::steady_clock::time_point presentation_time,
     std::chrono::steady_clock::time_point epoch);
+
+  /**
+   * @brief Whether a session may request stream resolution changes (0x5506 RESOLUTION).
+   *
+   * Shared by the RTSP feature flag (platform_caps::client_resolution_change) and the
+   * control-stream handler so the two cannot drift. Besides the opt-in, the capture loop only
+   * resizes the encoder and notifies the client (0x5507) when it follows the host display, and
+   * client-driven sizes are only exact when the launch mode was applied 1:1 (automatic resolution
+   * change with SOPS); otherwise its fixed scale ratio distorts them.
+   * Always false off Windows, where live display mode switching is not implemented.
+   */
+  bool
+  client_resolution_change_enabled(const config::video_t &video_config, bool session_enable_sops);
+
+  /**
+   * @brief Validate a client-requested stream resolution.
+   * @return The size rounded down to even dimensions, or nullopt when a dimension is out of range.
+   */
+  std::optional<std::pair<int, int>>
+  normalize_client_resolution_request(int width, int height);
 
   struct session_t;
   struct config_t {

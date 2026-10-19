@@ -45,6 +45,7 @@ extern "C" {
 #include "config.h"
 #include "streaming/fec.h"
 #include "display_device/display_device.h"
+#include "display_device/parsed_config.h"
 #include "display_device/session.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
@@ -140,6 +141,35 @@ namespace stream {
     using signed_rtp_tick = std::chrono::duration<std::int64_t, std::ratio<1, 90000>>;
     return static_cast<std::uint32_t>(
       std::chrono::round<signed_rtp_tick>(presentation_time - epoch).count());
+  }
+
+  bool
+  client_resolution_change_enabled([[maybe_unused]] const config::video_t &video_config, [[maybe_unused]] bool session_enable_sops) {
+#ifdef _WIN32
+    return video_config.allow_client_resolution_change &&
+           video_config.dynamic_resolution_follow_display &&
+           video_config.resolution_change == static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic) &&
+           session_enable_sops;
+#else
+    // Live display mode switching is only implemented on Windows.
+    return false;
+#endif
+  }
+
+  std::optional<std::pair<int, int>>
+  normalize_client_resolution_request(int width, int height) {
+    // The floor matches the Android client's and keeps tiny windows away from display
+    // modes that Windows or the VDD may reject mid-stream.
+    constexpr int min_dimension = 256;
+    constexpr int max_dimension = 16384;
+
+    // Encoders require even dimensions.
+    width &= ~1;
+    height &= ~1;
+    if (width < min_dimension || width > max_dimension || height < min_dimension || height > max_dimension) {
+      return std::nullopt;
+    }
+    return std::make_pair(width, height);
   }
 
   namespace {
@@ -702,6 +732,9 @@ namespace stream {
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::client_display_capabilities_t reported_hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
+
+    // Last accepted client-driven resolution change; only touched by the control thread.
+    std::chrono::steady_clock::time_point client_resolution_last_request {};
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
@@ -1962,20 +1995,37 @@ namespace stream {
       session->video.idr_events->raise(true);
     });
 
-    // 辅助函数：处理分辨率变更
-    auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
-      int old_width = session->config.monitor.width;
-      int old_height = session->config.monitor.height;
-      
-      BOOST_LOG(info) << "Dynamic resolution change requested: " << old_width << "x" << old_height 
-                      << " -> " << new_width << "x" << new_height;
-
-      // 验证分辨率范围
-      constexpr int MAX_RESOLUTION = 16384;
-      if (new_width <= 0 || new_width > MAX_RESOLUTION || new_height <= 0 || new_height > MAX_RESOLUTION) {
-        BOOST_LOG(warning) << "Invalid resolution value: " << new_width << "x" << new_height;
+    // 辅助函数：处理客户端请求的分辨率变更
+    // Only the display mode is changed here. The capture loop then follows the new display size
+    // (dynamic_resolution_follow_display), re-initializes the encoder and notifies the client (0x5507).
+    auto handle_resolution_change = [](session_t *session, int requested_width, int requested_height) {
+      // Re-validated here: the feature flag was computed at DESCRIBE and the config may have changed since.
+      if (!client_resolution_change_enabled(config::video, session->enable_sops)) {
+        BOOST_LOG(info) << "Ignoring client resolution change request to " << requested_width << "x" << requested_height
+                        << ": requires allow_client_resolution_change, dynamic_resolution_follow_display, automatic resolution_change"
+                        << " and a session started with \"Optimize game settings\"";
         return;
       }
+
+      // A control-only session has no stream of its own and must not resize another client's display.
+      if (session->control_only) {
+        BOOST_LOG(info) << "Ignoring client resolution change request from a control-only session";
+        return;
+      }
+
+      const auto requested = normalize_client_resolution_request(requested_width, requested_height);
+      if (!requested) {
+        BOOST_LOG(warning) << "Invalid resolution value: " << requested_width << "x" << requested_height;
+        return;
+      }
+      const int new_width = requested->first;
+      const int new_height = requested->second;
+
+      int old_width = session->config.monitor.width;
+      int old_height = session->config.monitor.height;
+
+      BOOST_LOG(info) << "Dynamic resolution change requested: " << old_width << "x" << old_height
+                      << " -> " << new_width << "x" << new_height;
 
       // 检查分辨率是否真的改变了
       if (old_width == new_width && old_height == new_height) {
@@ -1983,21 +2033,21 @@ namespace stream {
         return;
       }
 
+      // Clients debounce resizes; this only sheds request storms. It is measured from the start of the
+      // previous attempt, so a request that queued up behind a slow mode switch is still applied.
+      const auto now = std::chrono::steady_clock::now();
+      if (now - session->client_resolution_last_request < std::chrono::milliseconds(250)) {
+        BOOST_LOG(info) << "Dropping client resolution change request to " << new_width << "x" << new_height
+                        << ": less than 250 ms since the previous request";
+        return;
+      }
+      session->client_resolution_last_request = now;
+
       // 检测是否是旋转导致的宽高互换（例如：1920x1080 -> 1080x1920）
       bool is_rotation = (old_width == new_height && old_height == new_width);
       if (is_rotation) {
         BOOST_LOG(info) << "Detected display rotation: width and height swapped";
       }
-
-      // 更新会话配置
-      session->config.monitor.width = new_width;
-      session->config.monitor.height = new_height;
-      perf::update_session_display(
-        session->launch_session_id,
-        session->config.monitor.width,
-        session->config.monitor.height,
-        session->config.monitor.framerate
-      );
 
       // 创建临时的 launch_session_t 来更新显示设备配置
       // 注意：必须按照结构体声明顺序初始化字段
@@ -2023,6 +2073,7 @@ namespace stream {
       temp_launch_session.hdr_target_source = session->hdr_target_source;
 
       bool active_display_resolved = true;
+      std::string target_device_id;
       const auto active_display_event = mail::man->event<std::string>(mail::active_display);
       const auto active_display = active_display_event->view(std::chrono::milliseconds {0});
       const bool has_active_display = active_display && !active_display->empty();
@@ -2037,6 +2088,7 @@ namespace stream {
                  entry.second.friendly_name == target_display;
         });
         if (device_it != devices.end()) {
+          target_device_id = device_it->first;
           temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = device_it->first;
           temp_launch_session.use_vdd = device_it->second.friendly_name == ZAKO_NAME;
         }
@@ -2050,8 +2102,33 @@ namespace stream {
         }
       }
 
+      if (!active_display_resolved) {
+        return;
+      }
+
+      // The capture loop keeps its launch-time client/display scale ratio, so a client-driven size is only
+      // exact while the capture display still shows this stream's size: the launch mode (or the last
+      // client-driven change) was applied 1:1 and the host display has not changed underneath.
+      const auto display_shows_stream_size = [&]() {
+        if (target_device_id.empty()) {
+          return false;
+        }
+        const auto modes = display_device::get_current_display_modes({target_device_id});
+        const auto mode = modes.find(target_device_id);
+        if (mode == modes.end()) {
+          return false;
+        }
+        const auto width = static_cast<int>(mode->second.resolution.width);
+        const auto height = static_cast<int>(mode->second.resolution.height);
+        return (width == old_width && height == old_height) || (width == old_height && height == old_width);
+      };
+      if (!display_shows_stream_size()) {
+        BOOST_LOG(info) << "Ignoring client resolution change request: the capture display does not show the stream resolution "
+                        << old_width << "x" << old_height;
+        return;
+      }
+
       // 更新显示设备配置（重新配置模式）
-      // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
       if (is_rotation) {
         BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height 
                         << " -> " << new_width << "x" << new_height;
@@ -2060,29 +2137,37 @@ namespace stream {
         BOOST_LOG(info) << "Reconfiguring display device for new resolution: " << old_width << "x" << old_height 
                         << " -> " << new_width << "x" << new_height;
       }
-      
-      if (active_display_resolved) {
-        const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
-          const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
-          if (!result) {
-            BOOST_LOG(warning) << "Dynamic display reconfiguration failed: " << result.message;
-          }
-        });
-        if (!display_reconfigured) {
-          BOOST_LOG(info) << "Skipping display device reconfiguration for the dynamic resolution request because other streaming sessions are active";
-        }
+
+      std::optional<display_device::session_t::configure_result_t> result;
+      const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
+        result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+      });
+      if (!display_reconfigured) {
+        BOOST_LOG(info) << "Skipping display device reconfiguration for the dynamic resolution request because other streaming sessions are active";
+        return;
       }
-      else {
-        BOOST_LOG(info) << "Dynamic stream resolution updated without changing the unavailable capture display";
+
+      // deferred_retry is not a success here: the retry yields to active sessions, so the mode never
+      // applies mid-stream. Keep the current state; the client may request the size again.
+      if (result->result != display_device::session_t::configure_result_t::result_e::success) {
+        BOOST_LOG(warning) << "Dynamic display reconfiguration to " << new_width << "x" << new_height
+                           << " was not applied (result " << static_cast<int>(result->result) << "): " << result->message;
+        return;
       }
+
+      session->config.monitor.width = new_width;
+      session->config.monitor.height = new_height;
+      perf::update_session_display(
+        session->launch_session_id,
+        session->config.monitor.width,
+        session->config.monitor.height,
+        session->config.monitor.framerate
+      );
 
       // 请求 IDR 帧以确保客户端能正确显示新分辨率
       // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
       session->video.idr_events->raise(true);
 
-      // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
-      // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
-      // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
       BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
