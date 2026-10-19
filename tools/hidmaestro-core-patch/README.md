@@ -1,7 +1,7 @@
 # Foundation HIDMaestro Core patch
 
-Sidecar component 1.4.1 uses HIDMaestro v1.12.0 with managed-code patches for
-device-cleanup ownership and USB audio pacing. The v1.12.0 API, assembly/file versions and all
+Sidecar component 1.4.2 uses HIDMaestro v1.12.0 with managed-code patches for
+device-cleanup ownership, USB audio pacing and externally managed USB/IP. The v1.12.0 API, assembly/file versions and all
 official embedded resources are preserved. The complete component includes Core,
 runtime, licenses and notices; the Control Panel uses verified staging and
 whole-component rollback. Sidecar checks the exact runtime version and
@@ -48,3 +48,23 @@ Source: https://github.com/hifihedgehog/HIDMaestro/tree/v1.12.0
 with a full-deadline wait on its existing high-resolution timer. New work and
 shutdown still interrupt the wait; timer failures use a blocking fallback.
 Stream cursors, PCM handling and uncapped HID input remain unchanged.
+
+`managed-usbip.patch` makes `UsbipDriverInstaller.EnsureInstalled` a read-only
+guard. Both device creation and the SDK's explicit USB/IP install method reach
+this guard; neither can install, restart, replace, or stamp the shared driver.
+`HIDMAESTRO_KEEP_TRANSPORT=1` is insufficient upstream: it suppresses legacy
+replacement but still permits initial installation and devnode restart.
+
+The single compatibility contract is the GUI submodule's
+`src-tauri/component-compatibility.json`. GUI policy, build-time upstream ABI/
+driver/installer hash checks, and the embedded Sidecar/Core contract use it.
+The original 394 resources remain byte-identical; one contract resource is added.
+The extra `FoundationUsbipPolicy=externally-managed-v1` marker prevents an older
+driver-deploying Core from being mistaken for the managed runtime.
+
+Upgrade acceptance requires an idle host and no imported USB devices. Before
+activating the staged component, the installer performs two composite
+attach/detach cycles and checks that the shared tools/driver still match the
+contract and no imports remain. Failed acceptance leaves the active component
+untouched; a system-driver repair is an explicit manager operation rather than
+a component-directory rollback. Unverified newer transport versions are rejected.

@@ -9,10 +9,12 @@
     <HIDMaestroCorePath Condition="'$(HIDMaestroCorePath)' == ''">$(MSBuildProjectDirectory)\runtime\HIDMaestro.Core.dll</HIDMaestroCorePath>
   </PropertyGroup>
   <Target Name="RequireHIDMaestro" BeforeTargets="ResolveReferences"
-          Condition="!Exists('$(HIDMaestroCorePath)')">
+          Condition="!Exists('$(HIDMaestroCorePath)') or !Exists('$(CompatibilityManifestPath)')">
     <Error Text="HIDMaestro.Core.dll was not found. Build the Foundation v1.12.0 Core patch and set HIDMaestroCorePath to its output." />
   </Target>
   <ItemGroup>
+    <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
+    <None Include="$(CompatibilityManifestPath)" Link="component-compatibility.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- Input arrives in short bursts separated by about 1 ms. The pinned
          .NET 10 portable pool's default semaphore spin budget burns CPU
          between those bursts. Sleep on the signal instead; this does not

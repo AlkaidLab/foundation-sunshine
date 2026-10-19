@@ -31,8 +31,20 @@ else if (args[0] == "verify")
     var patched = patchedContext.LoadFromAssemblyPath(Path.GetFullPath(args[2]));
     Require(assembly.GetName().FullName == patched.GetName().FullName, "assembly identity changed");
     Require(Api(assembly).SequenceEqual(Api(patched)), "public SDK API changed");
+    using var compatibility = JsonDocument.Parse(File.ReadAllText(args[3]));
+    var usbip = compatibility.RootElement.GetProperty("usbip");
+    var originalInstaller = assembly.GetType("HIDMaestro.Internal.Usbip.UsbipDriverInstaller", true)!;
+    Require((string)originalInstaller.GetField("Version")!.GetRawConstantValue()! == usbip.GetProperty("version").GetString(),
+        "contract and upstream USB/IP ABI version disagree");
+    var pinnedDriverHash = (string)originalInstaller.GetMethod("PinnedUdeHash", BindingFlags.NonPublic | BindingFlags.Static)!
+        .Invoke(null, new object[] { "usbip2_ude.sys" })!;
+    Require(pinnedDriverHash == usbip.GetProperty("driver_sha256").GetString(), "contract and upstream driver hash disagree");
+    Require((string)originalInstaller.GetProperty("InstallerSha256", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)! ==
+        usbip.GetProperty("installer_sha256").GetString(), "contract and upstream installer hash disagree");
     var names = assembly.GetManifestResourceNames().Order().ToArray();
-    Require(names.SequenceEqual(patched.GetManifestResourceNames().Order()), "resource catalog changed");
+    Require(names.Append("Foundation.ComponentCompatibility.json").Order().SequenceEqual(patched.GetManifestResourceNames().Order()), "resource catalog changed");
+    using (var contract = patched.GetManifestResourceStream("Foundation.ComponentCompatibility.json")!)
+        Require(SHA256.HashData(contract).SequenceEqual(SHA256.HashData(File.ReadAllBytes(args[3]))), "compatibility contract changed");
     foreach (var name in names)
     {
         using var originalStream = assembly.GetManifestResourceStream(name)!;
@@ -41,10 +53,32 @@ else if (args[0] == "verify")
     }
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
         a.Key == "FoundationCorePatch" && a.Value == "device-ownership-1"), "patch marker missing");
+    Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
+        a.Key == "FoundationUsbipPolicy" && a.Value == "externally-managed-v1"), "external transport policy missing");
     Console.WriteLine($"SDK identity/API unchanged; {names.Length} resources byte-identical");
 }
 else if (args[0] == "test")
 {
+    var transport = assembly.GetType("HIDMaestro.Internal.Usbip.SharedUsbipTransport", true)!;
+    var validate = transport.GetMethod("ValidateState", BindingFlags.NonPublic | BindingFlags.Static)!;
+    using var contract = JsonDocument.Parse(File.ReadAllText(args[3]));
+    var driverHash = contract.RootElement.GetProperty("usbip").GetProperty("driver_sha256").GetString()!;
+    validate.Invoke(null, new object?[] { true, driverHash });
+    foreach (var state in new[] { (false, driverHash, "USBIP-SETUP-001:"), (true, new string('0', 64), "USBIP-EXEC-006:") })
+    {
+        try { validate.Invoke(null, new object?[] { state.Item1, state.Item2 }); Require(false, "incompatible driver accepted"); }
+        catch (TargetInvocationException error) when (error.InnerException is InvalidOperationException invalid)
+        { Require(invalid.Message.StartsWith(state.Item3), "incorrect shared transport diagnosis"); }
+    }
+    // The original public entry point must consist solely of the read-only
+    // guard. It cannot reach installer, restart, replacement or owner stamping.
+    var installer = assembly.GetType("HIDMaestro.Internal.Usbip.UsbipDriverInstaller", true)!;
+    var ensure = installer.GetMethod("EnsureInstalled", BindingFlags.Public | BindingFlags.Static)!;
+    var il = ensure.GetMethodBody()!.GetILAsByteArray()!;
+    Require(il.Length == 6 && il[0] == 0x28 && il[^1] == 0x2a &&
+        ensure.Module.ResolveMethod(BitConverter.ToInt32(il, 1))!.DeclaringType == transport,
+        "runtime deployment entry point escaped the read-only transport guard");
+    Console.WriteLine("Shared transport: missing/mismatched drivers fail closed; deployment entry point is read-only");
     // Run registry-only SDK paths with HKLM redirected inside this process
     // to a disposable HKCU hive. No driver deployment or PnP removal runs.
     var isolatedPath = $@"Software\FoundationSunshineTests\CorePatch-{Guid.NewGuid():N}";

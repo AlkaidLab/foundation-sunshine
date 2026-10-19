@@ -13,14 +13,14 @@ Build the compatible Foundation Core patch and the sidecar:
 scripts/build-ds5-sidecar.ps1
 ```
 
-The version 1.4.1 component ZIP includes patched `HIDMaestro.Core.dll`, its
+The version 1.4.2 component ZIP includes patched `HIDMaestro.Core.dll`, its
 licenses, and the complete .NET runtime. The main Sunshine package contains only
 the pinned ZIP download manifest. The Control Panel automatically updates older
 installed components when streaming is idle, using the existing administrator
 helper, verified staging and whole-component rollback. Optional USB/IP transport
 installation remains part of explicit install/repair, not automatic updates.
 The sidecar uses normal .NET loading and requires the v1.12.0 runtime and
-device-ownership patch marker even for `--probe`. Sunshine validates the
+device-ownership and externally managed USB/IP policy markers even for `--probe`. Sunshine validates the
 installed component without replacing DLLs.
 The upstream SDK API, assembly version and embedded resources are preserved; see
 [`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
@@ -36,6 +36,16 @@ layout, and channel-isolation checks (no elevation or virtual device required):
 
 ```powershell
 dotnet Sunshine.Ds5Sidecar.dll --self-check
+```
+
+USB/IP installation and repair belong to the shared component manager. Device
+creation only checks the approved driver and fails with a shared transport error
+when it is missing or incompatible. The ZIP carries `component-compatibility.json`,
+the same contract used by the GUI installer. The staged upgrade acceptance test
+requires elevation and an idle host, and creates/releases two composite devices:
+
+```powershell
+Sunshine.Ds5Sidecar.exe --self-test transport --result transport-acceptance.json
 ```
 
 The production process must be launched elevated and placed in the Sunshine

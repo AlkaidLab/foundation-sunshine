@@ -8,7 +8,7 @@
     <Version>1.12.0</Version>
     <AssemblyVersion>1.12.0.0</AssemblyVersion>
     <FileVersion>1.12.0.0</FileVersion>
-    <InformationalVersion>1.12.0+foundation.device-ownership.1.audio-pacing.1</InformationalVersion>
+    <InformationalVersion>1.12.0+foundation.device-ownership.1.audio-pacing.1.managed-usbip.1</InformationalVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -21,12 +21,15 @@
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="FoundationCorePatch" Value="device-ownership-1" />
+    <AssemblyMetadata Include="FoundationUsbipPolicy" Value="$(FoundationUsbipPolicy)" />
+    <Compile Include="SharedUsbipTransport.cs" />
+    <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
     <Compile Include="$(UpstreamSource)/sdk/HIDMaestro.Core/**/*.cs"
              Exclude="$(UpstreamSource)/sdk/HIDMaestro.Core/bin/**;$(UpstreamSource)/sdk/HIDMaestro.Core/obj/**" />
   </ItemGroup>
   <Import Project="$(PayloadDirectory)/resources.props" Condition="Exists('$(PayloadDirectory)/resources.props')" />
   <Target Name="RequireVerifiedInputs" BeforeTargets="BeforeBuild">
-    <Error Condition="'$(UpstreamSource)' == '' or '$(PayloadDirectory)' == ''"
+    <Error Condition="'$(UpstreamSource)' == '' or '$(PayloadDirectory)' == '' or !Exists('$(CompatibilityManifestPath)') or '$(FoundationUsbipPolicy)' == ''"
            Text="Use scripts/build-hidmaestro-core-patch.ps1 to prepare verified source and payload." />
   </Target>
 </Project>
