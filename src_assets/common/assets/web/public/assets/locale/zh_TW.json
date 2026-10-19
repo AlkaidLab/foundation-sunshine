@@ -327,6 +327,8 @@
     "address_family_both": "IPv4+IPv6",
     "address_family_desc": "設定 Sunshine 使用的位址族",
     "address_family_ipv4": "僅 IPv4",
+    "allow_client_resolution_change": "允許用戶端請求變更串流解析度",
+    "allow_client_resolution_change_desc": "啟用後，支援此功能的用戶端（例如可調整大小的 Moonlight 視窗，或旋轉／接入擴充座的 Android 裝置）可在串流期間請求變更解析度；主機會切換顯示模式（任意尺寸在虛擬顯示器上效果最佳），串流隨之跟隨。需同時開啟「串流中跟隨主機分辨率變化」並將解析度變更設為自動。預設關閉。",
     "always_send_scancodes": "永遠傳送掃描碼",
     "always_send_scancodes_desc": "傳送掃描碼可以增強與遊戲和應用程式的相容性，但可能會導致某些未使用美式英語鍵盤佈局的用戶端輸入錯誤。若某些應用程式的鍵盤輸入完全無效，請啟用此選項。若用戶端的鍵盤輸入在主機端產生錯誤輸入，則請停用此選項。",
     "amd_advanced_group": "AMF 進階調優",
