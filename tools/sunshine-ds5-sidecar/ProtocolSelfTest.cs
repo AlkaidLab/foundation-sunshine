@@ -386,8 +386,10 @@ internal static class ProtocolSelfTest
             BinaryPrimitives.ReadUInt32LittleEndian(message.Payload.AsSpan(20, 4)));
     }
 
-    internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath)
+    internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath,
+        bool genshinCompatibility = false)
     {
+        Require(!genshinCompatibility || composite, "Genshin compatibility requires composite self-test");
         RunDeterministicChecks();
         VerifyAdaptiveTriggerEncoding();
         var pipeName = $"sunshine-ds5-self-test-{Environment.ProcessId}-{Guid.NewGuid():N}";
@@ -411,8 +413,9 @@ internal static class ProtocolSelfTest
         Require(helloCapabilities.HasFlag(Protocol.Capability.AudioPolicyViolation),
             "hello audio endpoint policy capability");
 
+        var attachFlags = genshinCompatibility ? (byte)Protocol.AttachFlags.GenshinCompatibilityIdentity : (byte)0;
         await SendAsync(client, new Protocol.Message(
-            Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
+            Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
         var attach = await ReceiveAsync(client, stopping.Token);
         if (attach.Type == Protocol.MessageType.Error)
             throw new InvalidOperationException(DecodeError(attach.Payload));
@@ -423,6 +426,10 @@ internal static class ProtocolSelfTest
         Require(capabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "adaptive trigger capability");
         Require(!composite || capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
             "composite four-channel audio capability");
+        // Capability bits alone cannot prove that Windows retained the speaker
+        // setup required by games. Exercise the real COM enumeration/readback.
+        Require(!composite || DualSenseSpeakerConfiguration.IsConfigured(),
+            "quadraphonic endpoint format, available speakers and full-range speakers");
 
         var input = new byte[20];
         input[0] = 0;
@@ -497,7 +504,7 @@ internal static class ProtocolSelfTest
         // Reattach and intentionally drop the owner pipe without DETACH. Completion
         // of serverTask proves the EOF path disposed the still-attached controller.
         await SendAsync(client, new Protocol.Message(
-            Protocol.MessageType.Attach, 4, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
+            Protocol.MessageType.Attach, 4, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
         var ownerCleanupAttach = await ReceiveUntilAsync(
             client, Protocol.MessageType.AttachReply, 4, stopping.Token);
         Require(ownerCleanupAttach.Payload.Length == 8, "owner cleanup attach reply");
@@ -508,10 +515,12 @@ internal static class ProtocolSelfTest
         var result = JsonSerializer.Serialize(new
         {
             protocol = Protocol.Version,
-            profile = composite ? "dualsense-composite" : "dualsense",
+            profile = genshinCompatibility ? DualSenseHapticsAudio.GenshinCompatibilityProfileId
+                : composite ? "dualsense-composite" : "dualsense",
             hello = true,
             attached = true,
             four_channel_audio = capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
+            quadraphonic_configuration = composite,
             input = true,
             touch = true,
             motion = true,
@@ -948,6 +957,24 @@ internal static class ProtocolSelfTest
 
         Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(virtualDualSense[..2]),
             "physical DualSense endpoint exclusion");
+        var managedDualSense = new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"USB\VID_054C&PID_0CE6\HM2611F7204B0F",
+                new[] { @"USB\VID_054C&PID_0CE6" }),
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"ROOT\USB\0000", new[] { @"ROOT\USBIP_WIN2\UDE" }),
+        };
+        Require(DefaultAudioEndpointGuard.IsVirtualDualSenseChain(managedDualSense),
+            "managed DualSense classification without host-controller ownership stamping");
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(managedDualSense[..1]),
+            "HIDMaestro serial without shared transport exclusion");
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"USB\VID_054C&PID_0CE6\physical-sony", new[] { @"USB\VID_054C&PID_0CE6" }),
+            managedDualSense[1],
+        }), "physical Sony controller imported over USB/IP exclusion");
         Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(new[]
         {
             new DefaultAudioEndpointGuard.DeviceNodeIdentity(

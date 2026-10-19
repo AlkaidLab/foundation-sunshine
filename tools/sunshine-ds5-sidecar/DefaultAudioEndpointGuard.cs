@@ -98,7 +98,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
                     Console.Error.WriteLine($"Unable to unregister the default audio endpoint monitor: 0x{result:X8}");
             }
             if (enumerator is not null && Marshal.IsComObject(enumerator))
-                Marshal.FinalReleaseComObject(enumerator);
+                Marshal.ReleaseComObject(enumerator);
             GC.KeepAlive(notification);
         }
     }
@@ -202,7 +202,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         finally
         {
             if (endpoint is not null && Marshal.IsComObject(endpoint))
-                Marshal.FinalReleaseComObject(endpoint);
+                Marshal.ReleaseComObject(endpoint);
         }
     }
 
@@ -243,7 +243,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
                 finally
                 {
                     if (endpoint is not null && Marshal.IsComObject(endpoint))
-                        Marshal.FinalReleaseComObject(endpoint);
+                        Marshal.ReleaseComObject(endpoint);
                 }
             }
             return result;
@@ -251,9 +251,11 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         finally
         {
             if (endpoints is not null && Marshal.IsComObject(endpoints))
-                Marshal.FinalReleaseComObject(endpoints);
+                Marshal.ReleaseComObject(endpoints);
             if (enumerator is not null && Marshal.IsComObject(enumerator))
-                Marshal.FinalReleaseComObject(enumerator);
+                // Core Audio may share this RCW with the running monitor.
+                // Release only our acquisition, not every user's references.
+                Marshal.ReleaseComObject(enumerator);
         }
     }
 
@@ -286,6 +288,8 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     {
         var sonyDualSense = false;
         var hidMaestro = false;
+        var hidMaestroSerial = false;
+        var sharedUsbip = false;
         foreach (var node in chain)
         {
             sonyDualSense |= Contains(node.InstanceId, "VID_054C&PID_0CE6") ||
@@ -293,10 +297,16 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             hidMaestro |= node.HardwareIds.Any(id =>
                 id.Equals("ROOT\\HIDMAESTRO_UDE", StringComparison.OrdinalIgnoreCase) ||
                 id.StartsWith("ROOT\\HIDMAESTRO_UDE\\", StringComparison.OrdinalIgnoreCase));
+            hidMaestroSerial |= node.InstanceId.StartsWith(
+                @"USB\VID_054C&PID_0CE6\HM", StringComparison.OrdinalIgnoreCase);
+            sharedUsbip |= node.HardwareIds.Any(id =>
+                id.Equals(@"ROOT\USBIP_WIN2\UDE", StringComparison.OrdinalIgnoreCase));
         }
         // Checking both properties avoids rejecting a physical Sony controller
         // or some unrelated HIDMaestro virtual device.
-        return sonyDualSense && hidMaestro;
+        // Managed transport creation no longer stamps the shared host controller.
+        // Match the SDK-generated USB serial plus its transport ancestor instead.
+        return sonyDualSense && (hidMaestro || (hidMaestroSerial && sharedUsbip));
     }
 
     private static bool Contains(string value, string needle) =>
@@ -414,7 +424,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     }
 
     [ComImport]
-    [Guid("0BD7A1BE-7A1A-44DB-8397-C0A8FE7AF53E")]
+    [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E")]
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IMMDeviceCollection
     {

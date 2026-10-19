@@ -21,6 +21,25 @@ internal static class DualSenseSpeakerConfiguration
     private static readonly PropertyKey FullRangeSpeakers = new(
         new Guid("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), 6);
 
+    /// <summary>Reads back the active virtual endpoints without changing audio settings.</summary>
+    internal static bool IsConfigured()
+    {
+        var endpoints = DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints();
+        if (endpoints.Count == 0)
+            return false;
+        IPolicyConfig? policy = null;
+        try
+        {
+            var type = Type.GetTypeFromCLSID(PolicyConfigClientClass, throwOnError: true)!;
+            policy = (IPolicyConfig)Activator.CreateInstance(type)!;
+            return endpoints.All(endpoint => ReadAndValidate(policy, endpoint));
+        }
+        finally
+        {
+            Release(policy);
+        }
+    }
+
     internal static bool Ensure(TimeSpan timeout, out bool changed)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -84,7 +103,7 @@ internal static class DualSenseSpeakerConfiguration
         PropVariant value = default;
         try
         {
-            if (policy.GetPropertyValue(endpointId, ref key, ref value) < 0)
+            if (policy.GetPropertyValue(endpointId, false, ref key, ref value) < 0)
                 return 0;
             return value.ValueType == VtUi4 ? value.UInt32Value : 0;
         }
@@ -100,7 +119,7 @@ internal static class DualSenseSpeakerConfiguration
         try
         {
             var key = DeviceFormat;
-            if (policy.GetPropertyValue(endpointId, ref key, ref value) < 0)
+            if (policy.GetPropertyValue(endpointId, false, ref key, ref value) < 0)
                 return default;
             if (value.ValueType != VtBlob ||
                 value.Blob.Size < Marshal.SizeOf<WaveFormatExtensible>() ||
@@ -120,7 +139,7 @@ internal static class DualSenseSpeakerConfiguration
         IPolicyConfig policy, string endpointId, PropertyKey key, uint number)
     {
         var value = PropVariant.FromUInt32(number);
-        ThrowIfFailed(policy.SetPropertyValue(endpointId, ref key, ref value));
+        ThrowIfFailed(policy.SetPropertyValue(endpointId, false, ref key, ref value));
     }
 
     private static void SetFormat(
@@ -175,7 +194,7 @@ internal static class DualSenseSpeakerConfiguration
     private static void Release(object? instance)
     {
         if (instance is not null && Marshal.IsComObject(instance))
-            Marshal.FinalReleaseComObject(instance);
+            Marshal.ReleaseComObject(instance);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -241,12 +260,16 @@ internal static class DualSenseSpeakerConfiguration
         [PreserveSig] int Unused7();
         [PreserveSig] int Unused8();
         [PreserveSig]
+        // Windows 10+ includes the BOOL selecting the effects property store.
+        // Omitting it shifts both pointers and can cause an access violation.
         int GetPropertyValue(
             [MarshalAs(UnmanagedType.LPWStr)] string endpointId,
+            [MarshalAs(UnmanagedType.Bool)] bool effectsStore,
             ref PropertyKey key, ref PropVariant value);
         [PreserveSig]
         int SetPropertyValue(
             [MarshalAs(UnmanagedType.LPWStr)] string endpointId,
+            [MarshalAs(UnmanagedType.Bool)] bool effectsStore,
             ref PropertyKey key, ref PropVariant value);
         [PreserveSig]
         int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string endpointId, int role);

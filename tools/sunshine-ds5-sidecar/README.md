@@ -93,6 +93,15 @@ maximum and commits the active endpoint's 4-channel, available-speaker and
 full-range masks as quadraphonic (`0x33`) through Core Audio. This matches the
 three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
+Endpoint enumeration uses the Windows SDK's `IMMDeviceCollection` IID, and
+the Windows 10+ policy property calls include the effects-store argument.
+Core Audio references are released per acquisition so configuration readback
+cannot invalidate the concurrent default-device monitor. Endpoint detection
+also recognizes HIDMaestro's synthetic USB serial under the official USB/IP
+host controller, without requiring runtime ownership stamping.
+The transport acceptance test creates both the normal composite profile and
+the Genshin compatibility profile. It reads back the endpoint format and both
+speaker masks before passing, rather than trusting capability bits alone.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
 The v1 wire contract reserves capability bits and message numbers for the

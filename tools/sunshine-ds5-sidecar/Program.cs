@@ -98,7 +98,7 @@ if (selfTestProfile is not null)
         if (selfTestProfile == "transport")
         {
             for (var round = 0; round < 2; round++)
-                await ProtocolSelfTest.RunAsync(true, null, null);
+                await ProtocolSelfTest.RunAsync(true, null, null, genshinCompatibility: round == 1);
             var acceptance = JsonSerializer.Serialize(new {
                 usbip_policy = ComponentCompatibility.TransportPolicy,
                 usbip_version = ComponentCompatibility.UsbipVersion,
