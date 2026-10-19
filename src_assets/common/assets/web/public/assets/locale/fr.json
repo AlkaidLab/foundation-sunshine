@@ -325,6 +325,8 @@
     "address_family_both": "IPv4+IPv6",
     "address_family_desc": "Définir la famille d'adresses utilisée par Sunshine",
     "address_family_ipv4": "IPv4 uniquement",
+    "allow_client_resolution_change": "Autoriser les changements de résolution demandés par le client",
+    "allow_client_resolution_change_desc": "Lorsque cette option est activée, un client compatible (par ex. une fenêtre Moonlight redimensionnable ou un appareil Android pivoté ou connecté à une station d'accueil) peut demander une autre résolution pendant le stream ; l'hôte change le mode d'affichage (les tailles arbitraires fonctionnent mieux avec l'écran virtuel) et le stream suit. Nécessite que le stream suive la résolution de l'écran hôte et un changement de résolution automatique. Désactivé par défaut.",
     "always_send_scancodes": "Toujours envoyer les codes de balayage",
     "always_send_scancodes_desc": "L'envoi de codes de numérisation améliore la compatibilité avec les jeux et les applications, mais peut entraîner une saisie incorrecte du clavier de certains clients qui n'utilisent pas de disposition de clavier anglais américain. Activer si l'entrée du clavier ne fonctionne pas du tout dans certaines applications. Désactiver si les clés du client génèrent la mauvaise entrée sur l'hôte.",
     "amd_advanced_group": "Réglages avancés AMF",

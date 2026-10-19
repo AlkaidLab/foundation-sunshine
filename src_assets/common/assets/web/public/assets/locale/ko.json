@@ -325,6 +325,8 @@
     "address_family_both": "IPv4+IPv6",
     "address_family_desc": "Sunshine이 사용하는 주소 계열 설정",
     "address_family_ipv4": "IPv4 전용",
+    "allow_client_resolution_change": "클라이언트의 해상도 변경 요청 허용",
+    "allow_client_resolution_change_desc": "활성화하면 지원되는 클라이언트(예: 크기 조절이 가능한 Moonlight 창 또는 회전하거나 도크에 연결한 Android 기기)가 스트리밍 중에 다른 해상도를 요청할 수 있습니다. 호스트가 디스플레이 모드를 전환하고(임의의 크기는 가상 디스플레이에서 가장 잘 작동합니다) 스트림이 이를 따릅니다. 스트림이 호스트 디스플레이 해상도를 따르도록 하는 설정과 자동 해상도 변경이 필요합니다. 기본적으로 비활성화되어 있습니다.",
     "always_send_scancodes": "항상 스캔 코드 보내기",
     "always_send_scancodes_desc": "스캔코드를 전송하면 게임 및 앱과의 호환성이 향상되지만 미국식 영어 키보드 레이아웃을 사용하지 않는 특정 클라이언트에서 키보드 입력이 잘못될 수 있습니다. 특정 애플리케이션에서 키보드 입력이 전혀 작동하지 않는 경우 활성화합니다. 클라이언트의 키가 호스트에서 잘못된 입력을 생성하는 경우 비활성화합니다.",
     "amd_advanced_group": "AMF 고급 튜닝",

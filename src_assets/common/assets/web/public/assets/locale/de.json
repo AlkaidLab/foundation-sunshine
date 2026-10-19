@@ -325,6 +325,8 @@
     "address_family_both": "IPv4+IPv6",
     "address_family_desc": "Adressfamilie einstellen, die von Sunshine verwendet wird",
     "address_family_ipv4": "Nur IPv4",
+    "allow_client_resolution_change": "Vom Client angeforderte Auflösungsänderungen erlauben",
+    "allow_client_resolution_change_desc": "Wenn aktiviert, kann ein unterstützender Client (z. B. ein in der Größe veränderbares Moonlight-Fenster oder ein gedrehtes bzw. angedocktes Android-Gerät) während des Streams eine andere Auflösung anfordern; der Host wechselt den Anzeigemodus (beliebige Größen funktionieren am besten mit der virtuellen Anzeige) und der Stream folgt. Erfordert, dass der Stream der Host-Anzeigeauflösung folgt, und eine automatische Auflösungsänderung. Standardmäßig deaktiviert.",
     "always_send_scancodes": "Scancodes immer senden",
     "always_send_scancodes_desc": "Das Senden von Scancodes verbessert die Kompatibilität mit Spielen und Apps, kann aber zu falschen Tastatureingaben von bestimmten Clients führen, die kein amerikanisches Tastaturlayout verwenden. Aktivieren, wenn die Eingabe der Tastatur in bestimmten Anwendungen überhaupt nicht funktioniert. Deaktivieren, wenn Schlüssel auf dem Client die falsche Eingabe auf dem Host generieren.",
     "amd_advanced_group": "Erweiterte AMF-Optimierung",
