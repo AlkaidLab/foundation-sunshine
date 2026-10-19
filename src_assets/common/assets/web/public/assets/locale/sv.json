@@ -325,6 +325,8 @@
     "address_family_both": "IPv4+IPv6",
     "address_family_desc": "Ställ in adressfamiljen som används av Sunshine",
     "address_family_ipv4": "Endast IPv4",
+    "allow_client_resolution_change": "Tillåt upplösningsändringar som begärs av klienten",
+    "allow_client_resolution_change_desc": "När detta är aktiverat kan en kompatibel klient (t.ex. ett Moonlight-fönster med ändringsbar storlek eller en roterad eller dockad Android-enhet) begära en annan upplösning under strömningen; värddatorn byter bildskärmsläge (godtyckliga storlekar fungerar bäst med den virtuella bildskärmen) och strömmen följer efter. Kräver att strömmen följer värddatorns bildskärmsupplösning och automatisk upplösningsändring. Inaktiverat som standard.",
     "always_send_scancodes": "Skicka alltid sökkoder",
     "always_send_scancodes_desc": "Att skicka skanningskoder förbättrar kompatibiliteten med spel och appar men kan resultera i felaktig tangentbordsinmatning från vissa klienter som inte använder en amerikansk engelsk tangentbordslayout. Aktivera om tangentbordsinmatningen inte fungerar alls i vissa program. Inaktivera om nycklar på klienten genererar fel indata på värden.",
     "amd_advanced_group": "Avancerade AMF-inställningar",
