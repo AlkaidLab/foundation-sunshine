@@ -64,6 +64,7 @@ $core = Join-Path $buildRoot 'hidmaestro-core-patch/HIDMaestro.Core.dll'
     --runtime win-x64 `
     --self-contained true `
     --output $output `
+    -p:RestoreLockedMode=true `
     -p:HIDMaestroCorePath=$core `
     "-p:CompatibilityManifestPath=$CompatibilityManifestPath" `
     -p:DebugType=None `

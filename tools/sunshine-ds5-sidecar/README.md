@@ -95,13 +95,21 @@ three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
 Endpoint enumeration uses the Windows SDK's `IMMDeviceCollection` IID, and
 the Windows 10+ policy property calls include the effects-store argument.
+`NativeMethods.txt` requests the public audio COM interfaces, structures and
+property keys from Microsoft CsWin32. The generator and SDK metadata are pinned
+in `packages.lock.json`; publishing restores in locked mode and adds no runtime
+library dependency. `CoreAudio` shares endpoint enumeration and reference cleanup
+between the default-device monitor and WASAPI probe. Only the undocumented
+Windows 10+ policy interface remains hand-declared, inside `AudioPolicyConfig`.
 Core Audio references are released per acquisition so configuration readback
 cannot invalidate the concurrent default-device monitor. Endpoint detection
 also recognizes HIDMaestro's synthetic USB serial under the official USB/IP
 host controller, without requiring runtime ownership stamping.
 The transport acceptance test creates both the normal composite profile and
 the Genshin compatibility profile. It reads back the endpoint format and both
-speaker masks before passing, rather than trusting capability bits alone.
+speaker masks for the endpoint created by that attach before passing. It waits
+for that endpoint to become inactive before the next round, so a stale endpoint
+cannot satisfy another mode's check.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
 The v1 wire contract reserves capability bits and message numbers for the

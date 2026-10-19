@@ -413,6 +413,9 @@ internal static class ProtocolSelfTest
         Require(helloCapabilities.HasFlag(Protocol.Capability.AudioPolicyViolation),
             "hello audio endpoint policy capability");
 
+        var beforeEndpoints = composite
+            ? DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints().ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
         var attachFlags = genshinCompatibility ? (byte)Protocol.AttachFlags.GenshinCompatibilityIdentity : (byte)0;
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
@@ -428,8 +431,9 @@ internal static class ProtocolSelfTest
             "composite four-channel audio capability");
         // Capability bits alone cannot prove that Windows retained the speaker
         // setup required by games. Exercise the real COM enumeration/readback.
-        Require(!composite || DualSenseSpeakerConfiguration.IsConfigured(),
-            "quadraphonic endpoint format, available speakers and full-range speakers");
+        var endpointId = composite ? await WaitForNewRenderEndpointAsync(beforeEndpoints!, stopping.Token) : null;
+        Require(!composite || DualSenseSpeakerConfiguration.IsConfigured(endpointId!),
+            "current endpoint format, available speakers and full-range speakers");
 
         var input = new byte[20];
         input[0] = 0;
@@ -511,6 +515,18 @@ internal static class ProtocolSelfTest
 
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+        if (endpointId is not null)
+        {
+            // Dispose completes before Windows removes the audio endpoint.
+            // Wait for this identity to leave the active set before another round.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
+                       .Contains(endpointId, StringComparer.OrdinalIgnoreCase))
+            {
+                Require(DateTime.UtcNow < deadline, "current audio endpoint released");
+                await Task.Delay(50, stopping.Token);
+            }
+        }
 
         var result = JsonSerializer.Serialize(new
         {
@@ -536,6 +552,23 @@ internal static class ProtocolSelfTest
         if (!string.IsNullOrWhiteSpace(resultPath))
             await File.WriteAllTextAsync(resultPath, result, stopping.Token);
         return 0;
+    }
+
+    private static async Task<string> WaitForNewRenderEndpointAsync(
+        IReadOnlySet<string> previous, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        do
+        {
+            var created = DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
+                .Where(endpoint => !previous.Contains(endpoint)).ToArray();
+            Require(created.Length <= 1, "unambiguous current audio endpoint");
+            if (created.Length == 1)
+                return created[0];
+            await Task.Delay(50, cancellationToken);
+        }
+        while (DateTime.UtcNow < deadline);
+        throw new InvalidOperationException("The current self-test did not create an active render endpoint");
     }
 
     internal static void RunDeterministicChecks()
@@ -940,8 +973,6 @@ internal static class ProtocolSelfTest
 
     private static void VerifyDefaultAudioEndpointClassification()
     {
-        Require(Enum.GetUnderlyingType(typeof(DefaultAudioEndpointGuard.AudioRole)) == typeof(int),
-            "default audio role COM width");
         var virtualDualSense = new[]
         {
             new DefaultAudioEndpointGuard.DeviceNodeIdentity(
@@ -993,11 +1024,9 @@ internal static class ProtocolSelfTest
                 "{00000000-0000-0000-0000-000000000000}", 0x00000307),
             "complete default audio endpoint policy");
         var quadraphonic = DualSenseSpeakerConfiguration.CreateQuadraphonicFormat();
-        Require(DualSenseSpeakerConfiguration.HasValidInteropLayout(),
-            "Core Audio interop ABI");
         Require(DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
             "quadraphonic Core Audio speaker configuration");
-        quadraphonic.ChannelMask = 0x00000003;
+        quadraphonic.dwChannelMask = 0x00000003;
         Require(!DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
             "stereo Core Audio speaker configuration rejection");
     }

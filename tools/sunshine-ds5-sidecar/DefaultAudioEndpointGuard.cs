@@ -2,6 +2,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Channels;
 using Microsoft.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.Media.Audio;
+using AudioRole = Windows.Win32.Media.Audio.ERole;
 
 namespace Sunshine.Ds5Sidecar;
 
@@ -16,17 +19,8 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private const int DataFlowCount = 2;
     private const int AudioRoleCount = 3;
 
-    internal enum AudioRole
-    {
-        Console = 0,
-        Multimedia = 1,
-        Communications = 2,
-    }
-
     internal readonly record struct DeviceNodeIdentity(string InstanceId, IReadOnlyList<string> HardwareIds);
 
-    private static readonly Guid MmDeviceEnumeratorClass =
-        new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     private readonly CancellationTokenSource _stopping = new();
     // Each flow/role pair owns one atomic latest-value slot. The capacity-one
     // channel is only a non-blocking wakeup, so notification bursts coalesce
@@ -57,11 +51,10 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         var registered = false;
         try
         {
-            var type = Type.GetTypeFromCLSID(MmDeviceEnumeratorClass, throwOnError: true)!;
-            enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
+            enumerator = CoreAudio.CreateEnumerator();
             notification = new EndpointNotificationClient(OnDefaultDeviceChanged);
             var registrationResult = enumerator.RegisterEndpointNotificationCallback(notification);
-            registered = registrationResult >= 0;
+            registered = registrationResult.Succeeded;
 
             // Register before taking the initial snapshot so a default-device
             // change racing startup is either observed by the callback or by
@@ -74,7 +67,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             else
             {
                 Console.Error.WriteLine(
-                    $"Unable to register the default audio endpoint monitor (0x{registrationResult:X8}); " +
+                    $"Unable to register the default audio endpoint monitor ({registrationResult}); " +
                     "falling back to low-frequency polling");
                 await PollDefaultsAsync(enumerator);
             }
@@ -94,20 +87,19 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             if (registered && enumerator is not null && notification is not null)
             {
                 var result = enumerator.UnregisterEndpointNotificationCallback(notification);
-                if (result < 0 && !_stopping.IsCancellationRequested)
-                    Console.Error.WriteLine($"Unable to unregister the default audio endpoint monitor: 0x{result:X8}");
+                if (result.Failed && !_stopping.IsCancellationRequested)
+                    Console.Error.WriteLine($"Unable to unregister the default audio endpoint monitor: {result}");
             }
-            if (enumerator is not null && Marshal.IsComObject(enumerator))
-                Marshal.ReleaseComObject(enumerator);
+            CoreAudio.Release(enumerator);
             GC.KeepAlive(notification);
         }
     }
 
     private void CheckCurrentDefaults(IMMDeviceEnumerator enumerator)
     {
-        foreach (var flow in Enum.GetValues<DataFlow>())
+        foreach (var flow in new[] { EDataFlow.eRender, EDataFlow.eCapture })
         {
-            foreach (var role in Enum.GetValues<AudioRole>())
+            foreach (var role in new[] { AudioRole.eConsole, AudioRole.eMultimedia, AudioRole.eCommunications })
             {
                 if (TryGetDefaultEndpointId(enumerator, flow, role, out var endpointId))
                     ReportIfVirtualDualSense(role, endpointId);
@@ -147,7 +139,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
     }
 
-    private void OnDefaultDeviceChanged(DataFlow flow, AudioRole role, string? endpointId)
+    private void OnDefaultDeviceChanged(EDataFlow flow, AudioRole role, string? endpointId)
     {
         if (endpointId is null || _stopping.IsCancellationRequested ||
             Volatile.Read(ref _reported) != 0 || !TryGetEndpointSlot(flow, role, out var slot))
@@ -159,7 +151,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         _endpointChangeSignal.Writer.TryWrite(true);
     }
 
-    private static bool TryGetEndpointSlot(DataFlow flow, AudioRole role, out int slot)
+    private static bool TryGetEndpointSlot(EDataFlow flow, AudioRole role, out int slot)
     {
         var flowIndex = (int)flow;
         var roleIndex = (int)role;
@@ -184,7 +176,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     }
 
     private static bool TryGetDefaultEndpointId(
-        IMMDeviceEnumerator enumerator, DataFlow flow, AudioRole role, out string endpointId)
+        IMMDeviceEnumerator enumerator, EDataFlow flow, AudioRole role, out string endpointId)
     {
         endpointId = string.Empty;
         IMMDevice? endpoint = null;
@@ -194,15 +186,18 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             // endpoint is being created or removed, so treat any failed lookup
             // as "not currently default". A later notification (or the rare
             // registration-failure polling fallback) will retry it.
-            if (enumerator.GetDefaultAudioEndpoint(flow, role, out endpoint) < 0 || endpoint is null ||
-                endpoint.GetId(out endpointId) < 0)
+            if (enumerator.GetDefaultAudioEndpoint(flow, role, out endpoint).Failed || endpoint is null)
                 return false;
+            endpointId = CoreAudio.GetEndpointId(endpoint);
             return true;
+        }
+        catch (COMException)
+        {
+            return false;
         }
         finally
         {
-            if (endpoint is not null && Marshal.IsComObject(endpoint))
-                Marshal.ReleaseComObject(endpoint);
+            CoreAudio.Release(endpoint);
         }
     }
 
@@ -217,47 +212,8 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return IsVirtualDualSenseDeviceNode(node);
     }
 
-    internal static IReadOnlyList<string> GetActiveVirtualDualSenseRenderEndpoints()
-    {
-        const uint deviceStateActive = 0x00000001;
-        var result = new List<string>();
-        IMMDeviceEnumerator? enumerator = null;
-        IMMDeviceCollection? endpoints = null;
-        try
-        {
-            var type = Type.GetTypeFromCLSID(MmDeviceEnumeratorClass, throwOnError: true)!;
-            enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
-            Marshal.ThrowExceptionForHR(
-                enumerator.EnumAudioEndpoints(DataFlow.Render, deviceStateActive, out endpoints));
-            Marshal.ThrowExceptionForHR(endpoints.GetCount(out var count));
-            for (uint index = 0; index < count; ++index)
-            {
-                IMMDevice? endpoint = null;
-                try
-                {
-                    Marshal.ThrowExceptionForHR(endpoints.Item(index, out endpoint));
-                    Marshal.ThrowExceptionForHR(endpoint.GetId(out var endpointId));
-                    if (IsVirtualDualSenseEndpoint(endpointId))
-                        result.Add(endpointId);
-                }
-                finally
-                {
-                    if (endpoint is not null && Marshal.IsComObject(endpoint))
-                        Marshal.ReleaseComObject(endpoint);
-                }
-            }
-            return result;
-        }
-        finally
-        {
-            if (endpoints is not null && Marshal.IsComObject(endpoints))
-                Marshal.ReleaseComObject(endpoints);
-            if (enumerator is not null && Marshal.IsComObject(enumerator))
-                // Core Audio may share this RCW with the running monitor.
-                // Release only our acquisition, not every user's references.
-                Marshal.ReleaseComObject(enumerator);
-        }
-    }
+    internal static IReadOnlyList<string> GetActiveVirtualDualSenseRenderEndpoints() =>
+        CoreAudio.GetActiveEndpointIds(EDataFlow.eRender).Where(IsVirtualDualSenseEndpoint).ToArray();
 
     internal static bool IsVirtualDualSenseDeviceNode(string instanceId, bool includePhantom)
     {
@@ -347,107 +303,31 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         _stopping.Dispose();
     }
 
-    private enum DataFlow
-    {
-        Render = 0,
-        Capture = 1,
-    }
-
     private sealed record DefaultEndpointChange(
-        DataFlow Flow, AudioRole Role, string EndpointId);
+        EDataFlow Flow, AudioRole Role, string EndpointId);
 
     [ComVisible(true)]
     [ClassInterface(ClassInterfaceType.None)]
-    private sealed class EndpointNotificationClient : IMMNotificationClient
+    private sealed unsafe class EndpointNotificationClient : IMMNotificationClient
     {
-        private readonly Action<DataFlow, AudioRole, string?> _onDefaultDeviceChanged;
+        private readonly Action<EDataFlow, AudioRole, string?> _onDefaultDeviceChanged;
 
-        internal EndpointNotificationClient(Action<DataFlow, AudioRole, string?> onDefaultDeviceChanged)
+        internal EndpointNotificationClient(Action<EDataFlow, AudioRole, string?> onDefaultDeviceChanged)
         {
             _onDefaultDeviceChanged = onDefaultDeviceChanged;
         }
 
-        public int OnDeviceStateChanged(string deviceId, uint newState) => 0;
-        public int OnDeviceAdded(string deviceId) => 0;
-        public int OnDeviceRemoved(string deviceId) => 0;
+        public HRESULT OnDeviceStateChanged(PCWSTR deviceId, DEVICE_STATE newState) => new(0);
+        public HRESULT OnDeviceAdded(PCWSTR deviceId) => new(0);
+        public HRESULT OnDeviceRemoved(PCWSTR deviceId) => new(0);
 
-        public int OnDefaultDeviceChanged(DataFlow flow, AudioRole role, string? defaultDeviceId)
+        public HRESULT OnDefaultDeviceChanged(EDataFlow flow, AudioRole role, PCWSTR defaultDeviceId)
         {
-            _onDefaultDeviceChanged(flow, role, defaultDeviceId);
-            return 0;
+            _onDefaultDeviceChanged(flow, role, defaultDeviceId.Value == null ? null : defaultDeviceId.ToString());
+            return new(0);
         }
 
-        public int OnPropertyValueChanged(string deviceId, PropertyKey propertyKey) => 0;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private readonly struct PropertyKey
-    {
-        private readonly Guid _formatId;
-        private readonly uint _propertyId;
-    }
-
-    [ComImport]
-    [Guid("7991EEC9-7E89-4D85-8390-6C703CEC60C0")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMNotificationClient
-    {
-        [PreserveSig]
-        int OnDeviceStateChanged([MarshalAs(UnmanagedType.LPWStr)] string deviceId, uint newState);
-        [PreserveSig]
-        int OnDeviceAdded([MarshalAs(UnmanagedType.LPWStr)] string deviceId);
-        [PreserveSig]
-        int OnDeviceRemoved([MarshalAs(UnmanagedType.LPWStr)] string deviceId);
-        [PreserveSig]
-        int OnDefaultDeviceChanged(DataFlow flow, AudioRole role,
-                                   [MarshalAs(UnmanagedType.LPWStr)] string? defaultDeviceId);
-        [PreserveSig]
-        int OnPropertyValueChanged([MarshalAs(UnmanagedType.LPWStr)] string deviceId,
-                                   PropertyKey propertyKey);
-    }
-
-    [ComImport]
-    [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceEnumerator
-    {
-        [PreserveSig]
-        int EnumAudioEndpoints(DataFlow dataFlow, uint stateMask, out IMMDeviceCollection devices);
-        [PreserveSig]
-        int GetDefaultAudioEndpoint(DataFlow dataFlow, AudioRole role, out IMMDevice endpoint);
-        [PreserveSig]
-        int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice endpoint);
-        [PreserveSig]
-        int RegisterEndpointNotificationCallback(IMMNotificationClient callback);
-        [PreserveSig]
-        int UnregisterEndpointNotificationCallback(IMMNotificationClient callback);
-    }
-
-    [ComImport]
-    [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceCollection
-    {
-        [PreserveSig]
-        int GetCount(out uint count);
-        [PreserveSig]
-        int Item(uint index, out IMMDevice endpoint);
-    }
-
-    [ComImport]
-    [Guid("D666063F-1587-4E43-81F1-B948E807363F")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDevice
-    {
-        [PreserveSig]
-        int Activate(ref Guid interfaceId, uint classContext, IntPtr activationParameters,
-                     [MarshalAs(UnmanagedType.IUnknown)] out object instance);
-        [PreserveSig]
-        int OpenPropertyStore(uint access, out IntPtr properties);
-        [PreserveSig]
-        int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
-        [PreserveSig]
-        int GetState(out uint state);
+        public HRESULT OnPropertyValueChanged(PCWSTR deviceId, PROPERTYKEY propertyKey) => new(0);
     }
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
