@@ -398,6 +398,7 @@ namespace platf {
     constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
     constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
     constexpr caps_t host_session_state = 0x800;  // Session lock state updates (0x550E)
+    constexpr caps_t client_resolution_change = 0x2000;  // Client-requested stream resolution changes (0x5506 RESOLUTION); registry: LI_FF_CLIENT_RESOLUTION_CHANGE
     constexpr caps_t bitrate_callback = 0x4000;  // Host-to-client runtime bitrate updates (0x5506); registry: LI_FF_BITRATE_CALLBACK
     constexpr caps_t endpoint_auto_refresh = 0x8000;  // Authenticated UDP endpoint migration v1
   };  // namespace platform_caps
