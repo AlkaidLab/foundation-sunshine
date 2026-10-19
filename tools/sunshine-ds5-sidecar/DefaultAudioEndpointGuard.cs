@@ -38,12 +38,14 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     private readonly Task _worker;
     private int _reported;
 
+    /// <summary>Starts an asynchronous monitor without blocking controller creation.</summary>
     internal DefaultAudioEndpointGuard(Action<AudioRole> onViolation)
     {
         _onViolation = onViolation;
         _worker = Task.Run(MonitorAsync);
     }
 
+    /// <summary>Registers notifications before the initial snapshot and unregisters before releasing COM references.</summary>
     private async Task MonitorAsync()
     {
         IMMDeviceEnumerator? enumerator = null;
@@ -95,6 +97,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
     }
 
+    /// <summary>Checks both flows and all three valid roles, excluding SDK enumeration sentinels.</summary>
     private void CheckCurrentDefaults(IMMDeviceEnumerator enumerator)
     {
         foreach (var flow in new[] { EDataFlow.eRender, EDataFlow.eCapture })
@@ -107,6 +110,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
     }
 
+    /// <summary>Uses low-frequency snapshots only when notification registration is unavailable.</summary>
     private async Task PollDefaultsAsync(IMMDeviceEnumerator enumerator)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
@@ -114,6 +118,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
             CheckCurrentDefaults(enumerator);
     }
 
+    /// <summary>Consumes coalesced notifications outside the COM callback and isolates inspection failures.</summary>
     private async Task ProcessEndpointChangesAsync()
     {
         while (await _endpointChangeSignal.Reader.WaitToReadAsync(_stopping.Token))
@@ -139,6 +144,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
     }
 
+    /// <summary>Stores the latest identity per flow and role without blocking the audio service callback.</summary>
     private void OnDefaultDeviceChanged(EDataFlow flow, AudioRole role, string? endpointId)
     {
         if (endpointId is null || _stopping.IsCancellationRequested ||
@@ -151,6 +157,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         _endpointChangeSignal.Writer.TryWrite(true);
     }
 
+    /// <summary>Rejects invalid flow and role values before indexing the bounded notification slots.</summary>
     private static bool TryGetEndpointSlot(EDataFlow flow, AudioRole role, out int slot)
     {
         var flowIndex = (int)flow;
@@ -164,6 +171,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return true;
     }
 
+    /// <summary>Reports a matching virtual endpoint at most once for this controller session.</summary>
     private void ReportIfVirtualDualSense(AudioRole role, string endpointId)
     {
         if (Volatile.Read(ref _reported) != 0 ||
@@ -175,6 +183,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         _onViolation(role);
     }
 
+    /// <summary>Treats endpoints disappearing during a lookup as absent and releases the lookup reference.</summary>
     private static bool TryGetDefaultEndpointId(
         IMMDeviceEnumerator enumerator, EDataFlow flow, AudioRole role, out string endpointId)
     {
@@ -201,6 +210,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
     }
 
+    /// <summary>Resolves an MMDevice identity through its PnP ancestry instead of relying on its display name.</summary>
     internal static bool IsVirtualDualSenseEndpoint(string endpointId)
     {
         var instanceId = endpointId.StartsWith("SWD\\MMDEVAPI\\", StringComparison.OrdinalIgnoreCase)
@@ -212,9 +222,11 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return IsVirtualDualSenseDeviceNode(node);
     }
 
+    /// <summary>Filters the current render snapshot to HIDMaestro-backed DualSense endpoints.</summary>
     internal static IReadOnlyList<string> GetActiveVirtualDualSenseRenderEndpoints() =>
         CoreAudio.GetActiveEndpointIds(EDataFlow.eRender).Where(IsVirtualDualSenseEndpoint).ToArray();
 
+    /// <summary>Optionally includes phantom nodes while provisioning policy before enumeration.</summary>
     internal static bool IsVirtualDualSenseDeviceNode(string instanceId, bool includePhantom)
     {
         if (CM_Locate_DevNodeW(out var node, instanceId, 0) != 0 &&
@@ -225,6 +237,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return IsVirtualDualSenseDeviceNode(node);
     }
 
+    /// <summary>Bounds ancestry traversal and collects hardware identities for classification.</summary>
     private static bool IsVirtualDualSenseDeviceNode(uint node)
     {
         var chain = new List<DeviceNodeIdentity>();
@@ -240,6 +253,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return IsVirtualDualSenseChain(chain);
     }
 
+    /// <summary>Requires Sony identity plus a legacy owner marker or a synthetic serial under shared USB/IP.</summary>
     internal static bool IsVirtualDualSenseChain(IEnumerable<DeviceNodeIdentity> chain)
     {
         var sonyDualSense = false;
@@ -265,9 +279,11 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return sonyDualSense && (hidMaestro || (hidMaestroSerial && sharedUsbip));
     }
 
+    /// <summary>Matches PnP identifiers without depending on their letter casing.</summary>
     private static bool Contains(string value, string needle) =>
         value.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Sizes the native identity buffer and treats removed nodes as unavailable.</summary>
     private static string? GetDeviceId(uint node)
     {
         if (CM_Get_Device_ID_Size(out var length, node, 0) != 0)
@@ -276,6 +292,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         return CM_Get_Device_IDW(node, buffer, length + 1, 0) == 0 ? buffer.ToString() : null;
     }
 
+    /// <summary>Reads hardware identifiers without modifying PnP state; inaccessible nodes provide no evidence.</summary>
     private static IReadOnlyList<string> ReadHardwareIds(string instanceId)
     {
         try
@@ -295,6 +312,7 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
         }
     }
 
+    /// <summary>Cancels and joins the monitor before disposing its cancellation source.</summary>
     public void Dispose()
     {
         _stopping.Cancel();
@@ -312,40 +330,50 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     {
         private readonly Action<EDataFlow, AudioRole, string?> _onDefaultDeviceChanged;
 
+        /// <summary>Retains the managed sink for the lifetime of the native callback registration.</summary>
         internal EndpointNotificationClient(Action<EDataFlow, AudioRole, string?> onDefaultDeviceChanged)
         {
             _onDefaultDeviceChanged = onDefaultDeviceChanged;
         }
 
+        /// <summary>Acknowledges state notifications; classification follows default-device changes.</summary>
         public HRESULT OnDeviceStateChanged(PCWSTR deviceId, DEVICE_STATE newState) => new(0);
+        /// <summary>Acknowledges enumeration without doing work on the native callback thread.</summary>
         public HRESULT OnDeviceAdded(PCWSTR deviceId) => new(0);
+        /// <summary>Acknowledges removal without accessing a disappearing device on the callback thread.</summary>
         public HRESULT OnDeviceRemoved(PCWSTR deviceId) => new(0);
 
+        /// <summary>Copies the borrowed native identity before returning from the callback.</summary>
         public HRESULT OnDefaultDeviceChanged(EDataFlow flow, AudioRole role, PCWSTR defaultDeviceId)
         {
             _onDefaultDeviceChanged(flow, role, defaultDeviceId.Value == null ? null : defaultDeviceId.ToString());
             return new(0);
         }
 
+        /// <summary>Acknowledges unrelated property updates without reconfiguring the device.</summary>
         public HRESULT OnPropertyValueChanged(PCWSTR deviceId, PROPERTYKEY propertyKey) => new(0);
     }
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    /// <summary>Locates a current or explicitly requested phantom PnP node without changing its state.</summary>
     private static extern uint CM_Locate_DevNodeW(out uint deviceInstance,
                                                   string deviceId,
                                                   uint flags);
 
     [DllImport("cfgmgr32.dll")]
+    /// <summary>Reads one parent link during bounded ancestry traversal.</summary>
     private static extern uint CM_Get_Parent(out uint parentDeviceInstance,
                                              uint deviceInstance,
                                              uint flags);
 
     [DllImport("cfgmgr32.dll")]
+    /// <summary>Determines the identity buffer size before reading a device node.</summary>
     private static extern uint CM_Get_Device_ID_Size(out uint length,
                                                      uint deviceInstance,
                                                      uint flags);
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    /// <summary>Copies a PnP identity into the caller-provided Unicode buffer.</summary>
     private static extern uint CM_Get_Device_IDW(uint deviceInstance,
                                                  StringBuilder buffer,
                                                  uint bufferLength,

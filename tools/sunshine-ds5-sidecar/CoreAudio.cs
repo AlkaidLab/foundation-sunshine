@@ -7,9 +7,11 @@ namespace Sunshine.Ds5Sidecar;
 /// <summary>Owns endpoint enumeration and COM references shared by audio consumers.</summary>
 internal static class CoreAudio
 {
+    /// <summary>Acquires one enumerator reference owned by the caller.</summary>
     internal static IMMDeviceEnumerator CreateEnumerator() =>
         (IMMDeviceEnumerator)new MMDeviceEnumerator();
 
+    /// <summary>Copies the endpoint identity and frees the COM-allocated string.</summary>
     internal static unsafe string GetEndpointId(IMMDevice endpoint)
     {
         endpoint.GetId(out var id).ThrowOnFailure();
@@ -17,6 +19,7 @@ internal static class CoreAudio
         finally { Marshal.FreeCoTaskMem((IntPtr)id.Value); }
     }
 
+    /// <summary>Snapshots active endpoint identities, releasing every acquired COM reference.</summary>
     internal static IReadOnlyList<string> GetActiveEndpointIds(EDataFlow flow)
     {
         var enumerator = CreateEnumerator();
@@ -41,6 +44,7 @@ internal static class CoreAudio
         }
     }
 
+    /// <summary>Releases this acquisition without invalidating references held by another audio consumer.</summary>
     internal static void Release(object? instance)
     {
         // Core Audio can return a shared RCW. Never force-release other users.

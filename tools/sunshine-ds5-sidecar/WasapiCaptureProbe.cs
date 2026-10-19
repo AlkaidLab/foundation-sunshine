@@ -16,6 +16,7 @@ internal sealed unsafe class WasapiCaptureProbe : IDisposable
     private readonly ushort _blockAlign;
     private bool _disposed;
 
+    /// <summary>Takes ownership of an initialized capture device, client and service.</summary>
     private WasapiCaptureProbe(
         IMMDevice device, IAudioClient audioClient, IAudioCaptureClient captureClient,
         ushort blockAlign)
@@ -29,9 +30,11 @@ internal sealed unsafe class WasapiCaptureProbe : IDisposable
     internal ulong CapturedFrames { get; private set; }
     internal ulong NonZeroFrames { get; private set; }
 
+    /// <summary>Snapshots identities used to distinguish a new test endpoint from existing microphones.</summary>
     internal static HashSet<string> GetActiveCaptureEndpointIds() =>
         new(CoreAudio.GetActiveEndpointIds(EDataFlow.eCapture), StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Keeps opening, capture and disposal on one thread and propagates its result asynchronously.</summary>
     internal static Task<T> RunOnDedicatedThreadAsync<T>(
         string endpointId, Func<WasapiCaptureProbe, T> action)
     {
@@ -59,6 +62,7 @@ internal sealed unsafe class WasapiCaptureProbe : IDisposable
         return completion.Task;
     }
 
+    /// <summary>Initializes shared-mode capture and releases all acquired native resources on failure.</summary>
     private static WasapiCaptureProbe Open(string endpointId)
     {
         var enumerator = CoreAudio.CreateEnumerator();
@@ -110,6 +114,7 @@ internal sealed unsafe class WasapiCaptureProbe : IDisposable
         }
     }
 
+    /// <summary>Counts captured and nonzero frames while returning every acquired packet buffer.</summary>
     internal void Drain()
     {
         _captureClient.GetNextPacketSize(out var packetFrames).ThrowOnFailure();
@@ -140,6 +145,7 @@ internal sealed unsafe class WasapiCaptureProbe : IDisposable
         }
     }
 
+    /// <summary>Stops capture and releases its service, audio client and endpoint once.</summary>
     public void Dispose()
     {
         if (_disposed)

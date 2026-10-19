@@ -10,6 +10,7 @@ namespace HIDMaestro.Internal.Usbip;
 internal static class SharedUsbipTransport
 {
     private static readonly JsonElement Contract = LoadContract();
+    /// <summary>Reports readiness without converting a compatibility failure into automatic driver repair.</summary>
     internal static bool IsCompatible
     {
         get
@@ -18,6 +19,7 @@ internal static class SharedUsbipTransport
             catch (InvalidOperationException) { return false; }
         }
     }
+    /// <summary>Retains the embedded transport contract independently of its JSON document lifetime.</summary>
     private static JsonElement LoadContract()
     {
         using var stream = typeof(SharedUsbipTransport).Assembly
@@ -27,6 +29,7 @@ internal static class SharedUsbipTransport
         return document.RootElement.GetProperty("usbip").Clone();
     }
 
+    /// <summary>Rejects missing or mismatched drivers without initiating installation or repair.</summary>
     internal static void ValidateState(bool available, string? driverHash)
     {
         if (!available)
@@ -37,6 +40,7 @@ internal static class SharedUsbipTransport
                 $"USBIP-EXEC-006: the shared driver does not match USB/IP {Contract.GetProperty("version").GetString()}; repair it in Sunshine component management");
     }
 
+    /// <summary>Checks interface presence and hashes the registered driver using read-only access.</summary>
     internal static bool EnsureReady()
     {
         string? hash = null;

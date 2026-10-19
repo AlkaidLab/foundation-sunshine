@@ -386,6 +386,7 @@ internal static class ProtocolSelfTest
             BinaryPrimitives.ReadUInt32LittleEndian(message.Payload.AsSpan(20, 4)));
     }
 
+    /// <summary>Exercises one profile through attach, endpoint readback, explicit detach and owner-disconnect cleanup.</summary>
     internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath,
         bool genshinCompatibility = false)
     {
@@ -554,6 +555,7 @@ internal static class ProtocolSelfTest
         return 0;
     }
 
+    /// <summary>Waits for one new identity relative to this attach and rejects ambiguous or stale endpoints.</summary>
     private static async Task<string> WaitForNewRenderEndpointAsync(
         IReadOnlySet<string> previous, CancellationToken cancellationToken)
     {
@@ -971,6 +973,7 @@ internal static class ProtocolSelfTest
         }
     }
 
+    /// <summary>Checks virtual ancestry recognition while excluding physical controllers and unrelated devices.</summary>
     private static void VerifyDefaultAudioEndpointClassification()
     {
         var virtualDualSense = new[]
@@ -1013,6 +1016,7 @@ internal static class ProtocolSelfTest
         }), "unrelated HIDMaestro endpoint exclusion");
     }
 
+    /// <summary>Checks never-default policy completeness and rejects stereo speaker configuration.</summary>
     private static void VerifyDefaultAudioEndpointPolicy()
     {
         Require(DefaultAudioEndpointPolicy.NeedsUpdate(null, null),

@@ -9,12 +9,14 @@ internal static class DualSenseSpeakerConfiguration
     private const uint QuadraphonicSpeakerMask = 0x00000033;
     private static readonly Guid PcmSubFormat = new("00000001-0000-0010-8000-00AA00389B71");
 
+    /// <summary>Reads only the caller-selected endpoint so another active endpoint cannot satisfy acceptance.</summary>
     internal static bool IsConfigured(string endpointId)
     {
         using var policy = new AudioPolicyConfig();
         return ReadAndValidate(policy, endpointId);
     }
 
+    /// <summary>Waits for virtual endpoints, applies the three speaker settings, and verifies that Windows retained them.</summary>
     internal static bool Ensure(TimeSpan timeout, out bool changed)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -45,11 +47,13 @@ internal static class DualSenseSpeakerConfiguration
         return false;
     }
 
+    /// <summary>Requires both speaker masks and the complete four-channel PCM format to agree.</summary>
     private static bool ReadAndValidate(AudioPolicyConfig policy, string endpointId) =>
         policy.ReadUInt32(endpointId, PInvoke.PKEY_AudioEndpoint_PhysicalSpeakers) == QuadraphonicSpeakerMask &&
         policy.ReadUInt32(endpointId, PInvoke.PKEY_AudioEndpoint_FullRangeSpeakers) == QuadraphonicSpeakerMask &&
         IsQuadraphonic(policy.ReadFormat(endpointId));
 
+    /// <summary>Builds the 48 kHz, 16-bit quadraphonic format expected by the composite profile.</summary>
     internal static WAVEFORMATEXTENSIBLE CreateQuadraphonicFormat() => new()
     {
         Format = new WAVEFORMATEX
@@ -67,6 +71,7 @@ internal static class DualSenseSpeakerConfiguration
         SubFormat = PcmSubFormat,
     };
 
+    /// <summary>Rejects a stereo mask or a format inconsistent with the composite audio contract.</summary>
     internal static bool IsQuadraphonic(WAVEFORMATEXTENSIBLE format) =>
         format.Format.wFormatTag == 0xFFFE && format.Format.nChannels == 4 &&
         format.Format.nSamplesPerSec == 48000 && format.Format.wBitsPerSample == 16 &&
