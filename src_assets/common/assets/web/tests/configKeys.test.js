@@ -11,6 +11,7 @@ const { labelOf } = await import('foundation-ui/settings/labels.js')
 // and by its key name), unless it has no control in the Web UI at all. The list below is those keys: none of them had a
 // control in the original Web UI either (checked against the commit before the redesign), they are set in the config file.
 const NO_CONTROL = Object.freeze({
+  allow_client_resolution_change: 'new with client-requested resolution changes (0x5506 RESOLUTION, off by default): no control in the redesigned UI yet, set in the config file',
   amd_ltr_frames: 'no control in the original UI',
   client_fingerprint_remote_rules: 'no control in the original UI',
   client_fingerprint_rules_certificate: 'no control in the original UI',

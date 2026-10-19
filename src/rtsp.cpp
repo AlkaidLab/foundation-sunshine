@@ -1252,6 +1252,9 @@ namespace rtsp_stream {
         caps |= platf::platform_caps::host_session_state;
       }
       caps |= platf::platform_caps::bitrate_callback;
+      if (stream::client_resolution_change_enabled(config::video, session.enable_sops)) {
+        caps |= platf::platform_caps::client_resolution_change;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
 #ifdef _WIN32
       if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {

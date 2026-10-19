@@ -138,6 +138,7 @@ namespace config {
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
     int video_pacing_threshold;  // Minimum encoded frame size in bytes for UDP pacing; 0 disables the additional pacing path
+    bool allow_client_resolution_change;  // If true, apply client-requested mid-stream resolution changes (0x5506 RESOLUTION); also requires dynamic_resolution_follow_display and automatic resolution_change
   };
 
   struct audio_t {
