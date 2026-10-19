@@ -13,6 +13,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -140,6 +142,56 @@ namespace video {
   // 动态参数调节事件类型
   using dynamic_param_change_event_t = safe::mail_raw_t::event_t<dynamic_param_t>;
 
+  /**
+   * @brief Display size that a client-requested resolution change (0x5506 RESOLUTION) is switching to.
+   *
+   * The control stream sets it right before reconfiguring the display. Until the capture display reaches
+   * that size, the capture loop does not follow other sizes, so intermediate modes (e.g. a recreated
+   * virtual display coming up at its default mode) never reach the encoder or the client. The target is
+   * dropped when the apply fails or after a timeout, and retargeted when the driver applied a different
+   * mode, so it can never stop the capture loop from following the display for long.
+   */
+  class pending_display_size_t {
+  public:
+    using clock = std::chrono::steady_clock;
+    static constexpr std::chrono::seconds timeout { 10 };
+
+    void
+    set(int width, int height, clock::time_point now = clock::now());
+
+    void
+    clear();
+
+    /**
+     * @brief Wait for the display mode that was actually applied if it differs from the request.
+     */
+    void
+    settle(int applied_width, int applied_height);
+
+    /**
+     * @brief Whether a display that changed to this size is an intermediate mode the capture loop should skip.
+     * @note Reaching the target, with the same orientation, consumes it.
+     */
+    bool
+    defers(int width, int height, clock::time_point now = clock::now());
+
+    /**
+     * @brief Whether an unexpired target is still pending.
+     */
+    bool
+    pending(clock::time_point now = clock::now());
+
+  private:
+    struct target_t {
+      int width;
+      int height;
+      clock::time_point deadline;
+    };
+
+    std::mutex mutex_;
+    std::optional<target_t> target_;
+  };
+
   /* Encoding configuration requested by remote client */
   struct config_t {
     int width;  // Video width in pixels
@@ -206,6 +258,8 @@ namespace video {
     std::uint32_t perf_session_id = 0;
     bool pyrowave_dynamic_hdr_mapping = false;
     std::shared_ptr<streaming::bitrate_budget_t> bitrate_budget;
+    // Shared with the control stream for the session; only set by client-requested resolution changes.
+    std::shared_ptr<pending_display_size_t> client_resolution_target;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {

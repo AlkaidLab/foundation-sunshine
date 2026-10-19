@@ -2053,23 +2053,26 @@ namespace stream {
         return;
       }
 
-      // The capture loop keeps its launch-time client/display scale ratio, so a client-driven size is only
-      // exact while the capture display still shows this stream's size: the launch mode (or the last
-      // client-driven change) was applied 1:1 and the host display has not changed underneath.
-      const auto display_shows_stream_size = [&]() {
+      // Current mode of the capture display, if it can be read.
+      const auto capture_display_size = [&]() -> std::optional<std::pair<int, int>> {
         if (target_device_id.empty()) {
-          return false;
+          return std::nullopt;
         }
         const auto modes = display_device::get_current_display_modes({target_device_id});
         const auto mode = modes.find(target_device_id);
         if (mode == modes.end()) {
-          return false;
+          return std::nullopt;
         }
-        const auto width = static_cast<int>(mode->second.resolution.width);
-        const auto height = static_cast<int>(mode->second.resolution.height);
-        return (width == old_width && height == old_height) || (width == old_height && height == old_width);
+        return std::make_pair(static_cast<int>(mode->second.resolution.width), static_cast<int>(mode->second.resolution.height));
       };
-      if (!display_shows_stream_size()) {
+
+      // The capture loop keeps its launch-time client/display scale ratio, so a client-driven size is only
+      // exact while the capture display still shows this stream's size: the launch mode (or the last
+      // client-driven change) was applied 1:1 and the host display has not changed underneath.
+      const auto shown_size = capture_display_size();
+      if (!shown_size ||
+          !((shown_size->first == old_width && shown_size->second == old_height) ||
+            (shown_size->first == old_height && shown_size->second == old_width))) {
         BOOST_LOG(info) << "Ignoring client resolution change request: the capture display does not show the stream resolution "
                         << old_width << "x" << old_height;
         return;
@@ -2085,8 +2088,13 @@ namespace stream {
                         << " -> " << new_width << "x" << new_height;
       }
 
+      // Until the display reaches the requested size, the capture loop skips intermediate modes.
+      const auto &resolution_target = session->config.monitor.client_resolution_target;
       std::optional<display_device::session_t::configure_result_t> result;
       const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
+        if (resolution_target) {
+          resolution_target->set(new_width, new_height);
+        }
         result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
       });
       if (!display_reconfigured) {
@@ -2097,13 +2105,23 @@ namespace stream {
       // deferred_retry is not a success here: the retry yields to active sessions, so the mode never
       // applies mid-stream. Keep the current state; the client may request the size again.
       if (result->result != display_device::session_t::configure_result_t::result_e::success) {
+        if (resolution_target) {
+          resolution_target->clear();
+        }
         BOOST_LOG(warning) << "Dynamic display reconfiguration to " << new_width << "x" << new_height
                            << " was not applied (result " << static_cast<int>(result->result) << "): " << result->message;
         return;
       }
 
-      session->config.monitor.width = new_width;
-      session->config.monitor.height = new_height;
+      // The driver may have applied a slightly different mode; the capture loop and the session follow that one.
+      // If it cannot be read, assume the requested size; the target's deadline still bounds the capture loop's wait.
+      const auto applied_size = capture_display_size().value_or(std::make_pair(new_width, new_height));
+      if (resolution_target) {
+        resolution_target->settle(applied_size.first, applied_size.second);
+      }
+
+      session->config.monitor.width = applied_size.first;
+      session->config.monitor.height = applied_size.second;
       perf::update_session_display(
         session->launch_session_id,
         session->config.monitor.width,
@@ -2115,7 +2133,7 @@ namespace stream {
       // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
       session->video.idr_events->raise(true);
 
-      BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
+      BOOST_LOG(info) << "Dynamic stream resolution updated: " << applied_size.first << "x" << applied_size.second
                       << (is_rotation ? " (rotation detected)" : "");
     };
 
@@ -4611,6 +4629,7 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
+      session->config.monitor.client_resolution_target = std::make_shared<video::pending_display_size_t>();
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);

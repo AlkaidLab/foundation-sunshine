@@ -263,6 +263,49 @@ namespace video {
     return std::chrono::duration<double, std::milli> { 2000.0 / std::max(stream_fps, 1) };
   }
 
+  void
+  pending_display_size_t::set(int width, int height, clock::time_point now) {
+    std::lock_guard lock { mutex_ };
+    target_ = target_t { width, height, now + timeout };
+  }
+
+  void
+  pending_display_size_t::clear() {
+    std::lock_guard lock { mutex_ };
+    target_.reset();
+  }
+
+  void
+  pending_display_size_t::settle(int applied_width, int applied_height) {
+    std::lock_guard lock { mutex_ };
+    // Wait for the mode that was actually applied: clearing here could let the capture loop follow a display
+    // that still shows an intermediate mode. The original deadline still bounds the wait.
+    if (target_) {
+      target_->width = applied_width;
+      target_->height = applied_height;
+    }
+  }
+
+  bool
+  pending_display_size_t::defers(int width, int height, clock::time_point now) {
+    std::lock_guard lock { mutex_ };
+    // Orientation must match too: a portrait request is not satisfied by a landscape intermediate mode.
+    if (!target_ || now >= target_->deadline || (target_->width == width && target_->height == height)) {
+      target_.reset();
+      return false;
+    }
+    return true;
+  }
+
+  bool
+  pending_display_size_t::pending(clock::time_point now) {
+    std::lock_guard lock { mutex_ };
+    if (target_ && now >= target_->deadline) {
+      target_.reset();
+    }
+    return target_.has_value();
+  }
+
   input_activity_boost_policy_t
   make_input_activity_boost_policy(const input_activity_boost_config_t &config) {
     input_activity_boost_policy_t policy {};
@@ -3515,7 +3558,8 @@ namespace video {
     void *channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
     std::function<std::unique_ptr<encode_session_t>()> session_factory = {},
-    std::function<void()> backend_failure_handler = {}) {
+    std::function<void()> backend_failure_handler = {},
+    std::function<bool()> stop_requested = {}) {
     auto session = session_factory ? session_factory() :
       make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
@@ -3667,10 +3711,12 @@ namespace video {
       // a) The stream is ending
       // b) Sunshine is quitting
       // c) The capture side is waiting to reinit and we've encoded at least one frame
+      // d) The capture loop asked to re-evaluate the display (e.g. a skipped display change can now be followed)
       //
       // If we have to reinit before we have received any captured frames, we will encode
       // the blank dummy frame just to let Moonlight know that we're alive.
-      if (shutdown_event->peek() || !images->running() || (reinit_event.peek() && frame_nr > 1)) {
+      if (shutdown_event->peek() || !images->running() || (reinit_event.peek() && frame_nr > 1) ||
+          (stop_requested && frame_nr > 1 && stop_requested())) {
         break;
       }
 
@@ -4335,6 +4381,18 @@ namespace video {
         return std::max(64, (static_cast<int>(dimension * scale) + 1) & ~1);
       };
 
+      // While a client-requested resolution change settles, skip intermediate display modes (e.g. a recreated
+      // virtual display coming up at its default mode): keep the current encoding size and re-evaluate once the
+      // display reaches the requested size or the request is abandoned.
+      const bool display_change_deferred =
+        last_display_width != 0 && !is_window_capture &&
+        (current_width != last_display_width || current_height != last_display_height) &&
+        config.client_resolution_target && config.client_resolution_target->defers(current_width, current_height);
+      if (display_change_deferred) {
+        BOOST_LOG(info) << "Not following intermediate display resolution " << current_width << "x" << current_height
+                        << " while a client-requested resolution change settles";
+      }
+
       // Initialize cached display dimensions on first iteration
       if (last_display_width == 0 && last_display_height == 0) {
         last_display_width = current_width;
@@ -4374,7 +4432,7 @@ namespace video {
           idr_events->raise(true);
         }
       }
-      else if (!is_window_capture &&
+      else if (!display_change_deferred && !is_window_capture &&
                (current_width != last_display_width || current_height != last_display_height)) {
         const bool is_rotation = (last_display_width == current_height && last_display_height == current_width);
 
@@ -4628,6 +4686,14 @@ namespace video {
       }
       hdr_event->raise(std::move(hdr_info));
 
+      // A skipped display change is followed once the client-requested change completes or is abandoned.
+      std::function<bool()> stop_requested;
+      if (display_change_deferred) {
+        stop_requested = [target = config.client_resolution_target]() {
+          return !target->pending();
+        };
+      }
+
       encode_run(
         frame_nr,
         mail, images,
@@ -4635,7 +4701,8 @@ namespace video {
         std::move(encode_device),
         ref->reinit_event, *ref->encoder_p,
         channel_data, dynamic_param_events,
-        std::move(session_factory), std::move(backend_failure_handler));
+        std::move(session_factory), std::move(backend_failure_handler),
+        std::move(stop_requested));
     }
   }
 
