@@ -130,6 +130,7 @@ internal sealed class DeviceRegistry : IDisposable
         session.StartDefaultAudioEndpointGuard();
     }
 
+    /// <summary>Acknowledges detach after the owned session and render endpoint have been released.</summary>
     internal void Detach(uint requestId, ReadOnlySpan<byte> payload)
     {
         if (payload.Length != 1)
@@ -139,6 +140,7 @@ internal sealed class DeviceRegistry : IDisposable
         _emit(new Protocol.Message(Protocol.MessageType.DetachReply, requestId, new[] { payload[0] }));
     }
 
+    /// <summary>Resolves the payload's device ID only within this registry's attached sessions.</summary>
     internal ControllerSession GetController(ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty || !_controllers.TryGetValue(payload[0], out var controller))
@@ -194,6 +196,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Decodes generation-tagged PCM and queues it only while a microphone session exists.</summary>
     internal void SubmitMicrophonePcm(byte[] payload)
     {
         var packet = Protocol.DecodeMicPcm(payload);
@@ -202,6 +205,7 @@ internal sealed class DeviceRegistry : IDisposable
         _microphone.Enqueue(packet);
     }
 
+    /// <summary>Flushes the current generation or reports a missing microphone without creating one.</summary>
     internal void FlushMicrophone(uint requestId, ReadOnlySpan<byte> payload)
     {
         if (!payload.IsEmpty)
@@ -220,6 +224,7 @@ internal sealed class DeviceRegistry : IDisposable
                 Protocol.MicrophoneResult.Success, _microphone.Generation)));
     }
 
+    /// <summary>Replies only after the microphone device and its owned render endpoint finish releasing.</summary>
     internal void DestroyMicrophone(uint requestId, ReadOnlySpan<byte> payload)
     {
         if (!payload.IsEmpty)
@@ -244,6 +249,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Encodes the protocol result and generation without exposing implementation exceptions.</summary>
     private void EmitMicCreateReply(
         uint requestId, Protocol.MicrophoneResult result, uint generation)
     {
@@ -252,6 +258,7 @@ internal sealed class DeviceRegistry : IDisposable
             Protocol.EncodeMicCreateReply((int)result, generation)));
     }
 
+    /// <summary>Rejects unsupported flags or unavailable capabilities before selecting a controller identity.</summary>
     internal static string SelectProfileId(
         byte profileMode, Protocol.AttachFlags flags,
         bool authoredHapticsAvailable, bool genshinCompatibilityAvailable)
@@ -358,6 +365,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Registers pinned profiles before SDK defaults and derives the Genshin composite identity.</summary>
     private bool LoadPatchedProfiles()
     {
         // Register Sunshine's always-armed profile copies before the stock
