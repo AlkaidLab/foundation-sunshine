@@ -398,6 +398,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Attempts every owned device release before reporting the first cleanup error.</summary>
     internal void ReleaseAllDevices()
     {
         Exception? cleanupError = null;
@@ -429,6 +430,7 @@ internal sealed class DeviceRegistry : IDisposable
             throw new InvalidOperationException("One or more virtual devices failed to dispose", cleanupError);
     }
 
+    /// <summary>Always releases the SDK context, including when one of its sessions fails to dispose.</summary>
     public void Dispose()
     {
         try { ReleaseAllDevices(); }

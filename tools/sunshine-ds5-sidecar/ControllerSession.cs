@@ -83,6 +83,7 @@ internal sealed class ControllerSession : IDisposable
     internal byte ClientControllerNumber { get; }
     internal bool HasAudio => _audioOutput is not null;
 
+    /// <summary>Starts one monitor for audio-capable sessions and suppresses notifications after disposal.</summary>
     internal void StartDefaultAudioEndpointGuard()
     {
         if (_audioOutput is null || _audioEndpointGuard is not null)

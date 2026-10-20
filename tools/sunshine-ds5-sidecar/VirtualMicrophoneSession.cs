@@ -342,6 +342,7 @@ internal sealed class VirtualMicrophoneSession : IDisposable
         return new HidMaestroMicrophoneInput(microphone);
     }
 
+    /// <summary>Requires the protocol's sample rate and bit depth with one or two channels before pumping PCM.</summary>
     private static void ValidateFormat(IVirtualMicrophoneInput input)
     {
         if (input.SampleRateHz != Protocol.MicrophoneSampleRateHz ||
@@ -399,6 +400,7 @@ internal sealed class VirtualMicrophoneSession : IDisposable
             throw new InvalidOperationException("Virtual microphone cleanup failed", cleanupError);
     }
 
+    /// <summary>Preserves the first cleanup error while allowing the remaining resources to be released.</summary>
     private static void TryCleanup(Action action, ref Exception? firstError)
     {
         try { action(); }
