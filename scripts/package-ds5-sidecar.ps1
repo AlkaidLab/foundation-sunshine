@@ -64,6 +64,10 @@ $compatibility = Get-Content -LiteralPath (Join-Path $runtime 'component-compati
 if ($compatibility.schema -ne 1 -or $compatibility.usbip.policy -ne 'externally-managed-v1' -or
     $componentVersion -ne $compatibility.component_version -or
     $runtimeMetadata.usbip_policy -ne $compatibility.usbip.policy -or
+    $runtimeMetadata.usbip_version -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($runtimeMetadata.usbip_version) -or
+    $compatibility.usbip.version -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($compatibility.usbip.version) -or
     $runtimeMetadata.usbip_version -ne $compatibility.usbip.version) {
     throw 'Sidecar runtime and shared transport compatibility contract disagree'
 }

@@ -516,13 +516,13 @@ internal static class ProtocolSelfTest
 
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
-        if (endpointId is not null)
+        if (beforeEndpoints is not null)
         {
             // Dispose completes before Windows removes the audio endpoint.
-            // Wait for this identity to leave the active set before another round.
+            // Wait for all endpoints from both attaches to leave the active set.
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
-                       .Contains(endpointId, StringComparer.OrdinalIgnoreCase))
+                       .Any(endpoint => !beforeEndpoints.Contains(endpoint)))
             {
                 Require(DateTime.UtcNow < deadline, "current audio endpoint released");
                 await Task.Delay(50, stopping.Token);
