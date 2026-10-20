@@ -43,7 +43,7 @@ jobs:
     name: Setup Release
     outputs:
       publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
-      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
+      release_body: ${{ steps.filter_release_contributors.outputs.release_body || steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
       release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
       release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
       release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
@@ -73,6 +73,41 @@ jobs:
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
           echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
           echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+
+      - name: Filter bot contributors
+        id: filter_release_contributors
+        if: steps.setup_release_auto.outputs.release_body != ''
+        uses: actions/github-script@v7
+        env:
+          RELEASE_BODY: ${{ steps.setup_release_auto.outputs.release_body }}
+        with:
+          script: |
+            const body = process.env.RELEASE_BODY ?? '';
+            const sectionMarker = '## Contributors';
+            const sectionStart = body.lastIndexOf(sectionMarker);
+            if (sectionStart < 0) {
+              core.setOutput('release_body', body);
+              return;
+            }
+
+            // setup-release-action leaves GitHub's [bot] suffix after each
+            // linked author mention. Collect those logins before filtering
+            // only the generated contributor-avatar section.
+            const botLogins = new Set(
+              [...body.matchAll(/\]\(https:\/\/github\.com\/([A-Za-z0-9-]+)\)\[bot\]/gi)]
+                .map(([, login]) => login.toLowerCase()),
+            );
+            const contributors = body.slice(sectionStart);
+            const filteredContributors = contributors.replace(
+              /<a\b[^>]*\bhref="https:\/\/github\.com\/([A-Za-z0-9-]+)"[^>]*>[\s\S]*?<\/a>/gi,
+              (anchor, login) => {
+                if (!botLogins.has(login.toLowerCase())) return anchor;
+                core.info(`Omitting bot from contributor avatars: ${login}`);
+                return '';
+              },
+            );
+
+            core.setOutput('release_body', body.slice(0, sectionStart) + filteredContributors);
 
   vdd_smoke:
     name: VDD helper smoke tests
