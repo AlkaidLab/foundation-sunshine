@@ -16,35 +16,16 @@ internal static class DualSenseSpeakerConfiguration
         return ReadAndValidate(policy, endpointId);
     }
 
-    /// <summary>Waits for virtual endpoints, applies the three speaker settings, and verifies that Windows retained them.</summary>
-    internal static bool Ensure(TimeSpan timeout, out bool changed)
+    /// <summary>Configures only the current controller's endpoint and verifies all three speaker settings.</summary>
+    internal static void Ensure(string endpointId, out bool changed)
     {
-        var deadline = DateTime.UtcNow + timeout;
-        do
-        {
-            var endpoints = DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints();
-            if (endpoints.Count != 0)
-            {
-                changed = false;
-                using var policy = new AudioPolicyConfig();
-                foreach (var endpoint in endpoints)
-                {
-                    changed |= !ReadAndValidate(policy, endpoint);
-                    policy.SetFormat(endpoint, CreateQuadraphonicFormat());
-                    policy.SetUInt32(endpoint, PInvoke.PKEY_AudioEndpoint_PhysicalSpeakers, QuadraphonicSpeakerMask);
-                    policy.SetUInt32(endpoint, PInvoke.PKEY_AudioEndpoint_FullRangeSpeakers, QuadraphonicSpeakerMask);
-                    if (!ReadAndValidate(policy, endpoint))
-                        throw new InvalidOperationException("Windows did not retain the DualSense speaker configuration");
-                }
-                return true;
-            }
-            if (DateTime.UtcNow >= deadline)
-                break;
-            Thread.Sleep(50);
-        }
-        while (true);
-        changed = false;
-        return false;
+        using var policy = new AudioPolicyConfig();
+        changed = !ReadAndValidate(policy, endpointId);
+        policy.SetFormat(endpointId, CreateQuadraphonicFormat());
+        policy.SetUInt32(endpointId, PInvoke.PKEY_AudioEndpoint_PhysicalSpeakers, QuadraphonicSpeakerMask);
+        policy.SetUInt32(endpointId, PInvoke.PKEY_AudioEndpoint_FullRangeSpeakers, QuadraphonicSpeakerMask);
+        if (!ReadAndValidate(policy, endpointId))
+            throw new InvalidOperationException("Windows did not retain the DualSense speaker configuration");
     }
 
     /// <summary>Requires both speaker masks and the complete four-channel PCM format to agree.</summary>

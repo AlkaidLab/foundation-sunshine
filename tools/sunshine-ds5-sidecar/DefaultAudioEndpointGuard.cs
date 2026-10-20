@@ -226,6 +226,38 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     internal static IReadOnlyList<string> GetActiveVirtualDualSenseRenderEndpoints() =>
         CoreAudio.GetActiveEndpointIds(EDataFlow.eRender).Where(IsVirtualDualSenseEndpoint).ToArray();
 
+    /// <summary>Binds creation to one new render endpoint, rejecting stale or ambiguous identities.</summary>
+    internal static string WaitForNewRenderEndpoint(
+        IReadOnlySet<string> previous, TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var created = GetActiveVirtualDualSenseRenderEndpoints()
+                .Where(endpoint => !previous.Contains(endpoint)).ToArray();
+            if (created.Length > 1)
+                throw new InvalidOperationException("The current controller has ambiguous render endpoints");
+            if (created.Length == 1)
+                return created[0];
+            Thread.Sleep(50);
+        }
+        while (DateTime.UtcNow < deadline);
+        throw new TimeoutException("The current controller did not create an active render endpoint");
+    }
+
+    /// <summary>Requires the retiring controller's endpoint to disappear before reusing its identity.</summary>
+    internal static void WaitForRenderEndpointRemoval(string endpointId, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (CoreAudio.GetActiveEndpointIds(EDataFlow.eRender).Contains(endpointId, StringComparer.OrdinalIgnoreCase))
+        {
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException("The retiring controller's render endpoint remains active");
+            Thread.Sleep(50);
+        }
+    }
+
     /// <summary>Optionally includes phantom nodes while provisioning policy before enumeration.</summary>
     internal static bool IsVirtualDualSenseDeviceNode(string instanceId, bool includePhantom)
     {

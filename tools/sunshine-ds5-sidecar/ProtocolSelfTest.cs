@@ -432,7 +432,9 @@ internal static class ProtocolSelfTest
             "composite four-channel audio capability");
         // Capability bits alone cannot prove that Windows retained the speaker
         // setup required by games. Exercise the real COM enumeration/readback.
-        var endpointId = composite ? await WaitForNewRenderEndpointAsync(beforeEndpoints!, stopping.Token) : null;
+        var endpointId = composite ? await Task.Run(() =>
+            DefaultAudioEndpointGuard.WaitForNewRenderEndpoint(beforeEndpoints!, TimeSpan.FromSeconds(5), stopping.Token),
+            stopping.Token) : null;
         Require(!composite || DualSenseSpeakerConfiguration.IsConfigured(endpointId!),
             "current endpoint format, available speakers and full-range speakers");
 
@@ -553,24 +555,6 @@ internal static class ProtocolSelfTest
         if (!string.IsNullOrWhiteSpace(resultPath))
             await File.WriteAllTextAsync(resultPath, result, stopping.Token);
         return 0;
-    }
-
-    /// <summary>Waits for one new identity relative to this attach and rejects ambiguous or stale endpoints.</summary>
-    private static async Task<string> WaitForNewRenderEndpointAsync(
-        IReadOnlySet<string> previous, CancellationToken cancellationToken)
-    {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        do
-        {
-            var created = DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
-                .Where(endpoint => !previous.Contains(endpoint)).ToArray();
-            Require(created.Length <= 1, "unambiguous current audio endpoint");
-            if (created.Length == 1)
-                return created[0];
-            await Task.Delay(50, cancellationToken);
-        }
-        while (DateTime.UtcNow < deadline);
-        throw new InvalidOperationException("The current self-test did not create an active render endpoint");
     }
 
     internal static void RunDeterministicChecks()
