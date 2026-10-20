@@ -6,13 +6,18 @@
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
     <PublishSingleFile>false</PublishSingleFile>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <HIDMaestroCorePath Condition="'$(HIDMaestroCorePath)' == ''">$(MSBuildProjectDirectory)\runtime\HIDMaestro.Core.dll</HIDMaestroCorePath>
+    <CompatibilityManifestPath Condition="'$(CompatibilityManifestPath)' == ''">$(MSBuildProjectDirectory)\..\..\src_assets\common\sunshine-control-panel\src-tauri\component-compatibility.json</CompatibilityManifestPath>
   </PropertyGroup>
-  <Target Name="RequireHIDMaestro" BeforeTargets="ResolveReferences"
-          Condition="!Exists('$(HIDMaestroCorePath)')">
-    <Error Text="HIDMaestro.Core.dll was not found. Build the Foundation v1.12.0 Core patch and set HIDMaestroCorePath to its output." />
+  <Target Name="RequireHIDMaestro" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(HIDMaestroCorePath)')" Text="HIDMaestro.Core.dll was not found. Build the Foundation v1.12.0 Core patch and set HIDMaestroCorePath to its output." />
+    <Error Condition="!Exists('$(CompatibilityManifestPath)')" Text="component-compatibility.json was not found. Initialize the GUI submodule or set CompatibilityManifestPath." />
   </Target>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="[0.3.333]" PrivateAssets="all" />
+    <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
+    <None Include="$(CompatibilityManifestPath)" Link="component-compatibility.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- Input arrives in short bursts separated by about 1 ms. The pinned
          .NET 10 portable pool's default semaphore spin budget burns CPU
          between those bursts. Sleep on the signal instead; this does not

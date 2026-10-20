@@ -37,7 +37,12 @@ namespace {
       // so the test exercises real JSON parsing and file paths, not OpenSSL.
       write(active / "Sunshine.Ds5Sidecar.exe", exe_digest);
       write(active / "HIDMaestro.Core.dll", core_digest);
-      manifest.put("component_version", "1.4.1");
+      write(active / "component-compatibility.json",
+        R"({"schema":1,"component_version":"1.4.2","usbip":{"policy":"externally-managed-v1","version":"0.9.8.1"}})");
+      manifest.put("component_version", "1.4.2");
+      manifest.put("usbip_policy", "externally-managed-v1");
+      manifest.put("usbip_version", "0.9.8.1");
+      manifest.put("compatibility_sha256", std::string(64, 'd'));
       manifest.put("protocol", 1);
       manifest.put("sidecar_file", "Sunshine.Ds5Sidecar.exe");
       manifest.put("sidecar_sha256", exe_digest);
@@ -56,6 +61,7 @@ namespace {
     bool validate() {
       return platf::ds5::validate_component_manifest(active,
         [](const std::filesystem::path &path) -> std::optional<std::string> {
+          if (path.filename() == "component-compatibility.json") return std::string(64, 'd');
           std::ifstream input(path, std::ios::binary);
           if (!input) return std::nullopt;
           return std::string(std::istreambuf_iterator<char>(input), {});
@@ -76,12 +82,12 @@ namespace {
   }
 
   TEST_F(Ds5ComponentManifest, RejectsOldVersionAndWrongProtocol) {
-    for (const auto &version : { "1.2.0", "1.3.0", "1.4.0" }) {
+    for (const auto &version : { "1.2.0", "1.3.0", "1.4.0", "1.4.1" }) {
       manifest.put("component_version", version);
       save();
       EXPECT_FALSE(validate());
     }
-    manifest.put("component_version", "1.4.1");
+    manifest.put("component_version", "1.4.2");
     manifest.put("protocol", 2);
     save();
     EXPECT_FALSE(validate());
@@ -97,6 +103,22 @@ namespace {
       save();
       EXPECT_FALSE(validate());
     }
+  }
+
+  TEST_F(Ds5ComponentManifest, RejectsRuntimeManagedOrMismatchedTransport) {
+    for (const auto &policy : { "", "runtime-managed", "externally-managed-v2" }) {
+      manifest.put("usbip_policy", policy);
+      save();
+      EXPECT_FALSE(validate());
+    }
+    manifest.put("usbip_policy", "externally-managed-v1");
+    manifest.put("usbip_version", "0.9.7.7");
+    save();
+    EXPECT_FALSE(validate());
+    manifest.put("usbip_version", "0.9.8.1");
+    manifest.erase("compatibility_sha256");
+    save();
+    EXPECT_FALSE(validate());
   }
 
   TEST_F(Ds5ComponentManifest, RequiresCoreAtTheActiveComponentPath) {

@@ -1,20 +1,14 @@
 using System.Runtime.InteropServices;
+using Windows.Win32;
+using Windows.Win32.Media.Audio;
+using Windows.Win32.System.Com;
 
 namespace Sunshine.Ds5Sidecar;
 
-internal sealed class WasapiCaptureProbe : IDisposable
+internal sealed unsafe class WasapiCaptureProbe : IDisposable
 {
-    private const uint ClsctxAll = 23;
-    private const uint DeviceStateActive = 1;
     private const uint AudioClientStreamflagsNoPersist = 0x0008_0000;
     private const uint AudioClientBufferflagsSilent = 0x0000_0002;
-
-    private static readonly Guid MmDeviceEnumeratorClsid =
-        new("BCDE0395-E52F-467C-8E3D-C4579291692E");
-    private static readonly Guid AudioClientIid =
-        new("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
-    private static readonly Guid AudioCaptureClientIid =
-        new("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
 
     private readonly IMMDevice _device;
     private readonly IAudioClient _audioClient;
@@ -22,6 +16,7 @@ internal sealed class WasapiCaptureProbe : IDisposable
     private readonly ushort _blockAlign;
     private bool _disposed;
 
+    /// <summary>Takes ownership of an initialized capture device, client and service.</summary>
     private WasapiCaptureProbe(
         IMMDevice device, IAudioClient audioClient, IAudioCaptureClient captureClient,
         ushort blockAlign)
@@ -35,39 +30,11 @@ internal sealed class WasapiCaptureProbe : IDisposable
     internal ulong CapturedFrames { get; private set; }
     internal ulong NonZeroFrames { get; private set; }
 
-    internal static HashSet<string> GetActiveCaptureEndpointIds()
-    {
-        var enumerator = CreateEnumerator();
-        IMMDeviceCollection? collection = null;
-        try
-        {
-            ThrowIfFailed(enumerator.EnumAudioEndpoints(
-                EDataFlow.Capture, DeviceStateActive, out collection));
-            ThrowIfFailed(collection.GetCount(out var count));
-            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (uint index = 0; index < count; ++index)
-            {
-                IMMDevice? device = null;
-                try
-                {
-                    ThrowIfFailed(collection.Item(index, out device));
-                    ThrowIfFailed(device.GetId(out var id));
-                    ids.Add(id);
-                }
-                finally
-                {
-                    ReleaseComObject(device);
-                }
-            }
-            return ids;
-        }
-        finally
-        {
-            ReleaseComObject(collection);
-            ReleaseComObject(enumerator);
-        }
-    }
+    /// <summary>Snapshots identities used to distinguish a new test endpoint from existing microphones.</summary>
+    internal static HashSet<string> GetActiveCaptureEndpointIds() =>
+        new(CoreAudio.GetActiveEndpointIds(EDataFlow.eCapture), StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Keeps opening, capture and disposal on one thread and propagates its result asynchronously.</summary>
     internal static Task<T> RunOnDedicatedThreadAsync<T>(
         string endpointId, Func<WasapiCaptureProbe, T> action)
     {
@@ -95,32 +62,35 @@ internal sealed class WasapiCaptureProbe : IDisposable
         return completion.Task;
     }
 
+    /// <summary>Initializes shared-mode capture and releases all acquired native resources on failure.</summary>
     private static WasapiCaptureProbe Open(string endpointId)
     {
-        var enumerator = CreateEnumerator();
+        var enumerator = CoreAudio.CreateEnumerator();
         IMMDevice? device = null;
         IAudioClient? audioClient = null;
         IAudioCaptureClient? captureClient = null;
-        IntPtr mixFormat = IntPtr.Zero;
+        WAVEFORMATEX* mixFormat = null;
         try
         {
-            ThrowIfFailed(enumerator.GetDevice(endpointId, out device));
-            var audioClientIid = AudioClientIid;
-            ThrowIfFailed(device.Activate(
-                ref audioClientIid, ClsctxAll, IntPtr.Zero, out var activated));
+            enumerator.GetDevice(endpointId, out device).ThrowOnFailure();
+            var audioClientIid = typeof(IAudioClient).GUID;
+            device.Activate(
+                in audioClientIid, CLSCTX.CLSCTX_ALL, null, out var activated).ThrowOnFailure();
             audioClient = (IAudioClient)activated;
-            ThrowIfFailed(audioClient.GetMixFormat(out mixFormat));
-            var blockAlign = checked((ushort)Marshal.ReadInt16(mixFormat, 12));
+            audioClient.GetMixFormat(out mixFormat).ThrowOnFailure();
+            var blockAlign = mixFormat->nBlockAlign;
             if (blockAlign == 0)
                 throw new InvalidDataException("WASAPI capture mix format has zero block alignment");
-            ThrowIfFailed(audioClient.Initialize(
-                AudioClientShareMode.Shared, AudioClientStreamflagsNoPersist,
-                1_000_000, 0, mixFormat, IntPtr.Zero));
+            audioClient.Initialize(
+                AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED, AudioClientStreamflagsNoPersist,
+                1_000_000, 0, mixFormat, null).ThrowOnFailure();
 
-            var captureClientIid = AudioCaptureClientIid;
-            ThrowIfFailed(audioClient.GetService(ref captureClientIid, out var service));
+            // Use the generated native signature: the generic helper routes
+            // this classic COM service through the WinRT object marshaller.
+            var captureClientIid = typeof(IAudioCaptureClient).GUID;
+            audioClient.GetService(&captureClientIid, out var service).ThrowOnFailure();
             captureClient = (IAudioCaptureClient)service;
-            ThrowIfFailed(audioClient.Start());
+            audioClient.Start().ThrowOnFailure();
 
             var probe = new WasapiCaptureProbe(
                 device, audioClient, captureClient, blockAlign);
@@ -131,33 +101,34 @@ internal sealed class WasapiCaptureProbe : IDisposable
         }
         catch
         {
-            ReleaseComObject(captureClient);
-            ReleaseComObject(audioClient);
-            ReleaseComObject(device);
+            CoreAudio.Release(captureClient);
+            CoreAudio.Release(audioClient);
+            CoreAudio.Release(device);
             throw;
         }
         finally
         {
-            if (mixFormat != IntPtr.Zero)
-                Marshal.FreeCoTaskMem(mixFormat);
-            ReleaseComObject(enumerator);
+            if (mixFormat != null)
+                Marshal.FreeCoTaskMem((IntPtr)mixFormat);
+            CoreAudio.Release(enumerator);
         }
     }
 
+    /// <summary>Counts captured and nonzero frames while returning every acquired packet buffer.</summary>
     internal void Drain()
     {
-        ThrowIfFailed(_captureClient.GetNextPacketSize(out var packetFrames));
+        _captureClient.GetNextPacketSize(out var packetFrames).ThrowOnFailure();
         while (packetFrames != 0)
         {
-            ThrowIfFailed(_captureClient.GetBuffer(
-                out var data, out var frames, out var flags, out _, out _));
+            _captureClient.GetBuffer(
+                out var data, out var frames, out var flags, out _, out _).ThrowOnFailure();
             try
             {
                 CapturedFrames += frames;
-                if ((flags & AudioClientBufferflagsSilent) == 0 && data != IntPtr.Zero)
+                if ((flags & AudioClientBufferflagsSilent) == 0 && data != null)
                 {
                     var bytes = new byte[checked((int)(frames * _blockAlign))];
-                    Marshal.Copy(data, bytes, 0, bytes.Length);
+                    Marshal.Copy((IntPtr)data, bytes, 0, bytes.Length);
                     for (var frame = 0u; frame < frames; ++frame)
                     {
                         if (bytes.AsSpan(checked((int)(frame * _blockAlign)), _blockAlign)
@@ -168,168 +139,21 @@ internal sealed class WasapiCaptureProbe : IDisposable
             }
             finally
             {
-                ThrowIfFailed(_captureClient.ReleaseBuffer(frames));
+                _captureClient.ReleaseBuffer(frames).ThrowOnFailure();
             }
-            ThrowIfFailed(_captureClient.GetNextPacketSize(out packetFrames));
+            _captureClient.GetNextPacketSize(out packetFrames).ThrowOnFailure();
         }
     }
 
+    /// <summary>Stops capture and releases its service, audio client and endpoint once.</summary>
     public void Dispose()
     {
         if (_disposed)
             return;
         _disposed = true;
         _audioClient.Stop();
-        ReleaseComObject(_captureClient);
-        ReleaseComObject(_audioClient);
-        ReleaseComObject(_device);
-    }
-
-    private static IMMDeviceEnumerator CreateEnumerator()
-    {
-        var type = Type.GetTypeFromCLSID(MmDeviceEnumeratorClsid, throwOnError: true)!;
-        return (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
-    }
-
-    private static void ThrowIfFailed(int result)
-    {
-        if (result < 0)
-            Marshal.ThrowExceptionForHR(result);
-    }
-
-    private static void ReleaseComObject(object? value)
-    {
-        if (value is not null && Marshal.IsComObject(value))
-            Marshal.ReleaseComObject(value);
-    }
-
-    private enum EDataFlow
-    {
-        Render,
-        Capture,
-        All,
-    }
-
-    private enum AudioClientShareMode
-    {
-        Shared,
-        Exclusive,
-    }
-
-    [ComImport]
-    [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceEnumerator
-    {
-        [PreserveSig]
-        int EnumAudioEndpoints(
-            EDataFlow dataFlow, uint stateMask, out IMMDeviceCollection devices);
-
-        [PreserveSig]
-        int GetDefaultAudioEndpoint(EDataFlow dataFlow, int role, out IMMDevice endpoint);
-
-        [PreserveSig]
-        int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
-
-        [PreserveSig]
-        int RegisterEndpointNotificationCallback(IntPtr callback);
-
-        [PreserveSig]
-        int UnregisterEndpointNotificationCallback(IntPtr callback);
-    }
-
-    [ComImport]
-    [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDeviceCollection
-    {
-        [PreserveSig]
-        int GetCount(out uint count);
-
-        [PreserveSig]
-        int Item(uint index, out IMMDevice device);
-    }
-
-    [ComImport]
-    [Guid("D666063F-1587-4E43-81F1-B948E807363F")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IMMDevice
-    {
-        [PreserveSig]
-        int Activate(
-            ref Guid iid, uint clsctx, IntPtr activationParams,
-            [MarshalAs(UnmanagedType.IUnknown)] out object activatedInterface);
-
-        [PreserveSig]
-        int OpenPropertyStore(uint access, out IntPtr properties);
-
-        [PreserveSig]
-        int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
-
-        [PreserveSig]
-        int GetState(out uint state);
-    }
-
-    [ComImport]
-    [Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IAudioClient
-    {
-        [PreserveSig]
-        int Initialize(
-            AudioClientShareMode shareMode, uint streamFlags, long bufferDuration,
-            long periodicity, IntPtr format, IntPtr audioSessionGuid);
-
-        [PreserveSig]
-        int GetBufferSize(out uint bufferFrames);
-
-        [PreserveSig]
-        int GetStreamLatency(out long latency);
-
-        [PreserveSig]
-        int GetCurrentPadding(out uint paddingFrames);
-
-        [PreserveSig]
-        int IsFormatSupported(
-            AudioClientShareMode shareMode, IntPtr format, out IntPtr closestMatch);
-
-        [PreserveSig]
-        int GetMixFormat(out IntPtr format);
-
-        [PreserveSig]
-        int GetDevicePeriod(out long defaultPeriod, out long minimumPeriod);
-
-        [PreserveSig]
-        int Start();
-
-        [PreserveSig]
-        int Stop();
-
-        [PreserveSig]
-        int Reset();
-
-        [PreserveSig]
-        int SetEventHandle(IntPtr eventHandle);
-
-        [PreserveSig]
-        int GetService(
-            ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object service);
-    }
-
-    [ComImport]
-    [Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IAudioCaptureClient
-    {
-        [PreserveSig]
-        int GetBuffer(
-            out IntPtr data, out uint frames, out uint flags,
-            out ulong devicePosition, out ulong qpcPosition);
-
-        [PreserveSig]
-        int ReleaseBuffer(uint frames);
-
-        [PreserveSig]
-        int GetNextPacketSize(out uint frames);
+        CoreAudio.Release(_captureClient);
+        CoreAudio.Release(_audioClient);
+        CoreAudio.Release(_device);
     }
 }

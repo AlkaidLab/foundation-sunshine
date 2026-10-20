@@ -13,14 +13,14 @@ Build the compatible Foundation Core patch and the sidecar:
 scripts/build-ds5-sidecar.ps1
 ```
 
-The version 1.4.1 component ZIP includes patched `HIDMaestro.Core.dll`, its
+The version 1.4.2 component ZIP includes patched `HIDMaestro.Core.dll`, its
 licenses, and the complete .NET runtime. The main Sunshine package contains only
 the pinned ZIP download manifest. The Control Panel automatically updates older
 installed components when streaming is idle, using the existing administrator
 helper, verified staging and whole-component rollback. Optional USB/IP transport
 installation remains part of explicit install/repair, not automatic updates.
 The sidecar uses normal .NET loading and requires the v1.12.0 runtime and
-device-ownership patch marker even for `--probe`. Sunshine validates the
+device-ownership and externally managed USB/IP policy markers even for `--probe`. Sunshine validates the
 installed component without replacing DLLs.
 The upstream SDK API, assembly version and embedded resources are preserved; see
 [`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
@@ -36,6 +36,16 @@ layout, and channel-isolation checks (no elevation or virtual device required):
 
 ```powershell
 dotnet Sunshine.Ds5Sidecar.dll --self-check
+```
+
+USB/IP installation and repair belong to the shared component manager. Device
+creation only checks the approved driver and fails with a shared transport error
+when it is missing or incompatible. The ZIP carries `component-compatibility.json`,
+the same contract used by the GUI installer. The staged upgrade acceptance test
+requires elevation and an idle host, and creates/releases two composite devices:
+
+```powershell
+Sunshine.Ds5Sidecar.exe --self-test transport --result transport-acceptance.json
 ```
 
 The production process must be launched elevated and placed in the Sunshine
@@ -83,6 +93,23 @@ maximum and commits the active endpoint's 4-channel, available-speaker and
 full-range masks as quadraphonic (`0x33`) through Core Audio. This matches the
 three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
+Endpoint enumeration uses the Windows SDK's `IMMDeviceCollection` IID, and
+the Windows 10+ policy property calls include the effects-store argument.
+`NativeMethods.txt` requests the public audio COM interfaces, structures and
+property keys from Microsoft CsWin32. The generator and SDK metadata are pinned
+in `packages.lock.json`; publishing restores in locked mode and adds no runtime
+library dependency. `CoreAudio` shares endpoint enumeration and reference cleanup
+between the default-device monitor and WASAPI probe. Only the undocumented
+Windows 10+ policy interface remains hand-declared, inside `AudioPolicyConfig`.
+Core Audio references are released per acquisition so configuration readback
+cannot invalidate the concurrent default-device monitor. Endpoint detection
+also recognizes HIDMaestro's synthetic USB serial under the official USB/IP
+host controller, without requiring runtime ownership stamping.
+The transport acceptance test creates both the normal composite profile and
+the Genshin compatibility profile. It reads back the endpoint format and both
+speaker masks for the endpoint created by that attach before passing. It waits
+for that endpoint to become inactive before the next round, so a stale endpoint
+cannot satisfy another mode's check.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
 The v1 wire contract reserves capability bits and message numbers for the

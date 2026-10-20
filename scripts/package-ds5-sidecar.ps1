@@ -29,7 +29,7 @@ $assetName = 'Sunshine.Ds5Sidecar.x64.zip'
 if (-not (Test-Path -LiteralPath (Join-Path $runtime 'Sunshine.Ds5Sidecar.exe') -PathType Leaf)) {
     throw "DualSense sidecar runtime is incomplete: $runtime"
 }
-foreach ($name in @('HIDMaestro.Core.dll', 'LICENSE.HIDMaestro', 'THIRD-PARTY-NOTICES.txt')) {
+foreach ($name in @('HIDMaestro.Core.dll', 'LICENSE.HIDMaestro', 'THIRD-PARTY-NOTICES.txt', 'component-compatibility.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $runtime $name) -PathType Leaf)) {
         throw "DualSense component is missing $name"
     }
@@ -60,6 +60,17 @@ if ($runtimeMetadata.target -isnot [string] -or
     throw 'DualSense sidecar runtime metadata has an invalid target'
 }
 $componentVersion = $runtimeMetadata.component_version
+$compatibility = Get-Content -LiteralPath (Join-Path $runtime 'component-compatibility.json') -Raw | ConvertFrom-Json
+if ($compatibility.schema -ne 1 -or $compatibility.usbip.policy -ne 'externally-managed-v1' -or
+    $componentVersion -ne $compatibility.component_version -or
+    $runtimeMetadata.usbip_policy -ne $compatibility.usbip.policy -or
+    $runtimeMetadata.usbip_version -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($runtimeMetadata.usbip_version) -or
+    $compatibility.usbip.version -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($compatibility.usbip.version) -or
+    $runtimeMetadata.usbip_version -ne $compatibility.usbip.version) {
+    throw 'Sidecar runtime and shared transport compatibility contract disagree'
+}
 $runtimeTarget = $runtimeMetadata.target
 if ($runtimeTarget -ne 'win-x64-self-contained') {
     throw "DualSense sidecar runtime metadata has an unsupported target: $runtimeTarget"

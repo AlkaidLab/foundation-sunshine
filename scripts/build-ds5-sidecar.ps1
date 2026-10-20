@@ -2,11 +2,17 @@ param(
     [string]$OutputDirectory = "build/ds5-sidecar-runtime",
     [string]$PackageCache = "build/ds5-sidecar-cache",
     [string]$ReleaseTag = "",
-    [string]$Repository = "AlkaidLab/foundation-sunshine"
+    [string]$Repository = "AlkaidLab/foundation-sunshine",
+    [string]$CompatibilityManifestPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if (-not $CompatibilityManifestPath) {
+    $CompatibilityManifestPath = Join-Path $root 'src_assets/common/sunshine-control-panel/src-tauri/component-compatibility.json'
+}
+$CompatibilityManifestPath = (Resolve-Path -LiteralPath $CompatibilityManifestPath).Path
+$compatibility = Get-Content -LiteralPath $CompatibilityManifestPath -Raw | ConvertFrom-Json
 $pin = Get-Content (Join-Path $root 'tools/hidmaestro-core-patch/upstream.json') -Raw | ConvertFrom-Json
 $version = $pin.version
 $expectedSha256 = $pin.release_sha256
@@ -49,7 +55,7 @@ if (
 }
 
 # Rebuild only managed Core code, preserving the upstream ABI and payload.
-& (Join-Path $PSScriptRoot 'build-hidmaestro-core-patch.ps1') -PackageCache $PackageCache -DotnetPath $dotnet
+& (Join-Path $PSScriptRoot 'build-hidmaestro-core-patch.ps1') -PackageCache $PackageCache -DotnetPath $dotnet -CompatibilityManifestPath $CompatibilityManifestPath
 if ($LASTEXITCODE -ne 0) { throw 'HIDMaestro Core patch build failed' }
 $core = Join-Path $buildRoot 'hidmaestro-core-patch/HIDMaestro.Core.dll'
 
@@ -58,7 +64,9 @@ $core = Join-Path $buildRoot 'hidmaestro-core-patch/HIDMaestro.Core.dll'
     --runtime win-x64 `
     --self-contained true `
     --output $output `
+    -p:RestoreLockedMode=true `
     -p:HIDMaestroCorePath=$core `
+    "-p:CompatibilityManifestPath=$CompatibilityManifestPath" `
     -p:DebugType=None `
     -p:DebugSymbols=false
 if ($LASTEXITCODE -ne 0) {
@@ -70,7 +78,9 @@ foreach ($name in @('LICENSE.HIDMaestro', 'THIRD-PARTY-NOTICES.txt')) {
     Copy-Item -LiteralPath (Join-Path $buildRoot "hidmaestro-core-patch/$name") -Destination $output -Force
 }
 $runtimeMetadata = @{
-    component_version = '1.4.1'
+    component_version = $compatibility.component_version
+    usbip_policy = $compatibility.usbip.policy
+    usbip_version = $compatibility.usbip.version
     protocol = 1
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version

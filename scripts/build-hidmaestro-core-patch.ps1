@@ -1,7 +1,8 @@
 param(
     [string]$PackageCache = 'build/ds5-sidecar-cache',
     [string]$OutputDirectory = 'build/hidmaestro-core-patch',
-    [string]$DotnetPath = ''
+    [string]$DotnetPath = '',
+    [string]$CompatibilityManifestPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +12,14 @@ if ([string]::IsNullOrEmpty($DotnetPath)) {
     $DotnetPath = if ($null -ne $command) { $command.Source } else { Join-Path $env:ProgramFiles 'dotnet/dotnet.exe' }
 }
 $root = Split-Path -Parent $PSScriptRoot
+if (-not $CompatibilityManifestPath) {
+    $CompatibilityManifestPath = Join-Path $root 'src_assets/common/sunshine-control-panel/src-tauri/component-compatibility.json'
+}
+$CompatibilityManifestPath = (Resolve-Path -LiteralPath $CompatibilityManifestPath).Path
+$compatibility = Get-Content -LiteralPath $CompatibilityManifestPath -Raw | ConvertFrom-Json
+if ($compatibility.schema -ne 1 -or $compatibility.usbip.policy -ne 'externally-managed-v1') {
+    throw 'Unsupported shared USB/IP compatibility contract'
+}
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $root 'build'))
 $buildPrefix = $buildRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 $cache = [IO.Path]::GetFullPath((Join-Path $root $PackageCache))
@@ -22,6 +31,9 @@ foreach ($target in @($cache, $output)) {
 }
 $patchRoot = Join-Path $root 'tools/hidmaestro-core-patch'
 $pin = Get-Content -LiteralPath (Join-Path $patchRoot 'upstream.json') -Raw | ConvertFrom-Json
+if ($compatibility.hidmaestro_version -ne $pin.version) {
+    throw 'Sidecar compatibility contract and pinned HIDMaestro source disagree'
+}
 New-Item -ItemType Directory -Force -Path $cache, $output | Out-Null
 
 function Get-VerifiedArchive([string]$Url, [string]$Path, [string]$Digest) {
@@ -64,7 +76,7 @@ foreach ($directory in @($sourceDirectory, $payload)) {
 }
 Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceDirectory
 $source = Join-Path $sourceDirectory "HIDMaestro-$($pin.commit)"
-foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch')) {
+foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch', 'managed-usbip.patch')) {
     $patch = Join-Path $patchRoot $name
     & git apply --check --unsafe-paths "--directory=$source" $patch
     if ($LASTEXITCODE -ne 0) { throw "Core patch $name no longer applies exactly to the pinned source" }
@@ -80,12 +92,13 @@ $payloadTool = Join-Path $patchRoot 'PayloadTool/bin/Release/net10.0-windows10.0
 if ($LASTEXITCODE -ne 0) { throw 'Core resource extraction failed' }
 & $DotnetPath build (Join-Path $patchRoot 'HIDMaestro.Core.csproj') -c Release --nologo `
     "-p:UpstreamSource=$source" "-p:PayloadDirectory=$payload" "-p:OutputPath=$output/" `
+    "-p:CompatibilityManifestPath=$CompatibilityManifestPath" "-p:FoundationUsbipPolicy=$($compatibility.usbip.policy)" `
     -p:IncludeSourceRevisionInInformationalVersion=false
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core build failed' }
 $core = Join-Path $output 'HIDMaestro.Core.dll'
-& $DotnetPath $payloadTool verify $originalCore $core
+& $DotnetPath $payloadTool verify $originalCore $core $CompatibilityManifestPath
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core changed the upstream ABI or embedded payload' }
-& $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense.json')
+& $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense.json') $CompatibilityManifestPath
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership regressions failed' }
 
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force

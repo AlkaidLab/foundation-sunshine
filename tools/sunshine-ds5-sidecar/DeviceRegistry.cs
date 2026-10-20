@@ -64,6 +64,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Creates a client-owned controller and configures its own render endpoint before replying.</summary>
     internal void Attach(uint requestId, ReadOnlySpan<byte> payload)
     {
         // id:u8, controller:u8, profile:u8 (0 HID, 1 composite), flags:u8
@@ -94,17 +95,17 @@ internal sealed class DeviceRegistry : IDisposable
             }
         }
 
-        var controller = _context.CreateController(profile);
-        if (profile.RequiresUsbipBackend)
-            controller = ApplyDefaultAudioEndpointPolicy(controller, profile);
+        var (controller, endpointId) = CreateController(profile);
         ControllerSession session;
         try
         {
-            session = new ControllerSession(deviceId, payload[1], controller, profile, _emit);
+            session = new ControllerSession(deviceId, payload[1], controller, profile, _emit, endpointId);
         }
         catch
         {
             controller.Dispose();
+            if (endpointId is not null)
+                DefaultAudioEndpointGuard.WaitForRenderEndpointRemoval(endpointId, TimeSpan.FromSeconds(3));
             throw;
         }
         _controllers.Add(deviceId, session);
@@ -129,6 +130,7 @@ internal sealed class DeviceRegistry : IDisposable
         session.StartDefaultAudioEndpointGuard();
     }
 
+    /// <summary>Acknowledges detach after the owned session and render endpoint have been released.</summary>
     internal void Detach(uint requestId, ReadOnlySpan<byte> payload)
     {
         if (payload.Length != 1)
@@ -138,6 +140,7 @@ internal sealed class DeviceRegistry : IDisposable
         _emit(new Protocol.Message(Protocol.MessageType.DetachReply, requestId, new[] { payload[0] }));
     }
 
+    /// <summary>Resolves the payload's device ID only within this registry's attached sessions.</summary>
     internal ControllerSession GetController(ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty || !_controllers.TryGetValue(payload[0], out var controller))
@@ -145,6 +148,7 @@ internal sealed class DeviceRegistry : IDisposable
         return controller;
     }
 
+    /// <summary>Creates the composite microphone with the same endpoint ownership and policy guarantees.</summary>
     internal void CreateMicrophone(uint requestId, ReadOnlySpan<byte> payload)
     {
         var request = Protocol.DecodeMicCreate(payload);
@@ -168,27 +172,31 @@ internal sealed class DeviceRegistry : IDisposable
         }
 
         HMController? controller = null;
+        string? endpointId = null;
         try
         {
             var profile = _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId)
                           ?? throw new InvalidOperationException("Composite microphone prototype profile is missing");
-            controller = _context.CreateController(profile);
-            controller = ApplyDefaultAudioEndpointPolicy(controller, profile);
+            (controller, endpointId) = CreateController(profile);
             var generation = _nextMicrophoneGeneration;
             _nextMicrophoneGeneration = generation == uint.MaxValue ? 1 : generation + 1;
-            _microphone = new VirtualMicrophoneSession(controller, generation, _emit);
+            _microphone = new VirtualMicrophoneSession(controller, generation, _emit, endpointId);
             controller = null; // Session owns the controller after successful construction.
+            endpointId = null;
             EmitMicCreateReply(requestId, Protocol.MicrophoneResult.Success, generation);
             _microphone.PublishStatus();
         }
         catch (Exception error)
         {
             controller?.Dispose();
+            if (endpointId is not null)
+                DefaultAudioEndpointGuard.WaitForRenderEndpointRemoval(endpointId, TimeSpan.FromSeconds(3));
             Console.Error.WriteLine($"Unable to create the composite microphone prototype: {error.Message}");
             EmitMicCreateReply(requestId, Protocol.MicrophoneResult.DeviceCreationFailed, 0);
         }
     }
 
+    /// <summary>Decodes generation-tagged PCM and queues it only while a microphone session exists.</summary>
     internal void SubmitMicrophonePcm(byte[] payload)
     {
         var packet = Protocol.DecodeMicPcm(payload);
@@ -197,6 +205,7 @@ internal sealed class DeviceRegistry : IDisposable
         _microphone.Enqueue(packet);
     }
 
+    /// <summary>Flushes the current generation or reports a missing microphone without creating one.</summary>
     internal void FlushMicrophone(uint requestId, ReadOnlySpan<byte> payload)
     {
         if (!payload.IsEmpty)
@@ -215,6 +224,7 @@ internal sealed class DeviceRegistry : IDisposable
                 Protocol.MicrophoneResult.Success, _microphone.Generation)));
     }
 
+    /// <summary>Replies only after the microphone device and its owned render endpoint finish releasing.</summary>
     internal void DestroyMicrophone(uint requestId, ReadOnlySpan<byte> payload)
     {
         if (!payload.IsEmpty)
@@ -239,6 +249,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Encodes the protocol result and generation without exposing implementation exceptions.</summary>
     private void EmitMicCreateReply(
         uint requestId, Protocol.MicrophoneResult result, uint generation)
     {
@@ -247,6 +258,7 @@ internal sealed class DeviceRegistry : IDisposable
             Protocol.EncodeMicCreateReply((int)result, generation)));
     }
 
+    /// <summary>Rejects unsupported flags or unavailable capabilities before selecting a controller identity.</summary>
     internal static string SelectProfileId(
         byte profileMode, Protocol.AttachFlags flags,
         bool authoredHapticsAvailable, bool genshinCompatibilityAvailable)
@@ -273,61 +285,77 @@ internal sealed class DeviceRegistry : IDisposable
         };
     }
 
-    private HMController ApplyDefaultAudioEndpointPolicy(HMController controller, HMProfile profile)
+    /// <summary>Captures existing endpoints before creation so another controller cannot satisfy provisioning.</summary>
+    private (HMController Controller, string? EndpointId) CreateController(HMProfile profile)
     {
-        const int recreationLimit = 2;
-        for (var recreation = 0; recreation <= recreationLimit; ++recreation)
-        {
-            bool changed;
-            try
-            {
-                if (!DefaultAudioEndpointPolicy.EnsureNeverDefault(
-                        TimeSpan.FromSeconds(3), includePhantom: false, out changed))
-                {
-                    Console.Error.WriteLine(
-                        "Unable to find the virtual DualSense audio interface; runtime default-device guard remains active");
-                    return controller;
-                }
-            }
-            catch (Exception error)
-            {
-                Console.Error.WriteLine(
-                    $"Unable to apply the DualSense audio endpoint policy: {error.Message}; " +
-                    "runtime default-device guard remains active");
-                return controller;
-            }
-
-            if (!changed)
-            {
-                ApplySpeakerConfiguration();
-                return controller;
-            }
-
-            controller.Dispose();
-            controller = _context.CreateController(profile);
-        }
-
-        Console.Error.WriteLine(
-            "DualSense audio endpoint identity did not stabilize after policy provisioning; " +
-            "runtime default-device guard remains active");
-        ApplySpeakerConfiguration();
-        return controller;
+        var previous = profile.RequiresUsbipBackend
+            ? DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+        var controller = _context.CreateController(profile);
+        return previous is null ? (controller, null) : ApplyDefaultAudioEndpointPolicy(controller, profile, previous);
     }
 
-    private static void ApplySpeakerConfiguration()
+    /// <summary>Recreates only after the owned endpoint retires and configures the replacement by identity.</summary>
+    private (HMController Controller, string? EndpointId) ApplyDefaultAudioEndpointPolicy(
+        HMController controller, HMProfile profile, IReadOnlySet<string> previous)
+    {
+        const int recreationLimit = 2;
+        try
+        {
+            for (var recreation = 0; ; ++recreation)
+            {
+                var endpointId = DefaultAudioEndpointGuard.WaitForNewRenderEndpoint(previous, TimeSpan.FromSeconds(3));
+                bool changed;
+                try
+                {
+                    if (!DefaultAudioEndpointPolicy.EnsureNeverDefault(
+                            TimeSpan.FromSeconds(3), includePhantom: false, out changed))
+                    {
+                        Console.Error.WriteLine(
+                            "Unable to find the virtual DualSense audio interface; runtime default-device guard remains active");
+                        ApplySpeakerConfiguration(endpointId);
+                        return (controller, endpointId);
+                    }
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine(
+                        $"Unable to apply the DualSense audio endpoint policy: {error.Message}; " +
+                        "runtime default-device guard remains active");
+                    ApplySpeakerConfiguration(endpointId);
+                    return (controller, endpointId);
+                }
+                if (!changed || recreation == recreationLimit)
+                {
+                    if (changed)
+                        Console.Error.WriteLine(
+                            "DualSense audio endpoint identity did not stabilize after policy provisioning; " +
+                            "runtime default-device guard remains active");
+                    ApplySpeakerConfiguration(endpointId);
+                    return (controller, endpointId);
+                }
+                controller.Dispose();
+                DefaultAudioEndpointGuard.WaitForRenderEndpointRemoval(endpointId, TimeSpan.FromSeconds(3));
+                controller = _context.CreateController(profile);
+            }
+        }
+        catch
+        {
+            controller.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Applies speaker settings to the selected controller while preserving HID on configuration failure.</summary>
+    private static void ApplySpeakerConfiguration(string endpointId)
     {
         try
         {
-            if (!DualSenseSpeakerConfiguration.Ensure(TimeSpan.FromSeconds(3), out var changed))
-            {
-                Console.Error.WriteLine(
-                    "Unable to find the virtual DualSense render endpoint; " +
-                    "complete its quadraphonic speaker configuration manually");
-            }
-            else
-                Console.Error.WriteLine(changed
-                    ? "Configured the virtual DualSense render endpoint as quadraphonic"
-                    : "Reapplied the virtual DualSense quadraphonic speaker configuration");
+            DualSenseSpeakerConfiguration.Ensure(endpointId, out var changed);
+            Console.Error.WriteLine(changed
+                ? "Configured the virtual DualSense render endpoint as quadraphonic"
+                : "Reapplied the virtual DualSense quadraphonic speaker configuration");
         }
         catch (Exception error)
         {
@@ -337,6 +365,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Registers pinned profiles before SDK defaults and derives the Genshin composite identity.</summary>
     private bool LoadPatchedProfiles()
     {
         // Register Sunshine's always-armed profile copies before the stock
@@ -377,6 +406,7 @@ internal sealed class DeviceRegistry : IDisposable
         }
     }
 
+    /// <summary>Attempts every owned device release before reporting the first cleanup error.</summary>
     internal void ReleaseAllDevices()
     {
         Exception? cleanupError = null;
@@ -408,6 +438,7 @@ internal sealed class DeviceRegistry : IDisposable
             throw new InvalidOperationException("One or more virtual devices failed to dispose", cleanupError);
     }
 
+    /// <summary>Always releases the SDK context, including when one of its sessions fails to dispose.</summary>
     public void Dispose()
     {
         try { ReleaseAllDevices(); }

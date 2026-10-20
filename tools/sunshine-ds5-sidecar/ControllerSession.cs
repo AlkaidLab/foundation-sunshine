@@ -28,6 +28,7 @@ internal sealed class ControllerSession : IDisposable
     private readonly object _stateLock = new();
     private readonly object _outputLock = new();
     private readonly HMController _controller;
+    private readonly string? _renderEndpointId;
     private readonly StandardAxisState _axes;
     private readonly HMAudioOutput? _audioOutput;
     private readonly Action<Protocol.Message> _emit;
@@ -42,15 +43,18 @@ internal sealed class ControllerSession : IDisposable
     private int _disposed;
     private byte[] _audioResidual = Array.Empty<byte>();
 
+    /// <summary>Owns the controller and its render endpoint through explicit or owner-disconnect cleanup.</summary>
     internal ControllerSession(byte deviceId,
                                byte clientControllerNumber,
                                HMController controller,
                                HMProfile profile,
-                               Action<Protocol.Message> emit)
+                               Action<Protocol.Message> emit,
+                               string? renderEndpointId = null)
     {
         DeviceId = deviceId;
         ClientControllerNumber = clientControllerNumber;
         _controller = controller;
+        _renderEndpointId = renderEndpointId;
         _axes = new StandardAxisState(profile);
         _emit = emit;
         _state = new HMGamepadState
@@ -79,6 +83,7 @@ internal sealed class ControllerSession : IDisposable
     internal byte ClientControllerNumber { get; }
     internal bool HasAudio => _audioOutput is not null;
 
+    /// <summary>Starts one monitor for audio-capable sessions and suppresses notifications after disposal.</summary>
     internal void StartDefaultAudioEndpointGuard()
     {
         if (_audioOutput is null || _audioEndpointGuard is not null)
@@ -454,6 +459,7 @@ internal sealed class ControllerSession : IDisposable
         return false;
     }
 
+    /// <summary>Stops submissions and releases the owned endpoint before its identity can be recreated.</summary>
     public void Dispose()
     {
         // Wait for an in-flight submission and prevent later input from being
@@ -477,5 +483,7 @@ internal sealed class ControllerSession : IDisposable
             _audioOutput.StreamingChanged -= OnAudioStreamingChanged;
         }
         _controller.Dispose();
+        if (_renderEndpointId is not null)
+            DefaultAudioEndpointGuard.WaitForRenderEndpointRemoval(_renderEndpointId, TimeSpan.FromSeconds(3));
     }
 }

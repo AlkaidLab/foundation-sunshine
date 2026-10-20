@@ -27,8 +27,17 @@ namespace platf::ds5 {
       boost::property_tree::ptree manifest;
       std::ifstream stream(active_root / "component.json", std::ios::binary);
       boost::property_tree::read_json(stream, manifest);
+      boost::property_tree::ptree compatibility;
+      std::ifstream contract(active_root / "component-compatibility.json", std::ios::binary);
+      boost::property_tree::read_json(contract, compatibility);
       if (manifest.get<std::uint32_t>("protocol", 0) != virtual_device_host::protocol::VERSION ||
-          manifest.get<std::string>("component_version", "") != "1.4.1" ||
+          compatibility.get<std::uint32_t>("schema", 0) != 1 ||
+          compatibility.get<std::string>("component_version", "").empty() ||
+          manifest.get<std::string>("component_version", "") != compatibility.get<std::string>("component_version") ||
+          manifest.get<std::string>("usbip_policy", "") != "externally-managed-v1" ||
+          compatibility.get<std::string>("usbip.policy", "") != "externally-managed-v1" ||
+          compatibility.get<std::string>("usbip.version", "").empty() ||
+          manifest.get<std::string>("usbip_version", "") != compatibility.get<std::string>("usbip.version") ||
           manifest.get<std::string>("sidecar_file", "") != "Sunshine.Ds5Sidecar.exe") {
         error = "The active DualSense component manifest is incomplete or incompatible";
         return false;
@@ -37,7 +46,8 @@ namespace platf::ds5 {
       // present, describes the downloaded ZIP and cannot validate a binary.
       for (const auto &[field, file] : {
              std::pair { "sidecar_sha256", "Sunshine.Ds5Sidecar.exe" },
-             std::pair { "sha256", "HIDMaestro.Core.dll" } }) {
+             std::pair { "sha256", "HIDMaestro.Core.dll" },
+             std::pair { "compatibility_sha256", "component-compatibility.json" } }) {
         auto expected = manifest.get<std::string>(field, "");
         std::ranges::transform(expected, expected.begin(), [](unsigned char character) {
           return static_cast<char>(std::tolower(character));
