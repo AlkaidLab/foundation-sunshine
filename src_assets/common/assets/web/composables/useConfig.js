@@ -671,11 +671,8 @@ export function useConfig() {
     try {
       const response = await apiFetch('/api/restart', { method: 'POST' })
       // The native proxy can return 503 when Core exits before responding.
-      if (response.status === 503) {
-        console.debug('Sunshine restart request returned HTTP 503')
-        return
-      }
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      // Treat that expected restart response like a successful restart.
+      if (response.status !== 503 && !response.ok) throw new Error(`HTTP ${response.status}`)
       restarted.value = true
       setTimeout(() => {
         saved.value = false
