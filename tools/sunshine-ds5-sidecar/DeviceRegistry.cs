@@ -27,10 +27,9 @@ internal sealed class DeviceRegistry : IDisposable
     internal DeviceRegistry(Action<Protocol.Message> emit, bool enableCompositeMicrophonePrototype = false)
     {
         _emit = emit;
-        var compositeProfileValidated = LoadPatchedProfiles();
+        LoadPatchedProfiles();
         _context.LoadDefaultProfiles();
-        _authoredHapticsAvailable = compositeProfileValidated &&
-                                    _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
+        _authoredHapticsAvailable = _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
                                     HMContext.IsUsbipBackendAvailable;
         _genshinCompatibilityAvailable = _authoredHapticsAvailable &&
                                          _context.GetProfile(
@@ -384,15 +383,14 @@ internal sealed class DeviceRegistry : IDisposable
     }
 
     /// <summary>Registers pinned profiles before SDK defaults and derives the Genshin composite identity.</summary>
-    private bool LoadPatchedProfiles()
+    private void LoadPatchedProfiles()
     {
         // Register Sunshine's always-armed profile copies before the stock
         // catalog. HIDMaestro keeps the first profile for duplicate ids.
+        var directory = Directory.CreateTempSubdirectory("sunshine-ds5-profiles-");
         try
         {
             var assembly = typeof(DeviceRegistry).Assembly;
-            var directory = Path.Combine(Path.GetTempPath(), "sunshine-ds5-profiles");
-            Directory.CreateDirectory(directory);
             foreach (var id in new[] { "dualsense", "dualsense-composite" })
             {
                 var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
@@ -403,24 +401,30 @@ internal sealed class DeviceRegistry : IDisposable
                 var profileBytes = memory.ToArray();
                 if (id == DualSenseHapticsAudio.CompositeProfileId)
                     profileBytes = DualSenseHapticsAudio.CreateRuntimeCompositeProfile(profileBytes);
-                File.WriteAllBytes(Path.Combine(directory, id + ".json"), profileBytes);
+                File.WriteAllBytes(Path.Combine(directory.FullName, id + ".json"), profileBytes);
                 if (id == DualSenseHapticsAudio.CompositeProfileId)
                 {
                     var compatibilityProfile =
                         DualSenseHapticsAudio.CreateGenshinCompatibilityProfile(profileBytes);
                     File.WriteAllBytes(
-                        Path.Combine(directory, DualSenseHapticsAudio.GenshinCompatibilityProfileId + ".json"),
+                        Path.Combine(directory.FullName, DualSenseHapticsAudio.GenshinCompatibilityProfileId + ".json"),
                         compatibilityProfile);
                 }
             }
-            if (_context.LoadProfilesFromDirectory(directory) < 3)
+            if (_context.LoadProfilesFromDirectory(directory.FullName) < 3)
                 throw new InvalidOperationException("Patched DualSense profiles did not fully register");
-            return true;
         }
         catch (Exception error)
         {
-            Console.Error.WriteLine($"Unable to load patched DualSense profiles: {error.Message}");
-            return false;
+            throw new InvalidOperationException($"Unable to load patched DualSense profiles from '{directory.FullName}': {error.Message}", error);
+        }
+        finally
+        {
+            try { directory.Delete(recursive: true); }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"Unable to remove temporary DualSense profiles from '{directory.FullName}': {error}");
+            }
         }
     }
 
