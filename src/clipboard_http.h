@@ -18,8 +18,13 @@
  *     Response: 202 Accepted.
  *
  *   GET /api/v1/clipboard/events
- *     Server-Sent Events stream. Long-lived. Each inbound clipboard packet
- *     from any client is delivered as:
+ *     Server-Sent Events stream. Long-lived. Optional header
+ *     `X-Clipboard-Session-Sid` selects one session using an unsigned decimal
+ *     uint64 id; malformed or overflowing values return 400. Missing or empty
+ *     means all sessions. Unlike the write-side target, 0 is a literal session
+ *     filter, not broadcast. Keepalive comments reach every subscriber.
+ *     This is an optional filter, not a session authorization boundary.
+ *     Each selected inbound clipboard packet is delivered as:
  *         event: clipboard
  *         id: <sid>
  *         data: <base64(payload)>

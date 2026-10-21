@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,6 +31,10 @@ namespace clipboard_http {
       resp_https_t resp;
       std::atomic_bool alive { true };
       std::mutex send_mu;
+      // When set, this subscriber only receives clipboard events whose
+      // session id matches. Unset (the default, for backward compatibility
+      // with existing consumers) still receives every session's events.
+      std::optional<clipboard_bridge::session_id> session_filter;
     };
 
     std::mutex g_mu;
@@ -107,7 +112,7 @@ namespace clipboard_http {
     }
 
     void
-    fanout_frame(const std::string &frame) {
+    fanout_frame(const std::string &frame, std::optional<clipboard_bridge::session_id> event_sid = std::nullopt) {
       std::vector<std::shared_ptr<subscriber_t>> snapshot;
       {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -115,6 +120,14 @@ namespace clipboard_http {
       }
 
       for (auto &sub : snapshot) {
+        // A subscriber with no session_filter receives every event
+        // (backward-compatible default). A subscriber with a filter only
+        // receives events tagged with that same session id; keepalives
+        // and other untagged frames (event_sid unset) still reach it.
+        if (sub->session_filter.has_value() && event_sid.has_value()
+            && *sub->session_filter != *event_sid) {
+          continue;
+        }
         send_frame(sub, frame);
       }
 
@@ -125,7 +138,7 @@ namespace clipboard_http {
 
     void
     fanout_inbound(clipboard_bridge::session_id sid, const clipboard_bridge::payload_t &bytes) {
-      fanout_frame(build_event(sid, bytes));
+      fanout_frame(build_event(sid, bytes), sid);
     }
 
     void
@@ -239,6 +252,24 @@ namespace clipboard_http {
       auto sub = std::make_shared<subscriber_t>();
       sub->resp = std::move(resp);
       sub->resp->close_connection_after_response = true;
+
+      // Optional opt-in: a consumer that only cares about one streaming
+      // session's clipboard can scope its subscription to that session id,
+      // the same way handle_item() already scopes an outbound write via
+      // X-Clipboard-Target-Sid. Omitting this header preserves the
+      // existing broadcast-to-all-subscribers behavior.
+      auto sid_header = req->header.find("X-Clipboard-Session-Sid");
+      if (sid_header != req->header.end() && !sid_header->second.empty()) {
+        const auto &value = sid_header->second;
+        clipboard_bridge::session_id sid;
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), sid);
+        if (error != std::errc {} || end != value.data() + value.size()) {
+          sub->resp->write(web::StatusCode::bad_request,
+            R"({"error":"bad_session_sid"})");
+          return;
+        }
+        sub->session_filter = sid;
+      }
 
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/event-stream");
