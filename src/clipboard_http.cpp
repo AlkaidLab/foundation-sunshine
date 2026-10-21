@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -259,14 +260,15 @@ namespace clipboard_http {
       // existing broadcast-to-all-subscribers behavior.
       auto sid_header = req->header.find("X-Clipboard-Session-Sid");
       if (sid_header != req->header.end() && !sid_header->second.empty()) {
-        try {
-          sub->session_filter = static_cast<clipboard_bridge::session_id>(
-            std::stoull(sid_header->second));
-        } catch (...) {
+        const auto &value = sid_header->second;
+        clipboard_bridge::session_id sid;
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), sid);
+        if (error != std::errc {} || end != value.data() + value.size()) {
           sub->resp->write(web::StatusCode::bad_request,
             R"({"error":"bad_session_sid"})");
           return;
         }
+        sub->session_filter = sid;
       }
 
       web::CaseInsensitiveMultimap headers;
