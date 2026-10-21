@@ -11,8 +11,11 @@ internal sealed class VirtualDeviceHostServer : IAsyncDisposable
     private readonly Channel<Protocol.Message> _controlOutgoing;
     private readonly Channel<Protocol.Message> _realtimeOutgoing;
     private readonly SemaphoreSlim _outgoingSignal = new(0, 1);
+    private int _audioPolicyViolated;
     private NamedPipeServerStream? _pipe;
     private CancellationTokenSource? _sessionCancellation;
+
+    internal bool AudioPolicyViolated => Volatile.Read(ref _audioPolicyViolated) != 0;
 
     internal VirtualDeviceHostServer(
         string pipeName, bool enableCompositeMicrophonePrototype = false,
@@ -192,6 +195,8 @@ internal sealed class VirtualDeviceHostServer : IAsyncDisposable
 
     private void Emit(Protocol.Message message)
     {
+        if (message.Type == Protocol.MessageType.AudioPolicyViolation)
+            Volatile.Write(ref _audioPolicyViolated, 1);
         var written = message.Type is Protocol.MessageType.HapticsPcm
             ? _realtimeOutgoing.Writer.TryWrite(message)
             : _controlOutgoing.Writer.TryWrite(message);
