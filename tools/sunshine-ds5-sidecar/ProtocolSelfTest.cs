@@ -517,6 +517,7 @@ internal static class ProtocolSelfTest
 
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+        Require(!server.AudioPolicyViolated, "audio policy remained valid through owner cleanup");
         if (beforeEndpoints is not null)
         {
             // Dispose completes before Windows removes the audio endpoint.
