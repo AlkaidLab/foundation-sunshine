@@ -288,12 +288,18 @@ internal sealed class DeviceRegistry : IDisposable
     /// <summary>Captures existing endpoints before creation so another controller cannot satisfy provisioning.</summary>
     private (HMController Controller, string? EndpointId) CreateController(HMProfile profile)
     {
+        var defaults = profile.RequiresUsbipBackend ? DefaultAudioEndpointSnapshot.Capture() : null;
         var previous = profile.RequiresUsbipBackend
             ? DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
                 .ToHashSet(StringComparer.OrdinalIgnoreCase)
             : null;
         var controller = _context.CreateController(profile);
-        return previous is null ? (controller, null) : ApplyDefaultAudioEndpointPolicy(controller, profile, previous);
+        if (previous is null)
+            return (controller, null);
+        var result = ApplyDefaultAudioEndpointPolicy(controller, profile, previous);
+        try { defaults!.Restore(result.EndpointId!); }
+        catch { result.Controller.Dispose(); throw; }
+        return result;
     }
 
     /// <summary>Recreates only after the owned endpoint retires and configures the replacement by identity.</summary>

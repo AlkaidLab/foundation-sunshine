@@ -11,6 +11,7 @@ internal static class ProtocolSelfTest
     {
         VerifyStandardAxisState();
         await VerifyProtocolFrameReaderAsync();
+        await VerifyAcceptanceErrorsAsync();
         var pipeName = $"sunshine-device-host-contract-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var server = new VirtualDeviceHostServer(
@@ -420,9 +421,7 @@ internal static class ProtocolSelfTest
         var attachFlags = genshinCompatibility ? (byte)Protocol.AttachFlags.GenshinCompatibilityIdentity : (byte)0;
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
-        var attach = await ReceiveAsync(client, stopping.Token);
-        if (attach.Type == Protocol.MessageType.Error)
-            throw new InvalidOperationException(DecodeError(attach.Payload));
+        var attach = await ReceiveUntilAsync(client, Protocol.MessageType.AttachReply, 2, stopping.Token);
         Require(attach.Type == Protocol.MessageType.AttachReply && attach.RequestId == 2 && attach.Payload.Length == 8,
             "attach reply");
         var capabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(attach.Payload.AsSpan(4));
@@ -1133,6 +1132,7 @@ internal static class ProtocolSelfTest
         while (true)
         {
             var message = await ReceiveAsync(stream, cancellationToken);
+            ThrowIfAudioPolicyViolation(message);
             observed?.Invoke(message);
             if (message.Type == Protocol.MessageType.Error && message.RequestId == requestId)
                 throw new InvalidOperationException(DecodeError(message.Payload));
@@ -1147,6 +1147,7 @@ internal static class ProtocolSelfTest
         while (true)
         {
             var message = await ReceiveAsync(stream, cancellationToken);
+            ThrowIfAudioPolicyViolation(message);
             if (message.Type == Protocol.MessageType.Error)
                 throw new InvalidOperationException(DecodeError(message.Payload));
             if (message.Type == type)
@@ -1159,6 +1160,43 @@ internal static class ProtocolSelfTest
         if (payload.Length < 8) return "Malformed sidecar error";
         var length = Math.Min(BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4)), (uint)(payload.Length - 8));
         return System.Text.Encoding.UTF8.GetString(payload.Slice(8, (int)length));
+    }
+
+    private static void ThrowIfAudioPolicyViolation(Protocol.Message message)
+    {
+        if (message.Type != Protocol.MessageType.AudioPolicyViolation)
+            return;
+        var details = message.Payload.Length >= 3
+            ? $"device={message.Payload[0]}, controller={message.Payload[1]}, role={message.Payload[2]}"
+            : "malformed event payload";
+        throw new InvalidOperationException("Windows selected a virtual DualSense endpoint as the default audio device; " +
+            $"the audio policy guard closed this session ({details}).");
+    }
+
+    /// <summary>Ensures asynchronous policy failures survive acceptance reads instead of becoming EOF.</summary>
+    private static async Task VerifyAcceptanceErrorsAsync()
+    {
+        foreach (var byRequest in new[] { false, true })
+        {
+            using var stream = new MemoryStream(Protocol.Encode(new Protocol.Message(
+                Protocol.MessageType.AudioPolicyViolation, 0, new byte[] { 3, 2, 1, 0 })));
+            try
+            {
+                if (byRequest)
+                    await ReceiveUntilAsync(stream, Protocol.MessageType.DetachReply, 5, CancellationToken.None);
+                else
+                    await ReceiveUntilTypeAsync(stream, Protocol.MessageType.HapticsPcm, CancellationToken.None);
+                Require(false, "audio policy event rejection");
+            }
+            catch (InvalidOperationException error)
+            {
+                Require(error.Message.Contains("device=3, controller=2, role=1", StringComparison.Ordinal),
+                    "audio policy reason retained");
+            }
+        }
+        Require(DefaultAudioEndpointSnapshot.ShouldRestore("physical", "virtual", false, true), "new virtual default restored");
+        Require(!DefaultAudioEndpointSnapshot.ShouldRestore("physical", "other", false, false), "user default change preserved");
+        Require(!DefaultAudioEndpointSnapshot.ShouldRestore("physical", "virtual", true, true), "existing virtual default preserved");
     }
 
     private static void WriteFloat(Span<byte> destination, float value) =>
