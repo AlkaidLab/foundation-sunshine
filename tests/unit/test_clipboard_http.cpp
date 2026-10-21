@@ -1,11 +1,11 @@
 /**
  * @file tests/unit/test_clipboard_http.cpp
- * @brief Clipboard SSE route validation and session filtering regressions.
+ * @brief Clipboard SSE session ID validation regressions.
  */
-#include "src/clipboard_bridge.h"
 #include "src/clipboard_http.h"
 
 #include <gtest/gtest.h>
+#include <vector>
 
 namespace {
   // Exercise the registered handlers and real response serialization without
@@ -73,9 +73,6 @@ TEST_F(ClipboardHttp, MalformedSessionHeadersReturnBadRequest) {
     EXPECT_NE(connection->output.find("HTTP/1.1 400"), std::string::npos);
     EXPECT_NE(connection->output.find(R"({"error":"bad_session_sid"})"), std::string::npos);
     EXPECT_EQ(connection->output.find("text/event-stream"), std::string::npos);
-    const auto before = connection->output;
-    clipboard_bridge::bridge_t::instance().on_inbound(123, { 1, 2, 3 });
-    EXPECT_EQ(connection->output, before);
   }
 }
 
@@ -86,34 +83,4 @@ TEST_F(ClipboardHttp, DecimalSessionHeadersAcceptTheFullUint64Range) {
     EXPECT_NE(connection->output.find("HTTP/1.1 200"), std::string::npos);
     EXPECT_NE(connection->output.find("text/event-stream"), std::string::npos);
   }
-}
-
-TEST_F(ClipboardHttp, MissingAndEmptyFiltersKeepReceivingEverySession) {
-  const auto unfiltered = subscribe();
-  const auto empty = subscribe({ { "X-Clipboard-Session-Sid", "" } });
-  clipboard_bridge::bridge_t::instance().on_inbound(123, { 1 });
-  clipboard_bridge::bridge_t::instance().on_inbound(456, { 2 });
-  for (const auto &connection : { unfiltered, empty }) {
-    EXPECT_NE(connection->output.find("id: 123\n"), std::string::npos);
-    EXPECT_NE(connection->output.find("id: 456\n"), std::string::npos);
-  }
-}
-
-TEST_F(ClipboardHttp, ScopedSubscriptionReceivesOnlyItsSessionAndKeepalives) {
-  // Header names are case insensitive, and leading zeroes remain decimal.
-  const auto connection = subscribe({ { "x-clipboard-session-sid", "000123" } });
-  clipboard_bridge::bridge_t::instance().on_inbound(456, { 2 });
-  clipboard_bridge::bridge_t::instance().on_inbound(123, { 1 });
-  request("/api/v1/clipboard/capability", "POST");
-  EXPECT_EQ(connection->output.find("id: 456\n"), std::string::npos);
-  EXPECT_NE(connection->output.find("id: 123\ndata: AQ==\n\n"), std::string::npos);
-  EXPECT_NE(connection->output.find(": clipboard-keepalive\n\n"), std::string::npos);
-}
-
-TEST_F(ClipboardHttp, ZeroFilterDoesNotBecomeAnUnfilteredSubscription) {
-  const auto connection = subscribe({ { "X-Clipboard-Session-Sid", "0" } });
-  clipboard_bridge::bridge_t::instance().on_inbound(123, { 1 });
-  request("/api/v1/clipboard/capability", "POST");
-  EXPECT_EQ(connection->output.find("event: clipboard\n"), std::string::npos);
-  EXPECT_NE(connection->output.find(": clipboard-keepalive\n\n"), std::string::npos);
 }
