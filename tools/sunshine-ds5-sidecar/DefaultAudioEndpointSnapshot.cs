@@ -32,30 +32,56 @@ internal sealed class DefaultAudioEndpointSnapshot
     internal void Restore(string ownedRenderEndpoint)
     {
         var ownedController = DefaultAudioEndpointGuard.GetEndpointControllerId(ownedRenderEndpoint);
+        List<Exception>? errors = null;
+        var captureWaited = false;
         var enumerator = CoreAudio.CreateEnumerator();
         try
         {
             foreach (var selection in _defaults)
             {
-                var active = CoreAudio.GetActiveEndpointIds(selection.Flow);
-                if (!active.Contains(selection.EndpointId, StringComparer.OrdinalIgnoreCase) ||
-                    !DefaultAudioEndpointGuard.TryGetDefaultEndpointId(enumerator, selection.Flow, selection.Role, out var current) ||
-                    !ShouldRestore(selection.EndpointId, current, _previousEndpoints.Contains(current),
-                        DefaultAudioEndpointGuard.IsVirtualDualSenseEndpoint(current)))
-                    continue;
-                if (!string.Equals(current, ownedRenderEndpoint, StringComparison.OrdinalIgnoreCase) &&
-                    (ownedController is null || !string.Equals(ownedController,
-                        DefaultAudioEndpointGuard.GetEndpointControllerId(current), StringComparison.OrdinalIgnoreCase)))
-                    continue;
-                using var policy = new AudioPolicyConfig();
-                policy.SetDefaultEndpoint(selection.EndpointId, selection.Role);
-                if (!DefaultAudioEndpointGuard.TryGetDefaultEndpointId(enumerator, selection.Flow, selection.Role, out var restored) ||
-                    !string.Equals(restored, selection.EndpointId, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException($"Unable to restore the {selection.Flow}/{selection.Role} default audio endpoint");
-                Console.Error.WriteLine($"Restored {selection.Flow}/{selection.Role} default audio endpoint: {current} -> {restored}");
+                try
+                {
+                    // Capture may enumerate after render. Wait once before checking
+                    // its defaults, while the runtime guard has not started yet.
+                    if (selection.Flow == EDataFlow.eCapture && !captureWaited && ownedController is not null)
+                    {
+                        captureWaited = true;
+                        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+                        while (!CoreAudio.GetActiveEndpointIds(EDataFlow.eCapture).Any(id => string.Equals(
+                                   ownedController, DefaultAudioEndpointGuard.GetEndpointControllerId(id), StringComparison.OrdinalIgnoreCase)))
+                        {
+                            if (DateTime.UtcNow >= deadline)
+                                break; // An unavailable microphone cannot become default; the runtime guard remains active.
+                            Thread.Sleep(50);
+                        }
+                    }
+                    var active = CoreAudio.GetActiveEndpointIds(selection.Flow);
+                    if (!active.Contains(selection.EndpointId, StringComparer.OrdinalIgnoreCase) ||
+                        !DefaultAudioEndpointGuard.TryGetDefaultEndpointId(enumerator, selection.Flow, selection.Role, out var current) ||
+                        !ShouldRestore(selection.EndpointId, current, _previousEndpoints.Contains(current),
+                            DefaultAudioEndpointGuard.IsVirtualDualSenseEndpoint(current)))
+                        continue;
+                    if (!string.Equals(current, ownedRenderEndpoint, StringComparison.OrdinalIgnoreCase) &&
+                        (ownedController is null || !string.Equals(ownedController,
+                            DefaultAudioEndpointGuard.GetEndpointControllerId(current), StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    using var policy = new AudioPolicyConfig();
+                    policy.SetDefaultEndpoint(selection.EndpointId, selection.Role);
+                    if (!DefaultAudioEndpointGuard.TryGetDefaultEndpointId(enumerator, selection.Flow, selection.Role, out var restored) ||
+                        !string.Equals(restored, selection.EndpointId, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException($"Unable to restore the {selection.Flow}/{selection.Role} default audio endpoint");
+                    Console.Error.WriteLine($"Restored {selection.Flow}/{selection.Role} default audio endpoint: {current} -> {restored}");
+                }
+                catch (Exception error)
+                {
+                    (errors ??= new()).Add(new InvalidOperationException(
+                        $"Failed to restore the {selection.Flow}/{selection.Role} default audio endpoint", error));
+                }
             }
         }
         finally { CoreAudio.Release(enumerator); }
+        if (errors is not null)
+            throw new AggregateException("Unable to restore one or more default audio endpoints", errors);
     }
 
     internal static bool ShouldRestore(string previousDefault, string current, bool existedBefore, bool virtualDualSense) =>

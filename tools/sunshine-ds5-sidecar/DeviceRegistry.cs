@@ -298,7 +298,19 @@ internal sealed class DeviceRegistry : IDisposable
             return (controller, null);
         var result = ApplyDefaultAudioEndpointPolicy(controller, profile, previous);
         try { defaults!.Restore(result.EndpointId!); }
-        catch { result.Controller.Dispose(); throw; }
+        catch
+        {
+            try
+            {
+                result.Controller.Dispose();
+                DefaultAudioEndpointGuard.WaitForRenderEndpointRemoval(result.EndpointId!, TimeSpan.FromSeconds(3));
+            }
+            catch (Exception cleanupError)
+            {
+                Console.Error.WriteLine($"Unable to release the render endpoint after default audio restoration failed: {cleanupError}");
+            }
+            throw;
+        }
         return result;
     }
 
