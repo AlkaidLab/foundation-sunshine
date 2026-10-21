@@ -211,16 +211,8 @@ internal sealed class DefaultAudioEndpointGuard : IDisposable
     }
 
     /// <summary>Resolves an MMDevice identity through its PnP ancestry instead of relying on its display name.</summary>
-    internal static bool IsVirtualDualSenseEndpoint(string endpointId)
-    {
-        var instanceId = endpointId.StartsWith("SWD\\MMDEVAPI\\", StringComparison.OrdinalIgnoreCase)
-            ? endpointId
-            : "SWD\\MMDEVAPI\\" + endpointId;
-        if (CM_Locate_DevNodeW(out var node, instanceId, 0) != 0)
-            return false;
-
-        return IsVirtualDualSenseDeviceNode(node);
-    }
+    internal static bool IsVirtualDualSenseEndpoint(string endpointId) =>
+        IsVirtualDualSenseChain(GetEndpointChain(endpointId));
 
     /// <summary>Filters the current render snapshot to HIDMaestro-backed DualSense endpoints.</summary>
     internal static IReadOnlyList<string> GetActiveVirtualDualSenseRenderEndpoints() =>

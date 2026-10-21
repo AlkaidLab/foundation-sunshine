@@ -1123,6 +1123,14 @@ internal static class ProtocolSelfTest
         var payload = new byte[header.PayloadLength];
         if (payload.Length != 0)
             await stream.ReadExactlyAsync(payload, cancellationToken);
+        if (header.Type == Protocol.MessageType.AudioPolicyViolation)
+        {
+            var details = payload.Length >= 3
+                ? $"device={payload[0]}, controller={payload[1]}, role={payload[2]}"
+                : "malformed event payload";
+            throw new InvalidOperationException("Windows selected a virtual DualSense endpoint as the default audio device; " +
+                $"the audio policy guard closed this session ({details}).");
+        }
         return new Protocol.Message(header.Type, header.RequestId, payload);
     }
 
@@ -1133,7 +1141,6 @@ internal static class ProtocolSelfTest
         while (true)
         {
             var message = await ReceiveAsync(stream, cancellationToken);
-            ThrowIfAudioPolicyViolation(message);
             observed?.Invoke(message);
             if (message.Type == Protocol.MessageType.Error && message.RequestId == requestId)
                 throw new InvalidOperationException(DecodeError(message.Payload));
@@ -1148,7 +1155,6 @@ internal static class ProtocolSelfTest
         while (true)
         {
             var message = await ReceiveAsync(stream, cancellationToken);
-            ThrowIfAudioPolicyViolation(message);
             if (message.Type == Protocol.MessageType.Error)
                 throw new InvalidOperationException(DecodeError(message.Payload));
             if (message.Type == type)
@@ -1161,17 +1167,6 @@ internal static class ProtocolSelfTest
         if (payload.Length < 8) return "Malformed sidecar error";
         var length = Math.Min(BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4)), (uint)(payload.Length - 8));
         return System.Text.Encoding.UTF8.GetString(payload.Slice(8, (int)length));
-    }
-
-    private static void ThrowIfAudioPolicyViolation(Protocol.Message message)
-    {
-        if (message.Type != Protocol.MessageType.AudioPolicyViolation)
-            return;
-        var details = message.Payload.Length >= 3
-            ? $"device={message.Payload[0]}, controller={message.Payload[1]}, role={message.Payload[2]}"
-            : "malformed event payload";
-        throw new InvalidOperationException("Windows selected a virtual DualSense endpoint as the default audio device; " +
-            $"the audio policy guard closed this session ({details}).");
     }
 
     /// <summary>Ensures asynchronous policy failures survive acceptance reads instead of becoming EOF.</summary>
