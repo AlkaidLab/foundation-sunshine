@@ -105,7 +105,8 @@ english.StatusInstallGamepad=Installing virtual gamepad...
 english.StatusInstallVmouse=Installing virtual mouse driver...
 english.StatusInstallService=Installing system service...
 english.StatusAutostart=Configuring autostart...
-english.FinishOpenDocs=Open documentation
+english.FinishOpenDocs=View documentation
+english.DocumentationURL=https://www.alkaidlab.com/docs/
 english.FinishLaunchGUI=Launch Sunshine GUI
 english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nIt must be uninstalled before continuing.%n%nUninstall the previous version now?
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
@@ -147,7 +148,8 @@ chinesesimplified.StatusInstallGamepad=正在安装虚拟手柄...
 chinesesimplified.StatusInstallVmouse=正在安装虚拟鼠标驱动...
 chinesesimplified.StatusInstallService=正在安装系统服务...
 chinesesimplified.StatusAutostart=正在配置自动启动...
-chinesesimplified.FinishOpenDocs=打开使用文档
+chinesesimplified.FinishOpenDocs=查看文档
+chinesesimplified.DocumentationURL=https://www.alkaidlab.cn/docs/
 chinesesimplified.FinishLaunchGUI=启动 Sunshine 管理界面
 chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%n需要先卸载才能继续。%n%n是否现在卸载旧版本？
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
@@ -314,7 +316,7 @@ Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInst
 Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart
 
 ; Finish page actions - user selectable
-Filename: "https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
+Filename: "{cm:DocumentationURL}"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
 ; Launch the user-session agent with the original desktop token. The GUI then
 ; owns and reconciles its HKCU autostart entry from the correct user context.
 ;
