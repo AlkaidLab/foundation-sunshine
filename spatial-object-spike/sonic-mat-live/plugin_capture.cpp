@@ -1,6 +1,7 @@
 #define MAT_NATIVE_SESSION_ONLY
 #include "capture.cpp"
 #include "plugin_bridge.h"
+#include "capture_options.h"
 static bool OriginalPluginBytes(HANDLE engine){
     constexpr DWORD rvas[]={0xfa3b0,0x2fd90,0x45be0,0x31e00,0x74b50,0x733f8};
     constexpr BYTE expected[][8]={{0x48,0x8b,0xc4,0x48,0x89,0x58,0x10,0x55},{0x48,0x83,0xec,0x48,0x48,0x8b,0x49,0x08},{0x48,0x83,0xec,0x48,0x48,0x8b,0x49,0x08},{0x48,0x83,0xec,0x38,0x48,0x8b,0x49,0x08},{0x48,0x83,0xec,0x28,0x48,0x8b,0x49,0x08},{0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b}};
@@ -15,12 +16,25 @@ static uint32_t PluginRate(HANDLE engine,uint64_t renderer){
     require(ReadProcessMemory(engine,(void*)(status+0x108),&rate,sizeof(rate),&got)&&got==sizeof(rate)&&rate==48000.f,"Plugin native input rate must be observed 48kHz");return 48000;
 }
 int wmain(int argc,wchar_t** argv){
-    if(argc!=12||(std::wstring(argv[1])!=L"--attach"&&std::wstring(argv[1])!=L"--reattach")||std::wstring(argv[10])!=L"--max-seconds")return 2;
+    if(argc==4&&std::wstring(argv[1])==L"--preflight"){
+        HANDLE process=nullptr;int code=1;
+        try{
+            auto pid=std::stoull(argv[2]),created=std::stoull(argv[3]);require(pid&&pid<=MAXDWORD&&created,"Explicit plugin engine identity");
+            process=OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_READ,FALSE,(DWORD)pid);
+            require(process&&native_mat_guard::created(process)==created&&native_mat_guard::system_engine(process),"Read-only pinned plugin engine identity/hash");
+            require(OriginalPluginBytes(process),"Original six plugin entry points");
+            puts("PREFLIGHT plugin identity/hash/entries=6 passed; nativeReady=unverified attach=0");code=0;
+        }catch(const std::exception& e){printf("PREFLIGHT_FAILED %s win32=%lu\n",e.what(),GetLastError());}
+        if(process)CloseHandle(process);return code;
+    }
+    if((argc!=11&&argc!=12)||(std::wstring(argv[1])!=L"--attach"&&std::wstring(argv[1])!=L"--reattach")){
+        puts("plugin-mat-capture --preflight PID CREATED | --attach/--reattach PID CREATED TAP TAP_SHA CODEC CODEC_SHA LIVE_PIPE STOP_EVENT (--continuous | --max-seconds 1..60)");return 2;
+    }
     HANDLE engine{},map{},thread{},stop{},remoteMap{},remoteOwner{};void* arguments{};q4::Ring* ring{};
     std::thread controller;Shared shared;std::unique_ptr<NativeSession> native;bool handed=false;int result=1;
     setvbuf(stdout,nullptr,_IONBF,0);SetConsoleCtrlHandler(Ctrl,TRUE);
     try {
-        auto limit=std::stoull(argv[11]);require(limit&&limit<=60,"Bounded plugin capture");
+        auto limit=sonic_live::capture_limit(argc-10,argv[10],argc==12?argv[11]:nullptr);
         auto pid64=std::stoull(argv[2]),creation=std::stoull(argv[3]);require(pid64&&pid64<=MAXDWORD&&creation,"Explicit audiodg identity");DWORD pid=(DWORD)pid64;
         engine=OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_READ|PROCESS_VM_WRITE|PROCESS_VM_OPERATION|PROCESS_CREATE_THREAD|PROCESS_DUP_HANDLE|SYNCHRONIZE,FALSE,pid);
         require(engine&&native_mat_guard::created(engine)==creation&&native_mat_guard::system_engine(engine),"Pinned plugin audiodg identity/hash");
@@ -53,9 +67,12 @@ int wmain(int argc,wchar_t** argv){
                     InterlockedExchange64(&ring->read,++r);
                 }
                 {std::lock_guard lock(shared.mutex);require(!shared.failed,"Native plugin MAT output/consumer failed");}
-                if(GetTickCount64()-began>=limit*1000)SetEvent(stop);if(interrupted||WaitForSingleObject(stop,0)==WAIT_OBJECT_0)InterlockedExchange(&ring->stop,1);
+                if(limit&&GetTickCount64()-began>=limit*1000)SetEvent(stop);if(interrupted||WaitForSingleObject(stop,0)==WAIT_OBJECT_0)InterlockedExchange(&ring->stop,1);
                 if(WaitForSingleObject(thread,0)==WAIT_OBJECT_0){if(Read64(&ring->read)!=Read64(&ring->write))continue;
-                    require(ring->status==2&&!ring->error&&(interrupted||WaitForSingleObject(stop,0)==WAIT_OBJECT_0),"Unclean plugin capture end");assembler.finish();require(bool(native),"No usable native plugin object source");bridge.finish([&](const receiver::Slot& packet){return native->send(packet);});native->finish();printf("PLUGIN_STOP passes=%llu inputSamples=%llu restored=1\n",bridge.passes(),bridge.samples());break;}
+                    require(ring->status==2&&!ring->error&&(interrupted||WaitForSingleObject(stop,0)==WAIT_OBJECT_0),"Unclean plugin capture end");assembler.finish();
+                    if(native){bridge.finish([&](const receiver::Slot& packet){return native->send(packet);});native->finish();}
+                    else {std::lock_guard lock(shared.mutex);shared.ended=true;shared.changed.notify_all();puts("NO_NATIVE_SOURCE observedCycles=0 noEOS=1");}
+                    printf("PLUGIN_STOP passes=%llu inputSamples=%llu restored=1\n",bridge.passes(),bridge.samples());break;}
                 Sleep(1);
             }
         }catch(const std::exception& e){Broken(shared,e.what());InterlockedExchange(&ring->stop,1);}});

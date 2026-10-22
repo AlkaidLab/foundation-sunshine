@@ -48,13 +48,66 @@ static void Run(unsigned mode){
     if(server.joinable()){Broken(shared,"Test cleanup");server.join();}
     if(failure)std::rethrow_exception(failure);
 }
+static void Reconnect(bool sourceFailure){
+    Shared shared;shared.ready=true;shared.encoder=42;shared.last_cycle=GetTickCount64();
+    const auto name=L"\\\\.\\pipe\\SunshineMatLive-reconnect-"+std::to_wstring(GetCurrentProcessId())+(sourceFailure?L"-fault":L"-resume");
+    mat_capture::Descriptor descriptor{mat_capture::test_source,GetCurrentProcessId(),GetCurrentProcessId(),1,1,7,42,10000000};
+    std::exception_ptr failure;std::string serverError;HANDLE client=INVALID_HANDLE_VALUE;
+    std::thread server([&]{try{Serve(shared,name,descriptor);}catch(const std::exception& e){serverError=e.what();}});
+    const auto open=[&]{
+        auto until=GetTickCount64()+2000;
+        do{client=CreateFileW(name.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);if(client!=INVALID_HANDLE_VALUE)break;Sleep(1);}while(GetTickCount64()<until);
+        CheckPipe(client!=INVALID_HANDLE_VALUE,"Reconnect exclusive lease");
+        char command[8];memcpy(command,"MCAPOPEN",8);CheckPipe(Io(client,command,8,true,2000),"Reconnect OPEN");
+        uint8_t header[mat_capture::descriptor_bytes];CheckPipe(Io(client,header,sizeof(header),false,2000),"Reconnect descriptor");
+        mat_capture::Descriptor decoded;CheckPipe(!mat_capture::decode_descriptor(header,decoded),"Reconnect fixture must not authenticate as native");
+    };
+    const auto play=[&]{
+        char command[8];memcpy(command,"MCAPPLAY",8);CheckPipe(Io(client,command,8,true,2000),"Reconnect PLAY");
+        auto until=GetTickCount64()+2000;
+        for(;;){{std::lock_guard lock(shared.mutex);if(shared.playing)break;}CheckPipe(GetTickCount64()<until,"Reconnect PLAY admission");Sleep(1);}
+    };
+    const auto cycle=[](uint8_t tag){Cycle c{};memcpy(c.bytes.data(),"\x72\xf8\x1f\x4e\x16\x00\x02\x00",8);c.bytes[8]=tag;c.qpc=Qpc();return c;};
+    const auto enqueue=[&](const Cycle& c,bool end){std::lock_guard lock(shared.mutex);shared.queue.push_back(c);shared.last_cycle=GetTickCount64();shared.ended=end;shared.changed.notify_all();};
+    const auto read=[&](uint64_t& next,uint64_t& last,spatial_audio::Frame& frame){return mat_capture::read_record([&](void* p,size_t n,bool writing){CheckPipe(Io(client,p,(DWORD)n,writing,2000),"Reconnect record I/O");},next,last,7,42,frame);};
+    try{
+        // DESCRIBE/prepare cancellation must release the single lease before PLAY.
+        open();CloseHandle(client);client=INVALID_HANDLE_VALUE;
+        open();play();
+        if(sourceFailure){
+            Broken(shared,"Controlled source failure, no clean EOS");
+            uint64_t next=0,last=0;spatial_audio::Frame frame;bool rejected=false;try{read(next,last,frame);}catch(...){rejected=true;}
+            CheckPipe(rejected,"Source failure fabricated EOS");
+        }else{
+            enqueue(cycle(0x11),false);uint64_t next=0,last=0;spatial_audio::Frame frame;
+            CheckPipe(read(next,last,frame)==spatial_audio::Read::frame&&next==1&&frame.bytes[8]==0x11,"First lease data");
+            CloseHandle(client);client=INVALID_HANDLE_VALUE;
+            // A subsequent real cycle makes the writer observe the disconnect.
+            enqueue(cycle(0x22),false);
+            open();
+            {std::lock_guard lock(shared.mutex);CheckPipe(!shared.playing&&!shared.failed&&shared.queue.empty(),"Disconnected lease retained data/admission");shared.queue.push_back(cycle(0x33));}
+            play();
+            {std::lock_guard lock(shared.mutex);CheckPipe(shared.queue.empty(),"New PLAY retained pre-PLAY data");}
+            enqueue(cycle(0x44),true);next=0;last=0;
+            CheckPipe(read(next,last,frame)==spatial_audio::Read::frame&&next==1&&frame.bytes[8]==0x44,"Reconnect sequence/cutoff mixed old cycle");
+            CheckPipe(read(next,last,frame)==spatial_audio::Read::ended,"Reconnect clean EOS");
+        }
+        CloseHandle(client);client=INVALID_HANDLE_VALUE;server.join();
+        CheckPipe(serverError.empty()&&shared.acknowledged_leases==(sourceFailure?0u:1u),"Reconnect lease/EOS accounting");
+        CheckPipe(!shared.playing&&shared.queue.empty(),"Reconnect final lease release");
+    }catch(...){failure=std::current_exception();}
+    if(client!=INVALID_HANDLE_VALUE)CloseHandle(client);
+    if(server.joinable()){Broken(shared,"Reconnect test cleanup");server.join();}
+    if(failure)std::rethrow_exception(failure);
+}
 int main(){try{
     for(unsigned mode=0;mode<3;++mode)Run(mode);
+    Reconnect(false);Reconnect(true);
     for(unsigned mode=0;mode<3;++mode){uint8_t record[mat_capture::record_bytes];uint64_t next=mode==0?0:1,last=0;spatial_audio::Frame frame;
         mat_capture::encode_record(record,mode==2?mat_capture::error_kind:mat_capture::end_kind,next,1,nullptr,0);if(mode==1)record[28]^=1;
         bool wrote=false,failed=false;try{mat_capture::read_record([&](void* p,size_t n,bool writing){if(writing)wrote=true;else {CheckPipe(n==sizeof(record),"Control read size");memcpy(p,record,n);}},next,last,7,42,frame);}catch(...){failed=true;}
         CheckPipe(failed&&!wrote,"Invalid/empty/error EOF acknowledged");
     }
-    std::cout<<"PASS production pipe/reader delayed tail, exact EOS acknowledgement, wrong/missing/cancelled acknowledgement and invalid/empty/error EOF; nativeCapture=0\n";return 0;
+    std::cout<<"PASS production pipe/reader delayed tail, exact EOS acknowledgement, wrong/missing/cancelled acknowledgement, prepare cancellation, streaming disconnect/reconnect, fresh PLAY cutoff/sequence, source failure without EOS and invalid/empty/error EOF; nativeCapture=0\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL_PIPE_TAIL "<<e.what()<<" nativeCapture=0\n";return 1;}
 }

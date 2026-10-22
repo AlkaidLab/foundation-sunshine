@@ -52,3 +52,11 @@ logs are in `build/mat-full-native-run01/`; the frozen metadata/log hashes are i
 `2755c69012beae70ef66c675ef27f891b05621f4`; subsequent documentation edits do not
 imply a rebuild. This controlled-source pass does not verify game A/V timing,
 long-running stability or supported Android HDMI/eARC Atmos playback.
+
+`run-full-native.ps1 -OperatorControl` uses the same bounded acceptance through
+`sonic-mat-live/manage-live.ps1`: explicit Start with `-Seconds`, actual NativeReady
+status, the full session, then identity-bound Stop/restoration verification.
+The harness holds a process handle with the returned creation identity and records
+the exact operator logs. It never uses continuous mode during a bounded test.
+The operator entry point can separately prepare a continuous, explicitly started
+capture; see the Sonic adapter README. Hardware output is still a separate stage.

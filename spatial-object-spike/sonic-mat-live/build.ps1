@@ -9,6 +9,10 @@ $env:LIB="$compiler/lib/x64;$sdk/Lib/$v/ucrt/x64;$sdk/Lib/$v/um/x64"
 $minhook="$root/build/minhook-v1.3.4";if((git -C $minhook rev-parse HEAD) -ne 'c3fcafdc10146beb5919319d0683e44e3c30d537'){throw 'Pinned MinHook required'}
 Push-Location $out
 try {
+ & cl.exe /nologo /std:c++20 /O2 /W4 /WX /MT /EHsc "$PSScriptRoot/capture_options_test.cpp" /Fe:capture-options-test.exe
+ if($LASTEXITCODE){throw 'Capture options test build failed'}
+ & ./capture-options-test.exe *> capture-options-test.log
+ if($LASTEXITCODE){throw 'Capture options tests failed'}
  & cl.exe /nologo /O2 /MT /c "$minhook/src/buffer.c" "$minhook/src/hook.c" "$minhook/src/trampoline.c" "$minhook/src/hde/hde64.c"
  if($LASTEXITCODE){throw 'MinHook build failed'}
  $objects=@('buffer.obj','hook.obj','trampoline.obj','hde64.obj')

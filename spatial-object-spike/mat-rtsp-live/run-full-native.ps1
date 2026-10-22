@@ -6,7 +6,7 @@ param(
  [Parameter(Mandatory=$true)][string]$EndpointId,
  [ValidateRange(8,30)][int]$Seconds=20,
  [int]$Port=52410,
- [switch]$Reattach
+ [switch]$Reattach,[switch]$OperatorControl
 )
 # One explicitly authorized native run. No elevation, automatic retry, endpoint
 # selection/change, driver/service configuration, or recorded media source.
@@ -35,6 +35,7 @@ $arguments=@($m.harness,'--output',$Output,'--host-build',$m.hostBuild,'--client
  '--tap',$tap,'--tap-sha',(Get-FileHash $tap).Hash.ToLower(),'--codec',$codec,'--codec-sha',(Get-FileHash $codec).Hash.ToLower(),
  '--probe',"$build/spatial-probe.exe",'--engine-pid',"$EnginePid",'--engine-created',"$EngineCreated",'--endpoint-id',$EndpointId,'--seconds',"$Seconds",'--port',"$Port")
 if($Reattach){$arguments+='--reattach'}
+if($OperatorControl){$arguments+=@('--operator-build',$build,'--powershell',(Get-Process -Id $PID).Path)}
 & $m.python @arguments
 $code=$LASTEXITCODE
 $resultPath=Join-Path $Output 'result.json'

@@ -1,5 +1,53 @@
 # Sonic objects to native MAT
 
+## Operator lifecycle and full-session status, 2026-10-23
+
+The first full native MAT + encrypted Sunshine RTSP + actual H.264 decoder test
+passed: 983 delivered cycles / 60395520 bytes with matching source/client SHA,
+authenticated EOS, 588 decoded video frames and clean restoration/exit. See
+[`MAT-FULL-NATIVE-RESULT.txt`](../mat-rtsp-live/MAT-FULL-NATIVE-RESULT.txt).
+The local machine has no suitable HDMI/eARC playback setup. Hardware output,
+Atmos recognition, game A/V calibration and long-run stability remain unverified.
+
+`manage-live.ps1` is the explicit plugin operator entry point. It defaults to a
+read-only preflight of the exact audiodg identity, audioeng hash and six original
+entry points. It never elevates, selects an endpoint, starts a generated source,
+changes installed Sunshine configuration or automatically restarts a failed tap.
+Use a newly reviewed build; manifests bind all source and binary hashes.
+
+```powershell
+./spatial-object-spike/sonic-mat-live/manage-live.ps1 -Build <reviewed-build> -EnginePid <PID> -EngineCreated <FILETIME>
+# Explicit operator start; requires a Windows security context permitting access.
+./spatial-object-spike/sonic-mat-live/manage-live.ps1 -Action Start -Build <reviewed-build> -EnginePid <PID> -EngineCreated <FILETIME> -Output <fresh-dir> -Continuous
+./spatial-object-spike/sonic-mat-live/manage-live.ps1 -Action Status -Metadata <fresh-dir>/capture.json
+./spatial-object-spike/sonic-mat-live/manage-live.ps1 -Action Stop -Metadata <fresh-dir>/capture.json
+```
+
+Start requires exactly one of `-Continuous` or bounded `-Seconds 1..60`; omitting
+a bound cannot silently start continuous capture. `-Reattach` explicitly reuses
+only the exact previously loaded/hash-verified DLL path. The helper stays armed
+between client sessions; each lease clears pre-PLAY cycles and starts its cycle
+sequence again. It does not attach on every connection or retry a native failure.
+
+The output contains exact publisher PID/creation/image/hash, its private stop
+event and a two-line host configuration snippet. Apply that snippet to an
+explicitly selected host configuration when preparing a real deployment; Start
+does not edit an existing host. `WaitingForObjects` does not advertise MAT
+readiness. `NativeReady` means actual native cycles were observed while the same
+publisher/engine remain alive; the live pipe independently rejects stale output.
+Host/client capability negotiation remains authoritative: source absent or a
+phone without MAT output selects Opus before ANNOUNCE. Selected MAT route/source
+failure ends the session; reconnect renegotiates rather than changing codec in
+the running stream.
+
+Stop checks the exact publisher identity/hash, signals only its private event,
+waits at most 15 seconds and requires six-entry restoration. No forced kill or
+DLL unload is attempted. An operator stop before any native objects arrived can
+restore cleanly with zero cycles; it does not emit EOS or prove MAT readiness.
+Continuous capture removes only the probe duration bound; object/format, queue,
+deadline, watchdog and native ABI failures remain terminal. This mode still
+needs sustained native/game/hardware validation and is not a production service.
+
 ## Native live loopback acceptance passed, 2026-10-22 23:22
 
 The fifth separately authorized eight-second test passed with real native MAT:

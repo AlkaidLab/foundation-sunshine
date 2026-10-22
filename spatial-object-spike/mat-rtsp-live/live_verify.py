@@ -52,6 +52,45 @@ def signal_stop(name):
         kernel.CloseHandle(event)
 
 
+class OwnedPublisher:
+    """Wait on the exact process started by the operator control script."""
+    def __init__(self, state):
+        self.pid = state["publisherPid"]
+        self.returncode = None
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        self.kernel.OpenProcess.restype = ctypes.c_void_p
+        self.kernel.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.c_void_p] * 4
+        self.kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self.kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        self.kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        self.handle = self.kernel.OpenProcess(0x100000 | 0x1000, 0, self.pid)
+        if not self.handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        created, exited, system, user = (ctypes.c_ulonglong() for _ in range(4))
+        if not self.kernel.GetProcessTimes(self.handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(system), ctypes.byref(user)) or created.value != int(state["publisherCreated"]):
+            self.close()
+            raise RuntimeError("Operator publisher creation identity changed")
+
+    def poll(self):
+        if self.returncode is None and self.kernel.WaitForSingleObject(self.handle, 0) == 0:
+            code = ctypes.c_ulong()
+            if not self.kernel.GetExitCodeProcess(self.handle, ctypes.byref(code)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.returncode = code.value
+        return self.returncode
+
+    def wait(self, timeout):
+        if self.kernel.WaitForSingleObject(self.handle, int(timeout * 1000)) != 0:
+            raise subprocess.TimeoutExpired("owned native publisher", timeout)
+        return self.poll()
+
+    def close(self):
+        if self.handle:
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--output", type=Path, required=True)
@@ -70,7 +109,11 @@ def main():
     p.add_argument("--endpoint-id")
     p.add_argument("--seconds", type=int, default=20)
     p.add_argument("--reattach", action="store_true")
+    p.add_argument("--operator-build", type=Path)
+    p.add_argument("--powershell", type=Path)
     args = p.parse_args()
+    if bool(args.operator_build) != bool(args.powershell):
+        p.error("Operator build and explicit PowerShell executable must be paired")
     if not 8 <= args.seconds <= 30:
         p.error("Native capture duration must be 8..30 seconds")
     if not args.preflight_only and not all((args.publisher, args.tap, args.tap_sha, args.codec, args.codec_sha,
@@ -147,6 +190,17 @@ def main():
     result = {"passed": False, "preflightOnly": args.preflight_only, "sampleReplayUsed": False,
               "audioPayloadWrittenToDisk": False, "videoPayloadWrittenToDisk": False,
               "hardwareSink": False, "avSyncCalibrated": False, "nativeCaptureSeconds": args.seconds}
+    capture_path = out / "capture.log"
+    operator_script = Path(__file__).resolve().parent.parent / "sonic-mat-live" / "manage-live.ps1"
+
+    def operator(action, extra=()):
+        command = [str(args.powershell), "-NoProfile", "-File", str(operator_script), "-Action", action, *extra]
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
+        (out / f"operator-{action.lower()}.log").write_bytes(completed.stdout)
+        if completed.returncode:
+            raise RuntimeError(f"Operator {action} failed; inspect its original log")
+        return completed.stdout
 
     def start(command, name, cwd=None, process_env=None):
         log = (out / f"{name}.log").open("wb")
@@ -156,7 +210,8 @@ def main():
 
     def wait_log(process, name, marker, seconds):
         deadline = time.monotonic() + seconds
-        while marker not in log_text(out / f"{name}.log"):
+        path = capture_path if name == "capture" else out / f"{name}.log"
+        while marker not in log_text(path):
             if process.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError(f"{name} missing {marker}; no retry")
             time.sleep(.01)
@@ -187,13 +242,30 @@ def main():
         for dll, expected in ((args.tap, args.tap_sha), (args.codec, args.codec_sha)):
             assert sha(dll) == expected
         mode = "--reattach" if args.reattach else "--attach"
-        publisher = start([str(args.publisher), mode, str(args.engine_pid), args.engine_created,
-              str(args.tap), args.tap_sha, str(args.codec), args.codec_sha, pipe, stop,
-              "--max-seconds", str(args.seconds)], "capture")
+        if args.operator_build:
+            options = ["-Build", str(args.operator_build), "-Output", str(out / "operator"),
+                       "-EnginePid", str(args.engine_pid), "-EngineCreated", args.engine_created,
+                       "-Seconds", str(args.seconds), "-SessionId", identifier]
+            if args.reattach:
+                options.append("-Reattach")
+            operator("Start", options)
+            state = json.loads((out / "operator" / "capture.json").read_text(encoding="utf-8-sig"))
+            publisher = OwnedPublisher(state)
+            assert Path(state["producer"]).resolve() == args.publisher.resolve() and state["pipe"] == pipe and state["stopEvent"] == stop
+            assert not state["continuous"] and state["maximumSeconds"] == args.seconds
+            capture_path = out / "operator" / "capture.log"
+        else:
+            publisher = start([str(args.publisher), mode, str(args.engine_pid), args.engine_created,
+                  str(args.tap), args.tap_sha, str(args.codec), args.codec_sha, pipe, stop,
+                  "--max-seconds", str(args.seconds)], "capture")
         wait_log(publisher, "capture", "ATTACHED source=plugin-objects-to-native-MAT", 3)
         source = start([str(args.probe), "--emit", "--endpoint", args.endpoint_id, "--seconds",
                          str(args.seconds + 2), "--objects", "2", "--variant", "0"], "source")
         wait_log(publisher, "capture", "NATIVE_MAT_READY", 5)
+        if args.operator_build:
+            status = json.loads(operator("Status", ["-Metadata", str(out / "operator" / "capture.json")]))
+            assert status["state"] == "NativeReady" and status["publisherAlive"] and status["engineIdentityRetained"]
+            result["operatorObservedNativeReady"] = True
         key = os.urandom(16).hex()
         iv = os.urandom(4) + bytes(12)
         body, launch = request("launch", {"appid": apps.findtext("App/ID"), "rikey": key,
@@ -212,7 +284,7 @@ def main():
         publisher.wait(timeout=8)
         source.wait(timeout=8)
         status = json.loads((out / "client-result.json").read_text())
-        capture_log = log_text(out / "capture.log")
+        capture_log = log_text(capture_path)
         match = re.search(r"LEASE_END_ACK cycles=(\d+) sha256=([0-9a-f]{64})", capture_log)
         assert match, "Native publisher did not confirm stream SHA/EOS"
         assert client.returncode == publisher.returncode == source.returncode == 0
@@ -252,6 +324,15 @@ def main():
                 cleanup_errors.append(str(e))
         for log in logs:
             log.close()
+        if args.operator_build and (out / "operator" / "capture.json").exists():
+            try:
+                stopped = json.loads(operator("Stop", ["-Metadata", str(out / "operator" / "capture.json")]))
+                assert stopped["state"] == "StoppedVerified" and stopped["hooksRestored"]
+                result["operatorStopVerified"] = True
+            except Exception as error:
+                cleanup_errors.append(str(error))
+            if capture_path.exists():
+                shutil.copy2(capture_path, out / "capture.log")
         result.update(hostExitCode=host.returncode if host else None,
             publisherExitCode=publisher.returncode if publisher else None, clientExitCode=client.returncode if client else None,
             sourceExitCode=source.returncode if source else None, cleanupErrors=cleanup_errors,
@@ -259,6 +340,8 @@ def main():
         if cleanup_errors or (host and host.returncode != 0):
             result["passed"] = False
         save(out / "result.json", result)
+        if isinstance(publisher, OwnedPublisher):
+            publisher.close()
         if not result["passed"]:
             print("FAIL_FULL_NATIVE_RTSP inspect result.json and original logs", flush=True)
 
