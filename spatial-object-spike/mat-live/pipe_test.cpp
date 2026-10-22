@@ -42,6 +42,7 @@ static void Run(unsigned mode){
         if(mode==2){auto began=GetTickCount64();while(!finished&&GetTickCount64()-began<3000)Sleep(1);CheckPipe(finished,"Missing acknowledgement must be bounded");}
         CloseHandle(client);client=INVALID_HANDLE_VALUE;server.join();CheckPipe(serverError.empty(),"Server exception");
         CheckPipe(shared.acknowledged_leases==(mode==0?1u:0u),"Wrong/missing end acknowledgement accepted");
+        CheckPipe(mode==0?shared.delivered_sha256=="b51894f456731ba3171663abe5305090f366ee778eb56cece1009e90005f4898":shared.delivered_sha256.empty(),"Producer stream SHA oracle / failed lease publication");
     }catch(...){failure=std::current_exception();}
     if(client!=INVALID_HANDLE_VALUE)CloseHandle(client);
     if(server.joinable()){Broken(shared,"Test cleanup");server.join();}

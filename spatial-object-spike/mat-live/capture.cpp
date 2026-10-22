@@ -17,7 +17,17 @@ struct Shared {
     bool failed=false,ended=false,playing=false,ready=false;
     uint64_t encoder=0,play_qpc=0,last_cycle=0,cycles=0,skipped=0,acknowledged_leases=0;
     mat_capture::Observations observations;
-    std::string error;
+    std::string error,delivered_sha256;
+};
+// Metadata-only acceptance oracle for the post-PLAY stream; no payload storage.
+class LeaseDigest {
+    BCRYPT_ALG_HANDLE algorithm_{};BCRYPT_HASH_HANDLE hash_{};std::vector<BYTE> object_;
+    void close(){if(hash_)BCryptDestroyHash(hash_);if(algorithm_)BCryptCloseAlgorithmProvider(algorithm_,0);hash_=nullptr;algorithm_=nullptr;}
+public:
+    LeaseDigest(){try{DWORD size=0,got=0;require(BCryptOpenAlgorithmProvider(&algorithm_,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0,"Lease SHA256 algorithm");require(BCryptGetProperty(algorithm_,BCRYPT_OBJECT_LENGTH,(PUCHAR)&size,sizeof(size),&got,0)>=0,"Lease SHA256 object");object_.resize(size);require(BCryptCreateHash(algorithm_,&hash_,object_.data(),size,nullptr,0,0)>=0,"Lease SHA256 init");}catch(...){close();throw;}}
+    ~LeaseDigest(){close();}
+    void update(const uint8_t* p,size_t n){require(n<=MAXDWORD&&BCryptHashData(hash_,const_cast<PUCHAR>(p),(ULONG)n,0)>=0,"Lease SHA256 update");}
+    std::string finish(){BYTE digest[32];require(BCryptFinishHash(hash_,digest,32,0)>=0,"Lease SHA256 finish");constexpr char hex[]="0123456789abcdef";std::string out;for(auto b:digest){out+=hex[b>>4];out+=hex[b&15];}return out;}
 };
 static uint64_t Qpc(){LARGE_INTEGER n{};require(QueryPerformanceCounter(&n)!=FALSE,"QPC");return n.QuadPart;}
 static void Broken(Shared& s,const char* message){std::lock_guard lock(s.mutex);s.failed=true;s.error=message;s.queue.clear();s.changed.notify_all();}
@@ -88,7 +98,7 @@ static void Serve(Shared& shared,const std::wstring& name,mat_capture::Descripto
                 require(Io(pipe,command,8,false,30000,unavailable) && !memcmp(command,"MCAPPLAY",8),"Live source lease play timeout/disconnect");
                 {std::lock_guard lock(shared.mutex);require(!shared.failed && shared.ready && GetTickCount64()-shared.last_cycle<2000,"Source stale at PLAY");
                     shared.queue.clear();shared.play_qpc=Qpc();shared.playing=true;}
-                uint64_t sequence=0;
+                uint64_t sequence=0;LeaseDigest digest;
                 while(!interrupted) {
                     Cycle cycle{};bool end=false;
                     {
@@ -109,9 +119,9 @@ static void Serve(Shared& shared,const std::wstring& name,mat_capture::Descripto
                         // Never use unbounded FlushFileBuffers on a lost peer.
                         uint8_t ack[mat_capture::end_ack_bytes];
                         require(Io(pipe,ack,sizeof(ack),false,2000)&&mat_capture::valid_end_ack(ack,sequence),"Live source end acknowledgement failed/timed out");
-                        {std::lock_guard lock(shared.mutex);++shared.acknowledged_leases;}
-                        printf("LEASE_END_ACK cycles=%llu\n",sequence);break;
-                    }++sequence;
+                        auto sha=digest.finish();{std::lock_guard lock(shared.mutex);++shared.acknowledged_leases;shared.delivered_sha256=sha;}
+                        printf("LEASE_END_ACK cycles=%llu sha256=%s\n",sequence,sha.c_str());break;
+                    }digest.update(cycle.bytes.data(),cycle.bytes.size());++sequence;
                 }
             }catch(const std::exception& e){printf("LEASE_CLOSED %s\n",e.what());}
             {std::lock_guard lock(shared.mutex);shared.playing=false;shared.queue.clear();}
