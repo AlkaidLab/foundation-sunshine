@@ -1,0 +1,116 @@
+后续准备补充：新独立MATV4P1输入/原生探针已编译，15项普通进程测试及源逐字节
+对照通过；尚未原生编码。见MAT-NATIVE-V4-PREP-RESULT.txt，需新的单次UAC授权。
+
+真实 v4 录制 -> C++ 输入桥接 / 2026-10-20
+=======================================
+
+结论与范围
+----------
+真实quantum-v4-ordered-native01两段流的离线C++桥接通过：
+800对象包/384000样本，512个原生Process边界，12个空轮，两个独立观察域，
+1次源文件切换，全部保留。不限速与按录制QPC回放的字节/状态完全一致。
+独立Python直接读取原始v4事件建立golden，两域导出逐字节相同。
+另外与旧原生v3调用后PCM的592包/284160个对应样本逐位相同。
+
+本轮没有UAC、访问audiodg、播放音频、启动游戏、调用MAT编码器或修改生产配置。
+导出是MATBRG1诊断调用计划，不是MAT码流，也不是现有探针MATLIF1格式。
+不能把本轮结果描述为“已经编码出MAT”或“Android Atmos端到端通过”。
+
+实现与旧代码隔离
+----------------
+cpp_bridge_native_v4.hpp：新的worker DomainBridge，按域实例化。
+  复用既有Framer/FrameBuffer与同一FFmpeg AVAudioFifo；不改旧cpp_bridge_core.*。
+  q4::Assembler继续复用原PositionCache与严格返回配对/生命周期/全局序号检查。
+  身份包含域、host、原ID、type、generation；每域独立ID/缓存/输入样本游标。
+  每个完整PassEnd输出一轮480输入帧，含空轮；不再按非空对象数重排时间。
+  EOS所带最后一块PCM先保留，下一实际Process轮发零PCM的结束控制调用。
+  DomainEnd产生单独EOF控制记录，不额外调用Process、不推进样本时钟。
+  空轮推进的是该域输入时钟，不人为创建对象PCM。
+  当前若仍存活对象在一轮中缺失则拒绝，避免猜测静音或沿用上轮buffer。
+  未知坐标有声隔离/计数，静音未知延后；不伪填原点。
+  限动态对象、每轮完整480帧/offset0、最多20对象；床、短块、重复key明确拒绝。
+
+cpp_bridge_native_v4_replay.cpp：
+  先验证原生footer/格式/内容证明及全部源SHA，再解析两个分卷。
+  真实Process标记决定样本时钟，QPC仅安排离线到达节拍，不推算采样位置。
+  不限速按域落盘；节拍线程间用Boost SPSC容量8的索引队列。
+  数据提前离线读入只读Item列表；不是常驻RT采集producer或跨进程IPC设计。
+  worker map/vector及对象创建仍分配内存；FIFO预分配4096，观测最多480样本。
+  没有将两个域强行串成同一条MAT时间线，也没恢复域之间额外的全局静音。
+
+增益规则
+--------
+旧Bridge保持原v2回归的F32(F32(pcm*volume)*callGain)不变。
+新v4桥接按已观察的本机原生规则：F32(pcm * F32(volume*callGain))。
+采集首块中的Windows渐入已存在，原样保留，不再加淡入/逆包络。
+下一阶段若喂入私有MAT接口，必须用volume=1/callGain=1，避免再乘一次。
+这是未来提交契约，本轮没有实际调用vendor来验证unity提交或编码产物。
+
+独立负对照：384000样本中，132088个与旧“两次独立F32乘法”结果不同，
+383997个与重复增益结果不同。差异含末位舍入，不表示前者有明显可闻差异。
+旧原生v3录制来自另一次受控测试，按slot+XYZ源块匹配到新域1，592包/284160
+样本全部逐位相同；不是同一次调用的前后双点观测，也不扩展成所有编码器保证。
+
+导出与时钟
+----------
+最终构建cpp-native-v4-build02；回放cpp-native-v4-replay02；独立证明cpp-native-v4-proof02。
+域1：306个Process输入轮，146880输入帧，600音频调用/288000样本，2创建/2结束。
+  6空轮；另1条EOF控制（不计入Process/时钟）；文件1184960字节。
+  domain-1-mat-object-input.bin SHA256
+  aa345cc683f3daa98c680a9a25a73e04ec3272a74f86c028a535ae347fb729a8
+域2：206个Process输入轮，98880输入帧，200音频调用/96000样本，1创建/1结束。
+  6空轮；另1条EOF控制；文件399008字节。
+  domain-2-mat-object-input.bin SHA256
+  1ff71d6cd0e27d8ecbdc5af6adf769df51001fdd0f99d449f49c67bec360fafc
+3条结束通知带1440个显式零控制样本，不是额外的源音频；不能加到384000源样本里。
+input-clock.csv逐轮与原始PassBegin/PassEnd及整数480累积时钟一致。
+两个域native_id可分别从1开始；它们属于不同编码器会话，不可仅靠裸ID混在同一实例。
+
+离线节拍实测（最终build02/replay02）
+---------------------------------
+按源QPC调度跨度5.5428537秒，共516条工作项（512轮+2开始+2结束）。
+Boost队列容量8、观测高水位1，producer溢出0，512轮中超过10ms完成截止0。
+Process worker耗时：P50 0.0144ms，P99 0.0387ms，最大0.1449ms。
+目标到达时刻至完成：P99 0.574037ms，最大0.7977ms。
+不限速处理含导出IO约8.5763ms；不包含源预读/预扫描。
+以上不含audiodg采集、MAT编码、游戏负载、网络、客户端；不是端到端延迟。
+不把同一受控2对象峰值的worker数值推断为20对象/长测表现。
+
+验证和依赖
+----------
+21项旧C++回归、13项新v4自测通过，另17项test_resident_bridge.py通过。
+新自测覆盖空轮、EOS排空、控制EOF不推进时钟、域重建、增益负对照、未知坐标、
+生成代次/调用重排、缺失活对象、短块/静态/非有限数据/21对象/时钟跳变拒绝。
+verify_cpp_native_v4.py独立解析原始事件和输出，没有读C++对象CSV来生成golden；
+核对全部文件字节、活对象/slot、3建3结束、时钟CSV、节拍CSV和旧v3实测PCM。
+篡改临时导出副本会拒绝；已有输出目录拒绝且原文件不改；不合格来源证明在
+创建输出前拒绝。临时副本随TemporaryDirectory自动清理，原录制/导出未改。
+外部证明保存在proof02，不回写C++summary的independent_golden_passed=false。
+
+工具链：本机已有GCC16.2 UCRT，-fno-fast-math -ffp-contract=off；
+现有libavutil60.26.102静态库及同工具链动态GCC运行库，不安装/替换任何依赖。
+build02统一使用已有C:/msys64/ucrt64/include完整Boost1.85头集，编译期版本断言。
+build.json记录源码、exe、libavutil、Boost queue/version和运行库哈希。
+exe SHA256 65d71c30d9160bd9db08fd22433760ac45467655d1784bae5c54f11ceca2f25d。
+
+早期记录：build01/replay01使用缓存模块化Boost头、却回落到系统1.85 version.hpp；
+计算与初次测试通过，但该混合头环境不作为最终依赖证据，已改为一致头集复验。
+proof01为尚未加入旧原生v3交叉核对的初版；proof02为最终。
+交叉核对首次遇到旧content证明没有source_files字段，未产生成功证明；改从旧
+parser summary读取实际manifest后通过，没有改旧录制/旧证明或新C++导出。
+原v4-build06清单全部源码哈希及旧Bridge保持不变，新构建清单亦核对通过。
+
+复现（普通权限，从项目根目录；NEW目录必须不存在）
+--------------------------------------------------
+ ./spatial-object-spike/mat-spike/build-cpp-native-v4.ps1 -Output NEW_BUILD
+ ./spatial-object-spike/mat-spike/cpp-native-v4-build02/native-v4-replay.exe ./spatial-object-spike/resident/quantum-v4-ordered-native01/capture ./spatial-object-spike/resident/quantum-v4-ordered-content01/proof.json NEW_REPLAY
+ C:/Python311/python.exe -B ./spatial-object-spike/mat-spike/verify_cpp_native_v4.py --capture ./spatial-object-spike/resident/quantum-v4-ordered-native01/capture --source-proof ./spatial-object-spike/resident/quantum-v4-ordered-content01/proof.json --export NEW_REPLAY --exe ./spatial-object-spike/mat-spike/cpp-native-v4-build02/native-v4-replay.exe --v3-capture ./spatial-object-spike/resident/quantum-native01/capture --v3-proof ./spatial-object-spike/resident/quantum-native-content03/proof.json --v3-parser-proof ./spatial-object-spike/resident/quantum-native-proof01/summary.json --output NEW_PROOF
+
+下一步边界
+----------
+本轮已闭合真实v4录制到C++诊断输入计划，尚需为MAT接口做显式输入适配：
+  按域创建/结束实例，统一音量/增益为1，实际轮才Process，EOF不额外推进，
+  处理编码器起始预热/输出延迟和尾部排空，再核对产出及对象/坐标保留情况。
+不能直接将MATBRG1文件冒充MATLIF1，或把输出计划当作MAT bitstream。
+可先普通权限准备适配和输入自测；任何新的audiodg原生调用需要新的单次提权授权。
+没有完成真实游戏完整床/对象、20对象实时、跨域同步、RTP、Android本机Atmos。

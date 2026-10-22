@@ -1,0 +1,102 @@
+DEFAULT STATEFUL COLLECTOR / 2026-10-18
+======================================
+
+Outcome
+-------
+Flags and bounded incremental position/volume state are now in the default Dolby
+resident collector, not only in the full diagnostic parser. No virtual driver,
+game DLL injection, live debugger or per-block thread suspension was used.
+The requested 10-minute soak was STOPPED EARLY at the user's explicit request.
+Actual duration: 305.657 seconds (~5 min 6 sec). No claim of a completed 10-minute,
+hours/days, all-games, endpoint-switching or end-to-end audio-glitch endurance test.
+
+Implementation
+--------------
+stateful_tap.cpp uses the verified Microsoft encoder wrapper only and copies raw
+property flags + a loss epoch, with all 2048 float sample slots still available.
+It does NOT install the sanitizer diagnostic hook or copy 640-byte traces.
+position_cache.h runs in the collector, never the audio callback. Flag 0x4 updates
+XYZ; flag 0x2 updates volume; create/end handle lifetimes. Missing initial position
+is NaN/unknown, not zero. Static channel positions remain implicit in channel type.
+The cache is bounded at 4096 keys; generation protects observed ID reuse. A loss
+epoch invalidates all state/identity conservatively. Extended-reader calls are
+unsupported and cause the current default collector to stop unsuccessfully.
+
+collector.exe/start-resident.ps1/run-test.ps1 default to Dolby stateful output.
+Disk v2 uses 112-byte headers including flags, quality, generation, loss epoch and
+raw XYZ, plus reconstructed current XYZ and audio. Legacy tools expecting 64-byte
+records must NOT be used; use verify_stateful.py. Legacy explicit backends remain.
+The supervisor now uses one collector per engine lifetime and rotates output files
+without clearing its cache or reinstalling hooks. Quota stops safely, no auto-delete.
+
+Actual game: short mid-attachment (stateful-midattach01)
+------------------------------------------------------
+Game Nioh3 PID39832 and audiodg PID39292 were already running. No restart required.
+35.078 sec, 128982 blocks, 61911360 object-frames, 262091424 bytes.
+20 dynamic lifetimes began with observed unknown coordinates. 11 later received
+position updates; all 11 had nonzero audio with known position, 6 changed position.
+597 position-update blocks, 17461 cached-position blocks, 51662 unknown blocks.
+0 queue drops/invalid reads, successful cleanup, original bytes restored, exit0.
+This demonstrates the intentional limitation: fixed sources which never send a
+new position after attachment remain unknown, rather than being guessed as origin.
+
+Actual game: soak, also mid-attachment (stateful-soak01)
+------------------------------------------------------
+Same game PID39832 throughout; audiodg PID39292 unchanged. Dolby route unchanged.
+No synthetic emitter; before/after endpoint sessions identify Nioh3 as the only
+active non-system audio session on the default F32D80U physical endpoint.
+Game before/after module audits: CaptureDllLoaded=False.
+305.657 sec, 1129980 blocks, 542390400 object-frames, 2296119360 bytes (~2.30 GB).
+All 20 dynamic lifetimes have audible samples and multiple known XYZ positions.
+17 first appeared unknown and all 17 subsequently recovered; the other 3 already
+carried position on their first captured packet. No creation event was observed.
+29144 explicit dynamic position-update blocks; 529672 cached dynamic blocks;
+51984 unknown dynamic blocks; 519180 static-channel blocks.
+0 full drops, 0 busy drops, 0 invalid reads, 0 metadata-reader calls.
+Queue high water111/4096. Cache peak37/4096; no evictions/loss invalidations.
+Copy-section total257724.4 us, mean~0.228 us/block, maximum153.6 us. These exclude
+hook entry/exit/original processing, and are NOT an incremental whole-system cost.
+Collector CPU1.765625 sec over305.657 sec (~0.58% of one logical core).
+Whole audiodg CPU14.875 sec is NOT the incremental cost of the tap.
+After initial5 sec, collector private bytes stayed1822720..1900544; audiodg private
+bytes22409216..22659072. Shared queue is33882688 bytes; collector working set was
+about40.4 MB. Shared pages must not be double-counted as private memory.
+
+verify_stateful.py replayed all1129980 records independently, validated every PCM
+sample, flags, positions, sequence and cleanup; PASS. Same-object proof:
+  stateful-soak01/proof-object-audio.wav (10.0 sec, PCM16 pre-gain preview)
+  stateful-soak01/proof-object-position.csv (matching sample offsets/QPC/XYZ/gains)
+  Object2204274084, generation9. Listener-relative XYZ, NOT world/entity identity.
+
+Verification boundaries / remaining checks
+------------------------------------------
+position_cache_test.exe PASS: late attach, delta retention, create/end, reuse,
+gap invalidation, static channels and bounded eviction.
+cache_fixture_test.exe PASS: all627594 prior diagnostic lifecycle records replayed,
+339240 dynamic records agree with independently reconstructed Python CSV, including
+creation metadata. test_position_cache.py also passes its zero-filled packet case.
+test_stateful_format.py PASS: cache survives a synthetic file boundary; corrupted
+cached position and truncated PCM are rejected by the independent disk verifier.
+
+The game soak ran the first stateful collector build, before file rotation was
+added. That exact executable is preserved as collector_soak_v1.exe. The compiled
+default collector.exe now includes rotation, conservative identity splitting after
+loss and final flush checks. Those additions passed build/regression checks, but
+the planned SECOND actual-game file-rotation run was NOT started in that request
+because the user requested early termination. A SUBSEQUENT user request authorized
+only a short rotation check: stateful-rotation01 passed 20.125 seconds, 36 files /
+35 switches, 57 cached-position crossings, 5 audible cached-position crossings,
+zero missing/duplicate sequences and zero drops. See ROTATION-RESULT.txt. That
+subsequent short run used the current default collector.exe, not the saved v1.
+
+Cleanup
+-------
+STOP marker requested clean shutdown. status2/error0/exit0, bootstrap original
+bytes re-read externally and encoder bytes restored/compared inside the DLL.
+No collector remains active. Dormant capture DLLs are intentionally pinned until
+audiodg naturally exits. Game left running, Dolby setting preserved. No driver,
+certificate, boot policy, security policy, service/autostart or forced engine
+restart changes. No prior captures were removed or overwritten.
+
+This remains a local version-locked spike: audioeng.dll10.0.26100.9711,
+image0x1ef000, timestamp0x0627570d. See README.txt for startup, format and stop commands.

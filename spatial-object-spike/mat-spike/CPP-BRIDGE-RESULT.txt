@@ -1,0 +1,117 @@
+最新原生v4桥接补充：见CPP-NATIVE-V4-RESULT.txt。
+真实Process边界/调用前录制已完成独立C++ worker回放和逐字节golden验证，
+包含12空轮、2域Reset、384000样本增益一次和QPC节拍；尚未实际MAT编码。
+旧v2 Bridge源码保持不变，下文保留仁王3旧v2回放历史，勿混用来源/增益规则。
+
+仁王3录制 -> C++对象桥接验证 / 2026-10-20
+======================================
+
+后续Process边界候选/实验协议v3与测试见../resident/QUANTUM-RESULT.txt。
+真实时序尚待新授权短采，不要把合成标记fixture当成已获取的native边界。
+
+结论与范围
+----------
+已将离线桥接主体从Python移至C++20：复用采集器PositionCache、项目现有FFmpeg
+AVAudioFifo和Boost.Lockfree SPSC。Python只保留为独立golden/格式校验工具。
+最终cpp-bridge-build05、cpp-bridge-replay02和cpp-bridge-proof02通过。
+本轮普通权限运行；没有打开游戏、提权、访问audiodg、调用私有MAT编码器，
+没有改端点/驱动/安全设置，没有修改Sunshine生产构建或替换其依赖。
+
+实现
+----
+cpp_bridge_core.hpp/.cpp：
+  直接复用../resident/position_cache.h的增量状态机；逐条重建后校对录制快照。
+  身份包含采集session、host、原ID、type、loss epoch、generation；不按回调数组索引绑声道。
+  源volume和callGain分别以F32乘一次，禁止fast-math和FP contraction。
+  已知动态对象进入480帧输入；未知坐标不伪造原点。有声未知隔离计数，静音未知明确延后。
+  静态声床保留原type/slot和PCM，不伪装成动态XYZ，不宣称已接通床编码接口。
+  创建/结束/代次更换/loss epoch/EOF显式处理；源end所带最后一块PCM保留。
+  新代次即使位置未知，也立即结束旧代次，避免陈旧对象继续留存。
+
+  每对象FFmpeg mono FLT FIFO预留4096样本，单次输入上限2048；写前检查剩余空间，
+  不触发FFmpeg隐式扩容。元数据随整数样本偏移切分；块内位置变更不会被压成一个XYZ。
+  不足480的尾巴明确拒绝，不静默补零/丢弃。当前录制适配层只接受已对齐480帧，
+  通用Framer支持变长输入不等于native编码器已支持一个480块内多个位置变更。
+
+cpp_bridge_queue.hpp和cpp_bridge_replay.cpp：
+  预分配9个Batch池槽，ready SPSC容量8、free SPSC容量9，传固定POD池索引。
+  队列满明确失败并计数，不覆盖旧数据。停止时重新检查最后一次push，排空后才退出。
+  队列为同进程单生产者/单消费者；没有替换原audiodg跨进程、多入口竞争的共享内存ring。
+  两个正常优先级回放线程使用自身event/waitable timer，不操作音频线程。
+  FIFO和队列有界，不代表整个worker零分配；map/deque/vector及对象创建仍在worker分配。
+
+真实录制与逐字节一致性
+--------------------
+源：../resident/stateful-rotation01，原始36个分卷未改动，35次切换。
+73186条记录，35129280个对象样本，1978轮、19.78秒音频时钟。
+37个源key=20动态+17静态；1362轮调用顺序不同于首轮，桥接身份没有随之换绑。
+当前片段没有源create/end或loss变化；这些行为由C++合成单测覆盖，不冒充游戏证据。
+8个动态对象恢复到已知XYZ；其余12个仍未知且静音。
+动态输出2354400个样本；静态保留16140480个样本；未知静音延后16634400个样本。
+没有有声未知被丢进默认原点，没有动态PCM越界。
+
+cpp-bridge-replay02/mat-object-input.bin：9653536字节，1979轮，4913调用，8建/8结束。
+SHA256 249f8808b170130855e7d5f9f9d7ee857b1ebff03397541b66044badba941c09
+cpp-bridge-replay02/static-bed-input.bin：65701280字节，1978轮，33626调用。
+SHA256 a3c2c1270979a99b200c41f3a91b3c03212428c4d31e65e80c8b9aeae59bfa76
+两个文件与Python bridge-replay03逐字节相同；源session、所有既有计数、8个动态身份的
+全部共同字段及37个source slot亦核对一致。Python身份说明文字未强行伪装成二进制字段。
+
+verify_bridge_export.py独立扫描原始录制快照，而非复用C++缓存结果；检查F32增益、
+XYZ/slot、ID活性、EOF、零结束PCM、文件长度和全部输出哈希。
+cpp-bridge-proof02/proof.json：passed=true，golden_bytes_identical=true。
+C++summary保持原始记录：independent_golden_passed=false表示C++自身没有冒充外部校验；
+后续独立通过证据在proof.json，不回写原始summary来抹平这一区别。
+
+节拍短测（最终build05/replay02）
+------------------------------
+先恢复前1378轮状态，再按原QPC到达间隔回放最后600轮（6秒音频），保留中途启动语义。
+处理worker P50 0.0496ms，P99 0.119229ms，最大0.1824ms。
+目标到达时刻至处理结束 P99 0.609608ms，最大0.7382ms。
+0队列溢出、0个超过10ms完成截止；队列观测高水位1/8。
+节拍窗口动态输入SHA256：699ca272ee1acdf0d2ba1580064646bab1cbfb5f615020c73975dc8a99793d15
+与不限速及独立golden同窗口一致。全量不限速处理含导出IO约264.63ms，不含源预扫描。
+这不是MAT编码、真实游戏运行负载或端到端延迟；不能直接与其他轮次耗时相加。
+这段真实录制最大仅8个可提交动态对象；本轮未进行20对象native实时编码复测。
+
+测试、构建及失败记录
+------------------
+21项C++单测通过：变长组帧、块内XYZ、尾巴/超限/非有限元数据拒绝、F32增益、
+未知静音/有声策略、真实create原点、重排、跨host、end后复用、新代次未知时退役旧对象、
+loss清空、快照损坏、20对象上限、EOF、队列满不覆盖、双线程10000项顺序、
+停止与最后push竞争、池背压后排空和归还。
+原有38项Python单测继续全部通过。已有输出目录拒绝测试通过，目录中文件哈希未变化。
+
+build01：本机GCC子进程缺UCRT bin PATH，编译未完成。
+build02：const接口编译错误，已修正。
+build03：静态GCC异常运行库在预期throw时崩溃；最小独立throw/catch程序同样0xC0000005，
+  而同编译器动态运行库通过。不移除拒绝测试、不混用另一个FFmpeg ABI来掩盖问题。
+build04：动态GCC运行库、18自测和replay01/proof01通过。
+build05：补齐停止排空竞争、背压和元数据检查，21自测及replay02/proof02通过。
+保留以上失败/早期结果，未覆盖旧目录。
+
+依赖仍为本机现有UCRT GCC 16.2、libavutil 60.26.102静态库、Boost 1.92.0和已有JSON头。
+build05目录带同工具链libstdc++-6.dll、libgcc_s_seh-1.dll、libwinpthread-1.dll，
+运行无需修改系统PATH。build.json记录依赖、运行库、源码和exe哈希。
+本次只是诊断程序构建；产品发行仍须走项目支持的工具链、依赖许可和打包审查。
+
+复现（在项目根目录；所有输出必须是新路径）
+------------------------------------------
+编译并自测：
+  ./spatial-object-spike/mat-spike/build-cpp-bridge.ps1 -Output ./spatial-object-spike/mat-spike/NEW_BUILD
+运行：
+  ./spatial-object-spike/mat-spike/NEW_BUILD/cpp-bridge-replay.exe ./spatial-object-spike/resident/stateful-rotation01 ./spatial-object-spike/mat-spike/NEW_REPLAY 600 37
+独立校验：
+  C:/Python311/python.exe -B -u ./spatial-object-spike/mat-spike/verify_bridge_export.py --source ./spatial-object-spike/resident/stateful-rotation01 --export ./spatial-object-spike/mat-spike/NEW_REPLAY --output ./spatial-object-spike/mat-spike/NEW_PROOF
+可直接用现成cpp-bridge-build05/cpp-bridge-replay.exe跳过编译，保留旁边3个运行库DLL。
+
+尚未完成与下一步
+--------------
+1. 这是独立离线C++桥接，不是已上线常驻采集器。通用实时量子边界/sampleStart/object offset
+   仍须在采集协议补齐；37-key-set规则只适用于该录制，不按QPC猜同步样本时钟。
+2. 输出仍是自定义MATBRG1/MATBED1诊断输入，不是MAT，也不是之前MATLIF1输入。
+   尚未把本轮对象/声床接入独立MAT worker，更未改Sunshine/Moonlight传输。
+3. 下一优先项是可靠的采集时间边界，以及native静态床输入验证；不能只提交8个动态对象
+   就宣称完整游戏混音已编码。涉及audiodg的下一轮短测仍需新的明确授权。
+4. Android本机MAT解码/Atmos点亮、无Home Theater能力机器、私有ABI可维护性与授权依赖
+   仍未验证或解决。没有把主机离线桥接通过扩大为端到端通过。

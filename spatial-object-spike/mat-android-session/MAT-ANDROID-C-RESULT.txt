@@ -1,0 +1,141 @@
+MAT Android C: explicit RTSP negotiation -> independent IEC61937 session
+2026-10-21
+
+RESULT: PASS, no-device scope. Final evidence: C-PROOF.json.
+
+Implemented
+-----------
+- New codec5 / mat-iec61937-v1, separate from codec4 / mat-dump-v1.
+- Host DESCRIBE explicitly advertises the finite replay capability and manifest.
+- Client ANNOUNCE explicitly selects playback and echoes carrier, logical clock,
+  cycle count and SHA256; host rejects missing/mismatched/mixed profile fields.
+- Client requires a matching ANNOUNCE response, with no dump/Opus fallback.
+- New profile: carrier=iec61937-192000-8-s16le; logical clock=48000;
+  manifest remains bounded to 1..1000 complete cycles. This is not infinite live capture.
+- Existing Sunshine RTP send, pacing, FEC and optional encryption are reused.
+- common-c codec5 bypasses startup drops and ordinary decoder/PLC callbacks.
+  After decrypt/reorder/FEC, MatPlayback owns shared complete-cycle reception
+  and input SHA/count verification, with a separate full-cycle consumer callback.
+- Actual production JNI delivers the 61,440-byte cycle and epoch/domain/index/PTS
+  to MatPlaybackSession -> bounded MatCarrierPlayer -> MatAudioTrackSink on Android.
+- EOS input SHA/count must verify before Java drain is requested. Only successful
+  drain can return a successful playback EOS. Partial writes and errors do not
+  silently drop, conceal, switch codecs or resume in the middle of a cycle.
+- Android SmartAudioRenderer routes only negotiated codec5 to MatPassthroughRenderer.
+  MAT never enters the 16KB AC3 callback, Opus decode, PCM or audio-haptics analysis.
+- JNI setup/cleanup registers and releases the dedicated consumer after audio
+  thread lifecycle boundaries; the dump renderer remains lifecycle-only.
+
+Client opt-in
+-------------
+Settings: enable audio passthrough, explicitly select
+"MAT IEC61937 -- finite replay / HDMI (experimental)" in the audio codec list.
+Disable the existing MAT dump checkbox if playback is intended. That checkbox
+retains its prior precedence and dump-only behavior. Normal auto/Opus/AC3/E-AC3/
+PCM behavior is not changed and MAT is never selected automatically.
+The host must explicitly configure a replay recording. The installed host was
+not reconfigured in this work; test hosts use isolated temporary configuration.
+
+Full positive acceptance: session-final/
+---------------------------------------
+Actual normally linked Sunshine executable, paired isolated NVHTTP launch,
+production LiStartConnection and OPTIONS/DESCRIBE/SETUP/ANNOUNCE/PLAY,
+production RTP broadcaster/UDP/FEC, Android-checkout common-c audio threads,
+reassembly/input-SHA gate, actual production JNI, and actual MatPlaybackSession/
+MatCarrierPlayer. ONLY the final AudioTrack implementation is replaced by a
+fake hardware sink. Video units are discarded in memory, without decoding.
+
+All three modes PASS:
+  plain        rtsp://    + plaintext audio
+  aes          rtsp://    + AES audio
+  rtspenc-aes   rtspenc:// + AES audio
+Each: 178 complete cycles, 10,936,320 submitted bytes, ordinary decodeCalls=0,
+input SHA/count verified, renderer EOS drained, no dump file created.
+Native input, Java submitted-byte digest and independent fake sink digest agree:
+  79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6
+This is the existing 3.56s recording, not a newly captured game stream.
+
+Original dump regression: dump-session-final/
+---------------------------------------------
+Same current host and current source-built native client, codec4.
+Plain/AES/encrypted-RTSP+AES all PASS: original final raw file, count, EOS and
+SHA publication are unchanged; ordinary decodeCalls=0 and no AudioTrack.
+
+Negative negotiation: negative03/
+---------------------------------
+Fifteen cases use the ACTUAL production client against a controlled negative
+RTSP peer (not a substitute for the separate real-Sunshine positive tests).
+Missing/version/carrier/clock/SHA/count/duplicate DESCRIBE capability; wrong
+codec/SHA/count/carrier/clock ACK; missing ACK; identical and case-folded duplicate
+ACK. All reject in the RTSP handshake, before PLAY and before any carrier bytes.
+
+The negative test found that the old RTSP parser coalesces identical header
+names. A parsed duplicate marker now preserves that fact for the new playback
+confirmation validator; generic legacy last-value-wins lookup is retained.
+Parser-owned duplicate nodes are freed. Codec5 also checks header names without
+ASCII case sensitivity. This prevents a duplicate confirmation being mistaken
+for one unique, valid confirmation.
+
+Other acceptance
+----------------
+- playback-unit-final.log: six finite playback receiver lifecycle cases:
+  success, wrong manifest SHA, count limit, rejected consumer, rejected drain,
+  missing EOS; no false successful completion. Redundant END is idempotent.
+- regression-final/: twelve original JNI/player test groups, both common-c
+  copies' nine CTest tests each, six original dump lifecycle cases and source
+  mutation withholding END. Added playback capability/policy/ACK unit checks pass.
+- gradle01.log: actual full Android app compileNonRootDebugKotlin and
+  compileNonRootDebugJavaWithJavac succeed offline, including the new routing/UI.
+- android-final.log: actual NDK arm64/API22 common/JNI source compilation and
+  no-undefined link of MAT receiver, dump, playback and JNI modules succeed.
+  The IEC sink still guards playback at API24+.
+- git diff --check passes for host and both client/common worktrees.
+- Shared MAT modules match after newline normalization; pre-existing unrelated
+  common-c comment differences are retained and both copies are fingerprinted.
+
+No-device limits
+----------------
+No Android AudioTrack/HAL, TV internal-app route, HDMI/eARC Soundbar, actual
+Atmos recognition, rendering or device latency was exercised.
+The real Android callbacks adapter is compiled; the Windows harness exercises
+the same production JNI delivery and Java session behind its platform adapter.
+No full Moonlight APK/native application link, installation or device execution
+is claimed. The A/B standalone diagnostic APK is not a network Moonlight client.
+
+The full recording SHA is checked at EOS on the streaming path; this does not
+mean the whole recording was buffered/verified before the first output cycle.
+Per-cycle transport validation precedes delivery. Existing FNV/checksums and
+legacy AES-CBC audio are not claimed to provide authenticated audio transport.
+
+Build detail
+------------
+Current windres loses quoting again when it spawns GCC. The existing build-only
+adapter now passes this one preconfigured windows.rc using its existing 8.3
+filename. No resource/compiler replacement, system short-name policy change,
+special transport macro or forced compatibility header was used.
+
+Reproduce from repository root (PowerShell)
+-----------------------------------------
+./spatial-object-spike/mat-android-session/verify.ps1 -Output <NEW_DIRECTORY>
+Local dependencies are the same as A/B: JDK22, MSYS2 UCRT64, Android SDK/NDK,
+existing Sunshine build dependencies and Python with cryptography.
+The orchestrating script groups the individually executed build/test steps;
+this acceptance used the concrete directories named above.
+For app Kotlin/Java compilation, in spatial-object-spike/moonlight-vplus:
+  gradlew.bat --offline --no-daemon -PaudioHapticsSdkDir=<ROOT>/third-party/moonlight-audio-haptics
+    :app:compileNonRootDebugKotlin :app:compileNonRootDebugJavaWithJavac
+Set JAVA_HOME to the local JDK and ANDROID_HOME to the local Android SDK.
+
+Safety
+------
+Only test-owned loopback host sessions/certificates/state and ports were used.
+Each test host exited normally through its own shutdown window. No unrelated
+process was killed; the installed Sunshine PID17584 was left running.
+No Windows trust/endpoint/driver/audiodg changes, UAC, ADB or device playback.
+No commits, installs, deployment or unrelated worktree cleanup was performed.
+
+Remaining
+---------
+Real target TV/box -> HDMI/eARC -> MAT-capable Soundbar acceptance; complete
+Moonlight APK/native application packaging; then infinite/live-source contract,
+recovery after packet loss/route changes, and measured device latency.

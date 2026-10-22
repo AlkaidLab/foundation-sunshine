@@ -3,7 +3,8 @@
 add_compile_definitions(SUNSHINE_PLATFORM="windows")
 
 enable_language(RC)
-set(CMAKE_RC_COMPILER windres)
+# enable_language(RC) selects the toolchain's resource compiler. Do not replace
+# an explicitly configured compiler (or path adapter) with a PATH lookup.
 set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} --use-temp-file")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
 

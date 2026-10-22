@@ -1,0 +1,105 @@
+MAT formal RTSP / RTP reassembly and SHA256 acceptance
+2026-10-21, Windows host-side / loopback native client; no decoding
+
+RESULT: PASS (run03/proof.json)
+
+Dependency alignment
+- Host common-c: b91c7cd72764320edd6140a16f8614aeb63dc42a, matching Android.
+  Advanced from 31a2a4589ea926988a08ca508bb317fbfbe2a177; existing MAT edits
+  preserved. Backup: dependency-backup01/, retained stash:
+  d68b342b944176beea689ba6301fca3ca0005d5f. No commit or stash deletion.
+- PyroWave: 019ca97d69ded38bdd58615e8b4c909294fc3757.
+- Granite: fb178c8080d163419e8d20f10715c61c53c1ec9b.
+- Local C++/WinRT v2.0.250303.1 from build/dlssnr-toolchain/ucrt64/include.
+  The default installed projection lacked GraphicsCaptureSession5.MinUpdateInterval.
+- Full normal Sunshine executable linked with PyroWave runtime, no diagnostic
+  transport macros, forced compatibility header, extracted broadcaster, or mock.
+  Optional GUI/tray, SDK enhancements and Boost Windows Event Log disabled in
+  this test build. Windows resource compiler selection now respects the configured
+  toolchain. A build-only adapter compiles ONLY preconfigured windows.rc without
+  the unrelated long C++ -D/-I list, which this MSYS2 windres corrupts.
+
+Actual acceptance path
+  Isolated ephemeral paired TLS certificate / NVHTTP serverinfo + applist + launch
+  -> production LiStartConnection
+  -> actual OPTIONS / DESCRIBE / SETUP / ANNOUNCE / PLAY, manifest confirmation
+  -> production Sunshine audioThread + audioBroadcastThread + UDP send + FEC
+  -> production common-c AudioStream receiver / AES decryption / reassembly
+  -> native MatDumpFile END + count + SHA verification -> publish .raw + .json
+
+run03 cases, all PASS:
+  plain:       rtsp://    + plaintext audio
+  aes:         rtsp://    + AES-CBC audio
+  rtspenc-aes: rtspenc:// + AES-CBC audio (corever=1, encrypted RTSP handshake)
+Each received 10,936,320 bytes / 178 complete 61,440-byte carrier cycles.
+No bootstrap cycles were removed. Source and every final output SHA256:
+  79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6
+Every native sidecar: published=true, completeEOS=true, failed=false,
+cycles=expectedCycles=178, actual SHA256=expected SHA256.
+Every client: exit 0, audio decodeCalls=0. Video units received and discarded
+in memory without a decoder or file; no audio playback, AudioTrack or MAT decode.
+
+Issue found and fixed during formal testing
+- run01 failed at 161/178 cycles with bounded client queue overflow. It correctly
+  retained received.raw.partial and failed sidecar; no successful final file.
+- The replay's absolute schedule caught up in bursts after stalls. On this MinGW
+  runtime sub-ms standard sleeps can also return before their intended deadline.
+- Production MAT now uses Sunshine's EXISTING platform high-precision timer,
+  checks deadlines, and schedules relative to actual fragment send start; it does
+  not burst all overdue packets. No silent drop, queue flush or source-byte skip.
+- pacing-test03.log: artificial 80ms blocked emit, all 60 fragments + 4 END
+  preserved, post-stall minimum interval 332us. Earlier failed attempts retained.
+- run02 passed plain and AES; run03 repeated both and added encrypted RTSP.
+
+Other validation
+- common-tests.log: all 9 upstream common-c tests passed, including PyroWave
+  protocol, decode-unit and reassembly tests (test names, not MAT decoding).
+- profile-unit.log: SDP/manifest/confirmation/bounds, bounded FIFO, six native
+  writer lifecycle cases, and mutated source withholding successful END passed.
+- android-check.log: actual Android arm64 API22 common/JNI objects compiled and
+  MAT dump module linked. NOT a full APK build, installation or device run.
+- Host/Android MAT and PyroWave sources match after newline normalization.
+- Frozen M1 source/replay interfaces were unchanged.
+
+Reproduce from repository root (PowerShell; network tests after all builds)
+  ./spatial-object-spike/mat-rtsp-live/build-host.ps1
+  ./spatial-object-spike/mat-rtsp-live/build-client.ps1
+  python ./spatial-object-spike/mat-rtsp-live/verify.py --output <NEW directory>
+Each run requires a new directory and available test ports (default base52010).
+The harness pins and verifies the original input SHA, creates its OWN cert/state,
+authenticates the client normally against that private state, and trusts ONLY its
+own server certificate in its Python TLS context. Windows trust is not changed.
+Pairing is preprovisioned in isolated state: PIN pairing itself is not tested.
+
+Safety and scope
+- Original installed Sunshine service/executable/config/certs were not replaced,
+  stopped or reconfigured. Existing sunshine.exe PID17584 remains running.
+- Test host bound127.0.0.1, independent ports, no mDNS/UPnP, no input events,
+  no virtual display creation, display mode changes, microphone or virtual audio
+  capture, no drivers/UAC/audiodg access, and no endpoint/security-policy changes.
+- In run02/03, ProgramData was removed ONLY from the child process environment
+  so its normal nvprefs::load refused driver preference recovery/modification.
+  run01 exposed a Windows environment-key casing issue; logs show both NVIDIA
+  profile operations reported no modification. Harness casing fixed before
+  run02/03. The expected nvprefs refusal is an Error log, not a MAT failure.
+- Own host stopped through its normal hidden session-monitor shutdown handler;
+  exit0. No forced kill/retry on timeout. Failure logs and partial files retained.
+- This is BYTE-EXACT TRANSPORT acceptance, not Atmos decoding/rendering or an
+  Android device result. Client wall times include full handshake/teardown and
+  are not media latency. 178 carrier cycles describe3.56s carrier time, NOT
+  calibrated original-game PTS; no real-time latency claim is made here.
+- Replay remains opt-in dump-only, 1..1000 carrier cycles/session with original
+  RTP sequencing/legacy crypto bounds. Long streaming/rekey, loss recovery beyond
+  existing FEC, Android full APK/device file publication and decode are not proven.
+
+Evidence
+  run03/proof.json                 final three real sessions
+  run03/*/client.log               actual native connection stages and publication
+  run03/*/received.raw[.json]      verified carrier bytes and native status
+  run03/logs_archive/              normal host logs (rotated on shutdown)
+  run02/proof.json                 earlier successful plain/AES sessions
+  run01/                          failed queue-overflow evidence
+  build12.log                     final production host incremental build/link
+  build10.log                     full host/PyroWave library link
+  common-tests.log / profile-unit.log / pacing-test03.log / android-check.log
+  final-manifest.json             source, binary, dependency and evidence hashes

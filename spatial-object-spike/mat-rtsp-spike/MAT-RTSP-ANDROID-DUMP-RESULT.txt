@@ -1,0 +1,166 @@
+MAT dump v1：正式 RTSP 接线与安卓 dump-only 接入（无真机阶段）
+==========================================================
+
+完成范围
+--------
+已接入正常源代码路径，而不再只存在于 RTP 诊断入口：
+  主机 DESCRIBE 能力/录制清单 → 客户端 ANNOUNCE 请求 → 主机明确确认
+  → 正常 Sunshine audioThread 的 MAT 回放分支 → 原 RTP/AES/FEC/UDP
+  → 安卓 common-c AudioStream 的线程/LBQ/解密 → MatDumpFile 重组与 SHA256
+  → app 私有 .raw/.json；失败只有 .raw.partial/.json。
+
+这里的“正式接线”指正常会话代码已修改，并非声称正式应用已部署或跑过完整
+Sunshine RTSP 会话。主机整应用仍有本批以外的依赖版本问题，见下方边界。
+本轮按用户要求不等待设备，不装 APK，不做解码/播放/Atmos 点亮。
+
+默认全部关闭；Opus、AC3、E-AC3、PCM 的选择值不变。
+MAT 是单独的 audio codec 4 / mat-dump-v1，不伪装成 E-AC3，不交给 AudioTrack。
+
+主机端配置（仅供后续使用；本轮没有修改运行中的 Sunshine 配置）
+---------------------------------------------------------
+  mat_dump_replay = C:/.../encoder-payload.raw
+
+空值（默认）不广告 MAT 能力。仅使用主机本地路径，不允许客户端指定主机文件。
+文件必须为 1..1000 个完整 MAT-family IEC 载波周期，最多 20 秒。
+不创建 audiodg 实例、不打开采集钩子、不调用新的编码器、不切音频端点。
+正常 MAT audioThread 绕过 WASAPI/FFmpeg capture，仍保留正常会话 ping/QoS。
+
+DESCRIBE 每个 launch ticket 首次检查文件，逐周期验证并计算 SHA256，冻结
+path/hash/count；ANNOUNCE、幂等重试和 producer 都使用同一份不可变清单。
+源文件之后变化则 producer 不发送成功 END；客户端也独立核对 SHA256。
+
+正式能力协商契约
+----------------
+DESCRIBE SDP：
+  a=x-ss-audio.mat-dump:1
+  a=x-ss-audio.mat-sha256:<64 lowercase hex>
+  a=x-ss-audio.mat-cycles:<1..1000>
+
+ANNOUNCE SDP：
+  a=x-ml-audio.codec:mat-dump-v1
+  a=x-ml-audio.mat-dump:1
+  a=x-ml-audio.mat-sha256:<same digest>
+  a=x-ml-audio.mat-cycles:<same count>
+  a=x-nv-aqos.packetDuration:1
+
+ANNOUNCE 200 响应必须包含（重试也相同）：
+  X-SS-Audio-Codec: mat-dump-v1
+  X-SS-Mat-SHA256: <same digest>
+  X-SS-Mat-Cycles: <same count>
+
+MAT 客户端不接受“旧服务器忽略未知 codec”的隐式回退：缺能力/版本不支持/
+清单错误/缺确认/确认不匹配直接失败；普通 codec 保持兼容。
+主机要求 audio SETUP、已广告的清单、全部 MAT 属性一致，否则拒绝。
+重复 codec/MAT 属性、残缺属性和新版本不会默默当 Opus。
+ANNOUNCE 解析也处理末行没有 CRLF 和空值，避免漏掉 MAT 协商字段。
+
+1 是合成的分片传输 tick，仅供现有 RTP FEC 时间戳运算；不是 1 ms 音频帧。
+真实载波 PTS 保留在 SMAT 头：48k / 960 samples / 20 ms。
+网络协议仍为前一轮 v1（60 × 1024 分片、80-byte 头、4+2 FEC、SYNC/END）。
+沿用旧 AES-CBC，FNV 不是 MAC；SHA 来自本次 RTSP 清单，不是 Dolby 签名。
+硬限制 1000 周期，避免旧 16-bit sequence/IV 回绕；不代表长期流 rekey 已实现。
+
+启动与有界队列
+--------------
+旧 AudioStream 会预先发送 ping，并主动丢弃启动音频；这对 MAT 不可接受。
+MAT 分支先绑定 UDP，但延迟启动 ping，直到接收/消费线程和文件已就绪。
+主机原 recv_ping 因此成为就绪屏障；客户端 MAT 不执行额外的 500 ms 丢弃。
+保留原 FEC 首组同步，发送独立 SYNC 4 包，不牺牲 MAT 启动数据。
+
+主机 try_raise() 满队列明确失败，不使用旧 raise() 的满队列清空策略；
+每会话最多一片在途，等待真实 broadcaster ACK，并检查 UDP 发送失败。
+2 秒 ACK 保护超时/取消都失败退出，不伪造 END。
+正常完成后维持视频/控制会话，等用户关闭，不在客户端完成 EOS 前结束会话。
+
+客户端 MAT LBQ 为有界 512 项；溢出、缺片、序号间断、解密失败、重组错误、
+SHA/计数/EOS 不匹配均失败，不清空后伪装连续、不插静音、不将损坏流交给解码器。
+独立消费线程负责文件 IO；接收线程仍使用现有 RTP/FEC 逻辑。
+
+安卓接线与输出
+--------------
+新增“MAT recording verification (experimental)”设置，默认 false，不依赖
+原有 HDMI passthrough 开关。启用后明确选择 codec 4；关闭恢复既有选择。
+NvConnection 为每次连接生成 UUID 文件名，经新增 JNI 参数复制到 StreamConfig：
+  appContext.filesDir/mat-dumps/mat-<UUID>.raw
+  未完成：上述路径 + .partial
+  结果：上述路径 + .json
+
+只在完整重组、END、周期数、SHA256 全部匹配后发布 .raw，且不覆盖已有文件。
+文件位于 app 私有目录，无新增存储权限；日志包含路径和验证后的 SHA。
+后续可用 debug APK 的 run-as 导出；本轮没有 APK 安装/导出。
+
+SmartAudioRenderer 显式分流到 MatDumpRenderer（仅生命周期）；JNI 不创建
+Opus decoder/encoded sample buffer，MAT payload 直接由 common-c 原生写盘。
+不初始化 MAT AudioTrack、空间化或音频触觉分析，也不调用 decodeAndPlaySample。
+
+主要代码
+--------
+主机：src/rtsp.cpp/.h、src/audio.h、src/config.cpp/.h、src/thread_safe.h、
+      src/stream.cpp、src/spatial_transport/mat_dump_profile.h/mat_session_source.h。
+common-c：MatDumpProfile.h、MatDumpFile.h/.c、AudioStream.c、Connection.c、
+          RtspConnection.c、SdpGenerator.c、Limelight.h/Limelight-internal.h。
+安卓：Android.mk、callbacks.c、MoonBridge.java、NvConnection.kt、
+      SmartAudioRenderer.kt、MatDumpRenderer.kt、设置读取/UI。
+共享 MAT 模块同步在两份 common-c checkout，未覆盖其不同版本的无关代码。
+
+无真机验收
+----------
+build03：两份 common-c 完整 Windows 静态库构建通过；
+         rtsp/stream 对象采用下述匹配视频头检查，config/audio 正常对象编译通过。
+android-objects03：NDK 28.2 / arm64 / API 22：实际 AudioStream、协商、JNI 源码
+         编译通过，MAT writer 与仓库 Android libcrypto.a 的 .so 链接通过。
+gradle-online.log：:app:compileNonRootDebugKotlin BUILD SUCCESSFUL。
+gradle-java-online.log：:app:compileNonRootDebugJavaWithJavac BUILD SUCCESSFUL。
+         都不是完整 APK/native moonlight-core 链接验收。
+
+proof03/proof.json：新正常会话 replay_session helper + Sunshine 真 broadcaster/
+Windows send → 安卓 checkout 的实际 AudioStream.c（编译为 Windows 原生前端）
+→ 真接收/消费线程、512 项 LBQ、RtpAudioQueue、AES、MatDumpFile。
+测试调用了真实 SdpGenerator，输出的 ANNOUNCE 保存在 received.raw.announce。
+这不是安卓真机测试，也不是完整在线 RTSP 握手，不能把它们混为一谈。
+
+plain/AES 均收到全部 178 周期 / 10,936,320 bytes，启动段完整，解码回调次数 0。
+原始 MAT 与成功落盘 SHA256：
+  79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6
+
+单元测试：清单/版本/无能力/重复字段/显式确认/缺确认/回退拒绝/计数上限、
+try_raise 满队列保留 FIFO，以及 success/missing/corrupt/wronghash/wrongcount/
+disconnect 6 种文件生命周期；源文件变化不发送 END。
+transport-regression02/proof.json：旧 MAT 的 20 组明文/AES/乱序/重复/丢包与
+失败保护回归全部通过。
+legacy02/proof.json：原 E-AC3 四组回归全部通过。
+
+初次 transport-regression01/legacy01 与 Gradle/C++ 编译并行时发生 ACK 超时/
+旧队列丢包；这些失败记录保留，不计入通过。诊断入口改为 info 级日志后，在
+构建结束后串行完整重测通过，不宣称由此证明长期高负载实时性能。
+单元程序静态 C++ runtime 曾在 uncaught_exception/TLS 处崩溃；使用匹配的
+动态 runtime 后全部通过。没有为此修改系统或正常 Sunshine 的链接设置。
+
+复现（PowerShell 7；输出必须新目录）
+----------------------------------
+  ./spatial-object-spike/mat-rtsp-spike/build.ps1 -Output NEW_BUILD -UseMatchingVideoHeader
+  ./spatial-object-spike/mat-rtsp-spike/build-tests.ps1 -Build NEW_BUILD
+  ./spatial-object-spike/mat-rtsp-spike/check-android.ps1 -Output NEW_ANDROID_OBJECTS
+  ./spatial-object-spike/mat-rtp-spike/build.ps1 -Output NEW_RTP_BUILD
+  python ./spatial-object-spike/mat-rtsp-spike/verify.py --build NEW_BUILD --sender NEW_RTP_BUILD/sunshine-audio-replay.exe --out NEW_PROOF
+  python ./spatial-object-spike/mat-rtp-spike/verify.py --build NEW_RTP_BUILD --out NEW_TRANSPORT_PROOF --suite all
+  python ./spatial-object-spike/mat-rtp-spike/regression.py --build NEW_RTP_BUILD --out NEW_LEGACY_PROOF
+
+不要在重型构建并行时把这些短时、带保护超时的检查当成实时负载验收。
+首次已初始化安卓 common-c 及 enet/nanors 子模块（保持仓库固定提交）。
+Gradle 构建传入本仓库 audio-haptics SDK 路径；未改机器的 JAVA_HOME/Android SDK
+永久设置、未改本机运行配置、未创建/安装服务或驱动。
+
+仍需单独完成的边界
+------------------
+主机 root common-c 固定版本 31a2a458，安卓固定版本 b91c7cd7。
+Sunshine 现有 rtsp.cpp 已引用 root 固定版本缺少的 PyroWave API，与 MAT 无关。
+默认正常对象编译在这些旧缺失符号处失败。为检查本批 RTSP/stream 接线，
+-UseMatchingVideoHeader 仅 force-include 安卓固定版本的真实 PyrowaveProtocol.h。
+这是编译检查，不是修复 root 依赖、更不是整 Sunshine 生成/链接/部署成功。
+本轮没有擅自升级/替换无关依赖，也没有用假的常量/实现掩盖问题。
+
+因此尚未验收：完整 Sunshine + 安卓 APK 的在线 DESCRIBE/SETUP/ANNOUNCE/PLAY、
+真实设备私有目录落盘/导出、Android POSIX 发布文件行为、断连时机和端到端延迟。
+待主机依赖对齐及设备可用后，以同一 SHA 清单完成这一层，仍不需要先做解码。
+真实 broker/audiodg 采集、无限时长加密/rekey、MAT 解码/Atmos 点亮均不在本轮。

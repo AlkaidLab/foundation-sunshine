@@ -1,0 +1,146 @@
+最新修正源原生复测（2026-10-20 21:14）
+-----------------------------------
+单次10秒短测通过：首块XYZ已准确，384000 PCM样本全匹配Windows编码器输入模型
+（首块保留已证实的自然渐入，稳态为未乘volume/callGain的源），两域新流完整。
+报告：QUANTUM-V4-ORDERED-NATIVE-RESULT.txt；证据：quantum-v4-ordered-content01/proof.json。
+仍不等于应用全部未处理PCM、游戏/20对象长测、MAT/RTP或Android端到端已通过。
+以下保留更早各阶段历史结果，不以新结论覆盖旧录制。
+
+最新原生复测补充（2026-10-20 20:56）
+-----------------------------------
+已在新的一次性UAC授权下完成10秒原生复测，完整结果见QUANTUM-V4-NATIVE-RESULT.txt。
+2对象旧流和1对象新流都采到，800包/384000样本，零丢包/无效，正常退出和入口恢复。
+排除三个首块后382560样本逐位等于未加volume/gain的源，XYZ误差为零；两域Reset、
+缓存/输入时钟独立重建。但每对象首10ms已带渐入且XYZ=0，不等于源初始PCM/位置。
+因此主体采集/新流/稳态验证通过，全部原始源数据无损合同未通过，不能抹去首块例外。
+最终独立内容证据：quantum-v4-native-content02/proof.json。
+下面保留上一轮离线修复报告；其中“没有原生/部署”等是当时状态，不是当前状态。
+
+调用前快照 + 返回配对 + 多观察域 / v4离线修复 / 2026-10-20
+========================================================
+
+结论和边界
+----------
+已针对上次10秒原生短测暴露的两个问题完成独立v4修复版与离线验证：
+  1. PCM/属性在原Submit调用前一次复制；实际返回值用独立事件和调用编号配对。
+  2. 不再绑定首个encoder；在已验证类型的每个renderer Process内建立观察域，
+     Reset/析构或绑定标识变化时显式结束旧域，新域独立缓存和样本游标。
+最终quantum-v4-build06、quantum-v4-proof03通过。v4 DLL/collector/verifier均已构建。
+本轮没有UAC、没有部署、没有访问audiodg、没有声音播放或游戏，没有改默认采集器。
+C:/ProgramData/SpatialObjectSpike/engine_tap_quantum_v4.dll不存在。
+不能把离线修复写成“原生v4已通过”，或把旧v3返回后PCM升级为调用前PCM。
+
+实现要点
+--------
+quantum_v4_recorder.h/.cpp：
+  固定8个同时活动观察域、每轮最多64对象；原4096槽有界共享内存传输模型。
+  对象快照在原调用前发布，result=E_PENDING，包含当时的PCM、flags、XYZ、volume、gain、host。
+  返回后只发布SubmitResult，不再读原PCM/属性指针，按(domain,pass,call)关联实际HRESULT。
+  没有锁跨越原函数调用；RT路径无容器/堆分配/日志/等待，CAS只尝试一次，忙/满即显式失败。
+  失败不会改变原调用是否执行或其HRESULT；不通过除增益来“修复”旧数据。
+
+quantum_v4_tap.cpp：
+  六个精确版本限制的hook：renderer Process、basic Submit、extended Submit、
+  encoder Process、encoder Reset、encoder普通析构体。没有挂到游戏进程。
+  TLS只保存当前renderer调用的上下文指针（不跨进程传指针去解引用），每轮有PassBegin/PassEnd。
+  对象必须在相同encoder、相同线程的当前pass中，Process请求帧数必须等于renderer入口帧数。
+  所有hook一次安装，避免旧v3先发现一个candidate再安装而漏开头、永不跟踪第二实例的模式。
+  首个renderer入口之前的未绑定调用只计数；arming后未绑定、未知wrapper、重入或并发同encoder
+  均显式失败，不静默忽略。跨域并发传输仍可能产生CAS忙丢包并停止，不宣称硬实时无丢包。
+
+  正常stop停止准入新pass；管理线程等已准入pass完整排空，再卸hook、等所有回调退出。
+  admitted pass可在正常stop后继续发布其结果/Process/PassEnd；错误/丢包不能借此继续拼接。
+  __finally在原函数SEH异常传播时仍恢复TLS和计数，不伪造成功返回、不吞原异常。
+  DLL/trampoline仍需pin到音频进程退出，防止迟到返回地址进入已释放代码。
+  新文件独立于已验证的v3，没有覆写v3源码/二进制/原录制和C:/ProgramData中的旧DLL。
+
+quantum_v4_assembler.h：
+  worker在收到成功SubmitResult、匹配ProcessResult和PassEnd后才接收整轮。
+  缺/重复/错误call、非S_OK结果、跨线程、缺序、非零loss epoch、错域或未闭合EOF都拒绝。
+  每个观察域拥有独立PositionCache和整数输入样本游标；不按QPC猜样本、不串接两个域。
+  Reset/Destroy事件是调用前的“本采集缓存失效”通知，不伪称原生命周期函数已返回成功。
+  即使原Reset返回失败，捕获缓存也保守失效，实际HRESULT原样返回给原调用方。
+  允许不同域/线程的事件交错，但不代表不同端点已实现采样同步或混成同一条MAT。
+  短于轮长的对象偏移仍未知；块内多段/重复key不能压为一个快照。
+  复用原PositionCache，Reset后未知XYZ保持NaN，有声未知不伪填原点。
+
+quantum_v4_collector.cpp / quantum_v4_verify.cpp：
+  独立收集器最多允许10秒，64MiB上限、1MiB分卷；不会自行部署或提权，缺新DLL直接停止。
+  复用原collector的加载/权限/版本辅助代码，不修改旧collector默认dolby路径。
+  新只读校验器检查160字节v4头、来源阶段、配对和域关闭、源文件SHA256，输出分域CSV。
+  native_ungained_source_verified始终保留false：调用前不自动证明更上游尚未加过增益，
+  仍须对真实受控源核对。通用解析器不能凭header标签认证PCM来源/振幅。
+
+协议v4（packed，小端，Header 160字节）
+-----------------------------------
+  Record audio (64字节；magic=0x3451424f；frames仅表示本事件PCM样本数)
+  uint32 version=4,kind,properties,flags
+  uint64 lossEpoch,renderer,encoder,implementation,domain,pass,call
+  uint32 inputFrames,producedBytes,capacity; int32 result; uint32 reason,reserved=0
+随后audio.frames个mono F32。只有ObjectBefore带PCM。
+kind：1 DomainBegin、2 DomainEnd、3 PassBegin、4 ObjectBefore、5 SubmitResult、
+      6 ProcessResult、7 PassEnd。
+flags：1 PreCall、2 PostCall、4 ObservedNotCreated、8 NullPcm。
+reason：1 Discovery、2 Reset、3 Destroy、4 BindingChanged、5 CaptureStop。
+域编号是单次capture内的单调观察ID，不是跨录制UUID，也不宣称观察时真实创建了物理声源。
+CaptureStop是捕获EOF，不伪装成源析构。
+
+离线测试证据
+------------
+quantum-v4-build06/selftest.txt：32项通过。
+  使用真实v4 hook wrapper，但原函数为自有进程内的fake originals，没有安装任何hook。
+  fake原函数故意原地乘volume*gain，并改写原host、XYZ、flags和volume；前快照仍逐样本/逐字段一致。
+  fake原函数内部让worker读已发布数据，确认返回未到时不能提前提交。
+  正常stop发生于原函数内部，当前轮结果/Process/结束仍完整，后续轮不再准入。
+  原函数主动RaiseException，验证异常仍传播、active/admission/TLS归零，数据不能被当成功轮。
+  覆盖新encoder、Reset和析构后同地址复用、cookie变化、失败Reset失效、有声未知、空轮、
+  重入、非S_OK、缺Process、满/忙队列、活动域8上限、对象64上限（原函数仍继续转发）、
+  域槽复用但域ID不重用、零帧严格拒绝、缺/重复/错误返回、错误阶段、线程/帧数错配、
+  未闭合域EOF、短块未知偏移、不同域不同线程事件交错。
+
+quantum-v4-build06/bridge-selftest.json：
+  真实复用现有cpp_bridge_core.cpp和同一libavutil 60.26.102静态库的FFmpeg FIFO。
+  三个观察域独立实例，合成fixture共有4个480样本对象块，合计1920个调用前样本。
+  三块坐标已知的1440个样本经现有C++ Bridge按F32 volume、callGain各施加一次；逐样本相同，
+  且明确与重复施加的结果不同。Reset后的第4块480样本坐标未知，按策略隔离，不继承旧坐标。
+  这里只验证gain一次性应用，不声称已验证native组合乘法舍入或MAT输出的逐位等价。
+  此桥接测试只接完整、非空480帧的合成轮；不是通用空轮/变长native编码接入。
+
+quantum-v4-proof03/result.json：18项独立Python/编译后exe检查通过。
+  独立解析160字节事件，与原源公式F32(sample_index * 0.001f)比较，1920个样本及元数据全部一致。
+  PCM SHA256 1492bdf496490fa5d542e3a8f3ab6d6a9e693020dff8acab68007d4709d986e2。
+  验证所有4个返回配对、3域缓存/游标、同地址Reset后未知XYZ、实际FFmpeg桥接gain一次。
+  改坏返回/call/阶段/loss/cookie/域/保留位、截断/未闭合、已有目录均拒绝。
+  即使伪造pre-call标签，独立已知源oracle仍能发现放进来的post-gain PCM。
+  v3文件不能自动升级为v4；实际quantum-native01/capture也另行拒绝，未创建输出。
+
+旧回归：原21项C++桥接自测、18项v3 Assembler、38项Python单测均通过。
+原quantum-build02/build.json全部源码哈希逐项核对未变。
+最终build06/build.json记录新源码/依赖/运行库和DLL、collector、verifier哈希，源码匹配。
+MSVC仅有C4324对齐、C4505未用辅助函数警告。MinGW只编译文件Header/worker，不访问MSVC IPC布局。
+build01..05为逐步扩展的早期离线结果，未覆盖；最终证据以build06/proof03为准。
+
+私有ABI静态核对与剩余限制
+------------------------
+新增Reset 0x74b50和普通析构体0x733f8通过本机匹配PE/PDB离线反汇编核对。
+build06/offline-lifecycle-abi.txt只用cdb -z加载磁盘audioeng.dll，没有附加音频进程。
+所有六个入口仍限制image 0x1ef000、timestamp 0x0627570d及入口字节；并非稳定公共API。
+
+尚未证明：
+  - v4在真实audiodg中的入口参数、调用前原PCM增益状态、Reset/析构时序及20对象节拍/开销。
+  - 没有Reset/析构/cookie变化的同地址原地Initialize仍不可见，不能宣称所有生命周期都覆盖。
+  - 零帧render/对象提交目前严格拒绝；未知偏移、通用块内更新、静态床native输入仍待处理。
+  - 8域/64对象/队列满均明确失败，而非无限扩容或静默降级；并行producer忙丢包仍可能发生。
+  - 各域仅有相对输入时钟，跨域混音/重新绑定到RTP总时钟、线上session标识/协商尚未接入。
+  - 不等于Sunshine/Moonlight已接入、MAT编码完整游戏混音、Android本机Atmos点亮。
+
+复现（普通权限；在项目根目录；输出目录必须不存在）
+------------------------------------------------
+  ./spatial-object-spike/resident/build-quantum-v4.ps1 -Output ./spatial-object-spike/resident/NEW_V4_BUILD
+  C:/Python311/python.exe -B ./spatial-object-spike/mat-spike/check_quantum_v4.py --build ./spatial-object-spike/resident/NEW_V4_BUILD --output ./spatial-object-spike/resident/NEW_V4_PROOF
+  ./spatial-object-spike/resident/NEW_V4_BUILD/quantum-v4-verify.exe ./spatial-object-spike/resident/NEW_V4_BUILD/fixture NEW_READONLY_PROOF
+
+下一步可做一次新的10秒原生复测，核对调用前源PCM以及2对象旧流->销毁->1对象新流均被采到。
+需要用户新的单次提权授权及当时的只读权限/端点/组件检查；不能沿用上一轮已用完的授权。
+若音频引擎已空闲退出，需要在新授权范围内明确安排受控源冷启动，不自动重启服务或切端点。
+本轮没有运行上述原生步骤，默认路径和旧原始数据保持不变。

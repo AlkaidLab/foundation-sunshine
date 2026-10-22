@@ -1,0 +1,98 @@
+Native v4 capture -> C++ object bridge -> independently instantiated MAT encoder
+2026-10-20, one approved UAC and one bounded native attempt
+
+Related evidence (same directory):
+  MAT-NATIVE-V4-PREP-RESULT.txt -- frozen fixture/build, bounds and input proof
+  CPP-NATIVE-V4-RESULT.txt     -- actual v4 Process-boundary capture bridge
+
+OUTCOME
+The two-domain short replay passed the observed-layout audio continuity,
+raw-position-field activity, output integrity and 10 ms worker deadline checks.
+This joins the previous native capture and C++ conversion evidence to a new
+real native encoding run. It is NOT yet a live resident capture-to-encoder
+bridge, a game replay, a certified MAT decode, or Android device-local Atmos.
+
+EXECUTION
+  run:      mat-native-v4-run01
+  analysis: mat-native-v4-analysis01/proof.json
+  engine: audiodg PID 27364, same before/after, no hook installed by this test
+  one UAC launcher PID 14036; probe PID 16648; both exited; no native retry
+  independent encoder/mapper created and initialized separately for each domain
+  all create/mapper/initialize/submit/Process HRESULTs 0, native completion true
+  612 x 10 ms scheduled Process rounds = 6.12 seconds
+  512 original native source rounds + 40 silence preroll + 60 drain
+  863 object submissions, volume=1 and call gain=1; no second gain application
+  domain 1: 356 records, 10,936,320 bytes, 178 complete 61,440-byte bursts
+  domain 2: 256 records,  7,864,320 bytes, 128 complete bursts
+  total: 18,800,640 bytes (~24.576 Mbit/s relative to scheduled audio time)
+
+SOURCE CONTINUITY (offline observed-layout inspection, not licensed decoding)
+  domain 1: two objects, 144,000 original samples each (3 seconds/object)
+  domain 2: one object, 96,000 original samples (2 seconds)
+  all 384,000 original mono samples compared, including first/last 480 samples
+  zero source frames missing; zero source blocks above one PCM16 LSB error
+  peak error <= 1/32768, consistent with observed PCM16 conversion, not bit-exact F32
+  zero nonzero samples in unassigned dynamic slots, stable static slots and LFE
+  all three tracks have the same inferred encoded audio offset: 2,464 samples
+  = 51.333 ms at 48 kHz relative to the scheduled encoder-input timeline
+  this is an offline PCM timeline offset, NOT measured streaming end-to-end latency
+  200 ms explicit startup silence and 300 ms drain were retained in the fixture
+  first three carrier periods excluded only from stable PCM comparison
+  every original carrier byte, including bootstrap, remains in raw captures
+  domain 1 observed-layout invalid bootstrap periods: 0,1,2; domain 2: 0,2
+  no observed-layout-invalid periods after the frozen first-three-period window
+  independent C++ research parser agrees byte-for-byte with Python PCM and fields
+  reference commit: 5c689815680f3ea5b09fb35ea4dbe63a3dc5bfb7
+  same research layout in two languages is not independent Dolby certification
+
+POSITION / OBJECT LIFETIME
+  raw first-three six-bit fields change on all three active object tracks
+  input proof preserved captured Windows XYZ/PCM and source Process order
+  warmup deliberately creates the initial IDs 200 ms earlier, then source first
+  create becomes update; this is explicitly recorded, not untouched create timing
+  end controls processed at recorded rounds; second domain recreates ID 1 in a
+  separate encoder domain, without leaking old audio into its output
+  encoded XYZ scale/axes/quantization and frame-accurate metadata/audio alignment
+  remain uncalibrated; raw field movement alone does not establish those claims
+
+PACING (own normal-priority native worker, short wall-clock measurements)
+  domain 1 submit+Process: P99 0.549145 ms, max 0.6495 ms
+  domain 2 submit+Process: P99 0.689475 ms, max 0.7248 ms
+  0 / 612 rounds finished after their next scheduled 10 ms deadline
+  maximum observed start lateness: 0.6017 ms
+  not CPU utilization, a 20-object benchmark, a long soak or hard real-time proof
+
+INTEGRITY AND REPRODUCTION
+  analyzer: analyze_mat_native_v4.py (read-only, no native/audio calls)
+  immutable fixture: mat-native-v4-input01/input.bin
+  frozen source oracle: mat-native-v4-input-proof01/proof.json and expected NPZs
+  strict new capture-kind reader; old analyzer/source/summaries not rewritten
+  each domain rejects four in-memory corruptions: truncated header, truncated
+  payload, bad magic, and missing final record; no native calls for these tests
+  domain-1 payload SHA256:
+    79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6
+  domain-2 payload SHA256:
+    a3a1d6eb7f5055bc86955b7b7b5cb1f3ead2d14ddc982742dba8a26d369db101
+
+  Offline reproduction only, with a NEW analysis output directory:
+  C:/Python311/python.exe -B ./spatial-object-spike/mat-spike/analyze_mat_native_v4.py --run ./spatial-object-spike/mat-spike/mat-native-v4-run01 --input ./spatial-object-spike/mat-spike/mat-native-v4-input01 --input-proof ./spatial-object-spike/mat-spike/mat-native-v4-input-proof01 --reference ./spatial-object-spike/mat-spike/reference-build02/reference-check.exe --output NEW_ANALYSIS
+  Do NOT rerun run-mat-native-v4-once.ps1: its one-shot authorization was consumed.
+
+SAFETY / LIMITS
+  no endpoint selection/configuration, virtual driver, security change or game
+  launch; no audio-thread breakpoints or capture hooks installed by this test
+  own helper copied once to C:/ProgramData/SpatialObjectSpike/mat_replay_v4.dll
+  helper is pinned until natural audiodg exit; no forced unload/engine restart
+  post-test observation: mat-native-v4-run01/cleanup-observation.json
+  private audioeng/Dolby ABI and installed vendor DLLs are version/hash-locked
+  absence of a Home Theater endpoint was not tested on a different machine;
+  installed vendor components and permission to access audiodg are still needed
+  no Android device or MAT decoder/output API was tested; cannot claim Atmos lit
+
+NEXT ENGINEERING STEP
+Wire the already checked per-domain C++ assembler/cache to bounded live queues
+and a dedicated encoder worker, keeping Process pacing separate from audiodg's
+real-time hooks. Specify startup preroll, encoder reset, EOS/drain, overflow and
+discontinuity policy explicitly. First verify the streaming seam with a fake
+encoder offline; a later real audiodg test requires fresh, scoped authorization.
+Keep per-domain timelines separate rather than mixing unsynchronized objects.

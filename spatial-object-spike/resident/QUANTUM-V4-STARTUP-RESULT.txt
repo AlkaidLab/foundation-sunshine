@@ -1,0 +1,114 @@
+原生确认补充（2026-10-20 21:14）：修正源已完成单次10秒原生复测，通过。
+三个对象从块0起XYZ准确；384000 PCM样本全匹配既定输入模型，两个新流均完整。
+详见QUANTUM-V4-ORDERED-NATIVE-RESULT.txt及quantum-v4-ordered-content01/proof.json。
+下面保留离线定位当时报告，“尚未原生复测”是当时状态。
+
+v4 首块渐入 / 零坐标：离线定位与独立测试源修正
+================================================
+2026-10-20；本轮未提权、未附加audiodg、未播放声音、未启动游戏。
+
+结论
+----
+上轮三个对象首块的两类差异不应混为“采集器丢了首帧”：
+
+1. 首块渐入有明确的Windows处理链候选，并已用该函数的磁盘逻辑复算：
+   三个首块1440样本全部逐位相同，最大误差0，没有拟合参数。
+   对“忠实转发Windows实际编码器输入”的目标，这段渐入应原样保留，
+   不应逆包络，也不必仅为它把生产hook上移到更复杂的入口。
+2. 首块XYZ=0有直接的受控测试源调用顺序解释：旧源在首次GetBuffer前
+   SetPosition，本机AudioSes首次GetBuffer初始化又将XYZ写零。
+   不是v4 PositionCache缺更新而默认补零，不能据此判断真实游戏坐标丢失。
+3. 已新增独立修正测试源并编译，通过自有进程fake接口顺序自测。
+   原spatial_probe.cpp/exe、v4冻结构建、默认采集器和旧录制均未修改。
+   尚未运行修正测试源的原生音频测试；不能把离线复现标为原生闭环通过。
+
+渐入证据
+--------
+匹配本机audioeng.dll 10.0.26100.9711：
+ SHA256 3936BFFDC4AA365E74C9995359F2821AAF759A14155A180CFA95764962B9F1D3
+ image0x1ef000，PE/PDB匹配；CDB均使用-z磁盘模块，没有-p进程附加。
+ CSpatialAudioStreamProcessor::APOProcess RVA0xfa130：
+   0xfa318调用CVolumeProcessor::Apply（主要修改对象volume属性）；
+   0xfa332直接调用CFadeProcessor::Apply RVA0x44210，原地改对象PCM。
+   它属于更上游的流处理，不是当前SetAudioObject包装函数返回后快照造成。
+ CFadeProcessor::Apply首次状态分支，逐对象用同一初始化窗：
+   CFadeWindowLUT::Initialize RVA0x6e228；构造代码0x6d4d0指定16段。
+   指数从PE RVA0x106d9c读出0x3fe00000，即F32 1.75；不是从波形拟合。
+   LUT[k]=F32(pow(F32(1-k/16),1.75))；delta[k]=F32(LUT[k]-LUT[k+1])。
+   SetStep RVA0x6e99c：fade-in初始index=16，step=F32(-F32(16/480))。
+   Apply按SSE标量F32顺序累加index、查表线性插值、再执行倒向和乘法。
+   不能用数学上相近的连续幂函数替代实际F32查表操作来宣称逐位一致。
+
+verify_quantum_v4_startup.py复算三种已知频率的源首块，再施加上述窗。
+1440/1440逐位相同；改为指数1.0的负对照被拒绝；没有读录制比值拟合窗。
+旧native-content02仍保留“首块不等于未处理源”的结果，不覆盖、不改原PCM。
+这把渐入的解释从“看起来像淡入”提升为明确静态调用链+完整逐位波形证据。
+但没有同一次真实调用的上游/下游双点观测，报告仍保留这项因果边界。
+此模型只涵盖该版本、该帧长、该首次状态，不自动认证所有对象后续出生/复用窗。
+
+零坐标证据
+----------
+匹配本机audioses.dll 10.0.26100.9549：
+ SHA256 95AF7710EC1A13252283B3740A3EFEEB7C014790F99DC9404D6AEC426E5C6C4E
+ 从Microsoft公共符号服务取得匹配PDB，存于项目symbol-cache；没有安装组件。
+ CSpatialAudioObject::SetPosition RVA0x30360：
+   0x30416/0x30423/0x30430写XYZ，0x3043e设置XYZ更新位4。
+ CSpatialAudioObjectBase::GetBuffer RVA0x305e0：
+   0x3073c..0x3074b通过对象vtable slot0x48调用UpdatePropertiesOnGetBuffer。
+ CSpatialAudioObject::UpdatePropertiesOnGetBuffer RVA0x34b80：
+   0x34bee检查对象首次状态；首次分支0x34c60起设置create|volume；
+   动态对象额外设置XYZ更新位4；0x34c83/0x34c8a/0x34c91明确将XYZ三项写零。
+   该分支还初始化volume和扩展属性；非首次分支不做同一XYZ清零。
+
+旧测试源spatial_probe.cpp第155/156行设置位置和音量，第159行才GetBuffer。
+因此其第一个包的非零位置会被随后GetBuffer初始化覆盖；三个已录到的
+properties7、XYZ=0，与此代码路径吻合。从第二块起非首次分支不再清零，
+故上轮源块1..末块的坐标逐位吻合也有同一解释。
+
+这是该构建中的具体实现行为，不扩展成所有Windows版本的公共ABI保证。
+微软示例也采用GetBuffer/写数据后再SetPosition，文档说明首次GetBuffer
+开始对象生命周期（文档只是顺序/生命周期旁证，不直接证明该版本的清零指令）：
+ https://learn.microsoft.com/en-us/windows/win32/coreaudio/render-spatial-sound-using-spatial-audio-objects
+ https://learn.microsoft.com/en-us/windows/win32/api/spatialaudioclient/nf-spatialaudioclient-ispatialaudioobjectbase-getbuffer
+
+修正测试源（独立文件，不覆盖旧源）
+----------------------------------
+ ../spatial_probe_ordered.cpp
+   复用旧源的设备枚举/HRESULT辅助函数；旧wmain改名后不作为新入口执行。
+   新EmitOrdered只走GetBuffer -> SetPosition -> SetVolume -> 写PCM -> EOS -> EndUpdating。
+   仍是原48k F32、480帧、同一PCM/XYZ公式，保留Windows自然渐入，不做预热作弊。
+   只支持显式--emit、端点0..3、1/2对象、1..3秒、variant0/1。
+   无参数/不完整/超范围参数在COM/端点激活之前拒绝，不默认播放声音。
+   --describe和--selftest不访问COM/设备/音频进程。
+ ../build-spatial-probe-ordered.ps1
+   独立输出probe-ordered-build01；编译+fake顺序自测+拒绝无效输入检查通过。
+   fake GetBuffer主动清零位置，验证实际共用helper再设置XYZ/volume能保留期望值。
+   这只是自有进程测试，不是假装已在Windows真流中验证修正。
+
+修正exe：../probe-ordered-build01/spatial-probe-ordered.exe
+ SHA256 F7154A456EFB672C62E2F9742B0C052F9D2BCB228B1AADE9A6C25BBA080A793F
+旧exe保持SHA256 DB7A536ACBBD82180FBE52D036B12B279EE0F13C60C5014535ED5E2D21FD4EAC。
+新构建manifest包含新源、旧include和新exe哈希，native_verified=false。
+
+证据目录
+--------
+ quantum-v4-startup-proof01/proof.json：渐入逐位核对、旧/新顺序模型、PE哈希。
+ ../mat-spike/verify_quantum_v4_startup.py：独立只读复算，无逆增益/拟合/进程访问。
+ quantum-v4-startup-offline01..05.txt：audioeng磁盘反汇编，匹配原模块/PDB。
+ quantum-v4-startup-audioses-symbols.txt：匹配的AudioSes公共符号与PDB路径。
+ quantum-v4-startup-audioses02.txt：SetPosition/GetBuffer/首次属性初始化磁盘反汇编。
+ audioses01为早期无符号路径尝试，只有export，不作为最终定位证据。
+ 原capture两个chunk的SHA仍与native-content02逐项相同。
+
+普通权限复核（从项目根目录，输出目录必须不存在）：
+ C:/Python311/python.exe -B ./spatial-object-spike/mat-spike/verify_quantum_v4_startup.py --run ./spatial-object-spike/resident/quantum-v4-native01 --content-proof ./spatial-object-spike/resident/quantum-v4-native-content02/proof.json --output NEW_STARTUP_PROOF
+ ./spatial-object-spike/probe-ordered-build01/spatial-probe-ordered.exe --selftest
+
+下一步
+------
+若获得新的单次UAC授权：仅将10秒短测的受控源换成这个独立修正版，collector/DLL
+继续冻结v4-build06，不改hook。验证源块0起XYZ准确，PCM按Windows首次窗匹配，
+源块1起仍按未加volume/callGain的源逐位匹配，同时保留两次流重建/Reset检查。
+不能重用上轮已经消耗的UAC授权，本轮没有执行任何这样的音频短测。
+修正测试源的首次坐标原生通过前，不将host完整输入合同标为最终通过。
+更不能因此宣称游戏/20对象长时/跨域同步/MAT/RTP/Android Atmos端到端已通过。

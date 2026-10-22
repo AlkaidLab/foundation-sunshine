@@ -1,0 +1,164 @@
+最新更新：中途创建/结束/同ID复用及20对象真实10ms节拍短测通过，详见 LIFECYCLE-RESULT.txt。
+启动连续性v3对照详见 PREROLL-CONTINUITY-RESULT.txt；以下各阶段历史记录继续保留。
+同对象先喂200ms静音后，两对象完整1秒源片段的每个样本均可对齐到1 PCM16 LSB内，
+稳定窗口源前后无额外音频。下面保留v2阶段历史记录，其中“启动未解决”已被此短测更新；
+中途新对象、20对象实时常驻及安卓解码仍未验证。原始v2输入/输出未修改。
+
+audiodg 独立 MAT 编码短测 / 2026-10-20
+===================================
+
+结论
+----
+本机已打通：在 audiodg 自己的 worker 线程中新建 MAT 编码器、创建原生 Windows 位置
+映射器、成功初始化、提交对象 PCM/原始 XYZ，得到可按既有研究布局解包的新 MAT-family
+输出。不是重放旧载波，也没有借用正在工作的 Home Theater 编码器对象。
+
+本轮没有绑定/打开/切换渲染端点，没有通过 ISpatialAudioClient 重放对象到 Home Theater
+端点；没有虚拟驱动。这比“只能截取现有 Home Theater 输出”前进了一步。
+
+必须限定：
+1. 本机仍装有 Dolby Access，且同一机器曾具备 Home Theater 输出能力；没有做“完全
+   没有 Home Theater 能力的另一台机器”对照。当前只能确认这条直接调用路径未绑定该
+   端点，不能宣称所有无 Home Theater 主机均已验证、或没有任何环境/授权依赖。
+2. 开头约 0~90ms 的解包音频存在对齐/重复异常，启动序列尚未理顺。尚不能区分探针
+   调度、编码器 priming、研究布局解析的影响，不能武断归为编码器丢音频。
+   不能报告整段音频无损/连续性已通过，也不能直接拿当前启动序列上线。
+3. 位置字段随输入变化，但不是可逆、已校准的原始 XYZ；MAT 研究字段是量化/panning
+   表示。没有 Dolby 合规认证，也没有安卓真机本机解码/Atmos 点亮结果。
+
+实际输入
+--------
+encode-input01/input.bin：774440 字节，SHA256
+78577f2c6e11bc1d1368268a68297dfdc1022b2ff2ae12df8b64002ea22ed1b7
+两场景，各 2 个单声道对象 x100块 x480样本 = 每对象48000样本/1秒，48kHz。
+
+tone：523.25Hz、783.99Hz，幅度0.02，按已记录公式移动；ID901/902。
+game：来自既有 joc-spike/game02/input.npz 的《仁王3》录制子集，选取双方均有音频的
+1秒共同窗口（fixture第1..100块），对象ID2204929444/1915588004。
+该 fixture 原始采集是 resident/stateful-rotation01；不是本轮新启动游戏采集。
+输入保留 windows_xyz 原始 listener-relative XYZ；没有 R32归一化或轴交换。
+音频沿用 fixture 先前应用的 sourceVolume*callGain，回放 volume=1/gain=1，未再重复乘。
+未包含全游戏混音、静态声道床或全部20动态对象。
+
+新建与初始化路径
+----------------
+阶段A instance-run03/ 已证明可创建两个 canonical IUnknown 不同的 encoder COM 对象，
+都支持 IAsarEncoder2；本轮两个场景也分别调用工厂创建新的 encoder。
+
+使用已安装 Dolby Access 3.27.12250.0 的原位置 DLL：
+DolbyMatEnc.dll 1.0.2403.20001，SHA256
+963697FB61EE302699B294B1B6CB59AB42E5EAE3A555F6674ED54FC3A3CFACEA
+DolbyMatEngine.dll 3.1.8.rel，SHA256
+342CBC58A19AFA2B5B58CEF408EF91DCC06C68829520286ACABB7178EDA7F569
+
+audioeng.dll 10.0.26100.9711，SHA256
+3936BFFDC4AA365E74C9995359F2821AAF759A14155A180CFA95764962B9F1D3
+私有 ABI 按本机公共 PDB/离线反汇编核对，并做 image/timestamp/hash/vtable/prologue guard。
+没有把 RVA 当作跨系统通用接口。
+
+位置映射：本机 audioeng MakeAndInitialize<SpatialAudioPositionMapperFactory> RVA0xdf298，
+核对 factory vtable[3]==RVA0xe00e0，再调用 CreateForEncoder，使用系统 MAT format GUID
+{a289735d-fa3e-4e35-9d7d-b6f896acb2e7}。这是新建映射器，不是提取现有流的对象状态。
+
+encoder Initialize：480 samples/object，48000Hz，static mask0x1ffe，output carrier channels8，
+flags0，原生 mapper，默认 session GUID/context（GUID_NULL/nullptr）。返回 S_OK。
+对象提交与 Process 也均返回 S_OK；没有伪造许可上下文或补丁掉任何失败检查。
+直接 vtable[4] 提交对象；vtable[7] 输出。没有调用音频引擎 wrapper、安装 hook 或暂停音频线程。
+
+首次短测与修正
+--------------
+encode-run01/ 是首次真实尝试，保留失败原证据：初始化成功，输入/处理到第67块后，探针
+自身4MiB容量 guard触发0x8007007A，game场景尚未开始。这不是原生编码器返回的失败。
+原因是探针每次请求65536输出字节，会多排出载波；不能当作正确480输入/10ms节拍。
+
+对照旧受控采集记录，原生480输入帧对应每次30720字节请求。修正为30720，新增编译期
+容量预算断言；计时也覆盖提前返回路径。使用新的 v2 helper 文件名，未覆盖已加载 v1。
+用户明确允许再次一次性UAC后，执行 encode-run02/，没有未经确认反复提权。
+
+完整短测结果（encode-run02/capture/）
+-----------------------------------
+tone与game均：
+  create/mapper/initialize/submit/process HRESULT=0
+  source_blocks=100，processed_source_blocks=100，object_submissions=202（含两个结束通知）
+  records=108，bytes=3317760；额外8次处理用于结束/排空
+  原生对象输入1.0秒；处理/载波时钟1.08秒，不应把排空时间当作源片段时长
+  54个61440字节周期，IEC61937 Pc低5位0x16，载波24.576Mbps
+  QPC实测整个case（含创建/映射/初始化/排空/释放）tone37.3983ms，game38.1679ms
+  这是离线批处理吞吐量，不是实时采集延迟、播放延迟或20对象常驻性能证明。
+
+tone载波SHA256：
+0cc95452bf618ae9c62c54667ba496ed65601465ce27c06496f438bde58f5669
+game载波SHA256：
+d3f454cb9fc7e7c3d7b57b961ed390005bc62226fade22713ed17aebb5f02942
+
+离线解析与独立语言交叉检查
+--------------------------
+最终分析目录 encode-inspect-tone02/、encode-inspect-game02/。
+analyze_mat.py 为新采集类型增加独立完整性检查，不谎称“恢复过hook字节”；旧采集类型
+仍要求原来的恢复标记。没有放宽 MAT marker/字段/边界解析规则来强行通过。
+
+使用既有 reference-build02/reference-check.exe 和未经修改的上游 mat_format.cpp 再解包：
+encode-reference-tone01/、encode-reference-game01/ 的 proof.json 均通过。
+两种语言的31槽PCM逐字节、原始6bit字段逐行相同；同一研究布局，不等于两份合规认证。
+
+tone：51个研究布局匹配周期，前三个0/1/2不匹配；PCM48960帧，字段2040行。
+game：52个匹配周期，0/2不匹配；PCM49920帧，字段2080行。
+game的启动周期1虽匹配 marker，但静态槽0有4个异常样本（峰值约0.9746）。原始证据保留。
+这说明只看 marker 匹配不能把所有启动内容当作已稳定可播放的 PCM。
+
+在明确排除最初3个载波周期的稳定窗口中，两个场景均只有动态槽11/12有声音，所有静态
+槽样本和LFE为0。并非混入现有系统流的声音，也不是只有空MAT头。
+
+稳定窗口原始位置字段变化数（每对象六字段）：
+  tone对象0：[32,15,3,0,0,0]；对象1：[0,37,0,0,0,0]
+  game对象0：[7,0,2,0,0,0]；对象1：[15,13,3,0,0,0]
+这是“输入对象位置影响了新输出元数据”的证据，不是完整 XYZ 数值可逆/空间标定结果。
+
+音频源对照与仍未解决的问题
+--------------------------
+encode-compare-game02/、encode-compare-tone01/ 保留源对照。
+研究布局稳定窗口与game源的相关峰偏移均为-416样本。它只是解析/源时间轴对齐量，
+不是测得的编码器端到端延迟。周期纯音存在相关峰歧义，所以tone用同一-416作显式对照。
+
+完整可比较交叠窗口的相关性：
+  game对象0=0.999469，game对象1=0.972886；启动源块约0..8有明显误差/重复现象。
+  416源样本不在该“已解析稳定窗口”的交叠范围；不能据此断言原始码流永久丢了416样本。
+
+单独报告源100ms之后的0.9秒窗口，不把它冒充全片段结果：
+  game相关性0.999970/0.999962，最大绝对误差均小于1个PCM16 LSB（约3.052e-5）。
+  tone相关性均约0.999999806，最大误差也小于1 LSB。
+说明后段对象PCM确实对应输入，但启动时序/完整性验收仍未通过。
+旧 encode-compare-game01/ 是未对齐的480块级探索，不可据其“未匹配块”推断真实丢块。
+
+FFmpeg7.1的spdif解复用仍报告 data type0x0016未实现；不是本轮编码器的反证。
+本轮没有使用FFmpeg编码MAT，也没有把TrueHD SPDIF封装冒充对象MAT编码。
+
+安全、驻留与授权边界
+--------------------
+三次UAC分别用于阶段A、阶段B首测、阶段B修正短测，均有用户明确许可。
+提权launcher与采集worker均已退出，没有提权常驻命令通道/服务/计划任务。
+audiodg原PID35640仍在，没有强制重启或结束它。
+
+为避免卸载竞态，自己编译的三个helper及额外vendor引用保留到audiodg自然退出：
+C:\ProgramData\SpatialObjectSpike\mat_instance_stage_a_v1.dll
+C:\ProgramData\SpatialObjectSpike\mat_encode_stage_b_v1.dll
+C:\ProgramData\SpatialObjectSpike\mat_encode_stage_b_v2.dll
+它们不是正在持续采集的线程，不应在已加载时覆盖/强卸载；本轮未删除文件。
+
+没有安装虚拟驱动、修改端点/EDID/ACL/根证书/签名策略、借用令牌或绕过保护检查。
+未复制/重新分发Dolby二进制；只直接使用本机已有组件。商业使用许可仍需单独确认。
+当前是版本锁定的研究探针，不是受支持的公开SDK，也没有并入默认常驻采集器/传输链。
+MAT到安卓本机解码能力、真实设备适配与点亮Atmos依旧待验证。
+
+复现入口（已获许可的管理员进程；输出目录须不存在）
+------------------------------------------------
+build-mat-encode.ps1：编译helper/采集器并执行普通进程拒绝guard自测。
+prepare_native_input.py：生成两段有界输入与源数据侧车；不播放声音。
+run-mat-encode.ps1：校验版本/输入/文件哈希，再执行一次短测；自身不自动提权。
+analyze_mat.py --capture CAPTURE_CASE --output NEW_DIRECTORY
+verify_reference.py INSPECTION --executable reference-build02/reference-check.exe --output NEW_DIRECTORY
+compare_native.py INSPECTION --expected EXPECTED_NPZ --output NEW_DIRECTORY
+tone对照额外指定 --lag-samples -416，不能把周期纯音的自由相关峰当作唯一时序证据。
+
+下一步应优先修正启动/排空时序并做完整源覆盖检查，再在明确非HomeTheater/无该能力的
+主机环境对照；不是立刻把当前未验收的启动序列接进安卓播放链。

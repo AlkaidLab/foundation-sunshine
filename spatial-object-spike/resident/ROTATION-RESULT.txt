@@ -1,0 +1,50 @@
+ACTUAL NIOH 3 FILE-ROTATION SHORT TEST / 2026-10-18
+=================================================
+PASS: actual game, current default stateful collector, 4 MiB chunks, 20.125 sec.
+No long run, game restart, endpoint change, virtual driver or game injection.
+
+Run: run-test.ps1 -RunName stateful-rotation01 -NoSource -Seconds 20 -MaxMb 256 -ChunkMb 4
+Default backend was Dolby. Nioh3 PID39832/audiodg PID39292 remained unchanged.
+Before/after game module audits: CaptureDllLoaded=False. Endpoint session audit
+identifies Nioh3 as the only active non-system source on default F32D80U.
+
+36 output files / 35 switches / 148713952 bytes.
+73186 submit calls == 73186 recorded blocks; 35129280 mono object-frames.
+Every one of 37 objects has exactly1978 blocks of480 samples. Sequence0..73185
+continues across all files: no missing/duplicate records, no truncated PCM, all
+samples finite. No full/busy drops, invalid reads, unsupported readers or loss
+epochs. Cache peak37/4096, zero evictions. No create/end observed during the run.
+
+Independent state replay PASS for every block. 1295 same-object crossings between
+adjacent files. 57 dynamic crossings retain known XYZ without a position flag;
+all57 have zero-filled raw XYZ but NONZERO cached XYZ, equal to the previous
+same-object record. Five of those crossings have nonzero audio on BOTH sides.
+There are455 audible crossings including static channels/position-update packets.
+All generations remain stable across file boundaries, with no artificial reset.
+
+Cross-file same-object QPC interval: median10.0026 ms, p99 10.0525 ms,
+maximum10.0528 ms. Within-file: median10.0007 ms, p99 10.0557 ms,
+maximum10.2448 ms. No file-boundary-specific extra audio-block interval observed.
+This verifies continuity of the captured submit-block/sample stream; it is NOT
+an independent measurement of physical endpoint glitches or upstream source-frame
+indices, neither of which is encoded in this version-specific capture ABI.
+
+Late attachment:20 dynamic lifetimes initially unknown;8 received updates during
+this SHORT run and all8 have audible changing positions. Other unobserved initial
+positions remain correctly unknown; no coordinates were fabricated for them.
+Position blocks:1754 updated,3151 cached,34655 unknown;33626 static implicit.
+
+Tools: verify_stateful.py independently replays all flags and validates PCM;
+verify_rotation.py checks actual chunk sizes, complete sequences/frames, cache
+and identity continuity, boundary timing and per-object concatenated PCM SHA256.
+run-test.ps1 now accepts -ChunkMb, while its default remains128 MiB.
+
+Machine-readable evidence in stateful-rotation01/:
+  summary.json / position-summary.json / storage.json / backend.json
+  state-verification.json / rotation-verification.json / rotation-boundaries.csv
+  proof-object-audio.wav / proof-object-position.csv (same audible moving object)
+The proof WAV is a pre-gain PCM16 preview, not the final rendered mix.
+
+Cleanup: status2/error0/exit0, original hook bytes restored. Collector exited;
+game kept running, Dolby unchanged. Dormant pinned DLL remains until audiodg exits
+naturally. No prior capture was deleted/overwritten. No security/autostart changes.

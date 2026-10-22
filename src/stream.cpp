@@ -3,6 +3,13 @@
  * @brief Definitions for the streaming protocols.
  */
 #include "process.h"
+#include "spatial_transport/mat_session_source.h"
+#ifdef SUNSHINE_MAT_RTP_DIAGNOSTIC
+  #include "spatial_transport/mat_fragmenter.h"
+  #include "spatial_transport/mat_replay_state.h"
+  #include "spatial_audio/mat_replay_source.h"
+  #include <iostream>
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -638,6 +645,8 @@ namespace stream {
       util::buffer_t<uint8_t *> shards_p;
 
       audio_fec_packet_t fec_packet;
+      std::atomic<uint64_t> mat_sent {0};
+      std::atomic_bool mat_send_failed {false};
       std::unique_ptr<platf::deinit_t> qos;
 
       bool enable_mic;
@@ -3764,6 +3773,13 @@ namespace stream {
       }
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
+#ifdef SUNSHINE_AUDIO_RTP_DIAGNOSTIC
+      // FIFO end marker: all replay packets must pass through this exact
+      // production broadcaster before the isolated process exits.
+      if (channel_data == nullptr) {
+        break;
+      }
+#endif
       auto session = (session_t *) channel_data;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
@@ -3835,7 +3851,8 @@ namespace stream {
           session->audio.peer.port(),
           session->localAddress,
         };
-        platf::send(send_info);
+        const bool audio_sent = platf::send(send_info);
+        if (!audio_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -3862,19 +3879,32 @@ namespace stream {
               session->audio.peer.port(),
               session->localAddress,
             };
-            platf::send(send_info);
+            const bool parity_sent = platf::send(send_info);
+            if (!parity_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
             BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast audio failed "sv << e.what();
+        if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
         std::this_thread::sleep_for(100ms);
       }
+#ifdef SUNSHINE_MAT_RTP_DIAGNOSTIC
+      spatial_transport::replay_ack.fetch_add(1, std::memory_order_release);
+#endif
+      if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_sent.fetch_add(1, std::memory_order_release);
     }
 
     shutdown_event->raise(true);
   }
+
+#ifdef SUNSHINE_AUDIO_RTP_DIAGNOSTIC
+  #include "stream_audio_replay.inc"
+#endif
+#ifdef SUNSHINE_MAT_RTP_DIAGNOSTIC
+  #include "stream_mat_replay.inc"
+#endif
 
   int
   start_broadcast(broadcast_ctx_t &ctx) {
@@ -4095,6 +4125,34 @@ namespace stream {
     session->audio.qos = platf::enable_socket_qos(ref->audio_sock.native_handle(), address,
       session->audio.peer.port(), platf::qos_data_type_e::audio, session->config.audioQosType != 0);
 
+    if (audio::is_mat_codec(session->config.audio.codec)) {
+      auto shutdown = session->mail->event<bool>(mail::shutdown);
+      auto packets = mail::man->queue<audio::packet_t>(mail::audio_packets);
+      uint64_t submitted = 0;
+      try {
+        spatial_audio::require(bool(session->config.audio.mat_dump), "Missing negotiated MAT manifest");
+        auto timer = platf::create_high_precision_timer();
+        spatial_audio::require(timer && bool(*timer), "MAT pacing timer unavailable");
+        spatial_transport::replay_session(*session->config.audio.mat_dump, [&](const uint8_t *data, size_t n) {
+          spatial_audio::require(!shutdown->peek() && !global_shutdown_event->peek(), "MAT session cancelled");
+          audio::buffer_t packet(n); std::memcpy(packet.begin(), data, n);
+          spatial_audio::require(packets->try_raise(session, std::move(packet)), "MAT audio queue full/stopped");
+          ++submitted;
+          const auto deadline = std::chrono::steady_clock::now() + 2s;
+          while (session->audio.mat_sent.load(std::memory_order_acquire) < submitted) {
+            spatial_audio::require(!shutdown->peek() && !global_shutdown_event->peek() && std::chrono::steady_clock::now() < deadline, "MAT broadcast timeout/cancel");
+            std::this_thread::sleep_for(20us);
+          }
+          spatial_audio::require(!session->audio.mat_send_failed.load(), "MAT UDP send failed");
+        }, [&](std::chrono::nanoseconds delay) {
+          if (delay > 0ns) timer->sleep_for(delay);
+        });
+        BOOST_LOG(info) << "MAT replay sent: " << session->config.audio.mat_dump->profile.sha256;
+        // Don't end the video/control session before the client finishes EOS.
+        shutdown->view();
+      } catch (const std::exception &e) { BOOST_LOG(::error) << "MAT session failed: " << e.what(); }
+      return;
+    }
     BOOST_LOG(debug) << "Start capturing Audio"sv;
     audio::capture(session->mail, session->config.audio, session);
   }

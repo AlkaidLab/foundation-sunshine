@@ -1,0 +1,141 @@
+独立 MAT 接收器：一次性原生启动器准备与只读预检
+2026-10-21（Asia/Hong_Kong）
+
+结论
+----
+新增一次性启动器、默认只读预检脚本、原生输出记录验证/回收逻辑。
+最终版本已编译，完成自有子进程的真实远程句柄/入口守卫/清理测试。
+真实 audiodg 编码分支本轮没有运行；没有新的 MAT/Android 验证结论。
+
+最新预检 mat-native-launcher-preflight02：
+  preflight_completed=true；ready_for_authorized_attempt=false。
+  audioeng / DolbyMatEnc / DolbyMatEngine 的冻结 SHA256 全部匹配。
+  预检时已有且仅有一个 audiodg（快照 PID 30896，不可当作后续固定目标）。
+  当前进程未提升；唯一报告的阻碍是新的、明确的一次性提权授权。
+  既有 C:/ProgramData/SpatialObjectSpike 存在，但新接收 DLL 尚未部署。
+  staging_performed=false、audiodg_opened=false、native_encoder_called=false。
+  未自动启动/重启引擎。早先快照没有引擎、稍后快照已有，是动态状态，
+  后续实际执行必须重新预检和冻结当时的 PID + 精确创建时间，不能盲用快照。
+
+新增文件与最终版本
+------------------
+  mat_native_launcher.cpp         MSVC 一次性进程间启动/回收、源校验与输出验证
+  build-mat-native-launcher.ps1   隔离构建与普通自有子进程自测
+  run-mat-native-session-once.ps1 默认 Preflight；不自提权、不自动重试
+  verify_mat_native_launcher.py  独立字节级/进程退出/句柄数量核对与坏输入测试
+  mat-native-launcher-build04    最终构建与 selftest/proof.json
+  mat-native-launcher-preflight02 最新只读预检与两个源校验结果
+  mat-native-launcher-proof01    最终独立验证 proof.json，passed=true
+
+mat-native-launcher.exe SHA256：
+  CB9A98239CE9014DD037628C916ECF27A9DD36DDDE5E3DF5DF29AAF75BE9F367
+run-mat-native-session-once.ps1 SHA256：
+  6F97149E44E8F738B78CDC2342D785D361EE1607DE92FA7EFE6F329E6C2660B2
+verify_mat_native_launcher.py SHA256：
+  B3DDD74DCEC089EAEAA6CAABE3460CEE4CEB620DEA2CE8B38AEE745462517674
+mat-native-launcher-proof01/proof.json SHA256：
+  208404715547DF1AC2F19B661A1E9AC5F0DDAD798853545B85AD20DD4854C0CD
+
+复用且未修改：
+  mat-ipc-receiver-build06/mat_ipc_receiver.dll
+  A88652FFE2A24C41644548263B4B9ACCCE575A91820AFE708AEC4FBBC3556991
+  mat-dll-interop-proof02/proof.json 作为已完成 GCC->MSVC->假 DLL 的输入前置证明。
+
+build01 是初步成功版本；build02 的“首次加载前后句柄必须相等”测试失败，
+发现首次加载模块及依赖初始化有额外持有句柄；build03 分离加载与调用基线，
+build04 进一步收紧真实完成条件。最终以 build04/preflight02/proof01 为准。
+没有覆盖或删除中间证据。
+
+本轮实际测试
+------------
+最终构建自测15项通过；再重复10轮共150项、60个自有子进程，全通过。
+两类进程间测试：
+  1. 在交付第0/1/2/3/4个句柄后主动制造失败，尚未进入接收入口，
+     已交付的原始远程句柄全部回收，未启动的参数内存不留存。
+  2. 向第6个自有普通子进程交付5个句柄，加载冻结 DLL，真实调用
+     StartMatIpcReceiver。该子进程不是 audiodg，入口返回 ERROR_BAD_ENVIRONMENT=10。
+     vendorLoads/activations/initializations/workerTid/helperPinned 全部为0。
+     入口返回后5个远程原始句柄和参数内存回收，子进程正常退出。
+这个测试证明跨进程入口守卫及归属清理，不证明 audiodg 权限或编码器初始化。
+
+自有子进程仅继承 ready/stop 两个控制事件；之后明确 DuplicateHandle 交付
+input/data/cancel/owner/output 五个会话句柄，不把整个父进程句柄表继承过去。
+owner 仅含 SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION。
+所有子进程 CREATE_NO_WINDOW；逐个用 PID+创建时间核对自然退出，未强杀。
+
+句柄基线细节：本机首次加载 DLL/依赖路径观察到70->103个句柄；并未逐个归因。
+加载完成后再调用守卫，入口前后103->103；各部分交付失败前后70->70。
+这能排除本测试中的单次入口/交付句柄累积，不能把首次加载的33个句柄忽略成
+“不存在”，也不能声称已证明真实 vendor 运行后的常驻资源开销。
+DLL 模块本身未被远程卸载，随自有子进程正常退出结束。
+
+原生输出回收使用合成夹具：
+  一个0字节 Process记录 + 一个5字节记录。
+  实际 encoder-output.bin 恰为133字节，encoder-payload.raw 恰为 abcde。
+  Python 使用独立64字节 EncodedRecord布局逐字节核对，不是 MAT 数据/解码测试。
+  拒绝记录数量溢出、payload总量不符、序号缺口、S_FALSE、请求超限、
+  工作线程ID不符、时间倒退、native/fake输出种类不符。
+  必须先验证全部记录，才创建输出文件；保留0字节 Process的控制/时序记录。
+
+另外独立校验两个冻结源：306/206源轮、288000/96000源样本。
+11种损坏源在目标进程操作之前拒绝：短文件头、短PCM、尾部多字节、版本不符、
+轮数超限、首次未知update、重复对象、NaN坐标、NaN PCM、幅度越界、缺失EOF标志。
+
+已准备但本轮未执行的真实分支
+--------------------------
+PowerShell默认仅Preflight。AuthorizedNative必须明确选择并有新的人工授权；
+Confirmation字符串本身不构成授权。脚本不RunAs、不设置计划任务/服务、不重试。
+准备的单次范围为域1录制：306源轮+20预热+30排尾=356 Process，约3.56秒节拍；
+642 Submit，288000源样本，307条IPC消息。不是开游戏或新采集。
+
+执行前再次校验构建/源/组件哈希、既有唯一引擎、系统EXE/已加载audioeng路径、
+PID+精确创建时间，固定域/epoch/nonce。只接受已知的两个冻结源之一。
+如已获授权，首次可把相同hash的接收DLL复制到既有ProgramData测试目录；
+若已存在但hash不符则停止，不覆盖。没有自动创建目录、改ACL或安全设置。
+可执行文件只接受固定的已部署helper路径；不把私有用户目录当作服务可读位置。
+
+唯一目标进程打开失败或PPL限制时立即停止，不开启SeDebugPrivilege、
+不降低保护、不重启引擎、不换另一个PID、不自动重试。
+原生私有ABI守卫仍在冻结DLL内；本轮只编译，未验证在新启动器里可用。
+
+生产者按10ms发布480帧，有32共享槽；内部仍是8槽与独立codec线程。
+生产者不等待容量、不重试；满环明确失败。首对象出现后的200ms预热库存仍在。
+源未完整完成、native HRESULT非S_OK、EOF/队列未清空、轮次/样本/提交数不符、
+未完成工作线程或无输出，均不能报告 completed=true。
+输出record边界通过不等于有效MAT，更不等于已保留可解码的坐标或安卓点亮。
+
+失败清理边界
+------------
+远程入口返回前，不能释放它仍可能读取的Args或原始远程句柄。
+正常返回后，DLL持有自己的DuplicateHandle副本，启动器再释放交付的原始句柄。
+若入口/loader未返回则保留相关远程内存/句柄，记录retained而非假称已清理。
+请求协作取消；不TerminateThread/TerminateProcess，不远程FreeLibrary。
+若DLL工作线程超时但入口已返回，DLL自身保留私有视图/状态并pin helper；
+启动器不读/导出并发变化的诊断输出。真实卡死分支本轮没有运行验证。
+原生helper和组件引用可能保留至宿主自然退出，不承诺无常驻痕迹。
+脚本等待启动器最多30秒；超限不强杀或自动重跑。native入口内部源会话截止10秒。
+
+安全范围与冻结检查
+------------------
+本轮没有UAC、audiodg OpenProcess/模块枚举/内存写入/线程创建、外部进程附加、
+部署新helper、Dolby加载/激活、音频设备激活、驱动/端点/安全设置变更。
+远程加载/远程线程测试只发生在本轮新建、持有进程句柄的自有普通子进程。
+只读inspect只枚举进程清单、读取磁盘组件与当前进程token，不打开音频进程。
+最终未发现本轮测试进程仍在运行。
+
+冻结源码核对通过：mat-ipc-receiver-build06、mat-dll-interop-build01、
+cpp-mat-ipc-build03、cpp-mat-startup-build04、cpp-mat-stream-build05、
+mat-native-v4-build01、cpp-native-v4-build02 与新的 mat-native-launcher-build04。
+旧录制和生产默认链路未变，无关工作区修改保持原样。
+
+仅离线复现（本文件目录，新输出目录）
+----------------------------------
+  ./build-mat-native-launcher.ps1 -Output NEW_BUILD
+  ./run-mat-native-session-once.ps1 -Mode Preflight -Build NEW_BUILD -Output NEW_PREFLIGHT
+  python verify_mat_native_launcher.py --build NEW_BUILD --bridge cpp-native-v4-replay02 --preflight NEW_PREFLIGHT --output NEW_PROOF
+
+继续需要用户决定
+----------------
+是否允许下一轮仅一次UAC、把新接收DLL部署到既有测试目录并载入现有audiodg，
+执行上述单域约3.56秒录制回放？不改端点、不装驱动，不开启额外调试权限；
+守卫/访问/初始化失败即停止。旧的一次性UAC授权均不可复用。

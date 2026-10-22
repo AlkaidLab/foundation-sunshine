@@ -21,6 +21,7 @@
 namespace stream::session {
   enum class stop_reason_e : int;
 }
+namespace spatial_transport { struct ReplayManifest; }
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
@@ -129,6 +130,10 @@ namespace rtsp_stream {
     /// 200 response and its idempotent retries alike.
     int negotiated_dynamic_hdr_format { 0 };
     std::string negotiated_dynamic_hdr_fallback;
+    bool mat_dump_described {false};
+    bool mat_dump_selected {false};
+    bool mat_playback_selected {false};
+    std::shared_ptr<const spatial_transport::ReplayManifest> mat_dump;
   };
 
   launch_ticket_register_e

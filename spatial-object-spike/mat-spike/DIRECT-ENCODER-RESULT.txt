@@ -1,0 +1,105 @@
+不依赖 Home Theater 端点、直接调用本机 MAT 编码器：spike / 2026-10-20
+==================================================================
+
+后续更新：普通应用直接加载的负结果仍成立；已另在 audiodg 中通过工厂创建了两个不同
+COM 身份的 encoder 对象，尚未初始化/编码。见 AUDIODG-INSTANCE-RESULT.txt，勿将本报告
+的普通进程权限失败理解为已证明 audiodg 内无法创建，或将创建成功理解为编码通过。
+
+结论
+----
+未打通。普通独立 Win32 进程无法按本轮测试的方法激活/加载本机 Dolby MAT 组件。
+准确的失败点是“创建/加载”，不是“对象数据编码错误”或“坐标丢失”。
+没有到达 Initialize、对象提交或 Process；新编码输出为 0 字节。
+因此本轮不能证明私有编码核心必须依赖真实 Home Theater 端点，也不能声称核心
+原理上无法脱离端点运行；只能确认当前普通应用直接调用方案不成立，尚无可部署方案。
+
+与此前结果的区别
+----------------
+MAT-RESULT.txt 验证的是旧 resident/encoded01 录制样本：Windows 已经建好 Home Theater
+音频链路后截取编码器输出，再离线解出研究布局。那不等于应用可以独立创建编码器。
+本轮未重用旧载波冒充新编码输出，也没有为了获得结果切换/激活任何音频端点。
+未对采集的仁王 3 对象片段编码；权限在加载前已拒绝，不能报告实时性/音质/坐标结果。
+
+定位到的组件
+------------
+来自本机安装的 Dolby Access 3.27.12250.0 x64 包，而非已公开的通用 Windows MAT SDK：
+C:\Program Files\WindowsApps\DolbyLaboratories.DolbyAccess_3.27.12250.0_x64__rz1tebttyb220\DLLs\x64
+
+DolbyMatEnc.dll：138168 字节，版本 1.0.2403.20001
+SHA256 963697FB61EE302699B294B1B6CB59AB42E5EAE3A555F6674ED54FC3A3CFACEA
+运行时类名 Dolby.DolbyMatEncoder
+audioeng 公共符号 CLSID_DolbyMatEncoder：{aaca92be-029d-4006-ada0-725b506cf9b2}
+
+DolbyMatEngine.dll：1025024 字节，版本 3.1.8.rel
+SHA256 342CBC58A19AFA2B5B58CEF408EF91DCC06C68829520286ACABB7178EDA7F569
+运行时类名 Dolby.DolbyMATEngine
+audioeng 公共符号 CLSID_DolbyMatEngine：{5b3c2c7f-5957-4892-bcc5-022dee554ae1}
+
+类名通过只读查看安装文件的字符串获得；GUID/包装器调用链通过匹配本机 audioeng
+公共 PDB 的离线反汇编获得。两个 DLL 均只导出 DllCanUnloadNow、DllGetActivationFactory，
+没有 DllGetClassObject 或公开对象 PCM/XYZ 编码函数。
+这些事实不是对所有潜在私有入口的穷尽调查，不构成商业再分发/编码授权。
+
+实际测试
+--------
+direct_encoder_probe.cpp 在自己的独立进程内运行，不注入 audiodg、不播放音频。
+build-direct.ps1 编译；run-direct.ps1 记录已安装组件哈希/SDDL/签名、stdout/stderr、
+summary.json，使用 30 秒看门狗；超时仅终止自己创建的子进程。
+
+1. RoInitialize、MFStartup 成功。
+2. MFTEnumEx(MFT_CATEGORY_AUDIO_ENCODER, MFT_ENUM_FLAG_ALL, NULL, NULL) 返回 13 项。
+   列出各项公布的输出 subtype，未发现 MAT 编码项。
+   再按 SDK 定义的 IEC61937 Dolby MAT20/21 输出 subtype 分别过滤：均 S_OK、count=0。
+   {0000010c-0cea-0010-8000-00aa00389b71}
+   {0000030c-0cea-0010-8000-00aa00389b71}
+   这只描述当前进程/机器的 MFT 可见性，不是所有机器上不存在任何私有 MAT 编码器的证明。
+3. 对照：标准系统 propsys.dll 可正常 LoadLibraryExW；公开 AC3 MFT 可 CoCreateInstance，
+   GetOutputAvailableType 成功，默认输出为 AC3、2 声道，不是 MAT/JOC。
+4. 对上述两个 MAT 组件的 CLSID 分别 CoCreateInstance：均 0x80040154，类未注册。
+5. 对两个运行时类 RoGetActivationFactory：均 0x80040154。
+6. 对安装位置原文件使用绝对路径 LoadLibraryExW：均 0x80070005，拒绝访问。
+   未复制 DLL 到别处；未执行 DllGetActivationFactory，因为模块没有成功加载。
+7. 进一步定位：两个原文件 CreateFile(GENERIC_READ) 都成功；
+   CreateFile(GENERIC_READ | GENERIC_EXECUTE) 都返回 0x80070005。
+   当前文件 DACL 对普通 Users 允许读取，读执行授权包含 Dolby Access SYSAPPID 条件，
+   另有 SYSTEM/LOCAL SERVICE/NETWORK SERVICE 等授权。SDDL 保存在 installed-components.json。
+   因而证据指向安装组件的执行访问边界，不只是 DLL 名称/搜索路径有误。
+   未把访问拒绝武断归为“缺根证书”、Dolby 授权校验失败、或端点能力检查失败。
+
+最终完整版本：direct-build04/direct-encoder-probe.exe；direct-run03/ 为完整复测记录。
+direct-run01/、direct-run02/ 保留之前的探测记录；direct-build01 为缺 winstring.h 的编译失败，
+direct-build02/03 为中间版本。后续 build04 成功，探测正常退出，无超时/遗留进程。
+diagnostic_completed=true 只表示探测跑完，不表示编码成功；编码验证字段均为 false。
+
+安全与范围
+----------
+没有安装虚拟驱动，未改 EDID、ACL、注册表、根证书、签名/启动策略、音效设置或系统服务。
+没有复制/提取/重新分发厂商 codec，没有伪造 Dolby 包身份、借用服务令牌或绕过授权检查。
+没有创建系统级后台常驻任务；未改 Sunshine/安卓生产链路；之前用户修改保持不动。
+没有连接/安装安卓 APK，此轮仍只做主机侧。系统已有 Home Theater 端点是否存在没有改变；
+本轮探测没有调用端点 API，但也没有在成功编码后证明无端点可用。
+
+下一步判断
+----------
+当前不能把“系统内部能编码 MAT”当作 Sunshine 可调用的 MAT 编码后端。
+公开 ISpatialAudioClient 的对象提交仍是端点绑定的渲染路径，不能替代独立编码接口。
+若继续无驱动、无 Home Theater 条件的 MAT 路线，需要合法可访问的编码接口/SDK，或另做
+受支持宿主下创建独立实例的研究；本轮没有验证后者，也不建议靠降低系统安全策略接入。
+现有对象采集与对象传输不因本轮负结果失效，但安卓原生 Atmos 点亮仍未闭环。
+
+复现（从仓库根目录；两个输出目录必须不存在）
+------------------------------------------
+pwsh -File ./spatial-object-spike/mat-spike/build-direct.ps1 -Output ./spatial-object-spike/mat-spike/direct-build-new
+pwsh -File ./spatial-object-spike/mat-spike/run-direct.ps1 -Build ./spatial-object-spike/mat-spike/direct-build-new -Output ./spatial-object-spike/mat-spike/direct-run-new
+
+MSVC/SDK 路径在 build-direct.ps1 中为本机已安装版本；没有下载安装工具链。
+run-direct.ps1 仅查询当前用户已安装的 Dolby Access；缺包即停止，不会下载安装。
+
+核对的官方文档
+--------------
+MFT 枚举/分类/过滤：
+https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mftenumex
+公开 Dolby Digital 编码 MFT 是 mono/stereo AC3，而非对象 MAT 编码器：
+https://learn.microsoft.com/en-us/windows/win32/medfound/dolby-digital-audio-encoder
+空间对象 API 的最终输出由空间端点/用户选择的格式决定：
+https://learn.microsoft.com/en-us/windows/win32/coreaudio/spatial-sound

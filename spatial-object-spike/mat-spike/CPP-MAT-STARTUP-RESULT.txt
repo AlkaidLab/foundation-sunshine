@@ -1,0 +1,123 @@
+有界启动缓冲 + 不等待队列容量的 100 Hz 生产者：离线验证
+2026-10-20
+
+结论
+----
+在上轮 8 槽桥接/编码线程接口之前，新增独立 32 槽有界入口缓冲和搬运线程。
+录制桥接输出按独立 100 Hz 目标送入；生产者只做一次 tryPush，不等空位、不重试。
+正常场景，以及每域“初始化延迟 60 ms + 源第 60 轮停顿 40 ms”场景均完成，
+两个域的所有 PCM、XYZ、对象控制和 Process 序列与冻结的原生短测输入逐字节相同。
+
+这是离线启动/缓冲策略验证，不是真实 audiodg 采集回调，也没有新调用 Dolby 编码器。
+没有 UAC、注入、音频设备激活、驱动、端点、安全设置或系统全局计时精度变更。
+没有修改上一轮冻结的桥接器/队列/原生探针源码和构建，也没有接入生产默认链路。
+
+实现与实际取舍
+--------------
+  桥接生产者 -> 32 槽固定入口缓冲 -> 专用搬运线程 -> 8 槽队列 -> 独立编码线程
+
+新增文件：
+  cpp_mat_startup.hpp             Session/入口缓冲/搬运线程/错误与取消
+  cpp_mat_startup_tests.cpp       9 项新增测试
+  cpp_mat_startup_replay.cpp      双时钟回放、假编码器、局部高精度计时和追踪
+  build-cpp-mat-startup.ps1       构建与回归
+  verify_cpp_mat_startup.py       独立内容与时间顺序核对
+
+只搬运线程可以等编码队列；生产者没有容量等待或容量重试。
+复用旧 Pipeline 的 pushOffline 作为专用非实时搬运线程的有界等待适配器，
+并未把这个等待 API 放进生产者/音频钩子。真实跨进程版本仍需正式协议适配。
+队列传递自有快照，包含 PCM、XYZ 和生命周期，不引用会被桥接器复用的缓冲。
+原有独立编码线程负责 open/submit/Process/close；增益仍为 volume=1、callGain=1。
+
+32 槽库存不会在“启动完成”后凭空释放：输入和编码都为 100 Hz 时，预热积压
+会留下固定排队延迟。本轮明确保留它，不丢首帧、不倒放、不无限突发追赶。
+运行期编码交接仍是 8 槽，但前面的库存仍保留；不是宣称总共只用 8 槽。
+两队列合计 40 个可用槽，此外搬运/编码各有有界在途暂存。
+
+单域实测队列对象大小：
+  入口 32 槽（含 Boost 环形保留槽）：4,124,016 字节
+  编码  8 槽（含 Boost 环形保留槽）：1,124,784 字节
+  合计：5,248,800 字节，另有快照、worker 容器、FFmpeg FIFO 等。
+这不是总进程内存；离线输入预加载与假编码器的全量调用记录会随片段大小增长。
+
+失败策略
+--------
+入口满即标记 epoch 无效并取消下游，不覆盖、不静默丢帧、不继续提交失败流。
+序列缺口或编码器失败会沿两级队列传播。保留第一次失败类型。
+关闭中的 EOF 排队保留，EOF 本身不制造额外源 Process；执行明确的 drain。
+溢出后只能显式结束旧 Session，再创建新 Session/编码器 epoch；已验证新流无旧 PCM。
+没有自动无限重试/重建循环，无法通过换 epoch 隐藏丢失的原音频。
+取消与 join 只用于控制线程；不能抢占未来可能卡住的真实 vendor 调用。
+
+发现并修正的计时问题
+--------------------
+早期版本使用 std::this_thread::sleep_until。本机观察到约 15.6 ms 的粗粒度唤醒、
+少量早醒及紧邻的补赶调用；压力场景触发队列溢出，不能算作节拍验证通过。
+保留早期证据：cpp-mat-startup-live-clock01、cpp-mat-startup-delayed01/failure.json。
+
+最终版本使用每线程独立的高精度 waitable timer，等待后重新检查单调时钟目标；
+没有 timeBeginPeriod、全局 timer-resolution、服务或系统设置修改。
+假消费时钟落后超过 2 ms 时重定位后续目标，而非无限压缩后续调用来清空库存。
+这只是离线假编码器的调度策略；没有证明真实 Dolby 能接受任意间隔或重定位。
+
+最终验证产物
+------------
+  构建：cpp-mat-startup-build04
+  SHA256：39F636D69B5F4E981F3AA3F06D8A0941875D590E13C7CE147A6406583AC1743E
+  普通：cpp-mat-startup-live-clock02
+  延迟：cpp-mat-startup-delayed02
+  独立核对：cpp-mat-startup-proof01/proof.json
+  自测重复：cpp-mat-startup-build04/repeated-tests.json
+
+65 项 C++ 测试：21 项旧桥接 + 13 项 v4 + 22 项线程链路 + 9 项启动策略。
+最终程序重复 10 轮，650 次检查全部通过。
+启动新增测试覆盖精确 32 槽/第 33 次失败、快照所有权、启动阶段 EOF、取消、
+Process 故障、源序列缺口、溢出后重建、域隔离以及 20 对象快照。
+20 对象这里只是短合成假编码器测试，不是新的 20 对象原生 MAT 性能结论。
+
+每个回放场景：
+  域 1：306 源轮 + 20 预热 + 30 drain；642 次提交；288,000 源样本
+  域 2：206 源轮 + 20 预热 + 30 drain；221 次提交； 96,000 源样本
+  合计 612 轮、863 次提交、384,000 单声道源样本。
+  0 拒绝入队、0 容量重试；源导出（含 EOF）与冻结桥接导出一致。
+  消费线程实际调用记录可重组为完整原生已测试输入，SHA256：
+    ae4c5525ce885670227ae960d0a34d54fe017220fd934b5f78463f432903b089
+  与 mat-native-v4-input01/input.bin 逐字节相同，不是重新生成一个宽松参考。
+  *-fake-plan.bin 是假接口调用记录，绝不是 MAT 码流。
+
+最终普通场景：
+  入口高水位：12/32（两域）；编码队列：8/8；消费时钟重定位 0 次
+  Process 起始间隔：域1 9.501..10.416 ms；域2 9.475..10.490 ms
+  入口到假 Process 完成的中位数：域1 200.382 ms；域2 200.471 ms
+
+最终压力场景（每域声明 60 ms 初始化延迟，一次 40 ms Process 延迟）：
+  入口高水位：域1 23/32、域2 22/32；编码队列：8/8
+  两域各重定位消费目标 1 次，未通过无限补赶清空库存
+  入口到假 Process 完成中位数：域1 302.555 ms；域2 288.637 ms
+  该时间最大值：域1 312.379 ms；域2 298.617 ms
+  停顿使一次 Process 间隔增加到约 46.6/43.8 ms，不声称所有轮都守住 10 ms。
+
+最终四个域回放中，单次 tryPush 墙钟最大约 0.081 ms。
+以上都是短测墙钟观察，不是 CPU 利用率、硬实时保证或真实编码/端到端延迟。
+初始化/停顿注入使用 OS 等待，实际等待可能略偏离声明值；逐轮 CSV 是真实观察值。
+
+独立 Python 核对逐行验证：源目标间隔 10,000,000 ns、入口不早于目标、
+Process 不早于实际入口、Process 时钟/相位/序号与二进制调用记录一致、EOF 不加源轮。
+未验证编码后坐标刻度、元数据与音频的精确同步、认证 MAT 解码或 Android Atmos。
+
+复现（仓库根目录，输出必须使用新目录）
+------------------------------------
+  ./spatial-object-spike/mat-spike/build-cpp-mat-startup.ps1 -Output NEW_BUILD
+  NEW_BUILD/mat-startup-replay.exe --selftest
+  NEW_BUILD/mat-startup-replay.exe ./spatial-object-spike/mat-spike/cpp-native-v4-replay02 NEW_BASELINE
+  NEW_BUILD/mat-startup-replay.exe ./spatial-object-spike/mat-spike/cpp-native-v4-replay02 NEW_DELAYED --delayed
+  C:/Python311/python.exe -B ./spatial-object-spike/mat-spike/verify_cpp_mat_startup.py --build NEW_BUILD --input ./spatial-object-spike/mat-spike/mat-native-v4-input01 --input-proof ./spatial-object-spike/mat-spike/mat-native-v4-input-proof01 --bridge ./spatial-object-spike/mat-spike/cpp-native-v4-replay02 --replays NEW_BASELINE NEW_DELAYED --output NEW_PROOF
+
+下一步门槛
+----------
+将非实时搬运/编码端的内存队列改为版本化的跨进程共享内存协议，补 domain/epoch、
+长度边界、EOF、单调序列、心跳、取消和宿主退出校验；先用两进程假端离线测。
+真实编码端仍须在 audiodg 自有工作线程调用私有 Dolby ABI，普通进程不能直接替代。
+接真实 vendor 前需要新的明确授权短测；本轮没有使用此前已消耗的一次性 UAC 授权。
+当前策略验证的是“有界、无静默丢失”，约 200 ms 启动库存仍是交互串流的延迟障碍；
+要进一步降低必须单独验证预热模型，不能用本轮结果宣称已低延迟端到端可用。

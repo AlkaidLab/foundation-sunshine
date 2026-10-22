@@ -1,0 +1,121 @@
+桥接器 -> 有界队列 -> 独立编码线程：离线验证结果
+2026-10-20
+
+结论
+----
+本轮完成了独立的 C++ 线程链路，使用假编码器验证接口和调度，不调用真实 Dolby。
+普通回放和 10 ms 节拍回放均通过；消费线程实际收到的 PCM、XYZ、对象控制、
+Process 顺序可重组为上轮真实 MAT 短测的完整 MATV4P1 输入，逐字节相同。
+这验证了跨线程接缝，不代表本轮生成了 MAT，更不代表实时游戏/安卓 Atmos 已通。
+
+本轮没有 UAC、进程附加、Dolby DLL 加载、音频激活、驱动、端点或安全设置变化。
+没有修改旧桥接器、采集器、原生 MAT 探针或其冻结构建/输入；没有修改生产默认链路。
+
+实现文件（本目录）
+------------------
+cpp_mat_stream.hpp          固定大小快照、Boost SPSC、Pipeline/Encoder 接口
+cpp_mat_stream_fake.hpp     只记录调用的假编码器，强制所有接口在独立线程执行
+cpp_mat_stream_tests.cpp    新增生命周期、并发、错误与边界测试
+cpp_mat_stream_replay.cpp   真实 v4 录制 -> 原有 DomainBridge -> 快照 -> 消费线程
+build-cpp-mat-stream.ps1    复用现有 FFmpeg/Boost，无依赖安装
+verify_cpp_mat_stream.py    独立 Python 字节级核对与内存负控
+
+链路与所有权
+------------
+录制解析/桥接线程 -> 自有 PCM+XYZ 快照 -> 每域 8 槽 SPSC -> 每域独立编码线程
+
+沿用既有 v4 DomainBridge/PositionCache/FFmpeg AVAudioFifo；增益只在桥接处执行。
+快照连同样本、坐标、ID、生命周期和帧序号复制，不持有桥接器输出的悬空指针。
+编码器接口强制 volume=1、callGain=1，不重复施加增益。
+open、submit、process、close 全由编码线程执行；队列等待用原子通知，不做 1 ms 空转。
+每个域独立对象状态、队列、编码器和输入时钟，不按 QPC 猜测跨域样本同步。
+
+tryPush 是单生产者尝试入队接口，无显式等待/容器分配，满队列不覆盖也不跳帧。
+满队列或序列缺口使本 epoch 失败，失败输出不可播放/拼接；必须结束旧线程、
+显式创建新的 Pipeline/编码器 epoch，不能沿用旧缓存静默恢复。
+普通 C++ 原子通知/线程机制不是已证明的音频实时钩子实现，不能直接据此声称硬实时。
+
+pushOffline 是独立的离线送料包装，可等待空位，默认最多 5 秒，超时取消。
+它不能在 audiodg 音频线程/钩子中调用。消费中的外部编码器调用本身不可被安全抢占；
+join/析构是控制线程操作，不是实时操作，未来真实适配器还需要独立故障/存活边界。
+
+生命周期
+--------
+保留录制开头的空 Process；第一次已知对象出现时，先按相同 ID/XYZ 创建对象、
+喂 20 轮静音预热，随后原始 create 转为 update。其他创建不额外重复预热。
+后续源 Process 不合并、不跳过；EOS 最后一段 PCM 由原桥接器保留，end 控制在下一轮。
+EOF 是控制消息，不计为源 Process 或样本推进；EOF 内尚有的 end 控制并入首个 drain。
+明确执行 30 轮 drain 后关闭。空域不凭空创建对象。
+ID 重复、未知 update/end、非有限 PCM/XYZ、超过 20 个活对象、仍活对象突然缺席均拒绝。
+
+固定队列内存
+------------
+单快照 124,968 字节（最多 64 个调用，包含退役控制余量）；可用 8 槽。
+可用载荷 999,744 字节；Boost 内部另有一个环形保留槽，实测 sizeof(Queue)=1,124,784。
+此外有生产者/消费者暂存快照、FFmpeg FIFO 和 worker 容器，不把队列大小当作总进程内存。
+假编码器为离线对照保留完整调用记录，内存随录制增长，不是最终常驻输出实现。
+
+验证结果
+--------
+最终构建：cpp-mat-stream-build05
+可执行文件 SHA256：
+  70EE324075E42AAC3201541C88300D3FA2499EF9F80C7D5228CC969B00B525D9
+build01/02 为编译失败中间目录；build03/04 为早期验证版本，均不是最终交付构建。
+
+C++：21 项旧桥接 + 13 项 v4 + 22 项新线程链路 = 56 项全部通过。
+最终可执行文件再重复 10 轮，560 次检查全部通过：build05/repeated-tests.json。
+新增测试涵盖：
+  快照所有权/PCM/XYZ 不受复用覆盖；精确 8 槽容量与第 9 次入队失败；
+  20 对象 create/update/end；同轮退役与新 ID；域隔离；慢消费与最终消息排空；
+  取消与离线超时；序列缺口/错误域/重复 ID/未知 update/非有限值/超大包；
+  EOF 缺失 end；open/submit/Process/close 错误传播；空域；
+  存活对象缺席；失败后新 epoch 不继承旧对象或 PCM。
+20 对象这里只是短合成假编码器单测，不是新的 20 对象 Dolby 性能验证。
+
+最终录制回放：
+  cpp-mat-stream-replay03  普通独立线程回放
+  cpp-mat-stream-paced03  消费线程按 steady_clock 的 10 ms 目标节拍回放
+  cpp-mat-stream-proof02/proof.json  两者的独立字节级证明
+
+每次回放：
+  域 1：306 源轮 + 20 预热 + 30 drain = 356；642 次提交；288,000 源样本
+  域 2：206 源轮 + 20 预热 + 30 drain = 256；221 次提交；96,000 源样本
+  共 612 轮、863 次提交、384,000 原始单声道样本；两域高水位均为 8。
+  源导出含 EOF 与旧冻结桥接导出逐字节相同。
+  编码线程调用记录按冻结头重组，完整输入 SHA256：
+    ae4c5525ce885670227ae960d0a34d54fe017220fd934b5f78463f432903b089
+  与 mat-native-v4-input01/input.bin 相同；该输入此前在 MAT-NATIVE-V4-RESULT.txt
+  所记的一次真实原生编码中已验证音频连续。本轮不重新执行该原生探针。
+  原始两卷采集文件哈希保持不变。
+
+Python 独立核对还拒绝截短、额外 EOF Process、源轮序列缺口，并通过完整字节相等
+发现单字节修改。假编码器文件名为 *-fake-plan.bin，只是调用记录，不是 MAT 码流。
+
+限制与下一个真实接入前的门槛
+--------------------------
+1. 录制预加载，送料可以背压；10 ms 模式只验证独立消费者节拍下的内容不变，
+   没有逐轮硬实时期限/CPU/编码延迟结论，也没有新游戏实战或常驻长测。
+2. 8 槽只缓存约 80 ms 源轮，不能掩盖 200 ms 预热。在实时接入前必须明确上游
+   有界预缓冲/启动门控或其他经过验证的预热策略，不能把 pushOffline 搬进钩子，
+   也不能通过丢首帧/伪造静音掩盖这个问题。
+3. 真编码器仍在 audiodg 中；本轮只是定义并验证 Encoder 接口，没有让普通进程
+   获得直接调用私有 Dolby 编码器的能力。跨进程共享队列和真正 native adapter
+   仍需单独实现、离线测协议，再经新的明确授权做短原生复测。
+4. 编码后 XYZ 校准、元数据/音频同步、认证 MAT 解码、Android 本地 Atmos 均未新增验证。
+
+离线复现（仓库根目录，所有输出必须使用新目录）
+--------------------------------------------
+构建：
+  ./spatial-object-spike/mat-spike/build-cpp-mat-stream.ps1 -Output NEW_BUILD
+
+自测：
+  NEW_BUILD/mat-stream-replay.exe --selftest
+
+回放：
+  NEW_BUILD/mat-stream-replay.exe ./spatial-object-spike/resident/quantum-v4-ordered-native01/capture ./spatial-object-spike/resident/quantum-v4-ordered-content01/proof.json ./spatial-object-spike/mat-spike/cpp-native-v4-replay02/summary.json NEW_REPLAY
+  同一命令换 NEW_PACED 输出并追加 --paced。
+
+独立核对：
+  C:/Python311/python.exe -B ./spatial-object-spike/mat-spike/verify_cpp_mat_stream.py --build NEW_BUILD --input ./spatial-object-spike/mat-spike/mat-native-v4-input01 --input-proof ./spatial-object-spike/mat-spike/mat-native-v4-input-proof01 --bridge ./spatial-object-spike/mat-spike/cpp-native-v4-replay02 --replays NEW_REPLAY NEW_PACED --output NEW_PROOF
+
+上述全部为离线操作，不需要管理员，不得据此重跑任何一次性 UAC 探针。

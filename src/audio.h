@@ -10,6 +10,7 @@
 #include "utility.h"
 
 #include <bitset>
+namespace spatial_transport { struct ReplayManifest; }
 
 namespace audio {
   // Audio codec values negotiated via the "x-ml-audio.codec" RTSP attribute.
@@ -20,7 +21,10 @@ namespace audio {
     CODEC_AC3 = 1,
     CODEC_EAC3 = 2,
     CODEC_PCM_S16 = 3,  ///< Raw signed 16-bit interleaved LPCM (no compression)
+    CODEC_MAT_DUMP = 4, ///< Explicit RTSP mat-dump-v1; never decoded/rendered
+    CODEC_MAT_IEC61937 = 5, ///< Explicit finite MAT IEC replay; independent carrier sink
   };
+  inline bool is_mat_codec(int codec) { return codec == CODEC_MAT_DUMP || codec == CODEC_MAT_IEC61937; }
 
   enum stream_config_e : int {
     STEREO,  ///< Stereo
@@ -53,6 +57,7 @@ namespace audio {
   extern opus_stream_config_t stream_configs[MAX_STREAM_CONFIG];
 
   struct config_t {
+    std::shared_ptr<const spatial_transport::ReplayManifest> mat_dump;
     enum flags_e : int {
       HIGH_QUALITY,  ///< High quality audio
       HOST_AUDIO,  ///< Host audio

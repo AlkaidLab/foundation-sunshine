@@ -1,0 +1,169 @@
+真实游戏录制 -> MAT输入桥接离线回放 / 2026-10-20
+================================================
+
+后续C++移植已完成录制回归，见CPP-BRIDGE-RESULT.txt。
+最终cpp-bridge-build05/replay02/proof02复用现有FFmpeg+Boost；下文保留Python原轮次证据。
+
+本轮结论
+--------
+无需游戏、无需UAC，已经把既有《仁王3》原始采集记录接入一个可验证的离线桥接原型：
+读取分卷 -> 重放坐标/音量增量缓存 -> 稳定对象身份 -> F32增益归一 -> 480帧对象输入 -> 有界队列。
+不是重新生成两个固定对象的音频，也不是只读旧input.npz；直接从完整disk-v2记录重建。
+
+最终 bridge-replay03/ 和 bridge-proof01/ 通过：
+  - 全部73186条记录、35129280个对象样本均有明确归类；原始36个分卷未修改。
+  - 1978轮480帧，音频时钟19.78秒，跨35次分卷切换；坐标/音量缓存与采集时快照一致。
+  - 8个恢复坐标的动态对象输出2354400样本；未知坐标期间的34655条记录全部是零PCM，
+    明确延后建立对象，不伪造原点。17路静态床的16140480样本单独完整保留。
+  - 处理后的PCM、XYZ、源对象映射/通知，与另一遍直接使用原采集快照的golden逐字节一致。
+  - 最后6秒按原始QPC到达节奏做600轮有界队列回放，无溢出/10ms截止超时，输出与不限速回放一致。
+
+没有调用audiodg或任何Dolby组件，没有开游戏或新增DLL驻留；没有产生MAT码流。
+输出是自定义“待编码输入”诊断文件，不是Dolby MAT、IEC61937、WAV或可直接播放的媒体。
+还不能报告真实游戏全链路MAT编码通过，尤其不能丢掉静态床后声称完整游戏音频已完成。
+
+输入证据与时间轴
+----------------
+源目录：spatial-object-spike/resident/stateful-rotation01/
+采集时elapsed_seconds=20.125；实际音频对象时间轴1978x480/48000=19.78秒。
+源session诊断ID（36个文件清单的SHA256）：
+9150be3eb09bb79a06d49f2df6667e2b2bfcbeba02472fcbf7420f7ec55dcf23
+每个源文件的大小/SHA256见bridge-replay03/summary.json；回放后重新核对全部未变。
+此session hash只用于离线身份范围，不能要求未来实时采集预先知道整场录制哈希；
+实时版本应在attach时生成新的会话ID。
+
+该采集是mid-attach，真实source create=0、source end=0、loss epoch变化=0；
+不能拿本轮真录制宣称又测到了实际游戏创建/销毁。相关分支另有合成单元测试。
+20个动态对象最初都未知坐标，8个后来恢复；12个一直未知的对象在此录制中全静音。
+
+重要发现：不能依赖回调列表位置
+----------------------------
+第一次严格回放在轮376（名义3.76秒）停止：37个对象集合没变，但回调顺序变了。
+总计1362轮的排列不同于最初一轮，不等于发生1362次排序变化。
+若把数组下标当对象身份，接入真实游戏后会错绑PCM/坐标，这是合成固定列表没有覆盖的风险。
+
+现已改成：
+  source slot按(host,objectId,type)稳定分配，不随当轮排列变动。
+  编码身份按(session,host,objectId,type,lossEpoch,generation)隔离。
+  Native ID在本会话单调分配；新代次结束旧ID，不复用旧Native ID，避免残留缓存串入。
+  原始顺序保留用于到达QPC/审计，不重写源文件。
+  坐标只在flags&4时取rawXYZ更新；flags&2等增量沿用缓存，unknown保持None/NaN。
+  只有真正source create且未显式给位置时，才采用协议定义的默认原点。
+
+重要限制：旧采集缺少可信的音频更新轮次字段
+----------------------------------------
+disk-v2只有回调到达QPC/序号，没有原生render quantum ID、sample frame start或对象内偏移。
+本录制每一轮刚好完整覆盖相同37个key，各480帧；严格检查集合完整、每key恰好一次，
+允许轮内顺序变化。第一轮到最后一轮全都满足；残缺/重复/非480帧输入会拒绝。
+这属于“此录制专用的已核对重建条件”，不是通用实时轮次检测算法。
+
+源一轮内部QPC跨度：中位0.0185ms，最大0.1768ms。
+相邻轮开始QPC间隔：中位10.0008ms，最小9.7645ms，最大10.2433ms。
+这些支持本次批次分组，但不是系统提供的呈现时间戳或可泛化的同步保证。
+不能把QPC四舍五入成10ms音频网格，或据QPC抖动补静音、丢样本、重采样。
+真正上线仍应在采集协议中显式提供每次音频更新的序号/起始样本及对象样本偏移。
+
+分流、增益和生命周期策略
+----------------------
+三类对象样本精确守恒：
+  已知动态对象并输出             2354400
+  未知动态对象且静音、明确延后   16634400
+  静态床单独保留                16140480
+  合计                          35129280
+未知坐标且非零PCM的记录数0；若其他输入出现此情形，隔离并报告，绝不静默当原点编码。
+已知动态对象最大处理后PCM幅度0.005672748666256666，未超探针原有[-1,1]输入范围。
+静态床最大幅度0.24014711380004883，保留原type与源slot身份，未混成动态对象。
+
+音频先在F32中乘采集volume，再乘callGain；未来提交native时volume=1/gain=1，避免重复乘。
+重建后的对象输入每块带完整XYZ快照，source的坐标增量在桥接前已经还原。
+原始gain/音量/坐标和PCM仍全部保存在源录制，可追溯，没有改写。
+EOF额外生成一轮8个end通知，标记frame_flags=1且source QPC=-1；这不是游戏发出的end。
+真实source end若有最后一块PCM，先保留该音频，再在下一轮发桥接end，合成测试覆盖了此策略；
+尚未用该桥接输出执行native MAT编码，不能等同于已验证所有native end时序。
+
+480帧组包的边界
+--------------
+ObjectFramer可把113/367/960等片段拼成连续480帧，样本逐点守恒，缓冲最多480样本。
+跨片段的位置变化保留为分段(offset,frames,xyz)，不会用一个新坐标覆盖整个块。
+若同一480帧中有多个不同位置，single_position_ready=false；当前真实输入适配器会拒绝，
+不会猜测native私有ABI的offset用法。尾部不足480帧也拒绝，需要明确补齐/结束策略。
+本轮源全部已经是对齐的480帧，所以组包路径每条产生一个完整块、没有尾部残留。
+非480帧、块内坐标时间变化目前只有合成组包测试，不是已验证任意实时回调格式。
+
+原始节奏有界队列短测
+------------------
+先不限速重建前缀缓存，再回放最后600轮（源轮1378..1977，名义6.0秒）。
+按每轮原始首回调QPC相对于窗口首回调的差值安排到达，不改变PCM样本时钟。
+队列上限8轮（本录制每轮37条，不是native采集ring的8个slot）。
+生产者put_nowait，满队列就显式失败并停止，不悄悄丢包后继续用旧坐标。
+消费者由自己的Python线程执行桥接；没有任何音频线程/游戏线程参与。
+
+结果：
+  完成600轮，生产者溢出0，观察到的最高排队深度1轮，10ms完成截止超时0。
+  worker每轮墙钟：P50=0.4118ms，P99=0.760427ms，最大0.9030ms。
+  目标到达至完成：P50=0.7787ms，P99=1.248128ms，最大1.4525ms。
+  窗口动态输入SHA256：699ca272ee1acdf0d2ba1580064646bab1cbfb5f615020c73975dc8a99793d15
+  与完整不限速回放、golden同窗口字节一致。
+
+这只是Python/磁盘源离线桥接的6秒墙钟结果，不是native采集环形队列、20动态活跃对象、
+真实游戏CPU/GPU负载、MAT编码开销或端到端延迟。不能直接把它与上一轮0.829ms相加当总延迟。
+
+输出文件与独立只读验证
+--------------------
+bridge-replay03/mat-object-input.bin：9653536字节，1979轮（1978源轮+1 EOF轮），
+4913个调用（4905有PCM的对象块+8结束通知），8个bridge create、8个EOF end。
+SHA256 249f8808b170130855e7d5f9f9d7ee857b1ebff03397541b66044badba941c09
+
+bridge-replay03/static-bed-input.bin：65701280字节，1978轮、33626个静态床块。
+SHA256 a3c2c1270979a99b200c41f3a91b3c03212428c4d31e65e80c8b9aeae59bfa76
+床共有17个不同type，具体source slot/host/原ID/type清单见bridge-proof01/proof.json。
+未调用native床混音/提交接口，未把这些数据伪装成已编码音频。
+
+golden另扫原始数据，直接使用采集器已经写下的XYZ/volume快照，绕开本桥接的增量缓存和
+ObjectFramer；增益用F64乘法再逐步回舍到F32核对。最终所有桥接输入字节相同。
+这证明缓存/增益/归类与原录制一致，不是MAT格式的外部认证。
+
+verify_bridge_export.py又以只读方式独立解析两个导出文件，检查文件/帧长度、对象ID活性、
+slot稳定、结束PCM为零、动态XYZ有限、静态无虚构坐标、无尾部垃圾、未结束对象为零，
+并复查源golden哈希和原始paced CSV的600轮/0截止超时。
+bridge-proof01/proof.json passed=true；所有原始/导出文件保持不变。
+
+自定义诊断输入二进制（全部little endian）
+---------------------------------------
+FILE <8sIIIIQ> 32字节：magic(MATBRG1\0或MATBED1\0),version=1,rate=48000,
+  frames_per_quantum=480,frame_record_count,qpc_frequency。
+FRAME <IIIIqq> 32字节：round_index,frames=480,call_count,frame_flags,first_arrival_qpc,last_arrival_qpc。
+CALL <IIII3fI> 32字节：native_id,stable_source_slot,source_type,property_flags,x,y,z,frames=480，
+  随后480个F32 PCM。动态volume/gain已归一到1；静态native_id=0、XYZ为NaN。
+native flags 7=create+volume+position，6=volume+position，8=end。静态flags保留源值，不是动态提交指令。
+这不是之前MATLIF1固定fixture，不能直接传给run-mat-lifecycle.ps1，也不会自动调用encoder。
+
+失败尝试与回归覆盖
+----------------
+bridge-replay01：固定回调顺序假设在轮376被拒绝，部分输出保留；不算通过。
+bridge-replay02：全量导出及golden已通过，但paced清理代码错误地对enumerate调用close，
+在finally报AttributeError，未形成完成报告。修正为关闭原始generator，并新增paced前缀/结束测试。
+最终bridge-replay03完整通过；01/02没有覆盖或删除，以免混淆失败证据。
+03的原始报告未改写；随后更严格的CSV截止与结构复核保存在bridge-proof01。
+
+38项单元测试通过，含顺序重排、跨主机同ID、代次变化、结束后复用、loss epoch清空缓存、
+未知坐标、有声未知隔离、默认原点条件、分卷切换、序号缺口、变长片段/块内坐标、
+尾部残留、EOF标记、真实队列回放与强制背压失败；git diff --check通过。
+
+复现（普通权限；输出目录必须不存在）
+----------------------------------
+C:\Python311\python.exe -B -u replay_resident_bridge.py --source ../resident/stateful-rotation01
+  --output NEW_REPLAY --paced-seconds 6
+C:\Python311\python.exe -B -u verify_bridge_export.py --source ../resident/stateful-rotation01
+  --export EXISTING_REPLAY --output NEW_PROOF
+在mat-spike目录执行，或把脚本/source/output全部换成绝对路径。脚本不自动提权。
+
+接下来仍需处理的主机障碍
+----------------------
+1. 通用实时同步：采集协议缺原生更新轮次/样本起始/对象偏移，不能把本次37-key-set专用重建上线。
+2. 静态床：17路床PCM保住了，但还需验证native床输入接口，完整游戏混音尚未编码。
+3. 最后连接：本轮只到待编码输入；需把接口接入独立MAT worker，做经授权的短测及源对照。
+   可继续回放现有数据，无需立即打开游戏；进程内native测试仍须新的单次UAC许可。
+4. 块内变更/非480回调、未知有声对象、长期背压策略需要进一步实现和native验证。
+5. 仍有私有ABI/版本/安装与授权依赖；本轮没有解决其他无Home Theater能力机器的可用性。
+6. Sunshine/Moonlight MAT传输、安卓本机解码/Atmos点亮仍未验证。

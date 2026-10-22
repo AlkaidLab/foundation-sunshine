@@ -46,6 +46,7 @@ extern "C" {
 #include "stream.h"
 #include "streaming/fec.h"
 #include "sync.h"
+#include "spatial_transport/mat_dump_profile.h"
 #include "video.h"
 
 namespace asio = boost::asio;
@@ -1224,6 +1225,14 @@ namespace rtsp_stream {
     }
 
     // Report supported and required encryption flags
+    if (!session.mat_dump_described) {
+      session.mat_dump_described = true;
+      if (config::audio.stream) {
+        try { session.mat_dump = spatial_transport::inspect_replay(config::audio.mat_dump_replay); }
+        catch (const std::exception &e) { BOOST_LOG(warning) << "MAT dump capability disabled: " << e.what(); }
+      }
+    }
+    if (session.mat_dump) ss << spatial_transport::describe(*session.mat_dump);
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
     ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
@@ -1447,6 +1456,30 @@ namespace rtsp_stream {
     }
   };
 
+  struct mat_dump_response_headers_t {
+    std::string count;
+    OPTION_ITEM codec{}, hash{}, cycles{}, carrier{}, clock{};
+    mat_dump_response_headers_t(const launch_session_t &session) {
+      if ((!session.mat_dump_selected && !session.mat_playback_selected) || !session.mat_dump) return;
+      count = std::to_string(session.mat_dump->profile.cycles);
+      codec.option = const_cast<char *>("X-SS-Audio-Codec");
+      codec.content = const_cast<char *>(session.mat_playback_selected ? MAT_PLAYBACK_NAME : MAT_DUMP_NAME);
+      hash.option = const_cast<char *>("X-SS-Mat-SHA256"); hash.content = const_cast<char *>(session.mat_dump->profile.sha256);
+      cycles.option = const_cast<char *>("X-SS-Mat-Cycles"); cycles.content = count.data();
+      codec.next = &hash; hash.next = &cycles;
+      if (session.mat_playback_selected) {
+        carrier.option=const_cast<char *>("X-SS-Mat-Carrier"); carrier.content=const_cast<char *>(MAT_PLAYBACK_CARRIER);
+        clock.option=const_cast<char *>("X-SS-Mat-Clock"); clock.content=const_cast<char *>(MAT_PLAYBACK_CLOCK);
+        cycles.next=&carrier; carrier.next=&clock;
+      }
+    }
+    void attach(OPTION_ITEM &head) {
+      if (!codec.option) return;
+      auto tail = &head; while (tail->next) tail = tail->next;
+      tail->next = &codec;
+    }
+  };
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
@@ -1469,6 +1502,8 @@ namespace rtsp_stream {
           session.negotiated_dynamic_hdr_format,
           session.negotiated_dynamic_hdr_fallback);
         dynamic_hdr_headers.attach(option);
+        mat_dump_response_headers_t mat_headers(session);
+        mat_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1497,6 +1532,7 @@ namespace rtsp_stream {
           begin = pos;
         }
       }
+      if (begin != std::end(payload)) lines.emplace_back(begin, std::end(payload) - begin);
     }
 
     std::string_view client;
@@ -1509,14 +1545,22 @@ namespace rtsp_stream {
       }
       else if (type == "a=") {
         auto pos = line.find(':');
+        if (pos == std::string_view::npos || pos < 3) {
+          respond(sock, session, &option, 400, "Bad Request", req->sequenceNumber, {});
+          return;
+        }
 
         auto name = line.substr(2, pos - 2);
         auto val = line.substr(pos + 1);
 
-        if (val[val.size() - 1] == ' ') {
+        if (!val.empty() && val.back() == ' ') {
           val = val.substr(0, val.size() - 1);
         }
-        args.emplace(name, val);
+        auto [entry, inserted] = args.emplace(name, val);
+        if (!inserted && (name == "x-ml-audio.codec" || name.starts_with("x-ml-audio.mat-"))) {
+          respond(sock, session, &option, 400, "Bad Request", req->sequenceNumber, {});
+          return;
+        }
       }
     }
 
@@ -1575,7 +1619,42 @@ namespace rtsp_stream {
       // Unknown values fall back to Opus to preserve compatibility.
       {
         const auto &codecStr = args.at("x-ml-audio.codec"sv);
-        if (codecStr == "ac3"sv) {
+        bool has_mat_attributes=false;
+        for (const auto &[key,value] : args) if (key.starts_with("x-ml-audio.mat-")) has_mat_attributes=true;
+        if (codecStr != MAT_DUMP_NAME && codecStr != MAT_PLAYBACK_NAME && has_mat_attributes) {
+          respond(sock, session, &option, 415, "MAT attributes require explicit MAT dump codec", req->sequenceNumber, {});
+          return;
+        }
+        if (codecStr == MAT_DUMP_NAME) {
+          const auto value = [&args](std::string_view k) { auto it = args.find(k); return it == args.end() ? std::string_view{} : it->second; };
+          if (args.contains("x-ml-audio.mat-playback") || args.contains("x-ml-audio.mat-carrier") || args.contains("x-ml-audio.mat-clock") ||
+              !session.setup_audio || !config::audio.stream || !spatial_transport::accept(session.mat_dump.get(),
+              value("x-ml-audio.mat-dump"), value("x-ml-audio.mat-sha256"), value("x-ml-audio.mat-cycles"))) {
+            respond(sock, session, &option, 415, "MAT dump profile unavailable or mismatched", req->sequenceNumber, {});
+            return;
+          }
+          config.audio.codec = audio::CODEC_MAT_DUMP;
+          config.audio.mat_dump = session.mat_dump;
+          config.audio.packetDuration = 1; // Synthetic FEC transport tick, NOT media time.
+        }
+        else if (codecStr == MAT_PLAYBACK_NAME) {
+          const auto value = [&args](std::string_view k) { auto it=args.find(k); return it==args.end()?std::string_view{}:it->second; };
+          if (args.contains("x-ml-audio.mat-dump") || !session.setup_audio || !config::audio.stream ||
+              !spatial_transport::accept_playback(session.mat_dump.get(),value("x-ml-audio.mat-playback"),
+                  value("x-ml-audio.mat-sha256"),value("x-ml-audio.mat-cycles"),
+                  value("x-ml-audio.mat-carrier"),value("x-ml-audio.mat-clock"))) {
+            respond(sock,session,&option,415,"MAT IEC playback profile unavailable or mismatched",req->sequenceNumber,{});
+            return;
+          }
+          config.audio.codec=audio::CODEC_MAT_IEC61937;
+          config.audio.mat_dump=session.mat_dump;
+          config.audio.packetDuration=1;
+        }
+        else if (codecStr.starts_with("mat-")) {
+          respond(sock, session, &option, 415, "Unsupported MAT dump version", req->sequenceNumber, {});
+          return;
+        }
+        else if (codecStr == "ac3"sv) {
           config.audio.codec = audio::CODEC_AC3;
         }
         else if (codecStr == "eac3"sv) {
@@ -2047,11 +2126,20 @@ namespace rtsp_stream {
 
     session.stream_announce_payload = std::move(announce_payload);
     session.stream_session_started = true;
+    session.mat_dump_selected = config.audio.codec == audio::CODEC_MAT_DUMP;
+    session.mat_playback_selected = config.audio.codec == audio::CODEC_MAT_IEC61937;
+    if (session.mat_dump_selected || session.mat_playback_selected) {
+      BOOST_LOG(info) << "MAT negotiated: codec=" << (session.mat_playback_selected ? MAT_PLAYBACK_NAME : MAT_DUMP_NAME)
+                      << ", cycles=" << session.mat_dump->profile.cycles
+                      << ", sha256=" << session.mat_dump->profile.sha256;
+    }
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,
       session.negotiated_dynamic_hdr_fallback);
     dynamic_hdr_headers.attach(option);
+    mat_dump_response_headers_t mat_headers(session);
+    mat_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

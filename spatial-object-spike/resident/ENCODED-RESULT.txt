@@ -1,0 +1,55 @@
+POST-ENCODER CANDIDATE CHECK / 2026-10-18
+=======================================
+User's final target: Android ON-DEVICE Dolby Atmos decoding/rendering, not HDMI.
+Objects/XYZ alone and ordinary FFmpeg EAC3 encoding do not fulfill that target.
+
+Offline audioeng.dll disassembly identifies
+  AsarEncoderWrapper<IAsarEncoder2>::Process RVA0x31e00
+  HRESULT(this,inputFrames,capacity,BYTE*output,UINT32*produced).
+Wrapper strips inputFrames and forwards the remaining arguments to encoder vt[7].
+The independent encoded_tap.cpp hooks ONLY this wrapper, after original processing.
+Version/image/prologue guards, bounded128x65536-byte queue, external disk writer,
+collector handle/heartbeat watchdog, active-callback drain and original-byte
+restoration are retained. No live debugger, audio-thread breakpoints, protection
+bypass, game injection, virtual driver or security-policy change.
+
+Game was already closed. Therefore this check used the existing controlled native
+spatial_probe emitter:2 dynamic objects x5 seconds,500 blocks,240000 frames/object,
+48 kHz, variant0, sourcePID36444 exit0. NOT an actual-game bitstream validation.
+Default physical F32D80U endpoint and Dolby settings were preserved.
+
+encoded01:10.078 seconds total window;506 encoder callbacks, each input480 frames,
+each produces30720 bytes (including brief engine startup/tail),15544320 bytes total.
+Zero drops, invalid reads or encoder failures. All sequence numbers accounted for.
+Output contains253 little-endian IEC61937 preambles, exactly61440 bytes apart,
+all Pc low5 bits=0x16 (MAT/TrueHD-family data type), no EAC3-type0x15 bursts.
+Sample Pd values60620 and61424; byte-swapped payload starts079e0008..., NOT the
+ordinary TrueHD-in-MAT start sequence. This is consistent with a MAT-family stream
+on the configured Dolby route, but burst framing alone is NOT a full Atmos metadata
+decoder, proof of true source-object coverage, or Android local-decode compatibility.
+Payload SHA25638578e66d5853e8cf4ddb756f46a92a236e79e496a88a6cd28a3ff33bfd00094.
+
+status2/error0/exit0, original wrapper bytes restored inside/outside the DLL.
+No encoder probe/collector/emitter remains active. Dormant DLL stays pinned until
+audiodg naturally exits. No setting/driver changes. Existing object collector's
+default runtime and deployment were not replaced by this independent probe.
+
+Artifacts encoded01/:encoder-output.bin (64-byte header + exact produced bytes),
+encoder-payload.raw (concatenated carrier),summary.json,encoded-inspection.json,
+endpoint audits; source log is encoded01-source.log.
+encoded_selftest.exe PASS: exact bounded copy, zero output, malformed lengths/
+pointer rejection, full queue drop. This is a diagnostic tool, NOT yet a realtime
+Sunshine integration or reusable MAT-to-JOC transcoder. Probe is limited to30 sec.
+
+Client repository cloned for inspection, not modified or pushed:
+../moonlight-vplus commit9eb8f08b1b1d7f4ffd42d3bdbb5f784671043fa4.
+Current host audio RTP per-packet bound is3904 bytes; client JNI buffer16384 bytes.
+30720-byte/10ms carrier callbacks cannot simply be pushed through that existing
+AC3/EAC3 path. Nor can MAT bytes be relabeled EAC3-JOC. Need the chosen actual
+codec, appropriate framing/transport and system decoder/rendering integration.
+
+For Android local decoding, first choose/validate a true JOC/AC4 encoding source
+and device-integrated decoder; see ../android-capability-probe/README.txt.
+No target phone is currently ADB-connected. Capability enumeration does not prove
+successful decode or an Atmos indicator. Complete end-to-end implementation remains
+OPEN; do not conflate the successful object/encoder capture with completion.
