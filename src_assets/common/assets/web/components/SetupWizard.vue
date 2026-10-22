@@ -537,27 +537,6 @@ export default {
   setup() {
     return { FEATURED_RESOURCES, ...useVddStatus() }
   },
-  computed: {
-    isWindowsHost() {
-      return this.serverPlatform === 'windows'
-    },
-    vddPrerequisiteTitle() {
-      if (this.isWindowsHost) {
-        return this.$t('setup.vdd_driver_required')
-      }
-      // Linux/macOS use Sunshine's native virtual display backend (no ZakoVDD)
-      return this.$t('setup.vdd_backend_required_linux')
-    },
-    virtualDisplayDesc() {
-      return this.isWindowsHost ? this.$t('setup.virtual_display_desc') : this.$t('setup.virtual_display_desc_linux')
-    },
-    vddPrerequisiteHint() {
-      if (this.isWindowsHost) {
-        return this.canManageVdd ? this.$t('setup.vdd_driver_desktop_hint') : this.$t('setup.vdd_driver_browser_hint')
-      }
-      return this.$t('setup.vdd_backend_hint_linux')
-    },
-  },
   mounted() {
     // 服务器平台决定虚拟显示器前置条件的文案（Windows: ZakoVDD；Linux: 原生后端）
     apiJson('/api/config').then((data) => {
@@ -594,6 +573,25 @@ export default {
     this.clearCompletionNoticeTimer()
   },
   computed: {
+    isWindowsHost() {
+      return this.serverPlatform === 'windows'
+    },
+    vddPrerequisiteTitle() {
+      if (this.isWindowsHost) {
+        return this.$t('setup.vdd_driver_required')
+      }
+      // Linux/macOS use Sunshine's native virtual display backend (no ZakoVDD)
+      return this.$t('setup.vdd_backend_required_linux')
+    },
+    virtualDisplayDesc() {
+      return this.isWindowsHost ? this.$t('setup.virtual_display_desc') : this.$t('setup.virtual_display_desc_linux')
+    },
+    vddPrerequisiteHint() {
+      if (this.isWindowsHost) {
+        return this.canManageVdd ? this.$t('setup.vdd_driver_desktop_hint') : this.$t('setup.vdd_driver_browser_hint')
+      }
+      return this.$t('setup.vdd_backend_hint_linux')
+    },
     visibleCompletionNotices() {
       return COMPLETION_NOTICES.filter((notice) =>
         this.visibleCompletionNoticeIds.includes(notice.id)
