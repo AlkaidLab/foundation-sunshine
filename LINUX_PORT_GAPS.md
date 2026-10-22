@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 79，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 80，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
@@ -17,14 +17,13 @@
 非 KDE 桌面走合成器）、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**3 项部分实现**（§一）、**5 项可行未做**（§二，其中 §2.7/§2.8/§2.9/§2.10 残余/§2.11）、
+剩余：**2 项部分实现**（§一：§1.5 帧管线契约、§1.7 音频位深）、**5 项可行未做**（§二，其中 §2.7/§2.8/§2.9/§2.10 残余/§2.11）、
 **1 项等上游定义协议**（§2.1b）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.3 剪贴板图片 + 非 KDE
 桌面 provider、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
-拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端 + X11（RandR）显示后端、§7.1 管线帧率的"源更新"段；
-  §1.1 的**阶段一**（客户端身份写入虚拟屏 EDID，两平台同源派生）也已落地，但该条仍是部分实现，
-  阶段二（并行多实例）留在 §一。）
+拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端 + X11（RandR）显示后端、§7.1 管线帧率的"源更新"段、
+§1.1 虚拟显示器 per-client 隔离（阶段一客户端身份进 EDID + 阶段二并行多实例）。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -32,25 +31,37 @@
 
 ## 一、🔶 部分实现（有已知偏差）
 
-### 1.1 虚拟显示器 per-client 隔离（🔶 阶段一已完成，阶段二待做）
+### 1.1 ✅ 虚拟显示器 per-client 隔离（2026-10-22 完成，阶段一 + 阶段二）
 
-- **现状（阶段一，2026-10-22 落地）**：客户端身份已进入虚拟屏本身。`src/vdd_client_identity.{h,cpp}`
-  是共享的规范实现（RFC 4122 v5 / SHA-1 / nil 命名空间），Windows 交给 ZakoVDD 的 GUID 与 Linux
-  写进 EDID 序号的 32 位串号**同源派生**，所以两个平台对"这是哪个客户端的虚拟屏"判断一致；
-  有客户端标识时 `src/platform/linux/vdd_edid.cpp` 用该串号替换旧的"按分辨率/刷新率派生"序号，
-  采纳（adopt）时读回并记录。产品名仍是 `ZAKO_NAME`，客户端身份不外泄到用户可见命名。
-- **仍存的差距（阶段二）**：仍只有**一个**虚拟屏实例——`src/display_device/vdd_utils.cpp` 的
-  `active` / `active_connector` / `active_edid_opts` 是单实例状态，`create_vdd_monitor()` 在已有活动
-  虚拟屏时直接返回；清理逻辑还会把"不是当前活动连接器"的残留虚拟屏扫掉。因此第二个客户端接入时
-  仍是**销毁重建**（`src/display_device/session.cpp` 的 `rebuild_old_vdd_id` 链路）。
-- **阶段二路径**：把单实例状态换成 `连接器 ↔ 客户端串号` 的实例表（客户端复用自己那台；需要新屏时
-  再占一个空闲连接器；无空闲连接器则退回当前行为），清理与 `live_virtual_display_connector()` 等
-  单命名 API 按客户端参数化。上限受空闲连接器数量约束（本机只有 `DP-1` 与 `HDMI-A-1` 两个断开态
-  连接器可占，`eDP-1` 是真实内屏不能占用）。
-- **工作量**：阶段一已完成（低-中）；阶段二高。
-- **验收**：阶段一已达成——同一标识符恒定得到同一 GUID 与串号（单测对照 RFC 4122 v5 参考值），
-  不同标识符串号不同且非零，无标识符时保持历史序号（既有单客户端配置不会被视为新显示器）。
-  阶段二验收：两客户端同时各串各的虚拟屏互不干扰。
+- **阶段一（客户端身份进虚拟屏）**：`src/vdd_client_identity.{h,cpp}` 是共享的规范实现
+  （RFC 4122 v5 / SHA-1 / nil 命名空间），Windows 交给 ZakoVDD 的 GUID 与 Linux 写进 EDID 序号的
+  32 位串号**同源派生**，所以两个平台对"这是哪个客户端的虚拟屏"判断一致；产品名仍是 `ZAKO_NAME`，
+  客户端身份不外泄到用户可见命名。
+- **阶段二（并行多实例，2026-10-22 落地）**：后端状态从单实例改成实例表。
+  - `src/platform/linux/vdd_instances.{h,cpp}` 只装**纯规则**（无 DRM、可单测）：
+    `find()`（按 EDID 串号定位请求所属记录；无身份的调用方退回"选中记录"，即历史单槽行为）、
+    `live_count()`、`used_connectors()`、`pick_connector(candidates, unavailable)`。
+  - `src/display_device/vdd_utils.cpp` 保留共享的 `active_*` 会话字段，但新增
+    `std::vector<instance_t> instances` + `selected_instance`，并以
+    `store_current_locked()` / `load_instance_locked()` 在"请求态"与"某台虚拟屏的态"之间搬运；
+    `adopt_orphan_vdd_locked()` 现在会把**所有**活的虚拟连接器都收养进表（原来至多一台）。
+  - `create_vdd_monitor(identifier, …)`：先 `store_current_locked()` → 该客户端**自己**的活屏直接
+    复用（连 EDID 个性化与合成器布局都不动）→ 否则选一个空闲连接器（排除表中已占用的连接器，
+    以及独占会话关掉的物理输出——它们在 sysfs 里也只是 "disconnected"，无从分辨）→ 只清理
+    **无主**的残留虚拟屏 → 建新记录并选中。
+  - `destroy_vdd_monitor(identifier)` / `destroy_vdd_monitor_nolog(identifier)`：只拆自己那台；
+    "物理屏复位 + 主屏交还"只在**最后一台**虚拟屏消失时执行，仍有客户端在串流时不会把物理屏
+    重新点亮。`src/display_device/session.cpp` 的 `session_t::destroy_vdd_monitor()` 把
+    `current_vdd_client_id` 传下去，重建/恢复路径统一用同一个 `vdd_identifier`
+    （`vdd_reuse` 时是 `shared_vdd`，否则是客户端标识符），因此不会再误拆另一台。
+- **平台中立性**：`destroy_vdd_monitor*` 新增的 `std::string_view` 参数在 Windows 半边显式
+  `(void)` 忽略（Windows 由驱动按客户端 GUID 管理虚拟屏，本来就有真正的隔离），Windows 行为逐字不变。
+- **上限**：受空闲连接器数量约束（本机断开态连接器只有 `DP-1` 与 `HDMI-A-1`，`eDP-1` 是真实内屏
+  不能占；独占会话还会把物理输出排除掉，此时实际只剩一两个可占）。
+- **验收**：`tests/unit/test_vdd_instances.cpp` 9 例全绿——同一标识符定位到自己的记录、收养来的屏
+  靠串号也能认领、陌生客户端**不会**继承别人的屏（回归就是这个）、无身份调用保持单槽行为、
+  空闲连接器按序分配、独占关掉的物理输出被跳过、两客户端最终落在不同连接器上。
+  合并后全量 `test_sunshine` 805 例 / 791 通过 / 12 跳过 / 2 项环境依赖失败（§7.2/§7.3），无新增失败。
 
 ### 1.2 ✅ HDR 亮度分析精度（2026-10-22 完成，走 CPU 而非 GPU）
 

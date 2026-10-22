@@ -1,6 +1,6 @@
 # Foundation Sunshine Linux（Arch Linux）迁移报告
 
-- **基线**：`linux-migration` 分支（pkgrel 66，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 80，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点 `ed415026`，tag `v0.9.3-linux-upstream-sync` 指向 `0e2a6a11`）
 - **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支）
 - **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland 与 niri 双目标，PipeWire，
@@ -592,8 +592,45 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   `{fed83b8c-4d8b-5380-93f9-2613daf4e420}`），因此这条断言同时钉住"两平台同源"；串号等于 GUID
   前 32 位、恒非零、随标识符而变、无标识符时回落到历史序号；两个客户端的 EDID 只有 seq 字段不同，
   产品名一致。
-- **仍缺（阶段二）**：并行多实例——`vdd_utils.cpp` 的 `active*` 仍是单实例状态，第二客户端接入
-  仍走销毁重建；详见 `LINUX_PORT_GAPS.md` §1.1。
+
+### 6.23 并行多实例虚拟屏（§1.1 阶段二）
+
+- **问题**：阶段一让虚拟屏"知道"自己属于谁，但后端只有**一台**——`vdd_utils.cpp` 的
+  `active` / `active_connector` / `active_edid_opts` 是单实例状态，`create_vdd_monitor()` 在已有活屏时
+  直接返回，清理逻辑还会把"非当前活动连接器"的残留虚拟屏一并扫掉。于是第二个客户端接入
+  （`session.cpp` 的 `rebuild_old_vdd_id` 链路）必然**销毁重建**，第一个客户端正在看的屏就没了；
+  Windows 由驱动按 GUID 建多台，没有这个问题。
+- **实现**：把单实例状态换成实例表，规则与状态分离。
+  - `src/platform/linux/vdd_instances.{h,cpp}`（加入 `cmake/compile_definitions/linux.cmake` 的
+    `PLATFORM_TARGET_FILES`）只装**纯规则**，不碰 DRM，因此可脱离硬件单测：
+    `find(records, identifier, selected)` 按 EDID 串号在表里定位请求所属记录（从未记录的串号可
+    认领收养来的屏；无身份的调用方退回"选中记录"，即历史单槽行为，且不会因编号过期而误中）、
+    `live_count()`、`used_connectors()`、`pick_connector(candidates, unavailable)`。
+  - `vdd_utils.cpp`（Linux 半边）保留共享的 `active_*` 会话字段，另加
+    `std::vector<instance_t> instances` + `selected_instance`，用
+    `store_current_locked()` / `load_instance_locked()` / `clear_view_locked()` /
+    `erase_instance_locked()` 在"请求态"与"某台虚拟屏的态"之间搬运；
+    `adopt_orphan_vdd_locked()` 改为把**所有**活的虚拟连接器收养进表（原来至多一台）。
+  - `create_vdd_monitor(identifier, …)`：`store_current_locked()` → 该客户端**自己**的活屏直接复用
+    （EDID 个性化与合成器布局都不动）→ 否则选空闲连接器，候选里排除表中已占用的连接器，以及独占
+    会话关掉的物理输出（它们在 sysfs 里同样只显示 "disconnected"，无从分辨）→ 只清理**无主**的
+    残留虚拟屏 → 建新记录并选中。选的连接器按现有偏好顺序（DP > HDMI-A > HDMI > eDP > VGA）。
+  - `destroy_vdd_monitor(identifier)` / `destroy_vdd_monitor_nolog(identifier)`：只拆自己那台；
+    "物理屏复位 + 主屏交还物理屏"只在**最后一台**虚拟屏消失时执行，仍有客户端在串流时不会把
+    用户的物理屏重新点亮。`session_t::destroy_vdd_monitor()` 传 `current_vdd_client_id`，
+    重建 / 恢复路径（`prepare_vdd()`）统一用同一个 `vdd_identifier`（`vdd_reuse` 时为 `shared_vdd`，
+    否则为客户端标识符），因此不会再误拆另一台。
+- **平台中立性**：`destroy_vdd_monitor*` 新增的 `std::string_view` 参数在 Windows 半边显式
+  `(void)` 忽略——Windows 的隔离由驱动按客户端 GUID 完成，行为逐字不变；声明与默认实参在共享头
+  `src/display_device/vdd_utils.h`，调用方不传即保持旧行为。
+- **验证**：`tests/unit/test_vdd_instances.cpp` 9 例（同一标识符认领自己的记录；收养来的屏靠串号
+  也能认领；**陌生客户端不会继承别人的屏**——这正是回归；无身份调用保持单槽行为；空闲连接器按序
+  分配；独占关掉的物理输出被跳过；两客户端最终落在不同连接器上、表内各自可见）。
+  合并后全量 `test_sunshine` 805 例 / 791 通过 / 12 跳过 / 2 项环境依赖失败，无新增失败。
+- **本机未能验证**：真正的"两客户端同时串流"需要第二个客户端与至少两个空闲连接器；本机断开态
+  连接器只有 `DP-1` 与 `HDMI-A-1`（`eDP-1` 是真实内屏，不能占），独占会话还会排除物理输出，
+  因此多实例的端到端形态只做到规则层单测 + 单客户端回归。上限本身也受空闲连接器数量约束：
+  没有空闲连接器时退回原有行为（返回失败并记录日志），不会去抢别人的屏。
 
 ## 七、功能可用性矩阵
 
@@ -631,7 +668,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 非 niri 的 wlroots 显示后端 | niri 走 IPC（§6.16）、GNOME 走 Mutter D-Bus（§6.18）、裸 X11 走 RandR（§6.21）；只剩 sway/Hyprland 等 wlroots 合成器仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
 | display_device 复制拓扑 | 两个平台都可用：Mutter 写成同一个 logical monitor（§6.18），KScreen 用 `output.<name>.mirror.<source>`（§6.19）；回读统一经 `replication_source` 聚合（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
-| 虚拟显示器 per-client 隔离 | 客户端切换时销毁重建 VDD，单虚拟屏共享；Windows 是多实例 + 每客户端独立 GUID |
+| 虚拟显示器 per-client 隔离 | ✅ 已完成（§6.22 + §6.23）：客户端身份进 EDID 串号，后端为实例表，客户端切换不再销毁重建；上限受空闲连接器数量约束 |
 
 ### ❌ Windows 专属 / 不可移植
 
@@ -670,7 +707,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 796 用例，782 通过，12 跳过，2 失败
+test_sunshine: 805 用例，791 通过，12 跳过，2 失败
 ```
 
 两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：
