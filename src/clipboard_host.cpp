@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -84,7 +85,10 @@ namespace clipboard_host {
 #ifdef SUNSHINE_BUILD_WAYLAND
     /// Compositor half (desktop <-> clients): always images, and text too when
     /// klipper is absent. Null when the session has no data-control protocol.
-    std::unique_ptr<platf::clipboard_data::watcher_t> data_watcher;
+    /// Guarded by watcher_mu: the enet control thread, the RTSP thread and the
+    /// shutdown path all reach it.
+    std::shared_ptr<platf::clipboard_data::watcher_t> data_watcher;
+    std::mutex watcher_mu;
     /// True when this desktop has no klipper, so text must go through the
     /// compositor as well (niri, sway, Hyprland, plain weston).
     std::atomic<bool> ext_text { false };
@@ -134,6 +138,37 @@ namespace clipboard_host {
       }
       write_cv.notify_one();
     }
+
+    /**
+     * @brief Wait out the klipper retry interval, or wake early on shutdown.
+     * @details A plain sleep would not be interruptible: `stop()` only notifies
+     *          the condition variable, and the shutdown watchdog in main.cpp
+     *          allows ten seconds in total before it skips restoring the
+     *          display state. Waiting on the same variable keeps the retry
+     *          cadence while letting shutdown finish immediately.
+     */
+    void
+    wait_retry() {
+      std::unique_lock<std::mutex> lk { write_mu };
+      write_cv.wait_for(lk, kKlipperRetryInterval, [] {
+        return !running.load(std::memory_order_acquire);
+      });
+    }
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+    /**
+     * @brief Copy the current compositor provider handle.
+     * @details Holding the shared_ptr keeps the watcher alive for the duration
+     *          of one call even if `stop()` concurrently drops the owner; the
+     *          raw unique_ptr it used to be was read and reset from three
+     *          threads without synchronisation.
+     */
+    std::shared_ptr<platf::clipboard_data::watcher_t>
+    watcher_snapshot() {
+      std::lock_guard<std::mutex> lk { watcher_mu };
+      return data_watcher;
+    }
+#endif
 
     /**
      * @brief Open a dedicated user-session bus. Each thread that talks to
@@ -321,7 +356,8 @@ namespace clipboard_host {
       if (png.empty()) {
         return;
       }
-      if (!data_watcher) {
+      const auto watcher = watcher_snapshot();
+      if (!watcher) {
         BOOST_LOG(debug) << "Inbound clipboard image ignored: no image provider on this session"sv;
         return;
       }
@@ -335,9 +371,18 @@ namespace clipboard_host {
         last_image = fingerprint(png);
       }
 
-      if (!data_watcher->set_image(png)) {
+      if (!watcher->set_image(png)) {
         BOOST_LOG(warning) << "Inbound clipboard image could not be queued for the desktop"sv;
       }
+    }
+#else
+    /**
+     * @brief Clients -> desktop, image half; nothing to publish without
+     *        Wayland (the desktop clipboard has no compositor provider here).
+     */
+    void
+    apply_inbound_image(const payload_t &) {
+      BOOST_LOG(debug) << "Inbound clipboard image ignored: built without Wayland support"sv;
     }
 #endif
 
@@ -362,6 +407,7 @@ namespace clipboard_host {
         echo_ring.record(clipboard_bridge::kKindText, bytes);
       }
 
+#ifdef SUNSHINE_BUILD_WAYLAND
       if (ext_text.load(std::memory_order_acquire)) {
         // No klipper here: publish through the compositor and remember the
         // value, so the selection event our own write produces is dropped both
@@ -370,13 +416,15 @@ namespace clipboard_host {
           std::lock_guard<std::mutex> lk { text_mu };
           last_text = text;
         }
-        if (!data_watcher) {
+        const auto watcher = watcher_snapshot();
+        if (!watcher) {
           BOOST_LOG(debug) << "Inbound clipboard text ignored: no data-control provider"sv;
           return;
         }
-        data_watcher->set_text(text);
+        watcher->set_text(text);
         return;
       }
+#endif
 
       // Recorded before the write (as before) so the echo of our own change is
       // suppressed even though the poll thread applies it slightly later.
@@ -431,6 +479,10 @@ namespace clipboard_host {
       if (!config::input.clipboard_sync) {
         return;
       }
+      if (!running.load(std::memory_order_acquire)) {
+        // Shutdown already started; the provider may be gone.
+        return;
+      }
 
       const auto header = clipboard_wire::parse_header(bytes);
       if (!header) {
@@ -470,6 +522,7 @@ namespace clipboard_host {
       auto last_read = std::chrono::steady_clock::now() - kPollInterval;  // read immediately
 
       while (running.load(std::memory_order_acquire)) {
+#ifdef SUNSHINE_BUILD_WAYLAND
         if (ext_text.load(std::memory_order_acquire)) {
           // The compositor carries text now; this thread has nothing to read.
           // It still stamps liveness, which is what gates the wire capability.
@@ -487,6 +540,7 @@ namespace clipboard_host {
           });
           continue;
         }
+#endif
 
         if (!klipper_available) {
           bus = open_bus();
@@ -497,7 +551,7 @@ namespace clipboard_host {
               BOOST_LOG(info) << "Host clipboard sync unavailable (no session bus); will keep retrying"sv;
               logged_unavailable = true;
             }
-            std::this_thread::sleep_for(kKlipperRetryInterval);
+            wait_retry();
             continue;
           }
           if (logged_unavailable) {
@@ -505,8 +559,6 @@ namespace clipboard_host {
             logged_unavailable = false;
           }
         }
-
-        clipboard_bridge::bridge_t::instance().notify_gui_alive();
 
         // Ask klipper to tell us when the clipboard changes; the periodic read
         // below stays as a fallback for builds without the signal.
@@ -529,7 +581,7 @@ namespace clipboard_host {
           bus = nullptr;
           klipper_available = false;
           change_signal_subscribed = false;
-          std::this_thread::sleep_for(kKlipperRetryInterval);
+          wait_retry();
           continue;
         }
 
@@ -572,9 +624,16 @@ namespace clipboard_host {
           bus = nullptr;
           klipper_available = false;
           change_signal_subscribed = false;
-          std::this_thread::sleep_for(kKlipperRetryInterval);
+          wait_retry();
           continue;
         }
+
+        // Only stamp liveness once the provider actually answered: a desktop
+        // with a session bus but no klipper and no data-control keeps retrying
+        // every ten seconds, and the agent-side window is thirty seconds, so
+        // stamping before the read would advertise a text clipboard that
+        // nothing can fill.
+        clipboard_bridge::bridge_t::instance().notify_gui_alive();
 
         const auto session_count = clipboard_bridge::bridge_t::instance().session_count();
         if (!had_sessions && session_count > 0) {
@@ -651,13 +710,14 @@ namespace clipboard_host {
       return;
     }
 
-    clipboard_bridge::bridge_t::instance().add_inbound_listener(&on_inbound);
-
 #ifdef SUNSHINE_BUILD_WAYLAND
     if (platf::clipboard_data::available()) {
-      auto watcher = std::make_unique<platf::clipboard_data::watcher_t>();
+      auto watcher = std::make_shared<platf::clipboard_data::watcher_t>();
       if (watcher->start(&on_desktop_image, &on_desktop_text)) {
-        data_watcher = std::move(watcher);
+        {
+          std::lock_guard<std::mutex> lk { watcher_mu };
+          data_watcher = watcher;
+        }
 
         // klipper is the text transport only while the desktop has it. Probe
         // once, before the poll thread starts, so both halves agree.
@@ -679,6 +739,10 @@ namespace clipboard_host {
     }
 #endif
 
+    // Registered last: the enet control thread fires this on inbound frames, so
+    // the provider has to exist (or be known absent) before it can be observed.
+    clipboard_bridge::bridge_t::instance().add_inbound_listener(&on_inbound);
+
     poll_thread = std::thread(poll_loop);
     BOOST_LOG(info) << "Host clipboard provider started"sv;
   }
@@ -697,11 +761,17 @@ namespace clipboard_host {
     }
 
 #ifdef SUNSHINE_BUILD_WAYLAND
-    // After the poll thread: the watcher only publishes, so stopping it last
-    // cannot race a text publish.
-    if (data_watcher) {
-      data_watcher->stop();
+    // After the poll thread: the watcher only publishes towards clients, so
+    // stopping it last cannot race a text publish. Taking ownership out of the
+    // shared slot keeps it alive while it stops.
+    std::shared_ptr<platf::clipboard_data::watcher_t> watcher;
+    {
+      std::lock_guard<std::mutex> lk { watcher_mu };
+      watcher = std::move(data_watcher);
       data_watcher.reset();
+    }
+    if (watcher) {
+      watcher->stop();
     }
 #endif
 
@@ -711,7 +781,7 @@ namespace clipboard_host {
   bool
   image_available() {
 #ifdef SUNSHINE_BUILD_WAYLAND
-    return data_watcher != nullptr;
+    return watcher_snapshot() != nullptr;
 #else
     return false;
 #endif
