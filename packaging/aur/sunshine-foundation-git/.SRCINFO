@@ -1,7 +1,7 @@
 pkgbase = sunshine-foundation-git
 	pkgdesc = Self-hosted game stream host for Moonlight (AlkaidLab/qiin2333 fork, Linux migration branch)
 	pkgver = 0.9.1.r68.g6c2123f8
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/AlkaidLab/foundation-sunshine
 	install = sunshine-foundation-git.install
 	arch = x86_64
@@ -56,7 +56,7 @@ pkgbase = sunshine-foundation-git
 	source = googletest::git+https://github.com/google/googletest.git#commit=d72f9c8aea6817cdf1ca0ac10887f328de7f3da2
 	source = inputtino::git+https://github.com/games-on-whales/inputtino.git#commit=d28ec79eb63324e68d73a7de22bcb5ff0a6f6bf8
 	source = moonlight-audio-haptics::git+https://github.com/AlkaidLab/moonlight-audio-haptics.git#commit=21aae5018e36397d45b3dffff4005c952592ec0b
-	source = moonlight-common-c::git+https://github.com/qiin2333/moonlight-common-c.git#commit=31a2a4589ea926988a08ca508bb317fbfbe2a177
+	source = moonlight-common-c::git+https://github.com/qiin2333/moonlight-common-c.git#commit=ddd52e20252ac2e27b4137b6db24530cf96fdfbb
 	source = nanors::git+https://github.com/sleepybishop/nanors.git#commit=57ee5e921bd5047bca7ad377b181b7c28ea09731
 	source = nvapi::git+https://github.com/NVIDIA/nvapi.git#commit=9296d671e71608d6d6b7749ed93989af4ada8858
 	source = nv-codec-headers-1100::git+https://github.com/FFmpeg/nv-codec-headers.git#commit=18024c477256555badd8d5f1c5dd45b1cbb31cf6
