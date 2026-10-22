@@ -20,6 +20,7 @@
 #include "src/globals.h"
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
+#include "src/platform/linux/mirror_plan.h"
 #include "src/platform/linux/mutter_display.h"
 #include "src/platform/linux/niri_ipc.h"
 
@@ -1462,30 +1463,43 @@ namespace display_device {
       }
     }
 
-    // A mirrored group is reported as the outputs sharing a replication source.
-    // Only Mutter produces them; the command-driven backends leave the field at
-    // zero, so their outputs stay one group each.
-    active_topology_t grouped;
-    for (const auto &group : topology) {
-      const auto it = std::find_if(outputs.begin(), outputs.end(),
+    // A mirrored output names its group source by that output's numeric id, so
+    // the two can be folded back into one group. Mutter and KScreen both report
+    // it that way; niri leaves it zero and keeps one group per output.
+    for (auto &group : topology) {
+      const auto member = std::find_if(outputs.begin(), outputs.end(),
         [&group](const auto &output) { return output.name == group.front(); });
-      if (it != outputs.end() && it->replication_source > 0) {
-        const int source = it->replication_source;
-        const auto existing = std::find_if(grouped.begin(), grouped.end(), [&](const auto &candidate) {
-          const auto member = std::find_if(outputs.begin(), outputs.end(),
-            [&candidate](const auto &output) { return output.name == candidate.front(); });
-          return member != outputs.end() && member->replication_source == source;
-        });
-        if (existing != grouped.end()) {
-          existing->push_back(group.front());
-          continue;
-        }
+      if (member == outputs.end() || member->replication_source <= 0) {
+        continue;
       }
-      grouped.push_back(group);
+
+      const int source_id = member->replication_source;
+      const auto source = std::find_if(topology.begin(), topology.end(), [&](const auto &candidate) {
+        if (&candidate == &group) {
+          return false;
+        }
+        const auto it = std::find_if(outputs.begin(), outputs.end(),
+          [&candidate](const auto &output) { return output.name == candidate.front(); });
+        return it != outputs.end() && it->index == source_id;
+      });
+      if (source == topology.end()) {
+        // The source is off or gone; keep the output as a group of its own.
+        continue;
+      }
+
+      source->insert(source->end(), group.begin(), group.end());
+      group.clear();
     }
 
-    return grouped;
+    topology.erase(std::remove_if(topology.begin(), topology.end(),
+                     [](const auto &group) { return group.empty(); }),
+      topology.end());
+
+    return topology;
   }
+
+  bool
+  compositor_supports_replication();
 
   bool
   is_topology_valid(const active_topology_t &topology) {
@@ -1504,7 +1518,7 @@ namespace display_device {
       // validator rejects the group there exactly like set_topology would --
       // callers must not pass validation only to fail inside the setter with a
       // different message. Windows accepts up to two devices per group.
-      if (group.size() > 1 && !compositor_is_mutter()) {
+      if (group.size() > 1 && !compositor_supports_replication()) {
         return false;
       }
       for (const auto &device_id : group) {
@@ -1522,6 +1536,67 @@ namespace display_device {
     return canonical_topology(topology_a) == canonical_topology(topology_b);
   }
 
+  /**
+   * @brief Whether this session can express a mirrored topology group.
+   * @details Mutter models one as a logical monitor holding several connectors,
+   *          KScreen as `output.<name>.mirror.<source>`. niri has neither verb,
+   *          and the no-compositor fallback has nothing to talk to.
+   */
+  bool
+  compositor_supports_replication() {
+    if (compositor_is_niri()) {
+      return false;
+    }
+    return compositor_is_mutter() || platf::kscreen::session_supports_kscreen();
+  }
+
+  /**
+   * @brief Point KScreen outputs at their group source, or release them again.
+   * @details Only KScreen needs this pass: Mutter expresses mirroring inside the
+   *          logical monitor it is handed. An output that should no longer be
+   *          mirrored has to be released explicitly with `mirror.none` --
+   *          omitting it leaves the stale relation in place.
+   */
+  bool
+  apply_kscreen_mirroring(const active_topology_t &topology) {
+    if (compositor_is_mutter() || !platf::kscreen::session_supports_kscreen()) {
+      return true;
+    }
+
+    const auto current = query_outputs();
+    if (current.empty()) {
+      // Querying already failed and reported why; there is nothing to compare
+      // against, so do not turn one failure into two.
+      return true;
+    }
+
+    std::vector<platf::mirror::output_t> reported;
+    reported.reserve(current.size());
+    for (const auto &output : current) {
+      reported.push_back({ output.name, output.index, output.enabled, output.replication_source });
+    }
+
+    const auto planned = platf::mirror::plan(reported, canonical_topology(topology));
+    if (!planned) {
+      BOOST_LOG(error) << "Cannot apply mirroring: the topology names an output the compositor does not report";
+      return false;
+    }
+    if (planned->empty()) {
+      return true;
+    }
+
+    std::string args;
+    for (const auto &fragment : *planned) {
+      if (!args.empty()) {
+        args += ' ';
+      }
+      args += fragment;
+    }
+
+    BOOST_LOG(info) << "Changing mirroring: " << args;
+    return kscreen_change(args, [&]() { return is_topology_the_same(get_current_topology(), topology); });
+  }
+
   bool
   set_topology(const active_topology_t &new_topology) {
     if (!is_topology_valid(new_topology)) {
@@ -1529,7 +1604,7 @@ namespace display_device {
       return false;
     }
 
-    const bool mirroring_supported = compositor_is_mutter();
+    const bool mirroring_supported = compositor_supports_replication();
     for (const auto &group : new_topology) {
       if (group.size() > 1 && !mirroring_supported) {
         BOOST_LOG(error) << "Duplicated display groups are not supported on this backend: " << to_string(new_topology);
@@ -1654,6 +1729,11 @@ namespace display_device {
       return false;
     }
 
+    // Enabling has to come first: an output can only mirror one that is on.
+    if (!apply_kscreen_mirroring(new_topology)) {
+      return false;
+    }
+
     // A compositor can accept a request it does not fully apply, so let it
     // settle and then verify rather than trusting the exit codes (Windows
     // re-reads and reverts for the same reason). If the compositor stopped
@@ -1664,7 +1744,8 @@ namespace display_device {
     if (!settled && !updated.empty() && !is_topology_the_same(new_topology, updated)) {
       BOOST_LOG(error) << "Failed to change topology: requested " << to_string(new_topology)
                        << " but the compositor reports " << to_string(updated) << "; reverting";
-      apply(current);  // Best effort, we are already failing.
+      apply(current);                 // Best effort, we are already failing.
+      apply_kscreen_mirroring(current);  // Likewise for the mirror relations.
       return false;
     }
 

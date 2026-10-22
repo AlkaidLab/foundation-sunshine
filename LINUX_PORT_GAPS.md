@@ -16,7 +16,7 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
+剩余：**5 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
 §2.10 残余/§2.11）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
@@ -60,17 +60,23 @@
 
 ### 1.4 display_device 复制拓扑 + 非 KDE 桌面
 
-- **现状**（2026-10-22 更新）：三后端已齐 —— kscreen-doctor（KDE Plasma）、niri IPC（§6.16）、
+- **现状**（✅ 2026-10-22 完成）：三后端已齐 —— kscreen-doctor（KDE Plasma）、niri IPC（§6.16）、
   Mutter DisplayConfig（§2.3）。分发顺序 `niri → mutter → kscreen`，都不在时退化为 no-op 并打
   一条 warning（不破坏）。
-  - **复制拓扑**：GNOME/Mutter 上已可用 —— 一个 logical monitor 可含多个 connector，
-    `is_topology_valid`/`set_topology` 在 Mutter 会话下允许并写入多设备组，`get_current_topology`
-    经 `replication_source` 反向聚合回镜像组；同一能力也用于 §6.18 的拓扑还原验证。
-    **KDE 上仍缺**：kscreen-doctor 没有 replication 命令（已实测确认），需要 KWin 脚本或 libkscreen
-    D-Bus 才能补。
-- **若要做**（只剩 KDE 一半）：KWin 脚本加载模式（同 ABR 前台检测）或 libkscreen D-Bus 调
-  `setOutputs`。**工作量**：中。**验收**：KDE 会话下请求镜像拓扑后 `kscreen-doctor -o` 报出同一
-  CRTC 上的两个 connector。
+  - **复制拓扑（两个平台都已支持）**：
+    - Mutter：一个 logical monitor 可含多个 connector，`set_topology` 直接写多设备组（§6.18）。
+    - KScreen：**`kscreen-doctor` 其实有镜像命令** —— `output.<name>.mirror.<other|none>`
+      （`kscreen-doctor --help` 里明写，旧版本文档"没有 replication 命令"的判断是错的，凭
+      `output.<name>.mirror.eDP-1` 即可）。`apply_kscreen_mirroring()` 在使能/禁用之后追加这一步：
+      成员指向组首（`mirror.<source>`），不再需要镜像的输出显式回收（`mirror.none`，否则残留关系
+      不会被清除）；具体要发哪几条由纯函数 `src/platform/linux/mirror_plan.h` 算出。
+    - niri 没有镜像概念，`compositor_supports_replication()` 对它返回 false，多设备组仍被校验层
+      拒绝（早失败、报错信息一致）。
+  - **统一读取**：`get_current_topology()` 用 `compositor_output_t::replication_source`（KScreen 与
+    Mutter 都填"源输出的数字 id"）把镜像成员折叠回一个组，所以三后端的拓扑回读、`is_topology_the_same`
+    校验、`set_topology` 的自动回退都是同一套逻辑。
+- **验收**：`tests/unit/test_mirror_plan.cpp` 8 例覆盖"已镜像/新镜像/回收/改指向/交换方向/禁用输出/
+  未知输出/扩展桌面不变"；端到端（两块显示器上真镜像）需双输出环境。
 
 ### 1.5 帧管线契约（frame_contract）
 

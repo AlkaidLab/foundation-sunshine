@@ -462,6 +462,27 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   `The name is not activatable`。等有 GNOME 会话时可做端到端确认（切分辨率/HDR/主屏 + 镜像拓扑
   + 还原）。
 
+### 6.19 KScreen 镜像拓扑
+
+旧文档断言"kscreen-doctor 没有 replication 命令"，这条是错的：`kscreen-doctor --help` 里就有
+`output.HDMI-2.mirror.eDP-1` / `output.HDMI-2.mirror.none`。于是 §1.4 的 KDE 半边不需要 KWin 脚本，
+也不需要 libkscreen D-Bus。
+
+- **写入**：`set_topology` 在使能/禁用输出之后追加一次 `kscreen_change`，参数由纯函数
+  `src/platform/linux/mirror_plan.h` 的 `platf::mirror::plan()` 算出 —— 它只发差量：
+  成员指向组首（`mirror.<source>`），不再需要镜像的输出显式 `mirror.none`（不清就会留下残留关系），
+  已经正确的组合一条都不发。
+- **能力判定**：`compositor_supports_replication()` 对 Mutter/KScreen 返回 true，对 niri 返回
+  false —— niri 没有镜像概念，多设备组在校验层就被拒绝（早失败，报错信息与 setter 一致）。
+- **回读**：`get_current_topology()` 用 `compositor_output_t::replication_source`（KScreen 与
+  Mutter 都填"源输出的数字 id"）把镜像成员折叠回一个组，因此三后端的拓扑比较、`set_topology`
+  自动回退、`apply_config` 的还原校验共用同一套逻辑。
+- **顺序**：镜像必须在使能之后发（禁用的输出不能当镜像目标）；失败时回退路径同样重放
+  `apply_kscreen_mirroring(current)`，best effort。
+- **测试**：`tests/unit/test_mirror_plan.cpp` 8 例 —— 已镜像不重复发、新镜像、回收、改指向、交换
+  方向（先回收再重指，两条命令的顺序也固定）、禁用输出上的残留关系不碰、未知输出拒绝、扩展桌面
+  不变。没有双显示器环境，所以镜像的端到端效果未实测。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -498,7 +519,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
 | HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
 | 非 niri 的 wlroots / X11 显示后端 | niri 已由 IPC 后端覆盖（§6.16），GNOME 由 Mutter D-Bus 覆盖（§6.18）；sway/Hyprland 等仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
-| display_device 复制拓扑 | Mutter（GNOME）上可用：多设备组会写成同一个 logical monitor，回读经 `replication_source` 聚合（§6.18）；KDE 仍缺 —— kscreen-doctor 无 replication 命令（见 `LINUX_PORT_GAPS.md` §1.4） |
+| display_device 复制拓扑 | 两个平台都可用：Mutter 写成同一个 logical monitor（§6.18），KScreen 用 `output.<name>.mirror.<source>`（§6.19）；回读统一经 `replication_source` 聚合（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
 | HDR 分析精度 | CPU 亮度直方图（亮度域）vs Windows 的 D3D11 逐像素 maxRGB（scRGB）；消费端按近似处理 |
 | 虚拟显示器 per-client 隔离 | 客户端切换时销毁重建 VDD，单虚拟屏共享；Windows 是多实例 + 每客户端独立 GUID |
