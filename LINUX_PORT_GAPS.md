@@ -16,7 +16,7 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**8 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+剩余：**6 项部分实现**（§一）、**7 项可行未做**（§二）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
@@ -122,15 +122,33 @@
   文件选择器（`org.freedesktop.portal.FileChooser`），并把选中路径转成 wire 帧。
 - **验收**：客户端粘贴主机文件 → 得到文件句柄而非提示不支持。
 
-### 2.2 USB/IP 主机（中高）
+### 2.2 USB/IP 主机（✅ 后端已落地，2026-10-22；部署需 root）
 
-- **现状**：`src/remote_usb/remote_usb_host_controller.cpp` 非 Windows 直接返回
-  `usbip_host_backend::unsupported`。
-- **路径**：Linux 是 usbip 的内核原生平台（`usbip-host` 内核模块 + `usbipd` 用户态工具）。把
-  unsupported 后端替换为：枚举可导出的 USB 设备（sysfs busid）→ `usbip bind` → TCP 3240 端口复用
-  现有 reverse tunnel。fork 的协议层（`loopback_usbip_bridge`、`reverse_tunnel_service`）是跨平台源码。
-- **前置**：内核 `usbip_host` 模块（`usbip` 包含用户态工具）。
-- **验收**：客户端挂载主机 U 盘/手柄，读写正常。
+- **现状**：`usbip_host_backend` 增加 `usbip_linux` 方言，`automatic` 在 Linux 解析到它。控制器
+  （`src/remote_usb/remote_usb_host_controller.cpp`）对两种方言共用同一套生命周期/补偿逻辑，只换
+  argv 与端口来源：
+  - attach：`usbip --tcp-port PORT attach -r 127.0.0.1 -b BUSID`（`--tcp-port` 是全局选项，必须在
+    子命令前；没有 win2 的 `--once/--terse`）
+  - detach：`usbip detach -p PORT`
+- **端口来源**：usbip-utils 成功时**不输出任何东西**，所以端口从内核 vhci 的
+  `/sys/devices/platform/vhci_hcd.0/status` 反推：attach 前快照已占用端口，attach 后取差集（探针
+  略滞后，50 ms × 20 次有界轮询）。取差集的窗口用文件级互斥串行化，避免并发 attach 互相认领同一端口。
+  拿不到新端口就报 `attach_failed` 而不是返回一个无法 detach 的绑定。
+- **端口编号**：vhci 端口是 **0 基**（`pdev_nr * VHCI_PORTS + i`），而绑定沿用 win2 的 1 基校验，
+  因此内部存 `port + 1`，detach 时再减一。端口 0 与 15 都有单测覆盖。
+- **可用性判定**：`backend_supported()` 要求 ① `usbip` 可执行文件存在（`usbip` 在 Arch 是独立包
+  `extra/usbip`，属 linux-tools）② vhci 状态文件可读。任一缺失就回到 `unsupported`，reverse tunnel
+  保持关闭而不是在 attach 时才炸。
+- **部署前置（重要）**：vhci 的 `attach`/`detach` sysfs 属性**只有 root 可写**，而本仓打包的 service
+  以用户身份运行（文件能力只含渲染相关）。因此远程 USB 实际启用需要二者之一：
+  ① `sunshine` 以 root 运行（系统级 unit）；② 给 `usbip` 配 sudoers 并把 `usbip_host_controller_config`
+  的 `executable` 指向包装脚本。权限被拒时 detail 会追加
+  `(the vhci attach attribute is writable by root only)`，不会只留一句 helper stderr。
+- **未做**：本仓没有"导出主机设备"的 `usbip bind` 侧——fork 的方向是**客户端设备进主机**（
+  `loopback_usbip_bridge` 作服务端喂 PDU），这条方向与 Windows 完全一致，未改协议。
+- **验证**：单测覆盖 argv 约定、差集端口推导、0 基端口表示、无新端口失败、状态文件缺失降级（23 例
+  `RemoteUsbHostController.*` 全绿）。真机挂载未验证——本机 `usbip` 未安装、`vhci-hcd` 未加载，
+  需要用户 `pacman -S usbip` + `modprobe vhci-hcd` + root 才能做端到端。
 
 ### 2.3 GNOME Mutter 显示后端（中-高）
 

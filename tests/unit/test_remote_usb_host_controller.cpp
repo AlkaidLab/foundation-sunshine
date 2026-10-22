@@ -10,6 +10,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -95,6 +97,35 @@ struct result_harness {
   }
 };
 
+/** A vhci status file the injected runner can rewrite, standing in for the
+ *  kernel claiming a port as a side effect of `usbip attach`. */
+struct vhci_status_fixture {
+  std::filesystem::path path;
+
+  vhci_status_fixture() {
+    static std::atomic<unsigned> counter { 0 };
+    path = std::filesystem::temp_directory_path() /
+           ("sunshine-vhci-status-" + std::to_string(counter.fetch_add(1)));
+    write({});
+  }
+
+  ~vhci_status_fixture() {
+    std::error_code error;
+    std::filesystem::remove(path, error);
+  }
+
+  /** `claimed` ports are reported as imported, the rest as free. */
+  void write(const std::vector<unsigned> &claimed) {
+    std::ofstream status(path, std::ios::trunc);
+    status << "hub port sta spd dev      sockfd local_busid\n";
+    for (unsigned port = 0; port < 8; ++port) {
+      const auto in_use = std::find(claimed.begin(), claimed.end(), port) != claimed.end();
+      status << "hs  " << std::setw(4) << std::setfill('0') << port << ' '
+             << (in_use ? "006 -1" : "004 00000000 000000") << " 0-0\n";
+    }
+  }
+};
+
 remote_usb::usbip_host_request
 make_request(std::string busid = "usbip-test") {
   remote_usb::usbip_host_request request;
@@ -120,6 +151,15 @@ make_config(command_harness &commands) {
   };
   return config;
 }
+
+remote_usb::usbip_host_controller_config
+make_linux_config(command_harness &commands, const vhci_status_fixture &status) {
+  auto config = make_config(commands);
+  config.backend = remote_usb::usbip_host_backend::usbip_linux;
+  config.vhci_status_path = status.path.string();
+  return config;
+}
+
 
 }  // namespace
 
@@ -164,15 +204,144 @@ TEST(RemoteUsbHostController, ExplicitlyUnsupportedBackendDoesNotLaunchHelper) {
   controller.stop();
 }
 
-TEST(RemoteUsbHostController, AutomaticBackendIsNativeOnlyWithoutInjectedRunner) {
+TEST(RemoteUsbHostController, AutomaticBackendResolvesToThePlatformProfile) {
   remote_usb::usbip_host_controller controller;
 #ifdef _WIN32
   EXPECT_EQ(controller.backend(), remote_usb::usbip_host_backend::usbip_win2);
   EXPECT_TRUE(controller.backend_supported());
 #else
-  EXPECT_EQ(controller.backend(), remote_usb::usbip_host_backend::unsupported);
-  EXPECT_FALSE(controller.backend_supported());
+  EXPECT_EQ(controller.backend(), remote_usb::usbip_host_backend::usbip_linux);
+  /* The Linux profile additionally needs the vhci-hcd module and the usbip
+   * helper; a headless image has neither, and this test runs on both.  Only
+   * the implication is asserted so the test stays environment-independent. */
+  if (controller.backend_supported()) {
+    std::ifstream status("/sys/devices/platform/vhci_hcd.0/status");
+    EXPECT_TRUE(status.good());
+  }
 #endif
+  controller.stop();
+}
+
+TEST(RemoteUsbHostController, LinuxProfileUsesUsbipUtilsArgumentContract) {
+  vhci_status_fixture status;
+  status.write({});
+  command_harness commands;
+  result_harness results;
+  /* The kernel claims a vhci port as a side effect of the attach. */
+  commands.behavior = [&status](const std::vector<std::string> &arguments,
+                                const std::shared_ptr<std::atomic_bool> &) {
+    remote_usb::usbip_command_result result;
+    result.exit_code = 0;
+    if (arguments.size() > 2 && arguments.at(2) == "attach") {
+      status.write({ 5 });
+    }
+    return result;
+  };
+  remote_usb::usbip_host_controller controller(make_linux_config(commands, status));
+  EXPECT_EQ(controller.backend(), remote_usb::usbip_host_backend::usbip_linux);
+  EXPECT_TRUE(controller.backend_supported());
+
+  ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  const auto attached = results.result_at(0);
+  ASSERT_TRUE(attached.ok()) << attached.detail;
+  ASSERT_TRUE(attached.binding.has_value());
+  /* vhci port 5 is stored 1-based so both dialects share one representation. */
+  EXPECT_EQ(attached.binding->hub_port, 6U);
+
+  ASSERT_TRUE(commands.wait_calls(1));
+  {
+    std::lock_guard lock(commands.mutex);
+    const std::vector<std::string> expected {
+      "--tcp-port", "41234", "attach", "-r", "127.0.0.1", "-b", "usbip-test"
+    };
+    EXPECT_EQ(commands.calls.front().arguments, expected);
+  }
+
+  ASSERT_NE(controller.detach(*attached.binding, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(2));
+  EXPECT_TRUE(results.result_at(1).ok()) << results.result_at(1).detail;
+  ASSERT_TRUE(commands.wait_calls(2));
+  {
+    std::lock_guard lock(commands.mutex);
+    const std::vector<std::string> expected { "detach", "-p", "5" };
+    EXPECT_EQ(commands.calls.at(1).arguments, expected);
+  }
+  controller.stop();
+}
+
+TEST(RemoteUsbHostController, LinuxProfileRepresentsVhciPortZero) {
+  vhci_status_fixture status;
+  status.write({});
+  command_harness commands;
+  result_harness results;
+  commands.behavior = [&status](const std::vector<std::string> &arguments,
+                                const std::shared_ptr<std::atomic_bool> &) {
+    remote_usb::usbip_command_result result;
+    result.exit_code = 0;
+    if (arguments.size() > 2 && arguments.at(2) == "attach") {
+      status.write({ 0 });
+    }
+    return result;
+  };
+  remote_usb::usbip_host_controller controller(make_linux_config(commands, status));
+
+  ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  const auto attached = results.result_at(0);
+  ASSERT_TRUE(attached.ok()) << attached.detail;
+  ASSERT_TRUE(attached.binding.has_value());
+  /* vhci ports are zero-based; the binding must still satisfy the one-based
+   * validation that windows shares. */
+  EXPECT_EQ(attached.binding->hub_port, 1U);
+
+  ASSERT_NE(controller.detach(*attached.binding, results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(2));
+  ASSERT_TRUE(commands.wait_calls(2));
+  {
+    std::lock_guard lock(commands.mutex);
+    const std::vector<std::string> expected { "detach", "-p", "0" };
+    EXPECT_EQ(commands.calls.at(1).arguments, expected);
+  }
+  controller.stop();
+}
+
+TEST(RemoteUsbHostController, LinuxAttachWithoutANewVhciPortFails) {
+  vhci_status_fixture status;
+  status.write({});
+  command_harness commands;
+  result_harness results;
+  remote_usb::usbip_host_controller controller(make_linux_config(commands, status));
+
+  /* Exit zero but never claim a port: the binding would be unattachable to a
+   * detach, so the attach must not be reported as successful. */
+  ASSERT_NE(controller.attach(make_request(), results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  const auto attached = results.result_at(0);
+  EXPECT_EQ(attached.status, remote_usb::usbip_host_status::attach_failed);
+  EXPECT_NE(attached.detail.find("vhci port"), std::string::npos) << attached.detail;
+  EXPECT_FALSE(attached.binding.has_value());
+  controller.stop();
+}
+
+TEST(RemoteUsbHostController, LinuxProfileWithoutAStatusFileIsUnsupported) {
+  command_harness commands;
+  result_harness results;
+  auto config = make_config(commands);
+  config.backend = remote_usb::usbip_host_backend::usbip_linux;
+  config.vhci_status_path = (std::filesystem::temp_directory_path() /
+                             "sunshine-missing-vhci-status").string();
+  remote_usb::usbip_host_controller controller(std::move(config));
+
+  EXPECT_EQ(controller.backend(), remote_usb::usbip_host_backend::usbip_linux);
+  EXPECT_FALSE(controller.backend_supported());
+  EXPECT_EQ(controller.attach(make_request(), results.callback()), 0U);
+  ASSERT_TRUE(results.wait_results(1));
+  EXPECT_EQ(results.result_at(0).status, remote_usb::usbip_host_status::unsupported);
+  {
+    std::lock_guard lock(commands.mutex);
+    EXPECT_TRUE(commands.calls.empty());
+  }
   controller.stop();
 }
 

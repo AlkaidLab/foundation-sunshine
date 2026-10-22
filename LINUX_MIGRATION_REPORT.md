@@ -360,6 +360,27 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 - **未做**：file-offer（`kKindFileOffer`）仍只属于 Windows GUI agent；Linux 侧要支持需接
   xdg-desktop-portal 的文件选择器，记为 `LINUX_PORT_GAPS.md` §2.1b。
 
+### 6.15 远程 USB 的 usbip-utils 主机后端
+
+`src/remote_usb/remote_usb_host_controller.cpp` 新增 `usbip_host_backend::usbip_linux` 方言，
+`automatic` 在 Linux 解析到它（Windows 仍是 `usbip_win2`）。生命周期、并发上限、取消、stop 时的
+补偿 detach 全部沿用原有跨平台实现，只有两处平台差异：
+
+- **argv**：attach 用 `usbip --tcp-port PORT attach -r HOST -b BUSID`（`--tcp-port` 是全局选项，
+  必须写在子命令前），detach 用 `usbip detach -p PORT`；win2 的 `--once/--terse` 在 usbip-utils
+  上不存在。
+- **端口来源**：usbip-utils 成功时不打印任何内容，端口从内核 vhci 的
+  `/sys/devices/platform/vhci_hcd.0/status` 反推——attach 前快照、attach 后取差集，50 ms × 20 次
+  有界轮询（内核探针滞后于工具返回）；窗口用文件级互斥串行化，避免并发 attach 认领同一端口。拿不到
+  新端口即 `attach_failed`，不留无法 detach 的绑定。vhci 端口是 0 基，绑定沿用 win2 的 1 基表示
+  （内部 `port + 1`）。
+
+`backend_supported()` 现在要求 `usbip` 可执行文件存在且 vhci 状态文件可读，任一缺失即回到
+`unsupported` 并让 reverse tunnel 保持关闭。部署上仍有一道硬门槛：vhci 的 `attach`/`detach` 属性
+只有 root 可写，而本仓 service 以用户身份运行，所以端到端启用需要 root 运行或给 `usbip` 配 sudoers
+包装；权限被拒时 detail 会显式指出这一点。单测覆盖 argv 约定、差集推导、0 基端口、无新端口失败与
+状态缺失降级。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -392,6 +413,7 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 
 | 功能 | Linux 状态 |
 |---|---|
+| 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
 | HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
 | 非 KDE 显示后端 | display_device 的模式/HDR/拓扑目前只有 kscreen 实现；niri/wlroots/X11 走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
 | display_device 复制拓扑 | kscreen-doctor 无 replication 设置命令，多设备组被拒绝（见 `LINUX_PORT_GAPS.md` §1.4） |
@@ -407,7 +429,6 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 | 虚拟扬声器位深匹配 | Windows PolicyConfig COM；Linux 固定 `PA_SAMPLE_FLOAT32`（PipeWire 服务端自适应，质量无损） |
 | 触摸键盘自动唤起 | Windows 注册表机制，头文件自述非 Windows 即 no-op |
 | Tauri 控制面板 | 分发链 Windows 化；约 20 个系统模块仅 Windows 实现 |
-| USB/IP 主机（remote_usb） | 非 Windows 显式返回 `unsupported`（可行，见 `LINUX_PORT_GAPS.md` §2.2） |
 | vmouse 虚拟鼠标 / WGC 捕获 / rtx_hdr / pre_encode_filter / DS5 sidecar | 全在 `src/platform/windows/` |
 | Zako Direct 零拷贝借帧 | D3D11 共享纹理，Linux 无对等机制（KMS 捕获直读 DRM plane 已覆盖功能面） |
 
