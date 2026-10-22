@@ -276,6 +276,10 @@ else()
             ${CMAKE_SOURCE_DIR}/src/platform/linux/input/inputtino*.cpp)
     list(APPEND PLATFORM_TARGET_FILES ${INPUTTINO_SOURCES})
 
+    # The client-touch to contact translation is header-only so that it can be unit tested
+    # without a uinput device (it does not match the inputtino* glob above).
+    list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/linux/input/touch_plan.h")
+
     # build libevdev before the libinputtino target
     if(EXTERNAL_PROJECT_LIBEVDEV_USED)
         add_dependencies(libinputtino libevdev)

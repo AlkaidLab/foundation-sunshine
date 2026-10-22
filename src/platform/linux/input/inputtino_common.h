@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <set>
+
 #include <boost/locale.hpp>
 #include <inputtino/input.hpp>
 #include <libevdev/libevdev.h>
@@ -133,6 +135,14 @@ namespace platf {
     // for each client.
     inputtino::Result<inputtino::TouchScreen> touch;
     inputtino::Result<inputtino::PenTablet> pen;
+
+    /**
+     * Client pointer ids that currently have a contact down on `touch`.
+     * @details The device is stateful (MT-B slots) and only the client knows which pointers
+     *          are down, so the host has to remember the set to translate CANCEL_ALL and the
+     *          pointer-table overflow into releases of exactly the contacts it placed.
+     */
+    std::set<std::uint32_t> active_touch_pointers;
   };
 
   inline float
