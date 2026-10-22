@@ -35,7 +35,9 @@ for (var i = 0; i < args.Length; i++)
 // packages before any SDK operation, including capability probes.
 var corePatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
     attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "device-ownership-1");
-if (!corePatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
+var reportsPatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
+    attribute => attribute.Key == "FoundationDualSenseReports" && attribute.Value == "host-clock-v1");
+if (!corePatched || !reportsPatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
     return Fail("The Sidecar package is incomplete; reinstall the current DualSense component");
 
 if (selfCheck)

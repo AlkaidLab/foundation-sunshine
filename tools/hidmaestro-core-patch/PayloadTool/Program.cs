@@ -55,10 +55,14 @@ else if (args[0] == "verify")
         a.Key == "FoundationCorePatch" && a.Value == "device-ownership-1"), "patch marker missing");
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
         a.Key == "FoundationUsbipPolicy" && a.Value == "externally-managed-v1"), "external transport policy missing");
+    Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
+        a.Key == "FoundationDualSenseReports" && a.Value == "host-clock-v1"), "DualSense report clock patch missing");
     Console.WriteLine($"SDK identity/API unchanged; {names.Length} resources byte-identical");
 }
 else if (args[0] == "test")
 {
+    DualSenseReportChecks.Run(assembly, args[2], Require);
+    DualSenseReportChecks.Run(assembly, Path.Combine(Path.GetDirectoryName(args[2])!, "dualsense-composite.json"), Require);
     var transport = assembly.GetType("HIDMaestro.Internal.Usbip.SharedUsbipTransport", true)!;
     var validate = transport.GetMethod("ValidateState", BindingFlags.NonPublic | BindingFlags.Static)!;
     using var contract = JsonDocument.Parse(File.ReadAllText(args[3]));

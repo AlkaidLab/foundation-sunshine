@@ -1,7 +1,8 @@
 # Foundation HIDMaestro Core patch
 
 Sidecar component 1.4.2 uses HIDMaestro v1.12.0 with managed-code patches for
-device-cleanup ownership, USB audio pacing and externally managed USB/IP. The v1.12.0 API, assembly/file versions and all
+device-cleanup ownership, USB audio pacing, externally managed USB/IP and
+DualSense report metadata. The v1.12.0 API, assembly/file versions and all
 official embedded resources are preserved. The complete component includes Core,
 runtime, licenses and notices; the Control Panel uses verified staging and
 whole-component rollback. Sidecar checks the exact runtime version and
@@ -61,6 +62,20 @@ driver/installer hash checks, and the embedded Sidecar/Core contract use it.
 The original 394 resources remain byte-identical; one contract resource is added.
 The extra `FoundationUsbipPolicy=externally-managed-v1` marker prevents an older
 driver-deploying Core from being mistaken for the managed runtime.
+
+`dualsense-reports.patch` adds the profile semantic `deviceTimestamp` for a
+32-bit, 3 MHz host QPC clock. `DualSenseClock.cs` is compiled into both Core and
+Sidecar: device and sensor timestamps share an epoch regardless of device setup
+time. Device time is read during report encoding; sensor time is captured only
+when Sidecar initializes its state or receives motion. Both wrap naturally.
+The two bundled USB profiles also declare the 32-bit report sequence at byte 12,
+device time at byte 49 and USB-connected status `0x08` at byte 54. Other profiles
+retain their existing encoding. There is no input timer or merge window.
+Sidecar requires `FoundationDualSenseReports=host-clock-v1` so an older Core
+cannot silently encode the new timestamp semantic as zero. Build checks cover
+both profiles, clock epochs, counter rollover, button edges and motion bytes.
+These corrections do not preserve Android hardware sample times across the
+network or establish the cause of Genshin camera jumps; that needs game testing.
 
 Upgrade acceptance requires an idle host and no imported USB devices. Before
 activating the staged component, the installer performs two composite
