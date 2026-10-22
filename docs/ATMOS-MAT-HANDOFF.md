@@ -1,5 +1,12 @@
 # 2026-10-22 续作：原生实时 MAT 链路
 
+最新纠正：用户已选择现有 UUYC / Realtek 的 Windows Sonic 实时对象输入，接独立
+MAT 编码器；主机 HDMI 不是这条路线的前提。之前只监听了现有编码器的输出，
+零周期不能否定 Sonic 对象捕获。新连接器见 `spatial-object-spike/sonic-mat-live/`：
+Sonic 混音前对象/设备帧数/EOS -> 有界 IPC -> 独立原生 MAT worker -> 既有实时
+管道与串流。自身回调及 IPC FAKE-worker 测试已通过，仍待 UUYC 真回调/原生编码
+及完整 Sunshine/硬件验收；尚未取得本轮新的 audiodg 注入授权。
+
 后续本机续查：全端点只读枚举确认 F32D80U、SONY TV 等 HDMI 音频端点均为
 `DEVICE_STATE_NOTPRESENT (0x4)`，默认 Steam Streaming Speakers 为双声道
 48 kHz、可用动态对象数 0。UUYC 和 Realtek 为 128，但不能据此认定输出 MAT。
@@ -12,8 +19,8 @@
 缺失管道和文件路径均拒绝。检查器尚未接到真实 MAT，不能当作实采成功。
 新证据入口为 `build/mat-live-source-audit-v1/`、
 `build/mat-live-source-software-v3/proof.json`；实现/使用边界见 live README。
-主机实采源与完整 Sunshine/硬件端到端验收仍待；连接输入链路的选择正在本聊天
-询问用户。不要从本文或历史一次授权推导出新的 audiodg 注入权限。
+主机实采源与完整 Sunshine/硬件端到端验收仍待；用户后续已选择 Sonic 对象输入
+接独立编码器。不要从本文或历史一次授权推导出新的 audiodg 注入权限。
 
 当前开发分支为 `codex/atmos-mat-live`。正常偏好值 6 现在只协商实时 codec 7 或
 Opus 0，不会自动选择有限回放 codec 5。客户端继续沿用输出能力预检与路由失效

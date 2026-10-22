@@ -36,14 +36,14 @@ static uintptr_t LoadedTap(DWORD pid,const fs::path& expected) {
     }catch(...){CloseHandle(snap);throw;}
     CloseHandle(snap);return address;
 }
-static bool Io(HANDLE pipe,void* buffer,DWORD size,bool write,DWORD timeout) {
+static bool Io(HANDLE pipe,void* buffer,DWORD size,bool write,DWORD timeout,std::function<bool()> cancelled=[]{return false;}) {
     auto* b=static_cast<BYTE*>(buffer);DWORD done=0;auto began=GetTickCount64();
-    while(done<size && !interrupted) {
+    while(done<size && !interrupted && !cancelled()) {
         OVERLAPPED o{};o.hEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);if(!o.hEvent)return false;
         DWORD n=0;BOOL okay=write?WriteFile(pipe,b+done,size-done,&n,&o):ReadFile(pipe,b+done,size-done,&n,&o);
         if(!okay && GetLastError()==ERROR_IO_PENDING) {
-            while(WaitForSingleObject(o.hEvent,20)==WAIT_TIMEOUT && !interrupted && GetTickCount64()-began<timeout){}
-            if(interrupted || GetTickCount64()-began>=timeout){CancelIoEx(pipe,&o);GetOverlappedResult(pipe,&o,&n,TRUE);CloseHandle(o.hEvent);return false;}
+            while(WaitForSingleObject(o.hEvent,20)==WAIT_TIMEOUT && !interrupted && !cancelled() && GetTickCount64()-began<timeout){}
+            if(interrupted || cancelled() || GetTickCount64()-began>=timeout){CancelIoEx(pipe,&o);GetOverlappedResult(pipe,&o,&n,TRUE);CloseHandle(o.hEvent);return false;}
             okay=GetOverlappedResult(pipe,&o,&n,FALSE);
         }
         CloseHandle(o.hEvent);if(!okay||!n)return false;done+=n;
@@ -76,15 +76,16 @@ static void Serve(Shared& shared,const std::wstring& name,mat_capture::Descripto
                     connected=GetOverlappedResult(pipe,&o,&n,TRUE);
                 }
                 CloseHandle(o.hEvent);
-                char command[8];require(connected && Io(pipe,command,8,false,2000) && !memcmp(command,"MCAPOPEN",8),"Live source lease open");
+                const auto unavailable=[&]{std::lock_guard lock(shared.mutex);return shared.failed||shared.ended;};
+                char command[8];require(connected && Io(pipe,command,8,false,2000,unavailable) && !memcmp(command,"MCAPOPEN",8),"Live source lease open");
                 {
                     std::lock_guard lock(shared.mutex);
                     require(shared.ready && !shared.failed && GetTickCount64()-shared.last_cycle<2000,"Native MAT not ready");
                     descriptor.encoder=shared.encoder;
                 }
                 uint8_t header[mat_capture::descriptor_bytes];mat_capture::encode_descriptor(header,descriptor);
-                require(Io(pipe,header,sizeof(header),true,2000),"Live source descriptor");
-                require(Io(pipe,command,8,false,30000) && !memcmp(command,"MCAPPLAY",8),"Live source lease play timeout/disconnect");
+                require(Io(pipe,header,sizeof(header),true,2000,unavailable),"Live source descriptor");
+                require(Io(pipe,command,8,false,30000,unavailable) && !memcmp(command,"MCAPPLAY",8),"Live source lease play timeout/disconnect");
                 {std::lock_guard lock(shared.mutex);require(!shared.failed && shared.ready && GetTickCount64()-shared.last_cycle<2000,"Source stale at PLAY");
                     shared.queue.clear();shared.play_qpc=Qpc();shared.playing=true;}
                 uint64_t sequence=0;
@@ -109,6 +110,7 @@ static void Serve(Shared& shared,const std::wstring& name,mat_capture::Descripto
         }
     }catch(...){LocalFree(acl);throw;}LocalFree(acl);
 }
+#ifndef MAT_LIVE_PUBLISHER_HELPERS_ONLY
 int wmain(int argc,wchar_t** argv) {
     // Read-only preflight by default. No debug-privilege adjustment, UAC, engine restart or endpoint change.
     if(argc!=4 && argc!=8){puts("sunshine-mat-capture --preflight PID CREATION_TIME | --attach/--reattach PID CREATION_TIME TAP_ABSOLUTE SHA256 \\\\.\\pipe\\SunshineMatLive-NAME STOP_EVENT_NAME");return 2;}
@@ -218,3 +220,4 @@ int wmain(int argc,wchar_t** argv) {
     if(done && ring)UnmapViewOfFile(ring); // Keep pages mapped if a timed-out hook might still use them.
     if(thread)CloseHandle(thread);if(mapping)CloseHandle(mapping);if(process)CloseHandle(process);if(stop_event)CloseHandle(stop_event);return result;
 }
+#endif

@@ -11,8 +11,10 @@ foreach($directory in @($common,$clientCommon)){if(git -C $directory status --po
 $sourcePaths=@('src/audio.h','src/config.h','src/config.cpp','src/rtsp.h','src/rtsp.cpp','src/stream.cpp',
  'src/spatial_transport/mat_live_session.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/native_mat_pipe_source.h',
  'src/spatial_audio/native_mat_guard.h','src/spatial_audio/native_mat_assembler.h',
+ 'src/spatial_audio/stream_ring_source.h','src/spatial_audio/stream_output_protocol.h','src/spatial_audio/mat_stream_receiver.cpp',
  'spatial-object-spike/resident/encoded_tap.cpp','spatial-object-spike/mat-android-session/capability_negotiation_test.py') | ForEach-Object {"$root/$_"}
 $sourcePaths+=Get-ChildItem -LiteralPath $PSScriptRoot -File | ForEach-Object {$_.FullName}
+$sourcePaths+=Get-ChildItem -LiteralPath "$PSScriptRoot/../sonic-mat-live" -File | ForEach-Object {$_.FullName}
 foreach($relative in @(git -C $common diff --name-only 05415ed4f544ee10d9fc6c9735a1f34c4a032a87 HEAD)){
  $sourcePaths+=@("$common/$relative","$clientCommon/$relative")
 }
@@ -39,6 +41,8 @@ if($LASTEXITCODE){throw 'Actual live sender/assembler compile failed'}
 if($LASTEXITCODE){throw 'Actual live sender/assembler regression failed'}
 & "$PSScriptRoot/build-live-check.ps1" -CommonBuild "$out/host-common" -Output "$out/live-check" *> "$out/live-check-build.log"
 if($LASTEXITCODE){throw 'Native-only checker / software UDP+FEC regression failed'}
+& "$PSScriptRoot/../sonic-mat-live/build.ps1" -Output "$out/sonic-source" *> "$out/sonic-source-build.log"
+if($LASTEXITCODE){throw 'Sonic object / native-worker adapter software verification failed'}
 & gcc.exe -O2 -std=c11 -Wall -Wextra -Werror -DHAS_SOCKLEN_T "-I$common/src" "$PSScriptRoot/../mat-android-session/negotiation_client.c" "$out/host-common/libmoonlight-common-c.a" "$out/host-common/enet/libenet.a" -static-libgcc -lcrypto -lws2_32 -lwinmm -lbcrypt -lcrypt32 -liphlpapi -o "$out/negotiation-client.exe"
 if($LASTEXITCODE){throw 'Production RTSP frontend compile failed'}
 & $Python "$PSScriptRoot/../mat-android-session/capability_negotiation_test.py" --client "$out/negotiation-client.exe" --output "$out/negotiation" *> "$out/negotiation.log"

@@ -5,6 +5,11 @@ ANNOUNCE. Finite playback 5 and dump 4 are explicit diagnostics only. AUTO never
 opens a recorded file or chooses the finite profile. Unsupported phones keep
 using Opus; there is no phone MAT decoder or object renderer in this branch.
 
+The user selected [Sonic object capture -> dedicated native MAT encoding](../sonic-mat-live/README.md).
+That route does not require host HDMI and uses the same private pipe/streaming
+protocol. The passive already-running-encoder tap described below is a separate
+source option; its HDMI route diagnosis does not limit Sonic object capture.
+
 The opt-in host source is the continuous output of the already-running Windows
 native encoder Process wrapper. `sunshine-mat-capture.exe` attaches once to an
 explicit audiodg PID and creation time, copies completed output through a fixed

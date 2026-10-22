@@ -180,8 +180,6 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
             float x = static_cast<float>(std::sin(t * 1.1 + phase));
             float y = static_cast<float>(0.5 * std::sin(t * 0.7 + phase));
             float z = static_cast<float>(-std::cos(t * 1.1 + phase));
-            Check(object->SetPosition(x, y, z), "SetPosition");
-            Check(object->SetVolume(i ? 0.07f : 0.10f), "SetVolume");
             BYTE* data = nullptr;
             UINT32 bytes = 0;
             Check(object->GetBuffer(&data, &bytes), "GetBuffer");
@@ -191,6 +189,10 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
             for (UINT32 s = 0; s < frames; ++s) {
                 samples[s] = static_cast<float>(0.2 * std::sin(2.0 * 3.141592653589793 * frequency * (total + s) / rate));
             }
+            // The first GetBuffer can initialize/reset cached properties.
+            // Apply this packet's final position/volume after that initialization.
+            Check(object->SetPosition(x, y, z), "SetPosition");
+            Check(object->SetVolume(i ? 0.07f : 0.10f), "SetVolume");
             if (total + frames >= static_cast<unsigned long long>(seconds * rate))
                 Check(object->SetEndOfStream(frames), "SetEndOfStream");
         }
