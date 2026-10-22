@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 77，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 78，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
@@ -17,12 +17,12 @@
 非 KDE 桌面走合成器）、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**3 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
-§2.10 残余/§2.11）、**9 项本质不可移植**（§三）。
+剩余：**3 项部分实现**（§一）、**5 项可行未做**（§二，其中 §2.7/§2.8/§2.9/§2.10 残余/§2.11）、
+**1 项等上游定义协议**（§2.1b）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.3 剪贴板图片 + 非 KDE
 桌面 provider、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
-拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端、§7.1 管线帧率的"源更新"段。）
+拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端 + X11（RandR）显示后端、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -140,11 +140,19 @@
 - **验收**：客户端复制图片 → 主机 `wl-paste --type image/png` 得到同一 PNG；主机复制图片 → 客户端
   粘贴得到图片。✅
 
-### 2.1b 剪贴板 file-offer（低，独立议题）
+### 2.1b 剪贴板 file-offer（⏸ 等上游——本树里两端都不存在，不是移植缺口）
 
-- `kKindFileOffer`（kind 4）仍只属于 Windows GUI agent；Linux 侧要支持需接 xdg-desktop-portal 的
-  文件选择器（`org.freedesktop.portal.FileChooser`），并把选中路径转成 wire 帧。
-- **验收**：客户端粘贴主机文件 → 得到文件句柄而非提示不支持。
+- **勘察结论（2026-10-22）**：`kKindFileOffer`（kind 4）在宿主 C++ 里**既没有生产者也没有消费者**
+  ——`src/clipboard_wire.h:54` 的 `is_known_kind()` 认这个 kind，除此之外整棵树没有任何地方发它
+  （`grep -rn kKindFileOffer src/` 只有 `clipboard_bridge.h:58` 的定义）。它的生产者是 Windows 的
+  **GUI agent（Tauri 面板）**：`src_assets/…/tauri/src/file_transfer.rs` 的
+  `post_file_offer_payload()` 往 **`POST /api/v1/file-transfer/offers`** 发请求，再把手柄贴进
+  Sunshine 的剪贴板通道；而**这个端点在本树里同样不存在**。也就是说 Windows 侧端到端也依赖仓外组件。
+- **因此**：原先写的"接 xdg-desktop-portal FileChooser"是错的——portal 只能表达"让用户挑文件"，
+  而真实语义是"把主机已选中的文件交给客户端"，生产者属于 agent，不是宿主。
+- **结论**：等上游先定义宿主侧协议与端点；在那之前列进待办只会误导。Linux 侧要做也只能做
+  "读合成器选择里的 `text/uri-list` → 组帧"这半边，协议未定义时无从对齐。
+- **验收**（若上游补齐）：客户端粘贴主机文件 → 得到文件句柄而非提示不支持。
 
 ### 2.2 USB/IP 主机（✅ 后端已落地，2026-10-22；部署需 root）
 
@@ -294,7 +302,7 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   文件右键共享（KDE ServiceMenu 更自然）。
 - **建议**：搁置；文件右键共享若想要，走 KDE ServiceMenu（低工作量）单独立项。
 
-### 2.10 通用 wlroots 显示后端（低）— 已收窄到非 niri 的 wlroots 合成器
+### 2.10 通用 wlroots / X11 显示后端（低）— X11 已完成，只剩非 niri 的 wlroots 合成器
 
 - **背景**：目标是 **KDE + niri** 双环境。niri 那半边已落地（见下），只剩 sway/Hyprland 等
   wlroots 合成器的通用兜底没有后端。
@@ -303,6 +311,15 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   `src/platform/linux/display_device.cpp` 的 `query_outputs()` 分成 `query_kscreen_outputs()` /
   `query_niri_outputs()` 两个生产者，模式/拓扑开关按会话分派到 `niri msg output <name>
   mode|on|off`。`niri msg` 无论请求是否被接受都 exit 0，所以写操作一律回读状态判定。
+- **已完成（2026-10-22，第二轮）：X11（RandR）显示后端** ——
+  `src/platform/linux/xrandr_display.{h,cpp}`（`session_supports_xrandr` / `query_state` /
+  纯函数 `plan_for` / `apply`，apply 自带快照回滚）+ `display_device.cpp` 的
+  `compositor_is_xrandr()` / `query_xrandr_outputs()` / `xrandr_change()`。
+  裸 X11 会话（i3/openbox/bspwm…）因此有了分辨率、开关、主屏与**镜像**（两个 output 共用一个
+  crtc）；`compositor_is_xrandr()` 排在 niri / Mutter / kscreen 之后，Wayland 会话不受影响。
+  HDR 在 X11 上不存在色彩模式概念 → `set_hdr_states()` 明确拒绝并打一次性 warning。
+  实测 `query_state()` 与本机 `xrandr --query` 逐字段一致；写路径在 XWayland 上无法真正生效
+  （其 RandR 只读），真机 X11 会话未验证。详见 `LINUX_MIGRATION_REPORT.md` §6.21。
 - **仍缺**：
   1. **wlr-output-management 兜底**（`wlr-randr` 或直接绑 `zwlr_output_manager_v1`）覆盖
      sway/Hyprland。机器上没有这类合成器，无法运行时验证。

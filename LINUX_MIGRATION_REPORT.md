@@ -532,6 +532,42 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ---
 
+### 6.21 X11（RandR）显示后端
+
+- **问题**：KDE（kscreen）、GNOME（Mutter D-Bus）、niri（IPC）各有一个后端，裸 X11 会话
+  （i3/openbox/bspwm/X11 桌面会话）三个都没有，display_device 只能整段降级。
+- **实现**：`src/platform/linux/xrandr_display.{h,cpp}`（`namespace platf::xrandr`），
+  `src/platform/linux/display_device.cpp` 增加 `compositor_is_xrandr()` 与
+  `query_xrandr_outputs()` / `xrandr_change()`。
+- **模型差异**（决定了实现形状）：
+  1. output = 连接器，crtc = 时序发生器；**两个 output 共用一个 crtc 就是镜像**，且必须同模式。
+  2. 没有 per-output 动词：写 = 一串 `XRRSetCrtcConfig` + 一次屏幕尺寸，无 serial、无校验。
+     因此 `apply()` 先快照所有 crtc 与屏幕尺寸，任一步被拒就按快照回滚（`BadMatch`/`BadValue`
+     经 `XSetErrorHandler` 捕获，`XSync` 后判定）。
+  3. 禁用输出 = 把它从 crtc 上摘掉（`mode=None`, 0 outputs），没有 off 动词。
+  4. **RandR 没有 HDR / 色彩模式 / 缩放 / 小数刷新率概念**：`hdr_state_str` 恒空，
+     `set_hdr_states()` 对 X11 直接拒绝并打一次性 warning，而不是假装成功。
+  5. 主屏是 screen 上某个 output 的属性（`XRRSetOutputPrimary`），可以表达。
+- **纯函数 `plan_for()`**（可单测）：把"想要的 state"翻成"每块 crtc 扫哪个模式、放在哪、
+  带哪些 output"。拒绝无法表达的组合（未知/未连接的 output、镜像成员模式不一致、
+  没有可用模式、多个主屏）。`apply()` 只负责把 plan 落到 Xlib 上。
+- **选择顺序**：`compositor_is_xrandr()` 排在 niri / Mutter / kscreen **之后**——Wayland 会话总能
+  命中前三者之一，裸 X11 才会落在这里。XWayland 能应答 RandR 读，但永远不会被选为后端。
+- **实测**（本机 Plasma 的 XWayland，`DISPLAY=:0`）：`query_state()` 与 `xrandr --query` 逐字段一致
+  —— `DP-2 connected primary 1920x1080+0+0`、screen 1920x1080、29 个模式、当前模式
+  `1920x1080@59.96`。
+- **发现的两个真 bug（都由测试抓出）**：
+  1. `crtc->mode` 是 RRMode **句柄**而不是 `resources->modes[]` 的**下标**，按句柄当下标取
+     时序会读到越界内存；必须按 `.id` 比对。
+  2. 一次 modeset 之后，XWayland 会把**模式句柄当索引发回**（实测 `index=65.. nmode=28`
+     连续越界）。`query_state()` 现在跳过越界条目并记录，否则宿主机直接段错误。
+- **测试**：`tests/unit/test_xrandr_display.cpp` 16 例——13 例纯规划（单输出/禁用/并排/镜像共享
+  crtc/镜像尺寸不一致/未知或禁用的镜像源/主屏/主屏冲突/无模式/非当前 mode id/旋转与翻转/
+  时序换算），3 例真机（query 自洽、live 状态可规划、**回写当前配置**要么被接受要么带原因被拒）。
+- **未验证**：真实 X11 会话下的写路径。本机只有 XWayland，且**没有 Xvfb/Xephyr**，无法起嵌套 X
+  服务器；XWayland 侧写操作被接受但布局不变（其 RandR 是只读镜像）。sway/Hyprland 等
+  wlroots 兜底仍未做（见 `LINUX_PORT_GAPS.md` §2.10）。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -547,7 +583,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
 | Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测已移植（KDE + niri，§6.6） |
 | 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
-| 物理显示器 display_device | kscreen/niri 分辨率 + 拓扑开关 + 持久化还原；HDR/主屏仅 kscreen（§6.2、§6.16） |
+| 物理显示器 display_device | 四个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR（§6.2、§6.16、§6.18、§6.21） |
 | 剪贴板主机同步（文本 + 图片） | KDE：文本走 klipper sd-bus、图片走 ext-data-control；无 klipper 的桌面（niri/sway/Hyprland）文本也走 ext-data-control。共用帧/回声/blob 回退（§6.4、§6.14） |
 | 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
 | HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
@@ -565,7 +601,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 |---|---|
 | 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
 | HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
-| 非 niri 的 wlroots / X11 显示后端 | niri 已由 IPC 后端覆盖（§6.16），GNOME 由 Mutter D-Bus 覆盖（§6.18）；sway/Hyprland 等仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
+| 非 niri 的 wlroots 显示后端 | niri 走 IPC（§6.16）、GNOME 走 Mutter D-Bus（§6.18）、裸 X11 走 RandR（§6.21）；只剩 sway/Hyprland 等 wlroots 合成器仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
 | display_device 复制拓扑 | 两个平台都可用：Mutter 写成同一个 logical monitor（§6.18），KScreen 用 `output.<name>.mirror.<source>`（§6.19）；回读统一经 `replication_source` 聚合（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
 | 虚拟显示器 per-client 隔离 | 客户端切换时销毁重建 VDD，单虚拟屏共享；Windows 是多实例 + 每客户端独立 GUID |
