@@ -11,7 +11,7 @@
 
 pkgname=sunshine-foundation
 pkgver=2026.0909
-pkgrel=82
+pkgrel=83
 pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
 arch=('x86_64')
 url="https://github.com/qiin2333/Sunshine"
@@ -40,6 +40,7 @@ optdepends=(
   'nvidia-utils: NVENC hardware encoding'
   'libva-mesa-driver: VAAPI encoding on AMD/Intel'
   'usbip: remote USB tunneling (also needs vhci-hcd and root privileges)'
+  'wlr-randr: display configuration in wlroots sessions (sway, Hyprland, labwc, ...)'
 )
 options=(!strip)
 install=sunshine-foundation.install
