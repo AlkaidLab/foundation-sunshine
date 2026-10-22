@@ -174,6 +174,8 @@ if(WAYLAND_FOUND)
 
     GEN_WAYLAND("${WAYLAND_PROTOCOLS_DIR}" "unstable/xdg-output" xdg-output-unstable-v1)
     GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/wlr-protocols" "unstable" wlr-export-dmabuf-unstable-v1)
+    # Foreground-window tracking (src/platform/linux/foreground_app.cpp)
+    GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/wlr-protocols" "unstable" wlr-foreign-toplevel-management-unstable-v1)
 
     include_directories(
             SYSTEM

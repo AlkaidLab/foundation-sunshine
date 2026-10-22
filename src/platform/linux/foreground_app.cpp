@@ -6,29 +6,53 @@
  * compositor does not let regular clients query focus, so focus is taken from
  * whichever control interface the running session offers:
  *
- *   KDE Plasma - a tiny KWin script pushes active-window changes to a private
- *                D-Bus service hosted here (the tested path).
- *   niri       - `niri msg --json focused-window` is polled through niri's own
- *                IPC CLI (niri has no KWin, and its socket is per-session).
+ *   KDE Plasma  - a tiny KWin script pushes active-window changes to a private
+ *                 D-Bus service hosted here (the tested path, carries a pid).
+ *   wlroots     - wlr-foreign-toplevel-management reports activation state for
+ *                 every toplevel, which covers sway, river, wayfire and the
+ *                 rest of the wlroots family (no pid in the protocol).
+ *   niri        - `niri msg --json focused-window` is polled through niri's own
+ *                 IPC CLI (niri implements neither KWin's scripting nor the
+ *                 wlroots protocol).
+ *   X11         - _NET_ACTIVE_WINDOW watched through PropertyNotify, for an X11
+ *                 session or XWayland under a compositor with no focus source.
  *
- * detect() serves the cached report. Desktops with neither keep returning
+ * detect() serves the cached report. Desktops with none of these keep returning
  * empty info and ABR degrades the same way it does today.
  */
 #include "foreground_app.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <poll.h>
 #include <thread>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <systemd/sd-bus.h>
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+  #include <wayland-client.h>
+
+  #include <wlr-foreign-toplevel-management-unstable-v1.h>
+
+  #include "wayland.h"
+#endif
+
+#ifdef SUNSHINE_BUILD_X11
+  #include <X11/Xatom.h>
+  #include <X11/Xlib.h>
+  #include <X11/Xutil.h>
+#endif
 
 #include "sdbus_session.h"
 #include "src/display_device/vdd_utils.h"
@@ -48,6 +72,10 @@ namespace platf::foreground_app {
     // this path simple and matches ABR's own 10 s detection interval.
     constexpr auto kNiriPollInterval = std::chrono::seconds { 2 };
     constexpr auto kNiriCommandTimeout = std::chrono::milliseconds { 3000 };
+    // Re-read the foreground window on a timer as well, in case the producer did
+    // not deliver an event for the change (missed PropertyNotify, compositor
+    // that keeps quiet). Matches ABR's own detection cadence.
+    constexpr auto kResyncInterval = std::chrono::seconds { 2 };
 
     struct cache_t {
       std::mutex mutex;
@@ -383,6 +411,405 @@ try {
       }
     }
 
+#ifdef SUNSHINE_BUILD_WAYLAND
+    /**
+     * @brief One toplevel tracked through wlr-foreign-toplevel-management.
+     */
+    struct wlr_toplevel_t {
+      zwlr_foreign_toplevel_handle_v1 *handle {};
+      struct wlr_state_t *owner {};
+      std::string title;
+      std::string app_id;
+      bool activated {};
+    };
+
+    struct wlr_state_t {
+      zwlr_foreign_toplevel_manager_v1 *manager {};
+      std::vector<std::unique_ptr<wlr_toplevel_t>> toplevels;
+      std::mutex mutex;
+      std::atomic<bool> finished {};
+    };
+
+    /**
+     * @brief Report whichever toplevel the compositor marks as activated.
+     * @details A focus switch is delivered as "old toplevel loses `activated`"
+     *          plus "new toplevel gains it", each followed by `done`, so the
+     *          scan runs on every `done` and reports the single active entry.
+     *          The protocol carries no pid, which is fine: store_report() keeps
+     *          app-switch detection working through the exe name alone.
+     */
+    void
+    wlr_publish(wlr_state_t &state) {
+      std::lock_guard lock { state.mutex };
+      for (const auto &toplevel : state.toplevels) {
+        if (!toplevel->activated) {
+          continue;
+        }
+        if (!toplevel->app_id.empty() || !toplevel->title.empty()) {
+          store_report(0, toplevel->app_id, toplevel->title);
+        }
+        return;
+      }
+    }
+
+    void
+    wlr_on_title(void *data, zwlr_foreign_toplevel_handle_v1 *, const char *title) {
+      static_cast<wlr_toplevel_t *>(data)->title = title ? title : "";
+    }
+
+    void
+    wlr_on_app_id(void *data, zwlr_foreign_toplevel_handle_v1 *, const char *app_id) {
+      static_cast<wlr_toplevel_t *>(data)->app_id = app_id ? app_id : "";
+    }
+
+    void
+    wlr_on_state(void *data, zwlr_foreign_toplevel_handle_v1 *, wl_array *states) {
+      auto &toplevel = *static_cast<wlr_toplevel_t *>(data);
+      toplevel.activated = false;
+      const auto *begin = static_cast<const std::uint32_t *>(states->data);
+      const auto *end = begin + states->size / sizeof(std::uint32_t);
+      for (const auto *state = begin; state != end; ++state) {
+        if (*state == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED) {
+          toplevel.activated = true;
+        }
+      }
+    }
+
+    void
+    wlr_on_done(void *data, zwlr_foreign_toplevel_handle_v1 *) {
+      wlr_publish(*static_cast<wlr_toplevel_t *>(data)->owner);
+    }
+
+    void
+    wlr_on_closed(void *data, zwlr_foreign_toplevel_handle_v1 *handle) {
+      // The listener data lives in the entry that is about to be erased, so the
+      // state is reached through the owning pointer it carries.
+      auto &state = *static_cast<wlr_toplevel_t *>(data)->owner;
+      {
+        std::lock_guard lock { state.mutex };
+        auto &toplevels = state.toplevels;
+        const auto it = std::find_if(toplevels.begin(), toplevels.end(), [handle](const auto &entry) {
+          return entry->handle == handle;
+        });
+        if (it != toplevels.end()) {
+          // Destroying the proxy also drops the listeners registered on it.
+          auto closed = std::move(*it);
+          toplevels.erase(it);
+          zwlr_foreign_toplevel_handle_v1_destroy(closed->handle);
+        }
+      }
+      // Focus may have moved to another toplevel by now.
+      wlr_publish(state);
+    }
+
+    const zwlr_foreign_toplevel_handle_v1_listener kWlrToplevelListener = [] {
+      zwlr_foreign_toplevel_handle_v1_listener listener {};
+      listener.title = wlr_on_title;
+      listener.app_id = wlr_on_app_id;
+      listener.state = wlr_on_state;
+      listener.done = wlr_on_done;
+      listener.closed = wlr_on_closed;
+      return listener;
+    }();
+
+    void
+    wlr_on_toplevel(void *data, zwlr_foreign_toplevel_manager_v1 *, zwlr_foreign_toplevel_handle_v1 *handle) {
+      auto &state = *static_cast<wlr_state_t *>(data);
+      auto toplevel = std::make_unique<wlr_toplevel_t>();
+      toplevel->handle = handle;
+      toplevel->owner = &state;
+      zwlr_foreign_toplevel_handle_v1_add_listener(handle, &kWlrToplevelListener, toplevel.get());
+      std::lock_guard lock { state.mutex };
+      state.toplevels.push_back(std::move(toplevel));
+    }
+
+    void
+    wlr_on_manager_finished(void *data, zwlr_foreign_toplevel_manager_v1 *) {
+      static_cast<wlr_state_t *>(data)->finished.store(true, std::memory_order_release);
+    }
+
+    const zwlr_foreign_toplevel_manager_v1_listener kWlrManagerListener = [] {
+      zwlr_foreign_toplevel_manager_v1_listener listener {};
+      listener.toplevel = wlr_on_toplevel;
+      listener.finished = wlr_on_manager_finished;
+      return listener;
+    }();
+
+    struct wlr_registry_t {
+      wlr_state_t *state {};
+    };
+
+    void
+    wlr_on_global(void *data, wl_registry *registry, std::uint32_t name, const char *interface, std::uint32_t version) {
+      auto &state = *static_cast<wlr_registry_t *>(data)->state;
+      if (state.manager || std::strcmp(interface, zwlr_foreign_toplevel_manager_v1_interface.name) != 0) {
+        return;
+      }
+      // Version 3 only adds the `parent` event; nothing here needs more.
+      constexpr std::uint32_t kMaxVersion = 3;
+      state.manager = static_cast<zwlr_foreign_toplevel_manager_v1 *>(
+        wl_registry_bind(registry, name, &zwlr_foreign_toplevel_manager_v1_interface, std::min(version, kMaxVersion)));
+      zwlr_foreign_toplevel_manager_v1_add_listener(state.manager, &kWlrManagerListener, &state);
+    }
+
+    void
+    wlr_on_global_remove(void *, wl_registry *, std::uint32_t) {}
+
+    const wl_registry_listener kWlrRegistryListener = [] {
+      wl_registry_listener listener {};
+      listener.global = wlr_on_global;
+      listener.global_remove = wlr_on_global_remove;
+      return listener;
+    }();
+
+    /**
+     * @brief Open a connection and bind the toplevel manager if it is offered.
+     * @returns true when the compositor implements the protocol.
+     */
+    bool
+    wlr_bind(wl::display_t &display, wlr_state_t &state, wlr_registry_t &registry) {
+      if (display.init() < 0) {
+        return false;
+      }
+      if (wl_registry_add_listener(display.registry(), &kWlrRegistryListener, &registry) < 0) {
+        return false;
+      }
+      // The first roundtrip delivers the globals, the second the initial
+      // toplevel list, so the cache is populated before the worker idles.
+      display.roundtrip();
+      display.roundtrip();
+      return state.manager != nullptr;
+    }
+
+    /**
+     * @brief Whether the session compositor implements the generic wlroots
+     *        toplevel protocol.
+     * @details Probed before spawning the worker so a compositor that answers
+     *          nothing falls through to the next producer instead of parking a
+     *          thread that can never report. KWin has no wlr protocols, and
+     *          niri ships its own IPC instead, so both are served elsewhere.
+     *          wayland-protocols' own ext-foreign-toplevel-list is not usable
+     *          here: it enumerates toplevels without any activation state, so
+     *          it cannot answer which window is in the foreground.
+     */
+    bool
+    wlr_toplevels_available() {
+      wl::display_t display;
+      wlr_state_t state;
+      wlr_registry_t registry { &state };
+      const bool available = wlr_bind(display, state, registry);
+      if (state.manager) {
+        zwlr_foreign_toplevel_manager_v1_destroy(state.manager);
+      }
+      return available;
+    }
+
+    void
+    wlr_worker() {
+      wl::display_t display;
+      wlr_state_t state;
+      wlr_registry_t registry { &state };
+      if (!wlr_bind(display, state, registry)) {
+        clear_cache();
+        BOOST_LOG(warning) << "foreground: wlr-foreign-toplevel-management unavailable"sv;
+        return;
+      }
+
+      BOOST_LOG(info) << "foreground: wlr-foreign-toplevel-management tracking enabled"sv;
+      wlr_publish(state);
+
+      while (worker_running.load(std::memory_order_acquire) &&
+             !state.finished.load(std::memory_order_acquire)) {
+        // dispatch() returns false on a plain timeout; a dead compositor is
+        // visible through the display error instead.
+        display.dispatch(std::chrono::milliseconds { 500 });
+        if (wl_display_get_error(display.get()) != 0) {
+          BOOST_LOG(warning) << "foreground: Wayland connection lost; ABR app classification degraded"sv;
+          clear_cache();
+          return;
+        }
+      }
+
+      zwlr_foreign_toplevel_manager_v1_destroy(state.manager);
+      state.manager = nullptr;
+    }
+#endif  // SUNSHINE_BUILD_WAYLAND
+
+#ifdef SUNSHINE_BUILD_X11
+    /**
+     * @brief Read a byte-string X11 property.
+     * @details Trailing NUL padding is stripped, but an embedded NUL is kept:
+     *          WM_CLASS is exactly that, a pair of NUL separated strings.
+     */
+    std::string
+    x11_string_property(Display *dpy, Window window, Atom property, Atom type) {
+      if (property == None || type == None) {
+        return {};
+      }
+
+      Atom actual_type = None;
+      int actual_format = 0;
+      unsigned long count = 0;
+      unsigned long remaining = 0;
+      unsigned char *data = nullptr;
+      if (XGetWindowProperty(dpy, window, property, 0, 1024, False, type,
+            &actual_type, &actual_format, &count, &remaining, &data) != Success ||
+          !data) {
+        return {};
+      }
+
+      std::string value;
+      if (actual_format == 8) {
+        value.assign(reinterpret_cast<const char *>(data), count);
+      }
+      XFree(data);
+
+      const auto last = value.find_last_not_of('\0');
+      value.erase(last == std::string::npos ? 0 : last + 1);
+      return value;
+    }
+
+    std::uint32_t
+    x11_cardinal_property(Display *dpy, Window window, Atom property) {
+      if (property == None) {
+        return 0;
+      }
+
+      Atom actual_type = None;
+      int actual_format = 0;
+      unsigned long count = 0;
+      unsigned long remaining = 0;
+      unsigned char *data = nullptr;
+      std::uint32_t value = 0;
+      if (XGetWindowProperty(dpy, window, property, 0, 1, False, XA_CARDINAL,
+            &actual_type, &actual_format, &count, &remaining, &data) == Success &&
+          data) {
+        if (actual_format == 32 && count >= 1) {
+          value = static_cast<std::uint32_t>(reinterpret_cast<long *>(data)[0]);
+        }
+        XFree(data);
+      }
+      return value;
+    }
+
+    /**
+     * @brief Foreground window on X11, from the EWMH active-window property.
+     * @details _NET_ACTIVE_WINDOW names the focused window; from there
+     *          _NET_WM_PID, WM_CLASS and _NET_WM_NAME give the same triple the
+     *          KWin script reports. Property names use intern-only lookups so a
+     *          missing atom is not created just to be searched for.
+     */
+    bool
+    x11_read_foreground(Display *dpy, info_t &out) {
+      const Atom active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", True);
+      if (active_window == None) {
+        return false;
+      }
+
+      Atom actual_type = None;
+      int actual_format = 0;
+      unsigned long count = 0;
+      unsigned long remaining = 0;
+      unsigned char *data = nullptr;
+      if (XGetWindowProperty(dpy, DefaultRootWindow(dpy), active_window, 0, 1, False, XA_WINDOW,
+            &actual_type, &actual_format, &count, &remaining, &data) != Success ||
+          !data) {
+        return false;
+      }
+      const Window window = *reinterpret_cast<Window *>(data);
+      XFree(data);
+      if (!window) {
+        return false;
+      }
+
+      out = {};
+      out.pid = x11_cardinal_property(dpy, window, XInternAtom(dpy, "_NET_WM_PID", True));
+
+      // WM_CLASS holds "instance\0class"; KWin reports the class as the resource
+      // class, so the class is what the shared consumer compares against.
+      auto wm_class = x11_string_property(dpy, window, XA_WM_CLASS, XA_STRING);
+      const auto separator = wm_class.find('\0');
+      if (separator != std::string::npos) {
+        wm_class.erase(0, separator + 1);
+      }
+      out.exe_name = wm_class;
+
+      out.window_title = x11_string_property(dpy, window, XInternAtom(dpy, "_NET_WM_NAME", True),
+        XInternAtom(dpy, "UTF8_STRING", True));
+      if (out.window_title.empty()) {
+        out.window_title = x11_string_property(dpy, window, XA_WM_NAME, XA_STRING);
+      }
+
+      return !out.window_title.empty() || !out.exe_name.empty();
+    }
+
+    /**
+     * @brief Track the X11 foreground window from PropertyNotify events.
+     * @details Covers an X11 session and, on Wayland, XWayland clients under a
+     *          compositor with no focus interface of its own. The property is
+     *          re-read on a timer as well: a compositor that forgets the
+     *          notification would otherwise freeze the cached window forever.
+     */
+    void
+    x11_worker() {
+      Display *dpy = XOpenDisplay(nullptr);
+      if (!dpy) {
+        clear_cache();
+        BOOST_LOG(warning) << "foreground: cannot open the X11 display"sv;
+        return;
+      }
+
+      const Window root = DefaultRootWindow(dpy);
+      XSelectInput(dpy, root, PropertyChangeMask);
+      const Atom active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+      BOOST_LOG(info) << "foreground: X11 active-window tracking enabled"sv;
+
+      info_t last;
+      const auto publish = [&]() {
+        info_t current;
+        if (!x11_read_foreground(dpy, current)) {
+          return;
+        }
+        if (current.pid == last.pid && current.exe_name == last.exe_name &&
+            current.window_title == last.window_title) {
+          return;
+        }
+        last = current;
+        store_report(current.pid, current.exe_name, current.window_title);
+      };
+      publish();
+
+      const int fd = ConnectionNumber(dpy);
+      auto next_resync = std::chrono::steady_clock::now() + kResyncInterval;
+      while (worker_running.load(std::memory_order_acquire)) {
+        pollfd pfd { fd, POLLIN, 0 };
+        const int rc = poll(&pfd, 1, 500);
+        if (rc < 0 && errno != EINTR) {
+          break;
+        }
+
+        if (rc > 0 && (pfd.revents & POLLIN)) {
+          while (XPending(dpy) > 0) {
+            XEvent event {};
+            XNextEvent(dpy, &event);
+            if (event.type == PropertyNotify && event.xproperty.window == root &&
+                event.xproperty.atom == active_window) {
+              publish();
+            }
+          }
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_resync) {
+          publish();
+          next_resync = now + kResyncInterval;
+        }
+      }
+
+      XCloseDisplay(dpy);
+    }
+#endif  // SUNSHINE_BUILD_X11
+
     void
     start_worker() {
       if (worker_started.exchange(true)) {
@@ -390,15 +817,41 @@ try {
       }
       worker_running.store(true, std::memory_order_release);
 
-      // KDE first (the long-tested path); otherwise niri's IPC, probed with the
-      // very query the poller uses so an installed-but-not-running niri does
-      // not steal the KWin path.
-      if (!kwin_is_running() &&
-          display_device::vdd_utils::run_logged("niri msg --json focused-window", kNiriCommandTimeout).exit_code == 0) {
+      // KDE first: its KWin script is the only Wayland producer that also
+      // carries a pid, and KWin does not implement the wlroots protocols, so
+      // the generic probe below cannot serve a Plasma session anyway.
+      if (kwin_is_running()) {
+        std::thread(worker).detach();
+        return;
+      }
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+      // Generic wlroots path first: sway, river, wayfire and friends all speak
+      // it, and it is the only protocol that says which toplevel is active.
+      if (wlr_toplevels_available()) {
+        std::thread(wlr_worker).detach();
+        return;
+      }
+#endif
+
+      // niri ships its own IPC instead of wlr-foreign-toplevel-management; the
+      // query is probed so an installed-but-not-running niri does not win.
+      if (display_device::vdd_utils::run_logged("niri msg --json focused-window", kNiriCommandTimeout).exit_code == 0) {
         std::thread(niri_worker).detach();
         return;
       }
 
+#ifdef SUNSHINE_BUILD_X11
+      // Last resort: an X11 session, or XWayland on a compositor that offers no
+      // focus interface at all.
+      if (std::getenv("DISPLAY")) {
+        std::thread(x11_worker).detach();
+        return;
+      }
+#endif
+
+      // Nothing recognised. Keep the KWin worker trying: a Plasma session that
+      // starts later still gets picked up by its retry loop.
       std::thread(worker).detach();
     }
 

@@ -16,7 +16,7 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**10 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+剩余：**6 项部分实现**（§一）、**9 项可行未做**（§二）、**9 项本质不可移植**（§三）。
 （§1.6 / §2.6 AI Key 的 Secret Service 后端已于 2026-10-22 落地，从待办中移除。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
@@ -136,13 +136,40 @@
   再复用 Windows 那份协议实现（把它从 `src/platform/windows/` 挪成共享源 + 平台门控）。
 - **验收**：Cemu/模拟器识别到运动输入（需 §2.7 的 hidraw 采集先就位）。
 
-### 2.5 非 KDE 前台检测（低）—— niri 已覆盖，其余待做
+### 2.5 非 KDE 前台检测（✅ 已完成，2026-10-22）
 
-- **已完成**：niri（轮询 `niri msg --json focused-window`，KWin 优先、niri 兜底）。
-- **仍缺**：X11：XFixes + `_NET_ACTIVE_WINDOW`/`_NET_WM_PID`（X11 库已链接）；wlroots 系
-  （sway/Hyprland）：`ext-foreign-toplevel-list` / wlr-foreign-toplevel-management。两者都只需接入
-  `src/platform/linux/foreground_app.cpp` 的同一 producer 选择与缓存。
-- **验收**：Hyprland/X11 会话下 ABR 日志出现前台切换。
+`src/platform/linux/foreground_app.cpp` 的 producer 选择现在是四级，按能力从强到弱依次探测：
+
+1. **KDE Plasma** — KWin 脚本 + 私有 D-Bus 服务（原有路径，唯一带 pid 的 Wayland 源）。
+   只要 `org.kde.KWin` 占着总线名就优先用它，X11 版 Plasma 同样走这条。
+2. **wlroots 系（sway / river / wayfire …）** — `wlr-foreign-toplevel-management-unstable-v1`。
+   这是**唯一会广播"哪个 toplevel 处于 activated"的通用协议**，所以是 Wayland 的通用解：
+   `state` 事件里的 `ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED` 直接给出前台窗口，
+   每次 `done` 扫一遍活动项。协议不带 pid，`store_report(0, …)` 靠 exe 名比对照样能识别切换。
+   协议 XML 本来就在 `third-party/wlr-protocols/unstable/`（`wlgrab` 用的是同目录的
+   export-dmabuf），新增一行 `GEN_WAYLAND` 即可，没有引入新依赖。
+   **没有用 wayland-protocols 的 `ext-foreign-toplevel-list`**：它只枚举 toplevel、不带任何
+   激活状态，回答不了"谁在前台"这个问题。
+3. **niri** — 轮询 `niri msg --json focused-window`（原有路径）。niri 既不实现 KWin 脚本也不实现
+   wlroots 的 toplevel 协议，只能走自己的 IPC。查询本身作为探针，避免装了没跑时抢走其它 producer。
+4. **X11** — `_NET_ACTIVE_WINDOW` + `PropertyNotify`（根窗口 `PropertyChangeMask`），另有 2s 定时
+   重读兜底。字段取自 `_NET_WM_PID`、`WM_CLASS`（取第二段 class，对齐 KWin 的 resourceClass）、
+   `_NET_WM_NAME`（`UTF8_STRING`，缺失时退 `WM_NAME`）。X11 库只在 `SUNSHINE_BUILD_X11` 时才链接，
+   所以整块都在该宏内。这条同时覆盖"Wayland 合成器完全没有焦点接口时的 XWayland 客户端"。
+
+探测顺序把 KDE 放最前是因为它是唯一带 pid 的源，且 KWin 不实现 wlr 协议——实测当前 Plasma 会话的
+registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v1` **都不存在**，
+所以通用探针在 KDE 上会快速失败、不会误抢。
+
+**验证**：
+
+- X11 读取逻辑对着自建窗口做过端到端验证（`_NET_WM_PID` / `WM_CLASS` 取 class / 含中文与破折号的
+  `_NET_WM_NAME` 三项全部匹配），并已还原被测的根窗口属性。
+- wlroots producer 无法在本机运行时验证：当前只有 Plasma 与 niri，niri 不支持该协议，机器上也没有
+  sway/river。编译期验证到符号级（`nm` 可见 18 个 `zwlr_foreign_toplevel_*` 符号，生成代码已链接）。
+- 仍需在 sway 或 Hyprland 会话上确认 ABR 日志出现前台切换（Hyprland 实现的是
+  `ext-foreign-toplevel-list` + 自有的 hyprctl，本 producer 对它同样不生效——Hyprland 目前仍需
+  单独的 hyprctl 路径，见 §三 的说明）。
 
 ### 2.6 AI Key libsecret 后端（✅ 已完成，2026-10-22）
 

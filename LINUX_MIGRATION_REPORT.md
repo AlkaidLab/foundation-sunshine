@@ -17,7 +17,7 @@ NVENC/VAAPI/Vulkan/软件编码、evdev 输入注入、WebUI）是上游成熟�
 （虚拟显示器、物理显示器 display_device、HDR 动态元数据三件套、剪贴板主机同步、远程麦克风、
 ABR 前台检测、托盘）已逐项移植到 Linux 并补齐了 Windows 对齐审计。
 
-已移植项的清单与证据见 §六；剩余缺口（含 6 项部分实现、可行未做项、本质不可移植项）
+已移植项的清单与证据见 §六；剩余缺口（含 6 项部分实现、9 项可行未做、本质不可移植项）
 在 `LINUX_PORT_GAPS.md` 逐条编号维护。
 
 **上游同步状态**：2026-10-22 已并入 `origin/master` `7a0995e2`（33 个提交，403 文件）。
@@ -303,6 +303,27 @@ FALSE 且不带 `GError`，这点是实测出来的，别按返回值判错。�
 擦除会明确报错提示先清理 service 环境，否则 key 仍在生效。没装 `libsecret` 时行为与之前完全一致。
 验收用例：`tests/unit/test_credential_store.cpp` 的 `RoundTripsThroughTheKeyring`（无 Secret
 Service 或本用户已有 key 时 `GTEST_SKIP`，绝不覆盖真实凭据）。
+
+### 6.13 非 KDE 合成器的前台窗口检测
+
+ABR 的前台应用分类原先只覆盖 KDE（KWin 脚本 + 私有 D-Bus 服务）与 niri（`niri msg --json
+focused-window`）。`src/platform/linux/foreground_app.cpp` 现在按能力探测四级 producer，任一级缺席
+就落到下一级：
+
+1. KWin（唯一带 pid 的 Wayland 源，`org.kde.KWin` 占着总线名即用）；
+2. `wlr-foreign-toplevel-management-unstable-v1`——sway / river / wayfire 等 wlroots 系合成器，
+   `state` 事件里的 `ACTIVATED` 直接给出前台窗口，每次 `done` 扫描活动项。协议不带 pid，
+   靠 exe 名比对识别切换。协议 XML 复用仓库里已有的 `third-party/wlr-protocols/unstable/`
+   （`wlgrab` 用的 export-dmabuf 就在同目录），只加了一行 `GEN_WAYLAND`，没有新依赖；
+3. niri 的 IPC（原有路径，探针即那条查询本身）；
+4. X11 的 `_NET_ACTIVE_WINDOW`（`PropertyNotify` + 2s 定时重读），字段取 `_NET_WM_PID`、
+   `WM_CLASS` 第二段（对齐 KWin 的 resourceClass）、`_NET_WM_NAME`（缺失退 `WM_NAME`）。
+   整块在 `SUNSHINE_BUILD_X11` 内，因此不改变未启用 X11 的构建。
+
+没有采用 wayland-protocols 的 `ext-foreign-toplevel-list`：它枚举 toplevel 却不带激活状态，回答不了
+“谁在前台”。X11 读取逻辑用自建窗口做过端到端验证（pid / class / 含中文标题三项均匹配，测后还原了
+根窗口属性）；wlroots 分支在本机无法运行时验证（只有 Plasma 与 niri，niri 不支持该协议），
+只验证到符号级。Hyprland 走自己的 hyprctl，仍需单独路径（见 `LINUX_PORT_GAPS.md` §2.5）。
 
 ### 6.12 管线帧率的源更新段（KMS）
 
