@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "src/ai/credential_store.h"
+#include "src/utility.h"
 
 #if defined(_WIN32)
 
@@ -116,6 +117,12 @@ TEST(CredentialStoreTest, RoundTripsThroughTheKeyring) {
   const auto written = credential_store::write_llm_api_key({}, secret);
   ASSERT_TRUE(written.success) << written.error;
 
+  // A failed assertion below would leave the key in the user's real keyring,
+  // and the "already stored" guard above would then skip this test forever.
+  auto keyring_cleanup = util::fail_guard([] {
+    credential_store::erase_llm_api_key({});
+  });
+
   const auto loaded = credential_store::read_llm_api_key({});
   ASSERT_EQ(loaded.status, credential_store::read_status_e::success) << loaded.error;
   EXPECT_EQ(loaded.secret, secret);
@@ -129,6 +136,7 @@ TEST(CredentialStoreTest, RoundTripsThroughTheKeyring) {
   EXPECT_TRUE(after.secret.empty());
 
   EXPECT_TRUE(credential_store::erase_llm_api_key({}).success);
+  keyring_cleanup.disable();
 }
 
 #endif

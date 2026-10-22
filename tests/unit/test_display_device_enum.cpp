@@ -86,7 +86,10 @@ TEST(DisplayDeviceEnum, DisabledConnectorsStayVisibleAsInactive) {
       continue;
     }
     const auto enabled = sysfs_enabled_state(id);
-    if (enabled.has_value() && *enabled == "enabled") {
+    if (!enabled.has_value() || *enabled == "enabled") {
+      // An unreadable property is not evidence of anything, and this file's
+      // header promises not to assert on it; only an explicitly disabled
+      // connector is testable here.
       continue;
     }
     EXPECT_EQ(info.device_state, display_device::device_state_e::inactive)

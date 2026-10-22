@@ -123,9 +123,13 @@ TEST(WlrRandr, IgnoresUnknownFieldsAndEmptyOutput) {
   Position: 1920,1080
   Transform: flipped-90
   Scale: 1.500000
-)");
+)WLR");
 
   ASSERT_EQ(state.heads.size(), 1u);
+  // The unknown "Adaptive sync" line must not swallow the name or the fields
+  // that follow it.
+  EXPECT_EQ(state.heads[0].name, "DP-2");
+  EXPECT_EQ(state.heads[0].description, "Vendor Panel");
   EXPECT_EQ(state.heads[0].x, 1920);
   EXPECT_EQ(state.heads[0].y, 1080);
   EXPECT_EQ(state.heads[0].transform, "flipped-90");
