@@ -19,6 +19,7 @@
 #include "src/display_device/vdd_utils.h"
 #include "src/globals.h"
 #include "src/platform/linux/display_backend.h"
+#include "src/platform/linux/kwin_input_device.h"
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
 #include "src/platform/linux/mirror_plan.h"
@@ -2639,6 +2640,13 @@ namespace display_device {
     }
 
     save_guard.disable();
+
+    // The set of enabled outputs just changed (a virtual display appeared, or the
+    // physical one went away) and KWin's per-device touch mapping does not follow it:
+    // the device keeps pointing at whatever output it was given when it was created.
+    // Re-point it so client touches land on the display that is actually streamed.
+    platf::kwin_input::sync_our_touch_devices(device_id);
+
     return persist_settings();
   }
 
@@ -2750,6 +2758,11 @@ namespace display_device {
     persistent_data.reset();
 
     BOOST_LOG(info) << "Display device configuration restored.";
+
+    // Outputs are back to their pre-session set; refresh the touch mapping for the
+    // same reason as the success path of apply_config().
+    platf::kwin_input::sync_our_touch_devices();
+
     return true;
   }
 

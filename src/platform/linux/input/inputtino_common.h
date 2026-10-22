@@ -14,6 +14,7 @@
 #include "src/dsu_server.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/linux/kwin_input_device.h"
 #include "src/utility.h"
 
 using namespace std::literals;
@@ -125,6 +126,11 @@ namespace platf {
       if (!pen) {
         BOOST_LOG(warning) << "Unable to create virtual pen tablet: " << pen.getErrorMessage();
       }
+      // KWin guesses an output for a freshly created touch device, and on a machine with an
+      // internal panel that guess is the internal one — which is usually the display we are
+      // *not* streaming. Touch events for a device with no usable output are dropped, so ask
+      // KWin for the mapping we actually need (see kwin_input_device.h).
+      kwin_input::sync_our_touch_devices(config::video.output_name);
     }
 
     input_raw_t *global;
