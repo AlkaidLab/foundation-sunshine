@@ -12,7 +12,8 @@ $sourcePaths=@('src/audio.h','src/config.h','src/config.cpp','src/rtsp.h','src/r
  'src/spatial_transport/mat_live_session.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h',
  'src/spatial_audio/native_mat_guard.h','src/spatial_audio/native_mat_assembler.h',
  'src/spatial_audio/stream_ring_source.h','src/spatial_audio/stream_output_protocol.h','src/spatial_audio/mat_stream_receiver.cpp',
- 'spatial-object-spike/resident/encoded_tap.cpp','spatial-object-spike/mat-android-session/capability_negotiation_test.py') | ForEach-Object {"$root/$_"}
+ 'spatial-object-spike/resident/encoded_tap.cpp','spatial-object-spike/mat-android-session/capability_negotiation_test.py',
+ 'spatial-object-spike/mat-rtsp-live/live_verify.py','spatial-object-spike/mat-rtsp-live/operator_process_test.py') | ForEach-Object {"$root/$_"}
 $sourcePaths+=Get-ChildItem -LiteralPath $PSScriptRoot -File | ForEach-Object {$_.FullName}
 $sourcePaths+=Get-ChildItem -LiteralPath "$PSScriptRoot/../sonic-mat-live" -File | ForEach-Object {$_.FullName}
 foreach($relative in @(git -C $common diff --name-only 05415ed4f544ee10d9fc6c9735a1f34c4a032a87 HEAD)){
@@ -45,6 +46,10 @@ if($LASTEXITCODE){throw 'Private pipe tail/acknowledgement regression failed'}
 if($LASTEXITCODE){throw 'Native-only checker / software UDP+FEC regression failed'}
 & "$PSScriptRoot/../sonic-mat-live/build.ps1" -Output "$out/sonic-source" *> "$out/sonic-source-build.log"
 if($LASTEXITCODE){throw 'Sonic object / native-worker adapter software verification failed'}
+& "$PSScriptRoot/../sonic-mat-live/test-manage-live.ps1" -Output "$out/operator-state" *> "$out/operator-state.log"
+if($LASTEXITCODE){throw 'Native operator state/identity regression failed'}
+& $Python "$PSScriptRoot/../mat-rtsp-live/operator_process_test.py" --output "$out/operator-launcher" --powershell (Get-Process -Id $PID).Path *> "$out/operator-launcher.log"
+if($LASTEXITCODE){throw 'Native operator launcher output/ownership regression failed'}
 & gcc.exe -O2 -std=c11 -Wall -Wextra -Werror -DHAS_SOCKLEN_T "-I$common/src" "$PSScriptRoot/../mat-android-session/negotiation_client.c" "$out/host-common/libmoonlight-common-c.a" "$out/host-common/enet/libenet.a" -static-libgcc -lcrypto -lws2_32 -lwinmm -lbcrypt -lcrypt32 -liphlpapi -o "$out/negotiation-client.exe"
 if($LASTEXITCODE){throw 'Production RTSP frontend compile failed'}
 & $Python "$PSScriptRoot/../mat-android-session/capability_negotiation_test.py" --client "$out/negotiation-client.exe" --output "$out/negotiation" *> "$out/negotiation.log"
@@ -53,5 +58,5 @@ foreach($source in $sourceHashes){if((Get-FileHash -LiteralPath $source.path).Ha
 $hashes=@(Get-ChildItem -LiteralPath $out -Recurse -File | Where-Object Extension -In '.log','.json','.exe' | ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLower()}})
 @{result='PASS';scope='Software live MAT sender / RTP+FEC receiver / authenticated transport / negotiation; synthetic test bytes only';
  commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTestsPerCopy=14;rtspCases=21;logicalDataPacketsPerLongTest=78000;
- generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;privatePipeVersion=2;pipeTailRegression='PASS';nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
+ generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;privatePipeVersion=2;pipeTailRegression='PASS';operatorStateRegression='PASS';operatorLauncherRegression='PASS';nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS live MAT software verification: $out/proof.json"

@@ -1,0 +1,77 @@
+Native MAT operator lifecycle continuation, 2026-10-23
+
+Implemented
+-----------
+The plugin publisher now has a read-only exact-engine/hash/six-entry preflight,
+explicit --continuous mode, and retained --max-seconds 1..60 diagnostic bounds.
+Missing/malformed bounds cannot silently request continuous capture. Intentional
+stop before any object input restores cleanly without fabricating native readiness
+or an empty successful EOS. Existing object/format/watchdog constraints remain.
+
+manage-live.ps1 provides explicit Preflight / Start / Status / Stop. Start checks
+the reviewed source/binary manifest, creates immutable hash-named deployment and
+records publisher PID/creation/image/hash, exact private event/pipe and host config
+snippet. It does not emit objects, change endpoints, edit installed configuration,
+elevate, retry, install a service, force-kill or unload DLLs. WaitingForObjects is
+distinct from NativeReady. Stop checks process identity/hash and six-entry restore.
+Continuous mode is implemented but sustained native operation is unverified.
+
+Original full native session remains PASS
+----------------------------------------
+build/mat-full-native-run01: normal Sunshine encrypted RTSP + native MAT and H264.
+983 delivered cycles / 60395520 bytes, source/client whole SHA equal,
+authenticated EOS, 588 decoded video frames and 19437 ms reception overlap.
+See MAT-FULL-NATIVE-RESULT.txt; this was the first of two authorized joint tests.
+
+Second authorized native test: operator-controlled launch FAIL
+------------------------------------------------------------
+Source commit 47422e06203abad0238adae40246e41058799b0e.
+build/mat-full-native-run02/result.json is passed=false. The new launcher used
+subprocess.run(stdout=PIPE). PowerShell Start-Process left an output-pipe handle
+in its long-lived native child, so the harness waited for child/pipe EOF before
+starting the live source. Native publisher started at 01:30:12 and ended at
+01:30:32; source emission started at 01:30:32, after the capture bound.
+Native input/cycles were zero; no new RTSP/video client session was started.
+
+This is a launcher ordering failure, not evidence rejecting the already proven
+MAT source. Do not label the second run a native streaming pass.
+The new idle-stop path restored all six original entries, operator Stop verified,
+host/publisher/source exited0, cleanupErrors=[], same pinned audiodg retained.
+Private frozen record: build/mat-full-native-run02-completed.json.
+Both authorized joint tests are consumed; no further native run was made.
+
+Correction and software evidence
+--------------------------------
+The operator invocation now writes its log directly to a file; it does not wait
+for an inherited stdout pipe to reach EOF. operator_process_test.py uses only
+ordinary child processes and reproduced the old wait at 3.360 seconds for a
+2.5-second child. The fixed path returned after 0.531 seconds while its child was
+still alive. Creation-identity mismatch, bounded wait, exact child exit and
+command failure checks passed. Evidence: build/mat-lifecycle-launcher-v1/proof.json.
+
+Actual private publisher and production record-reader generated tests passed:
+prepare cancellation, streaming disconnect/reconnect, fresh PLAY cutoff/sequence,
+source failure without EOS, delayed tail, exact/bad/missing/cancelled EOS ACK and
+invalid/empty/error EOF. Evidence: build/mat-lifecycle-pipe-v1/proof.json.
+These test-source descriptors remain forbidden to the native-only host source.
+Operator own-process status/hash/identity/duration tests passed:
+build/mat-lifecycle-operator-v2/proof.json. Native adapter build, 32 paired-hook
+tests, explicit duration tests and both 1300-round fake-worker IPC tests passed:
+build/mat-lifecycle-native-v2/. No generated media entered the native pipe.
+
+Final complete software workflow: build/mat-lifecycle-software-v1/proof.json PASS.
+Both common-c copies passed 14 tests; 21 RTSP/live/Opus negotiation cases passed.
+Two generated 1300-cycle UDP/FEC cases and all 391 deliberately lost packets
+recovered; pipe lifecycle, 32 paired-hook cases, both 1300-round IPC paths,
+explicit capture options, operator state and launcher regression passed.
+The repeated ordinary-child test observed old=3.375s, fixed=0.563s.
+Corrected harness isolated normal-host startup/TLS pairing/normal exit preflight:
+build/mat-lifecycle-preflight-v1/result.json PASS, no native attachment.
+
+Remaining acceptance
+--------------------
+Corrected operator-controlled full native session needs a new explicitly bounded
+native test; it has not been natively retested. The local machine has no suitable
+MAT HDMI/eARC playback setup, so hardware/Atmos output is unverified. Game A/V
+calibration, sustained stability, broader object layouts and the historical
+missing-object failure cause remain open. Unsupported phones still select Opus.

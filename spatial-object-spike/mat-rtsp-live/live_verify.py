@@ -52,6 +52,18 @@ def signal_stop(name):
         kernel.CloseHandle(event)
 
 
+def run_operator_command(command, log_path, timeout=25):
+    # Start-Process may leave an inherited copy of the parent's stdout pipe in
+    # its long-lived native child. communicate(PIPE) then waits for that child,
+    # even after the launcher exited. A file requires no pipe EOF to return.
+    with log_path.open("wb") as log:
+        completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
+                                   timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
+    if completed.returncode:
+        raise RuntimeError(f"Operator command failed; inspect {log_path.name}")
+    return log_path.read_bytes()
+
+
 class OwnedPublisher:
     """Wait on the exact process started by the operator control script."""
     def __init__(self, state):
@@ -195,12 +207,7 @@ def main():
 
     def operator(action, extra=()):
         command = [str(args.powershell), "-NoProfile", "-File", str(operator_script), "-Action", action, *extra]
-        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
-        (out / f"operator-{action.lower()}.log").write_bytes(completed.stdout)
-        if completed.returncode:
-            raise RuntimeError(f"Operator {action} failed; inspect its original log")
-        return completed.stdout
+        return run_operator_command(command, out / f"operator-{action.lower()}.log")
 
     def start(command, name, cwd=None, process_env=None):
         log = (out / f"{name}.log").open("wb")

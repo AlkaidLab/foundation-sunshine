@@ -60,3 +60,17 @@ The harness holds a process handle with the returned creation identity and recor
 the exact operator logs. It never uses continuous mode during a bounded test.
 The operator entry point can separately prepare a continuous, explicitly started
 capture; see the Sonic adapter README. Hardware output is still a separate stage.
+
+The second authorized test (operator-controlled, 01:30) did not start a streaming
+session: `subprocess.run(stdout=PIPE)` waited on output handles inherited by the
+long-lived native child, so the 20-second capture expired before source emission.
+Zero native input/cycles were observed. Hooks restored, operator Stop verified,
+all children exited0 and the same engine survived. Original evidence is retained
+in `build/mat-full-native-run02/`; this does not invalidate the earlier full pass.
+
+The harness now logs the operator launcher directly to a file. The ordinary-child
+regression `operator_process_test.py` reproduced the old wait (3.360 seconds for
+a 2.5-second child), while the fixed path returned in 0.531 seconds with its child
+still alive. It also checks creation identity, bounded waits and child failure.
+The corrected operator/full-session path has not been natively retested. The two
+authorized joint tests are consumed; no additional native run is implied here.
