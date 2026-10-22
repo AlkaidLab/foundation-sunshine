@@ -76,7 +76,7 @@ foreach ($directory in @($sourceDirectory, $payload)) {
 }
 Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceDirectory
 $source = Join-Path $sourceDirectory "HIDMaestro-$($pin.commit)"
-foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch', 'managed-usbip.patch')) {
+foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch', 'managed-usbip.patch', 'dualsense-reports.patch')) {
     $patch = Join-Path $patchRoot $name
     & git apply --check --unsafe-paths "--directory=$source" $patch
     if ($LASTEXITCODE -ne 0) { throw "Core patch $name no longer applies exactly to the pinned source" }

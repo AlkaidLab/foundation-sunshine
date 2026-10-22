@@ -62,6 +62,7 @@ internal sealed class ControllerSession : IDisposable
             Axes = _axes.Values,
             BatteryLevel = 10,
             BatteryFull = true,
+            SensorTimestamp = Foundation.Input.DualSenseClock.Now,
         };
 
         _controller.OutputDecoded += OnOutputDecoded;
@@ -182,6 +183,7 @@ internal sealed class ControllerSession : IDisposable
         }
     }
 
+    /// <summary>Updates one motion sensor, stamps its host receive time and immediately submits the combined state.</summary>
     internal void SubmitMotion(ReadOnlySpan<byte> payload)
     {
         // id:u8, type:u8, reserved:u16, x/y/z:f32 = 16 bytes
@@ -221,16 +223,9 @@ internal sealed class ControllerSession : IDisposable
             {
                 throw new InvalidDataException("Unsupported motion type");
             }
-            _state.SensorTimestamp = EncodeSensorTimestamp(ElapsedMicroseconds());
+            _state.SensorTimestamp = Foundation.Input.DualSenseClock.Now;
             SubmitStateLocked();
         }
-    }
-
-    internal static uint EncodeSensorTimestamp(long elapsedMicroseconds)
-    {
-        // A standard DualSense report stores sensor time in 1/3 microsecond
-        // ticks. The 32-bit counter is expected to wrap naturally.
-        return unchecked((uint)(elapsedMicroseconds * 3L));
     }
 
     internal void SubmitBattery(ReadOnlySpan<byte> payload)
