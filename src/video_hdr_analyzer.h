@@ -137,13 +137,23 @@ namespace video::hdr_analyzer {
     const bool per_pixel_maxrgb = frame.has_chroma();
     const int step = std::max(1, frame.chroma_subsample);
 
+    // This runs on the encoding thread every few frames, so a 4K frame must not
+    // cost 8.3M maxRGB reconstructions. Windows caps the same analysis at
+    // hdr_analysis_max_width x hdr_analysis_max_height (its downsampled
+    // texture); striding over the full-resolution frame is the CPU equivalent
+    // and keeps the statistics comparable.
+    const int row_step = std::max(1, (frame.height + hdr_metadata::hdr_analysis_max_height - 1) / hdr_metadata::hdr_analysis_max_height);
+    const int col_step = std::max(1, (frame.width + hdr_metadata::hdr_analysis_max_width - 1) / hdr_metadata::hdr_analysis_max_width);
+
     std::vector<std::uint32_t> histogram(code_max + 1, 0);
-    for (int row = 0; row < frame.height; ++row) {
+    std::uint64_t sampled = 0;
+    for (int row = 0; row < frame.height; row += row_step) {
       const auto *y_line = frame.y.data + (size_t) row * frame.y.stride;
       const auto *cb_line = per_pixel_maxrgb ? frame.cb.data + (size_t) (row / step) * frame.cb.stride : nullptr;
       const auto *cr_line = per_pixel_maxrgb ? frame.cr.data + (size_t) (row / step) * frame.cr.stride : nullptr;
 
-      for (int col = 0; col < frame.width; ++col) {
+      for (int col = 0; col < frame.width; col += col_step) {
+        ++sampled;
         const auto y_code = (y_line[col] >> frame.shift) & code_max;
         if (!per_pixel_maxrgb) {
           ++histogram[y_code];
@@ -166,7 +176,7 @@ namespace video::hdr_analyzer {
       }
     }
 
-    const auto total = (std::uint64_t) frame.width * frame.height;
+    const auto total = sampled;
     if (!total) {
       return;
     }
