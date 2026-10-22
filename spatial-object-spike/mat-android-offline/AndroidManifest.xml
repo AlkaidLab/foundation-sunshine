@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.limelight.matdiagnostic">
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
+    <instrumentation android:name="com.limelight.binding.audio.MatDeviceCheck"
+        android:targetPackage="com.limelight.matdiagnostic" android:label="MAT device checks" />
     <application android:label="MAT offline diagnostic" android:allowBackup="false"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name="com.limelight.binding.audio.MatReplayActivity" android:exported="true">

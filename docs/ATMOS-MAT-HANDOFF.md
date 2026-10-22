@@ -3,6 +3,27 @@
 这是研究分支的进度和复现说明，不是自动部署或提权授权。以本文件为当前
 入口；2026-10-18 的 JOC 交接包属于旧路线，不能代替当前 MAT 状态。
 
+## 2026-10-22 本机续作：手机扬声器试听
+
+用户已明确将本轮验证目标改为手机内置扬声器发声。原始 HDMI/eARC 路线和
+历史验收记录保留在下文；续作报告见
+`spatial-object-spike/mat-android-offline/MAT-PHONE-RESULT.txt`，复现入口见同目录
+`README.md`。
+
+- 完整 Moonlight debug APK/native application 构建已通过，包含 arm64-v8a 和
+  armeabi-v7a 的完整 JNI 库；使用独立测试包名，尚未做完整客户端真机网络验收。
+- 魅族 17 / Android 13 的真实 ART/JNI/player 检查通过；MAT、TrueHD、E-AC-3/
+  JOC、AC-4 MediaCodec 创建均不可用，当前 IEC bitstream direct support 为 0。
+- 新增**仅限固定 SHA 样本**的研究性 PCM 提取及显式扬声器试听。Java 提取与
+  既有 Python 研究解析器逐字节一致；保留三周期 bootstrap 时长为静音，31 个
+  fullband slot 合成单声道并复制到双声道。试听归一化使用独立数组和独立哈希。
+- 3.56 秒 / 170,880 帧实际提交到内置扬声器并 drain；修正过低试听增益后，
+  用户在本聊天明确确认听到测试音。手机系统媒体音量未由脚本修改。
+
+这只补齐固定样本的本地发声实验，不是通用 MAT 解码器、Atmos 对象/坐标渲染、
+完整网络客户端播放或无限实时捕获。旧的“尚未构建完整 APK”描述属于初次交接
+时的历史状态，不能覆盖本节的新构建结果；HDMI/eARC 和真实 Atmos 点亮仍未验证。
+
 ## 三个关联仓库
 
 | 仓库 | 分支 | PR base |

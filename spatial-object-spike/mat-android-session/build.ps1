@@ -1,9 +1,11 @@
-param([Parameter(Mandatory=$true)][string]$Output)
+param([Parameter(Mandatory=$true)][string]$Output,
+ [string]$JdkRoot=$env:JAVA_HOME)
 $ErrorActionPreference='Stop'
 $root=(Resolve-Path "$PSScriptRoot/../..").Path.Replace('\','/')
 if(Test-Path -LiteralPath $Output){throw 'New build directory required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName.Replace('\','/')
-$env:JAVA_HOME='C:/Program Files/Java/jdk-22';$env:PATH="$env:JAVA_HOME/bin;C:/msys64/ucrt64/bin;"+$env:PATH
+if (!$JdkRoot -or !(Test-Path -LiteralPath "$JdkRoot/include/jni.h")) { throw 'Set -JdkRoot or JAVA_HOME to a JDK with JNI headers' }
+$env:JAVA_HOME=$JdkRoot;$env:PATH="$env:JAVA_HOME/bin;C:/msys64/ucrt64/bin;"+$env:PATH
 $jni="$root/spatial-object-spike/moonlight-vplus/app/src/main/jni/moonlight-core";$common="$jni/moonlight-common-c"
 & cmake.exe -S $common -B "$out/common" -G Ninja -DCMAKE_C_COMPILER=C:/msys64/ucrt64/bin/gcc.exe -DCMAKE_MAKE_PROGRAM=C:/msys64/ucrt64/bin/ninja.exe -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DOPENSSL_ROOT_DIR=C:/msys64/ucrt64
 if($LASTEXITCODE){throw 'common configure failed'}

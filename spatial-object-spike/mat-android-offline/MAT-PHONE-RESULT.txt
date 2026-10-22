@@ -1,0 +1,112 @@
+MAT phone continuation — 2026-10-22, Asia/Hong_Kong
+=================================================
+Result: fixed-recording research PCM audition reached the Meizu 17 built-in
+speaker, and the user explicitly confirmed hearing it in this chat.
+This is not general MAT decoding, Atmos rendering or a live network session.
+
+Workspace and inputs
+--------------------
+Isolated continuation branch: codex/atmos-mat-phone-playback.
+Host PR base snapshot: 0506cd01a54ff06128a7876e788bc7fda847b1da.
+Android parent: 6c81179991b46c16a01563b6011e79e4cb4239ac.
+Both common-c copies: 773bebded05624e275106ce1fa4bb9aa32726535.
+PyroWave / Granite: cc91cbf6363721d19d135d05ca8e3d8665ea6afd /
+fd1c9f6652e708fdc52773883c60b58ee3f80855.
+Private transfer ZIP SHA256 and all 16 manifest entries were verified.
+The fixed recording remains 178 cycles / 10,936,320 bytes, SHA256:
+79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6.
+Recordings, keys, APKs and full local proofs remain outside public commits.
+
+New-machine validation
+----------------------
+- Final offline build: build/mat-phone-speaker-normalized/proof.json.
+- 12 production JNI/player groups pass on the desktop; the same suite runs
+  under Android ART using the actual ARM native bridge and a fake final sink.
+- Both common-c copies: 10/10 CTests each.
+- Profile/manifest/queue and six dump lifecycle cases pass.
+- Separate playback receiver unit: six lifecycle cases pass.
+- Actual production client negative negotiation: 15/15 cases reject before
+  carrier delivery, build/mat-newpc-negative/proof.json.
+- Android common/JNI objects and MAT module no-undefined link pass.
+- Diagnostic APK builds/signature checks pass; no permissions requested.
+- PowerShell syntax and git diff whitespace checks pass.
+
+Tooling fixes accept JDK/SDK paths from arguments or environment, propagate
+those paths through the orchestrator, and remove the profile unit's dependency
+on an old full-host compile database. NumPy is used only by the existing Python
+research extractor as an independent byte-for-byte PCM oracle.
+
+Complete client build
+---------------------
+:app:assembleNonRootDebug: BUILD SUCCESSFUL, 154 tasks executed, including full
+native modules, Kotlin/Java, R8, DEX and APK packaging. Local Gradle init settings
+use short native staging/output directories to avoid Windows path limits and
+applicationId com.limelight.vplus.matvalidation to separate the installed apps.
+This full client APK was built and inspected, not installed or network-tested.
+APK SHA256:
+fa2eb123342778d838b40761d14ecf07139e9647bef5e262e9af9e91564c74eb.
+Both ARM ABIs contain all five MatNativeReceiver JNI exports. The private MAT
+fixture is absent from the full client APK. Context, source versions and hashes:
+build/mat-full-client-proof.json; log: build/mat-full-client-v3.log;
+local Gradle init: build/mat-full-client.init.gradle.
+
+Real phone capabilities
+-----------------------
+Meizu 17, Android 13 / API 33, ARM64.
+MediaCodecList enumerated and createDecoderByType attempted for:
+audio/vnd.dolby.mat, audio/vnd.dolby.mlp, audio/eac3, audio/eac3-joc, audio/ac4.
+All five are unavailable on this device. AC3 availability does not supply a MAT
+decoder. Current output encoding is PCM16; IEC bitstream direct support is 0.
+The existing HDMI-only MAT sink rejects the route without submitting carrier
+bytes. No route/capability guard was removed or bypassed.
+
+Phone-local research audition
+----------------------------
+MatResearchPcm accepts only the SHA-locked recording and checks the observed
+fullband/LFE/table layout. The first three bootstrap cycles retain their exact
+duration as silence. All 31 fullband slots are summed at quarter gain, with a
+clipping check; the fixed recording's LFE must be silent. Mono is duplicated to
+stereo. No position metadata is interpreted or claimed as calibrated XYZ.
+
+170,880 frames / 683,520 bytes / 48 kHz / two channels / 3.56 seconds.
+Independent Java/Python extraction SHA256:
+385b0daed31b0c69c36cca786dcf4cc07407aff200a9678cf07ea54cefa3a039.
+Initial extracted peak was only 124/32768; the user did not hear the original
+track-volume-0.15 audition. Those attempts are not acoustic successes.
+For explicit audition only, a separate array is peak-normalized to 8192/32768
+and played at track volume 0.35, without changing global media volume.
+Submitted audition PCM SHA256:
+30f1e0d0e306c5da6d35a23a89a5d1bc4cb73cb14d47b3ee5bca7553760da61e.
+The extraction array/hash remains unchanged; normalization tests include source
+preservation, peak bound, signed extremes and silent-input rejection.
+
+Final device run: build/mat-meizu17-normalized/proof.json.
+Installed APK SHA matches the passing offline proof. AudioTrack route is the
+built-in speaker (type 2), all 170,880 frames drain, and the user confirms hearing
+the normalized test. The machine-generated proof conservatively keeps acoustic
+confirmation separate; listener-feedback.json records the human confirmation.
+
+Installation and evidence
+-------------------------
+The phone initially returned INSTALL_FAILED_USER_RESTRICTED. Installation was
+completed only after user interaction with the phone. Subsequent updates reuse
+this diagnostic's local signing key; no security settings were changed.
+check-device.ps1 supports -SkipInstall for a separate manual installation and
+checks the installed APK hash before running instrumentation. Failed attempts
+preserve logs without producing a passing proof.
+
+build/mat-phone-capabilities is an invalidated intermediate snapshot because
+sources changed while that earlier verifier was running; do not use its proof.
+The final normalized offline proof was checked against every current source and
+artifact fingerprint. Historical transfer/C-PROOF records were not rewritten.
+No new host production service, audiodg probe or native vendor encoding was run.
+Full real-Sunshine positive network sessions and M1–M3 private-oracle replay were
+not repeated on this machine in this continuation.
+
+Remaining work
+--------------
+General format handling, object/coordinate semantics and spatial rendering,
+integration with a real client network session, production live-source contract
+and recovery/latency remain incomplete. This finite mono audition is not a
+replacement for any of them. HDMI/eARC hardware and real Atmos recognition
+remain unverified. No PR has been merged or published by this continuation.

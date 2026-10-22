@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$Output,[switch]$SkipHostBuild,[int]$Port=52210,
- [string]$Python='C:/Python311/python.exe')
+ [string]$Python='python', [string]$JdkRoot=$env:JAVA_HOME,
+ [string]$SdkRoot=$env:ANDROID_HOME)
 $ErrorActionPreference='Stop'
 $root=(Resolve-Path "$PSScriptRoot/../..").Path.Replace('\','/')
 if(Test-Path -LiteralPath $Output){throw 'New verification directory required'}
@@ -7,8 +8,8 @@ $out=(New-Item -ItemType Directory -Path $Output).FullName.Replace('\','/')
 $env:PATH='C:/msys64/ucrt64/bin;'+$env:PATH
 Push-Location $root
 try {
- & "$PSScriptRoot/build.ps1" -Output "$out/client"
- & "$root/spatial-object-spike/mat-android-offline/verify.ps1" -Output "$out/regression"
+ & "$PSScriptRoot/build.ps1" -Output "$out/client" -JdkRoot $JdkRoot
+ & "$root/spatial-object-spike/mat-android-offline/verify.ps1" -Output "$out/regression" -JdkRoot $JdkRoot -SdkRoot $SdkRoot -Python $Python
  & gcc.exe -O2 '-Ithird-party/moonlight-common-c/src' "$PSScriptRoot/playback_unit.c" third-party/moonlight-common-c/src/MatPlayback.c third-party/moonlight-common-c/src/MatReceiver.c third-party/moonlight-common-c/src/MatDepacketizer.c -lcrypto -o "$out/playback-unit.exe"
  if($LASTEXITCODE){throw 'Playback lifecycle unit build failed'}
  & "$out/playback-unit.exe" "$root/spatial-object-spike/mat-spike/mat-native-session-run02/capture/encoder-payload.raw" | Tee-Object -FilePath "$out/playback-unit.log"

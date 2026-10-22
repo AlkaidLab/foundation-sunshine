@@ -1,9 +1,13 @@
 param(
  [Parameter(Mandatory=$true)][string]$Output,
- [string]$SdkRoot='C:/Users/chou0/AppData/Local/Android/Sdk',
- [string]$JdkRoot='C:/Program Files/Java/jdk-22'
+ [string]$SdkRoot=$env:ANDROID_HOME,
+ [string]$JdkRoot=$env:JAVA_HOME,
+ [string]$Python='python.exe',
+ [string]$SigningKeystore
 )
 $ErrorActionPreference='Stop'
+if (!$JdkRoot -or !(Test-Path -LiteralPath "$JdkRoot/include/jni.h")) { throw 'Set -JdkRoot or JAVA_HOME to a JDK with JNI headers' }
+if (!$SdkRoot -or !(Test-Path -LiteralPath "$SdkRoot/platforms/android-36/android.jar")) { throw 'Set -SdkRoot or ANDROID_HOME to an Android SDK with platform 36' }
 $root=(Resolve-Path "$PSScriptRoot/../..").Path.Replace('\','/')
 if(Test-Path -LiteralPath $Output){throw 'A new output directory is required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName.Replace('\','/')
@@ -20,12 +24,16 @@ New-Item -ItemType Directory -Path "$out/classes","$out/dex" | Out-Null
 & gcc.exe -shared -O2 -std=c11 -Wall -Wextra -Werror -static-libgcc "-I$JdkRoot/include" "-I$JdkRoot/include/win32" "$jni/mat_carrier_bridge.c" "$common/src/MatReceiver.c" "$common/src/MatDepacketizer.c" -o "$out/moonlight-core.dll"
 if($LASTEXITCODE){throw 'Host JNI build failed'}
 $core=@('MatCarrierConsumer','MatCarrierPlayer','MatNativeReceiver','MatRecording')|ForEach-Object {"$audio/$_.java"}
-& javac.exe --release 8 -encoding UTF-8 -d "$out/classes" @core "$app/src/test/java/com/limelight/binding/audio/MatOfflineTest.java"
+& javac.exe --release 8 -encoding UTF-8 -d "$out/classes" @core "$app/src/test/java/com/limelight/binding/audio/MatOfflineTest.java" "$PSScriptRoot/MatResearchPcm.java" "$PSScriptRoot/MatResearchPcmTest.java"
 if($LASTEXITCODE){throw 'Core Java compile failed'}
 & java.exe -Xcheck:jni "-Djava.library.path=$out" -cp "$out/classes" com.limelight.binding.audio.MatOfflineTest $source 2>&1 | Tee-Object -FilePath "$out/jvm-tests.log"
 if($LASTEXITCODE){throw 'Production JNI/player tests failed'}
+& $Python "$PSScriptRoot/phone_pcm_oracle.py" $source "$out/research-mono.pcm" | Tee-Object -FilePath "$out/phone-pcm-oracle.log"
+if($LASTEXITCODE){throw 'Python research PCM oracle failed'}
+& java.exe -cp "$out/classes" com.limelight.binding.audio.MatResearchPcmTest $source "$out/research-mono.pcm" | Tee-Object -FilePath "$out/phone-pcm-test.log"
+if($LASTEXITCODE){throw 'Research PCM does not match existing offline extraction'}
 $androidJar="$SdkRoot/platforms/android-36/android.jar"
-& javac.exe -source 8 -target 8 -encoding UTF-8 -classpath "$androidJar;$out/classes" -d "$out/classes" "$audio/MatAudioTrackSink.java" "$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java"
+& javac.exe -source 8 -target 8 -encoding UTF-8 -classpath "$androidJar;$out/classes" -d "$out/classes" "$audio/MatAudioTrackSink.java" "$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java" "$PSScriptRoot/MatDeviceCheck.java" "$PSScriptRoot/MatResearchSpeaker.java"
 if($LASTEXITCODE){throw 'Actual Android AudioTrack sink/activity compile failed'}
 # Build both common-c copies and rerun the pre-existing dump/manifest acceptance tests.
 foreach($variant in @('host-common','android-common')) {
@@ -41,7 +49,7 @@ foreach($variant in @('host-common','android-common')) {
 if($LASTEXITCODE){throw 'Dump regression build failed'}
 & "$out/mat-profile-unit.exe" $source "$out/dump-regression" 2>&1 | Tee-Object -FilePath "$out/dump-regression.log"
 if($LASTEXITCODE){throw 'Original dump/manifest lifecycle regression failed'}
-& "$root/spatial-object-spike/mat-rtsp-spike/check-android.ps1" -Output "$out/android-objects" *>&1 | Tee-Object -FilePath "$out/android-check.log"
+& "$root/spatial-object-spike/mat-rtsp-spike/check-android.ps1" -Output "$out/android-objects" -SdkRoot $SdkRoot *>&1 | Tee-Object -FilePath "$out/android-check.log"
 if($LASTEXITCODE){throw 'Actual Android common/JNI compile failed'}
 # Standalone diagnostic APK, using the exact same client classes and JNI source.
 # This is NOT a full Moonlight APK and has no network or storage permissions.
@@ -53,7 +61,7 @@ foreach($abi in @('arm64-v8a','armeabi-v7a')) {
  if($LASTEXITCODE){throw "$abi MAT JNI module build failed"}
 }
 $tools="$SdkRoot/build-tools/36.0.0"
-$classFiles=@((Get-ChildItem -LiteralPath "$out/classes" -Recurse -Filter '*.class' | Where-Object {$_.Name -notlike 'MatOfflineTest*'}).FullName)
+$classFiles=@((Get-ChildItem -LiteralPath "$out/classes" -Recurse -Filter '*.class').FullName)
 & "$tools/d8.bat" --lib $androidJar --min-api 24 --output "$out/dex" @classFiles
 if($LASTEXITCODE){throw 'Diagnostic DEX compile failed'}
 & "$tools/aapt2.exe" link -o "$out/unsigned.apk" -I $androidJar --manifest "$PSScriptRoot/AndroidManifest.xml" --min-sdk-version 24 --target-sdk-version 35 --debug-mode
@@ -64,8 +72,12 @@ Copy-Item -LiteralPath $source -Destination "$out/apk/assets/verified-mat.raw"
 if($LASTEXITCODE){throw 'Diagnostic APK package failed'}
 & "$tools/zipalign.exe" -f -P 16 4 "$out/unsigned.apk" "$out/aligned.apk"
 if($LASTEXITCODE){throw 'Diagnostic APK alignment failed'}
-& keytool.exe -genkeypair -keystore "$out/mat-debug.keystore" -storepass android -keypass android -alias mat -dname 'CN=Local MAT Offline Diagnostic' -keyalg RSA -keysize 2048 -validity 3650 -noprompt
-if($LASTEXITCODE){throw 'Local diagnostic debug signing key failed'}
+if($SigningKeystore){
+ Copy-Item -LiteralPath $SigningKeystore -Destination "$out/mat-debug.keystore"
+} else {
+ & keytool.exe -genkeypair -keystore "$out/mat-debug.keystore" -storepass android -keypass android -alias mat -dname 'CN=Local MAT Offline Diagnostic' -keyalg RSA -keysize 2048 -validity 3650 -noprompt
+ if($LASTEXITCODE){throw 'Local diagnostic debug signing key failed'}
+}
 & "$tools/apksigner.bat" sign --ks "$out/mat-debug.keystore" --ks-key-alias mat --ks-pass pass:android --key-pass pass:android --out "$out/mat-offline-diagnostic.apk" "$out/aligned.apk"
 if($LASTEXITCODE){throw 'Diagnostic APK signing failed'}
 & "$tools/apksigner.bat" verify --verbose "$out/mat-offline-diagnostic.apk"
@@ -78,7 +90,9 @@ foreach($name in @('MatReceiver.c','MatReceiver.h','MatDumpFile.c','MatDepacketi
  $androidText=(Get-Content -Raw "$common/src/$name").Replace("`r`n","`n")
  if($hostText -cne $androidText){throw "Host/Android common source mismatch: $name"}
 }
-$files=@($core)+@("$audio/MatAudioTrackSink.java","$jni/mat_carrier_bridge.c","$jni/Android.mk","$app/proguard-rules.pro","$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java","$app/src/debug/AndroidManifest.xml","$app/src/test/java/com/limelight/binding/audio/MatOfflineTest.java","$common/src/MatReceiver.h","$common/src/MatReceiver.c","$common/src/MatDepacketizer.c","$common/src/MatDumpFile.c","$PSScriptRoot/verify.ps1","$PSScriptRoot/AndroidManifest.xml","$out/mat-offline-diagnostic.apk")
+$files=@($core)+@("$audio/MatAudioTrackSink.java","$jni/mat_carrier_bridge.c","$jni/Android.mk","$app/proguard-rules.pro","$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java","$app/src/debug/AndroidManifest.xml","$app/src/test/java/com/limelight/binding/audio/MatOfflineTest.java","$common/src/MatReceiver.h","$common/src/MatReceiver.c","$common/src/MatDepacketizer.c","$common/src/MatDumpFile.c","$PSScriptRoot/verify.ps1","$PSScriptRoot/AndroidManifest.xml","$PSScriptRoot/MatDeviceCheck.java","$out/mat-offline-diagnostic.apk")
+$files+=@('MatResearchPcm.java','MatResearchPcmTest.java','MatResearchSpeaker.java','phone_pcm_oracle.py') | ForEach-Object {"$PSScriptRoot/$_"}
+$files+="$root/spatial-object-spike/mat-spike/analyze_mat.py"
 $hashes=@($files|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLower()}})
 @{result='PASS';scope='A/B offline: real JNI and fake hardware; Android sources/DEX/native modules/APK built, no device playback';cycles=178;bytes=10936320;sha256=$expected;files=$hashes}|ConvertTo-Json -Depth 5 | Out-File -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS A/B offline: $out/proof.json"
