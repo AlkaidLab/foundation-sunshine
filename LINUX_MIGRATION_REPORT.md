@@ -17,8 +17,9 @@ NVENC/VAAPI/Vulkan/软件编码、evdev 输入注入、WebUI）是上游成熟�
 （虚拟显示器、物理显示器 display_device、HDR 动态元数据三件套、剪贴板主机同步、远程麦克风、
 ABR 前台检测、托盘）已逐项移植到 Linux 并补齐了 Windows 对齐审计。
 
-已移植项的清单与证据见 §六；剩余缺口（含 6 项部分实现、9 项可行未做、本质不可移植项）
-在 `LINUX_PORT_GAPS.md` 逐条编号维护。
+已移植项的清单与证据见 §六。剩余项在 2026-10-22 已**全部收束**（见 §十一与
+`LINUX_PORT_GAPS.md`）：可做的都落地了，其余 6 项逐条给出"不移植/搁置"的证据与**重启判据**，
+3 项等上游或属上游缺失，9 项本质不可移植。**待办为 0。**
 
 **上游同步状态**：2026-10-22 已并入 `origin/master` `7a0995e2`（33 个提交，403 文件）。
 其中两大跨平台重构（Simple-Web-Server → 自带 Beast HTTP 栈、confighttp 拆成 24 个模块）在 Linux
@@ -896,3 +897,26 @@ test_sunshine: 821 用例，808 通过，12 跳过，1 失败
 `#ifdef _WIN32` / `#if !defined(_WIN32)` 门控内。落地后用
 `git diff <merge-base>..HEAD -- <shared file>` 审计。详见 `AGENTS.md` 的 Platform rules 与
 Windows parity conventions。
+
+## 十一、剩余项的收束与重启判据（2026-10-22）
+
+可做的项已全部落地（§六 各节）。剩下的 6 项不是"没做"，而是**做不了或不该做**，逐条附证据；
+每条都写明**重启判据**——什么条件变化才值得重新开启，而不是简单一句"放弃"。
+
+| 项 | 判定 | 一句话证据 | 重启判据 |
+|---|---|---|---|
+| §1.5 帧管线契约 | 不移植 | 策略层跨平台，但采集端开关 `supports_pre_encode_filter()` 的**唯一 override 在 `src/platform/windows/display.h:383`**（基类 `src/platform/common.h:758` 返回 false），真实滤镜是 D3D11 计算着色器 | 上游把 pre_encode_filter 抽成带平台后端的接口 |
+| §1.7 音频位深 | 不处理 | Linux null sink 固定 48 kHz/float（PipeWire 服务端原生格式，转换无损）；Windows 走 PolicyConfig COM 按位深建设备只是为躲开 WASAPI 重采样 | 实测出现可听失真，或某类设备拒收 float |
+| §2.7 DS5 触觉 sidecar | 不移植 | 本机 `lsusb` 无 Sony `054c`；hidraw 只有 ITE(8910)/Compx VGN×3/Synaptics。上游侧车是 PowerShell + .NET + HIDMaestro 补丁的 Windows 工具链 | 有一台能被 Linux 直连的 DualSense 挂在主机上 |
+| §2.8 NVENC SDK 直连 | 搁置 | avcodec 路径功能面已齐（`src/video.cpp:1441/1457` 的 444、`:1649` 的 HDR 条目），直连只剩细粒度码控/lookahead/多实例增益 | 出现实测的画质或延迟瓶颈，或需要多编码实例 |
+| §2.9 Tauri 面板 | 搁置 | 阻塞点是"约 20 个模块只有 Windows 实现"，**不是工具链**（本机 `webkit2gtk-4.1` 已装）；WebUI 已覆盖配置/配对/监控 | 用户提出 WebUI 覆盖不到的具体需求（届时单独立项） |
+| §2.11 VAAPI 4:4:4 | 不启用 | 本机 VAAPI 驱动 `/usr/lib/dri/nvidia_drv_video.so` **只解码**：`nm -D` 只导出 `__vaDriverInit_1_0`，`strings` 里 `nvEncode*` 命中 0；vaapi 条目 444 槽位仍是 `AV_PIX_FMT_NONE`（`src/video.cpp:1764-1770`） | 换成 Intel/AMD iGPU 或出现带编码的 VAAPI 驱动 |
+
+另有两类不属于"待办"：**§2.1b 剪贴板 file-offer**（`kKindFileOffer` 的常量在
+`src/clipboard_bridge.h:58`，但整个 C++ 树里没有生产者也没有消费者——上游尚未定义协议，等上游）、
+以及 **9 项本质不可移植**（`LINUX_PORT_GAPS.md` §三，逐条给出 Windows 对应物与 Linux 现状）。
+
+**诚实的边界**：以下能力在本机**无法取得端到端证据**，文档中的结论来自协议/源码契约 + 单测 +
+失败路径实测，而不是一次成功实机运行：GNOME Mutter（无 GNOME 会话）、wlroots/wlr-randr（无
+sway/Hyprland）、X11 写路径（只有 XWayland 的只读镜像，且无 Xvfb/Xephyr）、DS5 触觉（无硬件）、
+VAAPI 444（驱动无编码）、以及 §1.1 的两个并发客户端形态（本机只有一个客户端）。

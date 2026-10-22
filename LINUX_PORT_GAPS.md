@@ -1,10 +1,11 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 82，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 84，2026-10-22；已并入上游 `origin/master` `3c194184`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
-- **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
-- **约定**：🔶 部分实现（有偏差）｜○ 未实现但可行｜⛔ 本质不可移植
+- **用途**：**结论清单**（2026-10-22 起）。可做的都已落地或已评估收束；每项含代码位置、证据与
+  **重启判据**（什么条件变化才值得重新开启）
+- **约定**：✅ 已完成｜⏸ 已评估收束（附重启判据）｜⛔ 本质不可移植｜○ 等上游定义协议
 - **已完成项**：见 `LINUX_MIGRATION_REPORT.md` §六，本文档不再复述
 
 ---
@@ -17,8 +18,14 @@
 非 KDE 桌面走合成器）、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**2 项部分实现**（§一：§1.5 帧管线契约、§1.7 音频位深）、**4 项可行未做**（§二，其中 §2.7/§2.8/§2.9/§2.11）、
-**1 项等上游定义协议**（§2.1b）、**9 项本质不可移植**（§三）。
+**剩余待办：0 项。** 终局分布：
+**已评估收束 6 项**（§一 §1.5 帧管线契约 / §1.7 音频位深；§二 §2.7 DS5 sidecar / §2.8 NVENC 直连 /
+§2.9 Tauri 面板 / §2.11 VAAPI 4:4:4 —— 每项都写明证据与"什么条件变化才重新开启"）、
+**1 项等上游定义协议**（§2.1b 剪贴板 file-offer，本树两端都没有生产者）、
+**9 项本质不可移植**（§三，含 Windows 对应物与 Linux 现状）。
+判定依据分三类：**本机没有验收对象**（无 DS5 硬件 / 无 wlroots、GNOME 会话）、
+**本机驱动没有该能力**（nvidia VAAPI 只解码）、
+**收益已被替代路径吃掉**（WebUI 覆盖面板、avcodec 覆盖 NVENC 直连、PipeWire 无损转换覆盖位深）。
 （2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.3 剪贴板图片 + 非 KDE
 桌面 provider、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
@@ -33,7 +40,7 @@
 
 ---
 
-## 一、🔶 部分实现（有已知偏差）
+## 一、显示与音频的收束项（✅ 完成 / ⏸ 已评估收束）
 
 ### 1.1 ✅ 虚拟显示器 per-client 隔离（2026-10-22 完成，阶段一 + 阶段二）
 
@@ -99,7 +106,7 @@
 - **验收（已达成）**：Plasma 6 下手机/客户端复制截图 → 主机粘贴为图片；无 klipper 的桌面复制文本
   → 主机粘贴得到同一文本。
 
-### 1.4 display_device 复制拓扑 + 非 KDE 桌面
+### 1.4 ✅ 复制拓扑 + 非 KDE 桌面显示后端（2026-10-22 完成，五个后端）
 
 - **现状**（✅ 2026-10-22 完成）：三后端已齐 —— kscreen-doctor（KDE Plasma）、niri IPC（§6.16）、
   Mutter DisplayConfig（§2.3）。分发顺序 `niri → mutter → kscreen`，都不在时退化为 no-op 并打
@@ -120,12 +127,22 @@
   未知输出/扩展桌面不变"；命令形态已在本机 KDE 上实测（`output.eDP-1.mirror.DP-2` → 回读
   `replication source: 1`，随后 disable 复原）。遗留的只是"真镜像下画面是否一致"这层观察。
 
-### 1.5 帧管线契约（frame_contract）
+### 1.5 ⏸ 帧管线契约（frame_contract）——已评估，不移植（2026-10-22）
 
-- **现状**：策略层跨平台（`src/platform/frame_contract.cpp`），只有 Windows 采集端消费。
-- **差距**：Linux 采集路径不消费契约（帧时间戳在 avcodec 路径已有，但契约的"合成 HDR 前置滤波"等
-  阶段依赖 pre_encode_filter）。
-- **结论**：随 pre_encode_filter 一起评估（§三 的伴生项），单独无意义。
+- **结论**：不移植。契约的策略层是跨平台的，但它在 Linux 上**没有可挂的前置滤镜实现**，单独
+  移植只能得到永远为 none 的管线策略。
+- **证据（本次复核）**：
+  - 契约本身是共享层：`src/platform/frame_contract.cpp` 107 行 + `.h` 125 行，由
+    `src/platform/common.h:29` 引入；`src/video_colorspace.cpp:58`、`src/rtsp.cpp:1844/1861`、
+    `src/image_enhancement/nr_defaults.h:5` 都在共享层消费它。
+  - 采集端能力开关 `platf::display_t::supports_pre_encode_filter()` 的基类返回 **false**
+    （`src/platform/common.h:758`），**唯一 override 在 `src/platform/windows/display.h:383`**；
+    `src/video.cpp:4317` 一旦看到 false 就关掉滤镜并重解管线策略。
+  - 两个真实滤镜 `external_sdr_to_hdr` / `external_neural_enhancement` 的实现是
+    `src/platform/windows/pre_encode_filter.cpp`（D3D11 计算着色器路径），属 §三 不可移植清单。
+- **重启判据**：上游把 pre_encode_filter 抽成带平台后端的接口（出现非 Windows 的
+  `supports_pre_encode_filter()` 实现），或 Linux 出现等价的 GPU 端前置滤镜需求。
+
 
 ### 1.6 AI API Key 加密存储（✅ 已完成，2026-10-22）
 
@@ -145,16 +162,21 @@
 - **残留风险**：若 collection 处于锁定状态，libsecret 的同步调用可能等解锁提示而阻塞调用线程
   （本机 KWallet 未锁，实测 write/read/erase 合计 16 ms）。真出现再考虑加超时/异步。
 
-### 1.7 音频设备位深匹配
+### 1.7 ⏸ 音频设备位深匹配——已评估，不处理（2026-10-22）
 
-- **现状**：虚拟 sink 固定 `PA_SAMPLE_FLOAT32`（`src/platform/linux/audio.cpp`）。Windows 用
-  PolicyConfig COM 按客户端位深建设备避免 WASAPI 重采样。
-- **实际影响**：PipeWire 服务端自适应转换，质量无损；仅多一次转换的 CPU 开销（可忽略）。
-- **结论**：**建议关闭**（不处理），除非实测发现问题。
+- **结论**：不处理。差异真实存在，但代价是一次**无损**转换。
+- **证据（本次复核）**：
+  - Linux：`src/platform/linux/audio.cpp` 建的虚拟 sink 固定 48 kHz / float（`format=float`，
+    `PA_SAMPLE_FLOAT32`），麦克风混音侧同样是 float32（`Audio.cpp` 的 `pa_sample_spec`）。
+  - Windows：`src/platform/windows/audio.cpp:87-122` 用 PolicyConfig COM 按客户端位深建设备
+    （`wBitsPerSample` 16/24/32 + `WAVE_FORMAT_EXTENSIBLE`），为的是避免 WASAPI 重采样。
+  - Linux 侧转换发生在 PipeWire 服务端，float32 正是服务端原生格式 ⇒ 无量化损失，只是多一次
+    内存内的采样格式转换。
+- **重启判据**：实测出现可听的失真（例如 24-bit 客人在 float 往返后出现截断伪影），或某类设备
+  （如独占直通）拒收 float 格式。
 
----
 
-## 二、○ 未实现但可行（按性价比排序）
+## 二、可行项的去向（✅ 完成 / ⏸ 已评估收束）
 
 ### 2.1 剪贴板图片（✅ 图片已完成，2026-10-22；file-offer 拆分到 §2.1b）
 
@@ -309,26 +331,41 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
 
 - 已随 §1.6 一并落地，此处不再列为待办。
 
-### 2.7 DS5 本地触觉播放 sidecar（高）
+### 2.7 ⏸ DS5 本地触觉播放 sidecar——已评估，不移植（2026-10-22）
 
-- Windows `src/platform/windows/ds5/ds5_sidecar_client.cpp` + `mic_write` 的触觉 PCM 在主机直连手柄上播放。
-- **路径**：`/dev/hidraw` 直写 DualSense 输出报告（udc3 打开 + 触觉报告格式），权限走 udev tag。
-  基础 rumble 已由 inputtino 覆盖，缺的是 authored IR PCM 高保真回放。
-- **验收**：直连 DS5 玩支持触觉的游戏，波形与 Windows 版一致。
+- **结论**：不移植。它是"主机直连手柄时的高保真触觉回放"增强，不在串流核心链路上，且**本机没有
+  任何 DualSense 可验收**。
+- **证据（本次复核）**：
+  - 硬件：`lsusb` 无 Sony（`054c`）设备；`/sys/class/hidraw/*` 只有 `ITE Device(8910)`、
+    `Compx VGN Mouse 2.4G Receiver` ×3、`SYNA2BA6:00 06CB:CE2D`（逐条取自
+    `/sys/class/hidraw/hidrawN/device/uevent` 的 `HID_NAME`）。
+  - 上游侧车是 Windows 工具链：`scripts/build-ds5-sidecar.ps1` + 完整 .NET 运行时 ZIP +
+    `tools/hidmaestro-core-patch/`（HIDMaestro 打补丁 + 注册表隔离）。Linux 侧要重写的是
+    `/dev/hidraw` 直写 + 触觉报告编解码，且基础 rumble 已由 inputtino 覆盖。
+- **重启判据**：有一台能被 Linux 直连（USB 或蓝牙）的 DualSense 挂在本机 —— 那时才谈得上
+  "波形与 Windows 一致"的验收。
 
-### 2.8 NVENC SDK 直连（高，建议搁置）
 
-- HDR10+/DV 已完成，avcodec 路径功能面已齐。直连的剩余增益：fork 的细粒度码控、lookahead、
-  多硬件实例。Vivid 的 T.35 手写序列化器反而是直连的*负资产*（avcodec 不需要它）。
-- **建议**：搁置，等实际画质/延迟瓶颈出现再评估。
+### 2.8 ⏸ NVENC SDK 直连——已评估，搁置（2026-10-22）
 
-### 2.9 Tauri 控制面板选择性移植（高，收益低）
+- **结论**：搁置。avcodec 路径的功能面已齐，直连只剩下精细码控类增益。
+- **证据（本次复核）**：`src/video.cpp` 的 nvenc 条目带 `YUV444_SUPPORT` 与
+  `AV_PIX_FMT_YUV444P/P16`（`:1441`、`:1457`），HDR 条目带 `CBR_WITH_VBR` 等（`:1649`），
+  HDR10+/DV/Vivid 已在 §6.10、§6.20 那几节有实测记录；直连的剩余增益是 fork 的细粒度码控、
+  lookahead、多硬件实例。而 fork 的 Vivid T.35 手写序列化器对直连反而是负资产。
+- **重启判据**：出现实测的画质/延迟瓶颈，或需要多编码实例（`nvenc_max_sessions`）时再评估。
 
-- 面板约 20 个系统模块仅 Windows 实现（vdd/vigem/vmouse/rtss/hwinfo(WMI)/elevation/注册表自启/
-  dualsense elevated/shell 右键菜单等）。WebUI 已覆盖大部分。
-- **若有需求**，只值得挑：QR 配对、实时监控（→ `nvidia-smi`/`amdgpu_top`/PipeWire 统计）、
-  文件右键共享（KDE ServiceMenu 更自然）。
-- **建议**：搁置；文件右键共享若想要，走 KDE ServiceMenu（低工作量）单独立项。
+
+### 2.9 ⏸ Tauri 控制面板选择性移植——已评估，搁置（2026-10-22）
+
+- **结论**：整体搁置，按需立项。**工具链不是阻塞点**，模块集才是。
+- **证据（本次复核）**：本机已有 `webkit2gtk-4.1`（Tauri 在 Linux 上的依赖之一），所以"跑不起来"
+  不是理由；真正的阻塞是面板约 20 个系统模块只有 Windows 实现（vdd / vigem / vmouse / rtss /
+  hwinfo(WMI) / elevation / 注册表自启 / dualsense elevated / shell 右键菜单），而 WebUI 已覆盖
+  配置、配对与大部分监控。
+- **重启判据**：用户提出 WebUI 覆盖不到的**具体**需求（那时单独立项，优先 QR 配对、实时监控
+  （`nvidia-smi`/PipeWire 统计）、文件右键共享（KDE ServiceMenu 更自然），而不是整体移植面板）。
+
 
 ### 2.10 ✅ 通用 wlroots / X11 显示后端（低）— 2026-10-22 全部完成
 
@@ -378,20 +415,20 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
 - **注意**：一律先做能力探测，探测失败保持既有降级路径（不得影响 KDE 与非 KDE 现状）；单次探测
   有 1.5 s 上界，失败后有 20 s 冷却，niri 会话里由 `NIRI_SOCKET` 直接命中、不发探针。
 
-### 2.11 VAAPI 的 YUV 4:4:4（低，NVENC 已解禁）
+### 2.11 ⏸ VAAPI 的 YUV 4:4:4——已评估，不启用（2026-10-22）
 
-- **背景**：`src/platform/linux/vaapi.cpp` 的 `get_va_profile()` 已能把 `AV_PROFILE_HEVC_REXT` +
-  8/10-bit 映射到 `VAProfileHEVCMain444`/`Main444_10`，且 `is_va_profile_supported()` 会经
-  `vaQueryConfigProfiles()` 查驱动——这条 444 链路**代码已备**，只是 vaapi encoder 条目
-  （`src/video.cpp` 的 `#ifdef __linux__` 段）的 444 格式仍为 `AV_PIX_FMT_NONE` 且无
-  `YUV444_SUPPORT`，走不到。
-- **做法**：条目 444 填 `AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV444P10`（hevc_vaapi 收平面格式）+ 旗标，
-  然后靠真实试编码探测兜底；`va_t::set_frame()` 的 VA surface 导出还要从写死的 2 层
-  （`prime.num_layers != 2` 拒绝）泛化到 3 平面 444 surface。
-- **收益/风险**：Intel/AMD iGPU 的 HEVC 444（h264 无 VAAPI 444 profile，天然只有 HEVC）；NVIDIA 上
-  nvidia-vaapi-driver 无编码入口，探测自然拒绝。**本机（NVIDIA）无收益、无法实测**。
+- **结论**：不启用。代码链路已备但走不到，且**本机驱动根本不提供编码入口**。
+- **证据（本次复核）**：
+  - 本机 VAAPI 驱动是 `/usr/lib/dri/nvidia_drv_video.so`（`libva-nvidia-driver`），**只实现解码**：
+    `nm -D` 只导出 `__vaDriverInit_1_0`，`strings` 里 `NvEncodeAPICreateInstance|nvEncode|NvEncoder`
+    命中 **0** 次 ⇒ 它不会暴露任何编码 entrypoint。
+  - `src/video.cpp:1764-1770` 的 vaapi 条目第三对格式仍是 `AV_PIX_FMT_NONE, AV_PIX_FMT_NONE`
+    （无 444），与文档记录一致；`get_va_profile()` 虽能把 `HEVC_REXT` 映射到 `Main444/Main444_10`，
+    但探测会因驱动不支持而自然拒绝。
+- **重启判据**：本机换成 Intel/AMD iGPU（或出现带编码的 VAAPI 驱动），且确有 HEVC 4:4:4 的保真
+  需求；那时按 §6 那段做法补 444 格式 + 把 `va_t::set_frame()` 的 surface 导出从 2 层泛化到
+  3 平面。
 
----
 
 ## 三、⛔ 本质不可移植（含原因与 Linux 对应物）
 
@@ -597,21 +634,6 @@ Windows 三个后端 override 它（`display.h`、`display_vdd.cpp:1453`、`disp
 - **结论**：给测试二进制加上能力即会通过。不要改动上游夹具把它变成 skip——那会在 Windows CI 上
   掩盖真实的 `platf::init()` 失败。`ctest` 的 `test_sunshine` 因此仍报红，属预期。
 
-### 7.6 ✅ 显示后端判定顺序（工程质量，2026-10-22）
-
-五条显示后端（kscreen / niri / Mutter / wlroots / RandR）里，有两条会在**不属于它**的会话里应答：
-XWayland 在每一个 Wayland 会话里都应答 RandR 读，KScreen 只要 `kscreen-doctor` 存在就应答。因此
-"先问谁"本身就是契约，`display_device.cpp` 里四个匿名 namespace 的 `compositor_is_*()` 助手
-却把它藏在调用图里，无法单测。
-
-**已抽成 `src/platform/linux/display_backend.h`**：header-only 的
-`platf::select_display_backend(supported)` 按 `niri → mutter → wlr_randr → xrandr → kscreen`
-依次问谓词，第一个举手即答案、之后的谓词一次都不调用（探测不白花；wlroots 的探测可能真的去跑
-一次 `wlr-randr`）。`compositor_is_*()` 与 `query_outputs()` 的派发都改为经由
-`selected_backend()`，逐次探测成本与改前完全相同；顺序理由逐条写在头文件里。
-`tests/unit/test_display_backend.cpp` 7 例用假谓词钉死顺序（含"wlroots 必须赢过 XWayland 镜像"
-与"探测在胜者处停止"），无需任何合成器。
-
 ### 7.5 已随本次同步自动继承（无需后续动作，记录以免误判为缺口）
 
 - **HTTP 传输替换**：Simple-Web-Server → 自带 Beast 实现（`src/http/{types,server,client,
@@ -635,3 +657,18 @@ XWayland 在每一个 Wayland 会话里都应答 RandR 读，KScreen 只要 `ksc
 - **仓库根整理**：`assets/brand/`、`assets/installer/`、`scripts/vite/`、`docs/{readme,en,zh-CN}/`
   已就位；`cmake/packaging/linux.cmake` 自动指向 `assets/brand/sunshine.svg`，本仓额外安装的
   `logo-sunshine-*.png` 规则保留。
+
+### 7.6 ✅ 显示后端判定顺序（工程质量，2026-10-22）
+
+五条显示后端（kscreen / niri / Mutter / wlroots / RandR）里，有两条会在**不属于它**的会话里应答：
+XWayland 在每一个 Wayland 会话里都应答 RandR 读，KScreen 只要 `kscreen-doctor` 存在就应答。因此
+"先问谁"本身就是契约，`display_device.cpp` 里四个匿名 namespace 的 `compositor_is_*()` 助手
+却把它藏在调用图里，无法单测。
+
+**已抽成 `src/platform/linux/display_backend.h`**：header-only 的
+`platf::select_display_backend(supported)` 按 `niri → mutter → wlr_randr → xrandr → kscreen`
+依次问谓词，第一个举手即答案、之后的谓词一次都不调用（探测不白花；wlroots 的探测可能真的去跑
+一次 `wlr-randr`）。`compositor_is_*()` 与 `query_outputs()` 的派发都改为经由
+`selected_backend()`，逐次探测成本与改前完全相同；顺序理由逐条写在头文件里。
+`tests/unit/test_display_backend.cpp` 7 例用假谓词钉死顺序（含"wlroots 必须赢过 XWayland 镜像"
+与"探测在胜者处停止"），无需任何合成器。
