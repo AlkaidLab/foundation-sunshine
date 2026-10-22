@@ -202,6 +202,10 @@ namespace platf::clipboard_data {
         ext_data_control_source_v1_destroy(source);
         source = nullptr;
       }
+      // An in-flight paste of the old item refers to bytes that are about to be
+      // replaced; out_transfer_t only remembers an offset, so finishing it
+      // would splice the old head onto the new tail. Drop them.
+      drop_out_transfers("the published item was replaced");
       source_bytes.clear();
       source_is_image = false;
 
@@ -241,8 +245,11 @@ namespace platf::clipboard_data {
         // the next publish and stop advertising bytes we no longer serve.
         [](void *data, ext_data_control_source_v1 *) {
           BOOST_LOG(debug) << "Clipboard ext: our selection was cancelled"sv;
-          static_cast<impl_t *>(data)->source_bytes.clear();
-          static_cast<impl_t *>(data)->source_is_image = false;
+          auto &state = *static_cast<impl_t *>(data);
+          // Bytes we no longer serve must not keep feeding a half-finished paste.
+          state.drop_out_transfers("the selection was cancelled");
+          state.source_bytes.clear();
+          state.source_is_image = false;
         },
       };
       ext_data_control_source_v1_add_listener(source, &kSourceListener, this);
@@ -399,6 +406,20 @@ namespace platf::clipboard_data {
       }
       recv_buf.clear();
       recv_is_image = false;
+    }
+
+    /// Close and forget every pending outbound paste.
+    void
+    drop_out_transfers(std::string_view reason) {
+      for (auto &transfer: out_transfers) {
+        if (transfer.fd >= 0) {
+          ::close(transfer.fd);
+        }
+      }
+      if (!out_transfers.empty()) {
+        BOOST_LOG(debug) << "Clipboard ext: dropped "sv << out_transfers.size() << " pending paste(s): " << reason;
+      }
+      out_transfers.clear();
     }
 
     /// Push pending paste bytes into their pipes; drop finished/expired ones.
