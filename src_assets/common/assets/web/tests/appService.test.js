@@ -88,22 +88,14 @@ test('formatAppData trims scalar fields and removes empty prep commands', () => 
   assert.equal(result['working-dir'], 'C:/Games/Game')
 })
 
-test('formatAppData rejects unknown per-app gamepad values', () => {
-  const result = AppService.formatAppData({
-    name: 'Game',
-    gamepad: 'invalid',
-  })
-
-  assert.equal(result.gamepad, '')
-})
-
-test('formatAppData preserves a per-app DualSense override', () => {
-  const result = AppService.formatAppData({
-    name: 'Game',
-    gamepad: 'ds5',
-  })
-
-  assert.equal(result.gamepad, 'ds5')
+test('formatAppData preserves supported gamepad overrides and drops unknown values', () => {
+  for (const [input, expected] of [
+    ['', ''], ['auto', 'auto'], ['x360', 'x360'], ['ds4', 'ds4'], ['ds5', 'ds5'],
+    ['invalid', ''], [undefined, ''],
+  ]) {
+    const result = AppService.formatAppData({ name: 'Game', gamepad: input })
+    assert.equal(result.gamepad, expected)
+  }
 })
 
 test('formatAppData normalizes per-app RTX HDR settings', () => {
