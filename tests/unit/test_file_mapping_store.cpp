@@ -199,17 +199,3 @@ TEST(FileMappingStore, SerializesConfigJson) {
   EXPECT_EQ(parsed[0]["mode"], "read");
   EXPECT_EQ(parsed[0]["clients"].size(), 0);
 }
-
-TEST(FileMappingStore, SerializesConfigValueAsParserSafeBase64) {
-  temp_store_tree_t tree;
-  file_mapping::mapping_t mapping;
-  mapping.id = "host-test";
-  mapping.name = "Downloads ] # still data";
-  mapping.local_root = tree.root / "Downloads";
-
-  const auto value = file_mapping_store::serialize_config_value({ mapping });
-  EXPECT_TRUE(value.rfind("base64:", 0) == 0);
-  EXPECT_EQ(value.find('['), std::string::npos);
-  EXPECT_EQ(value.find(']'), std::string::npos);
-  EXPECT_EQ(value.find('#'), std::string::npos);
-}

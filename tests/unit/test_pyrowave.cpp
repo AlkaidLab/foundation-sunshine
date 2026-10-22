@@ -441,7 +441,67 @@ TEST(PyrowavePacketizerTest, RoundTripsProtectedMetadataAcrossPacketsAndLostBloc
   }
 }
 
-TEST(PyrowavePacketizerTest, SegmentedInputMatchesConcatenatedReferenceBytes) {
+TEST(PyrowavePacketizerTest, PreservesFrameHeaderAndTailPaddingOnTheWire) {
+  // Reassembly ignores the repeated frame-header payload and trimmed tail bytes.
+  // Fixed wire examples protect those bytes without another packetizer algorithm.
+  const std::vector<std::uint8_t> metadata { 0x80, 0, 0, 5, 0, 0, 0, 0 };
+  const pyrowave::encoded_frame_t frame {
+    .frame_id = 17,
+    .deadline = { std::chrono::steady_clock::now(), std::chrono::milliseconds(100) },
+    .bitstream = { std::make_shared<const std::vector<std::uint8_t>>(
+      std::initializer_list<std::uint8_t> {
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20 }) },
+  };
+  auto packetizer = pyrowave::make_transport_packetizer();
+  for (const bool fec : { false, true }) {
+    SCOPED_TRACE(fec);
+    const auto result = packetizer->packetize(frame, {
+      .packet_boundary = 80,
+      .rtp_timestamp = 1717,
+      .block_aware_fec = fec,
+      .mark_critical = true,
+      .metadata = metadata,
+      .metadata_flags = 5,
+    });
+    ASSERT_EQ(result.failure, pyrowave::failure_e::none);
+    ASSERT_TRUE(pyrowave::validate(result));
+    std::vector<std::vector<std::uint8_t>> expected {
+      { 0x80, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+      { 0x80, 0, 0, 5, 0, 0, 0, 0, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17 },
+      { 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20 },
+    };
+    if (fec) {
+      expected[2].resize(16, 0);
+      expected.push_back({ 0x98, 0x19, 0x1a, 0x1e, 0x1c, 0x1d, 0x1e, 0x1f,
+                           0x30, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17 });
+    }
+    const unsigned kinds[] { 0, 1, 1, 2 };
+    const unsigned flags[] { 0x15, 0x15, 0x16, 0x1c };
+    ASSERT_EQ(result.packets.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      SCOPED_TRACE(i);
+      const auto span = result.packets[i];
+      EXPECT_EQ(span.offset, i * 80);
+      EXPECT_EQ(span.size, 64 + expected[i].size());
+      LI_PYROWAVE_PACKET_HEADER header {};
+      const std::uint8_t *payload = nullptr;
+      ASSERT_EQ(LiPyrowaveParsePacket(result.bitstream.view().data() + span.offset, span.size,
+        &header, &payload), LI_PYROWAVE_PACKET_OK);
+      EXPECT_EQ(header.packetKind, kinds[i]);
+      EXPECT_EQ(header.flags, flags[i]);
+      EXPECT_EQ(header.codecPayloadLength, 17u);
+      EXPECT_EQ(header.protectedPayloadLength, 25u);
+      EXPECT_EQ(header.metadataLength, 8u);
+      EXPECT_EQ(header.dataBlockCount, 2u);
+      EXPECT_EQ(header.parityBlockCount, fec ? 1u : 0u);
+      EXPECT_EQ(header.blockCount, fec ? 3u : 2u);
+      EXPECT_EQ(std::vector<std::uint8_t>(payload, payload + header.payloadLength), expected[i]);
+    }
+  }
+}
+
+TEST(PyrowavePacketizerTest, ClientRecoversMetadataAndCodecAcrossEverySegmentBoundary) {
   constexpr std::size_t payload_size = 32;
   constexpr std::size_t boundary = LI_PYROWAVE_WIRE_HEADER_SIZE + payload_size;
   auto packetizer = pyrowave::make_transport_packetizer();
@@ -471,94 +531,45 @@ TEST(PyrowavePacketizerTest, SegmentedInputMatchesConcatenatedReferenceBytes) {
         ASSERT_EQ(result.failure, pyrowave::failure_e::none);
         ASSERT_TRUE(pyrowave::validate(result));
 
-        // Keep the old concatenate-then-slice model only as a byte reference.
-        auto protected_bytes = request.metadata;
-        protected_bytes.insert(protected_bytes.end(), codec->begin(), codec->end());
-        const auto data_count = (protected_bytes.size() + payload_size - 1) / payload_size;
-        const auto parity_count = fec ? (data_count + LI_PYROWAVE_FEC_DATA_PER_GROUP - 1) / LI_PYROWAVE_FEC_DATA_PER_GROUP : 0;
-        const auto common_flags = static_cast<std::uint8_t>(LI_PYROWAVE_FLAG_CRITICAL |
-          (metadata_size == 0 ? 0 : LI_PYROWAVE_FLAG_METADATA_PRESENT));
-        LI_PYROWAVE_PACKET_HEADER common {};
-        common.version = LI_PYROWAVE_PROTOCOL_VERSION;
-        common.headerLength = LI_PYROWAVE_WIRE_HEADER_SIZE;
-        common.metadataFlags = request.metadata_flags;
-        common.frameId = 17;
-        common.rtpTimestamp = 1717;
-        common.codecPayloadLength = codec_size;
-        common.protectedPayloadLength = static_cast<std::uint32_t>(protected_bytes.size());
-        common.metadataLength = static_cast<std::uint16_t>(metadata_size);
-        common.fecScheme = fec ? LI_PYROWAVE_FEC_SCHEME_XOR : LI_PYROWAVE_FEC_SCHEME_NONE;
-        common.dataBlockCount = static_cast<std::uint16_t>(data_count);
-        common.parityBlockCount = static_cast<std::uint16_t>(parity_count);
-        common.fecBlockPayloadSize = payload_size;
-        common.blockCount = static_cast<std::uint16_t>(data_count + parity_count);
-
-        std::vector<std::uint8_t> reference;
-        std::vector<pyrowave::packet_span_t> reference_spans;
-        const auto append_reference = [&](LI_PYROWAVE_PACKET_HEADER header, const std::vector<std::uint8_t> &payload) {
-          header.payloadLength = static_cast<std::uint16_t>(payload.size());
-          std::vector<std::uint8_t> wire(boundary);
-          std::size_t written = 0;
-          ASSERT_EQ(LiPyrowaveBuildPacket(&header, payload.data(), payload.size(), wire.data(), wire.size(), &written),
-                    LI_PYROWAVE_PACKET_OK);
-          reference_spans.push_back({ reference.size(), written });
-          reference.insert(reference.end(), wire.begin(), wire.begin() + written);
-        };
-        auto header = common;
-        header.packetKind = LI_PYROWAVE_PACKET_FRAME_HEADER;
-        header.flags = LI_PYROWAVE_FLAG_START_OF_FRAME | common_flags;
-        std::vector<std::uint8_t> repeated_metadata(payload_size, 0);
-        std::copy_n(request.metadata.begin(), std::min(request.metadata.size(), payload_size), repeated_metadata.begin());
-        append_reference(header, repeated_metadata);
-
-        for (std::size_t index = 0; index < data_count; ++index) {
-          const auto offset = index * payload_size;
-          const auto count = std::min(payload_size, protected_bytes.size() - offset);
-          std::vector<std::uint8_t> payload(protected_bytes.begin() + offset, protected_bytes.begin() + offset + count);
-          if (fec) payload.resize(payload_size, 0);
-          header = common;
-          header.packetKind = LI_PYROWAVE_PACKET_DATA;
-          header.flags = common_flags |
-            (index == 0 ? LI_PYROWAVE_FLAG_START_OF_FRAME : 0) |
-            (index + 1 == data_count ? LI_PYROWAVE_FLAG_END_OF_FRAME : 0);
-          header.blockIndex = static_cast<std::uint16_t>(index);
-          if (fec) {
-            const auto group = index / LI_PYROWAVE_FEC_DATA_PER_GROUP;
-            header.fecGroupIndex = static_cast<std::uint16_t>(group);
-            header.fecDataCount = static_cast<std::uint8_t>(std::min<std::size_t>(LI_PYROWAVE_FEC_DATA_PER_GROUP,
-              data_count - group * LI_PYROWAVE_FEC_DATA_PER_GROUP));
-            header.fecParityCount = LI_PYROWAVE_FEC_PARITY_SHARDS;
-            header.fecShardIndex = static_cast<std::uint8_t>(index % LI_PYROWAVE_FEC_DATA_PER_GROUP);
+        // The independently implemented client reassembler is the oracle;
+        // do not maintain a second copy of the host's packet/FEC construction.
+        LI_PYROWAVE_REASSEMBLY_STATE state;
+        LiPyrowaveReassemblyInitialize(&state, 16 * 1024 * 1024);
+        const auto cleanup = std::unique_ptr<LI_PYROWAVE_REASSEMBLY_STATE,
+          decltype(&LiPyrowaveReassemblyDestroy)>(&state, LiPyrowaveReassemblyDestroy);
+        bool dropped_data = false;
+        for (const auto &span : result.packets) {
+          EXPECT_LE(span.size, boundary);
+          const auto *wire = result.bitstream.view().data() + span.offset;
+          LI_PYROWAVE_PACKET_HEADER header {};
+          const std::uint8_t *payload = nullptr;
+          ASSERT_EQ(LiPyrowaveParsePacket(wire, span.size, &header, &payload), LI_PYROWAVE_PACKET_OK);
+          EXPECT_EQ(header.frameId, 17u);
+          EXPECT_EQ(header.rtpTimestamp, 1717u);
+          EXPECT_NE(header.flags & LI_PYROWAVE_FLAG_CRITICAL, 0);
+          if (fec && !dropped_data && header.packetKind == LI_PYROWAVE_PACKET_DATA) {
+            dropped_data = true;
+            continue;
           }
-          append_reference(header, payload);
+          const auto status = LiPyrowaveReassemblyPushPacket(&state, wire, span.size, 5000, 100000);
+          EXPECT_TRUE(status == LI_PYROWAVE_REASSEMBLY_ACCEPTED ||
+                      status == LI_PYROWAVE_REASSEMBLY_COMPLETE ||
+                      status == LI_PYROWAVE_REASSEMBLY_DUPLICATE);
         }
-
-        for (std::size_t group = 0; group < parity_count; ++group) {
-          const auto group_start = group * LI_PYROWAVE_FEC_DATA_PER_GROUP;
-          const auto group_end = std::min(data_count, group_start + LI_PYROWAVE_FEC_DATA_PER_GROUP);
-          std::vector<std::uint8_t> parity(payload_size, 0);
-          for (std::size_t index = group_start; index < group_end; ++index) {
-            const auto offset = index * payload_size;
-            for (std::size_t byte = 0; byte < payload_size && offset + byte < protected_bytes.size(); ++byte) {
-              parity[byte] ^= protected_bytes[offset + byte];
-            }
-          }
-          header = common;
-          header.packetKind = LI_PYROWAVE_PACKET_PARITY;
-          header.flags = LI_PYROWAVE_FLAG_FEC_PARITY | common_flags;
-          header.blockIndex = static_cast<std::uint16_t>(data_count + group);
-          header.fecGroupIndex = static_cast<std::uint16_t>(group);
-          header.fecDataCount = static_cast<std::uint8_t>(group_end - group_start);
-          header.fecParityCount = LI_PYROWAVE_FEC_PARITY_SHARDS;
-          header.fecShardIndex = header.fecDataCount;
-          append_reference(header, parity);
-        }
-        EXPECT_EQ(*result.bitstream.storage, reference);
-        ASSERT_EQ(result.packets.size(), reference_spans.size());
-        for (std::size_t i = 0; i < reference_spans.size(); ++i) {
-          EXPECT_EQ(result.packets[i].offset, reference_spans[i].offset);
-          EXPECT_EQ(result.packets[i].size, reference_spans[i].size);
-        }
+        ASSERT_TRUE(LiPyrowaveReassemblyIsComplete(&state));
+        std::vector<std::uint8_t> decoded_metadata(metadata_size);
+        std::vector<std::uint8_t> decoded_codec(codec_size);
+        std::size_t written = 0;
+        std::uint16_t flags = 0;
+        ASSERT_EQ(LiPyrowaveReassemblyCopyMetadata(&state, decoded_metadata.data(), decoded_metadata.size(),
+          &written, &flags), LI_PYROWAVE_REASSEMBLY_COMPLETE);
+        EXPECT_EQ(written, metadata_size);
+        EXPECT_EQ(flags, request.metadata_flags);
+        EXPECT_EQ(decoded_metadata, request.metadata);
+        ASSERT_EQ(LiPyrowaveReassemblyCopyFrame(&state, decoded_codec.data(), decoded_codec.size(),
+          &written, nullptr), LI_PYROWAVE_REASSEMBLY_COMPLETE);
+        EXPECT_EQ(written, codec_size);
+        EXPECT_EQ(decoded_codec, *codec);
       }
     }
   }
