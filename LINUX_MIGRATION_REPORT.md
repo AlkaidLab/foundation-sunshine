@@ -175,10 +175,11 @@ sudo pacman -S --needed cmake ninja boost numactl \
 - **prep 模式**：`device_prep_e` 的 5 个取值（`src/display_device/parsed_config.h:27-33`）映射到
   `vdd_prep_e`（`:126-131`）。`23172`/`ZAKO_NAME` 设备 id 特判 `explicit_vdd`。
 
-### 6.2 物理显示器 display_device（kscreen 后端）
+### 6.2 物理显示器 display_device（kscreen + niri 后端）
 
-`src/platform/linux/display_device.cpp`（1703 行）以 kscreen-doctor 为合成器中介读写模式/HDR/主屏/
-拓扑，JSON 持久化 + apply/revert 编排对齐 Windows `settings.cpp`。
+`src/platform/linux/display_device.cpp` 以合成器为中介读写模式/HDR/主屏/拓扑，JSON 持久化 +
+apply/revert 编排对齐 Windows `settings.cpp`。合成器有两个生产者：kscreen-doctor（Plasma）与
+niri IPC（见 §6.16），由 `query_outputs()` 按会话分派。
 
 - `:143` `query_outputs()`、`:706` `set_display_modes()`、`:913` `set_hdr_states()`、
   `:1035` `set_topology()`、`:360` `wait_for_topology()`、`:383` `wait_for_display_stability()`。
@@ -187,7 +188,8 @@ sudo pacman -S --needed cmake ninja boost numactl \
 - 拓扑校验与 setter 一致地拒绝多设备组（复制组当前不可表达，见 `LINUX_PORT_GAPS.md`）。
 - kscreen 不可用的环境退化为既有的 no-op 行为并打 **warning**（明确"显示设置未被应用"），
   但保留 success 结果——这是 Linux 上会话的持久属性，返回失败会让所有非 KDE 会话进入无法修复的
-  deferred-retry。
+  deferred-retry。niri 会话不进入这条降级：模式与拓扑开关由 §6.16 的 IPC 后端接管，只有 HDR 与
+  主屏两项因 niri 没有对应接口而跳过（记录 warning，同样不返回失败）。
 
 ### 6.3 HDR 动态元数据三件套（avcodec 路径）
 
@@ -381,6 +383,29 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 包装；权限被拒时 detail 会显式指出这一点。单测覆盖 argv 约定、差集推导、0 基端口、无新端口失败与
 状态缺失降级。
 
+### 6.16 niri 输出后端（IPC）
+
+`src/platform/linux/niri_ipc.{h,cpp}` + `src/platform/linux/display_device.cpp`。niri 不实现
+KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_manager_v1`），但自带
+`niri msg` CLI + Unix socket（`NIRI_SOCKET`）与 JSON 输出，因此作为第二个 display_device 生产者。
+
+- **会话判定**：`session_supports_niri()`——`NIRI_SOCKET` 存在即真（niri 会导给所有子进程，即使
+  `XDG_CURRENT_DESKTOP` 为兼容性写成 KDE）；声明 KDE/Plasma 且无 socket 即假（不扫目录）；否则扫
+  `$XDG_RUNTIME_DIR` 与 `/run/user/<uid>`（服务用文件能力运行时 `secure_getenv` 会隐藏前者）下的
+  `niri.*.sock`，按 mtime 新→旧最多探 4 个，`niri msg --json version` exit 0 即认定。
+- **有界执行**：读 1.5 s、写 10 s（`vdd_utils::run_logged`，fork/exec + 关 fd + 超时 kill）；
+  失败后 20 s 冷却，避免每次查询都拉一个进程。
+- **读**：`niri msg --json outputs` → `platf::niri::parse_outputs()`（纯函数，`refresh_rate` 的
+  milliHz 转 Hz、`current_mode` 是模式下标、`null` 表示输出关闭）→ 映射成 `compositor_output_t`。
+  niri 没有 mode id，`id` 用下标字符串代替。
+- **写**：`niri msg output '<name>' mode WxH@R` / `on` / `off`。**`niri msg` 无论请求是否被接受都
+  exit 0**（未连接/非法模式只打一行 stdout），所以 `niri_change()` 与 kscreen 一样回读状态判定，
+  最多 3 次、间隔 500 ms。
+- **HDR / 主屏**：niri 的 IPC 两者都没有，`hdr_state_str` 恒空、`set_as_primary_device()` 返回
+  false 并打一次性 warning；`apply_config` 对这两项显式容忍（不把会话判失败）。
+- **测试**：`tests/unit/test_niri_ipc.cpp` 11 例覆盖 milliHz 换算、`current_mode` 下标、输出关闭、
+  越界下标、缺字段默认值、非对象/坏 JSON 拒绝。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -398,7 +423,7 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
 | Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测已移植（KDE + niri，§6.6） |
 | 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
-| 物理显示器 display_device | kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原（§6.2） |
+| 物理显示器 display_device | kscreen/niri 分辨率 + 拓扑开关 + 持久化还原；HDR/主屏仅 kscreen（§6.2、§6.16） |
 | 剪贴板主机同步（文本 + 图片） | 文本走 klipper sd-bus、图片走 ext-data-control，共用帧/回声/blob 回退（§6.4、§6.14） |
 | 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
 | HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
@@ -407,7 +432,7 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 | nvhttp 扩展 API | dynamic_params / network_probe / sessions / abr_api / ai_api / pairing，纯 HTTP 层 |
 | perf_recorder / input_activity / video_probe / cursor_channel | 跨平台；cursor_channel 在 Linux 因无光标生产者干净禁用 |
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 编译期特性检测；12ch 有 Linux null-sink 实现 |
-| AI API Key 凭据 | Linux 降级为明文环境变量 `SUNSHINE_LLM_API_KEY`（Windows 用 DPAPI，见 `LINUX_PORT_GAPS.md` §1.6） |
+| AI API Key 凭据 | Secret Service（libsecret）持久化，与 Windows 的 DPAPI 对等；无 keyring 时降级为环境变量 `SUNSHINE_LLM_API_KEY`（§6.11） |
 
 ### ⚠️ 降级可用（编译运行正常，功能面收窄）
 
@@ -415,7 +440,7 @@ wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Waylan
 |---|---|
 | 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
 | HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
-| 非 KDE 显示后端 | display_device 的模式/HDR/拓扑目前只有 kscreen 实现；niri/wlroots/X11 走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
+| 非 niri 的 wlroots / X11 显示后端 | niri 已由 IPC 后端覆盖（§6.16）；sway/Hyprland 等仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
 | display_device 复制拓扑 | kscreen-doctor 无 replication 设置命令，多设备组被拒绝（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
 | HDR 分析精度 | CPU 亮度直方图（亮度域）vs Windows 的 D3D11 逐像素 maxRGB（scRGB）；消费端按近似处理 |

@@ -20,6 +20,7 @@
 #include "src/globals.h"
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
+#include "src/platform/linux/niri_ipc.h"
 
 #include <algorithm>
 #include <atomic>
@@ -89,7 +90,7 @@ namespace display_device {
 
   namespace {
 
-    struct kscreen_mode_t {
+    struct compositor_mode_t {
       std::string id;
       unsigned int width = 0;
       unsigned int height = 0;
@@ -99,14 +100,14 @@ namespace display_device {
       bool preferred = false;
     };
 
-    struct kscreen_output_t {
+    struct compositor_output_t {
       int index = 0;
       std::string name;
       bool enabled = false;
       bool connected = false;
       int priority = 0;
       int replication_source = 0;
-      std::vector<kscreen_mode_t> modes;
+      std::vector<compositor_mode_t> modes;
       std::string hdr_state_str;  // "enabled" / "disabled" / "incapable"; empty = not reported
     };
 
@@ -139,8 +140,68 @@ namespace display_device {
       return confirmed();
     }
 
-    std::vector<kscreen_output_t>
-    query_outputs() {
+    template<typename ConfirmedFn>
+    bool
+    niri_change(const std::string &args, ConfirmedFn &&confirmed) {
+      // niri msg exits 0 whether or not the compositor accepted the request, so
+      // the verdict comes from re-reading the state, never the exit code.
+      for (int attempt = 0; attempt < 3; ++attempt) {
+        if (confirmed()) {
+          return true;
+        }
+
+        const auto result = platf::niri::run(args, platf::niri::kChangeTimeout);
+        BOOST_LOG(debug) << "niri msg [" << args << "] exit=" << result.exit_code
+                         << (result.output.empty() ? "" : " output: " + result.output);
+
+        if (result.exit_code == 0 && confirmed()) {
+          return true;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+      }
+      return confirmed();
+    }
+
+    /**
+     * @brief Whether this session is driven by niri rather than KScreen.
+     */
+    bool
+    compositor_is_niri() {
+      return platf::niri::session_supports_niri();
+    }
+
+    /**
+     * @brief Enable or disable one output through whichever compositor the
+     *        session has. Verified by the caller with wait_for_topology().
+     */
+    bool
+    change_output_enabled(const std::string &device_id, bool enabled) {
+      if (compositor_is_niri()) {
+        // niri selects outputs by name and needs the name quoted when it
+        // contains characters the CLI would otherwise split on.
+        const std::string args = "output '" + device_id + "' " + (enabled ? "on" : "off");
+        const auto result = platf::niri::run(args, platf::niri::kChangeTimeout);
+        if (result.exit_code != 0) {
+          BOOST_LOG(error) << "Failed to " << (enabled ? "enable" : "disable") << " output " << device_id
+                           << ": " << result.output;
+          return false;
+        }
+        return true;
+      }
+
+      const auto result = platf::kscreen::run("output." + device_id + (enabled ? ".enable" : ".disable"),
+                                             std::chrono::milliseconds { 10'000 });
+      if (result.exit_code != 0) {
+        BOOST_LOG(error) << "Failed to " << (enabled ? "enable" : "disable") << " output " << device_id
+                         << ": " << result.output;
+        return false;
+      }
+      return true;
+    }
+
+    std::vector<compositor_output_t>
+    query_kscreen_outputs() {
       if (!platf::kscreen::session_supports_kscreen()) {
         // No KScreen here (niri, wlroots, X11, or a service started before the
         // desktop). Probing would D-Bus-activate a KScreen that waits for a
@@ -160,19 +221,19 @@ namespace display_device {
       }
       platf::kscreen::note_available();
 
-      std::vector<kscreen_output_t> outputs;
+      std::vector<compositor_output_t> outputs;
 
       static const std::regex output_re { R"(^Output:\s+(\d+)\s+(\S+)\s+\S+)" };
       static const std::regex modes_re { R"((\d+):(\d+)x(\d+)@([0-9.]+)(\*)?(!)?)" };
       static const std::regex priority_re { R"(^priority\s+(\d+))" };
 
-      kscreen_output_t *current = nullptr;
+      compositor_output_t *current = nullptr;
       std::istringstream stream { result.output };
       std::string line;
       while (std::getline(stream, line)) {
         std::smatch match;
         if (std::regex_search(line, match, output_re)) {
-          kscreen_output_t output;
+          compositor_output_t output;
           output.index = std::atoi(match[1].str().c_str());
           output.name = match[2].str();
           outputs.push_back(std::move(output));
@@ -216,7 +277,7 @@ namespace display_device {
           auto begin = std::sregex_iterator { trimmed.begin(), trimmed.end(), modes_re };
           const auto end = std::sregex_iterator {};
           for (auto it = begin; it != end; ++it) {
-            kscreen_mode_t mode;
+            compositor_mode_t mode;
             mode.id = (*it)[1].str();
             mode.width = static_cast<unsigned int>(std::atoi((*it)[2].str().c_str()));
             mode.height = static_cast<unsigned int>(std::atoi((*it)[3].str().c_str()));
@@ -232,8 +293,8 @@ namespace display_device {
       return outputs;
     }
 
-    const kscreen_output_t *
-    find_output(const std::vector<kscreen_output_t> &outputs, const std::string &name) {
+    const compositor_output_t *
+    find_output(const std::vector<compositor_output_t> &outputs, const std::string &name) {
       const auto it = std::find_if(outputs.begin(), outputs.end(), [&name](const auto &output) {
         return output.name == name;
       });
@@ -524,6 +585,81 @@ namespace display_device {
         topology.end());
     }
 
+    /**
+     * @brief Read the outputs niri advertises over its IPC.
+     *
+     * niri reports every mode a connector supports, the index of the active
+     * one, and the logical layout. It has no concept of a primary/output
+     * priority, no HDR control, and no mode ids.
+     */
+    std::vector<compositor_output_t>
+    query_niri_outputs() {
+      if (!platf::niri::probe_allowed()) {
+        return {};
+      }
+
+      const auto result = platf::niri::run("--json outputs", platf::niri::kProbeTimeout);
+      if (result.exit_code != 0) {
+        platf::niri::note_unavailable(result.exit_code < 0 ? "niri msg did not answer" : "niri msg failed");
+        return {};
+      }
+      platf::niri::note_available();
+
+      std::string parse_error;
+      const auto reported_outputs = platf::niri::parse_outputs(result.output, &parse_error);
+      if (!parse_error.empty()) {
+        // An answer we cannot parse is no better than no answer; degrade
+        // instead of guessing a layout.
+        platf::niri::note_unavailable(std::string { "unparsable output list: " } + parse_error);
+        return {};
+      }
+      if (reported_outputs.empty()) {
+        platf::niri::note_unavailable("niri reported no outputs");
+        return {};
+      }
+
+      std::vector<compositor_output_t> outputs;
+      int index = 0;
+      for (const auto &reported : reported_outputs) {
+        compositor_output_t output;
+        output.index = ++index;
+        output.name = reported.name;
+        output.connected = true;
+
+        for (const auto &reported_mode : reported.modes) {
+          compositor_mode_t mode;
+          mode.width = reported_mode.width;
+          mode.height = reported_mode.height;
+          mode.refresh = reported_mode.refresh;
+          std::ostringstream formatted;
+          formatted << std::fixed << std::setprecision(3) << mode.refresh;
+          mode.refresh_str = formatted.str();
+          mode.preferred = reported_mode.preferred;
+          // niri has no mode ids; current_mode is an index into this list.
+          mode.id = std::to_string(output.modes.size());
+          output.modes.push_back(std::move(mode));
+        }
+
+        if (reported.current_mode && *reported.current_mode < output.modes.size()) {
+          output.modes[*reported.current_mode].current = true;
+          output.enabled = true;
+        }
+
+        // niri exposes no HDR control, so hdr_state_str stays empty and the HDR
+        // setters refuse with a reason instead of inventing a state.
+        outputs.push_back(std::move(output));
+      }
+      return outputs;
+    }
+
+    std::vector<compositor_output_t>
+    query_outputs() {
+      if (compositor_is_niri()) {
+        return query_niri_outputs();
+      }
+      return query_kscreen_outputs();
+    }
+
   }  // namespace
 
   /**
@@ -767,7 +903,7 @@ namespace display_device {
       }
 
       // Nearest candidate within tolerance, mirroring SDC_ALLOW_CHANGES.
-      const kscreen_mode_t *best = nullptr;
+      const compositor_mode_t *best = nullptr;
       double best_delta = 0.0;
       for (const auto &candidate : output->modes) {
         if (candidate.width != mode.resolution.width || candidate.height != mode.resolution.height) {
@@ -792,6 +928,18 @@ namespace display_device {
         BOOST_LOG(error) << "Output " << device_id << " has no " << (exact ? "exact " : "") << "mode "
                          << mode.resolution.width << "x" << mode.resolution.height << "@"
                          << target_refresh << " (available: " << available << ")";
+        return false;
+      }
+
+      if (compositor_is_niri()) {
+        // niri resolves the mode against what the output advertises, so the
+        // exact rate (including a fractional one) goes out verbatim.
+        const std::string spec = std::to_string(best->width) + "x" + std::to_string(best->height) + "@" + best->refresh_str;
+        BOOST_LOG(info) << "Changing display mode: niri output '" << device_id << "' " << spec;
+        if (niri_change("output '" + device_id + "' mode " + spec, current_matches)) {
+          return true;
+        }
+        BOOST_LOG(error) << "Failed to apply display mode to output " << device_id;
         return false;
       }
 
@@ -885,6 +1033,17 @@ namespace display_device {
 
     if (already_primary()) {
       return true;
+    }
+
+    if (compositor_is_niri()) {
+      // niri has no primary-output concept: every output is an independent
+      // head, and nothing in its IPC elects one. Refusing here keeps the
+      // session honest instead of reporting a change that never happened.
+      static std::atomic<bool> logged { false };
+      if (!logged.exchange(true)) {
+        BOOST_LOG(warning) << "The niri session has no primary-display concept; the primary display request is skipped.";
+      }
+      return false;
     }
 
     BOOST_LOG(info) << "Setting primary display: " << device_id;
@@ -1056,9 +1215,7 @@ namespace display_device {
       for (const auto &device_id : target_ids) {
         if (!current_ids.count(device_id)) {
           BOOST_LOG(info) << "Enabling output: " << device_id;
-          const auto result = platf::kscreen::run("output." + device_id + ".enable", std::chrono::milliseconds { 10'000 });
-          if (result.exit_code != 0) {
-            BOOST_LOG(error) << "Failed to enable output " << device_id << ": " << result.output;
+          if (!change_output_enabled(device_id, true)) {
             return false;
           }
         }
@@ -1067,9 +1224,7 @@ namespace display_device {
       for (const auto &device_id : current_ids) {
         if (!target_ids.count(device_id)) {
           BOOST_LOG(info) << "Disabling output: " << device_id;
-          const auto result = platf::kscreen::run("output." + device_id + ".disable", std::chrono::milliseconds { 10'000 });
-          if (result.exit_code != 0) {
-            BOOST_LOG(error) << "Failed to disable output " << device_id << ": " << result.output;
+          if (!change_output_enabled(device_id, false)) {
             return false;
           }
         }
@@ -1242,7 +1397,10 @@ namespace display_device {
                                              find_primary_in_topology(initial_topology.empty() ? current_topology : initial_topology) :
                                              current_settings.original_primary_display;
 
-      if (!device_id.empty() && !set_as_primary_device(device_id)) {
+      // niri cannot elect a primary output; making that a session failure would
+      // refuse a stream the compositor could otherwise run, so the request is
+      // dropped (set_as_primary_device() logs it once).
+      if (!compositor_is_niri() && !device_id.empty() && !set_as_primary_device(device_id)) {
         return { apply_result_t::result_e::primary_display_fail };
       }
 
@@ -1381,6 +1539,11 @@ namespace display_device {
       if (!set_hdr_states(new_hdr_states)) {
         if (is_vdd_mode) {
           BOOST_LOG(warning) << "HDR state change failed for the virtual display; continuing (HDR metadata comes from the EDID).";
+        }
+        else if (compositor_is_niri()) {
+          // niri exposes no HDR control at all: refusing the session here would
+          // make every HDR-requesting client fail, so the request is dropped.
+          BOOST_LOG(warning) << "HDR state change failed for the niri session; continuing without client HDR control.";
         }
         else {
           return { apply_result_t::result_e::hdr_states_fail };

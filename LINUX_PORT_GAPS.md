@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 70，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 72，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
@@ -12,13 +12,14 @@
 ## 总览
 
 核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 配置全组合模式表 + prep 模式 + 独占还原 +
-残留 adopt）、物理显示器 display_device（kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原）、HDR 三件套
+残留 adopt）、物理显示器 display_device（kscreen/niri 分辨率/拓扑 + 持久化还原）、HDR 三件套
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**7 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+剩余：**6 项部分实现**（§一）、**5 项可行未做**（§二）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
-前台检测、§2.1 剪贴板图片双向同步、§7.1 管线帧率的"源更新"段。）
+前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.10 niri 输出后端、§7.1 管线帧率的
+"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -228,20 +229,28 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   文件右键共享（KDE ServiceMenu 更自然）。
 - **建议**：搁置；文件右键共享若想要，走 KDE ServiceMenu（低工作量）单独立项。
 
-### 2.10 niri / wlr-output-management 显示后端（中）— 第二目标环境
+### 2.10 通用 wlroots 显示后端（低）— 已收窄到非 niri 的 wlroots 合成器
 
-- **背景**：目标是 **KDE + niri** 双环境、通用方案优先。VDD 本身与合成器无关（DRM 层 + niri 默认
-  自动启用新输出），但 **display_device 的模式/HDR/拓扑**全部经 kscreen-doctor → niri 下
-  `query_outputs()` 为空，客户端的模式/HDR 请求被忽略（降级为既有 no-op + warning）。
-- **已完成**：前台检测的 niri producer、VDD 输出的合成器无关启用
-  （`src/platform/linux/compositor_output.{h,cpp}`）、非 Plasma 会话不再被 kscreen-doctor 阻塞
-  （`src/platform/linux/kscreen_backend.{h,cpp}`）。
-- **待做**：`query_outputs()` / 模式应用 / HDR 目前只有 kscreen 实现。niri 需用其 IPC
-  （`niri msg outputs` / `output <name> mode|on|off|scale|position`），通用兜底用
-  wlr-output-management（`wlr-randr`，覆盖 sway/Hyprland 等）。**HDR 是否有 IPC/配置项需在 niri 上
-  确认，无则报 unknown 而不是猜**。
-- **验收**：niri 会话下客户端分辨率请求能作用到目标输出。**注意**：本机未装 niri，命令语法必须在
-  niri 环境实测；一律先做能力探测，探测失败必须保持现有降级路径（不得影响 KDE 与非 KDE 现状）。
+- **背景**：目标是 **KDE + niri** 双环境。niri 那半边已落地（见下），只剩 sway/Hyprland 等
+  wlroots 合成器的通用兜底没有后端。
+- **已完成（2026-10-22）**：niri 输出后端——`src/platform/linux/niri_ipc.{h,cpp}` 做会话判定、
+  socket 发现（`NIRI_SOCKET` / `/run/user/<uid>/niri.*.sock` 探活）、20 s 失败冷却与有界执行；
+  `src/platform/linux/display_device.cpp` 的 `query_outputs()` 分成 `query_kscreen_outputs()` /
+  `query_niri_outputs()` 两个生产者，模式/拓扑开关按会话分派到 `niri msg output <name>
+  mode|on|off`。`niri msg` 无论请求是否被接受都 exit 0，所以写操作一律回读状态判定。
+- **仍缺**：
+  1. **wlr-output-management 兜底**（`wlr-randr` 或直接绑 `zwlr_output_manager_v1`）覆盖
+     sway/Hyprland。机器上没有这类合成器，无法运行时验证。
+  2. **niri 无 HDR 控制**：IPC 不暴露 HDR 亮度/开关，`hdr_state_str` 恒空 → 客户端 HDR 请求被
+     记录并跳过（`compositor_is_niri()` 分支），不会失败。niri 侧需上游先提供接口。
+  3. **niri 无主屏概念**：`output <name> priority` 一类命令不存在，`ensure_primary` 请求被跳过并
+     打一次性 warning。
+  4. **缩放/位置未纳入**：`niri msg output <name> scale|position` 可用，但 display_device 的拓扑
+     模型只有"哪个输出开着"，没有布局坐标（Windows 侧也是 per-device 模式，不写布局）。
+- **验收**：niri 会话下客户端分辨率请求能作用到目标输出（已在嵌套 niri 26.04 上验证 CLI 语法与
+  JSON 结构；真实显示器上的端到端验证需要 niri 会话）。
+- **注意**：一律先做能力探测，探测失败保持既有降级路径（不得影响 KDE 与非 KDE 现状）；单次探测
+  有 1.5 s 上界，失败后有 20 s 冷却，niri 会话里由 `NIRI_SOCKET` 直接命中、不发探针。
 
 ### 2.11 VAAPI 的 YUV 4:4:4（低，NVENC 已解禁）
 
@@ -366,9 +375,9 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
 1. **HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
    拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；
    本机（PQ + NVIDIA）也无法端到端验证。
-2. **niri / wlr-output-management 输出后端**（§2.10）：模式/HDR/拓扑在 niri 下仍走"合成器不可用"
-   降级。实现需要 niri IPC 的真实 JSON 结构（本机未装 niri），拿到 `niri msg --json outputs` 与
-   `niri msg --help` 的实测输出即可落地并配测试。
+2. **niri 输出后端**（§2.10）：**已完成**（2026-10-22）。niri IPC 后端落地，模式/拓扑开关在
+   niri 会话下生效；HDR 与主屏因 niri 无对应接口而显式跳过（见 §2.10"仍缺"）。剩下的是
+   sway/Hyprland 的 wlr-output-management 通用兜底。
 3. **D15 复制拓扑**（§1.4）：kscreen-doctor 无 replication 命令（已实测确认），KDE 上实现镜像需 KWin
    脚本或 libkscreen 后端，属独立特性。
 4. **§四的有意保留差异**：如需翻转，按各条给出的理由逐项决策即可。
