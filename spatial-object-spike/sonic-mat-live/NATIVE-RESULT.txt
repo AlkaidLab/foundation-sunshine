@@ -1,0 +1,60 @@
+Real native MAT / private pipe v2 / authenticated client loopback: PASS
+2026-10-22 23:22, Asia/Hong_Kong
+
+Scope and source
+----------------
+One separately authorized eight-second capture test, ordinal 5. The selected
+UUYC endpoint retained its existing Dolby HRTF plugin path; no spatial format or
+default endpoint was changed. A separate public ISpatialAudioClient source emitted
+two live-generated objects for ten seconds. No recording or finite MAT fixture
+was read. This is controlled-source evidence, not an existing-game test.
+
+Pipeline exercised
+------------------
+MainPluginRenderer pre-submit PCM/properties + paired returns/lifecycle ->
+bounded IPC -> independent native Dolby MAT worker in the pinned audiodg ->
+complete IEC carrier cycles -> MCAPv002 private source lease and PLAY cutoff ->
+actual live sender -> AES-GCM -> UDP/RTP/4+2 FEC -> actual client AudioStream ->
+per-cycle and whole-stream SHA256 comparison -> authenticated END.
+
+Native input/output
+-------------------
+Observed 48 kHz / 480-frame input, two dynamic objects.
+772 source passes, 1544 object blocks, 741120 object samples.
+20 native warm rounds, 772 source rounds, 30 drain rounds.
+822 native output blocks / 25251840 bytes, assembled as 411 MAT cycles.
+create/mapper/initialize/submit/process HRESULTs all S_OK; status=2, error=0.
+The earlier missing-object rejection did not recur in tests 4 or 5; its cause is
+still unknown and missing input remains terminal.
+
+Client acceptance
+-----------------
+PASS_NATIVE_LOOPBACK
+402 post-PLAY cycles / 24698880 bytes, received in 8.08308 seconds.
+Whole-stream SHA256:
+9ad4e1f935b32a018af70c8a4b3f7602851dc6daac68cb5f7f75e6bfe9069a7f
+36071 UDP datagrams; 121 deliberately dropped ciphertext packets, all 121
+recovered. Every delivered cycle and whole-stream SHA matched. Authenticated EOS
+was accepted once; private publisher logged LEASE_END_ACK cycles=402.
+Cycles before PLAY are deliberately excluded by the existing live source cutoff;
+411 native cycles and 402 delivered cycles are different scopes.
+
+Cleanup and evidence
+--------------------
+All six original hook entries restored, all test children exited, same audiodg
+PID/creation time retained. No native audio payload was saved, no sample replay,
+no driver/service/default endpoint/spatial format change. Helpers remain pinned
+but inactive as designed; no forced unload/restart was performed.
+Private logs and frozen hashes: build/sonic-mat-native-run05/,
+build/sonic-mat-run05-completed.json and build/sonic-mat-software-v2/proof.json.
+The single additional authorization is consumed; this report grants no new run.
+
+Boundaries
+----------
+This passes real native MAT + real client loopback with clean EOS. It does not
+verify a full Sunshine RTSP/video session, game A/V synchronization, supported
+Android HDMI hardware, eARC/Atmos recognition, long-run stability, all game object
+layouts, or production availability on other Windows/component versions.
+No RTP16 wrap occurred in this short native test; separate generated 1300-cycle
+software tests cover wrap and recover 391 deliberate losses.
+Unsupported phones continue to negotiate Opus; no phone MAT restoration was added.

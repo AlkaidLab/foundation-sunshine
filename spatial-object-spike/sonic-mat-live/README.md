@@ -1,5 +1,22 @@
 # Sonic objects to native MAT
 
+## Native live loopback acceptance passed, 2026-10-22 23:22
+
+The fifth separately authorized eight-second test passed with real native MAT:
+772 object passes -> independent encoder -> 411 complete cycles; 402 post-PLAY
+cycles / 24,698,880 bytes matched at the actual client, including whole-stream
+SHA256. All 121 deliberate ciphertext losses were recovered, authenticated EOS
+and exact-count pipe close acknowledgement succeeded. Native drain, all six hook
+restorations, child exit and unchanged engine identity passed. No sample replay
+or native payload persistence was used.
+
+See [NATIVE-RESULT.txt](NATIVE-RESULT.txt) for evidence and limits. Full Sunshine
+RTSP/video, game synchronization, supported HDMI hardware/Atmos recognition and
+long-run stability are still separate acceptance stages. The earlier missing
+object did not recur in tests 4/5; its cause is not established.
+
+Earlier stages below are retained as history.
+
 ## Additional native test, 2026-10-22 23:10
 
 The separately authorized fourth test used its single additional allowance.

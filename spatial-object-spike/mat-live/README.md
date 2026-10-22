@@ -1,5 +1,12 @@
 # Native live MAT capture and streaming
 
+Real native capture and client loopback passed the separately authorized fifth
+test on 2026-10-22: 402 post-PLAY cycles, whole-stream SHA256 equality, all 121
+deliberate losses recovered, authenticated EOS and private close acknowledgement.
+Native drain and all hook/child/engine cleanup checks passed. See the
+[native acceptance report](../sonic-mat-live/NATIVE-RESULT.txt). Full Sunshine
+RTSP/video and hardware playback acceptance remain separate.
+
 Private source pipe version 2 (`MCAPv002`) requires an exact-count `MCAPDONE`
 acknowledgement after the client validates and consumes EOS. The publisher waits
 at most two seconds before disconnecting; it does not use an unbounded flush.
@@ -15,8 +22,8 @@ all six hook entries restored and engine identity retained. 406 delivered cycles
 passed per-cycle client comparison, but the old pipe lost its EOS. The pipe bug
 was reproduced without audiodg; the revised publisher and production record
 reader now pass delayed-tail / bounded acknowledgement / invalid EOF regressions.
-The fixed version has not been natively retested. The earlier missing-object
-failure did not recur in this test; its cause remains unproven.
+The fifth test above subsequently verified the fix natively. The earlier
+missing-object failure did not recur in tests 4/5; its cause remains unproven.
 
 Normal MAT preference is AUTO 6 locally, then **live codec 7 or Opus 0** before
 ANNOUNCE. Finite playback 5 and dump 4 are explicit diagnostics only. AUTO never

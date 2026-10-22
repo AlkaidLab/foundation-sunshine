@@ -1,5 +1,28 @@
 # 2026-10-22 续作：原生实时 MAT 链路
 
+## 23:22 收尾原生验收通过：实时 MAT / EOS / 整流校验 / 丢包恢复
+
+第 5 次为用户另行明确授权的一次 8 秒收尾验收，已执行并消耗。沿现有 UUYC
+插件输入，没有切换空间格式；公开 API 现场生成双对象 10 秒，没有读取样本。
+原生采集 772 轮、741120 对象样本；warm20 / drain30，822 个输出半块组成
+411 个 MAT 周期。原生 create/mapper/initialize/submit/process 均 S_OK，正常收尾。
+
+`PASS_NATIVE_LOOPBACK`：PLAY 后 402 周期 / 24698880 字节，8.08308 秒；全部
+逐周期与整流 SHA256 一致。121 个刻意丢弃的密文包全部通过 FEC 恢复；认证 EOS
+成功，私有管道记录 `LEASE_END_ACK cycles=402`。整流 SHA256 为
+`9ad4e1f935b32a018af70c8a4b3f7602851dc6daac68cb5f7f75e6bfe9069a7f`。
+六个入口恢复、子进程全退出、audiodg 身份保留；无音频载荷落盘或样本回放。
+上次缺失对象在第 4、5 次均未复现，原因仍未知，不能宣称该风险已消除。
+
+报告：[真实 MAT 原生回环验收](../spatial-object-spike/sonic-mat-live/NATIVE-RESULT.txt)。
+私有证据 `build/sonic-mat-native-run05/`、`build/sonic-mat-run05-completed.json`；
+完整软件回归 `build/sonic-mat-software-v2/proof.json` 通过，正常主机已重建。
+这是“现场对象 -> 独立原生 MAT -> 真正客户端接收”的短测通过；完整 Sunshine
+RTSP/视频、游戏同步、长稳测试、HDMI/eARC 真机 Atmos 识别仍待。手机继续 Opus。
+本次授权不覆盖新的挂接或长期采集。
+
+以下保留更早状态。
+
 ## 23:10 追加一次短测：采集正常收尾，定位并修复私有管道 EOS 丢失
 
 用户另行追加授权的 1 次短测已执行并消耗（累计第 4 次，不据此再挂接）。
