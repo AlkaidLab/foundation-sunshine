@@ -690,16 +690,26 @@ namespace platf {
             const auto sysfs_card = fs::path { "/sys/class/drm" } / card_name;
 
             if (preferred_adapter.front() == '/') {
-              // Render node: compare the PCI device both nodes belong to.
-              std::error_code node_ec;
-              const auto card_pci = fs::canonical(sysfs_card / "device", node_ec);
-              const auto other_pci = node_ec ? fs::path {} : fs::canonical(fs::path { preferred_adapter } / "device", node_ec);
-              if (!node_ec && card_pci != other_pci) {
-                BOOST_LOG(debug) << file << " is not the device behind ["sv << preferred_adapter << ']';
-                continue;
+              // Render node: compare the PCI device both nodes belong to. The
+              // render node is a device node, so its `device` link only exists in
+              // sysfs -- resolving it through /dev is what used to make this
+              // branch silently give up and keep every card.
+              std::error_code card_ec;
+              const auto card_pci = fs::canonical(sysfs_card / "device", card_ec);
+              if (card_ec) {
+                BOOST_LOG(debug) << "Could not resolve the sysfs device of "sv << file << "; not filtering"sv;
               }
-              if (node_ec) {
-                BOOST_LOG(debug) << "Could not resolve the device behind ["sv << preferred_adapter << "]; not filtering"sv;
+              else {
+                const auto node_name = fs::path { preferred_adapter }.filename();
+                std::error_code node_ec;
+                const auto node_pci = fs::canonical(fs::path { "/sys/class/drm" } / node_name / "device", node_ec);
+                if (node_ec) {
+                  BOOST_LOG(debug) << "Could not resolve the device behind ["sv << preferred_adapter << "]; not filtering"sv;
+                }
+                else if (card_pci != node_pci) {
+                  BOOST_LOG(debug) << file << " is not the device behind ["sv << preferred_adapter << ']';
+                  continue;
+                }
               }
             }
             else {
