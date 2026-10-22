@@ -922,7 +922,7 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 835 用例，822 通过，12 跳过，1 失败
+test_sunshine: 843 用例，830 通过，12 跳过，1 失败
 ```
 
 唯一失败的是 `DownloadFileTests/DownloadFileTest.Run/1`（访问 `https://httpbin.org/...`，离线必失败）
