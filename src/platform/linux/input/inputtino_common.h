@@ -9,6 +9,7 @@
 #include <libevdev/libevdev.h>
 
 #include "src/config.h"
+#include "src/dsu_server.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/utility.h"
@@ -48,7 +49,43 @@ namespace platf {
       }
     }
 
-    ~input_raw_t() = default;
+    ~input_raw_t() {
+      if (dsu_server) {
+        dsu_server->stop();
+      }
+    }
+
+    /**
+     * @brief Start the DSU server on the first motion event.
+     * @details Lazy for the same reason as on Windows: most sessions never
+     *          carry motion, and an idle UDP socket plus its thread is not
+     *          worth opening for them. `enable_dsu_server` is the gate.
+     */
+    void
+    init_dsu_server() {
+      if (dsu_server) {
+        return;
+      }
+
+      auto server = std::make_unique<dsu_server_t>(config::input.dsu_server_port);
+      if (server->start()) {
+        BOOST_LOG(error) << "DSU server failed to start; emulators will not see motion data";
+        return;
+      }
+      dsu_server = std::move(server);
+    }
+
+    /**
+     * @brief Warn once when the DSU server is enabled but did not start.
+     */
+    void
+    log_dsu_uninitialized() {
+      if (dsu_uninitialized_warning_logged) {
+        return;
+      }
+      dsu_uninitialized_warning_logged = true;
+      BOOST_LOG(warning) << "DSU server is enabled but not running; motion data is dropped";
+    }
 
     // All devices are wrapped in Result because it might be that we aren't able to create them (ex: udev permission denied)
     inputtino::Result<inputtino::Mouse> mouse;
@@ -59,6 +96,10 @@ namespace platf {
      * The pointer is shared because that state will be shared with background threads that deal with rumble and LED
      */
     std::vector<std::shared_ptr<joypad_state>> gamepads;
+
+    /// Null unless `enable_dsu_server` is set and the socket bound.
+    std::unique_ptr<dsu_server_t> dsu_server;
+    bool dsu_uninitialized_warning_logged = false;
   };
 
   struct client_input_raw_t: public client_input_t {

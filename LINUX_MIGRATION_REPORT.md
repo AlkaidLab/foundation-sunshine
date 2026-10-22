@@ -406,6 +406,28 @@ KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_
 - **测试**：`tests/unit/test_niri_ipc.cpp` 11 例覆盖 milliHz 换算、`current_mode` 下标、输出关闭、
   越界下标、缺字段默认值、非对象/坏 JSON 拒绝。
 
+### 6.17 DSU 运动数据服务器（cemuhook）
+
+`src/dsu_server.{h,cpp}` 从 `src/platform/windows/` 挪到顶层共享源（`cmake/sources/host.cmake`），
+平台差异只剩一处：`WSAIoctl`/`SIO_UDP_CONNRESET` 的初始化块包在 `#if defined(_WIN32)` 内。协议
+实现本身（16 字节 header、CRC32 自校验、INFO/DATA 两种消息、100 字节数据包、客户端超时清理）
+一行未改，Windows 预处理结果与合并前逐字相同。
+
+- **数据源**：Moonlight 客户端经 `gamepad_motion_t` 发来的 `LI_MOTION_TYPE_ACCEL` /
+  `LI_MOTION_TYPE_GYRO`。挂载点在 `src/platform/linux/input/inputtino_gamepad.cpp` 的 `motion()`，
+  与 Windows 的 `dsu_send_motion` 同源。**不是**宿主 IMU —— 早先 gap 文档判断错了。
+- **惰性启动**：首个 motion 事件才 `init_dsu_server()`，受 `config::input.enable_dsu_server`
+  （默认 false）门控；`start()` 失败即销毁并只告警一次，与 Windows 的生命周期逻辑一致。
+- **单位与轴向**：转发客户端原始值（m/s²、deg/s），未到达的那一半传 0，服务保留上一次的值；
+  服务端按 cemuhook 约定重排轴向（X=−x、Y=z、Z=−y、Yaw=−y）。
+- **配置**：`enable_dsu_server` / `dsu_server_port`（默认 26760）是共享配置键，WebUI 的开关与端口
+  在 Linux 上直接生效，无需单独接线。
+- **既有怪癖（未改）**：服务端从请求偏移 8（header 的 crc 字段）取"客户端 ID"并回显，而非
+  cemuhook 文档的偏移 12。真实客户端一律填 0 所以从未暴露；测试按实际行为断言，避免为"修 bug"
+  改动 Windows 也依赖的字节布局。
+- **测试**：`tests/unit/test_dsu_server.cpp` 9 例，真实回环 UDP，覆盖 INFO 响应字段、CRC32、
+  未订阅不发数据、订阅后收包、加速度/角速度轴向、分次到达的保留语义、未知消息类型、重启。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -433,6 +455,7 @@ KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_
 | perf_recorder / input_activity / video_probe / cursor_channel | 跨平台；cursor_channel 在 Linux 因无光标生产者干净禁用 |
 | 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 编译期特性检测；12ch 有 Linux null-sink 实现 |
 | AI API Key 凭据 | Secret Service（libsecret）持久化，与 Windows 的 DPAPI 对等；无 keyring 时降级为环境变量 `SUNSHINE_LLM_API_KEY`（§6.11） |
+| DSU 运动广播（cemuhook） | 共享协议实现 + inputtino motion 转发，Cemu/Ryujinx 可用；需客户端用手柄串流并开启 `enable_dsu_server`（§6.17） |
 
 ### ⚠️ 降级可用（编译运行正常，功能面收窄）
 

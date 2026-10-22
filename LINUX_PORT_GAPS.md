@@ -16,11 +16,11 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**8 项可行未做**（§二，其中 §2.1b/§2.3/§2.4/§2.7/§2.8/§2.9/
+剩余：**6 项部分实现**（§一）、**7 项可行未做**（§二，其中 §2.1b/§2.3/§2.7/§2.8/§2.9/
 §2.10 残余/§2.11）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
-前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.10 niri 输出后端、§7.1 管线帧率的
-"源更新"段。）
+前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.4 DSU 运动广播、§2.10 niri 输出
+后端、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -158,17 +158,38 @@
   分发骨架）。注意 `display_device.cpp` 当前所有读写函数都隐式假设 kscreen 存在。
 - **验收**：GNOME Wayland 会话下客户端"优化游戏设置"能切分辨率/HDR 并还原。
 
-### 2.4 DSU 运动数据服务器（低中）
+### 2.4 DSU 运动数据服务器（✅ 已完成，2026-10-22）
 
-- **现状**：`src/platform/windows/dsu_server.cpp`（DSU/cemuhook UDP 协议，497 行 asio UDP，
-  除 winsock include 外与平台无关）只在 `src/platform/windows/input.cpp:555-572` 挂载；
-  喂数据的入口是 `dsu_server->send_motion_data(controller_id, ...)`（同文件 :2507/:2514）。
-- **路径修正**：原以为 inputtino 的 DS5 能提供加速度/陀螺仪数据源，实际
-  `third-party/inputtino/include/inputtino/input.hpp:417` 是 `set_motion(MOTION_TYPE, x, y, z)`
-  ——**注入**方向，不是采集。所以 DSU 在 Linux 上没有可广播的源。真要做，必须先落地
-  §2.7 的第一步：用 `/dev/hidraw` 读物理 DualSense 的 input report 0x01/0x31 取 IMU，
-  再复用 Windows 那份协议实现（把它从 `src/platform/windows/` 挪成共享源 + 平台门控）。
-- **验收**：Cemu/模拟器识别到运动输入（需 §2.7 的 hidraw 采集先就位）。
+`src/dsu_server.{h,cpp}` 现在是共享源（`cmake/sources/host.cmake`），Windows 的 winsock 专用块
+留在 `#if defined(_WIN32)` 内（`WSAIoctl`/`SIO_UDP_CONNRESET`），Linux 走 asio 默认路径。
+`src/platform/windows/input.cpp:18` 的 include 改为 `#include "src/dsu_server.h"`，生命周期逻辑
+（惰性构造、`start()` 失败即销毁、只告警一次）逐字未动。
+
+Linux 侧在 `src/platform/linux/input/inputtino_gamepad.cpp` 的 `motion()` 里挂载：
+
+- 首个 `LI_MOTION_TYPE_ACCEL`/`LI_MOTION_TYPE_GYRO` 事件到达时才 `init_dsu_server()`，受
+  `config::input.enable_dsu_server` 门控（默认 false，WebUI 的"启用 DSU 服务器"+端口 26760
+  配置项由共享配置层直接生效）。
+- 转发的是**客户端原始值**（加速度 m/s²、角速度 deg/s），与 Windows 一致；两个 motion 类型
+  分事件到达，未到达的那一半传 0，服务内部保留上一次的值。
+- 服务端把客户端字节序的传感器数据按 cemuhook 的轴向约定重排（X=−x、Y=z、Z=−y、Yaw=−y），
+  这部分是 cemuhook 协议本身规定的，与平台无关。
+
+原 gap 文档的"路径修正"判断是错的：DSU 的数据源不是宿主 IMU，而是 Moonlight 客户端经
+`gamepad_motion_t` 发来的传感器流（Windows 侧 `src/platform/windows/input.cpp` 的
+`dsu_send_motion` 同样如此）。因此不需要 §2.7 的 hidraw 采集先就位，只要客户端是 DualSense
+手柄（Linux 的 inputtino PS5 虚拟手柄已经是），运动数据就能到达模拟器。
+
+**测试**：`tests/unit/test_dsu_server.cpp` 用真实回环 UDP 驱动，9 个用例覆盖 INFO 响应
+（32 字节、slot_state/device_model/connection_type、MAC 非零）、CRC32 自校验、未订阅时无数据、
+订阅后收到 100 字节数据包、加速度/角速度轴向映射、accel/gyro 分次到达时另一半保留、未知消息
+类型不回复且服务存活、stop 后同端口可重启。
+
+**一个需要记住的既有行为**：服务端从请求**偏移 8**（header 的 crc 字段）取"客户端 ID"并在响应
+里回显，而不是 cemuhook 文档的偏移 12。客户端一律填 0，所以从未暴露；测试按实际行为断言并
+在注释里写明，没有改动共享代码的字节布局。
+
+**验收**：Cemu/Ryujinx 在 Sunshine 串流里识别到运动输入（需客户端用手柄串流且开启该选项）。
 
 ### 2.5 非 KDE 前台检测（✅ 已完成，2026-10-22）
 

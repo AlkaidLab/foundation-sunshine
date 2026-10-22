@@ -223,6 +223,30 @@ namespace platf::gamepad {
           std::get<inputtino::PS5Joypad>(*gamepad->joypad).set_motion(inputtino::PS5Joypad::GYROSCOPE, deg2rad(motion.x), deg2rad(motion.y), deg2rad(motion.z));
           break;
       }
+
+      // Feed the cemuhook DSU broadcaster with the same client sensor stream.
+      // One motion type arrives per event, so the untouched half is zeroed and
+      // the server keeps the previous value for it. Values go out in the
+      // client's own units (m/s^2 and deg/s), exactly as Windows sends them.
+      if (!raw->dsu_server && config::input.enable_dsu_server) {
+        raw->init_dsu_server();
+      }
+
+      if (raw->dsu_server) {
+        switch (motion.motionType) {
+          case LI_MOTION_TYPE_ACCEL:
+            raw->dsu_server->send_motion_data(motion.id.globalIndex, motion.x, motion.y, motion.z, 0.0f, 0.0f, 0.0f);
+            break;
+          case LI_MOTION_TYPE_GYRO:
+            raw->dsu_server->send_motion_data(motion.id.globalIndex, 0.0f, 0.0f, 0.0f, motion.x, motion.y, motion.z);
+            break;
+          default:
+            break;
+        }
+      }
+      else if (config::input.enable_dsu_server) {
+        raw->log_dsu_uninitialized();
+      }
     }
   }
 
