@@ -149,6 +149,9 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/pairing.cpp src/nvhttp/pairing.h
     src/nvhttp/sessions.cpp src/nvhttp/sessions.h
 
+    # src/dsu_server: cemuhook DSU motion broadcaster, fed by client motion
+    src/dsu_server.cpp src/dsu_server.h
+
     # src/streaming
     src/streaming/abr.cpp src/streaming/abr.h
     src/streaming/bitrate.cpp src/streaming/bitrate.h
