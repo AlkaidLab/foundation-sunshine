@@ -61,8 +61,8 @@ else if (args[0] == "verify")
 }
 else if (args[0] == "test")
 {
-    DualSenseReportChecks.Run(assembly, args[2]);
-    DualSenseReportChecks.Run(assembly, Path.Combine(Path.GetDirectoryName(args[2])!, "dualsense-composite.json"));
+    DualSenseReportChecks.Run(assembly, args[2], Require);
+    DualSenseReportChecks.Run(assembly, Path.Combine(Path.GetDirectoryName(args[2])!, "dualsense-composite.json"), Require);
     var transport = assembly.GetType("HIDMaestro.Internal.Usbip.SharedUsbipTransport", true)!;
     var validate = transport.GetMethod("ValidateState", BindingFlags.NonPublic | BindingFlags.Static)!;
     using var contract = JsonDocument.Parse(File.ReadAllText(args[3]));
