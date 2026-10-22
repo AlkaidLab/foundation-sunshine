@@ -24,10 +24,10 @@
 #include <thread>
 #include <vector>
 
-#include <boost/property_tree/json_parser.hpp>
 #include <openssl/evp.h>
 
 #include "ds5_sidecar_client.h"
+#include "component_manifest.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 #include "src/platform/windows/virtual_device_host/protocol.h"
@@ -231,32 +231,9 @@ namespace platf::ds5 {
         return std::nullopt;
       }
 
-      boost::property_tree::ptree manifest;
-      try {
-        std::ifstream manifest_file_stream(expected_active_root / "component.json", std::ios::binary);
-        if (!manifest_file_stream.is_open()) {
-          throw std::runtime_error("unable to open component manifest");
-        }
-        boost::property_tree::read_json(manifest_file_stream, manifest);
-      }
-      catch (const std::exception &exception) {
-        BOOST_LOG(error) << "Unable to read the active DualSense component manifest: "sv
-                         << exception.what();
-        return std::nullopt;
-      }
-      const auto manifest_file = manifest.get<std::string>("sidecar_file", "");
-      auto expected_digest = manifest.get<std::string>("sidecar_sha256", "");
-      if (manifest.get<std::uint32_t>("protocol", 0) != VERSION ||
-          manifest_file != "Sunshine.Ds5Sidecar.exe" || expected_digest.size() != 64) {
-        BOOST_LOG(error) << "The active DualSense component manifest is incomplete or incompatible"sv;
-        return std::nullopt;
-      }
-      std::ranges::transform(expected_digest, expected_digest.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-      });
-      const auto actual_digest = sha256_file(candidate);
-      if (!actual_digest || *actual_digest != expected_digest) {
-        BOOST_LOG(error) << "The active DualSense sidecar failed manifest digest verification"sv;
+      std::string validation_error;
+      if (!validate_component_manifest(expected_active_root, sha256_file, validation_error)) {
+        BOOST_LOG(error) << validation_error;
         return std::nullopt;
       }
       return candidate;

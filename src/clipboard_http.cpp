@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <charconv>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,6 +31,10 @@ namespace clipboard_http {
       resp_https_t resp;
       std::atomic_bool alive { true };
       std::mutex send_mu;
+      // When set, this subscriber only receives clipboard events whose
+      // session id matches. Unset (the default, for backward compatibility
+      // with existing consumers) still receives every session's events.
+      std::optional<clipboard_bridge::session_id> session_filter;
     };
 
     std::mutex g_mu;
@@ -94,7 +99,7 @@ namespace clipboard_http {
         std::lock_guard<std::mutex> lk(sub->send_mu);
         if (sub->alive.load(std::memory_order_acquire)) {
           *sub->resp << frame;
-          sub->resp->send([sub](const SimpleWeb::error_code &ec) {
+          sub->resp->send([sub](const web::error_code &ec) {
             if (ec) {
               sub->alive.store(false, std::memory_order_release);
             }
@@ -107,7 +112,7 @@ namespace clipboard_http {
     }
 
     void
-    fanout_frame(const std::string &frame) {
+    fanout_frame(const std::string &frame, std::optional<clipboard_bridge::session_id> event_sid = std::nullopt) {
       std::vector<std::shared_ptr<subscriber_t>> snapshot;
       {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -115,6 +120,14 @@ namespace clipboard_http {
       }
 
       for (auto &sub : snapshot) {
+        // A subscriber with no session_filter receives every event
+        // (backward-compatible default). A subscriber with a filter only
+        // receives events tagged with that same session id; keepalives
+        // and other untagged frames (event_sid unset) still reach it.
+        if (sub->session_filter.has_value() && event_sid.has_value()
+            && *sub->session_filter != *event_sid) {
+          continue;
+        }
         send_frame(sub, frame);
       }
 
@@ -125,7 +138,7 @@ namespace clipboard_http {
 
     void
     fanout_inbound(clipboard_bridge::session_id sid, const clipboard_bridge::payload_t &bytes) {
-      fanout_frame(build_event(sid, bytes));
+      fanout_frame(build_event(sid, bytes), sid);
     }
 
     void
@@ -159,9 +172,9 @@ namespace clipboard_http {
       out["session_count"] = bridge.session_count();
       out["gui_alive"] = bridge.gui_alive();
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
-      resp->write(SimpleWeb::StatusCode::success_ok, out.dump(), headers);
+      resp->write(web::StatusCode::ok, out.dump(), headers);
     }
 
     void
@@ -170,7 +183,7 @@ namespace clipboard_http {
         return;
       }
       if (!config::input.clipboard_sync) {
-        resp->write(SimpleWeb::StatusCode::client_error_forbidden,
+        resp->write(web::StatusCode::forbidden,
           R"({"error":"clipboard_sync_disabled"})");
         return;
       }
@@ -183,12 +196,12 @@ namespace clipboard_http {
       if (content_length != req->header.end() && !content_length->second.empty()) {
         try {
           if (std::stoull(content_length->second) > clipboard_bridge::kMaxPayloadBytes) {
-            resp->write(SimpleWeb::StatusCode::client_error_payload_too_large,
+            resp->write(web::StatusCode::payload_too_large,
               R"({"error":"payload_too_large"})");
             return;
           }
         } catch (...) {
-          resp->write(SimpleWeb::StatusCode::client_error_bad_request,
+          resp->write(web::StatusCode::bad_request,
             R"({"error":"bad_content_length"})");
           return;
         }
@@ -201,7 +214,7 @@ namespace clipboard_http {
         try {
           target = static_cast<clipboard_bridge::session_id>(std::stoull(it->second));
         } catch (...) {
-          resp->write(SimpleWeb::StatusCode::client_error_bad_request,
+          resp->write(web::StatusCode::bad_request,
             R"({"error":"bad_target_sid"})");
           return;
         }
@@ -212,12 +225,12 @@ namespace clipboard_http {
       ss << req->content.rdbuf();
       const std::string body = ss.str();
       if (body.empty()) {
-        resp->write(SimpleWeb::StatusCode::client_error_bad_request,
+        resp->write(web::StatusCode::bad_request,
           R"({"error":"empty_body"})");
         return;
       }
       if (body.size() > clipboard_bridge::kMaxPayloadBytes) {
-        resp->write(SimpleWeb::StatusCode::client_error_payload_too_large,
+        resp->write(web::StatusCode::payload_too_large,
           R"({"error":"payload_too_large"})");
         return;
       }
@@ -225,7 +238,7 @@ namespace clipboard_http {
       clipboard_bridge::payload_t bytes(body.begin(), body.end());
       bridge.enqueue_outbound(target, std::move(bytes));
 
-      resp->write(SimpleWeb::StatusCode::success_accepted, R"({"ok":true})");
+      resp->write(web::StatusCode::accepted, R"({"ok":true})");
     }
 
     void
@@ -240,7 +253,25 @@ namespace clipboard_http {
       sub->resp = std::move(resp);
       sub->resp->close_connection_after_response = true;
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      // Optional opt-in: a consumer that only cares about one streaming
+      // session's clipboard can scope its subscription to that session id,
+      // the same way handle_item() already scopes an outbound write via
+      // X-Clipboard-Target-Sid. Omitting this header preserves the
+      // existing broadcast-to-all-subscribers behavior.
+      auto sid_header = req->header.find("X-Clipboard-Session-Sid");
+      if (sid_header != req->header.end() && !sid_header->second.empty()) {
+        const auto &value = sid_header->second;
+        clipboard_bridge::session_id sid;
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), sid);
+        if (error != std::errc {} || end != value.data() + value.size()) {
+          sub->resp->write(web::StatusCode::bad_request,
+            R"({"error":"bad_session_sid"})");
+          return;
+        }
+        sub->session_filter = sid;
+      }
+
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/event-stream");
       headers.emplace("Cache-Control", "no-cache");
       headers.emplace("Connection", "keep-alive");
@@ -303,8 +334,8 @@ namespace clipboard_http {
     }
 
     blob_response_t
-    json_blob_response(SimpleWeb::StatusCode status, std::string body) {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+    json_blob_response(web::StatusCode status, std::string body) {
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       return { status, std::move(body), std::move(headers) };
     }
@@ -348,20 +379,20 @@ namespace clipboard_http {
 
   blob_response_t
   make_blob_upload_response(
-    const SimpleWeb::CaseInsensitiveMultimap &request_headers,
+    const web::CaseInsensitiveMultimap &request_headers,
     const std::string &body) {
       if (auto out = make_blob_upload_preflight_response(request_headers)) {
         return *out;
       }
 
       if (!config::input.clipboard_sync) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_forbidden,
+        return json_blob_response(web::StatusCode::forbidden,
           R"({"error":"clipboard_sync_disabled"})");
       }
 
       auto mime_it = request_headers.find("X-Clipboard-Mime");
       if (mime_it == request_headers.end() || mime_it->second.empty()) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_bad_request,
+        return json_blob_response(web::StatusCode::bad_request,
           R"({"error":"missing_mime"})");
       }
       // Strict RFC 6838 token shape: type "/" subtype, each non-empty and made
@@ -369,16 +400,16 @@ namespace clipboard_http {
       // to prevent the value being abused as an XSS vector when it is later
       // echoed verbatim into the Content-Type header on the GET path.
       if (!is_valid_mime(mime_it->second)) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_bad_request,
+        return json_blob_response(web::StatusCode::bad_request,
           R"({"error":"bad_mime"})");
       }
 
       if (body.empty()) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_bad_request,
+        return json_blob_response(web::StatusCode::bad_request,
           R"({"error":"empty_body"})");
       }
       if (body.size() > clipboard_blob_store::kMaxBlobBytes) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_payload_too_large,
+        return json_blob_response(web::StatusCode::payload_too_large,
           R"({"error":"payload_too_large"})");
       }
 
@@ -388,7 +419,7 @@ namespace clipboard_http {
       if (!put.ok) {
         nlohmann::json err;
         err["error"] = put.err.empty() ? std::string { "put_failed" } : put.err;
-        return json_blob_response(SimpleWeb::StatusCode::client_error_payload_too_large, err.dump());
+        return json_blob_response(web::StatusCode::payload_too_large, err.dump());
       }
 
       nlohmann::json out;
@@ -396,27 +427,27 @@ namespace clipboard_http {
       out["size"] = size;
       out["expires_in"] = clipboard_blob_store::kBlobTtlSeconds;
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
-      return { SimpleWeb::StatusCode::success_ok, out.dump(), std::move(headers) };
+      return { web::StatusCode::ok, out.dump(), std::move(headers) };
     }
 
   std::optional<blob_response_t>
-  make_blob_upload_preflight_response(const SimpleWeb::CaseInsensitiveMultimap &request_headers) {
+  make_blob_upload_preflight_response(const web::CaseInsensitiveMultimap &request_headers) {
       auto content_length = request_headers.find("Content-Length");
       if (content_length == request_headers.end()) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_bad_request,
+        return json_blob_response(web::StatusCode::bad_request,
           R"({"error":"bad_content_length"})");
       }
 
       std::uint64_t length = 0;
       if (!parse_content_length(content_length->second, length)) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_bad_request,
+        return json_blob_response(web::StatusCode::bad_request,
           R"({"error":"bad_content_length"})");
       }
 
       if (length > clipboard_blob_store::kMaxBlobBytes) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_payload_too_large,
+        return json_blob_response(web::StatusCode::payload_too_large,
           R"({"error":"payload_too_large"})");
       }
 
@@ -426,39 +457,38 @@ namespace clipboard_http {
   blob_response_t
   make_blob_get_response(const std::string &id) {
       if (!config::input.clipboard_sync) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_forbidden,
+        return json_blob_response(web::StatusCode::forbidden,
           R"({"error":"clipboard_sync_disabled"})");
       }
 
       if (id.empty()) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_bad_request,
+        return json_blob_response(web::StatusCode::bad_request,
           R"({"error":"bad_id"})");
       }
 
       // Constrain to canonical UUID-v4 shape (36 chars, hex + dashes) to
       // avoid the path regex accidentally matching weird inputs.
       if (id.size() != 36) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_not_found,
+        return json_blob_response(web::StatusCode::not_found,
           R"({"error":"not_found"})");
       }
 
       auto got = clipboard_blob_store::get(id, /*consume=*/false);
       if (!got.found) {
-        return json_blob_response(SimpleWeb::StatusCode::client_error_not_found,
+        return json_blob_response(web::StatusCode::not_found,
           R"({"error":"not_found"})");
       }
 
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       // The mime was validated at upload time (is_valid_mime) so reflecting it
       // here is safe; nosniff defends against any UA that might still try to
       // override the declared type when displaying the response inline.
       headers.emplace("Content-Type", got.mime.empty() ? std::string { "application/octet-stream" } : got.mime);
       headers.emplace("X-Content-Type-Options", "nosniff");
       headers.emplace("Cache-Control", "no-store");
-      // Bytes-as-string copy: SimpleWebServer's `write(string)` is binary-safe
-      // (string isn't NUL-terminated-sensitive).
+      // Preserve embedded NUL bytes in the serialized response body.
       std::string body(reinterpret_cast<const char *>(got.bytes.data()), got.bytes.size());
-      return { SimpleWeb::StatusCode::success_ok, std::move(body), std::move(headers) };
+      return { web::StatusCode::ok, std::move(body), std::move(headers) };
   }
 
   void

@@ -16,7 +16,7 @@
 
 namespace file_mapping_http {
   namespace {
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
       return {
         { "Content-Type", "application/json" },
@@ -26,7 +26,7 @@ namespace file_mapping_http {
     }
 
     bool
-    has_websocket_upgrade(const SimpleWeb::CaseInsensitiveMultimap &headers) {
+    has_websocket_upgrade(const web::CaseInsensitiveMultimap &headers) {
       auto it = headers.find("upgrade");
       if (it == headers.end()) {
         return false;
@@ -40,7 +40,7 @@ namespace file_mapping_http {
     }
 
     std::string
-    header_value(const SimpleWeb::CaseInsensitiveMultimap &headers, const std::string &name) {
+    header_value(const web::CaseInsensitiveMultimap &headers, const std::string &name) {
       auto it = headers.find(name);
       return it == headers.end() ? std::string {} : it->second;
     }
@@ -138,11 +138,11 @@ namespace file_mapping_http {
       { "max_protocol_version", file_mapping::rpc::kProtocolVersion }
     };
 
-    return { SimpleWeb::StatusCode::success_ok, body.dump(), json_headers() };
+    return { web::StatusCode::ok, body.dump(), json_headers() };
   }
 
   http_response_t
-  make_session_placeholder_response(const SimpleWeb::CaseInsensitiveMultimap &request_headers) {
+  make_session_placeholder_response(const web::CaseInsensitiveMultimap &request_headers) {
     nlohmann::json body;
     body["ok"] = false;
 
@@ -150,12 +150,12 @@ namespace file_mapping_http {
     if (!has_websocket_upgrade(request_headers)) {
       body["error"] = "upgrade_required";
       headers.emplace("Upgrade", "websocket");
-      return { SimpleWeb::StatusCode::client_error_upgrade_required, body.dump(), std::move(headers) };
+      return { web::StatusCode::upgrade_required, body.dump(), std::move(headers) };
     }
 
     body["error"] = "session_not_implemented";
     body["message"] = "file mapping websocket sessions are served by the advertised Beast endpoint";
-    return { SimpleWeb::StatusCode::server_error_not_implemented, body.dump(), std::move(headers) };
+    return { web::StatusCode::not_implemented, body.dump(), std::move(headers) };
   }
 
   void

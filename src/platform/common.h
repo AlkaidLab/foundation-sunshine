@@ -44,6 +44,10 @@ struct AVHWFramesContext;
 struct AVCodecContext;
 struct AVDictionary;
 
+namespace perf {
+  struct capture_source_counter_t;
+}
+
 #ifdef _WIN32
 // Forward declarations of boost classes to avoid having to include boost headers
 // here, which results in issues with Windows.h and WinSock2.h include order.
@@ -445,6 +449,7 @@ namespace platf {
     float pressureOrDistance;  // Distance for hover and pressure for contact
     float contactAreaMajor;
     float contactAreaMinor;
+    std::uint16_t barrelRoll = 0xffff;  // Independent axial twist, or unknown
   };
 
   class deinit_t {
@@ -669,6 +674,12 @@ namespace platf {
      */
     using pull_free_image_cb_t = std::function<bool(std::shared_ptr<img_t> &img_out)>;
 
+    // Optional raw-source telemetry, shared by sessions using this display.
+    virtual std::shared_ptr<perf::capture_source_counter_t>
+    frame_rate_source() const {
+      return {};
+    }
+
     display_t() noexcept:
         offset_x { 0 },
         offset_y { 0 } {
@@ -823,6 +834,16 @@ namespace platf {
      */
     virtual bool
     is_sink_available(const std::string &sink) = 0;
+
+    /**
+     * @brief Check if a virtual sink supports the channel layout encoded in its name.
+     * @param sink Sink to be checked, as returned by sink_info().
+     * @returns False only when the platform knows the layout is unsupported.
+     */
+    virtual bool
+    is_sink_format_supported(const std::string &sink) {
+      return true;
+    }
 
     virtual std::optional<sink_t>
     sink_info() = 0;

@@ -1133,6 +1133,24 @@ namespace platf {
   bp::child
   run_command(bool elevated, bool interactive, const std::string &cmd, boost::filesystem::path &working_dir, const bp::environment &env, FILE *file, std::error_code &ec, bp::group *group) {
     std::wstring start_dir = working_dir.wstring();
+
+    // Validate lpCurrentDirectory before CreateProcessW for an actionable log entry.
+    if (!start_dir.empty()) {
+      // Keep drive roots such as "C:\" intact.
+      std::wstring probe_dir = start_dir;
+      while (probe_dir.size() > 1 && (probe_dir.back() == L'\\' || probe_dir.back() == L'/') && probe_dir[probe_dir.size() - 2] != L':') {
+        probe_dir.pop_back();
+      }
+
+      const auto probe_attributes = GetFileAttributesW(probe_dir.c_str());
+      if (probe_attributes == INVALID_FILE_ATTRIBUTES ||
+          (probe_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        const auto probe_error = probe_attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_DIRECTORY;
+        BOOST_LOG(warning) << "Working directory ["sv << to_utf8(start_dir) << "] does not exist or is not accessible (error "
+                           << util::hex(probe_error).to_string_view() << ")."sv;
+      }
+    }
+
     HANDLE job = group ? group->native_handle() : nullptr;
     STARTUPINFOEXW startup_info = create_startup_info(file, job ? &job : nullptr, ec);
     PROCESS_INFORMATION process_info;
@@ -1418,14 +1436,7 @@ namespace platf {
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 
     // Modify NVIDIA control panel settings again, in case they have been changed externally since sunshine launch
-    if (nvprefs_instance.load()) {
-      if (!nvprefs_instance.owning_undo_file()) {
-        nvprefs_instance.restore_from_and_delete_undo_file_if_exists();
-      }
-      nvprefs_instance.modify_application_profile();
-      nvprefs_instance.modify_global_profile();
-      nvprefs_instance.unload();
-    }
+    nvprefs_instance.configure();
 
     // Enable low latency mode on all connected WLAN NICs if wlanapi.dll is available
     if (fn_WlanOpenHandle) {

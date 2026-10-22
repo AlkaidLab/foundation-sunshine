@@ -197,6 +197,31 @@ TEST(HdrDynamicMetadata, SerializesAndRoundTripsHdr10PlusT35) {
   EXPECT_EQ(decoded.params[0].color_saturation_mapping_flag, 0);
 }
 
+TEST(HdrDynamicMetadata, CarriesGeneratedHdr10PlusBezierCurve) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.percentile_99 = 4000.0f;
+  stats.avg_maxrgb = 500.0f;
+  stats.valid = true;
+  std::array<uint8_t, video::hdr_metadata::hdr10plus_t35_max_payload_size> payload {};
+  const auto payload_size = video::hdr_metadata::serialize_hdr10plus_t35(stats, 400, payload);
+  ASSERT_GT(payload_size, video::hdr_metadata::hdr10plus_t35_prefix_size);
+  AVDynamicHDRPlus decoded {};
+  ASSERT_GE(av_dynamic_hdr_plus_from_t35(&decoded,
+    payload.data() + video::hdr_metadata::hdr10plus_t35_prefix_size,
+    payload_size - video::hdr_metadata::hdr10plus_t35_prefix_size), 0);
+  ASSERT_EQ(decoded.params[0].tone_mapping_flag, 1);
+  ASSERT_EQ(decoded.params[0].color_saturation_mapping_flag, 1);
+  EXPECT_GE(decoded.params[0].num_bezier_curve_anchors, 1);
+  EXPECT_LE(decoded.params[0].num_bezier_curve_anchors, 15);
+  EXPECT_LT(decoded.params[0].knee_point_x.num, decoded.params[0].knee_point_y.num + 4095);
+  // The receiver applies the curve to the PQ signal. The knee must therefore
+  // track PQ(average) rather than the linear average/peak ratio (0.125 here).
+  EXPECT_NEAR(
+    av_q2d(decoded.params[0].knee_point_x),
+    std::clamp(video::hdr_metadata::nits_to_pq(500.0f), 0.35f, 0.75f),
+    1.0f / 4095.0f);
+}
+
 TEST(HdrDynamicMetadata, CarriesTheNineHdr10PlusPercentiles) {
   platf::hdr_frame_luminance_stats_t stats {};
   stats.percentile_99 = 1000.0f;  // The analyzer fills this from the CDF's top slot.
@@ -652,6 +677,9 @@ TEST(HdrDynamicMetadata, WithholdsVividWithoutAPqDomainAverage) {
     stats.avg_maxrgb_pq = bad;
     EXPECT_FALSE(video::hdr_metadata::vivid_from_stats(stats).valid);
   }
+  stats.avg_maxrgb_pq = 0.5f;
+  stats.max_maxrgb = std::numeric_limits<float>::quiet_NaN();
+  EXPECT_FALSE(video::hdr_metadata::vivid_from_stats(stats).valid);
 
   // A genuinely black frame is not a missing statistic: both means read zero, they
   // agree, and the metadata says the picture is black.
@@ -732,6 +760,49 @@ TEST(HdrDynamicMetadata, SerializesVividStatisticsModeSyntax) {
   while (bit_offset < payload.size() * 8) {
     EXPECT_EQ(read_bits(payload, bit_offset, 1), 0U);
   }
+}
+
+TEST(HdrDynamicMetadata, CarriesGeneratedVividBaseCurve) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.min_maxrgb = 10.0F;
+  stats.max_maxrgb = 4000.0F;
+  stats.avg_maxrgb = 500.0F;
+  stats.avg_maxrgb_pq = video::hdr_metadata::nits_to_pq(500.0F);
+  stats.percentile_10_pq = video::hdr_metadata::nits_to_pq(50.0F);
+  stats.percentile_90_pq = video::hdr_metadata::nits_to_pq(2000.0F);
+  stats.valid = true;
+  const auto metadata = video::hdr_metadata::vivid_from_stats(stats);
+  ASSERT_TRUE(metadata.valid);
+  EXPECT_TRUE(metadata.tone_mapping);
+  EXPECT_TRUE(metadata.base_enabled);
+  std::vector<uint8_t> payload;
+  ASSERT_GT(video::hdr_metadata::serialize_vivid_t35(metadata, payload), 13U);
+}
+
+TEST(HdrDynamicMetadata, VividCurveUsesTheRequestedTargetDisplayPeak) {
+  platf::hdr_frame_luminance_stats_t stats {};
+  stats.min_maxrgb = 10.0F;
+  stats.max_maxrgb = 4000.0F;
+  stats.avg_maxrgb = 500.0F;
+  stats.avg_maxrgb_pq = video::hdr_metadata::nits_to_pq(500.0F);
+  stats.percentile_10_pq = video::hdr_metadata::nits_to_pq(50.0F);
+  stats.percentile_90_pq = video::hdr_metadata::nits_to_pq(2000.0F);
+  stats.valid = true;
+
+  const auto dim = video::hdr_metadata::vivid_from_stats(stats, 400);
+  const auto bright = video::hdr_metadata::vivid_from_stats(stats, 2000);
+  ASSERT_TRUE(dim.valid);
+  ASSERT_TRUE(bright.valid);
+  EXPECT_EQ(dim.targeted_display_pq,
+    video::hdr_metadata::target_display_pq_u12(400));
+  EXPECT_EQ(bright.targeted_display_pq,
+    video::hdr_metadata::target_display_pq_u12(2000));
+  EXPECT_EQ(dim.base_m_m, 24);
+  EXPECT_EQ(dim.base_m_n, 10);
+  EXPECT_EQ(bright.base_m_m, 24);
+  EXPECT_EQ(bright.base_m_n, 10);
+  EXPECT_NE(dim.base_m_p, bright.base_m_p);
+  EXPECT_NE(dim.base_m_a, bright.base_m_a);
 }
 
 TEST(HdrDynamicMetadata, AppliesAnnexA9ThirtyTwoFrameMean) {
@@ -1048,8 +1119,8 @@ TEST(HdrDynamicMetadata, DynamicMetadataBuilderFollowsTheFormatGates) {
 // denominator of 1 — as this code did before — yields values like 1000/1, far outside
 // that range. Encode it as a PQ code value, consistently with the four maxrgb fields.
 TEST(HdrDynamicMetadata, TargetDisplayLuminanceIsPqCodeNotNits) {
-  for (const float nits : { 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
-    const auto code = video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(nits));
+  for (const float nits : { 1.0f, 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
+    const auto code = video::hdr_metadata::target_display_pq_u12(nits);
 
     // Must land inside the 12-bit range the field is defined over.
     EXPECT_LE(code, 4095u) << "nits=" << nits;
@@ -1089,28 +1160,9 @@ TEST(HdrDynamicMetadata, TargetDisplayLuminanceIsPqCodeNotNits) {
     video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(1000.0f)));
   EXPECT_EQ(
     video::hdr_metadata::pq_to_u12(video::hdr_metadata::nits_to_pq(10000.0f)), 4095u);
-}
 
-// target_display_pq_u12() is the single conversion used by both the frame-setup and
-// per-frame metadata paths, so its <= 0 fallback is behavioral, not cosmetic: a display
-// that reports no peak luminance must still yield the 1000-nit code both places agree on.
-TEST(HdrDynamicMetadata, TargetDisplayHelperMatchesManualChainAndFallsBackTo1000Nits) {
-  using video::hdr_metadata::nits_to_pq;
-  using video::hdr_metadata::pq_to_u12;
-  using video::hdr_metadata::target_display_pq_u12;
-
-  // Matches the manual nits -> PQ -> 12-bit chain it replaces.
-  for (const float nits : { 1.0f, 400.0f, 1000.0f, 4000.0f, 10000.0f }) {
-    EXPECT_EQ(target_display_pq_u12(nits), pq_to_u12(nits_to_pq(nits))) << "nits=" << nits;
+  // ST 2084 maps the unreported-peak fallback of 1000 nits to 12-bit code 3078.
+  for (const float peak : { 0.0f, -1.0f, -10000.0f }) {
+    EXPECT_EQ(video::hdr_metadata::target_display_pq_u12(peak), 3078u);
   }
-
-  // Unreported / invalid peaks collapse to the documented 1000-nit default.
-  const auto fallback = pq_to_u12(nits_to_pq(1000.0f));
-  EXPECT_EQ(target_display_pq_u12(0.0f), fallback);
-  EXPECT_EQ(target_display_pq_u12(-1.0f), fallback);
-  EXPECT_EQ(target_display_pq_u12(-10000.0f), fallback);
-
-  // The denominator the codes are paired with is what FFmpeg parses them against.
-  EXPECT_EQ(video::hdr_metadata::pq_u12_den, 4095);
-  EXPECT_LE(target_display_pq_u12(10000.0f), video::hdr_metadata::pq_u12_den);
 }

@@ -14,7 +14,7 @@
 #include "src/config.h"
 #include "src/http_util.h"
 #include "src/logging.h"
-#include "src/perf_recorder.h"
+#include "src/streaming/perf_recorder.h"
 #include "src/platform/common.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
@@ -53,7 +53,7 @@ namespace widget_http {
     }
 
     void
-    send_error(resp_https_t response, SimpleWeb::StatusCode status, std::string error) {
+    send_error(resp_https_t response, web::StatusCode status, std::string error) {
       response->write(status, json {
                                    { "status", false },
                                    { "error", std::move(error) },
@@ -67,7 +67,7 @@ namespace widget_http {
     // the widget feature is off, and no unauthenticated loopback data hole exists.
     bool
     feature_disabled(resp_https_t response) {
-      response->write(SimpleWeb::StatusCode::client_error_not_found);
+      response->write(web::StatusCode::not_found);
       response->close_connection_after_response = true;
       return true;
     }
@@ -80,7 +80,7 @@ namespace widget_http {
       }
       if (!auth(response, request)) return;
       if (!token_valid(std::move(request))) {
-        send_error(std::move(response), SimpleWeb::StatusCode::client_error_unauthorized, "Invalid widget token");
+        send_error(std::move(response), web::StatusCode::unauthorized, "Invalid widget token");
         return;
       }
 
@@ -117,7 +117,7 @@ namespace widget_http {
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "widget_http: state snapshot failed: " << e.what();
-        send_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, e.what());
+        send_error(std::move(response), web::StatusCode::internal_server_error, e.what());
       }
     }
 
@@ -129,14 +129,14 @@ namespace widget_http {
       }
       if (!auth(response, request)) return;
       if (!token_valid(request)) {
-        send_error(std::move(response), SimpleWeb::StatusCode::client_error_unauthorized, "Invalid widget token");
+        send_error(std::move(response), web::StatusCode::unauthorized, "Invalid widget token");
         return;
       }
 
       const auto content_type = request->header.find("content-type");
       if (content_type == request->header.end() ||
           !http_util::content_type_matches(content_type->second, "application/json")) {
-        send_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "Content type must be application/json");
+        send_error(std::move(response), web::StatusCode::bad_request, "Content type must be application/json");
         return;
       }
 
@@ -145,7 +145,7 @@ namespace widget_http {
         ss << request->content.rdbuf();
         const auto body = json::parse(ss.str());
         if (!body.is_object()) {
-          send_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "Request body must be a JSON object");
+          send_error(std::move(response), web::StatusCode::bad_request, "Request body must be a JSON object");
           return;
         }
         const auto type = body.value("type", std::string {});
@@ -176,15 +176,15 @@ namespace widget_http {
             });
         }
         else {
-          send_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, "Unknown action type");
+          send_error(std::move(response), web::StatusCode::bad_request, "Unknown action type");
         }
       }
       catch (const json::parse_error &e) {
-        send_error(std::move(response), SimpleWeb::StatusCode::client_error_bad_request, e.what());
+        send_error(std::move(response), web::StatusCode::bad_request, e.what());
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "widget_http: action failed: " << e.what();
-        send_error(std::move(response), SimpleWeb::StatusCode::server_error_internal_server_error, e.what());
+        send_error(std::move(response), web::StatusCode::internal_server_error, e.what());
       }
     }
   }  // namespace

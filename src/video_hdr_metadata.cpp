@@ -77,8 +77,19 @@ namespace video::hdr_metadata {
         frame_metadata.distribution_maxrgb[i], hdr10plus_normalized_scale);
     }
     params.fraction_bright_pixels = av_make_q(0, 1);
-    params.tone_mapping_flag = 0;
-    params.color_saturation_mapping_flag = 0;
+    params.tone_mapping_flag = frame_metadata.tone_mapping;
+    if (params.tone_mapping_flag) {
+      params.knee_point_x = av_make_q(frame_metadata.knee_point_x, 4095);
+      params.knee_point_y = av_make_q(frame_metadata.knee_point_y, 4095);
+      params.num_bezier_curve_anchors = frame_metadata.bezier_curve_anchor_count;
+      for (size_t i = 0; i < frame_metadata.bezier_curve_anchor_count; ++i) {
+        params.bezier_curve_anchors[i] = av_make_q(frame_metadata.bezier_curve_anchors[i], 1023);
+      }
+    }
+    params.color_saturation_mapping_flag = frame_metadata.saturation_mapping;
+    if (params.color_saturation_mapping_flag) {
+      params.color_saturation_weight = av_make_q(frame_metadata.saturation_weight, 8);
+    }
 
     std::array<uint8_t, AV_HDR_PLUS_MAX_PAYLOAD_SIZE> body_storage {};
     uint8_t *body = body_storage.data();
@@ -105,7 +116,24 @@ namespace video::hdr_metadata {
       rational_equals(decoded.params[0].maxscl[2], params.maxscl[2]) &&
       rational_equals(decoded.params[0].average_maxrgb, params.average_maxrgb) &&
       decoded.params[0].num_distribution_maxrgb_percentiles ==
-        params.num_distribution_maxrgb_percentiles;
+        params.num_distribution_maxrgb_percentiles &&
+      decoded.params[0].tone_mapping_flag == params.tone_mapping_flag &&
+      decoded.params[0].color_saturation_mapping_flag == params.color_saturation_mapping_flag;
+
+    if (valid_round_trip && params.tone_mapping_flag) {
+      valid_round_trip =
+        av_cmp_q(decoded.params[0].knee_point_x, params.knee_point_x) == 0 &&
+        av_cmp_q(decoded.params[0].knee_point_y, params.knee_point_y) == 0 &&
+        decoded.params[0].num_bezier_curve_anchors == params.num_bezier_curve_anchors;
+      for (size_t i = 0; valid_round_trip && i < params.num_bezier_curve_anchors; ++i) {
+        valid_round_trip = av_cmp_q(decoded.params[0].bezier_curve_anchors[i],
+          params.bezier_curve_anchors[i]) == 0;
+      }
+    }
+    if (valid_round_trip && params.color_saturation_mapping_flag) {
+      valid_round_trip = av_cmp_q(decoded.params[0].color_saturation_weight,
+        params.color_saturation_weight) == 0;
+    }
 
     // Checking the distribution too: leaving it out is what let a non-conformant
     // empty percentile list ship while the round trip still reported success.

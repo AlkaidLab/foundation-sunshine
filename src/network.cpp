@@ -8,12 +8,97 @@
 #include "utility.h"
 #include <algorithm>
 #include <sstream>
+#include <cstring>
+#include <stdexcept>
+#ifdef _WIN32
+  #include <iphlpapi.h>
+#else
+  #include <ifaddrs.h>
+  #include <net/if.h>
+#endif
 
 using namespace std::literals;
 
 namespace ip = boost::asio::ip;
 
 namespace net {
+  std::vector<local_address_t>
+  local_addresses() {
+    std::vector<local_address_t> result;
+    const auto add = [&](const std::string &name, const sockaddr *address) {
+      if (!address || (address->sa_family != AF_INET && address->sa_family != AF_INET6)) return;
+      std::string value;
+      if (address->sa_family == AF_INET) {
+        const auto *v4 = reinterpret_cast<const sockaddr_in *>(address);
+        ip::address_v4::bytes_type bytes;
+        std::memcpy(bytes.data(), &v4->sin_addr, bytes.size());
+        value = ip::address_v4(bytes).to_string();
+      }
+      else {
+        const auto *v6 = reinterpret_cast<const sockaddr_in6 *>(address);
+        ip::address_v6::bytes_type bytes;
+        std::memcpy(bytes.data(), &v6->sin6_addr, bytes.size());
+        value = ip::address_v6(bytes, v6->sin6_scope_id).to_string();
+      }
+      result.push_back({ name, std::move(value) });
+    };
+#ifdef _WIN32
+    ULONG size = 16384;
+    std::vector<unsigned char> buffer(size);
+    ULONG status;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+      auto *adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES *>(buffer.data());
+      status = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, nullptr, adapters, &size);
+      if (status != ERROR_BUFFER_OVERFLOW) break;
+      buffer.resize(size);
+    }
+    if (status != NO_ERROR) throw std::runtime_error("Unable to enumerate network adapters");
+    for (auto *adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES *>(buffer.data()); adapter; adapter = adapter->Next) {
+      if (adapter->OperStatus != IfOperStatusUp) continue;
+      std::string name = adapter->AdapterName;
+      if (adapter->FriendlyName) {
+        const int length = WideCharToMultiByte(CP_UTF8, 0, adapter->FriendlyName, -1, nullptr, 0, nullptr, nullptr);
+        if (length > 1) {
+          name.resize(length);
+          WideCharToMultiByte(CP_UTF8, 0, adapter->FriendlyName, -1, name.data(), length, nullptr, nullptr);
+          name.pop_back();
+        }
+      }
+      for (auto *address = adapter->FirstUnicastAddress; address; address = address->Next) add(name, address->Address.lpSockaddr);
+    }
+#else
+    ifaddrs *addresses = nullptr;
+    if (getifaddrs(&addresses) != 0) throw std::runtime_error("Unable to enumerate network adapters");
+    auto cleanup = util::fail_guard([&]() { freeifaddrs(addresses); });
+    for (auto *entry = addresses; entry; entry = entry->ifa_next) {
+      if (entry->ifa_flags & IFF_UP) add(entry->ifa_name, entry->ifa_addr);
+    }
+#endif
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return std::tie(a.name, a.address) < std::tie(b.name, b.address); });
+    return result;
+  }
+
+  void
+  validate_bind_address(const std::string &value, const std::string &family) {
+    if (family != "ipv4" && family != "both") throw std::invalid_argument("address_family must be ipv4 or both");
+    if (value.empty()) return;
+    boost::system::error_code error;
+    const auto address = ip::make_address(value, error);
+    if (error || address.is_multicast()) throw std::invalid_argument("bind_address must be a single local IP address");
+    if (address.is_v6() && family == "ipv4") throw std::invalid_argument("IPv6 bind_address requires address_family=both");
+    boost::asio::io_context context;
+    ip::tcp::socket socket { context };
+    socket.open(address.is_v4() ? ip::tcp::v4() : ip::tcp::v6(), error);
+    if (!error) socket.bind(ip::tcp::endpoint(address, 0), error);
+    if (error) throw std::invalid_argument("bind_address is not available on this host");
+  }
+
+  bool
+  bind_uses_ipv4(af_e af) {
+    boost::system::error_code error;
+    const auto address = ip::make_address(get_bind_address(af), error);
+    return error ? af == IPV4 : address.is_v4();
+  }
   std::vector<ip::network_v4> pc_ips_v4 {
     ip::make_network_v4("127.0.0.0/8"sv),
   };
@@ -203,10 +288,10 @@ namespace net {
     enet_address_set_port(&addr, port);
 
     // Maximum of 128 clients, which should be enough for anyone
-    auto host = host_t { enet_host_create(af == IPV4 ? AF_INET : AF_INET6, &addr, 128, 0, 0, 0) };
+    auto host = host_t { enet_host_create(bind_uses_ipv4(af) ? AF_INET : AF_INET6, &addr, 128, 0, 0, 0) };
 
     // Enable opportunistic QoS tagging (automatically disables if the network appears to drop tagged packets)
-    enet_socket_set_option(host->socket, ENET_SOCKOPT_QOS, 1);
+    if (host) enet_socket_set_option(host->socket, ENET_SOCKOPT_QOS, 1);
 
     return host;
   }

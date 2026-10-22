@@ -5,14 +5,26 @@ HIDMaestro runtime. The shipping executable remains
 `Sunshine.Ds5Sidecar.exe` for component-upgrade compatibility, while the
 process now uses a `VirtualDeviceHostServer` and `DeviceRegistry` internally.
 It owns virtual devices and exposes the versioned `SDS5` named-pipe protocol.
-The helper does not contain HIDMaestro binaries.
+The optional component package includes patched HIDMaestro Core and its notices.
 
-Build against the pinned upstream v1.7.3 runtime:
+Build the compatible Foundation Core patch and the sidecar:
 
 ```powershell
-dotnet build -c Release `
-  -p:HIDMaestroCorePath=C:\path\to\HIDMaestro.Core.dll
+scripts/build-ds5-sidecar.ps1
 ```
+
+The version 1.4.2 component ZIP includes patched `HIDMaestro.Core.dll`, its
+licenses, and the complete .NET runtime. The main Sunshine package contains only
+the pinned ZIP download manifest. The Control Panel automatically updates older
+installed components when streaming is idle, using the existing administrator
+helper, verified staging and whole-component rollback. Optional USB/IP transport
+installation remains part of explicit install/repair, not automatic updates.
+The sidecar uses normal .NET loading and requires the v1.12.0 runtime and
+device-ownership, externally managed USB/IP and `FoundationDualSenseReports=host-clock-v1`
+markers even for `--probe`. Sunshine validates the
+installed component without replacing DLLs.
+The upstream SDK API, assembly version and embedded resources are preserved; see
+[`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
 
 Read-only capability probe:
 
@@ -27,21 +39,58 @@ layout, and channel-isolation checks (no elevation or virtual device required):
 dotnet Sunshine.Ds5Sidecar.dll --self-check
 ```
 
+USB/IP installation and repair belong to the shared component manager. Device
+creation only checks the approved driver and fails with a shared transport error
+when it is missing or incompatible. The ZIP carries `component-compatibility.json`,
+the same contract used by the GUI installer. The staged upgrade acceptance test
+requires elevation and an idle host, and creates/releases two composite devices:
+
+```powershell
+Sunshine.Ds5Sidecar.exe --self-test transport --result transport-acceptance.json
+```
+
 The production process must be launched elevated and placed in the Sunshine
 Job Object. The pipe accepts a single elevated client of the creating user;
 non-elevated callers are rejected at connect time and dropped without
 ending the sidecar.
+Input, touch, motion and battery updates submit their combined state directly
+on receipt under the session state lock. They do not use a thread-pool timer:
+even a 1 ms timer can run at roughly 15.6 ms intervals on Windows and reduce
+continuous input to about 64 Hz. The sidecar preserves the incoming update
+cadence; it does not synthesize repeated reports to inflate polling-rate tests.
+USB reports include rolling 8-bit and 32-bit sequence numbers, device time and
+the USB-connected status. Device and motion timestamps use the same host QPC
+epoch at 3 MHz. Button, touch and battery reports advance device time while
+retaining the latest motion sample timestamp. Network receive time still stands
+in for the client's physical sampling time; these metadata corrections have not
+been verified to resolve Genshin's camera jumps.
+The pipe reader reuses a receive buffer for headers and payloads, dispatching
+complete frames as soon as they arrive. This removes separate header/body reads
+and per-input payload allocations without adding a batching delay. Microphone
+PCM retains its own copy because its queue outlives the receive buffer. The
+device-free `--self-check` covers fragmented/packed frames, length validation,
+EOF, cancellation and retained PCM ownership.
+The reader uses one async state machine per pending frame. Standard axis
+bindings are resolved once through the SDK at controller creation and update
+the existing state dictionary in place. This avoids rebuilding the SDK's
+stick/trigger lists and axis dictionary on every input update. `--self-check`
+compares the cached mapping against the SDK's complete bundled profile catalog
+and checks that steady-state axis updates allocate no managed objects.
+The pinned .NET 10 runtime config sets
+`System.Threading.ThreadPool.UnfairSemaphoreSpinLimit` to zero for this process.
+Pool workers wait for a signal instead of spinning between short input bursts.
+This adds no report-rate limiter or timer. Because it trades spinning for OS
+wakeups, CPU and report-interval tests should be repeated when changing the
+bundled runtime or enabling additional concurrent input/audio workloads.
 Disconnecting the owning pipe disposes every device created by
 that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
-HID-only attaches actually serve the derived `dualsense-hidonly` profile:
-its top-level collection usage is Joystick (0x04) instead of Game Pad
-(0x05), because the root-enumerated device never gets the native DualSense
-decoder and Windows' generic gamepad template reads the Sony byte layout as
-a half-pressed right trigger plus a full-up right stick at rest, which
-win32k turns into perpetual desktop navigation (issue #1056). As a
-Joystick the device is only exposed through RawGameController/generic HID,
-where every usage decodes correctly.
+HID-only attaches use `dualsense` with the native 273-byte descriptor and
+Game Pad usage (0x05). HIDMaestro v1.12.0 no longer writes the incorrect global
+GameInput mapping for JSON profiles and removes exact legacy SDK tables
+(issue #1056), so the former Joystick usage override is unnecessary. Input
+reports retain `alwaysArmed` for touch and motion data. Windows decides how
+to expose the device; native Game Pad usage does not guarantee a WGI Gamepad.
 The optional Genshin compatibility attach flag derives a third profile from
 `dualsense-composite` at runtime. It preserves the Sony VID/PID, descriptors,
 and four-channel layout while changing only the USB product string from
@@ -51,6 +100,23 @@ maximum and commits the active endpoint's 4-channel, available-speaker and
 full-range masks as quadraphonic (`0x33`) through Core Audio. This matches the
 three settings applied by completing Windows' speaker setup wizard as required
 by Genshin.
+Endpoint enumeration uses the Windows SDK's `IMMDeviceCollection` IID, and
+the Windows 10+ policy property calls include the effects-store argument.
+`NativeMethods.txt` requests the public audio COM interfaces, structures and
+property keys from Microsoft CsWin32. The generator and SDK metadata are pinned
+in `packages.lock.json`; publishing restores in locked mode and adds no runtime
+library dependency. `CoreAudio` shares endpoint enumeration and reference cleanup
+between the default-device monitor and WASAPI probe. Only the undocumented
+Windows 10+ policy interface remains hand-declared, inside `AudioPolicyConfig`.
+Core Audio references are released per acquisition so configuration readback
+cannot invalidate the concurrent default-device monitor. Endpoint detection
+also recognizes HIDMaestro's synthetic USB serial under the official USB/IP
+host controller, without requiring runtime ownership stamping.
+The transport acceptance test creates both the normal composite profile and
+the Genshin compatibility profile. It reads back the endpoint format and both
+speaker masks for the endpoint created by that attach before passing. It waits
+for that endpoint to become inactive before the next round, so a stale endpoint
+cannot satisfy another mode's check.
 The sidecar advertises this support through a protocol capability bit so an
 older runtime cannot silently accept an ineffective setting.
 The v1 wire contract reserves capability bits and message numbers for the
@@ -58,7 +124,7 @@ virtual microphone. Normal startup intentionally does not advertise them;
 only the explicit development prototype can enable those capabilities.
 
 The Phase 2 composite-profile microphone path is development-only and requires
-both the exact HIDMaestro 1.7.3.0 runtime and an explicit opt-in. Its elevated
+both the exact HIDMaestro 1.12.0.0 runtime and an explicit opt-in. Its elevated
 attach/PCM/flush/destroy smoke test is:
 
 ```powershell

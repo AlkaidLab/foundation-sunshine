@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 
 #include "src/logging.h"
 
@@ -90,27 +90,27 @@ namespace nvhttp::display_scale {
       }
     }
 
-    SimpleWeb::StatusCode
+    web::StatusCode
     http_status(display_device::w_utils::display_scale_error_e error) {
       switch (error) {
         case display_device::w_utils::display_scale_error_e::display_not_found:
-          return SimpleWeb::StatusCode::client_error_not_found;
+          return web::StatusCode::not_found;
         case display_device::w_utils::display_scale_error_e::unsupported_scale:
-          return SimpleWeb::StatusCode::client_error_bad_request;
+          return web::StatusCode::bad_request;
         case display_device::w_utils::display_scale_error_e::permission_denied:
-          return SimpleWeb::StatusCode::client_error_forbidden;
+          return web::StatusCode::forbidden;
         case display_device::w_utils::display_scale_error_e::apply_failed:
-          return SimpleWeb::StatusCode::server_error_internal_server_error;
+          return web::StatusCode::internal_server_error;
         case display_device::w_utils::display_scale_error_e::none:
         default:
-          return SimpleWeb::StatusCode::success_ok;
+          return web::StatusCode::ok;
       }
     }
 #endif
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       return headers;
     }
@@ -204,13 +204,13 @@ namespace nvhttp::display_scale {
         response_json["status_message"] = "Display not found";
         response_json["success"] = false;
         response_json["error_code"] = "display_not_found";
-        response->write(SimpleWeb::StatusCode::client_error_not_found, response_json.dump(), headers);
+        response->write(web::StatusCode::not_found, response_json.dump(), headers);
         return;
       }
 
       response_json.update(to_json(*scale_info));
       response_json["success"] = true;
-      response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
+      response->write(web::StatusCode::ok, response_json.dump(), headers);
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "Error getting display scale options: " << e.what();
@@ -218,7 +218,7 @@ namespace nvhttp::display_scale {
       response_json["status_message"] = "Internal server error: " + std::string(e.what());
       response_json["success"] = false;
       response_json["error_code"] = "apply_failed";
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, response_json.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, response_json.dump(), headers);
     }
 #else
     response_json["status_code"] = 501;
@@ -226,7 +226,7 @@ namespace nvhttp::display_scale {
     response_json["success"] = false;
     response_json["error_code"] = "unsupported_platform";
     add_unsupported_scale_options_fields(response_json);
-    response->write(SimpleWeb::StatusCode::server_error_not_implemented, response_json.dump(), headers);
+    response->write(web::StatusCode::not_implemented, response_json.dump(), headers);
 #endif
   }
 
@@ -251,7 +251,7 @@ namespace nvhttp::display_scale {
         response_json["status_message"] = "Missing or invalid scale_percent";
         response_json["success"] = false;
         response_json["error_code"] = "invalid_request";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, response_json.dump(), headers);
+        response->write(web::StatusCode::bad_request, response_json.dump(), headers);
         return;
       }
 
@@ -271,7 +271,7 @@ namespace nvhttp::display_scale {
 
       if (set_result.success) {
         response_json["status_message"] = set_result.message.empty() ? "OK" : set_result.message;
-        response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
+        response->write(web::StatusCode::ok, response_json.dump(), headers);
         return;
       }
 
@@ -301,7 +301,7 @@ namespace nvhttp::display_scale {
       response_json["status_message"] = "Invalid JSON body: " + std::string(e.what());
       response_json["success"] = false;
       response_json["error_code"] = "invalid_request";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, response_json.dump(), headers);
+      response->write(web::StatusCode::bad_request, response_json.dump(), headers);
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "Error setting display scale: " << e.what();
@@ -309,14 +309,14 @@ namespace nvhttp::display_scale {
       response_json["status_message"] = "Internal server error: " + std::string(e.what());
       response_json["success"] = false;
       response_json["error_code"] = "apply_failed";
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, response_json.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, response_json.dump(), headers);
     }
 #else
     response_json["status_code"] = 501;
     response_json["status_message"] = "Display scale is not supported on this platform";
     response_json["success"] = false;
     response_json["error_code"] = "unsupported_platform";
-    response->write(SimpleWeb::StatusCode::server_error_not_implemented, response_json.dump(), headers);
+    response->write(web::StatusCode::not_implemented, response_json.dump(), headers);
 #endif
   }
 

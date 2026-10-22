@@ -3,13 +3,7 @@
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}")
 
-# copy assets (excluding shaders) to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets"
-        PATTERN "shaders" EXCLUDE)
-# use symbolic link for shaders directory
-file(CREATE_LINK "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/shaders"
-        "${CMAKE_BINARY_DIR}/assets/shaders" COPY_ON_ERROR SYMBOLIC)
+# Uninstalled assets are tracked by the shared assets build target.
 
 if(${SUNSHINE_BUILD_APPIMAGE} OR ${SUNSHINE_BUILD_FLATPAK})
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/misc/60-sunshine.rules"
@@ -90,17 +84,17 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
 
 # application icon
 if(NOT ${SUNSHINE_BUILD_FLATPAK})
-    install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
+    install(FILES "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps")
 else()
-    install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
+    install(FILES "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps"
             RENAME "${PROJECT_FQDN}.svg")
 endif()
 
 # tray icon
 if(${SUNSHINE_TRAY} STREQUAL 1)
-    install(FILES "${CMAKE_SOURCE_DIR}/sunshine.svg"
+    install(FILES "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.svg"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status"
             RENAME "sunshine-tray.svg")
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing.svg"

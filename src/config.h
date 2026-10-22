@@ -4,12 +4,15 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <bitset>
+#include <cctype>
 #include <chrono>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -36,6 +39,8 @@ namespace config {
 
     nvenc::nvenc_config nv;
     bool nv_realtime_hags;
+    bool nv_manage_driver_settings;
+    bool nv_vdd_force_vsync;
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_sunshine_high_power_mode;
     bool vdd_keep_enabled;
@@ -80,6 +85,7 @@ namespace config {
       int amd_ltr_frames = 0;  // LTR frames for RFI (0=disabled by default; matches FFmpeg amfenc behavior to avoid static-region color blocks)
       int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
       bool amd_avcodec_compat = false;  // Optional AVCodec-like AMF adapter; false keeps the clean standalone path.
+      int amd_hevc_gop_size = -1;  // -1: driver default, 0: on-demand IDR, 1-1000: frames.
       std::optional<bool> amd_multi_hw_instance;
       // The properties below historically had aggressive hardcoded defaults that
       // forced AMF code paths FFmpeg never touches (HIGH_MOTION_QUALITY_BOOST=on,
@@ -297,11 +303,31 @@ namespace config {
   std::unordered_map<std::string, std::string>
   parse_config(const std::string_view &file_content);
 
+  /** Parse the same boolean tokens for startup settings and saved-setting reloads. */
+  inline bool
+  to_bool(std::string_view boolean) {
+    std::string value { boolean };
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return std::tolower(ch); });
+    return value == "true" || value == "yes" || value == "enable" ||
+           value == "enabled" || value == "on" || value == "1";
+  }
+
   bool
   update_config(const std::map<std::string, std::string> &updates);
 
   std::optional<std::map<std::string, std::string>>
   get_config_snapshot();
+
+  /** Overlay immutable startup command-line values on a newly read configuration. */
+  template <typename Settings>
+  void
+  apply_command_line_overrides(Settings &settings, const std::unordered_map<std::string, std::string> &overrides) {
+    for (const auto &[name, value] : overrides) settings.insert_or_assign(name, value);
+  }
+
+  /** Read saved settings while retaining command-line precedence for runtime policies. */
+  std::optional<std::map<std::string, std::string>>
+  get_effective_config_snapshot();
 
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig);

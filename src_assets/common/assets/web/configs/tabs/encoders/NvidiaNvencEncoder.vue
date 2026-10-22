@@ -188,10 +188,19 @@ const frameBudget = computed(() => {
               <div class="form-text">{{ $t('config.nvenc_split_encode_desc') }}</div>
             </div>
 
+            <div class="mb-3" v-if="platform === 'windows'">
+              <label for="nvenc_manage_driver_settings" class="form-label">{{ $t('config.nvenc_manage_driver_settings') }}</label>
+              <select id="nvenc_manage_driver_settings" class="form-select" v-model="config.nvenc_manage_driver_settings">
+                <option value="disabled">{{ $t('_common.disabled') }}</option>
+                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
+              </select>
+              <div class="form-text">{{ $t('config.nvenc_manage_driver_settings_desc') }}</div>
+            </div>
+
             <!-- Prefer lower encoding latency over power savings -->
             <div class="mb-3" v-if="platform === 'windows'">
               <label for="nvenc_latency_over_power" class="form-label">{{ $t('config.nvenc_latency_over_power') }}</label>
-              <select id="nvenc_latency_over_power" class="form-select" v-model="config.nvenc_latency_over_power">
+              <select id="nvenc_latency_over_power" class="form-select" v-model="config.nvenc_latency_over_power" :disabled="config.nvenc_manage_driver_settings === 'disabled'">
                 <option value="disabled">{{ $t('_common.disabled') }}</option>
                 <option value="enabled">{{ $t('_common.enabled_def') }}</option>
               </select>
@@ -201,7 +210,7 @@ const frameBudget = computed(() => {
             <!-- Present OpenGL/Vulkan on top of DXGI -->
             <div class="mb-3" v-if="platform === 'windows'">
               <label for="nvenc_opengl_vulkan_on_dxgi" class="form-label">{{ $t('config.nvenc_opengl_vulkan_on_dxgi') }}</label>
-              <select id="nvenc_opengl_vulkan_on_dxgi" class="form-select" v-model="config.nvenc_opengl_vulkan_on_dxgi">
+              <select id="nvenc_opengl_vulkan_on_dxgi" class="form-select" v-model="config.nvenc_opengl_vulkan_on_dxgi" :disabled="config.nvenc_manage_driver_settings === 'disabled'">
                 <option value="disabled">{{ $t('_common.disabled') }}</option>
                 <option value="enabled">{{ $t('_common.enabled_def') }}</option>
               </select>

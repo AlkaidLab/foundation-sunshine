@@ -184,17 +184,9 @@ install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}"
         COMPONENT assets)
 
-# copy assets (excluding shaders) to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets"
-        PATTERN "shaders" EXCLUDE)
-# Keep shader sources available for an uninstalled local Sunshine binary too.
-# A plain copy works on Windows without requiring Developer Mode or symlink
-# privileges and ensures newly added compute shaders are visible immediately.
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets")
+# Uninstalled assets are tracked by the shared assets build target.
 
-set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
+set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
 
 # The name of the directory that will be created in C:/Program files/
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "${CPACK_PACKAGE_NAME}")

@@ -444,6 +444,8 @@ namespace platf::dxgi {
    */
   int
   wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
+    frame_counter = display->frame_rate_source();
+    frame_counter->kind.store(perf::capture_source_kind_e::wgc_arrivals, std::memory_order_relaxed);
     // WGC is not supported in service mode (running as SYSTEM user)
     // Fail fast to avoid unnecessary attempts and potential deadlocks
     if (is_running_as_system_user) {
@@ -699,6 +701,7 @@ namespace platf::dxgi {
    */
   void
   wgc_capture_t::on_frame_arrived(winrt::Direct3D11CaptureFramePool const &sender, winrt::IInspectable const &) {
+    const auto source_collection_epoch = perf::frame_rate_collection_epoch();
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame { nullptr };
     try {
       frame = sender.TryGetNextFrame();
@@ -708,6 +711,8 @@ namespace platf::dxgi {
       return;
     }
     if (frame != nullptr) {
+      // Count arrivals before the latest-frame mailbox can overwrite a frame.
+      frame_counter->record(1, source_collection_epoch);
       AcquireSRWLockExclusive(&frame_lock);
       if (produced_frame) {
         produced_frame.Close();

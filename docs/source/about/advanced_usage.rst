@@ -30,7 +30,6 @@ location by modifying the configuration file.
    =========   ===========
    Value       Description
    =========   ===========
-   Docker      /config/
    Linux       ~/.config/sunshine/
    macOS       ~/.config/sunshine/
    Windows     %ProgramFiles%\\Sunshine\\config

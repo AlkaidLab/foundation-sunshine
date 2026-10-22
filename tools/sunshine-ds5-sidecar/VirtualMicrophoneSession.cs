@@ -45,6 +45,7 @@ internal sealed class VirtualMicrophoneSession : IDisposable
     private readonly IVirtualMicrophoneInput _input;
     private readonly IDisposable? _inputSubscription;
     private readonly Action _disposeDevice;
+    private readonly string? _renderEndpointId;
     private readonly Action<Protocol.Message> _emit;
     private readonly MicrophonePcmQueue _queue = new();
     private readonly CancellationTokenSource _stopping = new();
@@ -62,11 +63,13 @@ internal sealed class VirtualMicrophoneSession : IDisposable
     private int _consecutiveSubmitFailures;
     private long _lastStatusTick;
 
+    /// <summary>Owns the composite microphone and waits for its render identity to retire on release.</summary>
     internal VirtualMicrophoneSession(
-        HMController controller, uint generation, Action<Protocol.Message> emit) :
+        HMController controller, uint generation, Action<Protocol.Message> emit, string? renderEndpointId = null) :
         this(CreateInput(controller), controller.Dispose, generation, emit,
             startPump: true, monitorDefaultAudio: true)
     {
+        _renderEndpointId = renderEndpointId;
     }
 
     internal VirtualMicrophoneSession(
@@ -339,6 +342,7 @@ internal sealed class VirtualMicrophoneSession : IDisposable
         return new HidMaestroMicrophoneInput(microphone);
     }
 
+    /// <summary>Requires the protocol's sample rate and bit depth with one or two channels before pumping PCM.</summary>
     private static void ValidateFormat(IVirtualMicrophoneInput input)
     {
         if (input.SampleRateHz != Protocol.MicrophoneSampleRateHz ||
@@ -366,6 +370,7 @@ internal sealed class VirtualMicrophoneSession : IDisposable
     private static uint SaturatingAdd(uint value, uint addition) =>
         uint.MaxValue - value < addition ? uint.MaxValue : value + addition;
 
+    /// <summary>Drains the pump and releases all device resources, including the owned render endpoint.</summary>
     public void Dispose()
     {
         lock (_stateSync)
@@ -387,11 +392,15 @@ internal sealed class VirtualMicrophoneSession : IDisposable
         TryCleanup(_queue.Dispose, ref cleanupError);
         TryCleanup(() => _inputSubscription?.Dispose(), ref cleanupError);
         TryCleanup(_disposeDevice, ref cleanupError);
+        if (_renderEndpointId is not null)
+            TryCleanup(() => DefaultAudioEndpointGuard.WaitForRenderEndpointRemoval(
+                _renderEndpointId, TimeSpan.FromSeconds(3)), ref cleanupError);
         TryCleanup(_stopping.Dispose, ref cleanupError);
         if (cleanupError is not null)
             throw new InvalidOperationException("Virtual microphone cleanup failed", cleanupError);
     }
 
+    /// <summary>Preserves the first cleanup error while allowing the remaining resources to be released.</summary>
     private static void TryCleanup(Action action, ref Exception? firstError)
     {
         try { action(); }

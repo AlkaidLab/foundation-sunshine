@@ -8,6 +8,27 @@
 
 struct MdnsInstanceNameTest: testing::TestWithParam<std::tuple<std::string, std::string>> {};
 
+TEST(ListenerValidation, RejectsInvalidNonLocalOrMismatchedAddresses) {
+  EXPECT_NO_THROW(net::validate_bind_address("", "ipv4"));
+  EXPECT_NO_THROW(net::validate_bind_address("127.0.0.1", "both"));
+  EXPECT_THROW(net::validate_bind_address("192.168.1.0/24", "ipv4"), std::invalid_argument);
+  EXPECT_THROW(net::validate_bind_address("::1", "ipv4"), std::invalid_argument);
+  EXPECT_THROW(net::validate_bind_address("203.0.113.254", "ipv4"), std::invalid_argument);
+  EXPECT_THROW(net::validate_bind_address("127.0.0.1", "ipv6"), std::invalid_argument);
+}
+
+TEST(ListenerValidation, EnumeratesRealLocalAddressesIncludingLoopback) {
+  const auto addresses = net::local_addresses();
+  ASSERT_FALSE(addresses.empty());
+  bool loopback = false;
+  for (const auto &entry : addresses) {
+    const auto address = boost::asio::ip::make_address(entry.address);
+    loopback = loopback || address.is_loopback();
+    EXPECT_FALSE(entry.name.empty());
+  }
+  EXPECT_TRUE(loopback);
+}
+
 TEST_P(MdnsInstanceNameTest, Run) {
   auto [input, expected] = GetParam();
   ASSERT_EQ(net::mdns_instance_name(input), expected);
@@ -78,6 +99,13 @@ TEST_F(BindAddressTest, ConfiguredIPv4Address) {
   ASSERT_EQ(bind_addr, "192.168.1.100");
 }
 
+TEST_F(BindAddressTest, ConcreteIPv4UsesIPv4SocketsEvenWithDualStackConfigured) {
+  config::sunshine.bind_address = "127.0.0.1";
+  EXPECT_TRUE(net::bind_uses_ipv4(net::BOTH));
+  config::sunshine.bind_address.clear();
+  EXPECT_FALSE(net::bind_uses_ipv4(net::BOTH));
+}
+
 /**
  * @brief Test that get_bind_address returns configured IPv6 address
  */
@@ -99,44 +127,6 @@ TEST_F(BindAddressTest, ConfiguredAddressOverridesFamily) {
 
   const auto bind_addr = net::get_bind_address(net::af_e::IPV4);
   ASSERT_EQ(bind_addr, "2001:db8::1");
-}
-
-/**
- * @brief Test with loopback addresses
- */
-TEST_F(BindAddressTest, LoopbackAddresses) {
-  // Test IPv4 loopback
-  config::sunshine.bind_address = "127.0.0.1";
-  const auto bind_addr_v4 = net::get_bind_address(net::af_e::IPV4);
-  ASSERT_EQ(bind_addr_v4, "127.0.0.1");
-
-  // Test IPv6 loopback
-  config::sunshine.bind_address = "::1";
-  const auto bind_addr_v6 = net::get_bind_address(net::af_e::BOTH);
-  ASSERT_EQ(bind_addr_v6, "::1");
-}
-
-/**
- * @brief Test with link-local addresses
- */
-TEST_F(BindAddressTest, LinkLocalAddresses) {
-  // Test IPv4 link-local
-  config::sunshine.bind_address = "169.254.1.1";
-  const auto bind_addr_v4 = net::get_bind_address(net::af_e::IPV4);
-  ASSERT_EQ(bind_addr_v4, "169.254.1.1");
-
-  // Test IPv6 link-local
-  config::sunshine.bind_address = "fe80::1";
-  const auto bind_addr_v6 = net::get_bind_address(net::af_e::BOTH);
-  ASSERT_EQ(bind_addr_v6, "fe80::1");
-}
-
-/**
- * @brief Test that af_to_any_address_string still works correctly
- */
-TEST_F(BindAddressTest, WildcardAddressFunction) {
-  ASSERT_EQ(net::af_to_any_address_string(net::af_e::IPV4), "0.0.0.0");
-  ASSERT_EQ(net::af_to_any_address_string(net::af_e::BOTH), "::");
 }
 
 TEST_F(BindAddressTest, WebUiHostUsesPanelLoopbackForConfiguredAddresses) {

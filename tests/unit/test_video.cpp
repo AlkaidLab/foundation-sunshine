@@ -218,23 +218,7 @@ TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
   EXPECT_EQ(std::ranges::find(statuses, id, &video::hdr_pipeline_status_t::id), statuses.end());
 }
 
-struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encoder_t *> {
-  void
-  SetUp() override {
-    auto &encoder = *GetParam();
-    const auto probe_display_name = display_device::get_display_name(config::video.output_name);
-    if (!video::validate_encoder(encoder, false, std::nullopt, probe_display_name)) {
-      // Encoder failed validation,
-      // if it's software - fail, otherwise skip
-      if (encoder.name == "software") {
-        FAIL() << "Software encoder not available";
-      }
-      else {
-        GTEST_SKIP() << "Encoder not available";
-      }
-    }
-  }
-};
+struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encoder_t *> {};
 
 INSTANTIATE_TEST_SUITE_P(
   EncoderVariants,
@@ -257,7 +241,13 @@ INSTANTIATE_TEST_SUITE_P(
   [](const auto &info) { return std::string(info.param->name); });
 
 TEST_P(EncoderTest, ValidateEncoder) {
-  // todo:: test something besides fixture setup
+  auto &encoder = *GetParam();
+  const auto probe_display_name = display_device::get_display_name(config::video.output_name);
+  const bool available = video::validate_encoder(encoder, false, std::nullopt, probe_display_name);
+  if (!available && encoder.name != "software") {
+    GTEST_SKIP() << "Encoder not available";
+  }
+  EXPECT_TRUE(available) << "Software encoder not available";
 }
 
 TEST(HdrPipelineStatus, LiveControlsValidateAndPreserveNewerRequests) {

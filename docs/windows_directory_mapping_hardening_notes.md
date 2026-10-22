@@ -326,16 +326,16 @@ Phase 3 才考虑：
 
 ## WSS 实现补充
 
-`Simple-Web-Server` 不应承担完整文件映射 WebSocket 数据通道。
+管理 HTTP 与文件映射 WebSocket 数据通道使用独立的协议会话；两者均已基于 Boost.Beast。
 
-保留它处理：
+`src/http/` 共用服务处理：
 
 - capability endpoint
 - Web UI 管理接口
 - 配置保存
 - 健康检查
 
-真正的文件通道应使用 Boost.Beast：
+文件通道由 `src/file_mapping/` 的 Beast WebSocket 会话处理：
 
 - Beast 已基于 Boost.Asio，和 Sunshine 当前依赖栈契合。
 - Beast 原生支持 WebSocket frame、binary/text、ping/pong、close、read/write 异步模型。
@@ -351,7 +351,7 @@ file_mapping: local filesystem safety
 file_mapping::service_t: built-in feature lifecycle and capability state
 ```
 
-除非后续统一网络层，否则不要在 `Simple-Web-Server::on_upgrade` 上手写完整 WebSocket 协议。
+WebSocket framing 使用 Beast 原生实现，文件 RPC 与本地文件系统安全保持在业务模块中。HTTP 迁移范围及模块职责见 [HTTP 架构](http-transport.zh-CN.md)。
 
 ## 当前落地状态记录
 

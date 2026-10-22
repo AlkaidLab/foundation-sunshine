@@ -1,0 +1,12 @@
+IMMDeviceEnumerator
+IMMNotificationClient
+IAudioClient
+IAudioCaptureClient
+MMDeviceEnumerator
+WAVEFORMATEXTENSIBLE
+PROPERTYKEY
+PROPVARIANT
+PropVariantClear
+PKEY_AudioEngine_DeviceFormat
+PKEY_AudioEndpoint_PhysicalSpeakers
+PKEY_AudioEndpoint_FullRangeSpeakers

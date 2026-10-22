@@ -12,6 +12,6 @@
 
 | Previous                              |                          Next |
 |:--------------------------------------|------------------------------:|
-| [Getting Started](getting_started.md) | [Docker](../DOCKER_README.md) |
+| [Getting Started](getting_started.md) | [Third Party Packages](third_party_packages.md) |
 
 </div>

@@ -1,11 +1,55 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { apiJson } from '../../utils/apiFetch.js'
 import WebhookCard from '../webhook/WebhookCard.vue'
 
 const props = defineProps(['config'])
 const defaultMoonlightPort = 47989
 const config = ref(props.config)
 const networkPage = ref(null)
+const listenerInfo = ref(null)
+const listenerError = ref('')
+const manualAddress = ref(false)
+let listenerRequest = 0
+const knownAddresses = computed(() => listenerInfo.value?.addresses || [])
+const addressChoice = computed({
+  get: () => {
+    const address = config.value.bind_address || ''
+    return manualAddress.value || (address && !knownAddresses.value.some((item) => item.address === address))
+      ? '__manual__'
+      : address
+  },
+  set: (value) => {
+    manualAddress.value = value === '__manual__'
+    if (!manualAddress.value) config.value.bind_address = value
+  },
+})
+const activeListener = computed(() => listenerInfo.value?.active)
+const savedListener = computed(() => listenerInfo.value?.saved)
+const listenerFamilyLabel = (settings) => {
+  if (settings.bind_address) return settings.bind_address.includes(':') ? 'IPv6' : 'IPv4'
+  return settings.address_family === 'both' ? 'IPv4 + IPv6' : 'IPv4'
+}
+const listenerPending = computed(
+  () =>
+    activeListener.value &&
+    savedListener.value &&
+    ['bind_address', 'address_family', 'port', 'upnp'].some(
+      (key) => String(activeListener.value[key]) !== String(savedListener.value[key]),
+    ),
+)
+const loadListeners = async () => {
+  const request = ++listenerRequest
+  try {
+    const data = await apiJson('/api/network/listeners')
+    if (request !== listenerRequest) return
+    if (data.status !== true) throw new Error(data.error || 'Unable to enumerate listeners')
+    listenerInfo.value = data
+    listenerError.value = ''
+  } catch (error) {
+    if (request === listenerRequest) listenerError.value = error.message
+  }
+}
 const effectivePort = computed(() => {
   const port = config.value?.port
   return port === undefined || port === null || port === '' ? defaultMoonlightPort : Number(port)
@@ -21,74 +65,27 @@ const revealLinkedSetting = () => {
   }
 }
 onMounted(() => {
+  void loadListeners()
   revealLinkedSetting()
   window.addEventListener('hashchange', revealLinkedSetting)
+  window.addEventListener('sunshine:config-saved', loadListeners)
 })
-onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetting))
+onBeforeUnmount(() => {
+  listenerRequest++
+  window.removeEventListener('hashchange', revealLinkedSetting)
+  window.removeEventListener('sunshine:config-saved', loadListeners)
+})
 </script>
 
 <template>
   <div id="network" ref="networkPage" class="config-page network-layout">
-    <section class="network-section" aria-labelledby="network-streaming-title">
-      <header class="network-section-header">
-        <span class="network-section-icon" aria-hidden="true"
-          ><i class="fa-solid fa-signal"></i
-        ></span>
-        <div>
-          <h2 id="network-streaming-title">{{ $t('config.network_streaming_title') }}</h2>
-          <p>{{ $t('config.network_streaming_desc') }}</p>
-        </div>
-      </header>
-      <div class="network-settings-grid">
-        <div class="network-field network-field-wide">
-          <label for="fec_auto" class="form-label">{{ $t('config.fec_auto') }}</label>
-          <select id="fec_auto" class="form-select" v-model="config.fec_auto">
-            <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-            <option value="enabled">{{ $t('_common.enabled') }}</option>
-          </select>
-          <div class="form-text">{{ $t('config.fec_auto_desc') }}</div>
-        </div>
-
-        <div class="network-field">
-          <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
-          <input
-            id="fec_percentage"
-            v-model.number="config.fec_percentage"
-            class="form-control"
-            type="number"
-            min="0"
-            max="255"
-            step="1"
-            placeholder="20"
-          />
-          <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
-        </div>
-
-        <div class="network-field">
-          <label for="fec_auto_max_percentage" class="form-label">{{
-            $t('config.fec_auto_max_percentage')
-          }}</label>
-          <input
-            id="fec_auto_max_percentage"
-            v-model.number="config.fec_auto_max_percentage"
-            class="form-control"
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            placeholder="50"
-          />
-          <div class="form-text">{{ $t('config.fec_auto_max_percentage_desc') }}</div>
-        </div>
-      </div>
-      <p class="network-section-note">{{ $t('config.fec_apply_note') }}</p>
-    </section>
+    <div v-if="listenerPending" class="alert alert-warning mb-0" role="status">
+      {{ $t('connections.pending_restart') }}
+    </div>
 
     <section class="network-section" aria-labelledby="network-connect-title">
       <header class="network-section-header">
-        <span class="network-section-icon" aria-hidden="true"
-          ><i class="fa-solid fa-wifi"></i
-        ></span>
+        <span class="network-section-icon" aria-hidden="true"><i class="fa-solid fa-wifi"></i></span>
         <div>
           <h2 id="network-connect-title">{{ $t('config.network_connect_title') }}</h2>
           <p>{{ $t('config.network_connect_desc') }}</p>
@@ -112,9 +109,19 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
           <div class="form-text">{{ $t('config.upnp_desc') }}</div>
         </div>
       </div>
-      <details class="network-advanced">
+      <details class="network-advanced" open>
         <summary>{{ $t('config.network_manual_title') }}</summary>
         <p class="network-advanced-description">{{ $t('config.network_manual_desc') }}</p>
+        <div v-if="activeListener" class="listener-effective mb-3">
+          <span class="badge text-bg-success">{{ $t('connections.active') }}</span
+          ><code
+            >{{ activeListener.bind_address || $t('connections.all_addresses') }} ·
+            {{ listenerFamilyLabel(activeListener) }} · {{ activeListener.port }}</code
+          >
+        </div>
+        <p v-if="listenerError" class="text-warning small" role="status">
+          {{ $t('connections.address_list_failed') }} {{ listenerError }}
+        </p>
         <div class="network-settings-grid">
           <div class="network-field">
             <label for="address_family" class="form-label">{{ $t('config.address_family') }}</label>
@@ -126,12 +133,22 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
           </div>
           <div class="network-field">
             <label for="bind_address" class="form-label">{{ $t('config.bind_address') }}</label>
-            <input
-              type="text"
-              class="form-control"
-              id="bind_address"
-              v-model="config.bind_address"
-            />
+            <select id="bind_address" v-model="addressChoice" class="form-select">
+              <option value="">{{ $t('connections.all_addresses') }}</option>
+              <option v-for="entry in knownAddresses" :key="`${entry.name}-${entry.address}`" :value="entry.address">
+                {{ entry.name }} · {{ entry.address }}
+              </option>
+              <option value="__manual__">{{ $t('connections.manual_address') }}</option>
+            </select>
+            <label v-if="addressChoice === '__manual__'" class="d-block mt-2"
+              ><span class="visually-hidden">{{ $t('connections.local_ip') }}</span
+              ><input
+                v-model.trim="config.bind_address"
+                type="text"
+                class="form-control"
+                :placeholder="$t('connections.local_ip')"
+            /></label>
+            <div class="form-text">{{ $t('connections.bind_help') }}</div>
             <div class="form-text">{{ $t('config.bind_address_desc') }}</div>
           </div>
           <div class="network-field">
@@ -168,15 +185,17 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
             </div>
           </div>
         </div>
+        <div class="listener-preview mt-3">
+          <span>{{ $t('connections.proposed') }}</span
+          ><code
+            >{{ config.bind_address || $t('connections.all_addresses') }} ·
+            {{ listenerFamilyLabel(config) }} · {{ effectivePort }}</code
+          ><small>{{ $t('connections.source_note') }}</small>
+        </div>
         <details class="network-port-reference">
           <summary>{{ $t('config.network_port_details') }}</summary>
           <div class="port-table-shell">
             <table class="table port-table">
-              <colgroup>
-                <col class="port-protocol-column" />
-                <col class="port-number-column" />
-                <col />
-              </colgroup>
               <thead>
                 <tr>
                   <th scope="col">{{ $t('config.port_protocol') }}</th>
@@ -225,25 +244,68 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
       </details>
     </section>
 
-    <section class="network-section" aria-labelledby="network-security-title">
-      <header class="network-section-header">
-        <span class="network-section-icon" aria-hidden="true"
-          ><i class="fa-solid fa-lock"></i
-        ></span>
+    <details class="network-section" aria-labelledby="network-streaming-title">
+      <summary class="network-section-header">
+        <span class="network-section-icon" aria-hidden="true"><i class="fa-solid fa-signal"></i></span>
+        <div>
+          <h2 id="network-streaming-title">{{ $t('config.network_streaming_title') }}</h2>
+          <p>{{ $t('config.network_streaming_desc') }}</p>
+        </div>
+      </summary>
+      <div class="network-settings-grid">
+        <div class="network-field network-field-wide">
+          <label for="fec_auto" class="form-label">{{ $t('config.fec_auto') }}</label>
+          <select id="fec_auto" class="form-select" v-model="config.fec_auto">
+            <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+            <option value="enabled">{{ $t('_common.enabled') }}</option>
+          </select>
+          <div class="form-text">{{ $t('config.fec_auto_desc') }}</div>
+        </div>
+
+        <div class="network-field">
+          <label for="fec_percentage" class="form-label">{{ $t('config.fec_percentage') }}</label>
+          <input
+            id="fec_percentage"
+            v-model.number="config.fec_percentage"
+            class="form-control"
+            type="number"
+            min="0"
+            max="255"
+            step="1"
+            placeholder="20"
+          />
+          <div class="form-text">{{ $t('config.fec_percentage_desc') }}</div>
+        </div>
+
+        <div class="network-field">
+          <label for="fec_auto_max_percentage" class="form-label">{{ $t('config.fec_auto_max_percentage') }}</label>
+          <input
+            id="fec_auto_max_percentage"
+            v-model.number="config.fec_auto_max_percentage"
+            class="form-control"
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            placeholder="50"
+          />
+          <div class="form-text">{{ $t('config.fec_auto_max_percentage_desc') }}</div>
+        </div>
+      </div>
+      <p class="network-section-note">{{ $t('config.fec_apply_note') }}</p>
+    </details>
+
+    <details class="network-section" aria-labelledby="network-security-title">
+      <summary class="network-section-header">
+        <span class="network-section-icon" aria-hidden="true"><i class="fa-solid fa-lock"></i></span>
         <div>
           <h2 id="network-security-title">{{ $t('config.network_security_title') }}</h2>
           <p>{{ $t('config.network_security_desc') }}</p>
         </div>
-      </header>
+      </summary>
       <div class="network-field">
-        <label for="origin_web_ui_allowed" class="form-label">{{
-          $t('config.origin_web_ui_allowed')
-        }}</label>
-        <select
-          id="origin_web_ui_allowed"
-          class="form-select"
-          v-model="config.origin_web_ui_allowed"
-        >
+        <label for="origin_web_ui_allowed" class="form-label">{{ $t('config.origin_web_ui_allowed') }}</label>
+        <select id="origin_web_ui_allowed" class="form-select" v-model="config.origin_web_ui_allowed">
           <option value="pc">{{ $t('config.origin_web_ui_allowed_pc') }}</option>
           <option value="lan">{{ $t('config.origin_web_ui_allowed_lan') }}</option>
           <option value="wan">{{ $t('config.origin_web_ui_allowed_wan') }}</option>
@@ -257,9 +319,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
       </div>
       <div class="network-settings-grid network-separated-fields">
         <div class="network-field">
-          <label for="lan_encryption_mode" class="form-label">{{
-            $t('config.lan_encryption_mode')
-          }}</label>
+          <label for="lan_encryption_mode" class="form-label">{{ $t('config.lan_encryption_mode') }}</label>
           <select id="lan_encryption_mode" class="form-select" v-model="config.lan_encryption_mode">
             <option value="0">{{ $t('_common.disabled_def') }}</option>
             <option value="1">{{ $t('config.lan_encryption_mode_1') }}</option>
@@ -268,9 +328,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
           <div class="form-text">{{ $t('config.lan_encryption_mode_desc') }}</div>
         </div>
         <div class="network-field">
-          <label for="wan_encryption_mode" class="form-label">{{
-            $t('config.wan_encryption_mode')
-          }}</label>
+          <label for="wan_encryption_mode" class="form-label">{{ $t('config.wan_encryption_mode') }}</label>
           <select id="wan_encryption_mode" class="form-select" v-model="config.wan_encryption_mode">
             <option value="0">{{ $t('_common.disabled') }}</option>
             <option value="1">{{ $t('config.wan_encryption_mode_1') }}</option>
@@ -279,23 +337,22 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
           <div class="form-text">{{ $t('config.wan_encryption_mode_desc') }}</div>
         </div>
       </div>
-    </section>
+    </details>
 
-    <section class="network-section" aria-labelledby="network-pairing-title">
-      <header class="network-section-header">
-        <span class="network-section-icon" aria-hidden="true"
-          ><i class="fa-solid fa-link"></i
-        ></span>
+    <details class="network-section" aria-labelledby="network-pairing-title">
+      <summary class="network-section-header">
+        <span class="network-section-icon" aria-hidden="true"><i class="fa-solid fa-link"></i></span>
         <div>
           <h2 id="network-pairing-title">{{ $t('config.network_pairing_title') }}</h2>
           <p>{{ $t('config.network_pairing_desc') }}</p>
         </div>
-      </header>
+      </summary>
+      <a href="/pin#client-list" class="btn btn-link px-0 mb-3"
+        >{{ $t('connections.manage_clients') }} <i class="fas fa-arrow-up-right-from-square ms-1"
+      /></a>
       <div class="network-settings-grid">
         <div class="network-field">
-          <label for="pair_max_attempts" class="form-label">{{
-            $t('config.pair_max_attempts')
-          }}</label>
+          <label for="pair_max_attempts" class="form-label">{{ $t('config.pair_max_attempts') }}</label>
           <input
             type="number"
             class="form-control"
@@ -310,19 +367,11 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
         </div>
         <div class="network-field">
           <label for="ping_timeout" class="form-label">{{ $t('config.ping_timeout') }}</label>
-          <input
-            type="text"
-            class="form-control"
-            id="ping_timeout"
-            placeholder="10000"
-            v-model="config.ping_timeout"
-          />
+          <input type="text" class="form-control" id="ping_timeout" placeholder="10000" v-model="config.ping_timeout" />
           <div class="form-text">{{ $t('config.ping_timeout_desc') }}</div>
         </div>
         <div class="network-field network-field-wide">
-          <label for="close_verify_safe" class="form-label">{{
-            $t('config.close_verify_safe')
-          }}</label>
+          <label for="close_verify_safe" class="form-label">{{ $t('config.close_verify_safe') }}</label>
           <select id="close_verify_safe" class="form-select" v-model="config.close_verify_safe">
             <option value="disabled">{{ $t('_common.disabled_def') }}</option>
             <option value="enabled">{{ $t('_common.enabled') }}</option>
@@ -330,15 +379,59 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
           <div class="form-text">{{ $t('config.close_verify_safe_desc') }}</div>
         </div>
       </div>
-    </section>
+    </details>
 
     <WebhookCard />
   </div>
 </template>
 
 <style scoped>
+.listener-effective {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.listener-effective code,
+.listener-preview code {
+  color: color-mix(in srgb, var(--ui-text-primary) 33%, var(--ui-accent-text));
+}
+.form-control:focus-visible,
+.form-select:focus-visible {
+  outline: 2px solid var(--ui-accent-text);
+  outline-offset: 3px;
+}
+.listener-preview {
+  padding: 1rem;
+  background: var(--ui-accent-soft);
+  border-radius: var(--ui-radius-sm);
+  font-size: 0.85rem;
+}
+.listener-preview code,
+.listener-preview small {
+  display: block;
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+details.network-section > summary {
+  cursor: pointer;
+  margin-bottom: 0;
+}
+details.network-section[open] > summary {
+  margin-bottom: 1.5rem;
+}
+details.network-section > summary::after {
+  content: '+';
+  margin-left: auto;
+  color: var(--ui-accent);
+}
+details.network-section[open] > summary::after {
+  content: '−';
+}
 .network-layout {
+  --network-text-secondary: color-mix(in srgb, var(--ui-text-primary) 33%, var(--ui-text-secondary));
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.25rem;
 }
 .network-section {
@@ -372,7 +465,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
 }
 .network-section-header p {
   margin: 0;
-  color: var(--ui-text-secondary);
+  color: var(--network-text-secondary);
   font-size: 0.875rem;
   line-height: 1.6;
 }
@@ -388,9 +481,11 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
   grid-column: 1 / -1;
 }
 .network-field .form-label {
+  color: var(--network-text-secondary);
   font-weight: 500;
 }
 .network-field .form-text {
+  color: var(--network-text-secondary);
   margin-top: 0.5rem;
   line-height: 1.6;
 }
@@ -398,7 +493,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', revealLinkedSetti
   margin: 1rem 0 0;
   font-size: 0.875rem;
   line-height: 1.6;
-  color: var(--ui-text-secondary);
+  color: var(--network-text-secondary);
 }
 .network-separated-fields {
   margin-top: 1.5rem;
@@ -441,7 +536,7 @@ summary:focus-visible {
 }
 .network-advanced-description {
   margin: 0.5rem 0 1.25rem;
-  color: var(--ui-text-secondary);
+  color: var(--network-text-secondary);
   font-size: 0.875rem;
 }
 .network-port-reference {

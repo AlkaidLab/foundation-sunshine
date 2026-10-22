@@ -262,7 +262,7 @@
                     :title="resourceTitle(resource)"
                     :description="resourceDescription(resource)"
                     :image-src="resource.imageSrc"
-                    :image-alt="resource.imageAlt"
+                    :image-alt="resourceTitle(resource)"
                     :variant="resource.variant"
                   />
                 </div>

@@ -1,0 +1,41 @@
+name: Translate README
+
+on:
+  workflow_dispatch:
+    inputs:
+      languages:
+        description: 'Comma-separated language codes to regenerate (de,fr,ja)'
+        required: true
+        default: 'de,fr,ja'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  translate:
+    name: Regenerate docs/readme translations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Translate README
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/translate_readme.py --languages "${{ github.event.inputs.languages }}"
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: 'docs: refresh translated READMEs'
+          body: |
+            Regenerated translated READMEs in docs/readme/ from the root README.md.
+            English (docs/readme/README.en.md) is maintained by hand and is never overwritten.
+            Review link anchors and terminology before merging.
+          branch: docs/translations
+          delete-branch: true
+          commit-message: 'docs: refresh translated READMEs [skip ci]'

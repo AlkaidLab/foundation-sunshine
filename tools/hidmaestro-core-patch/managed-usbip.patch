@@ -1,0 +1,84 @@
+--- a/sdk/HIDMaestro.Core/Internal/Usbip/UsbipDriverInstaller.cs
++++ b/sdk/HIDMaestro.Core/Internal/Usbip/UsbipDriverInstaller.cs
+@@ -69,68 +69,9 @@
+     /// re-enumerates USB.</param>
+     public static bool EnsureInstalled(Action<string>? progress = null)
+     {
+-        if (IsInstalled)
+-        {
+-            ReplaceLegacyTransportOnce(progress);
+-            s_verifiedThisProcess = true;
+-            StampOwnerHardwareId();
+-            return true;
+-        }
+-
+-        lock (s_lock)
+-        {
+-            if (IsInstalled) return true;
+-
+-            // A machine can have usbip-win2 already (VIIPER and DS4Windows
+-            // install the same transport) with its host controller merely
+-            // not started, or left interface-less by an interrupted PnP
+-            // operation. Running the installer over an existing install is
+-            // the wrong repair for that: Inno uninstalls the old version
+-            // first, and its driver-package removal touches the extension
+-            // INF bound to every USB root hub, which re-enumerates the whole
+-            // USB tree and can take many minutes. Restarting the devnode
+-            // republishes the interface in seconds. Try that first, and only
+-            // install when the product is genuinely absent.
+-            if (IsProductInstalled())
+-            {
+-                progress?.Invoke("Repairing the existing USB audio transport...");
+-                if (TryRestartHostController(progress)) return true;
+-
+-                throw new InvalidOperationException(
+-                    $"usbip-win2 {Version} is installed on this machine but its virtual host " +
+-                    "controller is not available, and restarting the device did not recover it. " +
+-                    "Reinstalling it from HIDMaestro would first uninstall the existing copy, " +
+-                    "which detaches a filter driver from every USB root hub and can take several " +
+-                    "minutes, so that is not done automatically. Repair or reinstall usbip-win2, " +
+-                    "or reboot, and try again.");
+-            }
+-
+-            progress?.Invoke($"Installing USB audio transport (usbip-win2 {Version})...");
+-
+-            string exe = ExtractInstaller();
+-            RunSilentInstall(exe);
+-
+-            // PnP settles the new host controller asynchronously. The
+-            // driver's own device arrives quickly; the root-hub
+-            // re-enumeration its filter INF triggers takes longer and does
+-            // not gate us.
+-            var sw = Stopwatch.StartNew();
+-            while (sw.ElapsedMilliseconds < TimeoutScale.Apply(60_000))
+-            {
+-                if (VhciClient.IsAvailable())
+-                {
+-                    StampOwnerHardwareId();
+-                    progress?.Invoke("USB audio transport ready.");
+-                    return true;
+-                }
+-                Thread.Sleep(250);
+-            }
+-
+-            throw new InvalidOperationException(
+-                $"usbip-win2 {Version} installer completed but its virtual host controller did not " +
+-                "appear within the timeout. Check Device Manager for 'USBip 3.X Emulated Host " +
+-                "Controller' and any pending-reboot state.");
+-        }
++        // Sunshine owns the shared installation. Never deploy, replace,
++        // restart, or stamp a driver while a device is being created.
++        return SharedUsbipTransport.EnsureReady();
+     }
+ 
+     // ── Moving a machine off the transport earlier releases installed ────
+--- a/sdk/HIDMaestro.Core/Internal/Usbip/UsbipBackend.cs
++++ b/sdk/HIDMaestro.Core/Internal/Usbip/UsbipBackend.cs
+@@ -22,6 +22,6 @@
+     /// controller does NOT require this to be true: it installs on
+     /// demand. Consumers use this only to decide whether to warn about
+     /// the one-time install.</summary>
+-    public static bool IsAvailable => VhciClient.IsAvailable();
++    public static bool IsAvailable => SharedUsbipTransport.IsCompatible;
+ 
+     private static int s_staleSweepDone;

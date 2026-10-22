@@ -54,6 +54,7 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+    std::unordered_map<std::string, std::string> command_line_config_overrides;
 
     std::optional<std::string>
     read_config_file_contents() {
@@ -439,6 +440,8 @@ namespace config {
 
     {},  // nv
     true,  // nv_realtime_hags
+    true,  // nv_manage_driver_settings
+    false,  // nv_vdd_force_vsync
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
     false,  // vdd_keep_enabled
@@ -472,6 +475,7 @@ namespace config {
       0,  // ltr_frames
       0,  // slices_per_frame
       false,  // avcodec_compat: keep clean standalone AMF path by default
+      -1,  // hevc_gop_size: leave periodic refresh to the driver
     },  // amd
 
     {
@@ -946,18 +950,6 @@ namespace config {
     }
   }
 
-  bool
-  to_bool(std::string &boolean) {
-    std::for_each(std::begin(boolean), std::end(boolean), [](char ch) { return (char) std::tolower(ch); });
-
-    return boolean == "true"sv ||
-           boolean == "yes"sv ||
-           boolean == "enable"sv ||
-           boolean == "enabled"sv ||
-           boolean == "on"sv ||
-           (std::find(std::begin(boolean), std::end(boolean), '1') != std::end(boolean));
-  }
-
   void
   bool_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, bool &input) {
     std::string tmp;
@@ -1223,6 +1215,8 @@ namespace config {
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
     bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
+    bool_f(vars, "nvenc_manage_driver_settings", video.nv_manage_driver_settings);
+    bool_f(vars, "nvenc_vdd_force_vsync", video.nv_vdd_force_vsync);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
 
@@ -1296,6 +1290,7 @@ namespace config {
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
     bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
+    int_between_f(vars, "amd_hevc_gop_size", video.amd.amd_hevc_gop_size, { -1, 1000 });
     bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
     // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
     // matches FFmpeg amfenc.c behavior of never setting the property unless
@@ -1781,9 +1776,11 @@ namespace config {
       // Read config file
       auto vars = parse_config(file_handler::read_file(sunshine.config_file.c_str()));
 
-      for (auto &[name, value] : cmd_vars) {
-        vars.insert_or_assign(std::move(name), std::move(value));
+      {
+        std::lock_guard lock { config_file_mutex };
+        command_line_config_overrides = cmd_vars;
       }
+      apply_command_line_overrides(vars, cmd_vars);
 
       // Apply the config. Note: This will try to create any paths
       // referenced in the config, so we may receive exceptions if
@@ -1942,6 +1939,16 @@ namespace config {
     }
   }
 
+  std::optional<std::map<std::string, std::string>>
+  get_effective_config_snapshot() {
+    auto snapshot = get_config_snapshot();
+    if (snapshot) {
+      std::lock_guard lock { config_file_mutex };
+      apply_command_line_overrides(*snapshot, command_line_config_overrides);
+    }
+    return snapshot;
+  }
+
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig) {
     std::lock_guard lock { config_file_mutex };
@@ -1952,6 +1959,7 @@ namespace config {
         "platform",         // 平台信息，编译时确定，只读
         "version",          // 版本号，只读
         "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "nvidia_vsync",  // NVIDIA compatibility capability and runtime state, read-only
         "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
         "adapters",         // 适配器列表，运行时枚举，只读

@@ -12,7 +12,7 @@ PyroWave 是面向高带宽局域网的实验性视频格式。它采用帧内�
 |---|---|
 | 服务端 | Windows Sunshine 实验版本 |
 | 客户端 | 配套的 Moonlight V+ Android 实验版本 |
-| 视频 | SDR、HDR10/PQ、HLG；桌面生成的 HDR10+/Vivid/DV 元数据由客户端应用内映射 |
+| 视频 | SDR、HDR10/PQ、HLG；Vivid 使用原生 Vulkan 能力，HDR10+ 与 Dolby Vision 使用客户端应用映射 |
 | 色彩 | BT.709 或 BT.2020、4:2:0、limited/full range |
 | 位深 | SDR 固定 8-bit；HDR10/PQ 与 HLG 固定 10-bit |
 | 网络 | 高带宽局域网，优先使用有线网络 |
@@ -71,22 +71,29 @@ full range。未选择 PyroWave 的客户端继续保留传统编码格式。初
 - SDR、HDR10/PQ 和 HLG 通过明确的颜色合同协商；
 - Sunshine 的静态 HDR 呈现信息通过现有控制通道传递；
 - HLG 不伪造 HDR10 mastering metadata；
-- 动态 HDR10+、HDR Vivid PQ/HLG、DV 8.1/8.4 的桌面生成子集按帧走受保护 TLV，
-  客户端消费后输出 PQ/HLG；这与厂商原生动态 HDR 模式分开，不承诺任意电影元数据或 Dolby 认证。
+- PyroWave 在原生 Vulkan Vivid 能力可用时按帧提交 Vivid PQ/HLG 动态 metadata；HDR10+ 与
+  Dolby Vision 8.1/8.4 由客户端应用映射到各自协商的 PQ/HLG 基础信号。应用映射不代表
+  Dolby 或 HDR10+ 的厂商认证输出。
 
 ### 动态 HDR 帧交付
 
-动态会话在客户端现有 HDR 选项中选择；PyroWave 的选项使用“元数据格式 → PQ/HLG”标明
-输出信号。主机需要开启 HDR 亮度分析，客户端在连接前验证对应 Vulkan Surface、shader
-和应用内消费者。双方确认 `DYNAMIC_HDR_MAPPING` 及动态格式后才进入媒体阶段。
+动态会话在客户端现有 HDR 选项中选择；PyroWave 的动态选项包括原生 Vivid 以及
+HDR10+/Dolby Vision 应用映射。主机需要开启 HDR 亮度分析，客户端在连接前验证对应
+Vulkan Surface、静态 HDR metadata 和动态映射能力。双方确认动态格式及能力后才进入媒体阶段。
 
-共享转换逐帧分析编码画面，复用 HDR10+/Vivid 生产器或 DV RPU 生成器。完整 payload
-与该帧码流一起参与 FEC，重组后随 decode unit 传到 Vulkan 转换阶段；缺失或非法动态
-metadata 不沿用上一帧，也不当作动态 HDR 生效。
+原生 Vivid、HDR10+ 和 Dolby Vision metadata 使用 Sunshine 现有的异步亮度分析和会话内场景快照；
+客户端按协商格式分别执行原生 Vivid 提交或应用映射。
+无新样本或新统计无效时保留有效状态，不因此丢帧；编码器重建时清空场景历史。
 
-支持的生成子集为 HDR10+ Application 1 单窗口统计、Vivid 四个统计字段以及 DV identity
-mapping 的 CM2.9 L1/L5/L6。客户端依据这些统计生成逐帧亮度映射，输出仍为 PQ/HLG；
-不实现影片 authored tone curves、Dolby trim/增强层或厂商专有映射引擎。
+完整动态 HDR payload 与该帧码流一起参与 FEC，重组后随 decode unit 传到 Vulkan 原生或应用映射阶段。
+主机复用场景统计不等于省略逐帧 metadata：接收端仍拒绝缺失或非法的必需 TLV，不能用
+客户端上一帧的 metadata 补齐。没有有效状态时不生成默认动态 metadata。
+
+PyroWave 原生 Vivid 只接受 Sunshine 生成的四项统计和 UWA base curve 子集，
+Vivid/PQ 使用 `system_start_code=0x01`，Vivid/HLG 使用 `0x02`。metadata 正文在实际
+Vulkan device 启用 Vivid feature 后通过原生接口提交，不在客户端生成 Vivid 亮度 LUT。
+HDR10+ 的 ST 2094-40 单窗口曲线和 Dolby Vision 8.1/8.4 的受支持 RPU 字段由客户端应用映射；
+Dolby Profile 5/7、NLQ、增强层和影片 authored metadata 仍由传统 HEVC 路径负责。
 
 ### 失败隔离
 
@@ -100,7 +107,7 @@ mapping 的 CM2.9 L1/L5/L6。客户端依据这些统计生成逐帧亮度映射
 
 - 默认启用 PyroWave；
 - Linux 服务端和其他客户端平台；
-- 厂商原生 HDR10+/Vivid/Dolby 输出、任意影片动态曲线、Dolby Profile 5/7 和增强层；
+- 厂商原生 HDR10+/Dolby 输出、原生 Vivid 的设备全覆盖、任意影片动态曲线、Dolby Profile 5/7 和增强层；
 - 4K、4:4:4、4:2:2 和高帧率全覆盖；
 - 混合 GPU、多 GPU、多客户端和所有 VDD 场景；
 - 固定带宽、固定丢包率或固定延迟保证；

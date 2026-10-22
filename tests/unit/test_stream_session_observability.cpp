@@ -13,6 +13,8 @@
 
 #include "../tests_common.h"
 
+// These identifiers are consumed through session JSON, webhooks and logs.
+// Their spelling is a compatibility contract, even when the mapping is simple.
 TEST(StreamSessionObservability, NamesEveryStopReason) {
   using stream::session::stop_reason_e;
   using stream::session::stop_reason_name;
@@ -66,8 +68,10 @@ TEST(StreamSessionObservability, PublishesOneConcurrentStopReason) {
 }
 
 TEST(StreamSessionObservability, SerializesSessionBoundaries) {
+  stream::session::lifecycle_t lifecycle { stream::session::state_e::RUNNING };
+  ASSERT_TRUE(lifecycle.request_stop(stream::session::stop_reason_e::control_disconnect));
   stream::session_info_t info {};
-  info.stop_reason = "control_disconnect";
+  info.stop_reason = stream::session::stop_reason_name(lifecycle.snapshot().stop_reason);
   info.uptime_ms = 123;
   info.control_connected = false;
   info.control_idle_ms = -1;

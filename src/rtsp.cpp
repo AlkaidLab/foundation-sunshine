@@ -42,6 +42,7 @@ extern "C" {
 #include "network.h"
 #include "pyrowave/runtime.h"
 #include "pyrowave/packet.h"
+#include "nvhttp.h"
 #include "rtsp.h"
 #include "stream.h"
 #include "streaming/fec.h"
@@ -701,7 +702,7 @@ namespace rtsp_stream {
 
     int
     bind(net::af_e af, std::uint16_t port, boost::system::error_code &ec) {
-      acceptor.open(af == net::IPV4 ? tcp::v4() : tcp::v6(), ec);
+      acceptor.open(net::bind_uses_ipv4(af) ? tcp::v4() : tcp::v6(), ec);
       if (ec) {
         return -1;
       }
@@ -794,6 +795,9 @@ namespace rtsp_stream {
     session_raise(std::shared_ptr<launch_session_t> launch_session) {
       if (!launch_session) {
         return launch_ticket_register_e::global_limit;
+      }
+      if (!launch_session->client_cert_uuid.empty() && !nvhttp::is_client_enabled(launch_session->client_cert_uuid)) {
+        return launch_ticket_register_e::denied;
       }
 
       const auto result = _launch_sessions.register_session(
@@ -916,6 +920,19 @@ namespace rtsp_stream {
         }
         catch (...) {
           BOOST_LOG(error) << "Streaming session termination callback failed"sv;
+        }
+      });
+    }
+
+    void
+    terminate_client_sessions(const std::string &uuid) {
+      _launch_sessions.erase_client(uuid);
+      boost::asio::post(io_context, [this, uuid]() {
+        auto lock = _session_slots.lock();
+        for (const auto &session : *_session_slots) {
+          if (stream::session::belongs_to_client(*session, uuid)) {
+            stream::session::stop(*session, stream::session::stop_reason_e::host_terminate);
+          }
         }
       });
     }
@@ -1050,6 +1067,11 @@ namespace rtsp_stream {
   void
   terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion) {
     server.terminate_sessions_async(reason, std::move(completion));
+  }
+
+  void
+  terminate_client_sessions(const std::string &uuid) {
+    server.terminate_client_sessions(uuid);
   }
 
   void
@@ -1201,6 +1223,11 @@ namespace rtsp_stream {
         caps |= platf::platform_caps::remote_text_context;
       }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
+#ifdef _WIN32
+      if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {
+        ss << "a=x-ss-general.penBarrelRoll:1" << std::endl;
+      }
+#endif
     }
 
     // Always request new control stream encryption if the client supports it
@@ -2112,6 +2139,10 @@ namespace rtsp_stream {
       }
     }
 
+    if (!session.client_cert_uuid.empty() && !nvhttp::is_client_enabled(session.client_cert_uuid)) {
+      respond(sock, session, &option, 403, "Client disabled or unpaired", req->sequenceNumber, {});
+      return;
+    }
     std::string announce_payload { payload };
     auto stream_session = stream::session::alloc(config, session);
     server->insert(stream_session);
@@ -2133,6 +2164,7 @@ namespace rtsp_stream {
                       << ", cycles=" << session.mat_dump->profile.cycles
                       << ", sha256=" << session.mat_dump->profile.sha256;
     }
+    session.nvidia_vsync_lease.reset();
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,

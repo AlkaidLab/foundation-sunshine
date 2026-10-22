@@ -305,16 +305,7 @@ main(int argc, char *argv[]) {
 
 #ifdef WIN32
   // Modify relevant NVIDIA control panel settings if the system has corresponding gpu
-  if (nvprefs_instance.load()) {
-    // Restore global settings to the undo file left by improper termination of sunshine.exe
-    nvprefs_instance.restore_from_and_delete_undo_file_if_exists();
-    // Modify application settings for sunshine.exe
-    nvprefs_instance.modify_application_profile();
-    // Modify global settings, undo file is produced in the process to restore after improper termination
-    nvprefs_instance.modify_global_profile();
-    // Unload dynamic library to survive driver re-installation
-    nvprefs_instance.unload();
-  }
+  nvprefs_instance.configure();
 
   // Wait as long as possible to terminate Sunshine.exe during logoff/shutdown
   SetProcessShutdownParameters(0x100, SHUTDOWN_NORETRY);
@@ -487,7 +478,7 @@ main(int argc, char *argv[]) {
     upnp_unmap = upnp::start();
   });
 
-  // FIXME: Temporary workaround: Simple-Web_server needs to be updated or replaced
+  // Do not start network services after shutdown has already been requested.
   if (shutdown_event->peek()) {
     return lifetime::desired_exit_code;
   }
@@ -609,10 +600,7 @@ main(int argc, char *argv[]) {
 
 #ifdef WIN32
   // Restore global NVIDIA control panel settings
-  if (nvprefs_instance.owning_undo_file() && nvprefs_instance.load()) {
-    nvprefs_instance.restore_global_profile();
-    nvprefs_instance.unload();
-  }
+  nvprefs_instance.restore();
 #endif
 
 #ifdef _WIN32

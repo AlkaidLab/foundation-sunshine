@@ -9,6 +9,9 @@ internal static class ProtocolSelfTest
 {
     internal static async Task RunHostProtocolChecksAsync()
     {
+        VerifyStandardAxisState();
+        await VerifyProtocolFrameReaderAsync();
+        await VerifyAcceptanceErrorsAsync();
         var pipeName = $"sunshine-device-host-contract-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var server = new VirtualDeviceHostServer(
@@ -69,12 +72,135 @@ internal static class ProtocolSelfTest
         await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    private static async Task VerifyProtocolFrameReaderAsync()
+    {
+        var messages = Enumerable.Range(0, 24).Select(index => new Protocol.Message(
+            index % 3 == 0 ? Protocol.MessageType.InputState : Protocol.MessageType.Motion,
+            (uint)index,
+            Enumerable.Repeat((byte)index, index % 3 == 0 ? 20 : 16).ToArray())).ToList();
+        messages.Insert(7, new Protocol.Message(Protocol.MessageType.MicFlush, 70, Array.Empty<byte>()));
+        messages.Insert(12, new Protocol.Message(Protocol.MessageType.MicPcm, 0,
+            CreateMicPcmPayload(1, 2, 3, 960, Protocol.MicPcmFlags.None)));
+        var wire = messages.SelectMany(Protocol.Encode).ToArray();
+        foreach (var chunk in new[] { 1, 7, 64, 4096 })
+        {
+            using var stream = new FragmentedProtocolStream(wire, chunk);
+            var reader = new ProtocolFrameReader(initialCapacity: 64);
+            foreach (var message in messages)
+            {
+                var frame = await reader.ReadAsync(stream, CancellationToken.None);
+                Require(frame.Header.Type == message.Type && frame.Header.RequestId == message.RequestId &&
+                        frame.Payload.Span.SequenceEqual(message.Payload),
+                    $"protocol frame reader fragmented/batched input (chunk {chunk})");
+            }
+            try
+            {
+                await reader.ReadAsync(stream, CancellationToken.None);
+                Require(false, "protocol frame reader EOF");
+            }
+            catch (EndOfStreamException) { }
+        }
+
+        // One read can contain multiple frames, with no wait or extra read to
+        // dispatch each already-available state. No timing-based coalescing.
+        using (var packed = new FragmentedProtocolStream(wire, int.MaxValue))
+        {
+            var reader = new ProtocolFrameReader(wire.Length);
+            foreach (var _ in messages)
+                await reader.ReadAsync(packed, CancellationToken.None);
+            Require(packed.ReadCount == 1, "protocol frame reader drains a packed read");
+        }
+
+        // A large valid frame must grow the buffer, preserve the next packed
+        // frame and stop at the protocol's advertised payload limit.
+        var maximumPayload = new byte[Protocol.MaxPayloadSize];
+        maximumPayload[^1] = 0x53;
+        var maximumFrame = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 99, maximumPayload));
+        using (var stream = new FragmentedProtocolStream(maximumFrame.Concat(wire).ToArray(), 4093))
+        {
+            var reader = new ProtocolFrameReader(64);
+            var frame = await reader.ReadAsync(stream, CancellationToken.None);
+            Require(frame.Header.RequestId == 99 && frame.Payload.Length == Protocol.MaxPayloadSize &&
+                    frame.Payload.Span[^1] == 0x53, "protocol frame reader maximum payload");
+            frame = await reader.ReadAsync(stream, CancellationToken.None);
+            Require(frame.Header == Protocol.DecodeHeader(wire.AsSpan(0, Protocol.HeaderSize)) &&
+                    frame.Payload.Span.SequenceEqual(messages[0].Payload),
+                "protocol frame reader preserves the frame after buffer growth");
+        }
+
+        foreach (var truncated in new[] { wire[..10], wire[..(Protocol.HeaderSize + 3)] })
+        {
+            using var stream = new MemoryStream(truncated);
+            try
+            {
+                await new ProtocolFrameReader().ReadAsync(stream, CancellationToken.None);
+                Require(false, "protocol frame reader truncated frame rejection");
+            }
+            catch (EndOfStreamException) { }
+        }
+        var oversized = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0, Array.Empty<byte>()));
+        BinaryPrimitives.WriteUInt32LittleEndian(oversized.AsSpan(8), Protocol.MaxPayloadSize + 1);
+        var invalidMagic = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0, Array.Empty<byte>()));
+        invalidMagic[0] = 0;
+        var invalidVersion = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0, Array.Empty<byte>()));
+        BinaryPrimitives.WriteUInt16LittleEndian(invalidVersion.AsSpan(4), Protocol.Version + 1);
+        foreach (var invalid in new[] { oversized, invalidMagic, invalidVersion })
+        {
+            using var stream = new MemoryStream(invalid);
+            try
+            {
+                await new ProtocolFrameReader().ReadAsync(stream, CancellationToken.None);
+                Require(false, "protocol frame reader invalid header rejection");
+            }
+            catch (InvalidDataException) { }
+        }
+
+        using (var canceled = new CancellationTokenSource())
+        using (var stream = new MemoryStream(wire))
+        {
+            canceled.Cancel();
+            try
+            {
+                await new ProtocolFrameReader().ReadAsync(stream, canceled.Token);
+                Require(false, "protocol frame reader cancellation");
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        // PCM decoding retains its array. Preserve it before the reusable
+        // receive buffer is overwritten by a later frame.
+        var pcmBytes = CreateMicPcmPayload(9, 10, 11, 2, Protocol.MicPcmFlags.None);
+        pcmBytes[20] = 0x5a;
+        var pcmFrame = Protocol.Encode(new Protocol.Message(Protocol.MessageType.MicPcm, 0, pcmBytes));
+        var nextFrame = Protocol.Encode(new Protocol.Message(Protocol.MessageType.InputState, 0,
+            Enumerable.Repeat((byte)0xa5, pcmBytes.Length).ToArray()));
+        using (var stream = new FragmentedProtocolStream(pcmFrame.Concat(nextFrame).ToArray(), pcmFrame.Length))
+        {
+            var reader = new ProtocolFrameReader(pcmFrame.Length);
+            var frame = await reader.ReadAsync(stream, CancellationToken.None);
+            var retained = Protocol.DecodeMicPcm(frame.Payload.ToArray());
+            await reader.ReadAsync(stream, CancellationToken.None);
+            Require(retained.Pcm.Span[0] == 0x5a, "protocol frame reader retained PCM ownership");
+        }
+    }
+
+    private sealed class FragmentedProtocolStream(byte[] bytes, int chunk) : MemoryStream(bytes, writable: false)
+    {
+        internal int ReadCount { get; private set; }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadCount++;
+            return base.ReadAsync(buffer[..Math.Min(buffer.Length, chunk)], cancellationToken);
+        }
+    }
+
     internal static async Task<int> RunMicrophonePrototypeAsync(
         string? resultPath, bool requireHostCapture = false)
     {
         if (!DeviceRegistry.HasPinnedMicrophoneRuntime)
             throw new InvalidOperationException(
-                "The composite microphone prototype requires the pinned HIDMaestro 1.7.3.0 runtime");
+                "The composite microphone prototype requires the pinned HIDMaestro 1.12.0.0 runtime");
 
         var pipeName = $"sunshine-microphone-prototype-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -261,8 +387,11 @@ internal static class ProtocolSelfTest
             BinaryPrimitives.ReadUInt32LittleEndian(message.Payload.AsSpan(20, 4)));
     }
 
-    internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath)
+    /// <summary>Exercises one profile through attach, endpoint readback, explicit detach and owner-disconnect cleanup.</summary>
+    internal static async Task<int> RunAsync(bool composite, string? resultPath, string? audioWriterPath,
+        bool genshinCompatibility = false)
     {
+        Require(!genshinCompatibility || composite, "Genshin compatibility requires composite self-test");
         RunDeterministicChecks();
         VerifyAdaptiveTriggerEncoding();
         var pipeName = $"sunshine-ds5-self-test-{Environment.ProcessId}-{Guid.NewGuid():N}";
@@ -286,11 +415,13 @@ internal static class ProtocolSelfTest
         Require(helloCapabilities.HasFlag(Protocol.Capability.AudioPolicyViolation),
             "hello audio endpoint policy capability");
 
+        var beforeEndpoints = composite
+            ? DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints().ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+        var attachFlags = genshinCompatibility ? (byte)Protocol.AttachFlags.GenshinCompatibilityIdentity : (byte)0;
         await SendAsync(client, new Protocol.Message(
-            Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
-        var attach = await ReceiveAsync(client, stopping.Token);
-        if (attach.Type == Protocol.MessageType.Error)
-            throw new InvalidOperationException(DecodeError(attach.Payload));
+            Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
+        var attach = await ReceiveUntilAsync(client, Protocol.MessageType.AttachReply, 2, stopping.Token);
         Require(attach.Type == Protocol.MessageType.AttachReply && attach.RequestId == 2 && attach.Payload.Length == 8,
             "attach reply");
         var capabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(attach.Payload.AsSpan(4));
@@ -298,6 +429,13 @@ internal static class ProtocolSelfTest
         Require(capabilities.HasFlag(Protocol.Capability.AdaptiveTriggers), "adaptive trigger capability");
         Require(!composite || capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
             "composite four-channel audio capability");
+        // Capability bits alone cannot prove that Windows retained the speaker
+        // setup required by games. Exercise the real COM enumeration/readback.
+        var endpointId = composite ? await Task.Run(() =>
+            DefaultAudioEndpointGuard.WaitForNewRenderEndpoint(beforeEndpoints!, TimeSpan.FromSeconds(5), stopping.Token),
+            stopping.Token) : null;
+        Require(!composite || DualSenseSpeakerConfiguration.IsConfigured(endpointId!),
+            "current endpoint format, available speakers and full-range speakers");
 
         var input = new byte[20];
         input[0] = 0;
@@ -372,21 +510,36 @@ internal static class ProtocolSelfTest
         // Reattach and intentionally drop the owner pipe without DETACH. Completion
         // of serverTask proves the EOF path disposed the still-attached controller.
         await SendAsync(client, new Protocol.Message(
-            Protocol.MessageType.Attach, 4, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, 0 }), stopping.Token);
+            Protocol.MessageType.Attach, 4, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
         var ownerCleanupAttach = await ReceiveUntilAsync(
             client, Protocol.MessageType.AttachReply, 4, stopping.Token);
         Require(ownerCleanupAttach.Payload.Length == 8, "owner cleanup attach reply");
 
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+        Require(!server.AudioPolicyViolated, "audio policy remained valid through owner cleanup");
+        if (beforeEndpoints is not null)
+        {
+            // Dispose completes before Windows removes the audio endpoint.
+            // Wait for all endpoints from both attaches to leave the active set.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
+                       .Any(endpoint => !beforeEndpoints.Contains(endpoint)))
+            {
+                Require(DateTime.UtcNow < deadline, "current audio endpoint released");
+                await Task.Delay(50, stopping.Token);
+            }
+        }
 
         var result = JsonSerializer.Serialize(new
         {
             protocol = Protocol.Version,
-            profile = composite ? "dualsense-composite" : "dualsense-hidonly",
+            profile = genshinCompatibility ? DualSenseHapticsAudio.GenshinCompatibilityProfileId
+                : composite ? "dualsense-composite" : "dualsense",
             hello = true,
             attached = true,
             four_channel_audio = capabilities.HasFlag(Protocol.Capability.AudioFourChannel),
+            quadraphonic_configuration = composite,
             input = true,
             touch = true,
             motion = true,
@@ -416,10 +569,46 @@ internal static class ProtocolSelfTest
         VerifyHapticsChannelIsolation();
         VerifyDefaultAudioEndpointClassification();
         VerifyDefaultAudioEndpointPolicy();
-        VerifyControllerStateSubmissionPolicy();
         VerifySensorTimestampEncoding();
         VerifyOutputValidityFlags();
         VerifyOutputValidityGating();
+    }
+
+    private static void VerifyStandardAxisState()
+    {
+        using var context = new HMContext();
+        Require(context.LoadDefaultProfiles() > 0, "axis mapping profile catalog");
+        var random = new Random(5305);
+        foreach (var profile in context.AllProfiles)
+        {
+            var cached = new StandardAxisState(profile);
+            var initial = HMGamepadStateHelpers.StandardAxes(profile);
+            Require(initial.Count == cached.Values.Count && initial.All(
+                    pair => cached.Values.TryGetValue(pair.Key, out var actual) && actual == pair.Value),
+                $"cached standard axes preserve initial neutral state ({profile.Id})");
+            for (var i = 0; i < 34; i++)
+            {
+                var lx = i < 2 ? i : random.NextSingle();
+                var ly = i < 2 ? i : random.NextSingle();
+                var rx = i < 2 ? i : random.NextSingle();
+                var ry = i < 2 ? i : random.NextSingle();
+                var lt = i < 2 ? i : random.NextSingle();
+                var rt = i < 2 ? i : random.NextSingle();
+                var expected = HMGamepadStateHelpers.StandardAxes(profile, lx, ly, rx, ry, lt, rt);
+                cached.Update(lx, ly, rx, ry, lt, rt);
+                Require(cached.Values.Count == expected.Count && expected.All(
+                        pair => cached.Values.TryGetValue(pair.Key, out var actual) && actual == pair.Value),
+                    $"cached standard axes match SDK ({profile.Id})");
+            }
+
+            // Warm the dictionary update before checking the hot path.
+            cached.Update(.1f, .2f, .3f, .4f, .5f, .6f);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < 100; i++)
+                cached.Update(.2f, .3f, .4f, .5f, .6f, .7f);
+            Require(GC.GetAllocatedBytesForCurrentThread() == before,
+                $"cached standard axes allocate no per-frame objects ({profile.Id})");
+        }
     }
 
     private static void VerifyHidMaestroMicrophoneContract()
@@ -724,21 +913,34 @@ internal static class ProtocolSelfTest
         }
     }
 
+    /// <summary>Checks the shared clock's tick rate, fractional conversion and natural 32-bit rollover.</summary>
     private static void VerifySensorTimestampEncoding()
     {
-        Require(ControllerSession.EncodeSensorTimestamp(0) == 0,
+        Require(Foundation.Input.DualSenseClock.Encode(0, 10_000_000) == 0,
             "DualSense sensor timestamp origin");
-        Require(ControllerSession.EncodeSensorTimestamp(1_000_000) == 3_000_000,
+        Require(Foundation.Input.DualSenseClock.Encode(10_000_000, 10_000_000) == 3_000_000,
             "DualSense sensor timestamp tick rate");
-        Require(ControllerSession.EncodeSensorTimestamp(0x55555556) == 2,
+        Require(Foundation.Input.DualSenseClock.Encode(0x100000000, 3_000_000) == 0 &&
+                Foundation.Input.DualSenseClock.Encode(0x100000001, 3_000_000) == 1,
             "DualSense sensor timestamp rollover");
+        Require(Foundation.Input.DualSenseClock.Encode(10_000_009, 10_000_000) == 3_000_002,
+            "DualSense fractional QPC ticks");
     }
 
     private static void VerifyProfileSelection()
     {
         Require(DeviceRegistry.SelectProfileId(
-                0, Protocol.AttachFlags.None, true, true) == "dualsense-hidonly",
+                0, Protocol.AttachFlags.None, true, true) == "dualsense",
             "HID-only attach profile selection");
+        using var stream = typeof(ProtocolSelfTest).Assembly.GetManifestResourceStream(
+            "Sunshine.Ds5Sidecar.profiles.dualsense.json")
+            ?? throw new InvalidOperationException("Bundled HID-only profile is missing");
+        using var document = JsonDocument.Parse(stream);
+        var descriptor = document.RootElement.GetProperty("descriptor").GetString()!;
+        Require(descriptor.Length == 273 * 2 && descriptor.StartsWith("05010905", StringComparison.Ordinal),
+            "HID-only native Game Pad descriptor");
+        Require(document.RootElement.GetProperty("extendedReport").GetProperty("alwaysArmed").GetBoolean(),
+            "HID-only full input reports remain armed");
         Require(DeviceRegistry.SelectProfileId(
                 1, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true) ==
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
@@ -759,21 +961,9 @@ internal static class ProtocolSelfTest
         }
     }
 
-    private static void VerifyControllerStateSubmissionPolicy()
-    {
-        var policy = new ControllerStateSubmissionPolicy();
-        Require(!policy.ObserveInput(0, true), "idle controller state coalescing");
-        Require(policy.ObserveInput(0, false), "analog activation boundary");
-        Require(!policy.ObserveInput(0, false), "continuous analog state coalescing");
-        Require(policy.ObserveInput(0, true), "analog neutral boundary");
-        Require(policy.ObserveInput(0x1000, true), "button press boundary");
-        Require(policy.ObserveInput(0, true), "button release boundary");
-    }
-
+    /// <summary>Checks virtual ancestry recognition while excluding physical controllers and unrelated devices.</summary>
     private static void VerifyDefaultAudioEndpointClassification()
     {
-        Require(Enum.GetUnderlyingType(typeof(DefaultAudioEndpointGuard.AudioRole)) == typeof(int),
-            "default audio role COM width");
         var virtualDualSense = new[]
         {
             new DefaultAudioEndpointGuard.DeviceNodeIdentity(
@@ -789,6 +979,24 @@ internal static class ProtocolSelfTest
 
         Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(virtualDualSense[..2]),
             "physical DualSense endpoint exclusion");
+        var managedDualSense = new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"USB\VID_054C&PID_0CE6\HM2611F7204B0F",
+                new[] { @"USB\VID_054C&PID_0CE6" }),
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"ROOT\USB\0000", new[] { @"ROOT\USBIP_WIN2\UDE" }),
+        };
+        Require(DefaultAudioEndpointGuard.IsVirtualDualSenseChain(managedDualSense),
+            "managed DualSense classification without host-controller ownership stamping");
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(managedDualSense[..1]),
+            "HIDMaestro serial without shared transport exclusion");
+        Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(new[]
+        {
+            new DefaultAudioEndpointGuard.DeviceNodeIdentity(
+                @"USB\VID_054C&PID_0CE6\physical-sony", new[] { @"USB\VID_054C&PID_0CE6" }),
+            managedDualSense[1],
+        }), "physical Sony controller imported over USB/IP exclusion");
         Require(!DefaultAudioEndpointGuard.IsVirtualDualSenseChain(new[]
         {
             new DefaultAudioEndpointGuard.DeviceNodeIdentity(
@@ -796,6 +1004,7 @@ internal static class ProtocolSelfTest
         }), "unrelated HIDMaestro endpoint exclusion");
     }
 
+    /// <summary>Checks never-default policy completeness and rejects stereo speaker configuration.</summary>
     private static void VerifyDefaultAudioEndpointPolicy()
     {
         Require(DefaultAudioEndpointPolicy.NeedsUpdate(null, null),
@@ -807,11 +1016,9 @@ internal static class ProtocolSelfTest
                 "{00000000-0000-0000-0000-000000000000}", 0x00000307),
             "complete default audio endpoint policy");
         var quadraphonic = DualSenseSpeakerConfiguration.CreateQuadraphonicFormat();
-        Require(DualSenseSpeakerConfiguration.HasValidInteropLayout(),
-            "Core Audio interop ABI");
         Require(DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
             "quadraphonic Core Audio speaker configuration");
-        quadraphonic.ChannelMask = 0x00000003;
+        quadraphonic.dwChannelMask = 0x00000003;
         Require(!DualSenseSpeakerConfiguration.IsQuadraphonic(quadraphonic),
             "stereo Core Audio speaker configuration rejection");
     }
@@ -920,6 +1127,14 @@ internal static class ProtocolSelfTest
         var payload = new byte[header.PayloadLength];
         if (payload.Length != 0)
             await stream.ReadExactlyAsync(payload, cancellationToken);
+        if (header.Type == Protocol.MessageType.AudioPolicyViolation)
+        {
+            var details = payload.Length >= 3
+                ? $"device={payload[0]}, controller={payload[1]}, role={payload[2]}"
+                : "malformed event payload";
+            throw new InvalidOperationException("Windows selected a virtual DualSense endpoint as the default audio device; " +
+                $"the audio policy guard closed this session ({details}).");
+        }
         return new Protocol.Message(header.Type, header.RequestId, payload);
     }
 
@@ -956,6 +1171,32 @@ internal static class ProtocolSelfTest
         if (payload.Length < 8) return "Malformed sidecar error";
         var length = Math.Min(BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4)), (uint)(payload.Length - 8));
         return System.Text.Encoding.UTF8.GetString(payload.Slice(8, (int)length));
+    }
+
+    /// <summary>Ensures asynchronous policy failures survive acceptance reads instead of becoming EOF.</summary>
+    private static async Task VerifyAcceptanceErrorsAsync()
+    {
+        foreach (var byRequest in new[] { false, true })
+        {
+            using var stream = new MemoryStream(Protocol.Encode(new Protocol.Message(
+                Protocol.MessageType.AudioPolicyViolation, 0, new byte[] { 3, 2, 1, 0 })));
+            try
+            {
+                if (byRequest)
+                    await ReceiveUntilAsync(stream, Protocol.MessageType.DetachReply, 5, CancellationToken.None);
+                else
+                    await ReceiveUntilTypeAsync(stream, Protocol.MessageType.HapticsPcm, CancellationToken.None);
+                Require(false, "audio policy event rejection");
+            }
+            catch (InvalidOperationException error)
+            {
+                Require(error.Message.Contains("device=3, controller=2, role=1", StringComparison.Ordinal),
+                    "audio policy reason retained");
+            }
+        }
+        Require(DefaultAudioEndpointSnapshot.ShouldRestore("physical", "virtual", false, true), "new virtual default restored");
+        Require(!DefaultAudioEndpointSnapshot.ShouldRestore("physical", "other", false, false), "user default change preserved");
+        Require(!DefaultAudioEndpointSnapshot.ShouldRestore("physical", "virtual", true, true), "existing virtual default preserved");
     }
 
     private static void WriteFloat(Span<byte> destination, float value) =>

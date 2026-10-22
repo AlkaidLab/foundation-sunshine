@@ -20,20 +20,19 @@ namespace pyrowave {
     bool configure(int format, const SS_HDR_METADATA &source, std::uint16_t target_peak_nits);
     bool enabled() const noexcept { return format_ != 0; }
 
-    // The result is owned here until the next build. Transport copies it into
-    // this frame's protected payload before the encoder advances.
+    // Build each frame from the latest valid scene sample, retaining it during
+    // async readback gaps. The result is owned here until the next build;
+    // transport copies it into this frame's protected payload.
     const hdr_frame_metadata_t *build(const platf::hdr_frame_luminance_stats_t &stats);
 
   private:
     int format_ = 0;
     std::uint16_t target_peak_nits_ = 1000;
-    std::uint64_t last_sample_sequence_ = 0;
-    bool has_dv_sample_ = false;
+    platf::hdr_frame_luminance_stats_t last_scene_stats_ {};
     video::hdr_metadata::dynamic_metadata_builder_t builder_;
     video::hdr_metadata::scene_change_detector_t scenes_;
     video::dolby_vision::rpu_generator_t rpu_;
     video::dolby_vision::level1_temporal_filter_t level1_filter_;
-    video::dolby_vision::frame_metadata_t last_dv_sample_ {};
     hdr_frame_metadata_t frame_;
   };
 

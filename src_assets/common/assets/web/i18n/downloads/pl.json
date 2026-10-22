@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "Komputer",
+    "other": "Inne",
+    "phone": "Telefon / Tablet",
+    "tv": "Telewizor"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "Dostosuj układy, kombinacje przycisków i wprowadzanie",
+        "Celuj ruchem urządzenia lub pada",
+        "HDR na zgodnych hostach i urządzeniach",
+        "Przesyłaj lokalny głos do komputera do gier"
+      ],
+      "description": "Dostosuj przyciski ekranowe i graj dotykiem, ruchem lub padem. Używaj klawiatury, mikrofonu i schowka telefonu ze zdalnym komputerem.",
+      "detail": "Klient dla telefonów i tabletów Android",
+      "features": [
+        "Własne przyciski ekranowe",
+        "Celowanie ruchem",
+        "Obraz HDR",
+        "Zdalny mikrofon"
+      ],
+      "name": "Android",
+      "note": "Pomoc klawiatury, schowek i mikrofon wymagają uprawnień oraz obsługi hosta. HDR wymaga zgodnego sprzętu i ekranów.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "Używaj V+ na telewizorze lub przystawce TV i graj padem w gry PC. W trakcie transmisji zmieniaj obraz i sprawdzaj wydajność.",
+      "detail": "Klient Android TV · Dla telewizorów",
+      "features": [
+        "Sterowanie padem",
+        "Obraz HDR",
+        "Sterowanie podczas transmisji",
+        "Statystyki na żywo"
+      ],
+      "name": "Android TV",
+      "note": "HDR, dźwięk i wibracje pada zależą od TV, systemu, podłączonych urządzeń i hosta.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Nawiguj i graj padem na Apple TV, przenosząc obraz komputera do gier na telewizor w salonie.",
+      "detail": "Klient Apple TV · Instalacja z App Store",
+      "features": [
+        "Sterowanie padem",
+        "Obraz HDR",
+        "Strumieniowanie na TV"
+      ],
+      "name": "Apple TV",
+      "note": "Wersja tvOS wymaga pada. HDR wymaga zgodnego hosta i Apple TV. Oficjalną wersję zainstaluj z App Store.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "Edytuj panele przycisków, obszary kamery i układy",
+        "Natywna integracja padów i sterowanie ruchem",
+        "HDR10, HLG i HDR Vivid na zgodnych urządzeniach",
+        "Zamień zmiany dźwięku gry na wibracje"
+      ],
+      "description": "Graj w gry PC dotykiem, przyciskami ekranowymi i natywnymi padami HarmonyOS, z ruchem, wibracjami sterowanymi dźwiękiem i HDR.",
+      "detail": "Klient HarmonyOS NEXT · Instalacja z AppGallery",
+      "features": [
+        "Własne przyciski ekranowe",
+        "Ruch i natywne pady",
+        "Obraz HDR",
+        "Wibracje sterowane dźwiękiem"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "HDR i rozszerzenia wymagają zgodnych urządzeń i Foundation Sunshine. Przesyłanie mikrofonu jest obecnie dostępne w trybie deweloperskim.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "Ustaw kombinacje, grupy układów i panele dotykowe",
+        "Mapowanie ruchu, nawigacja padem i skróty",
+        "HDR na zgodnych urządzeniach",
+        "Oglądaj przy innych zadaniach lub przesyłaj na inny ekran"
+      ],
+      "description": "Dostosuj przyciski, dotyk i ruch na iPhonie i iPadzie. Korzystaj z nawigacji padem, obrazu w obrazie, ekranów zewnętrznych i mikrofonu obsługiwanego przez hosta.",
+      "detail": "Klient iPhone / iPad · Instalacja z App Store",
+      "features": [
+        "Własne przyciski ekranowe",
+        "Ruch i pady",
+        "Obraz HDR",
+        "Obraz w obrazie i ekrany zewnętrzne"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR, obraz w obrazie, interpolacja i rysik zależą od urządzenia i systemu. Niektóre zaawansowane funkcje rysowania wymagają zakupu w aplikacji.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "HDR zależy od GPU, renderera i środowiska wyświetlania",
+        "Sterowanie pulpitem i padem",
+        "Dostosuj transmisję i tryb myszy",
+        "Sprawdzaj parametry sieci, dekodowania i wyświetlania"
+      ],
+      "description": "Zainstaluj AppImage i strumieniuj komputer w oknie lub pełnym ekranie. Graj klawiaturą lub padem i dostosowuj sesje za pomocą sterowania i statystyk.",
+      "detail": "Klient komputerowy dla Linux",
+      "features": [
+        "Obraz HDR",
+        "Klawiatura i pady",
+        "Sterowanie podczas transmisji",
+        "Statystyki na żywo"
+      ],
+      "name": "Linux",
+      "note": "Wybierz pakiet dla swojej architektury i systemu. HDR i schowek zależą od środowiska graficznego Linux.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "HDR na zgodnych ekranach",
+        "Znane sterowanie pulpitem",
+        "Synchronizuj tekst i obrazy",
+        "Uzyskaj dostęp do udostępnionych folderów hosta"
+      ],
+      "description": "Zachowaj znany interfejs komputerowy, graj klawiaturą, myszą lub padem w oknie lub pełnym ekranie z funkcjami współpracy.",
+      "detail": "Klient komputerowy dla macOS",
+      "features": [
+        "Obraz HDR",
+        "Klawiatura i pady",
+        "Dwukierunkowy schowek",
+        "Udostępnione pliki hosta"
+      ],
+      "name": "macOS",
+      "note": "Obecne pakiety są dla Apple Silicon. Schowek, mikrofon i udostępnione pliki wymagają obsługi hosta.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "Dostosuj jasność, kolory i obraz",
+        "Lokalne metody wprowadzania, tłumaczenie skrótów i gładzik",
+        "Korektor, korekcja słuchawek i dźwięk przestrzenny",
+        "Zmieniaj obraz, dźwięk i hosta podczas transmisji"
+      ],
+      "description": "Rozszerz strumieniowanie o natywny interfejs Maca, lokalny tekst i gładzik. Dostosuj HDR, dźwięk słuchawek i transmisję.",
+      "detail": "Natywny rozszerzony klient dla macOS",
+      "features": [
+        "Ustawienia HDR i kolorów",
+        "Wprowadzanie na Macu i gładzik",
+        "Ustawienia słuchawek i dźwięku",
+        "Sterowanie podczas transmisji"
+      ],
+      "name": "macOS",
+      "note": "macOS 12+, Apple Silicon i Intel. Schowek, mikrofon i sterowanie hostem wymagają jego obsługi.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Używaj klienta Android V+ na Quest do odbioru obrazu PC, zmiany transmisji i sprawdzania wydajności.",
+      "detail": "Klient Quest · Odbieranie obrazu PC",
+      "features": [
+        "Strumieniowanie obrazu PC",
+        "Sterowanie podczas transmisji",
+        "Statystyki na żywo"
+      ],
+      "name": "Quest VR",
+      "note": "Ten plik to Android APK. Wprowadzanie, obraz i HDR zależą od środowiska gogli.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "Specjalna wersja dla sprzętu Valve Steam Link. Połącz komputer do gier i graj na telewizorze padem.",
+      "detail": "Klient dla urządzeń Steam Link",
+      "features": [
+        "Sterowanie padem",
+        "Parowanie z hostem",
+        "Statystyki wydajności"
+      ],
+      "name": "Steam Link",
+      "note": "Wersja dla sprzętu Steam Link nie obsługuje HDR ani przesyłania mikrofonu.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "HDR ze zgodnymi kodekami i ekranami",
+        "Synchronizuj tekst i obrazy",
+        "Przesyłaj lokalny głos do komputera do gier",
+        "Otwieraj foldery udostępniane przez hosta"
+      ],
+      "description": "Połącz się klawiaturą, myszą i padem. Zmieniaj tryby myszy, ustawienia transmisji oraz korzystaj ze schowka i udostępnionych plików.",
+      "detail": "Klient komputerowy dla Windows",
+      "features": [
+        "Obraz HDR",
+        "Dwukierunkowy schowek",
+        "Zdalny mikrofon",
+        "Udostępnione pliki hosta"
+      ],
+      "name": "Windows",
+      "note": "Schowek, mikrofon, sterowanie ekranem i dostęp do plików wymagają odpowiedniej obsługi Foundation Sunshine.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "Klient",
+    "close": "Zamknij",
+    "desktopHint": "Zainstaluj pobraną aplikację na wybranym urządzeniu do gry.",
+    "download": "Pobierz",
+    "downloadAddress": "Adres pobierania",
+    "enhanced": "Rozszerzona",
+    "failed": "Kod QR jest niedostępny. Użyj przycisku pobierania.",
+    "friendLink": "Link partnerski",
+    "getApp": "Pobierz aplikację",
+    "mirror": "Alternatywne pobieranie",
+    "more": "Więcej działań",
+    "newLabel": "NEW",
+    "openFailed": "Nie można otworzyć przeglądarki. Skopiuj adres pobierania do przeglądarki.",
+    "openPage": "Otwórz stronę pobierania",
+    "openStore": "Otwórz sklep z aplikacjami",
+    "project": "Projekt",
+    "recommended": "Zalecane",
+    "releases": "Wszystkie wersje",
+    "resolveFailed": "Nie można przygotować pobierania. Zamknij okno i spróbuj ponownie.",
+    "resolving": "Przygotowywanie pobierania…",
+    "scan": "Zeskanuj telefonem, aby pobrać",
+    "setup": "Łączenie po instalacji",
+    "setupSteps": [
+      "Zainstaluj i otwórz klienta na urządzeniu do gry",
+      "Dodaj ten komputer do gier i sparuj go kodem PIN",
+      "Wybierz pulpit lub aplikację i zacznij grać"
+    ],
+    "setupTitles": [
+      "Pobierz i zainstaluj",
+      "Dodaj i sparuj",
+      "Rozpocznij strumieniowanie"
+    ],
+    "standard": "Zwykła",
+    "step": "Wybierz urządzenie do gry",
+    "system": "Wybierz system operacyjny",
+    "title": "Pobierz klientów"
+  }
+}

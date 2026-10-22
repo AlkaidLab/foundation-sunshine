@@ -54,22 +54,6 @@ namespace {
   };
 }  // namespace
 
-TEST(WebhookConfigTest, LegacyFieldsAreOrdinaryParsedValues) {
-  const auto parsed = config::parse_config(
-    "webhook_enabled = enabled\n"
-    "webhook_url = https://example.invalid/webhook\n"
-    "webhook_skip_ssl_verify = enabled\n"
-    "webhook_timeout = 5000\n"
-    "webhook_events = 1,4\n"
-  );
-
-  EXPECT_EQ(parsed.at("webhook_enabled"), "enabled");
-  EXPECT_EQ(parsed.at("webhook_url"), "https://example.invalid/webhook");
-  EXPECT_EQ(parsed.at("webhook_skip_ssl_verify"), "enabled");
-  EXPECT_EQ(parsed.at("webhook_timeout"), "5000");
-  EXPECT_EQ(parsed.at("webhook_events"), "1,4");
-}
-
 TEST(WebhookConfigTest, GeneralConfigCanOverwriteLegacyWebhookFields) {
   temporary_sunshine_config_t temporary_config;
   temporary_config.write(

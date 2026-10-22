@@ -385,7 +385,13 @@ namespace amf {
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) 60);
+      // Like FFmpeg's -g=-1, leave the driver GOP untouched by default.
+      if (config.hevc_gop_size >= 0) {
+        const auto gop_result = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) config.hevc_gop_size);
+        if (gop_result != AMF_OK) {
+          BOOST_LOG(warning) << "AMF: HEVC GOP override rejected, error: " << gop_result;
+        }
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
@@ -757,6 +763,17 @@ namespace amf {
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: encoder Init failed after fallbacks, error: " << res;
       return false;
+    }
+
+    if (video_format == 1) {
+      amf_int64 effective_gop = 0;
+      if (encoder->GetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, &effective_gop) == AMF_OK) {
+        BOOST_LOG(info) << "AMF: HEVC GOP " << effective_gop << " frames (requested " << config.hevc_gop_size
+                        << "; -1=driver default, 0=on-demand refresh)";
+      }
+      else {
+        BOOST_LOG(warning) << "AMF: HEVC GOP could not be read back";
+      }
     }
 
     // Derive runtime watchdog threshold from framerate so the fatal-error
@@ -1182,12 +1199,60 @@ namespace amf {
       --hwsurfaces_in_queue;
     }
     }
-    consecutive_empty_outputs = 0;
+    return make_encoded_frame(output_data);
+  }
 
-    auto output_pts = output_data->GetPts();
-    if (output_pts >= 0) {
-      result.frame_index = static_cast<uint64_t>(output_pts);
+  bool
+  amf_d3d11::has_pending_output() const {
+    if (!encoder) return false;
+    return avcodec_compat_profile ? avcodec_scheduler.has_pending_output() :
+                                    !pending_outputs.empty() || hwsurfaces_in_queue > 0;
+  }
+
+  amf_encoded_frame
+  amf_d3d11::receive_frame() {
+    amf_encoded_frame result;
+    if (!has_pending_output()) return result;
+
+    ::amf::AMFDataPtr output_data;
+    AMF_RESULT res = AMF_OK;
+    if (avcodec_compat_profile) {
+      res = avcodec_scheduler.receive_output(encoder, output_data);
     }
+    else if (!pending_outputs.empty()) {
+      output_data = pending_outputs.front();
+      pending_outputs.pop_front();
+      // These outputs were already removed from hwsurfaces_in_queue when collected.
+    }
+    else {
+      res = encoder->QueryOutput(&output_data);
+      if (output_data) --hwsurfaces_in_queue;
+    }
+
+    if (res != AMF_OK && res != AMF_REPEAT && res != AMF_NEED_MORE_INPUT) {
+      BOOST_LOG(error) << "AMF: output collection failed, error: " << res;
+      result.fatal = true;
+      return result;
+    }
+    if (!output_data) {
+      // Idle polling must not consume the submission-based stall watchdog budget.
+      if (device && device->GetDeviceRemovedReason() != S_OK) result.fatal = true;
+      return result;
+    }
+    return make_encoded_frame(output_data);
+  }
+
+  amf_encoded_frame
+  amf_d3d11::make_encoded_frame(const ::amf::AMFDataPtr &output_data) {
+    amf_encoded_frame result;
+    const auto output_pts = output_data->GetPts();
+    if (output_pts < 0) {
+      BOOST_LOG(error) << "AMF: output has no input frame identity";
+      result.fatal = true;
+      return result;
+    }
+    result.frame_index = static_cast<uint64_t>(output_pts);
+    consecutive_empty_outputs = 0;
     auto rfi_flag = frame_rfi_flags.find(result.frame_index);
     if (rfi_flag != frame_rfi_flags.end()) {
       result.after_ref_frame_invalidation = rfi_flag->second;
@@ -1201,6 +1266,7 @@ namespace amf {
     ::amf::AMFBufferPtr buffer(output_data);
     if (!buffer) {
       BOOST_LOG(error) << "AMF: output is not a buffer";
+      result.fatal = true;
       return result;
     }
 
@@ -1250,7 +1316,7 @@ namespace amf {
                                    (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_AVERAGE_QP :
                                                          AMF_VIDEO_ENCODER_AV1_STATISTIC_AVERAGE_Q_INDEX;
       if (output_data->GetProperty(avg_qp_prop, &avg_qp) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_index << " avg_qp=" << avg_qp << " size=" << data_size;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " avg_qp=" << avg_qp << " size=" << data_size;
       }
     }
     if (psnr_enabled) {
@@ -1259,7 +1325,7 @@ namespace amf {
                                  (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_PSNR_Y :
                                                        AMF_VIDEO_ENCODER_AV1_STATISTIC_PSNR_Y;
       if (output_data->GetProperty(psnr_prop, &psnr_y) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_index << " PSNR_Y=" << psnr_y;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " PSNR_Y=" << psnr_y;
       }
     }
     if (ssim_enabled) {
@@ -1268,7 +1334,7 @@ namespace amf {
                                  (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_SSIM_Y :
                                                        AMF_VIDEO_ENCODER_AV1_STATISTIC_SSIM_Y;
       if (output_data->GetProperty(ssim_prop, &ssim_y) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_index << " SSIM_Y=" << ssim_y;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " SSIM_Y=" << ssim_y;
       }
     }
 

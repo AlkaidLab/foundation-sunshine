@@ -3,6 +3,7 @@
  * @brief Definitions for audio capture and encoding.
  */
 // standard includes
+#include <algorithm>
 #include <thread>
 
 // lib includes
@@ -502,6 +503,9 @@ namespace audio {
       sink = &config::audio.sink;
     }
 
+    int capture_channels = stream.channelCount;
+    const std::uint8_t *capture_mapping = stream.mapping;
+
     // Prefer the virtual sink if host playback is disabled or there's no other sink
     if (ref->sink.null && (!config.flags[config_t::HOST_AUDIO] || sink->empty())) {
       auto &null = *ref->sink.null;
@@ -518,6 +522,12 @@ namespace audio {
         case 12:
           if (!null.surround714.empty()) {
             sink = &null.surround714;
+            if (!null.surround71.empty() && !control->is_sink_format_supported(null.surround714)) {
+              BOOST_LOG(info) << "Virtual audio sink doesn't support 7.1.4, capturing 7.1 with silent height channels"sv;
+              sink = &null.surround71;
+              capture_channels = 8;
+              capture_mapping = platf::speaker::map_surround71;
+            }
           }
           break;
       }
@@ -544,7 +554,7 @@ namespace audio {
     // An explicitly configured sink remains the capture endpoint across default-device
     // changes. An empty sink keeps the existing behavior of following the current default.
     const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
-    auto mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+    auto mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -567,7 +577,7 @@ namespace audio {
       shutdown_event->view();
     });
 
-    int samples_per_frame = frame_size * stream.channelCount;
+    int samples_per_frame = frame_size * capture_channels;
 
     while (!shutdown_event->peek()) {
       std::vector<float> sample_buffer;
@@ -583,7 +593,7 @@ namespace audio {
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
           do {
-            mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+            mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
             if (!mic) {
               BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
             }
@@ -591,6 +601,15 @@ namespace audio {
           continue;
         default:
           return;
+      }
+
+      if (capture_channels != stream.channelCount) {
+        // 7.1 is the leading part of the 7.1.4 layout, the remaining channels stay zero
+        std::vector<float> widened(frame_size * stream.channelCount);
+        for (int frame = 0; frame < frame_size; ++frame) {
+          std::copy_n(&sample_buffer[frame * capture_channels], capture_channels, &widened[frame * stream.channelCount]);
+        }
+        sample_buffer = std::move(widened);
       }
 
       samples->raise(std::move(sample_buffer));

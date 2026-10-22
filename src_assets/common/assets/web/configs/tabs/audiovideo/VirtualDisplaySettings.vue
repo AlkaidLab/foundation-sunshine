@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import VulkanHdrBridgeCard from './VulkanHdrBridgeCard.vue'
+import NvidiaVsyncCard from './NvidiaVsyncCard.vue'
 
 const props = defineProps({
   platform: String,
@@ -140,7 +141,7 @@ function removeFps(index) {
           required
           pattern="\d+(\.\d+)?"
           class="form-control add-input add-input-fps"
-          placeholder="例如: 120 或 119.88"
+          placeholder="120 / 119.88"
         />
         <button v-if="fps.length < MAX_FPS" class="btn btn-primary add-btn" type="submit">
           <i class="fas fa-plus"></i>
@@ -178,6 +179,7 @@ function removeFps(index) {
             {{ $t('config.vdd_borrowed_texture_desc') }}
           </div>
 
+          <NvidiaVsyncCard :config="config" :platform="platform" />
           <VulkanHdrBridgeCard class="mt-3" :config="config" />
         </div>
       </template>

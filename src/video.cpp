@@ -30,6 +30,7 @@ extern "C" {
 // lib includes
 #include "cbs.h"
 #include "config.h"
+#include "streaming/perf_recorder.h"
 #include "display_device/display_device.h"
 #include "globals.h"
 #include "hdr/dynamic_hdr_selection.h"
@@ -1084,6 +1085,16 @@ namespace video {
       return result;
     }
 
+    bool
+    has_pending_output() const {
+      return device && device->amf && device->amf->has_pending_output();
+    }
+
+    amf::amf_encoded_frame
+    receive_frame() {
+      return device && device->amf ? device->amf->receive_frame() : amf::amf_encoded_frame {};
+    }
+
     void
     track_frame_timestamp(
       uint64_t frame_index,
@@ -2068,6 +2079,9 @@ namespace video {
         if (frame_captured) {
           latest_captured_img = img;
           for (auto &capture_ctx : capture_ctxs) {
+            if (perf::frame_rate_collection_epoch()) {
+              perf::record_capture_frame(capture_ctx.config.perf_session_id, disp->frame_rate_source());
+            }
             capture_ctx.images->raise(captured_frame_t {
               .image = img,
             });
@@ -2374,7 +2388,8 @@ namespace video {
     {
       auto &raw_stats = session.device->hdr_luminance_stats;
       if (raw_stats.valid) {
-        const auto filtered = session.dynamic_metadata_temporal.update(raw_stats);
+        const auto filtered = session.dynamic_metadata_temporal.update(
+          raw_stats, session.dynamic_metadata_target_peak_nits);
 
         update_hdr_dynamic_metadata(
           frame,
@@ -2450,6 +2465,7 @@ namespace video {
 
       packet->replacements = &session.replacements;
       packet->channel_data = channel_data;
+      perf::record_encoded_frame(session.perf_session_id);
       packets->raise(std::move(packet));
     }
 
@@ -2501,8 +2517,65 @@ namespace video {
       encoded_trace->packet_ready = std::chrono::steady_clock::now();
       packet->pipeline_trace = std::move(encoded_trace);
     }
+    perf::record_encoded_frame(session.perf_session_id);
     packets->raise(std::move(packet));
 
+    return 0;
+  }
+
+  int
+  emit_amf_output(
+    amf::amf_encoded_frame encoded_frame,
+    amf_encode_session_t &session,
+    safe::mail_raw_t::queue_t<packet_t> &packets,
+    void *channel_data) {
+    if (encoded_frame.fatal) {
+      // Encoder is in unrecoverable state (device lost or repeated failures);
+      // propagate fatal so the session reinitializes instead of silently
+      // producing no video (which causes the client to time out and reconnect repeatedly).
+      BOOST_LOG(error) << "AMF: encoder in unrecoverable state, requesting reinit";
+      return -1;
+    }
+    if (encoded_frame.data.empty()) {
+      BOOST_LOG(error) << "AMF returned empty packet";
+      return -1;
+    }
+
+    // AMF may return an older frame than the one submitted; the RPU splice
+    // keys on the encoder's own output index, so pipeline lag cannot mismatch.
+    const bool dv_injected = session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    session.report_dolby_vision_output(dv_injected);
+
+    auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
+    packet->channel_data = channel_data;
+    packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
+    packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
+    packet->fec_percentage = session.resolve_frame_fec(encoded_frame.frame_index);
+    auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
+    if (encoded_trace) {
+      encoded_trace->packet_ready = std::chrono::steady_clock::now();
+      packet->pipeline_trace = std::move(encoded_trace);
+    }
+    perf::record_encoded_frame(session.perf_session_id);
+    packets->raise(std::move(packet));
+
+    return 0;
+  }
+
+  int
+  collect_amf_outputs(encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data) {
+    auto amf_session = dynamic_cast<amf_encode_session_t *>(&session);
+    if (!amf_session) return 0;
+
+    // Bound each pass so control events and fresh capture are serviced even if
+    // pre-analysis/multi-HW produces a batch of outputs. Never query an idle encoder.
+    constexpr int max_outputs_per_pass = 32;
+    for (int output = 0; output < max_outputs_per_pass && amf_session->has_pending_output(); ++output) {
+      auto frame = amf_session->receive_frame();
+      if (frame.fatal) return emit_amf_output(std::move(frame), *amf_session, packets, channel_data);
+      if (frame.data.empty()) break;
+      if (emit_amf_output(std::move(frame), *amf_session, packets, channel_data)) return -1;
+    }
     return 0;
   }
 
@@ -2521,49 +2594,21 @@ namespace video {
     session.track_frame_timestamp(submitted_frame_index, frame_timestamp, std::move(pipeline_trace));
 
     auto encoded_frame = session.encode_frame(frame_nr);
-    if (encoded_frame.fatal) {
-      // Encoder is in unrecoverable state (device lost or repeated failures);
-      // propagate fatal so the session reinitializes instead of silently
-      // producing no video (which causes the client to time out and reconnect repeatedly).
-      BOOST_LOG(error) << "AMF: encoder in unrecoverable state, requesting reinit";
-      return -1;
-    }
+    if (encoded_frame.fatal) return emit_amf_output(std::move(encoded_frame), session, packets, channel_data);
     if (encoded_frame.data.empty()) {
-      if (encoded_frame.frame_index == static_cast<uint64_t>(frame_nr)) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_nr << " buffered, waiting for more input";
-        return 0;
+      if (encoded_frame.frame_index != submitted_frame_index) return -1;
+      BOOST_LOG(debug) << "AMF: frame " << frame_nr << " buffered, waiting for more input";
+    }
+    else {
+      if (encoded_frame.frame_index > submitted_frame_index) {
+        BOOST_LOG(error) << "AMF frame index mismatch " << frame_nr << " " << encoded_frame.frame_index;
       }
-      BOOST_LOG(error) << "AMF returned empty packet";
-      return -1;
+      else if (encoded_frame.frame_index < submitted_frame_index) {
+        BOOST_LOG(debug) << "AMF pipeline lag: submitted " << frame_nr << ", got " << encoded_frame.frame_index;
+      }
+      if (emit_amf_output(std::move(encoded_frame), session, packets, channel_data)) return -1;
     }
-
-    if (encoded_frame.frame_index > static_cast<uint64_t>(frame_nr)) {
-      // AMF returned a frame from the future — truly unexpected
-      BOOST_LOG(error) << "AMF frame index mismatch " << frame_nr << " " << encoded_frame.frame_index;
-    }
-    else if (encoded_frame.frame_index < static_cast<uint64_t>(frame_nr)) {
-      // Normal pipeline latency: encoder buffered one frame and is returning a previous frame
-      BOOST_LOG(debug) << "AMF pipeline lag: submitted " << frame_nr << ", got " << encoded_frame.frame_index;
-    }
-
-    // AMF may return an older frame than the one submitted; the RPU splice
-    // keys on the encoder's own output index, so pipeline lag cannot mismatch.
-    const bool dv_injected = session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
-    session.report_dolby_vision_output(dv_injected);
-
-    auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
-    packet->channel_data = channel_data;
-    packet->after_ref_frame_invalidation = encoded_frame.after_ref_frame_invalidation;
-    packet->frame_timestamp = session.resolve_frame_timestamp(encoded_frame.frame_index);
-    packet->fec_percentage = session.resolve_frame_fec(encoded_frame.frame_index);
-    auto encoded_trace = session.resolve_frame_trace(encoded_frame.frame_index);
-    if (encoded_trace) {
-      encoded_trace->packet_ready = std::chrono::steady_clock::now();
-      packet->pipeline_trace = std::move(encoded_trace);
-    }
-    packets->raise(std::move(packet));
-
-    return 0;
+    return collect_amf_outputs(session, packets, channel_data);
   }
 
   struct encoder_rebuild_context_t {
@@ -3357,7 +3402,10 @@ namespace video {
       session = make_amf_encode_session(disp, effective_config, std::move(amf_encode_device), is_probe);
     }
 
-    if (session) session->bitrate_budget = config.bitrate_budget;
+    if (session) {
+      session->bitrate_budget = config.bitrate_budget;
+      session->perf_session_id = config.perf_session_id;
+    }
     return session;
   }
 
@@ -3488,6 +3536,7 @@ namespace video {
       if (!session->set_bitrate(config.bitrate_budget->applied().encoder_kbps)) return;
       session->bitrate_budget = config.bitrate_budget;
     }
+    session->perf_session_id = config.perf_session_id;
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -3553,24 +3602,43 @@ namespace video {
 
     using image_pop_result_t = decltype(images->pop(0ms));
     const auto input_activity_poll_interval = std::chrono::duration<double, std::milli> { 5ms };
+    const auto amf_output_poll_interval = std::chrono::duration<double, std::milli> { 1ms };
+    bool amf_output_failed = false;
+    auto has_amf_output = [&]() {
+      auto amf_session = dynamic_cast<amf_encode_session_t *>(session.get());
+      return amf_session && amf_session->has_pending_output();
+    };
     auto pop_image_interruptible = [&](const std::chrono::duration<double, std::milli> &wait_time, bool allow_input_preemption) -> image_pop_result_t {
-      if (!allow_input_preemption || wait_time <= input_activity_poll_interval) {
+      if (!has_amf_output() && (!allow_input_preemption || wait_time <= input_activity_poll_interval)) {
         return images->pop(wait_time);
       }
 
-      auto remaining_wait = wait_time;
-      while (images->running() && remaining_wait > 0ms) {
-        auto slice_wait = std::min(remaining_wait, input_activity_poll_interval);
+      // Query time counts toward the capture wait, rather than extending the
+      // repeat-frame cadence on every pass. The session may be replaced by a
+      // bitrate update, so always consult the current encoder.
+      const auto deadline = std::chrono::steady_clock::now() + wait_time;
+      while (images->running() && !shutdown_event->peek() && !reinit_event.peek()) {
+        if (collect_amf_outputs(*session, packets, channel_data)) {
+          amf_output_failed = true;
+          return {};
+        }
+        const auto remaining_wait = std::chrono::duration<double, std::milli> { deadline - std::chrono::steady_clock::now() };
+        if (remaining_wait <= 0ms) return images->pop(0ms);
+        auto slice_wait = remaining_wait;
+        if (has_amf_output()) {
+          slice_wait = std::min(slice_wait, amf_output_poll_interval);
+        }
+        else if (allow_input_preemption) {
+          slice_wait = std::min(slice_wait, input_activity_poll_interval);
+        }
         if (auto img = images->pop(slice_wait)) {
           return img;
         }
 
         consume_input_activity();
-        if (std::chrono::steady_clock::now() < input_boost_until) {
+        if (allow_input_preemption && std::chrono::steady_clock::now() < input_boost_until) {
           return {};
         }
-
-        remaining_wait -= slice_wait;
       }
 
       return {};
@@ -3652,6 +3720,11 @@ namespace video {
         session->request_idr_frame();
       }
 
+      if (collect_amf_outputs(*session, packets, channel_data)) {
+        if (backend_failure_handler) backend_failure_handler();
+        break;
+      }
+
       consume_input_activity();
       auto input_boost_active = input_activity_boost_policy.useful && std::chrono::steady_clock::now() < input_boost_until;
       auto effective_frame_time = effective_minimum_frame_time(
@@ -3663,12 +3736,14 @@ namespace video {
       std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
       bool has_new_frame = false;
+      bool replayed_frame = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
         if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           auto &img = frame->image;
+          replayed_frame = frame->is_replay;
           if (!frame->is_replay) {
             frame_timestamp = img->frame_timestamp;
             pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
@@ -3695,6 +3770,12 @@ namespace video {
           break;
         }
       }
+
+      if (amf_output_failed) {
+        if (backend_failure_handler) backend_failure_handler();
+        break;
+      }
+      if (shutdown_event->peek() || (reinit_event.peek() && frame_nr > 1)) break;
 
       consume_input_activity();
       input_boost_active = input_activity_boost_policy.useful && std::chrono::steady_clock::now() < input_boost_until;
@@ -3728,6 +3809,7 @@ namespace video {
       }
 
       session->request_normal_frame();
+      perf::record_encode_submission(config.perf_session_id, !has_new_frame || replayed_frame);
     }
   }
 
@@ -4058,6 +4140,9 @@ namespace video {
           }
 
           if (frame_captured) {
+            if (perf::frame_rate_collection_epoch()) {
+              perf::record_capture_frame(ctx->config.perf_session_id, disp->frame_rate_source());
+            }
             pipeline_trace = img->pipeline_trace.value_or(platf::frame_pipeline_trace_t {});
             if (!pipeline_trace->capture_ready) {
               pipeline_trace->capture_ready = frame_timestamp;
@@ -4086,6 +4171,7 @@ namespace video {
           }
 
           pos->session->request_normal_frame();
+          perf::record_encode_submission(ctx->config.perf_session_id, !frame_captured);
 
           ++pos;
         })
