@@ -6,6 +6,7 @@
 #include "credential_store.h"
 
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <system_error>
@@ -176,8 +177,17 @@ namespace credential_store {
       return { read_status_e::success, std::move(secret), {} };
     }
     // A missing entry is the normal "nothing saved yet" case; anything else
-    // (no Secret Service, locked collection) is a real error worth surfacing.
+    // (no Secret Service, locked collection) is a real error worth surfacing --
+    // but SUNSHINE_LLM_API_KEY is a documented read-only fallback on this
+    // platform, and a locked keyring must not hide a key the operator exported.
     if (error && !secret_object_missing(error)) {
+      if (auto fallback = environment_api_key(); !fallback.empty()) {
+        // The caller only sees "success"; silence here would hide a broken
+        // keyring, so say it on stderr where a service log picks it up.
+        std::fprintf(stderr, "Warning: using SUNSHINE_LLM_API_KEY; the keyring entry could not be read\n");
+        g_error_free(error);
+        return { read_status_e::success, std::move(fallback), {} };
+      }
       return { read_status_e::error, {}, secret_error("Reading the LLM credential from the keyring", error) };
     }
     if (error) g_error_free(error);
