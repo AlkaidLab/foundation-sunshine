@@ -540,11 +540,12 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
 1. **HLG 域分析源**：Linux 的分析器只按 PQ 解释像素，因此 HLG 会话没有 HDR Vivid、DV P8.4 也被门控
    拒绝。补齐需要新的分析源（预编码线性域，或 shader/readback 的 HLG 域映射），属独立特性；
    本机（PQ + NVIDIA）也无法端到端验证。
-2. **niri 输出后端**（§2.10）：**已完成**（2026-10-22）。niri IPC 后端落地，模式/拓扑开关在
-   niri 会话下生效；HDR 与主屏因 niri 无对应接口而显式跳过（见 §2.10"仍缺"）。剩下的是
-   sway/Hyprland 的 wlr-output-management 通用兜底。
-3. **D15 复制拓扑**（§1.4）：kscreen-doctor 无 replication 命令（已实测确认），KDE 上实现镜像需 KWin
-   脚本或 libkscreen 后端，属独立特性。
+2. **显示后端的剩余边界**（§2.10）：五个后端都已落地（kscreen / Mutter / niri / wlr-randr /
+   RandR）。仍缺的只有两处协议级空白，且都不在 Linux 侧可控范围内：niri 没有 HDR 与主屏接口
+   （显式跳过），wlr-output-management 没有映射到输出的 API（同样显式跳过）。
+3. **D15 复制拓扑**（§1.4）：**已完成**（2026-10-22）。KDE 走 `kscreen-doctor --output.<name>.mirror.<other>`
+   （真机验证 `replication source: 1`），GNOME 走 Mutter `ApplyMonitorsConfig` 的多 connector
+   logical monitor，X11 走共用 CRTC；niri 与 wlr 无镜像接口，显式跳过。
 4. **§四的有意保留差异**：如需翻转，按各条给出的理由逐项决策即可。
 5. **DisplayID 扩展块（中，可选）**：> 655.35 MHz 的模式（3440x1440@120/144、3840x2160@90/120/144）
    目前只能明确拒绝。要真正支持，需要在 EDID 里追加 DisplayID 扩展块（24 位像素时钟），并让 base
