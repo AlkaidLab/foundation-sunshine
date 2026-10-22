@@ -15,7 +15,7 @@ struct Cycle {std::array<uint8_t,MAT_WIRE_CYCLE> bytes;uint64_t qpc;};
 struct Shared {
     std::mutex mutex;std::condition_variable changed;std::deque<Cycle> queue;
     bool failed=false,ended=false,playing=false,ready=false;
-    uint64_t encoder=0,play_qpc=0,last_cycle=0,cycles=0,skipped=0;
+    uint64_t encoder=0,play_qpc=0,last_cycle=0,cycles=0,skipped=0,acknowledged_leases=0;
     mat_capture::Observations observations;
     std::string error;
 };
@@ -102,7 +102,16 @@ static void Serve(Shared& shared,const std::wstring& name,mat_capture::Descripto
                     mat_capture::encode_record(record,end?mat_capture::end_kind:mat_capture::cycle_kind,sequence,end?Qpc():cycle.qpc,
                         end?nullptr:cycle.bytes.data(),end?0:cycle.bytes.size());
                     require(Io(pipe,record,sizeof(record),true,2000) && (end||Io(pipe,cycle.bytes.data(),(DWORD)cycle.bytes.size(),true,2000)),"Live source consumer disconnected/backpressure");
-                    if(end)break;++sequence;
+                    if(end){
+                        // DisconnectNamedPipe discards buffered unread bytes.
+                        // Keep this lease alive until the client has consumed
+                        // the exact EOS; a completed WriteFile is insufficient.
+                        // Never use unbounded FlushFileBuffers on a lost peer.
+                        uint8_t ack[mat_capture::end_ack_bytes];
+                        require(Io(pipe,ack,sizeof(ack),false,2000)&&mat_capture::valid_end_ack(ack,sequence),"Live source end acknowledgement failed/timed out");
+                        {std::lock_guard lock(shared.mutex);++shared.acknowledged_leases;}
+                        printf("LEASE_END_ACK cycles=%llu\n",sequence);break;
+                    }++sequence;
                 }
             }catch(const std::exception& e){printf("LEASE_CLOSED %s\n",e.what());}
             {std::lock_guard lock(shared.mutex);shared.playing=false;shared.queue.clear();}

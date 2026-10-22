@@ -45,7 +45,7 @@ try {
 }finally{Pop-Location}
 $binaries=@(Get-ChildItem $out -File | Where-Object Extension -In '.exe','.dll' | ForEach-Object {@{name=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLower()}})
 $sourcePaths=@(Get-ChildItem $PSScriptRoot -File | ForEach-Object {$_.FullName})
-foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','spatial-object-spike/mat-live/capture.cpp','spatial-object-spike/resident/collector.cpp','spatial-object-spike/resident/protocol.h','spatial-object-spike/spatial_probe.cpp')){$sourcePaths+=@("$root/$file")}
+foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','spatial-object-spike/mat-live/capture.cpp','spatial-object-spike/resident/collector.cpp','spatial-object-spike/resident/protocol.h','spatial-object-spike/spatial_probe.cpp')){$sourcePaths+=@("$root/$file")}
 foreach($file in @('quantum_v4_tap.cpp','quantum_v4_recorder.cpp','quantum_v4_recorder.h','quantum_v4_protocol.h','quantum_v4_assembler.h','quantum_v4_selftest.cpp','position_cache.h')){$sourcePaths+=@("$root/spatial-object-spike/resident/$file")}
 $sourcePaths+=@("$minhook/include/MinHook.h")
 $sources=@($sourcePaths | Sort-Object -Unique | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})

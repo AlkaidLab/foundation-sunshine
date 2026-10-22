@@ -53,6 +53,8 @@ int main(){try{
  mat_capture::Descriptor identity{mat_capture::test_source,1,2,3,4,5,6,7},decoded;uint8_t descriptor[80];mat_capture::encode_descriptor(descriptor,identity);Check(!mat_capture::decode_descriptor(descriptor,decoded));
  identity.kind=mat_capture::native_source;mat_capture::encode_descriptor(descriptor,identity);Check(mat_capture::decode_descriptor(descriptor,decoded));descriptor[20]=1;Check(!mat_capture::decode_descriptor(descriptor,decoded));
  identity.kind=mat_capture::native_sonic_source;mat_capture::encode_descriptor(descriptor,identity);Check(mat_capture::decode_descriptor(descriptor,decoded));
+ memcpy(descriptor,"MCAPv001",8);mat_put32(descriptor+12,1);Check(!mat_capture::decode_descriptor(descriptor,decoded));
+ uint8_t ack[mat_capture::end_ack_bytes];mat_capture::encode_end_ack(ack,12);Check(mat_capture::valid_end_ack(ack,12)&&!mat_capture::valid_end_ack(ack,11));
  identity.kind=3;mat_capture::encode_descriptor(descriptor,identity);Check(!mat_capture::decode_descriptor(descriptor,decoded));
  auto bytes=Carrier();mat_capture::Assembler assembler;unsigned cycles=0;
  EncodedRecord record{0x42595445,30720,0,10,42,480,30720,30720,1,S_OK,0,0};

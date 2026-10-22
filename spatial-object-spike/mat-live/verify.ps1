@@ -9,7 +9,7 @@ $sharedCommit=git -C $common rev-parse HEAD
 if($sharedCommit -ne (git -C $clientCommon rev-parse HEAD)){throw 'Both parents must use one common-c commit'}
 foreach($directory in @($common,$clientCommon)){if(git -C $directory status --porcelain){throw 'Freeze shared sources before verification'}}
 $sourcePaths=@('src/audio.h','src/config.h','src/config.cpp','src/rtsp.h','src/rtsp.cpp','src/stream.cpp',
- 'src/spatial_transport/mat_live_session.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/native_mat_pipe_source.h',
+ 'src/spatial_transport/mat_live_session.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h',
  'src/spatial_audio/native_mat_guard.h','src/spatial_audio/native_mat_assembler.h',
  'src/spatial_audio/stream_ring_source.h','src/spatial_audio/stream_output_protocol.h','src/spatial_audio/mat_stream_receiver.cpp',
  'spatial-object-spike/resident/encoded_tap.cpp','spatial-object-spike/mat-android-session/capability_negotiation_test.py') | ForEach-Object {"$root/$_"}
@@ -39,6 +39,8 @@ foreach($name in @('MatLivePlayback','MatReceiver','MatDepacketizer')){
 if($LASTEXITCODE){throw 'Actual live sender/assembler compile failed'}
 & "$out/host-test.exe" *> "$out/host-tests.log"
 if($LASTEXITCODE){throw 'Actual live sender/assembler regression failed'}
+& "$PSScriptRoot/build-pipe-test.ps1" -Output "$out/pipe-regression" *> "$out/pipe-regression-build.log"
+if($LASTEXITCODE){throw 'Private pipe tail/acknowledgement regression failed'}
 & "$PSScriptRoot/build-live-check.ps1" -CommonBuild "$out/host-common" -Output "$out/live-check" *> "$out/live-check-build.log"
 if($LASTEXITCODE){throw 'Native-only checker / software UDP+FEC regression failed'}
 & "$PSScriptRoot/../sonic-mat-live/build.ps1" -Output "$out/sonic-source" *> "$out/sonic-source-build.log"
@@ -51,5 +53,5 @@ foreach($source in $sourceHashes){if((Get-FileHash -LiteralPath $source.path).Ha
 $hashes=@(Get-ChildItem -LiteralPath $out -Recurse -File | Where-Object Extension -In '.log','.json','.exe' | ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLower()}})
 @{result='PASS';scope='Software live MAT sender / RTP+FEC receiver / authenticated transport / negotiation; synthetic test bytes only';
  commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTestsPerCopy=14;rtspCases=21;logicalDataPacketsPerLongTest=78000;
- generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
+ generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;privatePipeVersion=2;pipeTailRegression='PASS';nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS live MAT software verification: $out/proof.json"

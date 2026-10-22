@@ -1,5 +1,23 @@
 # Native live MAT capture and streaming
 
+Private source pipe version 2 (`MCAPv002`) requires an exact-count `MCAPDONE`
+acknowledgement after the client validates and consumes EOS. The publisher waits
+at most two seconds before disconnecting; it does not use an unbounded flush.
+This prevents unread tail bytes from being discarded by DisconnectNamedPipe.
+Rebuild the publisher, Sunshine and native-only checker together: version 1 is
+rejected explicitly. The network `mat-live-v1` profile and Android negotiation
+are unchanged. The acknowledgement confirms local pipe consumption, not hardware
+playback or downstream Atmos recognition.
+
+The fourth explicitly authorized native test completed its eight-second capture
+window: 775 source passes, 413 assembled native MAT cycles, clean native drain,
+all six hook entries restored and engine identity retained. 406 delivered cycles
+passed per-cycle client comparison, but the old pipe lost its EOS. The pipe bug
+was reproduced without audiodg; the revised publisher and production record
+reader now pass delayed-tail / bounded acknowledgement / invalid EOF regressions.
+The fixed version has not been natively retested. The earlier missing-object
+failure did not recur in this test; its cause remains unproven.
+
 Normal MAT preference is AUTO 6 locally, then **live codec 7 or Opus 0** before
 ANNOUNCE. Finite playback 5 and dump 4 are explicit diagnostics only. AUTO never
 opens a recorded file or chooses the finite profile. Unsupported phones keep

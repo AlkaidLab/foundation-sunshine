@@ -71,7 +71,7 @@ try {
  $log=if(Test-Path "$out/capture.log"){Get-Content "$out/capture.log" -Raw}else{''}
  $received=if(Test-Path "$out/receiver.log"){Get-Content "$out/receiver.log" -Raw}else{''}
  $after=Get-Process -Id $EnginePid -ErrorAction SilentlyContinue
- @{passed=(!$failure -and $log -match 'NATIVE_MAT_READY' -and $log -match '(SONIC|PLUGIN)_STOP .*restored=1' -and $log -match 'HOOK_STOP restored=1' -and $received -match 'PASS_NATIVE_LOOPBACK');failure=$failure;
+ @{passed=(!$failure -and $log -match 'NATIVE_MAT_READY' -and $log -match '(SONIC|PLUGIN)_STOP .*restored=1' -and $log -match 'HOOK_STOP restored=1' -and $log -match 'LEASE_END_ACK cycles=[1-9][0-9]*' -and $received -match 'PASS_NATIVE_LOOPBACK');failure=$failure;
   elapsedSeconds=$watch.Elapsed.TotalSeconds;nativeReady=($log -match 'NATIVE_MAT_READY');hooksRestored=($log -match 'HOOK_STOP restored=1');
   engineIdentityRetained=($after -and $after.StartTime.ToUniversalTime().ToFileTimeUtc() -eq $EngineCreated);publisherExited=(!$capture -or $capture.HasExited);
   publisherExitCode=$(if($capture -and $capture.HasExited){$capture.ExitCode}else{$null});sourceExitCode=$(if($source -and $source.HasExited){$source.ExitCode}else{$null});receiverExitCode=$(if($client -and $client.HasExited){$client.ExitCode}else{$null});

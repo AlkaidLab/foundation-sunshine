@@ -1,6 +1,7 @@
 #pragma once
 #include "encoded_audio_source.h"
 #include "mat_capture_protocol.h"
+#include "mat_capture_reader.h"
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -82,16 +83,8 @@ public:
         if(state_==State::stopped)return Read::ended;if(state_!=State::running)return Read::failed;
         try {
             require(WaitForSingleObject(publisher_,0)==WAIT_TIMEOUT&&WaitForSingleObject(engine_,0)==WAIT_TIMEOUT,"Native MAT owner exited");
-            uint8_t h[mat_capture::record_bytes];io(h,sizeof(h),false);
-            require(mat_capture::valid_record(h,next_,last_qpc_),"MAT capture record sequence/time/bounds");
-            uint32_t kind=mat_get32(h+4);last_qpc_=mat_get64(h+16);
-            require(kind!=mat_capture::error_kind,"Native MAT capture failed; never synthesize EOS");
-            if(kind==mat_capture::end_kind){require(next_>0,"Empty live MAT stream");state_=State::stopped;return Read::ended;}
-            Frame f;f.bytes.resize(carrier_bytes);io(f.bytes.data(),(DWORD)f.bytes.size(),false);
-            require(mat_hash(f.bytes.data(),f.bytes.size())==mat_get32(h+28),"MAT capture bytes changed");
-            validate_carrier(f.bytes);require(next_<uint64_t(INT64_MAX)/960,"Live MAT source counter overflow");
-            f.epoch=native_.epoch;f.domain=native_.encoder;f.sequence=next_;f.sample_start=next_*960;
-            ++next_;out=std::move(f);return Read::frame;
+            auto status=mat_capture::read_record([this](void* p,size_t n,bool writing){io(p,(DWORD)n,writing);},next_,last_qpc_,native_.epoch,native_.encoder,out);
+            if(status==Read::ended)state_=State::stopped;return status;
         }catch(const std::exception& e){error_=e.what();state_=State::fault;return Read::failed;}
     }
     void stop()override {

@@ -1,5 +1,22 @@
 # Sonic objects to native MAT
 
+## Additional native test, 2026-10-22 23:10
+
+The separately authorized fourth test used its single additional allowance.
+The eight-second capture completed cleanly: 775 source passes / 744,000 object
+samples, 413 assembled native MAT cycles, 20 warm and 31 drain blocks, all native
+HRESULTs S_OK, all six hooks restored, unchanged engine identity and exited
+children. The earlier missing-object failure did not recur; its cause is unknown.
+
+406 post-PLAY cycles matched at the actual client, but the old private byte pipe
+discarded EOS on disconnect. An own-process test reproduced buffered tail loss.
+The shared publisher now waits at most two seconds for an exact-cycle-count EOS
+consumption acknowledgement. Private MCAPv002 rejects v1; rebuild the publisher,
+Sunshine and checker together. Network mat-live-v1 and Android fallback are
+unchanged. Production publisher/reader regression tests cover delayed reads,
+bad/missing/cancelled acknowledgements and invalid EOF. The fix has not yet been
+natively retested; no full-session or hardware acceptance is claimed.
+
 ## Native findings, 2026-10-22 23:00
 
 Three user-authorized bounded tests have been consumed. UUYC's 128-object
