@@ -15,10 +15,15 @@
 共享 PR：[moonlight-common-c #40](https://github.com/qiin2333/moonlight-common-c/pull/40)，
 安卓 PR：[moonlight-vplus #750](https://github.com/qiin2333/moonlight-vplus/pull/750)。
 主机 PR：[foundation-sunshine #1177](https://github.com/AlkaidLab/foundation-sunshine/pull/1177)。
-两者父仓库使用的 shared commit 为 `0d5b78271e7ee5c7bb3af351724e5fd9e16a20ba`。
+两个父仓库使用的 shared commit 为 `cdd4aaecd7919878a0472e6ca18a65461a85984a`。
 common-c 改了 STREAM_CONFIGURATION/JNI 接口，必须一起重新编译，不能混用旧库。
-分支基于原已验证快照，未为本次交接擅自合并最新上游，也不自动合并 PR。
-检查 PR 冲突并在集成后重跑测试，不能把旧快照的通过记录当新提交的验收。
+已按用户要求合并主机 master `c211d711`、共享库 mic
+`2aa14ffeb877f9093993d9c9cf3c3440e2d2220d`，未执行 PR 合并。
+保留上游新版 RTSP 解析器/大小写规则/重复节点释放，将 MAT duplicate marker
+适配到 replacement node；不能回退旧 caller-side free。主机保留上游 NVIDIA
+vsync lease reset、RC 构建策略和新 PyroWave/Granite，MAT 初始化同时保留。
+新增 `RtspParserMatTest.c` 防止相同/大小写混合/三重 ACK 被 coalesce 后漏检，
+同时验证上游空白字符与含 NUL 二进制 payload 行为。
 
 ## 当前结论与边界
 
@@ -75,15 +80,33 @@ common-c 各 9 个 CTest。完整 app Kotlin/Java 编译及 NDK MAT 模块链接
 但不等于完整 APK/native application 链接通过。
 
 原始 `C-PROOF.json`、run 输出和二进制不放公开 Git。必要证明随私下交接包保留。
-本次提交只对注释/格式、交接文档和 build-host 的 gitlink 检查做整理；以前的
-proof 仍描述当时的源文件哈希，不能重写成当前提交的全量重新测试证明。
+以前的 proof 仍描述当时的源文件哈希，不能重写成上游合并后的验收证明。
 
-本次 PR 整理另行重编译 common-c/JNI/Java 会话工具及 6 组 playback 生命周期，
+首次 PR 整理曾另行重编译 common-c/JNI/Java 会话工具及 6 组 playback 生命周期，
 15 组负协商全部通过；两份已有 CTest 构建各 9 项复跑通过。未重跑完整三模式
 正向会话、完整 APK 或真机验收。
 
-当前机可运行 `./tools/mat-handoff/make-bundle.ps1 -Output <全新目录>`，生成仅含
-固定录制、本文和历史 proof 摘要的本地 ZIP；不上传、不含密钥/证书/运行状态/
+### 上游合并后的本轮验收（2026-10-22）
+
+报告：`spatial-object-spike/mat-android-session/MAT-UPSTREAM-RESULT.txt`。
+新证据 `build/mat-upstream-full/proof.json`，不是旧 C-PROOF 的改写。
+已重新构建正常主机，再完整执行 verify.ps1 编排（`-SkipHostBuild` 仅跳过刚完成的主机构建）：
+三种加密组合的 codec5 播放与 codec4 落盘共六次真实隔离会话，全部 178 周期/
+10,936,320B/SHA 一致；播放最终硬件仍为 fake。两台测试主机均正常退出。
+两份 common-c 各 10/10 CTest，12 组 JNI/player、15 组负协商、6 组播放生命周期、
+6 组落盘生命周期及其他既有 profile/manifest 回归全部通过；Android NDK/JNI
+编译与诊断 APK 构建通过。完整 app Kotlin/Java 编译、上游 CMake 7 项回归和
+M1–M3 自有进程 fake 回归也通过；完整 Moonlight native application/APK 仍未验证。
+
+本轮主机 binary SHA256：`03ee0e2743b44dba586f712cdf2ecb58f3666b9b52025b326a1805d9a3bf9c7c`。
+详细源版本、源文件和构建产物哈希在新 proof 中；随后的纯交接文档提交不冒充重建。
+`supplemental.json` 收录额外测试的证据与日志哈希。转移包的
+`evidence/upstream-20261022/` 为本轮记录，原路径的 C-PROOF 保留历史含义。
+M1–M3 全量 fake 回放还需私下保留的对象/调用计划 oracle，默认 MAT 转移包不含
+这些原始捕获；不要误以为仅 3.56 秒 MAT 即可复现所有历史原生桥接实验。
+
+当前机可运行 `./tools/mat-handoff/make-bundle.ps1 -Output <全新目录> -Verification <新验收目录>`，生成仅含
+固定录制、本文、历史 proof 和新验收摘要的本地 ZIP；不上传、不含密钥/证书/运行状态/
 二进制/工具链。新机在完成 clone 后解压到仓库根目录，核对 BUNDLE-MANIFEST.json。
 
 ## 新电脑检出
@@ -100,9 +123,11 @@ git submodule status third-party/moonlight-common-c third-party/pyrowave
 git -C spatial-object-spike/moonlight-vplus submodule status app/src/main/jni/moonlight-core/moonlight-common-c
 ```
 
-不要用 `--remote` 更新已锁定 gitlink。PyroWave 验证版本
-`019ca97d69ded38bdd58615e8b4c909294fc3757`；其 Granite
-`fb178c8080d163419e8d20f10715c61c53c1ec9b`。客户端不嵌入主机 Git 树，须单独 clone。
+不要用 `--remote` 更新已锁定 gitlink。上游合并后的 PyroWave 版本
+`cc91cbf6363721d19d135d05ca8e3d8665ea6afd`；其 Granite
+`fd1c9f6652e708fdc52773883c60b58ee3f80855`。build-host 同时检查两个层级的 gitlink。
+旧 proof 的 PyroWave `019ca97d` / Granite `fb178c80` 是历史版本，不能混用做新验收。
+客户端不嵌入主机 Git 树，须单独 clone。
 录制样本从私下交接包恢复后先 `Get-FileHash -Algorithm SHA256`，不符就停。
 
 ## 工具与复现：现有脚本不是新机一键安装器
@@ -129,7 +154,7 @@ C++/WinRT 2.0.250303.1、MSVC/Windows SDK（仅原生模块）和项目构建依
 ./spatial-object-spike/mat-android-session/verify.ps1 -Output ./build/newpc-mat-verify -Python C:/Python311/python.exe
 ```
 
-该脚本编排此前逐项运行的验收；原机未将整个编排一次性跑完。先分层 build/unit、
+本轮已完整执行编排，主机构建先单独完成。新机仍建议先分层 build/unit、
 负协商、dump，再隔离会话；任何失败保留结果，不删除旧证据。`-SkipHostBuild`
 仅供已明确匹配当前源码的主机构建。Java/Kotlin 编译见安卓仓库 docs/MAT-HANDOFF.md。
 完整会话脚本会生成仅限测试的配对证书/私钥和状态，**不得提交或分享这些目录**。

@@ -1,0 +1,97 @@
+MAT upstream integration / no-device acceptance — 2026-10-22
+=========================================================
+RESULT: PASS. Fresh evidence: build/mat-upstream-full/proof.json;
+supplemental evidence: build/mat-upstream-full/supplemental.json.
+These are new records, not modified copies of the original C-PROOF.json.
+
+Integrated versions
+-------------------
+Host master: c211d7119c51a8248be70a0b413685f48c1094ef
+Shared mic: 2aa14ffeb877f9093993d9c9cf3c3440e2d2220d
+Shared resulting commit: cdd4aaecd7919878a0472e6ca18a65461a85984a
+Tested host source snapshot: d06ed19019533364e6091fd6bf950ed2cc4d2560
+Tested Android parent: 552b9b63d74de5f571fdca6badd9fe4da73c8e1f
+PyroWave: cc91cbf6363721d19d135d05ca8e3d8665ea6afd
+Granite: fd1c9f6652e708fdc52773883c60b58ee3f80855
+Later handoff-only commits do not change the tested runtime code. Main evidence
+fingerprints production source, test tools, native session DLL and Java classes.
+
+Conflict resolution
+-------------------
+- Keep upstream's line-based RTSP parser, whitespace/binary payload behavior,
+  case-insensitive lookup/coalescing and duplicate-node freeing in insertOption.
+  Mark the incoming replacement with FLAG_DUPLICATE_OPTION before insertion.
+  Do not free it again from the parser or lose the flag on the overwritten node.
+- Add RtspParserMatTest: unique/same-name/casefold/triple duplicate MAT headers,
+  whitespace, lowercase CSeq, bare LF and embedded-NUL binary payload.
+- Keep host upstream NVIDIA vsync lease reset AND MAT selection initialization.
+- Keep upstream RC/linker policy; honor configured RC compiler, without restoring
+  removed global --use-temp-file or forced -static settings.
+- Both parents pin the same merged common-c; retain upstream PyroWave/Granite
+  pins. Build harness now verifies all these gitlinks instead of the old pins.
+- Negative peer no longer reads an untracked previous run's serverinfo.xml.
+  Android compile check now explicitly includes the changed RtspParser.c.
+
+Fresh full C acceptance
+-----------------------
+First normally link the host:
+  ./spatial-object-spike/mat-rtsp-live/build-host.ps1
+Then run the entire verification orchestration, with a NEW output directory:
+  ./spatial-object-spike/mat-android-session/verify.ps1 -Output ./build/mat-upstream-full -SkipHostBuild -Port 52410
+The complete second command succeeded, including its final evidence freeze.
+
+Host executable SHA256:
+  03ee0e2743b44dba586f712cdf2ecb58f3666b9b52025b326a1805d9a3bf9c7c
+Source recording SHA256 (unchanged):
+  79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6
+
+Real isolated Sunshine/NVHTTP/production RTSP/RTP/FEC:
+  codec5 playback: plain / AES audio / encrypted RTSP + AES, all PASS.
+  codec4 dump:     plain / AES audio / encrypted RTSP + AES, all PASS.
+Each of the six sessions: 178 complete cycles, 10,936,320 bytes, correct SHA256,
+ordinary decodeCalls=0. Playback input SHA/EOS and Java drain complete; dump
+publishes the final verified raw. Both test-owned hosts shut down normally.
+ONLY final playback hardware is fake; no AudioTrack/HAL was exercised.
+
+The same full orchestration freshly rebuilds/reruns:
+- 12 production JNI/player offline groups.
+- Both common-c copies: 10/10 CTests each (includes new parser regression).
+- 6 playback receiver lifecycle cases; 6 dump lifecycle cases plus profile,
+  manifest, queue and source-mutation regressions.
+- 15 actual-client negative RTSP negotiations: all reject before PLAY/carrier.
+- Android arm64/API22 common/JNI compilation (including new parser), MAT module
+  no-undefined link; standalone ARM64/ARMv7 offline diagnostic APK build/inspect.
+  The playback sink remains API24+. This APK is NOT the full network client.
+
+Additional no-device checks
+----------------------------
+- Full app compileNonRootDebugKotlin and compileNonRootDebugJavaWithJavac:
+  BUILD SUCCESSFUL (offline Gradle). No full native application/APK link claimed.
+- Upstream real miniature CMake configuration regression: 7/7 tests PASS.
+- M1/M2/M3 rebuilt MSVC/GCC own-process fake regression: PASS; M1 byte-exact
+  replay; 16 complete domain replays; 1,250 continuous fake Process blocks;
+  100,000 ring iterations; 7 M3 failure cases; bounded output mapping 994,752 B.
+  Uses previously frozen private object/call-plan oracles; this is not fresh
+  game capture, audiodg access or actual continuous vendor encoding.
+  Full M1/M2/M3 replay requires those extra private oracles, not only the MAT
+  fixture in the default transfer ZIP. Ordinary module selftests are separate.
+
+Handoff / remaining limits
+--------------------------
+Read docs/ATMOS-MAT-HANDOFF.md; use the three PR heads and committed gitlinks.
+Package with make-bundle.ps1 -Verification <fresh-directory>; new proof and
+supplemental evidence go under evidence/upstream-20261022 in the local ZIP.
+It does not publish recordings, credentials, pairing state, certificates, private
+keys, signing keys, APKs, binaries or toolchains. Old transfer ZIPs are retained.
+The private archive is for local transfer; do not post it to the public PR.
+
+No new UAC, driver/endpoint/security change, native audiodg probe or device use.
+No production service reconfiguration/restart or unrelated process termination.
+An initial dependency-misaligned preliminary BUILD process tree was stopped;
+it was not used for acceptance. All counted host sessions use the aligned build.
+
+Still unverified: full Moonlight native application/APK packaging, Android
+AudioTrack/HAL, TV/box HDMI/eARC routing, Soundbar acceptance, real Atmos
+recognition, device latency, infinite/live capture contract and recovery.
+No phone-local MAT decoder, certification, authentication or commercial Dolby
+encoding license is established by this work. PRs remain experimental drafts.

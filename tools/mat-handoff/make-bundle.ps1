@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Output)
+param([Parameter(Mandatory=$true)][string]$Output,[string]$Verification)
 $ErrorActionPreference='Stop'
 $root=(Resolve-Path "$PSScriptRoot/../..").Path
 $out=[IO.Path]::GetFullPath($Output)
@@ -17,6 +17,23 @@ $files=@('docs/ATMOS-MAT-HANDOFF.md',$fixture,
  'spatial-object-spike/mat-android-session/MAT-ANDROID-C-RESULT.txt',
  'spatial-object-spike/mat-android-offline/MAT-ANDROID-OFFLINE-RESULT.txt')
 foreach($file in $files){if(!(Test-Path -LiteralPath "$root/$file" -PathType Leaf)){throw "Missing handoff input: $file"}}
+$extra=[ordered]@{}
+if($Verification){
+ $verified=(Resolve-Path -LiteralPath $Verification).Path
+ $proof=Get-Content -Raw "$verified/proof.json" | ConvertFrom-Json
+ if($proof.result -ne 'PASS' -or $proof.sourceSha256 -ne $expected -or $proof.androidDeviceTested){throw 'Unexpected no-device verification proof'}
+ foreach($entry in $proof.sourceHashes.PSObject.Properties){
+  if((Get-FileHash -LiteralPath "$root/$($entry.Name)").Hash.ToLower() -ne $entry.Value){throw "Source changed since verification: $($entry.Name)"}
+ }
+ foreach($relative in @('proof.json','playback/proof.json','dump/proof.json','negative/proof.json','regression/proof.json')){
+  $extra["evidence/upstream-20261022/$relative"]="$verified/$relative"
+ }
+ if(Test-Path -LiteralPath "$verified/supplemental.json"){
+  $extra['evidence/upstream-20261022/supplemental.json']="$verified/supplemental.json"
+ }
+ $extra['evidence/upstream-20261022/RESULT.txt']="$root/spatial-object-spike/mat-android-session/MAT-UPSTREAM-RESULT.txt"
+ foreach($path in $extra.Values){if(!(Test-Path -LiteralPath $path -PathType Leaf)){throw "Missing fresh evidence: $path"}}
+}
 New-Item -ItemType Directory -Path $out | Out-Null
 $manifest=@(foreach($file in $files){
  $target=Join-Path $out $file
@@ -24,6 +41,12 @@ $manifest=@(foreach($file in $files){
  Copy-Item -LiteralPath "$root/$file" -Destination $target
  [ordered]@{path=$file;bytes=(Get-Item -LiteralPath $target).Length;sha256=(Get-FileHash -LiteralPath $target).Hash.ToLower()}
 })
+foreach($entry in $extra.GetEnumerator()){
+ $target=Join-Path $out $entry.Key
+ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+ Copy-Item -LiteralPath $entry.Value -Destination $target
+ $manifest+=[ordered]@{path=$entry.Key;bytes=(Get-Item -LiteralPath $target).Length;sha256=(Get-FileHash -LiteralPath $target).Hash.ToLower()}
+}
 $repos=[ordered]@{}
 foreach($name in @('host','client','common')){
  $path=switch($name){host{$root} client{"$root/spatial-object-spike/moonlight-vplus"} common{"$root/third-party/moonlight-common-c"}}
@@ -33,7 +56,9 @@ foreach($name in @('host','client','common')){
 }
 [ordered]@{created=(Get-Date).ToString('o');scope='Private local transfer only: finite fixture and historical evidence; no toolchains or binaries. Read docs/ATMOS-MAT-HANDOFF.md. Do not publish game recording without permission.';repositories=$repos;files=$manifest} |
  ConvertTo-Json -Depth 6 | Out-File -LiteralPath "$out/BUNDLE-MANIFEST.json" -Encoding utf8
-Compress-Archive -LiteralPath "$out/docs","$out/spatial-object-spike","$out/BUNDLE-MANIFEST.json" -DestinationPath "$out.zip" -CompressionLevel Optimal
+$archivePaths=@("$out/docs","$out/spatial-object-spike","$out/BUNDLE-MANIFEST.json")
+if($Verification){$archivePaths+="$out/evidence"}
+Compress-Archive -LiteralPath $archivePaths -DestinationPath "$out.zip" -CompressionLevel Optimal
 $zipHash=(Get-FileHash -LiteralPath "$out.zip").Hash.ToLower()
 Write-Host "BUNDLE $out.zip"
 Write-Host "SHA256 $zipHash"
