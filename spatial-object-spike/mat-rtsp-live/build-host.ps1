@@ -14,12 +14,16 @@ $expected=@{
  # Follow the committed gitlink, not the pre-MAT baseline. Never use --remote
  # here: the two parent PRs must consume the same reviewed common-c commit.
  'third-party/moonlight-common-c'=(git -C $root rev-parse 'HEAD:third-party/moonlight-common-c')
- 'third-party/pyrowave'='019ca97d69ded38bdd58615e8b4c909294fc3757'
+ 'third-party/pyrowave'=(git -C $root rev-parse 'HEAD:third-party/pyrowave')
 }
 foreach($dependency in $expected.Keys){
  $actual=git -C "$root/$dependency" rev-parse HEAD
  if($actual -ne $expected[$dependency]){throw "Dependency not aligned: $dependency $actual"}
 }
+$graniteExpected=git -C "$root/third-party/pyrowave" rev-parse 'HEAD:third_party/Granite'
+$graniteActual=git -C "$root/third-party/pyrowave/third_party/Granite" rev-parse HEAD
+if($graniteExpected -ne $graniteActual){throw 'Granite does not match the committed PyroWave gitlink'}
+
 # A normal Sunshine executable: no diagnostic transport macros, mocks, forced
 # headers or decoder dependencies. Only optional GUI/tray/enhancements disabled.
 # Boost's unused Windows Event Log RC has a MinGW path-with-spaces problem.

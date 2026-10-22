@@ -1,7 +1,7 @@
 """Negative-only RTSP peer; actual production client must reject before any carrier delivery.
 This does NOT substitute for the separate full Sunshine positive acceptance.
 """
-import argparse, json, os, socket, subprocess, threading, xml.etree.ElementTree as ET
+import argparse, json, os, socket, subprocess, threading
 from pathlib import Path
 SHA="79cd69e33adcd1bcffe95673564b6fc727a7aaed7370745d43ec269925a492f6"
 CARRIER="iec61937-192000-8-s16le"
@@ -15,7 +15,9 @@ def main():
     p=argparse.ArgumentParser();p.add_argument("--client",type=Path,required=True);p.add_argument("--output",type=Path,required=True)
     a=p.parse_args();a.output.mkdir(parents=True,exist_ok=False)
     command=json.loads(a.client.read_text(encoding="utf-8-sig"))
-    info=ET.parse(ROOT/"spatial-object-spike/mat-rtsp-live/run03/serverinfo.xml").getroot()
+    # A controlled peer must not depend on an untracked previous run's XML.
+    # These non-secret protocol version fields match the positive host profile.
+    host_version, gfe_version, codec_modes = "7.1.431.-1", "3.23.0.74", "262145"
     env=dict(os.environ);env["PATH"]="C:/msys64/ucrt64/bin;"+env.get("PATH","")
     cases=[("missing-capability",SDP.replace("a=x-ss-audio.mat-playback:1\r\n",""),ACK),
            ("wrong-version",SDP.replace("mat-playback:1","mat-playback:2"),ACK),
@@ -58,8 +60,8 @@ def main():
             except Exception as e:
                 if not stop.is_set():errors.append(repr(e))
         worker=threading.Thread(target=serve);worker.start()
-        args=[f"rtsp://127.0.0.1:{port}",info.findtext("appversion"),info.findtext("GfeVersion"),
-              info.findtext("ServerCodecModeSupport"),str(a.output/name),"00"*16,"00"*16,"plain","reject"]
+        args=[f"rtsp://127.0.0.1:{port}",host_version,gfe_version,
+              codec_modes,str(a.output/name),"00"*16,"00"*16,"plain","reject"]
         try:
             with (a.output/f"{name}.log").open("wb") as log:
                 process=subprocess.Popen(command+args,stdout=log,stderr=subprocess.STDOUT,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
