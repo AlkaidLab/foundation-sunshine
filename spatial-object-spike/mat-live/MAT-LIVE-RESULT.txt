@@ -1,0 +1,77 @@
+MAT 实时采集与串流：实现/构建通过，原生挂接通过，MAT 数据验收未通过
+2026-10-22，Asia/Hong_Kong
+
+当前实现
+--------
+正常偏好值 6 在会话前只选择实时 mat-live-v1 / codec 7 或 Opus / codec 0。
+有限回放 codec 5 和落盘 codec 4 保留为明确诊断，正常 AUTO 不选择它们。
+不支持 MAT 的手机沿用 Opus；本轮没有加入手机 MAT 解码或对象渲染。
+
+主机已接入独立原生输出采集助手、受限本地管道、逐启动票据的源租约、正式
+RTSP live 协商和音频 RTP/FEC 发送；客户端加入实时认证/重组并复用现有 HDMI
+直通输出及路由守卫。实时路径没有文件输入、固定样本循环、固定周期数或整流 SHA。
+源只监听已经在运行的 Windows 编码器输出，不会替主机生成/启用 Dolby MAT。
+
+新增 HKDF-SHA256 派生的 AES-128-GCM 协议，使用 64 位认证包序号。
+RTP16 回绕不重复 nonce。失包/篡改/源失活/持续背压等均终止，不补发旧样本；
+只对成功验证的 END 做硬件 drain。音频时间仍是 carrier clock，尚未标定游戏 PTS。
+
+软件验收
+--------
+- 主机/客户端两份 common-c：各 14/14 CTest 通过。
+- 每份长测试：78,000 个逻辑数据包；实际客户端 RTP 队列与 AudioStream 路径
+  覆盖 78,008 包及 RTP16 回绕。生成的测试字节不是真实 Dolby MAT。
+- 独立 Python cryptography HKDF/AES-GCM 整包 oracle 通过。
+- 最终实际客户端 RTSP 前端对受控服务端：21 个 live/Opus/严格诊断用例通过。
+- 既有播放器 12 组 JNI/播放生命周期、18 个输出能力判定及 15 个严格拒绝回归通过。
+  最初在四路完整编译、可用内存约 1.3 GB 时，定时假硬件测试拒收第 177 周期；
+  降为两路编译后，完整回归通过。未放宽队列/超时限制；原失败日志保留。
+- 正常 Sunshine 主机完整构建通过，最终增量检查为 no work to do。
+  可选 GUI/tray、驱动下载及 RTX HDR/DLSSNR 关闭，没有诊断传输宏。
+- 完整 Android nonRoot debug APK 双 ABI 构建、签名和实时接收符号检查通过。
+  包名与正常安装隔离，未安装。已有 LSFG/PyroWave 本地依赖状态未由本轮修改。
+
+本机原生探测（明确区分于软件测试）
+----------------------------------
+普通权限只读预检：Win32 5。
+用户随后分别授权一次管理员只读预检和一次最长 15 秒实采探测。
+目标：audiodg PID 26504，创建 FILETIME 134371423865849023。
+管理员只读预检：身份与受支持 audioeng 文件哈希匹配，退出码 0。
+
+实采助手 PID 7980：实际加载固定 tap、完成原生 Process 输出挂接。
+显式停止与退出流程总耗时 15.15192 秒；15 秒期限前发出停止信号，余下为清理。
+结果：cycles=0，failed=0，originalBytesRestored=true，publisherExited=true。
+没有观测到完整 MAT 周期，不能宣称已捕获 MAT 数据或完成真实 MAT 串流。
+目标 audiodg 在探测前后保持同一 PID/创建时间。
+
+只读端点审计显示默认输出为“扬声器 (Steam Streaming Speakers)”。活动列表
+包含 Steam Streaming Microphone、Steam Streaming Speakers、VB-Audio CABLE、
+UUYC Virtual Audio Device 和 Realtek Speakers，未显示 HDMI 音频端点。
+本轮未切换输出、未启动游戏/测试音、未修改驱动/服务设置、未把音频载荷落盘。
+版本化的助手/DLL 已部署到 ProgramData/SunshineMatLive/<tap-hash>。
+tap 按设计保持加载，hook 已解除；不自动重新挂接或重启音频引擎。
+一次实采授权已使用，不得从这份交接文档推导出下一次注入授权。
+
+产物与证据（本机私有 build 目录）
+--------------------------------
+主机：build/mat-live-host/sunshine.exe
+  SHA256 f1a4f1f44f13712e377497f9bd6b00834e5748dff6a22329559a72f5f06e1608
+客户端：C:/Users/mohaha/.codex-build/mat-live-client/app/outputs/apk/nonRoot/debug/app-nonRoot-debug.apk
+  SHA256 4d37bf446d45607fdddf2966ea225d77f0b64aa9e72177c05f07e54ef6ed6e48
+原生助手与 DLL：build/mat-live-native-final-v4/
+软件验证：build/mat-live-software-final-v2/proof.json
+既有回归：build/mat-live-regression-final-v2/proof.json（最终补充前的 19 用例版本）
+管理员只读：build/mat-live-admin-readonly/result.json
+本轮实采：build/mat-live-capture15-result.json、build/mat-live-capture15-v1/capture.log
+端点审计：build/mat-live-endpoint-readonly/endpoints-utf8.log
+冻结清单：build/mat-live-final-manifest.json
+
+代码提交：主机 bb1e28b7c；客户端 4d517f1e；两份 common-c 均为
+8a51e978a4e03c12145200df659d74fd8183b8f2。后续报告提交只更新文档。
+所有提交在本地 codex/atmos-mat-live，尚未推送。
+
+剩余验收
+--------
+需要主机上存在实际产生 MAT 的原生音频链路，再验证持续字节流和端到端串流。
+游戏/视频 PTS 对齐、支持 MAT 的 HDMI/eARC 客户端、真实 Atmos 识别均未验收。
+当前手机仍应协商 Opus，不应通过解码/对象还原实验绕过能力判定。

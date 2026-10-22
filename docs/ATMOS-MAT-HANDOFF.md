@@ -8,9 +8,17 @@ Opus 0，不会自动选择有限回放 codec 5。客户端继续沿用输出能
 AES-GCM 认证包计数和正式发送/接收路径。正常路径没有录音文件或固定周期数。
 实现约束、构建和验收边界见 `spatial-object-spike/mat-live/README.md`。
 
-软件测试和构建不能作为真实采集成功的证据。本机首次只读 preflight 被 Windows
-以 Win32 5 拒绝访问 audiodg，尚未进行提升权限、注入、端点切换或设备播放。
-原生实时采集、与游戏音视频同步、HDMI/eARC 真机与 Atmos 识别仍待验收。
+软件测试和构建不能作为真实 MAT 数据采集成功的证据。本机普通权限预检返回
+Win32 5；随后用户在本聊天分别明确授权管理员只读预检和一次最长 15 秒实采。
+管理员预检通过；tap 在指定 audiodg 中成功挂接，结束后原始字节恢复，采集器退出，
+audiodg 保持同一 PID/创建时间。实际观测为 0 个完整 MAT 周期，不能宣称采到了
+MAT 数据或完成真实 MAT 串流。只读端点检查显示默认输出为 Steam Streaming
+Speakers，活动列表为 Steam/虚拟线/UUYC/Realtek 扬声器，未显示 HDMI 输出。
+
+本轮授权已用完，不自动再次注入/重启引擎/切换端点。tap 模块按设计保持加载，
+hook 已解除；没有持久化音频载荷或修改端点/驱动/服务配置。完整证据边界见
+`spatial-object-spike/mat-live/MAT-LIVE-RESULT.txt`。原生 MAT 数据、游戏音视频同步、
+HDMI/eARC 真机与 Atmos 识别仍待在可产生 MAT 的输出链路上验收。
 
 以下为之前阶段的历史记录，不代表当前正常路径仍使用有限样本回放。
 
