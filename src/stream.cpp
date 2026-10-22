@@ -52,7 +52,7 @@ extern "C" {
 #include "logging.h"
 #include "mic_mixer.h"
 #include "network.h"
-#include "perf_recorder.h"
+#include "streaming/perf_recorder.h"
 #include "stream.h"
 #include "sync.h"
 #include "tray/system_tray.h"
@@ -681,6 +681,7 @@ namespace stream {
     } control;
 
     std::uint32_t launch_session_id;
+    std::shared_ptr<void> nvidia_vsync_lease;
 
     // 保存 launch_session 的关键字段，用于动态参数更新
     bool enable_sops { false };
@@ -863,7 +864,7 @@ namespace stream {
     ctx.mic_socket_enabled.store(false);
 
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
-    auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
+    auto protocol = net::bind_uses_ipv4(address_family) ? udp::v4() : udp::v6();
     auto mic_port = net::map_port(MIC_STREAM_PORT);
     boost::system::error_code ec;
 
@@ -3419,6 +3420,7 @@ namespace stream {
         }
       }
 
+      const auto encoded_bytes = payload.size();
       const bool is_pyrowave = session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT;
       if (is_pyrowave && payload.empty()) {
         BOOST_LOG(error) << "[PyroWaveTransport] discarding empty video frame " << packet->frame_index();
@@ -3483,6 +3485,7 @@ namespace stream {
       }
 
       unsigned fecPercentage = 0;
+      unsigned requested_fec = 0;
       // PyroWave carries its own block-aware parity packets and the client
       // bypasses the legacy RTP FEC queue for this format. Legacy parity
       // shards would not contain a valid NV_VIDEO_PACKET header and must not
@@ -3519,19 +3522,28 @@ namespace stream {
       const auto frame_data = (payload.size() + blocksize - 1) / blocksize;
       if (!is_pyrowave) {
         const auto now = steady_now_ms();
-        const auto requested = session->config.fec_control->percentage(frame_data, session->config.minRequiredFecPackets, now);
-        session->config.monitor.bitrate_budget->observe_fec(requested, now);
+        requested_fec = session->config.fec_control->percentage(frame_data, session->config.minRequiredFecPackets, now);
+        session->config.monitor.bitrate_budget->observe_fec(requested_fec, now);
         // Higher protection requires a successfully lowered encoder target.
         // Buffered frames retain the allowance from their own submission.
-        fecPercentage = std::min(requested, packet->fec_percentage);
+        fecPercentage = std::min(requested_fec, packet->fec_percentage);
       }
       const auto layout = video_fec::plan(frame_data, fecPercentage, session->config.minRequiredFecPackets);
       if (!layout) {
-        BOOST_LOG(error) << "Encoded frame exceeds the existing RS wire limits";
+        BOOST_LOG(error) << "Encoded frame exceeds the existing RS wire limits: session=" << session->launch_session_id
+                         << ", frame=" << packet->frame_index()
+                         << ", idr=" << packet->is_idr() << ", encoded_bytes=" << encoded_bytes
+                         << ", data_packets=" << frame_data << ", packet_size=" << session->config.packetsize;
         continue;
       }
       if (layout->skipped) {
-        BOOST_LOG(warning) << "Skipping FEC for frame whose requested protection cannot fit the existing RS blocks";
+        BOOST_LOG(warning) << "Skipping FEC for frame whose requested protection cannot fit the existing RS blocks: session=" << session->launch_session_id
+                           << ", frame=" << packet->frame_index()
+                           << ", idr=" << packet->is_idr() << ", encoded_bytes=" << encoded_bytes
+                           << ", data_packets=" << frame_data << ", packet_size=" << session->config.packetsize
+                           << ", requested_fec=" << requested_fec << "%, planned_fec=" << fecPercentage
+                           << "% (submitted allowance=" << packet->fec_percentage
+                           << "%), encoder_kbps=" << session->config.monitor.bitrate_budget->applied().encoder_kbps;
         fecPercentage = 0;
       }
       const auto fec_blocks_needed = layout->count;
@@ -3879,7 +3891,7 @@ namespace stream {
   int
   start_broadcast(broadcast_ctx_t &ctx) {
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
-    auto protocol = address_family == net::IPV4 ? udp::v4() : udp::v6();
+    auto protocol = net::bind_uses_ipv4(address_family) ? udp::v4() : udp::v6();
     auto control_port = net::map_port(CONTROL_PORT);
     auto video_port = net::map_port(VIDEO_STREAM_PORT);
     auto audio_port = net::map_port(AUDIO_STREAM_PORT);
@@ -4197,6 +4209,11 @@ namespace stream {
       session.shutdown_event->raise(true);
     }
 
+    bool
+    belongs_to_client(const session_t &session, const std::string &uuid) {
+      return !uuid.empty() && session.client_cert_uuid == uuid;
+    }
+
     void
     join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
@@ -4288,6 +4305,7 @@ namespace stream {
         }
       }
 
+      session.nvidia_vsync_lease.reset();
       perf::end_session(session.launch_session_id);
 
       // Clean up ABR state for this client
@@ -4484,6 +4502,7 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->nvidia_vsync_lease = launch_session.nvidia_vsync_lease;
       session->created_at_ms = steady_now_ms();
 
       // 设置客户端名称

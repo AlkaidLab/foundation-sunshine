@@ -1,8 +1,5 @@
-cmake_minimum_required(VERSION 3.20)
-# `CMAKE_CUDA_ARCHITECTURES` requires 3.18
-# `set_source_files_properties` requires 3.18
-# `cmake_path(CONVERT ... TO_NATIVE_PATH_LIST ...)` requires 3.20
-# todo - set this conditionally
+cmake_minimum_required(VERSION 3.25)
+# Presets format 6 and the dependency discovery options require CMake 3.25.
 
 # Keep the private download credential out of compiler probes and build children.
 # This is a normal, non-cache variable, consumed only by the SDK downloader.
@@ -44,6 +41,7 @@ include(${CMAKE_MODULE_PATH}/prep/build_version.cmake)
 
 # cmake build flags
 include(${CMAKE_MODULE_PATH}/prep/options.cmake)
+include(${CMAKE_MODULE_PATH}/targets/project_options.cmake)
 
 # initial prep
 include(${CMAKE_MODULE_PATH}/prep/init.cmake)
@@ -65,10 +63,15 @@ include(${CMAKE_MODULE_PATH}/macros/common.cmake)
 # load dependencies
 include(${CMAKE_MODULE_PATH}/dependencies/common.cmake)
 
+# Explicit inventories are shared by the host and its test variant.
+include(${CMAKE_MODULE_PATH}/sources/host.cmake)
+
 # setup compile definitions
 include(${CMAKE_MODULE_PATH}/compile_definitions/common.cmake)
 
 # target definitions
+include(${CMAKE_MODULE_PATH}/targets/beast_http.cmake)
+include(${CMAKE_MODULE_PATH}/targets/core.cmake)
 include(${CMAKE_MODULE_PATH}/targets/common.cmake)
 
 # packaging

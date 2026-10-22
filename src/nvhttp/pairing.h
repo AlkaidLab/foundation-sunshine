@@ -9,10 +9,10 @@
 
 namespace nvhttp::pairing {
 
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
-  using resp_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Response>;
-  using req_http_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTP>::Request>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Request>;
+  using resp_http_t = std::shared_ptr<typename web::ServerBase<web::HTTP>::Response>;
+  using req_http_t = std::shared_ptr<typename web::ServerBase<web::HTTP>::Request>;
 
   void
   set_credentials(const std::string &pkey, const std::string &cert);

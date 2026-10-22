@@ -1,11 +1,10 @@
 #include "apps.h"
 
-#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
@@ -23,7 +22,7 @@ namespace nvhttp::apps {
 
   namespace {
 
-    using args_t = SimpleWeb::CaseInsensitiveMultimap;
+    using args_t = web::CaseInsensitiveMultimap;
     namespace pt = boost::property_tree;
 
     void
@@ -98,19 +97,15 @@ namespace nvhttp::apps {
       auto args = request->parse_query_string();
       auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
 
-      std::ifstream in(file_handler::path_from_utf8(app_image), std::ios::binary);
-      if (!in.is_open()) {
-        response->write(SimpleWeb::StatusCode::client_error_not_found, "App asset not found");
-        return;
-      }
-
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "image/png");
-      response->write(SimpleWeb::StatusCode::success_ok, in, headers);
+      if (!response->write_file(web::StatusCode::ok, file_handler::path_from_utf8(app_image), headers)) {
+        response->write(web::StatusCode::not_found, "App asset not found");
+      }
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "AppAsset error: "s << e.what();
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, "Missing or invalid parameters");
+      response->write(web::StatusCode::bad_request, "Missing or invalid parameters");
     }
   }
 

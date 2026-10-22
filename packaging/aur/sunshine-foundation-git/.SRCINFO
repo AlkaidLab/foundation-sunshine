@@ -45,9 +45,8 @@ pkgbase = sunshine-foundation-git
 	conflicts = sunshine-bin
 	options = !strip
 	source = foundation-sunshine::git+https://github.com/QiE2035/foundation-sunshine.git#branch=linux-migration
-	source = sunshine-control-panel::git+https://github.com/qiin2333/sunshine-control-panel.git#commit=beb6a3e61fe52e97c2fa60cec3df6d77ef0ae278
+	source = sunshine-control-panel::git+https://github.com/qiin2333/sunshine-control-panel.git#commit=0c5d2667fde2c10601a237783e3afb819cfd0597
 	source = AMF::git+https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git#commit=eadd00804d5f7e5cd8c85d540073198312870776
-	source = Simple-Web-Server::git+https://gitlab.com/eidheim/Simple-Web-Server.git#commit=546895a93a29062bb178367b46c7afb72da9881e
 	source = TPCircularBuffer::git+https://github.com/michaeltyson/TPCircularBuffer.git#commit=cc520397504bb72bc6df79ff03eb72988a6dc50d
 	source = ViGEmClient::git+https://github.com/LizardByte/Virtual-Gamepad-Emulation-Client.git#commit=8d71f6740ffff4671cdadbca255ce528e3cd3fef
 	source = foundation-build-deps::git+https://github.com/AlkaidLab/foundation-build-deps.git#commit=8e569811b6c0d1e5273e441c9572a7d0ab079833

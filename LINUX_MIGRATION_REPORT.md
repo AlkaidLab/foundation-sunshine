@@ -1,7 +1,7 @@
 # Foundation Sunshine Linux（Arch Linux）迁移报告
 
-- **基线**：`linux-migration` 分支，tag `v0.9.3-linux-upstream-sync`（pkgrel 65，2026-10-12，
-  HEAD `449021c7`；已并入上游 `origin/master` `ed415026`）
+- **基线**：`linux-migration` 分支（pkgrel 66，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+  上一个同步点 `ed415026`，tag `v0.9.3-linux-upstream-sync` 指向 `0e2a6a11`）
 - **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支）
 - **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland 与 niri 双目标，PipeWire，
   NVIDIA RTX 3050 Mobile / Ampere sm_86）
@@ -19,6 +19,11 @@ ABR 前台检测、托盘）已逐项移植到 Linux 并补齐了 Windows 对齐
 
 已移植项的清单与证据见 §六；剩余缺口（含 7 项部分实现、可行未做项、本质不可移植项）
 在 `LINUX_PORT_GAPS.md` 逐条编号维护。
+
+**上游同步状态**：2026-10-22 已并入 `origin/master` `7a0995e2`（33 个提交，403 文件）。
+其中两大跨平台重构（Simple-Web-Server → 自带 Beast HTTP 栈、confighttp 拆成 24 个模块）在 Linux
+上零改动直接生效；本次同步新引入的缺口只有"管线帧率的源更新段无 Linux 后端"（`LINUX_PORT_GAPS.md`
+§7.1），其余为上游测试的环境依赖。
 
 **已知总边界**：CI 目前只有 Windows 构建 job（`.github/workflows/main.yml` 的
 `setup_release` / `vdd_smoke` / `build_win`），Linux 编译与测试依赖本机手工验证。
@@ -359,16 +364,22 @@ NV12-only；VAAPI 444 未开（见 `LINUX_PORT_GAPS.md` §2.11）。
 
 ## 九、测试基线
 
-2026-10-13，HEAD `449021c7`，CUDA=ON 构建树：
+2026-10-22（并入上游 `7a0995e2` 之后），CUDA=ON 构建树：
 
 ```
-ctest: 15 个套件，14 通过，1 失败（test_sunshine）
-test_sunshine: 640 用例 / 95 套件，628 通过，12 跳过，0 断言失败
+ctest: 24 个套件，23 通过，1 失败（test_sunshine）
+test_sunshine: 694 用例，692 通过，12 跳过，2 失败
 ```
 
-唯一失败是三个需要真实音频/输入/编码器环境的套件的 `SetUpTestSuite`
-（`Configurations/AudioTest`、`MouseInputs/MouseHIDTest`、`EncoderVariants/EncoderTest`），
-在无头环境下预期失败。
+两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：
+
+- `DownloadFileTests/DownloadFileTest.Run/1` 访问 `https://httpbin.org/...`——离线必失败。
+- `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 期望未知 appid 返回
+  404，但 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`，本机装过包所以该
+  文件存在 → 返回 200。用 `unshare -rm` 把空目录 bind-mount 到 `/usr/share/sunshine` 后该用例通过。
+
+三个 `SetUpTestSuite` 失败（`Configurations/AudioTest`、`MouseInputs/MouseHIDTest`、
+`EncoderVariants/EncoderTest`）仍是无头环境预期行为。
 
 **注意事项**：
 - 直跑 `ctest` 需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），否则聚合套件

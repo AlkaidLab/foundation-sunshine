@@ -1846,6 +1846,22 @@ namespace platf {
 
     raw->penInfo.type = PT_PEN;
 
+    // A stopped session may retain its input context. Retire its virtual pen
+    // immediately so its last twist cannot keep being replayed after reconnect.
+    if (pen.eventType == LI_TOUCH_EVENT_CANCEL_ALL) {
+      auto &pointer = raw->penInfo.penInfo.pointerInfo;
+      if (pointer.pointerFlags != POINTER_FLAG_NONE) {
+        populate_common_pointer_info(pointer, {}, LI_TOUCH_EVENT_CANCEL_ALL, 0.0f, 0.0f);
+        if (!inject_synthetic_pointer_input(raw->global, raw->pen, &raw->penInfo, 1)) {
+          BOOST_LOG(warning) << "Failed to cancel virtual pen input: " << GetLastError();
+        }
+      }
+      raw->global->fnDestroySyntheticPointerDevice(raw->pen);
+      raw->pen = nullptr;
+      raw->penInfo = {};
+      return;
+    }
+
     auto &penInfo = raw->penInfo.penInfo;
     penInfo.pointerInfo.pointerType = PT_PEN;
     penInfo.pointerInfo.pointerId = 0;
@@ -1888,9 +1904,9 @@ namespace platf {
       penInfo.pressure = 0;
     }
 
-    if (pen.rotation != LI_ROT_UNKNOWN) {
+    if (pen.barrelRoll != LI_ROT_UNKNOWN) {
       penInfo.penMask |= PEN_MASK_ROTATION;
-      penInfo.rotation = pen.rotation;
+      penInfo.rotation = pen.barrelRoll % 360;
     }
     else {
       penInfo.rotation = 0;

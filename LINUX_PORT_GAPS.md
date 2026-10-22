@@ -1,7 +1,7 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支，tag `v0.9.3-linux-upstream-sync`（pkgrel 65，2026-10-12，
-  HEAD `449021c7`；已并入上游 `origin/master` `ed415026`）
+- **基线**：`linux-migration` 分支（pkgrel 66，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+  上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
 - **约定**：🔶 部分实现（有偏差）｜○ 未实现但可行｜⛔ 本质不可移植
@@ -17,7 +17,8 @@
 （KDE + niri）、托盘/向导/打包。
 
 剩余：**7 项部分实现**（§一）、**11 项可行未做**（§二）、**9 项本质不可移植**（§三）。
-另有**有意保留的差异**（§四，决策记录）与**上游新特性的 Linux 缺口**（§五）。
+另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
+**2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
 ---
 
@@ -300,3 +301,71 @@
    block 的首选 DTD 退回一个可行模式、由会话显式切到该模式；成败取决于内核 DRM 与 KWin 是否把
    DisplayID timing 纳入模式表，需实机验证。
 6. **合成器未重探测 EDID 改写的可能**（低）：若实机出现"模式可行但始终未生效"，即为此因。
+
+---
+
+## 七、2026-10-22 上游同步新引入的缺口
+
+同步点：`ed415026` → `7a0995e2`（33 个提交，403 文件，+29538/−12656）。本节只记录**本次同步带来
+的新缺口**；连同 §一/§二 一起才构成完整待办。
+
+### 7.1 🔶 管线帧率的"源更新"段在 Linux 恒为空（新）
+
+- **现状**：上游把 `perf_recorder` 迁到 `src/streaming/perf_recorder.{cpp,h}`，新增
+  `src/streaming/frame_rate_tracker.h`（`capture_source_kind_e { unavailable, dxgi_updates,
+  wgc_arrivals, vdd_published }` 与 `capture_source_counter_t`）。平台钩子是
+  `platf::display_t::frame_rate_source()`（`src/platform/common.h:685`，默认返回空指针）。
+  只有 Windows 三个后端 override 它：`src/platform/windows/display.h`、
+  `display_vdd.cpp:1453`、`display_wgc.cpp:447`。Linux 的 `src/platform/linux/kmsgrab.cpp:632`、
+  `cuda.cpp:735`、`wlgrab.cpp:28` 都没有 override。
+- **后果**：`GET /api/perf/current` 的三段（捕获交付 / 编码提交 / 编码输出）在 Linux 正常，只有
+  "源更新帧率" 恒为 `unavailable`；`POST /api/perf/frame-rates`（`src/confighttp/runtime.cpp:463`）
+  的按需订阅因此没有可订阅的源。
+- **技术路径**：wlr 后端用 `wp_presentation` feedback 或 output commit 序号喂
+  `observe_sequence()`；KMS 后端用 `drmModePageFlip` 回传的 `sequence`（或 vblank 计数）喂
+  `record()`。两者都归到 `capture_source_kind_e::vdd_published`——语义是"产出源的发布节奏"，
+  与 VDD 的 DRM 帧序号同义。约 0.5–1 天/后端，且需要真实串流验证计数值与 Moonlight 感知的
+  FPS 一致（否则诊断口径反而误导）。
+- **验收**：`/api/perf/current` 的源段非 `unavailable`，且 `docs/rtss-pipeline-fps.md` 的口径在
+  Linux 上可复现。
+
+### 7.2 ○ 依赖外网的单元测试（新）
+
+- `DownloadFileTests/DownloadFileTest.Run/1` 访问
+  `https://httpbin.org/redirect-to?url=/base64/aGVsbG8h`。离线机器必失败，与本仓代码无关。
+- **处置**：联网环境跑，或在 CI 里跳过该参数组；不要为此改产品代码。
+
+### 7.3 ○ 依赖系统已安装资产的单元测试（新）
+
+- `tests/unit/test_crypto.cpp` 的
+  `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 断言"未知 appid →
+  404"。但 `DEFAULT_APP_IMAGE_PATH` 是 `SUNSHINE_ASSETS_DIR "/box.png"`（`src/process.cpp:52`），
+  编译期就定成本机安装前缀的绝对路径 `/usr/share/sunshine/box.png`；本机装过包，该文件存在 →
+  实际返回 200 并把 box.png 流出。
+- **已验证是环境假设、不是移植回归**：在用户命名空间里 `unshare -rm` 把空目录 bind-mount 到
+  `/usr/share/sunshine` 后，该用例通过。
+- **要常绿**：测试里把 `SUNSHINE_ASSETS_DIR` 指到临时目录，或把该用例标注成"需要无系统资产环境"。
+
+### 7.4 已随本次同步自动继承（无需后续动作，记录以免误判为缺口）
+
+- **HTTP 传输替换**：Simple-Web-Server → 自带 Beast 实现（`src/http/{types,server,client,
+  tls_trust}.{h,cpp}`，`cmake/targets/beast_http.cmake` 建 `sunshine_http` 静态库）。本仓 24 个
+  include 点、AUR PKGBUILD 的 `source=`/`prepare()`、`third-party/Simple-Web-Server` 子模块与
+  工作区残留目录已全部清掉。`web::StatusCode` 的枚举名与旧 SimpleWeb 不同（`not_found` 等），
+  本仓 Linux-only 文件已随合并改到位。
+- **confighttp 拆分**：`src/confighttp.cpp` 4270 行 → 171 行，逻辑进 `src/confighttp/` 24 个文件；
+  `saveVddSettings` 上移为 `display_device::vdd_settings::save()`（`src/display_device/vdd_settings.cpp`，
+  已在 `cmake/sources/host.cmake:32`，Linux 也编）。
+- **去门控重新打回**：`/api/vdd/status`（`src/confighttp/diagnostics.cpp:420-422`）与
+  `/api/runtime/hdr` 的 `available`（`src/confighttp/runtime.cpp:121`）上游仍是 `#ifdef _WIN32`，
+  本仓保留跨平台版本（冲突已手工解决）。
+- **text_context 门控**：`notify_gui_alive` 扩到 6 参数（input_pane/uia/agent_present/observer_active/
+  generation/agent_id）。Linux 无 GUI agent 上报，`gui_alive()` 恒 false，行为不变。
+- **笔 barrel roll**：共享层（`src/pen_barrel_roll.h`、`pen_input_t::barrelRoll`）到位；inputtino 的
+  `place_tool()` 没有 barrel roll 参数，Linux 平台端无处落地，`src/rtsp.cpp` 的
+  `x-ss-general.penBarrelRoll` 广告也仍被 `#ifdef _WIN32` 挡住——客户端不会协商到，行为正确。
+- **AMF 两个提交**（AMF 积压输出、AMD HEVC GOP）：`src/amf/*` 只在
+  `cmake/compile_definitions/windows.cmake:118-137` 编译；新增的 `amd_hevc_gop_size` 配置键走共享层。
+- **仓库根整理**：`assets/brand/`、`assets/installer/`、`scripts/vite/`、`docs/{readme,en,zh-CN}/`
+  已就位；`cmake/packaging/linux.cmake` 自动指向 `assets/brand/sunshine.svg`，本仓额外安装的
+  `logo-sunshine-*.png` 规则保留。

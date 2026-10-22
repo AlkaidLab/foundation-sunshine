@@ -42,6 +42,7 @@
 
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import ThemeToggle from '../common/ThemeToggle.vue'
 import AccountMenu from '../common/AccountMenu.vue'
 import { useBackground } from '../../composables/useBackground.js'
@@ -49,13 +50,15 @@ import { useBackground } from '../../composables/useBackground.js'
 // 导航项配置
 const navItems = Object.freeze([
   { path: '/', icon: 'fa-home', label: 'navbar.home' },
-  { path: '/pin', icon: 'fa-qrcode', label: 'navbar.pin' },
+  { path: '/downloads', icon: 'fa-download', label: 'resource_card.client_downloads' },
+  { path: '/pin', icon: 'fa-qrcode', label: 'connections.title' },
   { path: '/apps', icon: 'fa-stream', label: 'navbar.applications' },
   { path: '/config', icon: 'fa-cog', label: 'navbar.configuration' },
 ])
 
 // 使用背景管理 composable
-const { loadBackground, addDragListeners } = useBackground()
+const { t } = useI18n()
+const { loadBackground, addDragListeners } = useBackground({ translate: t })
 const isEmbeddedGui = window.isTauri === true && window.parent !== window
 
 if (isEmbeddedGui) {

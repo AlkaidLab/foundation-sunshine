@@ -109,8 +109,8 @@ namespace ds5_config::api {
       return revision == (std::numeric_limits<std::uint64_t>::max)() ? 1 : revision + 1;
     }
 
-    SimpleWeb::CaseInsensitiveMultimap json_headers(std::string_view entity_tag = {}) {
-      SimpleWeb::CaseInsensitiveMultimap headers {
+    web::CaseInsensitiveMultimap json_headers(std::string_view entity_tag = {}) {
+      web::CaseInsensitiveMultimap headers {
         {"Content-Type", "application/json"},
         {"Cache-Control", "no-store"},
         {"X-Content-Type-Options", "nosniff"},
@@ -123,7 +123,7 @@ namespace ds5_config::api {
 
     void write_json(
       resp_https_t response,
-      SimpleWeb::StatusCode status,
+      web::StatusCode status,
       const json &body,
       std::string_view entity_tag = {}
     ) {
@@ -138,7 +138,7 @@ namespace ds5_config::api {
 
     void write_error(
       resp_https_t response,
-      SimpleWeb::StatusCode status,
+      web::StatusCode status,
       const char *message,
       const char *error_code = nullptr
     ) {
@@ -212,7 +212,7 @@ namespace ds5_config::api {
       if (state.disk_status == load_status_t::INVALID) {
         write_error(
           std::move(response),
-          SimpleWeb::StatusCode::server_error_internal_server_error,
+          web::StatusCode::internal_server_error,
           "Failed to read DualSense configuration",
           "ds5_config_invalid"
         );
@@ -220,7 +220,7 @@ namespace ds5_config::api {
       }
       write_json(
         std::move(response),
-        SimpleWeb::StatusCode::success_ok,
+        web::StatusCode::ok,
         settings_json(state.settings, state.persisted),
         state.entity_tag
       );
@@ -234,7 +234,7 @@ namespace ds5_config::api {
       if (request->content.size() > MAX_REQUEST_SIZE) {
         write_error(
           std::move(response),
-          SimpleWeb::StatusCode::client_error_payload_too_large,
+          web::StatusCode::payload_too_large,
           "Request body is too large"
         );
         return;
@@ -245,7 +245,7 @@ namespace ds5_config::api {
       if (input.is_discarded() || !parse_settings(input, requested)) {
         write_error(
           std::move(response),
-          SimpleWeb::StatusCode::client_error_bad_request,
+          web::StatusCode::bad_request,
           "Invalid DualSense configuration"
         );
         return;
@@ -264,7 +264,7 @@ namespace ds5_config::api {
                           << ", genshin_compatibility=" << result.state.settings.genshin_compatibility << ')';
           write_json(
             std::move(response),
-            SimpleWeb::StatusCode::success_ok,
+            web::StatusCode::ok,
             settings_json(result.state.settings, true, true),
             result.state.entity_tag
           );
@@ -275,7 +275,7 @@ namespace ds5_config::api {
                            << "; no file write was needed";
           write_json(
             std::move(response),
-            SimpleWeb::StatusCode::success_ok,
+            web::StatusCode::ok,
             settings_json(result.state.settings, result.state.persisted, false),
             result.state.entity_tag
           );
@@ -283,7 +283,7 @@ namespace ds5_config::api {
         case update_status_t::PRECONDITION_REQUIRED:
           write_json(
             std::move(response),
-            SimpleWeb::StatusCode::client_error_precondition_required,
+            web::StatusCode::precondition_required,
             precondition_error_json(
               "Query DualSense configuration before saving",
               "ds5_precondition_required",
@@ -294,7 +294,7 @@ namespace ds5_config::api {
         case update_status_t::PRECONDITION_FAILED:
           write_json(
             std::move(response),
-            SimpleWeb::StatusCode::client_error_precondition_failed,
+            web::StatusCode::precondition_failed,
             precondition_error_json(
               "DualSense configuration changed; query it again before saving",
               "ds5_precondition_failed",
@@ -305,7 +305,7 @@ namespace ds5_config::api {
         case update_status_t::INVALID_PRECONDITION:
           write_json(
             std::move(response),
-            SimpleWeb::StatusCode::client_error_bad_request,
+            web::StatusCode::bad_request,
             precondition_error_json(
               "Invalid If-Match header",
               "ds5_if_match_invalid",
@@ -316,7 +316,7 @@ namespace ds5_config::api {
         case update_status_t::INVALID_SETTINGS:
           write_error(
             std::move(response),
-            SimpleWeb::StatusCode::client_error_bad_request,
+            web::StatusCode::bad_request,
             "Invalid DualSense configuration"
           );
           return;
@@ -324,7 +324,7 @@ namespace ds5_config::api {
           BOOST_LOG(error) << "DualSense configuration file could not be read; save was rejected";
           write_error(
             std::move(response),
-            SimpleWeb::StatusCode::server_error_internal_server_error,
+            web::StatusCode::internal_server_error,
             "Failed to read DualSense configuration",
             "ds5_config_invalid"
           );
@@ -333,7 +333,7 @@ namespace ds5_config::api {
           BOOST_LOG(error) << "DualSense configuration could not be written to disk";
           write_error(
             std::move(response),
-            SimpleWeb::StatusCode::server_error_internal_server_error,
+            web::StatusCode::internal_server_error,
             "Failed to write DualSense configuration"
           );
           return;
@@ -341,7 +341,7 @@ namespace ds5_config::api {
           BOOST_LOG(error) << "DualSense configuration could not be published to the runtime";
           write_error(
             std::move(response),
-            SimpleWeb::StatusCode::server_error_internal_server_error,
+            web::StatusCode::internal_server_error,
             "Failed to apply DualSense configuration"
           );
           return;
@@ -353,7 +353,7 @@ namespace ds5_config::api {
       try {
         write_error(
           std::move(response),
-          SimpleWeb::StatusCode::server_error_internal_server_error,
+          web::StatusCode::internal_server_error,
           "DualSense request failed"
         );
       }

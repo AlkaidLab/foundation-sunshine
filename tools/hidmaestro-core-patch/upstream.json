@@ -1,0 +1,7 @@
+{
+  "version": "v1.12.0",
+  "commit": "b4d29d9f4b1b91ced6b4755f095184b66339b8be",
+  "source_sha256": "b4806275cb129afa72c16f02c1eb27bd7b283f2915d43f94fe323fe18e840191",
+  "release_sha256": "cf03347a0bc88bfb198a606c0ff8375bc4a9420fa80c07ef336186986d79b244",
+  "patch": "device-ownership-1"
+}

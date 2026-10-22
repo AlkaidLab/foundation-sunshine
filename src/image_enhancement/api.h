@@ -3,12 +3,12 @@
  * @brief HDR management handlers behind confighttp authentication.
  */
 #pragma once
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 #include <memory>
 
 namespace image_enhancement::api {
-  using response_t = std::shared_ptr<SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
-  using request_t = std::shared_ptr<SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
+  using response_t = std::shared_ptr<web::ServerBase<web::HTTPS>::Response>;
+  using request_t = std::shared_ptr<web::ServerBase<web::HTTPS>::Request>;
 
   void
   get_config(response_t response) noexcept;

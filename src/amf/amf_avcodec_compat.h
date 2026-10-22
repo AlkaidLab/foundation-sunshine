@@ -43,6 +43,12 @@ namespace amf {
     int
     in_flight() const;
 
+    bool
+    has_pending_output() const;
+
+    AMF_RESULT
+    receive_output(::amf::AMFComponent *encoder, ::amf::AMFDataPtr &output_data);
+
     amf_avcodec_scheduler_result
     submit_and_query(::amf::AMFComponent *encoder, const ::amf::AMFSurfacePtr &surface);
 

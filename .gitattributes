@@ -11,3 +11,6 @@ src_assets/common/assets/web/public/assets/locale/*.json text eol=lf
 # ensure Windows batch scripts are checked out with CRLF line endings
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Core patch context must match the LF source archive on Windows too.
+tools/hidmaestro-core-patch/*.patch text eol=lf whitespace=-blank-at-eol

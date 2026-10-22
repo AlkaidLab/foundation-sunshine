@@ -8,6 +8,8 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace text_context {
@@ -38,6 +40,8 @@ namespace text_context {
   };
 
   struct observation_t {
+    std::string agent_id;
+    std::uint64_t generation {0};
     source_e source {source_e::input_pane};
     bool active {false};
     bool editable {false};
@@ -77,7 +81,12 @@ namespace text_context {
     bool observe(const observation_t &observation);
     void drain_outbound(std::deque<outbound_msg_t> &out);
 
-    void notify_gui_alive(bool input_pane, bool uia);
+    /// Records the GUI agent heartbeat. `agent_present` is separate from the
+    /// observer capabilities so an idle GUI can still participate in the
+    /// first RTSP capability negotiation without running UIA.
+    void notify_gui_alive(bool input_pane, bool uia, bool agent_present,
+                          bool observer_active, std::uint64_t generation,
+                          std::string_view agent_id);
     bool gui_alive() const;
     bool input_pane_available() const;
     bool uia_available() const;

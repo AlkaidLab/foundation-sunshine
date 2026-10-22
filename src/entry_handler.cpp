@@ -75,10 +75,7 @@ namespace args {
 #ifdef _WIN32
   int
   restore_nvprefs_undo() {
-    if (nvprefs_instance.load()) {
-      nvprefs_instance.restore_from_and_delete_undo_file_if_exists();
-      nvprefs_instance.unload();
-    }
+    nvprefs_instance.restore();
     return 0;
   }
 #endif

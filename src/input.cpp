@@ -23,6 +23,7 @@ extern "C" {
 #include "input.h"
 #include "text_context/bridge.h"
 #include "input_activity.h"
+#include "pen_barrel_roll.h"
 #include "logging.h"
 #include "platform/common.h"
 #include "display_device/session.h"
@@ -143,6 +144,7 @@ namespace input {
     gamepad_t():
         gamepad_state {}, back_timeout_id {}, id { -1 }, back_button_state { button_state_e::NONE } {}
     ~gamepad_t() {
+      reset_state();
       ds5 = false;
       if (id >= 0) {
         task_pool.push([id = this->id]() {
@@ -156,6 +158,10 @@ namespace input {
     platf::gamepad_state_t gamepad_state;
 
     thread_pool_util::ThreadPool::task_id_t back_timeout_id;
+    thread_pool_util::ThreadPool::task_id_t home_release_timeout_id {};
+    std::uint64_t generation {};
+    std::uint64_t home_press_generation {};
+    bool client_home_pressed = false;
 
     int id;
 
@@ -165,6 +171,18 @@ namespace input {
     // Sunshine forces the button to be in a specific state until the gamepad state matches that of
     // Moonlight once more.
     button_state_e back_button_state;
+
+    void
+    reset_state() {
+      ++generation;
+      task_pool.cancel(back_timeout_id);
+      task_pool.cancel(home_release_timeout_id);
+      back_timeout_id = nullptr;
+      home_release_timeout_id = nullptr;
+      gamepad_state = {};
+      client_home_pressed = false;
+      back_button_state = button_state_e::NONE;
+    }
   };
 
   struct modifier_state_t {
@@ -217,6 +235,9 @@ namespace input {
 
     std::vector<gamepad_t> gamepads;
     activity::tracker_t activity_tracker;
+    pen_wire::roll_probe_t pen_roll_probe;
+    bool input_stopped = false;
+    std::chrono::steady_clock::time_point next_invalid_pen_warning {};
     std::unique_ptr<platf::client_input_t> client_context;
 
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_event;
@@ -614,6 +635,10 @@ namespace input {
         break;
       case SS_PEN_MAGIC:
         print((PSS_PEN_PACKET) payload);
+        break;
+      case pen_wire::magic:
+        print(&reinterpret_cast<pen_wire::packet_t *>(payload)->pen);
+        BOOST_LOG(debug) << "barrelRoll: " << pen_wire::decode_roll(reinterpret_cast<pen_wire::packet_t *>(payload)->barrelRoll);
         break;
       case SS_CONTROLLER_ARRIVAL_MAGIC:
         print((PSS_CONTROLLER_ARRIVAL_PACKET) payload);
@@ -1161,6 +1186,7 @@ namespace input {
     }
 
     // Allocate a new gamepad
+    input->gamepads[packet->controllerNumber].reset_state();
     if (platf::alloc_gamepad(
           platf_input, { id, packet->controllerNumber }, arrival, input->feedback_queue, input->client_gamepad)) {
       free_id(gamepadMask, id);
@@ -1352,7 +1378,7 @@ namespace input {
    * @param packet The pen packet.
    */
   void
-  passthrough(std::shared_ptr<input_t> &input, PSS_PEN_PACKET packet) {
+  passthrough(std::shared_ptr<input_t> &input, PSS_PEN_PACKET packet, std::uint16_t barrel_roll = pen_wire::unknown) {
     if (!config::input.mouse) {
       return;
     }
@@ -1400,6 +1426,7 @@ namespace input {
       from_clamped_netfloat(packet->pressureOrDistance, 0.0f, 1.0f),
       contact_area.first,
       contact_area.second,
+      barrel_roll == pen_wire::unknown ? rotation : barrel_roll,
     };
 
 #ifdef SUNSHINE_TESTS
@@ -1530,6 +1557,7 @@ namespace input {
         return;
       }
 
+      gamepad.reset_state();
       if (platf::alloc_gamepad(
             platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
@@ -1541,6 +1569,7 @@ namespace input {
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
+      gamepad.reset_state();
       free_gamepad(platf_input, gamepad.id);
       gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
@@ -1567,6 +1596,7 @@ namespace input {
     };
 
     auto bf_new = gamepad_state.buttonFlags;
+    gamepad.client_home_pressed = (bf_new & platf::HOME) != 0;
     switch (gamepad.back_button_state) {
       case button_state_e::UP:
         if (!(platf::BACK & bf_new)) {
@@ -1584,6 +1614,7 @@ namespace input {
         break;
     }
 
+    if (gamepad.home_release_timeout_id) gamepad_state.buttonFlags |= platf::HOME;
     bf = gamepad_state.buttonFlags ^ gamepad.gamepad_state.buttonFlags;
     bf_new = gamepad_state.buttonFlags;
 
@@ -1591,8 +1622,12 @@ namespace input {
       if (platf::BACK & bf_new) {
         // Don't emulate home button if timeout < 0
         if (config::input.back_button_timeout >= 0ms) {
-          auto f = [input, controller = packet->controllerNumber]() {
+          auto f = [input, controller = packet->controllerNumber, generation = gamepad.generation]() {
             auto &gamepad = input->gamepads[controller];
+            if (gamepad.id < 0 || gamepad.generation != generation) return;
+            gamepad.back_timeout_id = nullptr;
+            task_pool.cancel(gamepad.home_release_timeout_id);
+            const auto home_press_generation = ++gamepad.home_press_generation;
 
             auto &state = gamepad.gamepad_state;
 
@@ -1605,14 +1640,16 @@ namespace input {
             state.buttonFlags |= platf::HOME;
             platf::gamepad_update(platf_input, gamepad.id, state);
 
-            // Sleep for a short time to allow the input to be detected
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-            // Release Home button
-            state.buttonFlags &= ~platf::HOME;
-            platf::gamepad_update(platf_input, gamepad.id, state);
-
-            gamepad.back_timeout_id = nullptr;
+            // Keep the input worker responsive to removal during the Home press.
+            // A delayed release from the old device must never modify a reused slot.
+            auto release_home = [input, controller, generation, home_press_generation]() {
+              auto &gamepad = input->gamepads[controller];
+              if (gamepad.id < 0 || gamepad.generation != generation || gamepad.home_press_generation != home_press_generation) return;
+              gamepad.home_release_timeout_id = nullptr;
+              if (!gamepad.client_home_pressed) gamepad.gamepad_state.buttonFlags &= ~platf::HOME;
+              platf::gamepad_update(platf_input, gamepad.id, gamepad.gamepad_state);
+            };
+            gamepad.home_release_timeout_id = task_pool.pushDelayed(std::move(release_home), std::chrono::milliseconds(100)).task_id;
           };
 
           gamepad.back_timeout_id = task_pool.pushDelayed(std::move(f), config::input.back_button_timeout).task_id;
@@ -2006,6 +2043,16 @@ namespace input {
         return batch((PSS_TOUCHPAD_FRAME_PACKET) dest, (PSS_TOUCHPAD_FRAME_PACKET) src);
       case SS_PEN_MAGIC:
         return batch((PSS_PEN_PACKET) dest, (PSS_PEN_PACKET) src);
+      case pen_wire::magic: {
+        auto *dest_pen = reinterpret_cast<pen_wire::packet_t *>(dest);
+        auto *src_pen = reinterpret_cast<pen_wire::packet_t *>(src);
+        auto result = batch(&dest_pen->pen, &src_pen->pen);
+        if (result == batch_result_e::batched) {
+          dest_pen->barrelRoll = src_pen->barrelRoll;
+          dest_pen->reserved = src_pen->reserved;
+        }
+        return result;
+      }
       case SS_CONTROLLER_TOUCH_MAGIC:
         return batch((PSS_CONTROLLER_TOUCH_PACKET) dest, (PSS_CONTROLLER_TOUCH_PACKET) src);
       case SS_CONTROLLER_MOTION_MAGIC:
@@ -2120,6 +2167,11 @@ namespace input {
       case SS_PEN_MAGIC:
         passthrough(input, (PSS_PEN_PACKET) payload);
         break;
+      case pen_wire::magic: {
+        auto *packet = reinterpret_cast<pen_wire::packet_t *>(payload);
+        passthrough(input, &packet->pen, pen_wire::decode_roll(packet->barrelRoll));
+        break;
+      }
       case SS_CONTROLLER_ARRIVAL_MAGIC:
         passthrough(input, (PSS_CONTROLLER_ARRIVAL_PACKET) payload);
         break;
@@ -2148,6 +2200,41 @@ namespace input {
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      if (input->input_stopped) {
+        return;
+      }
+      if (input_data.size() >= sizeof(NV_INPUT_HEADER)) {
+        const auto *header = reinterpret_cast<const NV_INPUT_HEADER *>(input_data.data());
+        if (util::endian::little(header->magic) == pen_wire::magic &&
+            !pen_wire::valid_size(input_data.size(), header->size)) {
+          const auto now = std::chrono::steady_clock::now();
+          if (now >= input->next_invalid_pen_warning) {
+            input->next_invalid_pen_warning = now + std::chrono::seconds(5);
+            BOOST_LOG(warning) << "Dropping invalid barrel-roll pen packet [session_id=" << input->session_id
+                               << ", payload_bytes=" << input_data.size()
+                               << ", header.size=" << util::endian::big(header->size)
+                               << ", expected_payload_bytes=" << sizeof(pen_wire::packet_t)
+                               << ", expected_header.size=" << sizeof(pen_wire::packet_t) - sizeof(std::uint32_t)
+                               << "] (warnings limited to one per 5 seconds per session)";
+          }
+          return;
+        }
+      }
+      if (input_data.size() >= sizeof(SS_PEN_PACKET) &&
+          util::endian::little(reinterpret_cast<PNV_INPUT_HEADER>(input_data.data())->magic) == SS_PEN_MAGIC) {
+        input->pen_roll_probe.reset();
+      }
+      // Observe every received sample before hover batching can discard it.
+      // Keep the probe under the session queue lock and queue the resolved twist.
+      if (input_data.size() == sizeof(pen_wire::packet_t)) {
+        auto *packet = reinterpret_cast<pen_wire::packet_t *>(input_data.data());
+        if (util::endian::little(packet->pen.header.magic) == pen_wire::magic &&
+            pen_wire::valid_size(input_data.size(), packet->pen.header.size)) {
+          auto azimuth = pen_wire::decode_roll(packet->pen.rotation);
+          auto roll = input->pen_roll_probe.select(pen_wire::decode_roll(packet->barrelRoll), azimuth);
+          packet->barrelRoll = util::endian::little(roll);
+        }
+      }
       input->input_queue.push_back(std::move(input_data));
     }
     task_pool.push(passthrough_next_message, input);
@@ -2179,11 +2266,34 @@ namespace input {
 
   void
   reset(std::shared_ptr<input_t> &input) {
+    {
+      std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      input->input_stopped = true;
+      input->input_queue.clear();
+      input->pen_roll_probe.reset();
+    }
     task_pool.cancel(key_press_repeat_id);
     task_pool.cancel(input->mouse_left_button_timeout);
 
     // Ensure input is synchronous, by using the task_pool
-    task_pool.push(reset_input_state);
+    task_pool.push([input]() {
+#ifdef _WIN32
+      if (input->client_context) {
+        platf::pen_input_t cancel {};
+        cancel.eventType = LI_TOUCH_EVENT_CANCEL_ALL;
+        platf::pen_update(input->client_context.get(), {}, cancel);
+      }
+#endif
+      reset_input_state();
+      // Delayed controller callbacks own the session, so destruction alone cannot
+      // cancel them. Invalidate them on the input worker while the session is alive.
+      for (auto &gamepad : input->gamepads) {
+        gamepad.reset_state();
+        if (gamepad.id >= 0) {
+          platf::gamepad_update(platf_input, gamepad.id, gamepad.gamepad_state);
+        }
+      }
+    });
   }
 
   class deinit_t: public platf::deinit_t {

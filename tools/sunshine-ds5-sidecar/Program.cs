@@ -31,6 +31,13 @@ for (var i = 0; i < args.Length; i++)
         return Fail($"Unknown argument: {args[i]}");
 }
 
+// A component package includes its patched Core. Refuse incomplete or mixed
+// packages before any SDK operation, including capability probes.
+var corePatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
+    attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "device-ownership-1");
+if (!corePatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
+    return Fail("The Sidecar package is incomplete; reinstall the current DualSense component");
+
 if (selfCheck)
 {
     ProtocolSelfTest.RunDeterministicChecks();
@@ -41,6 +48,8 @@ if (selfCheck)
         channel_isolation = true,
         protocol_abi = true,
         host_protocol = true,
+        protocol_frame_reader = true,
+        cached_standard_axes = true,
         microphone_pcm_queue = true,
         hidmaestro_microphone_contract = true,
         virtual_microphone_session = true,
@@ -69,6 +78,9 @@ if (probe)
         audio_policy_violation = true,
         driver_installed = context.IsDriverInstalled,
         usbip_available = HMContext.IsUsbipBackendAvailable,
+        component_version = ComponentCompatibility.Version,
+        usbip_policy = ComponentCompatibility.TransportPolicy,
+        usbip_version = ComponentCompatibility.UsbipVersion,
         pinned_microphone_runtime = DeviceRegistry.HasPinnedMicrophoneRuntime,
         composite_microphone_prototype_requested = enableCompositeMicrophonePrototype,
     }));
@@ -79,10 +91,25 @@ if (selfTestProfile is not null)
 {
     if (!IsElevated())
         return Fail("sunshine-ds5-sidecar protocol self-test must run elevated");
-    if (selfTestProfile is not ("standard" or "composite" or "microphone-prototype" or "microphone-capture"))
-        return Fail("--self-test must be 'standard', 'composite', 'microphone-prototype', or 'microphone-capture'");
+    if (selfTestProfile is not ("standard" or "composite" or "transport" or "microphone-prototype" or "microphone-capture"))
+        return Fail("--self-test must be 'standard', 'composite', 'transport', 'microphone-prototype', or 'microphone-capture'");
     try
     {
+        if (selfTestProfile == "transport")
+        {
+            for (var round = 0; round < 2; round++)
+                await ProtocolSelfTest.RunAsync(true, null, null, genshinCompatibility: round == 1);
+            var acceptance = JsonSerializer.Serialize(new {
+                usbip_policy = ComponentCompatibility.TransportPolicy,
+                usbip_version = ComponentCompatibility.UsbipVersion,
+                rounds = 2,
+                released = true,
+            });
+            if (!string.IsNullOrWhiteSpace(resultPath))
+                await File.WriteAllTextAsync(resultPath, acceptance);
+            Console.WriteLine(acceptance);
+            return 0;
+        }
         if (selfTestProfile is "microphone-prototype" or "microphone-capture")
             return await ProtocolSelfTest.RunMicrophonePrototypeAsync(
                 resultPath, requireHostCapture: selfTestProfile == "microphone-capture");

@@ -187,8 +187,10 @@ namespace amf {
       if (config.enforce_hrd) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd), "HEVC enforce_hrd");
       res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1, "HEVC num_gops_per_idr");
       if (res != AMF_OK) return res;
-      res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) ctx.gop_size, "HEVC gop_size");
-      if (res != AMF_OK) return res;
+      if (config.hevc_gop_size >= 0) {
+        res = set_required_property(encoder, AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) config.hevc_gop_size, "HEVC gop_size");
+        if (res != AMF_OK) return res;
+      }
       if (config.preanalysis) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis), "HEVC preanalysis");
       if (config.vbaq) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq), "HEVC vbaq");
       if (config.lowlatency_mode) set_optional_property(encoder, AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE, !!(*config.lowlatency_mode), "HEVC lowlatency_mode");
@@ -273,6 +275,24 @@ namespace amf {
   int
   amf_avcodec_scheduler::in_flight() const {
     return hwsurfaces_in_queue;
+  }
+
+  bool
+  amf_avcodec_scheduler::has_pending_output() const {
+    return !output_list.empty() || hwsurfaces_in_queue > 0;
+  }
+
+  AMF_RESULT
+  amf_avcodec_scheduler::receive_output(::amf::AMFComponent *encoder, ::amf::AMFDataPtr &output_data) {
+    output_data = nullptr;
+    if (!output_list.empty()) {
+      output_data = output_list.front();
+      output_list.pop_front();
+      // query_once() already accounted for these outputs when they were stashed.
+      return AMF_OK;
+    }
+    if (hwsurfaces_in_queue == 0) return AMF_REPEAT;
+    return query_once(encoder, output_data);
   }
 
   AMF_RESULT

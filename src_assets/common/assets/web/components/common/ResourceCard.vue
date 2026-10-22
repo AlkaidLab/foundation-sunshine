@@ -7,6 +7,7 @@ import {
   HARMONY_CLIENT_URL,
   HOME_RESOURCE_GROUPS,
   LEGAL_RESOURCES,
+  resolveRandomResourceHref,
   resolveResourceHref,
   resolveResourceText,
 } from '../../config/resources.js'
@@ -20,9 +21,16 @@ const resourceDescription = (resource) => resolveResourceText(t, resource, 'desc
 const resourceHref = (resource) => resolveResourceHref(resource, locale.value)
 
 const handleResourceActivate = (resource, event) => {
-  if (resource.action !== 'harmony') return
+  if (resource.action === 'harmony') {
+    event.preventDefault()
+    showHarmonyModal.value = true
+    return
+  }
+  if (!resource.randomHrefs) return
   event.preventDefault()
-  showHarmonyModal.value = true
+  void openExternalUrl(resolveRandomResourceHref(resource)).catch((error) => {
+    console.error('Failed to open resource URL:', error)
+  })
 }
 
 const closeHarmonyModal = () => {

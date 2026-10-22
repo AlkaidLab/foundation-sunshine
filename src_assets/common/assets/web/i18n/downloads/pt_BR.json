@@ -1,0 +1,230 @@
+{
+  "groups": {
+    "computer": "Computador",
+    "other": "Outros",
+    "phone": "Celular / Tablet",
+    "tv": "Televisor"
+  },
+  "platforms": {
+    "android": {
+      "captions": [
+        "Personalize disposições, combinações de botões e entrada",
+        "Aponte com o movimento do dispositivo ou controle",
+        "HDR em anfitriões e dispositivos compatíveis",
+        "Envie a voz local para o PC de jogos"
+      ],
+      "description": "Personalize botões virtuais e jogue com toque, movimento ou controle. Use o teclado, microfone e área de transferência do celular com o PC remoto.",
+      "detail": "Cliente para celulares e tablets Android",
+      "features": [
+        "Botões virtuais personalizáveis",
+        "Mira por movimento",
+        "Vídeo HDR",
+        "Microfone remoto"
+      ],
+      "name": "Android",
+      "note": "A assistência de teclado, área de transferência e microfone requerem permissões e suporte do anfitrião. HDR requer hardware e telas compatíveis.",
+      "product": "Moonlight V+"
+    },
+    "android-tv": {
+      "description": "Use V+ num televisor ou box TV para jogar com controle. Abra os controles na transmissão para ajustar o vídeo e consultar o desempenho.",
+      "detail": "Cliente Android TV · Para televisores",
+      "features": [
+        "Entrada de controle",
+        "Vídeo HDR",
+        "Controles durante a transmissão",
+        "Estatísticas em tempo real"
+      ],
+      "name": "Android TV",
+      "note": "HDR, áudio e resposta do controle dependem do televisor, sistema, dispositivos conectados e anfitrião.",
+      "product": "Moonlight V+"
+    },
+    "apple-tv": {
+      "description": "Navegue e jogue com controle na Apple TV, levando o PC de jogos à tela da sala.",
+      "detail": "Cliente Apple TV · Instalar pela App Store",
+      "features": [
+        "Entrada de controle",
+        "Vídeo HDR",
+        "Transmissão na TV"
+      ],
+      "name": "Apple TV",
+      "note": "A versão tvOS requer um controle. HDR requer anfitrião e Apple TV compatíveis. Instale a versão oficial pela App Store.",
+      "product": "VoidLink"
+    },
+    "harmony": {
+      "captions": [
+        "Edite painéis de botões, áreas de câmera e disposições",
+        "Integração nativa de controles e entrada por movimento",
+        "HDR10, HLG e HDR Vivid em dispositivos compatíveis",
+        "Converta alterações do áudio do jogo em resposta háptica"
+      ],
+      "description": "Jogue jogos de PC com toque, botões virtuais e controles nativos HarmonyOS, com movimento, resposta háptica por áudio e HDR.",
+      "detail": "Cliente HarmonyOS NEXT · Instalar pela AppGallery",
+      "features": [
+        "Botões virtuais personalizáveis",
+        "Movimento e controles nativos",
+        "Vídeo HDR",
+        "Resposta háptica por áudio"
+      ],
+      "name": "HarmonyOS NEXT",
+      "note": "HDR e extensões requerem dispositivos compatíveis e Foundation Sunshine. O encaminhamento do microfone está disponível no modo de desenvolvedor.",
+      "product": "Moonlight V+"
+    },
+    "ios": {
+      "captions": [
+        "Configure combinações, grupos de disposições e painéis táteis",
+        "Mapeamento de movimento, navegação por controle e atalhos",
+        "HDR em dispositivos compatíveis",
+        "Veja em multitarefa ou transmita para outra tela"
+      ],
+      "description": "Personalize botões, toque e movimento no iPhone e iPad. Use navegação por controle, imagem em imagem, telas externas e microfone suportado pelo anfitrião.",
+      "detail": "Cliente iPhone / iPad · Instalar pela App Store",
+      "features": [
+        "Botões virtuais personalizáveis",
+        "Movimento e controles",
+        "Vídeo HDR",
+        "Imagem em imagem e telas externas"
+      ],
+      "name": "iPhone / iPad",
+      "note": "HDR, imagem em imagem, interpolação e caneta dependem do dispositivo e sistema. Algumas funções avançadas de desenho requerem compra no aplicativo.",
+      "product": "VoidLink"
+    },
+    "linux": {
+      "captions": [
+        "O HDR depende da GPU, renderizador e ambiente de visualização",
+        "Entrada de desktop e controle",
+        "Ajuste a transmissão e o modo do mouse",
+        "Consulte métricas de rede, decodificação e apresentação"
+      ],
+      "description": "Instale uma AppImage e transmita o PC numa janela ou em tela inteira. Jogue com teclado ou controle e ajuste sessões com controles e estatísticas.",
+      "detail": "Cliente de desktop para Linux",
+      "features": [
+        "Vídeo HDR",
+        "Teclado e controles",
+        "Controles durante a transmissão",
+        "Estatísticas em tempo real"
+      ],
+      "name": "Linux",
+      "note": "Escolha o pacote para a sua arquitetura e sistema. HDR e área de transferência dependem do desktop Linux.",
+      "product": "Moonlight PC"
+    },
+    "macos": {
+      "captions": [
+        "HDR em telas compatíveis",
+        "Controles de desktop familiares",
+        "Sincronize texto e imagens",
+        "Acesse as pastas compartilhadas do anfitrião"
+      ],
+      "description": "Mantenha a interface de desktop habitual, jogue com teclado, mouse ou controle e transmita em janela ou tela inteira com funções de colaboração.",
+      "detail": "Cliente de desktop para macOS",
+      "features": [
+        "Vídeo HDR",
+        "Teclado e controles",
+        "Área de transferência bidirecional",
+        "Arquivos compartilhados do anfitrião"
+      ],
+      "name": "macOS",
+      "note": "Os downloads atuais são para Apple Silicon. Área de transferência, microfone e arquivos compartilhados requerem suporte do anfitrião.",
+      "product": "Moonlight PC"
+    },
+    "macos-enhanced": {
+      "captions": [
+        "Ajuste brilho, cor e apresentação do vídeo",
+        "Métodos de entrada locais, adaptação de atalhos e trackpad",
+        "Equalizador, correção de fones de ouvido e opções surround",
+        "Ajuste vídeo, áudio e anfitrião durante a transmissão"
+      ],
+      "description": "Melhore a transmissão com uma interface Mac nativa, entrada de texto local e trackpad. Ajuste HDR, áudio de fones de ouvido e definições da transmissão.",
+      "detail": "Cliente nativo melhorado para macOS",
+      "features": [
+        "Controles HDR e de cor",
+        "Entrada Mac e trackpad",
+        "Ajustes de fones de ouvido e áudio",
+        "Controles durante a transmissão"
+      ],
+      "name": "macOS",
+      "note": "macOS 12+, Apple Silicon e Intel. Área de transferência, microfone e controles do anfitrião requerem o seu suporte.",
+      "product": "Moonlight macOS Enhanced"
+    },
+    "quest": {
+      "description": "Use o cliente Android V+ no Quest para receber vídeo do PC, ajustar a transmissão e consultar o desempenho.",
+      "detail": "Cliente para Quest · Receber vídeo do PC",
+      "features": [
+        "Transmissão de vídeo do PC",
+        "Controles durante a transmissão",
+        "Estatísticas em tempo real"
+      ],
+      "name": "Quest VR",
+      "note": "Este download é um APK Android. Entrada, visualização e HDR dependem do ambiente do visor.",
+      "product": "Moonlight V+"
+    },
+    "steam": {
+      "description": "Versão dedicada ao hardware Valve Steam Link. Conecte o PC de jogos e jogue no televisor com controle.",
+      "detail": "Cliente para dispositivos Steam Link",
+      "features": [
+        "Entrada de controle",
+        "Pareamento com o anfitrião",
+        "Estatísticas de desempenho"
+      ],
+      "name": "Steam Link",
+      "note": "Esta versão destina-se a hardware Steam Link e não suporta HDR nem encaminhamento de microfone.",
+      "product": "Moonlight PC"
+    },
+    "windows": {
+      "captions": [
+        "HDR com codecs e telas compatíveis",
+        "Sincronize texto e imagens",
+        "Envie a voz local para o PC de jogos",
+        "Acesse as pastas compartilhadas pelo anfitrião"
+      ],
+      "description": "Conecte-se com teclado, mouse e controle. Mude os modos do mouse, ajuste a transmissão e use a área de transferência e arquivos compartilhados.",
+      "detail": "Cliente de desktop para Windows",
+      "features": [
+        "Vídeo HDR",
+        "Área de transferência bidirecional",
+        "Microfone remoto",
+        "Arquivos compartilhados do anfitrião"
+      ],
+      "name": "Windows",
+      "note": "Área de transferência, microfone, controles de visualização e acesso a arquivos requerem o suporte correspondente do Foundation Sunshine.",
+      "product": "Moonlight PC"
+    }
+  },
+  "ui": {
+    "clientLabel": "Cliente",
+    "close": "Fechar",
+    "desktopHint": "Instale o aplicativo baixado no dispositivo de jogo escolhido.",
+    "download": "Baixar",
+    "downloadAddress": "Endereço de download",
+    "enhanced": "Melhorada",
+    "failed": "O código QR não está disponível. Use o botão de download.",
+    "friendLink": "Link parceiro",
+    "getApp": "Obter aplicativo",
+    "mirror": "Download alternativo",
+    "more": "Mais ações",
+    "newLabel": "NEW",
+    "openFailed": "Não foi possível abrir o navegador. Copie o endereço de download para o navegador.",
+    "openPage": "Abrir página de download",
+    "openStore": "Abrir loja de aplicativos",
+    "project": "Projeto",
+    "recommended": "Recomendado",
+    "releases": "Todas as versões",
+    "resolveFailed": "Não foi possível preparar o download. Feche esta janela e tente novamente.",
+    "resolving": "Preparando o download…",
+    "scan": "Escaneie com o celular para baixar",
+    "setup": "Conectar após instalar",
+    "setupSteps": [
+      "Instale e abra o cliente no dispositivo de jogo",
+      "Adicione este PC de jogos e conclua o pareamento por PIN",
+      "Escolha a área de trabalho ou um aplicativo para jogar"
+    ],
+    "setupTitles": [
+      "Baixar e instalar",
+      "Adicionar e parear",
+      "Iniciar transmissão"
+    ],
+    "standard": "Normal",
+    "step": "Escolha o dispositivo de jogo",
+    "system": "Escolha o sistema operacional",
+    "title": "Baixar clientes"
+  }
+}

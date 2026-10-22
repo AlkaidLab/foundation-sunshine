@@ -147,6 +147,10 @@ namespace text_context {
     std::unordered_map<session_id, active_context_t> active_contexts;
     std::optional<observation_t> current_uia;
     clock_t::time_point last_gui_alive {};
+    bool agent_alive {false};
+    bool observer_active {false};
+    std::uint64_t gui_generation {0};
+    std::string gui_agent_id;
     bool input_pane {false};
     bool uia {false};
   };
@@ -292,6 +296,11 @@ namespace text_context {
     if (observation.source != source_e::input_pane && observation.source != source_e::uia) {
       return false;
     }
+    if (observation.generation != 0 &&
+        (!_impl->observer_active || _impl->gui_generation != observation.generation ||
+         (!_impl->gui_agent_id.empty() && observation.agent_id != _impl->gui_agent_id))) {
+      return false;
+    }
     // InputPane is an edge-triggered signal and must never be replayed. UIA is
     // level-triggered: cache its latest state so a click into an already-focused
     // editor can still be correlated without polling the HTTP endpoint.
@@ -406,9 +415,39 @@ namespace text_context {
     _impl->outbox.clear();
   }
 
-  void bridge_t::notify_gui_alive(bool input_pane, bool uia) {
+  void bridge_t::notify_gui_alive(bool input_pane, bool uia, bool agent_present,
+                                  bool observer_active, std::uint64_t generation,
+                                  std::string_view agent_id) {
     std::lock_guard lock(_impl->mu);
+    if (agent_id.empty() || generation == 0) return;
     const auto now = clock_t::now();
+    const bool current_agent_alive = _impl->agent_alive &&
+                                     now - _impl->last_gui_alive < kGuiAliveWindow;
+    const bool different_agent_instance = _impl->gui_agent_id != agent_id;
+    const bool new_agent_instance = different_agent_instance &&
+                                    (_impl->gui_agent_id.empty() || !current_agent_alive);
+    if (different_agent_instance && !new_agent_instance) {
+      // A delayed request from a previous GUI process must not take ownership
+      // back from the currently registered agent.
+      return;
+    }
+    if (new_agent_instance) {
+      _impl->gui_agent_id = std::string {agent_id};
+      _impl->gui_generation = 0;
+      _impl->observer_active = false;
+      _impl->current_uia.reset();
+    }
+    // A delayed capability update from an older observer generation must not
+    // turn off the currently active observer. The agent id separates GUI
+    // process restarts, where the local generation counter starts over.
+    if (!new_agent_instance && generation < _impl->gui_generation) {
+      return;
+    }
+    const bool generation_changed = _impl->gui_generation != 0 &&
+                                    generation != _impl->gui_generation;
+    if (generation_changed) {
+      _impl->current_uia.reset();
+    }
     // A cached focused rectangle belongs to a specific GUI instance and only
     // stays trustworthy while that instance keeps heartbeating. Drop it when
     // UIA is reported unavailable or the previous heartbeat already expired
@@ -418,14 +457,16 @@ namespace text_context {
       _impl->current_uia.reset();
     }
     _impl->last_gui_alive = now;
+    _impl->agent_alive = agent_present;
+    _impl->observer_active = observer_active;
+    _impl->gui_generation = generation;
     _impl->input_pane = input_pane;
     _impl->uia = uia;
   }
 
   bool bridge_t::gui_alive() const {
     std::lock_guard lock(_impl->mu);
-    return (_impl->input_pane || _impl->uia) &&
-           clock_t::now() - _impl->last_gui_alive < kGuiAliveWindow;
+    return _impl->agent_alive && clock_t::now() - _impl->last_gui_alive < kGuiAliveWindow;
   }
 
   bool bridge_t::input_pane_available() const {

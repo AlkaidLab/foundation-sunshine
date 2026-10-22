@@ -20,6 +20,7 @@
             <p class="page-subtitle">{{ $t('index.description') }}</p>
           </div>
           <component
+            v-if="hostStatus === 'error' || versionCheckStatus !== VERSION_CHECK_STATUS.ERROR"
             :is="showVersionDetails ? 'button' : 'div'"
             class="home-status"
             :class="[`home-status-${statusState}`, { 'home-status-action': showVersionDetails }]"
@@ -167,7 +168,7 @@ const hasStableUpdate = computed(() => stableBuildAvailable.value)
 const hasPreReleaseUpdate = computed(() => notifyPreReleases.value && preReleaseBuildAvailable.value)
 
 const statusState = computed(() => {
-  if (hostStatus.value === 'error' || versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'error'
+  if (hostStatus.value === 'error') return 'error'
   if (
     hostStatus.value === 'loading' ||
     versionCheckStatus.value === VERSION_CHECK_STATUS.IDLE ||
@@ -175,23 +176,20 @@ const statusState = computed(() => {
   ) {
     return 'loading'
   }
+  if (versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'unavailable'
   if (hasStableUpdate.value || hasPreReleaseUpdate.value) return 'update'
   return 'ready'
 })
 
 const statusLabel = computed(() => {
   if (statusState.value === 'loading') return t('index.loading_latest')
-  if (statusState.value === 'error') return t('_common.error')
+  if (statusState.value === 'error' || statusState.value === 'unavailable') return t('_common.error')
   if (hasStableUpdate.value) return t('index.new_stable')
   if (hasPreReleaseUpdate.value) return t('index.new_pre_release')
   return t('index.version_latest')
 })
 
-const statusTitle = computed(() =>
-  versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR ? t('welcome.network_error') : undefined,
-)
-
-const statusAriaLabel = computed(() => statusTitle.value || statusLabel.value)
+const statusAriaLabel = computed(() => statusLabel.value)
 
 const versionLabel = computed(() => {
   const currentVersion = version.value?.version || hostConfig.value?.version
@@ -440,6 +438,12 @@ onMounted(async () => {
   border-color: var(--ui-danger-border, rgba(255, 107, 107, 0.34));
   background: var(--ui-danger-soft, rgba(255, 107, 107, 0.12));
   color: var(--ui-danger-text, #b4233a);
+}
+
+.home-status-unavailable {
+  border-color: var(--ui-border, rgba(74, 158, 255, 0.22));
+  background: var(--ui-surface, rgba(255, 255, 255, 0.08));
+  color: var(--ui-text-secondary, #64748b);
 }
 
 .home-status-update {
