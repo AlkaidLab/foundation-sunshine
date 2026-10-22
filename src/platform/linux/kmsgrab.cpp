@@ -679,12 +679,36 @@ namespace platf {
             }
           }
 
+          // `adapter_name` carries two different things: the wizard stores a
+          // driver name ("nvidia", "amdgpu") for the KMS/Vulkan paths, while the
+          // VAAPI init overwrites it with a render node ("/dev/dri/renderD128").
+          // Both have to narrow this loop, otherwise the user's GPU choice is
+          // silently ignored. entry.path() is the /dev/dri node itself, so the
+          // driver lives under /sys/class/drm instead.
           if (!preferred_adapter.empty()) {
-            std::error_code driver_ec;
-            const auto driver = fs::read_symlink(entry.path() / "device" / "driver", driver_ec);
-            if (!driver_ec && driver.filename().string() != preferred_adapter) {
-              BOOST_LOG(debug) << file << " does not match the configured adapter ["sv << preferred_adapter << ']';
-              continue;
+            const auto card_name = file.string();
+            const auto sysfs_card = fs::path { "/sys/class/drm" } / card_name;
+
+            if (preferred_adapter.front() == '/') {
+              // Render node: compare the PCI device both nodes belong to.
+              std::error_code node_ec;
+              const auto card_pci = fs::canonical(sysfs_card / "device", node_ec);
+              const auto other_pci = node_ec ? fs::path {} : fs::canonical(fs::path { preferred_adapter } / "device", node_ec);
+              if (!node_ec && card_pci != other_pci) {
+                BOOST_LOG(debug) << file << " is not the device behind ["sv << preferred_adapter << ']';
+                continue;
+              }
+              if (node_ec) {
+                BOOST_LOG(debug) << "Could not resolve the device behind ["sv << preferred_adapter << "]; not filtering"sv;
+              }
+            }
+            else {
+              std::error_code driver_ec;
+              const auto driver = fs::read_symlink(sysfs_card / "device" / "driver", driver_ec);
+              if (!driver_ec && driver.filename().string() != preferred_adapter) {
+                BOOST_LOG(debug) << file << " does not match the configured adapter ["sv << preferred_adapter << ']';
+                continue;
+              }
             }
           }
 
@@ -1292,18 +1316,12 @@ namespace platf {
       /// Called by refresh() with the plane's current framebuffer.
       void
       observe_scanout(std::uint32_t fb_id) const {
-        if (!fb_id) {
-          return;
-        }
-        if (last_scanout_fb && *last_scanout_fb != fb_id && source_counter) {
-          source_counter->record(1);
-        }
-        last_scanout_fb = fb_id;
+        scanout.observe(fb_id, source_counter);
       }
 
     private:
       mutable std::shared_ptr<perf::capture_source_counter_t> source_counter;
-      mutable std::optional<std::uint32_t> last_scanout_fb;
+      mutable perf::scanout_tracker_t scanout;
     };
 
     class display_ram_t: public display_t {
