@@ -562,14 +562,25 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 - **实测**（本机 Plasma 的 XWayland，`DISPLAY=:0`）：`query_state()` 与 `xrandr --query` 逐字段一致
   —— `DP-2 connected primary 1920x1080+0+0`、screen 1920x1080、29 个模式、当前模式
   `1920x1080@59.96`。
-- **发现的两个真 bug（都由测试抓出）**：
+- **发现的三个真 bug（都由测试抓出）**：
   1. `crtc->mode` 是 RRMode **句柄**而不是 `resources->modes[]` 的**下标**，按句柄当下标取
      时序会读到越界内存；必须按 `.id` 比对。
-  2. 一次 modeset 之后，XWayland 会把**模式句柄当索引发回**（实测 `index=65.. nmode=28`
-     连续越界）。`query_state()` 现在跳过越界条目并记录，否则宿主机直接段错误。
-- **测试**：`tests/unit/test_xrandr_display.cpp` 16 例——13 例纯规划（单输出/禁用/并排/镜像共享
+  2. `XRROutputInfo::modes[]` 里装的同样是**模式 id**，不是下标。早期实现把它当下标用，
+     在 `DISPLAY=:0` 上表现为「id 大于 `nmode` → 条目被跳过」（实测 29 个模式一个都没进列表），
+     而 id 恰好落在范围内时会静默取到**另一个**模式的分辨率。现在按 `mode_info.id ==
+     resources_mode` 查表，查不到才跳过并记录——xrandr 自身也是这么做的。
+  3. 镜像分组原先在**一趟**里完成：成员若在名字排序上早于它的 leader（如 `DP-1` 镜像
+     `HDMI-A-1`），成员先建了自己的 crtc 请求，leader 再建一个 → 镜像退化成并排，且可能因为
+     需要第二个 CRTC 而整体失败。现在先按 `leader_name` 分组、再逐组生成请求。
+- **CRTC 分配还要求合法**：回退分配时除「未被其它组占用」外，还检查该 crtc 在该组**每个**
+  output 的 `XRROutputInfo::crtcs` 允许列表里（服务器没给列表时视为不限制）。否则
+  `XRRSetCrtcConfig` 会整张请求被拒，现象是"合成器无视我们"。
+- **回滚不冒充成功**：计划被拒时恢复快照，但 `apply()` 仍返回失败（回滚成功不等于应用成功），
+  并把屏幕尺寸恢复成**快照**尺寸而不是计划尺寸。
+- **测试**：`tests/unit/test_xrandr_display.cpp` 20 例——16 例纯规划（单输出/禁用/并排/镜像共享
   crtc/镜像尺寸不一致/未知或禁用的镜像源/主屏/主屏冲突/无模式/非当前 mode id/旋转与翻转/
-  时序换算），3 例真机（query 自洽、live 状态可规划、**回写当前配置**要么被接受要么带原因被拒）。
+  时序换算/**成员排序早于 leader 的镜像**），4 例真机（query 自洽、live 状态可规划、**回写当前
+  配置**要么被接受要么带原因被拒）。
 - **未验证**：真实 X11 会话下的写路径。本机只有 XWayland，且**没有 Xvfb/Xephyr**，无法起嵌套 X
   服务器；XWayland 侧写操作被接受但布局不变（其 RandR 是只读镜像）。sway/Hyprland 等
   wlroots 兜底当时未做，已在 §6.26 完成。
@@ -922,7 +933,7 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 652 用例，647 通过，5 跳过，0 失败
+test_sunshine: 653 用例，648 通过，5 跳过，0 失败
 ```
 
 **用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，

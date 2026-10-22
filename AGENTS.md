@@ -26,7 +26,7 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
 ninja -C build sunshine
 cd build && ctest          # baseline: 24 suites, 23 pass; the single Encoder SetUpTestSuite
                            # failure inside test_sunshine is headless-only (needs cap_sys_admin)
-                           # (652 cases, 647 pass, 5 skip, 0 assertion failures)
+                           # (653 cases, 648 pass, 5 skip, 0 assertion failures)
 ```
 
 CUDA is the default (`SUNSHINE_ENABLE_CUDA` defaults to ON on Linux; a missing
