@@ -39,7 +39,7 @@ RTP16 回绕不重复 nonce。失包/篡改/源失活/持续背压等均终止�
 管理员只读预检：身份与受支持 audioeng 文件哈希匹配，退出码 0。
 
 实采助手 PID 7980：实际加载固定 tap、完成原生 Process 输出挂接。
-显式停止与退出流程总耗时 15.15192 秒；15 秒期限前发出停止信号，余下为清理。
+探测窗口按 15 秒计时；显式停止与清理后的累计耗时为 15.15192 秒。
 结果：cycles=0，failed=0，originalBytesRestored=true，publisherExited=true。
 没有观测到完整 MAT 周期，不能宣称已捕获 MAT 数据或完成真实 MAT 串流。
 目标 audiodg 在探测前后保持同一 PID/创建时间。
