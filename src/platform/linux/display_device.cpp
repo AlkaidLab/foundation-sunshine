@@ -23,6 +23,7 @@
 #include "src/platform/linux/mirror_plan.h"
 #include "src/platform/linux/mutter_display.h"
 #include "src/platform/linux/niri_ipc.h"
+#include "src/platform/linux/wlr_randr.h"
 #if defined(SUNSHINE_BUILD_XRANDR)
 #include "src/platform/linux/xrandr_display.h"
 #endif
@@ -177,6 +178,36 @@ namespace display_device {
     }
 
     /**
+     * @brief Run a wlr-randr change and verify that it took effect.
+     * @details wlr-randr reports what the compositor answered (apply and test
+     *          both come back as exit codes), but the compositor applies
+     *          asynchronously, so the verdict still comes from re-reading the
+     *          state. The same bounded retry as the other command-driven
+     *          backends is used for that reason.
+     */
+    template<typename ConfirmedFn>
+    bool
+    wlr_randr_change(const std::vector<platf::wlr_randr::request_t> &requests, ConfirmedFn &&confirmed) {
+      for (int attempt = 0; attempt < 3; ++attempt) {
+        if (confirmed()) {
+          return true;
+        }
+
+        const auto args = platf::wlr_randr::build_args(requests);
+        const auto result = platf::wlr_randr::run(args, platf::wlr_randr::kChangeTimeout);
+        BOOST_LOG(debug) << "wlr-randr [" << args << "] exit=" << result.exit_code
+                         << (result.output.empty() ? "" : " output: " + result.output);
+
+        if (result.exit_code == 0 && confirmed()) {
+          return true;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+      }
+      return confirmed();
+    }
+
+    /**
      * @brief Whether this session is driven by niri rather than KScreen.
      */
     bool
@@ -193,17 +224,35 @@ namespace display_device {
     }
 
     /**
+     * @brief Whether this session has a wlroots output manager.
+     * @details There is nothing to key off in the environment -- a wlroots
+     *          compositor sets no socket or bus name Sunshine could read -- so
+     *          this is decided by the probe the backend runs itself, which is
+     *          cached and rate-limited. It must be asked before RandR: XWayland
+     *          answers RandR reads in a wlroots session too, and the wlroots
+     *          output manager is the one that actually owns the connectors.
+     */
+    bool
+    compositor_is_wlr_randr() {
+      if (compositor_is_niri() || compositor_is_mutter()) {
+        return false;
+      }
+      return platf::wlr_randr::session_supports_wlr_randr();
+    }
+
+    /**
      * @brief Whether this session reaches RandR because nothing else is there.
-     * @details KScreen, Mutter and niri each describe a compositor's own model
-     *          and get first refusal. A bare X11 session has none of them, and
-     *          RandR is then the only display API there is. XWayland answers
-     *          RandR reads as well, but a Wayland session always matches one of
-     *          the three above, so this stays the last resort by construction.
+     * @details KScreen, Mutter, niri and wlroots each describe a compositor's
+     *          own model and get first refusal. A bare X11 session has none of
+     *          them, and RandR is then the only display API there is. XWayland
+     *          answers RandR reads as well, but a Wayland session always
+     *          matches one of the four above, so this stays the last resort by
+     *          construction.
      */
     bool
     compositor_is_xrandr() {
 #if defined(SUNSHINE_BUILD_XRANDR)
-      if (compositor_is_niri() || compositor_is_mutter()) {
+      if (compositor_is_niri() || compositor_is_mutter() || compositor_is_wlr_randr()) {
         return false;
       }
       if (platf::kscreen::session_supports_kscreen()) {
@@ -478,6 +527,20 @@ namespace display_device {
         return xrandr_set_enabled(device_id, enabled);
       }
 #endif
+
+      if (compositor_is_wlr_randr()) {
+        // wlr-randr has no per-output verb either, but it re-applies every head
+        // it read, so one block for this output is enough: the others keep
+        // their modes, positions and scales. Enabling a head that is off needs
+        // no mode of ours -- the tool fills it with the head's preferred mode,
+        // and the mode request right after this call overrides it anyway.
+        const std::vector<platf::wlr_randr::request_t> requests { { device_id, enabled, {} } };
+        return wlr_randr_change(requests, [&]() {
+          const auto outputs = query_outputs();
+          const auto *reported = find_output(outputs, device_id);
+          return reported && reported->enabled == enabled;
+        });
+      }
 
       const auto result = platf::kscreen::run("output." + device_id + (enabled ? ".enable" : ".disable"),
                                              std::chrono::milliseconds { 10'000 });
@@ -1096,6 +1159,65 @@ namespace display_device {
     }
 #endif
 
+    /**
+     * @brief Read the heads a wlroots compositor advertises.
+     * @details The protocol describes every head the compositor knows, so a
+     *          listed head is a connected output and one that reports
+     *          "Enabled: no" is simply turned off -- there is no separate
+     *          disconnected state to carry. wlroots has neither a primary-output
+     *          flag nor a mirror relation, and no HDR control, so those fields
+     *          stay empty and the features degrade the way they do on niri.
+     */
+    std::vector<compositor_output_t>
+    query_wlr_randr_outputs() {
+      if (!platf::wlr_randr::probe_allowed()) {
+        // A probe already failed inside the cooldown window; asking again would
+        // cost another compositor round trip for a known answer.
+        return {};
+      }
+
+      const auto state = platf::wlr_randr::query();
+      if (state.heads.empty()) {
+        return {};
+      }
+
+      std::vector<compositor_output_t> outputs;
+      outputs.reserve(state.heads.size());
+
+      for (std::size_t index = 0; index < state.heads.size(); ++index) {
+        const auto &head = state.heads[index];
+
+        compositor_output_t output;
+        output.index = static_cast<int>(index);
+        output.name = head.name;
+        output.enabled = head.enabled;
+        output.connected = true;
+        output.priority = 0;
+        output.replication_source = 0;
+        // hdr_state_str stays empty: the protocol exposes no colour mode, and an
+        // empty value means "not reported" to the HDR flow.
+
+        for (const auto &mode : head.modes) {
+          compositor_mode_t entry;
+          // The mode spec is what wlr-randr accepts back as --mode, so it is the
+          // mode's id here, exactly as an index is niri's.
+          entry.id = mode.spec;
+          entry.width = mode.width;
+          entry.height = mode.height;
+          entry.refresh = mode.refresh;
+          const auto separator = mode.spec.find('@');
+          entry.refresh_str = separator == std::string::npos ? std::string {} : mode.spec.substr(separator + 1);
+          entry.current = mode.current;
+          entry.preferred = mode.preferred;
+          output.modes.push_back(std::move(entry));
+        }
+
+        outputs.push_back(std::move(output));
+      }
+
+      return outputs;
+    }
+
     std::vector<compositor_output_t>
     query_outputs() {
       if (compositor_is_niri()) {
@@ -1103,6 +1225,9 @@ namespace display_device {
       }
       if (compositor_is_mutter()) {
         return query_mutter_outputs();
+      }
+      if (compositor_is_wlr_randr()) {
+        return query_wlr_randr_outputs();
       }
 #if defined(SUNSHINE_BUILD_XRANDR)
       if (compositor_is_xrandr()) {
@@ -1427,6 +1552,19 @@ namespace display_device {
         return false;
       }
 
+      if (compositor_is_wlr_randr()) {
+        // The mode id is the spec wlr-randr takes for --mode, and the tool
+        // resolves it against what the compositor advertises (millihertz
+        // precision), so the chosen candidate goes out as it was read.
+        const std::vector<platf::wlr_randr::request_t> requests { { device_id, true, best->id } };
+        BOOST_LOG(info) << "Changing display mode: wlroots output '" << device_id << "' " << best->id;
+        if (wlr_randr_change(requests, current_matches)) {
+          return true;
+        }
+        BOOST_LOG(error) << "Failed to apply display mode to output " << device_id;
+        return false;
+      }
+
 #if defined(SUNSHINE_BUILD_XRANDR)
       if (compositor_is_xrandr()) {
         // RandR takes a timing, not a mode handle, so the chosen candidate's id
@@ -1564,6 +1702,16 @@ namespace display_device {
       static std::atomic<bool> logged { false };
       if (!logged.exchange(true)) {
         BOOST_LOG(warning) << "The niri session has no primary-display concept; the primary display request is skipped.";
+      }
+      return false;
+    }
+
+    if (compositor_is_wlr_randr()) {
+      // wlr-output-management describes heads only; there is no primary flag to
+      // set, and the compositor decides the focus order itself.
+      static std::atomic<bool> logged { false };
+      if (!logged.exchange(true)) {
+        BOOST_LOG(warning) << "The wlroots session has no primary-display concept; the primary display request is skipped.";
       }
       return false;
     }
@@ -1843,6 +1991,11 @@ namespace display_device {
   bool
   compositor_supports_replication() {
     if (compositor_is_niri()) {
+      return false;
+    }
+    if (compositor_is_wlr_randr()) {
+      // wlr-output-management has no "two heads, one timing" verb: a
+      // configuration describes each head on its own.
       return false;
     }
 #if defined(SUNSHINE_BUILD_XRANDR)
@@ -2284,10 +2437,10 @@ namespace display_device {
                                              find_primary_in_topology(initial_topology.empty() ? current_topology : initial_topology) :
                                              current_settings.original_primary_display;
 
-      // niri cannot elect a primary output; making that a session failure would
-      // refuse a stream the compositor could otherwise run, so the request is
-      // dropped (set_as_primary_device() logs it once).
-      if (!compositor_is_niri() && !device_id.empty() && !set_as_primary_device(device_id)) {
+      // niri and wlroots cannot elect a primary output; making that a session
+      // failure would refuse a stream the compositor could otherwise run, so
+      // the request is dropped (set_as_primary_device() logs it once).
+      if (!compositor_is_niri() && !compositor_is_wlr_randr() && !device_id.empty() && !set_as_primary_device(device_id)) {
         return { apply_result_t::result_e::primary_display_fail };
       }
 
@@ -2427,10 +2580,12 @@ namespace display_device {
         if (is_vdd_mode) {
           BOOST_LOG(warning) << "HDR state change failed for the virtual display; continuing (HDR metadata comes from the EDID).";
         }
-        else if (compositor_is_niri()) {
-          // niri exposes no HDR control at all: refusing the session here would
-          // make every HDR-requesting client fail, so the request is dropped.
-          BOOST_LOG(warning) << "HDR state change failed for the niri session; continuing without client HDR control.";
+        else if (compositor_is_niri() || compositor_is_wlr_randr()) {
+          // neither niri nor wlroots exposes HDR control at all: refusing the
+          // session here would make every HDR-requesting client fail, so the
+          // request is dropped.
+          BOOST_LOG(warning) << "HDR state change failed for the session (no HDR control on this compositor); "
+                                "continuing without client HDR control.";
         }
         else {
           return { apply_result_t::result_e::hdr_states_fail };

@@ -301,6 +301,8 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/niri_ipc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/mutter_display.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/mutter_display.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/wlr_randr.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/wlr_randr.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_instances.h"
