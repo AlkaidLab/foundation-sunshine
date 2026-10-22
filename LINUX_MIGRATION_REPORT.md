@@ -479,9 +479,19 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   自动回退、`apply_config` 的还原校验共用同一套逻辑。
 - **顺序**：镜像必须在使能之后发（禁用的输出不能当镜像目标）；失败时回退路径同样重放
   `apply_kscreen_mirroring(current)`，best effort。
+- **实测（本机 KDE，2026-10-22）**：`kscreen-doctor output.eDP-1.enable output.eDP-1.mirror.DP-2`
+  之后 `kscreen-doctor -o` 报 `eDP-1 enabled` + `replication source: 1`（1 = DP-2 的输出 id），
+  随后 `output.eDP-1.disable` 复原。这条命令正是 `mirror_plan` 生成的形态，回读字段也正是
+  `query_kscreen_outputs()` 解析的 `replication source:`。
+- **实测发现的怪癖**：输出被禁用后**会保留**残留的 `replication source`（eDP-1 关掉后仍报
+  `replication source: 1`）。所以 `mirror_plan` 不碰禁用输出上的关系（动它会让整条原子请求失败），
+  而是靠"使能 → 再回收"的顺序兜住：需要独立的输出先被使能（此时旧关系复活），随后
+  `apply_kscreen_mirroring()` 发现它已启用且不在期望成员里，补一条 `mirror.none` 清掉。
+  这条顺序依赖就是 `tests/unit/test_mirror_plan.cpp` 里 `IgnoresAMirrorOnADisabledOutput` 与
+  `SwapsWhichOutputCarriesTheRelation` 两个用例的来源。
 - **测试**：`tests/unit/test_mirror_plan.cpp` 8 例 —— 已镜像不重复发、新镜像、回收、改指向、交换
   方向（先回收再重指，两条命令的顺序也固定）、禁用输出上的残留关系不碰、未知输出拒绝、扩展桌面
-  不变。没有双显示器环境，所以镜像的端到端效果未实测。
+  不变。
 
 ---
 

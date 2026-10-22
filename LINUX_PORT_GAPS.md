@@ -76,7 +76,8 @@
     Mutter 都填"源输出的数字 id"）把镜像成员折叠回一个组，所以三后端的拓扑回读、`is_topology_the_same`
     校验、`set_topology` 的自动回退都是同一套逻辑。
 - **验收**：`tests/unit/test_mirror_plan.cpp` 8 例覆盖"已镜像/新镜像/回收/改指向/交换方向/禁用输出/
-  未知输出/扩展桌面不变"；端到端（两块显示器上真镜像）需双输出环境。
+  未知输出/扩展桌面不变"；命令形态已在本机 KDE 上实测（`output.eDP-1.mirror.DP-2` → 回读
+  `replication source: 1`，随后 disable 复原）。遗留的只是"真镜像下画面是否一致"这层观察。
 
 ### 1.5 帧管线契约（frame_contract）
 
