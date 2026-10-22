@@ -668,6 +668,45 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
       `src/vdd_client_identity.{h,cpp}`（纯 std）、`src/video_hdr_analyzer.h`（仅 Linux 路径引用）已单独复核。
 - **复跑方式**：`python3 tools/audit-windows-parity.py`（推上游前跑一次；检查 2 非零退出即视为回归）。
 
+### 6.25 可选依赖：没有 libsystemd 也能构建
+
+- **问题**：`cmake/compile_definitions/linux.cmake` 一直把 libsystemd 当可选依赖（`pkg_check_modules(LIBSYSTEMD
+  libsystemd)` + `else()` 分支只打一行 STATUS），但三处代码把它当成了硬依赖，在没有 `libsystemd` 开发包的
+  系统上构建会失败：
+  1. `src/platform/linux/display_device.cpp` 无条件 include `mutter_display.h`，而后者无条件
+     `#include <systemd/sd-bus.h>` → 缺头文件即编译失败。
+  2. `src/platform/linux/foreground_app.cpp` 无条件包含同一头文件，且 KWin 前台生产者整段调用 sd-bus。
+  3. `src/rtsp.cpp:1228` 在 Linux 侧无条件调用 `clipboard_host::image_available()`，而
+     `src/clipboard_host.cpp` 只在 libsystemd 存在时才被编入 → 头文件放开后错误从"编译失败"变成"链接失败"。
+  另外 `SUNSHINE_MUTTER_DISPLAY` 这个宏除了 cmake 里定义它之外**没有任何使用点**，是残留。
+- **做法**：把"有没有会话总线"收敛成一个宏 `SUNSHINE_HAVE_SDBUS`（libsystemd 找到时定义，同时荷载
+  `SUNSHINE_CLIPBOARD_HOST`），并让三个模块**自带退化实现**，调用方不必写 `#ifdef`：
+  - `src/platform/linux/sdbus_session.h`：没有 sd-bus 时 `open_user_bus()` 返回 `nullptr`（类型前向声明，
+    调用方仍拿到 `sd_bus *`）。每个调用方本来就把"总线为空"当作"这个生产者不可用"，语义正好。
+  - `src/platform/linux/mutter_display.h`：只前向声明 `struct sd_bus_message;`，不再强迫包含者拉进 sd-bus 头。
+  - `src/platform/linux/mutter_display.cpp`：实现在 `#if defined(SUNSHINE_HAVE_SDBUS)` 内，`#else` 半边
+    （整个后端自报"这里没有 Mutter"，一次 info 日志说明原因）之外保留纯函数 `find_monitor` /
+    `find_logical_monitor` / `current_mode` / `matching_mode`，它们只对 `state_t` 做运算。
+  - `src/rtsp.cpp` / `src/clipboard_host.h`：`clipboard_host.h` 在无 provider 时给出 inline 的
+    `start()` / `stop()` 空实现与 `image_available() → false`，于是"没有剪贴板主机"自然等于"不通告图片能力"。
+  - `tests/CMakeLists.txt`：`test_mutter_display.cpp` 用手写 sd-bus 消息做编解码往返，无 libsystemd 时不参与
+    构建（与 `if (WIN32)` 排除同一处）。
+  - 删掉 `SUNSHINE_MUTTER_DISPLAY`；`else()` 分支的 STATUS 文本改为列出受影响功能。
+- **验证**：用一个假 `pkg-config` 把 libsystemd 报成缺失（其余模块转发给真 pkg-config），单独配置一棵
+  `build-nols` 并完整构建：
+  ```sh
+  printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *libsystemd*) exit 1;; esac; done\nexec /usr/bin/pkg-config "$@"\n' > /tmp/pkgconfig-stub/pkg-config
+  cmake -B build-nols -S . -G Ninja -DPKG_CONFIG_EXECUTABLE=/tmp/pkgconfig-stub/pkg-config \
+    -DSUNSHINE_ENABLE_CUDA=OFF -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+  ninja -C build-nols sunshine test_sunshine
+  ```
+  结果：配置阶段打印 `libsystemd not found - session-bus features disabled …`，`sunshine` 与 `test_sunshine`
+  均构建成功且无警告；`build-nols/tests/test_sunshine` 798 例 / 784 通过 / 12 跳过 / 2 环境依赖失败——
+  与主构建的 805 例相比正好少掉 7 个 Mutter 编解码用例，失败面完全一致。
+- **无 libsystemd 时的功能面**：剪贴板主机（文本 + 图片）不启动、GNOME 显示配置后端自报不可用（KScreen /
+  RandR / niri 继续工作）、KDE 的 KWin 前台生产者不可用（niri IPC、wlroots 协议、X11 三个生产者不受影响）。
+  Arch 包的 `depends` 里本来就有 `systemd`，所以正常安装不受影响；这条修复只针对自建/裁剪发行版。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用

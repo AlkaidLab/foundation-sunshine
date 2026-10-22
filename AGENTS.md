@@ -40,6 +40,14 @@ CUDA adds the NVFBC path and removes the NVENC GPU->RAM->GPU round trip; the
 ordinary KMS/Wayland/X11 paths stay compiled in. `SUNSHINE_BUILD_DIR=<dir>
 makepkg -f` packages another build tree instead of `build/`.
 
+Session-bus features (clipboard host, GNOME display config, the KWin foreground
+producer) are genuinely optional: `cmake/compile_definitions/linux.cmake` defines
+`SUNSHINE_HAVE_SDBUS` only when libsystemd is found, and those modules degrade to
+inert halves instead of breaking the build. Never include `<systemd/sd-bus.h>`
+outside such a guard — `src/platform/linux/sdbus_session.h` and
+`mutter_display.h` are the patterns to copy. Verify with a fake pkg-config that
+hides libsystemd (recipe and results: LINUX_MIGRATION_REPORT.md §6.25).
+
 Packaging (`packaging/arch-local/`, installs prebuilt tree, no compile in makepkg):
 bump `pkgrel` → `cmake -B build ...` (refreshes the binary version stamp — the user
 checks the `Sunshine version:` log line) → `ninja -C build sunshine` → `makepkg -f`.
