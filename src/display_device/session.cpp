@@ -147,7 +147,7 @@ namespace display_device {
     if (!config::video.vdd_keep_enabled) {
       // Only this session's own display: another client may still be streaming
       // onto its own virtual display.
-      vdd_utils::destroy_vdd_monitor_nolog(session_t::get().current_vdd_client_id);
+      vdd_utils::destroy_vdd_monitor_nolog(session_t::get().current_vdd_owner_id);
     }
   }
 
@@ -663,7 +663,12 @@ namespace display_device {
     const std::string vdd_identifier = config::video.vdd_reuse
       ? "shared_vdd"
       : client_name;
-    return vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
+    const bool created = vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
+    if (created) {
+      // Remember what the display was created as, so the destroy paths resolve.
+      current_vdd_owner_id = vdd_identifier;
+    }
+    return created;
   }
 
   bool
@@ -673,12 +678,15 @@ namespace display_device {
 
   bool
   session_t::destroy_vdd_monitor() {
-    const std::string client_id = current_vdd_client_id;
+    // The owner, not the client id: shared mode creates the display under a
+    // fixed identifier, so only that one resolves back to this monitor.
+    const std::string owner_id = current_vdd_owner_id;
     current_vdd_client_id.clear();
+    current_vdd_owner_id.clear();
     current_vdd_hdr_brightness.reset();
-    // Scoped to the client that owned this display: with one client this is the
-    // same call as before, and with two it no longer takes the other one down.
-    return vdd_utils::destroy_vdd_monitor(client_id);
+    // Scoped to the display this session owns: with one client this is the same
+    // call as before, and with two it no longer takes the other one down.
+    return vdd_utils::destroy_vdd_monitor(owner_id);
   }
 
   bool
@@ -793,6 +801,7 @@ namespace display_device {
       if (reuse_vdd && !hdr_capabilities_changed) {
         BOOST_LOG(info) << "共享VDD模式，复用现有VDD（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
         current_vdd_client_id = current_client_id;
+        current_vdd_owner_id = vdd_identifier;
       }
       else {
         BOOST_LOG(info) << "Rebuilding VDD to refresh session identity or HDR luminance capabilities"
@@ -906,6 +915,7 @@ namespace display_device {
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
+    current_vdd_owner_id = vdd_identifier;
     current_vdd_hdr_brightness = hdr_brightness;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
@@ -924,6 +934,7 @@ namespace display_device {
     settings.reset_persistence();
     stop_timer_and_clear_vdd_state();
     current_vdd_client_id.clear();
+    current_vdd_owner_id.clear();
   }
 
   void
