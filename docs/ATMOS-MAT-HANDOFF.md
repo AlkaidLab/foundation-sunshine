@@ -14,6 +14,7 @@
 两个父仓库必须引用同一个 common-c 提交；先审 shared PR，再处理父仓库。
 共享 PR：[moonlight-common-c #40](https://github.com/qiin2333/moonlight-common-c/pull/40)，
 安卓 PR：[moonlight-vplus #750](https://github.com/qiin2333/moonlight-vplus/pull/750)。
+主机 PR：[foundation-sunshine #1177](https://github.com/AlkaidLab/foundation-sunshine/pull/1177)。
 两者父仓库使用的 shared commit 为 `0d5b78271e7ee5c7bb3af351724e5fd9e16a20ba`。
 common-c 改了 STREAM_CONFIGURATION/JNI 接口，必须一起重新编译，不能混用旧库。
 分支基于原已验证快照，未为本次交接擅自合并最新上游，也不自动合并 PR。
