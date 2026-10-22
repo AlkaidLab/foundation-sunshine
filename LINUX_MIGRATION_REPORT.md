@@ -566,7 +566,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   时序换算），3 例真机（query 自洽、live 状态可规划、**回写当前配置**要么被接受要么带原因被拒）。
 - **未验证**：真实 X11 会话下的写路径。本机只有 XWayland，且**没有 Xvfb/Xephyr**，无法起嵌套 X
   服务器；XWayland 侧写操作被接受但布局不变（其 RandR 是只读镜像）。sway/Hyprland 等
-  wlroots 兜底仍未做（见 `LINUX_PORT_GAPS.md` §2.10）。
+  wlroots 兜底当时未做，已在 §6.26 完成。
 
 ### 6.22 客户端身份：虚拟屏的规范标识（§1.1 阶段一）
 
@@ -707,6 +707,51 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   RandR / niri 继续工作）、KDE 的 KWin 前台生产者不可用（niri IPC、wlroots 协议、X11 三个生产者不受影响）。
   Arch 包的 `depends` 里本来就有 `systemd`，所以正常安装不受影响；这条修复只针对自建/裁剪发行版。
 
+### 6.26 wlroots（wlr-randr）显示后端
+
+- **问题**：§6.21 之后仍有一个显示后端缺口 —— sway / Hyprland / labwc / wayfire 这类 wlroots
+  合成器。它们既不是 KDE（无 kscreen-doctor），也不说 Mutter 的 D-Bus 接口，更不是 niri（没有
+  `NIRI_SOCKET`），于是整段 display_device 降级，客户端的分辨率/开关请求都被丢弃。
+- **为什么走 CLI 而不是直接绑协议**：wlr-output-management-unstable-v1 是 Wayland 协议，读它就得
+  编出协议代码并持有连接；而四个后端里有三个已经是"通过小工具说话"（kscreen-doctor、niri msg、
+  xrandr CLI），多一个 `wlr-randr` 与此一致，也避免为一个多数构建用不到的合成器把协议代码
+  链进二进制。本仓 `third-party/wlr-protocols/` 里本来就有该 XML（§2.10 的前台检测用过），但这条
+  路径不需要它。
+- **会话判定**：wlroots 合成器**不设置**任何 `NIRI_SOCKET` / 总线名 / 环境变量可供识别，唯一的
+  诚实答案来自探针本身：跑一次 `wlr-randr` 看它是否列出 head。为了不让这个探针在每次状态读取时
+  都去敲一次合成器，`session_supports_wlr_randr()` 缓存结论，失败则置 20 s 冷却；工具不在
+  `/usr/bin`、`/usr/local/bin`、`/bin` 时直接判否（服务环境的 PATH 不可信，与三个前辈一致）。
+- **选择顺序**：niri → Mutter → **wlroots** → X11(RandR) → KScreen。wlroots 排在 RandR **之前**是有
+  意的：wlroots 会话里 XWayland 也在跑，它同样应答 RandR 读取，但真正拥有连接器的是 wlroots 输出
+  管理器；把 RandR 排在前面会让这类会话落到一个只读镜像上。
+- **协议形状带来的行为**（与另外三个后端的差异）：
+  1. **一次写 = 整份配置**：`wlr-randr --output X --on/--off/--mode …` 会重新应用它读到的每一个
+     head，所以单个输出的开关/模式请求只需列出该输出，其余 head 保持原样。
+  2. **模式 id 是字符串**（如 `3840x2160@59.94`）：工具把速率换算成 millihertz（`round(hz*1000)`）
+     再回匹配，因此解析出来的 spec 可以原样回传 —— 这条往返由
+     `WlrRandr.ModeSpecRoundTripsMillihertz` 与 `WlrRandr.ParsedSpecsAreAcceptedBackAsArguments` 把守。
+  3. **启用一个关着的 head 不需要我们给模式**：工具会替它填上 preferred 模式（源码
+     `fixup_disabled_head()`），紧随其后的模式请求再覆盖掉，语义与 KScreen/niri 的"先开再设"一致。
+  4. **无主屏字段、无镜像动词、无 HDR 控制**：`set_as_primary_device()` 与 HDR 请求显式跳过并打
+     一次性 warning，`compositor_supports_replication()` 返回 false（多设备组在校验层就被拒绝）。
+  5. **工具会对 argv 做严格解析**：`--tcp-port` 那类"必须前置于子命令"的坑在 wlr-randr 上不存在，
+     但输出名来自合成器、而我们经 `/bin/sh` 执行，因此名字一律按 shell 规则转义
+     （`WlrRandr.QuotesOutputNamesForTheShell`）。
+- **`--dryrun`**：wlr-randr 能把整份配置交给合成器**测试**（协议的 test 请求），`build_args(..., true)`
+  已打通；写路径目前与另外三个后端一样只做"回报 + 回读校验"，尚未把 dryrun 接到 apply 前。
+- **测试**：`tests/unit/test_wlr_randr.cpp` 8 例 —— 列表字段、模式与 flag、禁用 head 的默认几何、
+  未知字段的向前兼容、enable/disable/mode 的 argv 形状、多 head 一次调用、shell 转义、dryrun 只在
+  有请求时追加、millihertz 往返、以及"没有工具就不认领会话"。
+- **用真工具做的验证**：从 emersion/wlr-randr 的 `main.c` 在 `/tmp` 编译出真二进制（对方仓库里没有
+  Makefile，用 `wayland-scanner` 生成客户端代码后 gcc 直编），在本机 Plasma 会话下实测它的失败
+  分类正是本后端探测所依赖的两个串：有合成器但没有该协议时输出
+  `compositor doesn't support wlr-output-management-unstable-v1` 且 exit 1；没有合成器时输出
+  `failed to connect to display` 且 exit 1（两者都走 stderr，而 `vdd_utils::run_logged` 抓的是
+  合并输出）。
+- **未验证**：成功路径（读回真实 head、真正改模式/开关）。本机**没有任何 wlroots 合成器**，
+  sway/wlroots/wlr-randr 都未安装，无法起一个来做端到端；因此这条后端的正确性证据是
+  协议/源码契约 + 单测 + 失败分类的实测，而不是一次真实的模式切换。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -722,7 +767,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
 | Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测已移植（KDE + niri，§6.6） |
 | 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
-| 物理显示器 display_device | 四个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR（§6.2、§6.16、§6.18、§6.21） |
+| 物理显示器 display_device | 五个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ wlroots（wlr-randr）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR，镜像 kscreen/Mutter/RandR（§6.2、§6.16、§6.18、§6.21、§6.26） |
 | 剪贴板主机同步（文本 + 图片） | KDE：文本走 klipper sd-bus、图片走 ext-data-control；无 klipper 的桌面（niri/sway/Hyprland）文本也走 ext-data-control。共用帧/回声/blob 回退（§6.4、§6.14） |
 | 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
 | HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
@@ -740,7 +785,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 |---|---|
 | 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
 | HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
-| 非 niri 的 wlroots 显示后端 | niri 走 IPC（§6.16）、GNOME 走 Mutter D-Bus（§6.18）、裸 X11 走 RandR（§6.21）；只剩 sway/Hyprland 等 wlroots 合成器仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
+
 | display_device 复制拓扑 | 两个平台都可用：Mutter 写成同一个 logical monitor（§6.18），KScreen 用 `output.<name>.mirror.<source>`（§6.19）；回读统一经 `replication_source` 聚合（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
 | 虚拟显示器 per-client 隔离 | ✅ 已完成（§6.22 + §6.23）：客户端身份进 EDID 串号，后端为实例表，客户端切换不再销毁重建；上限受空闲连接器数量约束 |
@@ -782,7 +827,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 805 用例，792 通过，12 跳过，1 失败
+test_sunshine: 814 用例，801 通过，12 跳过，1 失败
 ```
 
 唯一失败的是 `DownloadFileTests/DownloadFileTest.Run/1`（访问 `https://httpbin.org/...`，离线必失败）

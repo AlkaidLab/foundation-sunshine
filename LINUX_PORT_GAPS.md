@@ -17,12 +17,13 @@
 非 KDE 桌面走合成器）、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**2 项部分实现**（§一：§1.5 帧管线契约、§1.7 音频位深）、**5 项可行未做**（§二，其中 §2.7/§2.8/§2.9/§2.10 残余/§2.11）、
+剩余：**2 项部分实现**（§一：§1.5 帧管线契约、§1.7 音频位深）、**4 项可行未做**（§二，其中 §2.7/§2.8/§2.9/§2.11）、
 **1 项等上游定义协议**（§2.1b）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.3 剪贴板图片 + 非 KDE
 桌面 provider、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
-拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端 + X11（RandR）显示后端、§7.1 管线帧率的"源更新"段、
+拓扑）、§2.4 DSU 运动广播、§2.10 显示后端四项（niri + wlroots/wlr-randr + X11（RandR）+ KDE 复制
+拓扑）、§7.1 管线帧率的"源更新"段、
 §1.1 虚拟显示器 per-client 隔离（阶段一客户端身份进 EDID + 阶段二并行多实例）、
 §7.3 依赖系统已安装资产的单测（改成按资产是否存在分支断言）、
 §7.2 依赖外网的单测（复核确认上游已自行摘出 ctest 门禁）。
@@ -329,7 +330,7 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   文件右键共享（KDE ServiceMenu 更自然）。
 - **建议**：搁置；文件右键共享若想要，走 KDE ServiceMenu（低工作量）单独立项。
 
-### 2.10 通用 wlroots / X11 显示后端（低）— X11 已完成，只剩非 niri 的 wlroots 合成器
+### 2.10 ✅ 通用 wlroots / X11 显示后端（低）— 2026-10-22 全部完成
 
 - **背景**：目标是 **KDE + niri** 双环境。niri 那半边已落地（见下），只剩 sway/Hyprland 等
   wlroots 合成器的通用兜底没有后端。
@@ -347,15 +348,31 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   HDR 在 X11 上不存在色彩模式概念 → `set_hdr_states()` 明确拒绝并打一次性 warning。
   实测 `query_state()` 与本机 `xrandr --query` 逐字段一致；写路径在 XWayland 上无法真正生效
   （其 RandR 只读），真机 X11 会话未验证。详见 `LINUX_MIGRATION_REPORT.md` §6.21。
-- **仍缺**：
-  1. **wlr-output-management 兜底**（`wlr-randr` 或直接绑 `zwlr_output_manager_v1`）覆盖
-     sway/Hyprland。机器上没有这类合成器，无法运行时验证。
-  2. **niri 无 HDR 控制**：IPC 不暴露 HDR 亮度/开关，`hdr_state_str` 恒空 → 客户端 HDR 请求被
+- **已完成（2026-10-22，第三轮）：wlroots（wlr-randr）显示后端** ——
+  `src/platform/linux/wlr_randr.{h,cpp}`：`wlr-randr` 的列表解析（纯函数 `parse_state`）、
+  `--mode` 规格与 millihertz 的往返（`mode_spec`）、请求到 argv 的构造（纯函数 `build_args`，
+  输出名按 shell 规则转义）、有界执行（`run` 复用 `vdd_utils::run_logged`）以及"探测缓存 + 20 s
+  冷却"的会话判定（`session_supports_wlr_randr`）。`display_device.cpp` 侧新增
+  `compositor_is_wlr_randr()` / `query_wlr_randr_outputs()` / `wlr_randr_change()`，接入开关、
+  模式、拓扑；主屏与 HDR 按协议能力显式跳过；镜像（一个 timing 两个 head）协议不支持 →
+  `compositor_supports_replication()` 返回 false。
+  **判定顺序**：niri → Mutter → wlroots → X11(RandR) → KScreen。wlroots 排在 RandR 之前是有意的：
+  wlroots 会话里 XWayland 也会应答 RandR 读取，而真正拥有连接器的是 wlroots 的输出管理器。
+  `--dryrun`（协议的 `test` 请求）已打通，但写路径目前只做"回读校验"，与另外三个后端一致。
+  验证：解析/构造/millihertz 往返共 8 个单测（`tests/unit/test_wlr_randr.cpp`）；**用真源码在
+  /tmp 编译出 wlr-randr**，在本机 KDE 会话下实测其失败分类（"compositor doesn't support
+  wlr-output-management-unstable-v1"、exit 1；无合成器时 "failed to connect to display"）正是
+  本后端的探测依据。本机没有任何 wlroots 合成器，**成功路径（读回真实 head、真正改模式）无法
+  运行时验证**。详见 `LINUX_MIGRATION_REPORT.md` §6.22。
+- **仍为已知边界**（非缺口，属合成器/协议能力）：
+  1. **niri 无 HDR 控制**：IPC 不暴露 HDR 亮度/开关，`hdr_state_str` 恒空 → 客户端 HDR 请求被
      记录并跳过（`compositor_is_niri()` 分支），不会失败。niri 侧需上游先提供接口。
-  3. **niri 无主屏概念**：`output <name> priority` 一类命令不存在，`ensure_primary` 请求被跳过并
-     打一次性 warning。
-  4. **缩放/位置未纳入**：`niri msg output <name> scale|position` 可用，但 display_device 的拓扑
-     模型只有"哪个输出开着"，没有布局坐标（Windows 侧也是 per-device 模式，不写布局）。
+  2. **niri 与 wlroots 无主屏概念**：`output <name> priority` 一类命令/wlroots 协议字段都不存在，
+     `ensure_primary` 请求被跳过并打一次性 warning。
+  3. **缩放/位置未纳入**：`niri msg output <name> scale|position` 与 `wlr-randr --pos/--scale` 都可用，
+     但 display_device 的拓扑模型只有"哪个输出开着"，没有布局坐标（Windows 侧也是 per-device 模式，
+     不写布局）。
+  4. **wlroots 无 HDR、无镜像**：协议里都没有对应字段/动词。
 - **验收**：niri 会话下客户端分辨率请求能作用到目标输出（已在嵌套 niri 26.04 上验证 CLI 语法与
   JSON 结构；真实显示器上的端到端验证需要 niri 会话）。
 - **注意**：一律先做能力探测，探测失败保持既有降级路径（不得影响 KDE 与非 KDE 现状）；单次探测
