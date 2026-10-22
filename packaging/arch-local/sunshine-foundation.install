@@ -1,6 +1,6 @@
 # sunshine.install
 # Arch Linux pacman 安装脚本钩子
-# 负责 setcap、udev 规则重载，并将安装用户添加到 input 组。
+# 负责 setcap、udev 规则重载，并提示（不自动执行）input 组加入。
 
 do_setcap() {
   local target
@@ -29,42 +29,31 @@ do_udev_reload() {
   udevadm trigger --sysname-match=uhid
 }
 
-do_add_user_to_input() {
-  # 尝试获取调用 pacman 的原始用户（通过 sudo 或 makepkg -si 安装时）
+do_input_group_hint() {
+  # udev 规则已经通过 TAG+="uaccess" 给活动 seat 会话授权，桌面用户无需做任何事。
+  # 'input' 组只对非 seat 会话（SSH、无头服务）有意义，而且是永久性的全设备授权，
+  # 因此这里只提示，不代替用户执行。
   local target_user="${SUDO_USER:-}"
 
-  if [ -z "$target_user" ]; then
-    # 如果无法确定用户，给出提示
-    echo "提示: 请手动将需要使用 Sunshine 的用户添加到 'input' 组:"
-    echo "  sudo usermod -aG input <你的用户名>"
-    echo "添加后需要重新登录（或重启）才能使组权限生效。"
+  if [ -z "$target_user" ] || ! id "$target_user" &>/dev/null; then
     return 0
   fi
 
-  # 检查用户是否存在
-  if ! id "$target_user" &>/dev/null; then
-    echo "警告: 用户 '$target_user' 不存在，跳过添加到 input 组。"
-    return 0
-  fi
-
-  # 检查用户是否已经在 input 组中
   if id -nG "$target_user" | grep -qw "input"; then
-    echo "用户 '$target_user' 已在 'input' 组中，无需修改。"
-  else
-    echo "正在将用户 '$target_user' 添加到 'input' 组..."
-    if usermod -aG input "$target_user"; then
-      echo "完成。请重新登录（或重启）以使权限生效。"
-    else
-      echo "错误: 无法将用户 '$target_user' 添加到 'input' 组。"
-      echo "请手动执行: sudo usermod -aG input $target_user"
-    fi
+    return 0
   fi
+
+  echo "提示: 用户 '$target_user' 不在 'input' 组中。"
+  echo "      桌面（seat）会话不需要它——udev 规则已通过 uaccess 授权。"
+  echo "      仅在 SSH 或无头环境下需要时，请手动执行:"
+  echo "        sudo usermod -aG input $target_user"
+  echo "      之后重新登录（或重启）生效。"
 }
 
 post_install() {
   do_setcap
   do_udev_reload
-  do_add_user_to_input
+  do_input_group_hint
 
   echo "Foundation Sunshine installed."
   echo "Run directly:        sunshine"
@@ -75,7 +64,7 @@ post_install() {
 post_upgrade() {
   do_setcap
   do_udev_reload
-  do_add_user_to_input
+  do_input_group_hint
 }
 
 post_remove() {

@@ -1,7 +1,7 @@
 post_install() {
   _sunshine_setcap
   _sunshine_udev_reload
-  _sunshine_add_user_to_input
+  _sunshine_input_group_hint
 
   echo ":: Foundation Sunshine (linux-migration) installed."
   echo "   Start:    systemctl --user enable --now sunshine"
@@ -76,34 +76,25 @@ _sunshine_udev_reload() {
   fi
 }
 
-_sunshine_add_user_to_input() {
-  # Try to determine the user who invoked pacman (via sudo or makepkg -si).
+_sunshine_input_group_hint() {
+  # The udev rule above already grants the active seat session access through
+  # TAG+="uaccess", which is what a desktop user needs. Membership in the
+  # 'input' group is only needed for sessions logind does not attach to a seat
+  # (SSH, headless services), and it is a permanent grant over every input
+  # device on the machine - so it stays a deliberate, manual step.
   local target_user="${SUDO_USER:-}"
 
-  if [ -z "$target_user" ]; then
-    echo "NOTE: Could not detect the installing user."
-    echo "      Please add your user to the 'input' group manually:"
-    echo "        sudo usermod -aG input <your-username>"
-    echo "      Then log out and back in (or reboot) for it to take effect."
+  if [ -z "$target_user" ] || ! id "$target_user" &>/dev/null; then
     return 0
   fi
 
-  # Ensure the user actually exists.
-  if ! id "$target_user" &>/dev/null; then
-    echo "WARNING: User '$target_user' does not exist - skipping input group setup." >&2
-    return 0
-  fi
-
-  # Check if already a member of 'input'.
   if id -nG "$target_user" | grep -qw "input"; then
-    echo ":: User '$target_user' is already in the 'input' group."
-  else
-    echo ":: Adding user '$target_user' to the 'input' group..."
-    if usermod -aG input "$target_user"; then
-      echo "   Done. Please log out and back in (or reboot) for the change to apply."
-    else
-      echo "WARNING: Failed to add '$target_user' to 'input'." >&2
-      echo "         Please run manually: sudo usermod -aG input $target_user" >&2
-    fi
+    return 0
   fi
+
+  echo "NOTE: '$target_user' is not in the 'input' group."
+  echo "      Desktop (seat) sessions do not need it - the udev rule grants"
+  echo "      access through uaccess. Enable it only for SSH or headless use:"
+  echo "        sudo usermod -aG input $target_user"
+  echo "      Then log out and back in for it to take effect."
 }

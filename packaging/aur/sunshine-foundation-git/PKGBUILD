@@ -28,7 +28,7 @@
 # * FFmpeg plus x264/x265/SVT-AV1/hdr10plus are consumed as pre-built static
 #   archives from `third-party/build-deps/dist/Linux-<arch>` (submodule). No
 #   system ffmpeg is required or used.
-# * CUDA/NVENC is disabled by default; flip `_use_cuda` to true (and add `cuda`
+# * The CUDA capture path is disabled by default; flip `_use_cuda` to true (and add `cuda`
 #   to makedepends) to build it. VAAPI (AMD/Intel) and the software encoder are
 #   always built.
 # * options=(!strip): makepkg's strip would drop the installed file
@@ -50,7 +50,8 @@ url="https://github.com/AlkaidLab/foundation-sunshine"
 license=('GPL-3.0-only')
 install="$pkgname.install"
 
-# Set to true to build with CUDA/NVENC support. That adds a hard `cuda`
+# Set to true to build the CUDA capture path (NVFBC). NVENC works without it;
+# this only adds the CUDA capture/HDR conversions. That adds a hard `cuda`
 # makedepends; VAAPI (AMD/Intel) and the software encoder are always built.
 _use_cuda=false
 
@@ -94,7 +95,7 @@ makedepends=(
 )
 
 optdepends=(
-  'cuda: NVENC hardware encoding on NVIDIA (rebuild with -DSUNSHINE_ENABLE_CUDA=ON)'
+  'cuda: CUDA capture path (NVFBC) and CUDA HDR conversions; NVENC itself needs no toolkit'
   'libva-intel-driver: VAAPI encoding on older Intel GPUs'
   'libva-mesa-driver: VAAPI encoding on AMD/Intel'
   'nvidia-utils: NVENC/NVDEC driver stack'

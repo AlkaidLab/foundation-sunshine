@@ -37,7 +37,7 @@ pkgbase = sunshine-foundation-git
 	depends = systemd
 	depends = udev
 	depends = wayland
-	optdepends = cuda: NVENC hardware encoding on NVIDIA (rebuild with -DSUNSHINE_ENABLE_CUDA=ON)
+	optdepends = cuda: CUDA capture path (NVFBC) and CUDA HDR conversions; NVENC itself needs no toolkit
 	optdepends = libva-intel-driver: VAAPI encoding on older Intel GPUs
 	optdepends = libva-mesa-driver: VAAPI encoding on AMD/Intel
 	optdepends = nvidia-utils: NVENC/NVDEC driver stack

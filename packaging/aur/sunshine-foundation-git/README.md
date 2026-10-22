@@ -40,16 +40,21 @@ Only one instance may run at a time (ports 47984/47989/47990/48010).
 
 ### NVIDIA / NVENC
 
-CUDA is **off** by default — the `cuda` package is an AUR package and is not a
-base dependency. To build with NVENC support, edit the top of `PKGBUILD`:
+NVENC itself needs no CUDA toolkit: the encoders go through FFmpeg (and the
+runtime `libcuda.so.1` from the driver), so H.264/HEVC/AV1 via NVENC work
+without the `cuda` package.
+
+What `cuda` buys is the **CUDA capture path** (NVFBC) and the CUDA-side HDR
+conversions. It is **off** by default — `cuda` is an AUR package and not a base
+dependency. To build with it, edit the top of `PKGBUILD`:
 
 ```bash
 _use_cuda=true
 ```
 
 and add `'cuda'` to `makedepends` (the `cuda` optdepend then becomes a real
-dependency). Then `makepkg -si` as usual. VAAPI (AMD/Intel) and software
-encoding are always enabled.
+dependency). Then `makepkg -si` as usual. VAAPI (AMD/Intel), the KMS/Wayland
+capture paths and software encoding are always enabled.
 
 ## Things that bite (already handled here)
 
