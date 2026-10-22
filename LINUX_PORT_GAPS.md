@@ -115,9 +115,15 @@
 
 ### 2.4 DSU 运动数据服务器（低中）
 
-- **现状**：`src/platform/windows/dsu_server.cpp`（DSU/cemuhook UDP 协议）仅 Windows input.cpp 挂载。
-- **路径**：inputtino 的 DS5 (uhid) 有加速度/陀螺仪数据源；照协议（UDP 26760）实现广播。
-- **验收**：Cemu/模拟器识别到运动输入。
+- **现状**：`src/platform/windows/dsu_server.cpp`（DSU/cemuhook UDP 协议，497 行 asio UDP，
+  除 winsock include 外与平台无关）只在 `src/platform/windows/input.cpp:555-572` 挂载；
+  喂数据的入口是 `dsu_server->send_motion_data(controller_id, ...)`（同文件 :2507/:2514）。
+- **路径修正**：原以为 inputtino 的 DS5 能提供加速度/陀螺仪数据源，实际
+  `third-party/inputtino/include/inputtino/input.hpp:417` 是 `set_motion(MOTION_TYPE, x, y, z)`
+  ——**注入**方向，不是采集。所以 DSU 在 Linux 上没有可广播的源。真要做，必须先落地
+  §2.7 的第一步：用 `/dev/hidraw` 读物理 DualSense 的 input report 0x01/0x31 取 IMU，
+  再复用 Windows 那份协议实现（把它从 `src/platform/windows/` 挪成共享源 + 平台门控）。
+- **验收**：Cemu/模拟器识别到运动输入（需 §2.7 的 hidraw 采集先就位）。
 
 ### 2.5 非 KDE 前台检测（低）—— niri 已覆盖，其余待做
 
@@ -321,13 +327,20 @@
 - **后果**：`GET /api/perf/current` 的三段（捕获交付 / 编码提交 / 编码输出）在 Linux 正常，只有
   "源更新帧率" 恒为 `unavailable`；`POST /api/perf/frame-rates`（`src/confighttp/runtime.cpp:463`）
   的按需订阅因此没有可订阅的源。
-- **技术路径**：wlr 后端用 `wp_presentation` feedback 或 output commit 序号喂
-  `observe_sequence()`；KMS 后端用 `drmModePageFlip` 回传的 `sequence`（或 vblank 计数）喂
-  `record()`。两者都归到 `capture_source_kind_e::vdd_published`——语义是"产出源的发布节奏"，
-  与 VDD 的 DRM 帧序号同义。约 0.5–1 天/后端，且需要真实串流验证计数值与 Moonlight 感知的
-  FPS 一致（否则诊断口径反而误导）。
-- **验收**：`/api/perf/current` 的源段非 `unavailable`，且 `docs/rtss-pipeline-fps.md` 的口径在
-  Linux 上可复现。
+- **技术路径（已做可行性核查，结论：不能照搬 Windows 的两条路）**：
+  - `wp_presentation` **不可用**：`wp_presentation.feedback()` 需要绑定到我们自己提交的
+    `wl_surface`，而 wlr-screencopy 客户端不持有 surface，拿不到 `presented` 事件。协议 XML 虽然
+    已 vendored（`third-party/wayland-protocols/stable/presentation-time/presentation-time.xml`，
+    `GEN_WAYLAND` 一行就能生成代码），但语义上无法用来观测别人的输出。
+  - `drmModePageFlip` 的 `sequence` **不可用**：page-flip 事件只发给 DRM master，而 kmsgrab 是非
+    master 的抓帧客户端，收不到。
+  - 因此 Linux 侧唯一可得的"源节奏"信号就是**合成器按需交付给 screencopy 的帧**，而那就是我们
+    自己的捕获交付段——再记一遍会让"源 = 捕获"恒等，指标反而误导（比 `unavailable` 更糟）。
+- **可选方案**：在 `src/platform/linux/vdd_edid.cpp` 那条链路上，若将来由我们驱动 VDD 的
+  presentation（例如自建 wl_surface 或用 DRM master 的 headless 后端），才能真正量到
+  `vdd_published`；当前架构下不做，`source_kind` 保持 `unavailable` 是诚实结果。
+- **验收**（若未来做）：`/api/perf/current` 的源段非 `unavailable`，且 `docs/rtss-pipeline-fps.md`
+  的口径在 Linux 上可复现。
 
 ### 7.2 ○ 依赖外网的单元测试（新）
 
