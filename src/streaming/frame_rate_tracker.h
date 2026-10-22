@@ -65,6 +65,12 @@ namespace perf {
     dxgi_updates,
     wgc_arrivals,
     vdd_published,
+    // Linux/KMS: the framebuffer the scanned-out plane points at changed, i.e.
+    // the compositor published a new frame. Same meaning as a DXGI present, so
+    // a static desktop reports zero source updates. (The vblank counters would
+    // give an absolute refresh rate, but the NVIDIA driver answers EOPNOTSUPP
+    // to both drmCrtcGetSequence and drmWaitVBlank.)
+    drm_fb_flips,
   };
 
   // One counter per display lifetime. Source updates never take recorder_mutex;

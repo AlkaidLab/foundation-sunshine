@@ -17,13 +17,13 @@ NVENC/VAAPI/Vulkan/软件编码、evdev 输入注入、WebUI）是上游成熟�
 （虚拟显示器、物理显示器 display_device、HDR 动态元数据三件套、剪贴板主机同步、远程麦克风、
 ABR 前台检测、托盘）已逐项移植到 Linux 并补齐了 Windows 对齐审计。
 
-已移植项的清单与证据见 §六；剩余缺口（含 7 项部分实现、可行未做项、本质不可移植项）
+已移植项的清单与证据见 §六；剩余缺口（含 6 项部分实现、可行未做项、本质不可移植项）
 在 `LINUX_PORT_GAPS.md` 逐条编号维护。
 
 **上游同步状态**：2026-10-22 已并入 `origin/master` `7a0995e2`（33 个提交，403 文件）。
 其中两大跨平台重构（Simple-Web-Server → 自带 Beast HTTP 栈、confighttp 拆成 24 个模块）在 Linux
-上零改动直接生效；本次同步新引入的缺口只有"管线帧率的源更新段无 Linux 后端"（`LINUX_PORT_GAPS.md`
-§7.1），其余为上游测试的环境依赖。
+上零改动直接生效。本次同步引入的唯一功能缺口——管线帧率的"源更新"段没有 Linux 后端
+（`LINUX_PORT_GAPS.md` §7.1）——也已补上 KMS 一侧，其余为上游测试的环境依赖。
 
 **已知总边界**：CI 目前只有 Windows 构建 job（`.github/workflows/main.yml` 的
 `setup_release` / `vdd_smoke` / `build_win`），Linux 编译与测试依赖本机手工验证。
@@ -304,6 +304,20 @@ FALSE 且不带 `GError`，这点是实测出来的，别按返回值判错。�
 验收用例：`tests/unit/test_credential_store.cpp` 的 `RoundTripsThroughTheKeyring`（无 Secret
 Service 或本用户已有 key 时 `GTEST_SKIP`，绝不覆盖真实凭据）。
 
+### 6.12 管线帧率的源更新段（KMS）
+
+`src/platform/linux/kmsgrab.cpp` 的 `display_t` override 了
+`frame_rate_source()`（`src/platform/common.h:685`），生产
+`perf::capture_source_kind_e::drm_fb_flips`：`refresh()` 每次读到 `plane->fb_id` 后调用
+`observe_scanout(fb_id)`，只有**扫描出的帧缓冲变了**才记一帧，语义对齐 Windows 的 DXGI present /
+WGC arrival（静态桌面记 0）。这填补了上游戏后"源更新帧率"恒为 `unavailable` 的空白——kmsgrab
+的捕获循环按串流帧率定速，屏幕冻住时捕获段照样报 60 fps，源段才能暴露"上游没出新帧"。
+
+驱动的 vblank 计数器在本机（NVIDIA）上不可用：`drmCrtcGetSequence` 与 `drmWaitVBlank` 都返回
+`EOPNOTSUPP`（实测），所以没有把绝对刷新率当源速率。`wlgrab`（`wlr-export-dmabuf` 一帧一请求，
+源速率与捕获速率恒等）与 `x11grab`（定时轮询、未接 XDamage）没有独立信号源，保持
+`unavailable`——理由写在 `LINUX_PORT_GAPS.md` §7.1。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -381,7 +395,7 @@ Service 或本用户已有 key 时 `GTEST_SKIP`，绝不覆盖真实凭据）。
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 695 用例，693 通过，12 跳过，2 失败
+test_sunshine: 696 用例，694 通过，12 跳过，2 失败
 ```
 
 两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：

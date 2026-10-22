@@ -23,6 +23,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/round_robin.h"
+#include "src/streaming/frame_rate_tracker.h"
 #include "src/utility.h"
 #include "src/video.h"
 
@@ -1193,6 +1194,10 @@ namespace platf {
         plane_t plane = drmModeGetPlane(card.fd.el, plane_id);
         frame_timestamp = std::chrono::steady_clock::now();
 
+        if (plane) {
+          observe_scanout(plane->fb_id);
+        }
+
         auto fb = card.fb(plane.get());
         if (!fb) {
           // This can happen if the display is being reconfigured while streaming
@@ -1261,6 +1266,44 @@ namespace platf {
       cursor_t captured_cursor {};
 
       card_t card;
+
+      /**
+       * The pipeline-FPS view compares the rate at which the *source* produces
+       * frames with what capture, encode submission and encoded output manage.
+       *
+       * On KMS the source-side signal is the framebuffer the CRTC's plane is
+       * scanned out from: a new buffer means the compositor published a new
+       * frame, exactly like a DXGI present or a WGC arrival, and an unchanged
+       * buffer means a static screen that produced nothing. The vblank counters
+       * (drmCrtcGetSequence / drmWaitVBlank) would read as an absolute refresh
+       * rate, but the NVIDIA driver answers EOPNOTSUPP to both, so they cannot
+       * be the primary signal.
+       */
+      std::shared_ptr<perf::capture_source_counter_t>
+      frame_rate_source() const override {
+        if (!source_counter) {
+          auto counter = std::make_shared<perf::capture_source_counter_t>();
+          counter->kind.store(perf::capture_source_kind_e::drm_fb_flips, std::memory_order_relaxed);
+          source_counter = std::move(counter);
+        }
+        return source_counter;
+      }
+
+      /// Called by refresh() with the plane's current framebuffer.
+      void
+      observe_scanout(std::uint32_t fb_id) const {
+        if (!fb_id) {
+          return;
+        }
+        if (last_scanout_fb && *last_scanout_fb != fb_id && source_counter) {
+          source_counter->record(1);
+        }
+        last_scanout_fb = fb_id;
+      }
+
+    private:
+      mutable std::shared_ptr<perf::capture_source_counter_t> source_counter;
+      mutable std::optional<std::uint32_t> last_scanout_fb;
     };
 
     class display_ram_t: public display_t {

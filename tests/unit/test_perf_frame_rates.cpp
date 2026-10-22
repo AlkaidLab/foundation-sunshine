@@ -404,3 +404,26 @@ TEST(PerfFrameRateCollection, LateSourceMetadataCannotPrimeOrIncrementTheNewWind
   EXPECT_EQ(source.frames, 120u);
   perf::set_frame_rate_subscription("metadata-test", false);
 }
+
+// The KMS capture path reports the CRTC's vblank sequence as its source rate,
+// so a 60 fps stream on a higher-refresh output shows the gap instead of an
+// empty source column.
+TEST_F(PerfFrameRates, ReportsDrmVblankAsTheSourceKind) {
+  constexpr auto id = 91009u;
+  begin(id);
+  const auto start = std::chrono::steady_clock::now();
+  auto source = std::make_shared<perf::capture_source_counter_t>();
+  source->kind = perf::capture_source_kind_e::drm_fb_flips;
+  // First observation only rebaselines the sequence.
+  source->observe_sequence(5000);
+  for (int i = 0; i < 60; ++i) perf::record_capture_frame(id, source, start);
+  source->observe_sequence(5144);
+  for (int i = 0; i < 60; ++i) perf::record_encode_submission(id, false);
+  for (int i = 0; i < 60; ++i) perf::record_encoded_frame(id);
+
+  const auto rates = rates_for(id, start + 1s);
+  EXPECT_EQ(rates["source_kind"], "drm_fb_flips");
+  EXPECT_EQ(rates["source"]["fps"], 144.0);
+  EXPECT_EQ(rates["capture"]["fps"], 60.0);
+  perf::end_session(id);
+}

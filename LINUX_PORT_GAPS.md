@@ -326,32 +326,39 @@
 同步点：`ed415026` → `7a0995e2`（33 个提交，403 文件，+29538/−12656）。本节只记录**本次同步带来
 的新缺口**；连同 §一/§二 一起才构成完整待办。
 
-### 7.1 🔶 管线帧率的"源更新"段在 Linux 恒为空（新）
+### 7.1 ✅ 管线帧率的"源更新"段（KMS 路径已接上，2026-10-22）
 
-- **现状**：上游把 `perf_recorder` 迁到 `src/streaming/perf_recorder.{cpp,h}`，新增
-  `src/streaming/frame_rate_tracker.h`（`capture_source_kind_e { unavailable, dxgi_updates,
-  wgc_arrivals, vdd_published }` 与 `capture_source_counter_t`）。平台钩子是
-  `platf::display_t::frame_rate_source()`（`src/platform/common.h:685`，默认返回空指针）。
-  只有 Windows 三个后端 override 它：`src/platform/windows/display.h`、
-  `display_vdd.cpp:1453`、`display_wgc.cpp:447`。Linux 的 `src/platform/linux/kmsgrab.cpp:632`、
-  `cuda.cpp:735`、`wlgrab.cpp:28` 都没有 override。
-- **后果**：`GET /api/perf/current` 的三段（捕获交付 / 编码提交 / 编码输出）在 Linux 正常，只有
-  "源更新帧率" 恒为 `unavailable`；`POST /api/perf/frame-rates`（`src/confighttp/runtime.cpp:463`）
-  的按需订阅因此没有可订阅的源。
-- **技术路径（已做可行性核查，结论：不能照搬 Windows 的两条路）**：
-  - `wp_presentation` **不可用**：`wp_presentation.feedback()` 需要绑定到我们自己提交的
-    `wl_surface`，而 wlr-screencopy 客户端不持有 surface，拿不到 `presented` 事件。协议 XML 虽然
-    已 vendored（`third-party/wayland-protocols/stable/presentation-time/presentation-time.xml`，
-    `GEN_WAYLAND` 一行就能生成代码），但语义上无法用来观测别人的输出。
-  - `drmModePageFlip` 的 `sequence` **不可用**：page-flip 事件只发给 DRM master，而 kmsgrab 是非
-    master 的抓帧客户端，收不到。
-  - 因此 Linux 侧唯一可得的"源节奏"信号就是**合成器按需交付给 screencopy 的帧**，而那就是我们
-    自己的捕获交付段——再记一遍会让"源 = 捕获"恒等，指标反而误导（比 `unavailable` 更糟）。
-- **可选方案**：在 `src/platform/linux/vdd_edid.cpp` 那条链路上，若将来由我们驱动 VDD 的
-  presentation（例如自建 wl_surface 或用 DRM master 的 headless 后端），才能真正量到
-  `vdd_published`；当前架构下不做，`source_kind` 保持 `unavailable` 是诚实结果。
-- **验收**（若未来做）：`/api/perf/current` 的源段非 `unavailable`，且 `docs/rtss-pipeline-fps.md`
-  的口径在 Linux 上可复现。
+**上游机制**：`src/streaming/perf_recorder.{cpp,h}` + `src/streaming/frame_rate_tracker.h`
+（`capture_source_kind_e` 与 `capture_source_counter_t`）。平台钩子是
+`platf::display_t::frame_rate_source()`（`src/platform/common.h:685`，默认返回空指针），
+Windows 三个后端 override 它（`display.h`、`display_vdd.cpp:1453`、`display_wgc.cpp:447`）。
+
+**已做**：`src/platform/linux/kmsgrab.cpp` 的 `display_t` 现在也 override：
+
+- 新增枚举值 `capture_source_kind_e::drm_fb_flips`（JSON 里就是 `"drm_fb_flips"`，映射在
+  `src/streaming/perf_recorder.cpp:300`）。这是纯增量，Windows 侧不受影响（switch 有 `default`）。
+- `refresh()` 每次读到 `plane->fb_id` 后调用 `observe_scanout(fb_id)`：**扫描出的帧缓冲变了**
+  才记一帧。语义与 DXGI present / WGC arrival 一致——静态桌面记 0，这才是这个指标要抓的
+  "上游没出新帧"场景。注意 kmsgrab 的捕获循环是**按串流帧率定速**的：屏幕冻住时 `capture` 段
+  照样报 60 fps，所以源段和捕获段不是同一个数，接上它是有意义的。
+- 驱动的 vblank 计数器两条路都试过，**NVIDIA 全不支持**（实测 `errno=95 EOPNOTSUPP`）：
+  `drmCrtcGetSequence`（`/dev/dri/card1` 上直接返回 −1）、`drmWaitVBlank`
+  （`DRM_VBLANK_RELATIVE` 同 errno）。所以没有把"绝对刷新率"当源速率——那在主力卡上恒为空。
+- 无权限时 `drmModeGetPlane` 会返回 `fb_id=0`，此时直接跳过，不产生错误的 0 帧；有权限时它读的
+  就是捕获本身依赖的那个值（`fb_id` 为 0 时 `refresh()` 本来就会 `timeout`），所以"能被这个
+  生产者看到"的前提与"能捕获"完全等价。
+
+**另外两个 Linux 后端为什么不接**：
+
+- `wlgrab.cpp`（`wlr-export-dmabuf`）：`dmabuf_t::listen()` 是**一帧一请求**，捕获循环每轮发一次
+  请求等一帧，源速率与捕获速率恒等，单独记一列只会误导。合成器侧的 `wp_presentation` 反馈需要
+  我们自己持有 `wl_surface`，screencopy 客户端拿不到。
+- `x11grab.cpp`：定时 `XShmGetImage` 轮询，没有 damage 事件接入（未用 XDamage），同样没有独立
+  信号源。
+
+**验收**：`tests/unit/test_perf_frame_rates.cpp` 的 `ReportsDrmFbFlipsAsTheSourceKind` 覆盖
+枚举→JSON 映射与"144 次翻转 / 60 次捕获"的分离；真实 KMS 会话下 `/api/perf/current` 的
+`source_kind` 应为 `drm_fb_flips`（需要带能力的二进制 + 活动会话，headless 环境无法复现）。
 
 ### 7.2 ○ 依赖外网的单元测试（新）
 
