@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 80，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 82，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
@@ -23,9 +23,12 @@
 桌面 provider、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
 拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端 + X11（RandR）显示后端、§7.1 管线帧率的"源更新"段、
-§1.1 虚拟显示器 per-client 隔离（阶段一客户端身份进 EDID + 阶段二并行多实例）。）
+§1.1 虚拟显示器 per-client 隔离（阶段一客户端身份进 EDID + 阶段二并行多实例）、
+§7.3 依赖系统已安装资产的单测（改成按资产是否存在分支断言）、
+§7.2 依赖外网的单测（复核确认上游已自行摘出 ctest 门禁）。
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
-**2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
+**2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七，其中 §7.1/§7.2/§7.3
+已了结，§7.4 记录了三个 SetUpTestSuite 失败的根因——测试二进制没有 `cap_sys_admin`，非缺口）。
 
 ---
 
@@ -534,24 +537,50 @@ Windows 三个后端 override 它（`display.h`、`display_vdd.cpp:1453`、`disp
 枚举→JSON 映射与"144 次翻转 / 60 次捕获"的分离；真实 KMS 会话下 `/api/perf/current` 的
 `source_kind` 应为 `drm_fb_flips`（需要带能力的二进制 + 活动会话，headless 环境无法复现）。
 
-### 7.2 ○ 依赖外网的单元测试（新）
+### 7.2 ✅ 依赖外网的单元测试（上游已自行摘出 ctest 门禁，2026-10-22 复核）
 
 - `DownloadFileTests/DownloadFileTest.Run/1` 访问
   `https://httpbin.org/redirect-to?url=/base64/aGVsbG8h`。离线机器必失败，与本仓代码无关。
-- **处置**：联网环境跑，或在 CI 里跳过该参数组；不要为此改产品代码。
+- **上游已经把这条路从 ctest 门禁里摘掉了**：`tests/CMakeLists.txt:613-618` 注册的
+  `test_sunshine` 用例带 `--gtest_filter=-DownloadFileTests/*`，注释写明该参数组 "report on a
+  third party's uptime rather than on this repository"，用例留在二进制里，改
+  `http::download_file` 时可手动跑。
+- 因此 `ctest` 不会因它变红，只有直接跑二进制才看得到失败。**无需动作**，更不要改产品代码。
 
-### 7.3 ○ 依赖系统已安装资产的单元测试（新）
+### 7.3 ✅ 依赖系统已安装资产的单元测试（2026-10-22 修复）
 
 - `tests/unit/test_crypto.cpp` 的
   `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 断言"未知 appid →
   404"。但 `DEFAULT_APP_IMAGE_PATH` 是 `SUNSHINE_ASSETS_DIR "/box.png"`（`src/process.cpp:52`），
   编译期就定成本机安装前缀的绝对路径 `/usr/share/sunshine/box.png`；本机装过包，该文件存在 →
-  实际返回 200 并把 box.png 流出。
-- **已验证是环境假设、不是移植回归**：在用户命名空间里 `unshare -rm` 把空目录 bind-mount 到
-  `/usr/share/sunshine` 后，该用例通过。
-- **要常绿**：测试里把 `SUNSHINE_ASSETS_DIR` 指到临时目录，或把该用例标注成"需要无系统资产环境"。
+  实际返回 200 并把 box.png 流出。（曾用用户命名空间 `unshare -rm` 把空目录 bind-mount 到
+  `/usr/share/sunshine` 验证：该断言是环境假设，不是移植回归。）
+- **已修**：用例先探一次编译期默认资产是否存在（`fs::exists(fs::path(SUNSHINE_ASSETS_DIR) /
+  "box.png")`），据此决定未知 appid 期望 200 还是 404；同时把真正要守的性质补强为"响应**永远不是**
+  请求里那个 app 自己的图"——期望 200 时断言 body 长度小于请求的 65 MiB 资产。两种环境都通过，
+  断言没有被削弱成恒真（`tests/unit/test_crypto.cpp:376-395`）。
+- 结果：`test_sunshine` 805 例 / 792 通过 / 12 跳过 / 1 失败，剩下的就是 §7.2 那条被 ctest
+  过滤掉的 httpbin 用例。
 
-### 7.4 已随本次同步自动继承（无需后续动作，记录以免误判为缺口）
+### 7.4 三个 SetUpTestSuite 失败（AudioTest / MouseHIDTest / EncoderTest）——权限，不是缺口
+
+这 3 个失败从移植第一天起就在（`AGENTS.md` 的构建基线亦记为 headless 现象），本轮查清了根因：
+
+- 报错点在 `tests/tests_common.h:18` 与 `:23` 的 `ASSERT_TRUE(platf_deinit)`：`platf::init()`
+  返回 `nullptr`（`src/platform/linux/misc.cpp:1092-1095`，没有任何采集后端自检通过）。用例体
+  本身是优雅跳过的（如 `tests/unit/test_audio.cpp:56`），只有夹具断言报错。
+- 根因是**能力**：KMS 自检走到 `src/platform/linux/kmsgrab.cpp:1837` 的
+  `if (!fb->handles[0])`——取 DRM framebuffer 的 GEM handle 需要 `cap_sys_admin`。已核对本机
+  `/usr/bin/sunshine-*` 带 `cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_sys_admin=p`
+  （`packaging/arch-local/sunshine-foundation.install` 的 `do_setcap()` 打上），而
+  `build/tests/test_sunshine` **没有能力** → 该分支 `break` → `display_names` 为空 → init 失败。
+- 设备权限不是原因：`/dev/dri/card1`、`/dev/dri/renderD128`、`/dev/uinput` 在当前用户下都能
+  `O_RDWR` 打开（已实测）；`strace` 也确认测试进程确实打开了 `card1` 与 `renderD128`，之后才因
+  拿不到 fb handle 放弃。
+- **结论**：给测试二进制加上能力即会通过。不要改动上游夹具把它变成 skip——那会在 Windows CI 上
+  掩盖真实的 `platf::init()` 失败。`ctest` 的 `test_sunshine` 因此仍报红，属预期。
+
+### 7.5 已随本次同步自动继承（无需后续动作，记录以免误判为缺口）
 
 - **HTTP 传输替换**：Simple-Web-Server → 自带 Beast 实现（`src/http/{types,server,client,
   tls_trust}.{h,cpp}`，`cmake/targets/beast_http.cmake` 建 `sunshine_http` 静态库）。本仓 24 个

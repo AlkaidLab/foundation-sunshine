@@ -778,22 +778,31 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ## 九、测试基线
 
-2026-10-22（并入上游 `7a0995e2` 之后），CUDA=ON 构建树：
+2026-10-22（并入上游 `7a0995e2` 之后，pkgrel 82），CUDA=ON 构建树：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 805 用例，791 通过，12 跳过，2 失败
+test_sunshine: 805 用例，792 通过，12 跳过，1 失败
 ```
 
-两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：
+唯一失败的是 `DownloadFileTests/DownloadFileTest.Run/1`（访问 `https://httpbin.org/...`，离线必失败）
+——它**不在 ctest 门禁内**：`tests/CMakeLists.txt:613-618` 注册 `test_sunshine` 时就带了
+`--gtest_filter=-DownloadFileTests/*`，只留给手动跑。所以上面这条 ctest 失败完全来自三个
+`SetUpTestSuite` 夹具（见下），不是用例失败。
 
-- `DownloadFileTests/DownloadFileTest.Run/1` 访问 `https://httpbin.org/...`——离线必失败。
-- `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 期望未知 appid 返回
-  404，但 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`，本机装过包所以该
-  文件存在 → 返回 200。用 `unshare -rm` 把空目录 bind-mount 到 `/usr/share/sunshine` 后该用例通过。
+- `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 曾因"未知 appid 期望
+  404、而 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`"失败（本机装过包，
+  文件存在 → 返回 200）。已改为按该资产是否存在分支断言，并把性质补强为"响应永远不是请求 app
+  自己的图"（`tests/unit/test_crypto.cpp:376-395`），现在恒绿。详见 `LINUX_PORT_GAPS.md` §7.3。
 
 三个 `SetUpTestSuite` 失败（`Configurations/AudioTest`、`MouseInputs/MouseHIDTest`、
-`EncoderVariants/EncoderTest`）仍是无头环境预期行为。
+`EncoderVariants/EncoderTest`）的根因已查明：**测试二进制没有 `cap_sys_admin`**，KMS 采集自检在
+`src/platform/linux/kmsgrab.cpp:1837` 取不到 framebuffer 的 GEM handle 而放弃，于是
+`platf::init()` 返回空、`tests/tests_common.h:18/23` 的 `ASSERT_TRUE(platf_deinit)` 报错（用例体
+本身是优雅跳过的）。已安装的 `/usr/bin/sunshine-*` 由
+`packaging/arch-local/sunshine-foundation.install` 的 `do_setcap()` 打了能力，所以真实运行不受影响。
+设备权限不是原因：`/dev/dri/card1`、`/dev/dri/renderD128`、`/dev/uinput` 都能打开，`strace` 也确认
+测试进程确实开了这两个 DRM 节点。设备齐备时给测试二进制加能力即会通过。
 
 **注意事项**：
 - 直跑 `ctest` 需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），否则聚合套件
