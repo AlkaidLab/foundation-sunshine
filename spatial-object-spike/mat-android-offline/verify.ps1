@@ -23,17 +23,21 @@ $audio="$app/src/main/java/com/limelight/binding/audio"
 New-Item -ItemType Directory -Path "$out/classes","$out/dex" | Out-Null
 & gcc.exe -shared -O2 -std=c11 -Wall -Wextra -Werror -static-libgcc "-I$JdkRoot/include" "-I$JdkRoot/include/win32" "$jni/mat_carrier_bridge.c" "$common/src/MatReceiver.c" "$common/src/MatDepacketizer.c" -o "$out/moonlight-core.dll"
 if($LASTEXITCODE){throw 'Host JNI build failed'}
-$core=@('MatCarrierConsumer','MatCarrierPlayer','MatNativeReceiver','MatRecording')|ForEach-Object {"$audio/$_.java"}
+$core=@('MatCarrierConsumer','MatCarrierPlayer','MatNativeReceiver','MatRecording','MatOutputPolicy')|ForEach-Object {"$audio/$_.java"}
 & javac.exe --release 8 -encoding UTF-8 -d "$out/classes" @core "$app/src/test/java/com/limelight/binding/audio/MatOfflineTest.java" "$PSScriptRoot/MatResearchPcm.java" "$PSScriptRoot/MatResearchPcmTest.java"
 if($LASTEXITCODE){throw 'Core Java compile failed'}
 & java.exe -Xcheck:jni "-Djava.library.path=$out" -cp "$out/classes" com.limelight.binding.audio.MatOfflineTest $source 2>&1 | Tee-Object -FilePath "$out/jvm-tests.log"
 if($LASTEXITCODE){throw 'Production JNI/player tests failed'}
+& javac.exe --release 8 -encoding UTF-8 -classpath "$out/classes" -d "$out/classes" "$app/src/test/java/com/limelight/binding/audio/MatOutputPolicyTest.java"
+if($LASTEXITCODE){throw 'MAT output policy tests compile failed'}
+& java.exe -cp "$out/classes" com.limelight.binding.audio.MatOutputPolicyTest | Tee-Object -FilePath "$out/output-policy.log"
+if($LASTEXITCODE){throw 'MAT output policy regression failed'}
 & $Python "$PSScriptRoot/phone_pcm_oracle.py" $source "$out/research-mono.pcm" | Tee-Object -FilePath "$out/phone-pcm-oracle.log"
 if($LASTEXITCODE){throw 'Python research PCM oracle failed'}
 & java.exe -cp "$out/classes" com.limelight.binding.audio.MatResearchPcmTest $source "$out/research-mono.pcm" | Tee-Object -FilePath "$out/phone-pcm-test.log"
 if($LASTEXITCODE){throw 'Research PCM does not match existing offline extraction'}
 $androidJar="$SdkRoot/platforms/android-36/android.jar"
-& javac.exe -source 8 -target 8 -encoding UTF-8 -classpath "$androidJar;$out/classes" -d "$out/classes" "$audio/MatAudioTrackSink.java" "$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java" "$PSScriptRoot/MatDeviceCheck.java" "$PSScriptRoot/MatResearchSpeaker.java"
+& javac.exe -source 8 -target 8 -encoding UTF-8 -classpath "$androidJar;$out/classes" -d "$out/classes" "$audio/MatOutputCapabilities.java" "$audio/MatAudioTrackSink.java" "$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java" "$PSScriptRoot/MatDeviceCheck.java" "$PSScriptRoot/MatResearchSpeaker.java"
 if($LASTEXITCODE){throw 'Actual Android AudioTrack sink/activity compile failed'}
 # Build both common-c copies and rerun the pre-existing dump/manifest acceptance tests.
 foreach($variant in @('host-common','android-common')) {
@@ -91,6 +95,7 @@ foreach($name in @('MatReceiver.c','MatReceiver.h','MatDumpFile.c','MatDepacketi
  if($hostText -cne $androidText){throw "Host/Android common source mismatch: $name"}
 }
 $files=@($core)+@("$audio/MatAudioTrackSink.java","$jni/mat_carrier_bridge.c","$jni/Android.mk","$app/proguard-rules.pro","$app/src/debug/java/com/limelight/binding/audio/MatReplayActivity.java","$app/src/debug/AndroidManifest.xml","$app/src/test/java/com/limelight/binding/audio/MatOfflineTest.java","$common/src/MatReceiver.h","$common/src/MatReceiver.c","$common/src/MatDepacketizer.c","$common/src/MatDumpFile.c","$PSScriptRoot/verify.ps1","$PSScriptRoot/AndroidManifest.xml","$PSScriptRoot/MatDeviceCheck.java","$out/mat-offline-diagnostic.apk")
+$files+=@("$audio/MatOutputCapabilities.java","$app/src/test/java/com/limelight/binding/audio/MatOutputPolicyTest.java")
 $files+=@('MatResearchPcm.java','MatResearchPcmTest.java','MatResearchSpeaker.java','phone_pcm_oracle.py') | ForEach-Object {"$PSScriptRoot/$_"}
 $files+="$root/spatial-object-spike/mat-spike/analyze_mat.py"
 $hashes=@($files|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLower()}})

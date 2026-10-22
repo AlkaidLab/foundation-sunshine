@@ -105,8 +105,21 @@ not repeated on this machine in this continuation.
 
 Remaining work
 --------------
-General format handling, object/coordinate semantics and spatial rendering,
-integration with a real client network session, production live-source contract
-and recovery/latency remain incomplete. This finite mono audition is not a
-replacement for any of them. HDMI/eARC hardware and real Atmos recognition
-remain unverified. No PR has been merged or published by this continuation.
+Scope correction from the user, 2026-10-22: do not reconstruct MAT on phones
+that lack MAT support. General mobile MAT decoding and custom phone object
+rendering are no longer required for this continuation. The experimental SOBJ
+renderer/streaming work is parked locally, outside the MAT transport path;
+its new full-app build was cancelled and no object diagnostic was installed.
+
+Continue the supported-device MAT passthrough path: capability selection before
+the session, real client network integration, a production live-source contract
+and recovery/latency validation. Unsupported devices should select the normal
+audio path before negotiating MAT. Explicit diagnostic MAT playback currently
+fails closed on unsupported output. Automatic normal-session selection is now
+implemented and verified separately by mat-capabilities/verify.ps1; the historical
+phone tests here do not establish its device behavior. Never reinterpret the IEC carrier as PCM or
+silently change codecs inside an already negotiated MAT stream.
+
+This finite mono audition remains research evidence only. HDMI/eARC hardware
+and real Atmos recognition remain unverified. No PR has been merged or published
+by this continuation.
