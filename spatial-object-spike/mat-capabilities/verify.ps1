@@ -67,7 +67,7 @@ gradle.projectsEvaluated {
 }
 $automatic=Get-Content -Raw "$out/negotiation/proof.json" | ConvertFrom-Json
 $strict=Get-Content -Raw "$out/strict-negative/proof.json" | ConvertFrom-Json
-if($automatic.result -ne 'PASS' -or $automatic.results.Count -ne 15 -or $strict.results.Count -ne 15){throw 'Incomplete RTSP coverage'}
+if($automatic.result -ne 'PASS' -or $automatic.results.Count -ne 21 -or $strict.results.Count -ne 15){throw 'Incomplete RTSP coverage'}
 $sourcePaths=@($PSCommandPath,"$PSScriptRoot/../mat-android-offline/verify.ps1")
 foreach($name in @('negotiation_client.c','capability_negotiation_test.py','negotiation_test.py','session_jni.c')){
  $sourcePaths+="$PSScriptRoot/../mat-android-session/$name"
@@ -84,7 +84,7 @@ if($apk){$artifacts+=@($apk,"$out/full-client.log","$out/apk-signature.log")}
 $hashes=@($artifacts | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})
 @{result='PASS';scope='Pre-session MAT eligibility and actual RTSP negotiation; no physical HDMI or real-time capture acceptance';
  commonCommit=$sharedHead;clientCommit=(git -C $client rev-parse HEAD);hostCommit=(git -C $root rev-parse HEAD);
- commonCtestsPerCopy=12;javaJniPlayerGroups=12;outputPolicyCases=18;automaticRtspCases=15;strictNegativeRtspCases=15;
+ commonCtestsPerCopy=14;javaJniPlayerGroups=12;outputPolicyCases=18;automaticRtspCases=21;strictNegativeRtspCases=15;
  fullClientApkBuilt=[bool]$BuildFullClient;androidDeviceTested=$false;realTimeCaptureTested=$false;atmosRecognitionVerified=$false;
  sourceHashes=$sources;artifactHashes=$hashes} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS MAT capability selection: $out/proof.json"

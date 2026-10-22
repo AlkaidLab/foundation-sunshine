@@ -523,6 +523,8 @@ namespace config {
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
     {}, // mat_dump_replay (explicit opt-in; no endpoint/capture changes)
+    {}, // mat_live_pipe (external native source must already be ready)
+    {}, // mat_live_producer
   };
 
   stream_t stream {
@@ -1498,6 +1500,8 @@ namespace config {
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
     string_f(vars, "mat_dump_replay", audio.mat_dump_replay);
+    string_f(vars, "mat_live_pipe", audio.mat_live_pipe);
+    string_f(vars, "mat_live_producer", audio.mat_live_producer);
 
     string_restricted_f(vars, "origin_web_ui_allowed", nvhttp.origin_web_ui_allowed, { "pc"sv, "lan"sv, "wan"sv });
 

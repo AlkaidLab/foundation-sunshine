@@ -21,7 +21,7 @@
 namespace stream::session {
   enum class stop_reason_e : int;
 }
-namespace spatial_transport { struct ReplayManifest; }
+namespace spatial_transport { struct ReplayManifest; struct LiveSession; }
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
@@ -136,6 +136,9 @@ namespace rtsp_stream {
     bool mat_dump_described {false};
     bool mat_dump_selected {false};
     bool mat_playback_selected {false};
+    bool mat_live_described {false};
+    bool mat_live_selected {false};
+    std::shared_ptr<spatial_transport::LiveSession> mat_live;
     std::shared_ptr<const spatial_transport::ReplayManifest> mat_dump;
   };
 

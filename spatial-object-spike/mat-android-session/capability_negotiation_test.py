@@ -8,26 +8,36 @@ def main():
     parser.add_argument("--client",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=False)
+    live=("v=0\r\n"+"".join(f"a=x-ss-audio.mat-live{suffix}:{value}\r\n" for suffix,value in
+        [("","1"),("-carrier",CARRIER),("-clock","48000"),("-crypto","aes128-gcm-hkdf-sha256"),("-epoch","123"),("-domain","7")]))
+    live_ack=[("X-SS-Audio-Codec","mat-live-v1"),("X-SS-Mat-Carrier",CARRIER),("X-SS-Mat-Clock","48000"),
+        ("X-SS-Mat-Live-Crypto","aes128-gcm-hkdf-sha256"),("X-SS-Mat-Live-Epoch","123"),("X-SS-Mat-Live-Domain","7")]
     cases=[
-        ("auto-mat",6,SDP,ACK,5),
+        ("auto-live",6,live,live_ack,7),
+        ("auto-finite-only",6,SDP,[],0),
         ("auto-legacy-host",6,"v=0\r\n",[],0),
-        ("auto-dump-only",6,SDP.replace("mat-playback","mat-dump"),[],0),
-        ("auto-version",6,SDP.replace("mat-playback:1","mat-playback:2"),[],0),
-        ("auto-carrier",6,SDP.replace(CARRIER,"pcm"),[],0),
-        ("auto-clock",6,SDP.replace("mat-clock:48000","mat-clock:192000"),[],0),
-        ("auto-hash",6,SDP.replace(SHA,"A"*64),[],0),
-        ("auto-count",6,SDP.replace("mat-cycles:178","mat-cycles:1001"),[],0),
-        ("auto-duplicate",6,SDP+"a=x-ss-audio.mat-playback:1\r\n",[],0),
-        ("auto-mat-bad-ack",6,SDP,ACK[:-1],-1),
-        ("auto-stale-mat-ack",6,"v=0\r\n",ACK,-1),
-        ("opus-ignores-host-mat",0,SDP,[],0),
-        ("strict-missing",5,"v=0\r\n",[],-1),
-        ("strict-mat",5,SDP,ACK,5),
+        ("auto-live-version",6,live.replace("mat-live:1","mat-live:2"),[],0),
+        ("auto-live-carrier",6,live.replace(CARRIER,"pcm"),[],0),
+        ("auto-live-clock",6,live.replace("clock:48000","clock:192000"),[],0),
+        ("auto-live-crypto",6,live.replace("aes128-gcm-hkdf-sha256","cbc"),[],0),
+        ("auto-live-epoch",6,live.replace("epoch:123","epoch:0"),[],0),
+        ("auto-live-overflow",6,live.replace("epoch:123","epoch:9223372036854775808"),[],0),
+        ("auto-live-duplicate",6,live+"a=x-ss-audio.mat-live:1\r\n",[],0),
+        ("auto-live-bad-ack",6,live,live_ack[:-1],-1),
+        ("auto-live-finite-ack",6,live,live_ack+[("X-SS-Mat-Cycles","178")],-1),
+        ("auto-live-wrong-epoch",6,live,live_ack[:-2]+[("X-SS-Mat-Live-Epoch","124"),live_ack[-1]],-1),
+        ("auto-live-duplicate-ack",6,live,live_ack+[live_ack[-1]],-1),
+        ("auto-stale-live-ack",6,"v=0\r\n",live_ack,-1),
+        ("auto-stale-finite-ack",6,"v=0\r\n",ACK,-1),
+        ("opus-ignores-live",0,live,[],0),
+        ("strict-live-missing",7,SDP,[],-1),
+        ("strict-live",7,live,live_ack,7),
+        ("strict-finite",5,SDP,ACK,5),
         ("auto-gfe",6,"v=0\r\n",[],0),
     ]
     results=[];env=dict(os.environ);env["PATH"]="C:/msys64/ucrt64/bin;"+env.get("PATH","")
     for name,requested,sdp,ack,expected in cases:
-        stop=threading.Event();methods=[];announces=[];errors=[]
+        stop=threading.Event();methods=[];announces=[];errors=[];describe_live=[]
         server=socket.socket();server.bind(("127.0.0.1",0));server.listen();server.settimeout(.1)
         port=server.getsockname()[1]
         def serve():
@@ -49,6 +59,7 @@ def main():
                             if not part:raise RuntimeError("truncated RTSP payload")
                             body+=part
                         if method=="ANNOUNCE":announces.append(body.decode())
+                        if method=="DESCRIBE":describe_live.append(fields.get("x-ml-mat-live"))
                         payload=sdp.encode() if method=="DESCRIBE" else b""
                         extra=[("Session","MATCAP"),("Transport",f"unicast;server_port={port}")]
                         if method=="ANNOUNCE":extra+=ack
@@ -71,7 +82,10 @@ def main():
             if expected==0:
                 assert "x-ml-audio.mat-" not in announces[0] and "mat-iec61937" not in announces[0],(name,announces)
                 assert "x-ml-audio.codec:6" not in announces[0]
-            else: assert "x-ml-audio.codec:mat-iec61937-v1" in announces[0]
+            else:
+                assert f"x-ml-audio.codec:{'mat-live-v1' if expected==7 else 'mat-iec61937-v1'}" in announces[0]
+                if expected==7:assert "mat-sha256" not in announces[0] and "mat-cycles" not in announces[0]
+        assert describe_live==(["1"] if requested in (6,7) and not name.endswith("gfe") else [None]),(name,describe_live)
         results.append(dict(case=name,requested=requested,selected=expected,methods=methods,mediaTested=False))
         print("PASS",name,flush=True)
     (args.output/"proof.json").write_text(json.dumps(dict(result="PASS",scope="Actual production RTSP negotiation; controlled peer; no media/device playback",results=results),indent=2))

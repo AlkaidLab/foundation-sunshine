@@ -3,7 +3,14 @@
 #include <cstring>
 #include "protocol.h"
 #include "encoded_protocol.h"
+#if defined(MAT_LIVE_TAP)
+#include <MinHook.h>
+#else
 #include "vendor/minhook-1.3.4/include/MinHook.h"
+#endif
+#if defined(MAT_LIVE_TAP)
+#include "../../src/spatial_audio/native_mat_guard.h"
+#endif
 // OFFLINE verified wrapper ABI: Process(this, inputFrames, capacity, output, bytes*).
 // This wrapper strips inputFrames before invoking IAsarEncoder2::Process.
 using Encode=HRESULT (__fastcall*)(void*,uint32_t,uint32_t,BYTE*,uint32_t*);
@@ -51,6 +58,10 @@ extern "C" __declspec(dllexport) DWORD WINAPI StartCapture(void* data) {
     wchar_t path[MAX_PATH]{};GetModuleFileNameW(nullptr,path,MAX_PATH);auto* name=wcsrchr(path,L'\\');name=name?name+1:path;
     const BYTE expected[]={0x48,0x83,0xec,0x38,0x48,0x8b,0x49,0x08};
     if(_wcsicmp(name,L"audiodg.exe") || !base || r->magic!=kByteMagic || r->version!=1) error=ERROR_BAD_ENVIRONMENT;
+#if defined(MAT_LIVE_TAP)
+    if(!error && (!native_mat_guard::system_engine(GetCurrentProcess()) ||
+        !native_mat_guard::loaded_audioeng(reinterpret_cast<HMODULE>(base)))) error=ERROR_REVISION_MISMATCH;
+#endif
     if(!error) {
         auto* dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);auto* nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
         if(nt->FileHeader.TimeDateStamp!=kTimestamp || nt->OptionalHeader.SizeOfImage!=kImageSize || memcmp(base+0x31e00,expected,8)) error=ERROR_REVISION_MISMATCH;
