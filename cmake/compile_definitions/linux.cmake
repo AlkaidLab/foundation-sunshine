@@ -288,6 +288,8 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/kscreen_backend.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/niri_ipc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/niri_ipc.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/mutter_display.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/mutter_display.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
@@ -313,6 +315,9 @@ if(LIBSYSTEMD_FOUND)
     list(APPEND PLATFORM_LIBRARIES ${LIBSYSTEMD_LIBRARIES})
     include_directories(SYSTEM ${LIBSYSTEMD_INCLUDE_DIRS})
     add_compile_definitions(SUNSHINE_CLIPBOARD_HOST)
+    # GNOME's display configuration is sd-bus only, so it rides the same
+    # dependency as the clipboard host.
+    add_compile_definitions(SUNSHINE_MUTTER_DISPLAY)
 else()
     message(STATUS "libsystemd not found - host clipboard sync disabled")
 endif()

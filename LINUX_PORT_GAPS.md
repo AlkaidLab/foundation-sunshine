@@ -16,11 +16,11 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**7 项可行未做**（§二，其中 §2.1b/§2.3/§2.7/§2.8/§2.9/
+剩余：**6 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
 §2.10 残余/§2.11）、**9 项本质不可移植**（§三）。
 （2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
-前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.4 DSU 运动广播、§2.10 niri 输出
-后端、§7.1 管线帧率的"源更新"段。）
+前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
+拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -60,15 +60,17 @@
 
 ### 1.4 display_device 复制拓扑 + 非 KDE 桌面
 
-- **现状**：`src/platform/linux/display_device.cpp` 拓扑每组单设备；`set_topology` 对多设备组直接
-  拒绝。模式/HDR/主屏/拓扑读写全部依赖 kscreen-doctor（KDE Plasma）；其他桌面查询返回空 →
-  退化为 no-op 行为（不破坏，但无功能，有一条 warning）。
-- **若要做**：
-  - 复制拓扑：kscreen-doctor 无 replication 设置命令 → 需走 KWin 脚本（同 ABR 前台检测的加载模式）
-    或 libkscreen D-Bus。
-  - GNOME：Mutter DisplayConfig D-Bus（`org.gnome.Mutter.DisplayConfig`，SetMonitorsConfig 支持
-    mode/scale/primary），实现独立 backend 类按 `XDG_CURRENT_DESKTOP` 分发。
-- **工作量**：复制拓扑中；GNOME 后端中-高。**验收**：GNOME 会话下分辨率/HDR 切换可用。
+- **现状**（2026-10-22 更新）：三后端已齐 —— kscreen-doctor（KDE Plasma）、niri IPC（§6.16）、
+  Mutter DisplayConfig（§2.3）。分发顺序 `niri → mutter → kscreen`，都不在时退化为 no-op 并打
+  一条 warning（不破坏）。
+  - **复制拓扑**：GNOME/Mutter 上已可用 —— 一个 logical monitor 可含多个 connector，
+    `is_topology_valid`/`set_topology` 在 Mutter 会话下允许并写入多设备组，`get_current_topology`
+    经 `replication_source` 反向聚合回镜像组；同一能力也用于 §6.18 的拓扑还原验证。
+    **KDE 上仍缺**：kscreen-doctor 没有 replication 命令（已实测确认），需要 KWin 脚本或 libkscreen
+    D-Bus 才能补。
+- **若要做**（只剩 KDE 一半）：KWin 脚本加载模式（同 ABR 前台检测）或 libkscreen D-Bus 调
+  `setOutputs`。**工作量**：中。**验收**：KDE 会话下请求镜像拓扑后 `kscreen-doctor -o` 报出同一
+  CRTC 上的两个 connector。
 
 ### 1.5 帧管线契约（frame_contract）
 
@@ -152,11 +154,32 @@
   `RemoteUsbHostController.*` 全绿）。真机挂载未验证——本机 `usbip` 未安装、`vhci-hcd` 未加载，
   需要用户 `pacman -S usbip` + `modprobe vhci-hcd` + root 才能做端到端。
 
-### 2.3 GNOME Mutter 显示后端（中-高）
+### 2.3 GNOME Mutter 显示后端（✅ 已完成，2026-10-22）
 
-- 见 §1.4。独立 backend 类 + `XDG_CURRENT_DESKTOP` 分发（`vdd_utils::hint_primary_output` 已有
-  分发骨架）。注意 `display_device.cpp` 当前所有读写函数都隐式假设 kscreen 存在。
-- **验收**：GNOME Wayland 会话下客户端"优化游戏设置"能切分辨率/HDR 并还原。
+`src/platform/linux/mutter_display.{h,cpp}` 是 Mutter 的 `org.gnome.Mutter.DisplayConfig` 客户端，
+`display_device.cpp` 在 `niri → mutter → kscreen` 的顺序里分发。与另外两个后端的关键差异都已
+按 Mutter 自己的模型落地：
+
+- **写入是整份替换**：`GetCurrentState` 取 serial + 全量配置，改完一次性 `ApplyMonitorsConfig`
+  （method 2 = persistent），没有 per-output 动词；因此 `mutter_change()` 统一做
+  "读 → 改 → 写 → 回读确认"，3 次重试 / 500 ms。
+- **mode id 是字符串**：Mutter 只接受它自己发出去的 id（形如 `2560x1440@144.001`），所以
+  `compositor_mode_t::id` 存原串而不是下标；改模式 = 把候选标成 current 后整份写回。
+- **禁用输出 = 从 logical monitor 里摘掉连接器**，摘空的 logical monitor 一并删除。
+- **主屏是 logical monitor 上的 flag** → `set_as_primary_device` 在 Mutter 上语义与 Windows 一致
+  （恰好一个 logical monitor 为 primary），不像 niri 只能退化为"第一个输出"。
+- **HDR = monitor 的 color-mode**：1 = BT.2100，0 = default（SDR）；`supported-color-modes` 不含
+  BT.2100 时明确报错而不是硬写。
+- **复制拓扑**（§1.4）：一个 logical monitor 可含多个 connector，`set_topology` 在 Mutter 会话下
+  接受多设备组，`get_current_topology` 用 `replication_source` 聚合回镜像组。
+
+测试：`tests/unit/test_mutter_display.cpp` 用真实 sd-bus 消息做编解码往返（无需合成器，无会话
+总线则 skip），7 例全绿；开发中被这批用例抓出 3 个真 bug（根 tuple 不能进容器、monitor 结构
+签名少了一层括号、缺可变 `find_monitor` 重载）。
+
+**未在本机运行时验证**：开发机没装 mutter，`busctl --user introspect org.gnome.Mutter.DisplayConfig`
+返回 `The name is not activatable`，所以只能靠单测覆盖编解码契约 + 代码走查。**验收**（待有 GNOME
+会话时）：客户端"优化游戏设置"能切分辨率/HDR/主屏并还原，镜像拓扑可设置。
 
 ### 2.4 DSU 运动数据服务器（✅ 已完成，2026-10-22）
 

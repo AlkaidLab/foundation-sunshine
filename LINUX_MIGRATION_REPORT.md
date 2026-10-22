@@ -428,6 +428,40 @@ KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_
 - **测试**：`tests/unit/test_dsu_server.cpp` 9 例，真实回环 UDP，覆盖 INFO 响应字段、CRC32、
   未订阅不发数据、订阅后收包、加速度/角速度轴向、分次到达的保留语义、未知消息类型、重启。
 
+### 6.18 GNOME Mutter 显示后端
+
+`src/platform/linux/mutter_display.{h,cpp}` 直连 `org.gnome.Mutter.DisplayConfig`（session bus），
+`display_device.cpp` 的分发顺序变为 `niri → mutter → kscreen`，三者都不在时仍退化为 no-op 加一条
+warning。Mutter 的模型与另外两个后端差别很大，因此接入点全部按它的语义重写：
+
+- **整份替换、一次原子写入**：`GetCurrentState` 拿 serial + 全量配置，改完 `ApplyMonitorsConfig`
+  （method 2 = persistent）。没有 per-output 动词，所以 `mutter_change()` 把
+  "读 → 改 → 写 → 回读" 串成一个模板函数，3 次重试 / 500 ms，`mutate` 返回 false 表示这条改动
+  根本无法表达（如未知 connector）→ 立即停止重试。
+- **mode id 是字符串**：Mutter 只接受它自己发出去的 id（`2560x1440@144.001` 这种），`compositor_mode_t::id`
+  因此存原串而不是像 niri 那样用下标；改模式 = 把选中的候选标成 `current` 再整份写回。
+- **禁用 = 从 logical monitor 里摘连接器**，摘空的 logical monitor 一并删除；启用 = 追加一个
+  logical monitor，位置排在现有桌面右边缘（`mutter_right_edge()` 按各 logical monitor 的实际宽度
+  换算逻辑坐标）。没有任何 logical monitor 时补一个 primary。
+- **主屏是 logical monitor 的 flag**，所以 `set_as_primary_device` 在 Mutter 上能表达与 Windows
+  相同的语义（恰好一个 primary），不像 niri 只能退化成"第一个输出"。
+- **HDR = color-mode**：1 = `BT.2100`（HDR），0 = default（SDR）；`supported-color-modes` 不含
+  BT.2100 时明确报错而不硬写。`hdr_state_str` 只在显示器声明支持 HDR 时才填。
+- **复制拓扑**（`LINUX_PORT_GAPS.md` §1.4）：一个 logical monitor 可含多个 connector。
+  `is_topology_valid`/`set_topology` 在 Mutter 会话下放行多设备组并按组重建 logical monitor
+  （已存在的组沿用原 x/y/scale/transform/primary，新组依次排到右边），`get_current_topology` 用
+  `compositor_output_t::replication_source` 把同组输出聚合回一个镜像组，因此 `set_topology` 的
+  回读校验对镜像拓扑同样成立。
+- **已知约束**：`set_hdr_states`/`set_display_modes` 的"回读确认"用的是 `query_outputs()`，即
+  每次重试都重新走一遍 D-Bus（Mutter 的 serial 只有一次有效，不能缓存）。
+- **测试**：`tests/unit/test_mutter_display.cpp` 7 例，用真实 sd-bus 消息做编解码往返（构造
+  `GetCurrentState` 的返回签名与 `ApplyMonitorsConfig` 的请求体后逐字段读回），不需要合成器；
+  没有会话总线时整组 GTEST_SKIP。开发中被这批用例抓出 3 个真 bug：根 tuple 不能
+  `enter_container`、monitor 结构签名少一层括号、缺可变 `find_monitor` 重载。
+- **未做运行时验证**：开发机上没有 mutter/gnome-shell，`busctl --user introspect` 返回
+  `The name is not activatable`。等有 GNOME 会话时可做端到端确认（切分辨率/HDR/主屏 + 镜像拓扑
+  + 还原）。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -463,8 +497,8 @@ KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_
 |---|---|
 | 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
 | HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
-| 非 niri 的 wlroots / X11 显示后端 | niri 已由 IPC 后端覆盖（§6.16）；sway/Hyprland 等仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
-| display_device 复制拓扑 | kscreen-doctor 无 replication 设置命令，多设备组被拒绝（见 `LINUX_PORT_GAPS.md` §1.4） |
+| 非 niri 的 wlroots / X11 显示后端 | niri 已由 IPC 后端覆盖（§6.16），GNOME 由 Mutter D-Bus 覆盖（§6.18）；sway/Hyprland 等仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
+| display_device 复制拓扑 | Mutter（GNOME）上可用：多设备组会写成同一个 logical monitor，回读经 `replication_source` 聚合（§6.18）；KDE 仍缺 —— kscreen-doctor 无 replication 命令（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
 | HDR 分析精度 | CPU 亮度直方图（亮度域）vs Windows 的 D3D11 逐像素 maxRGB（scRGB）；消费端按近似处理 |
 | 虚拟显示器 per-client 隔离 | 客户端切换时销毁重建 VDD，单虚拟屏共享；Windows 是多实例 + 每客户端独立 GUID |

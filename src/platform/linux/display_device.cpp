@@ -20,6 +20,7 @@
 #include "src/globals.h"
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
+#include "src/platform/linux/mutter_display.h"
 #include "src/platform/linux/niri_ipc.h"
 
 #include <algorithm>
@@ -111,6 +112,14 @@ namespace display_device {
       std::string hdr_state_str;  // "enabled" / "disabled" / "incapable"; empty = not reported
     };
 
+    // Defined further down, declared here because the Mutter helpers below read
+    // the configuration through the same funnel as every other backend.
+    std::vector<compositor_output_t>
+    query_outputs();
+
+    const compositor_output_t *
+    find_output(const std::vector<compositor_output_t> &outputs, const std::string &name);
+
     /**
      * @brief Run a kscreen-doctor change command and verify that it took
      *        effect, retrying a bounded number of times (the compositor
@@ -172,11 +181,143 @@ namespace display_device {
     }
 
     /**
+     * @brief Whether this session is driven by Mutter's display-config API.
+     */
+    bool
+    compositor_is_mutter() {
+      return platf::mutter::session_supports_mutter();
+    }
+
+    /**
+     * @brief Rewrite the Mutter configuration as a whole and verify the result.
+     * @details Mutter has no per-output verbs: a change is "read the state,
+     *          edit it, hand the whole thing back". @p mutate returns false when
+     *          the requested change cannot be expressed at all (an output it
+     *          does not know), which ends the retries; a rejected or ignored
+     *          apply is retried, because the compositor settles asynchronously.
+     */
+    template<typename MutateFn, typename ConfirmedFn>
+    bool
+    mutter_change(MutateFn &&mutate, ConfirmedFn &&confirmed) {
+      for (int attempt = 0; attempt < 3; ++attempt) {
+        if (confirmed()) {
+          return true;
+        }
+        if (!platf::mutter::probe_allowed()) {
+          return false;
+        }
+
+        auto state = platf::mutter::query_state();
+        if (!state) {
+          return false;
+        }
+
+        if (!mutate(*state)) {
+          return false;
+        }
+
+        if (!platf::mutter::apply(*state)) {
+          BOOST_LOG(debug) << "Mutter refused the configuration change (attempt " << (attempt + 1) << ")";
+        }
+        else if (confirmed()) {
+          return true;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds { 500 });
+      }
+      return confirmed();
+    }
+
+    /**
+     * @brief The right edge of the desktop, in logical pixels.
+     * @details A newly enabled output has to land somewhere; Mutter wants
+     *          absolute logical coordinates, so the newcomer goes beside what is
+     *          already on screen rather than on top of it.
+     */
+    int
+    mutter_right_edge(const platf::mutter::state_t &state) {
+      int right = 0;
+      for (const auto &logical : state.logical_monitors) {
+        const double scale = logical.scale > 0.0 ? logical.scale : 1.0;
+        for (const auto &connector : logical.connectors) {
+          const auto *monitor = platf::mutter::find_monitor(state, connector);
+          const auto *mode = monitor ? platf::mutter::current_mode(*monitor) : nullptr;
+          if (!mode) {
+            continue;
+          }
+          const int width = static_cast<int>(std::lround(mode->width / scale));
+          right = std::max(right, logical.x + width);
+        }
+      }
+      return right;
+    }
+
+    /**
+     * @brief Enable or disable one output through Mutter.
+     * @details Enabling adds a logical monitor, disabling removes the output
+     *          from its logical monitor — and removes the logical monitor once
+     *          it shows nothing.
+     */
+    bool
+    mutter_set_enabled(const std::string &device_id, bool enabled) {
+      const auto enabled_now = [&device_id]() {
+        const auto outputs = query_outputs();
+        const auto *output = find_output(outputs, device_id);
+        return output && output->enabled;
+      };
+
+      return mutter_change(
+        [&](platf::mutter::state_t &state) {
+          if (!platf::mutter::find_monitor(state, device_id)) {
+            BOOST_LOG(error) << "Mutter does not report a monitor named " << device_id;
+            return false;
+          }
+
+          auto *logical = platf::mutter::find_logical_monitor(state, device_id);
+          if (!enabled) {
+            if (!logical) {
+              return true;
+            }
+            if (logical->connectors.size() > 1) {
+              // Part of a mirror group: drop the output, keep the group.
+              logical->connectors.erase(
+                std::remove(logical->connectors.begin(), logical->connectors.end(), device_id),
+                logical->connectors.end());
+              return true;
+            }
+            state.logical_monitors.erase(
+              std::remove_if(state.logical_monitors.begin(), state.logical_monitors.end(),
+                [&logical](const auto &candidate) { return &candidate == logical; }),
+              state.logical_monitors.end());
+            return true;
+          }
+
+          if (logical) {
+            return true;
+          }
+
+          platf::mutter::logical_monitor_t fresh;
+          fresh.connectors = { device_id };
+          fresh.x = mutter_right_edge(state);
+          state.logical_monitors.push_back(std::move(fresh));
+          if (state.logical_monitors.size() == 1) {
+            state.logical_monitors.front().primary = true;
+          }
+          return true;
+        },
+        [&]() { return enabled_now() == enabled; });
+    }
+
+    /**
      * @brief Enable or disable one output through whichever compositor the
      *        session has. Verified by the caller with wait_for_topology().
      */
     bool
     change_output_enabled(const std::string &device_id, bool enabled) {
+      if (compositor_is_mutter()) {
+        return mutter_set_enabled(device_id, enabled);
+      }
+
       if (compositor_is_niri()) {
         // niri selects outputs by name and needs the name quoted when it
         // contains characters the CLI would otherwise split on.
@@ -652,10 +793,95 @@ namespace display_device {
       return outputs;
     }
 
+    /**
+     * @brief Read the configuration Mutter reports.
+     * @details Mutter's model differs from both other backends in ways the
+     *          callers can see: a mode id is an opaque string it hands back
+     *          verbatim, an output is "enabled" when some logical monitor shows
+     *          it, and HDR is a colour mode rather than an on/off switch.
+     */
+    std::vector<compositor_output_t>
+    query_mutter_outputs() {
+      if (!platf::mutter::probe_allowed()) {
+        return {};
+      }
+
+      auto state = platf::mutter::query_state();
+      if (!state) {
+        return {};
+      }
+      if (state->monitors.empty()) {
+        platf::mutter::note_unavailable("Mutter reported no monitors");
+        return {};
+      }
+
+      std::vector<compositor_output_t> outputs;
+      int index = 0;
+      for (const auto &monitor : state->monitors) {
+        compositor_output_t output;
+        output.index = ++index;
+        output.name = monitor.connector;
+        output.connected = true;
+
+        for (const auto &reported_mode : monitor.modes) {
+          compositor_mode_t mode;
+          // Mutter's own id, kept verbatim: ApplyMonitorsConfig rejects ids it
+          // did not hand out, so this is the only settable form.
+          mode.id = reported_mode.id;
+          mode.width = reported_mode.width;
+          mode.height = reported_mode.height;
+          mode.refresh = reported_mode.refresh;
+          std::ostringstream formatted;
+          formatted << std::fixed << std::setprecision(3) << mode.refresh;
+          mode.refresh_str = formatted.str();
+          mode.current = reported_mode.current;
+          mode.preferred = reported_mode.preferred;
+          output.modes.push_back(std::move(mode));
+        }
+
+        if (const auto *logical = platf::mutter::find_logical_monitor(*state, monitor.connector)) {
+          output.enabled = true;
+          output.priority = logical->primary ? 1 : 0;
+        }
+
+        // HDR support is a colour mode the monitor advertises; without it there
+        // is no state to report, and the setters refuse instead of inventing one.
+        const auto supports_hdr = std::find(monitor.supported_color_modes.begin(),
+                                        monitor.supported_color_modes.end(),
+                                        platf::mutter::kColorModeBt2100) != monitor.supported_color_modes.end();
+        if (supports_hdr) {
+          output.hdr_state_str = monitor.color_mode == platf::mutter::kColorModeBt2100 ? "enabled" : "disabled";
+        }
+
+        outputs.push_back(std::move(output));
+      }
+
+      // Record the mirror groups: every member of a logical monitor that shows
+      // more than one output points at the group's first member, which is how
+      // get_current_topology() reconstructs them.
+      for (auto &output : outputs) {
+        const auto *logical = platf::mutter::find_logical_monitor(*state, output.name);
+        if (!logical || logical->connectors.size() < 2) {
+          continue;
+        }
+        for (const auto &member : outputs) {
+          if (std::find(logical->connectors.begin(), logical->connectors.end(), member.name) !=
+              logical->connectors.end()) {
+            output.replication_source = member.index;
+            break;
+          }
+        }
+      }
+      return outputs;
+    }
+
     std::vector<compositor_output_t>
     query_outputs() {
       if (compositor_is_niri()) {
         return query_niri_outputs();
+      }
+      if (compositor_is_mutter()) {
+        return query_mutter_outputs();
       }
       return query_kscreen_outputs();
     }
@@ -931,6 +1157,38 @@ namespace display_device {
         return false;
       }
 
+      if (compositor_is_mutter()) {
+        // Mutter hands out mode ids and takes them back verbatim, so the id of
+        // the chosen candidate is what goes into the configuration. Marking it
+        // current is how the encoder tells append_apply_args which mode to use.
+        const std::string mode_id = best->id;
+        const std::string device = device_id;
+        BOOST_LOG(info) << "Changing display mode: Mutter monitor '" << device << "' mode " << mode_id;
+        const bool ok = mutter_change(
+          [&](platf::mutter::state_t &state) {
+            auto *monitor = platf::mutter::find_monitor(state, device);
+            if (!monitor) {
+              BOOST_LOG(error) << "Mutter does not report a monitor named " << device;
+              return false;
+            }
+            bool found = false;
+            for (auto &candidate : monitor->modes) {
+              candidate.current = candidate.id == mode_id;
+              found = found || candidate.current;
+            }
+            if (!found) {
+              BOOST_LOG(error) << "Mutter no longer offers mode " << mode_id << " for " << device;
+            }
+            return found;
+          },
+          current_matches);
+        if (ok) {
+          return true;
+        }
+        BOOST_LOG(error) << "Failed to apply display mode to output " << device_id;
+        return false;
+      }
+
       if (compositor_is_niri()) {
         // niri resolves the mode against what the output advertises, so the
         // exact rate (including a fractional one) goes out verbatim.
@@ -1046,6 +1304,26 @@ namespace display_device {
       return false;
     }
 
+    if (compositor_is_mutter()) {
+      // Primary is a flag on the logical monitor, so Mutter can express this
+      // the way Windows does: exactly one logical monitor becomes primary.
+      const std::string device = device_id;
+      BOOST_LOG(info) << "Setting primary display: " << device;
+      return mutter_change(
+        [&](platf::mutter::state_t &state) {
+          auto *target = platf::mutter::find_logical_monitor(state, device);
+          if (!target) {
+            BOOST_LOG(error) << "Output " << device << " is not shown by any logical monitor";
+            return false;
+          }
+          for (auto &logical : state.logical_monitors) {
+            logical.primary = (&logical == target);
+          }
+          return true;
+        },
+        already_primary);
+    }
+
     BOOST_LOG(info) << "Setting primary display: " << device_id;
     return kscreen_change("output." + device_id + ".priority.1", already_primary);
   }
@@ -1120,6 +1398,39 @@ namespace display_device {
           continue;
         }
 
+        if (compositor_is_mutter()) {
+          // HDR is the monitor's colour mode: BT.2100 for HDR, "default" back to
+          // SDR. The capability check keeps an output that cannot do HDR from
+          // being written a mode it does not support.
+          const unsigned int wanted_mode = state == hdr_state_e::enabled ?
+                                             platf::mutter::kColorModeBt2100 :
+                                             platf::mutter::kColorModeDefault;
+          const std::string device = device_id;
+          BOOST_LOG(info) << "Changing HDR state: Mutter monitor '" << device << "' color-mode " << wanted_mode;
+          const bool ok = mutter_change(
+            [&](platf::mutter::state_t &mutter_state) {
+              auto *monitor = platf::mutter::find_monitor(mutter_state, device);
+              if (!monitor) {
+                BOOST_LOG(error) << "Mutter does not report a monitor named " << device;
+                return false;
+              }
+              if (std::find(monitor->supported_color_modes.begin(), monitor->supported_color_modes.end(),
+                    wanted_mode) == monitor->supported_color_modes.end()) {
+                BOOST_LOG(error) << "Output " << device << " does not support "
+                                 << (state == hdr_state_e::enabled ? "HDR" : "SDR") << " through Mutter";
+                return false;
+              }
+              monitor->color_mode = wanted_mode;
+              return true;
+            },
+            state_matches);
+          if (!ok) {
+            BOOST_LOG(error) << "Failed to set HDR state for output " << device_id;
+            all_ok = false;
+          }
+          continue;
+        }
+
         const std::string args = "output." + device_id + (state == hdr_state_e::enabled ? ".hdr.enable" : ".hdr.disable");
         BOOST_LOG(info) << "Changing HDR state: " << args;
         if (!kscreen_change(args, state_matches)) {
@@ -1151,9 +1462,29 @@ namespace display_device {
       }
     }
 
-    // Duplicated groups (replication source) are not representable in the
-    // topology we can set back; extended-only grouping is the Linux norm.
-    return topology;
+    // A mirrored group is reported as the outputs sharing a replication source.
+    // Only Mutter produces them; the command-driven backends leave the field at
+    // zero, so their outputs stay one group each.
+    active_topology_t grouped;
+    for (const auto &group : topology) {
+      const auto it = std::find_if(outputs.begin(), outputs.end(),
+        [&group](const auto &output) { return output.name == group.front(); });
+      if (it != outputs.end() && it->replication_source > 0) {
+        const int source = it->replication_source;
+        const auto existing = std::find_if(grouped.begin(), grouped.end(), [&](const auto &candidate) {
+          const auto member = std::find_if(outputs.begin(), outputs.end(),
+            [&candidate](const auto &output) { return output.name == candidate.front(); });
+          return member != outputs.end() && member->replication_source == source;
+        });
+        if (existing != grouped.end()) {
+          existing->push_back(group.front());
+          continue;
+        }
+      }
+      grouped.push_back(group);
+    }
+
+    return grouped;
   }
 
   bool
@@ -1167,12 +1498,13 @@ namespace display_device {
       if (group.empty()) {
         return false;
       }
-      // Duplicated (mirrored) groups are not representable in this backend, so
-      // the validator rejects them exactly like set_topology does: callers must
-      // not pass validation only to fail inside the setter with a different
-      // message. Windows accepts up to two devices per group; Linux cannot
-      // express a group at all until a compositor-side backend exists.
-      if (group.size() > 1) {
+      // Duplicated (mirrored) groups are only expressible where the compositor
+      // models them: Mutter shows several monitors in one logical monitor. The
+      // command-driven backends (kscreen-doctor, niri) have no such verb, so the
+      // validator rejects the group there exactly like set_topology would --
+      // callers must not pass validation only to fail inside the setter with a
+      // different message. Windows accepts up to two devices per group.
+      if (group.size() > 1 && !compositor_is_mutter()) {
         return false;
       }
       for (const auto &device_id : group) {
@@ -1197,11 +1529,96 @@ namespace display_device {
       return false;
     }
 
+    const bool mirroring_supported = compositor_is_mutter();
     for (const auto &group : new_topology) {
-      if (group.size() > 1) {
+      if (group.size() > 1 && !mirroring_supported) {
         BOOST_LOG(error) << "Duplicated display groups are not supported on this backend: " << to_string(new_topology);
         return false;
       }
+    }
+
+    if (compositor_is_mutter()) {
+      // Mutter expresses a topology as the set of logical monitors, so the whole
+      // layout is handed over at once -- including mirrored groups, which is the
+      // one thing the command-driven backends cannot do.
+      const auto wanted = canonical_topology(new_topology);
+      const auto width_of = [](const platf::mutter::state_t &state,
+                              const platf::mutter::logical_monitor_t &logical) {
+        const double scale = logical.scale > 0.0 ? logical.scale : 1.0;
+        int width = 0;
+        for (const auto &connector : logical.connectors) {
+          const auto *monitor = platf::mutter::find_monitor(state, connector);
+          const auto *mode = monitor ? platf::mutter::current_mode(*monitor) : nullptr;
+          if (mode) {
+            width = std::max(width, static_cast<int>(std::lround(mode->width / scale)));
+          }
+        }
+        return width;
+      };
+
+      const bool ok = mutter_change(
+        [&](platf::mutter::state_t &state) {
+          std::vector<platf::mutter::logical_monitor_t> rebuilt;
+          int right = 0;
+          for (const auto &group : wanted) {
+            if (group.empty()) {
+              continue;
+            }
+            for (const auto &device_id : group) {
+              if (!platf::mutter::find_monitor(state, device_id)) {
+                BOOST_LOG(error) << "Mutter does not report a monitor named " << device_id;
+                return false;
+              }
+            }
+
+            platf::mutter::logical_monitor_t logical;
+            logical.connectors = group;
+
+            // A group that is already on screen keeps its geometry; only the
+            // ones being introduced get placed.
+            const auto existing = std::find_if(state.logical_monitors.begin(), state.logical_monitors.end(),
+              [&group](const auto &candidate) {
+                auto theirs { candidate.connectors };
+                auto ours { group };
+                std::sort(theirs.begin(), theirs.end());
+                std::sort(ours.begin(), ours.end());
+                return theirs == ours;
+              });
+            if (existing != state.logical_monitors.end()) {
+              logical.x = existing->x;
+              logical.y = existing->y;
+              logical.scale = existing->scale;
+              logical.transform = existing->transform;
+              logical.primary = existing->primary;
+            }
+            else {
+              logical.x = right;
+              logical.y = 0;
+            }
+
+            right = std::max(right, logical.x + width_of(state, logical));
+            rebuilt.push_back(std::move(logical));
+          }
+
+          if (rebuilt.empty()) {
+            BOOST_LOG(error) << "Refusing to apply an empty topology through Mutter";
+            return false;
+          }
+          if (std::none_of(rebuilt.begin(), rebuilt.end(), [](const auto &logical) { return logical.primary; })) {
+            rebuilt.front().primary = true;
+          }
+
+          state.logical_monitors = std::move(rebuilt);
+          return true;
+        },
+        [&]() { return is_topology_the_same(get_current_topology(), new_topology); });
+
+      if (!ok) {
+        BOOST_LOG(error) << "Failed to change topology: requested " << to_string(new_topology);
+        return false;
+      }
+      BOOST_LOG(info) << "Topology applied through Mutter: " << to_string(new_topology);
+      return true;
     }
 
     const auto current = get_current_topology();
