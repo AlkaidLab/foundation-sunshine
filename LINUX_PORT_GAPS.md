@@ -673,3 +673,27 @@ XWayland 在每一个 Wayland 会话里都应答 RandR 读，KScreen 只要 `ksc
 `selected_backend()`，逐次探测成本与改前完全相同；顺序理由逐条写在头文件里。
 `tests/unit/test_display_backend.cpp` 7 例用假谓词钉死顺序（含"wlroots 必须赢过 XWayland 镜像"
 与"探测在胜者处停止"），无需任何合成器。
+
+### 7.7 ✅ 上游 Linux 触控语义偏差（2026-10-22，用户报告触发，非同步缺口）
+
+用户报"多点触控好像有问题"。`src/platform/linux/input/inputtino_touch.cpp` 与上游逐字相同，
+所以这不是本分支的移植回归，而是**上游 Linux 路径与 Windows 语义不一致**：客户端事件被直接当成
+设备调用（`HOVER/DOWN/MOVE` → `place_finger`，`UP/CANCEL/HOVER_LEAVE` → `release_finger`），
+`CANCEL_ALL` 只有一行 `// TODO`。
+
+| 偏差 | 后果 |
+|---|---|
+| `CANCEL_ALL` 未处理 | 客户端取消手势后主机仍按着旧触点，下一根手指被当成第三根——捏合/双指滚动错乱 |
+| `HOVER` 当成触点（`pressureOrDistance` 是"距离"却当压力写） | 支持 hover 的客户端留下幻影触点 |
+| `LI_ROT_UNKNOWN`(65535) 与零压力不设缺省 | 每个触点自称横躺 90°、压力 0 |
+
+**已修**：纯逻辑抽到 header-only 的 `src/platform/linux/input/touch_plan.h`
+（`plan_for()` / `orientation_for()` / `pressure_for()` / `known_event()`），
+`inputtino_touch.cpp` 执行动作并维护**每客户端**的 `active_touch_pointers`（`client_input_raw_t`
+新增字段；设备是 MT-B 有状态的，只有客户端知道哪些 pointer 按着）。补了 Windows 有而上游 Linux
+缺的两件事：未知事件类型打警告、触点表溢出（>16）时先取消全部再安置新触点。
+`tests/unit/test_touch_plan.cpp` 14 例覆盖上述全部路径，不碰 uinput。
+
+**诚实边界**：本机没有 Moonlight 客户端可做端到端手势验证（uinput 节点是 `0600 root:root`，
+合成器靠 logind `TakeDevice` 打开，探针只能证明设备声明了 BTN_TOUCH + `INPUT_PROP_DIRECT` +
+16 槽位）。真机两指手势的确认在用户侧。

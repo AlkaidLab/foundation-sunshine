@@ -778,6 +778,41 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   这一条，以及"探测在胜者处停止"（全举手时只问了 niri；无人举手时问满四个后落到 KScreen）。
 - **未覆盖**：真会话里的端到端（要真起 sway/GNOME），同 §6.16/§6.18/§6.26 的诚实边界。
 
+### 6.28 客户端触控事件与 Windows 的接触语义对齐
+
+用户报"多点触控好像有问题"。排查的**第一个结论是"不是本分支的回归"**：`src/platform/linux/input/
+inputtino_touch.cpp` 与上游逐字相同（`git diff origin/master:<file> HEAD:<file>` 为空），inputtino
+的引脚也与上游一致（`d28ec79eb63324e68d73a7de22bcb5ff0a6f6bf8`）。问题在上游 Linux 路径本身。
+
+上游那份实现把客户端事件直接当成设备调用：`HOVER/DOWN/MOVE` 一律 `place_finger`，
+`UP/CANCEL/HOVER_LEAVE` 一律 `release_finger`，`CANCEL_ALL` 只留了一行 `// TODO`。对着 Windows
+实现（`src/platform/windows/input.cpp` 的 `populate_common_pointer_info` 与 `touch_update`）逐条
+比对后，有**三处语义偏差**，每处都能在多指手势里看出症状：
+
+| 偏差 | Windows 语义 | 上游 Linux 的行为 | 症状 |
+|---|---|---|---|
+| `CANCEL_ALL` 未处理 | `cancel_all_active_touches()`：释放全部已按下触点 | 什么都不做 | 客户端取消手势（失焦/手势中断）后主机仍按着旧触点，下一根手指到达时被当成**第三根**手指——捏合/双指滚动随即错乱 |
+| `HOVER` 当成触点 | hover 只标 in-range、不进 contact（`INRANGE\|UPDATE`，不含 `INCONTACT`） | `place_finger`，把 `pressureOrDistance`（hover 时是**距离**）当压力写下去 | 支持 hover 的客户端会在屏幕上留下**幻影触点**，且压力值是错的量纲 |
+| 未上报旋转（`LI_ROT_UNKNOWN = 65535`）与零压力 | 未知旋转 → 方向 0；压力为 0 → 512/1024 | `65535` 走 0..360→-90..90 换算后落到取整边界，被 inputtino `clamp` 成 **90°**；压力为 0 就传 0 | 每个触点都自称"横躺 90°"、压力 0；部分应用/合成器的接触面积与手势判定跟着变 |
+
+另外补了 Windows 有而上游 Linux 缺的两件事：未知事件类型打警告（Windows 会
+`BOOST_LOG(warning) << "Unknown touch event"`），以及触点表溢出（>16 个 pointer）时先取消全部
+再安置新触点（Windows 的 "No unused pointer entries! Cancelling all active touches!"）。
+
+- **做法**：把"事件 → 动作"抽成 header-only 的纯函数
+  `src/platform/linux/input/touch_plan.h`（`plan_for()` / `orientation_for()` / `pressure_for()` /
+  `known_event()`），`inputtino_touch.cpp` 只负责执行动作并维护**每客户端**的
+  `active_touch_pointers` 集合（`client_input_raw_t` 里新增字段，注释说明为什么必须挂在客户端上：
+  设备是 MT-B 有状态的，只有客户端知道哪些 pointer 按着）。
+- **测试**：`tests/unit/test_touch_plan.cpp` 14 例——hover 不产生触点 / hover 会释放已按下触点、
+  UP/CANCEL/HOVER_LEAVE 释放、CANCEL_ALL 释放全部、BUTTON_ONLY 与未知类型不动状态、旋转 0..360
+  全表映射且恒在 -90..90 内、`LI_ROT_UNKNOWN` 不声称方向、零压力回落到 0.5、触点表溢出时
+  `release_all` + 重放新触点、已知触点更新不算新触点。不碰 uinput，也不需要真实客户端。
+- **诚实边界**：本机没有 Moonlight 客户端可做端到端手势验证（合成器与内核事件流也读不到：uinput
+  建出的节点是 `0600 root:root`，合成器靠 logind `TakeDevice` 打开，我们的探针只能验证"设备声明
+  了 BTN_TOUCH + `INPUT_PROP_DIRECT` + 16 槽位"）。所以"多点触控确实好了"这一步需要用户在真机上
+  用两指手势确认；若症状不是上述三类，请把客户端与手势描述出来，我再往下查。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -788,6 +823,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 捕获：KMS / Wayland(wlr) / X11 | 见 §五第 4 条的合成器限制 |
 | 编码：NVENC / VAAPI / Vulkan / 软件 | Linux 注册四个编码器；NVENC 走 FFmpeg avcodec + CUDA hwdevice（运行时加载驱动）；NVENC 的 YUV 4:4:4 已解禁（§6.10） |
 | 输入注入 + 手柄振动 | inputtino（libevdev/uinput），含 rumble 回放 |
+| 触摸 / 多点触控 + 笔 | 每客户端独立触摸屏与笔设备；事件语义按 Windows 对齐（hover 不成触点、CANCEL_ALL 释放全部、旋转/压力有缺省值），见 §6.28 |
 | 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成；仅"主机直连 DualSense 播放"的 sidecar 是 Windows 专属 |
 | 文本输入通道 text_context | 纯数据通道 |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
@@ -853,7 +889,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 821 用例，808 通过，12 跳过，1 失败
+test_sunshine: 835 用例，822 通过，12 跳过，1 失败
 ```
 
 唯一失败的是 `DownloadFileTests/DownloadFileTest.Run/1`（访问 `https://httpbin.org/...`，离线必失败）
