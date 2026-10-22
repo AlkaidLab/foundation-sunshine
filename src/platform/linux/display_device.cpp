@@ -23,6 +23,9 @@
 #include "src/platform/linux/mirror_plan.h"
 #include "src/platform/linux/mutter_display.h"
 #include "src/platform/linux/niri_ipc.h"
+#if defined(SUNSHINE_BUILD_XRANDR)
+#include "src/platform/linux/xrandr_display.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -190,6 +193,29 @@ namespace display_device {
     }
 
     /**
+     * @brief Whether this session reaches RandR because nothing else is there.
+     * @details KScreen, Mutter and niri each describe a compositor's own model
+     *          and get first refusal. A bare X11 session has none of them, and
+     *          RandR is then the only display API there is. XWayland answers
+     *          RandR reads as well, but a Wayland session always matches one of
+     *          the three above, so this stays the last resort by construction.
+     */
+    bool
+    compositor_is_xrandr() {
+#if defined(SUNSHINE_BUILD_XRANDR)
+      if (compositor_is_niri() || compositor_is_mutter()) {
+        return false;
+      }
+      if (platf::kscreen::session_supports_kscreen()) {
+        return false;
+      }
+      return platf::xrandr::session_supports_xrandr();
+#else
+      return false;
+#endif
+    }
+
+    /**
      * @brief Rewrite the Mutter configuration as a whole and verify the result.
      * @details Mutter has no per-output verbs: a change is "read the state,
      *          edit it, hand the whole thing back". @p mutate returns false when
@@ -309,6 +335,121 @@ namespace display_device {
         [&]() { return enabled_now() == enabled; });
     }
 
+#if defined(SUNSHINE_BUILD_XRANDR)
+    /**
+     * @brief Read the RandR state, apply @p mutate, and write it back.
+     * @details RandR applies synchronously and has no serial, so a rejected
+     *          request is reported at once -- unlike Mutter, there is nothing to
+     *          poll. The retries cover the read-back instead: the server may
+     *          round a mode's rate or place an output elsewhere than asked.
+     */
+    template<typename MutateFn, typename ConfirmedFn>
+    bool
+    xrandr_change(MutateFn mutate, ConfirmedFn confirmed) {
+      for (int attempt = 0; attempt < 2; ++attempt) {
+        auto state = platf::xrandr::query_state();
+        if (!state) {
+          BOOST_LOG(error) << "Failed to read the X11 display configuration";
+          return false;
+        }
+        if (!mutate(*state)) {
+          return false;
+        }
+
+        // Not named `error`: that identifier is BOOST_LOG's severity keyword.
+        std::string apply_error;
+        if (!platf::xrandr::apply(*state, apply_error)) {
+          BOOST_LOG(error) << "Failed to apply the X11 display configuration: " << apply_error;
+          return false;
+        }
+        if (confirmed()) {
+          return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds { 200 });
+      }
+      return false;
+    }
+
+    /// Right edge of the desktop as RandR reports it: where a new output goes.
+    int
+    xrandr_right_edge(const platf::xrandr::state_t &state) {
+      int right = 0;
+      for (const auto &output : state.outputs) {
+        if (output.enabled) {
+          right = std::max(right, output.x + output.width);
+        }
+      }
+      return right;
+    }
+
+    /**
+     * @brief The mode a disabled output should come back at.
+     * @details RandR has no preferred-mode flag, and a disabled output has no
+     *          current mode, so this picks the largest listed timing -- what a
+     *          user expects an output to return at when it is switched back on.
+     */
+    const platf::xrandr::mode_t *
+    xrandr_default_mode(const platf::xrandr::output_t &output) {
+      if (const auto *current = platf::xrandr::current_mode(output)) {
+        return current;
+      }
+      const platf::xrandr::mode_t *best = nullptr;
+      for (const auto &mode : output.modes) {
+        if (!best || static_cast<long long>(mode.width) * mode.height >
+                       static_cast<long long>(best->width) * best->height) {
+          best = &mode;
+        }
+      }
+      return best;
+    }
+
+    /**
+     * @brief Enable or disable one output through RandR.
+     * @details An output cannot be enabled without a timing, so turning one back
+     *          on also has to pick a mode; the widest one goes to the right of
+     *          whatever is already on screen.
+     */
+    bool
+    xrandr_set_enabled(const std::string &device_id, bool enabled) {
+      const std::string device = device_id;
+      const bool want_enabled = enabled;
+      return xrandr_change(
+        [&](platf::xrandr::state_t &state) {
+          auto *output = platf::xrandr::find_output(state, device);
+          if (!output) {
+            BOOST_LOG(error) << "XRandR does not report an output named " << device;
+            return false;
+          }
+          if (!want_enabled) {
+            output->enabled = false;
+            return true;
+          }
+          if (output->enabled) {
+            return true;
+          }
+          const auto *mode = xrandr_default_mode(*output);
+          if (!mode) {
+            BOOST_LOG(error) << "Output " << device << " has no mode to be enabled with";
+            return false;
+          }
+          output->enabled = true;
+          output->mode_id = mode->id;
+          output->width = mode->width;
+          output->height = mode->height;
+          output->refresh = mode->refresh;
+          output->x = xrandr_right_edge(state);
+          output->y = 0;
+          output->mirror_of.clear();
+          return true;
+        },
+        [&]() {
+          const auto outputs = query_outputs();
+          const auto *reported = find_output(outputs, device);
+          return reported && reported->enabled == want_enabled;
+        });
+    }
+#endif
+
     /**
      * @brief Enable or disable one output through whichever compositor the
      *        session has. Verified by the caller with wait_for_topology().
@@ -331,6 +472,12 @@ namespace display_device {
         }
         return true;
       }
+
+#if defined(SUNSHINE_BUILD_XRANDR)
+      if (compositor_is_xrandr()) {
+        return xrandr_set_enabled(device_id, enabled);
+      }
+#endif
 
       const auto result = platf::kscreen::run("output." + device_id + (enabled ? ".enable" : ".disable"),
                                              std::chrono::milliseconds { 10'000 });
@@ -876,6 +1023,79 @@ namespace display_device {
       return outputs;
     }
 
+#if defined(SUNSHINE_BUILD_XRANDR)
+    std::vector<compositor_output_t>
+    query_xrandr_outputs() {
+      if (!platf::xrandr::probe_allowed()) {
+        return {};
+      }
+
+      auto state = platf::xrandr::query_state();
+      if (!state) {
+        return {};
+      }
+      if (state->outputs.empty()) {
+        platf::xrandr::note_unavailable("RandR reported no outputs");
+        return {};
+      }
+
+      std::vector<compositor_output_t> outputs;
+      int index = 0;
+      for (const auto &output : state->outputs) {
+        compositor_output_t entry;
+        entry.index = ++index;
+        entry.name = output.name;
+        entry.connected = output.connected;
+        entry.enabled = output.enabled;
+        entry.priority = output.primary ? 1 : 0;
+
+        for (const auto &reported_mode : output.modes) {
+          compositor_mode_t mode;
+          // RandR hands out no mode handle we could pass back, so the id is our
+          // own formatting of the timing; apply() resolves it against the
+          // server's mode list again.
+          mode.id = reported_mode.id;
+          mode.width = reported_mode.width;
+          mode.height = reported_mode.height;
+          mode.refresh = reported_mode.refresh;
+          std::ostringstream formatted;
+          formatted << std::fixed << std::setprecision(3) << mode.refresh;
+          mode.refresh_str = formatted.str();
+          mode.current = reported_mode.current ||
+                         (output.enabled && reported_mode.id == output.mode_id);
+          entry.modes.push_back(std::move(mode));
+        }
+
+        // RandR has no colour-mode concept at all, so hdr_state_str stays empty:
+        // reporting a state here would make the HDR setters look like they could
+        // work on this backend.
+        outputs.push_back(std::move(entry));
+      }
+
+      // Members of a shared crtc point at the group's leader, which is how
+      // get_current_topology() folds them back into one group. The leader itself
+      // carries no source, exactly like the KScreen backend reports it.
+      for (auto &output : outputs) {
+        const auto it = std::find_if(state->outputs.begin(), state->outputs.end(),
+                                     [&](const platf::xrandr::output_t &candidate) {
+                                       return candidate.name == output.name;
+                                     });
+        if (it == state->outputs.end() || it->mirror_of.empty()) {
+          continue;
+        }
+        const auto leader = std::find_if(outputs.begin(), outputs.end(),
+                                         [&](const compositor_output_t &candidate) {
+                                           return candidate.name == it->mirror_of;
+                                         });
+        if (leader != outputs.end()) {
+          output.replication_source = leader->index;
+        }
+      }
+
+      return outputs;
+    }
+#endif
+
     std::vector<compositor_output_t>
     query_outputs() {
       if (compositor_is_niri()) {
@@ -884,6 +1104,11 @@ namespace display_device {
       if (compositor_is_mutter()) {
         return query_mutter_outputs();
       }
+#if defined(SUNSHINE_BUILD_XRANDR)
+      if (compositor_is_xrandr()) {
+        return query_xrandr_outputs();
+      }
+#endif
       return query_kscreen_outputs();
     }
 
@@ -1202,6 +1427,44 @@ namespace display_device {
         return false;
       }
 
+#if defined(SUNSHINE_BUILD_XRANDR)
+      if (compositor_is_xrandr()) {
+        // RandR takes a timing, not a mode handle, so the chosen candidate's id
+        // is resolved against the server's own mode list by apply().
+        const std::string mode_id = best->id;
+        const int mode_width = best->width;
+        const int mode_height = best->height;
+        const double mode_refresh = best->refresh;
+        const std::string device = device_id;
+        BOOST_LOG(info) << "Changing display mode: X11 output '" << device << "' " << mode_id;
+        const bool ok = xrandr_change(
+          [&](platf::xrandr::state_t &state) {
+            auto *output = platf::xrandr::find_output(state, device);
+            if (!output) {
+              BOOST_LOG(error) << "XRandR does not report an output named " << device;
+              return false;
+            }
+            const auto *mode = platf::xrandr::matching_mode(*output, mode_width, mode_height, mode_refresh);
+            if (!mode) {
+              BOOST_LOG(error) << "XRandR no longer offers " << mode_id << " for " << device;
+              return false;
+            }
+            output->enabled = true;
+            output->mode_id = mode->id;
+            output->width = mode->width;
+            output->height = mode->height;
+            output->refresh = mode->refresh;
+            return true;
+          },
+          current_matches);
+        if (ok) {
+          return true;
+        }
+        BOOST_LOG(error) << "Failed to apply display mode to output " << device_id;
+        return false;
+      }
+#endif
+
       const std::string base_args = "output." + device_id + ".mode.";
       // kscreen-doctor rejects a decimal refresh rate in the WxH@refresh
       // form, so integral refreshes go by rate and fractional ones (e.g.
@@ -1325,6 +1588,28 @@ namespace display_device {
         already_primary);
     }
 
+#if defined(SUNSHINE_BUILD_XRANDR)
+    if (compositor_is_xrandr()) {
+      // Primary is a per-screen property of one output, so RandR expresses this
+      // the way Windows does: exactly one output carries the flag.
+      const std::string device = device_id;
+      BOOST_LOG(info) << "Setting primary display: " << device;
+      return xrandr_change(
+        [&](platf::xrandr::state_t &state) {
+          const auto *target = platf::xrandr::find_output(state, device);
+          if (!target || !target->enabled) {
+            BOOST_LOG(error) << "Output " << device << " is not enabled, so it cannot be primary";
+            return false;
+          }
+          for (auto &output : state.outputs) {
+            output.primary = output.name == device;
+          }
+          return true;
+        },
+        already_primary);
+    }
+#endif
+
     BOOST_LOG(info) << "Setting primary display: " << device_id;
     return kscreen_change("output." + device_id + ".priority.1", already_primary);
   }
@@ -1354,6 +1639,19 @@ namespace display_device {
       // "nothing to restore" (Windows rejects an empty map here instead).
       return true;
     }
+
+#if defined(SUNSHINE_BUILD_XRANDR)
+    if (compositor_is_xrandr()) {
+      // RandR has no colour-mode property: nothing on the X11 side can switch an
+      // output between SDR and HDR, so this refuses instead of pretending the
+      // request happened.
+      static std::atomic<bool> logged { false };
+      if (!logged.exchange(true)) {
+        BOOST_LOG(warning) << "The X11 (RandR) session exposes no HDR control; HDR requests are skipped.";
+      }
+      return false;
+    }
+#endif
 
     std::unordered_set<std::string> device_ids;
     for (const auto &[device_id, _] : states) {
@@ -1547,6 +1845,12 @@ namespace display_device {
     if (compositor_is_niri()) {
       return false;
     }
+#if defined(SUNSHINE_BUILD_XRANDR)
+    if (compositor_is_xrandr()) {
+      // Two outputs on one crtc is precisely what mirroring is on RandR.
+      return true;
+    }
+#endif
     return compositor_is_mutter() || platf::kscreen::session_supports_kscreen();
   }
 
@@ -1611,6 +1915,91 @@ namespace display_device {
         return false;
       }
     }
+
+#if defined(SUNSHINE_BUILD_XRANDR)
+    if (compositor_is_xrandr()) {
+      // RandR has no topology verb: a group is one crtc, so the whole layout has
+      // to be expressed in a single write -- enabling, positioning and mirroring
+      // together. Members take the leader's timing, which is what a shared crtc
+      // requires.
+      const auto wanted = canonical_topology(new_topology);
+      const bool ok = xrandr_change(
+        [&](platf::xrandr::state_t &state) {
+          for (auto &output : state.outputs) {
+            output.enabled = false;
+            output.primary = false;
+            output.mirror_of.clear();
+          }
+
+          int right = 0;
+          bool have_primary = false;
+          for (const auto &group : wanted) {
+            if (group.empty()) {
+              continue;
+            }
+
+            platf::xrandr::output_t *leader = nullptr;
+            for (const auto &device_id : group) {
+              auto *output = platf::xrandr::find_output(state, device_id);
+              if (!output) {
+                BOOST_LOG(error) << "XRandR does not report an output named " << device_id;
+                return false;
+              }
+              if (!output->connected) {
+                BOOST_LOG(error) << "Output " << device_id << " is not connected";
+                return false;
+              }
+              if (!leader) {
+                leader = output;
+              }
+            }
+
+            const auto *mode = xrandr_default_mode(*leader);
+            if (!mode) {
+              BOOST_LOG(error) << "Output " << leader->name << " has no mode to be enabled with";
+              return false;
+            }
+
+            const auto place = [&](platf::xrandr::output_t &output, bool is_leader) {
+              output.enabled = true;
+              output.mode_id = mode->id;
+              output.width = mode->width;
+              output.height = mode->height;
+              output.refresh = mode->refresh;
+              output.x = right;
+              output.y = 0;
+              output.mirror_of = is_leader ? std::string {} : leader->name;
+            };
+
+            place(*leader, true);
+            if (!have_primary) {
+              leader->primary = true;
+              have_primary = true;
+            }
+            right += mode->width;
+
+            for (std::size_t i = 1; i < group.size(); ++i) {
+              auto *member = platf::xrandr::find_output(state, group[i]);
+              if (!member) {
+                BOOST_LOG(error) << "XRandR does not report an output named " << group[i];
+                return false;
+              }
+              place(*member, false);
+              member->primary = false;
+            }
+          }
+          return true;
+        },
+        [&]() { return is_topology_the_same(get_current_topology(), new_topology); });
+
+      if (!ok) {
+        BOOST_LOG(error) << "Failed to change topology: requested " << to_string(new_topology);
+        return false;
+      }
+      BOOST_LOG(info) << "Topology applied through XRandR: " << to_string(new_topology);
+      return true;
+    }
+#endif
 
     if (compositor_is_mutter()) {
       // Mutter expresses a topology as the set of logical monitors, so the whole

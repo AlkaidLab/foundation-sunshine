@@ -206,6 +206,17 @@ if(X11_FOUND)
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/platform/linux/x11grab.h"
             "${CMAKE_SOURCE_DIR}/src/platform/linux/x11grab.cpp")
+
+    # RandR lives in its own library: capture needs only core X11, while display
+    # configuration needs the extension. Absent RandR, Sunshine keeps capturing
+    # and reports no display-management backend, which is the honest answer.
+    if(X11_Xrandr_FOUND)
+        add_compile_definitions(SUNSHINE_BUILD_XRANDR)
+        list(APPEND PLATFORM_LIBRARIES ${X11_Xrandr_LIB})
+        list(APPEND PLATFORM_TARGET_FILES
+                "${CMAKE_SOURCE_DIR}/src/platform/linux/xrandr_display.h"
+                "${CMAKE_SOURCE_DIR}/src/platform/linux/xrandr_display.cpp")
+    endif()
 endif()
 
 if(NOT ${CUDA_FOUND}
