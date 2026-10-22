@@ -4,19 +4,19 @@
  */
 #include <src/logging.h>
 
-#include "../tests_common.h"
-#include "../tests_log_checker.h"
-
+#include <array>
+#include <fstream>
+#include <gtest/gtest.h>
 #include <random>
 
 namespace {
   std::array log_levels = {
-    std::tuple("verbose", &verbose),
-    std::tuple("debug", &debug),
-    std::tuple("info", &info),
-    std::tuple("warning", &warning),
-    std::tuple("error", &error),
-    std::tuple("fatal", &fatal),
+    std::tuple("Verbose", &verbose),
+    std::tuple("Debug", &debug),
+    std::tuple("Info", &info),
+    std::tuple("Warning", &warning),
+    std::tuple("Error", &error),
+    std::tuple("Fatal", &fatal),
   };
 
   constexpr auto log_file = "test_sunshine.log";
@@ -30,9 +30,8 @@ INSTANTIATE_TEST_SUITE_P(
   testing::ValuesIn(log_levels),
   [](const auto &info) { return std::string(std::get<0>(info.param)); });
 
-TEST_P(LogLevelsTest, PutMessage) {
+TEST_P(LogLevelsTest, FlushesMessageWithItsSeverity) {
   auto [label, plogger] = GetParam();
-  ASSERT_TRUE(plogger);
   auto &logger = *plogger;
 
   std::random_device rand_dev;
@@ -40,5 +39,14 @@ TEST_P(LogLevelsTest, PutMessage) {
   auto test_message = std::to_string(rand_gen()) + std::to_string(rand_gen());
   BOOST_LOG(logger) << test_message;
 
-  ASSERT_TRUE(log_checker::line_contains(log_file, test_message));
+  logging::log_flush();
+  std::ifstream input(log_file);
+  ASSERT_TRUE(input.is_open());
+  const auto expected = std::string(label) + ": " + test_message;
+  for (std::string line; std::getline(input, line);) {
+    if (line.ends_with(expected)) {
+      return;
+    }
+  }
+  FAIL() << "Missing flushed log record: " << expected;
 }

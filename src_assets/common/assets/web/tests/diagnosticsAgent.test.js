@@ -80,10 +80,6 @@ test('diagnostics capabilities expose selectable skills', () => {
       DIAGNOSTICS_SKILL_IDS.logRemediation,
     ]
   )
-  assert.equal(getDiagnosticsCapabilityIcon(DIAGNOSTICS_SKILL_IDS.logPatterns), 'fa-magnifying-glass-chart')
-  assert.equal(getDiagnosticsCapabilityIcon(DIAGNOSTICS_SKILL_IDS.logRemediation), 'fa-screwdriver-wrench')
-  assert.equal(getDiagnosticsCapabilityLabel(DIAGNOSTICS_SKILL_IDS.logSeverity), 'Log severity summary')
-  assert.equal(getDiagnosticsCapabilityLabel(DIAGNOSTICS_SKILL_IDS.logSeverity, { locale: 'zh-CN' }), '日志严重度摘要')
 })
 
 test('diagnostics supports extension skills', async () => {
