@@ -37,8 +37,18 @@ Pre-native checks on this machine:
 * Native publisher SHA oracle and delayed EOS acknowledgement regression: passed.
 * Native callback, paired lifecycle and 1300-round IPC tests: passed.
 
-The requested full-session native test has not yet run as of this preparation.
-Its proposed scope is 20 seconds of capture, 22 seconds of live object emission,
-one encrypted RTSP session and 640x360 H.264 at 30 fps. Native execution requires
-the user's current explicit authorization. Existing eight-second loopback passes
-are not full RTSP/video acceptance evidence.
+Full-session native acceptance passed on 2026-10-23 at 01:11 Asia/Hong_Kong,
+using the first of the user's maximum two authorized joint tests. The bounded
+20-second capture and 22-second live object source delivered 983 post-PLAY MAT
+cycles / 60395520 bytes with identical publisher/client SHA256 and authenticated
+EOS. The client decoded 588 real desktop H.264 frames at 640x360, with 19437 ms
+of simultaneous audio/video reception. All six hook entries were restored,
+all test processes exited normally and the pinned audiodg identity was retained.
+No second native test was needed.
+
+See `MAT-FULL-NATIVE-RESULT.txt` for exact evidence and limits. Private original
+logs are in `build/mat-full-native-run01/`; the frozen metadata/log hashes are in
+`build/mat-full-native-run01-completed.json`. The tested source commit is
+`2755c69012beae70ef66c675ef27f891b05621f4`; subsequent documentation edits do not
+imply a rebuild. This controlled-source pass does not verify game A/V timing,
+long-running stability or supported Android HDMI/eARC Atmos playback.

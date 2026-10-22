@@ -1,0 +1,78 @@
+Full Sunshine live native MAT / encrypted RTSP / H.264: PASS_FULL_NATIVE_RTSP
+2026-10-23 01:11, Asia/Hong_Kong
+
+Scope
+-----
+The user authorized at most two bounded joint native acceptance tests. Test 1
+passed; no second test was run. The native capture limit was 20 seconds and a
+separate public ISpatialAudioClient source emitted two live objects for 22 seconds
+on the existing UUYC endpoint. Its actual renderer was the Dolby HRTF plugin,
+not evidence that Windows Sonic was selected. No recorded or finite MAT source
+was read. This is controlled live input, not an existing-game acceptance test.
+
+Complete path
+-------------
+Plugin pre-submit PCM/properties and paired lifecycle -> bounded IPC -> independent
+native MAT worker in the pinned audiodg -> complete IEC carrier cycles -> private
+MCAPv002 lease/PLAY cutoff -> normally built Sunshine -> paired TLS/NVHTTP launch
+-> encrypted RTSP and production LiStartConnection -> authenticated MAT AES-GCM
+over production UDP/RTP/FEC -> client cycle callbacks and stream SHA256.
+The same session captured the real desktop, encoded H.264 and decoded it in RAM.
+
+Native capture and publisher
+----------------------------
+48 kHz, 480-frame input, two dynamic objects.
+1979 source passes / 1899840 object samples, warm20 / drain31.
+2030 native 30720-byte output blocks / 62361600 bytes -> 1015 complete cycles.
+Native status=2, error=0; create/mapper/initialize/submit/process HRESULTs S_OK.
+Post-PLAY delivered stream: 983 cycles / 60395520 bytes.
+Publisher LEASE_END_ACK count and whole-stream SHA matched the actual client:
+01d320444fea2a2e77386cf74adaee51faa386a02d4115bf3033a2507801dfe3
+Total native cycles and post-PLAY cycles differ because the live source discards
+cycles before the session's PLAY cutoff. The SHA covers only delivered cycles.
+
+Actual full-session client
+--------------------------
+codec=7, encrypted=true, authenticatedEOS=true, audioDecodeCalls=0.
+588 H.264 units / 588 decoded frames, 640x360, requested 30 fps.
+decodeFailed=false, videoPtsReordered=false, reception overlap=19437 ms.
+Overlap is measured from receipt/decode callbacks; it is not A/V sync calibration.
+No deliberate packet loss was injected during this full-session test. Prior
+native loopback and generated wrap/FEC tests retain their separate scopes.
+
+Cleanup
+-------
+Six original hook entries restored; native worker/recorder stopped cleanly.
+Host, publisher, source and client all exit0; cleanupErrors empty.
+Same audiodg PID 26504 / created FILETIME 134371423865849023 retained.
+Installed Sunshine PID 15396 retained; isolated host PID 24752 exited normally.
+Native helper DLLs remain pinned but inactive as designed, with no forced unload.
+No endpoint, spatial format, driver, service or installed host configuration change.
+No audio or video payload written to disk; logs, isolated credentials and metadata
+remain private in the test output directory.
+
+Observed nonfatal diagnostics
+----------------------------
+Client WSAEINTR/10004 appears during LiStopConnection after authenticated EOS;
+there was no connection-terminated callback before completion. Host startup/exit
+nvprefs reports missing ProgramData because of the documented child-process-only
+opt-out from installed NVIDIA preference recovery. Host also logged inactive
+gamepad/PyroWave probes, loopback MAC/QoS warnings and a session-monitor join
+warning before its normal exit0. These do not prove those separate features work.
+
+Evidence and limits
+-------------------
+Private original logs/result: build/mat-full-native-run01/
+Frozen metadata/log hashes: build/mat-full-native-run01-completed.json
+Frozen executable/source pins: build/mat-full-live-prepared-v1.json
+Tested source commit: 2755c69012beae70ef66c675ef27f891b05621f4
+Host SHA256: b6483f494a90fc1418355dc30dc01d182c66eeb04b2afb10ecf8ff2747659d4b
+Client SHA256: 3ebe52a37f3b3c46a35a9a8b838ae9fe3101facd979652a1fba0845023d9c81c
+Subsequent report edits do not imply a binary rebuild or repeat native execution.
+
+This passes one bounded full Sunshine session with real native MAT and video.
+Game A/V synchronization, long-running stability, other object layouts, supported
+Android HDMI/eARC playback and actual Atmos recognition are still unverified.
+The earlier missing-live-object failure did not recur here; its cause remains
+unknown and missing input still terminates the bridge. Unsupported phones
+continue to negotiate Opus. This report grants no new native-run authorization.

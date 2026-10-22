@@ -1,4 +1,31 @@
-# 2026-10-22 续作：原生实时 MAT 链路
+# 2026-10-23 续作：原生实时 MAT 链路
+
+## 01:11 完整 Sunshine 加密 RTSP / MAT / H.264 联合验收通过
+
+用户本轮明确授权最多 2 次联合验收；第 1 次已通过，仅使用 1 次，无需重试。
+独立正常 Sunshine 使用隔离配置、配对证书和端口，经 NVHTTP launch、加密 RTSP、
+production `LiStartConnection` 建立完整会话。既有 UUYC 路径实际为 Dolby HRTF
+插件；公开 ISpatialAudioClient 现场提交双对象 22 秒，原生采集上限 20 秒。
+没有读取样本、循环回放或保存音视频载荷，没有切换端点、空间格式、驱动或服务。
+
+原生输入 1979 轮 / 1899840 对象样本，warm20 / drain31；2030 个输出半块组成
+1015 个 MAT 周期，所有原生 HRESULT 为 S_OK。PLAY 后真实客户端交付 983 周期 /
+60395520 字节，源端与客户端整流 SHA256 完全一致：
+`01d320444fea2a2e77386cf74adaee51faa386a02d4115bf3033a2507801dfe3`。
+codec7、AES-GCM 音频、认证 EOS 和私有管道周期数/SHA 确认均通过。
+
+真实桌面采集编码为 640×360 / 30fps H.264，客户端在内存解码 588 帧，没有解码
+失败或视频 PTS 倒序，音视频接收重叠 19437 ms。六个原始入口恢复，测试子进程
+全部 exit0，同一 audiodg 保留，已安装 Sunshine 继续运行。缺失对象问题本轮
+未复现，其历史原因仍未知；本次没有人为注入丢包，不借用早前恢复数量作为新结果。
+
+报告：[完整实时会话验收](../spatial-object-spike/mat-rtsp-live/MAT-FULL-NATIVE-RESULT.txt)。
+私有原始证据 `build/mat-full-native-run01/`，冻结摘要
+`build/mat-full-native-run01-completed.json`。测试源码提交 `2755c6901`，后续文档提交
+不代表重建。完整 RTSP/视频受控短测现已通过；游戏音视频同步、长期稳定性、支持
+Android HDMI/eARC 的真实输出及 Atmos 识别仍待。手机继续协商 Opus。
+
+以下保留更早状态与各次授权的历史范围。
 
 ## 23:22 收尾原生验收通过：实时 MAT / EOS / 整流校验 / 丢包恢复
 
