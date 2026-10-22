@@ -172,8 +172,9 @@ namespace credential_store {
       nullptr);
     if (stored) {
       std::string secret { stored };
-      std::memset(stored, 0, std::strlen(stored));
-      g_free(stored);
+      // libsecret owns this allocation and zeroes it before freeing; memset on
+      // the way to g_free is not something the optimiser has to keep.
+      secret_password_free(stored);
       return { read_status_e::success, std::move(secret), {} };
     }
     // A missing entry is the normal "nothing saved yet" case; anything else
@@ -272,13 +273,32 @@ namespace credential_store {
       "application", key_application,
       "purpose", key_purpose,
       nullptr);
-    // libsecret reports "nothing matched" as FALSE with no GError at all (and,
-    // depending on the version, sometimes as NO_SUCH_OBJECT). Erase is meant to
-    // be idempotent, so only a real transport/collection failure is an error.
-    if (!cleared && error && !secret_object_missing(error)) {
+    if (error && !secret_object_missing(error)) {
       return { false, secret_error("Clearing the LLM credential from the keyring", error) };
     }
     if (error) g_error_free(error);
+
+    if (!cleared) {
+      // FALSE with no error is ambiguous: it means "nothing matched", but it is
+      // also what a *locked* collection produces, because libsecret cannot delete
+      // what it cannot read. Erase has to be idempotent, so confirm the entry is
+      // really gone instead of assuming it.
+      GError *probe_error = nullptr;
+      gchar *still_there = secret_password_lookup_sync(
+        llm_key_schema(), nullptr, &probe_error,
+        "application", key_application,
+        "purpose", key_purpose,
+        nullptr);
+      if (still_there) {
+        secret_password_free(still_there);
+        if (probe_error) g_error_free(probe_error);
+        return { false, "The API key is still in the keyring; unlock it and try again" };
+      }
+      if (probe_error && !secret_object_missing(probe_error)) {
+        return { false, secret_error("Confirming the LLM credential was cleared", probe_error) };
+      }
+      if (probe_error) g_error_free(probe_error);
+    }
     // The keyring entry is gone, but an environment-supplied key still wins on
     // read, so erase is only complete once the service environment is clean.
     const char *configured = std::getenv("SUNSHINE_LLM_API_KEY");
