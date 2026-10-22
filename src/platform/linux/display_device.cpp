@@ -18,6 +18,7 @@
 #include "src/display_device/to_string.h"
 #include "src/display_device/vdd_utils.h"
 #include "src/globals.h"
+#include "src/platform/linux/display_backend.h"
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
 #include "src/platform/linux/mirror_plan.h"
@@ -208,11 +209,58 @@ namespace display_device {
     }
 
     /**
+     * @brief The backend that owns this session.
+     * @details The probes are consulted in precedence order and stop at the
+     *          first hit -- see `display_backend.h` for why the order is what
+     *          it is. Being lazy, this costs exactly what asking the individual
+     *          helpers one after another used to cost, and the order itself is
+     *          unit-tested instead of living in this call graph.
+     */
+    platf::display_backend_e
+    selected_backend() {
+      return platf::select_display_backend([](platf::display_backend_e backend) {
+        switch (backend) {
+          case platf::display_backend_e::niri:
+            return platf::niri::session_supports_niri();
+
+          case platf::display_backend_e::mutter:
+            return platf::mutter::session_supports_mutter();
+
+          case platf::display_backend_e::wlr_randr:
+            // Nothing to key off in the environment -- a wlroots compositor
+            // sets no socket or bus name Sunshine could read -- so this is the
+            // probe the backend runs itself, cached and rate-limited.
+            return platf::wlr_randr::session_supports_wlr_randr();
+
+          case platf::display_backend_e::xrandr:
+            // KScreen describes the compositor's own model, and a Plasma
+            // session must not be served by the XWayland RandR mirror. A bare
+            // X11 session reaches neither kscreen-doctor nor any of the
+            // compositor APIs above, and RandR is then all there is.
+            if (platf::kscreen::session_supports_kscreen()) {
+              return false;
+            }
+#if defined(SUNSHINE_BUILD_XRANDR)
+            return platf::xrandr::session_supports_xrandr();
+#else
+            return false;
+#endif
+
+          case platf::display_backend_e::kscreen:
+            // The floor, asked at use time; it is never what the probe chain
+            // "selects" because it has no probe of its own.
+            return false;
+        }
+        return false;
+      });
+    }
+
+    /**
      * @brief Whether this session is driven by niri rather than KScreen.
      */
     bool
     compositor_is_niri() {
-      return platf::niri::session_supports_niri();
+      return selected_backend() == platf::display_backend_e::niri;
     }
 
     /**
@@ -220,48 +268,23 @@ namespace display_device {
      */
     bool
     compositor_is_mutter() {
-      return platf::mutter::session_supports_mutter();
+      return selected_backend() == platf::display_backend_e::mutter;
     }
 
     /**
      * @brief Whether this session has a wlroots output manager.
-     * @details There is nothing to key off in the environment -- a wlroots
-     *          compositor sets no socket or bus name Sunshine could read -- so
-     *          this is decided by the probe the backend runs itself, which is
-     *          cached and rate-limited. It must be asked before RandR: XWayland
-     *          answers RandR reads in a wlroots session too, and the wlroots
-     *          output manager is the one that actually owns the connectors.
      */
     bool
     compositor_is_wlr_randr() {
-      if (compositor_is_niri() || compositor_is_mutter()) {
-        return false;
-      }
-      return platf::wlr_randr::session_supports_wlr_randr();
+      return selected_backend() == platf::display_backend_e::wlr_randr;
     }
 
     /**
      * @brief Whether this session reaches RandR because nothing else is there.
-     * @details KScreen, Mutter, niri and wlroots each describe a compositor's
-     *          own model and get first refusal. A bare X11 session has none of
-     *          them, and RandR is then the only display API there is. XWayland
-     *          answers RandR reads as well, but a Wayland session always
-     *          matches one of the four above, so this stays the last resort by
-     *          construction.
      */
     bool
     compositor_is_xrandr() {
-#if defined(SUNSHINE_BUILD_XRANDR)
-      if (compositor_is_niri() || compositor_is_mutter() || compositor_is_wlr_randr()) {
-        return false;
-      }
-      if (platf::kscreen::session_supports_kscreen()) {
-        return false;
-      }
-      return platf::xrandr::session_supports_xrandr();
-#else
-      return false;
-#endif
+      return selected_backend() == platf::display_backend_e::xrandr;
     }
 
     /**
@@ -1220,20 +1243,27 @@ namespace display_device {
 
     std::vector<compositor_output_t>
     query_outputs() {
-      if (compositor_is_niri()) {
-        return query_niri_outputs();
-      }
-      if (compositor_is_mutter()) {
-        return query_mutter_outputs();
-      }
-      if (compositor_is_wlr_randr()) {
-        return query_wlr_randr_outputs();
-      }
+      switch (selected_backend()) {
+        case platf::display_backend_e::niri:
+          return query_niri_outputs();
+
+        case platf::display_backend_e::mutter:
+          return query_mutter_outputs();
+
+        case platf::display_backend_e::wlr_randr:
+          return query_wlr_randr_outputs();
+
+        case platf::display_backend_e::xrandr:
 #if defined(SUNSHINE_BUILD_XRANDR)
-      if (compositor_is_xrandr()) {
-        return query_xrandr_outputs();
-      }
+          return query_xrandr_outputs();
+#else
+          break;
 #endif
+
+        case platf::display_backend_e::kscreen:
+          break;
+      }
+
       return query_kscreen_outputs();
     }
 
