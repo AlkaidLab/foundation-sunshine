@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 #ifndef _WIN32
@@ -200,5 +201,53 @@ TEST(VddEdid, SaturatedClockIsWhyUnencodableModesMustBeRejected) {
   const unsigned int v_blank = edid[60] | ((edid[61] & 0x0F) << 8);
   const double advertised_hz = 655350000.0 / (static_cast<double>(h_active + h_blank) * (v_active + v_blank));
   EXPECT_NEAR(advertised_hz, 71.4, 0.1);
+}
+
+TEST(VddEdid, ClientIdentityReplacesTheModeDerivedSerial) {
+  vdd_edid::edid_options opts;
+  opts.client_identifier = "living-room-tv";
+  const auto edid = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, opts);
+
+  // The client's canonical serial, read back the way adoption reads it.
+  EXPECT_EQ(vdd_edid::serial_number_of(edid), 0xFED83B8Cu);
+}
+
+TEST(VddEdid, EmptyClientIdentifierKeepsTheLegacySerial) {
+  // Every release before per-client identity produced this serial; it must not
+  // change, or an existing single-client setup would look like a new display.
+  // The refresh rate only contributes its low nibble — that is the legacy
+  // encoding, quirk included.
+  const std::uint32_t legacy_serial = (1920u << 16) | (1080u << 4) | (60u & 0x0Fu);
+
+  const auto legacy = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, false, "Zako HDR");
+  EXPECT_EQ(vdd_edid::serial_number_of(legacy), legacy_serial);
+
+  const vdd_edid::edid_options opts;
+  const auto explicit_legacy = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, opts);
+  EXPECT_EQ(vdd_edid::serial_number_of(explicit_legacy), legacy_serial);
+}
+
+TEST(VddEdid, TwoClientsDifferOnlyInIdentity) {
+  vdd_edid::edid_options first;
+  first.client_identifier = "living-room-tv";
+  vdd_edid::edid_options second;
+  second.client_identifier = "Bedroom Deck";
+
+  const auto first_edid = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, first);
+  const auto second_edid = vdd_edid::generate_virtual_display_edid(1920, 1080, 60, second);
+
+  EXPECT_NE(vdd_edid::serial_number_of(first_edid), vdd_edid::serial_number_of(second_edid));
+
+  // The identity must not leak into anything user-visible: the product name
+  // stays the canonical ZAKO_NAME, so the compositor shows one monitor name.
+  const std::string first_name(reinterpret_cast<const char *>(first_edid.data() + 77), 13);
+  const std::string second_name(reinterpret_cast<const char *>(second_edid.data() + 77), 13);
+  EXPECT_EQ(first_name, second_name);
+  EXPECT_EQ(first_name.compare(0, std::strlen("Zako HDR"), "Zako HDR"), 0);
+}
+
+TEST(VddEdid, SerialNumberOfRejectsShortInput) {
+  EXPECT_EQ(vdd_edid::serial_number_of({}), 0u);
+  EXPECT_EQ(vdd_edid::serial_number_of(std::vector<std::uint8_t>(15, 0xFF)), 0u);
 }
 #endif

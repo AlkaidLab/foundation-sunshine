@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -15,6 +16,7 @@
 
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/vdd_client_identity.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -387,17 +389,9 @@ namespace display_device {
 
     std::string
     generate_client_guid(const std::string &identifier) {
-      if (identifier.empty()) {
-        return "";
-      }
-
-      // 使用SHA1 name generator确保相同标识符生成相同GUID
-      static constexpr boost::uuids::uuid ns_id {};
-      const auto boost_uuid = boost::uuids::name_generator_sha1 { ns_id }(
-        reinterpret_cast<const unsigned char *>(identifier.c_str()),
-        identifier.size());
-
-      return "{" + boost::uuids::to_string(boost_uuid) + "}";
+      // One canonical derivation, shared with the Linux side so both platforms
+      // name a client's virtual display identically.
+      return vdd_identity::guid_for_identifier(identifier);
     }
 
     /**
@@ -1928,6 +1922,16 @@ namespace display_device::vdd_utils {
 
         BOOST_LOG(info) << "vdd: adopted live virtual display on "sv << name << " ("sv
                         << cached_width << "x"sv << cached_height << "@"sv << cached_refresh_hz << "Hz)"sv;
+        // The EDID serial identifies the owning client when the display was
+        // created with one (0 = a legacy mode-derived serial, i.e. a display
+        // created before per-client identity existed).
+        if (const auto adopted_serial = vdd_edid::serial_number_of(
+              std::vector<std::uint8_t>(content.begin(), content.end()));
+            adopted_serial != 0) {
+          std::ostringstream serial_text;
+          serial_text << "0x" << std::hex << std::setw(8) << std::setfill('0') << adopted_serial;
+          BOOST_LOG(debug) << "vdd: adopted display carries client serial "sv << serial_text.str();
+        }
         return;
       }
     }
@@ -2350,9 +2354,12 @@ namespace display_device::vdd_utils {
   }
 
   std::string
-  generate_client_guid(const std::string &) {
-    // Per-client GUIDs are a ZakoVDD driver concept.
-    return {};
+  generate_client_guid(const std::string &identifier) {
+    // Windows hands this GUID to ZakoVDD; Linux has no driver to hand it to,
+    // so the same GUID's serial bits go into the connector's EDID override.
+    // The derivation is shared so the two platforms cannot disagree about
+    // which client a virtual display belongs to.
+    return vdd_identity::guid_for_identifier(identifier);
   }
 
   physical_size_t
@@ -2408,6 +2415,10 @@ namespace display_device::vdd_utils {
     active_edid_opts.hdr_min_nits = hdr_brightness.min_nits >= 1.0f
                                       ? static_cast<int>(std::lround(hdr_brightness.min_nits))
                                       : -1;
+    // The client identity rides in the EDID serial number, so the compositor
+    // treats each client's virtual display as its own monitor and adoption can
+    // tell whose connector is live after a restart.
+    active_edid_opts.client_identifier = client_identifier;
 
     const auto settings = session_mode_settings ? *session_mode_settings : configured_mode_settings();
     if (cached_from_session && !vdd_edid::mode_fits_pixel_clock_limit(cached_width, cached_height, cached_refresh_hz)) {
@@ -2429,6 +2440,12 @@ namespace display_device::vdd_utils {
                     << ", EDID personalization: " << active_edid_opts.width_mm << "x" << active_edid_opts.height_mm
                     << "mm, HDR [" << active_edid_opts.hdr_max_nits << "," << active_edid_opts.hdr_min_nits << ","
                     << active_edid_opts.hdr_max_full_nits << "] nits";
+    if (const auto client_serial = vdd_identity::serial_for_identifier(client_identifier); client_serial != 0) {
+      std::ostringstream serial_text;
+      serial_text << "0x" << std::hex << std::setw(8) << std::setfill('0') << client_serial;
+      BOOST_LOG(debug) << "vdd: client identity "sv << vdd_identity::guid_for_identifier(client_identifier)
+                       << " (EDID serial "sv << serial_text.str() << ")"sv;
+    }
 
     if (active && connector_status_is(active_status_path, "connected")) {
       BOOST_LOG(debug) << "vdd: virtual display already active on "sv << active_connector;

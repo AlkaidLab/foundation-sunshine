@@ -47,6 +47,13 @@ namespace vdd_edid {
     // the compositor switch modes without an EDID rewrite. Must fit the
     // CEA-861 pixel-clock limit (655.35 MHz).
     std::vector<std::tuple<unsigned int, unsigned int, unsigned int>> extra_modes;
+
+    // The client this virtual display belongs to. Empty keeps the historical
+    // mode-derived serial number (one shared virtual display); a real value
+    // replaces it with the client's canonical serial, which is how a connector
+    // is attributed back to its client after a restart. See
+    // src/vdd_client_identity.h — the two platforms derive the same identity.
+    std::string client_identifier;
   };
 
   /**
@@ -64,6 +71,14 @@ namespace vdd_edid {
    */
   bool
   mode_fits_pixel_clock_limit(unsigned int width, unsigned int height, unsigned int refresh_hz);
+
+  /**
+   * @brief The EDID serial-number field (bytes 12..15, little endian).
+   * @details Adoption reads it back from a connector's override to learn whose
+   *          virtual display is live: 0 means a legacy (mode-derived) serial.
+   */
+  std::uint32_t
+  serial_number_of(const std::vector<std::uint8_t> &edid);
 
   /**
    * @brief Convenience overload matching the historical call signature.

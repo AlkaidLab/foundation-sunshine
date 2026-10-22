@@ -12,6 +12,8 @@
 #include <cmath>
 #include <tuple>
 
+#include "src/vdd_client_identity.h"
+
 namespace vdd_edid {
 
   namespace {
@@ -104,6 +106,18 @@ namespace vdd_edid {
     return dtd_pixel_clock_hz(width, height, refresh_hz) <= kMaxDtdPixelClockHz;
   }
 
+  std::uint32_t
+  serial_number_of(const std::vector<std::uint8_t> &edid) {
+    if (edid.size() < 16) {
+      return 0;
+    }
+
+    return static_cast<std::uint32_t>(edid[12]) |
+           (static_cast<std::uint32_t>(edid[13]) << 8) |
+           (static_cast<std::uint32_t>(edid[14]) << 16) |
+           (static_cast<std::uint32_t>(edid[15]) << 24);
+  }
+
   std::vector<std::uint8_t>
   generate_virtual_display_edid(unsigned int width, unsigned int height, unsigned int refresh_hz, const edid_options &opts) {
     const bool enable_hdr = opts.enable_hdr;
@@ -121,8 +135,13 @@ namespace vdd_edid {
     // Product code
     put16_le(edid, 10, enable_hdr ? 0x4844 : 0x5344);
 
-    // Serial number (unique per resolution/refresh)
-    const std::uint32_t serial = (width << 16) | (height << 4) | (refresh_hz & 0x0F);
+    // Serial number: the client's canonical serial when this virtual display
+    // belongs to a client, otherwise (legacy, and what every earlier release
+    // produced) unique per resolution/refresh.
+    const std::uint32_t client_serial = vdd_identity::serial_for_identifier(opts.client_identifier);
+    const std::uint32_t serial = client_serial != 0
+                                   ? client_serial
+                                   : ((width << 16) | (height << 4) | (refresh_hz & 0x0F));
     edid[12] = serial & 0xFF;
     edid[13] = (serial >> 8) & 0xFF;
     edid[14] = (serial >> 16) & 0xFF;
