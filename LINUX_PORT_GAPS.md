@@ -16,7 +16,8 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**7 项部分实现**（§一）、**11 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+剩余：**6 项部分实现**（§一）、**10 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+（§1.6 / §2.6 AI Key 的 Secret Service 后端已于 2026-10-22 落地，从待办中移除。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -73,13 +74,23 @@
   阶段依赖 pre_encode_filter）。
 - **结论**：随 pre_encode_filter 一起评估（§三 的伴生项），单独无意义。
 
-### 1.6 AI API Key 加密存储
+### 1.6 AI API Key 加密存储（✅ 已完成，2026-10-22）
 
-- **现状**：Linux 明文环境变量 `SUNSHINE_LLM_API_KEY`（`src/ai/credential_store.cpp`）；Windows 用
-  DPAPI。
-- **若要做**：libsecret（gnome-keyring/kwallet 后端）——KDE 环境有 kwallet 的 secret service 兼容层。
-  编译依赖 `libsecret`，可选发现（找不到回退环境变量）。
-- **工作量**：低。**验收**：Key 存入 keyring，进程列表/env 里看不到明文。
+- **已做**：`src/ai/credential_store.cpp` 在 `SUNSHINE_BUILD_LIBSECRET` 下走 Secret Service
+  （KWallet 的 secret-service 兼容层 / gnome-keyring）。条目是每用户一条，schema
+  `org.lizardbyte.sunshine.LlmApiKey` + 属性 `application=sunshine,purpose=llm-api-key`，
+  label `Sunshine LLM API key`，落在默认 collection。
+- **读取顺序**：keyring → `SUNSHINE_LLM_API_KEY` 环境变量兜底（与 Windows 一样，持久化值优先，
+  env 只做引导）。
+- **擦除**：清 keyring 条目；若 env 仍设着则报错提示先清理 service 环境（否则 key 仍在生效）。
+  清空不存在的条目视为成功（幂等）——libsecret 对"无匹配"返回 FALSE 且**不带 GError**，这点已实测。
+- **构建**：`cmake/compile_definitions/linux.cmake` 里 `pkg_check_modules(LIBSECRET libsecret-1)`
+  可选发现，找不到就退回纯环境变量（`message(STATUS "libsecret not found …")`），Windows 半边不变。
+- **验收**：`tests/unit/test_credential_store.cpp` 的 `RoundTripsThroughTheKeyring` 通过
+  （write→read→空写擦除→not_found→erase 幂等）；无 Secret Service 或已有用户 key 时 `GTEST_SKIP`，
+  不会覆盖真实凭据。
+- **残留风险**：若 collection 处于锁定状态，libsecret 的同步调用可能等解锁提示而阻塞调用线程
+  （本机 KWallet 未锁，实测 write/read/erase 合计 16 ms）。真出现再考虑加超时/异步。
 
 ### 1.7 音频设备位深匹配
 
@@ -133,9 +144,9 @@
   `src/platform/linux/foreground_app.cpp` 的同一 producer 选择与缓存。
 - **验收**：Hyprland/X11 会话下 ABR 日志出现前台切换。
 
-### 2.6 AI Key libsecret 后端（低）
+### 2.6 AI Key libsecret 后端（✅ 已完成，2026-10-22）
 
-- 见 §1.6。
+- 已随 §1.6 一并落地，此处不再列为待办。
 
 ### 2.7 DS5 本地触觉播放 sidecar（高）
 

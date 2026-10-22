@@ -303,6 +303,19 @@ else()
     message(STATUS "libsystemd not found - host clipboard sync disabled")
 endif()
 
+# AI API key persistence through the Secret Service (KWallet / gnome-keyring).
+# Optional: without it the credential stays environment-only, as before.
+pkg_check_modules(LIBSECRET libsecret-1)
+if(LIBSECRET_FOUND)
+    list(APPEND PLATFORM_LIBRARIES ${LIBSECRET_LIBRARIES})
+    include_directories(SYSTEM ${LIBSECRET_INCLUDE_DIRS})
+    link_directories(${LIBSECRET_LIBRARY_DIRS})
+    add_compile_definitions(SUNSHINE_BUILD_LIBSECRET)
+    message(STATUS "libsecret ${LIBSECRET_VERSION} found - LLM API key stored in the keyring")
+else()
+    message(STATUS "libsecret not found - LLM API key stays environment-only")
+endif()
+
 list(APPEND PLATFORM_LIBRARIES
         dl
         pulse

@@ -3,6 +3,7 @@
  * @brief Tests for native LLM credential storage.
  */
 
+#include <cstdlib>
 #include <fstream>
 #include <utility>
 
@@ -91,6 +92,43 @@ TEST(CredentialStoreTest, EmptySecretErasesAndEraseIsIdempotent) {
   EXPECT_TRUE(credential_store::write_llm_api_key(file_guard.path, "").success);
   EXPECT_FALSE(std::filesystem::exists(file_guard.path));
   EXPECT_TRUE(credential_store::erase_llm_api_key(file_guard.path).success);
+}
+
+#elif defined(SUNSHINE_BUILD_LIBSECRET)
+
+// The keyring entry is per user and global, and the path argument is unused on
+// this platform, so the round trip has to stay away from anything a real user
+// may already have saved.
+TEST(CredentialStoreTest, RoundTripsThroughTheKeyring) {
+  if (const char *configured = std::getenv("SUNSHINE_LLM_API_KEY"); configured && *configured) {
+    GTEST_SKIP() << "SUNSHINE_LLM_API_KEY is set; erase cannot be observed";
+  }
+
+  const auto before = credential_store::read_llm_api_key({});
+  if (before.status == credential_store::read_status_e::error) {
+    GTEST_SKIP() << "No usable Secret Service: " << before.error;
+  }
+  if (before.status == credential_store::read_status_e::success) {
+    GTEST_SKIP() << "A key is already stored in this user's keyring; refusing to overwrite it";
+  }
+
+  const std::string secret = "sk-test-keyring-round-trip";
+  const auto written = credential_store::write_llm_api_key({}, secret);
+  ASSERT_TRUE(written.success) << written.error;
+
+  const auto loaded = credential_store::read_llm_api_key({});
+  ASSERT_EQ(loaded.status, credential_store::read_status_e::success) << loaded.error;
+  EXPECT_EQ(loaded.secret, secret);
+
+  // An empty secret is the documented "clear it" path.
+  const auto cleared = credential_store::write_llm_api_key({}, "");
+  ASSERT_TRUE(cleared.success) << cleared.error;
+
+  const auto after = credential_store::read_llm_api_key({});
+  EXPECT_EQ(after.status, credential_store::read_status_e::not_found);
+  EXPECT_TRUE(after.secret.empty());
+
+  EXPECT_TRUE(credential_store::erase_llm_api_key({}).success);
 }
 
 #endif

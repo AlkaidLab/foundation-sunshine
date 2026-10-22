@@ -95,6 +95,7 @@ cd build && ctest
 | `wayland` + `wayland-protocols` | Wayland 捕获（protocols 默认用子模块） |
 | `libx11` + xcb/xrandr/xtst/xfixes/xi/xinerama | X11 捕获 |
 | `libpulse` | 音频捕获/播放（PipeWire 的 pulse 兼容层） |
+| `libsecret`（可选） | AI API Key 存 keyring（gnome-keyring / KWallet 的 secret-service 兼容层）；缺省退回 `SUNSHINE_LLM_API_KEY` |
 | `libevdev` | 输入注入（inputtino） |
 | `numactl` | 链接静态 FFmpeg 需要 libnuma |
 | `libayatana-appindicator` + `libnotify` | 托盘（`SUNSHINE_REQUIRE_TRAY` 默认 ON） |
@@ -107,7 +108,7 @@ cd build && ctest
 sudo pacman -S --needed cmake ninja boost numactl \
   libayatana-appindicator libnotify qt6-base qt6-svg \
   libdrm libcap libva wayland libx11 libxcb libxrandr libxtst libxfixes libxi libxinerama \
-  libpulse libevdev miniupnpc opus curl openssl
+  libpulse libevdev miniupnpc opus curl openssl libsecret
 ```
 
 ### 运行时依赖
@@ -291,6 +292,18 @@ CUDA=ON 的 kms-egl 路径为三平面渲染（`egl::create_target()`/`sws_t` �
 **边界**：CUDA=ON 的 ram 回退路径（wlgrab/nvfbc，`cuda::sws_t` 的 `RGBA_to_NV12` CUDA 核）仍
 NV12-only；VAAPI 444 未开（见 `LINUX_PORT_GAPS.md` §2.11）。
 
+### 6.11 AI API Key 存进 keyring
+
+`src/ai/credential_store.cpp`：`SUNSHINE_BUILD_LIBSECRET`（CMake 可选探测 `libsecret-1`）下用 Secret
+Service 替代 Windows 的 DPAPI blob。schema `org.lizardbyte.sunshine.LlmApiKey`，属性
+`application=sunshine` / `purpose=llm-api-key`，每用户一条，写入默认 collection；label
+`Sunshine LLM API key`。读取优先 keyring、`SUNSHINE_LLM_API_KEY` 仅作引导兜底（与 Windows 一致：
+持久化值优先）。清空密钥走同一入口传空串；条目不存在时视作成功（幂等）——libsecret 对"无匹配"返回
+FALSE 且不带 `GError`，这点是实测出来的，别按返回值判错。若 env 里仍留着 `SUNSHINE_LLM_API_KEY`，
+擦除会明确报错提示先清理 service 环境，否则 key 仍在生效。没装 `libsecret` 时行为与之前完全一致。
+验收用例：`tests/unit/test_credential_store.cpp` 的 `RoundTripsThroughTheKeyring`（无 Secret
+Service 或本用户已有 key 时 `GTEST_SKIP`，绝不覆盖真实凭据）。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -368,7 +381,7 @@ NV12-only；VAAPI 444 未开（见 `LINUX_PORT_GAPS.md` §2.11）。
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 694 用例，692 通过，12 跳过，2 失败
+test_sunshine: 695 用例，693 通过，12 跳过，2 失败
 ```
 
 两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：
