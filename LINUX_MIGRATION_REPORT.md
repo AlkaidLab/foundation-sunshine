@@ -632,6 +632,42 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   因此多实例的端到端形态只做到规则层单测 + 单客户端回归。上限本身也受空闲连接器数量约束：
   没有空闲连接器时退回原有行为（返回失败并记录日志），不会去抢别人的屏。
 
+### 6.24 Windows 中立性审计（可复跑）
+
+- **动机**：Windows CI 也构建本仓库，而本分支往共享文件里加了大量 Linux 代码（`git diff origin/master..HEAD`
+  = 53 个共享文件、+5462/−381）。两类错误很难靠肉眼发现：改动落进了 `#if defined(_WIN32)` 区域（悄悄
+  改变 Windows 编译的内容），或 Linux 专属源被写进了共享构建文件（Windows 去编译它）。
+- **工具**：`tools/audit-windows-parity.py`（默认比对 `origin/master..HEAD`，可传 `<base>..<head>`）。
+  - 检查 1：对每个共享文件重建**预处理嵌套栈**（识别 `#ifdef _WIN32`、`#if defined(_WIN32)`、`#ifndef _WIN32`
+    的 `#else` 分支），再用 `git diff -U0` 把每一处增/删行映射回行号，只报"会被 Windows 编译到"的改动行，
+    供人工逐条判断。纯预处理指令行不计（那是改动的形状，不是 Windows 编译的代码）。
+  - 检查 2：`cmake/sources/host.cmake`（共享）不得出现 `src/platform/linux/` 下的任何源；`src/platform/linux/`
+    下每个 `.cpp` 都必须被 `cmake/compile_definitions/linux.cmake` 显式列举或 glob 覆盖。
+- **当前结果**（2026-10-22，HEAD `d0ae854b`）：
+  - 检查 2：27 个 Linux 专属源，**0 个未列举、0 处泄漏**。
+  - 检查 1：36 行需人工判断，逐条已核，全部为**有意的平台化**，没有意外改动：
+    - `src/display_device/vdd_utils.{h,cpp}`：`windows.h` 与 `WIN32_LEAN_AND_MEAN` 收进 `#ifdef _WIN32`
+      （原本无条件，Linux 编不过）；Windows 半边的 `destroy_vdd_monitor*` 用 `(void) client_identifier` 显式忽略
+      新参数，内部调用改传 `{}`（等价于旧的单实例行为）。
+    - `src/entry_handler.cpp`：`windows_utils.h` 的 include 加 `#ifdef _WIN32`（上游原本无条件）。
+    - `src/globals.{h,cpp}`：`VDD_NAME` / `ZAKO_NAME` 提出门控（Windows 取值不变），并新增规范常量
+      `ZAKO_DEVICE_ID`（"23172"，会话把它当显式虚拟屏请求；不再由平台各自写死）。
+    - `src/rtsp.cpp`：图片剪贴板能力在 Windows 侧仍是 `constexpr bool images = true;`（行为逐字保持），
+      Linux 侧改问 `clipboard_host::image_available()`。
+    - `src/nvhttp.cpp` / `src/nvhttp/display_control.cpp`：去掉 Windows 专属门控的地方，Windows 取值不变
+      （`VddCapabilityVersion` → `capability_version`，`#else 0` 分支删除）。
+    - `src/platform/windows/display_vram.cpp`：`HDR_ANALYSIS_{INTERVAL,MAX_WIDTH,MAX_HEIGHT}` 改为引用共享
+      `video_hdr_metadata.h` 的 `hdr_analysis_*`，取值仍是 4 / 1920 / 1080（`src/video_hdr_metadata.h:330,337,338`），
+      Windows 行为逐字不变。
+    - `src/platform/windows/input.cpp`：只改 include 路径（`dsu_server.h` → `src/dsu_server.h`）。
+    - `src/tray/system_tray.cpp`：新代码全在 `#ifndef _WIN32`；被去掉的 `#ifdef _WIN32` 只让**菜单布局**
+      在 Linux 上跟 Windows 对齐，Windows 分支设置的菜单索引与文本不变。
+    - `src/video.cpp` 的 `#if !defined(_WIN32) … #else`：Vivid T.35 是本分支的 Linux 特性，Windows 侧给空
+      `vivid_formats` / `vivid_codec`，原生 NVENC/AMF 路径不受影响。
+    - 新文件 `src/dsu_server.{h,cpp}`（Windows 的 `WSAIoctl` 块在 `#if defined(_WIN32)` 内）、
+      `src/vdd_client_identity.{h,cpp}`（纯 std）、`src/video_hdr_analyzer.h`（仅 Linux 路径引用）已单独复核。
+- **复跑方式**：`python3 tools/audit-windows-parity.py`（推上游前跑一次；检查 2 非零退出即视为回归）。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用

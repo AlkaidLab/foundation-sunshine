@@ -58,7 +58,10 @@ User installs packages themselves (sudo needs a password).
 - Un-gating a Windows-only feature for Linux (include move, real capability report)
   is fine only if the Windows branch is byte-identical afterwards.
 - New shared-code behaviors must be gated or verified as Windows-neutral; audit with
-  `git diff <merge-base>..HEAD -- <shared file>` before pushing.
+  `git diff <merge-base>..HEAD -- <shared file>` before pushing, or run
+  `python3 tools/audit-windows-parity.py [<base>..<head>]`, which lists every changed
+  line that lands inside a Windows-only preprocessor region and fails when a
+  `src/platform/linux/` source leaks into the shared build files.
 
 ## Architecture boundaries
 
