@@ -922,7 +922,7 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 650 用例，645 通过，5 跳过，0 失败
+test_sunshine: 652 用例，647 通过，5 跳过，0 失败
 ```
 
 **用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
