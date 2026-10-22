@@ -66,9 +66,13 @@ namespace platf {
      */
     void
     init_dsu_server() {
-      if (dsu_server) {
+      if (dsu_server || dsu_start_attempted) {
+        // Attempted is not the same as running: a failed bind must not be
+        // retried on every single motion event (each retry would create and
+        // connect a socket, then log again).
         return;
       }
+      dsu_start_attempted = true;
 
       auto server = std::make_unique<dsu_server_t>(config::input.dsu_server_port);
       if (server->start()) {
@@ -102,6 +106,8 @@ namespace platf {
 
     /// Null unless `enable_dsu_server` is set and the socket bound.
     std::unique_ptr<dsu_server_t> dsu_server;
+    /// Set once `init_dsu_server()` has run, whether or not the bind succeeded.
+    bool dsu_start_attempted = false;
     bool dsu_uninitialized_warning_logged = false;
   };
 
