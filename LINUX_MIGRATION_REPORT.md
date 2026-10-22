@@ -506,7 +506,7 @@ KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 696 用例，694 通过，12 跳过，2 失败
+test_sunshine: 733 用例，719 通过，12 跳过，2 失败
 ```
 
 两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：
