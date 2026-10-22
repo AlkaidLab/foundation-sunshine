@@ -4,6 +4,7 @@ using System.Text.Json;
 
 internal static class DualSenseReportChecks
 {
+    /// <summary>Encodes one USB profile without creating a device and checks clocks, counters and retained input data.</summary>
     internal static void Run(Assembly core, string profilePath)
     {
         var codec = core.GetType("HIDMaestro.Internal.VendorBlobCodec", true)!;

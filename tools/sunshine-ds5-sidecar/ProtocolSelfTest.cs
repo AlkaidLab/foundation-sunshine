@@ -913,6 +913,7 @@ internal static class ProtocolSelfTest
         }
     }
 
+    /// <summary>Checks the shared clock's tick rate, fractional conversion and natural 32-bit rollover.</summary>
     private static void VerifySensorTimestampEncoding()
     {
         Require(Foundation.Input.DualSenseClock.Encode(0, 10_000_000) == 0,

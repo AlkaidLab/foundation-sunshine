@@ -183,6 +183,7 @@ internal sealed class ControllerSession : IDisposable
         }
     }
 
+    /// <summary>Updates one motion sensor, stamps its host receive time and immediately submits the combined state.</summary>
     internal void SubmitMotion(ReadOnlySpan<byte> payload)
     {
         // id:u8, type:u8, reserved:u16, x/y/z:f32 = 16 bytes
