@@ -3,9 +3,18 @@
 #include <cstdlib>
 #include <string>
 
-#include <systemd/sd-bus.h>
+#if defined(SUNSHINE_HAVE_SDBUS)
+  #include <systemd/sd-bus.h>
+#else
+  // Without libsystemd the header is not installed at all, so the type is only
+  // forward declared: callers that merely carry a bus pointer still compile,
+  // and the ones that would talk to it are compiled out.
+  struct sd_bus;
+#endif
 
 namespace platf::sdbus {
+
+#if defined(SUNSHINE_HAVE_SDBUS)
 
   /**
    * @brief Open a connection to the user session bus.
@@ -39,5 +48,22 @@ namespace platf::sdbus {
     }
     return bus;
   }
+
+#else
+
+  /**
+   * @brief Open a connection to the user session bus.
+   * @details Compiled without libsystemd there is no sd-bus to open a
+   *          connection with, so this reports "no bus". Every caller already
+   *          treats a null bus as "this producer is unavailable" and falls back
+   *          to another one, which is the right behavior on a system without
+   *          session-bus headers.
+   */
+  inline sd_bus *
+  open_user_bus() {
+    return nullptr;
+  }
+
+#endif
 
 }  // namespace platf::sdbus

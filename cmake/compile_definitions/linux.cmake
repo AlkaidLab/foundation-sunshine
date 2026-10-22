@@ -312,9 +312,16 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/gl.h"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/egl.h")
 
-# host-side clipboard provider (klipper D-Bus); optional, needs libsystemd
+# Session-bus access (sd-bus). Optional, and everything that needs it degrades
+# to an inert implementation rather than failing to build:
+#   - the host-side clipboard provider (klipper text, and images over Wayland)
+#   - GNOME's display configuration (org.gnome.Mutter.DisplayConfig)
+#   - the KDE/Wayland foreground-window producers in foreground_app.cpp
 pkg_check_modules(LIBSYSTEMD libsystemd)
 if(LIBSYSTEMD_FOUND)
+    list(APPEND PLATFORM_LIBRARIES ${LIBSYSTEMD_LIBRARIES})
+    include_directories(SYSTEM ${LIBSYSTEMD_INCLUDE_DIRS})
+    add_compile_definitions(SUNSHINE_HAVE_SDBUS)
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/clipboard_host.h"
             "${CMAKE_SOURCE_DIR}/src/clipboard_host.cpp")
@@ -326,14 +333,9 @@ if(LIBSYSTEMD_FOUND)
                 "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_data.cpp"
                 "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_mime.h")
     endif()
-    list(APPEND PLATFORM_LIBRARIES ${LIBSYSTEMD_LIBRARIES})
-    include_directories(SYSTEM ${LIBSYSTEMD_INCLUDE_DIRS})
     add_compile_definitions(SUNSHINE_CLIPBOARD_HOST)
-    # GNOME's display configuration is sd-bus only, so it rides the same
-    # dependency as the clipboard host.
-    add_compile_definitions(SUNSHINE_MUTTER_DISPLAY)
 else()
-    message(STATUS "libsystemd not found - host clipboard sync disabled")
+    message(STATUS "libsystemd not found - session-bus features disabled (clipboard sync, GNOME display config, KDE foreground detection)")
 endif()
 
 # AI API key persistence through the Secret Service (KWallet / gnome-keyring).

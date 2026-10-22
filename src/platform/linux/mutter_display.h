@@ -5,7 +5,12 @@
 #include <string>
 #include <vector>
 
-#include <systemd/sd-bus.h>
+// The sd-bus types are only ever passed as pointers here, so they are forward
+// declared: this header stays includable on a system without libsystemd, where
+// the implementation compiles to an inert "no Mutter here" half. The file that
+// needs the real type (the implementation, and the codec test) includes
+// <systemd/sd-bus.h> itself.
+struct sd_bus_message;
 
 /**
  * @file src/platform/linux/mutter_display.h

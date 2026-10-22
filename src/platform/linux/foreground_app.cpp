@@ -38,7 +38,10 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
-#include <systemd/sd-bus.h>
+
+#if defined(SUNSHINE_HAVE_SDBUS)
+  #include <systemd/sd-bus.h>
+#endif
 
 #ifdef SUNSHINE_BUILD_WAYLAND
   #include <wayland-client.h>
@@ -134,6 +137,12 @@ namespace platf::foreground_app {
       state.updated = std::chrono::steady_clock::now();
       state.ever_reported = true;
     }
+
+    // The KWin producer is the only one that needs a session bus: it registers
+    // a D-Bus object for the KWin script to call back on. Without libsystemd
+    // there is no sd-bus at all, so the whole producer compiles out and the
+    // probe below reports it as unavailable.
+#if defined(SUNSHINE_HAVE_SDBUS)
 
     int
     on_report(sd_bus_message *m, void *, sd_bus_error *) {
@@ -369,6 +378,23 @@ try {
     kwin_is_running() {
       return name_has_owner("org.kde.KWin");
     }
+
+#else  // !SUNSHINE_HAVE_SDBUS
+
+    /**
+     * @brief Whether a KWin instance owns the session-bus name.
+     * @details Built without libsystemd there is no bus to ask, so the producer
+     *          is reported as unavailable and niri, wlroots or X11 answer
+     *          instead. A Plasma session on such a build loses the only
+     *          producer that carries a pid, which is why the package depends on
+     *          the headers.
+     */
+    [[maybe_unused]] bool
+    kwin_is_running() {
+      return false;
+    }
+
+#endif  // SUNSHINE_HAVE_SDBUS
 
     /**
      * @brief Poll niri for the focused window.
@@ -820,10 +846,12 @@ try {
       // KDE first: its KWin script is the only Wayland producer that also
       // carries a pid, and KWin does not implement the wlroots protocols, so
       // the generic probe below cannot serve a Plasma session anyway.
+#if defined(SUNSHINE_HAVE_SDBUS)
       if (kwin_is_running()) {
         std::thread(worker).detach();
         return;
       }
+#endif
 
 #ifdef SUNSHINE_BUILD_WAYLAND
       // Generic wlroots path first: sway, river, wayfire and friends all speak
@@ -852,7 +880,9 @@ try {
 
       // Nothing recognised. Keep the KWin worker trying: a Plasma session that
       // starts later still gets picked up by its retry loop.
+#if defined(SUNSHINE_HAVE_SDBUS)
       std::thread(worker).detach();
+#endif
     }
 
   }  // namespace

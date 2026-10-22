@@ -17,6 +17,9 @@ using namespace std::chrono_literals;
 using namespace std::string_view_literals;
 
 namespace platf::mutter {
+
+#if defined(SUNSHINE_HAVE_SDBUS)
+
   namespace {
     /// Guards the probe cooldown. Queries happen from the display-settings
     /// thread, but a tray-triggered status read can race with them.
@@ -611,6 +614,64 @@ namespace platf::mutter {
     sd_bus_error_free(&dbus_error);
     return true;
   }
+
+#else  // !SUNSHINE_HAVE_SDBUS
+
+  // Without libsystemd there is no sd-bus to reach org.gnome.Mutter.DisplayConfig
+  // with, so the whole backend reports "not here" and every caller falls through
+  // to the next one in display_device.cpp. The state helpers below stay real:
+  // they are pure functions over state_t and carry no bus dependency.
+
+  bool
+  session_supports_mutter() {
+    return false;
+  }
+
+  bool
+  probe_allowed() {
+    return false;
+  }
+
+  void
+  note_available() {
+  }
+
+  void
+  note_unavailable(const std::string &reason) {
+    // Say it once, the way the sd-bus half does, so a user on a system without
+    // libsystemd can tell why GNOME display control is missing.
+    static std::atomic<bool> logged { false };
+    if (!logged.exchange(true)) {
+      BOOST_LOG(info) << "Mutter: unavailable (" << reason << "); built without libsystemd";
+    }
+  }
+
+  bool
+  read_state(sd_bus_message *reply, state_t &out) {
+    (void) reply;
+    (void) out;
+    return false;
+  }
+
+  std::optional<state_t>
+  query_state() {
+    return std::nullopt;
+  }
+
+  bool
+  append_apply_args(sd_bus_message *message, const state_t &state) {
+    (void) message;
+    (void) state;
+    return false;
+  }
+
+  bool
+  apply(const state_t &state) {
+    (void) state;
+    return false;
+  }
+
+#endif  // SUNSHINE_HAVE_SDBUS
 
   monitor_t *
   find_monitor(state_t &state, const std::string &connector) {

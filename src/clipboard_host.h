@@ -1,5 +1,17 @@
 #pragma once
 
+/**
+ * @file src/clipboard_host.h
+ * @brief The host-side clipboard provider (desktop clipboard <-> clients).
+ *
+ * The provider talks to the session bus (klipper for text, the compositor's
+ * data-control protocol for images), so it only exists when libsystemd is
+ * available. Without it this header degrades to no-op answers instead of
+ * leaving undefined symbols behind: a build without the session bus simply
+ * never advertises or services clipboard frames.
+ */
+#if defined(SUNSHINE_CLIPBOARD_HOST)
+
 namespace clipboard_host {
 
   /**
@@ -30,3 +42,25 @@ namespace clipboard_host {
   image_available();
 
 }  // namespace clipboard_host
+
+#else
+
+namespace clipboard_host {
+
+  inline void
+  start() {
+  }
+
+  inline void
+  stop() {
+  }
+
+  /// No provider means no images, so the capability stays unadvertised.
+  inline bool
+  image_available() {
+    return false;
+  }
+
+}  // namespace clipboard_host
+
+#endif

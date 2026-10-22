@@ -126,3 +126,4 @@ logs_archive/
 
 # secondary build trees (CUDA / experiments)
 build-cuda/
+build-nols/

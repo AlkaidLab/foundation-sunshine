@@ -553,6 +553,13 @@ if (WIN32)
 else ()
     # Windows-host test sources must not reach non-Windows builds.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")
+
+    # The Mutter codec test builds sd-bus messages by hand, so it needs the
+    # session-bus headers. Without libsystemd the backend under test is the
+    # inert half, and there is nothing to assert.
+    if (NOT LIBSYSTEMD_FOUND)
+        list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mutter_display\\.cpp")
+    endif ()
 endif ()
 
 set(SUNSHINE_SOURCES
