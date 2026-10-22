@@ -226,8 +226,9 @@ sudo pacman -S --needed cmake ninja boost numactl \
   否则 socket 连上但从不发 `Hello()`，dbus-broker 对第一条方法调用直接断开。
 - **不阻塞控制线程**：客户端→主机的写入是有界队列（8 条，溢出丢最旧），由 provider poll 线程执行；
   等待用条件变量。klipper 变更信号 `clipboardHistoryUpdated` 事件驱动 + 1 s 兜底读。
-- **边界对齐 agent**：出站过滤空读取；入站丢弃空串与含 NUL 文本。**文本类**——Linux 不通告
-  `clipboard_image`（provider 仅文本）；大文本走 blob store 的 `kKindRef` 描述符帧。
+- **边界对齐 agent**：出站过滤空读取；入站丢弃空串与含 NUL 文本。klipper 只有字符串，图片由
+  §6.14 的 data-control 模块承担，两者共用同一套帧；大文本与大图都走 blob store 的 `kKindRef`
+  描述符帧（`kInlineThresholdBytes = 60'000`）。`clipboard_image` 能力按 §6.14 的实际可用性通告。
 
 ### 6.5 远程麦克风写主机
 
@@ -339,6 +340,26 @@ WGC arrival（静态桌面记 0）。这填补了上游戏后"源更新帧率"�
 源速率与捕获速率恒等）与 `x11grab`（定时轮询、未接 XDamage）没有独立信号源，保持
 `unavailable`——理由写在 `LINUX_PORT_GAPS.md` §7.1。
 
+### 6.14 剪贴板图片（ext-data-control）
+
+`src/platform/linux/clipboard_image.{h,cpp}`（新增，`SUNSHINE_BUILD_WAYLAND` 下编译）。klipper 只承载
+字符串，图片只能走合成器自己的剪贴板，因此这一半用标准化的 `ext_data_control_v1`（Plasma 6 实现；
+wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Wayland 连接 + 独立线程**上双向同步 PNG。
+
+- **双向语义**：`selection` 事件给出带 `image/png` 的 offer 时 `receive()` 到管道读回字节 →
+  `clipboard_host` 的回声环/会话检查后发布；反向由客户端帧驱动，建 data source 宣告 `image/png` 并
+  `set_selection()`，粘贴时合成器通过 `send()` 取字节，直到别的客户端接走选择（`cancelled`）。
+- **回调里绝不阻塞**：`send()` 不直接写管道（大图不装进管道缓冲会死锁事件循环，而事件循环正是
+  必须把水排掉的那一方），改为登记 `out_transfers`；读取侧同样以 `recv_fd` + 非阻塞 fd 挂进
+  `poll()`，统一带 10 s 截止时间。首版就是踩了这个坑：自发布回读时阻塞读与 `send()` 互锁，
+  表现为 `transfer timed out after 0 bytes`、外部 `wl-paste` 也拿不到数据。
+- **实测**（Plasma 6，`wl-copy`/`wl-paste` 对照）：594 B、45 KB、3.4 MB 三种尺寸，`us → desktop`
+  由 `wl-paste` 取回、`desktop → us` 由 harness 收回，md5 全部一致；自发布回读亦正确。
+- **能力通告**：`src/rtsp.cpp` 的 `clipboard_image` 不再被 `#ifdef _WIN32` 挡死，改问
+  `clipboard_host::image_available()`——协议缺失时仍不通告，客户端不会发出无处落地的帧。
+- **未做**：file-offer（`kKindFileOffer`）仍只属于 Windows GUI agent；Linux 侧要支持需接
+  xdg-desktop-portal 的文件选择器，记为 `LINUX_PORT_GAPS.md` §2.1b。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -357,7 +378,7 @@ WGC arrival（静态桌面记 0）。这填补了上游戏后"源更新帧率"�
 | Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测已移植（KDE + niri，§6.6） |
 | 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
 | 物理显示器 display_device | kscreen 分辨率/HDR/主屏/拓扑 + 持久化还原（§6.2） |
-| 剪贴板主机同步（文本类） | klipper sd-bus 双向 + 回声抑制 + blob 回退（§6.4） |
+| 剪贴板主机同步（文本 + 图片） | 文本走 klipper sd-bus、图片走 ext-data-control，共用帧/回声/blob 回退（§6.4、§6.14） |
 | 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
 | HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
 | HDR10+ / DV P8.1 / HDR Vivid（动态） | avcodec 路径全通（§6.3） |

@@ -124,3 +124,11 @@ TEST(ClipboardWire, TextMimeDetection) {
   EXPECT_FALSE(clipboard_wire::is_text_mime(clipboard_bridge::kMimePng));
   EXPECT_FALSE(clipboard_wire::is_text_mime(""));
 }
+
+TEST(ClipboardWire, PngMimeDetection) {
+  EXPECT_TRUE(clipboard_wire::is_png_mime(clipboard_bridge::kMimePng));
+  // Exactly one image flavour is on the wire, the same one the agent uses.
+  EXPECT_STREQ(clipboard_bridge::kMimePng, "image/png");
+  EXPECT_FALSE(clipboard_wire::is_png_mime("image/jpeg"));
+  EXPECT_FALSE(clipboard_wire::is_png_mime(""));
+}

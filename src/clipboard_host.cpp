@@ -15,8 +15,11 @@
  *   [6:10] payload length, u32 LE
  *   [10:]  payload (raw UTF-8 for text)
  *
- * Only KIND_TEXT is handled; image / blob-ref frames are left to the GUI
- * agent and WebUI paths.
+ * Text travels through klipper (strings only). Images cannot: they need the
+ * compositor's own clipboard, so the image half lives in
+ * platform/linux/clipboard_image.cpp and speaks ext_data_control_v1. Both
+ * halves publish and apply the same clipboard_wire frames, so a client cannot
+ * tell which half moved the data. KIND_FILE_OFFER frames remain the GUI agent's.
  */
 #include "clipboard_host.h"
 
@@ -40,6 +43,9 @@
 #include "clipboard_bridge.h"
 #include "clipboard_echo.h"
 #include "clipboard_wire.h"
+#ifdef SUNSHINE_BUILD_WAYLAND
+  #include "src/platform/linux/clipboard_image.h"
+#endif
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/linux/sdbus_session.h"
@@ -74,6 +80,16 @@ namespace clipboard_host {
 
     std::atomic<bool> running { false };
     std::thread poll_thread;
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+    /// Image half (desktop <-> clients). Null when the session has no
+    /// data-control protocol, which leaves the provider text-only.
+    std::unique_ptr<platf::clipboard_image::watcher_t> image_watcher;
+    std::mutex image_mu;
+    /// Fingerprint of the picture we last saw or published, so a session that
+    /// starts mid-stream does not replay whatever was already on the clipboard.
+    std::optional<std::size_t> last_image;
+#endif
     std::atomic<std::uint32_t> next_token { 1 };
 
     // What this host last wrote towards klipper, in the agent's 16-entry ring
@@ -160,13 +176,121 @@ namespace clipboard_host {
       return true;
     }
 
-    payload_t
-    encode_text_frame(const std::string &text) {
-      // Single-flavor changes carry token 0, matching the GUI agent's wire
-      // contract: a non-zero token marks a compound burst that the peer may
-      // coalesce, which must not apply to a standalone text copy.
-      return clipboard_wire::encode_text(text);
+    /**
+     * @brief Hand a finished item to the bridge.
+     * @details One route for both halves: items that fit travel inline, larger
+     *          ones go to the blob store as a REF descriptor, exactly the way
+     *          the GUI agent does it on Windows.
+     */
+    void
+    enqueue_item(std::uint8_t kind, std::string_view mime, const payload_t &bytes, std::string_view what) {
+      if (bytes.size() > kInlineThresholdBytes) {
+        auto stored = clipboard_blob_store::put(bytes, std::string { mime });
+        if (!stored.ok) {
+          BOOST_LOG(warning) << "Host clipboard "sv << what << " could not be stored for out-of-band sync ("sv
+                             << bytes.size() << " bytes): "sv << stored.err;
+          return;
+        }
+        BOOST_LOG(debug) << "Posting host clipboard "sv << what << " as an out-of-band blob ("sv << bytes.size()
+                         << " bytes, id "sv << stored.id << ")"sv;
+        clipboard_bridge::bridge_t::instance().enqueue_outbound(
+          clipboard_bridge::kBroadcast,
+          clipboard_wire::encode_ref(stored.id, mime, bytes.size()));
+        return;
+      }
+
+      BOOST_LOG(debug) << "Posting host clipboard "sv << what << " to clients ("sv << bytes.size() << " bytes)"sv;
+      clipboard_bridge::bridge_t::instance().enqueue_outbound(
+        clipboard_bridge::kBroadcast,
+        clipboard_wire::encode(kind, 0, std::span<const std::uint8_t> { bytes }));
     }
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+    /// Cheap content identity for the "unchanged picture" test; the bytes are
+    /// too large to keep around just to compare.
+    std::size_t
+    fingerprint(const payload_t &bytes) {
+      std::size_t hash = 1469598103934665603ULL;
+      for (const auto byte : bytes) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+      }
+      return hash ^ (bytes.size() * 1099511628211ULL);
+    }
+
+    /**
+     * @brief Desktop clipboard -> clients, image half.
+     * @details Called on the image watcher's thread. The echo ring and the
+     *          session check mirror the text path so both halves stay silent in
+     *          the same situations.
+     */
+    void
+    on_desktop_image(payload_t png) {
+      if (png.empty()) {
+        return;
+      }
+
+      const auto fp = fingerprint(png);
+      std::optional<std::size_t> previous;
+      {
+        std::lock_guard<std::mutex> lk { image_mu };
+        previous = last_image;
+        last_image = fp;
+      }
+
+      if (!config::input.clipboard_sync) {
+        return;
+      }
+      if (clipboard_bridge::bridge_t::instance().session_count() == 0) {
+        return;
+      }
+      if (previous && *previous == fp) {
+        BOOST_LOG(debug) << "Clipboard image is unchanged; skipping"sv;
+        return;
+      }
+
+      bool is_echo = false;
+      {
+        std::lock_guard<std::mutex> lk { echo_mu };
+        is_echo = echo_ring.is_echo(clipboard_bridge::kKindPng, std::span<const std::uint8_t> { png });
+      }
+      if (is_echo) {
+        BOOST_LOG(debug) << "Clipboard image matches what a client wrote; skipping"sv;
+        return;
+      }
+
+      enqueue_item(clipboard_bridge::kKindPng, clipboard_bridge::kMimePng, png, "image"sv);
+    }
+
+    /**
+     * @brief Clients -> desktop, image half.
+     * @details Recorded in the echo ring before the compositor sees it, so the
+     *          selection event our own write produces is not posted back.
+     */
+    void
+    apply_inbound_image(const payload_t &png) {
+      if (png.empty()) {
+        return;
+      }
+      if (!image_watcher) {
+        BOOST_LOG(debug) << "Inbound clipboard image ignored: no image provider on this session"sv;
+        return;
+      }
+
+      {
+        std::lock_guard<std::mutex> lk { echo_mu };
+        echo_ring.record(clipboard_bridge::kKindPng, std::span<const std::uint8_t> { png });
+      }
+      {
+        std::lock_guard<std::mutex> lk { image_mu };
+        last_image = fingerprint(png);
+      }
+
+      if (!image_watcher->set_image(png)) {
+        BOOST_LOG(warning) << "Inbound clipboard image could not be queued for the desktop"sv;
+      }
+    }
+#endif
 
     /**
      * @brief Record and hand a peer-side text change to the klipper writer.
@@ -196,9 +320,9 @@ namespace clipboard_host {
 
     /**
      * @brief Resolve a kKindRef frame against the local blob store.
-     * @details Only text is applied on this provider (images and file offers
-     *          still belong to the GUI agent); the mime decides, exactly as the
-     *          agent's inbound handler does.
+     * @details Text lands in klipper, PNG in the compositor's clipboard; file
+     *          offers still belong to the GUI agent. The mime decides, exactly
+     *          as the agent's inbound handler does.
      */
     void
     on_inbound_ref(const payload_t &bytes) {
@@ -216,7 +340,7 @@ namespace clipboard_host {
         return;
       }
 
-      if (!clipboard_wire::is_text_mime(descriptor->mime)) {
+      if (!clipboard_wire::is_text_mime(descriptor->mime) && !clipboard_wire::is_png_mime(descriptor->mime)) {
         BOOST_LOG(info) << "Inbound clipboard REF: mime '"sv << descriptor->mime
                         << "' is not handled by the host provider; ignoring"sv;
         return;
@@ -226,6 +350,11 @@ namespace clipboard_host {
       if (!blob.found) {
         BOOST_LOG(warning) << "Inbound clipboard REF: blob "sv << descriptor->id
                            << " is missing or expired; ignoring"sv;
+        return;
+      }
+
+      if (clipboard_wire::is_png_mime(descriptor->mime)) {
+        apply_inbound_image(blob.bytes);
         return;
       }
 
@@ -245,6 +374,12 @@ namespace clipboard_host {
 
       if (header->kind == clipboard_bridge::kKindRef) {
         on_inbound_ref(bytes);
+        return;
+      }
+
+      if (header->kind == clipboard_bridge::kKindPng) {
+        const auto payload = clipboard_wire::payload_of(bytes, *header);
+        apply_inbound_image(payload_t { payload.begin(), payload.end() });
         return;
       }
 
@@ -384,28 +519,9 @@ namespace clipboard_host {
           if (is_echo) {
             BOOST_LOG(debug) << "Clipboard change matches content written from a client; skipping"sv;
           }
-          else if (content.size() > kInlineThresholdBytes) {
-            // Too big for one wire frame: store it out of band and post the
-            // descriptor, the same route the GUI agent takes. The peer fetches
-            // the bytes from this host's blob endpoint.
-            auto stored = clipboard_blob_store::put(
-              payload_t { content.begin(), content.end() }, clipboard_bridge::kMimeText);
-            if (!stored.ok) {
-              BOOST_LOG(warning) << "Host clipboard content could not be stored for out-of-band sync ("sv
-                                 << content.size() << " bytes): "sv << stored.err;
-            }
-            else {
-              BOOST_LOG(debug) << "Posting host clipboard as an out-of-band blob ("sv << content.size()
-                               << " bytes, id "sv << stored.id << ")"sv;
-              clipboard_bridge::bridge_t::instance().enqueue_outbound(
-                clipboard_bridge::kBroadcast,
-                clipboard_wire::encode_ref(stored.id, clipboard_bridge::kMimeText, content.size()));
-            }
-          }
           else {
-            BOOST_LOG(debug) << "Posting host clipboard to clients ("sv << content.size() << " bytes)"sv;
-            clipboard_bridge::bridge_t::instance().enqueue_outbound(
-              clipboard_bridge::kBroadcast, encode_text_frame(content));
+            enqueue_item(clipboard_bridge::kKindText, clipboard_bridge::kMimeText,
+              payload_t { content.begin(), content.end() }, "text"sv);
           }
         }
 
@@ -435,6 +551,21 @@ namespace clipboard_host {
 
     clipboard_bridge::bridge_t::instance().add_inbound_listener(&on_inbound);
 
+#ifdef SUNSHINE_BUILD_WAYLAND
+    if (platf::clipboard_image::available()) {
+      auto watcher = std::make_unique<platf::clipboard_image::watcher_t>();
+      if (watcher->start(&on_desktop_image)) {
+        image_watcher = std::move(watcher);
+      }
+      else {
+        BOOST_LOG(warning) << "Host clipboard: image provider failed to start; text only"sv;
+      }
+    }
+    else {
+      BOOST_LOG(info) << "Host clipboard: no data-control protocol on this session; image sync off"sv;
+    }
+#endif
+
     poll_thread = std::thread(poll_loop);
     BOOST_LOG(info) << "Host clipboard provider started"sv;
   }
@@ -451,7 +582,26 @@ namespace clipboard_host {
     if (poll_thread.joinable()) {
       poll_thread.join();
     }
+
+#ifdef SUNSHINE_BUILD_WAYLAND
+    // After the poll thread: the watcher only publishes, so stopping it last
+    // cannot race a text publish.
+    if (image_watcher) {
+      image_watcher->stop();
+      image_watcher.reset();
+    }
+#endif
+
     BOOST_LOG(info) << "Host clipboard provider stopped"sv;
+  }
+
+  bool
+  image_available() {
+#ifdef SUNSHINE_BUILD_WAYLAND
+    return image_watcher != nullptr;
+#else
+    return false;
+#endif
   }
 
 }  // namespace clipboard_host

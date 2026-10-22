@@ -182,4 +182,10 @@ namespace clipboard_wire {
   is_text_mime(std::string_view mime) {
     return mime.rfind("text/", 0) == 0;
   }
+
+  /// Whether a mime is the single image flavour the wire contract carries.
+  inline bool
+  is_png_mime(std::string_view mime) {
+    return mime == clipboard_bridge::kMimePng;
+  }
 }  // namespace clipboard_wire

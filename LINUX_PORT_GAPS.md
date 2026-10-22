@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 66，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 70，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
@@ -16,8 +16,9 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**6 项部分实现**（§一）、**9 项可行未做**（§二）、**9 项本质不可移植**（§三）。
-（§1.6 / §2.6 AI Key 的 Secret Service 后端已于 2026-10-22 落地，从待办中移除。）
+剩余：**6 项部分实现**（§一）、**8 项可行未做**（§二）、**9 项本质不可移植**（§三）。
+（2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
+前台检测、§2.1 剪贴板图片双向同步、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七）。
 
@@ -103,10 +104,23 @@
 
 ## 二、○ 未实现但可行（按性价比排序）
 
-### 2.1 剪贴板图片 + 大文件（中）⭐ 推荐下一个
+### 2.1 剪贴板图片（✅ 图片已完成，2026-10-22；file-offer 拆分到 §2.1b）
 
-- 见 §1.3 的路径。拆两步：先 wlr-data-control 图片双向（PNG），再 file-offer。
-- **验收**：手机复制截图 → 主机 Ctrl+V 得到图片；主机复制图片 → 手机粘贴。
+- **落地**：`src/platform/linux/clipboard_image.{h,cpp}`（`SUNSHINE_BUILD_WAYLAND` 下编译）用标准化
+  的 `ext_data_control_v1` 在独立连接/线程上双向同步 PNG，与 §6.4 的 klipper 文本半边共用
+  `clipboard_wire` 帧。传输全部由事件循环 pump（非阻塞 fd + 10 s 截止），回调里不阻塞——否则
+  `send()` 会与自己的阻塞读互锁。
+- **能力通告**：`src/rtsp.cpp` 的 `clipboard_image` 改由 `clipboard_host::image_available()` 决定，
+  合成器没有 data-control 协议时仍不通告（wlroots 系目前只导出 wlr 拼写，保持 text-only）。
+- **实测**：594 B / 45 KB / 3.4 MB 双向 bytes 与 md5 一致（`wl-copy`/`wl-paste` 对照）。
+- **验收**：客户端复制图片 → 主机 `wl-paste --type image/png` 得到同一 PNG；主机复制图片 → 客户端
+  粘贴得到图片。✅
+
+### 2.1b 剪贴板 file-offer（低，独立议题）
+
+- `kKindFileOffer`（kind 4）仍只属于 Windows GUI agent；Linux 侧要支持需接 xdg-desktop-portal 的
+  文件选择器（`org.freedesktop.portal.FileChooser`），并把选中路径转成 wire 帧。
+- **验收**：客户端粘贴主机文件 → 得到文件句柄而非提示不支持。
 
 ### 2.2 USB/IP 主机（中高）
 
