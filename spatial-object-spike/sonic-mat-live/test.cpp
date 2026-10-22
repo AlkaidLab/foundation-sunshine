@@ -10,6 +10,8 @@ static HRESULT __fastcall FakeMono(void*,uint32_t,const float* pcm,uint32_t coun
     if(pcm)for(uint32_t n=0;n<count;++n)const_cast<float*>(pcm)[n]=.9f;return S_OK;
 }
 static HRESULT __fastcall FakeEnd(void*){return S_OK;}
+static unsigned dispatched;
+static void __fastcall FakeDispatch(void*,uint32_t inputs,void* input,uint32_t outputs,void* output){if(inputs==1&&input&&outputs==1&&!output)++dispatched;}
 static void __fastcall FakeRender(void*,uint32_t,void*,uint32_t,void*){
     for(auto& f:samples)f=.2f;HookMono(hostA,0,samples,480,.5f);
     for(auto& f:samples)f=.1f;HookMono(hostB,0,samples,480,.25f);
@@ -23,6 +25,9 @@ int main(){try{
     auto ring=std::make_unique<sonic_live::Ring>();memset(ring.get(),0,sizeof(*ring));
     BYTE renderer[0x230]{};uint32_t rate=48000,frames=480;memcpy(renderer+0x48,&rate,4);memcpy(renderer+0x22c,&frames,4);
     BYTE connection[24]{};memcpy(connection+8,&frames,4);void* input=connection;
+    {uint32_t flags=1;memcpy(connection+12,&flags,4);void* table[]={reinterpret_cast<void*>(FakeDispatch)};void* engine=table;void* engineAddress=&engine;memcpy(renderer+0x130,&engineAddress,sizeof(engineAddress));originalDispatch=FakeDispatch;
+     InterlockedExchangePointer(&current,ring.get());HookDispatch(renderer,1,&input,1,nullptr);
+     Check(dispatched==1&&ring->dispatchCalls==1&&ring->dispatchEntry==reinterpret_cast<LONG64>(FakeDispatch)&&ring->dispatchFrames==480&&ring->dispatchFlags==1&&!ring->passes&&!ring->write&&!active);}
     Host(hostA,42,.3f,.75f);Host(hostB,43,.8f,-.5f);originalRender=FakeRender;originalMono=FakeMono;originalEnd=FakeEnd;
     InterlockedExchangePointer(&current,ring.get());endA=false;HookRender(renderer,1,&input,1,nullptr);
     Check(ring->write==1&&ring->passes==1&&ring->monoCalls==2&&!ring->invalid&&!ring->unbound&&!ring->dropped);

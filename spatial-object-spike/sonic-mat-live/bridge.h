@@ -7,6 +7,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <memory>
+#include <string>
 namespace sonic_live {
 inline void check(bool b,const char* why){if(!b)throw std::runtime_error(why);}
 // Strict first route: one Sonic renderer, 48kHz/480-frame full-span dynamic
@@ -51,7 +52,7 @@ public:
                 if(seen.contains(key))at->second.ended=true;
                 else {check(count<receiver::callCapacity,"Sonic EOS capacity");auto& c=packet->calls[count++];c.id=at->second.outputId;c.type=1;c.flags=8;c.frames=480;active_.erase(at);}
             }
-            for(const auto& [key,a]:active_)check(seen.contains(key),"Missing live Sonic object; no inferred silence/end");
+            for(const auto& [key,a]:active_)if(!seen.contains(key))throw std::runtime_error("Missing live object; no inferred silence/end: identity="+std::to_string(key.first)+" id="+std::to_string(key.second)+" pass="+std::to_string(p.sequence)+" observedObjects="+std::to_string(p.count));
             packet->header.calls=count;check(emit(*packet),"Native MAT input refused; epoch terminal");++sourcePasses;if(!p.count)++emptyPasses;
         }catch(...){poisoned_=true;throw;}
     }

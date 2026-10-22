@@ -6,12 +6,29 @@
 using Render=void(__fastcall*)(void*,uint32_t,void*,uint32_t,void*);
 using Mono=HRESULT(__fastcall*)(void*,uint32_t,const float*,uint32_t,float);
 using EndObject=HRESULT(__fastcall*)(void*);
-static Render originalRender;static Mono originalMono;static EndObject originalEnd;
-static void* targets[3]{};static BYTE saved[3][16]{};static bool created;
+static Render originalRender,originalDispatch;static Mono originalMono;static EndObject originalEnd;
+static void* targets[sonic_live::hookCount]{};static BYTE saved[sonic_live::hookCount][16]{};static bool created;
 static HMODULE self;static void* volatile current;static volatile LONG active,running;
 static __declspec(thread) sonic_live::Pass* pass;
 static LONG64 Read(volatile LONG64* p){return InterlockedCompareExchange64(p,0,0);}
 static sonic_live::Ring* Current(){return static_cast<sonic_live::Ring*>(InterlockedCompareExchangePointer(&current,nullptr,nullptr));}
+static void Fault(sonic_live::Ring* r);
+// Read-only routing telemetry: a spatial-capable endpoint need not select HRTF.
+// No PCM is inferred or forwarded from this dispatcher.
+static void __fastcall HookDispatch(void* renderer,uint32_t inputs,void* input,uint32_t outputs,void* output){
+    InterlockedIncrement(&active);auto* ring=Current();
+    if(ring&&!ring->stop){
+        InterlockedIncrement64(&ring->dispatchCalls);
+        __try {
+            auto* engine=*reinterpret_cast<BYTE**>(static_cast<BYTE*>(renderer)+0x130);
+            InterlockedExchange64(&ring->dispatchEngine,reinterpret_cast<LONG64>(engine));
+            if(engine)InterlockedExchange64(&ring->dispatchEntry,reinterpret_cast<LONG64>(**reinterpret_cast<void***>(engine)));
+            if(inputs&&input){auto* connection=*static_cast<BYTE**>(input);if(connection){uint32_t f=0,flags=0;memcpy(&f,connection+8,4);memcpy(&flags,connection+12,4);InterlockedExchange64(&ring->dispatchFrames,f);InterlockedExchange64(&ring->dispatchFlags,flags);}}
+        }__except(EXCEPTION_EXECUTE_HANDLER){Fault(ring);}
+    }
+    __try{originalDispatch(renderer,inputs,input,outputs,output);}
+    __finally{InterlockedDecrement(&active);}
+}
 static void Fault(sonic_live::Ring* r){if(r)InterlockedIncrement64(&r->invalid);}
 static bool Metadata(sonic_live::Pass* p,void* renderer,uint32_t inputs,void* input){
     bool valid=false;__try {
@@ -83,17 +100,15 @@ extern "C" __declspec(dllexport) DWORD WINAPI StartCapture(void* data){
     auto* ring=static_cast<sonic_live::Ring*>(MapViewOfFile(args.mapping,FILE_MAP_ALL_ACCESS,0,0,sizeof(sonic_live::Ring)));CloseHandle(args.mapping);
     if(!ring){CloseHandle(args.collector);InterlockedExchange(&running,0);return ERROR_INVALID_HANDLE;}
     DWORD error=0;auto* base=reinterpret_cast<BYTE*>(GetModuleHandleW(L"audioeng.dll"));
-    constexpr DWORD rvas[]={0xf7880,0x433f0,0x79e20};
-    const BYTE expected[][8]={{0x48,0x89,0x5c,0x24,0x10,0x4c,0x89,0x44},{0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48},{0x40,0x53,0x48,0x83,0xec,0x40,0x80,0x79}};
     if(!base||!args.collector||ring->magic!=sonic_live::magic||ring->version!=sonic_live::version||
         !native_mat_guard::system_engine(GetCurrentProcess())||!native_mat_guard::loaded_audioeng(reinterpret_cast<HMODULE>(base)))error=ERROR_REVISION_MISMATCH;
-    for(unsigned n=0;n<3&&!error;++n)if(memcmp(base+rvas[n],expected[n],8))error=ERROR_REVISION_MISMATCH;
+    for(unsigned n=0;n<sonic_live::hookCount&&!error;++n)if(memcmp(base+sonic_live::hookRvas[n],sonic_live::hookBytes[n],8))error=ERROR_REVISION_MISMATCH;
     if(!error&&!created){
         HMODULE pinned{};if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,reinterpret_cast<LPCWSTR>(self),&pinned))error=GetLastError();
         auto status=error?MH_ERROR_NOT_INITIALIZED:MH_Initialize();if(!error&&status!=MH_OK)error=0x6000+status;
-        void* hooks[]={reinterpret_cast<void*>(HookRender),reinterpret_cast<void*>(HookMono),reinterpret_cast<void*>(HookEnd)};
-        void** originals[]={reinterpret_cast<void**>(&originalRender),reinterpret_cast<void**>(&originalMono),reinterpret_cast<void**>(&originalEnd)};
-        for(unsigned n=0;n<3&&!error;++n){targets[n]=base+rvas[n];memcpy(saved[n],targets[n],16);status=MH_CreateHook(targets[n],hooks[n],originals[n]);if(status!=MH_OK)error=0x6100+n*0x100+status;}
+        void* hooks[]={reinterpret_cast<void*>(HookRender),reinterpret_cast<void*>(HookMono),reinterpret_cast<void*>(HookEnd),reinterpret_cast<void*>(HookDispatch)};
+        void** originals[]={reinterpret_cast<void**>(&originalRender),reinterpret_cast<void**>(&originalMono),reinterpret_cast<void**>(&originalEnd),reinterpret_cast<void**>(&originalDispatch)};
+        for(unsigned n=0;n<sonic_live::hookCount&&!error;++n){targets[n]=base+sonic_live::hookRvas[n];memcpy(saved[n],targets[n],16);status=MH_CreateHook(targets[n],hooks[n],originals[n]);if(status!=MH_OK)error=0x6100+n*0x100+status;}
         if(!error)created=true;
     }
     if(!error){InterlockedExchangePointer(&current,ring);
@@ -108,7 +123,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI StartCapture(void* data){
     while(InterlockedCompareExchange(&ring->writer,0,0))Sleep(1);
     if(created){auto status=MH_DisableHook(MH_ALL_HOOKS);if(status!=MH_OK&&!error)error=0x6700+status;}
     InterlockedExchangePointer(&current,nullptr);while(InterlockedCompareExchange(&active,0,0))Sleep(1);
-    for(unsigned n=0;n<3;++n)if(targets[n]&&memcmp(targets[n],saved[n],16))error=ERROR_WRITE_FAULT;
+    for(unsigned n=0;n<sonic_live::hookCount;++n)if(targets[n]&&memcmp(targets[n],saved[n],16))error=ERROR_WRITE_FAULT;
     if(ring->invalid||ring->unbound||ring->dropped)error=ERROR_INVALID_DATA;
     ring->error=error;InterlockedExchange(&ring->status,error?-1:2);UnmapViewOfFile(ring);CloseHandle(args.collector);InterlockedExchange(&running,0);return error;
 }

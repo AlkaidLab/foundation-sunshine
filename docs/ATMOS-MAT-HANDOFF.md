@@ -1,5 +1,38 @@
 # 2026-10-22 续作：原生实时 MAT 链路
 
+## 23:00 原生短测更新：已产出真实 MAT，尚未完整验收
+
+用户本轮授权最多 3 次有界短测，已全部执行，不据此再次挂接。
+前两次 UUYC 源均现场通过公开空间音频 API 提交 10 秒双对象，没有文件输入。
+Sonic HRTF 挂接零回调；第二次在总分发入口实测 347 次调用，实际入口为
+`MainPluginRenderer::Process (RVA 0xfa3b0)`，并加载 `DolbyHrtfEnc.dll`。
+因此 UUYC 的 maxDynamic=128 不能作为当前选择 Windows Sonic 的证据。
+
+第三次沿现有插件入口，用既有 q4 调用前 PCM/属性快照、返回配对及生命周期
+记录器接独立 MAT worker；从 renderer 的状态条目实读 48 kHz，入口实读 480 帧。
+两个动态对象已采到，原生 create/mapper/initialize/submit/process 均为 S_OK；
+133 个原生 30,720 字节块、4,085,760 输出字节，主机组成 64 个完整 MAT 周期。
+其中 47 个周期经过正式 live sender、AES-GCM、UDP/RTP/FEC 和真实客户端
+AudioStream 重组，每周期 SHA256 对比通过。没有样本回放或载荷落盘。
+
+随后一轮缺少仍存活对象，桥接器按规则终止，不猜测静音/结束；没有干净 EOS，
+因此 `PASS_NATIVE_LOOPBACK`、完整 8 秒连续性和整流 SHA 验收均未通过。
+缺失具体是空轮、对象身份变化还是输入欠载，现有日志不足以区分；已加入下一轮
+失败对象 ID/代次/属性 flags/帧数诊断，尚未再做原生测试。
+运行脚本的空日志就绪误判已修复；第三次结果中的“Live source did not finish”
+是早退后等待时间不足的次生报告，源最终正常提交完 1000 块。新脚本保留主错误。
+
+三次均独立检查原始入口字节恢复、子进程退出及同一 audiodg PID/创建时间；
+第三次检查全部六个插件入口，未切换默认声卡、空间格式、驱动或服务。
+DLL 按设计仍 pin 在 audiodg，挂接已停。手机仍走 Opus。
+证据：`build/sonic-mat-native-run01..03/`、对应管理员 wrapper 结果及冻结 build v9。
+下一步是定位缺失对象轮，再做完整实时验收；不是继续追查“编码器无法初始化”。
+完整 Sunshine RTSP/视频、游戏同步和 HDMI/eARC Atmos 识别仍未验收。
+
+下面保留 23:00 以前各阶段状态，不能覆盖上述实测结论或续用已消耗授权。
+
+---
+
 最新纠正：用户已选择现有 UUYC / Realtek 的 Windows Sonic 实时对象输入，接独立
 MAT 编码器；主机 HDMI 不是这条路线的前提。之前只监听了现有编码器的输出，
 零周期不能否定 Sonic 对象捕获。新连接器见 `spatial-object-spike/sonic-mat-live/`：

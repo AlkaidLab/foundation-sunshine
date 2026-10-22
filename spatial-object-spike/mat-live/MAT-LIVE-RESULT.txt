@@ -1,5 +1,23 @@
-MAT 实时采集与串流：实现/构建通过，原生挂接通过，MAT 数据验收未通过
+MAT 实时采集与串流：真实 MAT 已产出，47 周期实时重组一致，连续性验收未通过
 2026-10-22，Asia/Hong_Kong
+
+23:00 三次有界短测（授权已用尽）
+--------------------------------
+前两次 Sonic HRTF 无回调；总分发诊断确认 UUYC 选择 MainPluginRenderer，
+进程加载 DolbyHrtfEnc.dll。maxDynamic=128 不能证明实际走 Sonic。
+第三次插件 pre-submit 双对象 -> 独立原生 MAT 成功：实读 rate=48000，
+frames=480；create/mapper/initialize/submit/process HRESULT 全为 S_OK。
+native outputBytes=4085760，133 块；主机组装 64 个 61440 字节完整周期。
+真实客户端经 AES-GCM / UDP / RTP / FEC 接收 47 周期，各周期 SHA256 一致。
+随后 Missing live object 导致失败，sourceCycles=clientCycles=47、noAcceptance=1；
+没有干净 EOS，不宣称整流 SHA 或完整实时验收通过。对象为何缺失仍需诊断。
+已补非 PCM 失败对象诊断；不能通过填充、录制回放或放宽合同掩盖缺口。
+三次挂接全部恢复、子进程退出、同一 audiodg 身份保留；没有端点/驱动/服务变更。
+第三次源最终完成 1000 块、每对象 480000 帧。脚本的 source 等待不足已修正，
+主失败在 capture.log，不是源未正常完成。完整 RTSP/视频/硬件 Atmos 尚未验收。
+私有证据 build/sonic-mat-native-run01..03/；冻结第三次 build v9。
+
+以下为更早阶段的历史状态，不覆盖以上更新。
 
 最新路线确认：Sonic 实时对象 -> 独立原生 MAT
 --------------------------------------------

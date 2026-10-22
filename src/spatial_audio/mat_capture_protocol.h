@@ -2,7 +2,7 @@
 #include "../../third-party/moonlight-common-c/src/MatWire.h"
 namespace mat_capture {
 constexpr uint32_t descriptor_bytes=80,record_bytes=40;
-constexpr uint32_t native_source=1,native_sonic_source=2,test_source=0x80000001u;
+constexpr uint32_t native_source=1,native_object_source=2,native_sonic_source=native_object_source,test_source=0x80000001u;
 constexpr uint32_t cycle_kind=1,end_kind=2,error_kind=3,record_magic=0x4359434d;
 struct Descriptor {
     uint32_t kind=0,publisher_pid=0,engine_pid=0;
@@ -19,7 +19,8 @@ inline bool decode_descriptor(const uint8_t* p,Descriptor& d) {
         mat_get32(p+64)!=48000||mat_get32(p+68)!=MAT_WIRE_CYCLE)return false;
     d={mat_get32(p+16),mat_get32(p+32),mat_get32(p+36),mat_get64(p+24),mat_get64(p+40),
         mat_get64(p+48),mat_get64(p+56),mat_get64(p+72)};
-    // Source 2 binds a Sonic renderer domain feeding a dedicated native MAT worker.
+    // Source 2 binds an observed object renderer feeding a dedicated native MAT
+    // worker (Sonic HRTF or paired MainPluginRenderer pre-submit observations).
     return (d.kind==native_source||d.kind==native_sonic_source)&&d.publisher_pid&&d.engine_pid&&d.publisher_created&&d.engine_created&&
         d.epoch&&d.epoch<=INT64_MAX&&d.encoder&&d.qpc_hz&&d.qpc_hz<=INT64_MAX;
 }

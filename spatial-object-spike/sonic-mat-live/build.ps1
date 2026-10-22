@@ -24,6 +24,18 @@ try {
  if($LASTEXITCODE){throw 'Sonic/codec IPC integration build failed'}
  & ./sonic-queue-test.exe "$out/sunshine-sonic-mat-worker.dll" *> queue-test.log
  if($LASTEXITCODE){throw 'Sonic/codec IPC integration failed'}
+ & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /DPLUGIN_BRIDGE_QUEUE_TEST "$PSScriptRoot/queue_test.cpp" /Fe:plugin-queue-test.exe
+ if($LASTEXITCODE){throw 'Plugin/codec IPC integration build failed'}
+ & ./plugin-queue-test.exe "$out/sunshine-sonic-mat-worker.dll" *> plugin-queue-test.log
+ if($LASTEXITCODE){throw 'Plugin/codec IPC integration failed'}
+ & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /DSPATIAL_USE_EXTERNAL_MINHOOK "/I$minhook/include" /LD "$PSScriptRoot/plugin_tap.cpp" "$root/spatial-object-spike/resident/quantum_v4_recorder.cpp" @objects /Fe:sunshine-plugin-object-tap.dll
+ if($LASTEXITCODE){throw 'Plugin paired tap build failed'}
+ & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /DSPATIAL_USE_EXTERNAL_MINHOOK "/I$minhook/include" "$root/spatial-object-spike/resident/quantum_v4_selftest.cpp" "$root/spatial-object-spike/resident/quantum_v4_recorder.cpp" @objects /Fe:plugin-paired-test.exe
+ if($LASTEXITCODE){throw 'Plugin paired tests build failed'}
+ & ./plugin-paired-test.exe *> plugin-paired-test.log
+ if($LASTEXITCODE){throw 'Plugin paired tests failed'}
+ & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/plugin_capture.cpp" /Fe:sunshine-plugin-mat-capture.exe /link bcrypt.lib
+ if($LASTEXITCODE){throw 'Plugin/MAT publisher build failed'}
  & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/capture.cpp" /Fe:sunshine-sonic-mat-capture.exe /link bcrypt.lib
  if($LASTEXITCODE){throw 'Sonic/MAT publisher build failed'}
  & cl.exe /nologo /std:c++20 /O2 /MT /EHsc "$root/spatial-object-spike/spatial_probe.cpp" /Fe:spatial-probe.exe /link ole32.lib uuid.lib propsys.lib
@@ -34,6 +46,8 @@ try {
 $binaries=@(Get-ChildItem $out -File | Where-Object Extension -In '.exe','.dll' | ForEach-Object {@{name=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLower()}})
 $sourcePaths=@(Get-ChildItem $PSScriptRoot -File | ForEach-Object {$_.FullName})
 foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','spatial-object-spike/mat-live/capture.cpp','spatial-object-spike/resident/collector.cpp','spatial-object-spike/resident/protocol.h','spatial-object-spike/spatial_probe.cpp')){$sourcePaths+=@("$root/$file")}
+foreach($file in @('quantum_v4_tap.cpp','quantum_v4_recorder.cpp','quantum_v4_recorder.h','quantum_v4_protocol.h','quantum_v4_assembler.h','quantum_v4_selftest.cpp','position_cache.h')){$sourcePaths+=@("$root/spatial-object-spike/resident/$file")}
+$sourcePaths+=@("$minhook/include/MinHook.h")
 $sources=@($sourcePaths | Sort-Object -Unique | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})
 @{scope='Sonic source and dedicated native MAT worker build; own-process generated tests only';nativeCaptureTested=$false;binaries=$binaries;sources=$sources} | ConvertTo-Json -Depth 5 | Set-Content "$out/build.json" -Encoding utf8
 Get-FileHash "$out/sunshine-sonic-mat-capture.exe","$out/sunshine-sonic-object-tap.dll","$out/sunshine-sonic-mat-worker.dll"

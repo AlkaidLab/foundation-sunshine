@@ -23,15 +23,13 @@ static HANDLE DuplicateTo(HANDLE engine,HANDLE source,DWORD access=0){
 static void CloseRemote(HANDLE engine,HANDLE remote){if(!remote)return;HANDLE copy{};if(DuplicateHandle(engine,remote,GetCurrentProcess(),&copy,0,FALSE,DUPLICATE_CLOSE_SOURCE))CloseHandle(copy);}
 static HANDLE Map(size_t size){auto h=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,(DWORD)size,nullptr);require(h,"Create bounded native session mapping");return h;}
 static bool OriginalSonicBytes(HANDLE engine){
-    const DWORD rvas[]={0xf7880,0x433f0,0x79e20};
-    const BYTE expected[][8]={{0x48,0x89,0x5c,0x24,0x10,0x4c,0x89,0x44},{0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48},{0x40,0x53,0x48,0x83,0xec,0x40,0x80,0x79}};
     auto base=Module(GetProcessId(engine),L"audioeng.dll");if(!base)return false;
-    for(unsigned n=0;n<3;++n){BYTE bytes[8];SIZE_T got=0;if(!ReadProcessMemory(engine,(void*)(base+rvas[n]),bytes,8,&got)||got!=8||memcmp(bytes,expected[n],8))return false;}return true;
+    for(unsigned n=0;n<sonic_live::hookCount;++n){BYTE bytes[8];SIZE_T got=0;if(!ReadProcessMemory(engine,(void*)(base+sonic_live::hookRvas[n]),bytes,8,&got)||got!=8||memcmp(bytes,sonic_live::hookBytes[n],8))return false;}return true;
 }
 class NativeSession {
     HANDLE engine_,input_map_{},output_map_{},data_{},cancel_{},thread_{};
     receiver::Shared* input_{};spatial_stream::Output* output_{};void* arguments_{};
-    std::vector<HANDLE> remote_;std::thread consumer_;Shared& pipe_;uint64_t domain_,epoch_;bool finished_=false,reported_=false;
+    std::vector<HANDLE> remote_;std::thread consumer_;Shared& pipe_;uint64_t domain_,epoch_;const char* sourceKind_;bool finished_=false,reported_=false;
     void report(){
         if(!output_||reported_)return;reported_=true;const auto& s=output_->header;
         printf("NATIVE_WORKER sourceRounds=%llu sourceSamples=%llu processes=%llu outputBytes=%llu warm=%llu drain=%llu status=%ld error=%ld vendorLoads=%llu activations=%llu initialize=%llu createHR=0x%08x mapperHR=0x%08x initializeHR=0x%08x submitHR=0x%08x processHR=0x%08x\n",s.sourceRounds,s.sourceSamples,s.processes,s.outputBytes,s.warmRounds,s.drainRounds,s.status,s.error,s.vendorLoads,s.activations,s.initializations,(unsigned)s.createHr,(unsigned)s.mapperHr,(unsigned)s.initializeHr,(unsigned)s.submitHr,(unsigned)s.processHr);
@@ -50,7 +48,7 @@ class NativeSession {
                 }
                 auto qpc=source.capture_qpc();require(qpc>0,"Native MAT completion clock");progress=GetTickCount64();
                 std::lock_guard lock(pipe_.mutex);bool first=!pipe_.ready;pipe_.ready=true;pipe_.encoder=domain_;pipe_.last_cycle=progress;++pipe_.cycles;
-                if(first)printf("NATIVE_MAT_READY source=sonic-reencode carrierBytes=61440 inputRenderer=0x%llx fileInput=0\n",domain_);
+                if(first)printf("NATIVE_MAT_READY source=%s carrierBytes=61440 inputRenderer=0x%llx fileInput=0\n",sourceKind_,domain_);
                 if(pipe_.playing&&qpc>=pipe_.play_qpc){require(pipe_.queue.size()<4,"Live consumer overflow; no drop/replay");Cycle cycle{};memcpy(cycle.bytes.data(),frame.bytes.data(),frame.bytes.size());cycle.qpc=qpc;pipe_.queue.push_back(std::move(cycle));pipe_.changed.notify_all();}
             }
         }catch(const std::exception& e){Broken(pipe_,e.what());if(input_)receiver::fail(*input_,receiver::codec);if(cancel_)SetEvent(cancel_);}
@@ -66,7 +64,7 @@ class NativeSession {
         for(auto h:{input_map_,output_map_,data_,cancel_})if(h)CloseHandle(h);
     }
 public:
-    NativeSession(HANDLE engine,const fs::path& codec,uintptr_t loaded,uint64_t domain,uint64_t epoch,Shared& pipe):engine_(engine),pipe_(pipe),domain_(domain),epoch_(epoch){
+    NativeSession(HANDLE engine,const fs::path& codec,uintptr_t loaded,uint64_t domain,uint64_t epoch,Shared& pipe,const char* sourceKind="sonic-reencode"):engine_(engine),pipe_(pipe),domain_(domain),epoch_(epoch),sourceKind_(sourceKind){
         try {
             input_map_=Map(sizeof(receiver::Shared));output_map_=Map(sizeof(spatial_stream::Output));
             input_=(receiver::Shared*)MapViewOfFile(input_map_,FILE_MAP_ALL_ACCESS,0,0,sizeof(receiver::Shared));
@@ -93,6 +91,7 @@ public:
         require(s.status==2&&!s.error&&s.workerFinished&&!s.workerTimedOut&&s.eofSeen&&s.vendorLoads==1&&s.activations==1&&s.initializations==1&&s.hostGuardPassed&&s.createHr==S_OK&&s.mapperHr==S_OK&&s.initializeHr==S_OK&&s.submitHr==S_OK&&s.processHr==S_OK,"Native MAT worker result");finished_=true;
     }
 };
+#ifndef MAT_NATIVE_SESSION_ONLY
 int wmain(int argc,wchar_t** argv){
     if((argc!=10&&argc!=12)||(std::wstring(argv[1])!=L"--attach"&&std::wstring(argv[1])!=L"--reattach")){puts("sonic-mat-capture --attach/--reattach PID CREATED TAP_ABSOLUTE TAP_SHA256 CODEC_ABSOLUTE CODEC_SHA256 LIVE_PIPE STOP_EVENT [--max-seconds 1..60]");return 2;}
     HANDLE engine{},map{},thread{},stop{};void* arguments{};sonic_live::Ring* ring{};std::thread controller;Shared shared;
@@ -145,7 +144,9 @@ int wmain(int argc,wchar_t** argv){
         printf("STOP cycles=%llu failed=%d error=%s restored=1 calls=%lld passes=%lld unbound=%lld dropped=%lld invalid=%lld\n",shared.cycles,shared.failed,shared.error.c_str(),Read64(&ring->monoCalls),Read64(&ring->passes),Read64(&ring->unbound),Read64(&ring->dropped),Read64(&ring->invalid));result=shared.failed?1:0;
     }catch(const std::exception& e){printf("FAILED %s win32=%lu\n",e.what(),GetLastError());if(ring)InterlockedExchange(&ring->stop,1);InterlockedExchange(&interrupted,1);if(controller.joinable())controller.join();}
     native.reset();bool done=!thread||WaitForSingleObject(thread,10000)==WAIT_OBJECT_0;
+    if(ring){auto base=Module(GetProcessId(engine),L"audioeng.dll");auto entry=Read64(&ring->dispatchEntry);printf("SONIC_ROUTE dispatcherCalls=%lld engine=0x%llx entryRva=0x%llx lastFrames=%lld lastFlags=%lld\n",Read64(&ring->dispatchCalls),Read64(&ring->dispatchEngine),entry&&base?entry-base:0,Read64(&ring->dispatchFrames),Read64(&ring->dispatchFlags));}
     if(engine&&ring){bool restored=done&&OriginalSonicBytes(engine);printf("HOOK_STOP restored=%d nativeStatus=%ld nativeError=%ld calls=%lld passes=%lld unbound=%lld dropped=%lld invalid=%lld\n",restored,ring->status,ring->error,Read64(&ring->monoCalls),Read64(&ring->passes),Read64(&ring->unbound),Read64(&ring->dropped),Read64(&ring->invalid));if(!restored)result=1;}
     if(!handed&&engine){CloseRemote(engine,remoteMap);CloseRemote(engine,remoteOwner);}if(done&&arguments)VirtualFreeEx(engine,arguments,0,MEM_RELEASE);
     if(ring)UnmapViewOfFile(ring);if(thread)CloseHandle(thread);if(map)CloseHandle(map);if(stop)CloseHandle(stop);if(engine)CloseHandle(engine);return result;
 }
+#endif

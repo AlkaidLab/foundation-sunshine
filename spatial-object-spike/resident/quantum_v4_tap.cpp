@@ -1,6 +1,10 @@
 #define NOMINMAX
 #include "quantum_v4_recorder.h"
+#ifdef SPATIAL_USE_EXTERNAL_MINHOOK
+#include <MinHook.h>
+#else
 #include "vendor/minhook-1.3.4/include/MinHook.h"
+#endif
 #include <cstring>
 using Render4=void (__fastcall*)(void*,uint32_t,void*,uint32_t,void*);
 using Submit4=HRESULT (__fastcall*)(void*,const void*,const void*,const float*,uint32_t,float);
