@@ -500,7 +500,11 @@ namespace display_device {
     }
 
     bool
-    destroy_vdd_monitor() {
+    destroy_vdd_monitor(std::string_view client_identifier) {
+      // The Windows driver owns the virtual displays and tracks their clients
+      // itself, so the identifier is only used by the Linux backend.
+      (void) client_identifier;
+
       // 如果VDD已不存在，直接返回成功
       if (find_device_by_friendlyname(ZAKO_NAME).empty()) {
         BOOST_LOG(debug) << "VDD设备已不存在，跳过销毁";
@@ -531,7 +535,8 @@ namespace display_device {
     }
 
     void
-    destroy_vdd_monitor_nolog() {
+    destroy_vdd_monitor_nolog(std::string_view client_identifier) {
+      (void) client_identifier;
       (void) vdd_ioctl::send_command(L"DESTROYMONITOR");
     }
 
@@ -585,7 +590,7 @@ namespace display_device {
       last_toggle_time = now;
 
       if (is_display_on()) {
-        destroy_vdd_monitor();
+        destroy_vdd_monitor({});
         return true;
       }
 
@@ -655,7 +660,7 @@ namespace display_device {
           }
         }
 
-        destroy_vdd_monitor();
+        destroy_vdd_monitor({});
       }).detach();
 
       return true;
@@ -1034,10 +1039,15 @@ namespace display_device {
 #include "src/platform/linux/kscreen_backend.h"
 #include "src/platform/linux/kscreen_modes.h"
 #include "src/platform/linux/vdd_edid.h"
+#include "src/platform/linux/vdd_instances.h"
 
 namespace pt = boost::property_tree;
 
 namespace display_device::vdd_utils {
+
+  // The attribution rules are pure and live with the other platform modules;
+  // the backend keeps only the state the rules are applied to.
+  namespace vdd_instances = platf::vdd_instances;
 
   using namespace std::literals;
 
@@ -1110,6 +1120,175 @@ namespace display_device::vdd_utils {
     // EDID built at creation must use the same cross product, so the settings
     // have to survive from set_vdd_session_mode() to create_vdd_monitor().
     std::optional<VddSettings> session_mode_settings;
+
+    /**
+     * @brief One virtual display: a connector carrying our EDID override, and
+     *        the client it belongs to.
+     * @details This is the Linux counterpart of the Windows driver's per-client
+     *          monitor object. On Windows two clients stream onto two driver
+     *          instances; here they must be two hijacked connectors, so the
+     *          platform layer has to remember which connector belongs to whom
+     *          instead of keeping one slot and rebuilding it per client.
+     */
+    struct instance_t {
+      std::string client_identifier;  ///< "" when the display was created without one.
+      std::uint32_t serial { 0 };     ///< EDID serial number: the client's identity on the wire.
+      std::string card;               ///< e.g. "card1".
+      std::string connector;          ///< e.g. "DP-1".
+      std::string status_path;        ///< /sys/class/drm/card1-DP-1/status.
+      std::string edid_path;          ///< debugfs edid_override node.
+      std::string edid_content;       ///< Last written EDID, for mode-switch dedup.
+      vdd_edid::edid_options edid_opts;
+      unsigned int width { 1920 };
+      unsigned int height { 1080 };
+      unsigned int refresh_hz { 60 };
+      bool from_session { false };
+      std::optional<VddSettings> session_mode_settings;
+    };
+
+    /**
+     * @brief Every virtual display this process owns.
+     * @details The session fields above describe exactly one of them — the
+     *          selected instance — which is what keeps every existing caller
+     *          (encoding, mode publication, status) working unchanged:
+     *          store_current_locked() and load_instance_locked() move the
+     *          shared fields between the table and the view.
+     */
+    std::vector<instance_t> instances;
+    std::size_t selected_instance { vdd_instances::npos };
+
+    /// Defined further down; the instance table needs it before that point.
+    bool
+    connector_status_is(const std::string &status_path, const std::string &value);
+
+    /**
+     * @brief Capture the shared session fields into the selected instance.
+     * @note Caller holds state_mutex.
+     */
+    void
+    store_current_locked() {
+      if (selected_instance == vdd_instances::npos || selected_instance >= instances.size()) {
+        return;
+      }
+
+      auto &instance = instances[selected_instance];
+      instance.client_identifier = active_edid_opts.client_identifier;
+      instance.card = active_card;
+      instance.connector = active_connector;
+      instance.status_path = active_status_path;
+      instance.edid_path = active_edid_path;
+      instance.edid_content = active_edid_content;
+      instance.edid_opts = active_edid_opts;
+      instance.width = cached_width;
+      instance.height = cached_height;
+      instance.refresh_hz = cached_refresh_hz;
+      instance.from_session = cached_from_session;
+      instance.session_mode_settings = session_mode_settings;
+    }
+
+    /**
+     * @brief Make an instance's own state the shared session state.
+     * @note Caller holds state_mutex.
+     */
+    void
+    load_instance_locked(std::size_t index) {
+      if (index >= instances.size()) {
+        return;
+      }
+
+      const auto &instance = instances[index];
+      selected_instance = index;
+      active = true;
+      active_card = instance.card;
+      active_connector = instance.connector;
+      active_status_path = instance.status_path;
+      active_edid_path = instance.edid_path;
+      active_edid_content = instance.edid_content;
+      active_edid_opts = instance.edid_opts;
+      cached_width = instance.width;
+      cached_height = instance.height;
+      cached_refresh_hz = instance.refresh_hz;
+      cached_from_session = instance.from_session;
+      session_mode_settings = instance.session_mode_settings;
+    }
+
+    /**
+     * @brief Forget the shared session state without touching any connector.
+     * @note Caller holds state_mutex.
+     */
+    void
+    clear_view_locked() {
+      selected_instance = vdd_instances::npos;
+      active = false;
+      active_card.clear();
+      active_connector.clear();
+      active_status_path.clear();
+      active_edid_path.clear();
+      active_edid_content.clear();
+      cached_from_session = false;
+      session_mode_settings.reset();
+    }
+
+    /// The table as the pure attribution helpers see it.
+    std::vector<vdd_instances::record_t>
+    records_locked() {
+      std::vector<vdd_instances::record_t> records;
+      records.reserve(instances.size());
+      for (const auto &instance : instances) {
+        records.push_back(vdd_instances::record_t {
+          .client_identifier = instance.client_identifier,
+          .serial = instance.serial,
+          .connector = instance.connector,
+          .live = !instance.status_path.empty() && connector_status_is(instance.status_path, "connected"),
+        });
+      }
+      return records;
+    }
+
+    /**
+     * @brief The instance a request belongs to, or npos.
+     * @note Caller holds state_mutex.
+     */
+    std::size_t
+    find_instance_locked(std::string_view client_identifier) {
+      return vdd_instances::find(records_locked(), client_identifier, selected_instance);
+    }
+
+    /**
+     * @brief Drop a record and keep the selection consistent.
+     * @note Caller holds state_mutex.
+     */
+    void
+    erase_instance_locked(std::size_t index) {
+      if (index >= instances.size()) {
+        return;
+      }
+      instances.erase(instances.begin() + static_cast<std::ptrdiff_t>(index));
+      if (selected_instance == index) {
+        // Fall back to whatever else is still live, so a later request without
+        // an identity is not left without a display to attach to.
+        std::size_t fallback = vdd_instances::npos;
+        for (std::size_t i = instances.size(); i-- > 0;) {
+          if (connector_status_is(instances[i].status_path, "connected")) {
+            fallback = i;
+            break;
+          }
+        }
+        if (fallback == vdd_instances::npos && !instances.empty()) {
+          fallback = instances.size() - 1;
+        }
+
+        if (fallback != vdd_instances::npos) {
+          load_instance_locked(fallback);
+        }
+        else {
+          clear_view_locked();
+        }
+      }
+      else if (selected_instance != vdd_instances::npos && selected_instance > index) {
+        --selected_instance;
+      }
+    }
 
     bool
     write_text_file(const std::string &path, const std::string &content) {
@@ -1758,14 +1937,12 @@ namespace display_device::vdd_utils {
       return {};
     }
 
-    /**
-     * @brief First disconnected hotpluggable connector on the card, DP first.
-     */
-    std::string
-    pick_connector(const std::string &card) {
+    /// Connectors that could host a virtual display, in preference order.
+    std::vector<std::string>
+    candidate_connectors(const std::string &card) {
       static constexpr std::string_view preferred_types[] = { "DP", "HDMI-A", "HDMI", "eDP", "VGA" };
 
-      std::string fallback;
+      std::vector<std::string> candidates;
       for (const auto &type : preferred_types) {
         for (const auto &entry : fs::directory_iterator { "/sys/class/drm" }) {
           const auto name = entry.path().filename().string();
@@ -1779,16 +1956,23 @@ namespace display_device::vdd_utils {
           if (value != "disconnected") {
             continue;
           }
-          const std::string connector = name.substr(card.size() + 1);
-          if (type == "DP") {
-            return connector;
-          }
-          if (fallback.empty()) {
-            fallback = connector;
-          }
+          candidates.push_back(name.substr(card.size() + 1));
         }
       }
-      return fallback;
+      return candidates;
+    }
+
+    /**
+     * @brief Pick a connector for a new virtual display.
+     * @param card DRM card to search, e.g. "card1".
+     * @param unavailable Connectors that must not be taken: the ones other
+     *        virtual displays already own, and physical outputs an exclusive
+     *        session switched off (they read as plain "disconnected" in sysfs,
+     *        so nothing else can tell them apart from an unplugged screen).
+     */
+    std::string
+    pick_connector(const std::string &card, const std::vector<std::string> &unavailable = {}) {
+      return vdd_instances::pick_connector(candidate_connectors(card), unavailable);
     }
 
     bool
@@ -1895,13 +2079,11 @@ namespace display_device::vdd_utils {
           continue;
         }
 
-        active = true;
-        active_connector = connector;
-        active_status_path = status_path;
-        active_edid_path = edid_path;
-
         // Preferred timing descriptor: first DTD at EDID offset 54. Recover
         // the mode so logging and any later regeneration see real values.
+        unsigned int adopted_width = cached_width;
+        unsigned int adopted_height = cached_height;
+        unsigned int adopted_refresh = cached_refresh_hz;
         const auto byte = [&content](std::size_t i) { return (unsigned int) (std::uint8_t) content[i]; };
         const unsigned int pixel_clock_10khz = byte(54) | (byte(55) << 8);
         const unsigned int hactive = byte(56) | ((byte(58) >> 4) << 8);
@@ -1914,25 +2096,45 @@ namespace display_device::vdd_utils {
           if (hactive >= 64 && hactive <= 8192 &&
               vactive >= 64 && vactive <= 8192 &&
               refresh >= 20 && refresh <= 250) {
-            cached_width = hactive;
-            cached_height = vactive;
-            cached_refresh_hz = refresh;
+            adopted_width = hactive;
+            adopted_height = vactive;
+            adopted_refresh = refresh;
           }
         }
 
-        BOOST_LOG(info) << "vdd: adopted live virtual display on "sv << name << " ("sv
-                        << cached_width << "x"sv << cached_height << "@"sv << cached_refresh_hz << "Hz)"sv;
         // The EDID serial identifies the owning client when the display was
         // created with one (0 = a legacy mode-derived serial, i.e. a display
-        // created before per-client identity existed).
-        if (const auto adopted_serial = vdd_edid::serial_number_of(
-              std::vector<std::uint8_t>(content.begin(), content.end()));
-            adopted_serial != 0) {
+        // created before per-client identity existed). Adopting it here is what
+        // lets that client find its own display again instead of being handed
+        // whichever one comes first.
+        const auto adopted_serial = vdd_edid::serial_number_of(
+          std::vector<std::uint8_t>(content.begin(), content.end()));
+
+        instance_t adopted;
+        adopted.card = name.substr(0, name.find('-'));
+        adopted.connector = connector;
+        adopted.status_path = status_path;
+        adopted.edid_path = edid_path;
+        adopted.edid_content = content;
+        adopted.serial = adopted_serial;
+        adopted.width = adopted_width;
+        adopted.height = adopted_height;
+        adopted.refresh_hz = adopted_refresh;
+        instances.push_back(std::move(adopted));
+
+        // One display keeps being *the* selected one, exactly like the single
+        // slot this replaces; the others answer to their own client's identity.
+        if (!active) {
+          load_instance_locked(instances.size() - 1);
+        }
+
+        BOOST_LOG(info) << "vdd: adopted live virtual display on "sv << name << " ("sv
+                        << adopted_width << "x"sv << adopted_height << "@"sv << adopted_refresh << "Hz)"sv;
+        if (adopted_serial != 0) {
           std::ostringstream serial_text;
           serial_text << "0x" << std::hex << std::setw(8) << std::setfill('0') << adopted_serial;
           BOOST_LOG(debug) << "vdd: adopted display carries client serial "sv << serial_text.str();
         }
-        return;
       }
     }
     /**
@@ -2393,6 +2595,29 @@ namespace display_device::vdd_utils {
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
 
+    // The shared fields are about to describe the *requested* display, so the
+    // previous client's view has to be saved into its own record first: that is
+    // what keeps two clients' displays from overwriting each other's mode,
+    // EDID personalization and HDR metadata.
+    store_current_locked();
+
+    // A client that already owns a live virtual display keeps it: its EDID
+    // carries that client's identity, luminance and physical size, and the
+    // compositor's saved layout refers to it. Rebuilding it would drop the
+    // other client's display when only one slot is expected to exist, which is
+    // exactly the behaviour this table exists to stop.
+    if (const auto owned = find_instance_locked(client_identifier); owned != vdd_instances::npos) {
+      if (connector_status_is(instances[owned].status_path, "connected")) {
+        load_instance_locked(owned);
+        BOOST_LOG(debug) << "vdd: reusing this client's virtual display on "sv << instances[owned].connector;
+        return true;
+      }
+
+      BOOST_LOG(warning) << "vdd: this client's virtual display on "sv << instances[owned].connector
+                         << " is no longer live, recreating it"sv;
+      erase_instance_locked(owned);
+    }
+
     // Personalization captured at creation, mirroring the Windows
     // CREATEMONITOR payload [max_nits,min_nits,maxFALL][widthCm,heightCm]:
     // the client's reported luminance and physical size are written into the
@@ -2447,14 +2672,25 @@ namespace display_device::vdd_utils {
                        << " (EDID serial "sv << serial_text.str() << ")"sv;
     }
 
-    if (active && connector_status_is(active_status_path, "connected")) {
-      BOOST_LOG(debug) << "vdd: virtual display already active on "sv << active_connector;
-      return true;
-    }
+    // Reaching this point means no record matched the request: the caller is
+    // either unidentified with nothing selected, or a *different* client than
+    // the one owning the selected display. Any live display that belongs to
+    // somebody else is left alone and a spare connector is taken instead, so
+    // that connecting a second client no longer tears down the first one's
+    // screen. Nothing to release here — the record stays in the table.
+    const std::vector<std::string> unavailable = [] {
+      std::vector<std::string> taken = vdd_instances::used_connectors(records_locked());
+      for (const auto &offlined : offlined_physical_outputs) {
+        taken.push_back(offlined);
+      }
+      return taken;
+    }();
 
     // Sweep virtual connectors left behind by crashed sessions or older
     // runs: any forced-on connector still carrying our VHD-signature EDID
-    // is cleared so it does not accumulate and consume VRAM.
+    // is cleared so it does not accumulate and consume VRAM. Connectors owned
+    // by a live record are never swept: they may belong to another client's
+    // session, which is still streaming onto them.
     {
       const std::uint8_t signature[] = { 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x56, 0x24 };
       for (const auto &entry : std::filesystem::directory_iterator { "/sys/class/drm" }) {
@@ -2477,7 +2713,8 @@ namespace display_device::vdd_utils {
         if (content.size() < sizeof(signature) || std::memcmp(content.data(), signature, sizeof(signature)) != 0) {
           continue;
         }
-        if (active && status_path == active_status_path) {
+        if (status_path == active_status_path ||
+            std::find(unavailable.begin(), unavailable.end(), connector) != unavailable.end()) {
           continue;
         }
 
@@ -2494,7 +2731,7 @@ namespace display_device::vdd_utils {
     }
 
     const std::string debugfs_dir = debugfs_dir_for_card(card);
-    const std::string connector = pick_connector(card);
+    const std::string connector = pick_connector(card, unavailable);
     if (connector.empty()) {
       BOOST_LOG(error) << "vdd: no spare disconnected connector on "sv << card << " for the virtual display"sv;
       return false;
@@ -2569,12 +2806,38 @@ namespace display_device::vdd_utils {
       BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
     }
 
-    active = true;
-    active_card = card;
-    active_connector = connector;
-    active_status_path = status_path;
-    active_edid_path = edid_path;
-    active_edid_content.assign(reinterpret_cast<const char *>(edid.data()), edid.size());
+    // Hand the finished display to the record that owns it. `active_edid_opts`
+    // and the cached mode already describe this request, and the record is kept
+    // in step with them from here on.
+    {
+      instance_t created;
+      created.client_identifier = client_identifier;
+      created.serial = vdd_identity::serial_for_identifier(client_identifier);
+      created.card = card;
+      created.connector = connector;
+      created.status_path = status_path;
+      created.edid_path = edid_path;
+      created.edid_content.assign(reinterpret_cast<const char *>(edid.data()), edid.size());
+      created.edid_opts = active_edid_opts;
+      created.width = cached_width;
+      created.height = cached_height;
+      created.refresh_hz = cached_refresh_hz;
+      created.from_session = cached_from_session;
+      created.session_mode_settings = session_mode_settings;
+      instances.push_back(std::move(created));
+
+      selected_instance = instances.size() - 1;
+      active = true;
+      active_card = card;
+      active_connector = connector;
+      active_status_path = status_path;
+      active_edid_path = edid_path;
+      active_edid_content = instances.back().edid_content;
+    }
+
+    if (const auto total = vdd_instances::live_count(records_locked()); total > 1) {
+      BOOST_LOG(info) << "vdd: "sv << total << " virtual displays are now live, one per client"sv;
+    }
 
     BOOST_LOG(info) << "vdd: virtual display is live on "sv << card << '-' << connector;
     return true;
@@ -2586,55 +2849,79 @@ namespace display_device::vdd_utils {
   }
 
   bool
-  destroy_vdd_monitor() {
+  destroy_vdd_monitor(std::string_view client_identifier) {
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
-    if (!active) {
+    store_current_locked();
+
+    // Tear down the caller's own display. An unidentified caller (tray,
+    // headless teardown) keeps the historical single-slot behaviour and
+    // destroys the selected display instead — with one client the two are the
+    // same record.
+    const std::size_t target = client_identifier.empty()
+                                 ? selected_instance
+                                 : find_instance_locked(client_identifier);
+    if (target == vdd_instances::npos) {
       return true;
     }
+
+    // Everything below acts on the shared view, so the target becomes the view
+    // for the duration; erase_instance_locked() then re-selects whatever is
+    // still live, leaving another client's session untouched.
+    load_instance_locked(target);
+    const std::string connector = active_connector;
 
     write_text_file(active_edid_path, "");
     write_text_file(active_status_path, "off");
     const bool gone = wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
     if (!gone) {
-      BOOST_LOG(warning) << "vdd: connector "sv << active_connector << " did not turn off cleanly"sv;
+      BOOST_LOG(warning) << "vdd: connector "sv << connector << " did not turn off cleanly"sv;
     }
 
-    restore_offlined_physicals();
-    if (last_prep == parsed_config_t::vdd_prep_e::vdd_as_primary || last_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
-      // Give the primary role back to the physical screen.
-      for_each_connected_physical(active_connector, [](const auto &, const auto &physical) {
-        hint_primary_output(physical, 1);
-      });
+    erase_instance_locked(target);
+
+    // Physical screens were switched off for an exclusive session; only put
+    // them back once the last virtual display is gone, so a client that is
+    // still streaming does not get its screen lit back up.
+    if (vdd_instances::live_count(records_locked()) == 0) {
+      restore_offlined_physicals();
+      if (last_prep == parsed_config_t::vdd_prep_e::vdd_as_primary || last_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
+        // Give the primary role back to the physical screen.
+        for_each_connected_physical(connector, [](const auto &, const auto &physical) {
+          hint_primary_output(physical, 1);
+        });
+      }
     }
 
-    BOOST_LOG(info) << "vdd: virtual display on "sv << active_connector << " destroyed"sv;
-    active = false;
-    active_connector.clear();
-    // The session that owned this mode list is over: a later tray/headless
-    // creation must go back to deriving the preferred mode from the config
-    // instead of reusing the finished session's mode.
-    cached_from_session = false;
-    session_mode_settings.reset();
+    BOOST_LOG(info) << "vdd: virtual display on "sv << connector << " destroyed"sv;
     return gone;
   }
 
   void
-  destroy_vdd_monitor_nolog() {
+  destroy_vdd_monitor_nolog(std::string_view client_identifier) {
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
-    if (!active) {
+    store_current_locked();
+
+    const std::size_t target = client_identifier.empty()
+                                 ? selected_instance
+                                 : find_instance_locked(client_identifier);
+    if (target == vdd_instances::npos) {
       return;
     }
+
+    load_instance_locked(target);
+    const std::string connector = active_connector;
 
     write_text_file(active_edid_path, "");
     write_text_file(active_status_path, "off");
     wait_for_status(active_status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
-    restore_offlined_physicals();
-    active = false;
-    active_connector.clear();
-    cached_from_session = false;
-    session_mode_settings.reset();
+
+    erase_instance_locked(target);
+
+    if (vdd_instances::live_count(records_locked()) == 0) {
+      restore_offlined_physicals();
+    }
   }
 
   void
@@ -2645,7 +2932,9 @@ namespace display_device::vdd_utils {
   bool
   toggle_display_power() {
     if (is_display_on()) {
-      return destroy_vdd_monitor();
+      // The tray has no session behind it: the selected display is the one the
+      // user is looking at.
+      return destroy_vdd_monitor({});
     }
     return create_vdd_monitor("", hdr_brightness_t {}, physical_size_t {});
   }

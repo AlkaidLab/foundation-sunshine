@@ -537,6 +537,7 @@ if (WIN32)
     # synthesis for the KMS virtual display, compositor focus producers, the
     # PulseAudio staging queue); their tests have nothing to link on Windows.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_edid\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_instances\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_foreground_app\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mic_queue\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_display_device_enum\.cpp")

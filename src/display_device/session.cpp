@@ -145,7 +145,9 @@ namespace display_device {
     // 兜底：退出时如果 VDD 仍存在且 vdd_keep_enabled=false，直接销毁
     // 使用 nolog 版本，因为析构时 boost::log 可能已被销毁
     if (!config::video.vdd_keep_enabled) {
-      vdd_utils::destroy_vdd_monitor_nolog();
+      // Only this session's own display: another client may still be streaming
+      // onto its own virtual display.
+      vdd_utils::destroy_vdd_monitor_nolog(session_t::get().current_vdd_client_id);
     }
   }
 
@@ -671,9 +673,12 @@ namespace display_device {
 
   bool
   session_t::destroy_vdd_monitor() {
+    const std::string client_id = current_vdd_client_id;
     current_vdd_client_id.clear();
     current_vdd_hdr_brightness.reset();
-    return vdd_utils::destroy_vdd_monitor();
+    // Scoped to the client that owned this display: with one client this is the
+    // same call as before, and with two it no longer takes the other one down.
+    return vdd_utils::destroy_vdd_monitor(client_id);
   }
 
   bool
@@ -774,6 +779,11 @@ namespace display_device {
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
                                           !current_vdd_hdr_brightness->nearly_equal(hdr_brightness);
 
+    // The display this session owns: shared mode reuses one fixed identity, and
+    // every path that rebuilds or recovers a display must name the same owner,
+    // otherwise it would take down a display belonging to another client.
+    const std::string vdd_identifier = config::video.vdd_reuse ? std::string { "shared_vdd" } : current_client_id;
+
     // An existing VDD must be rebuilt when its advertised HDR capabilities no
     // longer match this session. A shared VDD may otherwise be reused across
     // clients when the effective capabilities are identical.
@@ -813,7 +823,7 @@ namespace display_device {
 
       if (mode_update == vdd_mode_update_e::recreate_monitor) {
         mode_rebuild_old_vdd_id = device_zako;
-        if (!vdd_utils::destroy_vdd_monitor()) {
+        if (!vdd_utils::destroy_vdd_monitor(vdd_identifier)) {
           BOOST_LOG(error) << "Failed to destroy the VDD monitor for an IOCTL mode-list rebuild";
           return vdd_stage_result_e::create_failed;
         }
@@ -836,7 +846,6 @@ namespace display_device {
 
       BOOST_LOG(info) << "创建虚拟显示器...";
       // 共享模式使用固定标识符；独立模式则使用当前客户端标识符创建显示器。
-      const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
       if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
         BOOST_LOG(error) << "VDD monitor creation command failed";
         return vdd_stage_result_e::create_failed;
@@ -852,7 +861,7 @@ namespace display_device {
       // /disable_enable 强拔 adapter，会留 CM_PROB_PHANTOM monitor，下一次
       // CREATEMONITOR 用新 GUID 会与 phantom 同 HardwareId 冲突，监视器永远attach 不上。
       BOOST_LOG(error) << "VDD设备初始化失败，尝试通过 IOCTL DESTROY+CREATE 恢复";
-      vdd_utils::destroy_vdd_monitor();
+      vdd_utils::destroy_vdd_monitor(vdd_identifier);
       std::this_thread::sleep_for(500ms);
 
       if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {

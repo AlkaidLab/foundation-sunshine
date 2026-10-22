@@ -303,6 +303,8 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/mutter_display.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_edid.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_instances.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/vdd_instances.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/gl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/EGL/eglplatform.h"

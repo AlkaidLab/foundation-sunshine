@@ -350,15 +350,25 @@ namespace display_device::vdd_utils {
   bool
   create_vdd_monitor_noninteractive();
 
+  /**
+   * @brief Tear down a virtual display.
+   * @param client_identifier Client that owns the display. Identified callers
+   *        only ever destroy their own display, which is what lets several
+   *        clients stream at once; an empty identifier keeps the historical
+   *        behaviour and destroys the selected display instead.
+   * @return Whether the connector turned off cleanly.
+   */
   bool
-  destroy_vdd_monitor();
+  destroy_vdd_monitor(std::string_view client_identifier = {});
 
   /**
    * @brief Shutdown-safe VDD destroy. Uses raw Win32 pipe API without BOOST_LOG.
    * Safe to call from destructors where boost::log may already be destroyed.
+   * @param client_identifier Same meaning as in destroy_vdd_monitor(); an empty
+   *        identifier destroys the selected display.
    */
   void
-  destroy_vdd_monitor_nolog();
+  destroy_vdd_monitor_nolog(std::string_view client_identifier = {});
 
   void
   disable_enable_vdd();
