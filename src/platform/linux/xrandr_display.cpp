@@ -188,7 +188,7 @@ namespace platf::xrandr {
   void
   note_unavailable(const std::string &reason) {
     std::lock_guard lock(probe_mutex);
-    cached_support = false;
+    cached_support.reset();
     cooldown_until = now() + kRetryCooldown;
     BOOST_LOG(debug) << "xrandr output management unavailable (" << reason << ")";
   }
@@ -197,8 +197,12 @@ namespace platf::xrandr {
   session_supports_xrandr() {
     {
       std::lock_guard lock(probe_mutex);
-      if (cached_support) {
-        return *cached_support;
+      if (cached_support && *cached_support) {
+        // Only a positive answer is sticky. A failure must stay re-probeable:
+        // the X server can come up after our service (or be restarted by the
+        // display manager), and caching "no" would turn the backend off for
+        // the rest of the process's life.
+        return true;
       }
       if (now() < cooldown_until) {
         return false;
