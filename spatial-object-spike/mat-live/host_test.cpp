@@ -32,6 +32,24 @@ int main(){try{
  session.started=false;static_cast<TestSource*>(session.source.get())->fail=true;packet=0;ends=0;
  caught=false;try{spatial_transport::live_session(session,key,16,[&](auto*,auto){++packet;},wait,[]{return false;});}catch(const std::runtime_error&){caught=true;}Check(caught);
  Check(packet==4 && ends==0); // Only SYNC; a failed source must never synthesize an END.
+ // A zero-cycle probe must distinguish idle, empty output, wrong contract and
+ // non-MAT bytes. No sample file or native process is involved in these tests.
+ {
+  mat_capture::Assembler a;auto generated=Carrier();unsigned emitted=0;
+  Check(a.observations().records==0 && a.startup_skipped()==0);
+  EncodedRecord r{0x42595445,0,0,1,42,480,30720,0,1,S_OK,0,0};
+  auto sink=[&](auto&,auto){++emitted;};a.push(r,nullptr,sink);
+  Check(a.startup_skipped()==1 && a.observations().empty==1 && a.observations().records==1);
+  r={0x42595445,1,1,2,42,256,1,1,1,S_FALSE,0,0};a.push(r,generated.data(),sink);
+  Check(a.startup_skipped()==2 && a.observations().wrong_result==1 && a.observations().wrong_frames==1 && a.observations().wrong_bytes==2);
+  r={0x42595445,30720,2,3,42,480,30720,30720,1,S_OK,0,0};
+  a.push(r,generated.data()+30720,sink);
+  Check(a.startup_skipped()==3 && a.observations().non_mat==3 && !emitted);
+  r.sequence=3;r.qpc=4;a.push(r,generated.data(),sink);
+  Check(a.partial() && a.observations().accepted_halves==1 && a.startup_skipped()==3 && !emitted);
+  r.sequence=4;r.qpc=5;a.push(r,generated.data()+30720,sink);
+  Check(!a.partial() && emitted==1 && a.observations().records==5 && a.observations().accepted_halves==2);
+ }
  mat_capture::Descriptor identity{mat_capture::test_source,1,2,3,4,5,6,7},decoded;uint8_t descriptor[80];mat_capture::encode_descriptor(descriptor,identity);Check(!mat_capture::decode_descriptor(descriptor,decoded));
  identity.kind=mat_capture::native_source;mat_capture::encode_descriptor(descriptor,identity);Check(mat_capture::decode_descriptor(descriptor,decoded));descriptor[20]=1;Check(!mat_capture::decode_descriptor(descriptor,decoded));
  auto bytes=Carrier();mat_capture::Assembler assembler;unsigned cycles=0;

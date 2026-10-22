@@ -16,10 +16,26 @@ struct Shared {
     std::mutex mutex;std::condition_variable changed;std::deque<Cycle> queue;
     bool failed=false,ended=false,playing=false,ready=false;
     uint64_t encoder=0,play_qpc=0,last_cycle=0,cycles=0,skipped=0;
+    mat_capture::Observations observations;
     std::string error;
 };
 static uint64_t Qpc(){LARGE_INTEGER n{};require(QueryPerformanceCounter(&n)!=FALSE,"QPC");return n.QuadPart;}
 static void Broken(Shared& s,const char* message){std::lock_guard lock(s.mutex);s.failed=true;s.error=message;s.queue.clear();s.changed.notify_all();}
+static uintptr_t LoadedTap(DWORD pid,const fs::path& expected) {
+    HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPMODULE,pid);
+    require(snap!=INVALID_HANDLE_VALUE,"Enumerate loaded tap identity");
+    MODULEENTRY32W entry{};entry.dwSize=sizeof(entry);uintptr_t address=0;
+    try {
+        require(Module32FirstW(snap,&entry)!=FALSE,"Read loaded module list");
+        do {
+            if(_wcsicmp(entry.szModule,expected.filename().c_str()))continue;
+            auto actual=fs::canonical(entry.szExePath);
+            require(!address && _wcsicmp(expected.c_str(),actual.c_str())==0,"Loaded tap path differs; no reuse");
+            address=reinterpret_cast<uintptr_t>(entry.modBaseAddr);
+        }while(Module32NextW(snap,&entry));
+    }catch(...){CloseHandle(snap);throw;}
+    CloseHandle(snap);return address;
+}
 static bool Io(HANDLE pipe,void* buffer,DWORD size,bool write,DWORD timeout) {
     auto* b=static_cast<BYTE*>(buffer);DWORD done=0;auto began=GetTickCount64();
     while(done<size && !interrupted) {
@@ -95,8 +111,9 @@ static void Serve(Shared& shared,const std::wstring& name,mat_capture::Descripto
 }
 int wmain(int argc,wchar_t** argv) {
     // Read-only preflight by default. No debug-privilege adjustment, UAC, engine restart or endpoint change.
-    if(argc!=4 && argc!=8){puts("sunshine-mat-capture --preflight PID CREATION_TIME | --attach PID CREATION_TIME TAP_ABSOLUTE SHA256 \\\\.\\pipe\\SunshineMatLive-NAME STOP_EVENT_NAME");return 2;}
-    const bool attach=argc==8 && std::wstring(argv[1])==L"--attach";
+    if(argc!=4 && argc!=8){puts("sunshine-mat-capture --preflight PID CREATION_TIME | --attach/--reattach PID CREATION_TIME TAP_ABSOLUTE SHA256 \\\\.\\pipe\\SunshineMatLive-NAME STOP_EVENT_NAME");return 2;}
+    const bool reuse=argc==8 && std::wstring(argv[1])==L"--reattach";
+    const bool attach=argc==8 && (std::wstring(argv[1])==L"--attach" || reuse);
     if(!attach && (argc!=4 || std::wstring(argv[1])!=L"--preflight"))return 2;
     HANDLE process{},mapping{},thread{},stop_event{};EncodedRing* ring{};void* arguments{};bool handed=false;
     HANDLE remote_mapping{},remote_collector{};Shared shared;std::thread collector;int result=1;
@@ -122,13 +139,16 @@ int wmain(int argc,wchar_t** argv) {
         require(native_mat_guard::created(process)==creation && native_mat_guard::system_engine(process),"Engine identity changed");
         auto base=Module(pid,L"audioeng.dll");BYTE prologue[8]{};SIZE_T got=0;const BYTE expected_bytes[]={0x48,0x83,0xec,0x38,0x48,0x8b,0x49,0x08};
         require(base && ReadProcessMemory(process,(void*)(base+0x31e00),prologue,8,&got) && got==8 && !memcmp(prologue,expected_bytes,8),"Original pinned encoder prologue");
-        require(Module(pid,tap.filename().c_str())==0,"Tap already loaded; no implicit reattach");
+        auto loaded=LoadedTap(pid,tap);
+        require(reuse?loaded!=0:loaded==0,reuse?"Explicit reattach requires the exact loaded tap":"Tap already loaded; explicit --reattach required");
         auto acl=PipeAcl();SECURITY_ATTRIBUTES sa{sizeof(sa),acl,FALSE};stop_event=CreateEventW(&sa,TRUE,FALSE,event_name.c_str());DWORD event_error=GetLastError();LocalFree(acl);
         require(stop_event && event_error!=ERROR_ALREADY_EXISTS,"Fresh explicit stop event");
         mapping=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(EncodedRing),nullptr);require(mapping,"Encoded ring");
         ring=(EncodedRing*)MapViewOfFile(mapping,FILE_MAP_ALL_ACCESS,0,0,sizeof(EncodedRing));require(ring,"Map encoded ring");memset(ring,0,sizeof(*ring));ring->magic=kByteMagic;ring->version=1;
         InterlockedExchange64(&ring->heartbeat,GetTickCount64());
-        auto loaded=LoadTap(process,pid,tap);auto local=LoadLibraryExW(tap.c_str(),nullptr,DONT_RESOLVE_DLL_REFERENCES);require(local,"Read pinned tap exports");
+        if(!reuse)loaded=LoadTap(process,pid,tap);
+        require(LoadedTap(pid,tap)==loaded,"Loaded tap identity changed");
+        auto local=LoadLibraryExW(tap.c_str(),nullptr,DONT_RESOLVE_DLL_REFERENCES);require(local,"Read pinned tap exports");
         auto start=GetProcAddress(local,"StartCapture");require(start,"Tap StartCapture export");auto entry=loaded+(uintptr_t)start-(uintptr_t)local;FreeLibrary(local);
         require(DuplicateHandle(GetCurrentProcess(),mapping,process,&remote_mapping,0,FALSE,DUPLICATE_SAME_ACCESS)!=FALSE,"Duplicate ring");
         require(DuplicateHandle(GetCurrentProcess(),GetCurrentProcess(),process,&remote_collector,SYNCHRONIZE,FALSE,0)!=FALSE,"Duplicate collector watchdog");
@@ -140,10 +160,11 @@ int wmain(int argc,wchar_t** argv) {
         descriptor.engine_pid=pid;descriptor.engine_created=creation;descriptor.epoch=(Qpc()&INT64_MAX)|1;LARGE_INTEGER hz{};QueryPerformanceFrequency(&hz);descriptor.qpc_hz=hz.QuadPart;
         collector=std::thread([&]{
             mat_capture::Assembler assembler;
+            uint64_t stop_requested=0;
             try {
                 while(true) {
                     auto now=GetTickCount64();InterlockedExchange64(&ring->heartbeat,now);
-                    require(!Read64(&ring->dropped) && !Read64(&ring->invalid) && !Read64(&ring->failures) && !ring->error,"Native ring loss/failure; no concealment");
+                    require(!Read64(&ring->dropped) && !Read64(&ring->invalid) && !ring->error,"Native ring loss/failure; no concealment");
                     require(WaitForSingleObject(process,0)==WAIT_TIMEOUT,"Engine exited; no automatic reattach");
                     auto read=Read64(&ring->read),write=Read64(&ring->write);require(write>=read && write-read<=kByteSlots,"Native ring bounds");
                     while(read<write) {
@@ -151,23 +172,44 @@ int wmain(int argc,wchar_t** argv) {
                             std::lock_guard lock(shared.mutex);bool first=!shared.ready;shared.ready=true;shared.encoder=assembler.encoder();shared.last_cycle=GetTickCount64();++shared.cycles;shared.skipped=assembler.startup_skipped();
                             if(first)printf("NATIVE_MAT_READY carrierBytes=61440 logicalRate=48000 durationFrames=960 startupSkippedRecords=%llu\n",shared.skipped);
                             if(shared.playing && qpc>=shared.play_qpc){require(shared.queue.size()<4,"Live consumer overflow; no drop/replay");shared.queue.push_back({bytes,qpc});shared.changed.notify_all();}
-                        });InterlockedExchange64(&ring->read,++read);
+                        });
+                        {std::lock_guard lock(shared.mutex);shared.skipped=assembler.startup_skipped();shared.observations=assembler.observations();}
+                        InterlockedExchange64(&ring->read,++read);
                     }
-                    if(interrupted || WaitForSingleObject(stop_event,0)==WAIT_OBJECT_0){InterlockedExchange(&ring->stop,1);}
+                    require(!Read64(&ring->failures),"Native Process HRESULT failed; no concealment");
+                    if(interrupted || WaitForSingleObject(stop_event,0)==WAIT_OBJECT_0){
+                        if(!stop_requested)stop_requested=now;
+                        // An operator stop closes at a whole carrier boundary.
+                        // Never pad/truncate a half-cycle or forge a clean EOS.
+                        if(!assembler.partial())InterlockedExchange(&ring->stop,1);
+                        else require(now-stop_requested<2000,"Native stop stalled mid-cycle; no EOS");
+                    }
                     if(WaitForSingleObject(thread,0)==WAIT_OBJECT_0) {
                         if(Read64(&ring->read)!=Read64(&ring->write))continue;
                         require(ring->status==2 && !ring->error && (interrupted||WaitForSingleObject(stop_event,0)==WAIT_OBJECT_0) && !assembler.partial(),"Unclean/truncated native stop; no EOS");
                         std::lock_guard lock(shared.mutex);shared.ended=true;shared.changed.notify_all();break;
                     }
-                    {std::lock_guard lock(shared.mutex);if(shared.ready)require(now-shared.last_cycle<2000,"Native MAT stalled");}
+                    // Collection may have just advanced last_cycle past the
+                    // loop's earlier `now`. Sample after draining to avoid an
+                    // unsigned underflow that falsely rejects fresh output.
+                    {std::lock_guard lock(shared.mutex);if(shared.ready)require(GetTickCount64()-shared.last_cycle<2000,"Native MAT stalled");}
                     Sleep(1);
                 }
-            }catch(const std::exception& e){Broken(shared,e.what());InterlockedExchange(&ring->stop,1);}
+            }catch(const std::exception& e){
+                {std::lock_guard lock(shared.mutex);shared.skipped=assembler.startup_skipped();shared.observations=assembler.observations();}
+                Broken(shared,e.what());InterlockedExchange(&ring->stop,1);
+            }
         });
         printf("ATTACHED publisher=%lu engine=%lu source=native-Process-output no-file-input=1\n",GetCurrentProcessId(),pid);
         Serve(shared,name,descriptor);InterlockedExchange(&ring->stop,1);collector.join();
         require(WaitForSingleObject(thread,10000)==WAIT_OBJECT_0,"Native hook stop timeout");
         require(ReadProcessMemory(process,(void*)(base+0x31e00),prologue,8,&got) && got==8 && !memcmp(prologue,expected_bytes,8),"Original encoder prologue restored");
+        const auto& o=shared.observations;
+        printf("OBSERVED calls=%lld records=%llu bytes=%lld empty=%llu wrongResult=%llu wrongFrames=%llu wrongBytes=%llu nonMat=%llu acceptedHalves=%llu dropped=%lld invalid=%lld failures=%lld lastFrames=%u lastCapacity=%u lastBytes=%u lastHR=0x%08X\n",
+            Read64(&ring->calls),o.records,Read64(&ring->bytes),o.empty,o.wrong_result,o.wrong_frames,o.wrong_bytes,o.non_mat,o.accepted_halves,
+            Read64(&ring->dropped),Read64(&ring->invalid),Read64(&ring->failures),o.last_frames,o.last_capacity,o.last_bytes,(unsigned)o.last_result);
+        printf("SOURCE_DIAGNOSIS %s\n",shared.cycles?"native-MAT-observed":Read64(&ring->calls)==0?"pinned-wrapper-Process-not-invoked":
+            o.empty==o.records && o.records?"encoder-output-empty":"encoder-output-not-usable-MAT; inspect-OBSERVED");
         printf("STOP cycles=%llu startupSkippedRecords=%llu failed=%d error=%s restored=1\n",shared.cycles,shared.skipped,shared.failed,shared.error.c_str());result=shared.failed?1:0;
     }catch(const std::exception& e){printf("FAILED %s win32=%lu\n",e.what(),GetLastError());if(ring)InterlockedExchange(&ring->stop,1);InterlockedExchange(&interrupted,1);if(collector.joinable())collector.join();}
     bool done=!thread || WaitForSingleObject(thread,10000)==WAIT_OBJECT_0;

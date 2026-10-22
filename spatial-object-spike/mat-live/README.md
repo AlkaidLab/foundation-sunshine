@@ -93,6 +93,56 @@ are checked on clean shutdown. There is no automatic attach/restart/rearm.
 
 ## Acceptance limits
 
+### Source diagnosis and native-only loopback check
+
+`spatial_probe --list --all` reads endpoint IDs, states, default roles, mix
+formats and active endpoints' spatial object capacities. It never activates
+inactive endpoints. `--endpoint <exact-ID>` selects an active endpoint explicitly
+for the separately initiated `--emit` diagnostic; it does not change defaults.
+Dynamic object capacity is not proof of MAT output. See Microsoft's
+[endpoint states](https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-state-xxx-constants)
+and [spatial sound requirements](https://learn.microsoft.com/en-us/windows/win32/coreaudio/spatial-sound).
+
+The publisher prints `OBSERVED` on shutdown even when no cycle completed:
+wrapper calls, copied records/bytes, empty outputs, non-S_OK results, frame/byte
+contract mismatches, missing IEC preambles, accepted halves, ring loss and last
+call dimensions/result. Counters overlap; a second half normally has no IEC
+preamble. `SOURCE_DIAGNOSIS pinned-wrapper-Process-not-invoked` applies to the
+one pinned wrapper, not every possible Windows encoder implementation. Startup
+skip counts are updated for every record, including probes with zero cycles.
+
+A previously pinned, stopped tap can be rearmed **explicitly** using
+`start-native.ps1 -Attach -Reattach -LoadedTap <exact-loaded-DLL-path>` with the
+usual build/output/engine identity parameters. This checks its loaded full path,
+file hash, original wrapper bytes and existing in-DLL running guard. Ordinary
+`-Attach` still rejects an already loaded tap. No automatic retry is added.
+Stop requests wait up to two seconds for an outstanding half-cycle to complete;
+a stalled/truncated final cycle is a failure, never silence padding or clean END.
+Account for this boundary drain when preparing a bounded probe.
+
+The software verifier also builds `mat-live-check.exe` and tests its loopback
+UDP/RTP/FEC adapter using separately labelled generated software fixtures. To
+use the checker after a real publisher has reported `NATIVE_MAT_READY`:
+
+```text
+mat-live-check --pipe LIVE_PIPE --producer EXACT_PRODUCER --max-seconds 30 --drop-for-fec
+```
+
+It accepts only the native pipe and process identity contract. There is no
+file/generated-source option. It uses the host's real live sender, ephemeral
+GCM session keys, loopback UDP, 4+2 audio FEC and actual common-c AudioStream
+decode path. Each received cycle and the whole stream must match source SHA256;
+counts, carrier clock, authenticated END and every deliberately lost packet's
+FEC recovery must match. Audio payloads are never written to disk. The timeout
+fails the check; it does not convert cancellation into successful EOS. Stop the
+publisher cleanly before it expires. The result reports actual RTP wrap status.
+
+This tool does not open an audio sink or exercise a complete Sunshine RTSP/video
+session. A loopback pass is source/transport bring-up evidence; supported HDMI
+client playback, sustained full-session streaming and game A/V timing are
+separate acceptance steps. Missing source, a file path or a half-cycle failure
+cannot produce a successful result.
+
 The software verifier uses generated carrier-shaped bytes, the actual host live
 sender, actual common-c RTP/FEC queue and AudioStream receiver. Each long test
 passes 78,000 data packets across RTP16 wrap; the independent Python cryptography

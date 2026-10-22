@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <mmdeviceapi.h>
+#include <audioclient.h>
 #include <spatialaudioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
@@ -27,11 +28,11 @@ static void Check(HRESULT hr, const char* what) {
     }
 }
 
-static std::vector<ComPtr<IMMDevice>> Devices() {
+static std::vector<ComPtr<IMMDevice>> Devices(DWORD states = DEVICE_STATE_ACTIVE) {
     ComPtr<IMMDeviceEnumerator> en;
     Check(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en)), "Enumerator");
     ComPtr<IMMDeviceCollection> col;
-    Check(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &col), "EnumAudioEndpoints");
+    Check(en->EnumAudioEndpoints(eRender, states, &col), "EnumAudioEndpoints");
     UINT n = 0;
     Check(col->GetCount(&n), "GetCount");
     std::vector<ComPtr<IMMDevice>> out;
@@ -44,13 +45,40 @@ static std::vector<ComPtr<IMMDevice>> Devices() {
 }
 
 static void List(const std::vector<ComPtr<IMMDevice>>& devices) {
+    ComPtr<IMMDeviceEnumerator> en;
+    Check(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en)), "Enumerator");
+    std::wstring defaults[3];
+    for (int role = 0; role < 3; ++role) {
+        ComPtr<IMMDevice> d; LPWSTR id = nullptr;
+        if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, static_cast<ERole>(role), &d)) &&
+            SUCCEEDED(d->GetId(&id))) { defaults[role] = id; CoTaskMemFree(id); }
+    }
     for (size_t i = 0; i < devices.size(); ++i) {
+        DWORD state = 0;
+        Check(devices[i]->GetState(&state), "Endpoint state");
+        LPWSTR id = nullptr;
+        Check(devices[i]->GetId(&id), "Endpoint ID");
+        printf("endpoint=%s state=0x%X defaultConsole=%d defaultMultimedia=%d defaultCommunications=%d\n",
+            Utf8(id).c_str(), state, defaults[0] == id, defaults[1] == id, defaults[2] == id);
+        CoTaskMemFree(id);
         ComPtr<IPropertyStore> props;
         PROPVARIANT name{};
         devices[i]->OpenPropertyStore(STGM_READ, &props);
         if (props) props->GetValue(PKEY_Device_FriendlyName, &name);
         printf("[%zu] %s\n", i, Utf8(name.vt == VT_LPWSTR ? name.pwszVal : L"?").c_str());
         PropVariantClear(&name);
+        if (state != DEVICE_STATE_ACTIVE) continue; // Never activate an inactive endpoint.
+        ComPtr<IAudioClient> audio;
+        HRESULT mixHr = devices[i]->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &audio);
+        WAVEFORMATEX* mix = nullptr;
+        if (SUCCEEDED(mixHr)) mixHr = audio->GetMixFormat(&mix);
+        printf("  MixFormat=0x%08lX", static_cast<unsigned long>(mixHr));
+        if (SUCCEEDED(mixHr)) {
+            printf(" channels=%u rate=%u bits=%u tag=0x%04X", mix->nChannels, mix->nSamplesPerSec,
+                mix->wBitsPerSample, mix->wFormatTag);
+            CoTaskMemFree(mix);
+        }
+        printf("\n");
         ComPtr<ISpatialAudioClient> client;
         HRESULT hr = devices[i]->Activate(__uuidof(ISpatialAudioClient), CLSCTX_ALL, nullptr, &client);
         printf("  ActivateSpatialClient=0x%08lX", static_cast<unsigned long>(hr));
@@ -190,6 +218,8 @@ int wmain(int argc, wchar_t** argv) {
     unsigned objectCount = 1;
     unsigned variant = 0;
     bool accessOnly = false;
+    bool all = false;
+    std::wstring endpoint;
     std::wstring gateName;
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
@@ -197,6 +227,8 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--seconds" && i + 1 < argc) seconds = _wtof(argv[++i]);
         else if (a == L"--emit") emit = true;
         else if (a == L"--access-only") accessOnly = true;
+        else if (a == L"--all") all = true;
+        else if (a == L"--endpoint" && i + 1 < argc) endpoint = argv[++i];
         else if (a == L"--objects" && i + 1 < argc) objectCount = _wtoi(argv[++i]);
         else if (a == L"--variant" && i + 1 < argc) variant = _wtoi(argv[++i]);
         else if (a == L"--gate" && i + 1 < argc) gateName = argv[++i];
@@ -212,7 +244,18 @@ int wmain(int argc, wchar_t** argv) {
             if (wait != WAIT_OBJECT_0) throw std::runtime_error("Gate timeout");
         }
         Check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "CoInitializeEx");
-        auto devices = Devices();
+        if (all && emit) return 2;
+        auto devices = Devices(all ? DEVICE_STATEMASK_ALL : DEVICE_STATE_ACTIVE);
+        if (!endpoint.empty()) {
+            if (device != -1) return 2;
+            for (size_t i = 0; i < devices.size(); ++i) {
+                LPWSTR id = nullptr;
+                Check(devices[i]->GetId(&id), "Endpoint ID");
+                bool match = endpoint == id; CoTaskMemFree(id);
+                if (match) { device = static_cast<int>(i); break; }
+            }
+            if (device == -1) throw std::runtime_error("Explicit endpoint is not active; no reselection");
+        }
         if (emit) {
             if (device < 0 || device >= static_cast<int>(devices.size()) || seconds <= 0 || seconds > 60) return 2;
             if (objectCount < 1 || objectCount > 2) return 2;

@@ -1,6 +1,36 @@
 MAT 实时采集与串流：实现/构建通过，原生挂接通过，MAT 数据验收未通过
 2026-10-22，Asia/Hong_Kong
 
+后续排查与代码补充（本轮未重新注入）
+------------------------------------
+全端点枚举：F32D80U、SONY TV 等 HDMI 音频端点均为 NOTPRESENT (0x4)。
+默认 Steam Streaming Speakers 为双声道 48 kHz，可用动态对象数为 0；
+UUYC/Realtek 为 128，但动态对象支持不代表 MAT 输出。当前会话审计瞬时峰值
+全部为 0，不能追溯为整个上轮 15 秒均无声。DolbyMatEnc/Engine 文件哈希匹配。
+因此有明确的输入路由缺口；仍不能仅凭旧 cycles=0 断言 Process 从未调用。
+
+新增逐记录诊断：calls/records/bytes/empty/HRESULT/frames/bytes/preamble/loss，
+无完整周期也保留 startupSkippedRecords；日志不包含音频原始字节。
+修正停滞检查用队列处理前时间减去新周期时间的无符号下溢隐患；
+此前 failed=0 的零周期结果不应归因于这个尚未触发的新发现问题。
+显式 --reattach 检查已加载 DLL 完整路径、文件哈希、引擎身份、原始 prologue
+和 DLL 内运行互斥；普通 --attach 不自动重试。边界停止不截断/填补半个周期。
+
+新增 mat-live-check.exe：仅原生实时管道输入 -> 正式 live sender -> 回环 UDP
+-> 4+2 RTP/FEC -> 实际 common-c AudioStream 接收 -> 每周期及整流 SHA256。
+超时/取消不作为干净 EOS；没有文件/生成源输入选项，也不打开音频硬件输出。
+缺失管道和文件路径的拒绝检查通过。独立生成软件字节用例各 1300 周期，
+覆盖 RTP16 回绕；一例无丢包，另一例 391 个刻意丢弃的密文数据包全部恢复。
+两份 common-c 14/14、21 个 RTSP 协商用例及加密 oracle 再次通过。
+本轮仍无真实 MAT 数据，未执行新的端点切换/驱动服务修改/注入/样本回放。
+上述 UDP 测试不是完整 Sunshine RTSP/视频会话或 HDMI/Atmos 硬件验收。
+等待选择真实输入链路，再准备有目标、时限与恢复检查的新实采。
+
+新证据：build/mat-live-source-audit-v1/（只读端点、会话和拒绝检查）、
+build/mat-live-source-software-v3/proof.json（软件测试）、
+build/mat-live-source-native-v4/（仅编译，未加载到 audiodg）。
+以下为此前完成阶段的详细记录，原授权均已消耗，不授予本轮新的注入权限。
+
 当前实现
 --------
 正常偏好值 6 在会话前只选择实时 mat-live-v1 / codec 7 或 Opus / codec 0。

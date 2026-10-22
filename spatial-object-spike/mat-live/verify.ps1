@@ -37,6 +37,8 @@ foreach($name in @('MatLivePlayback','MatReceiver','MatDepacketizer')){
 if($LASTEXITCODE){throw 'Actual live sender/assembler compile failed'}
 & "$out/host-test.exe" *> "$out/host-tests.log"
 if($LASTEXITCODE){throw 'Actual live sender/assembler regression failed'}
+& "$PSScriptRoot/build-live-check.ps1" -CommonBuild "$out/host-common" -Output "$out/live-check" *> "$out/live-check-build.log"
+if($LASTEXITCODE){throw 'Native-only checker / software UDP+FEC regression failed'}
 & gcc.exe -O2 -std=c11 -Wall -Wextra -Werror -DHAS_SOCKLEN_T "-I$common/src" "$PSScriptRoot/../mat-android-session/negotiation_client.c" "$out/host-common/libmoonlight-common-c.a" "$out/host-common/enet/libenet.a" -static-libgcc -lcrypto -lws2_32 -lwinmm -lbcrypt -lcrypt32 -liphlpapi -o "$out/negotiation-client.exe"
 if($LASTEXITCODE){throw 'Production RTSP frontend compile failed'}
 & $Python "$PSScriptRoot/../mat-android-session/capability_negotiation_test.py" --client "$out/negotiation-client.exe" --output "$out/negotiation" *> "$out/negotiation.log"
@@ -44,5 +46,6 @@ if($LASTEXITCODE){throw 'Production RTSP live/Opus negotiation failed'}
 foreach($source in $sourceHashes){if((Get-FileHash -LiteralPath $source.path).Hash.ToLower() -ne $source.sha256){throw "Source changed during verification: $($source.path)"}}
 $hashes=@(Get-ChildItem -LiteralPath $out -Recurse -File | Where-Object Extension -In '.log','.json','.exe' | ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLower()}})
 @{result='PASS';scope='Software live MAT sender / RTP+FEC receiver / authenticated transport / negotiation; synthetic test bytes only';
- commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTestsPerCopy=14;rtspCases=21;logicalDataPacketsPerLongTest=78000;nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
+ commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTestsPerCopy=14;rtspCases=21;logicalDataPacketsPerLongTest=78000;
+ generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS live MAT software verification: $out/proof.json"

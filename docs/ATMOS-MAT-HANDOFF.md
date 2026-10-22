@@ -1,5 +1,20 @@
 # 2026-10-22 续作：原生实时 MAT 链路
 
+后续本机续查：全端点只读枚举确认 F32D80U、SONY TV 等 HDMI 音频端点均为
+`DEVICE_STATE_NOTPRESENT (0x4)`，默认 Steam Streaming Speakers 为双声道
+48 kHz、可用动态对象数 0。UUYC 和 Realtek 为 128，但不能据此认定输出 MAT。
+当前会话审计的瞬时峰值全为 0；这不证明整个探测期间无声。Dolby 两个组件的
+文件 SHA 与历史原生实验一致。当前未进行新的注入、端点切换或样本回放。
+
+修正采集循环旧时间快照可能早于刚收到的周期、导致无符号下溢误报停滞的问题。
+新增逐记录零周期诊断、严格显式重用已停止 tap 和无文件输入的实时管道 loopback
+检查器。生成软件字节的 UDP/RTP/FEC 回归通过，包含回绕及 391 包丢失恢复；
+缺失管道和文件路径均拒绝。检查器尚未接到真实 MAT，不能当作实采成功。
+新证据入口为 `build/mat-live-source-audit-v1/`、
+`build/mat-live-source-software-v3/proof.json`；实现/使用边界见 live README。
+主机实采源与完整 Sunshine/硬件端到端验收仍待；连接输入链路的选择正在本聊天
+询问用户。不要从本文或历史一次授权推导出新的 audiodg 注入权限。
+
 当前开发分支为 `codex/atmos-mat-live`。正常偏好值 6 现在只协商实时 codec 7 或
 Opus 0，不会自动选择有限回放 codec 5。客户端继续沿用输出能力预检与路由失效
 终止逻辑，不支持 MAT 的手机走 Opus；不继续手机 MAT 还原或对象渲染。
