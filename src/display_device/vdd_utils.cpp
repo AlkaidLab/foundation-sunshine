@@ -1068,9 +1068,15 @@ namespace display_device {
         case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
           // VDD为副屏模式：物理显示器为主屏，VDD作为扩展显示器
           BOOST_LOG(info) << "应用vdd_prep: 物理显示器为主屏，VDD为副屏";
-          // 物理显示器放在前面（第一个为主显示器）
+          // 不能按物理显示器的枚举顺序选择主屏；枚举结果不保证首个设备就是原主屏。
+          // 先放入 VDD 创建前识别的原主屏，避免把副屏误设为主屏。
+          if (!original_primary_id.empty() && original_primary_id != vdd_device_id) {
+            new_topology.push_back({ original_primary_id });
+          }
           for (const auto &physical_id : physical_devices) {
-            new_topology.push_back({ physical_id });
+            if (physical_id != original_primary_id) {
+              new_topology.push_back({ physical_id });
+            }
           }
           // VDD单独一组（作为副显示器）
           new_topology.push_back({ vdd_device_id });
