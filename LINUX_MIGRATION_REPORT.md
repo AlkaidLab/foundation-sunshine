@@ -568,6 +568,33 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   服务器；XWayland 侧写操作被接受但布局不变（其 RandR 是只读镜像）。sway/Hyprland 等
   wlroots 兜底仍未做（见 `LINUX_PORT_GAPS.md` §2.10）。
 
+### 6.22 客户端身份：虚拟屏的规范标识（§1.1 阶段一）
+
+- **问题**：Windows 把每客户端的 GUID 交给 ZakoVDD（`CREATEMONITOR {GUID}:...`），所以每客户端
+  是自己的显示器；Linux 没有驱动可交，只能占用物理连接器 + EDID override，而客户端标识此前
+  **只进了一行日志**（`vdd_utils::generate_client_guid` 在 Linux 半边恒返回空串）。后果是合成器
+  把一个虚拟屏当成所有客户端共用的一台显示器，宿主机重启后也无从判断某连接器属于谁。
+- **实现**：新增共享的 `src/vdd_client_identity.{h,cpp}`（加入 `cmake/sources/host.cmake`，
+  Windows 同样编译）：
+  - `guid_for_identifier()`：RFC 4122 v5（SHA-1，nil 命名空间）UUID，格式与 Windows 交给驱动的
+    完全一致（花括号 + 小写十六进制）。
+  - `serial_for_identifier()`：同一次派生的前 32 位，永不为 0——EDID 的 serial-number 字段
+    （字节 12..15）是**唯一**能承载客户端身份的位置：产品名必须保持 `ZAKO_NAME`，而基块的四个
+    描述符槽（DTD1 / 0xFC / 0xFD / DTD2）已全部占用。
+  - `vdd_utils.cpp` 两个平台半边的 `generate_client_guid()` 都改为委托这一个实现，杜绝同名不同值。
+  - `src/platform/linux/vdd_edid.cpp` 在有客户端标识时用它替换旧的"按分辨率/刷新率派生"序号；
+    **无标识符时保持旧值不变**，因此既有的单客户端配置不会被认成新显示器（保住用户已保存的
+    显示设置）。`serial_number_of()` 供采纳路径读回。
+  - `vdd_utils.cpp` 的采纳路径（`adopt_orphan_vdd_locked`）现在会读出并记录该串号，创建路径也
+    记录客户端 GUID + 串号。
+- **验证**：`tests/unit/test_vdd_client_identity.cpp` 5 例 + `test_vdd_edid.cpp` 新增 4 例——
+  期望 GUID 由 Python `uuid.uuid5(uuid.UUID(int=0), name)` 独立复算（`living-room-tv` →
+  `{fed83b8c-4d8b-5380-93f9-2613daf4e420}`），因此这条断言同时钉住"两平台同源"；串号等于 GUID
+  前 32 位、恒非零、随标识符而变、无标识符时回落到历史序号；两个客户端的 EDID 只有 seq 字段不同，
+  产品名一致。
+- **仍缺（阶段二）**：并行多实例——`vdd_utils.cpp` 的 `active*` 仍是单实例状态，第二客户端接入
+  仍走销毁重建；详见 `LINUX_PORT_GAPS.md` §1.1。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -643,7 +670,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 733 用例，719 通过，12 跳过，2 失败
+test_sunshine: 796 用例，782 通过，12 跳过，2 失败
 ```
 
 两个失败都是上游新增用例的**环境依赖**，不是移植回归（详见 `LINUX_PORT_GAPS.md` §7.2 / §7.3）：
