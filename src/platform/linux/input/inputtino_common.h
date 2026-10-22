@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <set>
 
 #include <boost/locale.hpp>
@@ -66,17 +67,24 @@ namespace platf {
      */
     void
     init_dsu_server() {
-      if (dsu_server || dsu_start_attempted) {
-        // Attempted is not the same as running: a failed bind must not be
-        // retried on every single motion event (each retry would create and
-        // connect a socket, then log again).
+      if (dsu_server) {
         return;
       }
-      dsu_start_attempted = true;
+      // A failed bind must not be retried on every motion event: motion arrives
+      // hundreds of times a second and each attempt creates a socket, binds, and
+      // logs. It must not be abandoned for the session either, because the port
+      // is often held by another instance that may exit later. So: retry, but at
+      // most once per interval.
+      const auto now = std::chrono::steady_clock::now();
+      if (now < next_dsu_attempt) {
+        return;
+      }
+      next_dsu_attempt = now + kDsuRetryInterval;
 
       auto server = std::make_unique<dsu_server_t>(config::input.dsu_server_port);
       if (server->start()) {
-        BOOST_LOG(error) << "DSU server failed to start; emulators will not see motion data";
+        BOOST_LOG(error) << "DSU server failed to start; emulators will not see motion data (retrying in "
+                         << std::chrono::duration_cast<std::chrono::seconds>(kDsuRetryInterval).count() << "s)";
         return;
       }
       dsu_server = std::move(server);
@@ -106,8 +114,10 @@ namespace platf {
 
     /// Null unless `enable_dsu_server` is set and the socket bound.
     std::unique_ptr<dsu_server_t> dsu_server;
-    /// Set once `init_dsu_server()` has run, whether or not the bind succeeded.
-    bool dsu_start_attempted = false;
+    /// How long to wait before the next bind attempt after a failed one.
+    static constexpr std::chrono::seconds kDsuRetryInterval { 30 };
+    /// Earliest time the next `init_dsu_server()` may try to bind again.
+    std::chrono::steady_clock::time_point next_dsu_attempt {};
     bool dsu_uninitialized_warning_logged = false;
   };
 
