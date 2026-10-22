@@ -1,16 +1,16 @@
 MAT upstream integration / no-device acceptance — 2026-10-22
 =========================================================
-RESULT: PASS. Fresh evidence: build/mat-upstream-full/proof.json;
-supplemental evidence: build/mat-upstream-full/supplemental.json.
+RESULT: PASS. Final evidence: build/mat-upstream-final/proof.json;
+supplemental evidence: build/mat-upstream-final/supplemental.json.
 These are new records, not modified copies of the original C-PROOF.json.
 
 Integrated versions
 -------------------
 Host master: c211d7119c51a8248be70a0b413685f48c1094ef
 Shared mic: 2aa14ffeb877f9093993d9c9cf3c3440e2d2220d
-Shared resulting commit: cdd4aaecd7919878a0472e6ca18a65461a85984a
-Tested host source snapshot: d06ed19019533364e6091fd6bf950ed2cc4d2560
-Tested Android parent: 552b9b63d74de5f571fdca6badd9fe4da73c8e1f
+Shared resulting commit: 773bebded05624e275106ce1fa4bb9aa32726535
+Tested host source snapshot: d744e5e8cab3407dd017261b2be3b5669e29e36a
+Tested Android parent: 95fba0751bc1bf4cd4d6e3411ad428bac722403d
 PyroWave: cc91cbf6363721d19d135d05ca8e3d8665ea6afd
 Granite: fd1c9f6652e708fdc52773883c60b58ee3f80855
 Later handoff-only commits do not change the tested runtime code. Main evidence
@@ -37,8 +37,17 @@ Fresh full C acceptance
 First normally link the host:
   ./spatial-object-spike/mat-rtsp-live/build-host.ps1
 Then run the entire verification orchestration, with a NEW output directory:
-  ./spatial-object-spike/mat-android-session/verify.ps1 -Output ./build/mat-upstream-full -SkipHostBuild -Port 52410
+  ./spatial-object-spike/mat-android-session/verify.ps1 -Output ./build/mat-upstream-final -SkipHostBuild -Port 52610
 The complete second command succeeded, including its final evidence freeze.
+The first full run (mat-upstream-full) passed on the merged shared snapshot.
+Remote CI then exposed strict-compiler issues: two misleading-indentation
+warnings and CRT deprecation warnings because MAT headers preceded Platform.h.
+Fixes preserve warning policy: split statements, bounded memcpy instead of
+strcpy, and restore Platform.h-first inclusion. All MAT C modules passed local
+GCC -Wall/-Wextra/-Werror; Connection/RTSP/MAT modules passed MSVC /W3 /WX.
+Afterward the entire acceptance orchestration was rerun into mat-upstream-final.
+The host runtime code and executable did not change in these shared C-only fixes;
+the final tests reuse the same normally linked, aligned host identified below.
 
 Host executable SHA256:
   03ee0e2743b44dba586f712cdf2ecb58f3666b9b52025b326a1805d9a3bf9c7c

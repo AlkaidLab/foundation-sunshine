@@ -15,7 +15,7 @@
 共享 PR：[moonlight-common-c #40](https://github.com/qiin2333/moonlight-common-c/pull/40)，
 安卓 PR：[moonlight-vplus #750](https://github.com/qiin2333/moonlight-vplus/pull/750)。
 主机 PR：[foundation-sunshine #1177](https://github.com/AlkaidLab/foundation-sunshine/pull/1177)。
-两个父仓库使用的 shared commit 为 `cdd4aaecd7919878a0472e6ca18a65461a85984a`。
+两个父仓库使用的 shared commit 为 `773bebded05624e275106ce1fa4bb9aa32726535`。
 common-c 改了 STREAM_CONFIGURATION/JNI 接口，必须一起重新编译，不能混用旧库。
 已按用户要求合并主机 master `c211d711`、共享库 mic
 `2aa14ffeb877f9093993d9c9cf3c3440e2d2220d`，未执行 PR 合并。
@@ -89,7 +89,7 @@ common-c 各 9 个 CTest。完整 app Kotlin/Java 编译及 NDK MAT 模块链接
 ### 上游合并后的本轮验收（2026-10-22）
 
 报告：`spatial-object-spike/mat-android-session/MAT-UPSTREAM-RESULT.txt`。
-新证据 `build/mat-upstream-full/proof.json`，不是旧 C-PROOF 的改写。
+最终新证据 `build/mat-upstream-final/proof.json`，不是旧 C-PROOF 的改写。
 已重新构建正常主机，再完整执行 verify.ps1 编排（`-SkipHostBuild` 仅跳过刚完成的主机构建）：
 三种加密组合的 codec5 播放与 codec4 落盘共六次真实隔离会话，全部 178 周期/
 10,936,320B/SHA 一致；播放最终硬件仍为 fake。两台测试主机均正常退出。
@@ -104,6 +104,13 @@ M1–M3 自有进程 fake 回归也通过；完整 Moonlight native application/
 `evidence/upstream-20261022/` 为本轮记录，原路径的 C-PROOF 保留历史含义。
 M1–M3 全量 fake 回放还需私下保留的对象/调用计划 oracle，默认 MAT 转移包不含
 这些原始捕获；不要误以为仅 3.56 秒 MAT 即可复现所有历史原生桥接实验。
+
+远端 CI 首次暴露的 Linux indentation warning 和 MSVC CRT warning 已修复：
+不降低警告级别，拆开两处压缩语句；有界路径复制用 memcpy；恢复 Platform.h
+先于 MAT 标准库头文件包含的顺序。最终共享库另经本机 GCC -Wall/-Wextra/-Werror
+与 MSVC /W3 /WX 严格编译，修正后再次完整跑无真机编排并冻结最终 proof。
+较早的 `mat-upstream-full` 及转移包仅为中间快照，使用 `mat-upstream-final` 和
+最终新版交接包。远端 CI 与本地验收结果分开记录，不把 pending 当通过。
 
 当前机可运行 `./tools/mat-handoff/make-bundle.ps1 -Output <全新目录> -Verification <新验收目录>`，生成仅含
 固定录制、本文、历史 proof 和新验收摘要的本地 ZIP；不上传、不含密钥/证书/运行状态/
