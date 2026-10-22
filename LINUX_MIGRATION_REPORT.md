@@ -752,6 +752,26 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   sway/wlroots/wlr-randr 都未安装，无法起一个来做端到端；因此这条后端的正确性证据是
   协议/源码契约 + 单测 + 失败分类的实测，而不是一次真实的模式切换。
 
+### 6.27 显示后端的判定顺序（可测契约）
+
+- **问题**：五个后端都可能对同一个会话"举手"，其中两个还会在**不属于它**的会话里应答：
+  XWayland 在**每一个 Wayland 会话**里都应答 RandR 读，KScreen 只要 `kscreen-doctor` 存在就应
+  答（wlroots 合成器并不理会它）。所以"先问谁"不是实现细节而是契约：先问 RandR 会让
+  sway/Hyprland 会话悄悄落到真实输出的只读镜像上。
+- **做法**：把顺序抽成 `src/platform/linux/display_backend.h` 里的 header-only 选择器
+  `platf::select_display_backend(supported)`——按 `niri → mutter → wlr_randr → xrandr → kscreen`
+  依次问谓词，**第一个举手就是答案，之后的谓词一次都不调用**（探测不白花，尤其 wlroots 的探测
+  可能真的去跑一次 `wlr-randr`）。`display_device.cpp` 的 `compositor_is_*()` 四个助手与
+  `query_outputs()` 的派发都改成经由 `selected_backend()`，成本与改前逐次问助手完全相同。
+- **理由写在头文件里**，逐条对应：niri 有独占 socket；Mutter 占一个只有 GNOME 会发布的
+  bus name；wlroots 的 output manager 才是连接器真正的所有者；RandR 是裸 X11 会话仅剩的
+  API；KScreen 是兜底（它没有自己的探测，所以是"其他都拒绝之后剩下的那个"）。KScreen 的排除
+  条件仍写在 xrandr 谓词内部（Plasma 会话不能被 XWayland 镜像服务），顺序本身不掺平台判断。
+- **测试**：`tests/unit/test_display_backend.cpp` 7 例，用假谓词把顺序钉死，无需任何合成器
+  （一台机器装不下 Plasma/GNOME/niri/sway 四种会话）——含"wlroots 必须赢过 XWayland 镜像"
+  这一条，以及"探测在胜者处停止"（全举手时只问了 niri；无人举手时问满四个后落到 KScreen）。
+- **未覆盖**：真会话里的端到端（要真起 sway/GNOME），同 §6.16/§6.18/§6.26 的诚实边界。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -767,7 +787,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
 | Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测已移植（KDE + niri，§6.6） |
 | 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
-| 物理显示器 display_device | 五个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ wlroots（wlr-randr）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR，镜像 kscreen/Mutter/RandR（§6.2、§6.16、§6.18、§6.21、§6.26） |
+| 物理显示器 display_device | 五个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ wlroots（wlr-randr）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR，镜像 kscreen/Mutter/RandR；判定顺序为可测契约（§6.2、§6.16、§6.18、§6.21、§6.26、§6.27） |
 | 剪贴板主机同步（文本 + 图片） | KDE：文本走 klipper sd-bus、图片走 ext-data-control；无 klipper 的桌面（niri/sway/Hyprland）文本也走 ext-data-control。共用帧/回声/blob 回退（§6.4、§6.14） |
 | 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
 | HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
@@ -823,11 +843,11 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ## 九、测试基线
 
-2026-10-22（并入上游 `7a0995e2` 之后，pkgrel 82），CUDA=ON 构建树：
+2026-10-22（并入上游 `7a0995e2` 之后，pkgrel 84），CUDA=ON 构建树：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 814 用例，801 通过，12 跳过，1 失败
+test_sunshine: 821 用例，808 通过，12 跳过，1 失败
 ```
 
 唯一失败的是 `DownloadFileTests/DownloadFileTest.Run/1`（访问 `https://httpbin.org/...`，离线必失败）

@@ -65,7 +65,7 @@
 - **验收**：`tests/unit/test_vdd_instances.cpp` 9 例全绿——同一标识符定位到自己的记录、收养来的屏
   靠串号也能认领、陌生客户端**不会**继承别人的屏（回归就是这个）、无身份调用保持单槽行为、
   空闲连接器按序分配、独占关掉的物理输出被跳过、两客户端最终落在不同连接器上。
-  合并后全量 `test_sunshine` 805 例 / 791 通过 / 12 跳过 / 2 项环境依赖失败（§7.2/§7.3），无新增失败。
+  合并后全量 `test_sunshine` 821 例 / 808 通过 / 12 跳过 / 1 项环境依赖失败（§7.2，已被 ctest 门禁过滤），无新增失败。
 
 ### 1.2 ✅ HDR 亮度分析精度（2026-10-22 完成，走 CPU 而非 GPU）
 
@@ -596,6 +596,21 @@ Windows 三个后端 override 它（`display.h`、`display_vdd.cpp:1453`、`disp
   拿不到 fb handle 放弃。
 - **结论**：给测试二进制加上能力即会通过。不要改动上游夹具把它变成 skip——那会在 Windows CI 上
   掩盖真实的 `platf::init()` 失败。`ctest` 的 `test_sunshine` 因此仍报红，属预期。
+
+### 7.6 ✅ 显示后端判定顺序（工程质量，2026-10-22）
+
+五条显示后端（kscreen / niri / Mutter / wlroots / RandR）里，有两条会在**不属于它**的会话里应答：
+XWayland 在每一个 Wayland 会话里都应答 RandR 读，KScreen 只要 `kscreen-doctor` 存在就应答。因此
+"先问谁"本身就是契约，`display_device.cpp` 里四个匿名 namespace 的 `compositor_is_*()` 助手
+却把它藏在调用图里，无法单测。
+
+**已抽成 `src/platform/linux/display_backend.h`**：header-only 的
+`platf::select_display_backend(supported)` 按 `niri → mutter → wlr_randr → xrandr → kscreen`
+依次问谓词，第一个举手即答案、之后的谓词一次都不调用（探测不白花；wlroots 的探测可能真的去跑
+一次 `wlr-randr`）。`compositor_is_*()` 与 `query_outputs()` 的派发都改为经由
+`selected_backend()`，逐次探测成本与改前完全相同；顺序理由逐条写在头文件里。
+`tests/unit/test_display_backend.cpp` 7 例用假谓词钉死顺序（含"wlroots 必须赢过 XWayland 镜像"
+与"探测在胜者处停止"），无需任何合成器。
 
 ### 7.5 已随本次同步自动继承（无需后续动作，记录以免误判为缺口）
 
