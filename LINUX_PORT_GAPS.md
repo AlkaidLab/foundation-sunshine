@@ -1,6 +1,6 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（pkgrel 72，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（pkgrel 77，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
   上一个同步点是 `ed415026`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：待办工作清单。每项含现状钩子（代码位置）、技术路径、预估工作量、验收标准
@@ -13,12 +13,14 @@
 
 核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 配置全组合模式表 + prep 模式 + 独占还原 +
 残留 adopt）、物理显示器 display_device（kscreen/niri 分辨率/拓扑 + 持久化还原）、HDR 三件套
-（静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
+（静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本+图片双向（KDE 走 klipper+合成器，
+非 KDE 桌面走合成器）、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**4 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
+剩余：**3 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
 §2.10 残余/§2.11）、**9 项本质不可移植**（§三）。
-（2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
+（2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.3 剪贴板图片 + 非 KDE
+桌面 provider、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
 拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
@@ -54,17 +56,20 @@
   有限/全范围一致、MSB/LSB 对齐一致、4:2:0 色度覆盖到每个像素、无色度回退亮度、黑帧
   near-black 覆盖率为 1、坏帧不发布零值、序列号逐帧递增、BT.709 走自己的矩阵。
 
-### 1.3 剪贴板非文本类 + 非 KDE provider
+### 1.3 ✅ 剪贴板图片 + 非 KDE 桌面 provider（2026-10-22 完成）
 
-- **现状**：`src/clipboard_host.cpp` 仅处理 KIND_TEXT（klipper D-Bus 只支持文本读写）；
-  KIND_PNG / KIND_FILE_OFFER 的**主机写入侧**缺失；非 KDE 桌面无任何 provider。
-  大文本的 KIND_REF blob 回退**已实现**。
-- **若要做**：
-  - 图片：写 wlr-data-control Wayland 协议客户端（KWin 支持；wayland-scanner 生成协议码，构建已有
-    wayland 依赖）。SELECTION 源设 PNG+text/uri-list。
-  - 大文件：接 file-offer 语义（blob store 已跨平台）。
-  - 非 KDE：X11 XFixes selection 监听（项目已链接 X11）。
-- **工作量**：中（wlr-data-control 客户端是大头）。**验收**：手机复制截图 → 主机粘贴为图片。
+- **现状**：`src/platform/linux/clipboard_data.{h,cpp}`（`ext_data_control_v1`）双向承载
+  **图片与文本**。图片：PNG 发布/接收（`/tmp` 三尺寸实测 md5 一致）。文本：原先只有 klipper
+  一条路，非 KDE 桌面（niri/sway/Hyprland）上双向都不工作；现在启动时探测 klipper
+  （`klipper_present()`，一次 `klipper_get` 探针），**缺失且 data-control 可用时自动改走合成器**
+  （`ext_text`），发布/接收都带 UTF-8 mime 协商（`src/platform/linux/clipboard_mime.h`：
+  `text/plain;charset=utf-8` → `UTF8_STRING` → `text/plain`，非 UTF-8 字符集直接拒收而不是转码
+  成乱码）。真机实测：`set_text` → `wl-paste` 读到同一字符串；外部 `wl-copy` → sink 收到。
+  mime 策略由 `tests/unit/test_clipboard_mime.cpp` 10 例覆盖。
+- **仍缺**：`KIND_FILE_OFFER`（主机侧写 uri-list）→ 见 §2.1b；klipper 仍优先于合成器（KDE 上文本
+  仍走 klipper，避免两套文本源互相覆盖）。
+- **验收（已达成）**：Plasma 6 下手机/客户端复制截图 → 主机粘贴为图片；无 klipper 的桌面复制文本
+  → 主机粘贴得到同一文本。
 
 ### 1.4 display_device 复制拓扑 + 非 KDE 桌面
 

@@ -44,7 +44,7 @@
 #include "clipboard_echo.h"
 #include "clipboard_wire.h"
 #ifdef SUNSHINE_BUILD_WAYLAND
-  #include "src/platform/linux/clipboard_image.h"
+  #include "src/platform/linux/clipboard_data.h"
 #endif
 #include "src/config.h"
 #include "src/logging.h"
@@ -82,9 +82,15 @@ namespace clipboard_host {
     std::thread poll_thread;
 
 #ifdef SUNSHINE_BUILD_WAYLAND
-    /// Image half (desktop <-> clients). Null when the session has no
-    /// data-control protocol, which leaves the provider text-only.
-    std::unique_ptr<platf::clipboard_image::watcher_t> image_watcher;
+    /// Compositor half (desktop <-> clients): always images, and text too when
+    /// klipper is absent. Null when the session has no data-control protocol.
+    std::unique_ptr<platf::clipboard_data::watcher_t> data_watcher;
+    /// True when this desktop has no klipper, so text must go through the
+    /// compositor as well (niri, sway, Hyprland, plain weston).
+    std::atomic<bool> ext_text { false };
+    std::mutex text_mu;
+    /// Text we last saw or published, so an unchanged selection is not re-posted.
+    std::optional<std::string> last_text;
     std::mutex image_mu;
     /// Fingerprint of the picture we last saw or published, so a session that
     /// starts mid-stream does not replay whatever was already on the clipboard.
@@ -263,6 +269,49 @@ namespace clipboard_host {
     }
 
     /**
+     * @brief Desktop -> clients, text over the compositor's clipboard.
+     * @details Only used when klipper is absent; mirrors the klipper poll path
+     *          (same echo suppression, same empty/NUL rejection, same
+     *          "unchanged is not a change" rule).
+     */
+    void
+    on_desktop_text(std::string text) {
+      if (text.empty() || text.find('\0') != std::string::npos) {
+        return;
+      }
+
+      {
+        std::lock_guard<std::mutex> lk { text_mu };
+        if (last_text && *last_text == text) {
+          return;
+        }
+        last_text = text;
+      }
+
+      if (!config::input.clipboard_sync) {
+        return;
+      }
+      if (clipboard_bridge::bridge_t::instance().session_count() == 0) {
+        return;
+      }
+
+      bool is_echo = false;
+      {
+        std::lock_guard<std::mutex> lk { echo_mu };
+        const auto bytes = std::span<const std::uint8_t> {
+          reinterpret_cast<const std::uint8_t *>(text.data()), text.size() };
+        is_echo = echo_ring.is_echo(clipboard_bridge::kKindText, bytes);
+      }
+      if (is_echo) {
+        BOOST_LOG(debug) << "Clipboard text matches what a client wrote; skipping"sv;
+        return;
+      }
+
+      enqueue_item(clipboard_bridge::kKindText, clipboard_bridge::kMimeText,
+        payload_t { text.begin(), text.end() }, "text"sv);
+    }
+
+    /**
      * @brief Clients -> desktop, image half.
      * @details Recorded in the echo ring before the compositor sees it, so the
      *          selection event our own write produces is not posted back.
@@ -272,7 +321,7 @@ namespace clipboard_host {
       if (png.empty()) {
         return;
       }
-      if (!image_watcher) {
+      if (!data_watcher) {
         BOOST_LOG(debug) << "Inbound clipboard image ignored: no image provider on this session"sv;
         return;
       }
@@ -286,7 +335,7 @@ namespace clipboard_host {
         last_image = fingerprint(png);
       }
 
-      if (!image_watcher->set_image(png)) {
+      if (!data_watcher->set_image(png)) {
         BOOST_LOG(warning) << "Inbound clipboard image could not be queued for the desktop"sv;
       }
     }
@@ -311,6 +360,22 @@ namespace clipboard_host {
       {
         std::lock_guard<std::mutex> lk(echo_mu);
         echo_ring.record(clipboard_bridge::kKindText, bytes);
+      }
+
+      if (ext_text.load(std::memory_order_acquire)) {
+        // No klipper here: publish through the compositor and remember the
+        // value, so the selection event our own write produces is dropped both
+        // by the echo ring and by the unchanged check.
+        {
+          std::lock_guard<std::mutex> lk { text_mu };
+          last_text = text;
+        }
+        if (!data_watcher) {
+          BOOST_LOG(debug) << "Inbound clipboard text ignored: no data-control provider"sv;
+          return;
+        }
+        data_watcher->set_text(text);
+        return;
       }
 
       // Recorded before the write (as before) so the echo of our own change is
@@ -405,6 +470,24 @@ namespace clipboard_host {
       auto last_read = std::chrono::steady_clock::now() - kPollInterval;  // read immediately
 
       while (running.load(std::memory_order_acquire)) {
+        if (ext_text.load(std::memory_order_acquire)) {
+          // The compositor carries text now; this thread has nothing to read.
+          // It still stamps liveness, which is what gates the wire capability.
+          if (bus) {
+            sd_bus_unref(bus);
+            bus = nullptr;
+          }
+          klipper_available = false;
+          change_signal_subscribed = false;
+          clipboard_bridge::bridge_t::instance().notify_gui_alive();
+
+          std::unique_lock<std::mutex> lk { write_mu };
+          write_cv.wait_for(lk, kBusWaitInterval, [&] {
+            return !running.load(std::memory_order_acquire);
+          });
+          continue;
+        }
+
         if (!klipper_available) {
           bus = open_bus();
           klipper_available = bus != nullptr;
@@ -541,6 +624,25 @@ namespace clipboard_host {
       }
     }
 
+    /**
+     * @brief Whether KDE's klipper service owns its name on the session bus.
+     * @details klipper is the text transport *when it exists*. A desktop without
+     *          it (niri, sway, Hyprland, plain weston) needs the compositor's
+     *          data-control clipboard for text as well, otherwise copying text
+     *          inside a session silently does nothing on those desktops.
+     */
+    bool
+    klipper_present() {
+      sd_bus *bus = open_bus();
+      if (!bus) {
+        return false;
+      }
+      std::string ignored;
+      const bool present = klipper_get(bus, ignored);
+      sd_bus_unref(bus);
+      return present;
+    }
+
   }  // namespace
 
   void
@@ -552,17 +654,28 @@ namespace clipboard_host {
     clipboard_bridge::bridge_t::instance().add_inbound_listener(&on_inbound);
 
 #ifdef SUNSHINE_BUILD_WAYLAND
-    if (platf::clipboard_image::available()) {
-      auto watcher = std::make_unique<platf::clipboard_image::watcher_t>();
-      if (watcher->start(&on_desktop_image)) {
-        image_watcher = std::move(watcher);
+    if (platf::clipboard_data::available()) {
+      auto watcher = std::make_unique<platf::clipboard_data::watcher_t>();
+      if (watcher->start(&on_desktop_image, &on_desktop_text)) {
+        data_watcher = std::move(watcher);
+
+        // klipper is the text transport only while the desktop has it. Probe
+        // once, before the poll thread starts, so both halves agree.
+        if (!klipper_present()) {
+          ext_text.store(true, std::memory_order_release);
+          BOOST_LOG(info) << "Host clipboard: no klipper on this desktop; text goes through the compositor"sv;
+        }
       }
       else {
-        BOOST_LOG(warning) << "Host clipboard: image provider failed to start; text only"sv;
+        BOOST_LOG(warning) << "Host clipboard: data-control provider failed to start; klipper only"sv;
       }
     }
     else {
       BOOST_LOG(info) << "Host clipboard: no data-control protocol on this session; image sync off"sv;
+    }
+#else
+    if (!klipper_present()) {
+      BOOST_LOG(warning) << "Host clipboard: no klipper on this desktop and no data-control support; text sync off"sv;
     }
 #endif
 
@@ -586,9 +699,9 @@ namespace clipboard_host {
 #ifdef SUNSHINE_BUILD_WAYLAND
     // After the poll thread: the watcher only publishes, so stopping it last
     // cannot race a text publish.
-    if (image_watcher) {
-      image_watcher->stop();
-      image_watcher.reset();
+    if (data_watcher) {
+      data_watcher->stop();
+      data_watcher.reset();
     }
 #endif
 
@@ -598,7 +711,7 @@ namespace clipboard_host {
   bool
   image_available() {
 #ifdef SUNSHINE_BUILD_WAYLAND
-    return image_watcher != nullptr;
+    return data_watcher != nullptr;
 #else
     return false;
 #endif

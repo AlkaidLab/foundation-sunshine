@@ -1,15 +1,16 @@
 /**
- * @file src/platform/linux/clipboard_image.cpp
- * @brief Image support for the host-side clipboard provider over
+ * @file src/platform/linux/clipboard_data.cpp
+ * @brief Text and image support for the host-side clipboard provider over
  *        `ext_data_control_v1`.
  *
  * Two directions, one connection:
  *
- *   desktop -> clients: the compositor sends `selection` naming an offer; when
- *     the offer advertises image/png we call `receive()` on a pipe, read the
- *     bytes, and hand them to the sink.
+ *   desktop -> clients: the compositor sends `selection` naming an offer; we
+ *     pick the flavour the wire can carry (PNG when offered, otherwise the most
+ *     specific UTF-8 text spelling) and `receive()` it on a pipe, read the
+ *     bytes, and hand them to the matching sink.
  *
- *   clients -> desktop: we create a data source offering image/png and call
+ *   clients -> desktop: we create a data source offering that flavour and call
  *     `set_selection()`; the compositor asks us for the bytes through `send()`
  *     whenever a paste happens, so the source stays alive until another client
  *     takes the selection (we then see `cancelled`).
@@ -19,7 +20,9 @@
  * wlr-flavoured name, so this module stays inert there rather than pretending
  * to work.
  */
-#include "clipboard_image.h"
+#include "clipboard_data.h"
+
+#include "clipboard_mime.h"
 
 #ifdef SUNSHINE_BUILD_WAYLAND
 
@@ -50,12 +53,12 @@
   #include "src/clipboard_blob_store.h"
   #include "src/logging.h"
 
-namespace platf::clipboard_image {
+namespace platf::clipboard_data {
   using namespace std::string_view_literals;
 
   namespace {
     /// The only image flavour the wire contract knows (clipboard_bridge::kMimePng).
-    constexpr std::string_view kPngMime = "image/png";
+    constexpr std::string_view kPngMime = clipboard_mime::png_mime;
 
     /**
      * @brief How long a single pipe transfer may take before we give up.
@@ -65,7 +68,7 @@ namespace platf::clipboard_image {
     constexpr auto kTransferTimeout = std::chrono::seconds { 10 };
 
     /// Never buffer more than the blob store would accept for the same item.
-    constexpr std::size_t kMaxImageBytes = clipboard_blob_store::kMaxBlobBytes;
+    constexpr std::size_t kMaxTransferBytes = clipboard_blob_store::kMaxBlobBytes;
 
     /// Close a descriptor exactly once.
     void
@@ -121,8 +124,8 @@ namespace platf::clipboard_image {
       if (wl_display_roundtrip(display) >= 0 && wl_display_roundtrip(display) >= 0) {
         ok = probe.manager && probe.seat;
         if (!ok) {
-          BOOST_LOG(debug) << "Clipboard image: ext_data_control_manager_v1="sv << probe.manager
-                           << " seat="sv << probe.seat << " - image sync unavailable"sv;
+          BOOST_LOG(debug) << "Clipboard ext: ext_data_control_manager_v1="sv << probe.manager
+                           << " seat="sv << probe.seat << " - data-control sync unavailable"sv;
         }
       }
       wl_registry_destroy(registry);
@@ -145,8 +148,14 @@ namespace platf::clipboard_image {
     std::thread thread;
     std::atomic<bool> running { false };
     std::mutex mu;
-    std::optional<png_t> pending;
-    sink_fn sink;
+    /// At most one queued write; the newest wins whatever its flavour.
+    struct pending_t {
+      bytes_t bytes;
+      bool image = false;
+    };
+    std::optional<pending_t> pending;
+    sink_fn image_sink;
+    text_sink_fn text_sink;
     int wake_read = -1;
     int wake_write = -1;
 
@@ -157,16 +166,18 @@ namespace platf::clipboard_image {
     wl_seat *seat = nullptr;
     ext_data_control_device_v1 *device = nullptr;
     ext_data_control_source_v1 *source = nullptr;
-    /// Bytes the current data source serves on send().
-    png_t source_bytes;
+    /// Bytes the current data source serves on send(), and what they are.
+    bytes_t source_bytes;
+    bool source_is_image = false;
     std::unordered_map<ext_data_control_offer_v1 *, offer_t> offers;
     /// The offer named by the last `selection` event.
     ext_data_control_offer_v1 *selected = nullptr;
 
     // ---- in-flight transfers, pumped by the loop and never blocking it ----
-    /// Compositor -> us: a pipe we are reading an offered image out of.
+    /// Compositor -> us: a pipe we are reading an offered item out of.
     int recv_fd = -1;
-    png_t recv_buf;
+    bytes_t recv_buf;
+    bool recv_is_image = false;
     std::chrono::steady_clock::time_point recv_deadline;
     /// Us -> compositor: pipes a paste is draining, one per pending send().
     struct out_transfer_t {
@@ -180,7 +191,7 @@ namespace platf::clipboard_image {
     // client -> desktop
     // -------------------------------------------------------------------
     void
-    publish_source(png_t png) {
+    publish_source(bytes_t bytes, bool image) {
       if (!manager || !device) {
         return;
       }
@@ -192,10 +203,11 @@ namespace platf::clipboard_image {
         source = nullptr;
       }
       source_bytes.clear();
+      source_is_image = false;
 
       source = ext_data_control_manager_v1_create_data_source(manager);
       if (!source) {
-        BOOST_LOG(warning) << "Clipboard image: could not create a data source"sv;
+        BOOST_LOG(warning) << "Clipboard ext: could not create a data source"sv;
         return;
       }
 
@@ -203,11 +215,20 @@ namespace platf::clipboard_image {
         // send(): the compositor wants the bytes for a paste.
         [](void *data, ext_data_control_source_v1 *, const char *mime, int32_t fd) {
           auto &state = *static_cast<impl_t *>(data);
-          if (!mime || kPngMime != mime || state.source_bytes.empty()) {
+          if (!mime || state.source_bytes.empty()) {
             ::close(fd);
             return;
           }
-          // Serve from the loop, never from this callback: an image rarely fits
+          // Serve whichever flavour the paste asked for, but only one we
+          // actually advertised for this item.
+          const bool matches = state.source_is_image ?
+                                 kPngMime == mime :
+                                 clipboard_mime::is_text_mime(mime);
+          if (!matches) {
+            ::close(fd);
+            return;
+          }
+          // Serve from the loop, never from this callback: an item rarely fits
           // in the pipe buffer, and blocking here would freeze the very loop
           // that has to drain it.
           const int flags = ::fcntl(fd, F_GETFL, 0);
@@ -219,16 +240,29 @@ namespace platf::clipboard_image {
         // cancelled(): another client took the selection. Keep the proxy until
         // the next publish and stop advertising bytes we no longer serve.
         [](void *data, ext_data_control_source_v1 *) {
-          BOOST_LOG(debug) << "Clipboard image: our selection was cancelled"sv;
+          BOOST_LOG(debug) << "Clipboard ext: our selection was cancelled"sv;
           static_cast<impl_t *>(data)->source_bytes.clear();
+          static_cast<impl_t *>(data)->source_is_image = false;
         },
       };
       ext_data_control_source_v1_add_listener(source, &kSourceListener, this);
-      ext_data_control_source_v1_offer(source, kPngMime.data());
+      if (image) {
+        const std::string png_mime { clipboard_mime::png_mime };
+        ext_data_control_source_v1_offer(source, png_mime.c_str());
+      }
+      else {
+        // Advertise every UTF-8 spelling a paste might look for; the
+        // compositor picks one and send() accepts any of them.
+        for (const auto &mime: clipboard_mime::text_offers()) {
+          ext_data_control_source_v1_offer(source, mime.c_str());
+        }
+      }
 
-      source_bytes = std::move(png);
+      source_bytes = std::move(bytes);
+      source_is_image = image;
       ext_data_control_device_v1_set_selection(device, source);
-      BOOST_LOG(debug) << "Clipboard image: published "sv << source_bytes.size() << " bytes to the desktop"sv;
+      BOOST_LOG(debug) << "Clipboard ext: published "sv << source_bytes.size() << " bytes to the desktop as "sv
+                       << (image ? "png"sv : "text"sv);
     }
 
     // -------------------------------------------------------------------
@@ -263,13 +297,14 @@ namespace platf::clipboard_image {
       if (entry == offers.end()) {
         return;
       }
-      const auto &mimes = entry->second.mimes;
-      if (std::none_of(mimes.begin(), mimes.end(), [](const std::string &mime) { return mime == kPngMime; })) {
-        // Text (or an image flavour we do not speak): the klipper half owns it.
+      const auto choice = clipboard_mime::choose(entry->second.mimes);
+      if (choice.kind == clipboard_mime::kind_e::none) {
+        // Nothing the wire can carry (application/*, exotic image formats):
+        // leave the clients' clipboard untouched rather than empty it.
         return;
       }
 
-      start_receive(offer);
+      start_receive(offer, choice.mime, choice.kind == clipboard_mime::kind_e::image);
     }
 
     /// Give up on the pipe we were reading; nothing is delivered.
@@ -280,23 +315,23 @@ namespace platf::clipboard_image {
     }
 
     /**
-     * @brief Ask the compositor for the offered image and arm the loop to read
-     *        its pipe.
+     * @brief Ask the compositor for one offered flavour and arm the loop to
+     *        read its pipe.
      * @details The read is deliberately not done here: this runs inside
      *          dispatch_pending, and for our *own* source the bytes only arrive
      *          once the loop dispatches the resulting send() event.
      */
     void
-    start_receive(ext_data_control_offer_v1 *offer) {
+    start_receive(ext_data_control_offer_v1 *offer, const std::string &mime, bool image) {
       abort_receive();
 
       int fds[2] { -1, -1 };
       if (::pipe2(fds, O_CLOEXEC) != 0) {
-        BOOST_LOG(warning) << "Clipboard image: pipe2 failed: "sv << std::strerror(errno);
+        BOOST_LOG(warning) << "Clipboard ext: pipe2 failed: "sv << std::strerror(errno);
         return;
       }
 
-      ext_data_control_offer_v1_receive(offer, kPngMime.data(), fds[1]);
+      ext_data_control_offer_v1_receive(offer, mime.c_str(), fds[1]);
       close_fd(fds[1]);
       const int flags = ::fcntl(fds[0], F_GETFL, 0);
       if (flags >= 0) {
@@ -304,6 +339,7 @@ namespace platf::clipboard_image {
       }
 
       recv_fd = fds[0];
+      recv_is_image = image;
       recv_deadline = std::chrono::steady_clock::now() + kTransferTimeout;
       // Flush so the compositor starts pumping straight away.
       wl_display_flush(display);
@@ -320,8 +356,8 @@ namespace platf::clipboard_image {
       for (;;) {
         const auto got = ::read(recv_fd, chunk, sizeof(chunk));
         if (got > 0) {
-          if (recv_buf.size() + static_cast<std::size_t>(got) > kMaxImageBytes) {
-            BOOST_LOG(warning) << "Clipboard image: item exceeds "sv << kMaxImageBytes << " bytes; dropping"sv;
+          if (recv_buf.size() + static_cast<std::size_t>(got) > kMaxTransferBytes) {
+            BOOST_LOG(warning) << "Clipboard ext: item exceeds "sv << kMaxTransferBytes << " bytes; dropping"sv;
             abort_receive();
             return;
           }
@@ -338,7 +374,7 @@ namespace platf::clipboard_image {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
           return;
         }
-        BOOST_LOG(warning) << "Clipboard image: read failed: "sv << std::strerror(errno);
+        BOOST_LOG(warning) << "Clipboard ext: read failed: "sv << std::strerror(errno);
         abort_receive();
         return;
       }
@@ -351,11 +387,18 @@ namespace platf::clipboard_image {
       if (recv_buf.empty()) {
         return;
       }
-      BOOST_LOG(debug) << "Clipboard image: captured "sv << recv_buf.size() << " bytes from the desktop"sv;
-      if (sink) {
-        sink(std::move(recv_buf));
+      BOOST_LOG(debug) << "Clipboard ext: captured "sv << recv_buf.size() << " bytes from the desktop as "sv
+                       << (recv_is_image ? "png"sv : "text"sv);
+      if (recv_is_image) {
+        if (image_sink) {
+          image_sink(std::move(recv_buf));
+        }
+      }
+      else if (text_sink) {
+        text_sink(std::string { recv_buf.begin(), recv_buf.end() });
       }
       recv_buf.clear();
+      recv_is_image = false;
     }
 
     /// Push pending paste bytes into their pipes; drop finished/expired ones.
@@ -367,7 +410,7 @@ namespace platf::clipboard_image {
         // source_bytes; nothing more to serve then.
         if (it->offset >= source_bytes.size() || now > it->deadline) {
           if (now > it->deadline && it->offset < source_bytes.size()) {
-            BOOST_LOG(warning) << "Clipboard image: paste timed out after "sv << it->offset << " of "sv
+            BOOST_LOG(warning) << "Clipboard ext: paste timed out after "sv << it->offset << " of "sv
                                << source_bytes.size() << " bytes"sv;
           }
           ::close(it->fd);
@@ -408,7 +451,7 @@ namespace platf::clipboard_image {
 
       device = ext_data_control_manager_v1_get_data_device(manager, seat);
       if (!device) {
-        BOOST_LOG(warning) << "Clipboard image: could not create a data device"sv;
+        BOOST_LOG(warning) << "Clipboard ext: could not create a data device"sv;
         return;
       }
 
@@ -437,7 +480,7 @@ namespace platf::clipboard_image {
         },
         // finished: the compositor revoked our data device (session end).
         [](void *data, ext_data_control_device_v1 *) {
-          BOOST_LOG(debug) << "Clipboard image: data device finished"sv;
+          BOOST_LOG(debug) << "Clipboard ext: data device finished"sv;
           static_cast<impl_t *>(data)->running.store(false, std::memory_order_release);
         },
         // primary_selection: the middle-click buffer, outside the wire contract.
@@ -481,14 +524,14 @@ namespace platf::clipboard_image {
     // -------------------------------------------------------------------
     void
     apply_pending() {
-      std::optional<png_t> png;
+      std::optional<pending_t> item;
       {
         std::lock_guard<std::mutex> lk { mu };
-        png = std::move(pending);
+        item = std::move(pending);
         pending.reset();
       }
-      if (png && running.load(std::memory_order_acquire)) {
-        publish_source(std::move(*png));
+      if (item && running.load(std::memory_order_acquire)) {
+        publish_source(std::move(item->bytes), item->image);
         wl_display_flush(display);
       }
     }
@@ -497,10 +540,10 @@ namespace platf::clipboard_image {
     loop() {
       setup_registry();
       if (!manager || !device) {
-        BOOST_LOG(warning) << "Clipboard image: no data device; image sync stays off"sv;
+        BOOST_LOG(warning) << "Clipboard ext: no data device; data-control sync stays off"sv;
         return;
       }
-      BOOST_LOG(info) << "Clipboard image sync online"sv;
+      BOOST_LOG(info) << "Clipboard data-control online"sv;
 
       std::vector<pollfd> fds;
       std::vector<out_transfer_t *> out_slots;
@@ -520,7 +563,7 @@ namespace platf::clipboard_image {
         const int flushed = wl_display_flush(display);
         if (flushed < 0 && errno != EAGAIN) {
           wl_display_cancel_read(display);
-          BOOST_LOG(debug) << "Clipboard image: display connection failed: "sv << std::strerror(errno);
+          BOOST_LOG(debug) << "Clipboard ext: display connection failed: "sv << std::strerror(errno);
           running.store(false, std::memory_order_release);
           break;
         }
@@ -560,14 +603,14 @@ namespace platf::clipboard_image {
           if (errno == EINTR) {
             continue;
           }
-          BOOST_LOG(debug) << "Clipboard image: poll failed: "sv << std::strerror(errno);
+          BOOST_LOG(debug) << "Clipboard ext: poll failed: "sv << std::strerror(errno);
           running.store(false, std::memory_order_release);
           break;
         }
 
         if (fds[0].revents & POLLIN) {
           if (wl_display_read_events(display) < 0) {
-            BOOST_LOG(debug) << "Clipboard image: read_events failed"sv;
+            BOOST_LOG(debug) << "Clipboard ext: read_events failed"sv;
             running.store(false, std::memory_order_release);
             break;
           }
@@ -577,7 +620,7 @@ namespace platf::clipboard_image {
         }
 
         if (wl_display_dispatch_pending(display) < 0) {
-          BOOST_LOG(debug) << "Clipboard image: dispatch failed"sv;
+          BOOST_LOG(debug) << "Clipboard ext: dispatch failed"sv;
           running.store(false, std::memory_order_release);
           break;
         }
@@ -592,7 +635,7 @@ namespace platf::clipboard_image {
           pump_receive();
         }
         if (recv_fd >= 0 && std::chrono::steady_clock::now() > recv_deadline) {
-          BOOST_LOG(warning) << "Clipboard image: transfer timed out after "sv << recv_buf.size()
+          BOOST_LOG(warning) << "Clipboard ext: transfer timed out after "sv << recv_buf.size()
                              << " bytes; dropping"sv;
           abort_receive();
         }
@@ -647,16 +690,17 @@ namespace platf::clipboard_image {
   }
 
   bool
-  watcher_t::start(sink_fn sink) {
+  watcher_t::start(sink_fn sink, text_sink_fn text_sink) {
     if (_impl->running.exchange(true)) {
       return true;
     }
 
-    _impl->sink = std::move(sink);
+    _impl->image_sink = std::move(sink);
+    _impl->text_sink = std::move(text_sink);
 
     int fds[2] { -1, -1 };
     if (::pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0) {
-      BOOST_LOG(warning) << "Clipboard image: wake pipe failed: "sv << std::strerror(errno);
+      BOOST_LOG(warning) << "Clipboard ext: wake pipe failed: "sv << std::strerror(errno);
       _impl->running.store(false, std::memory_order_release);
       return false;
     }
@@ -665,7 +709,7 @@ namespace platf::clipboard_image {
 
     _impl->display = wl_display_connect(nullptr);
     if (!_impl->display) {
-      BOOST_LOG(info) << "Clipboard image: no Wayland session; image sync stays off"sv;
+      BOOST_LOG(info) << "Clipboard ext: no Wayland session; data-control sync stays off"sv;
       close_fd(_impl->wake_read);
       close_fd(_impl->wake_write);
       _impl->running.store(false, std::memory_order_release);
@@ -681,6 +725,28 @@ namespace platf::clipboard_image {
       }
     });
 
+    return true;
+  }
+
+  bool
+  watcher_t::set_text(std::string text) {
+    if (!_impl->running.load(std::memory_order_acquire) || text.empty()) {
+      return false;
+    }
+
+    impl_t::pending_t item;
+    item.bytes.assign(text.begin(), text.end());
+    item.image = false;
+
+    {
+      std::lock_guard<std::mutex> lk { _impl->mu };
+      _impl->pending = std::move(item);
+    }
+
+    if (_impl->wake_write >= 0) {
+      const char byte = 1;
+      [[maybe_unused]] const auto ignored = ::write(_impl->wake_write, &byte, 1);
+    }
     return true;
   }
 
@@ -704,7 +770,8 @@ namespace platf::clipboard_image {
 
     close_fd(_impl->wake_read);
     close_fd(_impl->wake_write);
-    _impl->sink = nullptr;
+    _impl->image_sink = nullptr;
+    _impl->text_sink = nullptr;
   }
 
   bool
@@ -716,7 +783,7 @@ namespace platf::clipboard_image {
     {
       std::lock_guard<std::mutex> lk { _impl->mu };
       // Newest wins: a stale clipboard is worthless once a newer one lands.
-      _impl->pending = std::move(png);
+      _impl->pending = impl_t::pending_t { std::move(png), true };
     }
 
     if (_impl->wake_write >= 0) {
@@ -725,6 +792,6 @@ namespace platf::clipboard_image {
     }
     return true;
   }
-}  // namespace platf::clipboard_image
+}  // namespace platf::clipboard_data
 
 #endif  // SUNSHINE_BUILD_WAYLAND

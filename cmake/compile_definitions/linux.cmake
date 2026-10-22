@@ -176,7 +176,7 @@ if(WAYLAND_FOUND)
     GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/wlr-protocols" "unstable" wlr-export-dmabuf-unstable-v1)
     # Foreground-window tracking (src/platform/linux/foreground_app.cpp)
     GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/wlr-protocols" "unstable" wlr-foreign-toplevel-management-unstable-v1)
-    # Clipboard images (src/platform/linux/clipboard_image.cpp): Plasma 6 and
+    # Clipboard text + images (src/platform/linux/clipboard_data.cpp): Plasma 6 and
     # other compositors expose the standardized data-control protocol.
     GEN_WAYLAND("${WAYLAND_PROTOCOLS_DIR}" "staging/ext-data-control" ext-data-control-v1)
 
@@ -309,8 +309,9 @@ if(LIBSYSTEMD_FOUND)
     # data-control protocol, so that half only exists in Wayland builds.
     if(WAYLAND_FOUND)
         list(APPEND PLATFORM_TARGET_FILES
-                "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_image.h"
-                "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_image.cpp")
+                "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_data.h"
+                "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_data.cpp"
+                "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_mime.h")
     endif()
     list(APPEND PLATFORM_LIBRARIES ${LIBSYSTEMD_LIBRARIES})
     include_directories(SYSTEM ${LIBSYSTEMD_INCLUDE_DIRS})
