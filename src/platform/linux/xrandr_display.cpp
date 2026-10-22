@@ -253,20 +253,29 @@ namespace platf::xrandr {
       output.primary = output_id == primary;
 
       for (int mode_index = 0; mode_index < info->nmode; ++mode_index) {
-        // The output's mode list holds indices into the resources' mode array,
-        // and a server that just performed a modeset can briefly hand back a
-        // list that no longer matches. Trusting it blindly crashes the host.
-        const auto resources_mode = info->modes[mode_index];
-        if (resources_mode >= resources->nmode) {
-          BOOST_LOG(debug) << "XRandR reported mode index " << resources_mode << " out of "
-                           << resources->nmode << " for output " << (info->name ? info->name : "");
+        // `info->modes` holds RRMode *ids*, not indices into resources->modes
+        // (the ids happen to be small on some servers, which is how treating them
+        // as indices can look plausible). Match by id, and skip an id the server
+        // no longer lists -- a modeset can leave the two lists briefly out of
+        // step, and indexing with an id reads an unrelated mode or runs off the
+        // end.
+        const RRMode resources_mode = info->modes[mode_index];
+        const XRRModeInfo *mode_info = nullptr;
+        for (int resource_index = 0; resource_index < resources->nmode; ++resource_index) {
+          if (resources->modes[resource_index].id == resources_mode) {
+            mode_info = &resources->modes[resource_index];
+            break;
+          }
+        }
+        if (!mode_info) {
+          BOOST_LOG(debug) << "XRandR listed mode id " << resources_mode << " for output "
+                           << (info->name ? info->name : "") << " but not in its mode table";
           continue;
         }
-        const auto &mode_info = resources->modes[resources_mode];
         mode_t mode;
-        mode.width = static_cast<int>(mode_info.width);
-        mode.height = static_cast<int>(mode_info.height);
-        mode.refresh = refresh_from_timings(mode_info.dotClock, mode_info.hTotal, mode_info.vTotal);
+        mode.width = static_cast<int>(mode_info->width);
+        mode.height = static_cast<int>(mode_info->height);
+        mode.refresh = refresh_from_timings(mode_info->dotClock, mode_info->hTotal, mode_info->vTotal);
         mode.id = format_mode_id(mode.width, mode.height, mode.refresh);
         output.modes.push_back(std::move(mode));
       }
@@ -407,6 +416,15 @@ namespace platf::xrandr {
     std::vector<crtc_request_t> requests;
     std::string primary;
 
+    // Group the enabled outputs by the crtc they will share *before* emitting any
+    // request. Grouping inside one pass lets a mirror member whose name sorts
+    // before its leader open a request of its own -- its lookup cannot see a
+    // leader that has not been visited yet -- after which the leader opens a
+    // second one. Two crtcs for a group that was asked to mirror is precisely the
+    // configuration the server rejects, or applies unmirrored.
+    std::vector<std::string> group_leaders;
+    std::vector<std::vector<const output_t *>> group_members;
+
     for (const auto *output : ordered) {
       if (!output->enabled) {
         continue;
@@ -428,60 +446,79 @@ namespace platf::xrandr {
         leader_name = leader->name;
       }
 
-      auto request = std::find_if(requests.begin(), requests.end(),
-                                  [&](const crtc_request_t &candidate) {
-                                    return candidate.outputs.front() == leader_name;
-                                  });
+      auto slot = std::find(group_leaders.begin(), group_leaders.end(), leader_name);
+      if (slot == group_leaders.end()) {
+        group_leaders.push_back(leader_name);
+        group_members.push_back({});
+        slot = std::prev(group_leaders.end());
+      }
+      group_members[static_cast<std::size_t>(slot - group_leaders.begin())].push_back(output);
+    }
 
-      if (request == requests.end()) {
-        const mode_t *mode = current_mode(*output);
-        if (!mode) {
-          // The caller may have set the mode without marking it current; fall
-          // back to the id it asked for.
-          const auto it = std::find_if(output->modes.begin(), output->modes.end(),
-                                       [&](const mode_t &candidate) { return candidate.id == output->mode_id; });
-          if (it == output->modes.end()) {
-            error = "output " + output->name + " has no usable mode";
+    for (std::size_t index = 0; index < group_leaders.size(); ++index) {
+      const auto &leader_name = group_leaders[index];
+      const auto &members = group_members[index];
+
+      const output_t *leader = find_output(desired, leader_name);
+      if (!leader) {
+        error = "mirror group leader " + leader_name + " disappeared";
+        return false;
+      }
+
+      const mode_t *mode = current_mode(*leader);
+      if (!mode) {
+        // The caller may have set the mode without marking it current; fall back
+        // to the id it asked for.
+        const auto it = std::find_if(leader->modes.begin(), leader->modes.end(),
+                                     [&](const mode_t &candidate) { return candidate.id == leader->mode_id; });
+        if (it == leader->modes.end()) {
+          error = "output " + leader->name + " has no usable mode";
+          return false;
+        }
+        mode = &*it;
+      }
+
+      crtc_request_t request;
+      // The leader comes first: a group is identified by its first entry, and the
+      // crtc's timing and geometry come from it.
+      request.outputs.push_back(leader->name);
+      request.mode_id = mode->id;
+      request.width = mode->width;
+      request.height = mode->height;
+      request.x = leader->x;
+      request.y = leader->y;
+      request.rotation = leader->rotation;
+      request.reflect_x = leader->reflect_x;
+      request.reflect_y = leader->reflect_y;
+
+      for (const auto *member : members) {
+        if (member == leader) {
+          continue;
+        }
+        // Mirror members share the crtc, so they share the timing; a member that
+        // asks for a different size cannot be honoured and the plan says so
+        // instead of letting the server pick one.
+        if (const mode_t *member_mode = current_mode(*member)) {
+          if (member_mode->width != request.width || member_mode->height != request.height) {
+            error = "output " + member->name + " mirrors " + leader_name + " but requests " +
+                    std::to_string(member_mode->width) + "x" + std::to_string(member_mode->height) +
+                    " instead of " + std::to_string(request.width) + "x" + std::to_string(request.height);
             return false;
           }
-          mode = &*it;
         }
-
-        crtc_request_t fresh;
-        fresh.outputs.push_back(output->name);
-        fresh.mode_id = mode->id;
-        fresh.width = mode->width;
-        fresh.height = mode->height;
-        fresh.x = output->x;
-        fresh.y = output->y;
-        fresh.rotation = output->rotation;
-        fresh.reflect_x = output->reflect_x;
-        fresh.reflect_y = output->reflect_y;
-        requests.push_back(std::move(fresh));
-        request = std::prev(requests.end());
-      } else {
-        // Mirror members share the crtc, so they share the timing; a member that
-        // asks for a different size or rate cannot be honoured and the plan says
-        // so instead of letting the server pick one.
-        const mode_t *mode = current_mode(*output);
-        if (mode && (mode->width != request->width || mode->height != request->height)) {
-          error = "output " + output->name + " mirrors " + request->outputs.front() +
-                  " but requests " + std::to_string(mode->width) + "x" + std::to_string(mode->height) +
-                  " instead of " + std::to_string(request->width) + "x" + std::to_string(request->height);
-          return false;
-        }
-        if (std::find(request->outputs.begin(), request->outputs.end(), output->name) == request->outputs.end()) {
-          request->outputs.push_back(output->name);
-        }
+        request.outputs.push_back(member->name);
       }
 
-      if (output->primary) {
-        if (!primary.empty() && primary != request->outputs.front()) {
-          error = "more than one output is marked primary (" + primary + ", " + output->name + ")";
+      if (std::any_of(members.begin(), members.end(),
+                      [](const output_t *candidate) { return candidate->primary; })) {
+        if (!primary.empty() && primary != leader->name) {
+          error = "primary is set on more than one mirror group (" + primary + ", " + leader->name + ")";
           return false;
         }
-        primary = request->outputs.front();
+        primary = leader->name;
       }
+
+      requests.push_back(std::move(request));
     }
 
     int width = 0;
@@ -529,6 +566,9 @@ namespace platf::xrandr {
       const crtc_request_t *plan = nullptr;
       RRMode mode = None;
       std::vector<RROutput> outputs;
+      // Per output: the crtcs the server allows that output to use (empty when the
+      // server did not say). A group's crtc has to be legal for every output in it.
+      std::vector<std::vector<RRCrtc>> allowed_crtcs;
       RRCrtc crtc = None;
     };
 
@@ -548,6 +588,11 @@ namespace platf::xrandr {
           }
           if (name == (info->name ? info->name : "")) {
             entry.outputs.push_back(resources->outputs[i]);
+            std::vector<RRCrtc> allowed;
+            for (int crtc_index = 0; crtc_index < info->ncrtc; ++crtc_index) {
+              allowed.push_back(info->crtcs[crtc_index]);
+            }
+            entry.allowed_crtcs.push_back(std::move(allowed));
             found = true;
           }
           XRRFreeOutputInfo(info);
@@ -617,7 +662,18 @@ namespace platf::xrandr {
     }
 
     // Give each group a crtc: prefer one that already drives one of its outputs,
-    // then one that is not claimed by another group.
+    // then one that is not claimed by another group. Either way the crtc has to be
+    // one the server allows for every output in the group -- handing a group a
+    // crtc that some member cannot use makes XRRSetCrtcConfig refuse the whole
+    // request, which reads as "the compositor ignored us".
+    const auto crtc_allowed = [](const live_request_t &entry, RRCrtc crtc) {
+      return std::all_of(entry.allowed_crtcs.begin(), entry.allowed_crtcs.end(),
+                         [&](const std::vector<RRCrtc> &allowed) {
+                           return allowed.empty() ||
+                                  std::find(allowed.begin(), allowed.end(), crtc) != allowed.end();
+                         });
+    };
+
     std::vector<RRCrtc> claimed;
     for (auto &entry : live) {
       for (const auto &snapshot : snapshots) {
@@ -633,12 +689,18 @@ namespace platf::xrandr {
         if (std::find(claimed.begin(), claimed.end(), snapshot.crtc) != claimed.end()) {
           continue;
         }
+        if (!crtc_allowed(entry, snapshot.crtc)) {
+          continue;
+        }
         entry.crtc = snapshot.crtc;
         break;
       }
       if (entry.crtc == None) {
         for (const auto &snapshot : snapshots) {
           if (std::find(claimed.begin(), claimed.end(), snapshot.crtc) != claimed.end()) {
+            continue;
+          }
+          if (!crtc_allowed(entry, snapshot.crtc)) {
             continue;
           }
           entry.crtc = snapshot.crtc;
@@ -719,23 +781,44 @@ namespace platf::xrandr {
                entry.plan->x, entry.plan->y, entry.outputs);
     }
 
+    // Restoring the snapshot is a best-effort undo, so it must not overwrite the
+    // reason the plan failed: it reports separately and only warns.
+    bool rollback_ok = true;
+    auto restore_crtc = [&](RRCrtc crtc, RRMode mode, Rotation rotation, int x, int y,
+                            const std::vector<RROutput> &outputs) {
+      std::vector<RROutput> ids = outputs;
+      const Status status = XRRSetCrtcConfig(display, resources, crtc, CurrentTime, x, y, mode, rotation,
+                                            ids.empty() ? nullptr : ids.data(), static_cast<int>(ids.size()));
+      if (status != RRSetConfigSuccess) {
+        rollback_ok = false;
+        BOOST_LOG(warning) << "XRandR rollback could not restore CRTC " << crtc;
+      }
+    };
+
     if (!ok) {
       // Undo in reverse: clear what we may have set, then restore the snapshot.
+      // `ok` stays false -- undoing a rejected request is not applying it, and a
+      // caller that saw success here would believe the layout changed.
       for (const auto &entry : live) {
-        set_crtc(entry.crtc, None, RR_Rotate_0, 0, 0, {});
+        restore_crtc(entry.crtc, None, RR_Rotate_0, 0, 0, {});
       }
-      ok = true;
-      failure.clear();
       for (const auto &snapshot : snapshots) {
         if (!snapshot.enabled) {
           continue;
         }
-        set_crtc(snapshot.crtc, snapshot.mode, snapshot.rotation,
-                 snapshot.x, snapshot.y, snapshot.outputs);
+        restore_crtc(snapshot.crtc, snapshot.mode, snapshot.rotation,
+                     snapshot.x, snapshot.y, snapshot.outputs);
+      }
+      // Undoing a grow leaves the screen bigger than the restored layout asked
+      // for; undoing a shrink needs it back. Restore the snapshot dimensions
+      // instead of the planned ones.
+      XRRSetScreenSize(display, root, screen.width, screen.height, screen.width_mm, screen.height_mm);
+      if (!rollback_ok) {
+        failure += "; the previous layout could not be fully restored";
       }
     }
 
-    if (!growing) {
+    if (ok && !growing) {
       XRRSetScreenSize(display, root, plan.screen_width, plan.screen_height,
                        millimetres_for(plan.screen_width), millimetres_for(plan.screen_height));
     }

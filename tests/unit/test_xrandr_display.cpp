@@ -119,6 +119,26 @@ TEST(XrandrPlan, MirroringSharesOneCrtc) {
   EXPECT_EQ(plan.screen_width, 1920);
 }
 
+TEST(XrandrPlan, MirrorMemberMaySortBeforeItsLeader) {
+  // "DP-1" sorts before "HDMI-A-1". Grouping inside one pass gives DP-1 a crtc of
+  // its own -- its leader has not been visited yet -- and the leader then opens a
+  // second one, so the mirror silently becomes a side-by-side layout.
+  state_t state;
+  auto member = make_output("DP-1", 0, 0);
+  member.mirror_of = "HDMI-A-1";
+  state.outputs.push_back(std::move(member));
+  state.outputs.push_back(make_output("HDMI-A-1", 0, 0));
+
+  plan_t plan;
+  std::string error;
+  ASSERT_TRUE(plan_for(state, plan, error)) << error;
+
+  ASSERT_EQ(plan.crtcs.size(), 1u);
+  // The leader leads the group; the member follows it.
+  EXPECT_EQ(plan.crtcs.front().outputs, (std::vector<std::string> { "HDMI-A-1", "DP-1" }));
+  EXPECT_EQ(plan.screen_width, 1920);
+}
+
 TEST(XrandrPlan, MirrorMemberWithADifferentSizeIsRefused) {
   auto state = side_by_side();
   state.outputs[1].mirror_of = "DP-1";
