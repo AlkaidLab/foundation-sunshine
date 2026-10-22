@@ -198,9 +198,10 @@ niri IPC（见 §6.16），由 `query_outputs()` 按会话分派。
 
 动态部分由 CPU 亮度分析器供给统计：
 
-- **分析器**：`src/video.cpp:396` `analyze_pq_luma_frame()`（限幅范围重映射的直方图，
-  PQ→nits 复用 `hdr_metadata::pq_to_nits`）；软件设备路径 `:567`，硬件设备采样下载路径 `:1036`。
-  平面 10-bit 格式按格式掩码解包（P010/YUV444P16 为 MSB，YUV420P10LE/YUV444P10LE 为 LSB）。
+- **分析器**：`src/video_hdr_analyzer.h` 的 `video::hdr_analyzer::analyze()`——**逐像素
+  max(R,G,B)** 的 PQ 直方图（与 Windows 计算着色器同一个量，见 §6.20）；`src/video.cpp` 只把
+  `AVFrame` 填成 `frame_t` 再调用（`analyze_pq_frame()`），软件设备路径与硬件设备采样下载路径各
+  一处。平面 10-bit 格式按格式掩码解包（P010/YUV444P16 为 MSB，YUV420P10LE/YUV444P10LE 为 LSB）。
 - **节奏与上限**：共享常量 `hdr_analysis_interval = 4`（`src/video_hdr_metadata.h:330`，对齐 Windows
   的 1/4 帧采样）、`hdr_analysis_max_width/height = 1920/1080`（`:337-338`）、
   `st2084_peak_nits = 10000.0f`（`:344`）。
@@ -493,6 +494,28 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
   方向（先回收再重指，两条命令的顺序也固定）、禁用输出上的残留关系不碰、未知输出拒绝、扩展桌面
   不变。
 
+### 6.20 HDR 亮度分析：逐像素 max(R,G,B)
+
+- **问题**：Windows 分析器是 D3D11 计算着色器跑 scRGB 帧，看到的是真 max(R,G,B)；Linux 走 KMS
+  捕获的 PQ YUV，旧实现直接拿**亮度**当 maxRGB 累加。亮度恒 ≤ maxRGB，饱和纯色下差距是量级级别：
+  纯红 100 nits 的帧，亮度只有约 1.2 nits。
+- **做法**：`src/video_hdr_analyzer.h`（纯 header，`namespace video::hdr_analyzer`）把每个
+  Y'CbCr 三元组按非恒定亮度反矩阵还原成 R'G'B' 的 PQ 信号，取最大者落回 10-bit 码进直方图。
+  矩阵系数按帧的 `colorspace` 选：BT.2020 NCL 默认，只有显式 BT.709/470BG/170M/240M 才换 BT.709
+  系数（否则 SDR 帧会被 2020 系数算歪）。`G' = Y' - (Kr·R' + Kb·B')/Kg` 用 `Kg = 1 - Kr - Kb`
+  归一，灰色三元组因此精确回到自身亮度——这是 `GreyKeepsItsLuma` 用例守的等式。
+- **色度取址**：4:4:4 直接同址；4:2:0（P010LE / YUV420P10LE）按最近邻取 `col/2, row/2`。分析在
+  已降采样到 ≤1920×1080 的帧上跑，插值成本换不来精度。
+- **为什么不上 GPU**：`hdr_analysis_interval = 4` ⇒ 每 4 帧一次、帧已降采样，CPU 每像素 6 次乘加
+  可以忽略；而 CUDA/Vulkan 路径要给 scRGB hwdevice 与 VAAPI/软件两条链路都加分支。PQ 数学仍只由
+  `video_hdr_metadata.h` 提供（`pq_to_nits` / `st2084_*`），没有第二份实现。
+- **契约修正**：`platf::hdr_frame_luminance_stats_t` 的字段注释本来就写着 max(R,G,B)
+  （`src/platform/common.h:527-549`），旧实现与之不符；现在实现与文档一致，Windows 软件路径同样
+  受益（硬件路径本来就走着色器）。
+- **测试**：`tests/unit/test_video_hdr_analyzer.cpp` 10 例 —— 纯红给 100 nits 而不是 1.2、
+  灰阶等式、有限/全范围等价、MSB/LSB 等价、4:2:0 色度覆盖每个像素、无色度回退亮度、黑帧
+  near-black = 1、坏帧不发布零值、序列号逐帧递增、BT.709 独立矩阵。
+
 ---
 
 ## 七、功能可用性矩阵
@@ -514,7 +537,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 剪贴板主机同步（文本 + 图片） | 文本走 klipper sd-bus、图片走 ext-data-control，共用帧/回声/blob 回退（§6.4、§6.14） |
 | 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
 | HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
-| HDR10+ / DV P8.1 / HDR Vivid（动态） | avcodec 路径全通（§6.3） |
+| HDR10+ / DV P8.1 / HDR Vivid（动态） | avcodec 路径全通（§6.3），分析器为逐像素 maxRGB（§6.20） |
 | 增强托盘 | 打开 UI/语言/项目链接/重启/退出 + 通知 + VDD 子菜单 + Advanced Settings（§6.9） |
 | nvhttp 扩展 API | dynamic_params / network_probe / sessions / abr_api / ai_api / pairing，纯 HTTP 层 |
 | perf_recorder / input_activity / video_probe / cursor_channel | 跨平台；cursor_channel 在 Linux 因无光标生产者干净禁用 |
@@ -531,7 +554,6 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 | 非 niri 的 wlroots / X11 显示后端 | niri 已由 IPC 后端覆盖（§6.16），GNOME 由 Mutter D-Bus 覆盖（§6.18）；sway/Hyprland 等仍走"合成器不可用"降级并打 warning（见 `LINUX_PORT_GAPS.md` §2.10） |
 | display_device 复制拓扑 | 两个平台都可用：Mutter 写成同一个 logical monitor（§6.18），KScreen 用 `output.<name>.mirror.<source>`（§6.19）；回读统一经 `replication_source` 聚合（见 `LINUX_PORT_GAPS.md` §1.4） |
 | frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
-| HDR 分析精度 | CPU 亮度直方图（亮度域）vs Windows 的 D3D11 逐像素 maxRGB（scRGB）；消费端按近似处理 |
 | 虚拟显示器 per-client 隔离 | 客户端切换时销毁重建 VDD，单虚拟屏共享；Windows 是多实例 + 每客户端独立 GUID |
 
 ### ❌ Windows 专属 / 不可移植

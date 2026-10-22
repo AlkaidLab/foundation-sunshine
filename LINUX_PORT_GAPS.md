@@ -16,9 +16,9 @@
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本双向、远程麦克风、ABR 前台检测
 （KDE + niri）、托盘/向导/打包。
 
-剩余：**5 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
+剩余：**4 项部分实现**（§一）、**6 项可行未做**（§二，其中 §2.1b/§2.7/§2.8/§2.9/
 §2.10 残余/§2.11）、**9 项本质不可移植**（§三）。
-（2026-10-22 告一段落、已从待办中移除：§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
+（2026-10-22 告一段落、已从待办中移除：§1.2 HDR 分析精度（逐像素 maxRGB）、§1.6 / §2.6 AI Key 的 Secret Service 后端、§2.5 非 KDE
 前台检测、§2.1 剪贴板图片双向同步、§2.2 USB/IP 主机后端、§2.3 GNOME Mutter 显示后端（含复制
 拓扑）、§2.4 DSU 运动广播、§2.10 niri 输出后端、§7.1 管线帧率的"源更新"段。）
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
@@ -37,14 +37,22 @@
   `create_vdd_monitor` 带 GUID 参数化显示名。受限于机器上的空闲连接器数量。
 - **工作量**：高。**验收**：两客户端同时各串各的虚拟屏互不干扰。
 
-### 1.2 HDR 亮度分析精度
+### 1.2 ✅ HDR 亮度分析精度（2026-10-22 完成，走 CPU 而非 GPU）
 
-- **现状**：CPU 亮度直方图，PQ 亮度域（`src/video.cpp:396` `analyze_pq_luma_frame`）。
-- **差距**：Windows 是 D3D11 计算着色器逐像素 max(R,G,B)（scRGB）；亮度 ≤ maxRGB，饱和纯色场景
-  maxSCL 略偏低。消费端已按近似处理（99 分位当 maxSCL）。
-- **若要做**：CUDA kernel（nvenc 会话有 CUDA hwdevice）或 Vulkan compute 对 YUV→RGB 逐像素求
-  maxRGB。
-- **工作量**：高。**验收**：纯红/纯蓝测试图 maxSCL 接近真实值。实际观感收益存疑，优先级低。
+- **做法**：新增 `src/video_hdr_analyzer.h`（纯 header 的 `video::hdr_analyzer`），把原来"拿亮度当
+  maxRGB"的直方图改成**逐像素 max(R,G,B)**：按 BT.2020 NCL（显式 BT.709 系标号时才换矩阵）反
+  矩阵把 Y'CbCr 还原成 R'G'B' 的 PQ 信号，取三者最大再落回 10-bit 码进直方图。4:4:4 与 4:2:0
+  都在内（4:2:0 按最近邻取同址色度），P010/P16 的 MSB 对齐与 planar P10 的 LSB 对齐统一由一个
+  `shift` 处理。`src/video.cpp` 只负责把 `AVFrame` 填成 `hdr_analyzer::frame_t` 再调用。
+- **为什么不用 CUDA**：这条分析每 4 帧对一张**已降采样**的帧跑一次，CPU 逐像素 6 次乘加在分析
+  分辨率下可以忽略；CUDA 路径要把 scRGB 的 hwdevice 与 VAAPI/软件编码两条链路都做成条件分支，
+  收益不抵复杂度。PQ 数学仍只由 `video_hdr_metadata.h` 提供，没有第二份实现。
+- **顺带修正的契约问题**：`platf::hdr_frame_luminance_stats_t` 的字段注释一直写的是 max(R,G,B)
+  （`src/platform/common.h:527-549`），旧实现喂的是亮度，属于实现与文档不符；现在两边一致。
+- **实测**：纯红 100 nits 的帧，旧实现（亮度）给 ~1.2 nits，新实现给 100 nits（见单测）。
+- **验收**：`tests/unit/test_video_hdr_analyzer.cpp` 10 例 —— 纯红不再是亮度值、灰阶仍等于亮度、
+  有限/全范围一致、MSB/LSB 对齐一致、4:2:0 色度覆盖到每个像素、无色度回退亮度、黑帧
+  near-black 覆盖率为 1、坏帧不发布零值、序列号逐帧递增、BT.709 走自己的矩阵。
 
 ### 1.3 剪贴板非文本类 + 非 KDE provider
 

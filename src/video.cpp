@@ -43,6 +43,7 @@ extern "C" {
 #include "sync.h"
 #include "video.h"
 #include "video_dolby_vision.h"
+#include "video_hdr_analyzer.h"
 #include "video_hdr_metadata.h"
 #include "video_probe.h"
 
@@ -383,17 +384,14 @@ namespace video {
     }
 
     /**
-     * @brief Per-frame luminance statistics for HDR10+ dynamic metadata,
-     *        analyzed on the CPU from the converted 10-bit luma plane.
-     *
-     * The Windows analyzer runs a compute shader over scRGB frames and sees
-     * true per-pixel max(R,G,B); the KMS capture path is PQ YUV, so luma
-     * stands in for maxRGB here. Saturated primaries can exceed luma, which
-     * the HDR10+ consumer already treats as approximate - it reports the 99th
-     * percentile as maxSCL rather than the frame maximum.
+     * @brief Hand a converted frame to the shared max(R,G,B) analyzer.
+     * @details The Windows analyzer runs a compute shader over scRGB frames and sees
+     *          true per-pixel max(R,G,B); here the same quantity is reconstructed from
+     *          the PQ YCbCr planes on the CPU. The arithmetic lives in
+     *          video_hdr_analyzer.h so it is unit tested without a capture device.
      */
     void
-    analyze_pq_luma_frame(AVFrame *sw_frame, platf::hdr_frame_luminance_stats_t &stats, std::uint64_t &sequence) {
+    analyze_pq_frame(AVFrame *sw_frame, platf::hdr_frame_luminance_stats_t &stats, std::uint64_t &sequence) {
       const auto fmt = (AVPixelFormat) sw_frame->format;
       if (!luminance_analysis_format_supported(fmt)) {
         return;
@@ -402,110 +400,23 @@ namespace video {
         return;
       }
 
-      const bool msb_aligned = luminance_analysis_format_is_msb_aligned(fmt);
-      const int shift = msb_aligned ? 6 : 0;
-      constexpr std::uint16_t kCodeMask = 0x3FF;
-      constexpr int kCodeMax = 1023;
-      // 10-bit limited-range luma spans [64, 940]; remap onto the PQ signal.
-      const bool limited_range = sw_frame->color_range != AVCOL_RANGE_JPEG;
-      constexpr int kLimitedLow = 64;
-      constexpr int kLimitedSpan = 940 - 64;
-
-      float signal_lut[kCodeMax + 1];
-      float nits_lut[kCodeMax + 1];
-      for (int code = 0; code <= kCodeMax; ++code) {
-        auto c = code;
-        if (limited_range) {
-          c = ((code - kLimitedLow) * kCodeMax) / kLimitedSpan;
-        }
-        signal_lut[code] = std::clamp(c, 0, kCodeMax) / float(kCodeMax);
-        nits_lut[code] = hdr_metadata::pq_to_nits(signal_lut[code]);
+      hdr_analyzer::frame_t frame;
+      frame.width = sw_frame->width;
+      frame.height = sw_frame->height;
+      frame.shift = luminance_analysis_format_is_msb_aligned(fmt) ? 6 : 0;
+      frame.chroma_subsample = (fmt == AV_PIX_FMT_P010LE || fmt == AV_PIX_FMT_YUV420P10LE) ? 2 : 1;
+      frame.limited_range = sw_frame->color_range != AVCOL_RANGE_JPEG;
+      // PQ content is BT.2020 almost by definition; only an explicit BT.709-family
+      // tag switches the matrix.
+      frame.bt2020 = !(sw_frame->colorspace == AVCOL_SPC_BT709 || sw_frame->colorspace == AVCOL_SPC_BT470BG ||
+                        sw_frame->colorspace == AVCOL_SPC_SMPTE170M || sw_frame->colorspace == AVCOL_SPC_SMPTE240M);
+      frame.y = { reinterpret_cast<const std::uint16_t *>(sw_frame->data[0]), sw_frame->linesize[0] / (int) sizeof(std::uint16_t) };
+      if (sw_frame->data[1] && sw_frame->data[2] && sw_frame->linesize[1] > 0 && sw_frame->linesize[2] > 0) {
+        frame.cb = { reinterpret_cast<const std::uint16_t *>(sw_frame->data[1]), sw_frame->linesize[1] / (int) sizeof(std::uint16_t) };
+        frame.cr = { reinterpret_cast<const std::uint16_t *>(sw_frame->data[2]), sw_frame->linesize[2] / (int) sizeof(std::uint16_t) };
       }
 
-      std::vector<std::uint32_t> histogram(kCodeMax + 1, 0);
-      const auto *base = reinterpret_cast<const std::uint16_t *>(sw_frame->data[0]);
-      const auto stride = sw_frame->linesize[0] / sizeof(std::uint16_t);
-      for (int row = 0; row < sw_frame->height; ++row) {
-        const auto *line = base + (size_t) row * stride;
-        for (int col = 0; col < sw_frame->width; ++col) {
-          ++histogram[(line[col] >> shift) & kCodeMask];
-        }
-      }
-
-      const auto total = (std::uint64_t) sw_frame->width * sw_frame->height;
-      if (!total) {
-        return;
-      }
-
-      auto code_at_percentile = [&](int pct) {
-        const auto target = (std::uint64_t) std::ceil(total * pct / 100.0);
-        std::uint64_t acc = 0;
-        for (int code = 0; code <= kCodeMax; ++code) {
-          acc += histogram[code];
-          if (acc >= target) {
-            return code;
-          }
-        }
-        return kCodeMax;
-      };
-
-      double nits_sum = 0.0;
-      double signal_sum = 0.0;
-      std::uint64_t near_black = 0;
-      int min_code = -1;
-      int max_code = 0;
-      for (int code = 0; code <= kCodeMax; ++code) {
-        const auto count = histogram[code];
-        if (!count) {
-          continue;
-        }
-        if (min_code < 0) {
-          min_code = code;
-        }
-        max_code = code;
-        nits_sum += (double) count * nits_lut[code];
-        signal_sum += (double) count * signal_lut[code];
-        if (signal_lut[code] < 1.0f / 256.0f) {
-          near_black += count;
-        }
-      }
-      if (min_code < 0) {
-        return;
-      }
-
-      stats.min_maxrgb = nits_lut[min_code];
-      stats.max_maxrgb = nits_lut[max_code];
-      stats.avg_maxrgb = (float) (nits_sum / total);
-      stats.avg_maxrgb_pq = (float) (signal_sum / total);
-      stats.near_black_fraction = (float) ((double) near_black / total);
-      stats.near_black_stats_valid = true;
-      // PQ's analysis clamp is the ST 2084 peak; when HLG analysis lands it
-      // must follow the Windows rule instead (min(display peak, this peak)).
-      stats.analysis_max_nits = hdr_metadata::st2084_peak_nits;
-      stats.sample_sequence = ++sequence;
-      stats.valid = true;
-
-      for (size_t i = 0; i < hdr_metadata::hdr10plus_percentages.size(); ++i) {
-        const auto pct = hdr_metadata::hdr10plus_percentages[i];
-        const auto code = code_at_percentile(pct);
-        stats.distribution_maxrgb[i] = nits_lut[code];
-        switch (pct) {
-          case 1:
-            stats.percentile_1_pq = signal_lut[code];
-            break;
-          case 10:
-            stats.percentile_10_pq = signal_lut[code];
-            break;
-          case 90:
-            stats.percentile_90_pq = signal_lut[code];
-            break;
-          case 99:
-            stats.percentile_99 = nits_lut[code];
-            break;
-          default:
-            break;
-        }
-      }
+      hdr_analyzer::analyze(frame, stats, sequence);
     }
   }  // namespace
 
@@ -564,7 +475,7 @@ namespace video {
         // Vivid startup gate) four times faster for the same content. The frames
         // in between keep the previous statistics, which those filters ignore.
         luminance_analysis_counter = 0;
-        analyze_pq_luma_frame(sw_frame.get(), hdr_luminance_stats, luminance_sequence);
+        analyze_pq_frame(sw_frame.get(), hdr_luminance_stats, luminance_sequence);
       }
 
       return 0;
@@ -1033,7 +944,7 @@ namespace video {
         return;
       }
 
-      analyze_pq_luma_frame(hw_analysis_frame.get(), device->hdr_luminance_stats, hw_analysis_sequence);
+      analyze_pq_frame(hw_analysis_frame.get(), device->hdr_luminance_stats, hw_analysis_sequence);
     }
 
     // Runtime HDR status published to the WebUI (GET /api/runtime/hdr). Only

@@ -547,6 +547,7 @@ if (WIN32)
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_niri_ipc\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mutter_display\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mirror_plan\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_video_hdr_analyzer\.cpp")
 else ()
     # Windows-host test sources must not reach non-Windows builds.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")
