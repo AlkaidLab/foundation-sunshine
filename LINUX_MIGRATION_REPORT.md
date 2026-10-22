@@ -813,6 +813,39 @@ inputtino_touch.cpp` 与上游逐字相同（`git diff origin/master:<file> HEAD
   了 BTN_TOUCH + `INPUT_PROP_DIRECT` + 16 槽位"）。所以"多点触控确实好了"这一步需要用户在真机上
   用两指手势确认；若症状不是上述三类，请把客户端与手势描述出来，我再往下查。
 
+### 6.29 虚拟触屏在 KWin 上的输出归属（`kwin_input_device`）
+
+§6.28 把事件语义对齐到 Windows 之后，用户复报"什么都点不动"。证据链把问题从我们的事件层推到
+合成器的投递决策：内核 → libinput 的事件流正常（`/tmp/touchprobe` 直接注入，`libinput
+debug-events` 可见 `TOUCH_DOWN/UP`），XWayland 指针跟随，但自建的 `wl_touch` 观察者客户端
+（`/tmp/wlobserve`，绑 `wl_seat` + `xdg_shell` 全屏窗口）收不到任何触摸事件。
+
+KWin 侧（`src/backends/libinput/connection.cpp`）：
+
+- `applyScreenToDevice()` 为每个触屏设备推断 output：物理尺寸匹配 → **内屏** → 第一个 output。
+  虚拟设备的物理尺寸是 0×0，于是落到内屏（本机 `eDP-1`，串流时是禁用的那块）。
+- `LIBINPUT_EVENT_TOUCH_DOWN` 在 `device->output()` 为空时丢弃事件。
+- `mapToWorkspace=false`（默认）把 0..1 坐标限制在同一块输出内。
+
+实现：新增 `src/platform/linux/kwin_input_device.h/.cpp`。
+
+- `plan_mapping(enabled_outputs, streamed_output)` —— 纯函数：始终 `map_to_workspace = true`
+  （Windows 语义），`output_name` 优先流式连接器，否则 `enabled_outputs.front()`，都没有就留空；
+- `collect_matching_nodes()` —— 纯函数，按设备名从 `/sys/class/input` 里挑 `eventN`（排序，稳定）；
+- `enabled_outputs()` —— 扫 `/sys/class/drm/card*-*` 的 `status`/`enabled`，剥掉 `cardN-` 前缀；
+- `available()` / `apply()` —— 会话总线上查 `org.kde.KWin`，再对
+  `/org/kde/KWin/InputDevice/<eventN>` 写 `outputName` 与 `mapToWorkspace`；
+- `sync_our_touch_devices(streamed)` —— 编排，无 KWin 时打一行 debug 就返回。
+
+接线：`inputtino_common.h` 的 `client_input_raw_t` 创建触屏后调用一次；`display_device.cpp` 的
+`apply_config()` 成功末尾与 `revert_settings()` 末尾各调用一次（输出集合刚变过，映射必须跟着变）。
+
+验证：7 例判定/匹配单测 + 1 例 live 冒烟（真机 `event30`，写入成功后回读 `outputName="DP-2"`；
+未流式时自动 skip）。真机确认：设置前触摸无反应，设置后立即恢复。
+
+边界：属性不持久化到 `kwinrc`，KWin 重启后需重新设置（下一次会话或显示变更会补上）；非 KDE
+合成器无此 API；笔设备未纳入。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -823,7 +856,7 @@ inputtino_touch.cpp` 与上游逐字相同（`git diff origin/master:<file> HEAD
 | 捕获：KMS / Wayland(wlr) / X11 | 见 §五第 4 条的合成器限制 |
 | 编码：NVENC / VAAPI / Vulkan / 软件 | Linux 注册四个编码器；NVENC 走 FFmpeg avcodec + CUDA hwdevice（运行时加载驱动）；NVENC 的 YUV 4:4:4 已解禁（§6.10） |
 | 输入注入 + 手柄振动 | inputtino（libevdev/uinput），含 rumble 回放 |
-| 触摸 / 多点触控 + 笔 | 每客户端独立触摸屏与笔设备；事件语义按 Windows 对齐（hover 不成触点、CANCEL_ALL 释放全部、旋转/压力有缺省值），见 §6.28 |
+| 触摸 / 多点触控 + 笔 | 每客户端独立触摸屏与笔设备；事件语义按 Windows 对齐（hover 不成触点、CANCEL_ALL 释放全部、旋转/压力有缺省值），见 §6.28；KWin 上的输出归属与坐标空间由 `kwin_input_device` 显式设定（否则内屏猜测会吞掉事件），见 §6.29 |
 | 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成；仅"主机直连 DualSense 播放"的 sidecar 是 Windows 专属 |
 | 文本输入通道 text_context | 纯数据通道 |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |

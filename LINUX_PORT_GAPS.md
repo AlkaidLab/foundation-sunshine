@@ -694,6 +694,42 @@ XWayland 在每一个 Wayland 会话里都应答 RandR 读，KScreen 只要 `ksc
 缺的两件事：未知事件类型打警告、触点表溢出（>16）时先取消全部再安置新触点。
 `tests/unit/test_touch_plan.cpp` 14 例覆盖上述全部路径，不碰 uinput。
 
+### 7.8 ✅ KWin 虚拟触屏的输出归属（2026-10-22，用户报告触发，非同步缺口）
+
+§7.7 修好事件语义后用户仍报"什么都点不动"。这一轮证据链指向**合成器**而不是我们的事件：
+
+| 证据 | 结论 |
+|---|---|
+| `/tmp/touchprobe` 直接注入合成设备，`libinput debug-events` 显示 `TOUCH_DOWN/MOTION/UP` 正常 | 内核到 libinput 这一段是好的 |
+| XWayland 的指针在注入后跟着动 | libinput 已被消费 |
+| 自写 Wayland 客户端（xdpyinfo 式的 `wlobserve`）绑 `wl_touch` 并全屏，注入后**收不到任何 `wl_touch` 事件** | 事件在 KWin 的投递决策里被丢掉 |
+
+根因在 KWin 的源码里（`src/backends/libinput/connection.cpp`）：
+
+- `applyScreenToDevice()` 给每个触屏设备猜一个 output：先按物理尺寸匹配，**猜不到就落到内屏**，
+  内屏也没有才落到第一个 output。笔记本上"内屏"往往正是我们**没有**在串流、而且被禁用的那块。
+- `LIBINPUT_EVENT_TOUCH_DOWN` 分支在 `device->output()` 为空时直接丢弃，只留一行
+  "Touch down received for device with no output assigned"。
+- 即使有 output，`mapToWorkspace=false` 会把 0..1 坐标限制在**单个** output 内。
+
+Windows 没有这两层：绝对触控天然覆盖整个虚拟桌面。于是本分支加了
+`src/platform/linux/kwin_input_device.{h,cpp}`：在触屏设备创建后、以及每次显示配置变更后（虚拟屏
+出现、物理屏退场），通过 `org.kde.KWin.InputDevice` 的 D-Bus 属性设
+
+- `outputName` —— 优先取正在串流的连接器，否则取任一 enabled 输出（有 `mapToWorkspace` 时
+  这个名字只用于让 `device->output()` 非空，位置仍按工作区计算）；
+- `mapToWorkspace = true` —— 与 Windows 的"绝对触控覆盖整个虚拟桌面"对齐。
+
+全部 best-effort：没有 KWin、没有会话总线、旧版 KWin 不认这个属性，都只是跳过，不影响会话。
+
+**验证**：`tests/unit/test_kwin_input_device.cpp` 7 例覆盖判定与匹配（含"笔设备不能被误配"），
+外加 1 个 live 冒烟用例——在本机真有 `event30` 时读 /sys、问总线、写属性并断言成功（已通过，
+回读 `outputName="DP-2"`）；真机确认设置前收不到触控、设置后立即可用。
+
+**边界**：属性不写进 `kwinrc`，KWin 重启后会回到猜测值，直到下一次会话或显示配置变更重新设置；
+非 KDE 合成器没有这个 API（niri / wlroots / X11 走各自的绝对坐标路径，未观察到同类问题）；
+笔设备不在此列（KWin 对 tablet 的映射不同，真机未复现问题）。
+
 **诚实边界**：本机没有 Moonlight 客户端可做端到端手势验证（uinput 节点是 `0600 root:root`，
 合成器靠 logind `TakeDevice` 打开，探针只能证明设备声明了 BTN_TOUCH + `INPUT_PROP_DIRECT` +
 16 槽位）。真机两指手势的确认在用户侧。
