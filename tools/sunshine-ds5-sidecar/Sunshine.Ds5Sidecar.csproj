@@ -15,6 +15,7 @@
     <Error Condition="!Exists('$(CompatibilityManifestPath)')" Text="component-compatibility.json was not found. Initialize the GUI submodule or set CompatibilityManifestPath." />
   </Target>
   <ItemGroup>
+    <Compile Include="../hidmaestro-core-patch/DualSenseClock.cs" Link="DualSenseClock.cs" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="[0.3.333]" PrivateAssets="all" />
     <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
     <None Include="$(CompatibilityManifestPath)" Link="component-compatibility.json" CopyToOutputDirectory="PreserveNewest" />

@@ -8,7 +8,7 @@
     <Version>1.12.0</Version>
     <AssemblyVersion>1.12.0.0</AssemblyVersion>
     <FileVersion>1.12.0.0</FileVersion>
-    <InformationalVersion>1.12.0+foundation.device-ownership.1.audio-pacing.1.managed-usbip.1</InformationalVersion>
+    <InformationalVersion>1.12.0+foundation.device-ownership.1.audio-pacing.1.managed-usbip.1.ds5-reports.1</InformationalVersion>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -23,6 +23,8 @@
     <AssemblyMetadata Include="FoundationCorePatch" Value="device-ownership-1" />
     <AssemblyMetadata Include="FoundationUsbipPolicy" Value="$(FoundationUsbipPolicy)" />
     <Compile Include="SharedUsbipTransport.cs" />
+    <Compile Include="DualSenseClock.cs" />
+    <AssemblyMetadata Include="FoundationDualSenseReports" Value="host-clock-v1" />
     <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
     <Compile Include="$(UpstreamSource)/sdk/HIDMaestro.Core/**/*.cs"
              Exclude="$(UpstreamSource)/sdk/HIDMaestro.Core/bin/**;$(UpstreamSource)/sdk/HIDMaestro.Core/obj/**" />
