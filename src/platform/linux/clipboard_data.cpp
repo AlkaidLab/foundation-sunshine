@@ -180,8 +180,17 @@ namespace platf::clipboard_data {
     bool recv_is_image = false;
     std::chrono::steady_clock::time_point recv_deadline;
     /// Us -> compositor: pipes a paste is draining, one per pending send().
+    /// @details Each transfer owns a copy of the bytes it serves. The selection
+    ///          can be replaced or cancelled while a paste is half-drained, and a
+    ///          transfer that only remembered an offset would then resume writing
+    ///          the *new* item's bytes into the *old* item's pipe -- a paste that
+    ///          receives one item's head spliced onto another's tail. Copying is
+    ///          cheap next to the paste it feeds (one memcpy per send()), and it
+    ///          lets an in-flight paste finish correctly after the selection
+    ///          moves on.
     struct out_transfer_t {
       int fd = -1;
+      bytes_t data;
       std::size_t offset = 0;
       std::chrono::steady_clock::time_point deadline;
     };
@@ -202,10 +211,8 @@ namespace platf::clipboard_data {
         ext_data_control_source_v1_destroy(source);
         source = nullptr;
       }
-      // An in-flight paste of the old item refers to bytes that are about to be
-      // replaced; out_transfer_t only remembers an offset, so finishing it
-      // would splice the old head onto the new tail. Drop them.
-      drop_out_transfers("the published item was replaced");
+      // Pastes already in flight keep serving the copy they were handed, so
+      // replacing the selection here cannot corrupt them.
       source_bytes.clear();
       source_is_image = false;
 
@@ -239,15 +246,16 @@ namespace platf::clipboard_data {
           if (flags >= 0) {
             ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
           }
-          state.out_transfers.push_back({ fd, 0, std::chrono::steady_clock::now() + kTransferTimeout });
+          state.out_transfers.push_back({ fd, state.source_bytes, 0,
+                                          std::chrono::steady_clock::now() + kTransferTimeout });
         },
         // cancelled(): another client took the selection. Keep the proxy until
         // the next publish and stop advertising bytes we no longer serve.
         [](void *data, ext_data_control_source_v1 *) {
           BOOST_LOG(debug) << "Clipboard ext: our selection was cancelled"sv;
           auto &state = *static_cast<impl_t *>(data);
-          // Bytes we no longer serve must not keep feeding a half-finished paste.
-          state.drop_out_transfers("the selection was cancelled");
+          // Stop advertising bytes we no longer serve. Transfers already handed
+          // a copy keep draining it: the paste they belong to was asked for.
           state.source_bytes.clear();
           state.source_is_image = false;
         },
@@ -408,38 +416,22 @@ namespace platf::clipboard_data {
       recv_is_image = false;
     }
 
-    /// Close and forget every pending outbound paste.
-    void
-    drop_out_transfers(std::string_view reason) {
-      for (auto &transfer: out_transfers) {
-        if (transfer.fd >= 0) {
-          ::close(transfer.fd);
-        }
-      }
-      if (!out_transfers.empty()) {
-        BOOST_LOG(debug) << "Clipboard ext: dropped "sv << out_transfers.size() << " pending paste(s): " << reason;
-      }
-      out_transfers.clear();
-    }
-
     /// Push pending paste bytes into their pipes; drop finished/expired ones.
     void
     pump_out_transfers() {
       const auto now = std::chrono::steady_clock::now();
       for (auto it = out_transfers.begin(); it != out_transfers.end();) {
-        // The selection may have been cancelled mid-transfer, which empties
-        // source_bytes; nothing more to serve then.
-        if (it->offset >= source_bytes.size() || now > it->deadline) {
-          if (now > it->deadline && it->offset < source_bytes.size()) {
+        if (it->offset >= it->data.size() || now > it->deadline) {
+          if (now > it->deadline && it->offset < it->data.size()) {
             BOOST_LOG(warning) << "Clipboard ext: paste timed out after "sv << it->offset << " of "sv
-                               << source_bytes.size() << " bytes"sv;
+                               << it->data.size() << " bytes"sv;
           }
           ::close(it->fd);
           it = out_transfers.erase(it);
           continue;
         }
 
-        const auto put = ::write(it->fd, source_bytes.data() + it->offset, source_bytes.size() - it->offset);
+        const auto put = ::write(it->fd, it->data.data() + it->offset, it->data.size() - it->offset);
         if (put < 0) {
           if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
             ++it;
@@ -452,7 +444,7 @@ namespace platf::clipboard_data {
         }
 
         it->offset += static_cast<std::size_t>(put);
-        if (it->offset >= source_bytes.size()) {
+        if (it->offset >= it->data.size()) {
           ::close(it->fd);
           it = out_transfers.erase(it);
           continue;

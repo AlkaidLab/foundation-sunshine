@@ -749,8 +749,17 @@ namespace clipboard_host {
 
   void
   stop() {
-    if (!running.exchange(false)) {
-      return;
+    {
+      // Clear the flag while holding the mutex every wait polls it under.
+      // Setting it outside leaves a window where a waiter evaluates the
+      // predicate, gets descheduled, and only then blocks: the notify below
+      // lands in that window and is lost, so the poll thread would sleep out a
+      // full kKlipperRetryInterval while the shutdown watchdog is already
+      // counting. Both edges of `running` are ordered against the predicate.
+      std::lock_guard<std::mutex> lk { write_mu };
+      if (!running.exchange(false, std::memory_order_acq_rel)) {
+        return;
+      }
     }
 
     // Wake the poll thread out of its wait instead of letting it time out.
