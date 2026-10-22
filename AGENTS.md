@@ -24,9 +24,9 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON
 ninja -C build sunshine
-cd build && ctest          # baseline: 15 suites, 14 pass; the 3 Audio/MouseHID/Encoder
-                           # SetUpTestSuite failures inside test_sunshine are headless-only
-                           # (640 cases, 628 pass, 12 skip, 0 assertion failures)
+cd build && ctest          # baseline: 24 suites, 23 pass; the single Encoder SetUpTestSuite
+                           # failure inside test_sunshine is headless-only (needs cap_sys_admin)
+                           # (650 cases, 645 pass, 5 skip, 0 assertion failures)
 ```
 
 CUDA is the default (`SUNSHINE_ENABLE_CUDA` defaults to ON on Linux; a missing

@@ -918,31 +918,33 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 
 ## 九、测试基线
 
-2026-10-22（并入上游 `3c194184` 之后），CUDA=ON 构建树：
+2026-10-22（并入上游 `c211d711` 之后），CUDA=ON 构建树：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 843 用例，830 通过，12 跳过，1 失败
+test_sunshine: 650 用例，645 通过，5 跳过，0 失败
 ```
 
-唯一失败的是 `DownloadFileTests/DownloadFileTest.Run/1`（访问 `https://httpbin.org/...`，离线必失败）
-——它**不在 ctest 门禁内**：`tests/CMakeLists.txt:613-618` 注册 `test_sunshine` 时就带了
-`--gtest_filter=-DownloadFileTests/*`，只留给手动跑。所以上面这条 ctest 失败完全来自三个
-`SetUpTestSuite` 夹具（见下），不是用例失败。
+**用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
+不是用例失败。用例数从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
+所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
+`tests/tools/vmouse_logging_stubs.cpp` 被删，`DownloadFileTests`（访问 `https://httpbin.org/`，
+离线必失败）也一并移除，所以此前记录的两项环境依赖失败不再出现。
 
 - `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 曾因"未知 appid 期望
   404、而 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`"失败（本机装过包，
   文件存在 → 返回 200）。已改为按该资产是否存在分支断言，并把性质补强为"响应永远不是请求 app
   自己的图"（`tests/unit/test_crypto.cpp:376-395`），现在恒绿。详见 `LINUX_PORT_GAPS.md` §7.3。
 
-三个 `SetUpTestSuite` 失败（`Configurations/AudioTest`、`MouseInputs/MouseHIDTest`、
-`EncoderVariants/EncoderTest`）的根因已查明：**测试二进制没有 `cap_sys_admin`**，KMS 采集自检在
-`src/platform/linux/kmsgrab.cpp:1837` 取不到 framebuffer 的 GEM handle 而放弃，于是
-`platf::init()` 返回空、`tests/tests_common.h:18/23` 的 `ASSERT_TRUE(platf_deinit)` 报错（用例体
-本身是优雅跳过的）。已安装的 `/usr/bin/sunshine-*` 由
-`packaging/arch-local/sunshine-foundation.install` 的 `do_setcap()` 打了能力，所以真实运行不受影响。
-设备权限不是原因：`/dev/dri/card1`、`/dev/dri/renderD128`、`/dev/uinput` 都能打开，`strace` 也确认
-测试进程确实开了这两个 DRM 节点。设备齐备时给测试二进制加能力即会通过。
+剩下的那一个 `SetUpTestSuite` 失败（`EncoderVariants/EncoderTest`）根因已查明：**测试二进制没有
+`cap_sys_admin`**，KMS 采集自检在 `src/platform/linux/kmsgrab.cpp:1837` 取不到 framebuffer 的 GEM
+handle 而放弃，于是 `platf::init()` 返回空、`tests/tests_common.h:18/23` 的
+`ASSERT_TRUE(platf_deinit)` 报错（用例体本身是优雅跳过的）。上游 #1176 删掉 `test_audio.cpp` 与
+`test_mouse.cpp` 后，原先并列的 AudioTest / MouseHIDTest 两个夹具已不存在。已安装的
+`/usr/bin/sunshine-*` 由 `packaging/arch-local/sunshine-foundation.install` 的 `do_setcap()` 打了
+能力，所以真实运行不受影响。设备权限不是原因：`/dev/dri/card1`、`/dev/dri/renderD128`、
+`/dev/uinput` 都能打开，`strace` 也确认测试进程确实开了这两个 DRM 节点。设备齐备时给测试二进制
+加能力即会通过。
 
 **注意事项**：
 - 直跑 `ctest` 需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），否则聚合套件

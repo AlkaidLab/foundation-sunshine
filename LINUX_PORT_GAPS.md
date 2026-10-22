@@ -37,7 +37,8 @@
 §7.2 依赖外网的单测（复核确认上游已自行摘出 ctest 门禁）。
 另有**有意保留的差异**（§四，决策记录）、**上游新特性的 Linux 缺口**（§五），以及
 **2026-10-22 上游同步（`ed415026..7a0995e2`，33 个提交）新引入的缺口**（§七，其中 §7.1/§7.2/§7.3
-已了结，§7.4 记录了三个 SetUpTestSuite 失败的根因——测试二进制没有 `cap_sys_admin`，非缺口）。
+已了结，§7.4 记录了 `SetUpTestSuite` 失败的根因——测试二进制没有 `cap_sys_admin`，非缺口；上游 #1176 删掉
+`test_audio.cpp`/`test_mouse.cpp` 后只剩 `EncoderTest` 一个）。
 
 ---
 
@@ -601,6 +602,9 @@ Windows 三个后端 override 它（`display.h`、`display_vdd.cpp:1453`、`disp
   third party's uptime rather than on this repository"，用例留在二进制里，改
   `http::download_file` 时可手动跑。
 - 因此 `ctest` 不会因它变红，只有直接跑二进制才看得到失败。**无需动作**，更不要改产品代码。
+- 上游 `c211d711`（#1176 测试清理）把这两个用例从 `tests/unit/test_httpcommon.cpp` 里删除，并从
+  `tests/CMakeLists.txt` 的过滤参数里摘掉——本仓并入后二进制里不再有 `DownloadFileTests`，§7.2
+  彻底了结。
 
 ### 7.3 ✅ 依赖系统已安装资产的单元测试（2026-10-22 修复）
 
@@ -617,13 +621,16 @@ Windows 三个后端 override 它（`display.h`、`display_vdd.cpp:1453`、`disp
 - 结果：`test_sunshine` 805 例 / 792 通过 / 12 跳过 / 1 失败，剩下的就是 §7.2 那条被 ctest
   过滤掉的 httpbin 用例。
 
-### 7.4 三个 SetUpTestSuite 失败（AudioTest / MouseHIDTest / EncoderTest）——权限，不是缺口
+### 7.4 `SetUpTestSuite` 失败（EncoderTest）——权限，不是缺口
 
-这 3 个失败从移植第一天起就在（`AGENTS.md` 的构建基线亦记为 headless 现象），本轮查清了根因：
+这个失败从移植第一天起就在（`AGENTS.md` 的构建基线亦记为 headless 现象），本轮查清了根因。
+上游 `c211d711`（#1176 测试清理）删掉 `tests/unit/test_audio.cpp` 与 `test_mouse.cpp` 之后，原先
+并列的 `Configurations/AudioTest`、`MouseInputs/MouseHIDTest` 两个夹具已不存在，只剩
+`EncoderVariants/EncoderTest`。
 
 - 报错点在 `tests/tests_common.h:18` 与 `:23` 的 `ASSERT_TRUE(platf_deinit)`：`platf::init()`
   返回 `nullptr`（`src/platform/linux/misc.cpp:1092-1095`，没有任何采集后端自检通过）。用例体
-  本身是优雅跳过的（如 `tests/unit/test_audio.cpp:56`），只有夹具断言报错。
+  本身是优雅跳过的，只有夹具断言报错。
 - 根因是**能力**：KMS 自检走到 `src/platform/linux/kmsgrab.cpp:1837` 的
   `if (!fb->handles[0])`——取 DRM framebuffer 的 GEM handle 需要 `cap_sys_admin`。已核对本机
   `/usr/bin/sunshine-*` 带 `cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_sys_admin=p`
