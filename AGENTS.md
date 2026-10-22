@@ -49,9 +49,13 @@ outside such a guard — `src/platform/linux/sdbus_session.h` and
 hides libsystemd (recipe and results: LINUX_MIGRATION_REPORT.md §6.25).
 
 Packaging (`packaging/arch-local/`, installs prebuilt tree, no compile in makepkg):
-bump `pkgrel` → `cmake -B build ...` (refreshes the binary version stamp — the user
-checks the `Sunshine version:` log line) → `ninja -C build sunshine` → `makepkg -f`.
-Never run makepkg while ninja is still linking. Never commit `packaging/arch-local/{pkg,src,*.pkg.tar.zst}`.
+`cmake -B build ...` (refreshes the binary version stamp) → `ninja -C build sunshine`
+→ `makepkg -f`. The PKGBUILD derives `pkgver` from that stamp itself
+(`<YYYY>.<MMDD>.<HHMMSS>.<commit>`, the string the `Sunshine version:` log line
+prints), so the package name always names the build it contains; keep `pkgrel` at 1
+and bump it only for packaging-only changes. It also re-links automatically when
+the stamp and HEAD disagree. Never run makepkg while ninja is still linking. Never
+commit `packaging/arch-local/{pkg,src,*.pkg.tar.zst}`.
 User installs packages themselves (sudo needs a password).
 
 ## Platform rules (Windows CI builds this repo — do not break it)

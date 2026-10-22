@@ -10,8 +10,17 @@
 # Run:     sunshine   # assets live in /usr/share/sunshine
 
 pkgname=sunshine-foundation
-pkgver=2026.0909
-pkgrel=84
+# The version is the one the binary itself carries - the same string the
+# "Sunshine version:" log line prints, and the same shape the fork uses for its
+# release tags (v2026.903.160345.杂鱼):
+#
+#     <YYYY>.<MMDD>.<HHMMSS>.<commit>      e.g. 2026.1022.153619.7969ff13
+#
+# It is read from the built tree further down, so the package always names the
+# build it contains instead of a frozen release with a growing pkgrel. Keep
+# pkgrel at 1 and bump it only for packaging-only changes.
+pkgver=0
+pkgrel=1
 pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
 arch=('x86_64')
 url="https://github.com/qiin2333/Sunshine"
@@ -47,7 +56,7 @@ install=sunshine-foundation.install
 
 # Package a different build tree (e.g. a CUDA-enabled one) without moving files:
 #   SUNSHINE_BUILD_DIR="$PWD/build-cuda" makepkg -f
-_build_dir="${SUNSHINE_BUILD_DIR:-$startdir/../../build}"
+_build_dir="${SUNSHINE_BUILD_DIR:-${startdir:-$PWD}/../../build}"
 
 # The executable carries a version stamp made of the configure timestamp plus the
 # current commit (cmake/prep/build_version.cmake), and cmake bakes that name into
@@ -76,6 +85,27 @@ _stamp_hash() {
 _stamp_is_dirty() {
   case "$1" in *杂鱼* | *dirty*) return 0 ;; *) return 1 ;; esac
 }
+
+# pkgver from the built tree: drop the "sunshine-" prefix and fold the dirty
+# marker into something pacman accepts (it allows only [A-Za-z0-9._+]).
+_pkgver_from_stamp() {
+  local stamp
+  stamp="$(_built_stamp)" || return 1
+  [ -n "$stamp" ] || return 1
+  printf '%s' "${stamp#sunshine-}" | sed -E 's/\.?[^A-Za-z0-9._+]+/.dirty/g'
+}
+
+# Fallback for a tree that has not been configured yet: commit time plus commit
+# in the same shape cmake stamps into the binary (cmake/prep/build_version.cmake).
+_pkgver_from_git() {
+  local repo="$startdir/../.." date sha
+  sha="$(git -C "$repo" rev-parse --short=8 HEAD 2>/dev/null)" || return 1
+  date="$(git -C "$repo" show -s --format=%cd --date=format-local:%Y.%m%d.%H%M%S HEAD 2>/dev/null)" || return 1
+  [ -n "$sha" ] && [ -n "$date" ] || return 1
+  printf '%s.%s' "$date" "$sha"
+}
+
+pkgver="$(_pkgver_from_stamp || _pkgver_from_git || printf 0)"
 
 _relink() {
   msg2 "re-configuring and relinking so the package matches the current tree"

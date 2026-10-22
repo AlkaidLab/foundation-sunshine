@@ -1,6 +1,7 @@
 # Foundation Sunshine Linux（Arch Linux）迁移报告
 
-- **基线**：`linux-migration` 分支（pkgrel 80，2026-10-22；已并入上游 `origin/master` `7a0995e2`，
+- **基线**：`linux-migration` 分支（包版本跟随二进制版本戳，如
+  `2026.1022.161750.430c3c02-1`；2026-10-22 已并入上游 `origin/master` `3c194184`，
   上一个同步点 `ed415026`，tag `v0.9.3-linux-upstream-sync` 指向 `0e2a6a11`）
 - **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支）
 - **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland 与 niri 双目标，PipeWire，
@@ -69,8 +70,12 @@ cd build && ctest
 
 ### 打包
 
-`packaging/arch-local/`（本地调试包，不在 makepkg 内编译）流程：bump `pkgrel` →
-`cmake -B build ...`（刷新二进制版本戳）→ `ninja -C build sunshine` → `makepkg -f`。
+`packaging/arch-local/`（本地调试包，不在 makepkg 内编译）流程：`cmake -B build ...` →
+`ninja -C build sunshine` → `makepkg -f`。**包版本由 PKGBUILD 自己从二进制版本戳读出**
+（`<YYYY>.<MMDD>.<HHMMSS>.<commit>`，与 `Sunshine version:` 日志行同一个串），所以包名永远
+指向它实际包含的那次构建，`pkgrel` 保持 1、只在纯打包改动时才 bump；没有构建树时回退到
+「提交时间 + 提交」的同形版本。`prepare()` 还会在版本戳与 HEAD 不一致时自动 `cmake` + `ninja`
+重链，脏工作树打出的戳带 `杂鱼`，包名里转成 `.dirty`。
 `SUNSHINE_BUILD_DIR=<dir> makepkg -f` 可打包别的构建树。**不要**在 ninja 仍在链接时跑 makepkg；
 **不要**提交 `packaging/arch-local/{pkg,src,*.pkg.tar.zst}`。
 
@@ -844,7 +849,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
 
 ## 九、测试基线
 
-2026-10-22（并入上游 `7a0995e2` 之后，pkgrel 84），CUDA=ON 构建树：
+2026-10-22（并入上游 `3c194184` 之后），CUDA=ON 构建树：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
