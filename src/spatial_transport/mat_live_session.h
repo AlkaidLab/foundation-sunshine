@@ -18,7 +18,8 @@ struct LiveSession {
 };
 inline std::shared_ptr<LiveSession> prepare_live(const std::string& pipe,const std::string& producer) {
 #if defined(_WIN32)
-    if(pipe.empty()||producer.empty())return {};
+    if(pipe.empty()&&producer.empty())return {};
+    spatial_audio::require(!pipe.empty()&&!producer.empty(),"Live MAT needs both mat_live_pipe and mat_live_producer");
     auto source=std::make_unique<spatial_audio::NativeMatPipeSource>();source->prepare(pipe,producer);
     auto result=std::make_shared<LiveSession>();uint64_t epoch=0;
     spatial_audio::require(RAND_bytes(reinterpret_cast<unsigned char*>(&epoch),sizeof(epoch))==1,"MAT live epoch entropy");
@@ -47,7 +48,14 @@ uint64_t live_session(LiveSession& session,const uint8_t* key,size_t key_size,Em
     if(auto pipe=dynamic_cast<spatial_audio::NativeMatPipeSource*>(session.source.get()))pipe->cancel_when(cancelled);
 #endif
     struct Stop {spatial_audio::EncodedAudioSource& source;~Stop(){source.stop();}} stop{*session.source};
-    require(session.source->start(),"Live MAT source could not start");
+    const auto descriptor=session.source->descriptor();
+    require(descriptor.version==1&&descriptor.format==spatial_audio::Format::mat_iec61937&&
+        descriptor.clock==spatial_audio::Clock::carrier_48000&&descriptor.rate==48000,"Live MAT source format/clock unsupported");
+    const auto source_failed=[&](const char* message){
+        const auto detail=session.source->error();
+        throw std::runtime_error(detail.empty()?message:std::string(message)+": "+detail);
+    };
+    if(!session.source->start())source_failed("Live MAT source could not start");
     MAT_LIVE_CIPHER cipher{};require(MatLiveCipherInit(&cipher,key,key_size,session.profile.epoch,session.profile.domain),"Live MAT key");
     struct Wipe {MAT_LIVE_CIPHER& c;~Wipe(){MatLiveWipe(&c,sizeof(c));}} wipe{cipher};
     uint64_t packet=0,cycles=0;uint32_t hash=2166136261u;
@@ -62,13 +70,14 @@ uint64_t live_session(LiveSession& session,const uint8_t* key,size_t key_size,Em
     while(!cancelled()) {
         auto status=session.source->read(frame);
         if(status==spatial_audio::Read::ended)break;
-        require(status!=spatial_audio::Read::failed,"Native MAT source failed");
+        if(status==spatial_audio::Read::failed)source_failed("Native MAT source failed");
         if(status==spatial_audio::Read::pending) {
             require(Clock::now()-last<std::chrono::seconds(2),"Live MAT source stalled");
             wait(std::chrono::milliseconds(1));continue;
         }
         require(status==spatial_audio::Read::frame&&frame.sequence==cycles&&frame.sample_start==cycles*960&&
-            frame.format==spatial_audio::Format::mat_iec61937&&frame.sample_rate==48000&&frame.duration_frames==960,
+            frame.format==spatial_audio::Format::mat_iec61937&&frame.clock==spatial_audio::Clock::carrier_48000&&
+            frame.sample_rate==48000&&frame.duration_frames==960,
             "Live MAT source descriptor/sequence/clock");
         spatial_audio::validate_carrier(frame.bytes);require(cycles<uint64_t(INT64_MAX)/20000000,"Live MAT cycle counter overflow");
         if(cycles==0)origin=Clock::now();

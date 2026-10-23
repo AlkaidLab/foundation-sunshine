@@ -3,6 +3,7 @@
 #define MAT_LIVE_PUBLISHER_HELPERS_ONLY
 #include "capture.cpp"
 #include "../../src/spatial_audio/mat_capture_reader.h"
+#include "../../src/spatial_audio/native_mat_pipe_source.h"
 #include <atomic>
 #include <iostream>
 static void CheckPipe(bool okay,const char* why){if(!okay)throw std::runtime_error(why);}
@@ -100,14 +101,49 @@ static void Reconnect(bool sourceFailure){
     if(server.joinable()){Broken(shared,"Reconnect test cleanup");server.join();}
     if(failure)std::rethrow_exception(failure);
 }
+static void RejectNativePeer(unsigned mode){
+    // A mock publisher may exercise rejection/cleanup, but can never pass the
+    // production audiodg identity check or supply a native stream to the host.
+    const auto name=L"\\\\.\\pipe\\SunshineMatLive-reject-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(mode);
+    HANDLE pipe=CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,4096,4096,0,nullptr);
+    CheckPipe(pipe!=INVALID_HANDLE_VALUE,"Mock publisher pipe");
+    std::string peerError;std::atomic<bool> disconnected=false;
+    std::thread peer([&]{try{
+        OVERLAPPED connection{};connection.hEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);CheckPipe(connection.hEvent!=nullptr,"Mock connect event");
+        BOOL okay=ConnectNamedPipe(pipe,&connection);DWORD code=okay?0:GetLastError();
+        if(code==ERROR_PIPE_CONNECTED)okay=TRUE;
+        if(!okay&&code==ERROR_IO_PENDING){
+            DWORD n=0;auto waited=WaitForSingleObject(connection.hEvent,2000);
+            if(waited!=WAIT_OBJECT_0){CancelIoEx(pipe,&connection);GetOverlappedResult(pipe,&connection,&n,TRUE);CloseHandle(connection.hEvent);throw std::runtime_error("Mock connect timeout");}
+            okay=GetOverlappedResult(pipe,&connection,&n,FALSE);
+        }
+        CloseHandle(connection.hEvent);CheckPipe(okay,"Mock source connected");
+        char open[8];CheckPipe(Io(pipe,open,8,false,2000)&&!memcmp(open,"MCAPOPEN",8),"Mock OPEN");
+        mat_capture::Descriptor d{mode==0?mat_capture::test_source:mat_capture::native_source,GetCurrentProcessId(),GetCurrentProcessId(),1,1,7,42,10000000};
+        if(mode){const auto created=native_mat_guard::created(GetCurrentProcess());d.publisher_created=d.engine_created=created;}
+        if(mode==2)++d.publisher_pid;
+        uint8_t bytes[mat_capture::descriptor_bytes];mat_capture::encode_descriptor(bytes,d);CheckPipe(Io(pipe,bytes,sizeof(bytes),true,2000),"Mock descriptor");
+        // prepare() must close the rejected lease while its source object is
+        // still alive, instead of retaining it until launch-ticket destruction.
+        char next;auto began=GetTickCount64();disconnected=!Io(pipe,&next,1,false,1000)&&GetTickCount64()-began<1000;
+    }catch(const std::exception& e){peerError=e.what();}});
+    spatial_audio::NativeMatPipeSource source;bool rejected=false;
+    try{source.prepare(fs::path(name).string(),fs::path(native_mat_guard::image(GetCurrentProcess())).string());}catch(...){rejected=true;}
+    peer.join();CloseHandle(pipe);
+    CheckPipe(rejected&&peerError.empty()&&disconnected,"Rejected native preparation retained the lease");
+    CheckPipe(source.state()==spatial_audio::State::fault&&!source.error().empty()&&!source.start(),"Rejected native source state/diagnostic");
+    const auto error=source.error();source.stop();source.stop();CheckPipe(source.state()==spatial_audio::State::fault&&source.error()==error,"Stop erased source failure");
+}
 int main(){try{
     for(unsigned mode=0;mode<3;++mode)Run(mode);
     Reconnect(false);Reconnect(true);
+    for(unsigned mode=0;mode<3;++mode)RejectNativePeer(mode);
     for(unsigned mode=0;mode<3;++mode){uint8_t record[mat_capture::record_bytes];uint64_t next=mode==0?0:1,last=0;spatial_audio::Frame frame;
         mat_capture::encode_record(record,mode==2?mat_capture::error_kind:mat_capture::end_kind,next,1,nullptr,0);if(mode==1)record[28]^=1;
         bool wrote=false,failed=false;try{mat_capture::read_record([&](void* p,size_t n,bool writing){if(writing)wrote=true;else {CheckPipe(n==sizeof(record),"Control read size");memcpy(p,record,n);}},next,last,7,42,frame);}catch(...){failed=true;}
         CheckPipe(failed&&!wrote,"Invalid/empty/error EOF acknowledged");
     }
-    std::cout<<"PASS production pipe/reader delayed tail, exact EOS acknowledgement, wrong/missing/cancelled acknowledgement, prepare cancellation, streaming disconnect/reconnect, fresh PLAY cutoff/sequence, source failure without EOS and invalid/empty/error EOF; nativeCapture=0\n";return 0;
+    std::cout<<"PASS production pipe/reader delayed tail, exact EOS acknowledgement, wrong/missing/cancelled acknowledgement, prepare cancellation, streaming disconnect/reconnect, fresh PLAY cutoff/sequence, source failure without EOS, native peer rejection/release and invalid/empty/error EOF; nativeCapture=0\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL_PIPE_TAIL "<<e.what()<<" nativeCapture=0\n";return 1;}
 }

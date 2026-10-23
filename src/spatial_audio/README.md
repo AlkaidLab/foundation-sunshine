@@ -1,5 +1,9 @@
 # Spatial audio source — M1/M2/M3
 
+For the current native live host path, configuration and mock-client checks, see
+[MAT host integration](../../docs/MAT-HOST.md). The sections below describe the
+earlier M1/M2/M3 experiments and retain their original scope.
+
 Opt-in components, not yet connected to Sunshine's default audio path. No installer,
 service, self-elevation or automatic audiodg attachment is included here.
 

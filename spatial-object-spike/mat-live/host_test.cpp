@@ -9,18 +9,82 @@ static int End(void*,uint64_t n){++ends;return n==unsigned(frames);}
 static void Check(bool b){if(!b)throw std::runtime_error("test assertion");}
 static std::vector<uint8_t> Carrier(){std::vector<uint8_t> b(61440);memcpy(b.data(),"\x72\xf8\x1f\x4e\x16\x00\x02\x00",8);return b;}
 struct TestSource final:spatial_audio::EncodedAudioSource {
- int n=0;bool fail=false,stopped=false;
- spatial_audio::Descriptor descriptor()const override{return {};}
- bool start()override{return true;}
+ int n=0,limit=8,stops=0;bool fail=false,stopped=false,started=false,start_ok=true,pending=false;
+ spatial_audio::Descriptor contract{};
+ std::function<void(spatial_audio::Frame&)> change=[](auto&){};
+ spatial_audio::Descriptor descriptor()const override{return contract;}
+ bool start()override{started=true;return start_ok;}
  spatial_audio::Read read(spatial_audio::Frame& f)override{
-  if(fail)return spatial_audio::Read::failed;if(n==8)return spatial_audio::Read::ended;
-  f={};f.bytes=Carrier();f.sequence=n;f.sample_start=n++*960;return spatial_audio::Read::frame;
+  if(fail)return spatial_audio::Read::failed;if(pending)return spatial_audio::Read::pending;if(n==limit)return spatial_audio::Read::ended;
+  f={};f.bytes=Carrier();f.sequence=n;f.sample_start=n++*960;change(f);return spatial_audio::Read::frame;
  }
- void stop()override{stopped=true;}
+ void stop()override{stopped=true;++stops;}
  spatial_audio::State state()const override{return spatial_audio::State::running;}
- std::string error()const override{return "test";}
+ std::string error()const override{return "mock source unavailable";}
 };
+// The client is a test sink, using the wire receiver only. No app, device or
+// fake native identity is enabled in the host. Every connection owns its state.
+struct MockClient {
+ LI_MAT_LIVE_PROFILE profile;MAT_LIVE_PLAYBACK* receiver=nullptr;unsigned packets=0,received=0,ends=0;
+ static int cycle(void* context,const uint8_t* bytes,int n,uint64_t epoch,uint64_t domain,uint64_t index,uint64_t pts){
+  auto& self=*static_cast<MockClient*>(context);
+  if(n!=61440||epoch!=self.profile.epoch||domain!=self.profile.domain||index!=self.received||pts!=index*960||bytes[0]!=0x72)return 0;
+  ++self.received;return 1;
+ }
+ static int end(void* context,uint64_t count){auto& self=*static_cast<MockClient*>(context);if(count!=self.received)return 0;++self.ends;return 1;}
+ MockClient(LI_MAT_LIVE_PROFILE p,const uint8_t* key):profile(p){LI_MAT_PLAYBACK_CALLBACKS cb{cycle,end,this};receiver=MatLivePlaybackOpen(&profile,key,&cb);Check(receiver);}
+ ~MockClient(){MatLivePlaybackClose(receiver);}
+ void push(const uint8_t* bytes,size_t n){if(packets++>=4)Check(MatLivePlaybackPush(receiver,bytes,n)>=0);}
+};
+static void HostContracts(){
+ uint8_t key[16]={};
+ auto wait=[](auto delay){if(delay>std::chrono::nanoseconds(0))std::this_thread::sleep_for(delay);};
+ // Separate sessions after a disconnected client must start at cycle zero;
+ // failure must not prevent a new lease/profile from being used.
+ for(unsigned connection=0;connection<3;++connection){
+  spatial_transport::LiveSession session;session.profile={200+connection,1};auto source=std::make_unique<TestSource>();auto* raw=source.get();source->limit=2;session.source=std::move(source);MockClient client(session.profile,key);
+  bool caught=false;
+  try{spatial_transport::live_session(session,key,16,[&](auto* p,auto n){if(connection==1&&client.packets>=10)throw std::runtime_error("mock client disconnected");client.push(p,n);},wait,[]{return false;});}catch(...){caught=true;}
+  Check(caught==(connection==1)&&raw->stops==1);
+  if(connection==1)Check(client.ends==0);else Check(client.received==2&&client.ends==1);
+ }
+ for(unsigned scenario=0;scenario<14;++scenario){
+  spatial_transport::LiveSession session;session.profile={300+scenario,1};auto source=std::make_unique<TestSource>();auto* raw=source.get();source->limit=2;
+  switch(scenario){
+   case 0:source->start_ok=false;break;
+   case 1:source->fail=true;break;
+   case 2:source->limit=0;break;
+   case 3:source->contract.rate=44100;break;
+   case 4:source->contract.clock=static_cast<spatial_audio::Clock>(2);break;
+   case 5:source->change=[](auto& f){++f.sequence;};break;
+   case 6:source->change=[](auto& f){++f.sample_start;};break;
+   case 7:source->change=[](auto& f){f.clock=static_cast<spatial_audio::Clock>(2);};break;
+   case 8:source->change=[](auto& f){f.bytes.resize(30720);};break;
+   case 9:source->pending=true;break; // Genuine host watchdog, no deadline override.
+   case 10:source->change=[](auto& f){f.duration_frames=480;};break;
+   case 11:source->change=[](auto& f){f.sample_rate=44100;};break;
+   case 12:source->contract.version=2;break;
+   case 13:source->contract.format=spatial_audio::Format::diagnostic_call_plan;break;
+  }
+  session.source=std::move(source);MockClient client(session.profile,key);std::string error;
+  try{spatial_transport::live_session(session,key,16,[&](auto* p,auto n){client.push(p,n);},wait,[]{return false;});}catch(const std::exception& e){error=e.what();}
+  Check(!error.empty()&&raw->stops==1&&client.ends==0&&client.received==0);
+  if(scenario<2)Check(error.find("mock source unavailable")!=std::string::npos);
+  if(scenario==3||scenario==4||scenario>=12)Check(!raw->started&&client.packets==0);
+ }
+ // Cancel during pacing, including a pending read, without manufacturing END.
+ for(bool pending:{false,true}){
+  spatial_transport::LiveSession session;session.profile={400,1};auto source=std::make_unique<TestSource>();auto* raw=source.get();source->pending=pending;session.source=std::move(source);MockClient client(session.profile,key);bool cancelled=false,caught=false;
+  try{spatial_transport::live_session(session,key,16,[&](auto* p,auto n){client.push(p,n);},[&](auto){cancelled=true;},[&]{return cancelled;});}catch(...){caught=true;}
+  Check(caught&&raw->stops==1&&client.ends==0);
+ }
+ Check(!spatial_transport::prepare_live("",""));
+#if defined(_WIN32)
+ bool caught=false;try{spatial_transport::prepare_live("\\\\.\\pipe\\SunshineMatLive-missing","");}catch(...){caught=true;}Check(caught);
+#endif
+}
 int main(){try{
+ HostContracts();
  uint8_t key[16]={};LI_MAT_PLAYBACK_CALLBACKS cb{};cb.cycle=Cycle;cb.end=End;LI_MAT_LIVE_PROFILE profile{123,7};
  auto receiver=MatLivePlaybackOpen(&profile,key,&cb);Check(receiver);
  spatial_transport::LiveSession session;session.profile=profile;session.source=std::make_unique<TestSource>();uint64_t packet=0;
@@ -66,5 +130,5 @@ int main(){try{
   record.sequence=1;record.qpc=20;if(test==0)record.encoder=43;if(test==1)record.result=E_FAIL;if(test==2)record.bytes=0;if(test==3)record.qpc=9;
   failed=false;try{a.push(record,bytes.data()+30720,[](auto&,auto){});}catch(...){failed=true;}Check(failed);
  }
- std::cout<<"PASS host live sender/source lifecycle, exact-cycle assembler and fail-closed native descriptor\n";return 0;
+ std::cout<<"PASS host sender with mock client: isolated reconnect, cancellation, source/start/clock/sequence/format failures, watchdog and cleanup; exact-cycle assembler and native-only descriptor\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
