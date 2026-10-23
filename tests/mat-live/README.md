@@ -29,6 +29,9 @@ replay, disk-publication policy or native attachment is part of this suite.
 `live_verify.py --preflight-only` uses a normally built Sunshine with isolated
 certificates, config and ports, checks pairing/start/stop, and never attaches a
 native source. Pass explicit `--host-build` and `--client-build` directories.
+`--ui-preflight` additionally checks the MAT switch, retirement of manual source
+parameters and read-only status polling against a pending exclusive auto pipe.
+No publisher is started.
 `host_support.py` owns only test certificates, a read-only prerequisite check and
 orderly shutdown of the test's own host.
 `preflight_exit_test.py --output <fresh-dir> --host-build <host-dir>
@@ -40,6 +43,8 @@ encoder/decoder self-test with explicitly supplied encoder/decoder FFmpeg builds
 The client decodes video in memory and consumes MAT callbacks without a device.
 The full `live_verify.py` native mode additionally requires explicit source,
 engine, component, endpoint and hash arguments and current operator authorization.
+Its publisher must use the trusted Program Files deployment used by `manage-live.ps1`;
+an executable started directly from a build directory is not an automatic host source.
 It is not invoked by the software verifier.
 
 The historical finite, Android and recorder harnesses are available only on

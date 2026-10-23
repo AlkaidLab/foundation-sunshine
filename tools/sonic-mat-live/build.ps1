@@ -57,7 +57,7 @@ try {
 }finally{Pop-Location}
 $binaries=@(Get-ChildItem $out -File | Where-Object Extension -In '.exe','.dll' | ForEach-Object {@{name=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLower()}})
 $sourcePaths=@(Get-ChildItem $PSScriptRoot -File | ForEach-Object {$_.FullName})
-foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/object_input_protocol.h','src/spatial_audio/native_encoded_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/mat_live_status.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','tools/mat-live/publisher.h','tools/mat-live/process_helpers.h')){$sourcePaths+=@("$root/$file")}
+foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/object_input_protocol.h','src/spatial_audio/native_encoded_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/mat_live_status.h','src/spatial_audio/mat_auto_source.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','tools/mat-live/publisher.h','tools/mat-live/process_helpers.h')){$sourcePaths+=@("$root/$file")}
 $sourcePaths+=Get-ChildItem -LiteralPath "$root/tools/mat-capture" -File | ForEach-Object {$_.FullName}
 $sourcePaths+=@("$minhook/include/MinHook.h")
 $sources=@($sourcePaths | Sort-Object -Unique | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})

@@ -19,7 +19,7 @@ struct LiveSession {
 inline std::shared_ptr<LiveSession> prepare_live(const std::string& pipe,const std::string& producer) {
 #if defined(_WIN32)
     if(pipe.empty()&&producer.empty())return {};
-    spatial_audio::require(!pipe.empty()&&!producer.empty(),"Live MAT needs both mat_live_pipe and mat_live_producer");
+    spatial_audio::require(!pipe.empty()&&(!producer.empty()||pipe==spatial_audio::mat_auto_pipe),"Live MAT source identity required");
     auto source=std::make_unique<spatial_audio::NativeMatPipeSource>();source->prepare(pipe,producer);
     auto result=std::make_shared<LiveSession>();uint64_t epoch=0;
     spatial_audio::require(RAND_bytes(reinterpret_cast<unsigned char*>(&epoch),sizeof(epoch))==1,"MAT live epoch entropy");

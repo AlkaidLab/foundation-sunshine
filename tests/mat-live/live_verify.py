@@ -126,8 +126,8 @@ def main():
     p.add_argument("--operator-build", type=Path)
     p.add_argument("--powershell", type=Path)
     args = p.parse_args()
-    if args.ui_preflight and (not args.preflight_only or not args.publisher):
-        p.error("UI preflight needs --preflight-only and a producer path (never executed)")
+    if args.ui_preflight and not args.preflight_only:
+        p.error("UI preflight needs --preflight-only")
     if bool(args.operator_build) != bool(args.powershell):
         p.error("Operator build and explicit PowerShell executable must be paired")
     if not 8 <= args.seconds <= 30:
@@ -154,7 +154,7 @@ def main():
     save(out / "apps.json", {"env": {}, "apps": [{"name": "Live desktop", "cmd": "",
           "image-path": "desktop.png", "exclude-global-prep-cmd": "true"}]})
     identifier = uuid.uuid4().hex
-    pipe = "\\\\.\\pipe\\SunshineMatLive-" + identifier
+    pipe = "\\\\.\\pipe\\SunshineMatLive-active"
     stop = "Local\\SunshineMatLiveStop-" + identifier
     config = {"port": args.port, "bind_address": "127.0.0.1", "address_family": "ipv4",
         "mdns_broadcast": "false", "upnp": "false", "system_tray": "false", "min_log_level": "info",
@@ -162,8 +162,7 @@ def main():
         "native_pen_touch": "false", "native_touchpad_optimization": "false", "clipboard_sync": "false",
         "enable_dsu_server": "false", "client_gamepad_override": "false", "usb_forwarding_enabled": "false",
         "install_steam_audio_drivers": "false", "stream_mic": "false", "keep_sink_default": "false",
-        "stream_audio": "true",  "mat_live_pipe": pipe,
-        "mat_live_producer": str(args.publisher.resolve()) if args.publisher else "",
+        "stream_audio": "true", "mat_live": "true",
         "vdd_headless_create": "false", "vdd_keep_enabled": "true", "vdd_vulkan_hdr_bridge": "false",
         "display_device_prep": "no_operation", "resolution_change": "no_operation",
         "refresh_rate_change": "no_operation", "hdr_prep": "no_operation", "client_fingerprint_remote_rules": "false",

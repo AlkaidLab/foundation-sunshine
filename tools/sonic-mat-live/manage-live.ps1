@@ -79,7 +79,7 @@ foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap
 }
 $producer=$deployed['sunshine-plugin-mat-capture.exe'];$tap=$deployed['sunshine-plugin-object-tap.dll'];$codec=$deployed['sunshine-sonic-mat-worker.dll']
 Get-ChildItem -LiteralPath $deployment -Force|ForEach-Object {Assert-MatDeploymentEntry $_.FullName}
-$id=if($SessionId){$SessionId}else{[guid]::NewGuid().ToString('N')};$pipe="\\.\pipe\SunshineMatLive-$id";$stop="Local\SunshineMatLiveStop-$id"
+$id=if($SessionId){$SessionId}else{[guid]::NewGuid().ToString('N')};$pipe='\\.\pipe\SunshineMatLive-active';$stop="Local\SunshineMatLiveStop-$id"
 foreach($value in @($producer,$tap,$codec,$out)){if($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")){throw 'Invalid launch path'}}
 $mode=if($Reattach){'--reattach'}else{'--attach'}
 $arguments=@($mode,"$EnginePid","$EngineCreated",('"'+$tap+'"'),(Get-FileHash $tap).Hash.ToLower(),('"'+$codec+'"'),(Get-FileHash $codec).Hash.ToLower(),$pipe,$stop)
@@ -94,11 +94,9 @@ try{
  while((Read-Log "$out/capture.log") -notmatch 'ATTACHED source=plugin-objects-to-native-MAT'){
   if($process.WaitForExit(20) -or [DateTime]::UtcNow -ge $deadline){throw 'Plugin attach failed/timed out; inspect capture log; no retry'}
  }
- @("mat_live_pipe = $pipe","mat_live_producer = $producer")|Set-Content -LiteralPath "$out/host-config-snippet.conf"
  Get-State $state|ConvertTo-Json
  Write-Host "Metadata: $out/capture.json"
- Write-Host "Host config snippet: $out/host-config-snippet.conf"
- Write-Host 'Waiting for actual live objects is not MAT readiness. No installed host config was changed.'
+ Write-Host 'Sunshine connects automatically when MAT audio is enabled. No parameters need copying.'
  $complete=$true
 }finally{
  if(!$complete -and $process -and !$process.HasExited){

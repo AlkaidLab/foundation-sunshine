@@ -2,45 +2,59 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { useConfig } from '../composables/useConfig.js'
 import { useMatLiveStatus } from '../composables/useMatLiveStatus.js'
-import { validateMatLiveSettings } from '../utils/matLiveSettings.js'
+import { resetBootstrapDataCache } from '../config/bootstrapData.js'
 
-test('partial MAT settings block save and restart from any tab', async (t) => {
-  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Must not save') })
-  const state = useConfig()
-  state.currentTab.value = 'network'
-  for (const config of [{ mat_live_pipe: 'pipe' }, { mat_live_producer: 'producer.exe' }]) {
-    state.config.value = config
-    assert.equal(await state.save(), false)
-    assert.equal(state.validationError.value, 'config.mat_live_pair_required')
-    await state.apply()
-    assert.equal(state.restarted.value, false)
-  }
-  assert.equal(fetch.mock.callCount(), 0)
-  assert.equal(validateMatLiveSettings({}), '')
-  assert.equal(validateMatLiveSettings({ mat_live_pipe: '', mat_live_producer: '' }), '')
-  assert.equal(validateMatLiveSettings({ mat_live_pipe: 'pipe', mat_live_producer: 'producer.exe' }), '')
-})
-
-test('paired MAT settings round-trip without changing Windows paths; clearing both removes defaults', async (t) => {
+test('MAT persists one switch and normalizes saved checkbox values', async (t) => {
   const previousWindow = globalThis.window
   globalThis.window = { dispatchEvent() {} }
-  t.after(() => { globalThis.window = previousWindow })
+  t.after(() => { globalThis.window = previousWindow; resetBootstrapDataCache() })
   const posted = []
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, '/api/config')
-    posted.push(JSON.parse(options.body))
-    return new Response(JSON.stringify({ status: true }), { status: 200 })
+    if (options.method === 'POST') {
+      posted.push(JSON.parse(options.body))
+      return new Response(JSON.stringify({ status: true }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ platform: 'windows', mat_live: 'true' }), { status: 200 })
   })
+  resetBootstrapDataCache()
   const state = useConfig()
   state.initTabs()
-  const settings = { mat_live_pipe: String.raw`\\.\pipe\SunshineMatLive-test`, mat_live_producer: String.raw`C:\Program Files\MAT\producer.exe` }
-  state.config.value = { ...settings }
+  await state.loadConfig()
+  assert.equal(state.config.value.mat_live, 'enabled')
   assert.equal(await state.save(), true)
-  for (const [key, value] of Object.entries(settings)) assert.equal(posted[0][key], value)
-  state.config.value = { mat_live_pipe: '', mat_live_producer: '' }
+  assert.equal(posted[0].mat_live, 'enabled')
+  assert.equal('mat_live_pipe' in posted[0], false)
+  assert.equal('mat_live_producer' in posted[0], false)
+  state.config.value.mat_live = 'disabled'
   assert.equal(await state.save(), true)
-  assert.equal('mat_live_pipe' in posted[1], false)
-  assert.equal('mat_live_producer' in posted[1], false)
+  assert.equal('mat_live' in posted[1], false)
+})
+
+test('automatic status polling stops when hidden or unmounted', async (t) => {
+  const previousDocument = globalThis.document
+  globalThis.document = { hidden: false }
+  t.after(() => { globalThis.document = previousDocument })
+  let tick, cleared
+  t.mock.method(globalThis, 'setInterval', (callback, delay) => { assert.equal(delay, 3000); tick = callback; return 42 })
+  t.mock.method(globalThis, 'clearInterval', (timer) => { cleared = timer })
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ state: 'unobserved' }), { status: 200 }))
+  const state = useMatLiveStatus()
+  state.start()
+  state.start()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(fetch.mock.callCount(), 1)
+  globalThis.document.hidden = true
+  tick()
+  assert.equal(fetch.mock.callCount(), 1)
+  globalThis.document.hidden = false
+  tick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(fetch.mock.callCount(), 2)
+  state.dispose()
+  assert.equal(cleared, 42)
+  tick()
+  assert.equal(fetch.mock.callCount(), 2)
 })
 
 test('status uses GET only, prevents overlap and clears stale readiness on errors', async (t) => {
@@ -70,4 +84,19 @@ test('status uses GET only, prevents overlap and clears stale readiness on error
   assert.equal(state.status.value.state, 'unavailable')
   await state.refresh()
   assert.equal(fetch.mock.callCount(), 3)
+})
+
+test('a status request timeout clears the previous connected state', async (t) => {
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', (delay) => { assert.equal(delay, 2500); return controller.signal })
+  t.mock.method(globalThis, 'fetch', async (_url, options) => await new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new Error('Timed out')), { once: true })
+  }))
+  const state = useMatLiveStatus()
+  state.status.value = { state: 'ready' }
+  const pending = state.refresh()
+  controller.abort()
+  await pending
+  assert.equal(state.status.value.state, 'unavailable')
+  assert.equal(state.loading.value, false)
 })

@@ -54,7 +54,7 @@ live_verify.main()
         command = [sys.executable, str(runner), mode, str(Path(__file__).resolve().parent),
                    "--preflight-only", "--ui-preflight", "--output", str(case),
                    "--host-build", str(args.host_build.resolve()), "--client-build", str(args.client_build.resolve()),
-                   "--publisher", str(args.host_build.resolve() / "sunshine.exe"), "--port", str(free_port())]
+                   "--port", str(free_port())]
         with (out / f"{mode}.log").open("wb") as log:
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=120)
         evidence = json.loads((case / "result.json").read_text(encoding="utf8"))

@@ -2,14 +2,8 @@
 
 #include <mutex>
 #include <string>
-#include <string_view>
 
 namespace spatial_audio {
-// Shared by config persistence and the read-only status route. No pipe/process I/O.
-inline bool mat_live_config_paired(std::string_view pipe, std::string_view producer) {
-    return pipe.empty() == producer.empty();
-}
-
 class MatLiveStatus {
 public:
     struct Snapshot {

@@ -103,8 +103,8 @@ static void Reconnect(bool sourceFailure){
 static void RejectNativePeer(unsigned mode){
     // A mock publisher may exercise rejection/cleanup, but can never pass the
     // production audiodg identity check or supply a native stream to the host.
-    const auto name=L"\\\\.\\pipe\\SunshineMatLive-reject-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(mode);
-    HANDLE pipe=CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,
+    const auto name=mode==3?fs::path(spatial_audio::mat_auto_pipe).wstring():L"\\\\.\\pipe\\SunshineMatLive-reject-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(mode);
+    HANDLE pipe=CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,
         PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,4096,4096,0,nullptr);
     CheckPipe(pipe!=INVALID_HANDLE_VALUE,"Mock publisher pipe");
     std::string peerError;std::atomic<bool> disconnected=false;
@@ -117,7 +117,15 @@ static void RejectNativePeer(unsigned mode){
             if(waited!=WAIT_OBJECT_0){CancelIoEx(pipe,&connection);GetOverlappedResult(pipe,&connection,&n,TRUE);CloseHandle(connection.hEvent);throw std::runtime_error("Mock connect timeout");}
             okay=GetOverlappedResult(pipe,&connection,&n,FALSE);
         }
-        CloseHandle(connection.hEvent);CheckPipe(okay,"Mock source connected");
+        const auto connectError=okay?0:GetLastError();CloseHandle(connection.hEvent);
+        if(mode==3&&!okay&&(connectError==ERROR_NO_DATA||connectError==ERROR_PIPE_NOT_CONNECTED||connectError==ERROR_BROKEN_PIPE)){
+            disconnected=true;return; // Rejection can finish before the server observes connect.
+        }
+        CheckPipe(okay,"Mock source connected");
+        if(mode==3){
+            char next;auto began=GetTickCount64();disconnected=!Io(pipe,&next,1,false,1000)&&GetTickCount64()-began<1000;
+            return; // Automatic discovery must reject us before sending OPEN.
+        }
         char open[8];CheckPipe(Io(pipe,open,8,false,2000)&&!memcmp(open,"MCAPOPEN",8),"Mock OPEN");
         mat_capture::Descriptor d{mode==0?mat_capture::test_source:mat_capture::native_source,GetCurrentProcessId(),GetCurrentProcessId(),1,1,7,42,10000000};
         if(mode){const auto created=native_mat_guard::created(GetCurrentProcess());d.publisher_created=d.engine_created=created;}
@@ -128,8 +136,9 @@ static void RejectNativePeer(unsigned mode){
         char next;auto began=GetTickCount64();disconnected=!Io(pipe,&next,1,false,1000)&&GetTickCount64()-began<1000;
     }catch(const std::exception& e){peerError=e.what();}});
     spatial_audio::NativeMatPipeSource source;bool rejected=false;
-    try{source.prepare(fs::path(name).string(),fs::path(native_mat_guard::image(GetCurrentProcess())).string());}catch(...){rejected=true;}
+    try{source.prepare(fs::path(name).string(),mode==3?"":fs::path(native_mat_guard::image(GetCurrentProcess())).string());}catch(...){rejected=true;}
     peer.join();CloseHandle(pipe);
+    if(!(rejected&&peerError.empty()&&disconnected))std::cerr<<"REJECT_MODE "<<mode<<" source="<<source.error()<<" peer="<<peerError<<" closed="<<disconnected<<'\n';
     CheckPipe(rejected&&peerError.empty()&&disconnected,"Rejected native preparation retained the lease");
     CheckPipe(source.state()==spatial_audio::State::fault&&!source.error().empty()&&!source.start(),"Rejected native source state/diagnostic");
     const auto error=source.error();source.stop();source.stop();CheckPipe(source.state()==spatial_audio::State::fault&&source.error()==error,"Stop erased source failure");
@@ -137,8 +146,13 @@ static void RejectNativePeer(unsigned mode){
     CheckPipe(observed.leases==0&&observed.running==0&&observed.last_error==error&&std::string(observed.state())=="error","Rejected source status retained a lease/lost its error");
 }
 int main(){try{
-    CheckPipe(spatial_audio::mat_live_config_paired("","")&&spatial_audio::mat_live_config_paired("pipe","exe")&&
-        !spatial_audio::mat_live_config_paired("pipe","")&&!spatial_audio::mat_live_config_paired("","exe"),"MAT config pair validation");
+    const fs::path programs=L"C:\\Program Files";const std::string hash(64,'a');
+    const auto installed=programs/L"SunshineSonicMatLive"/hash/L"sunshine-plugin-mat-capture.exe";
+    CheckPipe(spatial_audio::mat_auto_image(installed,programs,hash),"Automatic installed capture identity");
+    CheckPipe(!spatial_audio::mat_auto_image(installed,programs,std::string(64,'b'))&&
+        !spatial_audio::mat_auto_image(installed.parent_path()/L"other.exe",programs,hash)&&
+        !spatial_audio::mat_auto_image(installed,programs/L"other",hash)&&
+        !spatial_audio::trusted_mat_auto_publisher(GetCurrentProcess()),"Automatic source accepted wrong executable/root/hash/process");
     spatial_audio::MatLiveStatus status;
     CheckPipe(std::string(status.snapshot().state())=="unobserved","Configuration is not readiness");
     status.acquired();status.started();status.failed("Competing lease failed");
@@ -150,7 +164,7 @@ int main(){try{
     status.released(false);CheckPipe(std::string(status.snapshot().state())=="idle","Release falsely advertises readiness");
     for(unsigned mode=0;mode<3;++mode)Run(mode);
     Reconnect(false);Reconnect(true);
-    for(unsigned mode=0;mode<3;++mode)RejectNativePeer(mode);
+    for(unsigned mode=0;mode<4;++mode)RejectNativePeer(mode);
     for(unsigned mode=0;mode<3;++mode){uint8_t record[mat_capture::record_bytes];uint64_t next=mode==0?0:1,last=0;spatial_audio::Frame frame;
         mat_capture::encode_record(record,mode==2?mat_capture::error_kind:mat_capture::end_kind,next,1,nullptr,0);if(mode==1)record[28]^=1;
         bool wrote=false,failed=false;try{mat_capture::read_record([&](void* p,size_t n,bool writing){if(writing)wrote=true;else {CheckPipe(n==sizeof(record),"Control read size");memcpy(p,record,n);}},next,last,7,42,frame);}catch(...){failed=true;}

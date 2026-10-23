@@ -1262,7 +1262,7 @@ namespace rtsp_stream {
     }
     if (live_requests==1 && !session.mat_live_described && config::audio.stream && !session.control_only) {
       session.mat_live_described=true;
-      try {session.mat_live=spatial_transport::prepare_live(config::audio.mat_live_pipe,config::audio.mat_live_producer);}
+      try {if(config::audio.mat_live)session.mat_live=spatial_transport::prepare_live(spatial_audio::mat_auto_pipe,{});}
       catch(const std::exception& e){BOOST_LOG(warning)<<"Live MAT not ready; client may select Opus: "<<e.what();}
     }
     if (live_requests==1 && session.mat_live) ss<<spatial_transport::describe_live(*session.mat_live);

@@ -33,6 +33,11 @@ does not attach them to audiodg or load a vendor encoder in those tests.
 engine identity, reviewed build, fresh output and an explicit `-Continuous` or
 `-Seconds 1..60`. `Status` and `Stop` take that run's `capture.json`, validate
 publisher/engine identity and report observed readiness or verified restoration.
+Start exposes the fixed local `SunshineMatLive-active` pipe. Enable MAT in the
+Sunshine UI once; subsequent tool starts/restarts connect without copying any
+configuration. Only one capture publisher can own this endpoint at a time.
+The host verifies the elevated publisher, protected deployment location and
+executable content hash before exchanging capture commands.
 There is no UAC, endpoint change, installed-host edit, automatic restart or retry.
 Start deploys below Program Files and rejects untrusted owners, writable ACLs
 or reparse points on the deployment path/files; it never repairs an existing ACL.
@@ -41,7 +46,7 @@ tests does not authorize it.
 
 `spatial-probe.exe` is a separate endpoint inventory and explicit live-generated
 object source for a separately authorized test. It does not change the default
-endpoint. Configure Sunshine only with the two entries described in
+endpoint. Enable MAT in Sunshine as described in
 [MAT-HOST](../../docs/MAT-HOST.md).
 
 Historical native reports and abandoned paths remain on the

@@ -30,7 +30,7 @@ def verify_ui(opener, port, config, config_path):
     kernel.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(Overlapped)]
     kernel.GetOverlappedResult.argtypes = [wintypes.HANDLE, ctypes.POINTER(Overlapped), ctypes.POINTER(wintypes.DWORD), wintypes.BOOL]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    pipe = kernel.CreateNamedPipeW(config["mat_live_pipe"], 3 | 0x40000000, 0, 1, 64, 64, 0, None)
+    pipe = kernel.CreateNamedPipeW(r"\\.\pipe\SunshineMatLive-active", 3 | 0x40000000 | 0x80000, 0, 1, 64, 64, 0, None)
     if pipe == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     event = kernel.CreateEventW(None, True, False, None)
@@ -45,17 +45,19 @@ def verify_ui(opener, port, config, config_path):
         for _ in range(10):
             assert request("mat/status") == {"state": "unobserved", "last_error": ""}
         original = config_path.read_bytes()
-        for missing in ("mat_live_pipe", "mat_live_producer"):
-            assert request("config", {**config, missing: ""})["status"] == "false"
+        for invalid in ("invalid", "3"):
+            assert request("config", {**config, "mat_live": invalid})["status"] == "false"
             assert config_path.read_bytes() == original
         for enabled in (False, True):
             settings = {**config}
-            if not enabled:
-                settings.update(mat_live_pipe="", mat_live_producer="")
+            settings["mat_live"] = "true" if enabled else "false"
+            settings.update(mat_live_pipe="retired", mat_live_producer="retired")
             assert request("config", settings)["status"] == "true"
             saved = request("config")
-            assert saved.get("mat_live_pipe", "") == settings["mat_live_pipe"]
-            assert saved.get("mat_live_producer", "") == settings["mat_live_producer"]
+            assert saved["mat_live"] == settings["mat_live"]
+            assert "mat_live_pipe" not in saved and "mat_live_producer" not in saved
+            text = config_path.read_text(encoding="utf8")
+            assert "mat_live_pipe" not in text and "mat_live_producer" not in text
             # Saved changes await restart; runtime observation is independent.
             assert request("mat/status") == {"state": "unobserved", "last_error": ""}
         assert kernel.WaitForSingleObject(event, 0) == 258  # no pipe connection
@@ -67,5 +69,5 @@ def verify_ui(opener, port, config, config_path):
         if event:
             kernel.CloseHandle(event)
         kernel.CloseHandle(pipe)
-    return {"readOnlyPolls": 10, "partialSavesRejected": 2, "pairedRoundTrips": 2,
+    return {"readOnlyPolls": 10, "invalidSwitchesRejected": 2, "switchRoundTrips": 2, "legacyParametersRemoved": True,
             "capturePipeOpened": False, "savedSettingsRequireRestart": True}

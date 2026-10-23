@@ -10,6 +10,6 @@ $env:LIB="$compiler/lib/x64;$sdk/Lib/$version/ucrt/x64;$sdk/Lib/$version/um/x64"
 if($LASTEXITCODE){throw 'Pipe regression compile failed'}
 & "$out/pipe-test.exe" *> "$out/test.log"
 if($LASTEXITCODE){throw 'Pipe regression failed'}
-$paths=@('src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/mat_live_status.h','src/spatial_audio/encoded_audio_source.h','tools/mat-live/publisher.h','tests/mat-live/pipe_test.cpp','tests/mat-live/build-pipe-test.ps1')
+$paths=@('src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/native_mat_guard.h','src/spatial_audio/mat_auto_source.h','src/spatial_audio/mat_live_status.h','src/spatial_audio/encoded_audio_source.h','tools/mat-live/publisher.h','tests/mat-live/pipe_test.cpp','tests/mat-live/build-pipe-test.ps1')
 @{result='PASS';nativeCapture=$false;generatedCarrierOnly=$true;scope='Actual private publisher and production record reader; EOS acknowledgement, cancellation, disconnect/reconnect, fresh PLAY cutoff/sequence, source failure and negative EOF cases';sources=@($paths|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath "$root/$_").Hash.ToLower()}});testSha256=(Get-FileHash -LiteralPath "$out/pipe-test.exe").Hash.ToLower()}|ConvertTo-Json -Depth 5|Set-Content "$out/proof.json"
 Get-Content "$out/test.log"

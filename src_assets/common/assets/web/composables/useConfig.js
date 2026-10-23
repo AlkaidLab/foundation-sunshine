@@ -4,7 +4,6 @@ import { getBootstrapConfig } from '../config/bootstrapData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
 import { validateListenerSettings } from '../utils/listenerSettings.js'
-import { validateMatLiveSettings } from '../utils/matLiveSettings.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -71,8 +70,7 @@ const DEFAULT_TABS = [
     options: {
       audio_sink: '',
       virtual_sink: '',
-      mat_live_pipe: '',
-      mat_live_producer: '',
+      mat_live: 'disabled',
       keep_sink_default: false,
       microphone_redirect_backend: 'vb_cable',
       stream_mic: true,
@@ -446,6 +444,7 @@ export function useConfig() {
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
       configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
       configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
+      configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)
       configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
       configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
       config.value = configData
@@ -624,8 +623,6 @@ export function useConfig() {
     validationError.value = ''
     saveError.value = ''
     validationError.value = validateListenerSettings(config.value)
-    if (validationError.value) return false
-    validationError.value = validateMatLiveSettings(config.value)
     if (validationError.value) return false
     if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
       validationError.value = 'config.amd_hevc_gop_size_desc'

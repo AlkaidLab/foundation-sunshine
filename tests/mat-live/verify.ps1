@@ -34,7 +34,7 @@ foreach($name in @('MatLivePlayback','MatReceiver','MatDepacketizer')){
  & gcc.exe -O2 -std=c11 "-I$common/src" -c "$common/src/$name.c" -o "$out/$name.o"
  if($LASTEXITCODE){throw "$name host receiver compile failed"}
 }
-& g++.exe -O2 -std=c++23 -Wall -Wextra -Wno-misleading-indentation "$PSScriptRoot/host_test.cpp" "$out/MatLivePlayback.o" "$out/MatReceiver.o" "$out/MatDepacketizer.o" -lcrypto -o "$out/host-test.exe"
+& g++.exe -O2 -std=c++23 -Wall -Wextra -Wno-misleading-indentation "$PSScriptRoot/host_test.cpp" "$out/MatLivePlayback.o" "$out/MatReceiver.o" "$out/MatDepacketizer.o" -lcrypto -lbcrypt -ladvapi32 -lshell32 -lole32 -luuid -o "$out/host-test.exe"
 if($LASTEXITCODE){throw 'Actual live sender/assembler compile failed'}
 & "$out/host-test.exe" *> "$out/host-tests.log"
 if($LASTEXITCODE){throw 'Actual live sender/assembler regression failed'}
