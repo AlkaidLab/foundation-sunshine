@@ -165,6 +165,13 @@ namespace config {
     int wan_encryption_mode;
     bool fec_auto = false;
     int fec_auto_max_percentage = 50;
+
+    // Keep following the client's UDP source endpoint (same-IP port changes)
+    // for the whole session. Off by default: the ping payload is a cleartext
+    // credential, so session-long rebinding widens the hijack surface beyond
+    // the initial recv_ping() window. Needed behind NAT rebinding or VPN
+    // user-space netstacks that rotate the client's source ports.
+    bool follow_client_endpoint = false;
   };
 
   // Sleep mode options for PC sleep command

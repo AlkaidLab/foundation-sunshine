@@ -1527,6 +1527,7 @@ namespace config {
     int_between_f(vars, "fec_percentage", stream.fec_percentage, {0, 255});
     bool_f(vars, "fec_auto", stream.fec_auto);
     int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, {0, 100});
+    bool_f(vars, "follow_client_endpoint", stream.follow_client_endpoint);
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 
