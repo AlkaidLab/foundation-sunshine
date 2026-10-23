@@ -78,5 +78,5 @@ foreach($options in @(@{},@{Continuous=$true;Seconds=8})){
  $rejected=$false;try{& $control -Action Start -Build 'nonexistent' -Output "$out/not-created" -EnginePid 1 -EngineCreated 1 @options|Out-Null}catch{if($_.Exception.Message -notmatch 'exactly one'){throw};$rejected=$true}
  if(!$rejected -or (Test-Path "$out/not-created")){throw 'Invalid capture mode reached deployment/start'}
 }
-@{result='PASS';scope='Runtime-only package, operator state/identity/hash/duration; trusted/read-only deployment ACL policy and reparse rejection';runtimePackageCases=8;nativeCapture=$false;nativeReadyFixtureOnly=$true;sourceHashes=@('deployment.ps1','manage-live.ps1','test-manage-live.ps1')|ForEach-Object {@{name=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_)).Hash.ToLower()}}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath "$out/proof.json"
+@{result='PASS';scope='Runtime package, operator lifecycle and deployment guards';nativeCapture=$false}|ConvertTo-Json|Set-Content -LiteralPath "$out/proof.json"
 Write-Host 'PASS operator lifecycle and deployment ACL/reparse guards; nativeCapture=0'

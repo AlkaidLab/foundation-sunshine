@@ -1,6 +1,5 @@
 """Preflight cleanup failures must fail the real CLI; only isolated hosts run."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import socket
@@ -68,9 +67,7 @@ live_verify.main()
             assert evidence["failure"] == "INJECTED_PRIMARY_FAILURE"
             assert "ValueError: INJECTED_PRIMARY_FAILURE" in text
         cases.append({"mode": mode, "exitCode": result.returncode, "hostStopped": True})
-    source = Path(__file__).with_name("live_verify.py")
-    (out / "proof.json").write_text(json.dumps({"result": "PASS", "nativeCapture": False, "cases": cases,
-        "verifierSha256": hashlib.sha256(source.read_bytes()).hexdigest()}, indent=2), encoding="utf8")
+    (out / "proof.json").write_text(json.dumps({"result": "PASS", "nativeCapture": False, "cases": cases}, indent=2), encoding="utf8")
     print("PASS isolated preflight success, cleanup-failure exit, primary exception preservation; nativeCapture=0")
 
 

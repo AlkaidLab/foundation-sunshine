@@ -25,18 +25,18 @@ object Submit. Such output-only drains do not create MAT object input, advance
 its sequence or retire objects. Zero-output missing-object passes, partial object
 loss and capture record gaps still fail; no silence or timed frame is inferred.
 
-Build with MSVC 2022, Windows SDK and MinHook v1.3.4 at `build/minhook-v1.3.4`,
-pinned to `c3fcafdc10146beb5919319d0683e44e3c30d537`:
+Build with CMake, Visual Studio C++ tools and the Windows SDK. CMake fetches
+MinHook at `c3fcafdc10146beb5919319d0683e44e3c30d537`:
 
 ```powershell
 ./tools/sonic-mat-live/build.ps1 -Output ./build/mat-capture-new
 ```
 
-The build runs own-process callback/lifecycle and shared bridge tests, plus one
-generated 1300-round IPC tests for dynamic-only and 12 static + 2 dynamic inputs
-using an explicitly FAKE worker. They check exact type, PCM, gain, position and EOS.
-It compiles the real worker/tap but
-does not attach them to audiodg or load a vendor encoder in those tests.
+The build and CI share six CTests: capture options, object bridge, paired
+callbacks, dynamic-only and 12 static + 2 dynamic IPC, and private pipe lifecycle.
+The IPC tests run 1300 rounds with a FAKE worker and check exact type, PCM, gain,
+position and EOS. CI passes `-TestsOnly`; it never attaches to audiodg, loads a
+vendor encoder, starts a signal source or needs administrator privileges.
 
 `manage-live.ps1` defaults to read-only `Preflight`. `Start` requires the exact
 engine identity, reviewed build, fresh output and an explicit `-Continuous` or
@@ -50,8 +50,8 @@ The host verifies the elevated publisher, protected deployment location and
 executable content hash before exchanging capture commands.
 There is no UAC, endpoint change, installed-host edit, automatic restart or retry.
 Preflight/Start require only `build.json` and its three runtime files: the plugin
-publisher, plugin tap and native worker. Recorded source hashes are provenance;
-source trees, documentation and test executables are not runtime prerequisites.
+publisher, plugin tap and native worker. The manifest contains their required
+content hashes; source trees, documentation and test executables are not runtime prerequisites.
 Start deploys below Program Files and rejects untrusted owners, writable ACLs
 or reparse points on the deployment path/files; it never repairs an existing ACL.
 Native attachment requires the operator's current authorization; running software

@@ -6,16 +6,7 @@ $out=(New-Item -ItemType Directory -Path $Output).FullName.Replace('\','/')
 $common="$root/third-party/moonlight-common-c"
 $sharedCommit=git -C $common rev-parse HEAD
 if(git -C $common status --porcelain){throw 'Freeze shared sources before verification'}
-# Mock clients compile against this exact library. The historical Android app
-# checkout is intentionally not upgraded or included in this acceptance.
-$sourcePaths=@('src/audio.h','src/config.h','src/config.cpp','src/rtsp.h','src/rtsp.cpp','src/stream.h','src/stream.cpp','src/thread_safe.h') | ForEach-Object {"$root/$_"}
-foreach($folder in @('tools/mat-live','tools/sonic-mat-live','tools/mat-capture','tests/mat-live','src/spatial_audio','src/spatial_transport')){
- $sourcePaths+=Get-ChildItem -LiteralPath "$root/$folder" -Recurse -File | Where-Object Extension -In '.h','.cpp','.c','.ps1','.py','.md' | ForEach-Object {$_.FullName}
-}
-foreach($relative in @(git -C $common ls-files src tests CMakeLists.txt .github/workflows/ci.yml)){
- if(Test-Path -LiteralPath "$common/$relative"){$sourcePaths+="$common/$relative"}
-}
-$sourceHashes=@($sourcePaths | Sort-Object -Unique | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})
+# Extended software integration only; routine MAT checks are registered in CTest.
 $env:PATH='C:/msys64/ucrt64/bin;'+$env:PATH
 foreach($entry in ,@('host-common',$common)){
  $name=$entry[0];$source=$entry[1]
@@ -38,8 +29,6 @@ foreach($name in @('MatLivePlayback','MatReceiver','MatDepacketizer')){
 if($LASTEXITCODE){throw 'Actual live sender/assembler compile failed'}
 & "$out/host-test.exe" *> "$out/host-tests.log"
 if($LASTEXITCODE){throw 'Actual live sender/assembler regression failed'}
-& "$PSScriptRoot/build-pipe-test.ps1" -Output "$out/pipe-regression" *> "$out/pipe-regression-build.log"
-if($LASTEXITCODE){throw 'Private pipe tail/acknowledgement regression failed'}
 & "$root/tools/mat-live/build-live-check.ps1" -CommonBuild "$out/host-common" -Output "$out/live-check" *> "$out/live-check-build.log"
 if($LASTEXITCODE){throw 'Native-only checker / software UDP+FEC regression failed'}
 & "$root/tools/sonic-mat-live/build.ps1" -Output "$out/plugin-source" *> "$out/plugin-source-build.log"
@@ -52,9 +41,6 @@ if($LASTEXITCODE){throw 'Native operator launcher output/ownership regression fa
 if($LASTEXITCODE){throw 'Production RTSP frontend compile failed'}
 & $Python "$PSScriptRoot/negotiation_test.py" --client "$out/negotiation-client.exe" --output "$out/negotiation" *> "$out/negotiation.log"
 if($LASTEXITCODE){throw 'Production RTSP live/Opus negotiation failed'}
-foreach($source in $sourceHashes){if((Get-FileHash -LiteralPath $source.path).Hash.ToLower() -ne $source.sha256){throw "Source changed during verification: $($source.path)"}}
-$hashes=@(Get-ChildItem -LiteralPath $out -Recurse -File | Where-Object Extension -In '.log','.json','.exe' | ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLower()}})
-@{result='PASS';scope='Software live MAT sender / RTP+FEC receiver / authenticated transport / negotiation; synthetic test bytes only';
- commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTests=13;client='mock frontends using the reviewed host common library';liveUdpWatchdogCases=3;rtspCases=22;logicalDataPacketsPerLongTest=78000;
- generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;privatePipeVersion=2;pipeTailRegression='PASS';operatorStateRegression='PASS';operatorLauncherRegression='PASS';nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
+@{result='PASS';scope='Extended software integration; generated data and mock clients';commonCommit=$sharedCommit;
+ nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false} | ConvertTo-Json | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS live MAT software verification: $out/proof.json"

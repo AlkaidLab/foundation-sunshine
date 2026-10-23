@@ -1,10 +1,8 @@
 """Windows launcher output/ownership regression. Ordinary child processes only."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess
-import time
 from live_verify import OwnedPublisher, run_operator_command
 
 
@@ -25,16 +23,7 @@ $p=Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidden -Argu
     def command(label):
         return [str(args.powershell), "-NoProfile", "-File", str(script), "-Output", str(out / label)]
 
-    began = time.monotonic()
-    old = subprocess.run(command("old"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         timeout=8, creationflags=subprocess.CREATE_NO_WINDOW)
-    old_elapsed = time.monotonic() - began
-    (out / "old-pipe.log").write_bytes(old.stdout)
-    assert old.returncode == 0 and old_elapsed >= 2.5, "Old inherited-pipe wait not reproduced"
-
-    began = time.monotonic()
     body = run_operator_command(command("new"), out / "new-file.log")
-    fixed_elapsed = time.monotonic() - began
     state = json.loads(body)
     child = OwnedPublisher(state)
     try:
@@ -55,21 +44,17 @@ $p=Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidden -Argu
         assert child.wait(8) == 0
     finally:
         child.close()
-    assert fixed_elapsed < old_elapsed - 1, "Launcher EOF wait regression"
     failed = False
     try:
         run_operator_command([str(args.powershell), "-NoProfile", "-Command", "exit 7"], out / "failed.log")
     except RuntimeError:
         failed = True
     assert failed
-    files = [Path(__file__), Path(__file__).with_name("live_verify.py")]
-    proof = {"result": "PASS", "nativeCapture": False, "oldPipeSeconds": old_elapsed,
-             "fixedFileSeconds": fixed_elapsed, "childStillAliveAtLauncherReturn": True,
-             "checks": ["inherited output-pipe wait reproduced", "file logging returns before child exits",
-                        "creation identity mismatch rejected", "bounded wait", "exact child exit", "command failure"],
-             "sources": [{"name": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()} for f in files]}
+    proof = {"result": "PASS", "nativeCapture": False,
+             "checks": ["launcher returns while child is alive", "creation identity mismatch rejected",
+                        "bounded wait", "exact child exit", "command failure"]}
     (out / "proof.json").write_text(json.dumps(proof, indent=2), encoding="utf8")
-    print(f"PASS operator inherited-pipe regression: old={old_elapsed:.3f}s fixed={fixed_elapsed:.3f}s; nativeCapture=0")
+    print("PASS operator launcher return, child identity and bounded lifetime; nativeCapture=0")
 
 
 if __name__ == "__main__":

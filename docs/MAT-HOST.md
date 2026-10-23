@@ -54,7 +54,9 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 
 ## 验证
 
-主机软件验证入口：
+常规 CI 运行轻量主机契约、对象回调、IPC、管道和管理入口回归；客户端使用 mock，
+不启动原生捕获、现场信号或完整 RTSP/视频会话。
+扩展软件集成按需执行：
 
 ```powershell
 ./tests/mat-live/verify.ps1 -Output <全新目录> -Python <Python路径>
