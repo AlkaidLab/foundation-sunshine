@@ -1,5 +1,9 @@
 Native MAT operator lifecycle continuation, 2026-10-23
 
+Latest native result: PASS_OPERATOR_FULL_NATIVE_RTSP, 09:34 Asia/Hong_Kong.
+The separately authorized single 20-second retest passed the corrected operator
+launcher and complete real MAT/video session. See the retest section below.
+
 Implemented
 -----------
 The plugin publisher now has a read-only exact-engine/hash/six-entry preflight,
@@ -68,10 +72,55 @@ The repeated ordinary-child test observed old=3.375s, fixed=0.563s.
 Corrected harness isolated normal-host startup/TLS pairing/normal exit preflight:
 build/mat-lifecycle-preflight-v1/result.json PASS, no native attachment.
 
+Corrected operator-controlled native retest: PASS
+------------------------------------------------
+2026-10-23 09:34 Asia/Hong_Kong, source commit 45ec051cc.
+The user explicitly authorized one additional at-most-20-second joint test.
+One was executed, no automatic retry. Source: live public ISpatialAudioClient
+two-object emission for 22 seconds on the unchanged UUYC Dolby HRTF plugin path.
+Start reported WaitingForObjects; actual native output then produced NativeReady.
+The fixed launcher returned at 09:34:24 while the publisher was still running;
+the source began at 09:34:24, before native output stopped at 09:34:44.
+
+1969 native input passes / 1890240 object samples, warm20 / drain31.
+2020 native 30720-byte blocks / 62054400 bytes -> 1010 complete MAT cycles.
+Native status=2/error=0; create/mapper/initialize/submit/process HRESULTs S_OK.
+Post-PLAY stream: 932 cycles / 57262080 bytes, publisher/client SHA256 identical:
+73580b4339774ceb29a892bb0bdef612f28ef901cc3202cfb2dbff0c1a0702b3
+codec7, AES-GCM audio, authenticated EOS and exact pipe count/SHA ACK passed.
+Total native and post-PLAY counts differ because pre-PLAY cycles are excluded.
+
+Production LiStartConnection exercised paired TLS launch, encrypted RTSP and
+normal Sunshine video/MAT transport. 330 H.264 units/frames decoded at 640x360;
+no decode failure or video PTS reordering, audioDecodeCalls=0.
+Reception/decode overlap=18453 ms. Requested rate=30fps; sustained frame cadence
+and game/media lip sync were not calibrated. No deliberate loss was injected.
+
+The publisher's native duration bound initiated clean stop/drain and EOS.
+Subsequent operator Stop confirmed StoppedVerified, publisherAlive=false,
+hooksRestored=true. This verifies post-stop identity/restoration checking; it
+does not independently test operator-triggered midstream stop or continuous mode.
+Six original entries restored; host/publisher/source/client all exit0,
+cleanupErrors=[]; same audiodg PID 26504 / created FILETIME 134371423865849023.
+Installed Sunshine PID 15396 retained. No endpoint/spatial-format/driver/service
+change, sample replay, payload persistence, forced unload or engine restart.
+
+Private original evidence: build/mat-full-native-run03/
+Frozen result/log/build hashes: build/mat-full-native-run03-completed.json
+Prepared manifest: build/mat-full-live-prepared-v3.json
+Native build: build/mat-lifecycle-software-v1/sonic-source/
+Host SHA: b6483f494a90fc1418355dc30dc01d182c66eeb04b2afb10ecf8ff2747659d4b
+Client SHA: 3ebe52a37f3b3c46a35a9a8b838ae9fe3101facd979652a1fba0845023d9c81c
+The additional authorization is consumed; this report grants no new native run.
+The second test's failed original evidence remains unchanged and separate.
+
 Remaining acceptance
 --------------------
-Corrected operator-controlled full native session needs a new explicitly bounded
-native test; it has not been natively retested. The local machine has no suitable
-MAT HDMI/eARC playback setup, so hardware/Atmos output is unverified. Game A/V
-calibration, sustained stability, broader object layouts and the historical
-missing-object failure cause remain open. Unsupported phones still select Opus.
+The corrected operator/full-session bounded native path is now accepted.
+Continuous stability, active midstream operator Stop, real native multi-session
+reconnect, game A/V calibration, broader object layouts and the historical
+missing-object failure cause remain open. Cancellation/reconnect currently have
+generated own-process transport coverage, not native full-session acceptance.
+The local machine has no suitable MAT HDMI/eARC setup, so hardware/Atmos output
+is unverified. Unsupported phones still select Opus. Subsequent documentation
+edits do not imply a binary rebuild or repeated native execution.

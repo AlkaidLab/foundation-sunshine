@@ -1,5 +1,35 @@
 # 2026-10-23 续作：原生实时 MAT 链路
 
+## 09:34 管理入口联合原生复验通过
+
+用户另行明确授权追加 1 次最多 20 秒复验，已执行并消耗；没有自动重试。
+修复后的管理入口成功完成 Start → WaitingForObjects → NativeReady → 完整隔离
+Sunshine 加密 RTSP/MAT/H.264 会话 → 有界期限收尾 → StoppedVerified。
+既有 UUYC Dolby HRTF 插件路径不变，公开 ISpatialAudioClient 现场双对象 22 秒，
+原生采集上限 20 秒；没有读取样本、持久化载荷或改端点/空间格式/驱动/服务。
+
+原生输入 1969 轮 / 1890240 对象样本，warm20 / drain31，2020 个输出半块组成
+1010 个 MAT 周期；所有原生 HRESULT 为 S_OK。PLAY 后实际交付 932 周期 /
+57262080 字节，源端与客户端整流 SHA256 一致：
+`73580b4339774ceb29a892bb0bdef612f28ef901cc3202cfb2dbff0c1a0702b3`。
+codec7、AES-GCM 音频、认证 EOS 及私有管道周期数/SHA 确认全部通过。
+客户端实际解码 330 帧 640×360 H.264，无解码失败/视频 PTS 倒序，接收重叠
+18453 ms；请求 30fps 不等于本轮已验满帧率或游戏音画同步。
+
+六个入口恢复，主机/采集器/对象源/客户端全部 exit0，cleanupErrors 为空；同一
+audiodg 保留，已安装 Sunshine 未改动。本轮 Stop 命令确认的是期限自动收尾后的
+StoppedVerified；持续运行、主动中途 Stop、真实原生会话重连仍未分别实测。
+取消/重连的软件回归保留原有证明范围。本机缺少支持 MAT 的 HDMI/eARC 播放
+设备，硬件直通和 Atmos 识别仍待，不支持手机继续 Opus。
+
+报告：[采集管理闭环验收](../spatial-object-spike/mat-rtsp-live/MAT-LIFECYCLE-RESULT.txt)。
+私有原始证据 `build/mat-full-native-run03/`，冻结摘要
+`build/mat-full-native-run03-completed.json`；测试源码 `45ec051cc`，原生工具使用
+`build/mat-lifecycle-software-v1/sonic-source/`。历史第 2 次编排失败仍保留，不能
+覆盖原始日志；本次通过确认了启动管道等待修复可用于真实原生联合会话。
+
+以下保留早前状态。
+
 ## 01:30 后续闭环：采集管理入口已补，联合验收编排修复待原生复验
 
 本机不具备支持 MAT 的 HDMI/eARC 终端条件，不继续要求手机还原 MAT。

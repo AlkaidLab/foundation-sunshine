@@ -72,5 +72,18 @@ The harness now logs the operator launcher directly to a file. The ordinary-chil
 regression `operator_process_test.py` reproduced the old wait (3.360 seconds for
 a 2.5-second child), while the fixed path returned in 0.531 seconds with its child
 still alive. It also checks creation identity, bounded waits and child failure.
-The corrected operator/full-session path has not been natively retested. The two
-authorized joint tests are consumed; no additional native run is implied here.
+The two initial authorized joint tests were consumed. A separately authorized
+single 20-second retest passed at 09:34: operator Start/NativeReady, real native
+MAT with encrypted RTSP/H.264, authenticated EOS and StoppedVerified all passed.
+932 delivered cycles / 57262080 bytes matched publisher/client SHA256; 330 video
+frames decoded with 18453 ms reception overlap. All six entries restored, every
+child exited0 and the pinned engine identity was retained. No sample replay or
+payload persistence was used. Original evidence: `build/mat-full-native-run03/`;
+frozen proof: `build/mat-full-native-run03-completed.json`. Tested source commit:
+`45ec051cc`; subsequent report edits do not imply a rebuild or another run.
+
+The native publisher's explicit duration bound triggered shutdown; operator Stop
+verified the already stopped/restored process. Active midstream operator Stop,
+native multi-session reconnect, continuous stability, game A/V calibration and
+HDMI/eARC playback remain distinct unverified steps. The single additional
+authorization is consumed. See `MAT-LIFECYCLE-RESULT.txt` for the full record.
