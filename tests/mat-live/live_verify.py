@@ -111,7 +111,9 @@ def main():
     p.add_argument("--client-build", type=Path, required=True)
     p.add_argument("--port", type=int, default=52410)
     p.add_argument("--preflight-only", action="store_true")
-    p.add_argument("--ui-preflight", action="store_true")
+    preflight_checks = p.add_mutually_exclusive_group()
+    preflight_checks.add_argument("--ui-preflight", action="store_true")
+    preflight_checks.add_argument("--ticket-preflight", action="store_true")
     p.add_argument("--publisher", type=Path)
     p.add_argument("--tap", type=Path)
     p.add_argument("--tap-sha")
@@ -128,6 +130,8 @@ def main():
     args = p.parse_args()
     if args.ui_preflight and not args.preflight_only:
         p.error("UI preflight needs --preflight-only")
+    if args.ticket_preflight and not args.preflight_only:
+        p.error("Ticket preflight needs --preflight-only")
     if bool(args.operator_build) != bool(args.powershell):
         p.error("Operator build and explicit PowerShell executable must be paired")
     if not 8 <= args.seconds <= 30:
@@ -171,6 +175,8 @@ def main():
         "file_state": (out / "state.json").as_posix(), "credentials_file": (out / "creds.json").as_posix(),
         "pkey": (out / "server.key").as_posix(), "cert": (out / "server.pem").as_posix(),
         "file_apps": (out / "apps.json").as_posix(), "log_path": (out / "host.log").as_posix()}
+    if args.ticket_preflight:
+        config.update(ping_timeout=1000, min_log_level="debug", stream_audio="false")
     (out / "sunshine.conf").write_text("\n".join(f"{k} = {v}" for k, v in config.items()) + "\n", encoding="utf8")
     portable = out / "host"
     portable.mkdir()
@@ -247,6 +253,10 @@ def main():
         result["isolatedTlsPairing"] = True
         print("PREFLIGHT paired isolated Sunshine server ready", flush=True)
         if args.preflight_only:
+            if args.ticket_preflight:
+                from ticket_preflight import verify_ticket_expiry
+                launched = True  # Keep cancellation in the existing guarded cleanup.
+                result["ticketExpiry"] = verify_ticket_expiry(request, apps.findtext("App/ID"), out / "host.log")
             if args.ui_preflight:
                 from ui_preflight import verify_ui
                 result["uiStatus"] = verify_ui(opener, args.port, config, out / "sunshine.conf")

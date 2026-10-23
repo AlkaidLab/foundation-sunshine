@@ -697,7 +697,9 @@ namespace rtsp_stream {
           return _launch_sessions.claim_encrypted(remote_address, tagged_cipher, std::move(iv));
         },
         [this](std::uint32_t launch_session_id) {
-          _launch_sessions.release(launch_session_id, config::stream.ping_timeout);
+          if (_launch_sessions.release(launch_session_id, config::stream.ping_timeout)) {
+            schedule_pending_prune();
+          }
         });
     }
 

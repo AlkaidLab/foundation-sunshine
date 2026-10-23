@@ -96,7 +96,7 @@ try{
  }
  Get-State $state|ConvertTo-Json
  Write-Host "Metadata: $out/capture.json"
- Write-Host 'Sunshine connects automatically when MAT audio is enabled. No parameters need copying.'
+ Write-Host 'On first use, enable MAT in Sunshine, then save and apply (restart Sunshine). Once applied, capture connects automatically; no parameters need copying.'
  $complete=$true
 }finally{
  if(!$complete -and $process -and !$process.HasExited){

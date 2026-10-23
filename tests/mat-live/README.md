@@ -38,6 +38,9 @@ native source. Pass explicit `--host-build` and `--client-build` directories.
 `--ui-preflight` additionally checks the MAT switch, retirement of manual source
 parameters and read-only status polling against a pending exclusive auto pipe.
 No publisher is started.
+`--ticket-preflight` instead holds two overlapping incomplete RTSP connections
+past the original launch deadline, then checks asynchronous expiry after the last
+claim closes. It disables audio and never sends ANNOUNCE/PLAY; no media starts.
 `host_support.py` owns only test certificates, a read-only prerequisite check and
 orderly shutdown of the test's own host.
 `preflight_exit_test.py --output <fresh-dir> --host-build <host-dir>

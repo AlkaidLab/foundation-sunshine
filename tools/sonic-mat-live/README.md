@@ -33,8 +33,9 @@ does not attach them to audiodg or load a vendor encoder in those tests.
 engine identity, reviewed build, fresh output and an explicit `-Continuous` or
 `-Seconds 1..60`. `Status` and `Stop` take that run's `capture.json`, validate
 publisher/engine identity and report observed readiness or verified restoration.
-Start exposes the fixed local `SunshineMatLive-active` pipe. Enable MAT in the
-Sunshine UI once; subsequent tool starts/restarts connect without copying any
+Start exposes the fixed local `SunshineMatLive-active` pipe. On first use, enable
+MAT in the Sunshine UI, save and apply (restart Sunshine), then run Start.
+Subsequent tool starts/restarts connect without copying any
 configuration. Only one capture publisher can own this endpoint at a time.
 The host verifies the elevated publisher, protected deployment location and
 executable content hash before exchanging capture commands.
