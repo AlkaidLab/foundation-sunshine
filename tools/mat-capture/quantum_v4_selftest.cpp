@@ -1,10 +1,13 @@
 #include "quantum_v4_tap.cpp"
 #include "quantum_v4_assembler.h"
+#include "../sonic-mat-live/plugin_bridge.h"
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <vector>
+#include <barrier>
+#include <thread>
 namespace fs=std::filesystem;
 static void require4(bool okay,const char* message){if(!okay)throw std::runtime_error(message);}
 template<class F>static void rejects4(F fn){bool rejected=false;try{fn();}catch(const std::exception&){rejected=true;}require4(rejected,"expected rejection");}
@@ -79,7 +82,7 @@ struct Fixture4 {
     ~Fixture4(){InterlockedExchangePointer(&current4,nullptr);VirtualFree(ring,0,MEM_RELEASE);}
     void render(Renderer4& renderer,uint32_t frames=480) {Connection4 connection{nullptr,frames,1};void* inputs[]={&connection};HookRender4(&renderer,1,inputs,0,nullptr);}
     void finish(){recorder4.finish();}
-    std::vector<q4::Quantum> parse(){q4::Assembler parser;std::vector<q4::Quantum> output;for(LONG64 i=0;i<ring->write;++i){q4::Quantum q;auto& slot=ring->slots[i%kSlots];if(parser.push(slot.header,slot.pcm,q))output.push_back(std::move(q));}parser.finish();return output;}
+    std::vector<q4::Quantum> parse(){q4::Assembler parser;std::vector<q4::Quantum> output;for(LONG64 i=0;i<ring->write;++i){require4(q4::recordReady(*ring,i),"unpublished record");q4::Quantum q;auto& slot=ring->slots[i%kSlots];if(parser.push(slot.header,slot.pcm,q))output.push_back(std::move(q));}parser.finish();return output;}
 };
 static bool catchOriginalSeh4(Renderer4* renderer) {
     bool caught=false;Connection4 connection{nullptr,480,1};void* inputs[]={&connection};
@@ -93,10 +96,77 @@ static std::vector<Event4> events4(Fixture4& f) {
     for(LONG64 i=0;i<f.ring->write;++i){const auto& s=f.ring->slots[i];result.push_back({s.header,{s.pcm,s.pcm+s.header.audio.frames}});}
     return result;
 }
-static std::vector<q4::Quantum> parseEvents4(std::vector<Event4> events) {
+static std::vector<q4::Quantum> parseEvents4(std::vector<Event4> events,bool rewriteClock=true) {
     q4::Assembler parser;std::vector<q4::Quantum> output;
-    for(size_t i=0;i<events.size();++i){auto& event=events[i];event.header.audio.sequence=i;event.header.audio.qpc=1000+i;q4::Quantum q;if(parser.push(event.header,event.pcm.data(),q))output.push_back(std::move(q));}
+    for(size_t i=0;i<events.size();++i){auto& event=events[i];event.header.audio.sequence=i;if(rewriteClock)event.header.audio.qpc=1000+i;q4::Quantum q;if(parser.push(event.header,event.pcm.data(),q))output.push_back(std::move(q));}
     parser.finish();return output;
+}
+static std::barrier<>* overlap4=nullptr;
+static bool parallelMissingTail4=false;
+static thread_local unsigned parallelIndex4=0,parallelRound4=0;
+static HRESULT __fastcall ParallelSubmit4(void*,const void*,const void* properties,const float* pcm,uint32_t frames,float) {
+    auto* p=const_cast<Properties4*>(static_cast<const Properties4*>(properties));p->x=99;
+    for(unsigned i=0;i<frames;++i)const_cast<float*>(pcm)[i]=-1;
+    return S_OK;
+}
+static HRESULT __fastcall ParallelProcess4(void*,uint32_t,uint32_t,BYTE*,uint32_t* bytes){*bytes=0;return S_OK;}
+static void __fastcall ParallelRender4(void* object,uint32_t,void*,uint32_t,void*) {
+    overlap4->arrive_and_wait(); // Force distinct encoder passes to overlap in originals.
+    auto* renderer=static_cast<Renderer4*>(object);
+    if(parallelIndex4==0&&(!parallelMissingTail4||parallelRound4!=1299)) {
+        uint8_t info[12]{};uint64_t host=77;memcpy(info+4,&host,8);
+        Properties4 p{42,480,1,6,1,2,3,.5f};float pcm[480];
+        for(unsigned i=0;i<480;++i)pcm[i]=float(parallelRound4%20+i)*.001f;
+        HookSubmit4(renderer->encoder,info,&p,pcm,480,.25f);
+    }
+    uint32_t produced=0;HookProcess4(renderer->encoder,480,30720,nullptr,&produced);
+}
+static void concurrentEmptyDomains4(bool missingTail=false) {
+    Fixture4 f;constexpr unsigned count=q4::domainCapacity,rounds=1300;
+    Encoder4 encoders[count];Renderer4 renderers[count];
+    std::barrier start(count+1),inside(count);overlap4=&inside;parallelMissingTail4=missingTail;volatile LONG done=0;
+    originalRender4=ParallelRender4;originalSubmit4=ParallelSubmit4;originalProcess4=ParallelProcess4;
+    std::vector<std::thread> producers;std::exception_ptr failure;
+    for(unsigned i=0;i<count;++i) {
+        encoders[i]={f.table,reinterpret_cast<void*>(uintptr_t(100+i))};renderers[i]={nullptr,&encoders[i]};
+        producers.emplace_back([&,i]{parallelIndex4=i;for(unsigned n=0;n<rounds;++n){
+            parallelRound4=n;start.arrive_and_wait();f.render(renderers[i]);
+            if(i==count-1){if(n%2)HookReset4(&encoders[i]);else HookDestroy4(&encoders[i]);}
+            InterlockedIncrement(&done);
+        }});
+    }
+    q4::Assembler parser;sonic_live::PluginBridge bridge;std::map<uint64_t,int64_t> starts;
+    LONG64 read=0;uint64_t selected=0,empty=0,packets=0;std::map<uint64_t,uint64_t> samples;
+    auto emit=[&](const receiver::Slot& packet){
+        if(packet.header.kind==1){const auto n=packets;require4(packet.header.calls==1&&packet.calls[0].xyz[0]==1,"concurrent bridge metadata");
+            for(unsigned i=0;i<480;++i)require4(packet.calls[0].pcm[i]==float(n%20+i)*.001f*.125f,"concurrent pre-submit PCM overwritten");}
+        ++packets;return true;
+    };
+    auto drain=[&]{while(read<InterlockedCompareExchange64(&f.ring->write,0,0)&&q4::recordReady(*f.ring,read)) {
+        const auto& slot=f.ring->slots[read%kSlots];const auto& h=slot.header;
+        if(h.kind==q4::PassBegin)starts[h.domain]=h.audio.qpc;
+        q4::Quantum q;if(parser.push(h,slot.pcm,q)) {
+            require4(q.sampleStart==samples[q.domain],"concurrent domain sample clock");samples[q.domain]+=q.frames;
+            if(!q.objects.empty()){if(!selected)selected=q.domain;require4(q.domain==selected,"multiple object sources");}else ++empty;
+            if(selected&&q.domain==selected)bridge.push(q,starts.at(q.domain),h.audio.qpc,48000,emit);
+        }
+        InterlockedExchange64(&f.ring->read,++read);
+    }};
+    // Always advance the test gates/join originals even if parsing fails.
+    for(unsigned n=0;n<rounds;++n) {
+        InterlockedExchange(&done,0);start.arrive_and_wait();
+        for(;;){if(!failure)try{drain();}catch(...){failure=std::current_exception();}
+            if(InterlockedCompareExchange(&done,0,0)==count)break;std::this_thread::yield();}
+        if(!failure)try{drain();require4(!f.ring->stop&&!f.ring->invalid,"unrelated callback contention stopped capture");}catch(...){failure=std::current_exception();}
+    }
+    for(auto& thread:producers)thread.join();overlap4=nullptr;
+    if(failure)std::rethrow_exception(failure);
+    f.finish();drain();parser.finish();bridge.finish(emit);
+    require4(empty==(count-1)*rounds&&bridge.passes()==rounds&&bridge.samples()==rounds*480&&packets==rounds+1,
+        "concurrent empty domains lost/duplicated objects, frames or EOS");
+    require4(read>kSlots*8&&read==f.ring->write&&!f.ring->droppedBusy&&!f.ring->droppedFull&&!f.ring->invalid&&
+        !active4&&!captureAdmissions4&&f.ring->domainsOpened==f.ring->domainsClosed,"concurrent wrap/lifecycle cleanup");
+    printf("PASS concurrent callbacks: producers=%u rounds=%u emptyPasses=%llu records=%lld packets=%llu nativeCapture=0\n",count,rounds,empty,read,packets);
 }
 int main(int argc,char** argv) {
     unsigned tests=0;
@@ -115,13 +185,25 @@ int main(int argc,char** argv) {
         test("failed_submit_preserves_hresult_and_rejects_snapshot",[]{Fixture4 f;submitResult4=E_FAIL;f.render(f.rendererA);require4(f.ring->stop&&f.ring->invalid&&submitCalls4==1,"failed original swallowed");f.finish();rejects4([&]{f.parse();});});
         test("reentrant_submit_fails_closed_without_overwriting",[]{Fixture4 f;reenter4=true;f.render(f.rendererA);require4(f.ring->stop&&f.ring->invalid&&submitCalls4==2,"reentry not detected/original not forwarded");f.finish();rejects4([&]{f.parse();});});
         test("missing_Process_never_commits",[]{Fixture4 f;omitProcess4=true;f.render(f.rendererA);require4(f.ring->stop&&f.ring->invalid,"missing marker silently accepted");f.finish();rejects4([&]{f.parse();});});
-        test("queue_full_never_overwrites_pre_snapshot",[]{Fixture4 f;f.ring->write=kSlots;f.render(f.rendererA);require4(f.ring->droppedFull&&f.ring->stop&&f.ring->write==kSlots,"queue full overwrite");});
-        test("publication_contention_never_waits",[]{Fixture4 f;f.ring->writer=1;f.render(f.rendererA);f.ring->writer=0;require4(f.ring->droppedBusy&&f.ring->stop&&!f.ring->write,"writer lock waited or overwrote");});
+        test("queue_full_never_overwrites_pre_snapshot",[]{Fixture4 f;f.ring->write=kSlots;f.render(f.rendererA);require4(f.ring->droppedFull&&f.ring->stop&&f.ring->write==kSlots+1&&!q4::recordReady(*f.ring,0),"queue full overwrite");});
+        test("unpublished_ticket_blocks_reader_even_when_later_records_are_ready",[]{Fixture4 f;f.ring->write=1;f.render(f.rendererA);require4(!f.ring->stop&&!q4::recordReady(*f.ring,0)&&q4::recordReady(*f.ring,1)&&f.ring->slots[1].header.audio.sequence==1,"reader skipped unfinished producer");});
         test("unbound_arming_is_counted_then_post_arming_fails",[]{Fixture4 f;recorder4.unbound();require4(f.ring->ignoredBeforeFirstRender==1&&!f.ring->stop,"arming not distinguished");f.render(f.rendererA);recorder4.unbound();require4(f.ring->unboundAfterArming==1&&f.ring->stop,"unbound post-arm silently ignored");});
         test("same_encoder_concurrent_pass_rejected",[]{Fixture4 f;q4::Pass first,second;require4(recorder4.begin(1,2,3,480,first),"first pass");require4(!recorder4.begin(1,2,3,480,second)&&f.ring->stop,"concurrent encoder not rejected");recorder4.end(first);});
+        test("same_encoder_reset_inside_pass_rejected",[]{Fixture4 f;q4::Pass pass;require4(recorder4.begin(1,2,3,480,pass),"first pass");recorder4.retire(2,q4::Reset);require4(f.ring->stop&&f.ring->invalid,"same encoder reset overlapped pass");recorder4.end(pass);});
+        test("simultaneous_first_pass_on_same_encoder_rejected",[]{for(unsigned n=0;n<100;++n){
+            Fixture4 f;std::barrier gate(3);q4::Pass passes[2];std::thread threads[2];
+            for(unsigned i=0;i<2;++i)threads[i]=std::thread([&,i]{gate.arrive_and_wait();recorder4.begin(1,2,3,480,passes[i]);});
+            gate.arrive_and_wait();for(auto& thread:threads)thread.join();
+            require4(f.ring->stop&&f.ring->invalid&&!(passes[0].valid&&passes[1].valid),"concurrent first binding duplicated encoder");
+            for(auto& pass:passes)recorder4.end(pass);
+        }});
         test("active_domain_registry_capacity_bounded",[]{Fixture4 f;for(unsigned i=0;i<q4::domainCapacity;++i){q4::Pass p;require4(recorder4.begin(100+i,200+i,300+i,480,p),"early registry full");uint32_t bytes=0;recorder4.processed(p,480,30720,&bytes,S_OK);recorder4.end(p);}q4::Pass extra;require4(!recorder4.begin(999,999,999,480,extra)&&f.ring->stop,"unbounded registry growth");});
         test("per_pass_object_capacity_drops_explicitly_but_still_forwards_original",[]{Fixture4 f;sourceObjects4=q4::objectCapacity+1;f.render(f.rendererA);require4(f.ring->stop&&f.ring->invalid&&submitCalls4==q4::objectCapacity+1,"object capacity swallowed original or grew without bound");f.finish();rejects4([&]{f.parse();});});
-        test("retired_registry_slots_can_be_reused_without_reusing_domain_ID",[]{Fixture4 f;for(unsigned i=0;i<20;++i){f.render(f.rendererA);HookDestroy4(&f.a);}f.finish();auto q=f.parse();require4(q.size()==20&&q.front().domain==1&&q.back().domain==20,"lifetime slot/ID reuse");});
+        test("retired_registry_slots_can_be_reused_without_reusing_domain_ID",[]{Fixture4 f;for(unsigned i=0;i<20;++i){f.render(f.rendererA);HookDestroy4(&f.a);}f.finish();auto q=f.parse();require4(q.size()==20&&q.front().domain==1&&q.back().domain>q.front().domain,"lifetime slot/ID reuse");});
+        test("retired_registry_slots_accept_new_encoder_addresses",[]{Fixture4 f;for(unsigned i=0;i<20;++i){
+            q4::Pass p;require4(recorder4.begin(100+i,200+i,300+i,480,p),"retired binding leaked");
+            uint32_t bytes=0;recorder4.processed(p,480,30720,&bytes,S_OK);recorder4.end(p);recorder4.retire(200+i,q4::Destroy);
+        }f.finish();require4(f.parse().size()==20,"new encoder reuse lost lifecycle");});
         test("zero_frame_render_fails_instead_of_guessing",[]{Fixture4 f;sourceObjects4=0;f.render(f.rendererA,0);require4(f.ring->invalid&&f.ring->stop,"zero render frame semantics guessed");});
         test("worker_rejects_missing_return_even_with_resequenced_transport",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e.erase(e.begin()+3);rejects4([&]{parseEvents4(e);});});
         test("worker_rejects_duplicate_return",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e.insert(e.begin()+4,e[3]);rejects4([&]{parseEvents4(e);});});
@@ -131,14 +213,19 @@ int main(int argc,char** argv) {
         test("worker_rejects_render_Process_frame_mismatch",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e[4].header.inputFrames=240;rejects4([&]{parseEvents4(e);});});
         test("worker_rejects_domain_end_during_open_pass",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);std::swap(e[4],e[6]);rejects4([&]{parseEvents4(e);});});
         test("worker_rejects_cross_thread_result",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e[3].header.audio.tid+=1;rejects4([&]{parseEvents4(e);});});
+        test("worker_rejects_same_domain_QPC_reversal",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e[3].header.audio.qpc=e[2].header.audio.qpc-1;rejects4([&]{parseEvents4(e,false);});});
+        test("worker_rejects_previous_private_capture_version",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e[0].header.version=q4::version-1;rejects4([&]{parseEvents4(e);});});
         test("worker_rejects_EOF_without_domain_closure",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e.pop_back();rejects4([&]{parseEvents4(e);});});
         test("short_packet_offset_stays_unknown",[]{Fixture4 f;f.render(f.rendererA);f.finish();auto e=events4(f);e[2].header.audio.frames=240;e[2].pcm.resize(240);auto q=parseEvents4(e);require4(!q[0].fullSpanLayoutReady&&q[0].objects[0].offset==UINT32_MAX,"short offset fabricated");});
         test("interleaved_domains_and_threads_keep_independent_clocks",[]{
             Fixture4 f;f.render(f.rendererA);sourceX4=9;f.render(f.rendererB);f.finish();auto e=events4(f);
-            const unsigned order[]={0,1,2,6,7,8,9,10,11,3,4,5,12,13};std::vector<Event4> mixed;
+            const auto second=e[6].header.domain;const unsigned order[]={0,1,2,6,7,8,9,10,11,3,4,5,12,13};std::vector<Event4> mixed;
             for(auto index:order){auto item=e.at(index);item.header.audio.tid=item.header.domain==1?101:202;mixed.push_back(std::move(item));}
-            auto q=parseEvents4(mixed);require4(q.size()==2&&q[0].domain==2&&q[1].domain==1&&q[0].sampleStart==0&&q[1].sampleStart==0,"interleaved domains collapsed into one clock");
+            auto q=parseEvents4(mixed);require4(q.size()==2&&q[0].domain==second&&q[1].domain==1&&q[0].sampleStart==0&&q[1].sampleStart==0,"interleaved domains collapsed into one clock");
+            q=parseEvents4(mixed,false);require4(q.size()==2,"independent domain QPC reordering rejected");
         });
+        test("unrelated_concurrent_empty_domains_preserve_live_object_stream",[]{concurrentEmptyDomains4();});
+        test("empty_selected_source_still_rejects_missing_object",[]{rejects4([]{concurrentEmptyDomains4(true);});});
         if(argc==3&&std::string(argv[1])=="--fixture-output") {
             fs::path root=fs::absolute(argv[2]);require4(!fs::exists(root)&&fs::create_directories(root),"fixture output must be new");
             Fixture4 f;sourceObjects4=2;f.render(f.rendererA);sourceObjects4=1;sourceX4=9;f.render(f.rendererB);
@@ -146,9 +233,9 @@ int main(int argc,char** argv) {
             auto q=f.parse();require4(q.size()==3&&f.ring->domainsOpened==3&&f.ring->domainsClosed==3,"fixture domains");
             std::ofstream output(root/"events.bin",std::ios::binary);
             for(LONG64 i=0;i<f.ring->write;++i){const auto& slot=f.ring->slots[i];output.write(reinterpret_cast<const char*>(&slot.header),sizeof(slot.header));output.write(reinterpret_cast<const char*>(slot.pcm),slot.header.audio.frames*4);}output.close();require4(bool(output),"fixture write");
-            std::ofstream description(root/"expected.json");description<<"{\"source_kind\":\"synthetic-mutating-originals\",\"protocol_version\":4,\"header_bytes\":160,\"records\":"<<f.ring->write<<",\"domains\":3,\"quanta\":3,\"objects\":4,\"native_verified\":false,\"pcm\":\"F32(sample_index * 0.001f), before mutation\",\"volume\":0.5,\"call_gain\":0.25}\n";
+            std::ofstream description(root/"expected.json");description<<"{\"source_kind\":\"synthetic-mutating-originals\",\"protocol_version\":"<<q4::version<<",\"header_bytes\":160,\"records\":"<<f.ring->write<<",\"domains\":3,\"quanta\":3,\"objects\":4,\"native_verified\":false,\"pcm\":\"F32(sample_index * 0.001f), before mutation\",\"volume\":0.5,\"call_gain\":0.25}\n";
             description.close();require4(bool(description),"fixture description write");
-            std::ofstream format(root/"format.json");format<<"{\"version\":4,\"header_bytes\":160,\"source_kind\":\"synthetic-mutating-originals\",\"pcm_stage\":\"before-original-submit\",\"native_verified\":false}\n";format.close();require4(bool(format),"fixture format write");
+            std::ofstream format(root/"format.json");format<<"{\"version\":"<<q4::version<<",\"header_bytes\":160,\"source_kind\":\"synthetic-mutating-originals\",\"pcm_stage\":\"before-original-submit\",\"native_verified\":false}\n";format.close();require4(bool(format),"fixture format write");
         }
         printf("{\"passed\":true,\"tests\":%u,\"scope\":\"own-process real hook wrappers with deliberately mutating fake originals\",\"audiodg_accessed\":false,\"native_verified\":false}\n",tests);return 0;
     } catch(const std::exception& e){printf("FAILED %s\n",e.what());return 1;}

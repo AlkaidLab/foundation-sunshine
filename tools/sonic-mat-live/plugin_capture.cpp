@@ -55,7 +55,7 @@ int wmain(int argc,wchar_t** argv){
             for(;;){auto now=GetTickCount64();InterlockedExchange64(&ring->heartbeat,now);if(native)native->heartbeat();
                 require(!Read64(&ring->droppedFull)&&!Read64(&ring->droppedBusy)&&!Read64(&ring->invalid)&&!Read64(&ring->unboundAfterArming)&&!ring->error,"Plugin callback loss/ABI violation");require(WaitForSingleObject(engine,0)==WAIT_TIMEOUT,"Pinned plugin engine exited");
                 auto r=Read64(&ring->read),w=Read64(&ring->write);require(w>=r&&w-r<=kSlots,"Plugin ring bounds");
-                while(r<w){const auto& s=ring->slots[r%kSlots];const auto& h=s.header;
+                while(r<w){if(!q4::recordReady(*ring,r))break;const auto& s=ring->slots[r%kSlots];const auto& h=s.header;
                     if(h.kind==q4::DomainBegin){rates[h.domain]=PluginRate(engine,h.renderer);printf("PLUGIN_DOMAIN domain=%llu renderer=0x%llx rate=%u\n",h.domain,h.renderer,rates[h.domain]);}
                     if(h.kind==q4::PassBegin)starts[h.domain]=h.audio.qpc;
                     q4::Quantum quantum;if(assembler.push(h,s.pcm,quantum)){

@@ -4,21 +4,22 @@ namespace q4 {
 struct Pass {
     uint64_t renderer=0,encoder=0,implementation=0,domain=0,pass=0,call=0;
     uint32_t frames=0;
+    uint32_t binding=domainCapacity;
     bool valid=false,insideSubmit=false,sawProcess=false;
 };
-// Audio callbacks: fixed storage, one CAS attempt, no waits/heap/logging.
-// Publication lock is NEVER held across an original vendor function call.
+// Audio callbacks: fixed storage and bounded scans, no waits/heap/logging.
+// Only the same encoder is excluded across an original vendor function call.
 class Recorder {
     struct Binding {
+        volatile LONG64 owner=0; // encoder address; high bit owns its metadata/pass
         uint64_t renderer=0,encoder=0,implementation=0,domain=0,nextPass=0;
-        bool used=false,inPass=false;
+        bool used=false;
     };
     Ring* ring_=nullptr;
     Binding bindings_[domainCapacity]{};
-    volatile LONG registry_=0;
-    uint64_t nextDomain_=0;
     volatile LONG64 loss_=0;
-    bool emit(Header header,const float* pcm=nullptr,bool allowStopped=false);
+    Binding* acquire(uint64_t encoder,bool create);
+    bool emit(Header& header,const float* pcm=nullptr,bool allowStopped=false);
     Header header(const Pass& pass,uint32_t kind) const;
     bool close(Binding& binding,uint32_t reason,bool allowStopped=false);
 public:

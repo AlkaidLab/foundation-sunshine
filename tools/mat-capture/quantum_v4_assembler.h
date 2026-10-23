@@ -31,12 +31,12 @@ class Assembler {
         uint64_t renderer=0,encoder=0,implementation=0,pass=0,sample=0;
         uint32_t frames=0,thread=0;
         bool inPass=false,processed=false;
+        int64_t qpc=-1;
         std::vector<Object> pending;
         PositionCache cache;
     };
     std::map<uint64_t,Domain> domains_;
     uint64_t sequence_=0,lastDomain_=0;
-    int64_t qpc_=-1;
     bool poisoned_=false,closed_=false;
     void check(bool value,const char* message){if(!value){poisoned_=true;throw std::runtime_error(message);}}
 public:
@@ -46,7 +46,7 @@ public:
         check(!poisoned_&&!closed_,"v4 assembler closed or poisoned");
         const auto& a=h.audio;
         check(h.version==version&&a.magic==magic&&!h.reserved&&h.domain&&h.renderer&&h.encoder&&h.implementation&&a.tid,"v4 identity/version");
-        check(a.sequence==sequence_&&a.qpc>=0&&a.qpc>=qpc_,"v4 global sequence/QPC gap");++sequence_;qpc_=a.qpc;
+        check(a.sequence==sequence_&&a.qpc>=0,"v4 global sequence/QPC gap");++sequence_;
         check(h.lossEpoch==0,"v4 capture loss; reject instead of silently recovering");
         if(h.kind!=ObjectBefore)check(!a.frames&&!h.properties&&!a.host&&!a.objectId&&!a.type
             &&a.x==0&&a.y==0&&a.z==0&&a.volume==0&&a.callGain==0,"v4 control event contains PCM/object metadata");
@@ -57,10 +57,11 @@ public:
             check(h.domain>lastDomain_&&domains_.size()<domainCapacity&&!h.pass&&!h.call
                 &&h.reason==Discovery&&h.flags==ObservedNotCreated&&h.result==0,"v4 domain begin/order/capacity");
             for(const auto& item:domains_)check(item.second.encoder!=h.encoder,"v4 same encoder address in two live domains");
-            Domain fresh{};fresh.renderer=h.renderer;fresh.encoder=h.encoder;fresh.implementation=h.implementation;fresh.pending.reserve(64);
+            Domain fresh{};fresh.renderer=h.renderer;fresh.encoder=h.encoder;fresh.implementation=h.implementation;fresh.qpc=a.qpc;fresh.pending.reserve(64);
             domains_.emplace(h.domain,std::move(fresh));lastDomain_=h.domain;++opened;return false;
         }
         auto found=domains_.find(h.domain);check(found!=domains_.end(),"v4 unknown or retired domain");auto& d=found->second;
+        check(a.qpc>=d.qpc,"v4 domain QPC reversed");d.qpc=a.qpc;
         check(d.renderer==h.renderer&&d.encoder==h.encoder&&d.implementation==h.implementation,"v4 address/cookie rebound inside a domain");
         if(h.kind==DomainEnd) {
             check(!d.inPass&&!h.pass&&!h.call&&h.result==0&&h.reason>=Reset&&h.reason<=CaptureStop

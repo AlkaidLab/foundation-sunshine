@@ -53,7 +53,11 @@ Historical native reports and abandoned paths remain on the
 [archive branch](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023).
 They do not establish current game compatibility, A/V timing or HDMI/Atmos output.
 
-The paired recorder supports serialized callback publication. It can track
-interleaved empty domains, but concurrent registry/publication contention ends
-capture without waiting or silently dropping events. Multi-producer callback
-capture is outside this minimal version's supported input contract.
+The paired recorder has eight fixed encoder bindings. Distinct empty domains
+can run concurrently with the selected object domain; overlapping passes or
+reset/destroy during a pass on the same encoder still fail. Producers reserve bounded queue
+tickets and publish a completion marker after copying; the reader never skips an
+unfinished ticket. QPC ordering is checked per domain, not across independent
+threads. No callback waits, allocations or silent drops are introduced.
+Only one object-bearing domain is encoded. The private capture IPC is version 5;
+rebuild the tap and publisher together. This does not change the MAT wire protocol.
