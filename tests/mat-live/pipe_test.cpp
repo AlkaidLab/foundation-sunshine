@@ -133,8 +133,21 @@ static void RejectNativePeer(unsigned mode){
     CheckPipe(rejected&&peerError.empty()&&disconnected,"Rejected native preparation retained the lease");
     CheckPipe(source.state()==spatial_audio::State::fault&&!source.error().empty()&&!source.start(),"Rejected native source state/diagnostic");
     const auto error=source.error();source.stop();source.stop();CheckPipe(source.state()==spatial_audio::State::fault&&source.error()==error,"Stop erased source failure");
+    const auto observed=spatial_audio::mat_live_status.snapshot();
+    CheckPipe(observed.leases==0&&observed.running==0&&observed.last_error==error&&std::string(observed.state())=="error","Rejected source status retained a lease/lost its error");
 }
 int main(){try{
+    CheckPipe(spatial_audio::mat_live_config_paired("","")&&spatial_audio::mat_live_config_paired("pipe","exe")&&
+        !spatial_audio::mat_live_config_paired("pipe","")&&!spatial_audio::mat_live_config_paired("","exe"),"MAT config pair validation");
+    spatial_audio::MatLiveStatus status;
+    CheckPipe(std::string(status.snapshot().state())=="unobserved","Configuration is not readiness");
+    status.acquired();status.started();status.failed("Competing lease failed");
+    CheckPipe(std::string(status.snapshot().state())=="streaming","Failed contender hid active stream");
+    std::thread observer([&]{for(unsigned i=0;i<10000;++i){const auto s=status.snapshot();CheckPipe(s.leases==1&&s.running==1,"Status observation changed ownership");}});
+    for(unsigned i=0;i<10000;++i)status.failed("Competing lease failed");observer.join();
+    status.released(true);CheckPipe(std::string(status.snapshot().state())=="error","Release lost latest failure");
+    status.acquired();CheckPipe(std::string(status.snapshot().state())=="ready"&&status.snapshot().last_error.empty(),"Reconnect did not clear stale error");
+    status.released(false);CheckPipe(std::string(status.snapshot().state())=="idle","Release falsely advertises readiness");
     for(unsigned mode=0;mode<3;++mode)Run(mode);
     Reconnect(false);Reconnect(true);
     for(unsigned mode=0;mode<3;++mode)RejectNativePeer(mode);

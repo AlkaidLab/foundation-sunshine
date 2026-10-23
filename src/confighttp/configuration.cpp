@@ -18,6 +18,7 @@
 #include "src/nvhttp.h"
 #include "src/network.h"
 #include "src/platform/common.h"
+#include "src/spatial_audio/mat_live_status.h"
 #include "src/utility.h"
 #include "src/video.h"
 #include "version.h"
@@ -284,6 +285,9 @@ namespace confighttp::configuration {
 
       try {
         pt::read_json(ss, inputTree);
+        if (!spatial_audio::mat_live_config_paired(inputTree.get<std::string>("mat_live_pipe", ""), inputTree.get<std::string>("mat_live_producer", ""))) {
+          throw std::invalid_argument("Live MAT needs both mat_live_pipe and mat_live_producer, or both empty");
+        }
         net::validate_bind_address(inputTree.get<std::string>("bind_address", ""), inputTree.get<std::string>("address_family", "ipv4"));
         const auto port_value = inputTree.get<std::string>("port", "47989");
         std::size_t consumed = 0;

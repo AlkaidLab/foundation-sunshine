@@ -4147,7 +4147,10 @@ namespace stream {
         acknowledged(submitted);
         BOOST_LOG(info)<<"Native MAT capture ended cleanly: "<<cycles<<" cycles";
         shutdown->view();
-      } catch(const std::exception& e){BOOST_LOG(::error)<<"Live MAT stopped: "<<e.what();}
+      } catch(const std::exception& e){
+        if(!cancelled()) spatial_audio::mat_live_status.failed(e.what());
+        BOOST_LOG(::error)<<"Live MAT stopped: "<<e.what();
+      }
       return;
     }
     BOOST_LOG(debug) << "Start capturing Audio"sv;

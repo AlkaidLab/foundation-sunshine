@@ -2,6 +2,7 @@
 #include "encoded_audio_source.h"
 #include "mat_capture_protocol.h"
 #include "mat_capture_reader.h"
+#include "mat_live_status.h"
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -18,11 +19,13 @@ class NativeMatPipeSource final:public EncodedAudioSource {
     State state_=State::preparing;
     uint64_t next_=0,last_qpc_=0;
     std::string error_;
+    bool status_leased_=false,status_running_=false;
     std::function<bool()> cancelled_=[]{return false;};
     void close()noexcept {
         if(pipe_!=INVALID_HANDLE_VALUE){CancelIoEx(pipe_,nullptr);CloseHandle(pipe_);pipe_=INVALID_HANDLE_VALUE;}
         if(publisher_){CloseHandle(publisher_);publisher_=nullptr;}
         if(engine_){CloseHandle(engine_);engine_=nullptr;}
+        if(status_leased_){mat_live_status.released(status_running_);status_leased_=false;status_running_=false;}
     }
     static uint64_t created(HANDLE p) {
         FILETIME c{},e{},k{},u{};require(GetProcessTimes(p,&c,&e,&k,&u)!=0,"MAT process creation time");
@@ -79,15 +82,16 @@ public:
             auto target=(std::filesystem::path(system)/L"audiodg.exe").wstring();
             require(_wcsicmp(image(engine_).c_str(),target.c_str())==0,"Native MAT engine image");
             state_=State::idle;
-        }catch(const std::exception& e){error_=e.what();state_=State::fault;close();throw;}
+            mat_live_status.acquired();status_leased_=true;
+        }catch(const std::exception& e){error_=e.what();mat_live_status.failed(error_);state_=State::fault;close();throw;}
     }
     const mat_capture::Descriptor& identity()const{return native_;}
     Descriptor descriptor()const override{return {};}
     void cancel_when(std::function<bool()> fn){cancelled_=std::move(fn);}
     bool start()override {
         if(state_!=State::idle)return false;
-        try {char command[8];memcpy(command,"MCAPPLAY",8);io(command,8,true);state_=State::running;return true;}
-        catch(const std::exception& e){error_=e.what();state_=State::fault;close();return false;}
+        try {char command[8];memcpy(command,"MCAPPLAY",8);io(command,8,true);state_=State::running;mat_live_status.started();status_running_=true;return true;}
+        catch(const std::exception& e){error_=e.what();if(!cancelled_())mat_live_status.failed(error_);state_=State::fault;close();return false;}
     }
     Read read(Frame& out)override {
         if(state_==State::stopped)return Read::ended;if(state_!=State::running)return Read::failed;
@@ -95,7 +99,7 @@ public:
             require(WaitForSingleObject(publisher_,0)==WAIT_TIMEOUT&&WaitForSingleObject(engine_,0)==WAIT_TIMEOUT,"Native MAT owner exited");
             auto status=mat_capture::read_record([this](void* p,size_t n,bool writing){io(p,(DWORD)n,writing);},next_,last_qpc_,native_.epoch,native_.encoder,out);
             if(status==Read::ended){state_=State::stopped;close();}return status;
-        }catch(const std::exception& e){error_=e.what();state_=State::fault;close();return Read::failed;}
+        }catch(const std::exception& e){error_=e.what();if(!cancelled_())mat_live_status.failed(error_);state_=State::fault;close();return Read::failed;}
     }
     void stop()override {
         close();

@@ -110,6 +110,7 @@ def main():
     p.add_argument("--client-build", type=Path, required=True)
     p.add_argument("--port", type=int, default=52410)
     p.add_argument("--preflight-only", action="store_true")
+    p.add_argument("--ui-preflight", action="store_true")
     p.add_argument("--publisher", type=Path)
     p.add_argument("--tap", type=Path)
     p.add_argument("--tap-sha")
@@ -124,6 +125,8 @@ def main():
     p.add_argument("--operator-build", type=Path)
     p.add_argument("--powershell", type=Path)
     args = p.parse_args()
+    if args.ui_preflight and (not args.preflight_only or not args.publisher):
+        p.error("UI preflight needs --preflight-only and a producer path (never executed)")
     if bool(args.operator_build) != bool(args.powershell):
         p.error("Operator build and explicit PowerShell executable must be paired")
     if not 8 <= args.seconds <= 30:
@@ -244,6 +247,9 @@ def main():
         result["isolatedTlsPairing"] = True
         print("PREFLIGHT paired isolated Sunshine server ready", flush=True)
         if args.preflight_only:
+            if args.ui_preflight:
+                from ui_preflight import verify_ui
+                result["uiStatus"] = verify_ui(opener, args.port, config, out / "sunshine.conf")
             result["passed"] = True
             return
         for dll, expected in ((args.tap, args.tap_sha), (args.codec, args.codec_sha)):
