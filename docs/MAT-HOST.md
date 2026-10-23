@@ -78,3 +78,7 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 [归档分支 codex/mat-history-20261023](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023)。
 旧手机实验、有限回放、离线落盘、一次性探针、打包脚本和阶段报告仅在那里保留；
 当前构建与测试不依赖归档目录。历史原生 MAT/RTSP/H.264 短测结果仍只对应当时版本。
+
+独立 Sonic HRTF 入口、tap 及其专用测试另外保存在
+[codex/mat-sonic-archive-20261023](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-sonic-archive-20261023)
+（`d006e4b`）。当前仅构建 plugin 捕获入口，保留共用对象桥、原生 worker 和回归。

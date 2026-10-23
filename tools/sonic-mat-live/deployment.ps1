@@ -1,4 +1,11 @@
 # Read-only policy checks. Never repair permissions on a pre-existing directory.
+function Assert-MatBuildArtifacts([string]$Root,$Manifest){
+ foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')){
+  $entries=@($Manifest.binaries|Where-Object name -eq $name)
+  if($entries.Count -ne 1 -or $entries[0].sha256 -notmatch '^[0-9a-f]{64}$'){throw "Required runtime hash missing/invalid: $name"}
+  if((Get-FileHash -LiteralPath (Join-Path $Root $name)).Hash.ToLower() -ne $entries[0].sha256){throw "Binary differs from build: $name"}
+ }
+}
 function Assert-MatDeploymentAcl($Acl){
  $trusted=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
  if($Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted){throw 'Deployment owner is not trusted'}

@@ -4,7 +4,7 @@ This opt-in tool captures pre-mix object passes and hands owned PCM/XYZ/gain to
 the dedicated native worker, then publishes complete IEC carrier cycles through
 the private live pipe. The selected UUYC/plugin route uses
 `sunshine-plugin-object-tap.dll` and `sunshine-plugin-mat-capture.exe`.
-The Sonic HRTF adapter shares the same bounded object/worker contract.
+The shared object bridge and native worker have one production capture entry.
 
 The private ABI is pinned to audioeng.dll 10.0.26100.9711, timestamp 0x0627570d,
 image size 0x1ef000 and SHA256
@@ -25,8 +25,8 @@ pinned to `c3fcafdc10146beb5919319d0683e44e3c30d537`:
 ./tools/sonic-mat-live/build.ps1 -Output ./build/mat-capture-new
 ```
 
-The build runs own-process callback/lifecycle tests and two generated 1300-round
-IPC tests using an explicitly FAKE worker. It compiles the real worker/taps but
+The build runs own-process callback/lifecycle and shared bridge tests, plus one
+generated 1300-round IPC test using an explicitly FAKE worker. It compiles the real worker/tap but
 does not attach them to audiodg or load a vendor encoder in those tests.
 
 `manage-live.ps1` defaults to read-only `Preflight`. `Start` requires the exact
@@ -40,6 +40,9 @@ configuration. Only one capture publisher can own this endpoint at a time.
 The host verifies the elevated publisher, protected deployment location and
 executable content hash before exchanging capture commands.
 There is no UAC, endpoint change, installed-host edit, automatic restart or retry.
+Preflight/Start require only `build.json` and its three runtime files: the plugin
+publisher, plugin tap and native worker. Recorded source hashes are provenance;
+source trees, documentation and test executables are not runtime prerequisites.
 Start deploys below Program Files and rejects untrusted owners, writable ACLs
 or reparse points on the deployment path/files; it never repairs an existing ACL.
 Native attachment requires the operator's current authorization; running software
@@ -52,6 +55,9 @@ endpoint. Enable MAT in Sunshine as described in
 
 Historical native reports and abandoned paths remain on the
 [archive branch](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023).
+The separate Sonic HRTF capture entry/tap and its tests were archived at
+[`d006e4b`, codex/mat-sonic-archive-20261023](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-sonic-archive-20261023).
+The current build retains the shared bridge, native session and plugin regressions.
 They do not establish current game compatibility, A/V timing or HDMI/Atmos output.
 
 The paired recorder has eight fixed encoder bindings. Distinct empty domains

@@ -16,19 +16,13 @@ try {
  & cl.exe /nologo /O2 /MT /c "$minhook/src/buffer.c" "$minhook/src/hook.c" "$minhook/src/trampoline.c" "$minhook/src/hde/hde64.c"
  if($LASTEXITCODE){throw 'MinHook build failed'}
  $objects=@('buffer.obj','hook.obj','trampoline.obj','hde64.obj')
- & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /LD "/I$minhook/include" "$PSScriptRoot/tap.cpp" @objects /Fe:sunshine-sonic-object-tap.dll /link bcrypt.lib
- if($LASTEXITCODE){throw 'Sonic capture tap build failed'}
- & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "/I$minhook/include" "$PSScriptRoot/test.cpp" @objects /Fe:sonic-source-test.exe /link bcrypt.lib
- if($LASTEXITCODE){throw 'Sonic callback/bridge test build failed'}
- & ./sonic-source-test.exe *> test.log
- if($LASTEXITCODE){throw 'Sonic callback/bridge tests failed'}
+ & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/bridge_test.cpp" /Fe:bridge-test.exe
+ if($LASTEXITCODE){throw 'Shared object bridge test build failed'}
+ & ./bridge-test.exe *> bridge-test.log
+ if($LASTEXITCODE){throw 'Shared object bridge tests failed'}
  & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /LD "$root/src/spatial_audio/mat_stream_receiver.cpp" /Fe:sunshine-sonic-mat-worker.dll /link runtimeobject.lib ole32.lib bcrypt.lib
  if($LASTEXITCODE){throw 'Dedicated native MAT worker build failed'}
- & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/queue_test.cpp" /Fe:sonic-queue-test.exe
- if($LASTEXITCODE){throw 'Sonic/codec IPC integration build failed'}
- & ./sonic-queue-test.exe "$out/sunshine-sonic-mat-worker.dll" *> queue-test.log
- if($LASTEXITCODE){throw 'Sonic/codec IPC integration failed'}
- & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /DPLUGIN_BRIDGE_QUEUE_TEST "$PSScriptRoot/queue_test.cpp" /Fe:plugin-queue-test.exe
+ & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/queue_test.cpp" /Fe:plugin-queue-test.exe
  if($LASTEXITCODE){throw 'Plugin/codec IPC integration build failed'}
  & ./plugin-queue-test.exe "$out/sunshine-sonic-mat-worker.dll" *> plugin-queue-test.log
  if($LASTEXITCODE){throw 'Plugin/codec IPC integration failed'}
@@ -40,8 +34,6 @@ try {
  if($LASTEXITCODE){throw 'Plugin paired tests failed'}
  & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/plugin_capture.cpp" /Fe:sunshine-plugin-mat-capture.exe /link bcrypt.lib
  if($LASTEXITCODE){throw 'Plugin/MAT publisher build failed'}
- & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc "$PSScriptRoot/capture.cpp" /Fe:sunshine-sonic-mat-capture.exe /link bcrypt.lib
- if($LASTEXITCODE){throw 'Sonic/MAT publisher build failed'}
  & cl.exe /nologo /std:c++20 /O2 /MT /EHsc "$root/tools/sonic-mat-live/spatial_probe.cpp" /Fe:spatial-probe.exe /link ole32.lib uuid.lib propsys.lib
  if($LASTEXITCODE){throw 'Endpoint-specific live source probe build failed'}
  $durationCase=0
@@ -52,8 +44,9 @@ try {
  }
  # The CLI's expected argument-error code must not become the build's exit code.
  $global:LASTEXITCODE=0
- Get-Content test.log
- Get-Content queue-test.log
+ Get-Content bridge-test.log
+ Get-Content plugin-queue-test.log
+ Get-Content plugin-paired-test.log -Tail 1
 }finally{Pop-Location}
 $binaries=@(Get-ChildItem $out -File | Where-Object Extension -In '.exe','.dll' | ForEach-Object {@{name=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLower()}})
 $sourcePaths=@(Get-ChildItem $PSScriptRoot -File | ForEach-Object {$_.FullName})
@@ -61,5 +54,5 @@ foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_aud
 $sourcePaths+=Get-ChildItem -LiteralPath "$root/tools/mat-capture" -File | ForEach-Object {$_.FullName}
 $sourcePaths+=@("$minhook/include/MinHook.h")
 $sources=@($sourcePaths | Sort-Object -Unique | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})
-@{scope='Sonic source and dedicated native MAT worker build; own-process generated tests only';nativeCaptureTested=$false;binaries=$binaries;sources=$sources} | ConvertTo-Json -Depth 5 | Set-Content "$out/build.json" -Encoding utf8
-Get-FileHash "$out/sunshine-sonic-mat-capture.exe","$out/sunshine-sonic-object-tap.dll","$out/sunshine-sonic-mat-worker.dll"
+@{scope='Plugin object source and dedicated native MAT worker build; own-process generated tests only';nativeCaptureTested=$false;binaries=$binaries;sources=$sources} | ConvertTo-Json -Depth 5 | Set-Content "$out/build.json" -Encoding utf8
+Get-FileHash "$out/sunshine-plugin-mat-capture.exe","$out/sunshine-plugin-object-tap.dll","$out/sunshine-sonic-mat-worker.dll"

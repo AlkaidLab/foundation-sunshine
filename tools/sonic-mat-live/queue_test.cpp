@@ -1,15 +1,12 @@
-// Generated own-process Sonic frames -> real IPC receiver's FAKE worker.
+// Generated own-process plugin objects -> real IPC receiver's FAKE worker.
 // This test never loads a vendor component or attaches to an audio engine.
 #define NOMINMAX
-#include "bridge.h"
-#ifdef PLUGIN_BRIDGE_QUEUE_TEST
 #include "plugin_bridge.h"
-#endif
 #include "native_queue.h"
 #include <thread>
 #include <atomic>
 #include <iostream>
-static void Check(bool b){if(!b)throw std::runtime_error("Sonic IPC integration assertion");}
+static void Check(bool b){if(!b)throw std::runtime_error("Plugin IPC integration assertion");}
 int wmain(int argc,wchar_t** argv){try{
     Check(argc==2);HANDLE inputMap=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(receiver::Shared),nullptr);
     HANDLE outputMap=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(spatial_stream::Output),nullptr);
@@ -33,11 +30,7 @@ int wmain(int argc,wchar_t** argv){try{
             }++blocks;
         }
     }catch(const std::exception& e){error=e.what();failed=true;SetEvent(cancel);}});
-#ifdef PLUGIN_BRIDGE_QUEUE_TEST
     sonic_live::PluginBridge bridge;
-#else
-    sonic_live::Bridge bridge;
-#endif
     auto pass=std::make_unique<sonic_live::Pass>();*pass={};pass->renderer=7;pass->deviceFrames=480;pass->rate=48000;pass->count=1;
     auto& o=pass->objects[0];o.host=99;o.id=42;o.type=1;o.frames=480;o.result=S_OK;o.volume=.3f;o.gain=.5f;
     auto emit=[&](const receiver::Slot& packet){auto until=GetTickCount64()+2000;while(!sonic_live::enqueue_native(*input,packet,data)){
@@ -45,15 +38,11 @@ int wmain(int argc,wchar_t** argv){try{
     }return true;};
     try{for(unsigned n=0;n<1300;++n){pass->sequence=n;pass->firstQpc=receiver::qpc();pass->lastQpc=pass->firstQpc;
         o.xyz[0]=float(n%100)/100.f;for(auto& f:o.pcm)f=float(n%31)/100.f;
-#ifdef PLUGIN_BRIDGE_QUEUE_TEST
         q4::Quantum q;q.domain=1;q.renderer=7;q.frames=480;q.fullSpanLayoutReady=true;
         q4::Object object;object.resultSeen=true;object.offset=0;object.pcm.assign(o.pcm,o.pcm+480);
         object.state.generation=99;object.state.volumeKnown=1;object.state.positionState=position_state::Updated;
         object.state.audio.objectId=42;object.state.audio.type=1;object.state.audio.x=o.xyz[0];object.state.audio.volume=.3f;object.state.audio.callGain=.5f;
         q.objects.push_back(std::move(object));bridge.push(q,pass->firstQpc,pass->lastQpc,48000,emit);
-#else
-        bridge.push(*pass,emit);
-#endif
     }bridge.finish(emit);}catch(...){SetEvent(cancel);worker.join();reader.join();throw;}
     worker.join();reader.join();Check(!failed&&result==0&&source==1300&&blocks==1350&&output->header.eofSeen&&output->header.fakeCallsVerified==1321&&output->header.sourceSamples==1300*480&&output->header.vendorLoads==0&&output->header.hostGuardPassed==0);
     std::cout<<"PASS object bridge -> actual IPC FAKE codec worker: 1300 source rounds, 1350 output blocks, owned PCM/XYZ/gain exact; nativeCapture=0\n";

@@ -51,9 +51,8 @@ if($Action -eq 'Start' -and (!$Output -or ($Continuous -eq ($Seconds -gt 0)))){t
 if($Action -eq 'Preflight' -and ($Continuous -or $Seconds -or $Reattach -or $SessionId)){throw 'Capture options require explicit -Action Start'}
 $buildRoot=(Resolve-Path -LiteralPath $Build).Path
 $manifest=Get-Content -Raw -LiteralPath (Join-Path $buildRoot build.json)|ConvertFrom-Json
-if(!$manifest.binaries -or !$manifest.sources){throw 'Reviewed build manifest required'}
-foreach($file in $manifest.sources){if((Get-FileHash -LiteralPath $file.path).Hash.ToLower() -ne $file.sha256){throw "Source differs from build: $($file.path)"}}
-foreach($file in $manifest.binaries){if((Get-FileHash -LiteralPath (Join-Path $buildRoot $file.name)).Hash.ToLower() -ne $file.sha256){throw "Binary differs from build: $($file.name)"}}
+# Source/test hashes are build provenance, not launch-time dependencies.
+Assert-MatBuildArtifacts $buildRoot $manifest
 $exe=Join-Path $buildRoot sunshine-plugin-mat-capture.exe
 $preflight=& $exe --preflight $EnginePid $EngineCreated 2>&1
 if($LASTEXITCODE){throw "Read-only plugin preflight failed; no attach/elevation attempted: $preflight"}

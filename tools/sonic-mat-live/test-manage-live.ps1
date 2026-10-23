@@ -4,6 +4,30 @@ if(Test-Path -LiteralPath $Output){throw 'Fresh operator test output required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName
 $control=Join-Path $PSScriptRoot manage-live.ps1
 . "$PSScriptRoot/deployment.ps1"
+# Launch-time validation needs only the three runtime artifacts. Source, docs
+# and test products may have moved or changed since the build was recorded.
+$package=Join-Path $out 'runtime-only';New-Item -ItemType Directory -Path $package|Out-Null
+$runtimeNames=@('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')
+$runtime=@($runtimeNames|ForEach-Object {
+ $path=Join-Path $package $_;Set-Content -LiteralPath $path -Value 'hash fixture, never executed'
+ @{name=$_;sha256=(Get-FileHash -LiteralPath $path).Hash.ToLower()}
+})
+Assert-MatBuildArtifacts $package @{binaries=$runtime}
+Assert-MatBuildArtifacts $package @{binaries=$runtime+@(@{name='absent-test.exe';sha256='0'*64});sources=@(@{path='missing-source-or-doc';sha256='0'*64})}
+foreach($case in @('MissingRecord','DuplicateRecord','InvalidHash','WrongHash','MissingFile','CorruptFile')){
+ $entries=@($runtime|ForEach-Object {@{name=$_.name;sha256=$_.sha256}})
+ switch($case){
+  MissingRecord {$entries=@($entries|Select-Object -Skip 1)}
+  DuplicateRecord {$entries+=@($entries[0])}
+  InvalidHash {$entries[0].sha256='not-a-hash'}
+  WrongHash {$entries[0].sha256='0'*64}
+  MissingFile {Remove-Item -LiteralPath (Join-Path $package $runtimeNames[0])}
+  CorruptFile {Set-Content -LiteralPath (Join-Path $package $runtimeNames[0]) -Value 'corrupted fixture'}
+ }
+ $rejected=$false;try{Assert-MatBuildArtifacts $package @{binaries=$entries}}catch{$rejected=$true}
+ if(!$rejected){throw "Invalid runtime package accepted: $case"}
+ if($case -in @('MissingFile','CorruptFile')){Set-Content -LiteralPath (Join-Path $package $runtimeNames[0]) -Value 'hash fixture, never executed'}
+}
 # Policy tests use in-memory ACLs and own workspace paths; no Program Files writes.
 $trustedAcl=[Security.AccessControl.DirectorySecurity]::new()
 $trustedAcl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
@@ -54,5 +78,5 @@ foreach($options in @(@{},@{Continuous=$true;Seconds=8})){
  $rejected=$false;try{& $control -Action Start -Build 'nonexistent' -Output "$out/not-created" -EnginePid 1 -EngineCreated 1 @options|Out-Null}catch{if($_.Exception.Message -notmatch 'exactly one'){throw};$rejected=$true}
  if(!$rejected -or (Test-Path "$out/not-created")){throw 'Invalid capture mode reached deployment/start'}
 }
-@{result='PASS';scope='Operator state/identity/hash/duration; trusted/read-only deployment ACL policy and reparse rejection';nativeCapture=$false;nativeReadyFixtureOnly=$true;sourceHashes=@('deployment.ps1','manage-live.ps1','test-manage-live.ps1')|ForEach-Object {@{name=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_)).Hash.ToLower()}}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath "$out/proof.json"
+@{result='PASS';scope='Runtime-only package, operator state/identity/hash/duration; trusted/read-only deployment ACL policy and reparse rejection';runtimePackageCases=8;nativeCapture=$false;nativeReadyFixtureOnly=$true;sourceHashes=@('deployment.ps1','manage-live.ps1','test-manage-live.ps1')|ForEach-Object {@{name=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_)).Hash.ToLower()}}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath "$out/proof.json"
 Write-Host 'PASS operator lifecycle and deployment ACL/reparse guards; nativeCapture=0'

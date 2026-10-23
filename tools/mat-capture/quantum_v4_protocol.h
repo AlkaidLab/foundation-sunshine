@@ -20,14 +20,12 @@ static_assert(sizeof(Header)==160);
 // producer may finish first, but the consumer must never skip an earlier ticket.
 struct Slot {Header header;float pcm[kSamples];alignas(8) volatile LONG64 ready;};
 #if defined(_MSC_VER)
-// Same compiler/header for both ends. Existing v1/v2/v3 layouts are untouched.
-// The MinGW offline bridge consumes Header/files only, never this IPC layout.
+// Both IPC ends use the same compiler and this header.
 struct alignas(64) Ring : RingT<Slot> {
     alignas(64) volatile LONG64 ignoredBeforeFirstRender,unboundAfterArming;
     volatile LONG64 domainsOpened,domainsClosed,submitResults,processResults;
 };
 static_assert(offsetof(Ring,write)==64);
-static_assert(offsetof(Ring,slots)==offsetof(LegacyRing,slots));
 inline bool recordReady(Ring& ring,LONG64 ticket) {
     return InterlockedCompareExchange64(&ring.slots[ticket%kSlots].ready,0,0)==ticket+1;
 }

@@ -1,5 +1,4 @@
-#define MAT_NATIVE_SESSION_ONLY
-#include "capture.cpp"
+#include "native_session.h"
 #include "plugin_bridge.h"
 #include "capture_options.h"
 static bool OriginalPluginBytes(HANDLE engine){

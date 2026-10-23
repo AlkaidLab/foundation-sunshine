@@ -42,8 +42,8 @@ if($LASTEXITCODE){throw 'Actual live sender/assembler regression failed'}
 if($LASTEXITCODE){throw 'Private pipe tail/acknowledgement regression failed'}
 & "$root/tools/mat-live/build-live-check.ps1" -CommonBuild "$out/host-common" -Output "$out/live-check" *> "$out/live-check-build.log"
 if($LASTEXITCODE){throw 'Native-only checker / software UDP+FEC regression failed'}
-& "$root/tools/sonic-mat-live/build.ps1" -Output "$out/sonic-source" *> "$out/sonic-source-build.log"
-if($LASTEXITCODE){throw 'Sonic object / native-worker adapter software verification failed'}
+& "$root/tools/sonic-mat-live/build.ps1" -Output "$out/plugin-source" *> "$out/plugin-source-build.log"
+if($LASTEXITCODE){throw 'Plugin object / native-worker adapter software verification failed'}
 & "$root/tools/sonic-mat-live/test-manage-live.ps1" -Output "$out/operator-state" *> "$out/operator-state.log"
 if($LASTEXITCODE){throw 'Native operator state/identity regression failed'}
 & $Python "$PSScriptRoot/operator_process_test.py" --output "$out/operator-launcher" --powershell (Get-Process -Id $PID).Path *> "$out/operator-launcher.log"
