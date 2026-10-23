@@ -31,6 +31,9 @@ certificates, config and ports, checks pairing/start/stop, and never attaches a
 native source. Pass explicit `--host-build` and `--client-build` directories.
 `host_support.py` owns only test certificates, a read-only prerequisite check and
 orderly shutdown of the test's own host.
+`preflight_exit_test.py --output <fresh-dir> --host-build <host-dir>
+--client-build <mock-client-dir>` checks successful preflight, cleanup-failure
+exit codes and preservation of a primary exception using isolated hosts only.
 
 `build-client.ps1` builds a fileless strict-live mock client and generated H.264
 encoder/decoder self-test with explicitly supplied encoder/decoder FFmpeg builds.

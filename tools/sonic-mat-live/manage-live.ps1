@@ -8,6 +8,7 @@ param(
 # Explicit operator action only. No UAC, source generator, endpoint selection,
 # installed host edits, automatic restart, forced kill or DLL unload.
 $ErrorActionPreference='Stop'
+. "$PSScriptRoot/deployment.ps1"
 function Read-Log([string]$Path){if(Test-Path -LiteralPath $Path){return [string](Get-Content -Raw -LiteralPath $Path)};return ''}
 function Same-Process($Process,[string]$Created,[string]$Image){
  if(!$Process){return $false}
@@ -36,8 +37,8 @@ if($Action -in @('Status','Stop')){
  if($status.publisherAlive){
   $process=Get-Process -Id $state.publisherPid
   if(!(Same-Process $process $state.publisherCreated $state.producer)){throw 'Publisher changed before stop'}
-  $event=[Threading.EventWaitHandle]::OpenExisting($state.stopEvent)
-  try{[void]$event.Set()}finally{$event.Dispose()}
+  $stopSignal=[Threading.EventWaitHandle]::OpenExisting($state.stopEvent)
+  try{[void]$stopSignal.Set()}finally{$stopSignal.Dispose()}
   if(!$process.WaitForExit(15000)){throw 'Native stop exceeded 15 seconds; no force kill/unload; inspect capture log'}
  }
  $status=Get-State $state
@@ -61,17 +62,23 @@ if(Test-Path -LiteralPath $Output){throw 'Fresh output directory required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName
 $preflight|Set-Content -LiteralPath (Join-Path $out preflight.log)
 $exeHash=(Get-FileHash -LiteralPath $exe).Hash.ToLower()
-$deployment=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) "SunshineSonicMatLive/$exeHash"
-New-Item -ItemType Directory -Path $deployment -Force|Out-Null
+$programRoot=[Environment]::GetFolderPath('ProgramFiles')
+Assert-MatDeploymentEntry $programRoot
+$deploymentRoot=Join-Path $programRoot 'SunshineSonicMatLive'
+Initialize-MatDeploymentDirectory $deploymentRoot
+$deployment=Join-Path $deploymentRoot $exeHash
+Initialize-MatDeploymentDirectory $deployment
 $deployed=@{}
 foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')){
  $from=Join-Path $buildRoot $name;$hash=(Get-FileHash -LiteralPath $from).Hash.ToLower()
  $targetName=if($name.EndsWith('.dll')){[IO.Path]::GetFileNameWithoutExtension($name)+'-'+$hash.Substring(0,16)+'.dll'}else{$name}
  $to=Join-Path $deployment $targetName
- if(Test-Path -LiteralPath $to){if((Get-FileHash -LiteralPath $to).Hash.ToLower() -ne $hash){throw 'Immutable deployment differs'}}else{Copy-Item -LiteralPath $from -Destination $to}
+ if(Test-Path -LiteralPath $to){Assert-MatDeploymentEntry $to;if((Get-FileHash -LiteralPath $to).Hash.ToLower() -ne $hash){throw 'Immutable deployment differs'}}else{Copy-Item -LiteralPath $from -Destination $to}
+ Assert-MatDeploymentEntry $to
  $deployed[$name]=$to
 }
 $producer=$deployed['sunshine-plugin-mat-capture.exe'];$tap=$deployed['sunshine-plugin-object-tap.dll'];$codec=$deployed['sunshine-sonic-mat-worker.dll']
+Get-ChildItem -LiteralPath $deployment -Force|ForEach-Object {Assert-MatDeploymentEntry $_.FullName}
 $id=if($SessionId){$SessionId}else{[guid]::NewGuid().ToString('N')};$pipe="\\.\pipe\SunshineMatLive-$id";$stop="Local\SunshineMatLiveStop-$id"
 foreach($value in @($producer,$tap,$codec,$out)){if($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")){throw 'Invalid launch path'}}
 $mode=if($Reattach){'--reattach'}else{'--attach'}
@@ -95,7 +102,7 @@ try{
  $complete=$true
 }finally{
  if(!$complete -and $process -and !$process.HasExited){
-  try{$event=[Threading.EventWaitHandle]::OpenExisting($stop);try{[void]$event.Set()}finally{$event.Dispose()}}catch{Write-Warning "Unable to signal owned capture: $_"}
+  try{$stopSignal=[Threading.EventWaitHandle]::OpenExisting($stop);try{[void]$stopSignal.Set()}finally{$stopSignal.Dispose()}}catch{Write-Warning "Unable to signal owned capture: $_"}
   if(!$process.WaitForExit(15000)){Write-Warning 'Capture remains active; preserve metadata; no forced kill/unload'}
  }
 }

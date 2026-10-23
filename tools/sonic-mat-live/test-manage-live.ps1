@@ -3,6 +3,28 @@ $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $Output){throw 'Fresh operator test output required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName
 $control=Join-Path $PSScriptRoot manage-live.ps1
+. "$PSScriptRoot/deployment.ps1"
+# Policy tests use in-memory ACLs and own workspace paths; no Program Files writes.
+$trustedAcl=[Security.AccessControl.DirectorySecurity]::new()
+$trustedAcl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+foreach($sid in @('S-1-5-32-544','S-1-5-18')){
+ $trustedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','Allow'))
+}
+$trustedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),'ReadAndExecute','Allow'))
+Assert-MatDeploymentAcl $trustedAcl
+foreach($case in @('Owner','Write','Delete','ChangePermissions','TakeOwnership')){
+ $badAcl=[Security.AccessControl.DirectorySecurity]::new()
+ $badAcl.SetSecurityDescriptorBinaryForm($trustedAcl.GetSecurityDescriptorBinaryForm())
+ $user=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+ if($case -eq 'Owner'){$badAcl.SetOwner($user)}else{$badAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($user,[Security.AccessControl.FileSystemRights]$case,'Allow'))}
+ $rejected=$false;try{Assert-MatDeploymentAcl $badAcl}catch{$rejected=$true}
+ if(!$rejected){throw "Unsafe deployment ACL accepted: $case"}
+}
+Assert-MatDeploymentEntry ([Environment]::GetFolderPath('ProgramFiles'))
+$junctionTarget=Join-Path $out 'junction-target';New-Item -ItemType Directory -Path $junctionTarget|Out-Null
+$junction=Join-Path $out 'deployment-link';New-Item -ItemType Junction -Path $junction -Target $junctionTarget|Out-Null
+$rejected=$false;try{Assert-MatDeploymentEntry $junction}catch{if($_.Exception.Message -notmatch 'reparse'){throw};$rejected=$true}
+if(!$rejected){throw 'Deployment reparse point accepted'}
 $current=Get-Process -Id $PID
 $image=$current.Path
 # Only own-process metadata is used. No audiodg, native attach or source generator.
@@ -32,5 +54,5 @@ foreach($options in @(@{},@{Continuous=$true;Seconds=8})){
  $rejected=$false;try{& $control -Action Start -Build 'nonexistent' -Output "$out/not-created" -EnginePid 1 -EngineCreated 1 @options|Out-Null}catch{if($_.Exception.Message -notmatch 'exactly one'){throw};$rejected=$true}
  if(!$rejected -or (Test-Path "$out/not-created")){throw 'Invalid capture mode reached deployment/start'}
 }
-@{result='PASS';scope='Operator state, idempotent verified stop, process/hash mismatch rejection and explicit duration choice';nativeCapture=$false;nativeReadyFixtureOnly=$true;sourceHashes=@('manage-live.ps1','test-manage-live.ps1')|ForEach-Object {@{name=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_)).Hash.ToLower()}}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath "$out/proof.json"
-Write-Host 'PASS operator lifecycle state/identity/hash/duration guards; nativeCapture=0'
+@{result='PASS';scope='Operator state/identity/hash/duration; trusted/read-only deployment ACL policy and reparse rejection';nativeCapture=$false;nativeReadyFixtureOnly=$true;sourceHashes=@('deployment.ps1','manage-live.ps1','test-manage-live.ps1')|ForEach-Object {@{name=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $_)).Hash.ToLower()}}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath "$out/proof.json"
+Write-Host 'PASS operator lifecycle and deployment ACL/reparse guards; nativeCapture=0'

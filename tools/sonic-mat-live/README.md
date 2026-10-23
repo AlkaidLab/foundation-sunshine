@@ -34,6 +34,8 @@ engine identity, reviewed build, fresh output and an explicit `-Continuous` or
 `-Seconds 1..60`. `Status` and `Stop` take that run's `capture.json`, validate
 publisher/engine identity and report observed readiness or verified restoration.
 There is no UAC, endpoint change, installed-host edit, automatic restart or retry.
+Start deploys below Program Files and rejects untrusted owners, writable ACLs
+or reparse points on the deployment path/files; it never repairs an existing ACL.
 Native attachment requires the operator's current authorization; running software
 tests does not authorize it.
 
@@ -45,3 +47,8 @@ endpoint. Configure Sunshine only with the two entries described in
 Historical native reports and abandoned paths remain on the
 [archive branch](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023).
 They do not establish current game compatibility, A/V timing or HDMI/Atmos output.
+
+The paired recorder supports serialized callback publication. It can track
+interleaved empty domains, but concurrent registry/publication contention ends
+capture without waiting or silently dropping events. Multi-producer callback
+capture is outside this minimal version's supported input contract.

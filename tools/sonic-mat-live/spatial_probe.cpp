@@ -236,6 +236,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--gate" && i + 1 < argc) gateName = argv[++i];
         else if (a != L"--list") return 2;
     }
+    if (!std::isfinite(seconds) || seconds <= 0 || seconds > 60) return 2;
     try {
         if (accessOnly) { AccessAudit(); return 0; }
         if (!gateName.empty()) {
@@ -259,7 +260,7 @@ int wmain(int argc, wchar_t** argv) {
             if (device == -1) throw std::runtime_error("Explicit endpoint is not active; no reselection");
         }
         if (emit) {
-            if (device < 0 || device >= static_cast<int>(devices.size()) || seconds <= 0 || seconds > 60) return 2;
+            if (device < 0 || device >= static_cast<int>(devices.size())) return 2;
             if (objectCount < 1 || objectCount > 2) return 2;
             if (variant > 1) return 2;
             Emit(devices[device].Get(), seconds, objectCount, variant);

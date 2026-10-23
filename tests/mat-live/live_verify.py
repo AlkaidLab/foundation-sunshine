@@ -15,6 +15,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -357,6 +358,8 @@ def main():
             publisher.close()
         if not result["passed"]:
             print("FAIL_FULL_NATIVE_RTSP inspect result.json and original logs", flush=True)
+            if sys.exc_info()[0] is None:
+                raise RuntimeError("Acceptance failed during cleanup; inspect result.json")
 
 
 if __name__ == "__main__":

@@ -44,12 +44,20 @@ try {
  if($LASTEXITCODE){throw 'Sonic/MAT publisher build failed'}
  & cl.exe /nologo /std:c++20 /O2 /MT /EHsc "$root/tools/sonic-mat-live/spatial_probe.cpp" /Fe:spatial-probe.exe /link ole32.lib uuid.lib propsys.lib
  if($LASTEXITCODE){throw 'Endpoint-specific live source probe build failed'}
+ $durationCase=0
+ foreach($duration in @('nan','NaN','inf','-inf','0','61')){
+  & ./spatial-probe.exe --emit --seconds $duration --gate Local\SunshineMatInvalidDurationTest *> "probe-duration-$durationCase.log"
+  if($LASTEXITCODE -ne 2){throw "Probe accepted invalid duration: $duration"}
+  ++$durationCase
+ }
+ # The CLI's expected argument-error code must not become the build's exit code.
+ $global:LASTEXITCODE=0
  Get-Content test.log
  Get-Content queue-test.log
 }finally{Pop-Location}
 $binaries=@(Get-ChildItem $out -File | Where-Object Extension -In '.exe','.dll' | ForEach-Object {@{name=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLower()}})
 $sourcePaths=@(Get-ChildItem $PSScriptRoot -File | ForEach-Object {$_.FullName})
-foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/object_input_protocol.h','src/spatial_audio/native_encoded_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','tools/mat-live/publisher.h','tools/mat-live/process_helpers.h')){$sourcePaths+=@("$root/$file")}
+foreach($file in @('src/spatial_audio/stream_output_protocol.h','src/spatial_audio/object_input_protocol.h','src/spatial_audio/native_encoded_protocol.h','src/spatial_audio/stream_ring_source.h','src/spatial_audio/mat_capture_protocol.h','src/spatial_audio/mat_capture_reader.h','src/spatial_audio/native_mat_pipe_source.h','src/spatial_audio/mat_live_status.h','src/spatial_audio/mat_stream_receiver.cpp','src/spatial_audio/native_mat_guard.h','tools/mat-live/publisher.h','tools/mat-live/process_helpers.h')){$sourcePaths+=@("$root/$file")}
 $sourcePaths+=Get-ChildItem -LiteralPath "$root/tools/mat-capture" -File | ForEach-Object {$_.FullName}
 $sourcePaths+=@("$minhook/include/MinHook.h")
 $sources=@($sourcePaths | Sort-Object -Unique | ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLower()}})
