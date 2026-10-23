@@ -13,7 +13,7 @@ static HMODULE self;
 static volatile LONG running;
 using Submit=HRESULT(__fastcall*)(void*,const void*,const void*,const float*,UINT32,float);
 using Process=HRESULT(__fastcall*)(void*,UINT32,BYTE*,UINT32*);
-struct Properties {uint32_t id,offset,type,flags;float x,y,z,volume;BYTE extra[0xb4-32];};
+struct Properties {uint32_t id,frames,type,flags;float x,y,z,volume;BYTE extra[0xb4-32];};
 static_assert(sizeof(Properties)==0xb4);
 struct Session {
     spatial_stream::Args args{};spatial_stream::FakeConfig config{};bool fake=false,ro=false;
@@ -69,13 +69,13 @@ static HRESULT nativeOpen(Session& s,BYTE* audio){
     hr=reinterpret_cast<Make>(audio+0xdf298)(&mapperFactory);if(hr!=S_OK)return hr;auto mt=*reinterpret_cast<void***>(mapperFactory.Get());if(mt[3]!=audio+0xe00e0)return HRESULT_FROM_WIN32(ERROR_REVISION_MISMATCH);
     s.out->mapperHr=reinterpret_cast<Create>(mt[3])(mapperFactory.Get(),guid(L"{a289735d-fa3e-4e35-9d7d-b6f896acb2e7}"),&s.mapper);if(s.out->mapperHr!=S_OK)return s.out->mapperHr;
     using Initialize=HRESULT(__fastcall*)(void*,UINT32,UINT32,UINT32,UINT32,ULONG,IUnknown*,REFGUID,IUnknown*);
-    ++s.out->initializations;s.out->initializeHr=reinterpret_cast<Initialize>(table[3])(s.encoder.Get(),480,48000,0x1ffe,8,0,s.mapper.Get(),GUID_NULL,nullptr);
+    ++s.out->initializations;s.out->initializeHr=reinterpret_cast<Initialize>(table[3])(s.encoder.Get(),480,48000,bed714Mask,8,0,s.mapper.Get(),GUID_NULL,nullptr);
     s.target=s.encoder.Get();s.submit=reinterpret_cast<Submit>(table[4]);s.process=reinterpret_cast<Process>(table[7]);return s.out->initializeHr;
 }
 static HRESULT __fastcall fakeSubmit(void* target,const void* stream,const void* properties,const float* pcm,UINT32 count,float gain){
     auto& s=*static_cast<Session*>(target);if(s.config.failSubmitAt>=0&&s.out->submissions==static_cast<uint32_t>(s.config.failSubmitAt))return E_ABORT;
     if(!s.expected||stream!=s.stream||count!=480||gain!=1.f||s.pending>=64)return E_FAIL;
-    auto& c=*s.expected;Properties correct{};correct.id=c.id;correct.type=1;correct.flags=c.flags;correct.x=c.xyz[0];correct.y=c.xyz[1];correct.z=c.xyz[2];correct.volume=1;
+    auto& c=*s.expected;Properties correct{};correct.id=c.id;correct.frames=c.frames;correct.type=c.type;correct.flags=c.flags;correct.x=c.xyz[0];correct.y=c.xyz[1];correct.z=c.xyz[2];correct.volume=1;
     if(memcmp(properties,&correct,sizeof(correct))||memcmp(pcm,c.pcm,sizeof(c.pcm)))return E_FAIL;
     for(uint32_t n=0;n<s.pending;++n)if(s.borrowed[n]==pcm)return E_FAIL;
     s.borrowed[s.pending]=pcm;s.recorded[s.pending++]=c;++s.out->fakeCallsVerified;return S_OK;
@@ -84,7 +84,9 @@ static HRESULT __fastcall fakeProcess(void* target,UINT32 bytes,BYTE*,UINT32* pr
     for(uint32_t n=0;n<s.pending;++n)if(memcmp(s.borrowed[n],s.recorded[n].pcm,sizeof(Call::pcm)))return E_FAIL;
     *produced=s.config.oversizedProcess?request+1:0;return S_OK;}
 static bool submit(Session& s,const Call& c){
-    if(stopped(s))return false;Properties p{};p.id=c.id;p.type=1;p.flags=c.flags;p.x=c.xyz[0];p.y=c.xyz[1];p.z=c.xyz[2];p.volume=1;s.expected=&c;
+    // The pinned encoder's static branch reads Properties+4 as the PCM count,
+    // independently of Submit's count argument (the dynamic branch ignores it).
+    if(stopped(s))return false;Properties p{};p.id=c.id;p.frames=c.frames;p.type=c.type;p.flags=c.flags;p.x=c.xyz[0];p.y=c.xyz[1];p.z=c.xyz[2];p.volume=1;s.expected=&c;
     s.out->submitHr=s.submit(s.target,s.stream,&p,c.pcm,480,1.f);s.expected=nullptr;if(s.out->submitHr!=S_OK)return false;++s.out->submissions;return true;
 }
 static bool waitUntil(Session& s,HANDLE timer,int64_t target){for(;;){if(stopped(s))return false;auto left=target-qpc();if(left<=0)return true;LARGE_INTEGER due{};due.QuadPart=-((left*10000000+hz()-1)/hz());if(!SetWaitableTimer(timer,&due,0,nullptr,nullptr,FALSE)||WaitForSingleObject(timer,20)==WAIT_FAILED)return false;}}
@@ -108,21 +110,24 @@ static bool process(Session& s,HANDLE timer,int64_t& next,bool& started,uint32_t
     ++o.records;o.outputBytes+=b.bytes;s.pending=0;++o.processes;
     if(phase==1)++o.warmRounds;if(phase==2)++o.sourceRounds;if(phase==3)++o.drainRounds;return true;
 }
-static bool validCalls(const Slot& slot,uint32_t* active,uint32_t& activeCount){
+struct ActiveObject {uint32_t id,type;};
+static bool validCalls(const Slot& slot,ActiveObject* active,uint32_t& activeCount){
     const auto& m=slot.header;if(m.calls>64||m.frames!=480||(m.kind!=1&&m.kind!=2))return false;
-    for(uint32_t n=0;n<m.calls;++n){const auto& c=slot.calls[n];if(!c.id||c.type!=1||c.frames!=480||(c.flags!=7&&c.flags!=6&&c.flags!=8)||(m.kind==2&&c.flags!=8))return false;
+    for(uint32_t n=0;n<m.calls;++n){const auto& c=slot.calls[n];if(!c.id||!objectType(c.type)||c.frames!=480||(c.flags!=createFlags(c.type)&&c.flags!=updateFlags(c.type)&&c.flags!=8)||(m.kind==2&&c.flags!=8))return false;
         for(uint32_t j=0;j<n;++j)if(slot.calls[j].id==c.id)return false;
-        for(auto f:c.xyz)if(!std::isfinite(f)||fabsf(f)>10000)return false;
+        for(auto f:c.xyz)if(!std::isfinite(f)||(c.type==1?fabsf(f)>10000:f!=0))return false;
         for(auto f:c.pcm)if(!std::isfinite(f)||fabsf(f)>1||(c.flags==8&&f!=0))return false;
-        uint32_t k=0;while(k<activeCount&&active[k]!=c.id)++k;
-        if(c.flags==7){if(k<activeCount||activeCount==20)return false;active[activeCount++]=c.id;}
-        else{if(k==activeCount)return false;if(c.flags==8)active[k]=active[--activeCount];}
+        uint32_t k=0;while(k<activeCount&&active[k].id!=c.id)++k;
+        if(c.flags==createFlags(c.type)){if(k<activeCount||activeCount==20)return false;
+            if(c.type!=1)for(uint32_t j=0;j<activeCount;++j)if(active[j].type==c.type)return false;
+            active[activeCount++]={c.id,c.type};}
+        else{if(k==activeCount||active[k].type!=c.type)return false;if(c.flags==8)active[k]=active[--activeCount];}
     }
     if(m.kind==2)return activeCount==0;
-    for(uint32_t n=0;n<activeCount;++n){bool seen=false;for(uint32_t j=0;j<m.calls;++j)seen|=slot.calls[j].id==active[n];if(!seen)return false;}return true;
+    for(uint32_t n=0;n<activeCount;++n){bool seen=false;for(uint32_t j=0;j<m.calls;++j)seen|=slot.calls[j].id==active[n].id;if(!seen)return false;}return true;
 }
 static DWORD WINAPI codecWorker(void* opaque){
-    auto& s=*static_cast<Session*>(opaque);auto& o=*s.out;o.workerTid=GetCurrentThreadId();bool okay=false;HANDLE timer{};Slot* local{};Slot* prepared{};uint32_t active[20]{},activeCount=0,nextSource=0;bool warmed=false,started=false;int64_t next=0;
+    auto& s=*static_cast<Session*>(opaque);auto& o=*s.out;o.workerTid=GetCurrentThreadId();bool okay=false;HANDLE timer{};Slot* local{};Slot* prepared{};ActiveObject active[20]{};uint32_t activeCount=0,nextSource=0;bool warmed=false,started=false;int64_t next=0;
     if(s.fake){s.target=&s;s.submit=fakeSubmit;s.process=fakeProcess;o.mapperHr=S_OK;++o.initializations;o.initializeHr=s.config.failInitialize?S_FALSE:S_OK;o.createHr=S_OK;}
     else{BYTE* audio{};o.createHr=hostGuard(&audio)?E_ACCESSDENIED:nativeOpen(s,audio);}
     if(o.createHr!=S_OK||o.initializeHr!=S_OK)goto done;
@@ -131,13 +136,13 @@ static DWORD WINAPI codecWorker(void* opaque){
      for(;;){if(stopped(s))break;auto r=get(s.read),w=get(s.write);if(r==w){if(WaitForSingleObject(s.available,20)==WAIT_FAILED)break;continue;}
         memcpy(local,&s.slots[r%8],sizeof(Slot));put(s.read,r+1);SetEvent(s.space);auto& m=local->header;
         if(m.index!=nextSource||(s.args.maxSourceRounds&&m.index>s.args.maxSourceRounds)||!validCalls(*local,active,activeCount))break;
-        bool first=false;if(!warmed&&m.calls&&m.kind==1){for(uint32_t j=0;j<m.calls;++j)if(local->calls[j].flags!=7)goto stop;
-            for(uint32_t n=0;n<20;++n){for(uint32_t j=0;j<m.calls;++j){auto& c=prepared->calls[j];c=local->calls[j];memset(c.pcm,0,sizeof(c.pcm));c.flags=n?6:7;if(!submit(s,c))goto stop;}if(!process(s,timer,next,started,1,UINT32_MAX))goto stop;}
+        bool first=false;if(!warmed&&m.calls&&m.kind==1){for(uint32_t j=0;j<m.calls;++j)if(local->calls[j].flags!=createFlags(local->calls[j].type))goto stop;
+            for(uint32_t n=0;n<20;++n){for(uint32_t j=0;j<m.calls;++j){auto& c=prepared->calls[j];c=local->calls[j];memset(c.pcm,0,sizeof(c.pcm));c.flags=n?updateFlags(c.type):createFlags(c.type);if(!submit(s,c))goto stop;}if(!process(s,timer,next,started,1,UINT32_MAX))goto stop;}
             warmed=true;first=true;
         }
         // The native ABI may borrow PCM until Process returns. Each submitted
         // object's storage stays distinct and stable for the entire round.
-        for(uint32_t j=0;j<m.calls;++j){auto& c=prepared->calls[j];c=local->calls[j];if(first)c.flags=6;if(!submit(s,c))goto stop;if(m.kind==1&&c.flags!=8)o.sourceSamples+=480;}
+        for(uint32_t j=0;j<m.calls;++j){auto& c=prepared->calls[j];c=local->calls[j];if(first)c.flags=updateFlags(c.type);if(!submit(s,c))goto stop;if(m.kind==1&&c.flags!=8)o.sourceSamples+=480;}
         if(m.kind==2){o.eofSeen=1;auto drain=drainCount(o.processes,s.fake);for(uint32_t n=0;n<drain;++n)if(!process(s,timer,next,started,3,UINT32_MAX))goto stop;okay=true;break;}
         if(nextSource>=UINT32_MAX-100||(s.args.maxSourceRounds&&nextSource>=s.args.maxSourceRounds)||!process(s,timer,next,started,2,nextSource++))break;
      }

@@ -27,7 +27,7 @@ int main(){try{
      delayed.finish([&](auto& packet){Check(packet.header.kind==2&&packet.header.calls==0);++calls;return true;});Check(calls==2);}
     for(unsigned test=0;test<10;++test){sonic_live::Bridge broken;*p=*initial;
         if(test==0)p->deviceFrames=448;if(test==1)p->rate=44100;if(test==2)p->objects[0].offset=16;if(test==3)p->objects[0].result=S_FALSE;
-        if(test==4)p->objects[0].pcm[7]=std::numeric_limits<float>::quiet_NaN();if(test==5)p->objects[0].type=2;
+        if(test==4)p->objects[0].pcm[7]=std::numeric_limits<float>::quiet_NaN();if(test==5)p->objects[0].type=1u<<13;
         if(test==6)p->objects[1]=p->objects[0];if(test==7)p->objects[0].gain=100;
         bool failed=false;try{broken.push(*p,[](auto&){return true;});if(test==8){p->sequence=1;p->count=0;broken.push(*p,[](auto&){return true;});}
             if(test==9){p->sequence=1;p->renderer++;broken.push(*p,[](auto&){return true;});}}

@@ -12,6 +12,12 @@
 namespace receiver {
 constexpr uint32_t magic=0x3149504d,version=1,capacity=32,frameMagic=0x3146504d;
 constexpr uint32_t callCapacity=64,frames=480,roundLimit=400,request=30720,byteLimit=roundLimit*request;
+// Windows AudioObjectType bits: FL/FR/FC/LFE/SL/SR/BL/BR/TFL/TFR/TBL/TBR.
+// This is an input bed, not the eight-channel IEC carrier layout.
+constexpr uint32_t bed714Mask=0x1ffe;
+inline bool objectType(uint32_t type){return type==1||(type&&(type&bed714Mask)==type&&!(type&(type-1)));}
+inline uint32_t createFlags(uint32_t type){return type==1?7u:3u;}
+inline uint32_t updateFlags(uint32_t type){return type==1?6u:2u;}
 enum Error:LONG {none,badContract,identity,badFrame,checksumError,sequence,overflow,cancelled,producerExited,consumerExited,producerStale,consumerStale,missingEOF,codec,counters,timeout};
 struct alignas(64) Contract {uint32_t magic,version,headerBytes,mapBytes,slotBytes,capacity,packetBytes,callBytes;uint64_t domain,epoch,nonce[2];uint32_t producerPid,rate,frames,reserved;int64_t qpcHz;};
 struct alignas(64) Common {volatile LONG fault,cancel,producerStatus,consumerStatus,consumerPid,producerDone;};

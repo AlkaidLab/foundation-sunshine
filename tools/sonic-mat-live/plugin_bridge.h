@@ -29,10 +29,11 @@ public:
         check(quantum.objects.size()<=objects,"Plugin object capacity");
         for(const auto& object:quantum.objects){
             const auto& raw=object.state.audio;
-            check(object.resultSeen&&object.offset==0&&object.pcm.size()==480&&object.state.volumeKnown&&
-                (object.state.positionState==position_state::Updated||object.state.positionState==position_state::Cached||object.state.positionState==position_state::DefaultOrigin),"Plugin object metadata/span unknown");
+            check(object.resultSeen&&object.offset==0&&object.pcm.size()==480&&object.state.volumeKnown&&receiver::objectType(raw.type)&&
+                (raw.type==1?(object.state.positionState==position_state::Updated||object.state.positionState==position_state::Cached||object.state.positionState==position_state::DefaultOrigin):
+                 object.state.positionState==position_state::StaticChannel),"Plugin object metadata/span unknown");
             auto& out=pass->objects[pass->count++];out.host=object.state.generation;out.id=raw.objectId;out.type=raw.type;
-            out.frames=480;out.xyz[0]=raw.x;out.xyz[1]=raw.y;out.xyz[2]=raw.z;out.volume=raw.volume;out.gain=raw.callGain;
+            out.frames=480;if(raw.type==1){out.xyz[0]=raw.x;out.xyz[1]=raw.y;out.xyz[2]=raw.z;}out.volume=raw.volume;out.gain=raw.callGain;
             out.ended=(object.source.properties&8)!=0;out.nullPcm=(object.source.flags&q4::NullPcm)!=0;out.result=S_OK;
             memcpy(out.pcm,object.pcm.data(),sizeof(out.pcm));
         }

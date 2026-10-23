@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include "../../src/spatial_audio/object_input_protocol.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -135,9 +136,15 @@ static void AccessAudit() {
     CloseHandle(snap);
 }
 
-static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned variant) {
+static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned variant, bool bed714) {
     ComPtr<ISpatialAudioClient> client;
     Check(dev->Activate(__uuidof(ISpatialAudioClient), CLSCTX_ALL, nullptr, &client), "ActivateSpatialClient");
+    constexpr auto bedMask=AudioObjectType_FrontLeft|AudioObjectType_FrontRight|AudioObjectType_FrontCenter|AudioObjectType_LowFrequency|
+        AudioObjectType_SideLeft|AudioObjectType_SideRight|AudioObjectType_BackLeft|AudioObjectType_BackRight|
+        AudioObjectType_TopFrontLeft|AudioObjectType_TopFrontRight|AudioObjectType_TopBackLeft|AudioObjectType_TopBackRight;
+    static_assert(static_cast<unsigned>(bedMask)==receiver::bed714Mask);
+    if(bed714){AudioObjectType supported{};Check(client->GetNativeStaticObjectTypeMask(&supported),"GetStaticMask");
+        if((supported&bedMask)!=bedMask)throw std::runtime_error("Full 7.1.4 static bed unavailable; no downmix or substitution");}
     ComPtr<IAudioFormatEnumerator> formats;
     Check(client->GetSupportedAudioObjectFormatEnumerator(&formats), "GetObjectFormats");
     WAVEFORMATEX* fmt = nullptr;
@@ -150,7 +157,7 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     SpatialAudioObjectRenderStreamActivationParams params{};
     params.ObjectFormat = fmt;
-    params.StaticObjectTypeMask = AudioObjectType_None;
+    params.StaticObjectTypeMask = bed714?bedMask:AudioObjectType_None;
     params.MinDynamicObjectCount = objectCount;
     params.MaxDynamicObjectCount = objectCount;
     params.Category = AudioCategory_GameEffects;
@@ -164,7 +171,9 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
     CoTaskMemFree(fmt);
     Check(hr, "ActivateSpatialAudioStream");
     Check(stream->Start(), "Start");
-    std::vector<ComPtr<ISpatialAudioObject>> objects(objectCount);
+    const unsigned bedCount=bed714?12u:0u,totalObjects=bedCount+objectCount;
+    std::vector<ComPtr<ISpatialAudioObject>> objects(totalObjects);
+    std::vector<uint64_t> digests(totalObjects,14695981039346656037ull);
     unsigned long long total = 0;
     unsigned blocks = 0;
     ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>((seconds + 3) * 1000);
@@ -173,10 +182,12 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
         UINT32 available = 0, frames = 0;
         Check(stream->BeginUpdatingAudioObjects(&available, &frames), "BeginUpdating");
         double t = static_cast<double>(total) / rate;
-        for (unsigned i = 0; i < objectCount; ++i) {
+        for (unsigned i = 0; i < totalObjects; ++i) {
             auto& object = objects[i];
-            if (!object) Check(stream->ActivateSpatialAudioObject(AudioObjectType_Dynamic, &object), "ActivateObject");
-            double phase = i + variant * 2.0;
+            const bool isStatic=i<bedCount;const unsigned dynamicIndex=isStatic?0:i-bedCount;
+            auto type=isStatic?static_cast<AudioObjectType>(1u<<(i+1)):AudioObjectType_Dynamic;
+            if (!object) Check(stream->ActivateSpatialAudioObject(type, &object), "ActivateObject");
+            double phase = dynamicIndex + variant * 2.0;
             float x = static_cast<float>(std::sin(t * 1.1 + phase));
             float y = static_cast<float>(0.5 * std::sin(t * 0.7 + phase));
             float z = static_cast<float>(-std::cos(t * 1.1 + phase));
@@ -185,14 +196,16 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
             Check(object->GetBuffer(&data, &bytes), "GetBuffer");
             if (bytes != frames * sizeof(float)) throw std::runtime_error("Unexpected object buffer size");
             float* samples = reinterpret_cast<float*>(data);
-            double frequency = (i ? 783.99 : 523.25) + variant * 100.0;
+            double frequency = bed714?(isStatic?(type==AudioObjectType_LowFrequency?60.0:211.0+37.0*i):907.0+113.0*dynamicIndex):
+                (i?783.99:523.25)+variant*100.0;
             for (UINT32 s = 0; s < frames; ++s) {
                 samples[s] = static_cast<float>(0.2 * std::sin(2.0 * 3.141592653589793 * frequency * (total + s) / rate));
             }
+            for(UINT32 n=0;n<bytes;++n){digests[i]^=data[n];digests[i]*=1099511628211ull;}
             // The first GetBuffer can initialize/reset cached properties.
             // Apply this packet's final position/volume after that initialization.
-            Check(object->SetPosition(x, y, z), "SetPosition");
-            Check(object->SetVolume(i ? 0.07f : 0.10f), "SetVolume");
+            if(!isStatic)Check(object->SetPosition(x, y, z), "SetPosition");
+            Check(object->SetVolume(isStatic?0.10f:(dynamicIndex?0.07f:0.10f)), "SetVolume");
             if (total + frames >= static_cast<unsigned long long>(seconds * rate))
                 Check(object->SetEndOfStream(frames), "SetEndOfStream");
         }
@@ -207,8 +220,9 @@ static void Emit(IMMDevice* dev, double seconds, unsigned objectCount, unsigned 
     objects.clear();
     stream.Reset();
     CloseHandle(event);
-    printf("EMITTER PID=%lu variant=%u objects=%u blocks=%u framesPerObject=%llu rate=%u duration=%.3f\n",
-        GetCurrentProcessId(), variant, objectCount, blocks, total, rate, static_cast<double>(total) / rate);
+    printf("EMITTER PID=%lu variant=%u objects=%u bedChannels=%u dynamicObjects=%u blocks=%u framesPerObject=%llu rate=%u duration=%.3f\n",
+        GetCurrentProcessId(), variant, totalObjects, bedCount, objectCount, blocks, total, rate, static_cast<double>(total) / rate);
+    for(unsigned i=0;i<totalObjects;++i)printf("SOURCE_DIGEST lane=%u type=0x%x frames=%llu calls=%u fnv64=%016llx\n",i,i<bedCount?1u<<(i+1):1u,total,blocks,digests[i]);
     AccessAudit();
 }
 
@@ -221,6 +235,7 @@ int wmain(int argc, wchar_t** argv) {
     unsigned variant = 0;
     bool accessOnly = false;
     bool all = false;
+    bool bed714 = false;
     std::wstring endpoint;
     std::wstring gateName;
     for (int i = 1; i < argc; ++i) {
@@ -230,6 +245,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--emit") emit = true;
         else if (a == L"--access-only") accessOnly = true;
         else if (a == L"--all") all = true;
+        else if (a == L"--bed-7.1.4") bed714 = true;
         else if (a == L"--endpoint" && i + 1 < argc) endpoint = argv[++i];
         else if (a == L"--objects" && i + 1 < argc) objectCount = _wtoi(argv[++i]);
         else if (a == L"--variant" && i + 1 < argc) variant = _wtoi(argv[++i]);
@@ -261,9 +277,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (emit) {
             if (device < 0 || device >= static_cast<int>(devices.size())) return 2;
-            if (objectCount < 1 || objectCount > 2) return 2;
+            if ((!bed714&&objectCount<1) || objectCount > 2) return 2;
             if (variant > 1) return 2;
-            Emit(devices[device].Get(), seconds, objectCount, variant);
+            Emit(devices[device].Get(), seconds, objectCount, variant, bed714);
         } else {
             List(devices);
             AccessAudit();

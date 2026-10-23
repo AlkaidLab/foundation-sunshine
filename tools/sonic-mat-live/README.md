@@ -14,8 +14,10 @@ system/native component identities and reviewed DLL hashes. This is an opt-in
 development path, not a general Windows capture API.
 
 The current bridge accepts one renderer, 48 kHz/480-frame full-span dynamic
-objects and at most 20 complete objects. Static beds, fragmented objects, other
-rates, missing objects and multiple active renderers fail the session. No
+objects and 7.1.4 static channels, with at most 20 complete inputs in total.
+Static channels keep their AudioObjectType, including LFE; no XYZ is invented.
+Unsupported static types, multiple sources for one bed channel (mixing is not
+implemented), fragmented objects, other rates, missing inputs and multiple active renderers fail the session. No
 resampling, inferred silence, catch-up or sample-file input is provided.
 
 A paired successful plugin Process can return buffered headphone output with no
@@ -31,7 +33,9 @@ pinned to `c3fcafdc10146beb5919319d0683e44e3c30d537`:
 ```
 
 The build runs own-process callback/lifecycle and shared bridge tests, plus one
-generated 1300-round IPC test using an explicitly FAKE worker. It compiles the real worker/tap but
+generated 1300-round IPC tests for dynamic-only and 12 static + 2 dynamic inputs
+using an explicitly FAKE worker. They check exact type, PCM, gain, position and EOS.
+It compiles the real worker/tap but
 does not attach them to audiodg or load a vendor encoder in those tests.
 
 `manage-live.ps1` defaults to read-only `Preflight`. `Start` requires the exact
@@ -57,6 +61,10 @@ tests does not authorize it.
 object source for a separately authorized test. It does not change the default
 endpoint. Enable MAT in Sunshine as described in
 [MAT-HOST](../../docs/MAT-HOST.md).
+For an explicitly authorized generated test, `--emit --bed-7.1.4 --objects 2`
+requires the full static mask before stream activation and submits a distinct
+live signal to each of the 12 bed channels plus two moving objects. It does not
+substitute a smaller layout or replay a file.
 
 Historical native reports and abandoned paths remain on the
 [archive branch](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023).

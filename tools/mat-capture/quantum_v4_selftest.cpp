@@ -20,6 +20,7 @@ static unsigned sourceObjects4=1,sourceFlags4=6,submitCalls4=0,processCalls4=0,d
 static float sourceX4=1;
 static HRESULT submitResult4=S_OK,resetResult4=S_OK;
 static uint32_t producedBytes4=0;
+static bool sourceBed4=false;
 static bool mutate4=true,reenter4=false,omitProcess4=false,checkPending4=false;
 static bool stopInOriginal4=false;
 static bool raiseInOriginal4=false;
@@ -58,8 +59,9 @@ static void __fastcall FakeRender4(void* object,uint32_t,void* input,uint32_t,vo
     auto* renderer=static_cast<Renderer4*>(object);auto* connection=*static_cast<Connection4**>(input);
     for(unsigned n=0;n<sourceObjects4;++n) {
         uint8_t info[12]{};uint64_t host=77;memcpy(info+4,&host,8);
-        Properties4 p{42+n,connection->frames,1,sourceFlags4,sourceX4,2,3,.5f};float samples[kSamples];
-        for(unsigned i=0;i<connection->frames;++i)samples[i]=float(i)*.001f;
+        const uint32_t type=sourceBed4&&n<12?1u<<(n+1):1;
+        Properties4 p{42+n,connection->frames,type,sourceFlags4,sourceX4,2,3,.5f};float samples[kSamples];
+        for(unsigned i=0;i<connection->frames;++i)samples[i]=float(i)*.001f+(sourceBed4?float(n)*.01f:0.f);
         auto result=HookSubmit4(renderer->encoder,info,&p,samples,connection->frames,.25f);
         require4(result==submitResult4,"hook changed original HRESULT");
     }
@@ -77,7 +79,7 @@ struct Fixture4 {
         originalRender4=FakeRender4;originalSubmit4=FakeSubmit4;originalExtended4=FakeExtended4;
         originalProcess4=FakeProcess4;originalReset4=FakeReset4;originalDestroy4=FakeDestroy4;
         sourceObjects4=1;sourceFlags4=6;sourceX4=1;submitCalls4=processCalls4=destroyCalls4=resetCalls4=0;
-        submitResult4=resetResult4=S_OK;producedBytes4=0;mutate4=true;reenter4=omitProcess4=checkPending4=stopInOriginal4=raiseInOriginal4=false;duringOriginal4=nullptr;duringRead4=0;
+        submitResult4=resetResult4=S_OK;producedBytes4=0;sourceBed4=false;mutate4=true;reenter4=omitProcess4=checkPending4=stopInOriginal4=raiseInOriginal4=false;duringOriginal4=nullptr;duringRead4=0;
         recorder4.start(ring);InterlockedExchangePointer(&current4,ring);
     }
     ~Fixture4(){InterlockedExchangePointer(&current4,nullptr);VirtualFree(ring,0,MEM_RELEASE);}
@@ -260,6 +262,28 @@ int main(int argc,char** argv) {
             Fixture4 f;sourceObjects4=0;producedBytes4=3840;f.render(f.rendererA);f.finish();auto e=events4(f);
             for(auto& event:e)if(event.header.kind==q4::ProcessResult)event.header.result=E_FAIL;
             rejects4([&]{parseEvents4(e);});
+        });
+        test("twelve_static_channels_and_dynamic_objects_keep_type_PCM_and_EOS",[]{
+            Fixture4 f;sourceBed4=true;sourceObjects4=14;f.render(f.rendererA);f.render(f.rendererA);f.finish();auto q=f.parse();
+            sonic_live::PluginBridge bridge;unsigned emitted=0;
+            auto emit=[&](const receiver::Slot& packet){require4(packet.header.calls==14,"bed/dynamic channel missing");
+                for(unsigned n=0;n<14;++n){const auto& c=packet.calls[n];auto type=n<12?1u<<(n+1):1u;
+                    require4(c.id==n+1&&c.type==type,"static channel mapped to wrong speaker/dynamic type");
+                    require4(c.flags==(emitted==2?8u:emitted?receiver::updateFlags(type):receiver::createFlags(type)),"bed lifecycle flags");
+                    if(emitted<2){for(unsigned s=0;s<480;++s)require4(c.pcm[s]==(float(s)*.001f+float(n)*.01f)*.125f,"bed crosstalk or post-submit PCM");
+                        require4(c.xyz[0]==(n<12?0.f:1.f),"static XYZ fabricated or dynamic position lost");}}
+                ++emitted;return true;};
+            bridge.push(q[0],1,1,48000,emit);bridge.push(q[1],2,2,48000,emit);bridge.finish(emit);
+            require4(emitted==3&&bridge.samples()==14*2*480,"bed sample count/EOS");
+        });
+        test("missing_LFE_is_rejected_without_filling_silence",[]{
+            Fixture4 f;sourceBed4=true;sourceObjects4=14;f.render(f.rendererA);f.render(f.rendererA);f.finish();auto q=f.parse();
+            sonic_live::PluginBridge bridge;bridge.push(q[0],1,1,48000,[](auto&){return true;});q[1].objects.erase(q[1].objects.begin()+3);
+            rejects4([&]{bridge.push(q[1],2,2,48000,[](auto&){return true;});});
+        });
+        test("duplicate_static_speaker_sources_are_rejected_without_mixing",[]{
+            Fixture4 f;sourceBed4=true;sourceObjects4=14;f.render(f.rendererA);f.finish();auto q=f.parse();q[0].objects[1].state.audio.type=2;
+            sonic_live::PluginBridge bridge;rejects4([&]{bridge.push(q[0],1,1,48000,[](auto&){return true;});});
         });
         if(argc==3&&std::string(argv[1])=="--fixture-output") {
             fs::path root=fs::absolute(argv[2]);require4(!fs::exists(root)&&fs::create_directories(root),"fixture output must be new");

@@ -58,7 +58,9 @@ int wmain(int argc,wchar_t** argv){
                     if(h.kind==q4::DomainBegin){rates[h.domain]=PluginRate(engine,h.renderer);printf("PLUGIN_DOMAIN domain=%llu renderer=0x%llx rate=%u\n",h.domain,h.renderer,rates[h.domain]);}
                     if(h.kind==q4::PassBegin)starts[h.domain]=h.audio.qpc;
                     q4::Quantum quantum;if(assembler.push(h,s.pcm,quantum)){
-                        if(!selected&&!quantum.objects.empty()){selected=quantum.domain;printf("PLUGIN_SOURCE domain=%llu renderer=0x%llx objects=%zu frames=%u rate=%u\n",selected,quantum.renderer,quantum.objects.size(),quantum.frames,rates.at(selected));}
+                        if(!selected&&!quantum.objects.empty()){selected=quantum.domain;uint32_t mask=0,dynamic=0;
+                            for(const auto& o:quantum.objects){if(o.source.audio.type==1)++dynamic;else mask|=o.source.audio.type;}
+                            printf("PLUGIN_SOURCE domain=%llu renderer=0x%llx objects=%zu frames=%u rate=%u staticMask=0x%x dynamicObjects=%u\n",selected,quantum.renderer,quantum.objects.size(),quantum.frames,rates.at(selected),mask,dynamic);}
                         if(selected&&quantum.domain!=selected)require(quantum.objects.empty(),"Multiple object-bearing plugin domains");
                         else if(selected)bridge.push(quantum,starts.at(h.domain),h.audio.qpc,rates.at(h.domain),[&](const receiver::Slot& packet){if(!native)native=std::make_unique<NativeSession>(engine,codec,codecBase,bridge.renderer(),epoch,shared,"plugin-reencode");return native->send(packet);});
                     }

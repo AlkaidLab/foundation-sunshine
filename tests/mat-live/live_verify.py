@@ -124,6 +124,7 @@ def main():
     p.add_argument("--engine-created")
     p.add_argument("--endpoint-id")
     p.add_argument("--seconds", type=int, default=20)
+    p.add_argument("--bed-7.1.4", dest="bed714", action="store_true")
     p.add_argument("--reattach", action="store_true")
     p.add_argument("--operator-build", type=Path)
     p.add_argument("--powershell", type=Path)
@@ -283,7 +284,8 @@ def main():
                   "--max-seconds", str(args.seconds)], "capture")
         wait_log(publisher, "capture", "ATTACHED source=plugin-objects-to-native-MAT", 3)
         source = start([str(args.probe), "--emit", "--endpoint", args.endpoint_id, "--seconds",
-                         str(args.seconds + 2), "--objects", "2", "--variant", "0"], "source")
+                         str(args.seconds + 2), "--objects", "2", "--variant", "0"] +
+                       (["--bed-7.1.4"] if args.bed714 else []), "source")
         wait_log(publisher, "capture", "NATIVE_MAT_READY", 5)
         if args.operator_build:
             status = json.loads(operator("Status", ["-Metadata", str(out / "operator" / "capture.json")]))
@@ -313,10 +315,18 @@ def main():
         assert client.returncode == publisher.returncode == source.returncode == 0
         assert status["passed"] and status["cycles"] == int(match[1]) and status["sha256"] == match[2]
         assert "HOOK_STOP restored=1" in capture_log and "PLUGIN_STOP" in capture_log
+        if args.bed714:
+            assert "staticMask=0x1ffe dynamicObjects=2" in capture_log, "Full bed/dynamic input not observed"
+            rounds = re.search(r"PLUGIN_STOP passes=(\d+) inputSamples=(\d+)", capture_log)
+            assert rounds and int(rounds[1]) > 0 and int(rounds[2]) == int(rounds[1]) * 14 * 480
+            result["staticBedMask"] = 0x1ffe
+            result["staticBedChannels"] = 12
+            result["dynamicObjects"] = 2
         host_log = log_text(out / "host.log") + log_text(out / "host-console.log")
         assert f"Native MAT capture ended cleanly: {status['cycles']} cycles" in host_log
         result.update(passed=True, client=status, producerSha256=match[2], producerCycles=int(match[1]),
-                      fullSunshineRtspSession=True, encryptedRtsp=True, source="live ISpatialAudioClient two-object generator")
+                      fullSunshineRtspSession=True, encryptedRtsp=True,
+                      source="live ISpatialAudioClient 7.1.4 bed + two-object generator" if args.bed714 else "live ISpatialAudioClient two-object generator")
         print(f"PASS_FULL_NATIVE_RTSP cycles={status['cycles']} decodedVideoFrames={status['videoFramesDecoded']} sha256={status['sha256']}", flush=True)
     except Exception as error:
         result["failure"] = str(error)

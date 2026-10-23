@@ -26,6 +26,8 @@ try {
  if($LASTEXITCODE){throw 'Plugin/codec IPC integration build failed'}
  & ./plugin-queue-test.exe "$out/sunshine-sonic-mat-worker.dll" *> plugin-queue-test.log
  if($LASTEXITCODE){throw 'Plugin/codec IPC integration failed'}
+ & ./plugin-queue-test.exe "$out/sunshine-sonic-mat-worker.dll" --bed-7.1.4 *> plugin-bed-queue-test.log
+ if($LASTEXITCODE){throw '7.1.4 bed/dynamic IPC integration failed'}
  & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /DSPATIAL_USE_EXTERNAL_MINHOOK "/I$minhook/include" /LD "$PSScriptRoot/plugin_tap.cpp" "$root/tools/mat-capture/quantum_v4_recorder.cpp" @objects /Fe:sunshine-plugin-object-tap.dll
  if($LASTEXITCODE){throw 'Plugin paired tap build failed'}
  & cl.exe /nologo /std:c++20 /O2 /W4 /MT /EHsc /DSPATIAL_USE_EXTERNAL_MINHOOK "/I$minhook/include" "$root/tools/mat-capture/quantum_v4_selftest.cpp" "$root/tools/mat-capture/quantum_v4_recorder.cpp" @objects /Fe:plugin-paired-test.exe
@@ -46,6 +48,7 @@ try {
  $global:LASTEXITCODE=0
  Get-Content bridge-test.log
  Get-Content plugin-queue-test.log
+ Get-Content plugin-bed-queue-test.log
  Get-Content plugin-paired-test.log -Tail 1
 }finally{Pop-Location}
 $binaries=@(Get-ChildItem $out -File | Where-Object Extension -In '.exe','.dll' | ForEach-Object {@{name=$_.Name;sha256=(Get-FileHash $_.FullName).Hash.ToLower()}})

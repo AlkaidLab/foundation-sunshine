@@ -55,6 +55,11 @@ engine, component, endpoint and hash arguments and current operator authorizatio
 Its publisher must use the trusted Program Files deployment used by `manage-live.ps1`;
 an executable started directly from a build directory is not an automatic host source.
 It is not invoked by the software verifier.
+Add `--bed-7.1.4` to this authorized native mode to generate 12 distinct static
+channels and two moving objects, require the complete input mask and verify
+14 inputs per accepted source round. The software IPC tests exercise this layout
+and dynamic-only input separately; neither mock playback nor a successful encode
+proves a hardware sink's Atmos decoding or speaker output.
 
 The historical finite, Android and recorder harnesses are available only on
 [the archive branch](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023).
