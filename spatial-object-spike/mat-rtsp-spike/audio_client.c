@@ -1,22 +1,29 @@
-// Test fixture frontend, ACTUAL Android-checkout AudioStream.c (threads, LBQ,
-// initial-drop/ready-ping policy, decryption and MAT dump). Not an APK/device.
+// Diagnostic frontend, actual common AudioStream plus a tool-owned file sink.
+// Not an APK/device. The protocol library never opens the output path.
 #include "AudioStream.c"
+#include "../mat-diagnostics/MatDumpFile.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/stat.h>
 static LONG terminated,decode_calls;
+static MAT_DUMP_FILE* dump;
+static const char* dump_path;
 static void log_message(const char* fmt,...){va_list a;va_start(a,fmt);vfprintf(stderr,fmt,a);va_end(a);}
 static void terminate(int error){(void)error;InterlockedExchange(&terminated,1);}
 static int audio_init(int config,POPUS_MULTISTREAM_CONFIGURATION opus,void* ctx,int flags){
-    (void)config;(void)ctx;(void)flags;return opus->samplesPerFrame==960 && NegotiatedAudioCodec==AUDIO_CODEC_MAT_DUMP?0:-1;
+    (void)config;(void)ctx;(void)flags;
+    if(opus->samplesPerFrame!=960||NegotiatedAudioCodec!=AUDIO_CODEC_MAT_DUMP)return -1;
+    dump=MatDumpOpen(dump_path,&MatDumpProfile);if(!dump)return -1;
+    LI_MAT_PLAYBACK_CALLBACKS callbacks=MatDumpCallbacks(dump);LiSetMatPlaybackCallbacks(&callbacks);return 0;
 }
+static void cleanup(void){LiSetMatPlaybackCallbacks(NULL);MatDumpClose(dump);dump=NULL;}
 static void noop(void){}
 static void forbidden_decode(char* p,int n){(void)p;(void)n;InterlockedIncrement(&decode_calls);terminate(-1);}
 int main(int argc,char** argv){
     if(argc!=5)return 2; // final.raw trusted-sha cycles plain|aes
     if(initializePlatform())return 3;
     ListenerCallbacks.logMessage=log_message;ListenerCallbacks.connectionTerminated=terminate;
-    AudioCallbacks.init=audio_init;AudioCallbacks.start=noop;AudioCallbacks.stop=noop;AudioCallbacks.cleanup=noop;
+    AudioCallbacks.init=audio_init;AudioCallbacks.start=noop;AudioCallbacks.stop=noop;AudioCallbacks.cleanup=cleanup;
     AudioCallbacks.decodeAndPlaySample=forbidden_decode;AudioCallbacks.capabilities=0;
     AppVersionQuad[0]=7;AppVersionQuad[1]=1;AppVersionQuad[2]=500;AppVersionQuad[3]=-1;
     LiInitializeStreamConfiguration(&StreamConfig);
@@ -24,8 +31,7 @@ int main(int argc,char** argv){
     StreamConfig.audioConfiguration=AUDIO_CONFIGURATION_STEREO;
     StreamConfig.width=1280;StreamConfig.height=720;StreamConfig.fps=60;StreamConfig.bitrate=10000;StreamConfig.packetSize=1392;
     NegotiatedVideoFormat=VIDEO_FORMAT_H264;
-    if(strlen(argv[1])>=sizeof(StreamConfig.matDumpPath))return 2;
-    strcpy(StreamConfig.matDumpPath,argv[1]);
+    dump_path=argv[1];
     char describe[256];snprintf(describe,sizeof(describe),"a=x-ss-audio.mat-dump:1\r\na=x-ss-audio.mat-sha256:%s\r\na=x-ss-audio.mat-cycles:%s\r\n",argv[2],argv[3]);
     if(!MatProfileParse(&MatDumpProfile,describe))return 2;
     if(!MatProfileConfirm(&MatDumpProfile,MAT_DUMP_NAME,argv[2],argv[3]))return 2;

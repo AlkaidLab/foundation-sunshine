@@ -1,9 +1,12 @@
 // Full production LiStartConnection frontend. No audio or video decoder.
 #include "Limelight-internal.h"
+#include "../mat-diagnostics/MatDumpFile.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <sys/stat.h>
 static volatile LONG terminated, audio_decode_calls, video_units;
+static MAT_DUMP_FILE* dump;
+static const char* dump_path;
 static void message(const char* fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stderr,fmt,ap); va_end(ap); }
 static void stage_start(int stage) { fprintf(stderr,"STAGE starting %s\n",LiGetStageName(stage)); }
 static void stage_done(int stage) { fprintf(stderr,"STAGE complete %s\n",LiGetStageName(stage)); }
@@ -13,8 +16,11 @@ static int video_setup(int fmt,int w,int h,int fps,void* ctx,int flags) { (void)
 static int discard_video(PDECODE_UNIT unit) { (void)unit;InterlockedIncrement(&video_units);return DR_OK; }
 static int audio_init(int cfg,const POPUS_MULTISTREAM_CONFIGURATION opus,void* ctx,int flags) {
     (void)cfg;(void)ctx;(void)flags;
-    return NegotiatedAudioCodec==AUDIO_CODEC_MAT_DUMP && opus->samplesPerFrame==960?0:-1;
+    if(NegotiatedAudioCodec!=AUDIO_CODEC_MAT_DUMP||opus->samplesPerFrame!=960)return -1;
+    dump=MatDumpOpen(dump_path,&MatDumpProfile);if(!dump)return -1;
+    LI_MAT_PLAYBACK_CALLBACKS callbacks=MatDumpCallbacks(dump);LiSetMatPlaybackCallbacks(&callbacks);return 0;
 }
+static void audio_cleanup(void){LiSetMatPlaybackCallbacks(NULL);MatDumpClose(dump);dump=NULL;}
 static void forbidden_audio_decode(char* data,int size) { (void)data;(void)size;InterlockedIncrement(&audio_decode_calls); }
 static int unhex(const char* text,unsigned char* out,int bytes) {
     if(strlen(text)!=(size_t)bytes*2)return 0;
@@ -33,13 +39,13 @@ int main(int argc,char** argv) {
     config.streamingRemotely=STREAM_CFG_LOCAL;config.audioConfiguration=AUDIO_CONFIGURATION_STEREO;
     config.supportedVideoFormats=VIDEO_FORMAT_H264;config.clientRefreshRateX100=3000;
     config.audioCodec=AUDIO_CODEC_MAT_DUMP;config.encryptionFlags=!strcmp(argv[8],"aes")?ENCFLG_AUDIO:ENCFLG_NONE;
-    if(strlen(argv[5])>=sizeof(config.matDumpPath) || !unhex(argv[6],(unsigned char*)config.remoteInputAesKey,16) ||
+    if(!unhex(argv[6],(unsigned char*)config.remoteInputAesKey,16) ||
         !unhex(argv[7],(unsigned char*)config.remoteInputAesIv,16))return 2;
-    strcpy(config.matDumpPath,argv[5]);
+    dump_path=argv[5];
     listener.stageStarting=stage_start;listener.stageComplete=stage_done;listener.stageFailed=stage_fail;
     listener.logMessage=message;listener.connectionTerminated=connection_end;
     video.setup=video_setup;video.submitDecodeUnit=discard_video;video.capabilities=CAPABILITY_DIRECT_SUBMIT;
-    audio.init=audio_init;audio.decodeAndPlaySample=forbidden_audio_decode;
+    audio.init=audio_init;audio.cleanup=audio_cleanup;audio.decodeAndPlaySample=forbidden_audio_decode;
     int err=LiStartConnection(&server,&config,&listener,&video,&audio,NULL,0,NULL,0);
     if(err){fprintf(stderr,"START_FAILED %d\n",err);return 3;}
     // Reaching CONNECTED implies production RTSP validation accepted the echo.

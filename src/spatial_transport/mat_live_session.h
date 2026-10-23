@@ -29,7 +29,7 @@ inline std::shared_ptr<LiveSession> prepare_live(const std::string& pipe,const s
 #endif
 }
 inline std::string describe_live(const LiveSession& s) {
-    return "a=x-ss-audio.mat-live:1\r\na=x-ss-audio.mat-live-carrier:" MAT_PLAYBACK_CARRIER
+    return "a=x-ss-audio.mat-live:1\r\na=x-ss-audio.mat-live-carrier:" MAT_CARRIER
         "\r\na=x-ss-audio.mat-live-clock:48000\r\na=x-ss-audio.mat-live-crypto:" MAT_LIVE_CRYPTO
         "\r\na=x-ss-audio.mat-live-epoch:"+std::to_string(s.profile.epoch)+
         "\r\na=x-ss-audio.mat-live-domain:"+std::to_string(s.profile.domain)+"\r\n";

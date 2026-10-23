@@ -1,6 +1,6 @@
 #include "src/spatial_transport/mat_session_source.h"
 #include "src/thread_safe.h"
-#include "third-party/moonlight-common-c/src/MatDumpFile.h"
+#include "spatial-object-spike/mat-diagnostics/MatDumpFile.h"
 #include <iostream>
 #include <fstream>
 using spatial_audio::require;
