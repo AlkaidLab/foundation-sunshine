@@ -6,16 +6,24 @@ namespace sonic_live {
 // Worker-only adapter of paired pre-submit observations. The q4 assembler owns
 // lifecycle/property reconstruction; no missing position/gain is fabricated.
 class PluginBridge {
-    Bridge bridge_;uint64_t domain_=0,sequence_=0;
+    Bridge bridge_;uint64_t domain_=0,sequence_=0,outputOnlyPasses_=0;
 public:
     uint64_t renderer()const{return bridge_.renderer();}
     uint64_t passes()const{return bridge_.sourcePasses;}
     uint64_t samples()const{return bridge_.inputSamples;}
+    uint64_t outputOnlyPasses()const{return outputOnlyPasses_;}
     template<class Emit>void push(const q4::Quantum& quantum,int64_t first,int64_t last,uint32_t rate,Emit emit){
         check(quantum.fullSpanLayoutReady&&quantum.frames==480&&rate==48000,"Plugin source layout/rate unsupported");
         if(!domain_&&!quantum.objects.empty())domain_=quantum.domain;
         if(!domain_)return;
         check(domain_==quantum.domain,"Plugin renderer domain changed; end epoch");
+        check(first>0&&last>=first,"Plugin source pass clock invalid");
+        // The headphone encoder can drain buffered output without any Submit.
+        // Its wrapper's Process ignores the input-frame argument. A paired,
+        // successful output-only Process is not another 480 samples of object
+        // input for the independent MAT encoder. Keep source IDs/sequence and
+        // PCM untouched; zero-output gaps and partial object loss still fail.
+        if(quantum.objects.empty()&&quantum.producedBytes){++outputOnlyPasses_;return;}
         auto pass=std::make_unique<Pass>();pass->sequence=sequence_++;pass->renderer=quantum.renderer;
         pass->firstQpc=first;pass->lastQpc=last;pass->rate=rate;pass->deviceFrames=pass->requestedFrames=480;
         check(quantum.objects.size()<=objects,"Plugin object capacity");

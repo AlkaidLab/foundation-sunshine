@@ -19,6 +19,7 @@ struct Renderer4 {void* unused;Encoder4* encoder;};
 static unsigned sourceObjects4=1,sourceFlags4=6,submitCalls4=0,processCalls4=0,destroyCalls4=0,resetCalls4=0;
 static float sourceX4=1;
 static HRESULT submitResult4=S_OK,resetResult4=S_OK;
+static uint32_t producedBytes4=0;
 static bool mutate4=true,reenter4=false,omitProcess4=false,checkPending4=false;
 static bool stopInOriginal4=false;
 static bool raiseInOriginal4=false;
@@ -49,7 +50,7 @@ static HRESULT __fastcall FakeSubmit4(void* encoder,const void* info,const void*
     }
     return submitResult4;
 }
-static HRESULT __fastcall FakeProcess4(void*,uint32_t,uint32_t,BYTE*,uint32_t* bytes){++processCalls4;*bytes=0;return S_OK;}
+static HRESULT __fastcall FakeProcess4(void*,uint32_t,uint32_t,BYTE*,uint32_t* bytes){++processCalls4;*bytes=producedBytes4;return S_OK;}
 static HRESULT __fastcall FakeExtended4(void*,const void*,const void*,const void*,const float*,uint32_t,float){return S_OK;}
 static HRESULT __fastcall FakeReset4(void*){++resetCalls4;return resetResult4;}
 static void __fastcall FakeDestroy4(void*){++destroyCalls4;}
@@ -76,7 +77,7 @@ struct Fixture4 {
         originalRender4=FakeRender4;originalSubmit4=FakeSubmit4;originalExtended4=FakeExtended4;
         originalProcess4=FakeProcess4;originalReset4=FakeReset4;originalDestroy4=FakeDestroy4;
         sourceObjects4=1;sourceFlags4=6;sourceX4=1;submitCalls4=processCalls4=destroyCalls4=resetCalls4=0;
-        submitResult4=resetResult4=S_OK;mutate4=true;reenter4=omitProcess4=checkPending4=stopInOriginal4=raiseInOriginal4=false;duringOriginal4=nullptr;duringRead4=0;
+        submitResult4=resetResult4=S_OK;producedBytes4=0;mutate4=true;reenter4=omitProcess4=checkPending4=stopInOriginal4=raiseInOriginal4=false;duringOriginal4=nullptr;duringRead4=0;
         recorder4.start(ring);InterlockedExchangePointer(&current4,ring);
     }
     ~Fixture4(){InterlockedExchangePointer(&current4,nullptr);VirtualFree(ring,0,MEM_RELEASE);}
@@ -228,6 +229,38 @@ int main(int argc,char** argv) {
         });
         test("unrelated_concurrent_empty_domains_preserve_live_object_stream",[]{concurrentEmptyDomains4();});
         test("empty_selected_source_still_rejects_missing_object",[]{rejects4([]{concurrentEmptyDomains4(true);});});
+        test("buffered_output_without_Submit_is_not_new_object_input",[]{
+            Fixture4 f;sourceObjects4=2;f.render(f.rendererA);
+            sourceObjects4=0;producedBytes4=3840;f.render(f.rendererA);
+            sourceObjects4=2;producedBytes4=0;sourceX4=9;f.render(f.rendererA);f.finish();
+            auto q=f.parse();require4(q.size()==3&&q[1].objects.empty()&&q[1].producedBytes==3840&&q[2].producedBytes==0,"Process output observation lost/stale");
+            sonic_live::PluginBridge bridge;unsigned emitted=0;
+            auto emit=[&](const receiver::Slot& packet){
+                require4(packet.header.index==emitted,"drain created a source sequence gap");
+                if(emitted<2){require4(packet.header.kind==1&&packet.header.calls==2,"drain fabricated PCM/EOS");
+                    for(unsigned n=0;n<2;++n){const auto& c=packet.calls[n];require4(c.id==n+1&&c.flags==(emitted?6u:7u)&&c.xyz[0]==(emitted?9.f:1.f),"drain changed IDs/metadata");
+                        for(unsigned s=0;s<480;++s)require4(c.pcm[s]==float(s)*.001f*.125f,"drain changed source PCM");}}
+                else require4(packet.header.kind==2&&packet.header.calls==2&&packet.calls[0].flags==8&&packet.calls[1].flags==8,"drain lost final EOS");
+                ++emitted;return true;
+            };
+            for(unsigned n=0;n<q.size();++n)bridge.push(q[n],100+n,100+n,48000,emit);
+            bridge.finish(emit);require4(emitted==3&&bridge.passes()==2&&bridge.samples()==4*480&&bridge.outputOnlyPasses()==1,"output drain advanced object input clock");
+        });
+        test("buffered_output_does_not_hide_partial_object_loss",[]{
+            Fixture4 f;sourceObjects4=2;f.render(f.rendererA);sourceObjects4=1;producedBytes4=3840;f.render(f.rendererA);f.finish();
+            auto q=f.parse();sonic_live::PluginBridge bridge;bridge.push(q[0],1,1,48000,[](auto&){return true;});
+            rejects4([&]{bridge.push(q[1],2,2,48000,[](auto&){return true;});});
+        });
+        test("buffered_output_never_hides_capture_sequence_loss",[]{
+            Fixture4 f;sourceObjects4=2;f.render(f.rendererA);sourceObjects4=0;producedBytes4=3840;f.render(f.rendererA);f.finish();
+            auto e=events4(f);e.erase(e.begin()+2);q4::Assembler parser;
+            rejects4([&]{for(const auto& event:e){q4::Quantum q;parser.push(event.header,event.pcm.data(),q);}});
+        });
+        test("buffered_output_with_failed_Process_is_not_a_drain",[]{
+            Fixture4 f;sourceObjects4=0;producedBytes4=3840;f.render(f.rendererA);f.finish();auto e=events4(f);
+            for(auto& event:e)if(event.header.kind==q4::ProcessResult)event.header.result=E_FAIL;
+            rejects4([&]{parseEvents4(e);});
+        });
         if(argc==3&&std::string(argv[1])=="--fixture-output") {
             fs::path root=fs::absolute(argv[2]);require4(!fs::exists(root)&&fs::create_directories(root),"fixture output must be new");
             Fixture4 f;sourceObjects4=2;f.render(f.rendererA);sourceObjects4=1;sourceX4=9;f.render(f.rendererB);

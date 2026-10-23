@@ -18,6 +18,11 @@ objects and at most 20 complete objects. Static beds, fragmented objects, other
 rates, missing objects and multiple active renderers fail the session. No
 resampling, inferred silence, catch-up or sample-file input is provided.
 
+A paired successful plugin Process can return buffered headphone output with no
+object Submit. Such output-only drains do not create MAT object input, advance
+its sequence or retire objects. Zero-output missing-object passes, partial object
+loss and capture record gaps still fail; no silence or timed frame is inferred.
+
 Build with MSVC 2022, Windows SDK and MinHook v1.3.4 at `build/minhook-v1.3.4`,
 pinned to `c3fcafdc10146beb5919319d0683e44e3c30d537`:
 

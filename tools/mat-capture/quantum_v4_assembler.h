@@ -21,7 +21,7 @@ struct Object {
 };
 struct Quantum {
     uint64_t domain=0,pass=0,sampleStart=0,renderer=0,encoder=0,implementation=0;
-    uint32_t frames=0;bool fullSpanLayoutReady=false;
+    uint32_t frames=0,producedBytes=0;bool fullSpanLayoutReady=false;
     std::vector<Object> objects;
 };
 // Worker-only. Independent cache/clock per observed domain; never concatenate
@@ -29,7 +29,7 @@ struct Quantum {
 class Assembler {
     struct Domain {
         uint64_t renderer=0,encoder=0,implementation=0,pass=0,sample=0;
-        uint32_t frames=0,thread=0;
+        uint32_t frames=0,thread=0,producedBytes=0;
         bool inPass=false,processed=false;
         int64_t qpc=-1;
         std::vector<Object> pending;
@@ -71,7 +71,7 @@ public:
         if(h.kind==PassBegin) {
             check(!d.inPass&&h.pass==d.pass+1&&!h.call&&h.inputFrames>0&&h.inputFrames<=kSamples
                 &&h.flags==PreCall&&h.result==0,"v4 pass begin/gap");
-            d.pass=h.pass;d.inPass=true;d.processed=false;d.frames=h.inputFrames;d.thread=a.tid;d.pending.clear();return false;
+            d.pass=h.pass;d.inPass=true;d.processed=false;d.producedBytes=0;d.frames=h.inputFrames;d.thread=a.tid;d.pending.clear();return false;
         }
         check(d.inPass&&h.pass==d.pass&&a.tid==d.thread,"v4 event outside pass or cross-thread");
         if(h.kind==ObjectBefore) {
@@ -91,11 +91,11 @@ public:
         if(h.kind==ProcessResult) {
             check(!d.processed&&!h.call&&h.inputFrames==d.frames&&h.result==S_OK&&h.flags==PostCall&&h.producedBytes<=h.capacity
                 &&(d.pending.empty()||d.pending.back().resultSeen),"v4 failed Process/pending Submit/frame mismatch");
-            d.processed=true;++markers;return false;
+            d.processed=true;d.producedBytes=h.producedBytes;++markers;return false;
         }
         check(h.kind==PassEnd&&d.processed&&!h.call&&h.flags==PostCall&&h.result==0,"v4 incomplete pass or unknown event");
         check(d.sample<=UINT64_MAX-d.frames,"v4 sample cursor overflow");
-        output={};output.domain=h.domain;output.pass=h.pass;output.sampleStart=d.sample;output.frames=d.frames;
+        output={};output.domain=h.domain;output.pass=h.pass;output.sampleStart=d.sample;output.frames=d.frames;output.producedBytes=d.producedBytes;
         output.renderer=d.renderer;output.encoder=d.encoder;output.implementation=d.implementation;output.fullSpanLayoutReady=true;
         std::set<std::tuple<uint64_t,uint32_t,uint32_t>> keys;
         for(auto& object:d.pending) {

@@ -74,7 +74,7 @@ int wmain(int argc,wchar_t** argv){
                     require(ring->status==2&&!ring->error&&(interrupted||WaitForSingleObject(stop,0)==WAIT_OBJECT_0),"Unclean plugin capture end");assembler.finish();
                     if(native){bridge.finish([&](const receiver::Slot& packet){return native->send(packet);});native->finish();}
                     else {std::lock_guard lock(shared.mutex);shared.ended=true;shared.changed.notify_all();puts("NO_NATIVE_SOURCE observedCycles=0 noEOS=1");}
-                    printf("PLUGIN_STOP passes=%llu inputSamples=%llu restored=1\n",bridge.passes(),bridge.samples());break;}
+                    printf("PLUGIN_STOP passes=%llu inputSamples=%llu outputOnlyPasses=%llu restored=1\n",bridge.passes(),bridge.samples(),bridge.outputOnlyPasses());break;}
                 Sleep(1);
             }
         }catch(const std::exception& e){Broken(shared,e.what());InterlockedExchange(&ring->stop,1);}});
