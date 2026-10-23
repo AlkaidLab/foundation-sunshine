@@ -86,10 +86,11 @@ bool Recorder::begin(uint64_t renderer,uint64_t encoder,uint64_t implementation,
         okay=close(*binding,BindingChanged);
     }
     if(okay&&!binding->used) {
-        binding->renderer=renderer;binding->encoder=encoder;binding->implementation=implementation;binding->nextPass=0;binding->used=true;
+        binding->renderer=renderer;binding->encoder=encoder;binding->implementation=implementation;binding->nextPass=0;
         Pass fresh{};fresh.renderer=renderer;fresh.encoder=encoder;fresh.implementation=implementation;
         auto value=header(fresh,DomainBegin);value.reason=Discovery;value.flags=ObservedNotCreated;
-        okay=emit(value);binding->domain=value.domain;if(okay)InterlockedIncrement64(&ring_->domainsOpened);
+        okay=emit(value);
+        if(okay){binding->domain=value.domain;binding->used=true;InterlockedIncrement64(&ring_->domainsOpened);}
     }
     if(okay) {
         if(binding->nextPass==UINT64_MAX){fail();okay=false;}
