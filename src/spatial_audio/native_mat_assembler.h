@@ -1,7 +1,7 @@
 #pragma once
 #include "encoded_audio_source.h"
 #include "mat_capture_protocol.h"
-#include "../../spatial-object-spike/resident/encoded_protocol.h"
+#include "native_encoded_protocol.h"
 #include <array>
 #include <functional>
 namespace mat_capture {

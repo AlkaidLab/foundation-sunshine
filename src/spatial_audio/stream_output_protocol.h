@@ -1,5 +1,5 @@
 #pragma once
-#include "../../spatial-object-spike/mat-spike/mat_ipc_receiver_api.h"
+#include "object_input_protocol.h"
 
 namespace spatial_stream {
 using namespace receiver;

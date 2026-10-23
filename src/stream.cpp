@@ -3779,13 +3779,6 @@ namespace stream {
       }
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
-#ifdef SUNSHINE_AUDIO_RTP_DIAGNOSTIC
-      // FIFO end marker: all replay packets must pass through this exact
-      // production broadcaster before the isolated process exits.
-      if (channel_data == nullptr) {
-        break;
-      }
-#endif
       auto session = (session_t *) channel_data;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
@@ -3904,9 +3897,6 @@ namespace stream {
     shutdown_event->raise(true);
   }
 
-#ifdef SUNSHINE_AUDIO_RTP_DIAGNOSTIC
-  #include "stream_audio_replay.inc"
-#endif
 
   int
   start_broadcast(broadcast_ctx_t &ctx) {

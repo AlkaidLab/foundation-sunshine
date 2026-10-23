@@ -6,7 +6,7 @@
 
 ## 使用入口
 
-1. 按 [原生采集器说明](../spatial-object-spike/sonic-mat-live/README.md) 构建工具，
+1. 按 [原生采集器说明](../tools/sonic-mat-live/README.md) 构建工具，
    对指定 audiodg 的 PID/创建时间做 Preflight，再显式 Start。状态最初可以是
    `WaitingForObjects`；应用产生受支持的空间对象后才会出现 `NativeReady`。
 2. 将 Start 输出的 `host-config-snippet.conf` 两行加入目标 Sunshine 配置，按正常
@@ -46,41 +46,26 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 主机软件验证入口：
 
 ```powershell
-./spatial-object-spike/mat-live/verify.ps1 -Output <全新目录> -Python <Python路径>
+./tests/mat-live/verify.ps1 -Output <全新目录> -Python <Python路径>
 ```
 
 测试中的 mock 客户端复用协议解析器，覆盖正常结束、连接中断后新会话、取消、
 源启动/读取失败、空流、时钟/格式/序号错误、停滞看门狗和资源释放。客户端应用
 及手机输出不参与本轮开发。软件生成的载波形状数据只在测试中使用。
 
-此前受控原生短测已经通过真实 MAT、加密 RTSP 和 H.264 接收，见
-[原生管理入口记录](../spatial-object-spike/mat-rtsp-live/MAT-LIFECYCLE-RESULT.txt)。
-本轮主机硬化以新构建和 mock 验证为准，不把历史原生结果改写成新版本实测。
+实时共享协议已通过 [common-c #40](https://github.com/qiin2333/moonlight-common-c/pull/40)
+合入 `mic`，主机固定到 `24f23691a1c303e49cab9334414d35e023ba7f97`。本地 AUTO6
+在 ANNOUNCE 前选择 live7 或 Opus0；旧 codec4/5 明确拒绝。生产主机没有录制文件
+输入，客户端应用保持 mock，不更新历史 Android 应用或其 shared 指针。
+
+[当前测试入口](../tests/mat-live/README.md) 覆盖协议、管道、对象回调、管理入口和
+生成数据的 UDP/FEC 回归。软件构建及 mock 验证不等于原生实采或硬件播放验收。
 持续原生运行、主动中途停止、真实多会话重连、游戏音画同步和 HDMI/eARC Atmos
-识别仍是后续验证项；本机没有相应终端条件。
+识别仍是后续验证项，本机没有相应终端条件。
 
-## 2026-10-23 审查收尾
+## 历史资料
 
-当前主机按最小实时范围接入 common-c：保留 live7 协议、认证、网络接收和
-cycle/EOS 回调；删除 codec4/5 的生产协商、SHA/count 接收器和主机有限回放分支。
-旧编号 4/5 明确拒绝，不复用；正常偏好只选 live7 或 Opus0。线上实时 profile/
-密文格式保持不变，消费者需重建以适配移除的未发布 API。
-
-文件保存、SHA/count 检查和离线输入只留在
-[诊断工具](../spatial-object-spike/mat-diagnostics/README.md)，不注册生产网络 codec，
-不提供 Sunshine 录制文件输入。旧有限 RTSP/RTP 实验要求使用历史版本。
-客户端继续 mock，Android 应用及其 shared 指针不升级。
-
-当前软件验收目录为 `build/mat-minimal-live-v1`，发布及正常主机构建状态记录在
-`build/mat-boundary-publish-state.json`。MinGW/MSVC 静态 CTest 各 13 项、22 个
-RTSP 场景覆盖 live7/Opus0、旧 codec 拒绝和异常确认。真实 AudioStream UDP
-线程验证认证 END 成功与缺失 END/尾段超时；诊断工具保留 7 个落盘与 7 个离线
-输入场景。数据为软件生成，本轮没有原生实采或设备播放。
-
-本轮人工审查覆盖配置与协商、源身份和租约、对象桥/原生 worker、管道收尾、
-加密发送及退出路径，未留下已确认的阻塞代码问题。修正两处生命周期细节：
-结束的 renderer 清理其速率/时间状态；Start 的最终状态查询或输出失败时仍执行
-停止清理。采集工具重新构建，回调/对象桥、IPC、配对生命周期及管理入口软件
-回归通过（`build/mat-host-review-lifecycle-v1`、`build/mat-host-review-operator-v1`）。
-这两处修复没有重新原生实采；上文持续运行、主动停止、真实重连和硬件验收边界
-继续适用。草稿 PR 的 CodeRabbit 自动审查被跳过，不计作人工审查之外的通过项。
+清理前的完整版本 `be20f80bb8622b16ac6d45bbb339b1e9e55919cf` 已保存到
+[归档分支 codex/mat-history-20261023](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023)。
+旧手机实验、有限回放、离线落盘、一次性探针、打包脚本和阶段报告仅在那里保留；
+当前构建与测试不依赖归档目录。历史原生 MAT/RTSP/H.264 短测结果仍只对应当时版本。
