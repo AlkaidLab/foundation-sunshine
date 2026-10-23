@@ -417,7 +417,16 @@ namespace stream {
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
-  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t>>>;
+
+  // Peer tracker: keeps receiving session-matching pings for the whole session
+  // lifetime so the broadcast threads can follow client address/port changes
+  // (NAT rebinding, VPN user-space netstacks rewriting source ports, etc).
+  struct peer_tracker_t {
+    std::mutex mutex;
+    std::optional<udp::endpoint> pending;
+  };
+  using peer_tracker_ptr = std::shared_ptr<peer_tracker_t>;
+  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t, peer_tracker_ptr>>>;
 
   // return bytes written on success
   // return -1 on error
@@ -622,6 +631,10 @@ namespace stream {
       safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
+
+      // Fed by the shared receive loop from session-matching pings,
+      // consumed by videoBroadcastThread before each frame.
+      peer_tracker_ptr peer_tracker;
     } video;
 
     struct {
@@ -642,6 +655,10 @@ namespace stream {
 
       bool enable_mic;
       bool mic_registered { false };
+
+      // Fed by the shared receive loop from session-matching pings,
+      // consumed by audioBroadcastThread before each packet.
+      peer_tracker_ptr peer_tracker;
     } audio;
 
     struct {
@@ -3228,6 +3245,11 @@ namespace stream {
   recvThread(broadcast_ctx_t &ctx) {
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_video_session;
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_audio_session;
+    // Tracker maps share the session-id keyspace with the message-queue maps
+    // above, but stay registered for the whole session lifetime so pings
+    // arriving after the initial recv_ping() still update the send target.
+    std::unordered_map<av_session_id_t, peer_tracker_ptr> video_ping_trackers;
+    std::unordered_map<av_session_id_t, peer_tracker_ptr> audio_ping_trackers;
 
     auto &video_sock = ctx.video_sock;
     auto &audio_sock = ctx.audio_sock;
@@ -3240,18 +3262,30 @@ namespace stream {
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
     // 统一处理PING包逻辑
-    auto handle_ping = [](auto &session_map, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
+    auto handle_ping = [](auto &session_map, auto &tracker_map, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
       try {
         if (bytes == 4) {
           if (auto it = session_map.find(peer.address()); it != std::end(session_map)) {
-            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
+            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: "sv << type_str;
             it->second->raise(peer, std::string { buf.data(), bytes });
           }
         }
         else if (bytes >= sizeof(SS_PING)) {
           auto ping = (PSS_PING) buf.data();
-          if (auto it = session_map.find(std::string { ping->payload, sizeof(ping->payload) }); it != std::end(session_map)) {
-            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
+          auto key = std::string { ping->payload, sizeof(ping->payload) };
+
+          // Feed the peer tracker on every session-matching ping, including
+          // the ones arriving long after recv_ping() has completed.
+          if (auto tit = tracker_map.find(key); tit != std::end(tracker_map)) {
+            {
+              std::lock_guard lk { tit->second->mutex };
+              tit->second->pending = peer;
+            }
+            BOOST_LOG(debug) << "PING-TRACK: "sv << peer.address().to_string() << ':' << peer.port() << " :: "sv << type_str;
+          }
+
+          if (auto it = session_map.find(key); it != std::end(session_map)) {
+            BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: "sv << type_str;
             it->second->raise(peer, std::string { buf.data(), bytes });
           }
         }
@@ -3262,12 +3296,15 @@ namespace stream {
     };
 
     // 更新会话映射
-    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map) {
+    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map,
+                                 auto &video_trackers, auto &audio_trackers) {
       while (message_queue_queue->peek()) {
         if (auto message_queue_opt = message_queue_queue->pop()) {
-          auto [socket_type, session_id, message_queue] = *message_queue_opt;
+          auto [socket_type, session_id, message_queue, peer_tracker] = *message_queue_opt;
           auto &target_map = socket_type == socket_e::video ? video_map :
                                                               (socket_type == socket_e::audio ? audio_map : throw std::runtime_error("Unknown socket type"));
+          auto &target_trackers = socket_type == socket_e::video ? video_trackers :
+                                                                        (socket_type == socket_e::audio ? audio_trackers : throw std::runtime_error("Unknown socket type"));
 
           if (message_queue) {
             target_map.emplace(session_id, message_queue);
@@ -3275,12 +3312,21 @@ namespace stream {
           else {
             target_map.erase(session_id);
           }
+
+          // The tracker is registered/unregistered independently from the
+          // message queue: a null tracker erases the tracker entry.
+          if (peer_tracker) {
+            target_trackers.emplace(session_id, peer_tracker);
+          }
+          else {
+            target_trackers.erase(session_id);
+          }
         }
       }
     };
 
     // 初始化接收函数
-    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
+    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, auto &tracker_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
         auto &peer = peers[buf_idx];
 
@@ -3337,20 +3383,21 @@ namespace stream {
 
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
 
-        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
+        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session,
+                           video_ping_trackers, audio_ping_trackers);
         if (bytes == 0) {
           BOOST_LOG(warning) << "Received empty packet";
           // 即使是空包，也继续接收
         }
         else {
-          handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
+          handle_ping(session_map, tracker_map, peer, buffers[buf_idx], bytes, type_str);
         }
       };
     };
 
     try {
-      init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
-      init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
+      init_recv_func(video_sock, 0, peer_to_video_session, video_ping_trackers, "VIDEO");
+      init_recv_func(audio_sock, 1, peer_to_audio_session, audio_ping_trackers, "AUDIO");
 
       video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
       audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
@@ -3402,6 +3449,37 @@ namespace stream {
       auto session = (session_t *) packet->channel_data;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
+
+      // Apply a peer update learned from a session-matching ping. NAT
+      // rebinding or a VPN user-space netstack rotating the client's source
+      // port would otherwise leave us sending into a dead endpoint until
+      // the session is restarted.
+      //
+      // Only port changes on the same address are followed: the ping payload
+      // travels in cleartext inside the UDP SS_PING, so an on-path observer
+      // could otherwise redirect the stream to an arbitrary endpoint for the
+      // whole session (the initial recv_ping() lock inherits the same
+      // exposure, but only for the startup window).
+      if (session->video.peer_tracker) {
+        std::optional<udp::endpoint> new_peer;
+        {
+          std::lock_guard lk { session->video.peer_tracker->mutex };
+          new_peer = std::move(session->video.peer_tracker->pending);
+          session->video.peer_tracker->pending.reset();
+        }
+        if (new_peer && *new_peer != session->video.peer) {
+          if (new_peer->address() == session->video.peer.address()) {
+            BOOST_LOG(info) << "[PEER-UPDATE] VIDEO "sv
+                            << session->video.peer.address().to_string() << ':' << session->video.peer.port()
+                            << " -> "sv << new_peer->address().to_string() << ':' << new_peer->port();
+            session->video.peer = *new_peer;
+          }
+          else {
+            BOOST_LOG(warning) << "[PEER-UPDATE] VIDEO ignored address change "sv
+                               << session->video.peer.address().to_string() << " -> "sv << new_peer->address().to_string();
+          }
+        }
+      }
 
       std::string_view payload { (char *) packet->data(), packet->data_size() };
       std::vector<uint8_t> payload_with_replacements;
@@ -3779,6 +3857,31 @@ namespace stream {
       auto session = (session_t *) channel_data;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
 
+      // Apply a peer update learned from a session-matching ping (see the
+      // equivalent block in videoBroadcastThread; port-only changes on the
+      // same address, to avoid extending the cleartext-payload hijack
+      // exposure to the whole session).
+      if (session->audio.peer_tracker) {
+        std::optional<udp::endpoint> new_peer;
+        {
+          std::lock_guard lk { session->audio.peer_tracker->mutex };
+          new_peer = std::move(session->audio.peer_tracker->pending);
+          session->audio.peer_tracker->pending.reset();
+        }
+        if (new_peer && *new_peer != session->audio.peer) {
+          if (new_peer->address() == session->audio.peer.address()) {
+            BOOST_LOG(info) << "[PEER-UPDATE] AUDIO "sv
+                            << session->audio.peer.address().to_string() << ':' << session->audio.peer.port()
+                            << " -> "sv << new_peer->address().to_string() << ':' << new_peer->port();
+            session->audio.peer = *new_peer;
+          }
+          else {
+            BOOST_LOG(warning) << "[PEER-UPDATE] AUDIO ignored address change "sv
+                               << session->audio.peer.address().to_string() << " -> "sv << new_peer->address().to_string();
+          }
+        }
+      }
+
       auto sequenceNumber = session->audio.sequenceNumber;
       auto timestamp = session->audio.timestamp;
 
@@ -4001,24 +4104,38 @@ namespace stream {
   }
 
   int
-  recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
+  recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout, peer_tracker_ptr &tracker_out) {
     auto messages = std::make_shared<message_queue_t::element_type>(30);
+    auto tracker = std::make_shared<peer_tracker_t>();
     av_session_id_t session_id = std::string { expected_payload };
 
+    // Peer tracking is only meaningful for session-id (payload-keyed) clients;
+    // legacy clients are matched by source address and never send SS_PING.
+    const bool session_id_client = session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1;
+    const peer_tracker_ptr registered_tracker = session_id_client ? tracker : nullptr;
+
+    tracker_out = tracker;
+
     // Only allow matches on the peer address for legacy clients
-    if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-      ref->message_queue_queue->raise(type, peer.address(), messages);
+    if (!session_id_client) {
+      ref->message_queue_queue->raise(type, peer.address(), messages, nullptr);
     }
-    ref->message_queue_queue->raise(type, session_id, messages);
+    ref->message_queue_queue->raise(type, session_id, messages, registered_tracker);
+
+    bool initial_ping_ok = false;
 
     auto fg = util::fail_guard([&]() {
       messages->stop();
 
-      // remove message queue from session
-      if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-        ref->message_queue_queue->raise(type, peer.address(), nullptr);
+      // Remove the message queue from the session. On success, keep the
+      // tracker registered under the payload key so the receive loop keeps
+      // feeding it with session-matching pings for the rest of the session;
+      // on timeout, drop both so a failed session leaves nothing behind.
+      if (!session_id_client) {
+        ref->message_queue_queue->raise(type, peer.address(), nullptr, nullptr);
       }
-      ref->message_queue_queue->raise(type, session_id, nullptr);
+      ref->message_queue_queue->raise(type, session_id, nullptr,
+        initial_ping_ok ? registered_tracker : nullptr);
     });
 
     auto start_time = std::chrono::steady_clock::now();
@@ -4037,7 +4154,7 @@ namespace stream {
         // Match the new PING payload format
         BOOST_LOG(debug) << "Received ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
-      else if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1) && msg == "PING"sv) {
+      else if (!session_id_client && msg == "PING"sv) {
         // Match the legacy fixed PING payload only if the new type is not supported
         BOOST_LOG(debug) << "Received ping [v1] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
@@ -4049,6 +4166,7 @@ namespace stream {
 
       // Update connection details.
       peer = recv_peer;
+      initial_ping_ok = true;
       return 0;
     }
 
@@ -4067,7 +4185,8 @@ namespace stream {
     while_starting_do_nothing(session->lifecycle);
 
     auto ref = broadcast_shared.ref();
-    auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
+    session->video.peer_tracker = std::make_shared<peer_tracker_t>();
+    auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout, session->video.peer_tracker);
     if (error < 0) {
       return;
     }
@@ -4084,6 +4203,9 @@ namespace stream {
     video_config.perf_session_id = session->launch_session_id;
     video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
       session->config.packetsize);
+
+    // Unregister the peer tracker now that the session is ending
+    ref->message_queue_queue->raise(socket_e::video, av_session_id_t { std::string { session->video.ping_payload } }, nullptr, nullptr);
   }
 
   void
@@ -4097,7 +4219,8 @@ namespace stream {
     while_starting_do_nothing(session->lifecycle);
 
     auto ref = broadcast_shared.ref();
-    auto error = recv_ping(session, ref, socket_e::audio, session->audio.ping_payload, session->audio.peer, config::stream.ping_timeout);
+    session->audio.peer_tracker = std::make_shared<peer_tracker_t>();
+    auto error = recv_ping(session, ref, socket_e::audio, session->audio.ping_payload, session->audio.peer, config::stream.ping_timeout, session->audio.peer_tracker);
     if (error < 0) {
       return;
     }
@@ -4109,6 +4232,9 @@ namespace stream {
 
     BOOST_LOG(debug) << "Start capturing Audio"sv;
     audio::capture(session->mail, session->config.audio, session);
+
+    // Unregister the peer tracker now that the session is ending
+    ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { std::string { session->audio.ping_payload } }, nullptr, nullptr);
   }
 
   namespace session {
