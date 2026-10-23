@@ -518,6 +518,8 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+# MAT harnesses have independent entrypoints and are built by verify.ps1.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of
 # their assertions and isolate their fixtures from the aggregate host state.
 list(REMOVE_ITEM TEST_SOURCES
