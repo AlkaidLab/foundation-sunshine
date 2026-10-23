@@ -63,7 +63,10 @@ int wmain(int argc,wchar_t** argv){
                         if(selected&&quantum.domain!=selected)require(quantum.objects.empty(),"Multiple object-bearing plugin domains");
                         else if(selected)bridge.push(quantum,starts.at(h.domain),h.audio.qpc,rates.at(h.domain),[&](const receiver::Slot& packet){if(!native)native=std::make_unique<NativeSession>(engine,codec,codecBase,bridge.renderer(),epoch,shared,"plugin-reencode");return native->send(packet);});
                     }
-                    if(h.kind==q4::DomainEnd&&h.domain==selected)require(h.reason==q4::CaptureStop,"Selected plugin domain retired; end epoch");
+                    if(h.kind==q4::DomainEnd){
+                        rates.erase(h.domain);starts.erase(h.domain);
+                        if(h.domain==selected)require(h.reason==q4::CaptureStop,"Selected plugin domain retired; end epoch");
+                    }
                     InterlockedExchange64(&ring->read,++r);
                 }
                 {std::lock_guard lock(shared.mutex);require(!shared.failed,"Native plugin MAT output/consumer failed");}

@@ -88,11 +88,11 @@ try{
   if($process.WaitForExit(20) -or [DateTime]::UtcNow -ge $deadline){throw 'Plugin attach failed/timed out; inspect capture log; no retry'}
  }
  @("mat_live_pipe = $pipe","mat_live_producer = $producer")|Set-Content -LiteralPath "$out/host-config-snippet.conf"
- $complete=$true
  Get-State $state|ConvertTo-Json
  Write-Host "Metadata: $out/capture.json"
  Write-Host "Host config snippet: $out/host-config-snippet.conf"
  Write-Host 'Waiting for actual live objects is not MAT readiness. No installed host config was changed.'
+ $complete=$true
 }finally{
  if(!$complete -and $process -and !$process.HasExited){
   try{$event=[Threading.EventWaitHandle]::OpenExisting($stop);try{[void]$event.Set()}finally{$event.Dispose()}}catch{Write-Warning "Unable to signal owned capture: $_"}
