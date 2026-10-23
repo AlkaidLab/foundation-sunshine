@@ -33,7 +33,7 @@ foreach($entry in ,@('host-common',$common)){
  & $Python "$PSScriptRoot/crypto_oracle.py" --executable "$out/$name/mat-live-tests.exe" --output "$out/$name/golden.bin" *> "$out/$name-oracle.log"
  if($LASTEXITCODE){throw "$name independent cryptographic oracle failed"}
 }
-& "$PSScriptRoot/../mat-diagnostics/verify.ps1" -Output "$out/diagnostics" -CommonBuild "$out/host-common" *> "$out/diagnostics.log"
+& "$PSScriptRoot/../mat-diagnostics/verify.ps1" -Output "$out/diagnostics" -CommonBuild "$out/host-common" -Python $Python *> "$out/diagnostics.log"
 if($LASTEXITCODE){throw 'Tool-owned dump/raw-recording regression failed'}
 foreach($name in @('MatLivePlayback','MatReceiver','MatDepacketizer')){
  & gcc.exe -O2 -std=c11 "-I$common/src" -c "$common/src/$name.c" -o "$out/$name.o"

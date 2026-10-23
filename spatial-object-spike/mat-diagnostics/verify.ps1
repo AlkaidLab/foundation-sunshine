@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Output,[Parameter(Mandatory=$true)][string]$CommonBuild)
+param([Parameter(Mandatory=$true)][string]$Output,[Parameter(Mandatory=$true)][string]$CommonBuild,[string]$Python='python.exe')
 $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $Output){throw 'Fresh diagnostic output required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName
@@ -23,6 +23,8 @@ if($LASTEXITCODE -ne 1){throw 'Truncated recording was accepted'}
 if($LASTEXITCODE){throw 'Tool-owned AudioStream dump frontend build failed'}
 & gcc.exe -O2 -std=c11 -DNDEBUG -DHAS_SOCKLEN_T "-I$common/src" "-I$common/enet/include" "$PSScriptRoot/../mat-rtsp-live/session_client.c" "$PSScriptRoot/MatDumpFile.c" "$lib/libmoonlight-common-c.a" "$lib/enet/libenet.a" -lcrypto -lws2_32 -lwinmm -lbcrypt -lcrypt32 -liphlpapi -o "$out/mat-session-client.exe"
 if($LASTEXITCODE){throw 'Tool-owned RTSP dump frontend build failed'}
-@{result='PASS';dumpCases=7;recordingCases=7;replayConsumer='mock';generatedBytesOnly=$true;nativeCapture=$false;hardwareOutput=$false}|ConvertTo-Json|Set-Content "$out/proof.json"
+& $Python "$PSScriptRoot/watchdog_test.py" --client "$out/mat-audio-client.exe" --output "$out/watchdog" *> "$out/watchdog.log"
+if($LASTEXITCODE){throw 'Real receive-thread EOS/inactivity regression failed'}
+@{result='PASS';dumpCases=7;recordingCases=7;threadedWatchdogCases=3;replayConsumer='mock';generatedBytesOnly=$true;nativeCapture=$false;hardwareOutput=$false}|ConvertTo-Json|Set-Content "$out/proof.json"
 Get-Content "$out/test.log","$out/replay.log"
 exit 0

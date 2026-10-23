@@ -62,7 +62,7 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 ## 2026-10-23 审查收尾
 
 此前 `8a51e978` 的 18 项跨平台 CI 全部通过；职责审查随后要求收窄未发布 API。
-当前主机引用 `c6b340440a14997145438d2a9f2059852c257b69`：common-c 保留协议、
+当前主机引用 `7078c4b0173254ea7613245570425a187711c739`：common-c 保留协议、
 认证、网络接收和 cycle/EOS 回调，文件落盘和原始录制输入迁至
 [诊断工具](../spatial-object-spike/mat-diagnostics/README.md)。`matDumpPath` 和离线
 接收入口已删除，codec4 通过回调交付已验证数据。线上的 MAT profile/密文格式
@@ -78,6 +78,15 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 通过 7 个落盘场景、7 个离线输入场景与成功/截断文件检查，实际 AudioStream
 codec4/5 的回调失败、错误 SHA/count 也有回归覆盖。数据全部由软件生成；本轮
 没有新增原生实采或客户端设备播放验证。
+
+随后处理 common-c Copilot 的四项反馈：静态 MSVC RTP 测试启用 C11 atomics，
+有限流摘要使用兼容 OpenSSL 1.0.2 的 context 接口，修正超时检查的跨线程时间戳
+取值顺序，并为显式有限流补齐未收到有效 EOS 的停滞期限。MinGW/MSVC 静态
+CTest 各 14 项通过；真实接收/解码线程在缺失 END 或尾数据时约 2.6 秒失败退出，
+正常 EOS 仍成功。两个 1300 周期 live UDP/FEC 用例及 391 丢包恢复再次通过。
+定向证据在 `build/mat-review-diagnostics-final-v1`、`build/mat-review-watchdog-v1`、
+`build/mat-review-msvc-v1` 和 `build/mat-review-live-check-v1`。未运行实际
+OpenSSL 1.0.2 SDK，不将接口兼容修正当作旧 SDK 的运行验收。
 
 本轮人工审查覆盖配置与协商、源身份和租约、对象桥/原生 worker、管道收尾、
 加密发送及退出路径，未留下已确认的阻塞代码问题。修正两处生命周期细节：

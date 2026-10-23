@@ -25,6 +25,9 @@ seven raw-input cases, exercises successful/truncated file input, and compiles
 both actual AudioStream/RTSP diagnostic dump frontends with tool-owned storage.
 It does not read a recorded native MAT fixture. The normal live acceptance also
 runs this suite; its mock clients link the same reviewed common library.
+The same suite runs the actual AudioStream receive/decoder threads over local
+UDP: clean EOS succeeds, while missing END or the final data fragment must time
+out without publishing a completed file. Use `-Python <path>` if needed.
 
 The Android application/PR is not upgraded here. Earlier Android JNI/offline APK
 experiments remain historical and require their pinned shared API (8a51e978 or
