@@ -48,7 +48,6 @@ extern "C" {
 #include "stream.h"
 #include "streaming/fec.h"
 #include "sync.h"
-#include "spatial_transport/mat_dump_profile.h"
 #include "spatial_transport/mat_live_session.h"
 #include "video.h"
 
@@ -1254,14 +1253,6 @@ namespace rtsp_stream {
     }
 
     // Report supported and required encryption flags
-    if (!session.mat_dump_described) {
-      session.mat_dump_described = true;
-      if (config::audio.stream) {
-        try { session.mat_dump = spatial_transport::inspect_replay(config::audio.mat_dump_replay); }
-        catch (const std::exception &e) { BOOST_LOG(warning) << "MAT dump capability disabled: " << e.what(); }
-      }
-    }
-    if (session.mat_dump) ss << spatial_transport::describe(*session.mat_dump);
     unsigned live_requests=0;
     for(auto item=req->options;item;item=item->next) {
       if (boost::iequals(item->option,"X-ML-Mat-Live")) {
@@ -1499,31 +1490,19 @@ namespace rtsp_stream {
     }
   };
 
-  struct mat_dump_response_headers_t {
-    std::string count, live_epoch, live_domain;
-    OPTION_ITEM codec{}, hash{}, cycles{}, carrier{}, clock{}, crypto{}, epoch{}, domain{};
-    mat_dump_response_headers_t(const launch_session_t &session) {
+  struct mat_live_response_headers_t {
+    std::string live_epoch, live_domain;
+    OPTION_ITEM codec{}, carrier{}, clock{}, crypto{}, epoch{}, domain{};
+    mat_live_response_headers_t(const launch_session_t &session) {
       if(session.mat_live_selected && session.mat_live) {
         live_epoch=std::to_string(session.mat_live->profile.epoch);live_domain=std::to_string(session.mat_live->profile.domain);
         codec.option=const_cast<char*>("X-SS-Audio-Codec");codec.content=const_cast<char*>(MAT_LIVE_NAME);
-        carrier.option=const_cast<char*>("X-SS-Mat-Carrier");carrier.content=const_cast<char*>(MAT_PLAYBACK_CARRIER);
-        clock.option=const_cast<char*>("X-SS-Mat-Clock");clock.content=const_cast<char*>(MAT_PLAYBACK_CLOCK);
+        carrier.option=const_cast<char*>("X-SS-Mat-Carrier");carrier.content=const_cast<char*>(MAT_CARRIER);
+        clock.option=const_cast<char*>("X-SS-Mat-Clock");clock.content=const_cast<char*>(MAT_CLOCK);
         crypto.option=const_cast<char*>("X-SS-Mat-Live-Crypto");crypto.content=const_cast<char*>(MAT_LIVE_CRYPTO);
         epoch.option=const_cast<char*>("X-SS-Mat-Live-Epoch");epoch.content=live_epoch.data();
         domain.option=const_cast<char*>("X-SS-Mat-Live-Domain");domain.content=live_domain.data();
         codec.next=&carrier;carrier.next=&clock;clock.next=&crypto;crypto.next=&epoch;epoch.next=&domain;return;
-      }
-      if ((!session.mat_dump_selected && !session.mat_playback_selected) || !session.mat_dump) return;
-      count = std::to_string(session.mat_dump->profile.cycles);
-      codec.option = const_cast<char *>("X-SS-Audio-Codec");
-      codec.content = const_cast<char *>(session.mat_playback_selected ? MAT_PLAYBACK_NAME : MAT_DUMP_NAME);
-      hash.option = const_cast<char *>("X-SS-Mat-SHA256"); hash.content = const_cast<char *>(session.mat_dump->profile.sha256);
-      cycles.option = const_cast<char *>("X-SS-Mat-Cycles"); cycles.content = count.data();
-      codec.next = &hash; hash.next = &cycles;
-      if (session.mat_playback_selected) {
-        carrier.option=const_cast<char *>("X-SS-Mat-Carrier"); carrier.content=const_cast<char *>(MAT_PLAYBACK_CARRIER);
-        clock.option=const_cast<char *>("X-SS-Mat-Clock"); clock.content=const_cast<char *>(MAT_PLAYBACK_CLOCK);
-        cycles.next=&carrier; carrier.next=&clock;
       }
     }
     void attach(OPTION_ITEM &head) {
@@ -1555,7 +1534,7 @@ namespace rtsp_stream {
           session.negotiated_dynamic_hdr_format,
           session.negotiated_dynamic_hdr_fallback);
         dynamic_hdr_headers.attach(option);
-        mat_dump_response_headers_t mat_headers(session);
+        mat_live_response_headers_t mat_headers(session);
         mat_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
@@ -1675,24 +1654,19 @@ namespace rtsp_stream {
         const auto &codecStr = args.at("x-ml-audio.codec"sv);
         bool has_mat_attributes=false;
         for (const auto &[key,value] : args) if (key.starts_with("x-ml-audio.mat-")) has_mat_attributes=true;
-        if (codecStr != MAT_DUMP_NAME && codecStr != MAT_PLAYBACK_NAME && codecStr != MAT_LIVE_NAME && has_mat_attributes) {
-          respond(sock, session, &option, 415, "MAT attributes require explicit MAT dump codec", req->sequenceNumber, {});
+        if (codecStr != MAT_LIVE_NAME && has_mat_attributes) {
+          respond(sock, session, &option, 415, "MAT attributes require explicit live MAT codec", req->sequenceNumber, {});
           return;
         }
         if(codecStr!=MAT_LIVE_NAME) {
           session.mat_live.reset();
-          for(const auto& [name,value]:args) if(name.starts_with("x-ml-audio.mat-live")) {
-            respond(sock,session,&option,415,"Mixed live/diagnostic MAT profile",req->sequenceNumber,{});return;
-          }
         }
         if(codecStr==MAT_LIVE_NAME) {
           for(const auto& [name,value]:args) if(name.starts_with("x-ml-audio.mat-") && !name.starts_with("x-ml-audio.mat-live")) {
             respond(sock,session,&option,415,"Mixed live/diagnostic MAT attributes",req->sequenceNumber,{});return;
           }
           const auto value=[&args](std::string_view k){auto it=args.find(k);return it==args.end()?std::string{}:std::string(it->second);};
-          if(args.contains("x-ml-audio.mat-dump") || args.contains("x-ml-audio.mat-playback") ||
-             args.contains("x-ml-audio.mat-sha256") || args.contains("x-ml-audio.mat-cycles") ||
-             !session.setup_audio || !config::audio.stream || !spatial_transport::accept_live(session.mat_live.get(),
+          if(!session.setup_audio || !config::audio.stream || !spatial_transport::accept_live(session.mat_live.get(),
              value("x-ml-audio.mat-live"),value("x-ml-audio.mat-live-carrier"),value("x-ml-audio.mat-live-clock"),
              value("x-ml-audio.mat-live-crypto"),value("x-ml-audio.mat-live-epoch"),value("x-ml-audio.mat-live-domain"))) {
             session.mat_live.reset();respond(sock,session,&option,415,"Native live MAT source/profile unavailable",req->sequenceNumber,{});return;
@@ -1700,33 +1674,8 @@ namespace rtsp_stream {
           config.audio.codec=audio::CODEC_MAT_LIVE;config.audio.mat_live=session.mat_live;
           config.audio.packetDuration=1; // FEC transport tick; media PTS is in the authenticated envelope.
         }
-        else if (codecStr == MAT_DUMP_NAME) {
-          const auto value = [&args](std::string_view k) { auto it = args.find(k); return it == args.end() ? std::string_view{} : it->second; };
-          if (args.contains("x-ml-audio.mat-playback") || args.contains("x-ml-audio.mat-carrier") || args.contains("x-ml-audio.mat-clock") ||
-              !session.setup_audio || !config::audio.stream || !spatial_transport::accept(session.mat_dump.get(),
-              value("x-ml-audio.mat-dump"), value("x-ml-audio.mat-sha256"), value("x-ml-audio.mat-cycles"))) {
-            respond(sock, session, &option, 415, "MAT dump profile unavailable or mismatched", req->sequenceNumber, {});
-            return;
-          }
-          config.audio.codec = audio::CODEC_MAT_DUMP;
-          config.audio.mat_dump = session.mat_dump;
-          config.audio.packetDuration = 1; // Synthetic FEC transport tick, NOT media time.
-        }
-        else if (codecStr == MAT_PLAYBACK_NAME) {
-          const auto value = [&args](std::string_view k) { auto it=args.find(k); return it==args.end()?std::string_view{}:it->second; };
-          if (args.contains("x-ml-audio.mat-dump") || !session.setup_audio || !config::audio.stream ||
-              !spatial_transport::accept_playback(session.mat_dump.get(),value("x-ml-audio.mat-playback"),
-                  value("x-ml-audio.mat-sha256"),value("x-ml-audio.mat-cycles"),
-                  value("x-ml-audio.mat-carrier"),value("x-ml-audio.mat-clock"))) {
-            respond(sock,session,&option,415,"MAT IEC playback profile unavailable or mismatched",req->sequenceNumber,{});
-            return;
-          }
-          config.audio.codec=audio::CODEC_MAT_IEC61937;
-          config.audio.mat_dump=session.mat_dump;
-          config.audio.packetDuration=1;
-        }
         else if (codecStr.starts_with("mat-")) {
-          respond(sock, session, &option, 415, "Unsupported MAT dump version", req->sequenceNumber, {});
+          respond(sock, session, &option, 415, "Unsupported MAT profile", req->sequenceNumber, {});
           return;
         }
         else if (codecStr == "ac3"sv) {
@@ -2208,20 +2157,13 @@ namespace rtsp_stream {
     session.stream_session_started = true;
     session.mat_live_selected = config.audio.codec == audio::CODEC_MAT_LIVE;
     if(session.mat_live_selected) BOOST_LOG(info)<<"Native live MAT negotiated: AEAD counter64; no finite replay";
-    session.mat_dump_selected = config.audio.codec == audio::CODEC_MAT_DUMP;
-    session.mat_playback_selected = config.audio.codec == audio::CODEC_MAT_IEC61937;
-    if (session.mat_dump_selected || session.mat_playback_selected) {
-      BOOST_LOG(info) << "MAT negotiated: codec=" << (session.mat_playback_selected ? MAT_PLAYBACK_NAME : MAT_DUMP_NAME)
-                      << ", cycles=" << session.mat_dump->profile.cycles
-                      << ", sha256=" << session.mat_dump->profile.sha256;
-    }
     session.nvidia_vsync_lease.reset();
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,
       session.negotiated_dynamic_hdr_fallback);
     dynamic_hdr_headers.attach(option);
-    mat_dump_response_headers_t mat_headers(session);
+    mat_live_response_headers_t mat_headers(session);
     mat_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});

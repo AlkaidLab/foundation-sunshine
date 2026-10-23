@@ -1,5 +1,5 @@
 #pragma once
-#include "encoded_audio_source.h"
+#include "../../src/spatial_audio/encoded_audio_source.h"
 #include <filesystem>
 #include <fstream>
 

@@ -32,7 +32,8 @@ def main():
         ("opus-ignores-live",0,live,[],0),
         ("strict-live-missing",7,SDP,[],-1),
         ("strict-live",7,live,live_ack,7),
-        ("strict-finite",5,SDP,ACK,5),
+        ("removed-finite",5,SDP,ACK,-1),
+        ("removed-dump",4,SDP,ACK,-1),
         ("auto-gfe",6,"v=0\r\n",[],0),
     ]
     results=[];env=dict(os.environ);env["PATH"]="C:/msys64/ucrt64/bin;"+env.get("PATH","")
@@ -85,7 +86,7 @@ def main():
             else:
                 assert f"x-ml-audio.codec:{'mat-live-v1' if expected==7 else 'mat-iec61937-v1'}" in announces[0]
                 if expected==7:assert "mat-sha256" not in announces[0] and "mat-cycles" not in announces[0]
-        assert describe_live==(["1"] if requested in (6,7) and not name.endswith("gfe") else [None]),(name,describe_live)
+        assert describe_live==(["1"] if requested in (6,7) and not name.endswith("gfe") else [] if requested in (4,5) else [None]),(name,describe_live)
         results.append(dict(case=name,requested=requested,selected=expected,methods=methods,mediaTested=False))
         print("PASS",name,flush=True)
     (args.output/"proof.json").write_text(json.dumps(dict(result="PASS",scope="Actual production RTSP negotiation; controlled peer; no media/device playback",results=results),indent=2))

@@ -1,6 +1,5 @@
 """Actual AudioStream receive/decoder threads; generated carrier bytes, no hardware."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,6 +7,9 @@ import socket
 import struct
 import subprocess
 import time
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 def fnv(data):
@@ -40,14 +42,14 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     carrier = bytes.fromhex('72f81f4e16000200') + bytes(61432)
-    sha = hashlib.sha256(carrier).hexdigest()
+    key = HKDF(algorithm=hashes.SHA256(), length=16, salt=b'Sunshine MAT live v1',
+               info=b'MATL AES128 GCM' + struct.pack('<QQ', 1, 1)).derive(bytes(16))
     env = dict(os.environ)
     env['PATH'] = 'C:/msys64/ucrt64/bin;' + env.get('PATH', '')
     results = []
     for mode in ('complete', 'missing-end', 'missing-tail'):
-        output = args.output / (mode + '.raw')
         with (args.output / (mode + '.stderr')).open('w', encoding='utf8') as error:
-            child = subprocess.Popen([str(args.client.resolve()), str(output.resolve()), sha, '1', 'plain'],
+            child = subprocess.Popen([str(args.client.resolve())],
                                      stdout=subprocess.PIPE, stderr=error, text=True, env=env,
                                      creationflags=subprocess.CREATE_NO_WINDOW)
             ready = child.stdout.readline().strip()
@@ -60,6 +62,8 @@ def main():
                 if mode == 'complete':
                     packets += [wire(3, carrier)] * 4
                 for payload in packets:
+                    header = b'MLIV' + bytes([1, 32, 0, 0]) + struct.pack('<QQII', 1, seq, 1104, 0)
+                    payload = header + AESGCM(key).encrypt(b'MATL' + struct.pack('<Q', seq), bytes(payload), header)
                     sender.sendto(struct.pack('!BBHII', 0x80, 97, seq, seq, 1) + payload,
                                   ('127.0.0.1', int(ready.split()[1])))
                     seq += 1
@@ -67,13 +71,10 @@ def main():
             stdout, _ = child.communicate(timeout=6)
         elapsed = time.monotonic() - started
         (args.output / (mode + '.stdout')).write_text(ready + '\n' + stdout, encoding='utf8')
-        status = json.loads(Path(str(output) + '.json').read_text())
         if mode == 'complete':
-            assert child.returncode == 0 and status['published'] and status['completeEOS']
-            assert hashlib.sha256(output.read_bytes()).hexdigest() == sha
+            assert child.returncode == 0 and 'success=1 cycles=1 ended=1 decodeCalls=0' in stdout
         else:
-            assert child.returncode == 1 and elapsed < 5 and not output.exists()
-            assert status['failed'] and not status['published'] and not status['completeEOS']
+            assert child.returncode == 1 and elapsed < 5 and 'success=0' in stdout and 'ended=0 decodeCalls=0' in stdout
             assert 'MAT validated input timed out' in (args.output / (mode + '.stderr')).read_text()
         results.append(dict(mode=mode, exitCode=child.returncode, seconds=elapsed, passed=True))
     (args.output / 'proof.json').write_text(json.dumps(dict(result='PASS', cases=results,

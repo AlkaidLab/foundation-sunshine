@@ -60,6 +60,6 @@ if($LASTEXITCODE){throw 'Production RTSP live/Opus negotiation failed'}
 foreach($source in $sourceHashes){if((Get-FileHash -LiteralPath $source.path).Hash.ToLower() -ne $source.sha256){throw "Source changed during verification: $($source.path)"}}
 $hashes=@(Get-ChildItem -LiteralPath $out -Recurse -File | Where-Object Extension -In '.log','.json','.exe' | ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLower()}})
 @{result='PASS';scope='Software live MAT sender / RTP+FEC receiver / authenticated transport / negotiation; synthetic test bytes only';
- commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTests=14;client='mock frontends using the reviewed host common library';diagnosticsRegression='PASS';rtspCases=21;logicalDataPacketsPerLongTest=78000;
+ commonCommit=$sharedCommit;sourceHashes=$sourceHashes;commonTests=13;client='mock frontends using the reviewed host common library';diagnosticsRegression='PASS';rtspCases=22;logicalDataPacketsPerLongTest=78000;
  generatedUdpCyclesPerCase=1300;udpCases=2;deliberateDropsRecovered=391;privatePipeVersion=2;pipeTailRegression='PASS';operatorStateRegression='PASS';operatorLauncherRegression='PASS';nativeCaptureTested=$false;androidDeviceTested=$false;atmosRecognitionVerified=$false;artifacts=$hashes} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath "$out/proof.json" -Encoding utf8
 Write-Host "PASS live MAT software verification: $out/proof.json"

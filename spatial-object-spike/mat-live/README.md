@@ -26,8 +26,8 @@ The fifth test above subsequently verified the fix natively. The earlier
 missing-object failure did not recur in tests 4/5; its cause remains unproven.
 
 Normal MAT preference is AUTO 6 locally, then **live codec 7 or Opus 0** before
-ANNOUNCE. Finite playback 5 and dump 4 are explicit diagnostics only. AUTO never
-opens a recorded file or chooses the finite profile. Unsupported phones keep
+ANNOUNCE. Finite codec4/5 production paths are removed and their IDs rejected.
+Offline file checks remain standalone diagnostics. Unsupported phones keep
 using Opus; there is no phone MAT decoder or object renderer in this branch.
 
 The user selected [Sonic object capture -> dedicated native MAT encoding](../sonic-mat-live/README.md).
@@ -177,12 +177,12 @@ The software verifier uses generated carrier-shaped bytes, the actual host live
 sender, actual common-c RTP/FEC queue and AudioStream receiver. Each long test
 passes 78,000 data packets across RTP16 wrap; the independent Python cryptography
 oracle checks the complete packet against HKDF/AES-GCM. It also covers tamper,
-replay, gap, wrong identity/key, failure/EOS handling and 21 production-client
+replay, gap, wrong identity/key, failure/EOS handling and 22 production-client
 RTSP negotiation cases against a controlled peer. These are software tests, not
 native capture, hardware playback or Dolby acceptance.
 
-The older capability verifier retains finite recording tests as regression
-coverage only; its normal network selection now checks live 7 / Opus 0. Private
+The old finite RTSP/RTP harnesses require their historical source revisions.
+Current acceptance tests live7 / Opus0 and explicitly rejects codec4/5. Private
 captures, generated evidence, APKs, binaries, local keys and build dependencies
 must remain outside public commits.
 

@@ -61,32 +61,21 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 
 ## 2026-10-23 审查收尾
 
-此前 `8a51e978` 的 18 项跨平台 CI 全部通过；职责审查随后要求收窄未发布 API。
-当前主机引用 `7078c4b0173254ea7613245570425a187711c739`：common-c 保留协议、
-认证、网络接收和 cycle/EOS 回调，文件落盘和原始录制输入迁至
-[诊断工具](../spatial-object-spike/mat-diagnostics/README.md)。`matDumpPath` 和离线
-接收入口已删除，codec4 通过回调交付已验证数据。线上的 MAT profile/密文格式
-保持兼容；使用新库的消费者须重建并适配上述未发布 API。
+当前主机按最小实时范围接入 common-c：保留 live7 协议、认证、网络接收和
+cycle/EOS 回调；删除 codec4/5 的生产协商、SHA/count 接收器和主机有限回放分支。
+旧编号 4/5 明确拒绝，不复用；正常偏好只选 live7 或 Opus0。线上实时 profile/
+密文格式保持不变，消费者需重建以适配移除的未发布 API。
 
-客户端继续用 mock 前端，直接链接当前被审查的 common 库。Android 应用/PR 仍为
-历史版本，不升级其 shared 指针，也不作为本轮验收对象；历史证据不推算为新
-提交的结果。后续采集生命周期修改继续留在主机侧。
+文件保存、SHA/count 检查和离线输入只留在
+[诊断工具](../spatial-object-spike/mat-diagnostics/README.md)，不注册生产网络 codec，
+不提供 Sunshine 录制文件输入。旧有限 RTSP/RTP 实验要求使用历史版本。
+客户端继续 mock，Android 应用及其 shared 指针不升级。
 
-职责收敛的软件验收记录为 `build/mat-boundary-live-v1/proof.json`：当前 common 库
-14 项 CTest、21 个协商场景、独立加密 oracle、两个 1300 周期 UDP/FEC 用例和
-391 个刻意丢包恢复，以及源契约/租约/管道/管理入口回归通过。迁出的诊断工具
-通过 7 个落盘场景、7 个离线输入场景与成功/截断文件检查，实际 AudioStream
-codec4/5 的回调失败、错误 SHA/count 也有回归覆盖。数据全部由软件生成；本轮
-没有新增原生实采或客户端设备播放验证。
-
-随后处理 common-c Copilot 的四项反馈：静态 MSVC RTP 测试启用 C11 atomics，
-有限流摘要使用兼容 OpenSSL 1.0.2 的 context 接口，修正超时检查的跨线程时间戳
-取值顺序，并为显式有限流补齐未收到有效 EOS 的停滞期限。MinGW/MSVC 静态
-CTest 各 14 项通过；真实接收/解码线程在缺失 END 或尾数据时约 2.6 秒失败退出，
-正常 EOS 仍成功。两个 1300 周期 live UDP/FEC 用例及 391 丢包恢复再次通过。
-定向证据在 `build/mat-review-diagnostics-final-v1`、`build/mat-review-watchdog-v1`、
-`build/mat-review-msvc-v1` 和 `build/mat-review-live-check-v1`。未运行实际
-OpenSSL 1.0.2 SDK，不将接口兼容修正当作旧 SDK 的运行验收。
+当前软件验收目录为 `build/mat-minimal-live-v1`，发布及正常主机构建状态记录在
+`build/mat-boundary-publish-state.json`。MinGW/MSVC 静态 CTest 各 13 项、22 个
+RTSP 场景覆盖 live7/Opus0、旧 codec 拒绝和异常确认。真实 AudioStream UDP
+线程验证认证 END 成功与缺失 END/尾段超时；诊断工具保留 7 个落盘与 7 个离线
+输入场景。数据为软件生成，本轮没有原生实采或设备播放。
 
 本轮人工审查覆盖配置与协商、源身份和租约、对象桥/原生 worker、管道收尾、
 加密发送及退出路径，未留下已确认的阻塞代码问题。修正两处生命周期细节：

@@ -158,7 +158,7 @@ def main():
         "native_pen_touch": "false", "native_touchpad_optimization": "false", "clipboard_sync": "false",
         "enable_dsu_server": "false", "client_gamepad_override": "false", "usb_forwarding_enabled": "false",
         "install_steam_audio_drivers": "false", "stream_mic": "false", "keep_sink_default": "false",
-        "stream_audio": "true", "mat_dump_replay": "", "mat_live_pipe": pipe,
+        "stream_audio": "true",  "mat_live_pipe": pipe,
         "mat_live_producer": str(args.publisher.resolve()) if args.publisher else "",
         "vdd_headless_create": "false", "vdd_keep_enabled": "true", "vdd_vulkan_hdr_bridge": "false",
         "display_device_prep": "no_operation", "resolution_change": "no_operation",

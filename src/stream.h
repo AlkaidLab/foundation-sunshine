@@ -31,9 +31,6 @@ namespace stream {
 #ifdef SUNSHINE_AUDIO_RTP_DIAGNOSTIC
   int audio_rtp_replay_diagnostic(int argc, char **argv);
 #endif
-#ifdef SUNSHINE_MAT_RTP_DIAGNOSTIC
-  int mat_rtp_replay_diagnostic(int argc, char **argv);
-#endif
   constexpr auto VIDEO_STREAM_PORT = 9;
   constexpr auto CONTROL_PORT = 10;
   constexpr auto AUDIO_STREAM_PORT = 11;

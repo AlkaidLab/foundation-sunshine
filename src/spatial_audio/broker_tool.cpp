@@ -1,5 +1,5 @@
 // Opt-in offline broker harness. No deployment, elevation, hooks or audiodg.
-#include "mat_replay_source.h"
+#include "../../spatial-object-spike/mat-diagnostics/mat_replay_source.h"
 #include "stream_ring_source.h"
 #include "capture_reader_api.h"
 #include "object_broker.h"

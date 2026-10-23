@@ -1,5 +1,5 @@
 #pragma once
-#include "../../third-party/moonlight-common-c/src/MatDumpProfile.h"
+#include "MatDumpProfile.h"
 #include "../../third-party/moonlight-common-c/src/Limelight.h"
 #include <stddef.h>
 #ifdef __cplusplus

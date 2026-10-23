@@ -1,6 +1,6 @@
 #include "MatDumpFile.h"
 #include "../../third-party/moonlight-common-c/src/MatReceiver.h"
-#include "../../third-party/moonlight-common-c/src/MatPlayback.h"
+#include "MatPlayback.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>

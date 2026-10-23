@@ -1,5 +1,17 @@
 # 2026-10-23 续作：原生实时 MAT 链路
 
+## Live-only production boundary - 2026-10-23
+
+The current scope removes codec4/5 from common-c and Sunshine production,
+including finite RTSP negotiation, manifest configuration, replay workers and
+unused finish polling. IDs 4/5 are rejected; AUTO selects live7 or Opus0.
+The authenticated live wire format and cycle/EOS callbacks are unchanged.
+Standalone SHA/count file checks and offline input live only in
+`spatial-object-spike/mat-diagnostics`; historical finite RTSP/RTP harnesses
+require their pinned old revisions. Android remains unchanged; clients are mocks.
+Current evidence is recorded in `build/mat-boundary-publish-state.json`.
+All earlier test counts and native results below retain their historical scope.
+
 ## 本轮：主机边界补齐，客户端先 mock
 
 按用户要求收敛实现，沿用外置采集器和两项主机配置。接入、状态、故障和验证说明
