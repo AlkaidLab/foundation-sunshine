@@ -105,7 +105,13 @@ _pkgver_from_git() {
   printf '%s.%s' "$date" "$sha"
 }
 
-pkgver="$(_pkgver_from_stamp || _pkgver_from_git || printf 0)"
+# Kept as a function rather than a top-level assignment: makepkg runs pkgver()
+# *after* prepare(), and prepare() may relink the tree. Reading the stamp up
+# front would name the package after the stamp that existed before the relink,
+# so the package name and the binary inside it could disagree.
+pkgver() {
+  _pkgver_from_stamp || _pkgver_from_git || printf 0
+}
 
 _relink() {
   msg2 "re-configuring and relinking so the package matches the current tree"
