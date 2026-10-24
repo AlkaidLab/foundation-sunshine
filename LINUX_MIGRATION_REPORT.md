@@ -939,6 +939,47 @@ Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输�
 660 通过；`python3 tools/audit-windows-parity.py` 确认落入 Windows 区域的改动行为 0。
 两客户端并发现场本机无法构造（只有一个客户端），所以上面第一条的正确性由纯函数单测覆盖。
 
+### 6.32 第五轮 review：设备归属、跨卡编号与两处打包缺陷
+
+五个独立缺陷，都能在没有第二个客户端的机器上判定：
+
+- **虚拟屏按名字定位会碰到别人的屏**：`prepare_vdd()` 用
+  `find_device_by_friendlyname(ZAKO_NAME)` 取设备 id，而所有虚拟屏的友好名都是同一个
+  `ZAKO_NAME`；两个客户端并存时它可能指向另一个客户端的监视器，随后的
+  `update_vdd_resolution()` 模式发布判定与 `apply_vdd_display_stage()` 的
+  `wait_for_mode_publication()` 就会对"不是本次会话在串流的那块屏"校验成功。
+  新增 `vdd_utils::owned_virtual_display_connector(owner)`：在实例表里按 EDID 串号
+  （`vdd_instances::find`）定位该 owner 的记录，只有连接器仍为 `connected` 才返回其裸名
+  （Linux 的设备 id 就是连接器名）；无记录或已断开返回空。`prepare_vdd()` 与
+  `apply_vdd_display_stage()` 都用它覆盖按名字取到的 id，并在替换时打 debug 日志。
+  Windows 半边不经过这段（`#ifndef _WIN32`），驱动按 GUID 隔离。
+- **跨卡连接器编号对不上**：`kms_display_names()` 的 `conn_type_count_t` 声明在卡循环**之外**，
+  一台机器两张卡时第二张卡的 DisplayPort 会被播成 `DP-2`；而 `display_t::init()` 每卡都从零
+  编号，于是监视器列表里的名字解不回 CRTC，虚拟屏的裸名还可能在别的卡上误命中。
+  新增 `connector_numbering(card_dir, hwdevice_type)`：用与枚举**完全相同**的卡顺序与跳过规则
+  （含 `mem_type_e::cuda` 的 NVIDIA 过滤及其 `encoder != "nvenc"` 例外）预演一遍共享计数器，
+  记下每张卡的起始值；`init()` 取 `live_virtual_display_card()` 把搜索钉在宿主卡上，
+  非宿主卡直接跳过，并按"名字来自监视器列表 → 用共享起始值；名字是虚拟屏裸名 → 用 card-local
+  零起始"两种口径各自重建 `crtc_to_connector_name`，每次重试都从同一 base 开始。
+- **PulseAudio 操作对象可能为空**：`pa_context_load_module` / `unload_module` /
+  `get_server_info`（sink 与 source 各一次）/ `set_default_source` 在上下文未就绪时返回空指针，
+  而调用点无条件 `alarm->wait()`——`alarm_t` 没有超时，等待永不返回，整个启动或会话清理会挂死。
+  八处调用后都判空、记 `pa_strerror(pa_context_errno(...))` 并返回该函数的失败值
+  （`PA_INVALID_INDEX` / `-1` / 原名 / `false`）。
+- **本地包的版本戳读得太早**：`packaging/arch-local/PKGBUILD` 在顶层读构建树里的版本戳，而
+  makepkg 先跑 `prepare()`（其中会重新 link）再读 `pkgver`，重新链接后包名与包内二进制会不一致。
+  改成 `pkgver=0` 占位 + `pkgver()` 函数：`_pkgver_from_stamp || _pkgver_from_git || printf 0`。
+- **AUR 的 `sha256sums` 比 `source` 多一项**：多出的一行 `SKIP` 让 makepkg 的校验数与源数不等，
+  构建前即报错。按 `makepkg --printsrcinfo` 重新生成，工作树的 `.SRCINFO` 与生成结果逐字节相同
+  （26 源 / 26 和）。
+
+验证：`ninja -C build sunshine test_sunshine` 通过；`test_sunshine` 665 例 / 660 通过 / 5 跳过 /
+0 断言失败；AUR 的 `bash -c 'source ./PKGBUILD; echo ${#source[@]} ${#sha256sums[@]}'` 输出
+`26 26`（本地包 `arch-local` 不含 `source` 数组——它安装已构建的树——所以只校验 `pkgver()`）；
+`python3 tools/audit-windows-parity.py` 确认落入 Windows 区域的改动行为 0。
+两客户端的现场形态仍无法在本机构造，`owned_virtual_display_connector()` 的多实例分支由
+`vdd_instances::find` 的既有单测（14 例）间接覆盖。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -1027,7 +1068,8 @@ test_sunshine: 665 用例，660 通过，5 跳过，0 失败
 | `89420200` | 第一轮 review 修复之后 | 652 / 647 |
 | `8c095703` | 第二轮 review 修复之后 | 653 / 648 |
 | `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐 | 660 / 655 |
-| 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复（当前，最终统计） | 665 / 660 |
+| 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复 | 665 / 660 |
+| 第五轮 review 修复之后 | 设备归属、跨卡编号、PulseAudio 判空与两处打包缺陷（当前） | 665 / 660 |
 
 从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
