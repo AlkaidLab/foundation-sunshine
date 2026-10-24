@@ -39,6 +39,24 @@ namespace platf::vdd_instances {
     }));
   }
 
+  session_mode_target_t
+  session_mode_target(const std::vector<record_t> &records, std::string_view identifier, std::size_t selected) {
+    if (identifier.empty()) {
+      // Unidentified request (tray, headless): the historical single-slot
+      // behaviour, i.e. it belongs to whatever is selected.
+      return { session_mode_target_e::selected, selected };
+    }
+
+    const std::size_t owned = find(records, identifier, selected);
+    if (owned != npos && records[owned].live) {
+      return { session_mode_target_e::instance, owned };
+    }
+
+    // Either this client has no display yet or the one it had is gone; both are
+    // settled by creation, which publishes the mode from the pending request.
+    return { session_mode_target_e::stash_pending, npos };
+  }
+
   std::vector<std::string>
   used_connectors(const std::vector<record_t> &records) {
     std::vector<std::string> connectors;

@@ -13,6 +13,8 @@ namespace {
   using platf::vdd_instances::npos;
   using platf::vdd_instances::pick_connector;
   using platf::vdd_instances::record_t;
+  using platf::vdd_instances::session_mode_target;
+  using platf::vdd_instances::session_mode_target_e;
   using platf::vdd_instances::used_connectors;
 
   /// A record whose serial is the one the identity rules derive for the name,
@@ -117,4 +119,65 @@ TEST(VddInstances, TwoClientsEndUpOnDifferentConnectors) {
   EXPECT_EQ(find(records, "alpha", npos), 0u);
   EXPECT_EQ(find(records, "bravo", npos), 1u);
   EXPECT_EQ(live_count(records), 2u);
+}
+
+TEST(VddInstances, AnUnidentifiedSessionModeKeepsTheSelectedView) {
+  const std::vector<record_t> records {
+    record("alpha", "DP-1"),
+  };
+
+  const auto target = session_mode_target(records, "", 0);
+  EXPECT_EQ(target.kind, session_mode_target_e::selected);
+  EXPECT_EQ(target.index, 0u);
+}
+
+TEST(VddInstances, ASessionModeFollowsItsOwnClientEvenWhenAnotherIsSelected) {
+  // The shared fields describe alpha's display here, but bravo's mode request
+  // must land on bravo's record: writing it into the view would apply bravo's
+  // EDID to alpha's connector.
+  const std::vector<record_t> records {
+    record("alpha", "DP-1"),
+    record("bravo", "DP-2"),
+  };
+
+  const auto target = session_mode_target(records, "bravo", 0);
+  EXPECT_EQ(target.kind, session_mode_target_e::instance);
+  EXPECT_EQ(target.index, 1u);
+}
+
+TEST(VddInstances, ASessionModeForAClientWithoutADisplayIsHeld) {
+  const std::vector<record_t> records {
+    record("alpha", "DP-1"),
+  };
+
+  const auto target = session_mode_target(records, "bravo", 0);
+  EXPECT_EQ(target.kind, session_mode_target_e::stash_pending);
+  EXPECT_EQ(target.index, npos);
+}
+
+TEST(VddInstances, ASessionModeForADeadDisplayIsHeldForRecreation) {
+  const std::vector<record_t> records {
+    record("alpha", "DP-1", /*live=*/false),
+  };
+
+  const auto target = session_mode_target(records, "alpha", 0);
+  EXPECT_EQ(target.kind, session_mode_target_e::stash_pending);
+  EXPECT_EQ(target.index, npos);
+}
+
+TEST(VddInstances, ASessionModeMatchesADisplayAdoptedFromAPreviousRun) {
+  // Adoption recovers the serial but not the client name, so the identity has
+  // to be recognised through the EDID serial the record still carries.
+  const std::vector<record_t> records {
+    record_t {
+      .client_identifier = "",
+      .serial = vdd_identity::serial_for_identifier("bravo"),
+      .connector = "DP-2",
+      .live = true,
+    },
+  };
+
+  const auto target = session_mode_target(records, "bravo", npos);
+  EXPECT_EQ(target.kind, session_mode_target_e::instance);
+  EXPECT_EQ(target.index, 0u);
 }

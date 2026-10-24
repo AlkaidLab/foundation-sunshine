@@ -1017,7 +1017,6 @@ namespace display_device {
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
-#include <sys/capability.h>
 #include <sys/stat.h>
 
 #include <boost/property_tree/json_parser.hpp>
@@ -1025,8 +1024,16 @@ namespace display_device {
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#if defined(SUNSHINE_BUILD_DRM)
+// libcap and libdrm are only linked when the build found both of them
+// (cmake/compile_definitions/linux.cmake: LIBDRM_FOUND AND LIBCAP_FOUND). The
+// virtual display backend degrades to the compositor-driven path without them,
+// so nothing here may reference them unconditionally.
+#include <sys/capability.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+#endif
 
 #include <algorithm>
 #include <cstdlib>
@@ -1067,6 +1074,7 @@ namespace display_device::vdd_utils {
 
     std::mutex state_mutex;
 
+#if defined(SUNSHINE_BUILD_DRM)
     /**
      * @brief RAII: lift the permitted file capabilities (granted by the
      *        packaging install hook) into the effective set for the duration
@@ -1102,6 +1110,20 @@ namespace display_device::vdd_utils {
 
       cap_t caps {};
     };
+#else
+    /**
+     * @brief Stand-in for builds without libcap: the effective set cannot be
+     *        raised, so the debugfs writes rely on the binary already carrying
+     *        the capabilities in its effective set (setcap ...+ep).
+     */
+    class elevated_caps {
+    public:
+      elevated_caps() = default;
+      elevated_caps(const elevated_caps &) = delete;
+      elevated_caps &
+      operator=(const elevated_caps &) = delete;
+    };
+#endif  // SUNSHINE_BUILD_DRM
 
     // Virtual display session state, guarded by state_mutex.
     bool active { false };
@@ -1171,6 +1193,22 @@ namespace display_device::vdd_utils {
      */
     std::vector<instance_t> instances;
     std::size_t selected_instance { vdd_instances::npos };
+
+    /**
+     * @brief Session mode a client asked for before it had a display.
+     * @details `set_vdd_session_mode()` runs before the virtual display is
+     *          created, and with two clients the shared fields describe the
+     *          *other* client's display at that moment. Keeping the request per
+     *          client is what lets creation publish the right mode without
+     *          touching a display it does not own.
+     */
+    struct pending_mode_t {
+      unsigned int width { 0 };
+      unsigned int height { 0 };
+      unsigned int refresh_hz { 0 };
+      VddSettings settings;
+    };
+    std::unordered_map<std::string, pending_mode_t> pending_session_modes;
 
     /// Defined further down; the instance table needs it before that point.
     bool
@@ -1416,6 +1454,11 @@ namespace display_device::vdd_utils {
       return file.substr(file.find('-') + 1);                                   // DP-2
     }
 
+#if defined(SUNSHINE_BUILD_DRM)
+    // The helpers below talk to libdrm directly, so they only exist when the
+    // build found it (cmake/compile_definitions/linux.cmake defines
+    // SUNSHINE_BUILD_DRM for LIBDRM_FOUND AND LIBCAP_FOUND). Without it the
+    // virtual display is still brought up, by the compositor alone.
     std::string_view
     kms_connector_prefix(std::uint32_t type) {
       switch (type) {
@@ -1470,7 +1513,9 @@ namespace display_device::vdd_utils {
       }
       return 0;
     }
+#endif  // SUNSHINE_BUILD_DRM
 
+#if defined(SUNSHINE_BUILD_DRM)
     bool
     find_master_holder(const std::string &dev_path, pid_t *out_pid, int *out_fd) {
       std::vector<std::pair<pid_t, int>> candidates;
@@ -1507,6 +1552,9 @@ namespace display_device::vdd_utils {
         }
         if (drmIoctl(dup_fd, DRM_IOCTL_DROP_MASTER, nullptr) == 0) {
           drmIoctl(dup_fd, DRM_IOCTL_SET_MASTER, nullptr);  // restore while we keep looking
+          // A duplicated descriptor shares the holder's file description, so
+          // the restored master state survives dropping our reference.
+          ::close(dup_fd);
           BOOST_LOG(debug) << "vdd: DRM master held by pid "sv << pid << " fd "sv << target_fd;
           *out_pid = pid;
           *out_fd = target_fd;
@@ -1516,6 +1564,17 @@ namespace display_device::vdd_utils {
       }
       return false;
     }
+#else
+    bool
+    find_master_holder(const std::string &dev_path, pid_t *out_pid, int *out_fd) {
+      // Built without libdrm: there is no master to borrow, and the
+      // compositor-driven path is the only one that can light the connector.
+      (void) dev_path;
+      (void) out_pid;
+      (void) out_fd;
+      return false;
+    }
+#endif  // SUNSHINE_BUILD_DRM
 
     /**
      * @brief Ask the compositor to light up a connector.
@@ -1678,6 +1737,7 @@ namespace display_device::vdd_utils {
       (void) priority;
     }
 
+#if defined(SUNSHINE_BUILD_DRM)
     /**
      * @brief Assign a CRTC to a connected connector: temporarily take DRM
      *        master from the compositor (pidfd borrow), create a dumb
@@ -1779,7 +1839,18 @@ namespace display_device::vdd_utils {
       }
       return assigned;
     }
+#else
+    bool
+    force_crtc_assignment(const std::string &dev_path, const std::string &connector) {
+      // Built without libdrm no modeset can be attempted, so the caller keeps
+      // waiting for the compositor instead of racing it.
+      (void) dev_path;
+      (void) connector;
+      return false;
+    }
+#endif  // SUNSHINE_BUILD_DRM
 
+#if defined(SUNSHINE_BUILD_DRM)
     /**
      * @brief Whether the named connector has been given an encoder/CRTC by
      *        the compositor. A non-master DRM open is enough to read this.
@@ -1809,6 +1880,16 @@ namespace display_device::vdd_utils {
       close(fd);
       return has_crtc;
     }
+#else
+    bool
+    connector_has_crtc(const std::string &card, const std::string &connector) {
+      // Without libdrm the CRTC assignment cannot be read back. Report true so
+      // the caller does not block a display the compositor may have enabled.
+      (void) card;
+      (void) connector;
+      return true;
+    }
+#endif  // SUNSHINE_BUILD_DRM
 
     bool
     connector_status_is(const std::string &status_path, const std::string &value) {
@@ -2447,7 +2528,7 @@ namespace display_device::vdd_utils {
   }
 
   bool
-  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode) {
+  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode, std::string_view client_identifier) {
     elevated_caps caps;
     const auto refresh_hz = std::max(1u, (requested_mode.refresh_rate.numerator + requested_mode.refresh_rate.denominator / 2) / requested_mode.refresh_rate.denominator);
 
@@ -2459,6 +2540,24 @@ namespace display_device::vdd_utils {
       // Only state is touched under the lock; the connector work below spawns
       // processes (kscreen-doctor) and must not hold it.
       std::lock_guard lock { state_mutex };
+
+      // The check has to run against the requesting client's own display: the
+      // shared fields describe whichever display was touched last, and reporting
+      // *that* connector as published would only move the failure downstream.
+      if (!client_identifier.empty()) {
+        if (const auto target = vdd_instances::session_mode_target(records_locked(), client_identifier, selected_instance);
+            target.kind == vdd_instances::session_mode_target_e::instance) {
+          load_instance_locked(target.index);
+        }
+        else {
+          BOOST_LOG(error) << "vdd: client "sv << client_identifier
+                           << " has no live virtual display; cannot check whether it published "sv
+                           << requested_mode.resolution.width << 'x' << requested_mode.resolution.height
+                           << '@' << refresh_hz << "Hz"sv;
+          return false;
+        }
+      }
+
       cached_width = requested_mode.resolution.width;
       cached_height = requested_mode.resolution.height;
       cached_refresh_hz = refresh_hz;
@@ -2577,7 +2676,7 @@ namespace display_device::vdd_utils {
   }
 
   set_vdd_result
-  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings) {
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings, std::string_view client_identifier) {
     elevated_caps caps;
     if (!config.resolution || !config.refresh_rate) {
       return set_vdd_result::invalid_config;
@@ -2585,6 +2684,31 @@ namespace display_device::vdd_utils {
 
     const auto refresh_hz = std::max(1u, (config.refresh_rate->numerator + config.refresh_rate->denominator / 2) / config.refresh_rate->denominator);
     std::lock_guard lock { state_mutex };
+
+    // Resolve the requester's own display before writing anything. With two
+    // clients the shared fields describe whichever display was touched last, so
+    // a request from the *other* client would otherwise be applied to this
+    // client's connector (EDID included) and then saved into its record.
+    if (const auto target = vdd_instances::session_mode_target(records_locked(), client_identifier, selected_instance);
+        target.kind != vdd_instances::session_mode_target_e::selected) {
+      if (target.kind == vdd_instances::session_mode_target_e::instance) {
+        load_instance_locked(target.index);
+      }
+      else {
+        // No live display of this client yet: keep the request for creation and
+        // leave the view (another client's display) untouched.
+        pending_session_modes[std::string { client_identifier }] = pending_mode_t {
+          .width = config.resolution->width,
+          .height = config.resolution->height,
+          .refresh_hz = refresh_hz,
+          .settings = settings,
+        };
+        BOOST_LOG(debug) << "vdd: holding the session mode "sv << config.resolution->width << 'x' << config.resolution->height
+                         << '@' << refresh_hz << "Hz for client "sv << client_identifier << " until its display exists"sv;
+        return set_vdd_result::ok;
+      }
+    }
+
     cached_width = config.resolution->width;
     cached_height = config.resolution->height;
     cached_refresh_hz = refresh_hz;
@@ -2675,6 +2799,44 @@ namespace display_device::vdd_utils {
       BOOST_LOG(warning) << "vdd: this client's virtual display on "sv << instances[owned].connector
                          << " is no longer live, recreating it"sv;
       erase_instance_locked(owned);
+    }
+
+    // From here on the shared fields describe the *requested* display, so every
+    // failure path below has to put the previous client's view back: otherwise
+    // the next store_current_locked() saves this failed request into that
+    // client's record, replacing its identity with a display that never came up.
+    const std::size_t view_selection = selected_instance;
+    struct view_restore_t {
+      std::size_t selection;
+      bool armed { true };
+      ~view_restore_t() {
+        if (!armed) {
+          return;
+        }
+        if (selection == vdd_instances::npos) {
+          clear_view_locked();
+        }
+        else {
+          load_instance_locked(selection);
+        }
+      }
+    } restore_view { view_selection };
+
+    // A client may have asked for its session mode before it had a display, in
+    // which case set_vdd_session_mode() held the request instead of writing it
+    // into somebody else's view. Adopt it here, before the EDID and the mode
+    // ladder are built from the cached mode.
+    if (!client_identifier.empty()) {
+      if (const auto pending = pending_session_modes.find(client_identifier); pending != pending_session_modes.end()) {
+        cached_width = pending->second.width;
+        cached_height = pending->second.height;
+        cached_refresh_hz = pending->second.refresh_hz;
+        cached_from_session = true;
+        session_mode_settings = pending->second.settings;
+        pending_session_modes.erase(pending);
+        BOOST_LOG(debug) << "vdd: adopting the session mode client "sv << client_identifier
+                         << " requested before its display existed"sv;
+      }
     }
 
     // Personalization captured at creation, mirroring the Windows
@@ -2898,6 +3060,10 @@ namespace display_device::vdd_utils {
       BOOST_LOG(info) << "vdd: "sv << total << " virtual displays are now live, one per client"sv;
     }
 
+    // The view now describes the display that was just created: the rollback
+    // would erase exactly that.
+    restore_view.armed = false;
+
     BOOST_LOG(info) << "vdd: virtual display is live on "sv << card << '-' << connector;
     return true;
   }
@@ -2912,6 +3078,13 @@ namespace display_device::vdd_utils {
     elevated_caps caps;
     std::lock_guard lock { state_mutex };
     store_current_locked();
+
+    // A teardown drops whatever this client still had queued: its next session
+    // asks for its own mode again, and a stale request would otherwise be
+    // adopted by the next creation.
+    if (!client_identifier.empty()) {
+      pending_session_modes.erase(std::string { client_identifier });
+    }
 
     // Tear down the caller's own display. An unidentified caller (tray,
     // headless teardown) keeps the historical single-slot behaviour and

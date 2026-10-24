@@ -48,6 +48,35 @@ namespace platf::vdd_instances {
   /// Records still reporting a live connector.
   std::size_t live_count(const std::vector<record_t> &records);
 
+  /**
+   * @brief Where a session-mode request belongs.
+   * @details The shared session fields describe exactly one display, so a
+   *          request that names a client has to be resolved *before* they are
+   *          written: a client with a live display must get its own view
+   *          loaded, and a client whose display does not exist yet must keep
+   *          its request until creation instead of applying it to whichever
+   *          display the shared fields happen to describe.
+   */
+  enum class session_mode_target_e {
+    selected,       ///< Use whatever the shared fields already describe.
+    instance,       ///< Load this record's own view first.
+    stash_pending,  ///< Keep the request until this client's creation.
+  };
+
+  struct session_mode_target_t {
+    session_mode_target_e kind { session_mode_target_e::selected };
+    std::size_t index { npos };  ///< Only meaningful for `instance`.
+  };
+
+  /**
+   * @brief Decide how a session-mode request must be applied.
+   * @param records Known records.
+   * @param identifier Requesting client, empty when unidentified.
+   * @param selected Index of the record the shared fields describe.
+   */
+  session_mode_target_t session_mode_target(const std::vector<record_t> &records, std::string_view identifier,
+                                            std::size_t selected = npos);
+
   /// Connectors of the records, in table order.
   std::vector<std::string> used_connectors(const std::vector<record_t> &records);
 

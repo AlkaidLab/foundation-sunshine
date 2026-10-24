@@ -366,7 +366,8 @@ namespace display_device {
 
   session_t::vdd_stage_result_e
   session_t::apply_vdd_display_stage(const parsed_config_t &config,
-    const boost::optional<device_info_map_t> &pre_vdd_devices) {
+    const boost::optional<device_info_map_t> &pre_vdd_devices,
+    std::string_view client_identifier) {
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation &&
         !vdd_utils::apply_vdd_prep(config.device_id, config.vdd_prep, pre_vdd_devices)) {
       return vdd_stage_result_e::topology_failed;
@@ -376,7 +377,7 @@ namespace display_device {
     // 锁屏场景会在解锁后执行本阶段；SYSTEM+RDP 不进入本阶段。
     if (config.resolution && config.refresh_rate) {
       const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
-      if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
+      if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode, client_identifier)) {
         BOOST_LOG(error) << "VDD monitor did not publish "
                          << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
         return vdd_stage_result_e::modes_failed;
@@ -534,6 +535,9 @@ namespace display_device {
                            enable_hdr = session.enable_hdr,
                            hdr_target_source = session.hdr_target_source,
                            hdr_capabilities = session.hdr_capabilities,
+                           vdd_owner = config::video.vdd_reuse
+                             ? std::string { "shared_vdd" }
+                             : get_client_id_from_session(session),
                            pre_saved_initial_topology,
                            pre_vdd_devices = pending_vdd_.pre_vdd_devices,
                            should_prepare_vdd,
@@ -552,7 +556,7 @@ namespace display_device {
         }
 
         if (should_prepare_vdd) {
-          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
+          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices, vdd_owner);
           if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
             BOOST_LOG(warning) << "[Display Deferred Retry] The rebuilt VDD has not published the requested mode yet; retrying later";
             return false;
@@ -607,7 +611,13 @@ namespace display_device {
     cancel_pending_display_retry();
 
     if (should_prepare_vdd) {
-      const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices);
+      // The identifier this session's virtual display is created under, so the
+      // mode-publication check looks at this client's display rather than
+      // whichever one the shared session fields describe.
+      const std::string vdd_owner = config::video.vdd_reuse
+        ? std::string { "shared_vdd" }
+        : get_client_id_from_session(session);
+      const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices, vdd_owner);
       if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
         restore_state_impl(revert_reason_e::config_cleanup);
         return {
@@ -702,7 +712,8 @@ namespace display_device {
   session_t::vdd_mode_update_e
   session_t::update_vdd_resolution(const parsed_config_t &config,
     const vdd_utils::VddSettings &vdd_settings,
-    const std::string &vdd_device_id) {
+    const std::string &vdd_device_id,
+    std::string_view client_identifier) {
     if (!config.resolution || !config.refresh_rate) {
       BOOST_LOG(debug) << "VDD session mode update skipped: resolution or refresh rate is not set";
       return vdd_mode_update_e::failed;
@@ -710,7 +721,7 @@ namespace display_device {
 
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
-    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
+    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings, client_identifier);
     switch (setmodes_result) {
       case vdd_utils::set_vdd_result::ok: {
         BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
@@ -825,7 +836,7 @@ namespace display_device {
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
       config.resolution && config.refresh_rate) {
-      const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako);
+      const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako, vdd_identifier);
       if (mode_update == vdd_mode_update_e::failed) {
         return vdd_stage_result_e::modes_failed;
       }

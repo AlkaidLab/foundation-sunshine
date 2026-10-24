@@ -4,6 +4,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 // lib includes
 #include <boost/atomic.hpp>
 // local includes
@@ -277,7 +278,8 @@ namespace display_device {
      * @brief 执行依赖可访问交互式 Windows 会话的 VDD 显示操作。
      */
     static vdd_stage_result_e
-    apply_vdd_display_stage(const parsed_config_t &config, const boost::optional<device_info_map_t> &pre_vdd_devices);
+    apply_vdd_display_stage(const parsed_config_t &config, const boost::optional<device_info_map_t> &pre_vdd_devices,
+      std::string_view client_identifier);
 
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
@@ -321,7 +323,8 @@ namespace display_device {
     vdd_mode_update_e
     update_vdd_resolution(const parsed_config_t &config,
       const vdd_utils::VddSettings &vdd_settings,
-      const std::string &vdd_device_id);
+      const std::string &vdd_device_id,
+      std::string_view client_identifier);
 
     /**
      * @brief Clear VDD session state.

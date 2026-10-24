@@ -215,9 +215,14 @@ namespace display_device::vdd_utils {
    * @brief Wait until Windows exposes a requested mode for a display device.
    * @details Uses a bounded deadline internally. Callers do not need to encode
    *          driver timing assumptions or retry counts.
+   * @param client_identifier Requesting client on Linux, so the publication is
+   *        checked against *that* client's virtual display and not against
+   *        whichever one the shared session fields currently describe. Empty on
+   *        Windows and for unidentified callers.
    */
   bool
-  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode);
+  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode,
+                            std::string_view client_identifier = {});
 
   struct vdd_status_t {
     std::string state;
@@ -312,10 +317,16 @@ namespace display_device::vdd_utils {
    *          This does not persist the session resolution to vdd_settings.xml.
    * @param config Parsed display configuration containing the requested session mode.
    * @param settings Full standard mode list plus the requested session mode.
+   * @param client_identifier Requesting client on Linux. A client that already
+   *        owns a live virtual display gets its own view loaded first; one whose
+   *        display does not exist yet has its request kept until creation, so
+   *        the mode is never applied to another client's connector. Empty on
+   *        Windows and for unidentified callers.
    * @return Typed outcome describing whether the complete live update was accepted.
    */
   set_vdd_result
-  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings);
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings,
+                       std::string_view client_identifier = {});
 
   /**
    * @brief 从客户端标识符生成GUID字符串（用于驱动识别）
