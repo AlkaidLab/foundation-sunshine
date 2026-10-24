@@ -78,7 +78,11 @@ public:
     }
     ~NativeSession(){cleanup();}
     bool send(const receiver::Slot& packet){
-        return sonic_live::enqueue_native(*input_,packet,data_);
+        bool accepted=sonic_live::enqueue_native(*input_,packet,data_);
+        if(!accepted)fprintf(stderr,"NATIVE_INPUT_REFUSED fault=%ld cancel=%ld done=%ld queued=%lld capacity=32 workerStatus=%ld workerError=%ld\n",
+            receiver::get(input_->common.fault),receiver::get(input_->common.cancel),receiver::get(input_->common.producerDone),
+            receiver::get(input_->writer.write)-receiver::get(input_->reader.read),receiver::get(output_->header.status),receiver::get(output_->header.error));
+        return accepted;
     }
     void heartbeat(){receiver::put(input_->writer.heartbeat,receiver::qpc());}
     void finish(){
