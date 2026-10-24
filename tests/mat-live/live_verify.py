@@ -1,8 +1,8 @@
-"""One bounded native MAT + full RTSP/video acceptance. No media file input.
+"""Full RTSP/video acceptance with Windows or Android mock output. No replay.
 
 The shared test helpers handle isolated certificates and orderly host shutdown.
 No installed host is modified.
-Elevation, deployment and explicit native authorization belong to the caller.
+Native MAT mode needs explicit authorization; Android Opus mode never attaches.
 """
 import argparse
 import ctypes
@@ -108,7 +108,12 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--host-build", type=Path, required=True)
-    p.add_argument("--client-build", type=Path, required=True)
+    p.add_argument("--client-build", type=Path)
+    p.add_argument("--adb", type=Path)
+    p.add_argument("--android-serial")
+    p.add_argument("--android-apk", type=Path)
+    p.add_argument("--android-session-only", action="store_true",
+                   help="Full Android session with Opus fallback, no native capture")
     p.add_argument("--port", type=int, default=52410)
     p.add_argument("--preflight-only", action="store_true")
     preflight_checks = p.add_mutually_exclusive_group()
@@ -129,6 +134,14 @@ def main():
     p.add_argument("--operator-build", type=Path)
     p.add_argument("--powershell", type=Path)
     args = p.parse_args()
+    android = all((args.adb, args.android_serial, args.android_apk))
+    if any((args.adb, args.android_serial, args.android_apk)) and not android:
+        p.error("Android needs explicit ADB, emulator serial and diagnostic APK")
+    if not android and not args.client_build:
+        p.error("Explicit client build or Android diagnostic APK required")
+    if args.android_session_only and (not android or args.preflight_only):
+        p.error("Android software session requires Android arguments, without --preflight-only")
+    client_binary = args.android_apk if android else args.client_build / "mat-live-session-client.exe"
     if args.ui_preflight and not args.preflight_only:
         p.error("UI preflight needs --preflight-only")
     if args.ticket_preflight and not args.preflight_only:
@@ -137,7 +150,7 @@ def main():
         p.error("Operator build and explicit PowerShell executable must be paired")
     if not 8 <= args.seconds <= 30:
         p.error("Native capture duration must be 8..30 seconds")
-    if not args.preflight_only and not all((args.publisher, args.tap, args.tap_sha, args.codec, args.codec_sha,
+    if not args.preflight_only and not args.android_session_only and not all((args.publisher, args.tap, args.tap_sha, args.codec, args.codec_sha,
                                           args.probe, args.engine_pid, args.engine_created, args.endpoint_id)):
         p.error("Explicit pinned native producer/engine/endpoint arguments required")
     out = args.output.resolve()
@@ -211,7 +224,8 @@ def main():
     launched = False
     result = {"passed": False, "preflightOnly": args.preflight_only, "sampleReplayUsed": False,
               "audioPayloadWrittenToDisk": False, "videoPayloadWrittenToDisk": False,
-              "hardwareSink": False, "avSyncCalibrated": False, "nativeCaptureSeconds": args.seconds}
+              "hardwareSink": False, "avSyncCalibrated": False,
+              "nativeCaptureSeconds": 0 if args.android_session_only or args.preflight_only else args.seconds}
     capture_path = out / "capture.log"
     operator_script = Path(__file__).resolve().parents[2] / "tools/sonic-mat-live/manage-live.ps1"
 
@@ -263,49 +277,71 @@ def main():
                 result["uiStatus"] = verify_ui(opener, args.port, config, out / "sunshine.conf")
             result["passed"] = True
             return
-        for dll, expected in ((args.tap, args.tap_sha), (args.codec, args.codec_sha)):
-            assert sha(dll) == expected
-        mode = "--reattach" if args.reattach else "--attach"
-        if args.operator_build:
-            options = ["-Build", str(args.operator_build), "-Output", str(out / "operator"),
-                       "-EnginePid", str(args.engine_pid), "-EngineCreated", args.engine_created,
-                       "-Seconds", str(args.seconds), "-SessionId", identifier]
-            if args.reattach:
-                options.append("-Reattach")
-            operator("Start", options)
-            state = json.loads((out / "operator" / "capture.json").read_text(encoding="utf-8-sig"))
-            publisher = OwnedPublisher(state)
-            assert Path(state["producer"]).resolve() == args.publisher.resolve() and state["pipe"] == pipe and state["stopEvent"] == stop
-            assert not state["continuous"] and state["maximumSeconds"] == args.seconds
-            capture_path = out / "operator" / "capture.log"
-        else:
-            publisher = start([str(args.publisher), mode, str(args.engine_pid), args.engine_created,
-                  str(args.tap), args.tap_sha, str(args.codec), args.codec_sha, pipe, stop,
-                  "--max-seconds", str(args.seconds)], "capture")
-        wait_log(publisher, "capture", "ATTACHED source=plugin-objects-to-native-MAT", 3)
-        source = start([str(args.probe), "--emit", "--endpoint", args.endpoint_id, "--seconds",
-                         str(args.seconds + 2), "--objects", "2", "--variant", "0"] +
-                       (["--bed-7.1.4"] if args.bed714 else []), "source")
-        wait_log(publisher, "capture", "NATIVE_MAT_READY", 5)
-        if args.operator_build:
-            status = json.loads(operator("Status", ["-Metadata", str(out / "operator" / "capture.json")]))
-            assert status["state"] == "NativeReady" and status["publisherAlive"] and status["engineIdentityRetained"]
-            result["operatorObservedNativeReady"] = True
+        if android:
+            from android.session import AndroidClient
+            client = AndroidClient(args.adb, args.android_serial, args.android_apk, out)
+        if not args.android_session_only:
+            for dll, expected in ((args.tap, args.tap_sha), (args.codec, args.codec_sha)):
+                assert sha(dll) == expected
+            mode = "--reattach" if args.reattach else "--attach"
+            if args.operator_build:
+                options = ["-Build", str(args.operator_build), "-Output", str(out / "operator"),
+                           "-EnginePid", str(args.engine_pid), "-EngineCreated", args.engine_created,
+                           "-Seconds", str(args.seconds), "-SessionId", identifier]
+                if args.reattach:
+                    options.append("-Reattach")
+                operator("Start", options)
+                state = json.loads((out / "operator" / "capture.json").read_text(encoding="utf-8-sig"))
+                publisher = OwnedPublisher(state)
+                assert Path(state["producer"]).resolve() == args.publisher.resolve() and state["pipe"] == pipe and state["stopEvent"] == stop
+                assert not state["continuous"] and state["maximumSeconds"] == args.seconds
+                capture_path = out / "operator" / "capture.log"
+            else:
+                publisher = start([str(args.publisher), mode, str(args.engine_pid), args.engine_created,
+                      str(args.tap), args.tap_sha, str(args.codec), args.codec_sha, pipe, stop,
+                      "--max-seconds", str(args.seconds)], "capture")
+            wait_log(publisher, "capture", "ATTACHED source=plugin-objects-to-native-MAT", 3)
+            source = start([str(args.probe), "--emit", "--endpoint", args.endpoint_id, "--seconds",
+                             str(args.seconds + 2), "--objects", "2", "--variant", "0"] +
+                           (["--bed-7.1.4"] if args.bed714 else []), "source")
+            wait_log(publisher, "capture", "NATIVE_MAT_READY", 5)
+            if args.operator_build:
+                status = json.loads(operator("Status", ["-Metadata", str(out / "operator" / "capture.json")]))
+                assert status["state"] == "NativeReady" and status["publisherAlive"] and status["engineIdentityRetained"]
+                result["operatorObservedNativeReady"] = True
         key = os.urandom(16).hex()
         iv = os.urandom(4) + bytes(12)
         body, launch = request("launch", {"appid": apps.findtext("App/ID"), "rikey": key,
-            "rikeyid": int.from_bytes(iv[:4], "big"), "mode": "640x360x30", "localAudioPlayMode": 0,
+            "rikeyid": int.from_bytes(iv[:4], "big"), "mode": "640x360x30",
+            "localAudioPlayMode": 1 if args.android_session_only else 0,
+            "continuousAudio": 1 if args.android_session_only else 0,
             "surroundAudioInfo": 196610, "sops": 0, "useVdd": 0, "customScreenMode": 0,
             "touchKeyboard": 0, "hdrMode": 0, "corever": 1, "remoteControllersBitmap": 0, "gcmap": 0, "gcpersist": 0})
         launched = True
         (out / "launch.xml").write_bytes(body)
         session_url = launch.findtext("sessionUrl0")
         assert session_url and session_url.startswith("rtspenc://")
-        client = start([str((args.client_build / "mat-live-session-client.exe").resolve()), session_url,
-             info.findtext("appversion"), info.findtext("GfeVersion"), info.findtext("ServerCodecModeSupport"),
-             key, iv.hex(), str(out / "client-result.json"), str(args.seconds + 10)], "client")
-        print(f"NATIVE full RTSP client={client.pid} host={host.pid} publisher={publisher.pid}", flush=True)
-        client.wait(timeout=args.seconds + 15)
+        if android:
+            client.start({
+                "sessionHost": "10.0.2.2", "sessionUrl": session_url.replace("127.0.0.1", "10.0.2.2"),
+                "appVersion": info.findtext("appversion"), "gfeVersion": info.findtext("GfeVersion"),
+                "serverCodecMask": info.findtext("ServerCodecModeSupport"), "inputKey": key, "inputIv": iv.hex(),
+                "audioCodec": 6 if args.android_session_only else 7,
+                "expectedCodec": 0 if args.android_session_only else 7,
+                "seconds": args.seconds if args.android_session_only else args.seconds + 10})
+        else:
+            client = start([str(client_binary.resolve()), session_url,
+                 info.findtext("appversion"), info.findtext("GfeVersion"), info.findtext("ServerCodecModeSupport"),
+                 key, iv.hex(), str(out / "client-result.json"), str(args.seconds + 10)], "client")
+        print(f"FULL_RTSP client={client.pid} host={host.pid} nativeCapture={publisher is not None}", flush=True)
+        client.wait(timeout=args.seconds + 30)
+        if args.android_session_only:
+            status = json.loads((out / "client-result.json").read_text())
+            assert client.returncode == 0 and status["passed"] and status["codec"] == 0
+            assert status["fullLiStartConnection"] and status["videoFramesDecoded"] >= 30
+            result.update(passed=True, client=status, fullSunshineRtspSession=True, encryptedRtsp=True,
+                          source="Sunshine continuous Opus fallback (idle silence); compressed audio mock; Android MediaCodec H264")
+            return
         publisher.wait(timeout=8)
         source.wait(timeout=8)
         status = json.loads((out / "client-result.json").read_text())
@@ -359,6 +395,11 @@ def main():
                 cleanup_errors.append(str(e))
         for log in logs:
             log.close()
+        if android and client:
+            try:
+                client.close()
+            except Exception as error:
+                cleanup_errors.append(str(error))
         if args.operator_build and (out / "operator" / "capture.json").exists():
             try:
                 stopped = json.loads(operator("Stop", ["-Metadata", str(out / "operator" / "capture.json")]))
@@ -371,14 +412,14 @@ def main():
         result.update(hostExitCode=host.returncode if host else None,
             publisherExitCode=publisher.returncode if publisher else None, clientExitCode=client.returncode if client else None,
             sourceExitCode=source.returncode if source else None, cleanupErrors=cleanup_errors,
-            hostSha256=sha(portable / "sunshine.exe"), clientSha256=sha(args.client_build / "mat-live-session-client.exe"))
+            hostSha256=sha(portable / "sunshine.exe"), clientSha256=sha(client_binary))
         if cleanup_errors or (host and host.returncode != 0):
             result["passed"] = False
         save(out / "result.json", result)
         if isinstance(publisher, OwnedPublisher):
             publisher.close()
         if not result["passed"]:
-            print("FAIL_FULL_NATIVE_RTSP inspect result.json and original logs", flush=True)
+            print("FAIL_FULL_RTSP inspect result.json and original logs", flush=True)
             if sys.exc_info()[0] is None:
                 raise RuntimeError("Acceptance failed during cleanup; inspect result.json")
 

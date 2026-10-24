@@ -122,8 +122,32 @@ missing END, sink failure, cancellation at END, preservation of a Java callback
 exception, stale epochs, callback rejection and two fresh-session reconnects.
 Each successful session consumes 128 generated cycles. The END callback returns
 success only after mock drain; redundant authenticated END packets notify Java once.
-The `proof.json`, instrumentation and CheckJNI logs report this diagnostic bridge
-only. There is no Android app integration, RTSP/RTP/FEC session, AudioTrack, HDMI
-output, Dolby decode or acoustic synchronization claim. The source is generated
-in memory, not captured or replayed media. For the JNI lifetime/thread rules see
+The default `proof.json`, instrumentation and CheckJNI logs report the generated
+JNI cases only. The source is generated in memory, not captured or replayed media.
+For the JNI lifetime/thread rules see
 [Android JNI tips](https://developer.android.com/ndk/guides/jni-tips).
+
+The same APK also contains a full common-c `LiStartConnection` adapter and an
+Android MediaCodec H.264 decoder in ByteBuffer mode. Run against an isolated,
+normally built Sunshine with no native capture:
+
+```powershell
+python tests/mat-live/live_verify.py --output <fresh-dir> --host-build <Sunshine-build> --adb <adb.exe> --android-serial emulator-5560 --android-apk <diagnostic.apk> --android-session-only --seconds 8 --port 52410
+```
+
+This checks real encrypted RTSP/control, video RTP/FEC, Android decode and orderly
+teardown. With no armed MAT source, AUTO6 must negotiate Opus0. The isolated launch
+uses the existing `continuousAudio` option to send idle Opus silence, which the
+compressed-audio mock discards. It keeps host playback enabled to avoid selecting
+a virtual sink. This result is not a live-MAT or source-audio integrity result.
+
+For authorized native MAT acceptance, omit `--android-session-only` and supply the
+existing explicit native source/operator arguments as well as the three Android
+arguments. The APK is prepared before native attachment; strict live7 uses actual
+AudioStream authentication/reassembly and JNI callbacks into the same bounded
+Java mock. Acceptance requires publisher/received/consumed SHA equality,
+authenticated EOS after mock drain, concurrent video decode and verified hook
+restoration. This mode still needs fresh native-capture authorization.
+
+The historical Android application stays untouched. This diagnostic APK contains
+no AudioTrack, HDMI output, Dolby decoder or acoustic synchronization test.

@@ -56,7 +56,7 @@ def main():
     classes, dex = out / "classes", out / "dex"
     classes.mkdir(); dex.mkdir()
     run([java / "bin/javac.exe", "-source", "8", "-target", "8", "-bootclasspath", platform,
-         "-d", classes, source / "MatInstrumentation.java"])
+         "-d", classes, *sorted(source.glob("*.java"))])
     run([java / "bin/java.exe", "-cp", tools / "lib/d8.jar", "com.android.tools.r8.D8",
          "--min-api", "23", "--lib", platform, "--output", dex, *classes.rglob("*.class")])
     unsigned, aligned, apk = (out / name for name in ("unsigned.apk", "aligned.apk", "mat-jni-mock.apk"))

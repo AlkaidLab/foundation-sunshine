@@ -13,10 +13,10 @@ import java.util.ArrayDeque;
 public final class MatInstrumentation extends Instrumentation {
     static { System.loadLibrary("matjni"); }
     private static native int runNative(Output output, long epoch, int mode);
-    private static void check(boolean value, String message) {
+    static void check(boolean value, String message) {
         if (!value) throw new AssertionError(message);
     }
-    private static String hex(byte[] bytes) {
+    static String hex(byte[] bytes) {
         StringBuilder text = new StringBuilder();
         for (byte b : bytes) text.append(String.format("%02x", b & 255));
         return text.toString();
@@ -25,14 +25,18 @@ public final class MatInstrumentation extends Instrumentation {
     static final class Output {
         final ArrayDeque<byte[]> queue = new ArrayDeque<>();
         final MessageDigest expected, consumed;
-        final long epoch, caller = Thread.currentThread().getId();
+        final long epoch, domain, caller = Thread.currentThread().getId();
+        final boolean generated;
         final int mode;
         int cycles, ends, peak, offset, writes, zeroWrites, shortWrites;
         long consumedBytes;
         String sourceSha, outputSha;
         boolean completed, closed, foreignThread, pendingAtEnd;
         Output(long epoch, int mode) throws Exception {
-            this.epoch = epoch; this.mode = mode;
+            this(epoch, mode, 7, true);
+        }
+        Output(long epoch, int mode, long domain, boolean generated) throws Exception {
+            this.epoch = epoch; this.mode = mode; this.domain = domain; this.generated = generated;
             expected = MessageDigest.getInstance("SHA-256");
             consumed = MessageDigest.getInstance("SHA-256");
         }
@@ -41,16 +45,19 @@ public final class MatInstrumentation extends Instrumentation {
             if (mode == 5) throw new CallbackException();
             if (mode == 7) return false;
             check(foreignThread && !closed && !completed, "callback thread/lifecycle");
-            check(e == epoch && domain == 7 && index == cycles && pts == index * 960, "cycle identity");
+            check(e == epoch && domain == this.domain && index == cycles && pts == index * 960, "cycle identity");
             check(borrowed.isDirect() && borrowed.remaining() == 61440, "borrowed native buffer");
             if (queue.size() == 4) return false;
             byte[] copy = new byte[61440]; borrowed.get(copy);
             // Native storage is reused by the next cycle; only the owned copy may be queued.
             queue.add(copy); peak = Math.max(peak, queue.size());
-            byte[] source = new byte[61440];
-            for (int j = 0; j < source.length; ++j) source[j] = (byte)(j * 7 + cycles);
-            byte[] header = {0x72, (byte)0xf8, 0x1f, 0x4e, 0x16, 0, 2, 0};
-            System.arraycopy(header, 0, source, 0, header.length);
+            byte[] source = copy;
+            if (generated) {
+                source = new byte[61440];
+                for (int j = 0; j < source.length; ++j) source[j] = (byte)(j * 7 + cycles);
+                byte[] header = {0x72, (byte)0xf8, 0x1f, 0x4e, 0x16, 0, 2, 0};
+                System.arraycopy(header, 0, source, 0, header.length);
+            }
             expected.update(source); ++cycles;
             return queue.size() < 3 || drain(1);
         }
@@ -75,10 +82,15 @@ public final class MatInstrumentation extends Instrumentation {
         }
         void close() { closed = true; queue.clear(); }
     }
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    private Bundle arguments;
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); this.arguments = arguments; start(); }
     @Override public void onStart() {
         Bundle result = new Bundle(); JSONArray cases = new JSONArray();
         try {
+            if (arguments != null && arguments.containsKey("sessionUrl")) {
+                result.putString("proof", Session.run(arguments).toString());
+                finish(Activity.RESULT_OK, result); return;
+            }
             for (int mode = 0; mode < 8; ++mode) {
                 Output output = new Output(123, mode); int code = -1; boolean threw = false;
                 try { code = runNative(output, 123, mode); }
