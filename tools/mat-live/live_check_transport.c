@@ -12,8 +12,8 @@ static reed_solomon* encoder;
 static uint8_t shards[RTPA_TOTAL_SHARDS][MAT_LIVE_PACKET];
 static void failure(int code){(void)code;terminated=1;}
 void LiveCheckClose(void){
-    if(sender!=INVALID_SOCKET)closesocket(sender);sender=INVALID_SOCKET;
-    if(receiver!=INVALID_SOCKET)closesocket(receiver);receiver=INVALID_SOCKET;
+    if(sender!=INVALID_SOCKET)closeSocket(sender);sender=INVALID_SOCKET;
+    if(receiver!=INVALID_SOCKET)closeSocket(receiver);receiver=INVALID_SOCKET;
     if(encoder)reed_solomon_release(encoder);encoder=NULL;
     if(matLive)MatLivePlaybackClose(matLive);matLive=NULL;
     if(initialized){RtpaCleanupQueue(&rtpAudioQueue);cleanupPlatform();initialized=0;}
@@ -32,7 +32,12 @@ int LiveCheckOpen(const LI_MAT_LIVE_PROFILE* profile,const uint8_t key[16],const
     if(sender==INVALID_SOCKET||receiver==INVALID_SOCKET)goto fail;
     memset(&destination,0,sizeof(destination));destination.sin_family=AF_INET;destination.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     if(bind(receiver,(struct sockaddr*)&destination,sizeof(destination)))goto fail;
-    {int n=sizeof(destination);DWORD timeout=1000;
+    {socklen_t n=sizeof(destination);
+#ifdef LC_WINDOWS
+     DWORD timeout=1000;
+#else
+     struct timeval timeout={1,0};
+#endif
      if(getsockname(receiver,(struct sockaddr*)&destination,&n)||setsockopt(receiver,SOL_SOCKET,SO_RCVTIMEO,(const char*)&timeout,sizeof(timeout)))goto fail;}
     return 1;
 fail:LiveCheckClose();return 0;
@@ -66,7 +71,9 @@ int LiveCheckSend(const uint8_t* payload,size_t length){
     if(index==3){
         uint8_t* pointers[RTPA_TOTAL_SHARDS];for(unsigned i=0;i<RTPA_TOTAL_SHARDS;++i)pointers[i]=shards[i];
         if(reed_solomon_encode(encoder,pointers,RTPA_TOTAL_SHARDS,(int)length))return 0;
-        for(unsigned i=0;i<RTPA_FEC_SHARDS;++i){
+        /* Mode 2 proves recovery with exactly three data + one parity shard.
+         * Unlike Debug FEC validation, production needs no extra test shard. */
+        for(unsigned i=0;i<(drop_mode==2?1:RTPA_FEC_SHARDS);++i){
             AUDIO_FEC_HEADER* f=(AUDIO_FEC_HEADER*)(r+1);r->packetType=127;r->sequenceNumber=BE16((uint16_t)(sequence+i+1));
             r->timestamp=0;f->fecShardIndex=(uint8_t)i;f->payloadType=97;f->baseSequenceNumber=BE16((uint16_t)(sequence-3));
             f->baseTimestamp=BE32((uint32_t)(sequence-3));f->ssrc=0;memcpy(f+1,shards[4+i],length);

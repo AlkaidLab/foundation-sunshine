@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include "MatLivePlayback.h"
 #include "MatLiveCrypto.h"
+#include "../../../tools/mat-live/live_check_transport.h"
 
 typedef struct {
     JavaVM* vm;
@@ -43,6 +44,7 @@ static int send_packet(Run* r,MAT_LIVE_PLAYBACK* playback,MAT_LIVE_CIPHER* ciphe
     uint8_t wire[MAT_LIVE_PACKET];
     if(!MatLiveSeal(cipher,sequence,plain,wire))return -1;
     if(r->mode==1)wire[MAT_LIVE_HEADER]^=1; /* Authentication failure before Java sees data. */
+    if(r->mode==8)return LiveCheckSend(wire,sizeof(wire))?0:-1;
     return MatLivePlaybackPush(playback,wire,sizeof(wire));
 }
 static void* worker(void* context) {
@@ -51,12 +53,19 @@ static void* worker(void* context) {
     uint8_t key[16]={0},carrier[MAT_WIRE_CYCLE],plain[MAT_WIRE_PACKET];
     LI_MAT_LIVE_PROFILE profile={r->epoch,7};
     LI_MAT_PLAYBACK_CALLBACKS callbacks={cycle,end,r};
-    MAT_LIVE_PLAYBACK* playback=MatLivePlaybackOpen(&profile,key,&callbacks);
+    MAT_LIVE_PLAYBACK* playback=NULL;
+    if(r->mode==8) {
+        if(!LiveCheckOpen(&profile,key,&callbacks,2))goto done;
+    } else playback=MatLivePlaybackOpen(&profile,key,&callbacks);
     MAT_LIVE_CIPHER cipher;
-    if(!playback||!MatLiveCipherInit(&cipher,key,sizeof(key),r->mode==6?r->epoch-1:r->epoch,7))goto done;
+    if((!playback&&r->mode!=8)||!MatLiveCipherInit(&cipher,key,sizeof(key),r->mode==6?r->epoch-1:r->epoch,7))goto done;
+    if(r->mode==8) {
+        mat_wire_make(plain,MAT_WIRE_SYNC,r->epoch,7,0,0,0,NULL);
+        for(uint64_t i=0;i<4;++i)if(send_packet(r,playback,&cipher,plain,i)<0)goto done;
+    }
     uint64_t sequence=4;
     uint32_t hash=2166136261u;
-    int total=r->mode==0?128:1;
+    int total=r->mode==0||r->mode==8?128:1;
     for(int i=0;i<total;++i) {
         for(unsigned j=0;j<sizeof(carrier);++j)carrier[j]=(uint8_t)(j*7+i);
         memcpy(carrier,"\x72\xf8\x1f\x4e\x16\x00\x02\x00",8);
@@ -75,8 +84,9 @@ static void* worker(void* context) {
             if(r->result<0)break;
         }
     }
+    if(r->mode==8&&r->result>=0)r->result=2;
 done:
-    MatLivePlaybackClose(playback);
+    if(r->mode==8)LiveCheckClose();else MatLivePlaybackClose(playback);
     (*r->vm)->DetachCurrentThread(r->vm);
     return NULL;
 }
@@ -95,4 +105,8 @@ JNIEXPORT jint JNICALL Java_com_sunshine_matmock_MatInstrumentation_runNative(
     (*env)->DeleteGlobalRef(env,r.sink);
     if(r.exception){(*env)->Throw(env,r.exception);(*env)->DeleteGlobalRef(env,r.exception);}
     return r.result;
+}
+JNIEXPORT jlongArray JNICALL Java_com_sunshine_matmock_MatInstrumentation_fecStatsNative(JNIEnv* env,jclass type) {
+    (void)type;jlong values[]={(jlong)LiveCheckDrops(),(jlong)LiveCheckRecovered()};
+    jlongArray result=(*env)->NewLongArray(env,2);if(result)(*env)->SetLongArrayRegion(env,result,0,2,values);return result;
 }

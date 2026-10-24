@@ -13,6 +13,7 @@ import java.util.ArrayDeque;
 public final class MatInstrumentation extends Instrumentation {
     static { System.loadLibrary("matjni"); }
     private static native int runNative(Output output, long epoch, int mode);
+    private static native long[] fecStatsNative();
     static void check(boolean value, String message) {
         if (!value) throw new AssertionError(message);
     }
@@ -109,16 +110,25 @@ public final class MatInstrumentation extends Instrumentation {
                     .put("consumedBytes", output.consumedBytes).put("peakQueueCycles", output.peak);
                 cases.put(item);
             }
+            Output fec = new Output(123, 0);
+            try {
+                verifySuccess(fec, runNative(fec, 123, 8));
+                long[] stats = fecStatsNative();
+                check(stats[0] > 0 && stats[0] == stats[1], "three data + one parity recovery");
+                cases.put(new JSONObject().put("name", "fec-three-data-one-parity").put("passed", true)
+                    .put("dropped", stats[0]).put("recovered", stats[1])
+                    .put("sourceSha256", fec.sourceSha).put("outputSha256", fec.outputSha));
+            } finally { fec.close(); }
             for (long epoch = 124; epoch <= 125; ++epoch) {
                 Output output = new Output(epoch, 0);
                 verifySuccess(output, runNative(output, epoch, 0)); output.close();
             }
             cases.put(new JSONObject().put("name", "fresh-session-reconnect").put("passed", true));
             JSONObject proof = new JSONObject().put("passed", true).put("cases", cases)
-                .put("cyclesPerSuccessfulSession", 128).put("successfulSessions", 3)
+                .put("cyclesPerSuccessfulSession", 128).put("successfulSessions", 4)
                 .put("source", "generated encrypted packets")
                 .put("nativeWorkerThread", true).put("output", "mock").put("hardwareSink", false)
-                .put("rtspSession", false).put("rtpFec", false).put("pid", android.os.Process.myPid());
+                .put("rtspSession", false).put("rtpFec", true).put("pid", android.os.Process.myPid());
             result.putString("proof", proof.toString());
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {

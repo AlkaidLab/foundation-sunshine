@@ -116,10 +116,15 @@ Start an x86_64 emulator first. The runner requires SDK platform 34 and SDK CMak
 for the diagnostic process, then restores the setting and removes its APK.
 No Gradle dependencies are downloaded. Run this manually, outside routine CI.
 
-Nine cases cover native-thread callbacks, copying borrowed buffers before native
+Ten cases cover native-thread callbacks, copying borrowed buffers before native
 reuse, bounded Java mock writes/drain and SHA equality, authentication failure,
 missing END, sink failure, cancellation at END, preservation of a Java callback
 exception, stale epochs, callback rejection and two fresh-session reconnects.
+The added RTP/FEC case reuses the existing loopback transport adapter and recovers
+one deliberately absent data shard using only three data shards plus one parity
+shard, then compares the generated and consumed SHA. Native code is built as
+RelWithDebInfo so common-c's Debug-only extra-shard FEC validation is excluded;
+the debuggable APK still runs with CheckJNI enabled.
 Each successful session consumes 128 generated cycles. The END callback returns
 success only after mock drain; redundant authenticated END packets notify Java once.
 The default `proof.json`, instrumentation and CheckJNI logs report the generated

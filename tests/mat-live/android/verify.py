@@ -50,7 +50,7 @@ def main():
     run([cmake / "cmake.exe", "-S", source, "-B", out / "native", "-G", "Ninja",
          f"-DCMAKE_MAKE_PROGRAM={cmake / 'ninja.exe'}",
          f"-DCMAKE_TOOLCHAIN_FILE={ndk / 'build/cmake/android.toolchain.cmake'}",
-         "-DANDROID_ABI=x86_64", "-DANDROID_PLATFORM=android-23", "-DCMAKE_BUILD_TYPE=Debug",
+         "-DANDROID_ABI=x86_64", "-DANDROID_PLATFORM=android-23", "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
          f"-DOPENSSL_ROOT={crypto}"])
     run([cmake / "cmake.exe", "--build", out / "native", "--parallel", "2"])
     classes, dex = out / "classes", out / "dex"
@@ -82,13 +82,13 @@ def main():
         if not match:
             raise RuntimeError(text)
         proof = json.loads(match[1])
-        assert proof["passed"] and len(proof["cases"]) == 9
+        assert proof["passed"] and len(proof["cases"]) == 10
         runtime = device("logcat", "-d", "-v", "brief", "--pid=" + str(proof["pid"]))
         (out / "runtime.log").write_text(runtime, encoding="utf8")
         assert "JNI DETECTED ERROR" not in runtime and "FATAL EXCEPTION" not in runtime
         assert "Late-enabling -Xcheck:jni" in runtime, "CheckJNI activation was not observed"
         proof.update(serial=args.serial, api=device("shell", "getprop", "ro.build.version.sdk"),
-                     abi=abi, checkJniEnabled=True,
+                     abi=abi, checkJniEnabled=True, nativeBuildType="RelWithDebInfo",
                      commonHead=run(["git", "-C", root / "third-party/moonlight-common-c", "rev-parse", "HEAD"]),
                      hostHead=run(["git", "rev-parse", "HEAD"]),
                      apkSha256=hashlib.sha256(apk.read_bytes()).hexdigest(),
