@@ -338,6 +338,13 @@ namespace platf {
             alarm.get()),
         };
 
+        // libpulse returns null (and never runs the callback) while the context
+        // is not ready; the alarm has no timeout, so waiting would hang forever.
+        if (!op) {
+          BOOST_LOG(error) << "Couldn't create load-module operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return PA_INVALID_INDEX;
+        }
+
         alarm->wait();
         return *alarm->status();
       }
@@ -353,6 +360,11 @@ namespace platf {
         op_t op {
           pa_context_unload_module(ctx.get(), i, success_cb, alarm.get())
         };
+
+        if (!op) {
+          BOOST_LOG(error) << "Couldn't create unload-module operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return -1;
+        }
 
         alarm->wait();
 
@@ -504,6 +516,13 @@ namespace platf {
         };
 
         op_t server_op { pa_context_get_server_info(ctx.get(), cb<pa_server_info *>, &server_f) };
+        if (!server_op) {
+          // Returning the empty name is the documented "no default" answer and
+          // matches the failure path of the callback above.
+          BOOST_LOG(error) << "Couldn't create server-info operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return sink_name;
+        }
+
         alarm->wait();
         // No need to check status. If it failed just return default name.
         return sink_name;
@@ -528,6 +547,11 @@ namespace platf {
         };
 
         op_t server_op { pa_context_get_server_info(ctx.get(), cb<pa_server_info *>, &server_f) };
+        if (!server_op) {
+          BOOST_LOG(error) << "Couldn't create server-info operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return source_name;
+        }
+
         alarm->wait();
         return source_name;
       }
@@ -543,6 +567,11 @@ namespace platf {
         op_t op {
           pa_context_set_default_source(ctx.get(), source_name.c_str(), success_cb, alarm.get())
         };
+
+        if (!op) {
+          BOOST_LOG(warning) << "Couldn't create set default-source operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return false;
+        }
 
         alarm->wait();
 
@@ -707,6 +736,11 @@ namespace platf {
             cb_i,
             alarm.get()),
         };
+
+        if (!op) {
+          BOOST_LOG(error) << "Couldn't create load-module operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return -1;
+        }
 
         alarm->wait();
         mic_sink_index = static_cast<std::uint32_t>(*alarm->status());
