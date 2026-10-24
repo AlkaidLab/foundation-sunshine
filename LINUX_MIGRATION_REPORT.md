@@ -857,6 +857,39 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 边界：属性不持久化到 `kwinrc`，KWin 重启后需重新设置（下一次会话或显示变更会补上）；非 KDE
 合成器无此 API；笔设备未纳入。
 
+### 6.30 虚拟屏存在期间的主屏归属（对齐上游 #1175）
+
+上游 `0219abe2`（#1175，2026-10-23）修的是 Windows 侧同一个语义：`vdd_as_secondary`
+（物理屏为主屏、虚拟屏为副屏）原来直接把 `physical_devices` 按枚举顺序铺进拓扑，而"枚举结果
+不保证首个设备就是原主屏"，于是副屏可能被设成主屏。它改成把 **VDD 创建前识别的原主屏**放到
+拓扑第一位。
+
+Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输出的主屏标志**（kscreen 的
+`priority 1`、Mutter 逻辑监视器的 `primary`、RandR 的 primary output），但同一个隐患换了形态
+存在：`vdd_as_secondary` 原来对**每一个**物理输出都发一次 `hint_primary_output(…, 1)`，
+而主屏标志是"后写覆盖先写"，所以最终主屏落在合成器最后处理的那个输出上——多显示器时可能正是
+用户没在看的那块屏。
+
+对齐后的规则：
+
+- 新增 `src/platform/linux/vdd_primary_plan.h`（纯函数，7 例单测）：
+  `secondary_plan(physicals, vdd, original_primary)` —— **只有已知的原主屏会被提升**，
+  其余物理输出显式降为副屏；原主屏未知（已拔掉 / 名字对不上 / 从来没观测到）时**整个物理侧
+  一个 hint 都不发**，只把虚拟屏降为副屏，让合成器保留它已有的主屏——这是唯一不会把主屏
+  交给错误屏幕的答案；
+- 原主屏在**进锁之前**采样：`apply_vdd_prep()` 先读一次合成器（走共享 API
+  `display_device::is_primary_device()`，五个后端都覆盖），再取 `state_mutex`。必须这样排，
+  因为该查询会枚举输出、可能反向调用 `vdd_utils`（`is_vdd_connector()` →
+  `enum_available_devices()` → `offlined_physical_connectors()`），而 `state_mutex` 不是递归锁；
+- 采样结果保存在 `original_primary_connector`，跨多个串流会话沿用，直到**最后一个**虚拟屏销毁时
+  归还主屏角色后再清空（下一次会话重新采样当时的真实布局）；
+- 采样点早于 `restore_offlined_physicals()`：被独占会话强制关掉的屏此刻读作 disconnected、不会
+  被采到，此时宁可不提升也不猜。
+
+验证：`tests/unit/test_vdd_primary_plan.cpp` 7 例（已知主屏提升且其余降级/未知主屏不碰物理侧/
+原主屏已拔掉/记录里是虚拟屏本身/销毁时归还/无记忆时什么都不做/无物理屏时只降级虚拟屏）。
+真机无法覆盖两屏以上并发场景（见 §十一 的诚实边界）。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -933,7 +966,7 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 653 用例，648 通过，5 跳过，0 失败
+test_sunshine: 660 用例，655 通过，5 跳过，0 失败
 ```
 
 **用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
@@ -943,17 +976,19 @@ test_sunshine: 653 用例，648 通过，5 跳过，0 失败
 | --- | --- | --- |
 | `a7a20060` | 并入上游 `c211d711` 之后（中间统计） | 650 用例 / 645 通过 |
 | `89420200` | 第一轮 review 修复之后 | 652 / 647 |
-| `8c095703` | 第二轮 review 修复之后（当前，最终统计） | 653 / 648 |
+| `8c095703` | 第二轮 review 修复之后 | 653 / 648 |
+| `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐（当前，最终统计） | 660 / 655 |
 
 从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
 `tests/tools/vmouse_logging_stubs.cpp` 被删，`DownloadFileTests`（访问 `https://httpbin.org/`，
 离线必失败）也一并移除，所以此前记录的两项环境依赖失败不再出现。
-650 之后的 3 例增量都出自本分支的 review 修复，不是上游带来的：`+2` 例来自
-`tests/unit/test_perf_frame_rates.cpp` 的 `PerfScanoutTracker.BaselinesTheFirstFramebuffer` 与
-`PerfScanoutTracker.CountsOnlyNewFramebuffers`（同一提交把 `PerfFrameRates.ReportsDrmVblankAsTheSourceKind`
-改名为 `…ReportsDrmFbFlipsAsTheSourceKind`，净增 2），`+1` 例来自 `tests/unit/test_xrandr_display.cpp`
-的 `XrandrPlan.MirrorMemberMaySortBeforeItsLeader`。
+650 之后的增量都出自本分支，不是上游带来的：`+2` 例来自 `tests/unit/test_perf_frame_rates.cpp` 的
+`PerfScanoutTracker.BaselinesTheFirstFramebuffer` 与 `PerfScanoutTracker.CountsOnlyNewFramebuffers`
+（同一提交把 `PerfFrameRates.ReportsDrmVblankAsTheSourceKind` 改名为
+`…ReportsDrmFbFlipsAsTheSourceKind`，净增 2），`+1` 例来自 `tests/unit/test_xrandr_display.cpp` 的
+`XrandrPlan.MirrorMemberMaySortBeforeItsLeader`，`+7` 例来自 `tests/unit/test_vdd_primary_plan.cpp`
+（对齐上游 #1175 的主屏归属规则，见 §6.30）。
 
 - `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 曾因"未知 appid 期望
   404、而 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`"失败（本机装过包，
