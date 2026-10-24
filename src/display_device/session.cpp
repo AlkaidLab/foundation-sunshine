@@ -770,7 +770,7 @@ namespace display_device {
                                 !current_client_id.empty() &&
                                 current_vdd_client_id != current_client_id;
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
-                                          !current_vdd_hdr_brightness->nearly_equal(hdr_brightness);
+                                          !current_vdd_hdr_brightness->matches_for_reuse(hdr_brightness, client_changed);
 
     // An existing VDD must be rebuilt when its advertised HDR capabilities no
     // longer match this session. A shared VDD may otherwise be reused across
@@ -839,6 +839,9 @@ namespace display_device {
         BOOST_LOG(error) << "VDD monitor creation command failed";
         return vdd_stage_result_e::create_failed;
       }
+      // Cache only programmed capabilities; advancing this on reuse would
+      // hide cumulative drift across individually small client changes.
+      current_vdd_hdr_brightness = hdr_brightness;
       std::this_thread::sleep_for(200ms);
     }
 
@@ -868,6 +871,7 @@ namespace display_device {
         }
         return vdd_stage_result_e::create_failed;
       }
+      current_vdd_hdr_brightness = hdr_brightness;
     }
 
     if (device_zako.empty()) {
@@ -895,7 +899,6 @@ namespace display_device {
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
-    current_vdd_hdr_brightness = hdr_brightness;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
     return vdd_stage_result_e::ready;
