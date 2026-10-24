@@ -162,8 +162,6 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.h"

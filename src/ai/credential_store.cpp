@@ -1,11 +1,13 @@
 /**
  * @file src/ai/credential_store.cpp
- * @brief DPAPI storage on Windows and environment-only credentials elsewhere.
+ * @brief DPAPI on Windows, the Secret Service on Linux, environment-only elsewhere.
  */
 
 #include "credential_store.h"
 
 #include <cstdlib>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <system_error>
 #include <vector>
@@ -14,6 +16,8 @@
   #include <windows.h>
   #include <sddl.h>
   #include <wincrypt.h>
+#elif defined(SUNSHINE_BUILD_LIBSECRET)
+  #include <libsecret/secret.h>
 #endif
 
 namespace credential_store {
@@ -83,6 +87,47 @@ namespace credential_store {
       }
       return { true, {} };
     }
+#elif defined(SUNSHINE_BUILD_LIBSECRET)
+    // One keyring entry per user: there is no per-install file path to key on,
+    // and the attributes are the whole lookup key.
+    constexpr const char *key_application = "sunshine";
+    constexpr const char *key_purpose = "llm-api-key";
+
+    const SecretSchema *
+    llm_key_schema() {
+      static const SecretSchema schema = {
+        "org.lizardbyte.sunshine.LlmApiKey",
+        SECRET_SCHEMA_NONE,
+        {
+          { "application", SECRET_SCHEMA_ATTRIBUTE_STRING },
+          { "purpose", SECRET_SCHEMA_ATTRIBUTE_STRING },
+          { nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING },
+        },
+      };
+      return &schema;
+    }
+
+    // Takes ownership of `error`.
+    std::string
+    secret_error(const char *operation, GError *error) {
+      std::string message { operation };
+      if (!error) return message + " failed";
+      message += ": ";
+      message += error->message;
+      g_error_free(error);
+      return message;
+    }
+
+    bool
+    secret_object_missing(GError *error) {
+      return error && g_error_matches(error, SECRET_ERROR, SECRET_ERROR_NO_SUCH_OBJECT);
+    }
+
+    std::string
+    environment_api_key() {
+      const char *value = std::getenv("SUNSHINE_LLM_API_KEY");
+      return value && *value ? std::string { value } : std::string {};
+    }
 #endif
   }  // namespace
 
@@ -117,6 +162,41 @@ namespace credential_store {
     SecureZeroMemory(output.pbData, output.cbData);
     LocalFree(output.pbData);
     return { read_status_e::success, std::move(secret), {} };
+#elif defined(SUNSHINE_BUILD_LIBSECRET)
+    (void) path;
+    GError *error = nullptr;
+    gchar *stored = secret_password_lookup_sync(
+      llm_key_schema(), nullptr, &error,
+      "application", key_application,
+      "purpose", key_purpose,
+      nullptr);
+    if (stored) {
+      std::string secret { stored };
+      // libsecret owns this allocation and zeroes it before freeing; memset on
+      // the way to g_free is not something the optimiser has to keep.
+      secret_password_free(stored);
+      return { read_status_e::success, std::move(secret), {} };
+    }
+    // A missing entry is the normal "nothing saved yet" case; anything else
+    // (no Secret Service, locked collection) is a real error worth surfacing --
+    // but SUNSHINE_LLM_API_KEY is a documented read-only fallback on this
+    // platform, and a locked keyring must not hide a key the operator exported.
+    if (error && !secret_object_missing(error)) {
+      if (auto fallback = environment_api_key(); !fallback.empty()) {
+        // The caller only sees "success"; silence here would hide a broken
+        // keyring, so say it on stderr where a service log picks it up.
+        std::fprintf(stderr, "Warning: using SUNSHINE_LLM_API_KEY; the keyring entry could not be read\n");
+        g_error_free(error);
+        return { read_status_e::success, std::move(fallback), {} };
+      }
+      return { read_status_e::error, {}, secret_error("Reading the LLM credential from the keyring", error) };
+    }
+    if (error) g_error_free(error);
+
+    if (auto fallback = environment_api_key(); !fallback.empty()) {
+      return { read_status_e::success, std::move(fallback), {} };
+    }
+    return { read_status_e::not_found, {}, {} };
 #else
     (void) path;
     const char *value = std::getenv("SUNSHINE_LLM_API_KEY");
@@ -146,6 +226,23 @@ namespace credential_store {
     SecureZeroMemory(output.pbData, output.cbData);
     LocalFree(output.pbData);
     return result;
+#elif defined(SUNSHINE_BUILD_LIBSECRET)
+    (void) path;
+    GError *error = nullptr;
+    const bool stored = secret_password_store_sync(
+      llm_key_schema(), SECRET_COLLECTION_DEFAULT, "Sunshine LLM API key",
+      secret.c_str(), nullptr, &error,
+      "application", key_application,
+      "purpose", key_purpose,
+      nullptr);
+    if (!stored) {
+      return {
+        false,
+        secret_error("Storing the LLM credential in the keyring", error) +
+          " (or set SUNSHINE_LLM_API_KEY in the service environment)"
+      };
+    }
+    return { true, {} };
 #else
     (void) path;
     const char *configured = std::getenv("SUNSHINE_LLM_API_KEY");
@@ -155,7 +252,7 @@ namespace credential_store {
     }
     return {
       false,
-      "Secure API key persistence is only supported on Windows; set SUNSHINE_LLM_API_KEY in the service environment"
+      "Secure API key persistence needs a Secret Service provider (libsecret); set SUNSHINE_LLM_API_KEY in the service environment instead"
     };
 #endif
   }
@@ -167,6 +264,47 @@ namespace credential_store {
     const bool removed = std::filesystem::remove(path, ec);
     if (ec) return { false, "Could not remove the protected credential file: " + ec.message() };
     (void) removed;
+    return { true, {} };
+#elif defined(SUNSHINE_BUILD_LIBSECRET)
+    (void) path;
+    GError *error = nullptr;
+    const bool cleared = secret_password_clear_sync(
+      llm_key_schema(), nullptr, &error,
+      "application", key_application,
+      "purpose", key_purpose,
+      nullptr);
+    if (error && !secret_object_missing(error)) {
+      return { false, secret_error("Clearing the LLM credential from the keyring", error) };
+    }
+    if (error) g_error_free(error);
+
+    if (!cleared) {
+      // FALSE with no error is ambiguous: it means "nothing matched", but it is
+      // also what a *locked* collection produces, because libsecret cannot delete
+      // what it cannot read. Erase has to be idempotent, so confirm the entry is
+      // really gone instead of assuming it.
+      GError *probe_error = nullptr;
+      gchar *still_there = secret_password_lookup_sync(
+        llm_key_schema(), nullptr, &probe_error,
+        "application", key_application,
+        "purpose", key_purpose,
+        nullptr);
+      if (still_there) {
+        secret_password_free(still_there);
+        if (probe_error) g_error_free(probe_error);
+        return { false, "The API key is still in the keyring; unlock it and try again" };
+      }
+      if (probe_error && !secret_object_missing(probe_error)) {
+        return { false, secret_error("Confirming the LLM credential was cleared", probe_error) };
+      }
+      if (probe_error) g_error_free(probe_error);
+    }
+    // The keyring entry is gone, but an environment-supplied key still wins on
+    // read, so erase is only complete once the service environment is clean.
+    const char *configured = std::getenv("SUNSHINE_LLM_API_KEY");
+    if (configured && *configured) {
+      return { false, "Remove SUNSHINE_LLM_API_KEY from the service environment to clear the API key" };
+    }
     return { true, {} };
 #else
     (void) path;

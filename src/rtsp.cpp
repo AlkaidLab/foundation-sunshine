@@ -32,6 +32,9 @@ extern "C" {
 
 // local includes
 #include "clipboard_bridge.h"
+#if !defined(_WIN32)
+  #include "clipboard_host.h"
+#endif
 #include "text_context/bridge.h"
 #include "config.h"
 #include "cursor_channel.h"
@@ -1213,7 +1216,20 @@ namespace rtsp_stream {
       // GUI agent is currently subscribed; otherwise the client would attempt
       // sync into a black hole.
       if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
-        caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+        caps |= platf::platform_caps::clipboard_text;
+#if defined(_WIN32)
+        // The Windows GUI agent implements image capture/apply in-process.
+        constexpr bool images = true;
+#else
+        // On Linux the host provider only reaches images through the
+        // compositor's data-control protocol (platform/linux/clipboard_image):
+        // klipper carries strings, so without that protocol image frames would
+        // have nowhere to land.
+        const bool images = clipboard_host::image_available();
+#endif
+        if (images) {
+          caps |= platf::platform_caps::clipboard_image;
+        }
       }
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;

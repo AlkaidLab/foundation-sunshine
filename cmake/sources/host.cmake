@@ -37,6 +37,7 @@ set(SUNSHINE_HOST_SOURCES
     src/upnp.cpp src/upnp.h
     src/cbs.cpp
     src/client_fingerprint.cpp src/client_fingerprint.h
+    src/vdd_client_identity.cpp src/vdd_client_identity.h
     src/config.cpp src/config.h
     src/entry_handler.cpp src/entry_handler.h
     src/file_handler.cpp src/file_handler.h
@@ -148,6 +149,9 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/network_probe_limiter.cpp src/nvhttp/network_probe_limiter.h
     src/nvhttp/pairing.cpp src/nvhttp/pairing.h
     src/nvhttp/sessions.cpp src/nvhttp/sessions.h
+
+    # src/dsu_server: cemuhook DSU motion broadcaster, fed by client motion
+    src/dsu_server.cpp src/dsu_server.h
 
     # src/streaming
     src/streaming/abr.cpp src/streaming/abr.h

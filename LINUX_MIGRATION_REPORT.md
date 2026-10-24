@@ -1,0 +1,1150 @@
+# Foundation Sunshine Linux（Arch Linux）迁移报告
+
+- **基线**：`linux-migration` 分支（包版本跟随二进制版本戳，如
+  `2026.1022.161750.430c3c02-1`；同步链为 `ed415026`（上一个同步点，tag
+  `v0.9.3-linux-upstream-sync` 指向 `0e2a6a11`）→ `7a0995e2`（2026-10-22，33 个提交）→
+  `c211d711`（测试清理）→ `0219abe2`（2026-10-23，#1175），当前与 `origin/master` 差距 0）
+- **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支）
+- **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland 与 niri 双目标，PipeWire，
+  NVIDIA RTX 3050 Mobile / Ampere sm_86）
+- **用途**：本文档记录**当前状态**——Linux 侧已具备什么、证据在哪、边界在哪。
+  待办与未完成项见 `LINUX_PORT_GAPS.md`；构建/测试/约定的操作说明见 `AGENTS.md`。
+
+---
+
+## 一、总体结论
+
+**迁移已完成，功能面与 Windows 增强分支基本对齐。** 核心串流能力（KMS/Wayland/X11 捕获、
+NVENC/VAAPI/Vulkan/软件编码、evdev 输入注入、WebUI）是上游成熟代码；fork 的 Windows 增强
+（虚拟显示器、物理显示器 display_device、HDR 动态元数据三件套、剪贴板主机同步、远程麦克风、
+ABR 前台检测、托盘）已逐项移植到 Linux 并补齐了 Windows 对齐审计。
+
+已移植项的清单与证据见 §六。剩余项在 2026-10-22 已**全部收束**（见 §十一与
+`LINUX_PORT_GAPS.md`）：可做的都落地了，其余 6 项逐条给出"不移植/搁置"的证据与**重启判据**，
+3 项等上游或属上游缺失，9 项本质不可移植。**待办为 0。**
+
+**上游同步状态**：主同步是 2026-10-22 并入 `origin/master` `7a0995e2`（33 个提交，403 文件），
+此后又跟随两个提交：`c211d711`（#1176 测试清理）与 `0219abe2`（#1175 副屏主屏归属），
+当前 `origin/master` 仍为 `0219abe2`、与本分支差距 0。
+其中两大跨平台重构（Simple-Web-Server → 自带 Beast HTTP 栈、confighttp 拆成 24 个模块）在 Linux
+上零改动直接生效。本次同步引入的唯一功能缺口——管线帧率的"源更新"段没有 Linux 后端
+（`LINUX_PORT_GAPS.md` §7.1）——也已补上 KMS 一侧，其余为上游测试的环境依赖。
+
+**已知总边界**：CI 目前只有 Windows 构建 job（`.github/workflows/main.yml` 的
+`setup_release` / `vdd_smoke` / `build_win`），Linux 编译与测试依赖本机手工验证。
+
+---
+
+## 二、平台支持现状速览
+
+| 层面 | 现状 |
+|---|---|
+| Linux 平台代码 | `src/platform/linux/` 文件齐全（kmsgrab / wlgrab / x11grab / vaapi / cuda / wayland / graphics / audio / input），为上游成熟代码，无致命 stub |
+| FFmpeg 依赖 | 用子模块 `third-party/build-deps/dist/Linux-x86_64` 的静态库（avcodec/avutil/swscale + x264/x265/SVT-AV1/hdr10plus/cbs） |
+| Boost | 要求**精确 1.92.0**；Arch 当前即 1.92.0。版本不匹配时 CMake 自动 FetchContent 联网下载（`cmake/dependencies/Boost_Sunshine.cmake`）；系统包路径下 `Boost::format` 可能未定义，已补指向 `Boost::headers` 的 INTERFACE 目标 |
+| WebUI | Vue/Vite，`npm run build` 交叉生成静态资产，跨平台 |
+| 托盘图标 | 需要 `libayatana-appindicator` + `libnotify`；`SUNSHINE_REQUIRE_TRAY` **默认 ON**，缺失时直接 FATAL |
+| CUDA | **默认 ON**（`cmake/prep/options.cmake:60`）；缺失工具链只是跳过 CUDA 源。CUDA 13.4 / sm_86 实测编译+链接通过 |
+| CI | 仅 Windows（`setup_release` / `vdd_smoke` / `build_win`），无 Linux job |
+| 打包 | `packaging/arch-local/`（本机调试包，装已构建树到 `/usr`）+ `packaging/aur/sunshine-foundation-git/`（AUR 从源码构建）。上游旧布局的 `packaging/linux/` 模板（desktop/appdata/service）已恢复 |
+
+---
+
+## 三、构建与打包
+
+### 构建
+
+```bash
+sccache --start-server 2>/dev/null || true
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+  -DSUNSHINE_ASSETS_DIR=share/sunshine -DSUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine \
+  -DSUNSHINE_ENABLE_CUDA=ON \
+  -DCMAKE_CUDA_ARCHITECTURES="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d .)" \
+  -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+  -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON
+ninja -C build sunshine
+cd build && ctest
+```
+
+- `SUNSHINE_ENABLE_CUDA` 在 Linux 默认 ON；缺失 CUDA 只是跳过 CUDA 源。
+- 显式指定 `CMAKE_CUDA_ARCHITECTURES` 只编本机架构；未指定时走兼容阶梯，阶梯会自动剔除
+  工具链已删除的架构（CUDA 13 不接受 Turing 以下）。
+- 链接期 `libcuda.so.1`（NVIDIA 驱动）是 `dlopen()`，cudart 静态链接——**运行时不需要 CUDA 工具包**。
+
+### 打包
+
+`packaging/arch-local/`（本地调试包，不在 makepkg 内编译）流程：`cmake -B build ...` →
+`ninja -C build sunshine` → `makepkg -f`。**包版本由 PKGBUILD 自己从二进制版本戳读出**
+（`<YYYY>.<MMDD>.<HHMMSS>.<commit>`，与 `Sunshine version:` 日志行同一个串），所以包名永远
+指向它实际包含的那次构建，`pkgrel` 保持 1、只在纯打包改动时才 bump；没有构建树时回退到
+「提交时间 + 提交」的同形版本。`prepare()` 还会在版本戳与 HEAD 不一致时自动 `cmake` + `ninja`
+重链，脏工作树打出的戳带 `杂鱼`，包名里转成 `.dirty`。
+`SUNSHINE_BUILD_DIR=<dir> makepkg -f` 可打包别的构建树。**不要**在 ninja 仍在链接时跑 makepkg；
+**不要**提交 `packaging/arch-local/{pkg,src,*.pkg.tar.zst}`。
+
+`packaging/aur/sunshine-foundation-git/` 从源码构建，每个构建需要的子模块都是固定提交的
+`source` 条目（makepkg 不检出 gitlink 且 `build()` 无网络），`prepare()` 把源码树还原到 gitlink
+路径，并对 `third-party/AMF`（Windows-only，仅保留头）与 `third-party/build-deps`（只留本机
+`dist/Linux-<arch>` 切片）做 sparse-checkout。默认 `_use_cuda=false`（`cuda` 是 AUR 包，不进基础依赖）。
+
+---
+
+## 四、Arch Linux 依赖清单
+
+### 构建依赖（pacman 包名）
+
+| 包 | 用途 |
+|---|---|
+| `base-devel` | 编译工具链 |
+| `cmake` (≥3.25) / `ninja` / `git` | 构建系统与子模块 |
+| `boost` 1.92.0 | 精确版本要求 |
+| `openssl` / `curl` / `miniupnpc` / `opus` | 网络与音频编解码 |
+| `libdrm` + `libcap` | KMS 捕获与文件能力 |
+| `libva` | VAAPI 编码 |
+| `wayland` + `wayland-protocols` | Wayland 捕获（protocols 默认用子模块） |
+| `libx11` + xcb/xrandr/xtst/xfixes/xi/xinerama | X11 捕获 |
+| `libpulse` | 音频捕获/播放（PipeWire 的 pulse 兼容层） |
+| `libsecret`（可选） | AI API Key 存 keyring（gnome-keyring / KWallet 的 secret-service 兼容层）；缺省退回 `SUNSHINE_LLM_API_KEY` |
+| `libevdev` | 输入注入（inputtino） |
+| `numactl` | 链接静态 FFmpeg 需要 libnuma |
+| `libayatana-appindicator` + `libnotify` | 托盘（`SUNSHINE_REQUIRE_TRAY` 默认 ON） |
+| `node` ≥26.7 且 `<27`、`npm` ≥11.19 且 `<12` | WebUI 构建（`package.json` engines 约束） |
+| `cuda`（可选） | NvFBC/CUDA 捕获路径（NVENC 不需要它） |
+| `qt6-base` + `qt6-svg` | 托盘 Qt6 实现 |
+| `sccache`（可选） | 编译缓存，重建提速显著 |
+
+```bash
+sudo pacman -S --needed cmake ninja boost numactl \
+  libayatana-appindicator libnotify qt6-base qt6-svg \
+  libdrm libcap libva wayland libx11 libxcb libxrandr libxtst libxfixes libxi libxinerama \
+  libpulse libevdev miniupnpc opus curl openssl libsecret
+```
+
+### 运行时依赖
+
+上表库的运行时包 + `nvidia-utils`（NVENC 无需额外 SDK）+ `pipewire`（经 pulse API 供音频）。
+安装后按 §五做 `setcap`/udev 配置。
+
+---
+
+## 五、运行时配置
+
+1. **KMS 捕获权限**（Wayland 下的主要整屏捕获路径）：
+   ```bash
+   sudo setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p \
+     $(readlink -f $(which sunshine))
+   ```
+   虚拟显示器后端还需要 `cap_dac_read_search`/`cap_dac_override`（debugfs/sysfs 写入）与
+   `cap_sys_ptrace`（向合成器借 DRM master）；进程内用 libcap RAII 把 permitted 提升为 effective。
+   包 post-install hook 会自动执行这一步。
+2. **输入设备权限**：`60-sunshine.rules` 给 `/dev/uinput`、`/dev/uhid` 打 `uaccess` 标签。
+3. **systemd 用户服务**：`systemctl --user enable --now sunshine`。
+4. **捕获方式现实（KWin Wayland）**：KWin 不支持 wlr-export-dmabuf/wlr-screencopy，故 `wlgrab` 在
+   Plasma Wayland 上不可用；`x11grab` 只能抓 XWayland 窗口；实际可行的是 `kmsgrab`（需第 1 步
+   的 setcap）。niri 下 VDD 输出由 DRM 层点亮。
+5. **NVIDIA**：确认 `nvidia-drm.modeset=1`。NVENC 由 FFmpeg 运行时加载驱动。
+6. **端口**：TCP 47984–47990、48010；UDP 47998–48000。Arch 默认无防火墙。
+7. **音频**：PipeWire 经 `pipewire-pulse` 兼容 libpulse。
+
+---
+
+## 六、已移植的 Windows 增强
+
+> 每项给出当前实现位置与关键证据行号。历史演进细节不再保留在本文档。
+
+### 6.1 虚拟显示器（ZakoVDD → 原生 Linux 后端）
+
+**形态**：in-process 原生后端（不使用外部守护进程或 helper 二进制）。个性化 EDID + 连接器状态
+强制 + pidfd 借 DRM master 做 CRTC 指派 + 独占模式物理屏还原。
+
+- **EDID 生成**：`src/platform/linux/vdd_edid.{h,cpp}`（340 行）。证据：
+  `vdd_edid.h:24` 像素时钟上限 `kMaxDtdPixelClockHz = 655350000.0`（DTD 16 位 ×10 kHz）；
+  `:49` `edid_options.extra_modes`；`:66` `mode_fits_pixel_clock_limit()`；
+  `vdd_edid.cpp:55` `dtd_pixel_clock_hz()` 单一来源、`:103-104` 可行性过滤、`:178` 饱和保护、
+  `:221` 附加模式布局。显示名为共享常量 `ZAKO_NAME`（"Zako HDR"），KDE 前缀的 "UQD" 是 EDID
+  厂商 ID 字节的固有解码，非命名分歧。
+- **完整模式表（链式 CTA 块）**：块 1 = 数据块 + 首选时序副本 + 4 个附加模式，后续 DTD-only 块各 6 个
+  （逐块校验和与 DTD 起始指针），通告**配置分辨率 × 刷新率的全部可行组合**，与 Windows SETMODES
+  的"全组合"语义等价。阶梯仅保留防病态配置的 40 项上限（`src/display_device/vdd_utils.cpp:1990-1991`）。
+  Range Limits 描述符覆盖全部通告刷新率。
+- **连接器与 CRTC**：`src/display_device/vdd_utils.cpp` Linux 段——
+  `:2315` `set_vdd_session_mode()`、`:1501` `force_crtc_assignment()`（pidfd 借 master + dumb buffer +
+  `drmModeSetCrtc`）、`:1424` `wait_for_compositor_output()`、`:2070` `run_logged()`（有界 fork/exec，
+  关闭继承 fd，10 s 上限）、`:1196` `restore_offlined_physicals()`、`:2064` `offlined_physical_connectors()`。
+- **组合器先行、抢 master 兜底**：status 强制上电触发的 uevent 会让 KWin 自己探测并点亮连接器，但该
+  激活是一次性的——抢 master 若与之相撞，KWin 的 atomic commit 失败后丢弃该输出且永不重试。因此
+  创建与模式切换路径先轮询 kscreen 等组合器点亮（`:2235`），只有组合器忽略 status-forced 连接器时才
+  走 `:2237` 的兜底，并在兜底后对可观察组合器做一次 status off→on 循环给组合器新的激活机会。
+- **残留 adopt**：EDID override 与强制连接器状态是 DRM 持久的（进程内簿记随进程消失）。
+  `adopt_orphan_vdd_locked()`（`:1871`）扫描带 VHD 签名 EDID 的连接器并恢复跟踪，
+  `live_virtual_display_connector()`（`:2044`）是其入口——**不要**重建它能 adopt 的虚拟屏。
+- **模式发布校验**：`is_mode_advertised()`（`:2161`）查询合成器真实模式表而非"VDD 活着即通过"；
+  `wait_for_mode_publication()`（`:2185`）按 `kModePublicationTimeout` 轮询，失败时打印实际发布的
+  模式列表并返回 `modes_fail`；查询不可用（niri/wlroots/X11）视为"未知"。
+- **prep 模式**：`device_prep_e` 的 5 个取值（`src/display_device/parsed_config.h:27-33`）映射到
+  `vdd_prep_e`（`:126-131`）。`23172`/`ZAKO_NAME` 设备 id 特判 `explicit_vdd`。
+
+### 6.2 物理显示器 display_device（kscreen + niri 后端）
+
+`src/platform/linux/display_device.cpp` 以合成器为中介读写模式/HDR/主屏/拓扑，JSON 持久化 +
+apply/revert 编排对齐 Windows `settings.cpp`。后端有**五个**生产者，由 `query_outputs()` 按会话
+分派、`compositor_is_*()` 按能力缺失逐级降级：kscreen-doctor（Plasma，§6.2/§6.19）、niri IPC
+（§6.16）、GNOME Mutter 的 DisplayConfig D-Bus（§6.18）、wlroots 的 `wlr-randr`（§6.26）、
+裸 X11 的 RandR（§6.27）。判定顺序本身抽成了纯函数 `src/platform/linux/display_backend.h`，
+有单测覆盖。
+
+- `:143` `query_outputs()`、`:706` `set_display_modes()`、`:913` `set_hdr_states()`、
+  `:1035` `set_topology()`、`:360` `wait_for_topology()`、`:383` `wait_for_display_stability()`。
+- 模式匹配用 Windows 的 1 Hz 模糊比较 + 取最近候选；失败时按三段式回滚而非留下半套模式。
+- 空 device_id（Display: Auto）解析为主屏（kscreen priority 1），模式/HDR 不再作用于所有输出。
+- 拓扑校验与 setter 一致地拒绝多设备组（复制组当前不可表达，见 `LINUX_PORT_GAPS.md`）。
+- kscreen 不可用的环境退化为既有的 no-op 行为并打 **warning**（明确"显示设置未被应用"），
+  但保留 success 结果——这是 Linux 上会话的持久属性，返回失败会让所有非 KDE 会话进入无法修复的
+  deferred-retry。niri 会话不进入这条降级：模式与拓扑开关由 §6.16 的 IPC 后端接管，只有 HDR 与
+  主屏两项因 niri 没有对应接口而跳过（记录 warning，同样不返回失败）。
+
+### 6.3 HDR 动态元数据三件套（avcodec 路径）
+
+静态透传本就跨平台：`src/platform/linux/kmsgrab.cpp:864` 读 DRM `HDR_OUTPUT_METADATA` blob、
+`:930` 解析，`src/video.cpp:3443` 挂 mastering display side data、`:3462` 挂 content light。
+
+动态部分由 CPU 亮度分析器供给统计：
+
+- **分析器**：`src/video_hdr_analyzer.h` 的 `video::hdr_analyzer::analyze()`——**逐像素
+  max(R,G,B)** 的 PQ 直方图（与 Windows 计算着色器同一个量，见 §6.20）；`src/video.cpp` 只把
+  `AVFrame` 填成 `frame_t` 再调用（`analyze_pq_frame()`），软件设备路径与硬件设备采样下载路径各
+  一处。平面 10-bit 格式按格式掩码解包（P010/YUV444P16 为 MSB，YUV420P10LE/YUV444P10LE 为 LSB）。
+- **节奏与上限**：共享常量 `hdr_analysis_interval = 4`（`src/video_hdr_metadata.h:330`，对齐 Windows
+  的 1/4 帧采样）、`hdr_analysis_max_width/height = 1920/1080`（`:337-338`）、
+  `st2084_peak_nits = 10000.0f`（`:344`）。
+- **HDR10+**：`src/video.cpp:2581` `update_hdr_dynamic_metadata()`；side data 懒挂载——第一帧有效
+  统计到来才创建，消除占位 SEI。
+- **DV P8.1 RPU**：`src/video.cpp:2808` `dolby_vision_.stage()`（avcodec 路径），NVENC/AMF 直连路径
+  为 `:1257`/`:1386`；按提交帧序 stage L1、输出包按 pts 回程 splice RPU NAL。
+- **HDR Vivid**：FFmpeg 只有 CUVA 解析器、无序列化器，故在 `encode_avcodec()`（`:2724`）内用共享
+  `serialize_vivid_t35()`（`:2784`）构建 T.35，经 `hdr_bitstream::append_t35_unit()`（`:2785`）按 pts
+  拼到首个 VCL NAL 之前。**仅 Linux 编译**——Windows 的 avcodec 家族显式标记不能承载 Vivid。
+- **ST2084 常量唯一来源**：`src/video_hdr_metadata.h:26-30`（`st2084_m1/m2/c1/c2/c3`）；
+  `:366` `pq_to_nits()`。**不要重新推导 PQ 数学**。
+
+### 6.4 剪贴板主机同步（klipper D-Bus，KDE 上的文本通道）
+
+`src/clipboard_host.cpp`（457 行）经 sd-bus 对话 KDE klipper
+（`org.kde.klipper` set/getClipboardContents），与客户端双向同步，复用 GUI agent 的线协议。
+
+- **线协议**：`src/clipboard_wire.h`（185 行）编解码、`src/clipboard_echo.h`（123 行）16 项
+  `(kind, payload-hash)` + TTL 的回声环形。常量收敛在 `src/clipboard_bridge.h`
+  （`:81` `inbound_sink_fn`、`:94` `set_inbound_sink`、`:98` `add_inbound_listener`）。
+- **AT_SECURE 下的用户总线**：Sunshine 带文件能力运行 ⇒ `secure_getenv` 隐藏 `XDG_RUNTIME_DIR`，
+  `sd_bus_open_user()` 失败。用 `platf::sdbus::open_user_bus()`
+  （`src/platform/linux/sdbus_session.h:18`）——它必须调 `sd_bus_set_bus_client(bus, 1)`（`:35`），
+  否则 socket 连上但从不发 `Hello()`，dbus-broker 对第一条方法调用直接断开。
+- **不阻塞控制线程**：客户端→主机的写入是有界队列（8 条，溢出丢最旧），由 provider poll 线程执行；
+  等待用条件变量。klipper 变更信号 `clipboardHistoryUpdated` 事件驱动 + 1 s 兜底读。
+- **边界对齐 agent**：出站过滤空读取；入站丢弃空串与含 NUL 文本。klipper 只有字符串，图片由
+  §6.14 的 data-control 模块承担，两者共用同一套帧；大文本与大图都走 blob store 的 `kKindRef`
+  描述符帧（`kInlineThresholdBytes = 60'000`）。`clipboard_image` 能力按 §6.14 的实际可用性通告。
+- **只在有 klipper 时才走 klipper**：启动时 `klipper_present()`（一次 `klipper_get` 探针）判定；
+  桌面没有 klipper（niri / sway / Hyprland / plain weston）且 data-control 可用时，`ext_text` 置位，
+  **文本改由 §6.14 的合成器通道承载**（`poll_loop` 此时只负责刷 `notify_gui_alive()` 存活戳）。
+  在此之前，非 KDE 桌面上的文本剪贴板双向都不工作——klipper 是当时的唯一文本源。
+
+### 6.5 远程麦克风写主机
+
+`src/platform/linux/audio.cpp`：命名 null-sink `sink-sunshine-virtual-mic`（`:216`），monitor 源即
+虚拟麦克风；`:647` `write_mic_pcm()`、`:676` `init_mic_redirect_device()`。
+
+- **背压契约**：`:227-237` 有界队列 + writer 线程（`src/platform/linux/mic_queue.h`，116 行，
+  容量 5 帧 = 100 ms）。`write_mic_pcm()` 只入队、永不阻塞共享混音线程；队列满返回 0（约定的背压丢帧）；
+  阻塞写与错误码映射（-2 设备丢失 / -1 一般错误）在 writer 线程完成并在下一次调用上报。
+- **默认录音设备切换**：`:536` `set_default_source_name()`——读当前默认源 → 指向 null-sink monitor →
+  释放时还原；对 PulseAudio/PipeWire 通用。
+
+### 6.6 ABR 前台应用检测
+
+`src/platform/linux/foreground_app.cpp`（463 行）。
+
+- **KDE**：`:134` `install_kwin_script()` 经 D-Bus 加载 KWin 脚本（静默自动重装），活动窗口变化推送
+  到进程内 `org.sunshine.Abr` 服务；`detect()` 返回缓存。
+- **niri**：轮询 `niri msg --json focused-window`（2 s，走有界执行），JSON 逐字段类型检查地映射到
+  `info_t`；`null`（无焦点窗口）不更新缓存。
+- **后端选择**：启动时先探测 `org.kde.KWin` 是否在会话总线上；KDE 保持 KWin 路径，无 KWin 且 niri
+  查询可用才启用 niri；两者都无则保持空结果降级。
+- **缓存失效**：`:86` `clear_cache()`——生产者已死（脚本重载失败 / niri 查询失败）时清空，ABR 退回
+  基于启动器的分类。
+
+### 6.7 合成器输出启用（桌面分发）
+
+`src/platform/linux/compositor_output.{h,cpp}`：`:28` `enable_command()` 是**纯函数**（桌面串 →
+命令字符串），`:12` `niri_session()`、`:18` `tool_available()` 提供探针。KDE → kscreen-doctor、
+niri → `niri msg output <c> on`、其他 Wayland → `wlr-randr`（wlr-output-management）、X11 → `xrandr`。
+
+> **该设计是事故驱动的**：早期版本把 KDE 分支误写成调用自己，导致 Plasma 下创建/切换 VDD 必崩
+> （自递归栈溢出）。现在映射是纯函数并被单元测试逐分支锁死命令字符串。**不要**把 dispatcher 的分支
+> 改回可递归的调用。
+
+### 6.8 非 Plasma 会话不再被 kscreen-doctor 阻塞
+
+`src/platform/linux/kscreen_backend.{h,cpp}` + `kscreen_modes.h`。
+
+- **会话判定**：`session_supports_kscreen()` 先看 `NIRI_SOCKET`（niri 无 KScreen），否则要求 desktop
+  串含 Plasma/KDE；**每次重新判定不缓存**，所以先于桌面启动的服务在用户登录后仍能接上。不支持则
+  **根本不 spawn**。
+- **短探测 + 冷却**：查询用 1.5 s 超时，失败/超时武装 20 s 冷却，成功即清除；变更命令仍 10 s 且只在
+  探测成功后发出。
+- 实测（`advertised_modes("eDP-1")`）：KDE ~699 ms 不变 / niri 0 ms（不再 spawn）/ 无桌面 0 ms /
+  声称 KDE 但合成器不应答首次 807 ms 后续 0 ms。
+
+### 6.9 托盘
+
+`src/tray/system_tray.cpp`：VDD 子菜单（显示名 "Zako HDR"）、每 2 s 轮询 `is_vdd_active()` 并变化即
+刷新、首次查询时 adopt 残留虚拟屏、危险操作走 Qt `QMessageBox` 确认（Windows 为 `MessageBoxW`，
+整体在 `#ifndef _WIN32` 内）、Advanced Settings 子菜单两平台布局一致（导入/导出/重置/清理缓存/
+重置显示器），退出文案为 Linux 专用键。Qt 托盘需 `checkbox=1` 才渲染勾选态（Windows 仅凭 `checked`
+画 `MFS_CHECKED`，该字段在 Windows 被忽略）。
+
+### 6.10 NVENC YUV 4:4:4
+
+`src/video.cpp`：`:713` `YUV444_SUPPORT` 旗标、`:1520` nvenc 条目 flags、`:1536` 444 格式填
+`AV_PIX_FMT_YUV444P`（8-bit）+ `AV_PIX_FMT_YUV444P16`（10-bit 16-bit 移位容器）、
+`:1615` h264 sdr444 补 `AV_PROFILE_H264_HIGH_444_PREDICTIVE`。支持与否由真实试编码探测决定。
+CUDA=ON 的 kms-egl 路径为三平面渲染（`egl::create_target()`/`sws_t` 的 `is_planar_yuv444()` 判定）。
+**边界**：CUDA=ON 的 ram 回退路径（wlgrab/nvfbc，`cuda::sws_t` 的 `RGBA_to_NV12` CUDA 核）仍
+NV12-only；VAAPI 444 未开（见 `LINUX_PORT_GAPS.md` §2.11）。
+
+### 6.11 AI API Key 存进 keyring
+
+`src/ai/credential_store.cpp`：`SUNSHINE_BUILD_LIBSECRET`（CMake 可选探测 `libsecret-1`）下用 Secret
+Service 替代 Windows 的 DPAPI blob。schema `org.lizardbyte.sunshine.LlmApiKey`，属性
+`application=sunshine` / `purpose=llm-api-key`，每用户一条，写入默认 collection；label
+`Sunshine LLM API key`。读取优先 keyring、`SUNSHINE_LLM_API_KEY` 仅作引导兜底（与 Windows 一致：
+持久化值优先）。清空密钥走同一入口传空串；条目不存在时视作成功（幂等）——libsecret 对"无匹配"返回
+FALSE 且不带 `GError`，这点是实测出来的，别按返回值判错。若 env 里仍留着 `SUNSHINE_LLM_API_KEY`，
+擦除会明确报错提示先清理 service 环境，否则 key 仍在生效。没装 `libsecret` 时行为与之前完全一致。
+验收用例：`tests/unit/test_credential_store.cpp` 的 `RoundTripsThroughTheKeyring`（无 Secret
+Service 或本用户已有 key 时 `GTEST_SKIP`，绝不覆盖真实凭据）。
+
+### 6.13 非 KDE 合成器的前台窗口检测
+
+ABR 的前台应用分类原先只覆盖 KDE（KWin 脚本 + 私有 D-Bus 服务）与 niri（`niri msg --json
+focused-window`）。`src/platform/linux/foreground_app.cpp` 现在按能力探测四级 producer，任一级缺席
+就落到下一级：
+
+1. KWin（唯一带 pid 的 Wayland 源，`org.kde.KWin` 占着总线名即用）；
+2. `wlr-foreign-toplevel-management-unstable-v1`——sway / river / wayfire 等 wlroots 系合成器，
+   `state` 事件里的 `ACTIVATED` 直接给出前台窗口，每次 `done` 扫描活动项。协议不带 pid，
+   靠 exe 名比对识别切换。协议 XML 复用仓库里已有的 `third-party/wlr-protocols/unstable/`
+   （`wlgrab` 用的 export-dmabuf 就在同目录），只加了一行 `GEN_WAYLAND`，没有新依赖；
+3. niri 的 IPC（原有路径，探针即那条查询本身）；
+4. X11 的 `_NET_ACTIVE_WINDOW`（`PropertyNotify` + 2s 定时重读），字段取 `_NET_WM_PID`、
+   `WM_CLASS` 第二段（对齐 KWin 的 resourceClass）、`_NET_WM_NAME`（缺失退 `WM_NAME`）。
+   整块在 `SUNSHINE_BUILD_X11` 内，因此不改变未启用 X11 的构建。
+
+没有采用 wayland-protocols 的 `ext-foreign-toplevel-list`：它枚举 toplevel 却不带激活状态，回答不了
+“谁在前台”。X11 读取逻辑用自建窗口做过端到端验证（pid / class / 含中文标题三项均匹配，测后还原了
+根窗口属性）；wlroots 分支在本机无法运行时验证（只有 Plasma 与 niri，niri 不支持该协议），
+只验证到符号级。Hyprland 走自己的 hyprctl，仍需单独路径（见 `LINUX_PORT_GAPS.md` §2.5）。
+
+### 6.12 管线帧率的源更新段（KMS）
+
+`src/platform/linux/kmsgrab.cpp` 的 `display_t` override 了
+`frame_rate_source()`（`src/platform/common.h:685`），生产
+`perf::capture_source_kind_e::drm_fb_flips`：`refresh()` 每次读到 `plane->fb_id` 后调用
+`observe_scanout(fb_id)`，只有**扫描出的帧缓冲变了**才记一帧，语义对齐 Windows 的 DXGI present /
+WGC arrival（静态桌面记 0）。这填补了上游戏后"源更新帧率"恒为 `unavailable` 的空白——kmsgrab
+的捕获循环按串流帧率定速，屏幕冻住时捕获段照样报 60 fps，源段才能暴露"上游没出新帧"。
+
+驱动的 vblank 计数器在本机（NVIDIA）上不可用：`drmCrtcGetSequence` 与 `drmWaitVBlank` 都返回
+`EOPNOTSUPP`（实测），所以没有把绝对刷新率当源速率。`wlgrab`（`wlr-export-dmabuf` 一帧一请求，
+源速率与捕获速率恒等）与 `x11grab`（定时轮询、未接 XDamage）没有独立信号源，保持
+`unavailable`——理由写在 `LINUX_PORT_GAPS.md` §7.1。
+
+### 6.14 剪贴板 data-control 通道（图片 + 非 KDE 文本）
+
+`src/platform/linux/clipboard_data.{h,cpp}`（`SUNSHINE_BUILD_WAYLAND` 下编译）。klipper 只承载
+字符串，图片只能走合成器自己的剪贴板，因此这一半用标准化的 `ext_data_control_v1`（Plasma 6 实现；
+wlroots 仍只导出 wlr 拼写，那里会保持 text-only）在**独立 Wayland 连接 + 独立线程**上双向同步 PNG，
+并同时承载**文本**（§6.4 的 `ext_text` 模式，供没有 klipper 的桌面使用）。
+
+- **双向语义**：`selection` 事件给出带 `image/png` 的 offer 时 `receive()` 到管道读回字节 →
+  `clipboard_host` 的回声环/会话检查后发布；反向由客户端帧驱动，建 data source 宣告 `image/png` 并
+  `set_selection()`，粘贴时合成器通过 `send()` 取字节，直到别的客户端接走选择（`cancelled`）。
+- **回调里绝不阻塞**：`send()` 不直接写管道（大图不装进管道缓冲会死锁事件循环，而事件循环正是
+  必须把水排掉的那一方），改为登记 `out_transfers`；读取侧同样以 `recv_fd` + 非阻塞 fd 挂进
+  `poll()`，统一带 10 s 截止时间。首版就是踩了这个坑：自发布回读时阻塞读与 `send()` 互锁，
+  表现为 `transfer timed out after 0 bytes`、外部 `wl-paste` 也拿不到数据。
+- **实测**（Plasma 6，`wl-copy`/`wl-paste` 对照）：594 B、45 KB、3.4 MB 三种尺寸，`us → desktop`
+  由 `wl-paste` 取回、`desktop → us` 由 harness 收回，md5 全部一致；自发布回读亦正确。
+- **文本风味协商**：`src/platform/linux/clipboard_mime.h`（纯 header，无 Wayland 依赖）决定向 offer
+  要哪一种表示——`image/png` 优先；文本按 `text/plain;charset=utf-8` → `UTF8_STRING` →
+  `text/plain` → 其它 `text/*` 排序；带非 UTF-8 字符集的表示**拒收**（照原样当 UTF-8 会变乱码），
+  不可承载的 offer（`application/*`、`image/svg+xml`、X11 的 `STRING`/`COMPOUND_TEXT`）则一个也不
+  请求，宁可不动客户端剪贴板也不清空它。发布文本时同时宣告三种 UTF-8 拼写，`send()` 接受其中任意
+  一种。策略由 `tests/unit/test_clipboard_mime.cpp` 10 例固定。
+- **文本实测**（Plasma 6，与 klipper 并存）：`set_text("sunshine-ext-text-probe-42")` 后
+  `wl-paste --no-newline` 逐字取回同一字符串；外部 `wl-copy` 写入后 sink 收到 `from-wl-copy-77`，
+  自发布回读同样会进 sink——这正是 `clipboard_host` 用 `last_text` + 回声环双重去重的原因。
+- **能力通告**：`src/rtsp.cpp` 的 `clipboard_image` 不再被 `#ifdef _WIN32` 挡死，改问
+  `clipboard_host::image_available()`——协议缺失时仍不通告，客户端不会发出无处落地的帧。
+- **未做**：file-offer（`kKindFileOffer`）仍只属于 Windows GUI agent；Linux 侧要支持需接
+  xdg-desktop-portal 的文件选择器，记为 `LINUX_PORT_GAPS.md` §2.1b。
+
+### 6.15 远程 USB 的 usbip-utils 主机后端
+
+`src/remote_usb/remote_usb_host_controller.cpp` 新增 `usbip_host_backend::usbip_linux` 方言，
+`automatic` 在 Linux 解析到它（Windows 仍是 `usbip_win2`）。生命周期、并发上限、取消、stop 时的
+补偿 detach 全部沿用原有跨平台实现，只有两处平台差异：
+
+- **argv**：attach 用 `usbip --tcp-port PORT attach -r HOST -b BUSID`（`--tcp-port` 是全局选项，
+  必须写在子命令前），detach 用 `usbip detach -p PORT`；win2 的 `--once/--terse` 在 usbip-utils
+  上不存在。
+- **端口来源**：usbip-utils 成功时不打印任何内容，端口从内核 vhci 的
+  `/sys/devices/platform/vhci_hcd.0/status` 反推——attach 前快照、attach 后取差集，50 ms × 20 次
+  有界轮询（内核探针滞后于工具返回）；窗口用文件级互斥串行化，避免并发 attach 认领同一端口。拿不到
+  新端口即 `attach_failed`，不留无法 detach 的绑定。vhci 端口是 0 基，绑定沿用 win2 的 1 基表示
+  （内部 `port + 1`）。
+
+`backend_supported()` 现在要求 `usbip` 可执行文件存在且 vhci 状态文件可读，任一缺失即回到
+`unsupported` 并让 reverse tunnel 保持关闭。部署上仍有一道硬门槛：vhci 的 `attach`/`detach` 属性
+只有 root 可写，而本仓 service 以用户身份运行，所以端到端启用需要 root 运行或给 `usbip` 配 sudoers
+包装；权限被拒时 detail 会显式指出这一点。单测覆盖 argv 约定、差集推导、0 基端口、无新端口失败与
+状态缺失降级。
+
+### 6.16 niri 输出后端（IPC）
+
+`src/platform/linux/niri_ipc.{h,cpp}` + `src/platform/linux/display_device.cpp`。niri 不实现
+KScreen 也不实现 `wlr-output-management`（实测 registry 无 `zwlr_output_manager_v1`），但自带
+`niri msg` CLI + Unix socket（`NIRI_SOCKET`）与 JSON 输出，因此作为第二个 display_device 生产者。
+
+- **会话判定**：`session_supports_niri()`——`NIRI_SOCKET` 存在即真（niri 会导给所有子进程，即使
+  `XDG_CURRENT_DESKTOP` 为兼容性写成 KDE）；声明 KDE/Plasma 且无 socket 即假（不扫目录）；否则扫
+  `$XDG_RUNTIME_DIR` 与 `/run/user/<uid>`（服务用文件能力运行时 `secure_getenv` 会隐藏前者）下的
+  `niri.*.sock`，按 mtime 新→旧最多探 4 个，`niri msg --json version` exit 0 即认定。
+- **有界执行**：读 1.5 s、写 10 s（`vdd_utils::run_logged`，fork/exec + 关 fd + 超时 kill）；
+  失败后 20 s 冷却，避免每次查询都拉一个进程。
+- **读**：`niri msg --json outputs` → `platf::niri::parse_outputs()`（纯函数，`refresh_rate` 的
+  milliHz 转 Hz、`current_mode` 是模式下标、`null` 表示输出关闭）→ 映射成 `compositor_output_t`。
+  niri 没有 mode id，`id` 用下标字符串代替。
+- **写**：`niri msg output '<name>' mode WxH@R` / `on` / `off`。**`niri msg` 无论请求是否被接受都
+  exit 0**（未连接/非法模式只打一行 stdout），所以 `niri_change()` 与 kscreen 一样回读状态判定，
+  最多 3 次、间隔 500 ms。
+- **HDR / 主屏**：niri 的 IPC 两者都没有，`hdr_state_str` 恒空、`set_as_primary_device()` 返回
+  false 并打一次性 warning；`apply_config` 对这两项显式容忍（不把会话判失败）。
+- **测试**：`tests/unit/test_niri_ipc.cpp` 11 例覆盖 milliHz 换算、`current_mode` 下标、输出关闭、
+  越界下标、缺字段默认值、非对象/坏 JSON 拒绝。
+
+### 6.17 DSU 运动数据服务器（cemuhook）
+
+`src/dsu_server.{h,cpp}` 从 `src/platform/windows/` 挪到顶层共享源（`cmake/sources/host.cmake`），
+平台差异只剩一处：`WSAIoctl`/`SIO_UDP_CONNRESET` 的初始化块包在 `#if defined(_WIN32)` 内。协议
+实现本身（16 字节 header、CRC32 自校验、INFO/DATA 两种消息、100 字节数据包、客户端超时清理）
+一行未改，Windows 预处理结果与合并前逐字相同。
+
+- **数据源**：Moonlight 客户端经 `gamepad_motion_t` 发来的 `LI_MOTION_TYPE_ACCEL` /
+  `LI_MOTION_TYPE_GYRO`。挂载点在 `src/platform/linux/input/inputtino_gamepad.cpp` 的 `motion()`，
+  与 Windows 的 `dsu_send_motion` 同源。**不是**宿主 IMU —— 早先 gap 文档判断错了。
+- **惰性启动**：首个 motion 事件才 `init_dsu_server()`，受 `config::input.enable_dsu_server`
+  （默认 false）门控；`start()` 失败即销毁并只告警一次，与 Windows 的生命周期逻辑一致。
+- **单位与轴向**：转发客户端原始值（m/s²、deg/s），未到达的那一半传 0，服务保留上一次的值；
+  服务端按 cemuhook 约定重排轴向（X=−x、Y=z、Z=−y、Yaw=−y）。
+- **配置**：`enable_dsu_server` / `dsu_server_port`（默认 26760）是共享配置键，WebUI 的开关与端口
+  在 Linux 上直接生效，无需单独接线。
+- **既有怪癖（未改）**：服务端从请求偏移 8（header 的 crc 字段）取"客户端 ID"并回显，而非
+  cemuhook 文档的偏移 12。真实客户端一律填 0 所以从未暴露；测试按实际行为断言，避免为"修 bug"
+  改动 Windows 也依赖的字节布局。
+- **测试**：`tests/unit/test_dsu_server.cpp` 9 例，真实回环 UDP，覆盖 INFO 响应字段、CRC32、
+  未订阅不发数据、订阅后收包、加速度/角速度轴向、分次到达的保留语义、未知消息类型、重启。
+
+### 6.18 GNOME Mutter 显示后端
+
+`src/platform/linux/mutter_display.{h,cpp}` 直连 `org.gnome.Mutter.DisplayConfig`（session bus），
+`display_device.cpp` 的分发顺序变为 `niri → mutter → kscreen`，三者都不在时仍退化为 no-op 加一条
+warning。Mutter 的模型与另外两个后端差别很大，因此接入点全部按它的语义重写：
+
+- **整份替换、一次原子写入**：`GetCurrentState` 拿 serial + 全量配置，改完 `ApplyMonitorsConfig`
+  （method 2 = persistent）。没有 per-output 动词，所以 `mutter_change()` 把
+  "读 → 改 → 写 → 回读" 串成一个模板函数，3 次重试 / 500 ms，`mutate` 返回 false 表示这条改动
+  根本无法表达（如未知 connector）→ 立即停止重试。
+- **mode id 是字符串**：Mutter 只接受它自己发出去的 id（`2560x1440@144.001` 这种），`compositor_mode_t::id`
+  因此存原串而不是像 niri 那样用下标；改模式 = 把选中的候选标成 `current` 再整份写回。
+- **禁用 = 从 logical monitor 里摘连接器**，摘空的 logical monitor 一并删除；启用 = 追加一个
+  logical monitor，位置排在现有桌面右边缘（`mutter_right_edge()` 按各 logical monitor 的实际宽度
+  换算逻辑坐标）。没有任何 logical monitor 时补一个 primary。
+- **主屏是 logical monitor 的 flag**，所以 `set_as_primary_device` 在 Mutter 上能表达与 Windows
+  相同的语义（恰好一个 primary），不像 niri 只能退化成"第一个输出"。
+- **HDR = color-mode**：1 = `BT.2100`（HDR），0 = default（SDR）；`supported-color-modes` 不含
+  BT.2100 时明确报错而不硬写。`hdr_state_str` 只在显示器声明支持 HDR 时才填。
+- **复制拓扑**（`LINUX_PORT_GAPS.md` §1.4）：一个 logical monitor 可含多个 connector。
+  `is_topology_valid`/`set_topology` 在 Mutter 会话下放行多设备组并按组重建 logical monitor
+  （已存在的组沿用原 x/y/scale/transform/primary，新组依次排到右边），`get_current_topology` 用
+  `compositor_output_t::replication_source` 把同组输出聚合回一个镜像组，因此 `set_topology` 的
+  回读校验对镜像拓扑同样成立。
+- **已知约束**：`set_hdr_states`/`set_display_modes` 的"回读确认"用的是 `query_outputs()`，即
+  每次重试都重新走一遍 D-Bus（Mutter 的 serial 只有一次有效，不能缓存）。
+- **测试**：`tests/unit/test_mutter_display.cpp` 7 例，用真实 sd-bus 消息做编解码往返（构造
+  `GetCurrentState` 的返回签名与 `ApplyMonitorsConfig` 的请求体后逐字段读回），不需要合成器；
+  没有会话总线时整组 GTEST_SKIP。开发中被这批用例抓出 3 个真 bug：根 tuple 不能
+  `enter_container`、monitor 结构签名少一层括号、缺可变 `find_monitor` 重载。
+- **未做运行时验证**：开发机上没有 mutter/gnome-shell，`busctl --user introspect` 返回
+  `The name is not activatable`。等有 GNOME 会话时可做端到端确认（切分辨率/HDR/主屏 + 镜像拓扑
+  + 还原）。
+
+### 6.19 KScreen 镜像拓扑
+
+旧文档断言"kscreen-doctor 没有 replication 命令"，这条是错的：`kscreen-doctor --help` 里就有
+`output.HDMI-2.mirror.eDP-1` / `output.HDMI-2.mirror.none`。于是 §1.4 的 KDE 半边不需要 KWin 脚本，
+也不需要 libkscreen D-Bus。
+
+- **写入**：`set_topology` 在使能/禁用输出之后追加一次 `kscreen_change`，参数由纯函数
+  `src/platform/linux/mirror_plan.h` 的 `platf::mirror::plan()` 算出 —— 它只发差量：
+  成员指向组首（`mirror.<source>`），不再需要镜像的输出显式 `mirror.none`（不清就会留下残留关系），
+  已经正确的组合一条都不发。
+- **能力判定**：`compositor_supports_replication()` 对 Mutter/KScreen 返回 true，对 niri 返回
+  false —— niri 没有镜像概念，多设备组在校验层就被拒绝（早失败，报错信息与 setter 一致）。
+- **回读**：`get_current_topology()` 用 `compositor_output_t::replication_source`（KScreen 与
+  Mutter 都填"源输出的数字 id"）把镜像成员折叠回一个组，因此三后端的拓扑比较、`set_topology`
+  自动回退、`apply_config` 的还原校验共用同一套逻辑。
+- **顺序**：镜像必须在使能之后发（禁用的输出不能当镜像目标）；失败时回退路径同样重放
+  `apply_kscreen_mirroring(current)`，best effort。
+- **实测（本机 KDE，2026-10-22）**：`kscreen-doctor output.eDP-1.enable output.eDP-1.mirror.DP-2`
+  之后 `kscreen-doctor -o` 报 `eDP-1 enabled` + `replication source: 1`（1 = DP-2 的输出 id），
+  随后 `output.eDP-1.disable` 复原。这条命令正是 `mirror_plan` 生成的形态，回读字段也正是
+  `query_kscreen_outputs()` 解析的 `replication source:`。
+- **实测发现的怪癖**：输出被禁用后**会保留**残留的 `replication source`（eDP-1 关掉后仍报
+  `replication source: 1`）。所以 `mirror_plan` 不碰禁用输出上的关系（动它会让整条原子请求失败），
+  而是靠"使能 → 再回收"的顺序兜住：需要独立的输出先被使能（此时旧关系复活），随后
+  `apply_kscreen_mirroring()` 发现它已启用且不在期望成员里，补一条 `mirror.none` 清掉。
+  这条顺序依赖就是 `tests/unit/test_mirror_plan.cpp` 里 `IgnoresAMirrorOnADisabledOutput` 与
+  `SwapsWhichOutputCarriesTheRelation` 两个用例的来源。
+- **测试**：`tests/unit/test_mirror_plan.cpp` 8 例 —— 已镜像不重复发、新镜像、回收、改指向、交换
+  方向（先回收再重指，两条命令的顺序也固定）、禁用输出上的残留关系不碰、未知输出拒绝、扩展桌面
+  不变。
+
+### 6.20 HDR 亮度分析：逐像素 max(R,G,B)
+
+- **问题**：Windows 分析器是 D3D11 计算着色器跑 scRGB 帧，看到的是真 max(R,G,B)；Linux 走 KMS
+  捕获的 PQ YUV，旧实现直接拿**亮度**当 maxRGB 累加。亮度恒 ≤ maxRGB，饱和纯色下差距是量级级别：
+  纯红 100 nits 的帧，亮度只有约 1.2 nits。
+- **做法**：`src/video_hdr_analyzer.h`（纯 header，`namespace video::hdr_analyzer`）把每个
+  Y'CbCr 三元组按非恒定亮度反矩阵还原成 R'G'B' 的 PQ 信号，取最大者落回 10-bit 码进直方图。
+  矩阵系数按帧的 `colorspace` 选：BT.2020 NCL 默认，只有显式 BT.709/470BG/170M/240M 才换 BT.709
+  系数（否则 SDR 帧会被 2020 系数算歪）。`G' = Y' - (Kr·R' + Kb·B')/Kg` 用 `Kg = 1 - Kr - Kb`
+  归一，灰色三元组因此精确回到自身亮度——这是 `GreyKeepsItsLuma` 用例守的等式。
+- **色度取址**：4:4:4 直接同址；4:2:0（P010LE / YUV420P10LE）按最近邻取 `col/2, row/2`。分析在
+  已降采样到 ≤1920×1080 的帧上跑，插值成本换不来精度。
+- **为什么不上 GPU**：`hdr_analysis_interval = 4` ⇒ 每 4 帧一次、帧已降采样，CPU 每像素 6 次乘加
+  可以忽略；而 CUDA/Vulkan 路径要给 scRGB hwdevice 与 VAAPI/软件两条链路都加分支。PQ 数学仍只由
+  `video_hdr_metadata.h` 提供（`pq_to_nits` / `st2084_*`），没有第二份实现。
+- **契约修正**：`platf::hdr_frame_luminance_stats_t` 的字段注释本来就写着 max(R,G,B)
+  （`src/platform/common.h:527-549`），旧实现与之不符；现在实现与文档一致，Windows 软件路径同样
+  受益（硬件路径本来就走着色器）。
+- **测试**：`tests/unit/test_video_hdr_analyzer.cpp` 10 例 —— 纯红给 100 nits 而不是 1.2、
+  灰阶等式、有限/全范围等价、MSB/LSB 等价、4:2:0 色度覆盖每个像素、无色度回退亮度、黑帧
+  near-black = 1、坏帧不发布零值、序列号逐帧递增、BT.709 独立矩阵。
+
+---
+
+### 6.21 X11（RandR）显示后端
+
+- **问题**：KDE（kscreen）、GNOME（Mutter D-Bus）、niri（IPC）各有一个后端，裸 X11 会话
+  （i3/openbox/bspwm/X11 桌面会话）三个都没有，display_device 只能整段降级。
+- **实现**：`src/platform/linux/xrandr_display.{h,cpp}`（`namespace platf::xrandr`），
+  `src/platform/linux/display_device.cpp` 增加 `compositor_is_xrandr()` 与
+  `query_xrandr_outputs()` / `xrandr_change()`。
+- **模型差异**（决定了实现形状）：
+  1. output = 连接器，crtc = 时序发生器；**两个 output 共用一个 crtc 就是镜像**，且必须同模式。
+  2. 没有 per-output 动词：写 = 一串 `XRRSetCrtcConfig` + 一次屏幕尺寸，无 serial、无校验。
+     因此 `apply()` 先快照所有 crtc 与屏幕尺寸，任一步被拒就按快照回滚（`BadMatch`/`BadValue`
+     经 `XSetErrorHandler` 捕获，`XSync` 后判定）。
+  3. 禁用输出 = 把它从 crtc 上摘掉（`mode=None`, 0 outputs），没有 off 动词。
+  4. **RandR 没有 HDR / 色彩模式 / 缩放 / 小数刷新率概念**：`hdr_state_str` 恒空，
+     `set_hdr_states()` 对 X11 直接拒绝并打一次性 warning，而不是假装成功。
+  5. 主屏是 screen 上某个 output 的属性（`XRRSetOutputPrimary`），可以表达。
+- **纯函数 `plan_for()`**（可单测）：把"想要的 state"翻成"每块 crtc 扫哪个模式、放在哪、
+  带哪些 output"。拒绝无法表达的组合（未知/未连接的 output、镜像成员模式不一致、
+  没有可用模式、多个主屏）。`apply()` 只负责把 plan 落到 Xlib 上。
+- **选择顺序**：`compositor_is_xrandr()` 排在 niri / Mutter / kscreen **之后**——Wayland 会话总能
+  命中前三者之一，裸 X11 才会落在这里。XWayland 能应答 RandR 读，但永远不会被选为后端。
+- **实测**（本机 Plasma 的 XWayland，`DISPLAY=:0`）：`query_state()` 与 `xrandr --query` 逐字段一致
+  —— `DP-2 connected primary 1920x1080+0+0`、screen 1920x1080、29 个模式、当前模式
+  `1920x1080@59.96`。
+- **发现的三个真 bug（都由测试抓出）**：
+  1. `crtc->mode` 是 RRMode **句柄**而不是 `resources->modes[]` 的**下标**，按句柄当下标取
+     时序会读到越界内存；必须按 `.id` 比对。
+  2. `XRROutputInfo::modes[]` 里装的同样是**模式 id**，不是下标。早期实现把它当下标用，
+     在 `DISPLAY=:0` 上表现为「id 大于 `nmode` → 条目被跳过」（实测 29 个模式一个都没进列表），
+     而 id 恰好落在范围内时会静默取到**另一个**模式的分辨率。现在按 `mode_info.id ==
+     resources_mode` 查表，查不到才跳过并记录——xrandr 自身也是这么做的。
+  3. 镜像分组原先在**一趟**里完成：成员若在名字排序上早于它的 leader（如 `DP-1` 镜像
+     `HDMI-A-1`），成员先建了自己的 crtc 请求，leader 再建一个 → 镜像退化成并排，且可能因为
+     需要第二个 CRTC 而整体失败。现在先按 `leader_name` 分组、再逐组生成请求。
+- **CRTC 分配还要求合法**：回退分配时除「未被其它组占用」外，还检查该 crtc 在该组**每个**
+  output 的 `XRROutputInfo::crtcs` 允许列表里（服务器没给列表时视为不限制）。否则
+  `XRRSetCrtcConfig` 会让整份请求被拒，现象是"合成器无视我们"。
+- **回滚不冒充成功**：计划被拒时恢复快照，但 `apply()` 仍返回失败（回滚成功不等于应用成功），
+  并把屏幕尺寸恢复成**快照**尺寸而不是计划尺寸。
+- **测试**：`tests/unit/test_xrandr_display.cpp` 20 例——16 例纯规划（单输出/禁用/并排/镜像共享
+  crtc/镜像尺寸不一致/未知或禁用的镜像源/主屏/主屏冲突/无模式/非当前 mode id/旋转与翻转/
+  时序换算/**成员排序早于 leader 的镜像**），4 例真机（query 自洽、live 状态可规划、**回写当前
+  配置**要么被接受要么带原因被拒）。
+- **未验证**：真实 X11 会话下的写路径。本机只有 XWayland，且**没有 Xvfb/Xephyr**，无法起嵌套 X
+  服务器；XWayland 侧写操作被接受但布局不变（其 RandR 是只读镜像）。sway/Hyprland 等
+  wlroots 兜底当时未做，已在 §6.26 完成。
+
+### 6.22 客户端身份：虚拟屏的规范标识（§1.1 阶段一）
+
+- **问题**：Windows 把每客户端的 GUID 交给 ZakoVDD（`CREATEMONITOR {GUID}:...`），所以每客户端
+  是自己的显示器；Linux 没有驱动可交，只能占用物理连接器 + EDID override，而客户端标识此前
+  **只进了一行日志**（`vdd_utils::generate_client_guid` 在 Linux 半边恒返回空串）。后果是合成器
+  把一个虚拟屏当成所有客户端共用的一台显示器，宿主机重启后也无从判断某连接器属于谁。
+- **实现**：新增共享的 `src/vdd_client_identity.{h,cpp}`（加入 `cmake/sources/host.cmake`，
+  Windows 同样编译）：
+  - `guid_for_identifier()`：RFC 4122 v5（SHA-1，nil 命名空间）UUID，格式与 Windows 交给驱动的
+    完全一致（花括号 + 小写十六进制）。
+  - `serial_for_identifier()`：同一次派生的前 32 位，永不为 0——EDID 的 serial-number 字段
+    （字节 12..15）是**唯一**能承载客户端身份的位置：产品名必须保持 `ZAKO_NAME`，而基块的四个
+    描述符槽（DTD1 / 0xFC / 0xFD / DTD2）已全部占用。
+  - `vdd_utils.cpp` 两个平台半边的 `generate_client_guid()` 都改为委托这一个实现，杜绝同名不同值。
+  - `src/platform/linux/vdd_edid.cpp` 在有客户端标识时用它替换旧的"按分辨率/刷新率派生"序号；
+    **无标识符时保持旧值不变**，因此既有的单客户端配置不会被认成新显示器（保住用户已保存的
+    显示设置）。`serial_number_of()` 供采纳路径读回。
+  - `vdd_utils.cpp` 的采纳路径（`adopt_orphan_vdd_locked`）现在会读出并记录该串号，创建路径也
+    记录客户端 GUID + 串号。
+- **验证**：`tests/unit/test_vdd_client_identity.cpp` 5 例 + `test_vdd_edid.cpp` 新增 4 例——
+  期望 GUID 由 Python `uuid.uuid5(uuid.UUID(int=0), name)` 独立复算（`living-room-tv` →
+  `{fed83b8c-4d8b-5380-93f9-2613daf4e420}`），因此这条断言同时钉住"两平台同源"；串号等于 GUID
+  前 32 位、恒非零、随标识符而变、无标识符时回落到历史序号；两个客户端的 EDID 只有 seq 字段不同，
+  产品名一致。
+
+### 6.23 并行多实例虚拟屏（§1.1 阶段二）
+
+- **问题**：阶段一让虚拟屏"知道"自己属于谁，但后端只有**一台**——`vdd_utils.cpp` 的
+  `active` / `active_connector` / `active_edid_opts` 是单实例状态，`create_vdd_monitor()` 在已有活屏时
+  直接返回，清理逻辑还会把"非当前活动连接器"的残留虚拟屏一并扫掉。于是第二个客户端接入
+  （`session.cpp` 的 `rebuild_old_vdd_id` 链路）必然**销毁重建**，第一个客户端正在看的屏就没了；
+  Windows 由驱动按 GUID 建多台，没有这个问题。
+- **实现**：把单实例状态换成实例表，规则与状态分离。
+  - `src/platform/linux/vdd_instances.{h,cpp}`（加入 `cmake/compile_definitions/linux.cmake` 的
+    `PLATFORM_TARGET_FILES`）只装**纯规则**，不碰 DRM，因此可脱离硬件单测：
+    `find(records, identifier, selected)` 按 EDID 串号在表里定位请求所属记录（从未记录的串号可
+    认领收养来的屏；无身份的调用方退回"选中记录"，即历史单槽行为，且不会因编号过期而误中）、
+    `live_count()`、`used_connectors()`、`pick_connector(candidates, unavailable)`。
+  - `vdd_utils.cpp`（Linux 半边）保留共享的 `active_*` 会话字段，另加
+    `std::vector<instance_t> instances` + `selected_instance`，用
+    `store_current_locked()` / `load_instance_locked()` / `clear_view_locked()` /
+    `erase_instance_locked()` 在"请求态"与"某台虚拟屏的态"之间搬运；
+    `adopt_orphan_vdd_locked()` 改为把**所有**活的虚拟连接器收养进表（原来至多一台）。
+  - `create_vdd_monitor(identifier, …)`：`store_current_locked()` → 该客户端**自己**的活屏直接复用
+    （EDID 个性化与合成器布局都不动）→ 否则选空闲连接器，候选里排除表中已占用的连接器，以及独占
+    会话关掉的物理输出（它们在 sysfs 里同样只显示 "disconnected"，无从分辨）→ 只清理**无主**的
+    残留虚拟屏 → 建新记录并选中。选的连接器按现有偏好顺序（DP > HDMI-A > HDMI > eDP > VGA）。
+  - `destroy_vdd_monitor(identifier)` / `destroy_vdd_monitor_nolog(identifier)`：只拆自己那台；
+    "物理屏复位 + 主屏交还物理屏"只在**最后一台**虚拟屏消失时执行，仍有客户端在串流时不会把
+    用户的物理屏重新点亮。`session_t::destroy_vdd_monitor()` 传 `current_vdd_client_id`，
+    重建 / 恢复路径（`prepare_vdd()`）统一用同一个 `vdd_identifier`（`vdd_reuse` 时为 `shared_vdd`，
+    否则为客户端标识符），因此不会再误拆另一台。
+- **平台中立性**：`destroy_vdd_monitor*` 新增的 `std::string_view` 参数在 Windows 半边显式
+  `(void)` 忽略——Windows 的隔离由驱动按客户端 GUID 完成，行为逐字不变；声明与默认实参在共享头
+  `src/display_device/vdd_utils.h`，调用方不传即保持旧行为。
+- **验证**：`tests/unit/test_vdd_instances.cpp` 9 例（同一标识符认领自己的记录；收养来的屏靠串号
+  也能认领；**陌生客户端不会继承别人的屏**——这正是回归；无身份调用保持单槽行为；空闲连接器按序
+  分配；独占关掉的物理输出被跳过；两客户端最终落在不同连接器上、表内各自可见）。
+  合并后全量 `test_sunshine` 805 例 / 791 通过 / 12 跳过 / 2 项环境依赖失败，无新增失败。
+- **本机未能验证**：真正的"两客户端同时串流"需要第二个客户端与至少两个空闲连接器；本机断开态
+  连接器只有 `DP-1` 与 `HDMI-A-1`（`eDP-1` 是真实内屏，不能占），独占会话还会排除物理输出，
+  因此多实例的端到端形态只做到规则层单测 + 单客户端回归。上限本身也受空闲连接器数量约束：
+  没有空闲连接器时退回原有行为（返回失败并记录日志），不会去抢别人的屏。
+
+### 6.24 Windows 中立性审计（可复跑）
+
+- **动机**：Windows CI 也构建本仓库，而本分支往共享文件里加了大量 Linux 代码（`git diff origin/master..HEAD`
+  = 53 个共享文件、+5462/−381）。两类错误很难靠肉眼发现：改动落进了 `#if defined(_WIN32)` 区域（悄悄
+  改变 Windows 编译的内容），或 Linux 专属源被写进了共享构建文件（Windows 去编译它）。
+- **工具**：`tools/audit-windows-parity.py`（默认比对 `origin/master..HEAD`，可传 `<base>..<head>`）。
+  - 检查 1：对每个共享文件重建**预处理嵌套栈**（识别 `#ifdef _WIN32`、`#if defined(_WIN32)`、`#ifndef _WIN32`
+    的 `#else` 分支），再用 `git diff -U0` 把每一处增/删行映射回行号，只报"会被 Windows 编译到"的改动行，
+    供人工逐条判断。纯预处理指令行不计（那是改动的形状，不是 Windows 编译的代码）。
+  - 检查 2：`cmake/sources/host.cmake`（共享）不得出现 `src/platform/linux/` 下的任何源；`src/platform/linux/`
+    下每个 `.cpp` 都必须被 `cmake/compile_definitions/linux.cmake` 显式列举或 glob 覆盖。
+- **当前结果**（2026-10-22，HEAD `d0ae854b`）：
+  - 检查 2：27 个 Linux 专属源，**0 个未列举、0 处泄漏**。
+  - 检查 1：36 行需人工判断，逐条已核，全部为**有意的平台化**，没有意外改动：
+    - `src/display_device/vdd_utils.{h,cpp}`：`windows.h` 与 `WIN32_LEAN_AND_MEAN` 收进 `#ifdef _WIN32`
+      （原本无条件，Linux 编不过）；Windows 半边的 `destroy_vdd_monitor*` 用 `(void) client_identifier` 显式忽略
+      新参数，内部调用改传 `{}`（等价于旧的单实例行为）。
+    - `src/entry_handler.cpp`：`windows_utils.h` 的 include 加 `#ifdef _WIN32`（上游原本无条件）。
+    - `src/globals.{h,cpp}`：`VDD_NAME` / `ZAKO_NAME` 提出门控（Windows 取值不变），并新增规范常量
+      `ZAKO_DEVICE_ID`（"23172"，会话把它当显式虚拟屏请求；不再由平台各自写死）。
+    - `src/rtsp.cpp`：图片剪贴板能力在 Windows 侧仍是 `constexpr bool images = true;`（行为逐字保持），
+      Linux 侧改问 `clipboard_host::image_available()`。
+    - `src/nvhttp.cpp` / `src/nvhttp/display_control.cpp`：去掉 Windows 专属门控的地方，Windows 取值不变
+      （`VddCapabilityVersion` → `capability_version`，`#else 0` 分支删除）。
+    - `src/platform/windows/display_vram.cpp`：`HDR_ANALYSIS_{INTERVAL,MAX_WIDTH,MAX_HEIGHT}` 改为引用共享
+      `video_hdr_metadata.h` 的 `hdr_analysis_*`，取值仍是 4 / 1920 / 1080（`src/video_hdr_metadata.h:330,337,338`），
+      Windows 行为逐字不变。
+    - `src/platform/windows/input.cpp`：只改 include 路径（`dsu_server.h` → `src/dsu_server.h`）。
+    - `src/tray/system_tray.cpp`：新代码全在 `#ifndef _WIN32`；被去掉的 `#ifdef _WIN32` 只让**菜单布局**
+      在 Linux 上跟 Windows 对齐，Windows 分支设置的菜单索引与文本不变。
+    - `src/video.cpp` 的 `#if !defined(_WIN32) … #else`：Vivid T.35 是本分支的 Linux 特性，Windows 侧给空
+      `vivid_formats` / `vivid_codec`，原生 NVENC/AMF 路径不受影响。
+    - 新文件 `src/dsu_server.{h,cpp}`（Windows 的 `WSAIoctl` 块在 `#if defined(_WIN32)` 内）、
+      `src/vdd_client_identity.{h,cpp}`（纯 std）、`src/video_hdr_analyzer.h`（仅 Linux 路径引用）已单独复核。
+- **复跑方式**：`python3 tools/audit-windows-parity.py`（推上游前跑一次；检查 2 非零退出即视为回归）。
+
+### 6.25 可选依赖：没有 libsystemd 也能构建
+
+- **问题**：`cmake/compile_definitions/linux.cmake` 一直把 libsystemd 当可选依赖（`pkg_check_modules(LIBSYSTEMD
+  libsystemd)` + `else()` 分支只打一行 STATUS），但三处代码把它当成了硬依赖，在没有 `libsystemd` 开发包的
+  系统上构建会失败：
+  1. `src/platform/linux/display_device.cpp` 无条件 include `mutter_display.h`，而后者无条件
+     `#include <systemd/sd-bus.h>` → 缺头文件即编译失败。
+  2. `src/platform/linux/foreground_app.cpp` 无条件包含同一头文件，且 KWin 前台生产者整段调用 sd-bus。
+  3. `src/rtsp.cpp:1228` 在 Linux 侧无条件调用 `clipboard_host::image_available()`，而
+     `src/clipboard_host.cpp` 只在 libsystemd 存在时才被编入 → 头文件放开后错误从"编译失败"变成"链接失败"。
+  另外 `SUNSHINE_MUTTER_DISPLAY` 这个宏除了 cmake 里定义它之外**没有任何使用点**，是残留。
+- **做法**：把"有没有会话总线"收敛成一个宏 `SUNSHINE_HAVE_SDBUS`（libsystemd 找到时定义，同时荷载
+  `SUNSHINE_CLIPBOARD_HOST`），并让三个模块**自带退化实现**，调用方不必写 `#ifdef`：
+  - `src/platform/linux/sdbus_session.h`：没有 sd-bus 时 `open_user_bus()` 返回 `nullptr`（类型前向声明，
+    调用方仍拿到 `sd_bus *`）。每个调用方本来就把"总线为空"当作"这个生产者不可用"，语义正好。
+  - `src/platform/linux/mutter_display.h`：只前向声明 `struct sd_bus_message;`，不再强迫包含者拉进 sd-bus 头。
+  - `src/platform/linux/mutter_display.cpp`：实现在 `#if defined(SUNSHINE_HAVE_SDBUS)` 内，`#else` 半边
+    （整个后端自报"这里没有 Mutter"，一次 info 日志说明原因）之外保留纯函数 `find_monitor` /
+    `find_logical_monitor` / `current_mode` / `matching_mode`，它们只对 `state_t` 做运算。
+  - `src/rtsp.cpp` / `src/clipboard_host.h`：`clipboard_host.h` 在无 provider 时给出 inline 的
+    `start()` / `stop()` 空实现与 `image_available() → false`，于是"没有剪贴板主机"自然等于"不通告图片能力"。
+  - `tests/CMakeLists.txt`：`test_mutter_display.cpp` 用手写 sd-bus 消息做编解码往返，无 libsystemd 时不参与
+    构建（与 `if (WIN32)` 排除同一处）。
+  - 删掉 `SUNSHINE_MUTTER_DISPLAY`；`else()` 分支的 STATUS 文本改为列出受影响功能。
+- **验证**：用一个假 `pkg-config` 把 libsystemd 报成缺失（其余模块转发给真 pkg-config），单独配置一棵
+  `build-nols` 并完整构建：
+  ```sh
+  printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *libsystemd*) exit 1;; esac; done\nexec /usr/bin/pkg-config "$@"\n' > /tmp/pkgconfig-stub/pkg-config
+  cmake -B build-nols -S . -G Ninja -DPKG_CONFIG_EXECUTABLE=/tmp/pkgconfig-stub/pkg-config \
+    -DSUNSHINE_ENABLE_CUDA=OFF -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+  ninja -C build-nols sunshine test_sunshine
+  ```
+  结果：配置阶段打印 `libsystemd not found - session-bus features disabled …`，`sunshine` 与 `test_sunshine`
+  均构建成功且无警告；`build-nols/tests/test_sunshine` 798 例 / 784 通过 / 12 跳过 / 2 环境依赖失败——
+  与主构建的 805 例相比正好少掉 7 个 Mutter 编解码用例，失败面完全一致。
+- **无 libsystemd 时的功能面**：剪贴板主机（文本 + 图片）不启动、GNOME 显示配置后端自报不可用（KScreen /
+  RandR / niri 继续工作）、KDE 的 KWin 前台生产者不可用（niri IPC、wlroots 协议、X11 三个生产者不受影响）。
+  Arch 包的 `depends` 里本来就有 `systemd`，所以正常安装不受影响；这条修复只针对自建/裁剪发行版。
+
+### 6.26 wlroots（wlr-randr）显示后端
+
+- **问题**：§6.21 之后仍有一个显示后端缺口 —— sway / Hyprland / labwc / wayfire 这类 wlroots
+  合成器。它们既不是 KDE（无 kscreen-doctor），也不说 Mutter 的 D-Bus 接口，更不是 niri（没有
+  `NIRI_SOCKET`），于是整段 display_device 降级，客户端的分辨率/开关请求都被丢弃。
+- **为什么走 CLI 而不是直接绑协议**：wlr-output-management-unstable-v1 是 Wayland 协议，读它就得
+  编出协议代码并持有连接；而四个后端里有三个已经是"通过小工具说话"（kscreen-doctor、niri msg、
+  xrandr CLI），多一个 `wlr-randr` 与此一致，也避免为一个多数构建用不到的合成器把协议代码
+  链进二进制。本仓 `third-party/wlr-protocols/` 里本来就有该 XML（§2.10 的前台检测用过），但这条
+  路径不需要它。
+- **会话判定**：wlroots 合成器**不设置**任何 `NIRI_SOCKET` / 总线名 / 环境变量可供识别，唯一的
+  诚实答案来自探针本身：跑一次 `wlr-randr` 看它是否列出 head。为了不让这个探针在每次状态读取时
+  都去敲一次合成器，`session_supports_wlr_randr()` 缓存结论，失败则置 20 s 冷却；工具不在
+  `/usr/bin`、`/usr/local/bin`、`/bin` 时直接判否（服务环境的 PATH 不可信，与三个前辈一致）。
+- **选择顺序**：niri → Mutter → **wlroots** → X11(RandR) → KScreen。wlroots 排在 RandR **之前**是有
+  意的：wlroots 会话里 XWayland 也在跑，它同样应答 RandR 读取，但真正拥有连接器的是 wlroots 输出
+  管理器；把 RandR 排在前面会让这类会话落到一个只读镜像上。
+- **协议形状带来的行为**（与另外三个后端的差异）：
+  1. **一次写 = 整份配置**：`wlr-randr --output X --on/--off/--mode …` 会重新应用它读到的每一个
+     head，所以单个输出的开关/模式请求只需列出该输出，其余 head 保持原样。
+  2. **模式 id 是字符串**（如 `3840x2160@59.94`）：工具把速率换算成 millihertz（`round(hz*1000)`）
+     再回匹配，因此解析出来的 spec 可以原样回传 —— 这条往返由
+     `WlrRandr.ModeSpecRoundTripsMillihertz` 与 `WlrRandr.ParsedSpecsAreAcceptedBackAsArguments` 把守。
+  3. **启用一个关着的 head 不需要我们给模式**：工具会替它填上 preferred 模式（源码
+     `fixup_disabled_head()`），紧随其后的模式请求再覆盖掉，语义与 KScreen/niri 的"先开再设"一致。
+  4. **无主屏字段、无镜像动词、无 HDR 控制**：`set_as_primary_device()` 与 HDR 请求显式跳过并打
+     一次性 warning，`compositor_supports_replication()` 返回 false（多设备组在校验层就被拒绝）。
+  5. **工具会对 argv 做严格解析**：`--tcp-port` 那类"必须前置于子命令"的坑在 wlr-randr 上不存在，
+     但输出名来自合成器、而我们经 `/bin/sh` 执行，因此名字一律按 shell 规则转义
+     （`WlrRandr.QuotesOutputNamesForTheShell`）。
+- **`--dryrun`**：wlr-randr 能把整份配置交给合成器**测试**（协议的 test 请求），`build_args(..., true)`
+  已打通；写路径目前与另外三个后端一样只做"回报 + 回读校验"，尚未把 dryrun 接到 apply 前。
+- **测试**：`tests/unit/test_wlr_randr.cpp` 8 例 —— 列表字段、模式与 flag、禁用 head 的默认几何、
+  未知字段的向前兼容、enable/disable/mode 的 argv 形状、多 head 一次调用、shell 转义、dryrun 只在
+  有请求时追加、millihertz 往返、以及"没有工具就不认领会话"。
+- **用真工具做的验证**：从 emersion/wlr-randr 的 `main.c` 在 `/tmp` 编译出真二进制（对方仓库里没有
+  Makefile，用 `wayland-scanner` 生成客户端代码后 gcc 直编），在本机 Plasma 会话下实测它的失败
+  分类正是本后端探测所依赖的两个串：有合成器但没有该协议时输出
+  `compositor doesn't support wlr-output-management-unstable-v1` 且 exit 1；没有合成器时输出
+  `failed to connect to display` 且 exit 1（两者都走 stderr，而 `vdd_utils::run_logged` 抓的是
+  合并输出）。
+- **未验证**：成功路径（读回真实 head、真正改模式/开关）。本机**没有任何 wlroots 合成器**，
+  sway/wlroots/wlr-randr 都未安装，无法起一个来做端到端；因此这条后端的正确性证据是
+  协议/源码契约 + 单测 + 失败分类的实测，而不是一次真实的模式切换。
+
+### 6.27 显示后端的判定顺序（可测契约）
+
+- **问题**：五个后端都可能对同一个会话"举手"，其中两个还会在**不属于它**的会话里应答：
+  XWayland 在**每一个 Wayland 会话**里都应答 RandR 读，KScreen 只要 `kscreen-doctor` 存在就应
+  答（wlroots 合成器并不理会它）。所以"先问谁"不是实现细节而是契约：先问 RandR 会让
+  sway/Hyprland 会话悄悄落到真实输出的只读镜像上。
+- **做法**：把顺序抽成 `src/platform/linux/display_backend.h` 里的 header-only 选择器
+  `platf::select_display_backend(supported)`——按 `niri → mutter → wlr_randr → xrandr → kscreen`
+  依次问谓词，**第一个举手就是答案，之后的谓词一次都不调用**（探测不白花，尤其 wlroots 的探测
+  可能真的去跑一次 `wlr-randr`）。`display_device.cpp` 的 `compositor_is_*()` 四个助手与
+  `query_outputs()` 的派发都改成经由 `selected_backend()`，成本与改前逐次问助手完全相同。
+- **理由写在头文件里**，逐条对应：niri 有独占 socket；Mutter 占一个只有 GNOME 会发布的
+  bus name；wlroots 的 output manager 才是连接器真正的所有者；RandR 是裸 X11 会话仅剩的
+  API；KScreen 是兜底（它没有自己的探测，所以是"其他都拒绝之后剩下的那个"）。KScreen 的排除
+  条件仍写在 xrandr 谓词内部（Plasma 会话不能被 XWayland 镜像服务），顺序本身不掺平台判断。
+- **测试**：`tests/unit/test_display_backend.cpp` 7 例，用假谓词把顺序钉死，无需任何合成器
+  （一台机器装不下 Plasma/GNOME/niri/sway 四种会话）——含"wlroots 必须赢过 XWayland 镜像"
+  这一条，以及"探测在胜者处停止"（全举手时只问了 niri；无人举手时问满四个后落到 KScreen）。
+- **未覆盖**：真会话里的端到端（要真起 sway/GNOME），同 §6.16/§6.18/§6.26 的诚实边界。
+
+### 6.28 客户端触控事件与 Windows 的接触语义对齐
+
+用户报"多点触控好像有问题"。排查的**第一个结论是"不是本分支的回归"**：`src/platform/linux/input/
+inputtino_touch.cpp` 与上游逐字相同（`git diff origin/master:<file> HEAD:<file>` 为空），inputtino
+的引脚也与上游一致（`d28ec79eb63324e68d73a7de22bcb5ff0a6f6bf8`）。问题在上游 Linux 路径本身。
+
+上游那份实现把客户端事件直接当成设备调用：`HOVER/DOWN/MOVE` 一律 `place_finger`，
+`UP/CANCEL/HOVER_LEAVE` 一律 `release_finger`，`CANCEL_ALL` 只留了一行 `// TODO`。对着 Windows
+实现（`src/platform/windows/input.cpp` 的 `populate_common_pointer_info` 与 `touch_update`）逐条
+比对后，有**三处语义偏差**，每处都能在多指手势里看出症状：
+
+| 偏差 | Windows 语义 | 上游 Linux 的行为 | 症状 |
+|---|---|---|---|
+| `CANCEL_ALL` 未处理 | `cancel_all_active_touches()`：释放全部已按下触点 | 什么都不做 | 客户端取消手势（失焦/手势中断）后主机仍按着旧触点，下一根手指到达时被当成**第三根**手指——捏合/双指滚动随即错乱 |
+| `HOVER` 当成触点 | hover 只标 in-range、不进 contact（`INRANGE\|UPDATE`，不含 `INCONTACT`） | `place_finger`，把 `pressureOrDistance`（hover 时是**距离**）当压力写下去 | 支持 hover 的客户端会在屏幕上留下**幻影触点**，且压力值是错的量纲 |
+| 未上报旋转（`LI_ROT_UNKNOWN = 65535`）与零压力 | 未知旋转 → 方向 0；压力为 0 → 512/1024 | `65535` 走 0..360→-90..90 换算后落到取整边界，被 inputtino `clamp` 成 **90°**；压力为 0 就传 0 | 每个触点都自称"横躺 90°"、压力 0；部分应用/合成器的接触面积与手势判定跟着变 |
+
+另外补了 Windows 有而上游 Linux 缺的两件事：未知事件类型打警告（Windows 会
+`BOOST_LOG(warning) << "Unknown touch event"`），以及触点表溢出（>16 个 pointer）时先取消全部
+再安置新触点（Windows 的 "No unused pointer entries! Cancelling all active touches!"）。
+
+- **做法**：把"事件 → 动作"抽成 header-only 的纯函数
+  `src/platform/linux/input/touch_plan.h`（`plan_for()` / `orientation_for()` / `pressure_for()` /
+  `known_event()`），`inputtino_touch.cpp` 只负责执行动作并维护**每客户端**的
+  `active_touch_pointers` 集合（`client_input_raw_t` 里新增字段，注释说明为什么必须挂在客户端上：
+  设备是 MT-B 有状态的，只有客户端知道哪些 pointer 按着）。
+- **测试**：`tests/unit/test_touch_plan.cpp` 14 例——hover 不产生触点 / hover 会释放已按下触点、
+  UP/CANCEL/HOVER_LEAVE 释放、CANCEL_ALL 释放全部、BUTTON_ONLY 与未知类型不动状态、旋转 0..360
+  全表映射且恒在 -90..90 内、`LI_ROT_UNKNOWN` 不声称方向、零压力回落到 0.5、触点表溢出时
+  `release_all` + 重放新触点、已知触点更新不算新触点。不碰 uinput，也不需要真实客户端。
+- **诚实边界**：本机没有 Moonlight 客户端可做端到端手势验证（合成器与内核事件流也读不到：uinput
+  建出的节点是 `0600 root:root`，合成器靠 logind `TakeDevice` 打开，我们的探针只能验证"设备声明
+  了 BTN_TOUCH + `INPUT_PROP_DIRECT` + 16 槽位"）。所以"多点触控确实好了"这一步需要用户在真机上
+  用两指手势确认；若症状不是上述三类，请把客户端与手势描述出来，我再往下查。
+
+### 6.29 虚拟触屏在 KWin 上的输出归属（`kwin_input_device`）
+
+§6.28 把事件语义对齐到 Windows 之后，用户复报"什么都点不动"。证据链把问题从我们的事件层推到
+合成器的投递决策：内核 → libinput 的事件流正常（`/tmp/touchprobe` 直接注入，`libinput
+debug-events` 可见 `TOUCH_DOWN/UP`），XWayland 指针跟随，但自建的 `wl_touch` 观察者客户端
+（`/tmp/wlobserve`，绑 `wl_seat` + `xdg_shell` 全屏窗口）收不到任何触摸事件。
+
+KWin 侧（`src/backends/libinput/connection.cpp`）：
+
+- `applyScreenToDevice()` 为每个触屏设备推断 output：物理尺寸匹配 → **内屏** → 第一个 output。
+  虚拟设备的物理尺寸是 0×0，于是落到内屏（本机 `eDP-1`，串流时是禁用的那块）。
+- `LIBINPUT_EVENT_TOUCH_DOWN` 在 `device->output()` 为空时丢弃事件。
+- `mapToWorkspace=false`（默认）把 0..1 坐标限制在同一块输出内。
+
+实现：新增 `src/platform/linux/kwin_input_device.h/.cpp`。
+
+- `plan_mapping(enabled_outputs, streamed_output)` —— 纯函数：始终 `map_to_workspace = true`
+  （Windows 语义），`output_name` 优先流式连接器，否则 `enabled_outputs.front()`，都没有就留空；
+- `collect_matching_nodes()` —— 纯函数，按设备名从 `/sys/class/input` 里挑 `eventN`（排序，稳定）；
+- `enabled_outputs()` —— 扫 `/sys/class/drm/card*-*` 的 `status`/`enabled`，剥掉 `cardN-` 前缀；
+- `available()` / `apply()` —— 会话总线上查 `org.kde.KWin`，再对
+  `/org/kde/KWin/InputDevice/<eventN>` 写 `outputName` 与 `mapToWorkspace`；
+- `sync_our_touch_devices(streamed)` —— 编排，无 KWin 时打一行 debug 就返回。
+
+接线：`inputtino_common.h` 的 `client_input_raw_t` 创建触屏后调用一次；`display_device.cpp` 的
+`apply_config()` 成功末尾与 `revert_settings()` 末尾各调用一次（输出集合刚变过，映射必须跟着变）。
+
+验证：7 例判定/匹配单测 + 1 例 live 冒烟（真机 `event30`，写入成功后回读 `outputName="DP-2"`；
+未流式时自动 skip）。真机确认：设置前触摸无反应，设置后立即恢复。
+
+边界：属性不持久化到 `kwinrc`，KWin 重启后需重新设置（下一次会话或显示变更会补上）；非 KDE
+合成器无此 API。这套映射**只作用于触摸设备**：笔设备由独立的输入类
+（`src/platform/linux/input/inputtino_pen.cpp`）创建，KWin 对 tablet 的归属规则不同，
+`sync_our_touch_devices()` 因此显式跳过它（`tests/unit/test_kwin_input_device.cpp` 里有
+"笔设备不能被误配"一例守护），并不表示笔输入不受支持。
+
+### 6.30 虚拟屏存在期间的主屏归属（对齐上游 #1175）
+
+上游 `0219abe2`（#1175，2026-10-23）修的是 Windows 侧同一个语义：`vdd_as_secondary`
+（物理屏为主屏、虚拟屏为副屏）原来直接把 `physical_devices` 按枚举顺序铺进拓扑，而"枚举结果
+不保证首个设备就是原主屏"，于是副屏可能被设成主屏。它改成把 **VDD 创建前识别的原主屏**放到
+拓扑第一位。
+
+Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输出的主屏标志**（kscreen 的
+`priority 1`、Mutter 逻辑监视器的 `primary`、RandR 的 primary output），但同一个隐患换了形态
+存在：`vdd_as_secondary` 原来对**每一个**物理输出都发一次 `hint_primary_output(…, 1)`，
+而主屏标志是"后写覆盖先写"，所以最终主屏落在合成器最后处理的那个输出上——多显示器时可能正是
+用户没在看的那块屏。
+
+对齐后的规则：
+
+- 新增 `src/platform/linux/vdd_primary_plan.h`（纯函数，7 例单测）：
+  `secondary_plan(physicals, vdd, original_primary)` —— **只有已知的原主屏会被提升**，
+  其余物理输出显式降为副屏；原主屏未知（已拔掉 / 名字对不上 / 从来没观测到）时**整个物理侧
+  一个 hint 都不发**，只把虚拟屏降为副屏，让合成器保留它已有的主屏——这是唯一不会把主屏
+  交给错误屏幕的答案；
+- 原主屏在**进锁之前**采样：`apply_vdd_prep()` 先读一次合成器（走共享 API
+  `display_device::is_primary_device()`，五个后端都覆盖），再取 `state_mutex`。必须这样排，
+  因为该查询会枚举输出、可能反向调用 `vdd_utils`（`is_vdd_connector()` →
+  `enum_available_devices()` → `offlined_physical_connectors()`），而 `state_mutex` 不是递归锁；
+- 采样结果保存在 `original_primary_connector`，跨多个串流会话沿用，直到**最后一个**虚拟屏销毁时
+  归还主屏角色后再清空（下一次会话重新采样当时的真实布局）；
+- 采样点早于 `restore_offlined_physicals()`：被独占会话强制关掉的屏此刻读作 disconnected、不会
+  被采到，此时宁可不提升也不猜。
+
+验证：`tests/unit/test_vdd_primary_plan.cpp` 7 例（已知主屏提升且其余降级/未知主屏不碰物理侧/
+原主屏已拔掉/记录里是虚拟屏本身/销毁时归还/无记忆时什么都不做/无物理屏时只降级虚拟屏）。
+真机无法覆盖两屏以上并发场景（见 §十一 的诚实边界）。
+
+### 6.31 第四轮 review：客户域会话模式、失败回滚与构建门控
+
+同日第三批 review（`5638185757`）指出四个真问题，都已修：
+
+- **会话模式写错客户端**：`set_vdd_session_mode()` 与 `wait_for_mode_publication()` 原来都只操作
+  "共享视图"（`cached_width`/`active_edid_path`/`selected_instance` 描述的那块屏）。单客户端时
+  这就是唯一那块屏，但两个客户端并存时，A 的请求可能落到 B 的连接器上，连 EDID 一起覆盖 B。
+  现在两个函数都多收一个 `client_identifier`：
+  `src/platform/linux/vdd_instances.h` 新增纯函数
+  `session_mode_target(records, identifier, selected)` 返回三态——`selected`（未识别调用方，
+  保持原行为）/`instance`（该客户端有自己的活显示器，先 `load_instance_locked` 把视图切过去）/
+  `stash_pending`（它的显示器还不存在：把请求存进 `pending_session_modes`，**视图一个字节都不写**，
+  等 `create_vdd_monitor()` 创建该客户端显示器时再取用）。凡是"这条请求属于谁"的判定都走
+  `find()`，所以上一轮 `adopt_orphan_vdd_locked()` 从 EDID serial 恢复的孤儿显示器也能匹配上。
+  通话链：`session.cpp` 的 `prepare_vdd()`（用 `vdd_identifier`）与 `apply_vdd_display_stage()`
+  （用 `config::video.vdd_reuse ? "shared_vdd" : get_client_id_from_session(session)`，延迟重试的
+  定时器回调里也在捕获时算好同一个值）。
+- **创建失败污染共享视图**：`create_vdd_monitor()` 从"开始描述请求"到最后成功之间有多条失败返回
+  路径（连接器被占、EDID 写不进、使能失败等）。原来失败返回时共享字段仍描述着这次没起来的
+  显示器，紧接着的 `store_current_locked()` 就会把它写进**上一个客户端**的记录，用一块从没存在
+  过的屏覆盖掉它的身份。现在进了这段就架一个 `view_restore_t` 作用域守卫，析构时按进入时的
+  `selected_instance` 决定 `load_instance_locked()` 还是 `clear_view_locked()`，成功路径
+  `restore_view.armed = false` 解除。
+- **`find_master_holder()` 泄漏 fd**：成功分支在 `*out_fd = target_fd` 之后直接 `return true`，
+  而它 `pidfd_getfd()` 得到的 `dup_fd` 没关——每成功一次泄漏一个 DRM fd。现在成功分支也先
+  `::close(dup_fd)`（`*out_fd` 存的是持有者自己的 fd 号，调用方会重新 `pidfd_getfd` 取一次，
+  所以关掉不影响语义）。
+- **libdrm / libcap 无条件依赖**：`cmake/compile_definitions/linux.cmake:128` 只在
+  `LIBDRM_FOUND AND LIBCAP_FOUND` 时定义 `SUNSHINE_BUILD_DRM`，但 `vdd_utils.cpp` 的头文件与
+  符号使用没有全部跟随这个开关——关掉 DRM 的构建会编译失败。现在 `<sys/capability.h>`、
+  `<xf86drm.h>`、`<xf86drmMode.h>`、`elevated_caps`、以及全部 `drmIoctl`/`drmMode*`/`cap_*` 使用点
+  都落在 `#if defined(SUNSHINE_BUILD_DRM)` 内；无 DRM 构建下 `elevated_caps` 是空操作，代码路径
+  退化为"依赖二进制自带的有效能力集"，这一点写在替代实现上方。
+
+验证：`tests/unit/test_vdd_instances.cpp` 新增 5 例（未识别调用方保持视图 / 请求跟随自己的客户端
+即使别的客户端正被选中 / 客户端还没有显示器时暂存 / 记录已不活时暂存待重建 / 上一轮收养的
+无名字显示器按 serial 命中），`VddInstances.*` 共 14 例全绿；全量 `test_sunshine` 665 用例
+660 通过；`python3 tools/audit-windows-parity.py` 确认落入 Windows 区域的改动行为 0。
+两客户端并发现场本机无法构造（只有一个客户端），所以上面第一条的正确性由纯函数单测覆盖。
+
+### 6.32 第五轮 review：设备归属、跨卡编号与两处打包缺陷
+
+五个独立缺陷，都能在没有第二个客户端的机器上判定：
+
+- **虚拟屏按名字定位会碰到别人的屏**：`prepare_vdd()` 用
+  `find_device_by_friendlyname(ZAKO_NAME)` 取设备 id，而所有虚拟屏的友好名都是同一个
+  `ZAKO_NAME`；两个客户端并存时它可能指向另一个客户端的监视器，随后的
+  `update_vdd_resolution()` 模式发布判定与 `apply_vdd_display_stage()` 的
+  `wait_for_mode_publication()` 就会对"不是本次会话在串流的那块屏"校验成功。
+  新增 `vdd_utils::owned_virtual_display_connector(owner)`：在实例表里按 EDID 串号
+  （`vdd_instances::find`）定位该 owner 的记录，只有连接器仍为 `connected` 才返回其裸名
+  （Linux 的设备 id 就是连接器名）；无记录或已断开返回空。`prepare_vdd()` 与
+  `apply_vdd_display_stage()` 都用它覆盖按名字取到的 id，并在替换时打 debug 日志。
+  Windows 半边不经过这段（`#ifndef _WIN32`），驱动按 GUID 隔离。
+- **跨卡连接器编号对不上**：`kms_display_names()` 的 `conn_type_count_t` 声明在卡循环**之外**，
+  一台机器两张卡时第二张卡的 DisplayPort 会被播成 `DP-2`；而 `display_t::init()` 每卡都从零
+  编号，于是监视器列表里的名字解不回 CRTC，虚拟屏的裸名还可能在别的卡上误命中。
+  新增 `connector_numbering(card_dir, hwdevice_type)`：用与枚举**完全相同**的卡顺序与跳过规则
+  （含 `mem_type_e::cuda` 的 NVIDIA 过滤及其 `encoder != "nvenc"` 例外）预演一遍共享计数器，
+  记下每张卡的起始值；`init()` 取 `live_virtual_display_card()` 把搜索钉在宿主卡上，
+  非宿主卡直接跳过，并按"名字来自监视器列表 → 用共享起始值；名字是虚拟屏裸名 → 用 card-local
+  零起始"两种口径各自重建 `crtc_to_connector_name`，每次重试都从同一 base 开始。
+- **PulseAudio 操作对象可能为空**：`pa_context_load_module` / `unload_module` /
+  `get_server_info`（sink 与 source 各一次）/ `set_default_source` 在上下文未就绪时返回空指针，
+  而调用点无条件 `alarm->wait()`——`alarm_t` 没有超时，等待永不返回，整个启动或会话清理会挂死。
+  八处调用后都判空、记 `pa_strerror(pa_context_errno(...))` 并返回该函数的失败值
+  （`PA_INVALID_INDEX` / `-1` / 原名 / `false`）。
+- **本地包的版本戳读得太早**：`packaging/arch-local/PKGBUILD` 在顶层读构建树里的版本戳，而
+  makepkg 先跑 `prepare()`（其中会重新 link）再读 `pkgver`，重新链接后包名与包内二进制会不一致。
+  改成 `pkgver=0` 占位 + `pkgver()` 函数：`_pkgver_from_stamp || _pkgver_from_git || printf 0`。
+- **AUR 的 `sha256sums` 比 `source` 多一项**：多出的一行 `SKIP` 让 makepkg 的校验数与源数不等，
+  构建前即报错。按 `makepkg --printsrcinfo` 重新生成，工作树的 `.SRCINFO` 与生成结果逐字节相同
+  （26 源 / 26 和）。
+
+验证：`ninja -C build sunshine test_sunshine` 通过；`test_sunshine` 665 例 / 660 通过 / 5 跳过 /
+0 断言失败；AUR 的 `bash -c 'source ./PKGBUILD; echo ${#source[@]} ${#sha256sums[@]}'` 输出
+`26 26`（本地包 `arch-local` 不含 `source` 数组——它安装已构建的树——所以只校验 `pkgver()`）；
+`python3 tools/audit-windows-parity.py` 确认落入 Windows 区域的改动行为 0。
+两客户端的现场形态仍无法在本机构造，`owned_virtual_display_connector()` 的多实例分支由
+`vdd_instances::find` 的既有单测（14 例）间接覆盖。
+
+## 七、功能可用性矩阵
+
+### ✅ 完整可用
+
+| 功能 | 说明 |
+|---|---|
+| 核心串流 / Moonlight 配对 / WebUI | 上游成熟代码，全平台 |
+| 捕获：KMS / Wayland(wlr) / X11 | 见 §五第 4 条的合成器限制 |
+| 编码：NVENC / VAAPI / Vulkan / 软件 | Linux 注册四个编码器；NVENC 走 FFmpeg avcodec + CUDA hwdevice（运行时加载驱动）；NVENC 的 YUV 4:4:4 已解禁（§6.10） |
+| 输入注入 + 手柄振动 | inputtino（libevdev/uinput），含 rumble 回放 |
+| 触摸 / 多点触控 + 笔 | 每客户端独立触摸屏与笔设备；事件语义按 Windows 对齐（hover 不成触点、CANCEL_ALL 释放全部、旋转/压力有缺省值），见 §6.28；KWin 上的输出归属与坐标空间由 `kwin_input_device` 显式设定（否则内屏猜测会吞掉事件），见 §6.29 |
+| 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成；仅"主机直连 DualSense 播放"的 sidecar 是 Windows 专属 |
+| 文本输入通道 text_context | 纯数据通道 |
+| 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
+| Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测有四个生产者：KWin D-Bus（KDE）、wlr-foreign-toplevel（niri/sway/wlroots）、`niri msg` IPC、X11 `_NET_ACTIVE_WINDOW`（§6.13） |
+| 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
+| 物理显示器 display_device | 五个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ wlroots（wlr-randr）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR，镜像 kscreen/Mutter/RandR；判定顺序为可测契约（§6.2、§6.16、§6.18、§6.21、§6.26、§6.27） |
+| 剪贴板主机同步（文本 + 图片） | KDE：文本走 klipper sd-bus、图片走 ext-data-control；无 klipper 的桌面（niri/sway/Hyprland）文本也走 ext-data-control。共用帧/回声/blob 回退（§6.4、§6.14） |
+| 远程麦克风写主机 | 虚拟 null-sink + 背压队列 + 默认录音设备切换（§6.5） |
+| HDR 静态元数据透传（MDCV/CLL） | kmsgrab 读 DRM blob → avcodec side data |
+| HDR10+ / DV P8.1 / HDR Vivid（动态） | avcodec 路径全通（§6.3），分析器为逐像素 maxRGB（§6.20） |
+| 增强托盘 | 打开 UI/语言/项目链接/重启/退出 + 通知 + VDD 子菜单 + Advanced Settings（§6.9） |
+| nvhttp 扩展 API | dynamic_params / network_probe / sessions / abr_api / ai_api / pairing，纯 HTTP 层 |
+| perf_recorder / input_activity / video_probe / cursor_channel | 跨平台；cursor_channel 在 Linux 因无光标生产者干净禁用 |
+| 音频增强：Opus DRED / 持续音频 / 7.1.4 12 声道 | DRED 是 libopus≥1.5 编译期特性检测；12ch 有 Linux null-sink 实现 |
+| AI API Key 凭据 | Secret Service（libsecret）持久化，与 Windows 的 DPAPI 对等；无 keyring 时降级为环境变量 `SUNSHINE_LLM_API_KEY`（§6.11） |
+| DSU 运动广播（cemuhook） | 共享协议实现 + inputtino motion 转发，Cemu/Ryujinx 可用；需客户端用手柄串流并开启 `enable_dsu_server`（§6.17） |
+
+### ⚠️ 降级可用（编译运行正常，功能面收窄）
+
+| 功能 | Linux 状态 |
+|---|---|
+| 远程 USB（USB/IP 主机） | 后端已实现（usbip-utils 方言，见 §6.15）；vhci `attach` 属性仅 root 可写，需 root 运行或 sudoers 包装才能端到端启用 |
+| HLG 编码与 DV P8.4 | kmsgrab 不接受 HLG EOTF（`kmsgrab.cpp:951-952`），属内核 UAPI 限制（`HDR_OUTPUT_METADATA` 仅定义 PQ/SDR）；P8.1 已覆盖 DV 主流 |
+
+| display_device 复制拓扑 | 两个平台都可用：Mutter 写成同一个 logical monitor（§6.18），KScreen 用 `output.<name>.mirror.<source>`（§6.19）；回读统一经 `replication_source` 聚合（见 `LINUX_PORT_GAPS.md` §1.4） |
+| frame_contract（帧管线契约） | 策略层跨平台（`src/platform/frame_contract.cpp`），但只有 Windows 采集端消费 |
+| 虚拟显示器 per-client 隔离 | ✅ 已完成（§6.22 + §6.23）：客户端身份进 EDID 串号，后端为实例表，客户端切换不再销毁重建；上限受空闲连接器数量约束 |
+
+### ❌ Windows 专属 / 不可移植
+
+| 功能 | 原因 |
+|---|---|
+| NVENC SDK 13 直连 / AMF QVBR / 多硬件实例 | `src/nvenc/`、`src/amf/` 仅进 Windows 构建；Linux NVENC 为 FFmpeg avcodec 路径 |
+| 虚拟扬声器位深匹配 | Windows PolicyConfig COM；Linux 固定 `PA_SAMPLE_FLOAT32`（PipeWire 服务端自适应，质量无损） |
+| 触摸键盘自动唤起 | Windows 注册表机制，头文件自述非 Windows 即 no-op |
+| Tauri 控制面板 | 分发链 Windows 化；约 20 个系统模块仅 Windows 实现 |
+| vmouse 虚拟鼠标 / WGC 捕获 / rtx_hdr / pre_encode_filter / DS5 sidecar | 全在 `src/platform/windows/` |
+| Zako Direct 零拷贝借帧 | D3D11 共享纹理，Linux 无对等机制（KMS 捕获直读 DRM plane 已覆盖功能面） |
+
+不可移植项的完整原因与 Linux 对应物见 `LINUX_PORT_GAPS.md` §三。
+
+---
+
+## 八、编码器与本机 GPU（RTX 3050 Mobile, Ampere sm_86）
+
+- **首选 `nvenc`**（h264_nvenc / hevc_nvenc / av1_nvenc，经 FFmpeg）——不需要 `cuda` 包。
+- **YUV 4:4:4 已解禁**：客户端开 4:4:4 后 h264 444=8-bit、hevc 444=10-bit HDR；Ampere 上
+  h264/hevc 444 可用，AV1 444 需 Ada（探测自动拒绝）。
+- **CUDA 默认 ON**：CUDA 加 NVFBC 路径并移除 NVENC 的 GPU→RAM→GPU 往返；普通 KMS/Wayland/X11
+  路径仍在编译内。CUDA 13.4 / sm_86 实测编译+链接通过。**运行时未在本沙箱验证**（无 GPU）；
+  日志里 `Attempting to use NVENC without CUDA support. Reverting back to GPU -> RAM -> GPU`
+  应消失。
+- **`vulkan`** 编码器是该分支跨平台新增项，可作实验选项；**`vaapi`** 在 NVIDIA 上不适用。
+
+**HDR 全链路边界**：**可用** = PQ 静态元数据透传、HDR10+、DV P8.1、HDR Vivid（均见 §6.3）；
+**不可用** = HLG（kmsgrab 不支持 HLG EOTF 输入）、DV P8.4（需 HLG 基层）。
+
+---
+
+## 九、测试基线
+
+2026-10-22（并入上游 `c211d711` 之后），CUDA=ON 构建树：
+
+```
+ctest: 24 个套件，23 通过，1 失败（test_sunshine）
+test_sunshine: 665 用例，660 通过，5 跳过，0 失败
+```
+
+**用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
+不是用例失败。三个时间点的用例数（都是同一构建树里的 `test_sunshine`）：
+
+| 构建树 | 时间点 | 用例 |
+| --- | --- | --- |
+| `a7a20060` | 并入上游 `c211d711` 之后（中间统计） | 650 用例 / 645 通过 |
+| `89420200` | 第一轮 review 修复之后 | 652 / 647 |
+| `8c095703` | 第二轮 review 修复之后 | 653 / 648 |
+| `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐 | 660 / 655 |
+| 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复 | 665 / 660 |
+| 第五轮 review 修复之后 | 设备归属、跨卡编号、PulseAudio 判空与两处打包缺陷（当前） | 665 / 660 |
+
+从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
+所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
+`tests/tools/vmouse_logging_stubs.cpp` 被删，`DownloadFileTests`（访问 `https://httpbin.org/`，
+离线必失败）也一并移除，所以此前记录的两项环境依赖失败不再出现。
+650 之后的增量都出自本分支，不是上游带来的：`+2` 例来自 `tests/unit/test_perf_frame_rates.cpp` 的
+`PerfScanoutTracker.BaselinesTheFirstFramebuffer` 与 `PerfScanoutTracker.CountsOnlyNewFramebuffers`
+（同一提交把 `PerfFrameRates.ReportsDrmVblankAsTheSourceKind` 改名为
+`…ReportsDrmFbFlipsAsTheSourceKind`，净增 2），`+1` 例来自 `tests/unit/test_xrandr_display.cpp` 的
+`XrandrPlan.MirrorMemberMaySortBeforeItsLeader`，`+7` 例来自 `tests/unit/test_vdd_primary_plan.cpp`
+（对齐上游 #1175 的主屏归属规则，见 §6.30），最后 `+5` 例来自
+`tests/unit/test_vdd_instances.cpp` 的 `SessionModeTarget` 系列（客户域会话模式，见 §6.31）。
+
+- `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 曾因"未知 appid 期望
+  404、而 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`"失败（本机装过包，
+  文件存在 → 返回 200）。已改为按该资产是否存在分支断言，并把性质补强为"响应永远不是请求 app
+  自己的图"（`tests/unit/test_crypto.cpp:376-395`），现在恒绿。详见 `LINUX_PORT_GAPS.md` §7.3。
+
+剩下的那一个 `SetUpTestSuite` 失败（`EncoderVariants/EncoderTest`）根因已查明：**测试二进制没有
+`cap_sys_admin`**，KMS 采集自检在 `src/platform/linux/kmsgrab.cpp:1837` 取不到 framebuffer 的 GEM
+handle 而放弃，于是 `platf::init()` 返回空、`tests/tests_common.h:18/23` 的
+`ASSERT_TRUE(platf_deinit)` 报错（用例体本身是优雅跳过的）。上游 #1176 删掉 `test_audio.cpp` 与
+`test_mouse.cpp` 后，原先并列的 AudioTest / MouseHIDTest 两个夹具已不存在。已安装的
+`/usr/bin/sunshine-*` 由 `packaging/arch-local/sunshine-foundation.install` 的 `do_setcap()` 打了
+能力，所以真实运行不受影响。设备权限不是原因：`/dev/dri/card1`、`/dev/dri/renderD128`、
+`/dev/uinput` 都能打开，`strace` 也确认测试进程确实开了这两个 DRM 节点。设备齐备时给测试二进制
+加能力即会通过。
+
+**注意事项**：
+- 直跑 `ctest` 需要可写的 `$HOME`（FileHandler 用例在 `~/.config/sunshine` 下建目录），否则聚合套件
+  提前 abort。
+- 增量只编 `sunshine` 时 `ctest` 会跑旧的 `test_sunshine` 并掩盖新失败——改测试相关代码后要重建该目标。
+
+---
+
+## 十、标签与提交约定
+
+**里程碑标签阶梯**（每完成一个功能里程碑继续延伸）：
+
+`v0.1-linux-base` → `v0.2-linux-vdd` → `v0.3-linux-display-device` → `v0.4-linux-clipboard-host` →
+`v0.5-linux-mic-redirect` → `v0.5.1-linux-restart-fixes` / `v0.5.2-linux-tray-restart` →
+`v0.6-linux-abr-foreground` → `v0.7-linux-hdr10plus` → `v0.8-linux-dv-rpu` →
+`v0.8.1-linux-tray-vdd-state` / `v0.8.2-linux-tray-msgbox` →
+`v0.8.3-linux-manual-vdd` / `v0.8.4-linux-vdd-mode-list` →
+`v0.8.5-linux-vdd-name` / `v0.8.6-linux-parity-audit` → `v0.8.7-linux-vdd-refresh-ladder` →
+`v0.9.0-linux-full-mode-table` → `v0.9.1-linux-full-cross-product` → `v0.9.2-linux-nvenc-yuv444` →
+`v0.9.3-linux-upstream-sync`（**当前**）
+
+**提交约定**：每个逻辑步骤一个 commit；commit message 用英文、conventional-commit 风格
+（`feat(linux): …`）。用户读中文。
+
+**Windows 中立性**：本仓库由 Windows CI 构建，任何共享代码改动都必须保证 Windows 行为恒等或在
+`#ifdef _WIN32` / `#if !defined(_WIN32)` 门控内。落地后用
+`git diff <merge-base>..HEAD -- <shared file>` 审计。详见 `AGENTS.md` 的 Platform rules 与
+Windows parity conventions。
+
+## 十一、剩余项的收束与重启判据（2026-10-22）
+
+可做的项已全部落地（§六 各节）。剩下的 6 项不是"没做"，而是**做不了或不该做**，逐条附证据；
+每条都写明**重启判据**——什么条件变化才值得重新开启，而不是简单一句"放弃"。
+
+| 项 | 判定 | 一句话证据 | 重启判据 |
+|---|---|---|---|
+| §1.5 帧管线契约 | 不移植 | 策略层跨平台，但采集端开关 `supports_pre_encode_filter()` 的**唯一 override 在 `src/platform/windows/display.h:383`**（基类 `src/platform/common.h:758` 返回 false），真实滤镜是 D3D11 计算着色器 | 上游把 pre_encode_filter 抽成带平台后端的接口 |
+| §1.7 音频位深 | 不处理 | Linux null sink 固定 48 kHz/float（PipeWire 服务端原生格式，转换无损）；Windows 走 PolicyConfig COM 按位深建设备只是为躲开 WASAPI 重采样 | 实测出现可听失真，或某类设备拒收 float |
+| §2.7 DS5 触觉 sidecar | 不移植 | 本机 `lsusb` 无 Sony `054c`；hidraw 只有 ITE(8910)/Compx VGN×3/Synaptics。上游侧车是 PowerShell + .NET + HIDMaestro 补丁的 Windows 工具链 | 有一台能被 Linux 直连的 DualSense 挂在主机上 |
+| §2.8 NVENC SDK 直连 | 搁置 | avcodec 路径功能面已齐（`src/video.cpp:1441/1457` 的 444、`:1649` 的 HDR 条目），直连只剩细粒度码控/lookahead/多实例增益 | 出现实测的画质或延迟瓶颈，或需要多编码实例 |
+| §2.9 Tauri 面板 | 搁置 | 阻塞点是"约 20 个模块只有 Windows 实现"，**不是工具链**（本机 `webkit2gtk-4.1` 已装）；WebUI 已覆盖配置/配对/监控 | 用户提出 WebUI 覆盖不到的具体需求（届时单独立项） |
+| §2.11 VAAPI 4:4:4 | 不启用 | 本机 VAAPI 驱动 `/usr/lib/dri/nvidia_drv_video.so` **只解码**：`nm -D` 只导出 `__vaDriverInit_1_0`，`strings` 里 `nvEncode*` 命中 0；vaapi 条目 444 槽位仍是 `AV_PIX_FMT_NONE`（`src/video.cpp:1764-1770`） | 换成 Intel/AMD iGPU 或出现带编码的 VAAPI 驱动 |
+
+另有两类不属于"待办"：**§2.1b 剪贴板 file-offer**（`kKindFileOffer` 的常量在
+`src/clipboard_bridge.h:58`，但整个 C++ 树里没有生产者也没有消费者——上游尚未定义协议，等上游）、
+以及 **9 项本质不可移植**（`LINUX_PORT_GAPS.md` §三，逐条给出 Windows 对应物与 Linux 现状）。
+
+**诚实的边界**：以下能力在本机**无法取得端到端证据**，文档中的结论来自协议/源码契约 + 单测 +
+失败路径实测，而不是一次成功实机运行：GNOME Mutter（无 GNOME 会话）、wlroots/wlr-randr（无
+sway/Hyprland）、X11 写路径（只有 XWayland 的只读镜像，且无 Xvfb/Xephyr）、DS5 触觉（无硬件）、
+VAAPI 444（驱动无编码）、以及 §1.1 的两个并发客户端形态（本机只有一个客户端）。

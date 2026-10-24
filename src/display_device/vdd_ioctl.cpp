@@ -6,6 +6,7 @@
  * `<Windows.h>` blast radius out of `vdd_utils.cpp`.
  */
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
@@ -545,3 +546,21 @@ namespace display_device::vdd_ioctl {
   }
 
 }  // namespace display_device::vdd_ioctl
+
+#else  // !_WIN32
+
+// ZakoVDD is a Windows display driver. Platform-neutral code (display session
+// staging) still references the transport, so keep a stub that reports the
+// control channel as missing rather than failing to link.
+
+#include "vdd_ioctl.h"
+
+namespace display_device::vdd_ioctl {
+
+  bool
+  ping() {
+    return false;
+  }
+
+}  // namespace display_device::vdd_ioctl
+#endif

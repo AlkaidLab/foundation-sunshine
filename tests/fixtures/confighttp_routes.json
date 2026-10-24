@@ -163,8 +163,7 @@
   },
   {
     "pattern": "^/api/vdd/status$",
-    "method": "GET",
-    "windows": true
+    "method": "GET"
   },
   {
     "pattern": "^/api/vulkan-hdr-bridge$",

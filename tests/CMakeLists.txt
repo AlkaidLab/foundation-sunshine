@@ -553,6 +553,37 @@ if (WIN32)
             ${HDR_ENCODING_TEST_SOURCE}
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
             ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
+    # vdd_edid, foreground_app and mic_queue are Linux-only target files (EDID
+    # synthesis for the KMS virtual display, compositor focus producers, the
+    # PulseAudio staging queue); their tests have nothing to link on Windows.
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_edid\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_instances\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_primary_plan\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_foreground_app\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mic_queue\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_display_device_enum\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_edid\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_compositor_output\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_kscreen_modes\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_kscreen_backend\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_niri_ipc\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mutter_display\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_xrandr_display\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_wlr_randr\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_display_backend\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_kwin_input_device\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mirror_plan\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_video_hdr_analyzer\.cpp")
+else ()
+    # Windows-host test sources must not reach non-Windows builds.
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")
+
+    # The Mutter codec test builds sd-bus messages by hand, so it needs the
+    # session-bus headers. Without libsystemd the backend under test is the
+    # inert half, and there is nothing to assert.
+    if (NOT LIBSYSTEMD_FOUND)
+        list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mutter_display\\.cpp")
+    endif ()
 endif ()
 
 set(SUNSHINE_SOURCES

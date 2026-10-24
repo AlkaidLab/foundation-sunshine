@@ -1,7 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,13 +9,115 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 
 #include <boost/optional.hpp>
 
 #include "parsed_config.h"
 
+#ifndef _WIN32
+namespace display_device {
+
+  // Windows-only display session helpers that platform-neutral code still
+  // references; the Linux equivalents are no-ops (no WTS session events,
+  // no RDP session detection).
+  class SessionEventListener {
+  public:
+    template<typename Fn>
+    static void
+    add_unlock_task(Fn &&) {
+    }
+
+    static void
+    init() {
+    }
+
+    static void
+    deinit() {
+    }
+
+    static void
+    clear_unlock_task() {
+    }
+  };
+
+  namespace w_utils {
+    inline bool
+    is_any_rdp_session_active() {
+      return false;
+    }
+  }  // namespace w_utils
+}  // namespace display_device
+#endif
+
 namespace display_device::vdd_utils {
+
+#ifndef _WIN32
+  /**
+   * @brief Name of the live virtual output's connector (e.g. "DP-1") created by
+   *        the external virtual display helper, or empty when none is active.
+   * @note The name is card-local. On a machine with more than one GPU the same
+   *       connector name can exist on another card, so callers that resolve it
+   *       back to a CRTC must also use @ref live_virtual_display_card().
+   */
+  std::string
+  live_virtual_display_connector();
+
+  /**
+   * @brief DRM node name (e.g. "card1") owning the live virtual output, or empty
+   *        when none is active.
+   * @details Only meaningful together with @ref live_virtual_display_connector();
+   *          it exists so a caller can restrict its search to the card the
+   *          virtual display was actually created on.
+   * @note Unlike @ref live_virtual_display_connector() this never has side
+   *       effects: it does not adopt an orphaned display and does not restore
+   *       offlined physical outputs.
+   */
+  std::string
+  live_virtual_display_card();
+
+  /**
+   * @brief Device id (connector name) of the live virtual display owned by
+   *        @p owner, or empty when that owner has no live display.
+   * @details Two virtual displays carry the same friendly name, so a lookup by
+   *          name cannot tell them apart: this resolves the record the owner
+   *          actually created (matching the EDID serial the identity produces)
+   *          and returns its connector, which is the device id the rest of the
+   *          display code uses. An empty @p owner keeps the historical
+   *          single-slot behaviour and describes the selected record.
+   * @note Adopts an orphaned display from a previous run, like
+   *       @ref live_virtual_display_connector(), but restores no outputs.
+   */
+  std::string
+  owned_virtual_display_connector(std::string_view owner);
+
+  /**
+   * @brief Names of the physical connectors this backend powered off for an
+   *        exclusive virtual display session (they read as disconnected in
+   *        sysfs while offlined, so callers cannot discover them there).
+   */
+  std::vector<std::string>
+  offlined_physical_connectors();
+
+  struct exec_output_t {
+    int exit_code = -1;
+    std::string output;
+  };
+
+  /**
+   * @brief Run a command via /bin/sh, capturing its combined output.
+   * @details The child inherits none of our file descriptors, and it is
+   *          killed once @p timeout has elapsed — compositor helpers can
+   *          block indefinitely on a wedged session, which must not wedge
+   *          the calling thread or pin our listening sockets.
+   */
+  exec_output_t
+  run_logged(const std::string &cmd, std::chrono::milliseconds timeout = std::chrono::milliseconds { 10'000 });
+#endif
 
   using namespace std::chrono_literals;
 
@@ -27,6 +127,14 @@ namespace display_device::vdd_utils {
   inline constexpr auto kMaxRetryDelay = 3000ms;
 
   extern const std::chrono::milliseconds kDefaultDebounceInterval;
+
+  // The OS publishes a mode list asynchronously after the mode list is set
+  // (Windows: SETMODES / IddCxMonitorUpdateModes2; Linux: the kernel re-reading
+  // the EDID override). Both platforms poll for the requested mode with the
+  // same bounds, so they live here instead of in one platform half.
+  inline constexpr auto kModePublicationTimeout = std::chrono::seconds { 3 };
+  inline constexpr auto kModePublicationInitialPoll = std::chrono::milliseconds { 50 };
+  inline constexpr auto kModePublicationMaxPoll = std::chrono::milliseconds { 500 };
 
   // HDR亮度范围结构
   struct hdr_brightness_t {
@@ -138,9 +246,14 @@ namespace display_device::vdd_utils {
    * @brief Wait until Windows exposes a requested mode for a display device.
    * @details Uses a bounded deadline internally. Callers do not need to encode
    *          driver timing assumptions or retry counts.
+   * @param client_identifier Requesting client on Linux, so the publication is
+   *        checked against *that* client's virtual display and not against
+   *        whichever one the shared session fields currently describe. Empty on
+   *        Windows and for unidentified callers.
    */
   bool
-  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode);
+  wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode,
+                            std::string_view client_identifier = {});
 
   struct vdd_status_t {
     std::string state;
@@ -235,10 +348,16 @@ namespace display_device::vdd_utils {
    *          This does not persist the session resolution to vdd_settings.xml.
    * @param config Parsed display configuration containing the requested session mode.
    * @param settings Full standard mode list plus the requested session mode.
+   * @param client_identifier Requesting client on Linux. A client that already
+   *        owns a live virtual display gets its own view loaded first; one whose
+   *        display does not exist yet has its request kept until creation, so
+   *        the mode is never applied to another client's connector. Empty on
+   *        Windows and for unidentified callers.
    * @return Typed outcome describing whether the complete live update was accepted.
    */
   set_vdd_result
-  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings);
+  set_vdd_session_mode(const parsed_config_t &config, const VddSettings &settings,
+                       std::string_view client_identifier = {});
 
   /**
    * @brief 从客户端标识符生成GUID字符串（用于驱动识别）
@@ -273,15 +392,25 @@ namespace display_device::vdd_utils {
   bool
   create_vdd_monitor_noninteractive();
 
+  /**
+   * @brief Tear down a virtual display.
+   * @param client_identifier Client that owns the display. Identified callers
+   *        only ever destroy their own display, which is what lets several
+   *        clients stream at once; an empty identifier keeps the historical
+   *        behaviour and destroys the selected display instead.
+   * @return Whether the connector turned off cleanly.
+   */
   bool
-  destroy_vdd_monitor();
+  destroy_vdd_monitor(std::string_view client_identifier = {});
 
   /**
    * @brief Shutdown-safe VDD destroy. Uses raw Win32 pipe API without BOOST_LOG.
    * Safe to call from destructors where boost::log may already be destroyed.
+   * @param client_identifier Same meaning as in destroy_vdd_monitor(); an empty
+   *        identifier destroys the selected display.
    */
   void
-  destroy_vdd_monitor_nolog();
+  destroy_vdd_monitor_nolog(std::string_view client_identifier = {});
 
   void
   disable_enable_vdd();
@@ -315,6 +444,57 @@ namespace display_device::vdd_utils {
 
   VddSettings
   prepare_vdd_settings(const parsed_config_t &config);
+
+  // ---------------------------------------------------------------------------
+  // Shared (platform-neutral) mode-list helpers — defined once in vdd_utils.cpp
+  // outside the platform guards.
+  //
+  // The Windows backend forwards this list to the ZakoVDD driver via SETMODES;
+  // the Linux backend builds the virtual display's EDID mode ladder from it.
+  // Both must accept the exact same configuration syntax, so the parsing and
+  // de-duplication live here instead of being re-implemented per platform.
+  // ---------------------------------------------------------------------------
+
+  bool
+  same_resolution(const resolution_t &a, const resolution_t &b);
+
+  void
+  append_unique_resolution(std::vector<resolution_t> &resolutions, const resolution_t &resolution);
+
+  void
+  append_unique_refresh_rate(std::vector<unsigned int> &refresh_rates_hz, unsigned int refresh_hz);
+
+  boost::optional<unsigned int>
+  rounded_vdd_refresh_hz(double refresh_hz);
+
+  boost::optional<unsigned int>
+  rounded_refresh_hz(const refresh_rate_t &refresh_rate);
+
+  /**
+   * @brief Parse a configured resolution entry ("1920x1080").
+   * @details Acceptance matches the Windows driver path exactly: surrounding
+   *          whitespace is trimmed, the separator must be 'x' or 'X', both
+   *          dimensions must be positive and no trailing characters allowed.
+   */
+  boost::optional<resolution_t>
+  parse_vdd_resolution(const std::string &value);
+
+  /**
+   * @brief Parse a configured refresh-rate entry ("60", "59.94").
+   * @details Acceptance matches the Windows driver path exactly: the whole
+   *          entry must be a positive number; fractional rates are rounded to
+   *          the nearest integer (the driver mode list is integral).
+   */
+  boost::optional<unsigned int>
+  parse_vdd_refresh_hz(const std::string &value);
+
+  /**
+   * @brief Physical size of a configured client device-size class.
+   * @details Canonical per-client size classes shared by both backends;
+   *          unknown classes fall back to "medium".
+   */
+  physical_size_t
+  client_physical_size_for_class(const std::string &device_size);
 
   // 重试函数模板
   template <typename Func>
