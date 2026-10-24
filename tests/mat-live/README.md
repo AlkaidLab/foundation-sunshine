@@ -5,6 +5,11 @@ streaming session:
 
 - Windows CTest includes `mat_live_host_tests` for sender/source lifecycle and
   `mat_live_crypto_tests`, reusing the dependency's authentication/tamper cases.
+- `mat_mock_output_tests` connects the real authenticated receiver to a bounded
+  output queue and simulated device. It covers short/zero writes, write failures,
+  slow/stalled consumption, route/capability loss, fresh-session reconnect and EOS
+  drain. A virtual clock drives 500 cycles with arrival jitter; accepted, written
+  and consumed bytes must have identical SHA256. No MAT decoder is simulated.
 - The independent `MAT software regressions` job runs six own-process CTests
   from `tools/sonic-mat-live`, plus operator package/identity/deployment checks.
 - Existing RTSP lease and Web UI tests cover the lease expiry and status UI.
@@ -14,7 +19,7 @@ Run the same callback/IPC/pipe checks locally:
 ```powershell
 ./tools/sonic-mat-live/build.ps1 -Output ./build/mat-smoke-new -TestsOnly
 ./tools/sonic-mat-live/test-manage-live.ps1 -Output ./build/mat-operator-new
-ctest --test-dir <host-build> -R '^mat_live_(host|crypto)_tests$' --output-on-failure
+ctest --test-dir <host-build> -R '^mat_(live_(host|crypto)|mock_output)_tests$' --output-on-failure
 ```
 
 ## Extended software integration (manual)
@@ -32,9 +37,14 @@ The optional verifier builds the capture helpers and mock clients and runs:
 - controlled production RTSP negotiation: live7/Opus0, retired codec4/5 rejection,
   malformed capabilities and stale/duplicate acknowledgements;
 - real AudioStream UDP receive/decoder threads: valid authenticated END succeeds;
-  missing END or final data times out without a successful completion callback;
+  missing END/tail, stalled output, route loss and cancellation while draining
+  fail without a successful completion callback;
 - two 1300-cycle UDP/FEC cases across RTP16 wrap, with 391 deliberate losses
   recovered; no hardware sink;
+- the same mock-output scenarios through real UDP/RTP/FEC, including 1300 paced
+  virtual cycles and source/written/consumed SHA equality after loss recovery;
+- controlled device capabilities through the real RTSP client: AUTO selects Opus
+  for unavailable/unsupported output, strict MAT rejects it before connecting;
 - host source/format/clock/identity/lease failures, cancellation and new sessions;
 - actual private publisher/reader pipe tail, bounded acknowledgement and teardown;
 - own-process object callbacks, paired lifecycle, generated IPC with a FAKE
@@ -71,7 +81,12 @@ exit codes and preservation of a primary exception using isolated hosts only.
 
 `build-client.ps1` builds a fileless strict-live mock client and generated H.264
 encoder/decoder self-test with explicitly supplied encoder/decoder FFmpeg builds.
-The client decodes video in memory and consumes MAT callbacks without a device.
+The client decodes video in memory and feeds MAT callbacks to the same mock
+output. Its completion requires both authenticated END and simulated sink drain;
+the result records written/consumed SHA, playback frames and peak backlog.
+The END callback returns success only after the bounded drain completes.
+The threaded audio watchdog client uses this output too. A mock capability is
+test input, never proof of an Android route or permission to play MAT as PCM.
 The full `live_verify.py` native mode additionally requires explicit source,
 engine, component, endpoint and hash arguments and current operator authorization.
 Its publisher must use the trusted Program Files deployment used by `manage-live.ps1`;

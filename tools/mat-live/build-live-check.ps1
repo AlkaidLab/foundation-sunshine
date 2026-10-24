@@ -16,4 +16,9 @@ if($LASTEXITCODE){throw 'Generated software transport test build failed'}
 & "$out/transport-test.exe" *> "$out/transport-test.log"
 if($LASTEXITCODE){throw 'Software UDP/RTP/FEC/authenticated receive test failed'}
 Get-Content "$out/transport-test.log"
+& gcc.exe -O2 -std=c11 -DNDEBUG -DHAS_SOCKLEN_T -DMOCK_USE_UDP @includes "$root/tests/mat-live/mock_output_test.c" @libraries -o "$out/mock-output-udp-test.exe"
+if($LASTEXITCODE){throw 'Mock output UDP integration build failed'}
+& "$out/mock-output-udp-test.exe" *> "$out/mock-output-udp-test.log"
+if($LASTEXITCODE){throw 'Mock output UDP integration failed'}
+Get-Content "$out/mock-output-udp-test.log"
 Get-FileHash "$out/mat-live-check.exe","$out/transport-test.exe"

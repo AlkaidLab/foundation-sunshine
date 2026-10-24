@@ -26,6 +26,11 @@ if (WIN32)
     target_link_libraries(mat_live_crypto_tests PRIVATE OpenSSL::Crypto)
     add_test(NAME mat_live_crypto_tests COMMAND mat_live_crypto_tests)
     set_tests_properties(mat_live_crypto_tests PROPERTIES TIMEOUT 15)
+    add_executable(mat_mock_output_tests mat-live/mock_output_test.c ${MAT_RECEIVER_TEST_SOURCES})
+    target_include_directories(mat_mock_output_tests PRIVATE ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src)
+    target_link_libraries(mat_mock_output_tests PRIVATE OpenSSL::Crypto)
+    add_test(NAME mat_mock_output_tests COMMAND mat_mock_output_tests)
+    set_tests_properties(mat_mock_output_tests PROPERTIES TIMEOUT 15)
 endif ()
 
 # Add GoogleTest directory to the project

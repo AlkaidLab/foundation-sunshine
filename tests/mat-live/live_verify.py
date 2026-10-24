@@ -314,6 +314,8 @@ def main():
         assert match, "Native publisher did not confirm stream SHA/EOS"
         assert client.returncode == publisher.returncode == source.returncode == 0
         assert status["passed"] and status["cycles"] == int(match[1]) and status["sha256"] == match[2]
+        assert status["mockOutputCompleted"] and status["mockPlayedFrames"] == status["cycles"] * 3840
+        assert status["mockWrittenSha256"] == status["mockPlayedSha256"] == match[2]
         assert "HOOK_STOP restored=1" in capture_log and "PLUGIN_STOP" in capture_log
         if args.bed714:
             assert "staticMask=0x1ffe dynamicObjects=2" in capture_log, "Full bed/dynamic input not observed"

@@ -42,8 +42,13 @@ def main():
         ("removed-dump",4,SDP,ACK,-1),
         ("auto-gfe",6,"v=0\r\n",[],0),
     ]
+    cases = [(*case, None) for case in cases] + [
+        ("device-mat",6,live,live_ack,7,"mat"),
+        *[(f"device-{device}",6,live,[],0,device) for device in ("gone","speaker","pcm","no-iec")],
+        ("strict-device-pcm",7,live,[],-1,"pcm"),
+    ]
     results=[];env=dict(os.environ);env["PATH"]="C:/msys64/ucrt64/bin;"+env.get("PATH","")
-    for name,requested,sdp,ack,expected in cases:
+    for name,requested,sdp,ack,expected,device in cases:
         stop=threading.Event();methods=[];announces=[];errors=[];describe_live=[]
         server=socket.socket();server.bind(("127.0.0.1",0));server.listen();server.settimeout(.1)
         port=server.getsockname()[1]
@@ -76,7 +81,7 @@ def main():
                 if not stop.is_set():errors.append(repr(error))
         worker=threading.Thread(target=serve);worker.start()
         try:
-            run=subprocess.run([str(args.client.resolve()),f"rtsp://127.0.0.1:{port}",str(requested),"gfe" if name.endswith("gfe") else "sunshine"],
+            run=subprocess.run([str(args.client.resolve()),f"rtsp://127.0.0.1:{port}",str(requested),"gfe" if name.endswith("gfe") else "sunshine"] + ([device] if device else []),
                 stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
         finally:stop.set();worker.join(4);server.close()
         log=run.stdout.decode("utf8",errors="replace").replace("\r\n","\n");(args.output/f"{name}.log").write_text(log)
@@ -92,7 +97,8 @@ def main():
             else:
                 assert f"x-ml-audio.codec:{'mat-live-v1' if expected==7 else 'mat-iec61937-v1'}" in announces[0]
                 if expected==7:assert "mat-sha256" not in announces[0] and "mat-cycles" not in announces[0]
-        assert describe_live==(["1"] if requested in (6,7) and not name.endswith("gfe") else [] if requested in (4,5) else [None]),(name,describe_live)
+        effective = requested if not device or device == "mat" else -1 if requested == 7 else 0
+        assert describe_live==(["1"] if effective in (6,7) and not name.endswith("gfe") else [] if effective in (4,5,-1) else [None]),(name,describe_live)
         results.append(dict(case=name,requested=requested,selected=expected,methods=methods,mediaTested=False))
         print("PASS",name,flush=True)
     (args.output/"proof.json").write_text(json.dumps(dict(result="PASS",scope="Actual production RTSP negotiation; controlled peer; no media/device playback",results=results),indent=2))

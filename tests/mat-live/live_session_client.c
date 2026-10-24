@@ -5,6 +5,7 @@
 // Preserve the C-runtime value used by FFmpeg before including that layer.
 enum { FFMPEG_EAGAIN=EAGAIN };
 #include "Limelight-internal.h"
+#include "mock_output.h"
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
 #include <openssl/evp.h>
@@ -12,10 +13,12 @@ enum { FFMPEG_EAGAIN=EAGAIN };
 #include <stdarg.h>
 #include <fcntl.h>
 #include <io.h>
-static volatile LONG terminated,ended,decodeFailed;
+static volatile LONG terminated,ended,decodeFailed,outputFailed;
 static uint64_t cycles,videoFrames,videoUnits,firstAudio,lastAudio,firstVideo,lastVideo,lastVideoPts;
 static int audioDecodeCalls,videoPtsReordered;static char audioSha[65];
 static EVP_MD_CTX* digest;static AVCodecContext* decoder;static AVFrame* frame;
+static MockDevice device;static MockOutput* output;static MockOutputStats outputStats;
+static void audio_cleanup(void);
 static void message(const char* fmt,...){va_list a;va_start(a,fmt);vfprintf(stderr,fmt,a);va_end(a);}
 static void stage_start(int stage){fprintf(stderr,"STAGE starting %s\n",LiGetStageName(stage));}
 static void stage_done(int stage){fprintf(stderr,"STAGE complete %s\n",LiGetStageName(stage));}
@@ -43,19 +46,24 @@ static int decode_video(PDECODE_UNIT unit){
 }
 static void video_cleanup(void){av_frame_free(&frame);avcodec_free_context(&decoder);}
 static int audio_cycle(void* ctx,const unsigned char* p,int n,uint64_t epoch,uint64_t domain,uint64_t index,uint64_t pts){
- (void)ctx;if(n!=61440||epoch!=MatLiveProfile.epoch||domain!=MatLiveProfile.domain||index!=cycles||pts!=index*960||!EVP_DigestUpdate(digest,p,n))return 0;
+ (void)ctx;if(n!=61440||epoch!=MatLiveProfile.epoch||domain!=MatLiveProfile.domain||index!=cycles||pts!=index*960||
+    !mock_output_offer(output,p,n,epoch,domain,index,pts,GetTickCount64())||!EVP_DigestUpdate(digest,p,n))return 0;
  uint64_t now=GetTickCount64();if(!cycles)firstAudio=now;lastAudio=now;++cycles;return 1;
 }
 static int audio_end(void* ctx,uint64_t count){
  (void)ctx;unsigned n=0;unsigned char hash[32];if(count!=cycles||!cycles||!EVP_DigestFinal_ex(digest,hash,&n)||n!=32)return 0;
- for(unsigned i=0;i<32;++i)sprintf(audioSha+i*2,"%02x",hash[i]);InterlockedExchange(&ended,1);return 1;
+ for(unsigned i=0;i<32;++i)sprintf(audioSha+i*2,"%02x",hash[i]);
+ return mock_output_end(output,count,GetTickCount64())&&mock_output_wait_end(output);
 }
 static int audio_init(int cfg,const POPUS_MULTISTREAM_CONFIGURATION opus,void* ctx,int flags){
  (void)cfg;(void)ctx;(void)flags;if(NegotiatedAudioCodec!=AUDIO_CODEC_MAT_LIVE||opus->samplesPerFrame!=960)return -1;
- digest=EVP_MD_CTX_new();if(!digest||!EVP_DigestInit_ex(digest,EVP_sha256(),NULL))return -1;
+ digest=EVP_MD_CTX_new();if(!digest||!EVP_DigestInit_ex(digest,EVP_sha256(),NULL)){audio_cleanup();return -1;}
+ MockCapabilities caps={1,1,1,1};uint64_t now=GetTickCount64();if(!mock_device_init(&device,caps,now)){audio_cleanup();return -1;}
+ output=mock_output_open(mock_device_sink(&device),1,MatLiveProfile.epoch,MatLiveProfile.domain,now,1000,3000);if(!output){audio_cleanup();return -1;}
  LI_MAT_PLAYBACK_CALLBACKS cb={audio_cycle,audio_end,NULL};LiSetMatPlaybackCallbacks(&cb);return 0;
 }
-static void audio_cleanup(void){LiSetMatPlaybackCallbacks(NULL);EVP_MD_CTX_free(digest);digest=NULL;}
+static void audio_cleanup(void){LiSetMatPlaybackCallbacks(NULL);if(output){mock_output_stop(output);outputStats=mock_output_poll(output,GetTickCount64());mock_output_free(output);output=NULL;}
+ mock_device_close(&device);EVP_MD_CTX_free(digest);digest=NULL;}
 static void forbidden_audio(char* p,int n){(void)p;(void)n;++audioDecodeCalls;}
 static int unhex(const char* s,unsigned char* out,int n){if(strlen(s)!=(size_t)n*2)return 0;for(int i=0;i<n;++i){unsigned v;if(sscanf(s+i*2,"%2x",&v)!=1)return 0;out[i]=(unsigned char)v;}return 1;}
 static int decoder_self_test(void){
@@ -86,12 +94,18 @@ int main(int argc,char** argv){
  if(error){fprintf(stderr,"START_FAILED %d\n",error);return 3;}
  int codec=NegotiatedAudioCodec,encrypted=AudioEncryptionEnabled;
  printf("CONNECTED codec=%d encrypted=%d profileConfirmed=1 video=H264\n",codec,encrypted);
- while(!InterlockedCompareExchange(&terminated,0,0)&&!InterlockedCompareExchange(&ended,0,0)&&!InterlockedCompareExchange(&decodeFailed,0,0)&&GetTickCount64()-began<seconds*1000)Sleep(5);
+ while(!InterlockedCompareExchange(&terminated,0,0)&&!InterlockedCompareExchange(&ended,0,0)&&!InterlockedCompareExchange(&decodeFailed,0,0)&&!InterlockedCompareExchange(&outputFailed,0,0)&&GetTickCount64()-began<seconds*1000){
+  uint64_t now=GetTickCount64();mock_device_tick(&device,now);outputStats=mock_output_poll(output,now);
+  if(outputStats.state==MOCK_COMPLETED)InterlockedExchange(&ended,1);
+  if(outputStats.state==MOCK_FAILED){fprintf(stderr,"MOCK_OUTPUT_FAILED %s\n",outputStats.error);InterlockedExchange(&outputFailed,1);}Sleep(5);
+ }
  int cleanEnd=InterlockedCompareExchange(&ended,0,0),connectionFailed=InterlockedCompareExchange(&terminated,0,0);
- LiStopConnection();uint64_t overlapStart=firstAudio>firstVideo?firstAudio:firstVideo,overlapEnd=lastAudio<lastVideo?lastAudio:lastVideo;
+ mock_output_stop(output);LiStopConnection();uint64_t overlapStart=firstAudio>firstVideo?firstAudio:firstVideo,overlapEnd=lastAudio<lastVideo?lastAudio:lastVideo;
  uint64_t overlap=overlapEnd>overlapStart?overlapEnd-overlapStart:0;
- int passed=cleanEnd&&!connectionFailed&&!decodeFailed&&!audioDecodeCalls&&!videoPtsReordered&&codec==7&&encrypted&&videoFrames>=30&&cycles>=100&&overlap>=2000;
+ int sinkPassed=outputStats.state==MOCK_COMPLETED&&!strcmp(audioSha,device.written_sha)&&!strcmp(audioSha,device.played_sha);
+ int passed=cleanEnd&&sinkPassed&&!connectionFailed&&!decodeFailed&&!outputFailed&&!audioDecodeCalls&&!videoPtsReordered&&codec==7&&encrypted&&videoFrames>=30&&cycles>=100&&overlap>=2000;
  FILE* result=fopen(argv[7],"wx");if(!result)return 5;
- fprintf(result,"{\"passed\":%s,\"codec\":%d,\"encrypted\":%s,\"authenticatedEOS\":%s,\"cycles\":%llu,\"bytes\":%llu,\"sha256\":\"%s\",\"videoFramesDecoded\":%llu,\"videoUnits\":%llu,\"videoPtsReordered\":%s,\"decodeFailed\":%s,\"audioDecodeCalls\":%d,\"overlapMs\":%llu,\"fullLiStartConnection\":true,\"hardwareSink\":false,\"avSyncCalibrated\":false}\n",passed?"true":"false",codec,encrypted?"true":"false",cleanEnd?"true":"false",(unsigned long long)cycles,(unsigned long long)(cycles*61440),audioSha,(unsigned long long)videoFrames,(unsigned long long)videoUnits,videoPtsReordered?"true":"false",decodeFailed?"true":"false",audioDecodeCalls,(unsigned long long)overlap);fclose(result);
+ fprintf(result,"{\"mockOutputCompleted\":%s,\"mockWrittenSha256\":\"%s\",\"mockPlayedSha256\":\"%s\",\"mockPlayedFrames\":%llu,\"mockPeakBacklogBytes\":%llu,",sinkPassed?"true":"false",device.written_sha,device.played_sha,(unsigned long long)outputStats.played_frames,(unsigned long long)outputStats.peak_backlog_bytes);
+ fprintf(result,"\"passed\":%s,\"codec\":%d,\"encrypted\":%s,\"authenticatedEOS\":%s,\"cycles\":%llu,\"bytes\":%llu,\"sha256\":\"%s\",\"videoFramesDecoded\":%llu,\"videoUnits\":%llu,\"videoPtsReordered\":%s,\"decodeFailed\":%s,\"audioDecodeCalls\":%d,\"overlapMs\":%llu,\"fullLiStartConnection\":true,\"hardwareSink\":false,\"avSyncCalibrated\":false}\n",passed?"true":"false",codec,encrypted?"true":"false",cleanEnd?"true":"false",(unsigned long long)cycles,(unsigned long long)(cycles*61440),audioSha,(unsigned long long)videoFrames,(unsigned long long)videoUnits,videoPtsReordered?"true":"false",decodeFailed?"true":"false",audioDecodeCalls,(unsigned long long)overlap);fclose(result);
  printf("RESULT passed=%d cycles=%llu videoFramesDecoded=%llu overlapMs=%llu sha256=%s authenticatedEOS=%d\n",passed,(unsigned long long)cycles,(unsigned long long)videoFrames,(unsigned long long)overlap,audioSha,cleanEnd);return passed?0:4;
 }

@@ -47,9 +47,9 @@ def main():
     env = dict(os.environ)
     env['PATH'] = 'C:/msys64/ucrt64/bin;' + env.get('PATH', '')
     results = []
-    for mode in ('complete', 'missing-end', 'missing-tail'):
+    for mode in ('complete', 'missing-end', 'missing-tail', 'sink-stall', 'route-loss', 'cancel-drain'):
         with (args.output / (mode + '.stderr')).open('w', encoding='utf8') as error:
-            child = subprocess.Popen([str(args.client.resolve())],
+            child = subprocess.Popen([str(args.client.resolve())] + ([f'--{mode}'] if mode in ('sink-stall', 'route-loss', 'cancel-drain') else []),
                                      stdout=subprocess.PIPE, stderr=error, text=True, env=env,
                                      creationflags=subprocess.CREATE_NO_WINDOW)
             ready = child.stdout.readline().strip()
@@ -59,7 +59,7 @@ def main():
                 seq = 0
                 packets = [wire(2, carrier)] * 4
                 packets += [wire(1, carrier, i) for i in range(59 if mode == 'missing-tail' else 60)]
-                if mode == 'complete':
+                if mode not in ('missing-end', 'missing-tail'):
                     packets += [wire(3, carrier)] * 4
                 for payload in packets:
                     header = b'MLIV' + bytes([1, 32, 0, 0]) + struct.pack('<QQII', 1, seq, 1104, 0)
@@ -73,13 +73,21 @@ def main():
         (args.output / (mode + '.stdout')).write_text(ready + '\n' + stdout, encoding='utf8')
         if mode == 'complete':
             assert child.returncode == 0 and 'success=1 cycles=1 ended=1 decodeCalls=0' in stdout
+            assert 'submittedBytes=61440 playedFrames=3840 sinkCompleted=1' in stdout
         else:
             assert child.returncode == 1 and elapsed < 5 and 'success=0' in stdout and 'ended=0 decodeCalls=0' in stdout
-            assert 'MAT validated input timed out' in (args.output / (mode + '.stderr')).read_text()
+            stderr = (args.output / (mode + '.stderr')).read_text()
+            if mode in ('missing-end', 'missing-tail'):
+                assert 'MAT validated input timed out' in stderr
+            elif mode == 'sink-stall':
+                assert 'sink playhead stalled' in stderr
+            elif mode == 'route-loss':
+                assert 'output route/capability changed' in stderr
+            assert 'sinkCompleted=0' in stdout
         results.append(dict(mode=mode, exitCode=child.returncode, seconds=elapsed, passed=True))
     (args.output / 'proof.json').write_text(json.dumps(dict(result='PASS', cases=results,
                                                         nativeCapture=False, hardware=False), indent=2))
-    print('PASS actual AudioStream UDP threads: clean EOS, missing END and missing final data terminate within deadline')
+    print('PASS actual AudioStream UDP threads: drained EOS, missing END/tail, sink stall, route loss and cancellation during END drain')
 
 
 if __name__ == '__main__':
