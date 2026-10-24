@@ -1039,6 +1039,7 @@ namespace display_device {
 #include <unordered_map>
 
 #include "src/config.h"
+#include "src/display_device/display_device.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/linux/compositor_output.h"
@@ -1046,6 +1047,7 @@ namespace display_device {
 #include "src/platform/linux/kscreen_modes.h"
 #include "src/platform/linux/vdd_edid.h"
 #include "src/platform/linux/vdd_instances.h"
+#include "src/platform/linux/vdd_primary_plan.h"
 
 namespace pt = boost::property_tree;
 
@@ -1054,6 +1056,7 @@ namespace display_device::vdd_utils {
   // The attribution rules are pure and live with the other platform modules;
   // the backend keeps only the state the rules are applied to.
   namespace vdd_instances = platf::vdd_instances;
+  namespace vdd_primary = platf::vdd_primary;
 
   using namespace std::literals;
 
@@ -1113,6 +1116,12 @@ namespace display_device::vdd_utils {
     // through the state file below.
     std::vector<std::string> offlined_physical_outputs;
     parsed_config_t::vdd_prep_e last_prep { parsed_config_t::vdd_prep_e::no_operation };
+    // The physical connector that held the primary role before the first
+    // virtual display was prepared (upstream 0219abe2 records the same thing
+    // for the Windows topology). Kept until the last virtual display is gone so
+    // the role can be handed back to that screen instead of to whichever
+    // connector the compositor happens to see last.
+    std::string original_primary_connector;
     vdd_edid::edid_options active_edid_opts;  // Personalization captured at create
     unsigned int cached_width { 1920 };
     unsigned int cached_height { 1080 };
@@ -1824,6 +1833,50 @@ namespace display_device::vdd_utils {
         if (connector_status_is(status_path, "connected")) {
           fn(status_path, connector);
         }
+      }
+    }
+
+    /**
+     * @brief Connected physical connectors, in /sys/class/drm enumeration
+     *        order — which is exactly what the primary rules must not depend on.
+     */
+    std::vector<std::string>
+    connected_physical_connectors(const std::string &vd_connector) {
+      std::vector<std::string> connectors;
+      for_each_connected_physical(vd_connector, [&](const auto &, const auto &connector) {
+        connectors.push_back(connector);
+      });
+      return connectors;
+    }
+
+    /**
+     * @brief The physical connector the compositor currently treats as primary.
+     * @details Asks the shared display-device API, so every backend answers:
+     *          kscreen priority 1 on KDE, the logical-monitor `primary` flag on
+     *          Mutter, the RandR primary output on X11. niri and wlroots have
+     *          no primary concept and answer "no" for every connector, which
+     *          leaves the plan without a promotion — the compositor's own
+     *          choice stays untouched.
+     * @return The connector's name, or empty when none of them is primary.
+     */
+    std::string
+    detect_primary_connector(const std::vector<std::string> &physicals) {
+      for (const auto &connector : physicals) {
+        if (display_device::is_primary_device(connector)) {
+          return connector;
+        }
+      }
+      return {};
+    }
+
+    /**
+     * @brief Emit a primary plan: role primary becomes kscreen priority 1,
+     *        role secondary becomes priority 2.
+     */
+    void
+    apply_primary_plan(const std::vector<vdd_primary::hint_t> &plan) {
+      for (const auto &hint : plan) {
+        hint_primary_output(hint.connector, hint.role == vdd_primary::role_e::primary ? 1 : 2);
       }
     }
 
@@ -2892,10 +2945,15 @@ namespace display_device::vdd_utils {
     if (vdd_instances::live_count(records_locked()) == 0) {
       restore_offlined_physicals();
       if (last_prep == parsed_config_t::vdd_prep_e::vdd_as_primary || last_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
-        // Give the primary role back to the physical screen.
-        for_each_connected_physical(connector, [](const auto &, const auto &physical) {
-          hint_primary_output(physical, 1);
-        });
+        // Give the primary role back to the screen that had it before the
+        // virtual display appeared, not to "every physical in turn": the latter
+        // left the answer to the enumeration order (upstream 0219abe2 removed
+        // the same assumption on Windows). The remembered connector is dropped
+        // with the last virtual display, so the next session samples the layout
+        // that is actually in front of the user.
+        const auto physicals = connected_physical_connectors(connector);
+        apply_primary_plan(vdd_primary::secondary_plan(physicals, {}, original_primary_connector));
+        original_primary_connector.clear();
       }
     }
 
@@ -2964,8 +3022,43 @@ namespace display_device::vdd_utils {
   bool
   apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e vdd_prep, const boost::optional<device_info_map_t> &) {
     elevated_caps caps;
+
+    // Sample the physical screen that currently holds the primary role, before
+    // any hint below moves it: this is the Linux counterpart of the pre-VDD
+    // device list upstream 0219abe2 reads on Windows. Two constraints shape
+    // where this runs:
+    //   * it must happen outside state_mutex — the question goes to the
+    //     compositor through the shared display-device API, which enumerates
+    //     outputs and can reach back into vdd_utils (is_vdd_connector() ->
+    //     enum_available_devices() -> offlined_physical_connectors()), and
+    //     state_mutex is not recursive;
+    //   * the virtual display's own connector is excluded, so a display that is
+    //     primary right now cannot be mistaken for the user's screen.
+    // A screen still forced off by an earlier exclusive session reads as
+    // disconnected and is therefore not sampled; the plan then promotes nothing
+    // rather than guessing. The answer survives until the last virtual display
+    // is gone (see destroy_vdd_monitor()).
+    std::string primary_sample;
+    if (vdd_prep != parsed_config_t::vdd_prep_e::display_off) {
+      std::string vd_connector;
+      bool needs_sample = false;
+      {
+        std::lock_guard probe_lock { state_mutex };
+        vd_connector = active_connector;
+        needs_sample = original_primary_connector.empty();
+      }
+      if (needs_sample) {
+        primary_sample = detect_primary_connector(connected_physical_connectors(vd_connector));
+      }
+    }
+
     std::lock_guard lock { state_mutex };
     last_prep = vdd_prep;
+
+    if (!primary_sample.empty()) {
+      original_primary_connector = primary_sample;
+      BOOST_LOG(info) << "vdd: physical primary before the virtual display is "sv << original_primary_connector;
+    }
 
     if (vdd_prep != parsed_config_t::vdd_prep_e::display_off) {
       // Whatever a previous run switched off for an exclusive session comes
@@ -2992,12 +3085,17 @@ namespace display_device::vdd_utils {
       }
 
       case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
-        // Physicals stay primary, VDD extends as secondary.
+        // Physicals stay primary, VDD extends as secondary. Which physical is
+        // primary is not decided here: only the screen that held the role
+        // before the virtual display appeared is promoted, and no other
+        // physical is promoted after it. The old code handed the role to every
+        // physical in turn, so the compositor kept whichever one it saw last --
+        // the enumeration-order dependence upstream 0219abe2 removed on
+        // Windows ("枚举结果不保证首个设备就是原主屏").
+        // Without a virtual display there is nothing to extend, so the role is
+        // left exactly as the compositor has it.
         if (!vd_connector.empty()) {
-          hint_primary_output(vd_connector, 2);
-          for_each_connected_physical(vd_connector, [](const auto &, const auto &physical) {
-            hint_primary_output(physical, 1);
-          });
+          apply_primary_plan(vdd_primary::secondary_plan(connected_physical_connectors(vd_connector), vd_connector, original_primary_connector));
         }
         return true;
       }

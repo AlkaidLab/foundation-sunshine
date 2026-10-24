@@ -558,6 +558,7 @@ if (WIN32)
     # PulseAudio staging queue); their tests have nothing to link on Windows.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_edid\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_instances\.cpp")
+    list(FILTER TEST_SOURCES EXCLUDE REGEX "test_vdd_primary_plan\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_foreground_app\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_mic_queue\.cpp")
     list(FILTER TEST_SOURCES EXCLUDE REGEX "test_display_device_enum\.cpp")
