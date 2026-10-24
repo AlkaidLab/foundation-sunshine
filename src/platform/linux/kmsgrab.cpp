@@ -16,6 +16,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <thread>
 
 #include "src/config.h"
@@ -630,6 +631,54 @@ namespace platf {
       BOOST_LOG(debug) << ss.str();
     }
 
+    /**
+     * @brief Starting connector counter for every card, in enumeration order.
+     *
+     * @details @ref kms_display_names() keeps **one** `conn_type_count_t` for all
+     *          the cards it visits, so on a two-GPU machine the second card's
+     *          DisplayPort can be advertised as "DP-2". Resolving such a name
+     *          back to a CRTC therefore needs the identical numbering, which
+     *          means replaying the same card order and the same skip rules --
+     *          numbering each card from one would rename every connector after
+     *          the first and make the advertised names unresolvable.
+     *
+     * @param card_dir Directory holding the DRM nodes ("/dev/dri").
+     * @param hwdevice_type Capture memory type; decides which cards are skipped.
+     * @return Map of card node name ("card1") to the counter value that card
+     *         starts at. Cards that enumeration skips are absent.
+     */
+    std::map<std::string, kms::conn_type_count_t>
+    connector_numbering(const fs::path &card_dir, mem_type_e hwdevice_type) {
+      std::map<std::string, kms::conn_type_count_t> numbering;
+      kms::conn_type_count_t running;
+
+      std::error_code ec;
+      for (auto &entry : fs::directory_iterator { card_dir, ec }) {
+        const auto filestring = entry.path().filename().generic_string();
+        if (filestring.size() < 4 || std::string_view { filestring }.substr(0, 4) != "card"sv) {
+          continue;
+        }
+
+        kms::card_t card;
+        if (card.init(entry.path().c_str())) {
+          continue;
+        }
+
+        // Same filter and same exception as kms_display_names().
+        if (hwdevice_type == mem_type_e::cuda && !card.is_nvidia() && config::video.encoder != "nvenc") {
+          continue;
+        }
+
+        numbering.emplace(filestring, running);
+
+        // monitors() is what advances the counter; the connectors themselves
+        // are irrelevant here.
+        card.monitors(running);
+      }
+
+      return numbering;
+    }
+
     class display_t: public platf::display_t {
     public:
       display_t(mem_type_e mem_type):
@@ -652,16 +701,30 @@ namespace platf {
         // priority; otherwise a non-numeric display_name selects the connector
         // by name and a numeric one keeps the legacy enumeration index.
         const auto vdd_connector = display_device::vdd_utils::live_virtual_display_connector();
+        // The connector name above is card-local; on a multi-GPU machine another
+        // card can expose the same name, so pin the search to the owner.
+        const auto vdd_card = display_device::vdd_utils::live_virtual_display_card();
         const bool name_is_index = !display_name.empty() && std::all_of(display_name.begin(), display_name.end(), ::isdigit);
         const std::string target_connector = !vdd_connector.empty() ? vdd_connector :
           (name_is_index ? std::string {} : display_name);
 
         fs::path card_dir { "/dev/dri"sv };
+
+        // The advertised names come from kms_display_names(), whose counter runs
+        // across all cards. Replaying that numbering is what makes a name from
+        // the monitor list resolve to the connector it was built from.
+        const auto numbering = connector_numbering(card_dir, mem_type);
+
         for (auto &entry : fs::directory_iterator { card_dir }) {
           auto file = entry.path().filename();
 
           auto filestring = file.generic_string();
           if (filestring.size() < 4 || std::string_view { filestring }.substr(0, 4) != "card"sv) {
+            continue;
+          }
+
+          if (!vdd_card.empty() && filestring != vdd_card) {
+            BOOST_LOG(debug) << file << " does not host the virtual display ("sv << vdd_card << ')';
             continue;
           }
 
@@ -724,9 +787,28 @@ namespace platf {
 
           std::map<std::uint32_t, std::string> crtc_to_connector_name;
           {
+            // Two numbering schemes meet here, and the target decides which one
+            // applies:
+            //  - a connector named by the monitor list was built by
+            //    kms_display_names() with one counter shared by all the cards,
+            //    so it is only resolvable with the same shared numbering;
+            //  - a virtual display is named by vdd_utils as a bare connector
+            //    ("DP-1", the name the sysfs node itself carries), which is
+            //    card-local, and the owning card has already been pinned above.
+            // Each rebuild restarts from the same base so the retry loop cannot
+            // shift the very names it is retrying for.
+            const auto base = [&]() {
+              if (!vdd_connector.empty()) {
+                return kms::conn_type_count_t {};
+              }
+
+              auto it = numbering.find(filestring);
+              return it != numbering.end() ? it->second : kms::conn_type_count_t {};
+            }();
+
             auto build_map = [&]() {
               crtc_to_connector_name.clear();
-              kms::conn_type_count_t conn_type_count;
+              auto conn_type_count = base;
               for (auto &conn : card.monitors(conn_type_count)) {
                 if (conn.crtc_id) {
                   crtc_to_connector_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
