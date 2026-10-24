@@ -574,7 +574,7 @@ warning。Mutter 的模型与另外两个后端差别很大，因此接入点全
      需要第二个 CRTC 而整体失败。现在先按 `leader_name` 分组、再逐组生成请求。
 - **CRTC 分配还要求合法**：回退分配时除「未被其它组占用」外，还检查该 crtc 在该组**每个**
   output 的 `XRROutputInfo::crtcs` 允许列表里（服务器没给列表时视为不限制）。否则
-  `XRRSetCrtcConfig` 会整张请求被拒，现象是"合成器无视我们"。
+  `XRRSetCrtcConfig` 会让整份请求被拒，现象是"合成器无视我们"。
 - **回滚不冒充成功**：计划被拒时恢复快照，但 `apply()` 仍返回失败（回滚成功不等于应用成功），
   并把屏幕尺寸恢复成**快照**尺寸而不是计划尺寸。
 - **测试**：`tests/unit/test_xrandr_display.cpp` 20 例——16 例纯规划（单输出/禁用/并排/镜像共享
@@ -937,10 +937,23 @@ test_sunshine: 653 用例，648 通过，5 跳过，0 失败
 ```
 
 **用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
-不是用例失败。用例数从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
+不是用例失败。三个时间点的用例数（都是同一构建树里的 `test_sunshine`）：
+
+| 构建树 | 时间点 | 用例 |
+| --- | --- | --- |
+| `a7a20060` | 并入上游 `c211d711` 之后（中间统计） | 650 用例 / 645 通过 |
+| `89420200` | 第一轮 review 修复之后 | 652 / 647 |
+| `8c095703` | 第二轮 review 修复之后（当前，最终统计） | 653 / 648 |
+
+从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
 `tests/tools/vmouse_logging_stubs.cpp` 被删，`DownloadFileTests`（访问 `https://httpbin.org/`，
 离线必失败）也一并移除，所以此前记录的两项环境依赖失败不再出现。
+650 之后的 3 例增量都出自本分支的 review 修复，不是上游带来的：`+2` 例来自
+`tests/unit/test_perf_frame_rates.cpp` 的 `PerfScanoutTracker.BaselinesTheFirstFramebuffer` 与
+`PerfScanoutTracker.CountsOnlyNewFramebuffers`（同一提交把 `PerfFrameRates.ReportsDrmVblankAsTheSourceKind`
+改名为 `…ReportsDrmFbFlipsAsTheSourceKind`，净增 2），`+1` 例来自 `tests/unit/test_xrandr_display.cpp`
+的 `XrandrPlan.MirrorMemberMaySortBeforeItsLeader`。
 
 - `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 曾因"未知 appid 期望
   404、而 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`"失败（本机装过包，
