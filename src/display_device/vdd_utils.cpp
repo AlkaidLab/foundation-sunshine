@@ -2406,6 +2406,43 @@ namespace display_device::vdd_utils {
     return {};
   }
 
+  std::string
+  live_virtual_display_card() {
+    std::lock_guard lock { state_mutex };
+    // Deliberately no adoption and no restore: the connector accessor owns both
+    // side effects, and callers ask for this one second.
+    if (active && !active_connector.empty() && !active_card.empty() &&
+        connector_status_is(active_status_path, "connected")) {
+      return active_card;
+    }
+
+    return {};
+  }
+
+  std::string
+  owned_virtual_display_connector(std::string_view owner) {
+    std::lock_guard lock { state_mutex };
+    // A display left behind by a previous process is the one an owner with a
+    // matching identity should get back, so adopt before looking it up.
+    if (instances.empty()) {
+      adopt_orphan_vdd_locked();
+    }
+
+    const std::size_t index = find_instance_locked(owner);
+    if (index == vdd_instances::npos || index >= instances.size()) {
+      return {};
+    }
+
+    const auto &instance = instances[index];
+    // A record whose connector is gone is not a device the caller can configure;
+    // reporting it would recreate the stale-name problem this lookup removes.
+    if (instance.status_path.empty() || !connector_status_is(instance.status_path, "connected")) {
+      return {};
+    }
+
+    return instance.connector;
+  }
+
   std::vector<std::string>
   offlined_physical_connectors() {
     std::lock_guard lock { state_mutex };

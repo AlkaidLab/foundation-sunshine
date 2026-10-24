@@ -58,11 +58,42 @@ namespace display_device::vdd_utils {
 
 #ifndef _WIN32
   /**
-   * @brief Name of the live virtual output (e.g. "card1-DP-1") created by the
-   *        external virtual display helper, or empty when none is active.
+   * @brief Name of the live virtual output's connector (e.g. "DP-1") created by
+   *        the external virtual display helper, or empty when none is active.
+   * @note The name is card-local. On a machine with more than one GPU the same
+   *       connector name can exist on another card, so callers that resolve it
+   *       back to a CRTC must also use @ref live_virtual_display_card().
    */
   std::string
   live_virtual_display_connector();
+
+  /**
+   * @brief DRM node name (e.g. "card1") owning the live virtual output, or empty
+   *        when none is active.
+   * @details Only meaningful together with @ref live_virtual_display_connector();
+   *          it exists so a caller can restrict its search to the card the
+   *          virtual display was actually created on.
+   * @note Unlike @ref live_virtual_display_connector() this never has side
+   *       effects: it does not adopt an orphaned display and does not restore
+   *       offlined physical outputs.
+   */
+  std::string
+  live_virtual_display_card();
+
+  /**
+   * @brief Device id (connector name) of the live virtual display owned by
+   *        @p owner, or empty when that owner has no live display.
+   * @details Two virtual displays carry the same friendly name, so a lookup by
+   *          name cannot tell them apart: this resolves the record the owner
+   *          actually created (matching the EDID serial the identity produces)
+   *          and returns its connector, which is the device id the rest of the
+   *          display code uses. An empty @p owner keeps the historical
+   *          single-slot behaviour and describes the selected record.
+   * @note Adopts an orphaned display from a previous run, like
+   *       @ref live_virtual_display_connector(), but restores no outputs.
+   */
+  std::string
+  owned_virtual_display_connector(std::string_view owner);
 
   /**
    * @brief Names of the physical connectors this backend powered off for an

@@ -368,8 +368,23 @@ namespace display_device {
   session_t::apply_vdd_display_stage(const parsed_config_t &config,
     const boost::optional<device_info_map_t> &pre_vdd_devices,
     std::string_view client_identifier) {
+    // The parsed configuration names a display, but with more than one virtual
+    // display present that name is ambiguous: both carry the same friendly name,
+    // and only the owner can say which connector is theirs. Publishing and
+    // verifying modes against the wrong monitor reports success for a device the
+    // session is not streaming, so resolve it here as well.
+    std::string vdd_device_id = config.device_id;
+#ifndef _WIN32
+    if (const auto owned = vdd_utils::owned_virtual_display_connector(client_identifier);
+      !owned.empty() && owned != vdd_device_id) {
+      BOOST_LOG(debug) << "Resolved the virtual display device for this session: "
+                       << vdd_device_id << " -> " << owned;
+      vdd_device_id = owned;
+    }
+#endif
+
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation &&
-        !vdd_utils::apply_vdd_prep(config.device_id, config.vdd_prep, pre_vdd_devices)) {
+        !vdd_utils::apply_vdd_prep(vdd_device_id, config.vdd_prep, pre_vdd_devices)) {
       return vdd_stage_result_e::topology_failed;
     }
 
@@ -377,7 +392,7 @@ namespace display_device {
     // 锁屏场景会在解锁后执行本阶段；SYSTEM+RDP 不进入本阶段。
     if (config.resolution && config.refresh_rate) {
       const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
-      if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode, client_identifier)) {
+      if (!vdd_utils::wait_for_mode_publication(vdd_device_id, requested_mode, client_identifier)) {
         BOOST_LOG(error) << "VDD monitor did not publish "
                          << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
         return vdd_stage_result_e::modes_failed;
@@ -789,7 +804,26 @@ namespace display_device {
       }
     }
 
+    // The display this session owns: shared mode reuses one fixed identity, and
+    // every path that rebuilds or recovers a display must name the same owner,
+    // otherwise it would take down a display belonging to another client.
+    const std::string vdd_identifier = config::video.vdd_reuse ? std::string { "shared_vdd" } : current_client_id;
+
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
+#ifndef _WIN32
+    // Every virtual display carries the same friendly name, so the lookup above
+    // can name the *other* client's monitor. The mode checks below publish and
+    // verify modes for whatever device they are handed, so resolve the
+    // connector this owner actually created instead of trusting the name.
+    if (const auto owned = vdd_utils::owned_virtual_display_connector(vdd_identifier);
+      !owned.empty() && owned != device_zako) {
+      if (!device_zako.empty()) {
+        BOOST_LOG(debug) << "Resolved the virtual display by owner " << vdd_identifier
+                         << ": " << device_zako << " -> " << owned;
+      }
+      device_zako = owned;
+    }
+#endif
 
     std::string rebuild_old_vdd_id;
     const bool client_changed = !current_vdd_client_id.empty() &&
@@ -797,11 +831,6 @@ namespace display_device {
                                 current_vdd_client_id != current_client_id;
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
                                           !current_vdd_hdr_brightness->nearly_equal(hdr_brightness);
-
-    // The display this session owns: shared mode reuses one fixed identity, and
-    // every path that rebuilds or recovers a display must name the same owner,
-    // otherwise it would take down a display belonging to another client.
-    const std::string vdd_identifier = config::video.vdd_reuse ? std::string { "shared_vdd" } : current_client_id;
 
     // An existing VDD must be rebuilt when its advertised HDR capabilities no
     // longer match this session. A shared VDD may otherwise be reused across
