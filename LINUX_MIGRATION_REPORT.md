@@ -1,8 +1,9 @@
 # Foundation Sunshine Linux（Arch Linux）迁移报告
 
 - **基线**：`linux-migration` 分支（包版本跟随二进制版本戳，如
-  `2026.1022.161750.430c3c02-1`；2026-10-22 已并入上游 `origin/master` `3c194184`，
-  上一个同步点 `ed415026`，tag `v0.9.3-linux-upstream-sync` 指向 `0e2a6a11`）
+  `2026.1022.161750.430c3c02-1`；同步链为 `ed415026`（上一个同步点，tag
+  `v0.9.3-linux-upstream-sync` 指向 `0e2a6a11`）→ `7a0995e2`（2026-10-22，33 个提交）→
+  `c211d711`（测试清理）→ `0219abe2`（2026-10-23，#1175），当前与 `origin/master` 差距 0）
 - **对象仓库**：`foundation-sunshine`（LizardByte/Sunshine 的 AlkaidLab 增强分支）
 - **目标环境**：Arch Linux / CachyOS（x86_64_v3，KDE Plasma + Wayland 与 niri 双目标，PipeWire，
   NVIDIA RTX 3050 Mobile / Ampere sm_86）
@@ -22,7 +23,9 @@ ABR 前台检测、托盘）已逐项移植到 Linux 并补齐了 Windows 对齐
 `LINUX_PORT_GAPS.md`）：可做的都落地了，其余 6 项逐条给出"不移植/搁置"的证据与**重启判据**，
 3 项等上游或属上游缺失，9 项本质不可移植。**待办为 0。**
 
-**上游同步状态**：2026-10-22 已并入 `origin/master` `7a0995e2`（33 个提交，403 文件）。
+**上游同步状态**：主同步是 2026-10-22 并入 `origin/master` `7a0995e2`（33 个提交，403 文件），
+此后又跟随两个提交：`c211d711`（#1176 测试清理）与 `0219abe2`（#1175 副屏主屏归属），
+当前 `origin/master` 仍为 `0219abe2`、与本分支差距 0。
 其中两大跨平台重构（Simple-Web-Server → 自带 Beast HTTP 栈、confighttp 拆成 24 个模块）在 Linux
 上零改动直接生效。本次同步引入的唯一功能缺口——管线帧率的"源更新"段没有 Linux 后端
 （`LINUX_PORT_GAPS.md` §7.1）——也已补上 KMS 一侧，其余为上游测试的环境依赖。
@@ -890,6 +893,46 @@ Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输�
 原主屏已拔掉/记录里是虚拟屏本身/销毁时归还/无记忆时什么都不做/无物理屏时只降级虚拟屏）。
 真机无法覆盖两屏以上并发场景（见 §十一 的诚实边界）。
 
+### 6.31 第四轮 review：客户域会话模式、失败回滚与构建门控
+
+同日第三批 review（`5638185757`）指出四个真问题，都已修：
+
+- **会话模式写错客户端**：`set_vdd_session_mode()` 与 `wait_for_mode_publication()` 原来都只操作
+  "共享视图"（`cached_width`/`active_edid_path`/`selected_instance` 描述的那块屏）。单客户端时
+  这就是唯一那块屏，但两个客户端并存时，A 的请求可能落到 B 的连接器上，连 EDID 一起覆盖 B。
+  现在两个函数都多收一个 `client_identifier`：
+  `src/platform/linux/vdd_instances.h` 新增纯函数
+  `session_mode_target(records, identifier, selected)` 返回三态——`selected`（未识别调用方，
+  保持原行为）/`instance`（该客户端有自己的活显示器，先 `load_instance_locked` 把视图切过去）/
+  `stash_pending`（它的显示器还不存在：把请求存进 `pending_session_modes`，**视图一个字节都不写**，
+  等 `create_vdd_monitor()` 创建该客户端显示器时再取用）。凡是"这条请求属于谁"的判定都走
+  `find()`，所以上一轮 `adopt_orphan_vdd_locked()` 从 EDID serial 恢复的孤儿显示器也能匹配上。
+  通话链：`session.cpp` 的 `prepare_vdd()`（用 `vdd_identifier`）与 `apply_vdd_display_stage()`
+  （用 `config::video.vdd_reuse ? "shared_vdd" : get_client_id_from_session(session)`，延迟重试的
+  定时器回调里也在捕获时算好同一个值）。
+- **创建失败污染共享视图**：`create_vdd_monitor()` 从"开始描述请求"到最后成功之间有多条失败返回
+  路径（连接器被占、EDID 写不进、使能失败等）。原来失败返回时共享字段仍描述着这次没起来的
+  显示器，紧接着的 `store_current_locked()` 就会把它写进**上一个客户端**的记录，用一块从没存在
+  过的屏覆盖掉它的身份。现在进了这段就架一个 `view_restore_t` 作用域守卫，析构时按进入时的
+  `selected_instance` 决定 `load_instance_locked()` 还是 `clear_view_locked()`，成功路径
+  `restore_view.armed = false` 解除。
+- **`find_master_holder()` 泄漏 fd**：成功分支在 `*out_fd = target_fd` 之后直接 `return true`，
+  而它 `pidfd_getfd()` 得到的 `dup_fd` 没关——每成功一次泄漏一个 DRM fd。现在成功分支也先
+  `::close(dup_fd)`（`*out_fd` 存的是持有者自己的 fd 号，调用方会重新 `pidfd_getfd` 取一次，
+  所以关掉不影响语义）。
+- **libdrm / libcap 无条件依赖**：`cmake/compile_definitions/linux.cmake:128` 只在
+  `LIBDRM_FOUND AND LIBCAP_FOUND` 时定义 `SUNSHINE_BUILD_DRM`，但 `vdd_utils.cpp` 的头文件与
+  符号使用没有全部跟随这个开关——关掉 DRM 的构建会编译失败。现在 `<sys/capability.h>`、
+  `<xf86drm.h>`、`<xf86drmMode.h>`、`elevated_caps`、以及全部 `drmIoctl`/`drmMode*`/`cap_*` 使用点
+  都落在 `#if defined(SUNSHINE_BUILD_DRM)` 内；无 DRM 构建下 `elevated_caps` 是空操作，代码路径
+  退化为"依赖二进制自带的有效能力集"，这一点写在替代实现上方。
+
+验证：`tests/unit/test_vdd_instances.cpp` 新增 5 例（未识别调用方保持视图 / 请求跟随自己的客户端
+即使别的客户端正被选中 / 客户端还没有显示器时暂存 / 记录已不活时暂存待重建 / 上一轮收养的
+无名字显示器按 serial 命中），`VddInstances.*` 共 14 例全绿；全量 `test_sunshine` 665 用例
+660 通过；`python3 tools/audit-windows-parity.py` 确认落入 Windows 区域的改动行为 0。
+两客户端并发现场本机无法构造（只有一个客户端），所以上面第一条的正确性由纯函数单测覆盖。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用
@@ -966,7 +1009,7 @@ Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输�
 
 ```
 ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 660 用例，655 通过，5 跳过，0 失败
+test_sunshine: 665 用例，660 通过，5 跳过，0 失败
 ```
 
 **用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
@@ -977,7 +1020,8 @@ test_sunshine: 660 用例，655 通过，5 跳过，0 失败
 | `a7a20060` | 并入上游 `c211d711` 之后（中间统计） | 650 用例 / 645 通过 |
 | `89420200` | 第一轮 review 修复之后 | 652 / 647 |
 | `8c095703` | 第二轮 review 修复之后 | 653 / 648 |
-| `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐（当前，最终统计） | 660 / 655 |
+| `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐 | 660 / 655 |
+| 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复（当前，最终统计） | 665 / 660 |
 
 从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
@@ -988,7 +1032,8 @@ test_sunshine: 660 用例，655 通过，5 跳过，0 失败
 （同一提交把 `PerfFrameRates.ReportsDrmVblankAsTheSourceKind` 改名为
 `…ReportsDrmFbFlipsAsTheSourceKind`，净增 2），`+1` 例来自 `tests/unit/test_xrandr_display.cpp` 的
 `XrandrPlan.MirrorMemberMaySortBeforeItsLeader`，`+7` 例来自 `tests/unit/test_vdd_primary_plan.cpp`
-（对齐上游 #1175 的主屏归属规则，见 §6.30）。
+（对齐上游 #1175 的主屏归属规则，见 §6.30），最后 `+5` 例来自
+`tests/unit/test_vdd_instances.cpp` 的 `SessionModeTarget` 系列（客户域会话模式，见 §6.31）。
 
 - `NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments` 曾因"未知 appid 期望
   404、而 `DEFAULT_APP_IMAGE_PATH` 编译期就是 `/usr/share/sunshine/box.png`"失败（本机装过包，
