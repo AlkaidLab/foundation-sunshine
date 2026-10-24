@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.22)
+project(mat_jni_mock C)
+set(CMAKE_C_STANDARD 11)
+get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(COMMON "${ROOT}/third-party/moonlight-common-c/src")
+if(NOT EXISTS "${OPENSSL_ROOT}/${ANDROID_ABI}/libcrypto.a")
+    message(FATAL_ERROR "Supply an Android OpenSSL build with include/ and <ABI>/libcrypto.a")
+endif()
+add_library(matjni SHARED bridge.c
+    "${COMMON}/MatLivePlayback.c" "${COMMON}/MatReceiver.c" "${COMMON}/MatDepacketizer.c")
+target_include_directories(matjni PRIVATE "${COMMON}" "${OPENSSL_ROOT}/include")
+target_compile_options(matjni PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(matjni PRIVATE "${OPENSSL_ROOT}/${ANDROID_ABI}/libcrypto.a" dl)

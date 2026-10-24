@@ -100,3 +100,30 @@ proves a hardware sink's Atmos decoding or speaker output.
 
 The historical finite, Android and recorder harnesses are available only on
 [the archive branch](https://github.com/AlkaidLab/foundation-sunshine/tree/codex/mat-history-20261023).
+
+## Android/JNI mock acceptance (manual)
+
+`android/verify.py` builds a small instrumented APK with the current common-c
+receiver; it does not build or modify the archived Android client. Supply an
+Android OpenSSL build containing `include/` and `x86_64/libcrypto.a`:
+
+```powershell
+python tests/mat-live/android/verify.py --sdk <SDK> --ndk <NDK> --openssl <Android-OpenSSL> --java-home <JDK> --output <fresh-dir> --serial emulator-5560
+```
+
+Start an x86_64 emulator first. The runner requires SDK platform 34 and SDK CMake
+3.22.1; it installs only on the explicitly selected emulator, enables CheckJNI
+for the diagnostic process, then restores the setting and removes its APK.
+No Gradle dependencies are downloaded. Run this manually, outside routine CI.
+
+Nine cases cover native-thread callbacks, copying borrowed buffers before native
+reuse, bounded Java mock writes/drain and SHA equality, authentication failure,
+missing END, sink failure, cancellation at END, preservation of a Java callback
+exception, stale epochs, callback rejection and two fresh-session reconnects.
+Each successful session consumes 128 generated cycles. The END callback returns
+success only after mock drain; redundant authenticated END packets notify Java once.
+The `proof.json`, instrumentation and CheckJNI logs report this diagnostic bridge
+only. There is no Android app integration, RTSP/RTP/FEC session, AudioTrack, HDMI
+output, Dolby decode or acoustic synchronization claim. The source is generated
+in memory, not captured or replayed media. For the JNI lifetime/thread rules see
+[Android JNI tips](https://developer.android.com/ndk/guides/jni-tips).
