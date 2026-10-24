@@ -1,5 +1,5 @@
 import { translateFallback } from '../utils/localizedMessage.js'
-import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
+import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS, DEFAULT_MENU_CMD_NAME_KEYS } from '../utils/constants.js';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
 import { deepClone, formatError } from '../utils/helpers.js';
 import { normalizePerAppGamepadMode } from '../utils/gamepadModes.js';
@@ -99,16 +99,33 @@ export class AppService {
 
   /**
    * Get the platform default built-in apps.
+   * @param {string} platform
+   * @param {Function} [translate] i18n t(); when given, default menu command
+   *   names follow the current UI language (falls back to the English names)
    */
-  static getDefaultBuiltInApps(platform) {
-    return cloneData(DEFAULT_BUILT_IN_APPS[platform] || []);
+  static getDefaultBuiltInApps(platform, translate) {
+    const apps = cloneData(DEFAULT_BUILT_IN_APPS[platform] || []);
+    if (typeof translate !== 'function') {
+      return apps;
+    }
+
+    apps.forEach((app) => {
+      (app['menu-cmd'] || []).forEach((menuCmd) => {
+        const key = DEFAULT_MENU_CMD_NAME_KEYS[menuCmd.id];
+        const translated = key ? translate(key) : '';
+        if (translated && translated !== key) {
+          menuCmd.name = translated;
+        }
+      });
+    });
+    return apps;
   }
 
   /**
    * Restore matching built-in app defaults and append missing built-in apps.
    */
-  static restoreDefaultBuiltInApps(apps, platform) {
-    const defaults = AppService.getDefaultBuiltInApps(platform);
+  static restoreDefaultBuiltInApps(apps, platform, translate) {
+    const defaults = AppService.getDefaultBuiltInApps(platform, translate);
     const nextApps = cloneData(Array.isArray(apps) ? apps : []);
     let added = 0;
     let restored = 0;

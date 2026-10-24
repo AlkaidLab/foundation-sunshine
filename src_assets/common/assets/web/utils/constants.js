@@ -64,6 +64,13 @@ export const APP_CONSTANTS = {
   TEXT_TRUNCATE_LENGTH: 50
 };
 
+// 默认菜单命令的显示名称翻译键（按命令 id）。恢复默认应用时按当前界面语言填写名称，
+// 因为客户端（Moonlight）会原样显示这里保存的名称。
+export const DEFAULT_MENU_CMD_NAME_KEYS = {
+  kcENAT5r9P: 'apps.default_menu_cmd_touch_keyboard',
+  rjeOKHmcdL: 'apps.default_menu_cmd_desktop_pet',
+};
+
 // 默认内置应用配置
 export const DEFAULT_BUILT_IN_APPS = {
   windows: [
@@ -78,13 +85,13 @@ export const DEFAULT_BUILT_IN_APPS = {
       'menu-cmd': [
         {
           id: 'kcENAT5r9P',
-          name: '触摸键盘',
+          name: 'Touch Keyboard',
           cmd: '.\\tools\\qiin-tabtip.exe',
           elevated: 'false'
         },
         {
           id: 'rjeOKHmcdL',
-          name: '桌宠',
+          name: 'Desktop Pet',
           cmd: '.\\assets\\gui\\sunshine-gui.exe --toolbar',
           elevated: 'false'
         }
