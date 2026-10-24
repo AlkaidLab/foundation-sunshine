@@ -1119,6 +1119,10 @@ namespace display_device::vdd_utils {
     class elevated_caps {
     public:
       elevated_caps() = default;
+      // User-declared so the stand-in is not trivially destructible: every
+      // scope that needs elevated capabilities declares one on purpose, and a
+      // trivial type would only earn a -Wunused-variable for it here.
+      ~elevated_caps() {}  // user-provided on purpose: see the comment above
       elevated_caps(const elevated_caps &) = delete;
       elevated_caps &
       operator=(const elevated_caps &) = delete;
