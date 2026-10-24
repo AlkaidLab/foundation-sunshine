@@ -14,10 +14,11 @@
 ## 总览
 
 核心体验链路已全部对齐：虚拟显示器（原生 EDID 后端 + 配置全组合模式表 + prep 模式 + 独占还原 +
-残留 adopt）、物理显示器 display_device（kscreen/niri 分辨率/拓扑 + 持久化还原）、HDR 三件套
+残留 adopt）、物理显示器 display_device（五个后端：kscreen / niri / Mutter / wlroots / RandR，
+分辨率 + 拓扑开关 + 镜像 + 持久化还原）、HDR 三件套
 （静态透传 / HDR10+ 动态 / DV P8.1 RPU / Vivid）、剪贴板文本+图片双向（KDE 走 klipper+合成器，
 非 KDE 桌面走合成器）、远程麦克风、ABR 前台检测
-（KDE + niri）、托盘/向导/打包。
+（KWin / wlroots toplevel / niri IPC / X11 四个生产者）、托盘/向导/打包。
 
 **剩余待办：0 项。** 终局分布：
 **已评估收束 6 项**（§一 §1.5 帧管线契约 / §1.7 音频位深；§二 §2.7 DS5 sidecar / §2.8 NVENC 直连 /
@@ -372,12 +373,12 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
 ### 2.10 ✅ 通用 wlroots / X11 显示后端（低）— 2026-10-22 全部完成
 
 - **背景**：目标是 **KDE + niri** 双环境。niri 那半边已落地（见下），只剩 sway/Hyprland 等
-  wlroots 合成器的通用兜底没有后端。
+  wlroots 合成器的通用兜底没有后端。（现已全部落地，本节保留为历史记录。）
 - **已完成（2026-10-22）**：niri 输出后端——`src/platform/linux/niri_ipc.{h,cpp}` 做会话判定、
   socket 发现（`NIRI_SOCKET` / `/run/user/<uid>/niri.*.sock` 探活）、20 s 失败冷却与有界执行；
-  `src/platform/linux/display_device.cpp` 的 `query_outputs()` 分成 `query_kscreen_outputs()` /
-  `query_niri_outputs()` 两个生产者，模式/拓扑开关按会话分派到 `niri msg output <name>
-  mode|on|off`。`niri msg` 无论请求是否被接受都 exit 0，所以写操作一律回读状态判定。
+  `src/platform/linux/display_device.cpp` 的 `query_outputs()` 当时分成 `query_kscreen_outputs()` /
+  `query_niri_outputs()` 两个生产者（后续三轮又加了 Mutter / wlroots / RandR，共五个），
+  模式/拓扑开关按会话分派到 `niri msg output <name> mode|on|off`。`niri msg` 无论请求是否被接受都 exit 0，所以写操作一律回读状态判定。
 - **已完成（2026-10-22，第二轮）：X11（RandR）显示后端** ——
   `src/platform/linux/xrandr_display.{h,cpp}`（`session_supports_xrandr` / `query_state` /
   纯函数 `plan_for` / `apply`，apply 自带快照回滚）+ `display_device.cpp` 的

@@ -187,8 +187,11 @@ sudo pacman -S --needed cmake ninja boost numactl \
 ### 6.2 物理显示器 display_device（kscreen + niri 后端）
 
 `src/platform/linux/display_device.cpp` 以合成器为中介读写模式/HDR/主屏/拓扑，JSON 持久化 +
-apply/revert 编排对齐 Windows `settings.cpp`。合成器有两个生产者：kscreen-doctor（Plasma）与
-niri IPC（见 §6.16），由 `query_outputs()` 按会话分派。
+apply/revert 编排对齐 Windows `settings.cpp`。后端有**五个**生产者，由 `query_outputs()` 按会话
+分派、`compositor_is_*()` 按能力缺失逐级降级：kscreen-doctor（Plasma，§6.2/§6.19）、niri IPC
+（§6.16）、GNOME Mutter 的 DisplayConfig D-Bus（§6.18）、wlroots 的 `wlr-randr`（§6.26）、
+裸 X11 的 RandR（§6.27）。判定顺序本身抽成了纯函数 `src/platform/linux/display_backend.h`，
+有单测覆盖。
 
 - `:143` `query_outputs()`、`:706` `set_display_modes()`、`:913` `set_hdr_states()`、
   `:1035` `set_topology()`、`:360` `wait_for_topology()`、`:383` `wait_for_display_stability()`。
@@ -858,7 +861,10 @@ KWin 侧（`src/backends/libinput/connection.cpp`）：
 未流式时自动 skip）。真机确认：设置前触摸无反应，设置后立即恢复。
 
 边界：属性不持久化到 `kwinrc`，KWin 重启后需重新设置（下一次会话或显示变更会补上）；非 KDE
-合成器无此 API；笔设备未纳入。
+合成器无此 API。这套映射**只作用于触摸设备**：笔设备由独立的输入类
+（`src/platform/linux/input/inputtino_pen.cpp`）创建，KWin 对 tablet 的归属规则不同，
+`sync_our_touch_devices()` 因此显式跳过它（`tests/unit/test_kwin_input_device.cpp` 里有
+"笔设备不能被误配"一例守护），并不表示笔输入不受支持。
 
 ### 6.30 虚拟屏存在期间的主屏归属（对齐上游 #1175）
 
@@ -947,7 +953,7 @@ Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输�
 | 触觉反馈（haptics 协议层） | DS5 PCM 分析 → IR v2 回发客户端、legacy rumble 合成；仅"主机直连 DualSense 播放"的 sidecar 是 Windows 专属 |
 | 文本输入通道 text_context | 纯数据通道 |
 | 文件夹共享 file_mapping | HTTP/WS/RPC/token 全套跨平台；"资源管理器右键共享"入口是 Windows 专属 |
-| Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测已移植（KDE + niri，§6.6） |
+| Webhook / client_fingerprint / launch_session_manager / ABR | 纯逻辑层；ABR 前台检测有四个生产者：KWin D-Bus（KDE）、wlr-foreign-toplevel（niri/sway/wlroots）、`niri msg` IPC、X11 `_NET_ACTIVE_WINDOW`（§6.13） |
 | 虚拟显示器 | 原生 EDID 后端 + 全组合模式表 + prep 模式 + 独占还原 + 残留 adopt（§6.1） |
 | 物理显示器 display_device | 五个后端：kscreen（KDE）/ niri / Mutter（GNOME）/ wlroots（wlr-randr）/ RandR（裸 X11）——分辨率 + 拓扑开关 + 持久化还原；HDR 仅 kscreen 与 Mutter，主屏 kscreen/Mutter/RandR，镜像 kscreen/Mutter/RandR；判定顺序为可测契约（§6.2、§6.16、§6.18、§6.21、§6.26、§6.27） |
 | 剪贴板主机同步（文本 + 图片） | KDE：文本走 klipper sd-bus、图片走 ext-data-control；无 klipper 的桌面（niri/sway/Hyprland）文本也走 ext-data-control。共用帧/回声/blob 回退（§6.4、§6.14） |
