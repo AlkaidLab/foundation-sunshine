@@ -3,6 +3,8 @@
 add_compile_definitions(SUNSHINE_PLATFORM="windows")
 
 enable_language(RC)
+# enable_language(RC) selects the toolchain's resource compiler. Do not replace
+# an explicitly configured compiler (or path adapter) with a PATH lookup.
 
 # gcc complains about misleading indentation in some mingw includes
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
