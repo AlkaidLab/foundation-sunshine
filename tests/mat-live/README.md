@@ -156,3 +156,29 @@ restoration. This mode still needs fresh native-capture authorization.
 
 The historical Android application stays untouched. This diagnostic APK contains
 no AudioTrack, HDMI output, Dolby decoder or acoustic synchronization test.
+
+### Paced network isolation (manual)
+
+Build standalone Windows and x86_64 Android probes with the installed SDK/NDK,
+Android OpenSSL and an existing current MinGW common-c static build:
+
+```powershell
+./tests/mat-live/android/build-network.ps1 -Sdk <SDK> -Ndk <NDK> -OpenSsl <Android-OpenSSL> -CommonBuild <MinGW-common-build> -Output <fresh-build>
+python tests/mat-live/android/network_verify.py --build <fresh-build> --adb <adb.exe> --serial emulator-5560 --output <fresh-results>
+```
+
+The six cases compare Windows loopback, emulator loopback and Windows-to-emulator
+NAT, first with a raw UDP receiver, then with actual AudioStream receive/decoder
+threads, RTP/FEC and authenticated MAT callbacks into a SHA-only mock. Each sender
+generates 250 carrier cycles through the production fragmenter, AEAD and pacing;
+its test RTP/FEC framing mirrors the broadcaster. This does not run Sunshine's
+broadcast thread or a full RTSP/video/JNI session.
+
+The results retain sent/received counts, unique shard IDs, a noncryptographic
+datagram checksum, sender pacing, decoded SHA/EOS and kernel UDP counters. The
+first-failure counter distinguishes initial receive overflow from later overflow
+after terminal failure stops reception. Cross-emulator loss remains a failed run
+and exits nonzero; it is not converted into silence, skipped data or relaxed EOS.
+No socket buffers, emulator network settings, physical devices or production
+capabilities are changed. The runner removes only its two standalone guest files.
+These targets are excluded from the normal APK build and routine CI.

@@ -19,3 +19,13 @@ target_include_directories(matjni PRIVATE "${COMMON}" "${COMMON}/../enet/include
 set_source_files_properties("${ROOT}/tools/mat-live/live_check_transport.c" PROPERTIES COMPILE_OPTIONS -Wno-unused-parameter)
 target_compile_options(matjni PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(matjni PRIVATE moonlight-common-c "${OPENSSL_CRYPTO_LIBRARY}" dl log)
+
+# Optional paced-network isolation; not packaged in the APK or run in routine CI.
+add_executable(mat-udp-probe EXCLUDE_FROM_ALL udp_probe.c)
+add_executable(mat-paced-sender EXCLUDE_FROM_ALL paced_sender.cpp)
+set_property(TARGET mat-paced-sender PROPERTY CXX_STANDARD 23)
+foreach(target mat-udp-probe mat-paced-sender)
+    target_include_directories(${target} PRIVATE "${COMMON}" "${COMMON}/../enet/include"
+        "${COMMON}/../nanors" "${COMMON}/../nanors/deps" "${COMMON}/../nanors/deps/obl" "${OPENSSL_ROOT}/include")
+    target_link_libraries(${target} PRIVATE moonlight-common-c "${OPENSSL_CRYPTO_LIBRARY}" dl log m)
+endforeach()
