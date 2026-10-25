@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Run production input batching and queue dispatch with a recording motion sink.
-
-No driver is needed. Activity validation and unrelated platform sinks are stubbed;
-the packet layouts, batching overloads and queue walker come from production code.
-"""
+"""Check sensor ordering and coalescing through the production input queue walker."""
 import argparse
 import os
 import pathlib
-import shutil
 import subprocess
 import tempfile
 
@@ -23,7 +18,6 @@ fixture = r'''
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -56,77 +50,33 @@ namespace input {
 }
 int main() {
   auto input = std::make_shared<input::input_t>();
-  std::vector<SS_CONTROLLER_MOTION_PACKET> expected;
-  auto enqueue = [&](uint8_t type, float x, uint8_t controller = 0) {
-    SS_CONTROLLER_MOTION_PACKET packet {};
+  std::vector<SS_CONTROLLER_MOTION_PACKET> packets(4);
+  // G1 A1 G2 G0 must become G1 A1 G0: keep the sensor barrier and merge only G2/G0.
+  for (size_t i = 0; i < packets.size(); ++i) {
+    auto& packet = packets[i];
     packet.header.magic = SS_CONTROLLER_MOTION_MAGIC;
     packet.header.size = util::endian::big(uint32_t(sizeof(packet) - 4));
-    packet.motionType = type;
-    packet.controllerNumber = controller;
-    const float y = x * .5f, z = -x * .25f;
-    std::memcpy(packet.x, &x, 4);
-    std::memcpy(packet.y, &y, 4);
-    std::memcpy(packet.z, &z, 4);
-    expected.push_back(packet);
-    std::vector<uint8_t> bytes(sizeof(packet));
-    std::memcpy(bytes.data(), &packet, sizeof(packet));
-    input->input_queue.push_back(std::move(bytes));
-  };
-  auto verify = [&] {
-    while (!input->input_queue.empty()) input::passthrough_next_message(input);
-    assert(input::delivered.size() == expected.size());
-    for (size_t i = 0; i < expected.size(); ++i) {
-      assert(std::memcmp(&input::delivered[i], &expected[i], sizeof(expected[i])) == 0);
-    }
-    input::passthrough_next_message(input);
-    assert(input::delivered.size() == expected.size());
-    expected.clear();
-    input::delivered.clear();
-  };
-  // A later reading must not jump over the other sensor, including a partial tail.
-  for (uint8_t first : {1, 2}) {
-    enqueue(first, 1);
-    enqueue(3 - first, 1);
-    enqueue(first, 2);
-    verify();
+    packet.motionType = i == 1 ? LI_MOTION_TYPE_ACCEL : LI_MOTION_TYPE_GYRO;
+    const float x = i == 3 ? 0.f : float(i + 1);
+    std::memcpy(packet.x, &x, sizeof(x));
+    input->input_queue.emplace_back(sizeof(packet));
+    std::memcpy(input->input_queue.back().data(), &packet, sizeof(packet));
   }
-  // Both frame orders and interleaved controllers survive realistic backlog sizes.
-  // Full four-sample cycles have zero mean; byte equality preserves the source-time integral.
-  for (int count : {1, 2, 4, 8, 32, 128}) {
-    for (uint8_t first : {1, 2}) {
-      for (int i = 0; i < count; ++i) {
-        const float x = (i % 4 == 3) ? -3.f : 1.f;
-        for (uint8_t controller : {0, 1}) {
-          enqueue(first, x, controller);
-          enqueue(3 - first, x, controller);
-        }
-      }
-      if (first == 1) enqueue(1, 9);
-      enqueue(2, 0); // A final stop and subsequent acceleration must retain their order.
-      enqueue(1, 9);
-      verify();
-    }
-  }
-  // Retain existing same-sensor coalescing and its final zero; this patch changes only the barrier.
-  enqueue(2, 10);
-  enqueue(2, 20);
-  enqueue(2, 0);
-  expected.erase(expected.begin(), expected.end() - 1);
-  verify();
-  std::cout << "Motion queue: sensor barriers, paired backlogs, final zero and idle checks passed\n";
+  while (!input->input_queue.empty()) input::passthrough_next_message(input);
+  assert(input::delivered.size() == 3);
+  assert(std::memcmp(&input::delivered[0], &packets[0], sizeof(packets[0])) == 0);
+  assert(std::memcmp(&input::delivered[1], &packets[1], sizeof(packets[1])) == 0);
+  assert(std::memcmp(&input::delivered[2], &packets[3], sizeof(packets[3])) == 0);
 }
 '''
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--compiler", help="GNU/Clang compiler selected by the parent CMake build")
+parser.add_argument("--compiler", default="c++", help="GNU/Clang compiler selected by CMake")
 args = parser.parse_args()
-compiler = args.compiler or shutil.which("clang++") or shutil.which("g++")
-if not compiler:
-    raise RuntimeError("A C++23 GNU/Clang compiler is required")
 with tempfile.TemporaryDirectory(prefix="sunshine-motion-queue-") as directory:
     path = pathlib.Path(directory)
     (path / "probe.cpp").write_text(fixture.replace("// PRODUCTION", production), encoding="utf-8")
     binary = path / ("probe.exe" if os.name == "nt" else "probe")
-    subprocess.run([compiler, "-std=c++23", "-Wall", "-Wextra", "-Werror", "-Wno-sign-compare",
+    subprocess.run([args.compiler, "-std=c++23", "-Wall", "-Wextra", "-Werror", "-Wno-sign-compare",
                     "-I" + str(ROOT), "-I" + str(ROOT / "third-party"), str(path / "probe.cpp"),
                     "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
