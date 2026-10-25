@@ -66,7 +66,12 @@ final class Session {
         }
         public boolean submit(ByteBuffer bytes, long pts) {
             drain(0); int index = decoder.dequeueInputBuffer(10000);
-            if (index < 0) { drain(10000); index = decoder.dequeueInputBuffer(10000); }
+            // Codec startup may hold every input buffer while producing output.
+            // Keep this unit and release output until an input returns or we fail.
+            long deadline = SystemClock.elapsedRealtime() + 500;
+            while (index < 0 && SystemClock.elapsedRealtime() < deadline) {
+                drain(10000); index = decoder.dequeueInputBuffer(10000);
+            }
             check(index >= 0, "MediaCodec input timeout");
             ByteBuffer input = decoder.getInputBuffer(index); input.clear();
             int size = bytes.remaining(); check(input.remaining() >= size, "MediaCodec input capacity");
