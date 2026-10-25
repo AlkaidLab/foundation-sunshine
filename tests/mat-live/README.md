@@ -177,7 +177,10 @@ broadcast thread or a full RTSP/video/JNI session.
 The results retain sent/received counts, unique shard IDs, a noncryptographic
 datagram checksum, sender pacing, decoded SHA/EOS and kernel UDP counters. The
 first-failure counter distinguishes initial receive overflow from later overflow
-after terminal failure stops reception. Cross-emulator loss remains a failed run
+after terminal failure stops reception. A failed decoded probe now closes its
+socket promptly; its receive count covers only the time through terminal shutdown,
+not the sender's entire stream. Raw reception still measures the complete bounded
+send. Cross-emulator loss remains a failed run
 and exits nonzero; it is not converted into silence, skipped data or relaxed EOS.
 No socket buffers, emulator network settings, physical devices or production
 capabilities are changed. The runner removes only its two standalone guest files.

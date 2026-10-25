@@ -88,7 +88,9 @@ int main(int argc,char** argv) {
     LI_MAT_PLAYBACK_CALLBACKS cb={cycle,end,NULL};LiSetMatPlaybackCallbacks(&cb);
     if(initializeAudioStream()||notifyAudioPortNegotiationComplete())return 4;
     int capacity=0;SOCKADDR_LEN length=sizeof(capacity);getsockopt(rtpSocket,SOL_SOCKET,SO_RCVBUF,(char*)&capacity,&length);
-    printf("READY raw=%d receiveBuffer=%d\n",raw,capacity);fflush(stdout);
+    struct sockaddr_in local;SOCKADDR_LEN local_size=sizeof(local);
+    getsockname(rtpSocket,(struct sockaddr*)&local,&local_size);
+    printf("READY raw=%d receiveBuffer=%d localPort=%u\n",raw,capacity,ntohs(local.sin_port));fflush(stdout);
     if(!raw) { if(startAudioStream(NULL,0))return 5; }
     else {
         struct sockaddr_in peer=*remote;peer.sin_port=htons(AudioPortNumber);
@@ -96,7 +98,7 @@ int main(int argc,char** argv) {
         if(sendto(rtpSocket,"PING",4,0,(struct sockaddr*)&peer,sizeof(peer))!=4)return 6;
     }
     uint64_t deadline=PltGetMillis()+7500;
-    while(PltGetMillis()<deadline) {
+    while(!atomic_load(&failed)&&PltGetMillis()<deadline) {
         if(raw) { char buffer[4096];if(observed_recv(rtpSocket,buffer,sizeof(buffer),false)<0)break; }
         else PltSleepMs(5);
     }

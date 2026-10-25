@@ -79,6 +79,8 @@ def main():
                 complete = sender.returncode == receiver.returncode == 0 and sent['datagrams'] == received['received'] and sent['checksum'] == received['checksum'] and received['duplicate'] == received['malformed'] == '0'
                 decoded = None if mode == 'raw' else (received['cycles'] == '250' and received['ended'] == '1' and received['failed'] == '0' and received['sha256'] == expected_sha)
                 item = dict(path=path, mode=mode, complete=complete, decoded=decoded, sent=sent, received=received,
+                            senderExitCode=sender.returncode, receiverExitCode=receiver.returncode,
+                            receiveCountScope='through terminal shutdown' if received['failed'] == '1' else 'full bounded send',
                             kernelUdpDelta={key:after[key]-value for key,value in before.items()})
                 first_error = int(received['firstFailureRcvbufErrors'])
                 item['kernelRcvbufErrorsBeforeFirstFailure'] = None if first_error < 0 else first_error-before['RcvbufErrors']
