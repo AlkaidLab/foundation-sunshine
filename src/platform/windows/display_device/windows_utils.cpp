@@ -21,6 +21,9 @@
 #include <SetupApi.h>
 #include <wtsapi32.h>
 
+// Keep Win32-dependent helpers after the host headers above.
+#include "hdr_state_api.h"
+
 namespace display_device::w_utils {
 
   namespace {
@@ -582,34 +585,20 @@ namespace display_device::w_utils {
       return hdr_state_e::unknown;
     }
 
-    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO color_info = {};
-    color_info.header.adapterId = path.targetInfo.adapterId;
-    color_info.header.id = path.targetInfo.id;
-    color_info.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-    color_info.header.size = sizeof(color_info);
-
-    LONG result { DisplayConfigGetDeviceInfo(&color_info.header) };
-    if (result != ERROR_SUCCESS) {
-      BOOST_LOG(error) << get_error_string(result) << " failed to get advanced color info! ";
+    const auto state = hdr_state_api::query(path.targetInfo, DisplayConfigGetDeviceInfo);
+    if (state.status != ERROR_SUCCESS) {
+      BOOST_LOG(error) << get_error_string(state.status) << " failed to get HDR state!";
       return hdr_state_e::unknown;
     }
 
-    return color_info.advancedColorSupported ? color_info.advancedColorEnabled ? hdr_state_e::enabled : hdr_state_e::disabled : hdr_state_e::unknown;
+    return state.supported ? state.enabled ? hdr_state_e::enabled : hdr_state_e::disabled : hdr_state_e::unknown;
   }
 
   bool
   set_hdr_state(const DISPLAYCONFIG_PATH_INFO &path, bool enable) {
-    DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE color_state = {};
-    color_state.header.adapterId = path.targetInfo.adapterId;
-    color_state.header.id = path.targetInfo.id;
-    color_state.header.type = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
-    color_state.header.size = sizeof(color_state);
-
-    color_state.enableAdvancedColor = enable ? 1 : 0;
-
-    LONG result { DisplayConfigSetDeviceInfo(&color_state.header) };
+    const LONG result = hdr_state_api::set(path.targetInfo, enable, DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo);
     if (result != ERROR_SUCCESS) {
-      BOOST_LOG(error) << get_error_string(result) << " failed to set advanced color info!";
+      BOOST_LOG(error) << get_error_string(result) << " failed to set HDR state!";
       return false;
     }
 
