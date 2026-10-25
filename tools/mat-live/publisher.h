@@ -1,7 +1,10 @@
 #pragma once
 #include "process_helpers.h"
 #include "../../src/spatial_audio/native_mat_guard.h"
-#include "../../src/spatial_audio/native_mat_assembler.h"
+#include "../../src/spatial_audio/mat_capture_protocol.h"
+#include "../../src/spatial_audio/encoded_audio_source.h"
+#include <array>
+#include <functional>
 #include <sddl.h>
 #include <deque>
 #include <mutex>
@@ -15,8 +18,7 @@ struct Cycle {std::array<uint8_t,MAT_WIRE_CYCLE> bytes;uint64_t qpc;};
 struct Shared {
     std::mutex mutex;std::condition_variable changed;std::deque<Cycle> queue;
     bool failed=false,ended=false,playing=false,ready=false;
-    uint64_t encoder=0,play_qpc=0,last_cycle=0,cycles=0,skipped=0,acknowledged_leases=0;
-    mat_capture::Observations observations;
+    uint64_t encoder=0,play_qpc=0,last_cycle=0,cycles=0,acknowledged_leases=0;
     std::string error,delivered_sha256;
 };
 // Metadata-only acceptance oracle for the post-PLAY stream; no payload storage.

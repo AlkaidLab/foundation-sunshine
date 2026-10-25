@@ -127,7 +127,7 @@ static void RejectNativePeer(unsigned mode){
             return; // Automatic discovery must reject us before sending OPEN.
         }
         char open[8];CheckPipe(Io(pipe,open,8,false,2000)&&!memcmp(open,"MCAPOPEN",8),"Mock OPEN");
-        mat_capture::Descriptor d{mode==0?mat_capture::test_source:mat_capture::native_source,GetCurrentProcessId(),GetCurrentProcessId(),1,1,7,42,10000000};
+        mat_capture::Descriptor d{mode==0?mat_capture::test_source:mat_capture::native_object_source,GetCurrentProcessId(),GetCurrentProcessId(),1,1,7,42,10000000};
         if(mode){const auto created=native_mat_guard::created(GetCurrentProcess());d.publisher_created=d.engine_created=created;}
         if(mode==2)++d.publisher_pid;
         uint8_t bytes[mat_capture::descriptor_bytes];mat_capture::encode_descriptor(bytes,d);CheckPipe(Io(pipe,bytes,sizeof(bytes),true,2000),"Mock descriptor");

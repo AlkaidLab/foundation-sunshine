@@ -29,15 +29,14 @@ static_assert(sizeof(Output)<2*1024*1024&&offsetof(Output,slots)%64==0);
 struct Args {
     uint32_t bytes,version;HANDLE input,data,cancel,owner,output;
     uint64_t domain,epoch,nonce[2],ownerCreationTime;
-    // Zero removes the old diagnostic duration/350-source-round limits, NOT
-    // liveness/cancellation or integer-overflow checks. Native pacing stays on.
+    // Zero leaves duration/round count unbounded; liveness and native pacing stay on.
     uint32_t ownerPid,maxSourceRounds,maxSeconds,reserved;
 };
 struct FakeConfig {uint32_t bytes,version;int32_t failInitialize,failSubmitAt,failProcessAt;uint32_t oversizedProcess,paceMs;};
 using Start=DWORD(WINAPI*)(const Args*);
 using FakeStart=DWORD(WINAPI*)(const Args*,const FakeConfig*);
 inline bool argsValid(const Args& a){return a.bytes==sizeof(a)&&a.version==streamVersion&&a.input&&a.data&&a.cancel&&a.owner&&a.output&&a.domain&&a.epoch&&a.ownerPid&&a.ownerCreationTime&&!a.reserved;}
-inline bool contract(const Shared& s,const Args& a){receiver::Args old{sizeof(receiver::Args),receiver::apiVersion,a.input,a.data,a.cancel,a.owner,a.output,a.domain,a.epoch,{a.nonce[0],a.nonce[1]},a.ownerCreationTime,a.ownerPid,1,1,0};return receiver::contract(s,old);}
+inline bool contract(const Shared& s,const Args& a){const auto& c=s.contract;return c.magic==receiver::magic&&c.version==receiver::version&&c.headerBytes==320&&c.mapBytes==sizeof(Shared)&&c.slotBytes==sizeof(Slot)&&c.capacity==receiver::capacity&&c.packetBytes==124968&&c.callBytes==sizeof(Call)&&c.rate==48000&&c.frames==480&&!c.reserved&&c.qpcHz==hz()&&c.domain==a.domain&&c.epoch==a.epoch&&c.nonce[0]==a.nonce[0]&&c.nonce[1]==a.nonce[1]&&c.producerPid==a.ownerPid;}
 inline bool outputValid(const Output& o,const Args& a,bool fake){return o.magic==streamMagic&&o.version==streamVersion&&o.bytes==sizeof(Output)&&o.capacity==slots&&o.payloadBytes==payloadCapacity&&o.format==(fake?fakeFormat:nativeFormat)&&o.ownerPid==a.ownerPid&&!o.reserved&&o.epoch==a.epoch&&o.domain==a.domain&&o.nonce[0]==a.nonce[0]&&o.nonce[1]==a.nonce[1];}
 inline uint32_t blockChecksum(Block h,const BYTE* p){h.checksum=0;return fnv(fnv(2166136261u,&h,sizeof(h)),p,h.bytes);}
 inline bool publish(Output& o,Block h,const BYTE* p){

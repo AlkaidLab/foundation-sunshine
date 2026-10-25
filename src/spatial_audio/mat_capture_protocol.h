@@ -2,7 +2,7 @@
 #include "../../third-party/moonlight-common-c/src/MatWire.h"
 namespace mat_capture {
 constexpr uint32_t descriptor_bytes=80,record_bytes=40,end_ack_bytes=16,pipe_version=2;
-constexpr uint32_t native_source=1,native_object_source=2,test_source=0x80000001u;
+constexpr uint32_t native_object_source=2,test_source=0x80000001u;
 constexpr uint32_t cycle_kind=1,end_kind=2,error_kind=3,record_magic=0x4359434d;
 struct Descriptor {
     uint32_t kind=0,publisher_pid=0,engine_pid=0;
@@ -21,7 +21,7 @@ inline bool decode_descriptor(const uint8_t* p,Descriptor& d) {
         mat_get64(p+48),mat_get64(p+56),mat_get64(p+72)};
     // Source 2 binds an observed object renderer feeding a dedicated native MAT
     // worker via paired MainPluginRenderer pre-submit observations.
-    return (d.kind==native_source||d.kind==native_object_source)&&d.publisher_pid&&d.engine_pid&&d.publisher_created&&d.engine_created&&
+    return d.kind==native_object_source&&d.publisher_pid&&d.engine_pid&&d.publisher_created&&d.engine_created&&
         d.epoch&&d.epoch<=INT64_MAX&&d.encoder&&d.qpc_hz&&d.qpc_hz<=INT64_MAX;
 }
 inline void encode_end_ack(uint8_t* p,uint64_t cycles){memcpy(p,"MCAPDONE",8);mat_put64(p+8,cycles);}

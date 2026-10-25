@@ -10,8 +10,9 @@ failure, EOS or cancellation. A generated test-source descriptor is rejected.
 external capture/worker pair. `stream_output_protocol.h` defines its continuous
 output ring; `mat_stream_receiver.cpp` is built separately as the dedicated native
 worker DLL. It is not compiled into Sunshine's normal audio capture path.
-`native_encoded_protocol.h` and `native_mat_assembler.h` retain the half-block
-contract and exact full-cycle assembly used by that worker's publisher.
+`StreamRingSource` assembles the worker's consecutive 30,720-byte blocks into
+complete carrier cycles for the publisher. Only the object-worker source kind
+is accepted by the host.
 
 There is no offline reader, file replay source, legacy broker or fixture DLL in
 this directory. See [host integration](../../docs/MAT-HOST.md),
