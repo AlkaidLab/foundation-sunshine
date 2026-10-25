@@ -2000,9 +2000,9 @@ namespace input {
       return batch_result_e::not_batchable;
     }
 
-    // Batched events must be the same sensor
+    // Do not move a newer reading ahead of the other sensor in a six-axis frame.
     if (dest->motionType != src->motionType) {
-      return batch_result_e::not_batchable;
+      return batch_result_e::terminate_batch;
     }
 
     // Take the latest state

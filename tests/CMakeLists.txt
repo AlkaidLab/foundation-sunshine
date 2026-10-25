@@ -486,6 +486,11 @@ if (Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"
             "${CMAKE_SOURCE_DIR}/tests/tools/controller_handoff_probe.py"
             --compiler "${CMAKE_CXX_COMPILER}")
     set_tests_properties(controller_handoff_probe PROPERTIES TIMEOUT 60)
+    add_test(NAME motion_queue_probe
+            COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/tools/motion_queue_probe.py"
+            --compiler "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(motion_queue_probe PROPERTIES TIMEOUT 60)
 endif ()
 if(Python3_Interpreter_FOUND)
     add_test(NAME cmake_configuration_tests
