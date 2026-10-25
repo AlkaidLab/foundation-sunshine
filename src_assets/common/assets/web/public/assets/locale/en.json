@@ -78,6 +78,8 @@
     "cover_search_tab_igdb": "IGDB",
     "cover_search_tab_steam": "Steam",
     "covers_found": "Covers Found",
+    "default_menu_cmd_desktop_pet": "Desktop Pet",
+    "default_menu_cmd_touch_keyboard": "Touch Keyboard",
     "delete": "Delete",
     "delete_confirm": "Are you sure you want to delete \"{name}\"?",
     "detached_cmds": "Detached Commands",
