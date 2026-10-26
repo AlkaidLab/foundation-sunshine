@@ -177,6 +177,9 @@ int main(int argc, char **argv) {
     } else if (microphone_mode && type == 11) {
       break;
     } else if (type == 3 && payload.size() == 4) {
+      if (GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_HAPTICS", nullptr, 0) > 0) {
+        if (!reply(pipe, 108, 0, { payload[0], payload[1], 2, 4, 0x62, 33, 44, 0x10, 0x23, 1 })) break;
+      }
       if (interleave) {
         std::vector<std::uint8_t> early(6);
         early[0] = payload[0];

@@ -260,6 +260,7 @@ namespace platf::ds5 {
     bool genshin_compatibility_requested = false;
     bool force_hid_fallback = false;
     feedback_queue_t feedback_queue;
+    ds5_haptics_state_event_t haptics_state;
     std::uint32_t next_request_id = 1;
 
     ~impl_t() {
@@ -333,9 +334,9 @@ namespace platf::ds5 {
           }
           break;
         case message_e::haptics_state:
-          if (p.size() == 10 && p[0] == owned_index && (p[2] & ~3) == 0 &&
+          if (p.size() == 10 && p[0] == owned_index && p[1] == client_index && (p[2] & ~3) == 0 &&
               (p[3] & ~4) == 0 && (p[4] & ~0x62) == 0 && (p[9] & ~1) == 0) {
-            feedback_queue->raise(gamepad_feedback_msg_t::make_ds5_haptics_state(p[1], p.data() + 2));
+            haptics_state->raise(gamepad_feedback_msg_t::make_ds5_haptics_state(p[1], p.data() + 2));
           }
           break;
         case message_e::haptics_pcm:
@@ -582,6 +583,13 @@ namespace platf::ds5 {
       }
     }
 
+    void reset_haptics() {
+      if (!haptics_state || global_index < 0) return;
+      const std::array<std::uint8_t, 8> reset { 0, 0, 0x62, 0, 0, 0, 0, 0 };
+      haptics_state->raise(gamepad_feedback_msg_t::make_ds5_haptics_state(client_index, reset.data()));
+      feedback_queue->raise(gamepad_feedback_msg_t::make_rumble(client_index, 0, 0));
+    }
+
     void read_loop() {
       bool recovery_attempted = false;
       while (!stopping) {
@@ -594,6 +602,7 @@ namespace platf::ds5 {
         if (stopping) {
           break;
         }
+        reset_haptics();
         BOOST_LOG(warning) << "DualSense sidecar disconnected unexpectedly"sv;
         close_transport();
         if (recovery_attempted) {
@@ -632,6 +641,7 @@ namespace platf::ds5 {
       }
       // 正在完成的恢复可能再次发布 true；join 后确保最终状态为离线。
       published_audio_haptics.store(false, boost::memory_order_relaxed);
+      reset_haptics();
       close_transport();
       global_index = -1;
     }
@@ -684,6 +694,8 @@ namespace platf::ds5 {
       return -1;
     }
     _impl->feedback_queue = std::move(feedback_queue);
+    _impl->client_index = id.clientRelativeIndex;
+    _impl->haptics_state = ds5_haptics_state_event(_impl->feedback_queue->mail, id.clientRelativeIndex);
     if (_impl->attach(id, audio_haptics, genshin_compatibility && audio_haptics)) {
       return 0;
     }

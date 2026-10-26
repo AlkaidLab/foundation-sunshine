@@ -232,6 +232,14 @@ namespace platf {
 
   using feedback_queue_t = safe::mail_raw_t::queue_t<gamepad_feedback_msg_t>;
 
+  using ds5_haptics_state_event_t = safe::mail_raw_t::event_t<gamepad_feedback_msg_t>;
+
+  // Absolute state is latest-value feedback: PCM queue overflow must never discard it.
+  inline ds5_haptics_state_event_t
+  ds5_haptics_state_event(const safe::mail_t &mail, unsigned controller) {
+    return mail->event<gamepad_feedback_msg_t>("ds5_haptics_state." + std::to_string(controller));
+  }
+
   namespace speaker {
     enum speaker_e {
       FRONT_LEFT,  ///< Front left

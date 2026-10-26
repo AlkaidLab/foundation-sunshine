@@ -657,6 +657,7 @@ namespace stream {
       std::uint32_t seq;
 
       platf::feedback_queue_t feedback_queue;
+      std::array<platf::ds5_haptics_state_event_t, 16> ds5_haptics_states;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
 
@@ -2436,9 +2437,20 @@ namespace stream {
             has_ds5_haptics_session |=
               input::has_ds5_audio_haptics(session->input);
             auto &feedback_queue = session->control.feedback_queue;
+            const auto send_pending_state = [session](unsigned controller) {
+              if (controller >= session->control.ds5_haptics_states.size()) return;
+              if (auto state = session->control.ds5_haptics_states[controller]->pop(0ms)) {
+                send_feedback_msg(session, *state);
+              }
+            };
+            for (unsigned controller = 0; controller < session->control.ds5_haptics_states.size(); ++controller) {
+              send_pending_state(controller);
+            }
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
 
+              // A state may arrive after the initial poll; apply it ahead of this controller's PCM/rumble.
+              send_pending_state(feedback_msg->id);
               send_feedback_msg(session, *feedback_msg);
             }
 
@@ -4548,6 +4560,9 @@ namespace stream {
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
+      for (unsigned controller = 0; controller < session->control.ds5_haptics_states.size(); ++controller) {
+        session->control.ds5_haptics_states[controller] = platf::ds5_haptics_state_event(mail, controller);
+      }
       session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
       session->control.resolution_change_queue = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
       session->control.legacy_input_enc_iv = launch_session.iv;
