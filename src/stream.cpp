@@ -2439,7 +2439,12 @@ namespace stream {
             auto &feedback_queue = session->control.feedback_queue;
             const auto send_pending_state = [session](unsigned controller) {
               if (controller >= session->control.ds5_haptics_states.size()) return;
-              if (auto state = session->control.ds5_haptics_states[controller]->pop(0ms)) {
+              // An empty event's pop(0ms) still waits on its condition variable, at least a
+              // timer tick on Windows; doing that for every controller on every control-loop
+              // pass delayed input by tens of milliseconds. Only pop a state that is there.
+              auto &state_event = session->control.ds5_haptics_states[controller];
+              if (!state_event->peek()) return;
+              if (auto state = state_event->pop(0ms)) {
                 send_feedback_msg(session, *state);
               }
             };
