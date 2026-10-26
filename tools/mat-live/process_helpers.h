@@ -29,7 +29,12 @@ static HANDLE RemoteThread(HANDLE process, uintptr_t entry, void* arg) {
 static void* RemoteCopy(HANDLE process, const void* data, size_t bytes) {
     void* p = VirtualAllocEx(process, nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     Require(p != nullptr, "VirtualAllocEx");
-    Require(WriteProcessMemory(process, p, data, bytes, nullptr) != FALSE, "WriteProcessMemory"); return p;
+    if (!WriteProcessMemory(process, p, data, bytes, nullptr)) {
+        const auto error = GetLastError();
+        VirtualFreeEx(process, p, 0, MEM_RELEASE);
+        SetLastError(error); Require(false, "WriteProcessMemory");
+    }
+    return p;
 }
 static uintptr_t LoadTap(HANDLE process, DWORD pid, const fs::path& path) {
     uintptr_t base = Module(pid, path.filename().c_str());
@@ -43,7 +48,9 @@ static uintptr_t LoadTap(HANDLE process, DWORD pid, const fs::path& path) {
     Require(remoteOwner != 0, "Remote loader module");
     std::wstring value = path.wstring();
     void* arg = RemoteCopy(process, value.c_str(), (value.size() + 1) * sizeof(wchar_t));
-    HANDLE t = RemoteThread(process, remoteOwner + reinterpret_cast<uintptr_t>(loader) - reinterpret_cast<uintptr_t>(owner), arg);
+    HANDLE t;
+    try { t = RemoteThread(process, remoteOwner + reinterpret_cast<uintptr_t>(loader) - reinterpret_cast<uintptr_t>(owner), arg); }
+    catch (...) { VirtualFreeEx(process, arg, 0, MEM_RELEASE); throw; }
     DWORD wait = WaitForSingleObject(t, 10000); DWORD loaderExit{}; GetExitCodeThread(t, &loaderExit); CloseHandle(t);
     printf("LoadLibrary remoteThreadExit=0x%08lX\n", loaderExit);
     // Never free memory a timed-out loader might still be reading.

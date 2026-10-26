@@ -1,11 +1,43 @@
 // Own-process byte-pipe test. Generated carrier only; no audiodg or vendor use.
 // The test-source descriptor is intentionally rejected by native preparation.
+#define NOMINMAX
+#include <windows.h>
+static void* lastAllocation;
+static void* ObservedAllocation(HANDLE process,void* address,SIZE_T bytes,DWORD type,DWORD protection){
+    return lastAllocation=VirtualAllocEx(process,address,bytes,type,protection);
+}
+static HANDLE DeniedThread(HANDLE,LPSECURITY_ATTRIBUTES,SIZE_T,LPTHREAD_START_ROUTINE,void*,DWORD,LPDWORD){
+    SetLastError(ERROR_ACCESS_DENIED);return nullptr;
+}
+#define VirtualAllocEx ObservedAllocation
+#define CreateRemoteThread DeniedThread
 #include "../../tools/mat-live/publisher.h"
+#undef CreateRemoteThread
+#undef VirtualAllocEx
 #include "../../src/spatial_audio/mat_capture_reader.h"
 #include "../../src/spatial_audio/native_mat_pipe_source.h"
 #include <atomic>
 #include <iostream>
 static void CheckPipe(bool okay,const char* why){if(!okay)throw std::runtime_error(why);}
+static void StartupFailureCleanup(){
+    // Real own-process allocation; the OS denies writes on the first handle.
+    // The second case injects thread-creation failure before any entry can run.
+    for(bool copyFailure:{true,false}){
+        HANDLE process=OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_OPERATION|(copyFailure?0:PROCESS_VM_WRITE),FALSE,GetCurrentProcessId());
+        CheckPipe(process!=nullptr,"Open restricted own-process handle");
+        lastAllocation=nullptr;bool rejected=false;
+        try{
+            if(copyFailure){const int value=42;RemoteCopy(process,&value,sizeof(value));}
+            else LoadTap(process,GetCurrentProcessId(),L"mat-cleanup-test-not-loaded.dll");
+        }catch(const std::runtime_error& error){
+            rejected=std::string(error.what())==(copyFailure?"WriteProcessMemory":"CreateRemoteThread");
+        }
+        MEMORY_BASIC_INFORMATION memory{};
+        const bool released=lastAllocation&&VirtualQueryEx(process,lastAllocation,&memory,sizeof(memory))==sizeof(memory)&&memory.State==MEM_FREE;
+        CloseHandle(process);
+        CheckPipe(rejected&&released,"Startup failure retained remote argument memory");
+    }
+}
 static void Run(unsigned mode){
     Shared shared;shared.ready=true;shared.encoder=42;shared.last_cycle=GetTickCount64();
     const auto name=L"\\\\.\\pipe\\SunshineMatLive-eos-test-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(mode);
@@ -146,6 +178,7 @@ static void RejectNativePeer(unsigned mode){
     CheckPipe(observed.leases==0&&observed.running==0&&observed.last_error==error&&std::string(observed.state())=="error","Rejected source status retained a lease/lost its error");
 }
 int main(){try{
+    StartupFailureCleanup();
     const fs::path programs=L"C:\\Program Files";const std::string hash(64,'a');
     const auto installed=programs/L"SunshineSonicMatLive"/hash/L"sunshine-plugin-mat-capture.exe";
     CheckPipe(spatial_audio::mat_auto_image(installed,programs,hash),"Automatic installed capture identity");
