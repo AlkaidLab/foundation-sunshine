@@ -476,6 +476,25 @@ TEST(Ds5SidecarClientTests, HapticsStateSurvivesPcmOverflowAndFreePublishesReset
   EXPECT_EQ(reset->data.ds5_haptics_state, idle);
 }
 
+TEST(Ds5SidecarClientTests, MalformedAndForeignHapticsDoNotPoisonControllerState) {
+  event_namespace_scope_t events(L"haptics-invalid");
+  environment_scope_t invalid(L"SUNSHINE_DS5_TEST_BAD_HAPTICS", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-haptics-invalid-test");
+  auto state = platf::ds5_haptics_state_event(mail, 7);
+  auto other = platf::ds5_haptics_state_event(mail, 8);
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 7 }, feedback, false), 0);
+  // All invalid messages precede the synchronous attach reply, so no sleeps are needed.
+  EXPECT_FALSE(state->pop(std::chrono::milliseconds(0)));
+  EXPECT_FALSE(other->pop(std::chrono::milliseconds(0)));
+  EXPECT_TRUE(client.owns(0));
+  client.free(0);
+}
+
 TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {
 
   event_namespace_scope_t events(L"recovery-failure");

@@ -177,6 +177,26 @@ int main(int argc, char **argv) {
     } else if (microphone_mode && type == 11) {
       break;
     } else if (type == 3 && payload.size() == 4) {
+      if (GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_BAD_HAPTICS", nullptr, 0) > 0) {
+        const std::vector<std::uint8_t> valid { payload[0], payload[1], 2, 4, 0x62, 33, 44, 0x10, 0x23, 1 };
+        auto bad = valid;
+        bad.pop_back();
+        if (!reply(pipe, 108, 0, bad)) break;
+        bad = valid;
+        bad.push_back(0);
+        if (!reply(pipe, 108, 0, bad)) break;
+        for (auto offset : { 2u, 3u, 4u, 9u }) {
+          bad = valid;
+          bad[offset] = 0x80;
+          if (!reply(pipe, 108, 0, bad)) return 6;
+        }
+        bad = valid;
+        bad[1] = static_cast<std::uint8_t>(payload[1] + 1);
+        if (!reply(pipe, 108, 0, bad)) break;
+        bad = valid;
+        bad[0] = static_cast<std::uint8_t>(payload[0] + 1);
+        if (!reply(pipe, 108, 0, bad)) break;
+      }
       if (GetEnvironmentVariableW(L"SUNSHINE_DS5_TEST_HAPTICS", nullptr, 0) > 0) {
         if (!reply(pipe, 108, 0, { payload[0], payload[1], 2, 4, 0x62, 33, 44, 0x10, 0x23, 1 })) break;
       }
