@@ -1,16 +1,17 @@
-"""Process adapter for the existing isolated Sunshine verifier; emulator only."""
+"""Process adapter for the isolated verifier; physical devices require opt-in."""
 import json
 import re
 import subprocess
 
 
 class AndroidClient:
-    def __init__(self, adb, serial, apk, output):
+    def __init__(self, adb, serial, apk, output, allow_physical_device=False):
         self.adb, self.serial, self.output = str(adb), serial, output
         self.process = self.log = None
         self.previous = None
-        if not serial.startswith("emulator-") or self.device("shell", "getprop", "ro.kernel.qemu") != "1":
-            raise RuntimeError("Android session requires an explicitly selected emulator")
+        emulator = serial.startswith("emulator-") and self.device("shell", "getprop", "ro.kernel.qemu") == "1"
+        if not emulator and not allow_physical_device:
+            raise RuntimeError("Physical Android session requires explicit opt-in")
         self.previous = self.device("shell", "getprop", "debug.checkjni")
         try:
             self.device("shell", "setprop", "debug.checkjni", "1")

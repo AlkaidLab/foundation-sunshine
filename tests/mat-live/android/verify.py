@@ -1,7 +1,7 @@
-"""Build and run the optional JNI diagnostic on an explicitly selected emulator.
+"""Build and run the optional JNI mock diagnostic on an explicitly selected device.
 
 Uses installed SDK/NDK/JDK tools, an existing Android OpenSSL build and current
-common-c sources. No Gradle downloads, archived app edits or physical-device use.
+common-c sources. Physical devices require an explicit opt-in. No device output.
 """
 import argparse
 import hashlib
@@ -18,6 +18,7 @@ def main():
     for name in ("sdk", "ndk", "openssl", "java-home", "output"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--serial", required=True)
+    parser.add_argument("--allow-physical-device", action="store_true")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent
     root = source.parents[2]
@@ -42,15 +43,16 @@ def main():
     def device(*command):
         return run([adb, "-s", args.serial, *command])
 
-    if not args.serial.startswith("emulator-") or device("shell", "getprop", "ro.kernel.qemu") != "1":
-        raise RuntimeError("Select an Android emulator explicitly; this runner does not install on phones")
+    emulator = args.serial.startswith("emulator-") and device("shell", "getprop", "ro.kernel.qemu") == "1"
+    if not emulator and not args.allow_physical_device:
+        raise RuntimeError("Physical-device installation requires --allow-physical-device and an explicit serial")
     abi = device("shell", "getprop", "ro.product.cpu.abi")
-    if abi != "x86_64":
-        raise RuntimeError("This diagnostic build targets the x86_64 emulator")
+    if abi not in ("x86_64", "arm64-v8a"):
+        raise RuntimeError("This diagnostic supports x86_64 and arm64-v8a")
     run([cmake / "cmake.exe", "-S", source, "-B", out / "native", "-G", "Ninja",
          f"-DCMAKE_MAKE_PROGRAM={cmake / 'ninja.exe'}",
          f"-DCMAKE_TOOLCHAIN_FILE={ndk / 'build/cmake/android.toolchain.cmake'}",
-         "-DANDROID_ABI=x86_64", "-DANDROID_PLATFORM=android-23", "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+         f"-DANDROID_ABI={abi}", "-DANDROID_PLATFORM=android-23", "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
          f"-DOPENSSL_ROOT={crypto}"])
     run([cmake / "cmake.exe", "--build", out / "native", "--parallel", "2"])
     classes, dex = out / "classes", out / "dex"
@@ -63,7 +65,7 @@ def main():
     run([tools / "aapt2.exe", "link", "--manifest", source / "AndroidManifest.xml", "-I", platform, "-o", unsigned])
     with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(dex / "classes.dex", "classes.dex")
-        archive.write(out / "native/libmatjni.so", "lib/x86_64/libmatjni.so")
+        archive.write(out / "native/libmatjni.so", f"lib/{abi}/libmatjni.so")
     run([tools / "zipalign.exe", "-f", "4", unsigned, aligned])
     keystore = out / "test.keystore"
     run([java / "bin/keytool.exe", "-genkeypair", "-keystore", keystore, "-storepass", "android",
@@ -88,13 +90,13 @@ def main():
         assert "JNI DETECTED ERROR" not in runtime and "FATAL EXCEPTION" not in runtime
         assert "Late-enabling -Xcheck:jni" in runtime, "CheckJNI activation was not observed"
         proof.update(serial=args.serial, api=device("shell", "getprop", "ro.build.version.sdk"),
-                     abi=abi, checkJniEnabled=True, nativeBuildType="RelWithDebInfo",
+                     abi=abi, emulator=emulator, checkJniEnabled=True, nativeBuildType="RelWithDebInfo",
                      commonHead=run(["git", "-C", root / "third-party/moonlight-common-c", "rev-parse", "HEAD"]),
                      hostHead=run(["git", "rev-parse", "HEAD"]),
                      apkSha256=hashlib.sha256(apk.read_bytes()).hexdigest(),
                      cryptoSha256=hashlib.sha256((crypto / abi / "libcrypto.a").read_bytes()).hexdigest())
     finally:
-        # Only the explicitly selected emulator and this diagnostic package are touched.
+        # Only the explicitly selected device and this diagnostic package are touched.
         for command in (("shell", "setprop debug.checkjni '" + previous + "'"), ("uninstall", package)):
             try:
                 device(*command)

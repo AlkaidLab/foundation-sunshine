@@ -132,6 +132,13 @@ JNI cases only. The source is generated in memory, not captured or replayed medi
 For the JNI lifetime/thread rules see
 [Android JNI tips](https://developer.android.com/ndk/guides/jni-tips).
 
+The JNI builder defaults to emulator-only installation. An explicitly selected
+physical device requires `verify.py --allow-physical-device` and an explicit
+serial; supported ABIs are x86_64 and arm64-v8a, selected from that device.
+Output remains mock. The full-session process adapter also accepts explicit
+physical-device opt-in from a separate LAN test harness; the normal isolated
+runner below retains its emulator address and default emulator-only guard.
+
 The same APK also contains a full common-c `LiStartConnection` adapter and an
 Android MediaCodec H.264 decoder in ByteBuffer mode. Run against an isolated,
 normally built Sunshine with no native capture:
