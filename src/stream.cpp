@@ -1453,6 +1453,25 @@ namespace stream {
 
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
+    else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_state) {
+      if ((session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_STATE) == 0) {
+        return 0;
+      }
+      // v1, reserved, controller:u16le, eight-byte absolute actuator state.
+      std::array<std::uint8_t, sizeof(control_header_v2) + 12> plaintext {};
+      auto *control = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      control->type = util::endian::little<std::uint16_t>(0x550D);
+      control->payloadLength = util::endian::little<std::uint16_t>(12);
+      auto *wire = plaintext.data() + sizeof(control_header_v2);
+      wire[0] = 1;
+      wire[2] = static_cast<std::uint8_t>(msg.id);
+      wire[3] = static_cast<std::uint8_t>(msg.id >> 8);
+      std::ranges::copy(msg.data.ds5_haptics_state, wire + 4);
+      std::array<std::uint8_t,
+        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+        encrypted_payload;
+      payload = encode_control(session, util::view(plaintext), encrypted_payload);
+    }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;

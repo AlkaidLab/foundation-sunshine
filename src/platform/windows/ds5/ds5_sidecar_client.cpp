@@ -332,6 +332,12 @@ namespace platf::ds5 {
             feedback_queue->raise(gamepad_feedback_msg_t::make_rgb_led(p[1], p[2], p[3], p[4]));
           }
           break;
+        case message_e::haptics_state:
+          if (p.size() == 10 && p[0] == owned_index && (p[2] & ~3) == 0 &&
+              (p[3] & ~4) == 0 && (p[4] & ~0x62) == 0 && (p[9] & ~1) == 0) {
+            feedback_queue->raise(gamepad_feedback_msg_t::make_ds5_haptics_state(p[1], p.data() + 2));
+          }
+          break;
         case message_e::haptics_pcm:
           if (p.size() >= 24 && p[0] == owned_index) {
             const auto frames = read_u16(p.data() + 4);
