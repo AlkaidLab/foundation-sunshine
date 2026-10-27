@@ -1175,40 +1175,6 @@ namespace video {
     encode_session_ctx_queue_t encode_session_ctx_queue { 30 };
   };
 
-  namespace {
-
-  const std::shared_ptr<streaming::capture_target_t> &
-  capture_target_for(capture_ctx_t &context) {
-    return context.config.capture_target;
-  }
-
-  const std::shared_ptr<streaming::capture_target_t> &
-  capture_target_for(std::unique_ptr<sync_session_ctx_t> &context) {
-    return context->config.capture_target;
-  }
-
-  template <typename Range>
-  void
-  invalidate_capture_targets(Range &contexts) {
-    for (auto &context : contexts) {
-      if (const auto &target = capture_target_for(context)) {
-        target->invalidate();
-      }
-    }
-  }
-
-  template <typename Range>
-  void
-  publish_capture_targets(Range &contexts, const std::string &display_name, const std::string &device_id) {
-    for (auto &context : contexts) {
-      if (const auto &target = capture_target_for(context)) {
-        target->publish(display_name, device_id);
-      }
-    }
-  }
-
-  }  // namespace
-
   int
   start_capture_sync(capture_thread_sync_ctx_t &ctx);
   void
@@ -1864,8 +1830,10 @@ namespace video {
       for (auto &capture_ctx : capture_ctxs) {
         capture_ctx.images->stop();
       }
-      invalidate_capture_targets(capture_ctx_queue->unsafe());
       for (auto &capture_ctx : capture_ctx_queue->unsafe()) {
+        if (capture_ctx.config.capture_target) {
+          capture_ctx.config.capture_target->invalidate();
+        }
         capture_ctx.images->stop();
       }
     });
@@ -1950,7 +1918,11 @@ namespace video {
 
     std::shared_ptr<platf::display_t> disp;
     auto clear_targets_before_display = util::fail_guard([&]() {
-      invalidate_capture_targets(capture_ctxs);
+      for (auto &capture_ctx : capture_ctxs) {
+        if (capture_ctx.config.capture_target) {
+          capture_ctx.config.capture_target->invalidate();
+        }
+      }
     });
     reset_capture_display(disp, target_display_name, config);
     if (!disp) {
@@ -1958,7 +1930,9 @@ namespace video {
     }
     std::string active_capture_display_name = disp->captured_display_name();
     std::string active_capture_device_id = disp->captured_display_device_id();
-    publish_capture_targets(capture_ctxs, active_capture_display_name, active_capture_device_id);
+    if (config.capture_target) {
+      config.capture_target->publish(active_capture_display_name, active_capture_device_id);
+    }
     active_display_event->raise(target_display_name);
     display_wp = disp;
 
@@ -2157,7 +2131,11 @@ namespace video {
           // requests holding a target lock finish before switching can start.
           active_capture_display_name.clear();
           active_capture_device_id.clear();
-          invalidate_capture_targets(capture_ctxs);
+          for (auto &capture_ctx : capture_ctxs) {
+            if (capture_ctx.config.capture_target) {
+              capture_ctx.config.capture_target->invalidate();
+            }
+          }
           reinit_event.raise(true);
 
           // Some classes of images contain references to the display --> display won't delete unless img is deleted
@@ -2247,7 +2225,11 @@ namespace video {
             if (disp) {
               active_capture_display_name = disp->captured_display_name();
               active_capture_device_id = disp->captured_display_device_id();
-              publish_capture_targets(capture_ctxs, active_capture_display_name, active_capture_device_id);
+              for (auto &capture_ctx : capture_ctxs) {
+                if (capture_ctx.config.capture_target) {
+                  capture_ctx.config.capture_target->publish(active_capture_display_name, active_capture_device_id);
+                }
+              }
               active_display_event->raise(target_display_name);
               break;
             }
@@ -4064,7 +4046,11 @@ namespace video {
 
     auto clear_targets = util::fail_guard([&]() {
       // This guard precedes destruction of disp, including reinit/error exits.
-      invalidate_capture_targets(synced_session_ctxs);
+      for (auto &ctx : synced_session_ctxs) {
+        if (ctx->config.capture_target) {
+          ctx->config.capture_target->invalidate();
+        }
+      }
     });
 
     if (synced_session_ctxs.empty()) {
@@ -4122,7 +4108,11 @@ namespace video {
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
         active_display_name = target_display_name;
-        publish_capture_targets(synced_session_ctxs, disp->captured_display_name(), disp->captured_display_device_id());
+        for (auto &ctx : synced_session_ctxs) {
+          if (ctx->config.capture_target) {
+            ctx->config.capture_target->publish(disp->captured_display_name(), disp->captured_display_device_id());
+          }
+        }
         active_display_event->raise(target_display_name);
         break;
       }
