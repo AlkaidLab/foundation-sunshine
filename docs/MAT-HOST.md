@@ -67,7 +67,8 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 及手机输出不参与本轮开发。软件生成的载波形状数据只在测试中使用。
 
 实时共享协议已通过 [common-c #40](https://github.com/qiin2333/moonlight-common-c/pull/40)
-合入 `mic`，主机固定到 `24f23691a1c303e49cab9334414d35e023ba7f97`。本地 AUTO6
+合入 `mic`（`24f23691a1c303e49cab9334414d35e023ba7f97`），主机随 master 固定到包含它的
+`733025a254e6e166a4afb577cbe056c10257f950`。本地 AUTO6
 在 ANNOUNCE 前选择 live7 或 Opus0；旧 codec4/5 明确拒绝。生产主机没有录制文件
 输入，客户端应用保持 mock，不更新历史 Android 应用或其 shared 指针。
 
