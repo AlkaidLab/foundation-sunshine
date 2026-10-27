@@ -56,6 +56,10 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/mat/status$",
+    "method": "GET"
+  },
+  {
     "pattern": "^/api/apps$",
     "method": "POST"
   },

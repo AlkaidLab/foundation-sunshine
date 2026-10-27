@@ -13,6 +13,7 @@
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
+#include "src/spatial_audio/mat_live_status.h"
 #include <algorithm>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
@@ -405,6 +406,34 @@ namespace confighttp::diagnostics {
     }
 #endif
 
+    void
+    getMatLiveStatus(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      const auto snapshot = spatial_audio::mat_live_status.snapshot();
+      const char *state = snapshot.state();
+      if (!config::audio.mat_live) {
+        state = "disabled";
+      }
+      else if (!config::audio.stream) {
+        state = "audio_disabled";
+      }
+#ifndef _WIN32
+      state = "unsupported";
+#endif
+      // Only observations from real session activity; never open/probe the capture pipe here.
+      const json output {
+        { "state", state },
+        { "last_error", snapshot.last_error },
+      };
+      const web::CaseInsensitiveMultimap headers {
+        { "Content-Type", "application/json" },
+        { "Cache-Control", "no-store" },
+        { "X-Frame-Options", "DENY" },
+        { "Content-Security-Policy", "frame-ancestors 'none';" },
+      };
+      response->write(output.dump(), headers);
+    }
+
   }  // namespace
 
   void
@@ -416,6 +445,7 @@ namespace confighttp::diagnostics {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
+    server.resource["^/api/mat/status$"]["GET"] = getMatLiveStatus;
 #ifdef _WIN32
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
 #endif
