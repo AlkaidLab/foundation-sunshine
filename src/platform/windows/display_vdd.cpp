@@ -1384,13 +1384,6 @@ namespace platf::dxgi {
       return -1;
     }
 
-    // Producer selection currently uses dimensions and VDD monitor indices.
-    // Those values do not prove that the shared producer belongs to this
-    // DXGI output when two VDD monitors have the same mode. Do not publish an
-    // unverified display identity to target=current; the API will report the
-    // control as unavailable until the producer carries a stable identity.
-    captures_monitor = false;
-
     // Try to identify which VDD monitor backs this DXGI output by matching
     // dimensions. width/height come from DXGI DesktopCoordinates / orientation.
     // NOTE: We intentionally do NOT trigger CREATEMONITOR here. Sunshine's

@@ -4238,10 +4238,6 @@ namespace stream {
         return;
       }
 
-      if (session.config.monitor.capture_target) {
-        session.config.monitor.capture_target->stop();
-      }
-
       BOOST_LOG(info) << "Stopping streaming session "sv << session.launch_session_id
                       << " [client_uuid="sv << session.client_cert_uuid
                       << ", reason="sv << stop_reason_name(reason) << ']';
@@ -4259,9 +4255,7 @@ namespace stream {
       if (client_cert_uuid.empty()) {
         return {};
       }
-      // Do not call ref() after a separate has_ref() check: the last stream
-      // can tear down between those calls, which would recreate the broadcast
-      // context while an options request is only probing active sessions.
+      // try_ref() avoids recreating the broadcast context when no stream is active.
       auto broadcast_ref = broadcast_shared.try_ref();
       if (!broadcast_ref) {
         return {};
@@ -4269,8 +4263,6 @@ namespace stream {
 
       std::vector<streaming::capture_session_t> sessions;
       {
-        // Copy shared state while the raw session pointers are protected, then
-        // release this lock before any target lock or Windows display API call.
         auto lg = broadcast_ref->control_server._sessions.lock();
         for (const auto session : *broadcast_ref->control_server._sessions) {
           if (session) {

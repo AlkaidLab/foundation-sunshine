@@ -1,12 +1,12 @@
 # Current streaming display scale
 
-Adjust the display captured by the caller's active video session without a monitor picker. Use the paired GameStream HTTPS client certificate; identity comes from TLS, never from `uniqueid`.
+Adjust the display captured by the caller's active video session without a monitor picker. The session is identified by the paired GameStream HTTPS client certificate (TLS), never by `uniqueid`.
 
 ## GET
 
 `GET /display-scale-options?target=current`
 
-Success includes the existing scale fields, `target: "current"`, actual `display_name`, and a nonempty canonical `device_id`. Preserve nullable current/recommended percentages and the server-provided supported steps.
+Success includes the existing scale fields plus `target: "current"`, the captured `display_name`, and its `device_id`.
 
 ## POST
 
@@ -15,16 +15,17 @@ Success includes the existing scale fields, `target: "current"`, actual `display
 ```json
 {
   "target": "current",
-  "device_id": "canonical device_id returned by GET",
-  "display_name": "display_name returned by GET",
   "scale_percent": 150
 }
 ```
 
-`device_id` is required. `display_name` is optional; when it is non-empty, it must match the target identity returned by GET. Success returns the target identity, previous/current scale, supported steps, `effective_immediately`, and `restart_required`; acceptance may precede effect.
+The server resolves the captured display at request time and applies the scale by its `device_id`. The response reports which display was changed (`display_name`, `device_id`), previous/current scale, supported steps, `effective_immediately`, and `restart_required`.
 
-## Errors and target rules
+## Errors
 
-HTTP 409 uses `no_active_stream`, `ambiguous_stream`, `display_target_unavailable`, or `display_target_changed` in `error_code`. Clients close/disable the control, retry when capture is ready, or reload options and ask for a new choice according to the error. Missing or invalid POST identity is HTTP 400 `invalid_request`.
+HTTP 409 with `error_code`:
 
-`target=current` never falls back to the primary display, launch-time target, another client's session, or a display list. Window capture has no fixed monitor and is unavailable; non-Windows hosts return HTTP 501 `unsupported_platform`.
+- `no_active_stream`: this client has no running video session.
+- `display_target_unavailable`: capture is still initializing, uses window capture (no fixed monitor), or the display cannot be resolved. Retry later.
+
+An invalid `target` value returns HTTP 400 `invalid_request`. `target=current` never falls back to the primary display or another client's session. Non-Windows hosts return HTTP 501 `unsupported_platform`.

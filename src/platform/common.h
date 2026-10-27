@@ -699,15 +699,10 @@ namespace platf {
       return {};
     }
 
-    // The actual output opened by this backend, not the requested/default
-    // output. An empty name makes current-display control unavailable.
+    // The output actually opened by this backend, or empty when the capture
+    // has no fixed monitor (e.g. window capture).
     virtual std::string
     captured_display_name() const {
-      return {};
-    }
-
-    virtual std::string
-    captured_display_device_id() const {
       return {};
     }
 
