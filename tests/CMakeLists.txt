@@ -38,6 +38,14 @@ target_link_libraries(display_scale_steps_unit_tests PRIVATE gtest_main sunshine
 set_target_properties(display_scale_steps_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME display_scale_steps_unit_tests COMMAND display_scale_steps_unit_tests)
 
+add_executable(vdd_mode_list_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_mode_list.cpp)
+target_include_directories(vdd_mode_list_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        Boost::optional
+        sunshine_project_options sunshine_coverage)
+set_target_properties(vdd_mode_list_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME vdd_mode_list_unit_tests COMMAND vdd_mode_list_unit_tests)
+
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
 target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main
