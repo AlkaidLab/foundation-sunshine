@@ -410,7 +410,13 @@ namespace confighttp::diagnostics {
     getMatLiveStatus(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
       const auto snapshot = spatial_audio::mat_live_status.snapshot();
-      const char *state = !config::audio.mat_live ? "disabled" : !config::audio.stream ? "audio_disabled" : snapshot.state();
+      const char *state = snapshot.state();
+      if (!config::audio.mat_live) {
+        state = "disabled";
+      }
+      else if (!config::audio.stream) {
+        state = "audio_disabled";
+      }
 #ifndef _WIN32
       state = "unsupported";
 #endif

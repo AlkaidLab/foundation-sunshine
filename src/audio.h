@@ -10,7 +10,9 @@
 #include "utility.h"
 
 #include <bitset>
-namespace spatial_transport { struct LiveSession; }
+namespace spatial_transport {
+  struct LiveSession;
+}
 
 namespace audio {
   // Audio codec values negotiated via the "x-ml-audio.codec" RTSP attribute.
@@ -21,9 +23,10 @@ namespace audio {
     CODEC_AC3 = 1,
     CODEC_EAC3 = 2,
     CODEC_PCM_S16 = 3,  ///< Raw signed 16-bit interleaved LPCM (no compression)
-    CODEC_MAT_LIVE = 7, ///< Native live MAT; authenticated 64-bit packet counter
+    CODEC_MAT_LIVE = 7,  ///< Native live MAT; authenticated 64-bit packet counter
   };
-  inline bool is_mat_codec(int codec) { return codec == CODEC_MAT_LIVE; }
+  inline bool
+  is_mat_codec(int codec) { return codec == CODEC_MAT_LIVE; }
 
   enum stream_config_e : int {
     STEREO,  ///< Stereo

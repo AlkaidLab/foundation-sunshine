@@ -522,7 +522,7 @@ namespace config {
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
-    false, // mat_live (capture tool must already be running)
+    false,  // mat_live (capture tool must already be running)
   };
 
   stream_t stream {

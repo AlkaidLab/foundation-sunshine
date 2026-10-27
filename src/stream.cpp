@@ -639,8 +639,8 @@ namespace stream {
       util::buffer_t<uint8_t *> shards_p;
 
       audio_fec_packet_t fec_packet;
-      std::atomic<uint64_t> mat_sent {0};
-      std::atomic_bool mat_send_failed {false};
+      std::atomic<uint64_t> mat_sent { 0 };
+      std::atomic_bool mat_send_failed { false };
       std::unique_ptr<platf::deinit_t> qos;
 
       bool enable_mic;
@@ -3826,7 +3826,7 @@ namespace stream {
       auto &shards_p = session->audio.shards_p;
 
       // 检查客户端是否启用了音频加密
-      const bool live_mat=session->config.audio.codec==audio::CODEC_MAT_LIVE;
+      const bool live_mat = session->config.audio.codec == audio::CODEC_MAT_LIVE;
       bool audio_encryption_enabled = !live_mat && (session->config.encryptionFlagsEnabled & SS_ENC_AUDIO) != 0;
       if (sequenceNumber == 0 && !live_mat) {
         // 只在第一个包时记录一次，避免日志过多
@@ -3836,7 +3836,7 @@ namespace stream {
                         << ", will " << (audio_encryption_enabled ? "ENCRYPT" : "NOT encrypt") << " audio data";
       }
 
-      if(sequenceNumber==0 && live_mat) BOOST_LOG(info)<<"MAT live packets authenticated with AES-128-GCM / counter64";
+      if (sequenceNumber == 0 && live_mat) BOOST_LOG(info) << "MAT live packets authenticated with AES-128-GCM / counter64";
       size_t plaintext_size = packet_data.size();
       
       // 验证 cipher 是否已初始化
@@ -3845,10 +3845,10 @@ namespace stream {
         BOOST_LOG(info) << "Audio cipher status: initialized=" << (cipher_initialized ? "yes" : "no")
                         << ", key_size=" << session->audio.cipher.key.size();
       }
-      
+
       auto bytes = encode_audio(audio_encryption_enabled, packet_data,
         shards_p[sequenceNumber % RTPA_DATA_SHARDS], iv, session->audio.cipher);
-      
+
       if (sequenceNumber == 0 && !live_mat) {
         // 验证加密是否真的执行了
         if (audio_encryption_enabled) {
@@ -3932,7 +3932,6 @@ namespace stream {
 
     shutdown_event->raise(true);
   }
-
 
   int
   start_broadcast(broadcast_ctx_t &ctx) {
@@ -4153,39 +4152,45 @@ namespace stream {
     session->audio.qos = platf::enable_socket_qos(ref->audio_sock.native_handle(), address,
       session->audio.peer.port(), platf::qos_data_type_e::audio, session->config.audioQosType != 0);
 
-    if(session->config.audio.codec==audio::CODEC_MAT_LIVE) {
-      auto shutdown=session->mail->event<bool>(mail::shutdown);
-      auto packets=mail::man->queue<audio::packet_t>(mail::audio_packets);
-      uint64_t submitted=0;
-      const auto cancelled=[&]{return shutdown->peek() || global_shutdown_event->peek();};
+    if (session->config.audio.codec == audio::CODEC_MAT_LIVE) {
+      auto shutdown = session->mail->event<bool>(mail::shutdown);
+      auto packets = mail::man->queue<audio::packet_t>(mail::audio_packets);
+      uint64_t submitted = 0;
+      const auto cancelled = [&] { return shutdown->peek() || global_shutdown_event->peek(); };
       try {
-        spatial_audio::require(bool(session->config.audio.mat_live),"Missing native MAT source lease");
-        auto timer=platf::create_high_precision_timer();
-        spatial_audio::require(timer && bool(*timer),"Live MAT pacing timer unavailable");
+        spatial_audio::require(bool(session->config.audio.mat_live), "Missing native MAT source lease");
+        auto timer = platf::create_high_precision_timer();
+        spatial_audio::require(timer && bool(*timer), "Live MAT pacing timer unavailable");
         // Keep at most one FEC data group outstanding. Waiting after every
         // fragment would make the scheduler round 333us pacing into 1ms ticks.
-        const auto acknowledged=[&](uint64_t minimum){
-          const auto deadline=std::chrono::steady_clock::now()+60ms;
-          while(session->audio.mat_sent.load(std::memory_order_acquire)<minimum) {
-            spatial_audio::require(!cancelled() && std::chrono::steady_clock::now()<deadline,"Live MAT broadcast deadline/cancel");
+        const auto acknowledged = [&](uint64_t minimum) {
+          const auto deadline = std::chrono::steady_clock::now() + 60ms;
+          while (session->audio.mat_sent.load(std::memory_order_acquire) < minimum) {
+            spatial_audio::require(!cancelled() && std::chrono::steady_clock::now() < deadline, "Live MAT broadcast deadline/cancel");
             timer->sleep_for(50us);
           }
-          spatial_audio::require(!session->audio.mat_send_failed.load(),"Live MAT UDP send failed");
+          spatial_audio::require(!session->audio.mat_send_failed.load(), "Live MAT UDP send failed");
         };
-        const auto cycles=spatial_transport::live_session(*session->config.audio.mat_live,
-          session->audio.cipher.key.data(),session->audio.cipher.key.size(),[&](const uint8_t* data,size_t n){
-            spatial_audio::require(!cancelled(),"Live MAT cancelled");
-            if(submitted>=4)acknowledged(submitted-3);
-            audio::buffer_t packet(n);std::memcpy(packet.begin(),data,n);
-            spatial_audio::require(packets->try_raise(session,std::move(packet)),"Live MAT send queue full/stopped");
-            ++submitted;
-          },[&](std::chrono::nanoseconds delay){if(delay>0ns)timer->sleep_for(std::min(delay,10ms+0ns));},cancelled);
+        const auto emit = [&](const uint8_t *data, size_t n) {
+          spatial_audio::require(!cancelled(), "Live MAT cancelled");
+          if (submitted >= 4) acknowledged(submitted - 3);
+          audio::buffer_t packet(n);
+          std::memcpy(packet.begin(), data, n);
+          spatial_audio::require(packets->try_raise(session, std::move(packet)), "Live MAT send queue full/stopped");
+          ++submitted;
+        };
+        const auto wait = [&](std::chrono::nanoseconds delay) {
+          if (delay > 0ns) timer->sleep_for(std::min(delay, 10ms + 0ns));
+        };
+        const auto cycles = spatial_transport::live_session(*session->config.audio.mat_live,
+          session->audio.cipher.key.data(), session->audio.cipher.key.size(), emit, wait, cancelled);
         acknowledged(submitted);
-        BOOST_LOG(info)<<"Native MAT capture ended cleanly: "<<cycles<<" cycles";
+        BOOST_LOG(info) << "Native MAT capture ended cleanly: " << cycles << " cycles";
         shutdown->view();
-      } catch(const std::exception& e){
-        if(!cancelled()) spatial_audio::mat_live_status.failed(e.what());
-        BOOST_LOG(::error)<<"Live MAT stopped: "<<e.what();
+      }
+      catch (const std::exception &e) {
+        if (!cancelled()) spatial_audio::mat_live_status.failed(e.what());
+        BOOST_LOG(::error) << "Live MAT stopped: " << e.what();
       }
       return;
     }

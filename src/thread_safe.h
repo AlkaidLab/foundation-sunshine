@@ -268,7 +268,8 @@ namespace safe {
     // Loss-intolerant producers must not invoke raise()'s legacy clear-on-full.
     // Failure is explicit; existing producers retain their original behavior.
     template <class... Args>
-    bool try_raise(Args &&...args) {
+    bool
+    try_raise(Args &&...args) {
       std::lock_guard ul { _lock };
       if (!_continue || _queue.size() >= _max_elements) return false;
       _queue.emplace_back(std::forward<Args>(args)...);
