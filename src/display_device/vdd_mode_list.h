@@ -15,8 +15,10 @@
  *      configured order), until the budget is full.
  *
  * The chosen modes are emitted in a fixed order that does not depend on the
- * priority: configured sizes x refresh rates (resolution-major, configured
- * order), then the requested mode if it is not configured.
+ * priority: the smallest-area mode first (the driver reports index 0 as the
+ * native mode, and Windows scales any source smaller than native in both
+ * dimensions), then configured sizes x refresh rates (resolution-major,
+ * configured order), then the requested mode if it is not configured.
  * Repeating a request therefore produces a byte-identical command.
  */
 #pragma once
@@ -126,6 +128,65 @@ namespace display_device::vdd_mode_list {
   }
 
   /**
+   * @brief Index of the mode that must lead the list: the smallest-area size.
+   * @details ZakoVDD reports the first SETMODES entry as the monitor's
+   *          preferred (native) mode. When a source mode is smaller than the
+   *          native mode in both dimensions, Windows commits the native target
+   *          timing and scales the desktop onto it, so the VDD producer runs
+   *          at the native size instead of the requested one. Leading with the
+   *          smallest-area size means no listed size can be smaller in both
+   *          dimensions. Ties on area prefer the narrower, then the shorter
+   *          size; within that size the session refresh rate wins, otherwise
+   *          the first entry in list order.
+   */
+  inline std::size_t
+  smallest_mode_index(const std::vector<vdd_mode_t> &modes, unsigned int session_refresh_hz) {
+    std::size_t best = 0;
+    const auto area = [](const vdd_mode_t &mode) {
+      return static_cast<unsigned long long>(mode.resolution.width) * mode.resolution.height;
+    };
+    for (std::size_t index = 1; index < modes.size(); ++index) {
+      const auto &candidate = modes[index];
+      const auto &current = modes[best];
+      if (area(candidate) != area(current)) {
+        if (area(candidate) < area(current)) {
+          best = index;
+        }
+        continue;
+      }
+      if (candidate.resolution.width != current.resolution.width) {
+        if (candidate.resolution.width < current.resolution.width) {
+          best = index;
+        }
+        continue;
+      }
+      if (candidate.resolution.height != current.resolution.height) {
+        if (candidate.resolution.height < current.resolution.height) {
+          best = index;
+        }
+        continue;
+      }
+      // Same size: only the session refresh rate displaces the earlier entry.
+      if (candidate.refresh_hz == session_refresh_hz && current.refresh_hz != session_refresh_hz) {
+        best = index;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * @brief Move the smallest-area mode to the front; the rest keeps its order.
+   */
+  inline void
+  move_smallest_mode_first(std::vector<vdd_mode_t> &modes, unsigned int session_refresh_hz) {
+    if (modes.size() < 2) {
+      return;
+    }
+    const auto index = smallest_mode_index(modes, session_refresh_hz);
+    std::rotate(modes.begin(), modes.begin() + static_cast<std::ptrdiff_t>(index), modes.begin() + static_cast<std::ptrdiff_t>(index) + 1);
+  }
+
+  /**
    * @brief Choose and order the modes of a SETMODES list (see the file comment).
    * @param configured Configured sizes in configured order.
    * @param refresh_rates_hz Configured refresh rates in configured order.
@@ -198,6 +259,7 @@ namespace display_device::vdd_mode_list {
       plan.modes.push_back(*requested);
     }
     plan.configured_left_out = sizes.size() * rates.size() - configured_selected;
+    move_smallest_mode_first(plan.modes, session_refresh_hz);
     return plan;
   }
 

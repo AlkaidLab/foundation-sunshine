@@ -37,16 +37,16 @@ namespace {
   TEST(VddModeList, FormatsConfiguredProductThenRequestedMode) {
     const vdd_mode_t requested { { 3000, 2000 }, 120 };
     EXPECT_EQ(command_for(&requested),
-      L"SETMODES 1920x1080x60,1920x1080x120,2560x1440x60,2560x1440x120,3000x2000x120");
+      L"SETMODES 1920x1080x120,1920x1080x60,2560x1440x60,2560x1440x120,3000x2000x120");
     // A configured size at the session rate adds nothing.
     const vdd_mode_t configured_mode { { 2560, 1440 }, 120 };
-    EXPECT_EQ(command_for(&configured_mode), L"SETMODES 1920x1080x60,1920x1080x120,2560x1440x60,2560x1440x120");
+    EXPECT_EQ(command_for(&configured_mode), L"SETMODES 1920x1080x120,1920x1080x60,2560x1440x60,2560x1440x120");
     EXPECT_TRUE(mode_list::format_setmodes_command({}).empty());
   }
 
   TEST(VddModeList, UnconfiguredSessionRateIsAppendedToTheProduct) {
     EXPECT_EQ(command_for(nullptr, 90),
-      L"SETMODES 1920x1080x60,1920x1080x120,1920x1080x90,2560x1440x60,2560x1440x120,2560x1440x90");
+      L"SETMODES 1920x1080x90,1920x1080x60,1920x1080x120,2560x1440x60,2560x1440x120,2560x1440x90");
   }
 
   TEST(VddModeList, RepeatedRequestIsByteIdentical) {
@@ -101,5 +101,42 @@ namespace {
     const auto plan = mode_list::plan_modes(configured, refresh_rates, 120, &requested, limits);
     EXPECT_EQ(mode_list::format_setmodes_command(plan.modes), L"SETMODES 1920x1080x120,3000x2000x120");
     EXPECT_EQ(plan.configured_left_out, 3u);
+  }
+
+  TEST(VddModeList, SmallestModeLeadsTheList) {
+    // The driver reports index 0 as the native mode; Windows scales any source
+    // smaller than native in both dimensions, so the smallest size leads.
+    const std::vector<resolution_t> sizes { { 1280, 720 }, { 1920, 1080 } };
+    const std::vector<unsigned int> rates { 60, 120 };
+
+    // 1458x540 (787,320 px) is smaller than 1280x720 (921,600 px).
+    const vdd_mode_t wide { { 1458, 540 }, 120 };
+    EXPECT_EQ(command_for(&wide, 120, sizes, rates),
+      L"SETMODES 1458x540x120,1280x720x60,1280x720x120,1920x1080x60,1920x1080x120");
+
+    // Without a smaller request, the smallest configured size leads at the session rate.
+    const vdd_mode_t large { { 1920, 1080 }, 120 };
+    EXPECT_EQ(command_for(&large, 120, sizes, rates),
+      L"SETMODES 1280x720x120,1280x720x60,1920x1080x60,1920x1080x120");
+
+    // No listed size is smaller than index 0 in both dimensions.
+    const vdd_mode_t small { { 960, 540 }, 120 };
+    const auto modes = mode_list::plan_modes(sizes, rates, 120, &small).modes;
+    ASSERT_FALSE(modes.empty());
+    EXPECT_TRUE(mode_list::same_mode(modes.front(), small));
+    for (const auto &mode : modes) {
+      EXPECT_FALSE(mode.resolution.width < modes.front().resolution.width && mode.resolution.height < modes.front().resolution.height);
+    }
+  }
+
+  TEST(VddModeList, SmallestModeTieBreakIsDeterministic) {
+    // Equal areas: the narrower size wins; same size prefers the session rate.
+    const std::vector<vdd_mode_t> modes {
+      { { 1200, 600 }, 60 },
+      { { 800, 900 }, 60 },
+      { { 800, 900 }, 120 },
+    };
+    EXPECT_EQ(mode_list::smallest_mode_index(modes, 120), 2u);
+    EXPECT_EQ(mode_list::smallest_mode_index(modes, 90), 1u);
   }
 }  // namespace
