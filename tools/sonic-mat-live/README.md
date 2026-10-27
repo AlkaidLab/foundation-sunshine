@@ -54,6 +54,10 @@ publisher, plugin tap and native worker. The manifest contains their required
 content hashes; source trees, documentation and test executables are not runtime prerequisites.
 Start deploys below Program Files and rejects untrusted owners, writable ACLs
 or reparse points on the deployment path/files; it never repairs an existing ACL.
+Each deployed copy must match its `build.json` hash (a build file replaced after
+the manifest check is removed and rejected). Start runs its elevated preflight
+and passes tap/worker hashes from the verified copies and manifest only, never
+from the user-writable build directory.
 Native attachment requires the operator's current authorization; running software
 tests does not authorize it.
 

@@ -53,14 +53,17 @@ $buildRoot=(Resolve-Path -LiteralPath $Build).Path
 $manifest=Get-Content -Raw -LiteralPath (Join-Path $buildRoot build.json)|ConvertFrom-Json
 # Source/test hashes are build provenance, not launch-time dependencies.
 Assert-MatBuildArtifacts $buildRoot $manifest
-$exe=Join-Path $buildRoot sunshine-plugin-mat-capture.exe
-$preflight=& $exe --preflight $EnginePid $EngineCreated 2>&1
-if($LASTEXITCODE){throw "Read-only plugin preflight failed; no attach/elevation attempted: $preflight"}
-if($Action -eq 'Preflight'){$preflight;return}
+$trusted=@{}
+foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')){$trusted[$name]=Get-MatTrustedHash $manifest $name}
+function Invoke-Preflight([string]$Image){
+ $result=& $Image --preflight $EnginePid $EngineCreated 2>&1
+ if($LASTEXITCODE){throw "Read-only plugin preflight failed; no attach/elevation attempted: $result"}
+ return $result
+}
+if($Action -eq 'Preflight'){Invoke-Preflight (Join-Path $buildRoot sunshine-plugin-mat-capture.exe);return}
 if(Test-Path -LiteralPath $Output){throw 'Fresh output directory required'}
 $out=(New-Item -ItemType Directory -Path $Output).FullName
-$preflight|Set-Content -LiteralPath (Join-Path $out preflight.log)
-$exeHash=(Get-FileHash -LiteralPath $exe).Hash.ToLower()
+$exeHash=$trusted['sunshine-plugin-mat-capture.exe']
 $programRoot=[Environment]::GetFolderPath('ProgramFiles')
 Assert-MatDeploymentEntry $programRoot
 $deploymentRoot=Join-Path $programRoot 'SunshineSonicMatLive'
@@ -69,19 +72,22 @@ $deployment=Join-Path $deploymentRoot $exeHash
 Initialize-MatDeploymentDirectory $deployment
 $deployed=@{}
 foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')){
- $from=Join-Path $buildRoot $name;$hash=(Get-FileHash -LiteralPath $from).Hash.ToLower()
+ $from=Join-Path $buildRoot $name;$hash=$trusted[$name]
  $targetName=if($name.EndsWith('.dll')){[IO.Path]::GetFileNameWithoutExtension($name)+'-'+$hash.Substring(0,16)+'.dll'}else{$name}
  $to=Join-Path $deployment $targetName
- if(Test-Path -LiteralPath $to){Assert-MatDeploymentEntry $to;if((Get-FileHash -LiteralPath $to).Hash.ToLower() -ne $hash){throw 'Immutable deployment differs'}}else{Copy-Item -LiteralPath $from -Destination $to}
+ if(Test-Path -LiteralPath $to){Assert-MatDeploymentEntry $to}
+ Copy-MatDeploymentFile $from $to $hash
  Assert-MatDeploymentEntry $to
  $deployed[$name]=$to
 }
 $producer=$deployed['sunshine-plugin-mat-capture.exe'];$tap=$deployed['sunshine-plugin-object-tap.dll'];$codec=$deployed['sunshine-sonic-mat-worker.dll']
 Get-ChildItem -LiteralPath $deployment -Force|ForEach-Object {Assert-MatDeploymentEntry $_.FullName}
+# Run the elevated preflight only from the verified, protected copy.
+Invoke-Preflight $producer|Set-Content -LiteralPath (Join-Path $out preflight.log)
 $id=if($SessionId){$SessionId}else{[guid]::NewGuid().ToString('N')};$pipe='\\.\pipe\SunshineMatLive-active';$stop="Local\SunshineMatLiveStop-$id"
 foreach($value in @($producer,$tap,$codec,$out)){if($value.Contains('"') -or $value.Contains("`r") -or $value.Contains("`n")){throw 'Invalid launch path'}}
 $mode=if($Reattach){'--reattach'}else{'--attach'}
-$arguments=@($mode,"$EnginePid","$EngineCreated",('"'+$tap+'"'),(Get-FileHash $tap).Hash.ToLower(),('"'+$codec+'"'),(Get-FileHash $codec).Hash.ToLower(),$pipe,$stop)
+$arguments=@($mode,"$EnginePid","$EngineCreated",('"'+$tap+'"'),$trusted['sunshine-plugin-object-tap.dll'],('"'+$codec+'"'),$trusted['sunshine-sonic-mat-worker.dll'],$pipe,$stop)
 if($Continuous){$arguments+='--continuous'}else{$arguments+=@('--max-seconds',"$Seconds")}
 $process=$null;$complete=$false
 try{

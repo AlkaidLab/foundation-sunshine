@@ -1,9 +1,23 @@
 # Read-only policy checks. Never repair permissions on a pre-existing directory.
+function Get-MatTrustedHash($Manifest,[string]$Name){
+ $entries=@($Manifest.binaries|Where-Object name -eq $Name)
+ if($entries.Count -ne 1 -or $entries[0].sha256 -notmatch '^[0-9a-f]{64}$'){throw "Required runtime hash missing/invalid: $Name"}
+ return [string]$entries[0].sha256
+}
 function Assert-MatBuildArtifacts([string]$Root,$Manifest){
  foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')){
-  $entries=@($Manifest.binaries|Where-Object name -eq $name)
-  if($entries.Count -ne 1 -or $entries[0].sha256 -notmatch '^[0-9a-f]{64}$'){throw "Required runtime hash missing/invalid: $name"}
-  if((Get-FileHash -LiteralPath (Join-Path $Root $name)).Hash.ToLower() -ne $entries[0].sha256){throw "Binary differs from build: $name"}
+  if((Get-FileHash -LiteralPath (Join-Path $Root $name)).Hash.ToLower() -ne (Get-MatTrustedHash $Manifest $name)){throw "Binary differs from build: $name"}
+ }
+}
+# The build directory is user-writable, so its files may change after the
+# manifest check. Trust is established only on the copy in the protected
+# deployment directory, compared against the manifest hash.
+function Copy-MatDeploymentFile([string]$From,[string]$To,[string]$Hash){
+ $copied=$false
+ if(!(Test-Path -LiteralPath $To)){Copy-Item -LiteralPath $From -Destination $To;$copied=$true}
+ if((Get-FileHash -LiteralPath $To).Hash.ToLower() -ne $Hash){
+  if($copied){Remove-Item -LiteralPath $To -Force}
+  throw "Deployed binary differs from build manifest: $([IO.Path]::GetFileName($To))"
  }
 }
 function Assert-MatDeploymentAcl($Acl){

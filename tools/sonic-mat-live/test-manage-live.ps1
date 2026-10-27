@@ -28,6 +28,19 @@ foreach($case in @('MissingRecord','DuplicateRecord','InvalidHash','WrongHash','
  if(!$rejected){throw "Invalid runtime package accepted: $case"}
  if($case -in @('MissingFile','CorruptFile')){Set-Content -LiteralPath (Join-Path $package $runtimeNames[0]) -Value 'hash fixture, never executed'}
 }
+# A build file swapped after the manifest check must not be deployed, and an
+# existing deployment must match the manifest rather than its own content.
+$deployTarget=Join-Path $out 'deploy-copy.dll';$source=Join-Path $package $runtimeNames[1]
+Copy-MatDeploymentFile $source $deployTarget $runtime[1].sha256
+Copy-MatDeploymentFile $source $deployTarget $runtime[1].sha256
+Set-Content -LiteralPath $source -Value 'swapped after manifest check'
+$swapped=Join-Path $out 'deploy-swapped.dll'
+$rejected=$false;try{Copy-MatDeploymentFile $source $swapped $runtime[1].sha256}catch{if($_.Exception.Message -notmatch 'manifest'){throw};$rejected=$true}
+if(!$rejected -or (Test-Path -LiteralPath $swapped)){throw 'Swapped build binary was deployed'}
+Set-Content -LiteralPath $deployTarget -Value 'tampered deployment'
+$rejected=$false;try{Copy-MatDeploymentFile $source $deployTarget $runtime[1].sha256}catch{$rejected=$true}
+if(!$rejected -or !(Test-Path -LiteralPath $deployTarget)){throw 'Tampered deployment accepted or removed'}
+Set-Content -LiteralPath $source -Value 'hash fixture, never executed'
 # Policy tests use in-memory ACLs and own workspace paths; no Program Files writes.
 $trustedAcl=[Security.AccessControl.DirectorySecurity]::new()
 $trustedAcl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
@@ -79,4 +92,4 @@ foreach($options in @(@{},@{Continuous=$true;Seconds=8})){
  if(!$rejected -or (Test-Path "$out/not-created")){throw 'Invalid capture mode reached deployment/start'}
 }
 @{result='PASS';scope='Runtime package, operator lifecycle and deployment guards';nativeCapture=$false}|ConvertTo-Json|Set-Content -LiteralPath "$out/proof.json"
-Write-Host 'PASS operator lifecycle and deployment ACL/reparse guards; nativeCapture=0'
+Write-Host 'PASS operator lifecycle, manifest-bound deployment and ACL/reparse guards; nativeCapture=0'
