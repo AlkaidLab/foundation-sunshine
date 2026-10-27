@@ -699,6 +699,13 @@ namespace platf {
       return {};
     }
 
+    // The output actually opened by this backend, or empty when the capture
+    // has no fixed monitor (e.g. window capture).
+    virtual std::string
+    captured_display_name() const {
+      return {};
+    }
+
     display_t() noexcept:
         offset_x { 0 },
         offset_y { 0 } {

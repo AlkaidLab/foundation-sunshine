@@ -4250,6 +4250,31 @@ namespace stream {
       return !uuid.empty() && session.client_cert_uuid == uuid;
     }
 
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid) {
+      if (client_cert_uuid.empty()) {
+        return {};
+      }
+      // try_ref() avoids recreating the broadcast context when no stream is active.
+      auto broadcast_ref = broadcast_shared.try_ref();
+      if (!broadcast_ref) {
+        return {};
+      }
+
+      std::vector<streaming::capture_session_t> sessions;
+      {
+        auto lg = broadcast_ref->control_server._sessions.lock();
+        for (const auto session : *broadcast_ref->control_server._sessions) {
+          if (session) {
+            sessions.push_back({ session->client_cert_uuid,
+              session->lifecycle.state() == state_e::RUNNING,
+              session->control_only, session->config.monitor.capture_target });
+          }
+        }
+      }
+      return streaming::select_current_capture(sessions, client_cert_uuid);
+    }
+
     void
     join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
@@ -4562,6 +4587,7 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
+      session->config.monitor.capture_target = std::make_shared<streaming::capture_target_t>();
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);

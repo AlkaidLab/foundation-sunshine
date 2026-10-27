@@ -596,6 +596,9 @@ namespace platf::dxgi {
           }
 
           captured_window_hwnd = target_hwnd;
+          // A window can move between monitors while this capture stays open.
+          // It has no fixed current monitor for display-scale control.
+          display->captures_monitor = false;
 
           auto window_size = item.Size();
           window_capture_width = static_cast<int>(window_size.Width);
