@@ -20,7 +20,7 @@ pkgname=sunshine-foundation
 # build it contains instead of a frozen release with a growing pkgrel. Keep
 # pkgrel at 1 and bump it only for packaging-only changes.
 pkgver=0
-pkgrel=2
+pkgrel=1
 pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
 arch=('x86_64')
 url="https://github.com/qiin2333/Sunshine"

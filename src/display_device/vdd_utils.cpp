@@ -1359,6 +1359,31 @@ namespace display_device::vdd_utils {
     }
 
     /**
+     * @brief Ask the compositor to re-read the DRM connector list.
+     * @details Forcing a connector on writes its `status` attribute, which only
+     *          emits a uevent for that connector device. KWin does not listen to
+     *          those: kwin 6.8 `src/backends/drm/drm_backend.cpp:174` builds its
+     *          monitor with `filterSubsystemDevType("drm", "drm_minor")`, and
+     *          `handleUdevEvent()` (:190-191) drops every device whose sysname is
+     *          not a `cardN` primary node. The result is a connector that reads
+     *          `connected` in sysfs while KScreen never lists it, so every
+     *          compositor-mediated step afterwards dies on "Output with name or
+     *          uuid DP-2 not found". Writing `change` to the card's own uevent
+     *          file is what makes KWin call `updateOutputs()` and pick the
+     *          connector up; it is the same synthetic event
+     *          `udevadm trigger --action=change` sends.
+     */
+    bool
+    notify_compositor(const std::string &card) {
+      const std::string path = "/sys/class/drm/" + card + "/uevent";
+      if (!write_text_file(path, "change")) {
+        BOOST_LOG(warning) << "vdd: cannot ask the compositor to re-read "sv << card << " ["sv << path << "]: "sv << strerror(errno);
+        return false;
+      }
+      return true;
+    }
+
+    /**
      * @brief Record the connectors an exclusive session switched off.
      * @details A forced-off connector reads as plain "disconnected" in sysfs,
      *          so a process that did not do the switching cannot tell it from an
@@ -1861,6 +1886,19 @@ namespace display_device::vdd_utils {
      */
     bool
     connector_has_crtc(const std::string &card, const std::string &connector) {
+      // A connector that is disconnected can still carry an encoder from an
+      // earlier forced-on run (nvidia keeps DP-2 "enabled" while nothing is
+      // plugged in). That leftover says nothing about whether a compositor
+      // can use the output, so it must not be reported as an assignment.
+      {
+        std::ifstream status_in { "/sys/class/drm/" + card + "-" + connector + "/status" };
+        std::string current;
+        std::getline(status_in, current);
+        if (current != "connected") {
+          return false;
+        }
+      }
+
       const int fd = open(("/dev/dri/" + card).c_str(), O_RDWR);
       if (fd < 0) {
         return true;  // cannot verify - do not block the caller
@@ -2134,9 +2172,12 @@ namespace display_device::vdd_utils {
      * @brief Apply an EDID to the active connector and force it on. When the
      *        connector is already live with a different EDID, cycle it off
      *        first so the kernel re-reads the override.
+     * @details `card` is only used to wake the compositor afterwards: the
+     *          connector-level uevent the status write emits is invisible to
+     *          KWin, so the card needs its own event (see notify_compositor).
      */
     bool
-    apply_edid_and_enable(const std::string &edid_path, const std::string &status_path, const std::vector<std::uint8_t> &edid) {
+    apply_edid_and_enable(const std::string &edid_path, const std::string &status_path, const std::string &card, const std::vector<std::uint8_t> &edid) {
       const std::string connector_name = connector_name_for_status(status_path);
       std::string current;
       {
@@ -2174,6 +2215,11 @@ namespace display_device::vdd_utils {
         BOOST_LOG(error) << "vdd: cannot force connector on ["sv << status_path << "]: "sv << strerror(errno);
         return false;
       }
+
+      // The kernel now reports the connector as connected, but KWin only
+      // re-enumerates connectors when the card node itself reports a change.
+      // Wake it before anyone tries to talk to KScreen about the connector.
+      notify_compositor(card);
 
       return wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
     }
@@ -2622,7 +2668,7 @@ namespace display_device::vdd_utils {
 
         // Live mode switch: cycle the connector with an EDID for the new mode.
         const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
-        applied = apply_edid_and_enable(active_edid_path, active_status_path, edid);
+        applied = apply_edid_and_enable(active_edid_path, active_status_path, card, edid);
       }
     }
 
@@ -2636,9 +2682,16 @@ namespace display_device::vdd_utils {
 
     // Same ordering as creation: the status cycle for the new mode handed the
     // compositor a fresh connector event, and its one-shot activation must
-    // not be raced with a master steal.
-    if (!wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 }) &&
-        !connector_has_crtc(card, connector)) {
+    // not be raced with a master steal. The observable compositor gets woken
+    // explicitly, because it ignores the connector-level event the cycle
+    // emits (see notify_compositor).
+    const bool compositor_observable = platf::kscreen::session_supports_kscreen();
+    bool compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 });
+    if (!compositor_live && compositor_observable) {
+      notify_compositor(card);
+      compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 });
+    }
+    if (!compositor_live && !compositor_observable && !connector_has_crtc(card, connector)) {
       force_crtc_assignment("/dev/dri/" + card, connector);
     }
     enable_output_via_compositor(connector);
@@ -2776,7 +2829,7 @@ namespace display_device::vdd_utils {
 
     refresh_config_mode_ladder_locked(settings);
     const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, refresh_hz, active_edid_opts);
-    return apply_edid_and_enable(active_edid_path, active_status_path, edid) ? set_vdd_result::ok : set_vdd_result::failed;
+    return apply_edid_and_enable(active_edid_path, active_status_path, active_card, edid) ? set_vdd_result::ok : set_vdd_result::failed;
   }
 
   std::string
@@ -3009,22 +3062,30 @@ namespace display_device::vdd_utils {
     refresh_config_mode_ladder_locked(settings);
     const auto edid = vdd_edid::generate_virtual_display_edid(cached_width, cached_height, cached_refresh_hz, active_edid_opts);
 
-    if (!apply_edid_and_enable(edid_path, status_path, edid)) {
+    if (!apply_edid_and_enable(edid_path, status_path, card, edid)) {
       BOOST_LOG(error) << "vdd: failed to bring up "sv << card << '-' << connector;
       return false;
     }
 
-    // The status write emits a DRM uevent; current KWin reprobes, enables the
-    // output and assigns the CRTC itself. That activation is one-shot, so it
-    // must not be raced with the master steal below: a SETCRTC taken from
-    // under the compositor mid-activation fails its atomic commit and it
-    // drops the output for good, leaving the session to die on the mode set
-    // against an output kscreen never lists. Compositor first; the steal is
-    // the fallback for compositors that ignore status-forced connectors.
+    // A forced connector only becomes an output when the compositor re-reads
+    // the connector list; the card change event notify_compositor() sends is
+    // what triggers that on KWin. The activation is one-shot, so it must not be
+    // raced with the master steal below: a SETCRTC taken from under the
+    // compositor mid-activation fails its atomic commit and it drops the output
+    // for good. Compositor first; the steal only exists for compositors that
+    // cannot be observed at all.
+    const bool compositor_observable = platf::kscreen::session_supports_kscreen();
     bool compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
     bool crtc_assigned = connector_has_crtc(card, connector);
 
-    if (!compositor_live && !crtc_assigned) {
+    if (!compositor_live && compositor_observable) {
+      // The card event may have been coalesced with the status write; ask
+      // again before concluding the compositor will never see the connector.
+      notify_compositor(card);
+      compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
+    }
+
+    if (!compositor_live && !compositor_observable && !crtc_assigned) {
       for (int attempt = 0; attempt < 4 && !crtc_assigned; ++attempt) {
         force_crtc_assignment("/dev/dri/" + card, connector);
         enable_output_via_compositor(connector);
@@ -3046,23 +3107,30 @@ namespace display_device::vdd_utils {
           wait_for_status(status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
           write_text_file(status_path, "on");
           wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
+          notify_compositor(card);
           compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
         }
       }
     }
 
-    if (compositor_live || crtc_assigned) {
+    if (compositor_live) {
       // No-op when the compositor already enabled the output; needed for
       // compositors that surface new outputs disabled.
       enable_output_via_compositor(connector);
     }
-    else if (platf::kscreen::session_supports_kscreen()) {
+    else if (compositor_observable) {
       // The compositor is observable and still does not see the connector.
-      // Returning true here would only move the failure to the mode set with
-      // a bogus "live" log in front of it; fail where the cause is visible.
+      // `connector_has_crtc` is not evidence to the contrary here: a connector
+      // left "enabled" while disconnected keeps its encoder from an earlier
+      // run, and KScreen cannot address an output it never listed. Returning
+      // true would only move the failure to the mode set with a bogus "live"
+      // log in front of it; fail where the cause is visible.
       BOOST_LOG(error) << "vdd: compositor never surfaced "sv << connector
                        << "; refusing to create a virtual display it cannot use"sv;
       return false;
+    }
+    else if (crtc_assigned) {
+      enable_output_via_compositor(connector);
     }
     else {
       BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;

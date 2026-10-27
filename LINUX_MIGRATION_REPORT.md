@@ -980,6 +980,51 @@ Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输�
 两客户端的现场形态仍无法在本机构造，`owned_virtual_display_connector()` 的多实例分支由
 `vdd_instances::find` 的既有单测（14 例）间接覆盖。
 
+### 6.33 KWin 看不见强制点亮的连接器（虚拟屏独占连接 503 的根因）
+
+手机客户端选"虚拟屏幕独占"连接时 `/launch` 一直 503，日志里的失败链是同一处：
+
+```
+00:59:43 Info  vdd: virtual display is live on card1-DP-2
+00:59:44 Info  vdd: [kscreen-doctor output.DP-2.enable] exit=0 output: Output with name or uuid DP-2 not found.
+00:59:44 Warn  vdd: could not switch physical output eDP-1 off: ... 不允许通过配置更改禁用所有输出
+00:59:46 Error Cannot set display mode for unknown output: DP-2
+00:59:48 Error Unable to find display or encoder during startup.        → 503
+```
+
+根因不在我们的 DRM 操作，而在"强制点亮"与合成器之间缺少一次事件：`apply_edid_and_enable()`
+往连接器的 `status` 节点写 `on`，内核因此只发**连接器级** uevent；而 KWin 6.8
+（`src/backends/drm/drm_backend.cpp:174`）用 `filterSubsystemDevType("drm", "drm_minor")`
+建监听，`handleUdevEvent()`（`:190-191`）又丢弃一切 sysname 不是 `cardN` 主节点的设备。
+于是连接器在 sysfs 里是 `connected`，KScreen 却从未见过它——该文件里
+`Output with name or uuid DP-2 not found` 出现过 7 次，同日所有 `kscreen-doctor -o` 输出
+（含强制点亮后连续三次轮询）都只有 `1 eDP-1`。
+
+第二个缺陷让这个失败被掩盖：`connector_has_crtc()` 把 `connector->encoder_id` 当成
+"合成器已接管"，而 nvidia 驱动的连接器在**断开**状态下仍可能留着上次的 encoder
+（`/sys/class/drm/card1-DP-2/enabled` 至今读作 `enabled`，状态却是 `disconnected`）。
+创建流程因此跳过了全部补救分支，还打出与事实相反的 `virtual display is live`，
+把失败推迟到模式设置，最终表现为 503。
+
+修法三条，都在 `src/display_device/vdd_utils.cpp`：
+
+- 新增 `notify_compositor(card)`：往 `/sys/class/drm/<card>/uevent` 写 `change`
+  （等同 `udevadm trigger --action=change`），让 KWin 走 `updateOutputs()`
+  重读连接器列表；`apply_edid_and_enable()` 在 `status=on` 之后调用它，
+  KScreen 可观测的会话在首次轮询落空后还会再补一次。
+- 创建与"活模式切换"两条路径都改成以**合成器是否列出该 output**为唯一判据：
+  KScreen 可观测却始终没列出时直接报
+  `vdd: compositor never surfaced DP-2; refusing to create a virtual display it cannot use`
+  并返回失败，不再用陈旧 CRTC 冒充成功；master-steal 回退只留给无法观测的合成器
+  （niri 与 GNOME 会话由 `session_supports_kscreen()` 判为不可观测，行为不变）。
+- `connector_has_crtc()` 先要求连接器 `status` 为 `connected`，再读 encoder，
+  断开的连接器上残留的 encoder 不再算"已分配"。
+
+验证：`ninja -C build sunshine` 与 `test_sunshine`（665 例 / 660 通过 / 5 跳过 / 0 断言失败）
+保持原基线。合成器侧的效果无法在无头环境验证——本机没有第二个 DRM 会话可复现，
+只能由用户在自己的 Plasma 会话里用手机重新连接确认；代码路径把"没被列出"变成
+一条明确的错误日志，而不是拖到 503。
+
 ## 七、功能可用性矩阵
 
 ### ✅ 完整可用

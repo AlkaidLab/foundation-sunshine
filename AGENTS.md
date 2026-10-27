@@ -99,12 +99,21 @@ User installs packages themselves (sudo needs a password).
   `vdd_utils::run_logged()` (fork/exec, closes fds, 10s kill).
 - kscreen-doctor needs the session env (`WAYLAND_DISPLAY` + bus); it rejects decimal
   refresh in `mode.WxH@refresh` — fractional rates go by mode id.
-- NVIDIA: status-forced connectors DO emit a DRM uevent and current KWin probes,
-  lights and CRTCs them itself within ~1.5s — but that activation is one-shot:
-  racing it with the pidfd master-steal SETCRTC makes KWin fail its atomic commit
-  and drop the output permanently. Compositor first, steal only as fallback
-  (`wait_for_compositor_output` in vdd_utils.cpp). Forced-off still reads as plain
-  "disconnected" in sysfs — enumeration must consult `vdd_utils::offlined_physical_connectors()`.
+- NVIDIA: forcing a connector on through its `status` node emits only a
+  **connector-level** uevent, which KWin ignores — kwin 6.8
+  `src/backends/drm/drm_backend.cpp:174` monitors `("drm", "drm_minor")` and
+  `:190-191` drops every sysname that is not a `cardN` primary node, so the output
+  stays invisible to KScreen ("Output with name or uuid DP-2 not found") and the
+  session dies later as a 503 on the mode set. Write `change` to
+  `/sys/class/drm/<card>/uevent` after forcing the connector
+  (`notify_compositor()` in vdd_utils.cpp), and treat "KScreen lists the output" as
+  the only proof it is usable — a connector left `enabled` while `disconnected`
+  keeps a stale encoder that proves nothing. That activation is one-shot: racing it
+  with the pidfd master-steal SETCRTC makes KWin fail its atomic commit and drop
+  the output permanently. Compositor first, steal only for compositors that cannot
+  be observed (`wait_for_compositor_output` in vdd_utils.cpp). Forced-off still
+  reads as plain "disconnected" in sysfs — enumeration must consult
+  `vdd_utils::offlined_physical_connectors()`.
 - kscreen-doctor exits 0 on failures (`Output ... not found`, `applying config
   failed!`) — verdicts must parse the output text, never the exit code alone.
 - `BOOST_LOG` `"...sv"` literals need `using namespace std::string_view_literals`.
