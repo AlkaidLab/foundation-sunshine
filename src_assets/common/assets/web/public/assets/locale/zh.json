@@ -78,6 +78,8 @@
     "cover_search_tab_igdb": "IGDB",
     "cover_search_tab_steam": "Steam",
     "covers_found": "找到的封面",
+    "default_menu_cmd_desktop_pet": "桌宠",
+    "default_menu_cmd_touch_keyboard": "触摸键盘",
     "delete": "删除",
     "delete_confirm": "确定要删除应用 \"{name}\" 吗？",
     "detached_cmds": "独立命令",

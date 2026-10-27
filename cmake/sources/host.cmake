@@ -29,6 +29,7 @@ set(SUNSHINE_HOST_SOURCES
     src/display_device/vdd_capability.cpp src/display_device/vdd_capability.h
     src/display_device/vdd_utils.cpp src/display_device/vdd_utils.h
     src/display_device/vdd_ioctl.cpp src/display_device/vdd_ioctl.h
+    src/display_device/vdd_mode_list.h
     src/display_device/vdd_settings.cpp src/display_device/vdd_settings.h
     src/display_device/display_device.h
     src/display_device/vdd_control_ioctl.h

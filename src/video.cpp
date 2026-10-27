@@ -1814,6 +1814,13 @@ namespace video {
   }
 
   void
+  publish_capture_target(const config_t &config, const platf::display_t &disp) {
+    if (config.capture_target) {
+      config.capture_target->set(disp.captured_display_name());
+    }
+  }
+
+  void
   captureThread(
     std::shared_ptr<safe::queue_t<capture_ctx_t>> capture_ctx_queue,
     sync_util::sync_t<std::weak_ptr<platf::display_t>> &display_wp,
@@ -1918,6 +1925,7 @@ namespace video {
     if (!disp) {
       return;
     }
+    publish_capture_target(config, *disp);
     active_display_event->raise(target_display_name);
     display_wp = disp;
 
@@ -1935,6 +1943,7 @@ namespace video {
         // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
         // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
         capture_ctx->config.display_name = target_display_name;
+        publish_capture_target(capture_ctx->config, *disp);
         if (initial_img) {
           // 锁屏或静态桌面可能长时间没有新的 Desktop Duplication 帧。
           // 新会话必须先取得当前画面，不能一直编码初始化用的黑色占位帧。
@@ -2193,6 +2202,9 @@ namespace video {
             // reset_display() will sleep between retries
             reset_capture_display(disp, target_display_name, config);
             if (disp) {
+              for (auto &capture_ctx : capture_ctxs) {
+                publish_capture_target(capture_ctx.config, *disp);
+              }
               active_display_event->raise(target_display_name);
               break;
             }
@@ -4062,6 +4074,9 @@ namespace video {
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
         active_display_name = target_display_name;
+        for (auto &ctx : synced_session_ctxs) {
+          publish_capture_target(ctx->config, *disp);
+        }
         active_display_event->raise(target_display_name);
         break;
       }
@@ -4099,6 +4114,7 @@ namespace video {
           // active target in newly joined contexts so the next reinit does not
           // restore their stale launch-time display selection.
           encode_session_ctx->config.display_name = active_display_name;
+          publish_capture_target(encode_session_ctx->config, *disp);
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
           auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());

@@ -660,6 +660,7 @@ namespace stream {
       std::uint32_t seq;
 
       platf::feedback_queue_t feedback_queue;
+      std::array<platf::ds5_haptics_state_event_t, 16> ds5_haptics_states;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
 
@@ -1454,6 +1455,25 @@ namespace stream {
       std::array<std::uint8_t, sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(plaintext)) + crypto::cipher::tag_size>
         encrypted_payload;
 
+      payload = encode_control(session, util::view(plaintext), encrypted_payload);
+    }
+    else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_state) {
+      if ((session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_STATE) == 0) {
+        return 0;
+      }
+      // v1, reserved, controller:u16le, eight-byte absolute actuator state.
+      std::array<std::uint8_t, sizeof(control_header_v2) + 12> plaintext {};
+      auto *control = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      control->type = util::endian::little<std::uint16_t>(0x550D);
+      control->payloadLength = util::endian::little<std::uint16_t>(12);
+      auto *wire = plaintext.data() + sizeof(control_header_v2);
+      wire[0] = 1;
+      wire[2] = static_cast<std::uint8_t>(msg.id);
+      wire[3] = static_cast<std::uint8_t>(msg.id >> 8);
+      std::ranges::copy(msg.data.ds5_haptics_state, wire + 4);
+      std::array<std::uint8_t,
+        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+        encrypted_payload;
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
@@ -2420,9 +2440,25 @@ namespace stream {
             has_ds5_haptics_session |=
               input::has_ds5_audio_haptics(session->input);
             auto &feedback_queue = session->control.feedback_queue;
+            const auto send_pending_state = [session](unsigned controller) {
+              if (controller >= session->control.ds5_haptics_states.size()) return;
+              // An empty event's pop(0ms) still waits on its condition variable, at least a
+              // timer tick on Windows; doing that for every controller on every control-loop
+              // pass delayed input by tens of milliseconds. Only pop a state that is there.
+              auto &state_event = session->control.ds5_haptics_states[controller];
+              if (!state_event->peek()) return;
+              if (auto state = state_event->pop(0ms)) {
+                send_feedback_msg(session, *state);
+              }
+            };
+            for (unsigned controller = 0; controller < session->control.ds5_haptics_states.size(); ++controller) {
+              send_pending_state(controller);
+            }
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
 
+              // A state may arrive after the initial poll; apply it ahead of this controller's PCM/rumble.
+              send_pending_state(feedback_msg->id);
               send_feedback_msg(session, *feedback_msg);
             }
 
@@ -4260,6 +4296,31 @@ namespace stream {
       return !uuid.empty() && session.client_cert_uuid == uuid;
     }
 
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid) {
+      if (client_cert_uuid.empty()) {
+        return {};
+      }
+      // try_ref() avoids recreating the broadcast context when no stream is active.
+      auto broadcast_ref = broadcast_shared.try_ref();
+      if (!broadcast_ref) {
+        return {};
+      }
+
+      std::vector<streaming::capture_session_t> sessions;
+      {
+        auto lg = broadcast_ref->control_server._sessions.lock();
+        for (const auto session : *broadcast_ref->control_server._sessions) {
+          if (session) {
+            sessions.push_back({ session->client_cert_uuid,
+              session->lifecycle.state() == state_e::RUNNING,
+              session->control_only, session->config.monitor.capture_target });
+          }
+        }
+      }
+      return streaming::select_current_capture(sessions, client_cert_uuid);
+    }
+
     void
     join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
@@ -4572,9 +4633,13 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
+      session->config.monitor.capture_target = std::make_shared<streaming::capture_target_t>();
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
+      for (unsigned controller = 0; controller < session->control.ds5_haptics_states.size(); ++controller) {
+        session->control.ds5_haptics_states[controller] = platf::ds5_haptics_state_event(mail, controller);
+      }
       session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
       session->control.resolution_change_queue = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
       session->control.legacy_input_enc_iv = launch_session.iv;

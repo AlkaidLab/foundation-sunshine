@@ -78,6 +78,8 @@
     "cover_search_tab_igdb": "IGDB",
     "cover_search_tab_steam": "蒸氣",
     "covers_found": "找到封面圖片",
+    "default_menu_cmd_desktop_pet": "桌寵",
+    "default_menu_cmd_touch_keyboard": "觸控鍵盤",
     "delete": "刪除",
     "delete_confirm": "確定要刪除應用 \"{name}\" 嗎？",
     "detached_cmds": "獨立指令",

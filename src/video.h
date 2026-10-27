@@ -19,6 +19,7 @@
 
 #include "hdr/client_display_capabilities.h"
 #include "streaming/bitrate.h"
+#include "streaming/capture_target.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -206,6 +207,7 @@ namespace video {
     std::uint32_t perf_session_id = 0;
     bool pyrowave_dynamic_hdr_mapping = false;
     std::shared_ptr<streaming::bitrate_budget_t> bitrate_budget;
+    std::shared_ptr<streaming::capture_target_t> capture_target;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {

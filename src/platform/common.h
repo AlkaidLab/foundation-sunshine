@@ -110,6 +110,7 @@ namespace platf {
     set_rgb_led,  ///< Set RGB LED
     set_adaptive_triggers,  ///< Set adaptive triggers
     ds5_haptics_pcm,  ///< Authored DualSense actuator PCM (48 kHz, stereo, S16LE)
+    ds5_haptics_state,  ///< Absolute actuator mode and claimed control groups
   };
 
   struct gamepad_feedback_msg_t {
@@ -175,6 +176,15 @@ namespace platf {
       return msg;
     }
 
+    static gamepad_feedback_msg_t
+    make_ds5_haptics_state(std::uint16_t id, const std::uint8_t *state) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_haptics_state;
+      msg.id = id;
+      std::copy_n(state, 8, msg.data.ds5_haptics_state.begin());
+      return msg;
+    }
+
     gamepad_feedback_e type;
     std::uint16_t id;
 
@@ -216,10 +226,19 @@ namespace platf {
         std::uint64_t presentation_time_us;
         std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> pcm;
       } ds5_haptics;
+      std::array<std::uint8_t, 8> ds5_haptics_state;
     } data;
   };
 
   using feedback_queue_t = safe::mail_raw_t::queue_t<gamepad_feedback_msg_t>;
+
+  using ds5_haptics_state_event_t = safe::mail_raw_t::event_t<gamepad_feedback_msg_t>;
+
+  // Absolute state is latest-value feedback: PCM queue overflow must never discard it.
+  inline ds5_haptics_state_event_t
+  ds5_haptics_state_event(const safe::mail_t &mail, unsigned controller) {
+    return mail->event<gamepad_feedback_msg_t>("ds5_haptics_state." + std::to_string(controller));
+  }
 
   namespace speaker {
     enum speaker_e {
@@ -677,6 +696,13 @@ namespace platf {
     // Optional raw-source telemetry, shared by sessions using this display.
     virtual std::shared_ptr<perf::capture_source_counter_t>
     frame_rate_source() const {
+      return {};
+    }
+
+    // The output actually opened by this backend, or empty when the capture
+    // has no fixed monitor (e.g. window capture).
+    virtual std::string
+    captured_display_name() const {
       return {};
     }
 

@@ -58,6 +58,26 @@ target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_pr
 set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
 
+add_executable(display_scale_steps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp)
+target_include_directories(display_scale_steps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(display_scale_steps_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(display_scale_steps_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME display_scale_steps_unit_tests COMMAND display_scale_steps_unit_tests)
+
+add_executable(vdd_mode_list_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_mode_list.cpp)
+target_include_directories(vdd_mode_list_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        Boost::optional
+        sunshine_project_options sunshine_coverage)
+set_target_properties(vdd_mode_list_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME vdd_mode_list_unit_tests COMMAND vdd_mode_list_unit_tests)
+
+add_executable(current_capture_target_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp)
+target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
+
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
 target_link_libraries(pen_barrel_roll_unit_tests PRIVATE gtest_main
@@ -552,6 +572,8 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_http_util.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
