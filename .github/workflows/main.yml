@@ -122,6 +122,21 @@ jobs:
           & .\src_assets\windows\misc\vdd\smoke-test-vdd-device-helper.ps1
           & .\src_assets\windows\misc\vdd\smoke-test-install-vdd-selection.ps1
 
+  mat_smoke:
+    name: MAT software regressions
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Run own-process MAT regressions
+        shell: pwsh
+        run: |
+          git submodule update --init --depth 1 third-party/moonlight-common-c
+          if ($LASTEXITCODE) { throw 'MAT dependency checkout failed' }
+          ./tools/sonic-mat-live/build.ps1 -Output build/mat-smoke -TestsOnly
+          ./tools/sonic-mat-live/test-manage-live.ps1 -Output build/mat-operator
+
   build_win:
     name: Windows
     needs: setup_release
