@@ -1,6 +1,9 @@
 /**
- * @file src/platform/windows/dsu_server.h
+ * @file src/dsu_server.h
  * @brief DSU Server头文件，用于接收客户端连接并发送Switch Pro手柄的运动传感器数据
+ *
+ * Shared by every platform that can feed it client motion data; the Windows
+ * input backend was the first user, the Linux inputtino backend is the second.
  */
 
 #pragma once

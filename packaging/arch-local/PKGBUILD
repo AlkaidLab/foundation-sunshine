@@ -1,0 +1,192 @@
+# Maintainer: local
+#
+# Local debug package: installs the ALREADY-BUILT tree from this repository's
+# build/ directory to the global prefix /usr (no compilation inside makepkg).
+#
+# Build:   (repo root)  ninja -C build          # configure with
+#          -DCMAKE_INSTALL_PREFIX=/usr
+# Package: cd packaging/arch-local && makepkg -f
+# Install: sudo pacman -U ./sunshine-foundation-*.pkg.tar.zst
+# Run:     sunshine   # assets live in /usr/share/sunshine
+
+pkgname=sunshine-foundation
+# The version is the one the binary itself carries - the same string the
+# "Sunshine version:" log line prints, and the same shape the fork uses for its
+# release tags (v2026.903.160345.杂鱼):
+#
+#     <YYYY>.<MMDD>.<HHMMSS>.<commit>      e.g. 2026.1022.153619.7969ff13
+#
+# It is read from the built tree further down, so the package always names the
+# build it contains instead of a frozen release with a growing pkgrel. Keep
+# pkgrel at 1 and bump it only for packaging-only changes.
+pkgver=0
+pkgrel=1
+pkgdesc="Foundation Sunshine (local debug build of the linux-migration branch)"
+arch=('x86_64')
+url="https://github.com/qiin2333/Sunshine"
+license=('GPL-3.0-only')
+depends=(
+  'boost-libs'
+  'curl'
+  'libcap'
+  'libdrm'
+  'libevdev'
+  'libnotify'
+  'libpulse'
+  'libsecret'
+  'libva'
+  'libx11'
+  'miniupnpc'
+  'numactl'
+  'openssl'
+  'opus'
+  'qt6-base'
+  'qt6-svg'
+  'systemd'
+  'wayland'
+)
+optdepends=(
+  'nvidia-utils: NVENC hardware encoding'
+  'libva-mesa-driver: VAAPI encoding on AMD/Intel'
+  'usbip: remote USB tunneling (also needs vhci-hcd and root privileges)'
+  'wlr-randr: display configuration in wlroots sessions (sway, Hyprland, labwc, ...)'
+)
+options=(!strip)
+install=sunshine-foundation.install
+
+# Package a different build tree (e.g. a CUDA-enabled one) without moving files:
+#   SUNSHINE_BUILD_DIR="$PWD/build-cuda" makepkg -f
+_build_dir="${SUNSHINE_BUILD_DIR:-${startdir:-$PWD}/../../build}"
+
+# The executable carries a version stamp made of the configure timestamp plus the
+# current commit (cmake/prep/build_version.cmake), and cmake bakes that name into
+# cmake_install.cmake. Re-running cmake without relinking -- the usual slip after
+# a pkgrel-only commit -- therefore leaves the install rules pointing at a binary
+# that was never created, and `cmake --install` dies with a bare
+# "file INSTALL cannot find .../sunshine-<stamp>" error. Finish the job here
+# instead of failing the package build.
+_built_stamp() {
+  local binary
+  binary="$(readlink -f "$_build_dir/sunshine" 2>/dev/null)" || return 0
+  [ -n "$binary" ] && basename "$binary"
+}
+
+_wanted_stamp() {
+  grep -oE 'sunshine-[^"/]+' "$_build_dir/cmake_install.cmake" 2>/dev/null | head -n1
+}
+
+# The 8-hex commit embedded in a stamp ("sunshine-2026.0916.085147.36239907").
+_stamp_hash() {
+  printf '%s' "$1" | grep -oE '[0-9a-f]{8}' | tail -n1
+}
+
+# A dirty tree makes the stamp carry the 杂鱼 marker (staged as "dirty" by
+# package()).
+_stamp_is_dirty() {
+  case "$1" in *杂鱼* | *dirty*) return 0 ;; *) return 1 ;; esac
+}
+
+# pkgver from the built tree: drop the "sunshine-" prefix and fold the dirty
+# marker into something pacman accepts (it allows only [A-Za-z0-9._+]).
+_pkgver_from_stamp() {
+  local stamp
+  stamp="$(_built_stamp)" || return 1
+  [ -n "$stamp" ] || return 1
+  printf '%s' "${stamp#sunshine-}" | sed -E 's/\.?[^A-Za-z0-9._+]+/.dirty/g'
+}
+
+# Fallback for a tree that has not been configured yet: commit time plus commit
+# in the same shape cmake stamps into the binary (cmake/prep/build_version.cmake).
+_pkgver_from_git() {
+  local repo="$startdir/../.." date sha
+  sha="$(git -C "$repo" rev-parse --short=8 HEAD 2>/dev/null)" || return 1
+  date="$(git -C "$repo" show -s --format=%cd --date=format-local:%Y.%m%d.%H%M%S HEAD 2>/dev/null)" || return 1
+  [ -n "$sha" ] && [ -n "$date" ] || return 1
+  printf '%s.%s' "$date" "$sha"
+}
+
+# Kept as a function rather than a top-level assignment: makepkg runs pkgver()
+# *after* prepare(), and prepare() may relink the tree. Reading the stamp up
+# front would name the package after the stamp that existed before the relink,
+# so the package name and the binary inside it could disagree.
+pkgver() {
+  _pkgver_from_stamp || _pkgver_from_git || printf 0
+}
+
+_relink() {
+  msg2 "re-configuring and relinking so the package matches the current tree"
+  cmake -B "$_build_dir" -S "$startdir/../.." || return 1
+  ninja -C "$_build_dir" sunshine || return 1
+}
+
+prepare() {
+  local wanted built head_hash built_hash
+  wanted="$(_wanted_stamp)"
+  built="$(_built_stamp)"
+
+  if [ ! -f "$_build_dir/CMakeCache.txt" ] && [ ! -f "$_build_dir/sunshine" ]; then
+    error "build/ is not configured; run this from the repository root first:"
+    error "  cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \\"
+    error "    -DSUNSHINE_ASSETS_DIR=share/sunshine -DSUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine \\"
+    error "    -DSUNSHINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \\"
+    error "    -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \\"
+    error "    -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON && ninja -C build sunshine"
+    return 1
+  fi
+
+  # (1) cmake wrote install rules for a binary that was never linked (a commit
+  #     after the last configure is enough: the stamp carries HEAD and the
+  #     configure timestamp).
+  if [ -n "$wanted" ] && [ "$wanted" != "$built" ]; then
+    msg "build/ is stale (install rules want ${wanted:-nothing}, built: ${built:-nothing})"
+    _relink || return 1
+    return 0
+  fi
+
+  # (2) The binary predates the current commit, or it was built from a dirty
+  #     tree that has since been committed: the version line the user checks
+  #     would otherwise identify a different tree than the one being packaged.
+  head_hash="$(git -C "$startdir/../.." rev-parse --short=8 HEAD 2>/dev/null)" || return 0
+  built_hash="$(_stamp_hash "$built")"
+  if [ -n "$head_hash" ] && [ "$built_hash" != "$head_hash" ]; then
+    msg "build/ carries ${built_hash:-nothing}, tree is at ${head_hash}"
+    _relink || return 1
+  elif _stamp_is_dirty "$built" && git -C "$startdir/../.." diff --quiet; then
+    msg "build/ is stamped dirty but the tree is clean"
+    _relink || return 1
+  fi
+}
+
+package() {
+  if [ ! -f "$_build_dir/sunshine" ]; then
+    error "build/sunshine not found - build the repository first"
+    return 1
+  fi
+
+  # The build was configured with CMAKE_INSTALL_PREFIX=/usr, so the install
+  # rules place bin/ and share/sunshine under /usr and the systemd user unit
+  # + udev rule at their absolute system locations.
+  if ! DESTDIR="$pkgdir" cmake --install "$_build_dir"; then
+    error "cmake --install failed; if the message names a missing sunshine-<stamp> binary,"
+    error "the build tree changed after the last link - rebuild it with: ninja -C build sunshine"
+    return 1
+  fi
+
+  # A dirty working tree appends the "杂鱼" marker to the version stamp
+  # (cmake/prep/build_version.cmake). A non-ASCII executable name trips
+  # libarchive's charset translation ("bsdtar: Can't translate ... to UTF-8") and
+  # leaves pacman with a path it cannot reliably match, so stage the same binary
+  # under an ASCII stamp. The version string compiled into the binary is
+  # untouched; only the file name changes.
+  local binary base ascii
+  for binary in "$pkgdir"/usr/bin/sunshine-*; do
+    [ -e "$binary" ] || continue
+    base="$(basename "$binary")"
+    ascii="$(printf '%s' "$base" | sed -E 's/[^A-Za-z0-9._+-]+/dirty/g')"
+    [ "$ascii" = "$base" ] && continue
+
+    mv -f -- "$binary" "$pkgdir/usr/bin/$ascii"
+    ln -sfn -- "$ascii" "$pkgdir/usr/bin/sunshine"
+    msg2 "staged dirty build as $ascii (was $base)"
+  done
+}

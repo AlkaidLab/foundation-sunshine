@@ -11,6 +11,7 @@ namespace system_tray_i18n {
   // String key constants
   const std::string KEY_QUIT_TITLE = "quit_title";
   const std::string KEY_QUIT_MESSAGE = "quit_message";
+  const std::string KEY_QUIT_MESSAGE_NO_GUI = "quit_message_no_gui";
   
   // Menu item keys
   const std::string KEY_OPEN_SUNSHINE = "open_sunshine";
@@ -66,12 +67,14 @@ namespace system_tray_i18n {
   const std::string KEY_IMPORT_ERROR_TITLE = "import_error_title";
   const std::string KEY_IMPORT_ERROR_WRITE = "import_error_write";
   const std::string KEY_IMPORT_ERROR_EXCEPTION = "import_error_exception";
+  const std::string KEY_IMPORT_SUCCESS_MSG = "import_success_msg";
   const std::string KEY_EXPORT_SUCCESS_TITLE = "export_success_title";
   const std::string KEY_EXPORT_SUCCESS_MSG = "export_success_msg";
   const std::string KEY_EXPORT_ERROR_TITLE = "export_error_title";
   const std::string KEY_EXPORT_ERROR_WRITE = "export_error_write";
   const std::string KEY_EXPORT_ERROR_NO_CONFIG = "export_error_no_config";
   const std::string KEY_EXPORT_ERROR_EXCEPTION = "export_error_exception";
+  const std::string KEY_EXPORT_ERROR_PATH = "export_error_path";
   const std::string KEY_RESET_CONFIRM_TITLE = "reset_confirm_title";
   const std::string KEY_RESET_CONFIRM_MSG = "reset_confirm_msg";
   const std::string KEY_RESET_SUCCESS_TITLE = "reset_success_title";
@@ -87,6 +90,7 @@ namespace system_tray_i18n {
   const std::map<std::string, std::string> DEFAULT_STRINGS = {
     { KEY_QUIT_TITLE, "Wait! Don't Leave Me! T_T" },
     { KEY_QUIT_MESSAGE, "Nooo! You can't just quit like that!\nAre you really REALLY sure you want to leave?\nI'll miss you... but okay, if you must...\n\n(This will also close the Sunshine GUI application.)" },
+    { KEY_QUIT_MESSAGE_NO_GUI, "Nooo! You can't just quit like that!\nAre you really REALLY sure you want to leave?\nI'll miss you... but okay, if you must..." },
     { KEY_OPEN_SUNSHINE, "Open GUI" },
     { KEY_VDD_BASE_DISPLAY, "Foundation Display" },
     { KEY_VDD_CREATE, "Create Virtual Display" },
@@ -136,12 +140,14 @@ namespace system_tray_i18n {
     { KEY_IMPORT_ERROR_TITLE, "Import Error" },
     { KEY_IMPORT_ERROR_WRITE, "Failed to import configuration file." },
     { KEY_IMPORT_ERROR_EXCEPTION, "An error occurred while importing configuration." },
+    { KEY_IMPORT_SUCCESS_MSG, "Configuration imported successfully.\n\nRestart Sunshine now to apply it?" },
     { KEY_EXPORT_SUCCESS_TITLE, "Export Success" },
     { KEY_EXPORT_SUCCESS_MSG, "Configuration exported successfully!" },
     { KEY_EXPORT_ERROR_TITLE, "Export Error" },
     { KEY_EXPORT_ERROR_WRITE, "Failed to export configuration file." },
     { KEY_EXPORT_ERROR_NO_CONFIG, "No configuration found to export." },
     { KEY_EXPORT_ERROR_EXCEPTION, "An error occurred while exporting configuration." },
+    { KEY_EXPORT_ERROR_PATH, "Only a regular .conf file can be written; symlinks are not allowed." },
     { KEY_RESET_CONFIRM_TITLE, "Reset Configuration" },
     { KEY_RESET_CONFIRM_MSG, "This will reset all configuration to default values.\nThis action cannot be undone.\n\nDo you want to continue?" },
     { KEY_RESET_SUCCESS_TITLE, "Reset Success" },
@@ -158,6 +164,7 @@ namespace system_tray_i18n {
   const std::map<std::string, std::string> CHINESE_STRINGS = {
     { KEY_QUIT_TITLE, "真的要退出吗" },
     { KEY_QUIT_MESSAGE, "你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~\n\n这将同时关闭Sunshine GUI应用程序。" },
+    { KEY_QUIT_MESSAGE_NO_GUI, "你不能退出!\n那么想退吗? 真拿你没办法呢, 继续点一下吧~" },
     { KEY_OPEN_SUNSHINE, "打开基地面板" },
     { KEY_VDD_BASE_DISPLAY, "基地显示器" },
     { KEY_VDD_CREATE, "创建显示器" },
@@ -207,12 +214,14 @@ namespace system_tray_i18n {
     { KEY_IMPORT_ERROR_TITLE, "导入失败" },
     { KEY_IMPORT_ERROR_WRITE, "无法写入配置文件。" },
     { KEY_IMPORT_ERROR_EXCEPTION, "导入配置时发生错误。" },
+    { KEY_IMPORT_SUCCESS_MSG, "配置导入成功。\n\n是否立即重启 Sunshine 以应用新配置？" },
     { KEY_EXPORT_SUCCESS_TITLE, "导出成功" },
     { KEY_EXPORT_SUCCESS_MSG, "配置已成功导出！" },
     { KEY_EXPORT_ERROR_TITLE, "导出失败" },
     { KEY_EXPORT_ERROR_WRITE, "无法导出配置文件。" },
     { KEY_EXPORT_ERROR_NO_CONFIG, "未找到可导出的配置。" },
     { KEY_EXPORT_ERROR_EXCEPTION, "导出配置时发生错误。" },
+    { KEY_EXPORT_ERROR_PATH, "只允许写入常规 .conf 文件，不允许符号链接。" },
     { KEY_RESET_CONFIRM_TITLE, "重置配置" },
     { KEY_RESET_CONFIRM_MSG, "这将把所有配置重置为默认值。\n此操作无法撤销。\n\n确定要继续吗？" },
     { KEY_RESET_SUCCESS_TITLE, "重置成功" },
@@ -228,6 +237,7 @@ namespace system_tray_i18n {
   const std::map<std::string, std::string> JAPANESE_STRINGS = {
     { KEY_QUIT_TITLE, "本当に終了しますか？" },
     { KEY_QUIT_MESSAGE, "終了できません！\n本当に終了したいですか？\n\nこれによりSunshine GUIアプリケーションも閉じられます。" },
+    { KEY_QUIT_MESSAGE_NO_GUI, "終了できません！\n本当に終了したいですか？" },
     { KEY_OPEN_SUNSHINE, "GUIを開く" },
     { KEY_VDD_BASE_DISPLAY, "基地ディスプレイ" },
     { KEY_VDD_CREATE, "仮想ディスプレイを作成" },
@@ -277,12 +287,14 @@ namespace system_tray_i18n {
     { KEY_IMPORT_ERROR_TITLE, "インポート失敗" },
     { KEY_IMPORT_ERROR_WRITE, "設定ファイルを書き込めませんでした。" },
     { KEY_IMPORT_ERROR_EXCEPTION, "設定のインポート中にエラーが発生しました。" },
+    { KEY_IMPORT_SUCCESS_MSG, "設定をインポートしました。\n\n今すぐ Sunshine を再起動して適用しますか？" },
     { KEY_EXPORT_SUCCESS_TITLE, "エクスポート成功" },
     { KEY_EXPORT_SUCCESS_MSG, "設定のエクスポートに成功しました！" },
     { KEY_EXPORT_ERROR_TITLE, "エクスポート失敗" },
     { KEY_EXPORT_ERROR_WRITE, "設定ファイルをエクスポートできませんでした。" },
     { KEY_EXPORT_ERROR_NO_CONFIG, "エクスポートする設定が見つかりません。" },
     { KEY_EXPORT_ERROR_EXCEPTION, "設定のエクスポート中にエラーが発生しました。" },
+    { KEY_EXPORT_ERROR_PATH, "書き込みできるのは通常の .conf ファイルのみです。シンボリックリンクは許可されません。" },
     { KEY_RESET_CONFIRM_TITLE, "設定のリセット" },
     { KEY_RESET_CONFIRM_MSG, "すべての設定をデフォルト値にリセットします。\nこの操作は元に戻せません。\n\n続行しますか？" },
     { KEY_RESET_SUCCESS_TITLE, "リセット成功" },

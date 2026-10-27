@@ -40,6 +40,10 @@
 #ifdef _WIN32
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
+#else
+  #ifdef SUNSHINE_CLIPBOARD_HOST
+    #include "clipboard_host.h"
+  #endif
 #endif
 
 #ifdef _WIN32
@@ -388,10 +392,20 @@ main(int argc, char *argv[]) {
   auto shutdown_event = mail::man->event<bool>(mail::shutdown);
   on_signal(SIGINT, [shutdown_event]() {
     shutdown_event->raise(true);
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+    // The main thread may be parked in the tray event loop; wake it so the
+    // graceful shutdown path can proceed before the forced watchdog fires.
+    // Guarded like every other call site: with SUNSHINE_TRAY=0 (Windows, where
+    // the GUI agent owns the tray) system_tray::end_tray() is not compiled.
+    system_tray::end_tray();
+#endif
   });
 
   on_signal(SIGTERM, [shutdown_event]() {
     shutdown_event->raise(true);
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+    system_tray::end_tray();
+#endif
   });
 
 #ifdef _WIN32
@@ -564,6 +578,10 @@ main(int argc, char *argv[]) {
   }
 #endif
 
+#ifdef SUNSHINE_CLIPBOARD_HOST
+  clipboard_host::start();
+#endif
+
   mainThreadLoop(shutdown_event);
 
   // Cover tray/HTTP requests and signals before any cleanup can block.
@@ -571,6 +589,10 @@ main(int argc, char *argv[]) {
   BOOST_LOG(info) << "Shutdown requested; allowing up to 10 seconds for cleanup"sv;
 
   client_fingerprint_deinit_guard.reset();
+
+#ifdef SUNSHINE_CLIPBOARD_HOST
+  clipboard_host::stop();
+#endif
 
   // Stop outbound callbacks before joining inbound servers. This cancels
   // queued tests while their response objects are still valid.
