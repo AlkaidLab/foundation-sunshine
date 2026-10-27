@@ -29,6 +29,7 @@ extern "C" {
 #include <boost/atomic.hpp>
 #include <boost/asio.hpp>
 #include <boost/bind.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 
 // local includes
 #include "clipboard_bridge.h"
@@ -47,6 +48,7 @@ extern "C" {
 #include "stream.h"
 #include "streaming/fec.h"
 #include "sync.h"
+#include "spatial_transport/mat_live_session.h"
 #include "video.h"
 
 namespace asio = boost::asio;
@@ -695,7 +697,9 @@ namespace rtsp_stream {
           return _launch_sessions.claim_encrypted(remote_address, tagged_cipher, std::move(iv));
         },
         [this](std::uint32_t launch_session_id) {
-          _launch_sessions.release(launch_session_id, config::stream.ping_timeout);
+          if (_launch_sessions.release(launch_session_id, config::stream.ping_timeout)) {
+            schedule_pending_prune();
+          }
         });
     }
 
@@ -1251,6 +1255,27 @@ namespace rtsp_stream {
     }
 
     // Report supported and required encryption flags
+    unsigned live_requests = 0;
+    for (auto item = req->options; item; item = item->next) {
+      if (boost::iequals(item->option, "X-ML-Mat-Live")) {
+        if (std::string_view(item->content) != "1") {
+          live_requests = 2;
+          break;
+        }
+        ++live_requests;
+      }
+    }
+    if (live_requests == 1 && !session.mat_live_described && config::audio.stream && !session.control_only) {
+      session.mat_live_described = true;
+      try {
+        if (config::audio.mat_live) session.mat_live = spatial_transport::prepare_live(spatial_audio::mat_auto_pipe, {});
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Live MAT not ready; client may select Opus: " << e.what();
+      }
+    }
+    if (live_requests == 1 && session.mat_live) ss << spatial_transport::describe_live(*session.mat_live);
+
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
     ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
@@ -1474,6 +1499,42 @@ namespace rtsp_stream {
     }
   };
 
+  struct mat_live_response_headers_t {
+    std::string live_epoch, live_domain;
+    OPTION_ITEM codec {}, carrier {}, clock {}, crypto {}, epoch {}, domain {};
+    mat_live_response_headers_t(const launch_session_t &session) {
+      if (session.mat_live_selected && session.mat_live) {
+        live_epoch = std::to_string(session.mat_live->profile.epoch);
+        live_domain = std::to_string(session.mat_live->profile.domain);
+        codec.option = const_cast<char *>("X-SS-Audio-Codec");
+        codec.content = const_cast<char *>(MAT_LIVE_NAME);
+        carrier.option = const_cast<char *>("X-SS-Mat-Carrier");
+        carrier.content = const_cast<char *>(MAT_CARRIER);
+        clock.option = const_cast<char *>("X-SS-Mat-Clock");
+        clock.content = const_cast<char *>(MAT_CLOCK);
+        crypto.option = const_cast<char *>("X-SS-Mat-Live-Crypto");
+        crypto.content = const_cast<char *>(MAT_LIVE_CRYPTO);
+        epoch.option = const_cast<char *>("X-SS-Mat-Live-Epoch");
+        epoch.content = live_epoch.data();
+        domain.option = const_cast<char *>("X-SS-Mat-Live-Domain");
+        domain.content = live_domain.data();
+        codec.next = &carrier;
+        carrier.next = &clock;
+        clock.next = &crypto;
+        crypto.next = &epoch;
+        epoch.next = &domain;
+        return;
+      }
+    }
+    void
+    attach(OPTION_ITEM &head) {
+      if (!codec.option) return;
+      auto tail = &head;
+      while (tail->next) tail = tail->next;
+      tail->next = &codec;
+    }
+  };
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
@@ -1496,6 +1557,8 @@ namespace rtsp_stream {
           session.negotiated_dynamic_hdr_format,
           session.negotiated_dynamic_hdr_fallback);
         dynamic_hdr_headers.attach(option);
+        mat_live_response_headers_t mat_headers(session);
+        mat_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1505,6 +1568,7 @@ namespace rtsp_stream {
       return;
     }
 
+    auto live_lease_guard = util::fail_guard([&] { session.mat_live.reset(); });
     std::vector<std::string_view> lines;
 
     auto whitespace = [](char ch) {
@@ -1524,6 +1588,7 @@ namespace rtsp_stream {
           begin = pos;
         }
       }
+      if (begin != std::end(payload)) lines.emplace_back(begin, std::end(payload) - begin);
     }
 
     std::string_view client;
@@ -1536,14 +1601,22 @@ namespace rtsp_stream {
       }
       else if (type == "a=") {
         auto pos = line.find(':');
+        if (pos == std::string_view::npos || pos < 3) {
+          respond(sock, session, &option, 400, "Bad Request", req->sequenceNumber, {});
+          return;
+        }
 
         auto name = line.substr(2, pos - 2);
         auto val = line.substr(pos + 1);
 
-        if (val[val.size() - 1] == ' ') {
+        if (!val.empty() && val.back() == ' ') {
           val = val.substr(0, val.size() - 1);
         }
-        args.emplace(name, val);
+        auto [entry, inserted] = args.emplace(name, val);
+        if (!inserted && (name == "x-ml-audio.codec" || name.starts_with("x-ml-audio.mat-"))) {
+          respond(sock, session, &option, 400, "Bad Request", req->sequenceNumber, {});
+          return;
+        }
       }
     }
 
@@ -1602,7 +1675,49 @@ namespace rtsp_stream {
       // Unknown values fall back to Opus to preserve compatibility.
       {
         const auto &codecStr = args.at("x-ml-audio.codec"sv);
-        if (codecStr == "ac3"sv) {
+        bool has_mat_attributes = false;
+        for (const auto &[key, value] : args)
+          if (key.starts_with("x-ml-audio.mat-")) has_mat_attributes = true;
+        if (codecStr != MAT_LIVE_NAME && has_mat_attributes) {
+          respond(sock, session, &option, 415, "MAT attributes require explicit live MAT codec", req->sequenceNumber, {});
+          return;
+        }
+        if (codecStr != MAT_LIVE_NAME) {
+          session.mat_live.reset();
+        }
+        if (codecStr == MAT_LIVE_NAME) {
+          for (const auto &[name, value] : args)
+            if (name.starts_with("x-ml-audio.mat-") && !name.starts_with("x-ml-audio.mat-live")) {
+              respond(sock, session, &option, 415, "Mixed live/diagnostic MAT attributes", req->sequenceNumber, {});
+              return;
+            }
+          const auto value = [&args](std::string_view k) {
+            auto it = args.find(k);
+            return it == args.end() ? std::string {} : std::string(it->second);
+          };
+          const auto live_accepted = [&] {
+            return spatial_transport::accept_live(session.mat_live.get(),
+              value("x-ml-audio.mat-live"),
+              value("x-ml-audio.mat-live-carrier"),
+              value("x-ml-audio.mat-live-clock"),
+              value("x-ml-audio.mat-live-crypto"),
+              value("x-ml-audio.mat-live-epoch"),
+              value("x-ml-audio.mat-live-domain"));
+          };
+          if (!session.setup_audio || !config::audio.stream || !live_accepted()) {
+            session.mat_live.reset();
+            respond(sock, session, &option, 415, "Native live MAT source/profile unavailable", req->sequenceNumber, {});
+            return;
+          }
+          config.audio.codec = audio::CODEC_MAT_LIVE;
+          config.audio.mat_live = session.mat_live;
+          config.audio.packetDuration = 1;  // FEC transport tick; media PTS is in the authenticated envelope.
+        }
+        else if (codecStr.starts_with("mat-")) {
+          respond(sock, session, &option, 415, "Unsupported MAT profile", req->sequenceNumber, {});
+          return;
+        }
+        else if (codecStr == "ac3"sv) {
           config.audio.codec = audio::CODEC_AC3;
         }
         else if (codecStr == "eac3"sv) {
@@ -2076,14 +2191,19 @@ namespace rtsp_stream {
       return;
     }
 
+    live_lease_guard.disable();
     session.stream_announce_payload = std::move(announce_payload);
     session.stream_session_started = true;
+    session.mat_live_selected = config.audio.codec == audio::CODEC_MAT_LIVE;
+    if (session.mat_live_selected) BOOST_LOG(info) << "Native live MAT negotiated: AEAD counter64; no finite replay";
     session.nvidia_vsync_lease.reset();
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,
       session.negotiated_dynamic_hdr_fallback);
     dynamic_hdr_headers.attach(option);
+    mat_live_response_headers_t mat_headers(session);
+    mat_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

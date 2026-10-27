@@ -108,7 +108,7 @@ namespace confighttp::configuration {
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
       for (auto &[name, value] : vars) {
         // widget_token 是本地端点凭证,不回显明文;只暴露是否已配置
-        if (name == "widget_token") {
+        if (name == "widget_token" || name == "mat_live_pipe" || name == "mat_live_producer") {
           continue;
         }
         outputTree.put(std::move(name), std::move(value));
@@ -284,6 +284,9 @@ namespace confighttp::configuration {
 
       try {
         pt::read_json(ss, inputTree);
+        if (const auto mat = inputTree.get_optional<std::string>("mat_live"); mat && *mat != "true" && *mat != "false" && *mat != "enabled" && *mat != "disabled") {
+          throw std::invalid_argument("mat_live must be enabled or disabled");
+        }
         net::validate_bind_address(inputTree.get<std::string>("bind_address", ""), inputTree.get<std::string>("address_family", "ipv4"));
         const auto port_value = inputTree.get<std::string>("port", "47989");
         std::size_t consumed = 0;
@@ -314,7 +317,7 @@ namespace confighttp::configuration {
         // 将 inputTree 转换为 std::map（保证有序）
         std::map<std::string, std::string> fullConfig;
         for (const auto &kv : inputTree) {
-          if (kv.first == "usb_forwarding_config_version") continue;
+          if (kv.first == "usb_forwarding_config_version" || kv.first == "mat_live_pipe" || kv.first == "mat_live_producer") continue;
           std::string value = inputTree.get<std::string>(kv.first);
           fullConfig[kv.first] = value;
         }
