@@ -922,6 +922,13 @@ namespace platf::dxgi {
     cached_sdr_white_nits.reset();
     last_sdr_white_check_time = {};
 
+    // Bind capture to the canonical device when it opens. Re-resolving only
+    // its GDI name later could identify a different monitor after hotplug.
+    capture_device_id.clear();
+    if (const auto scale_info = display_device::w_utils::get_display_scale_info(to_utf8(display_device_name), {})) {
+      capture_device_id = scale_info->device_id;
+    }
+
     return 0;
   }
 
@@ -933,6 +940,16 @@ namespace platf::dxgi {
       borrowed,
       capture_adapter_luid,
       capture_source_generation);
+  }
+
+  std::string
+  display_base_t::captured_display_name() const {
+    return captures_monitor ? to_utf8(display_device_name) : std::string {};
+  }
+
+  std::string
+  display_base_t::captured_display_device_id() const {
+    return captures_monitor ? capture_device_id : std::string {};
   }
 
   bool

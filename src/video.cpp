@@ -1831,6 +1831,9 @@ namespace video {
         capture_ctx.images->stop();
       }
       for (auto &capture_ctx : capture_ctx_queue->unsafe()) {
+        if (capture_ctx.config.capture_target) {
+          capture_ctx.config.capture_target->invalidate();
+        }
         capture_ctx.images->stop();
       }
     });
@@ -1914,9 +1917,21 @@ namespace video {
     }
 
     std::shared_ptr<platf::display_t> disp;
+    auto clear_targets_before_display = util::fail_guard([&]() {
+      for (auto &capture_ctx : capture_ctxs) {
+        if (capture_ctx.config.capture_target) {
+          capture_ctx.config.capture_target->invalidate();
+        }
+      }
+    });
     reset_capture_display(disp, target_display_name, config);
     if (!disp) {
       return;
+    }
+    std::string active_capture_display_name = disp->captured_display_name();
+    std::string active_capture_device_id = disp->captured_display_device_id();
+    if (config.capture_target) {
+      config.capture_target->publish(active_capture_display_name, active_capture_device_id);
     }
     active_display_event->raise(target_display_name);
     display_wp = disp;
@@ -1935,6 +1950,9 @@ namespace video {
         // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
         // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
         capture_ctx->config.display_name = target_display_name;
+        if (capture_ctx->config.capture_target) {
+          capture_ctx->config.capture_target->publish(active_capture_display_name, active_capture_device_id);
+        }
         if (initial_img) {
           // 锁屏或静态桌面可能长时间没有新的 Desktop Duplication 帧。
           // 新会话必须先取得当前画面，不能一直编码初始化用的黑色占位帧。
@@ -2054,6 +2072,9 @@ namespace video {
       auto push_captured_image_callback = [&](std::shared_ptr<platf::img_t> &&img, bool frame_captured) -> bool {
         KITTY_WHILE_LOOP(auto capture_ctx = std::begin(capture_ctxs), capture_ctx != std::end(capture_ctxs), {
           if (!capture_ctx->images->running()) {
+            if (capture_ctx->config.capture_target) {
+              capture_ctx->config.capture_target->invalidate();
+            }
             capture_ctx = capture_ctxs.erase(capture_ctx);
 
             continue;
@@ -2106,6 +2127,15 @@ namespace video {
 
       switch (status) {
         case platf::capture_e::reinit: {
+          // Invalidate before releasing any old display resources. Control
+          // requests holding a target lock finish before switching can start.
+          active_capture_display_name.clear();
+          active_capture_device_id.clear();
+          for (auto &capture_ctx : capture_ctxs) {
+            if (capture_ctx.config.capture_target) {
+              capture_ctx.config.capture_target->invalidate();
+            }
+          }
           reinit_event.raise(true);
 
           // Some classes of images contain references to the display --> display won't delete unless img is deleted
@@ -2193,6 +2223,13 @@ namespace video {
             // reset_display() will sleep between retries
             reset_capture_display(disp, target_display_name, config);
             if (disp) {
+              active_capture_display_name = disp->captured_display_name();
+              active_capture_device_id = disp->captured_display_device_id();
+              for (auto &capture_ctx : capture_ctxs) {
+                if (capture_ctx.config.capture_target) {
+                  capture_ctx.config.capture_target->publish(active_capture_display_name, active_capture_device_id);
+                }
+              }
               active_display_event->raise(target_display_name);
               break;
             }
@@ -4007,6 +4044,15 @@ namespace video {
     auto active_display_event = mail::man->event<std::string>(mail::active_display);
     std::string active_display_name;
 
+    auto clear_targets = util::fail_guard([&]() {
+      // This guard precedes destruction of disp, including reinit/error exits.
+      for (auto &ctx : synced_session_ctxs) {
+        if (ctx->config.capture_target) {
+          ctx->config.capture_target->invalidate();
+        }
+      }
+    });
+
     if (synced_session_ctxs.empty()) {
       auto ctx = encode_session_ctx_queue.pop();
       if (!ctx) {
@@ -4062,6 +4108,11 @@ namespace video {
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
         active_display_name = target_display_name;
+        for (auto &ctx : synced_session_ctxs) {
+          if (ctx->config.capture_target) {
+            ctx->config.capture_target->publish(disp->captured_display_name(), disp->captured_display_device_id());
+          }
+        }
         active_display_event->raise(target_display_name);
         break;
       }
@@ -4099,6 +4150,9 @@ namespace video {
           // active target in newly joined contexts so the next reinit does not
           // restore their stale launch-time display selection.
           encode_session_ctx->config.display_name = active_display_name;
+          if (encode_session_ctx->config.capture_target) {
+            encode_session_ctx->config.capture_target->publish(disp->captured_display_name(), disp->captured_display_device_id());
+          }
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
           auto encode_session = make_synced_session(disp.get(), encoder, *img, *synced_session_ctxs.back());
@@ -4113,6 +4167,9 @@ namespace video {
         KITTY_WHILE_LOOP(auto pos = std::begin(synced_sessions), pos != std::end(synced_sessions), {
           auto ctx = pos->ctx;
           if (ctx->shutdown_event->peek()) {
+            if (ctx->config.capture_target) {
+              ctx->config.capture_target->invalidate();
+            }
             // Let waiting thread know it can delete shutdown_event
             ctx->join_event->raise(true);
 
@@ -4646,6 +4703,11 @@ namespace video {
     void *channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
     int packet_size) {
+    auto clear_target = util::fail_guard([&]() {
+      if (config.capture_target) {
+        config.capture_target->stop();
+      }
+    });
 #ifdef _WIN32
     if (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT)) {
       // PyroWave uses the same shared capture coordinator and encoder-loop

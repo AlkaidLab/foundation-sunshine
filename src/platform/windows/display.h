@@ -194,6 +194,14 @@ namespace platf::dxgi {
       return capture_frame_counter;
     }
 
+    std::string
+    captured_display_name() const override;
+
+    std::string
+    captured_display_device_id() const override;
+
+    bool captures_monitor = true;
+
     int
     init(const ::video::config_t &config, const std::string &display_name);
 
@@ -313,6 +321,7 @@ namespace platf::dxgi {
 
   private:
     std::wstring display_device_name;
+    std::string capture_device_id;
 
     // Cached HDR metadata for change detection
     std::optional<SS_HDR_METADATA> cached_hdr_metadata;

@@ -1,5 +1,6 @@
 #include "display_scale.h"
 
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -11,8 +12,9 @@
 #include "src/logging.h"
 
 #ifdef _WIN32
-#include "src/display_device/display_device.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/display_device/display_device.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/stream.h"
 #endif
 
 using json = nlohmann::json;
@@ -31,6 +33,52 @@ namespace nvhttp::display_scale {
     }
 
 #ifdef _WIN32
+    void
+    write_current_error(resp_https_t response, json &response_json,
+      const web::CaseInsensitiveMultimap &headers, const char *code, const char *message) {
+      response_json["target"] = "current";
+      response_json["status_code"] = 409;
+      response_json["status_message"] = message;
+      response_json["success"] = false;
+      response_json["error_code"] = code;
+      response->write(web::StatusCode::conflict, response_json.dump(), headers);
+    }
+
+    template <class Action>
+    void
+    with_current_capture(resp_https_t response, const req_https_t &request, json &response_json,
+      const web::CaseInsensitiveMultimap &headers, Action &&action) {
+      response_json["target"] = "current";
+      const auto selected = stream::session::current_capture_for_client(nvhttp::get_client_cert_uuid_from_request(request));
+      switch (selected.error) {
+        case streaming::capture_target_error_e::no_active_stream:
+          write_current_error(response, response_json, headers, "no_active_stream", "No active video stream for this client");
+          return;
+        case streaming::capture_target_error_e::ambiguous_stream:
+          write_current_error(response, response_json, headers, "ambiguous_stream", "More than one active video stream for this client");
+          return;
+        case streaming::capture_target_error_e::none:
+          break;
+      }
+      if (!selected.target) {
+        write_current_error(response, response_json, headers, "display_target_unavailable", "Capture target is not available");
+        return;
+      }
+
+      // Keep this lock for resolve, expected-identity validation, and apply.
+      // Capture switching and session stop must invalidate it before proceeding.
+      const auto target = selected.target->lock();
+      if (target.stopped()) {
+        write_current_error(response, response_json, headers, "no_active_stream", "Video stream has stopped");
+        return;
+      }
+      if (target.display_name().empty() || target.device_id().empty()) {
+        write_current_error(response, response_json, headers, "display_target_unavailable", "Capture target is initializing or unavailable");
+        return;
+      }
+      action(target.display_name(), target.device_id());
+    }
+
     void
     add_fields(json &node, const display_device::w_utils::display_scale_info_t &scale_info) {
       node["is_primary"] = scale_info.is_primary;
@@ -198,6 +246,30 @@ namespace nvhttp::display_scale {
       const std::string display_name = display_name_it != args.end() ? display_name_it->second : std::string {};
       const std::string device_id = device_id_it != args.end() ? device_id_it->second : std::string {};
 
+      const auto target_it = args.find("target");
+      if (target_it != args.end()) {
+        if (target_it->second != "current") {
+          response_json["status_code"] = 400;
+          response_json["status_message"] = "Invalid target";
+          response_json["success"] = false;
+          response_json["error_code"] = "invalid_request";
+          response->write(web::StatusCode::bad_request, response_json.dump(), headers);
+          return;
+        }
+        with_current_capture(response, request, response_json, headers, [&](const std::string &actual_display_name, const std::string &actual_device_id) {
+          // Canonical ID only: never choose primary/default or reuse a GDI name.
+          const auto scale_info = display_device::w_utils::get_display_scale_info({}, actual_device_id);
+          if (!scale_info || !streaming::matches_capture_identity(actual_device_id, actual_display_name, scale_info->device_id, scale_info->display_name)) {
+            write_current_error(response, response_json, headers, "display_target_unavailable", "Captured display cannot be resolved");
+            return;
+          }
+          response_json.update(to_json(*scale_info));
+          response_json["success"] = true;
+          response->write(web::StatusCode::ok, response_json.dump(), headers);
+        });
+        return;
+      }
+
       const auto scale_info = display_device::w_utils::get_display_scale_info(display_name, device_id);
       if (!scale_info) {
         response_json["status_code"] = 404;
@@ -259,7 +331,46 @@ namespace nvhttp::display_scale {
       const std::string device_id = body.contains("device_id") && body["device_id"].is_string() ? body["device_id"].get<std::string>() : std::string {};
       const int scale_percent = body["scale_percent"].get<int>();
 
-      const auto set_result = display_device::w_utils::set_display_scale(display_name, device_id, scale_percent);
+      const bool current_target = body.contains("target");
+      if (current_target && (!body["target"].is_string() || body["target"].get<std::string>() != "current" ||
+                              device_id.empty() || (body.contains("display_name") && !body["display_name"].is_string()))) {
+        response_json["status_code"] = 400;
+        response_json["status_message"] = "target=current requires the device_id returned by display-scale-options";
+        response_json["success"] = false;
+        response_json["error_code"] = "invalid_request";
+        response->write(web::StatusCode::bad_request, response_json.dump(), headers);
+        return;
+      }
+
+      std::optional<display_device::w_utils::set_display_scale_result_t> applied;
+      if (current_target) {
+        with_current_capture(response, request, response_json, headers, [&](const std::string &actual_display_name, const std::string &actual_device_id) {
+          const auto scale_info = display_device::w_utils::get_display_scale_info({}, actual_device_id);
+          if (!scale_info || !streaming::matches_capture_identity(actual_device_id, actual_display_name, scale_info->device_id, scale_info->display_name)) {
+            write_current_error(response, response_json, headers, "display_target_unavailable", "Captured display cannot be resolved");
+            return;
+          }
+          if (!streaming::matches_capture_identity(device_id, display_name, scale_info->device_id, scale_info->display_name)) {
+            write_current_error(response, response_json, headers, "display_target_changed", "Captured display changed; reload display scale options");
+            return;
+          }
+          // ID only: if the device disappears between resolve and apply, the
+          // OS helper must not fall back to a GDI name reused by another device.
+          applied = display_device::w_utils::set_display_scale({}, scale_info->device_id, scale_percent);
+          if (!applied->success && applied->error == display_device::w_utils::display_scale_error_e::display_not_found) {
+            applied.reset();
+            write_current_error(response, response_json, headers, "display_target_unavailable", "Captured display is no longer available");
+          }
+        });
+        if (!applied) {
+          return;
+        }
+      }
+      else {
+        applied = display_device::w_utils::set_display_scale(display_name, device_id, scale_percent);
+      }
+
+      const auto &set_result = *applied;
       response_json["success"] = set_result.success;
       response_json["display_name"] = set_result.display_name;
       response_json["device_id"] = set_result.device_id;

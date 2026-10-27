@@ -4238,6 +4238,10 @@ namespace stream {
         return;
       }
 
+      if (session.config.monitor.capture_target) {
+        session.config.monitor.capture_target->stop();
+      }
+
       BOOST_LOG(info) << "Stopping streaming session "sv << session.launch_session_id
                       << " [client_uuid="sv << session.client_cert_uuid
                       << ", reason="sv << stop_reason_name(reason) << ']';
@@ -4248,6 +4252,32 @@ namespace stream {
     bool
     belongs_to_client(const session_t &session, const std::string &uuid) {
       return !uuid.empty() && session.client_cert_uuid == uuid;
+    }
+
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid) {
+      if (client_cert_uuid.empty() || !broadcast_shared.has_ref()) {
+        return {};
+      }
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) {
+        return {};
+      }
+
+      std::vector<streaming::capture_session_t> sessions;
+      {
+        // Copy shared state while the raw session pointers are protected, then
+        // release this lock before any target lock or Windows display API call.
+        auto lg = broadcast_ref->control_server._sessions.lock();
+        for (const auto session : *broadcast_ref->control_server._sessions) {
+          if (session) {
+            sessions.push_back({ session->client_cert_uuid,
+              session->lifecycle.state() == state_e::RUNNING,
+              session->control_only, session->config.monitor.capture_target });
+          }
+        }
+      }
+      return streaming::select_current_capture(sessions, client_cert_uuid);
     }
 
     void
@@ -4562,6 +4592,7 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
+      session->config.monitor.capture_target = std::make_shared<streaming::capture_target_t>();
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
