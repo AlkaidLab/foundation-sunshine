@@ -76,6 +76,8 @@ Check-Status 'StoppedVerified'
 (& $control -Action Stop -Metadata "$out/capture.json")|Out-Null
 Set-Content -LiteralPath $state.captureLog -Value @('STOP cycles=0 failed=1 error=source-stall restored=1','HOOK_STOP restored=1 nativeStatus=2 nativeError=0 entries=6')
 Check-Status 'Faulted'
+Set-Content -LiteralPath $state.captureLog -Value @('COMPONENT name=audioeng.dll support=unsupported version=10.0.1.2 sha256=00','COMPONENT name=DolbyAccess support=missing version=unknown sha256=none','FAILED Unsupported system component; see COMPONENT lines win32=0')
+Check-Status 'Unsupported'
 $state.publisherPid=$PID;$state.publisherCreated=$current.StartTime.ToFileTimeUtc().ToString()
 Set-Content -LiteralPath $state.captureLog -Value ''
 Check-Status 'WaitingForObjects'

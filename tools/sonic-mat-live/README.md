@@ -8,7 +8,8 @@ The shared object bridge and native worker have one production capture entry.
 
 The private ABI is pinned to audioeng.dll 10.0.26100.9711, timestamp 0x0627570d,
 image size 0x1ef000 and SHA256
-`3936bffdc4aa365e74c9995359f2821aaf759a14155a180cfa95764962b9f1d3`.
+`3936bffdc4aa365e74c9995359f2821aaf759a14155a180cfa95764962b9f1d3`; the verified
+builds live only in `src/spatial_audio/mat_compat.h`.
 The launcher checks the explicit PID/creation time, original callback bytes,
 system/native component identities and reviewed DLL hashes. This is an opt-in
 development path, not a general Windows capture API.
@@ -37,6 +38,13 @@ callbacks, dynamic-only and 12 static + 2 dynamic IPC, and private pipe lifecycl
 The IPC tests run 1300 rounds with a FAKE worker and check exact type, PCM, gain,
 position and EOS. CI passes `-TestsOnly`; it never attaches to audiodg, loads a
 vendor encoder, starts a signal source or needs administrator privileges.
+
+Preflight and Start first print one `COMPONENT` line each for `audioeng.dll` and
+Dolby Access (version, SHA256, `supported`/`missing`/`unsupported`). Builds not
+listed in `src/spatial_audio/mat_compat.h` end with exit code 3 before any hook or
+elevation; `manage-live.ps1` reports them and Status shows `Unsupported`. Dolby
+Access is located through its package family, so Store version folders and other
+install drives work as long as the DLL contents are verified.
 
 `manage-live.ps1` defaults to read-only `Preflight`. `Start` requires the exact
 engine identity, reviewed build, fresh output and an explicit `-Continuous` or

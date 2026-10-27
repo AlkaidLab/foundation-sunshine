@@ -24,9 +24,10 @@ function Get-State($State){
  $restored=$log -match 'HOOK_STOP restored=1 .*entries=6'
  $failed=$log -match '(?m)^FAILED |(?m)^STOP .*failed=1|(?m)^HOOK_STOP restored=0'
  $nativeSeen=$log -match 'NATIVE_MAT_READY'
- $status=if($failed -or !$engineAlive){'Faulted'}elseif(!$process){if($restored){'StoppedVerified'}else{'ExitedUnverified'}}elseif($nativeSeen){'NativeReady'}else{'WaitingForObjects'}
+ $unsupported=@($log -split "`r?`n"|Where-Object {$_ -match '^COMPONENT .*support=(missing|unsupported)'})
+ $status=if($unsupported){'Unsupported'}elseif($failed -or !$engineAlive){'Faulted'}elseif(!$process){if($restored){'StoppedVerified'}else{'ExitedUnverified'}}elseif($nativeSeen){'NativeReady'}else{'WaitingForObjects'}
  [ordered]@{state=$status;publisherAlive=[bool]$process;engineIdentityRetained=[bool]$engineAlive;nativeCyclesObserved=[bool]$nativeSeen;
-  hooksRestored=[bool]$restored;hardwarePlaybackVerified=$false;producer=$State.producer;pipe=$State.pipe;captureLog=$State.captureLog}
+  hooksRestored=[bool]$restored;unsupportedComponents=$unsupported;hardwarePlaybackVerified=$false;producer=$State.producer;pipe=$State.pipe;captureLog=$State.captureLog}
 }
 if($Action -in @('Status','Stop')){
  if(!$Metadata){throw 'Exact capture metadata is required'}
@@ -57,6 +58,10 @@ $trusted=@{}
 foreach($name in @('sunshine-plugin-mat-capture.exe','sunshine-plugin-object-tap.dll','sunshine-sonic-mat-worker.dll')){$trusted[$name]=Get-MatTrustedHash $manifest $name}
 function Invoke-Preflight([string]$Image){
  $result=& $Image --preflight $EnginePid $EngineCreated 2>&1
+ if($LASTEXITCODE -eq 3){
+  $components=(@($result)|Where-Object {"$_" -like 'COMPONENT *'}) -join "`n"
+  throw "This Windows audio engine or Dolby Access build has not been verified for MAT capture; no attach/elevation attempted. Include these lines when reporting it:`n$components"
+ }
  if($LASTEXITCODE){throw "Read-only plugin preflight failed; no attach/elevation attempted: $result"}
  return $result
 }

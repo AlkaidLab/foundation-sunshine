@@ -1,6 +1,7 @@
 #include "native_session.h"
 #include "plugin_bridge.h"
 #include "capture_options.h"
+#include "components.h"
 static bool
 OriginalPluginBytes(HANDLE engine) {
   constexpr DWORD rvas[] = { 0xfa3b0, 0x2fd90, 0x45be0, 0x31e00, 0x74b50, 0x733f8 };
@@ -31,6 +32,10 @@ wmain(int argc, wchar_t **argv) {
     HANDLE process = nullptr;
     int code = 1;
     try {
+      if (!sonic_live::report_components(mat_compat::audio_engine(), sonic_live::find_dolby_access().component)) {
+        puts("PREFLIGHT_UNSUPPORTED system audio engine or Dolby Access build has not been verified; attach=0");
+        return 3;
+      }
       auto pid = std::stoull(argv[2]), created = std::stoull(argv[3]);
       require(pid && pid <= MAXDWORD && created, "Explicit plugin engine identity");
       process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, (DWORD) pid);
@@ -64,6 +69,8 @@ wmain(int argc, wchar_t **argv) {
     auto pid64 = std::stoull(argv[2]), creation = std::stoull(argv[3]);
     require(pid64 && pid64 <= MAXDWORD && creation, "Explicit audiodg identity");
     DWORD pid = (DWORD) pid64;
+    const auto dolby = sonic_live::find_dolby_access();
+    require(sonic_live::report_components(mat_compat::audio_engine(), dolby.component), "Unsupported system component; see COMPONENT lines");
     engine = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | SYNCHRONIZE, FALSE, pid);
     require(engine && native_mat_guard::created(engine) == creation && native_mat_guard::system_engine(engine), "Pinned plugin audiodg identity/hash");
     require(OriginalPluginBytes(engine), "Original six plugin entry points");
@@ -109,7 +116,7 @@ wmain(int argc, wchar_t **argv) {
     while (!ring->status && GetTickCount64() - began < 2000 && WaitForSingleObject(thread, 10) == WAIT_TIMEOUT) InterlockedExchange64(&ring->heartbeat, GetTickCount64());
     require(ring->status == 1, "Plugin paired hooks ready");
     auto epoch = (Qpc() & INT64_MAX) | 1;
-    controller = std::thread([&, codec, codecBase, epoch, began, limit] {try {
+    controller = std::thread([&, codec, codecBase, vendor = dolby.directory, epoch, began, limit] {try {
             q4::Assembler assembler;sonic_live::PluginBridge bridge;std::map<uint64_t,uint32_t> rates;std::map<uint64_t,int64_t> starts;uint64_t selected=0;
             for(;;){auto now=GetTickCount64();InterlockedExchange64(&ring->heartbeat,now);if(native)native->heartbeat();
                 require(!Read64(&ring->droppedFull)&&!Read64(&ring->droppedBusy)&&!Read64(&ring->invalid)&&!Read64(&ring->unboundAfterArming)&&!ring->error,"Plugin callback loss/ABI violation");require(WaitForSingleObject(engine,0)==WAIT_TIMEOUT,"Pinned plugin engine exited");
@@ -122,7 +129,7 @@ wmain(int argc, wchar_t **argv) {
                             for(const auto& o:quantum.objects){if(o.source.audio.type==1)++dynamic;else mask|=o.source.audio.type;}
                             printf("PLUGIN_SOURCE domain=%llu renderer=0x%llx objects=%zu frames=%u rate=%u staticMask=0x%x dynamicObjects=%u\n",selected,quantum.renderer,quantum.objects.size(),quantum.frames,rates.at(selected),mask,dynamic);}
                         if(selected&&quantum.domain!=selected)require(quantum.objects.empty(),"Multiple object-bearing plugin domains");
-                        else if(selected)bridge.push(quantum,starts.at(h.domain),h.audio.qpc,rates.at(h.domain),[&](const receiver::Slot& packet){if(!native)native=std::make_unique<NativeSession>(engine,codec,codecBase,bridge.renderer(),epoch,shared,"plugin-reencode");return native->send(packet);});
+                        else if(selected)bridge.push(quantum,starts.at(h.domain),h.audio.qpc,rates.at(h.domain),[&](const receiver::Slot& packet){if(!native)native=std::make_unique<NativeSession>(engine,codec,codecBase,vendor,bridge.renderer(),epoch,shared,"plugin-reencode");return native->send(packet);});
                     }
                     if(h.kind==q4::DomainEnd){
                         rates.erase(h.domain);starts.erase(h.domain);

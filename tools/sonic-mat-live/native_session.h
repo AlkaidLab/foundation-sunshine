@@ -137,7 +137,7 @@ class NativeSession {
   }
 
 public:
-  NativeSession(HANDLE engine, const fs::path &codec, uintptr_t loaded, uint64_t domain, uint64_t epoch, Shared &pipe, const char *sourceKind): engine_(engine), pipe_(pipe), domain_(domain), epoch_(epoch), sourceKind_(sourceKind) {
+  NativeSession(HANDLE engine, const fs::path &codec, uintptr_t loaded, const std::wstring &vendorDirectory, uint64_t domain, uint64_t epoch, Shared &pipe, const char *sourceKind): engine_(engine), pipe_(pipe), domain_(domain), epoch_(epoch), sourceKind_(sourceKind) {
     try {
       input_map_ = Map(sizeof(receiver::Shared));
       output_map_ = Map(sizeof(spatial_stream::Output));
@@ -152,6 +152,8 @@ public:
       require(data_ && cancel_, "Native queue events");
       auto dup = [&](HANDLE h, DWORD access = 0) {auto copy=DuplicateTo(engine_,h,access);remote_.push_back(copy);return copy; };
       spatial_stream::Args args { sizeof(args), spatial_stream::streamVersion, dup(input_map_), dup(data_), dup(cancel_), dup(GetCurrentProcess(), SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION), dup(output_map_), domain, epoch, { nonce[0], nonce[1] }, native_mat_guard::created(GetCurrentProcess()), GetCurrentProcessId(), 0, 0, 0 };
+      require(vendorDirectory.size() < std::size(args.vendorDirectory), "Dolby Access directory length");
+      wmemcpy(args.vendorDirectory, vendorDirectory.c_str(), vendorDirectory.size() + 1);
       arguments_ = RemoteCopy(engine_, &args, sizeof(args));
       thread_ = RemoteThread(engine_, Export(codec, loaded, "StartMatStreamReceiver"), arguments_);
       consumer_ = std::thread([this] { consume(); });

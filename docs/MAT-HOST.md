@@ -52,6 +52,20 @@ ANNOUNCE 前选择普通音频。严格 MAT 请求被拒绝。已经选择 MAT �
 其他采样率和多个同时工作的 renderer 会拒绝；这不等于已支持
 所有游戏。原生 ABI 与组件版本固定，构建成功不能证明其他系统版本可用。
 
+## 系统组件版本
+
+采集钩子和原生 worker 依赖 `audioeng.dll` 与 Dolby Access（`DolbyMatEnc.dll`、
+`DolbyMatEngine.dll`）的内部偏移，只在
+[`mat_compat.h`](../src/spatial_audio/mat_compat.h) 列出的已验证文件哈希上运行。
+Windows 累积更新或 Dolby Access 商店更新改变这些文件后，MAT 不可用，普通音频不受影响：
+
+- 采集工具的 Preflight/Start 先输出每个组件的 `COMPONENT` 行（版本、哈希、是否支持），
+  未验证时以退出码 3 结束，不挂钩也不提权；管理入口提示附上这些行反馈，
+  Status 显示 `Unsupported`。主机状态页此时仍显示「等待采集工具」。
+- Dolby Access 按包族名查找当前安装目录，商店更新版本号或安装到其他盘不需要改代码；
+  只要 DLL 内容仍在已验证列表即可继续使用。worker 在 audiodg 内仍校验目录形状和哈希。
+- 新版本须重新完成原生验收后，在 `mat_compat.h` 增加对应哈希。
+
 ## 验证
 
 常规 CI 运行轻量主机契约、对象回调、IPC、管道和管理入口回归；客户端使用 mock，

@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "stream_output_protocol.h"
+#include "mat_compat.h"
 #include <roapi.h>
 #include <activation.h>
 #include <winstring.h>
@@ -147,12 +148,22 @@ done:
 }
 static HRESULT
 nativeOpen(Session &s, BYTE *audio) {
-  constexpr wchar_t folder[] = L"C:\\Program Files\\WindowsApps\\DolbyLaboratories.DolbyAccess_3.27.12250.0_x64__rz1tebttyb220\\DLLs\\x64\\";
+  // The publisher resolves the installed package; only its shape and the
+  // pinned DLL contents are trusted here.
+  const wchar_t *folder = s.args.vendorDirectory;
+  if (!mat_compat::dolby_directory_shape(folder)) return HRESULT_FROM_WIN32(ERROR_BAD_PATHNAME);
   wchar_t enc[MAX_PATH] {}, engine[MAX_PATH] {}, audioPath[MAX_PATH] {};
-  swprintf_s(enc, L"%sDolbyMatEnc.dll", folder);
-  swprintf_s(engine, L"%sDolbyMatEngine.dll", folder);
+  if (swprintf_s(enc, L"%sDolbyMatEnc.dll", folder) < 0 || swprintf_s(engine, L"%sDolbyMatEngine.dll", folder) < 0) return HRESULT_FROM_WIN32(ERROR_BAD_PATHNAME);
+  if (GetFileAttributesW(enc) == INVALID_FILE_ATTRIBUTES || GetFileAttributesW(engine) == INVALID_FILE_ATTRIBUTES) return HRESULT_FROM_WIN32(ERROR_MOD_NOT_FOUND);
   GetModuleFileNameW(reinterpret_cast<HMODULE>(audio), audioPath, MAX_PATH);
-  if (!fileHash(audioPath, "3936bffdc4aa365e74c9995359f2821aaf759a14155a180cfa95764962b9f1d3") || !fileHash(enc, "963697fb61ee302699b294b1b6cb59ab42e5eae3a555f6674ed54fc3a3cfacea") || !fileHash(engine, "342cbc58a19afa2b5b58cef408ef91dcc06c68829520286acabb7178eda7f569")) return HRESULT_FROM_WIN32(ERROR_REVISION_MISMATCH);
+  bool pinned = false;
+  for (auto expected : mat_compat::audioeng_sha256)
+    pinned = pinned || fileHash(audioPath, expected.data());
+  if (!pinned) return HRESULT_FROM_WIN32(ERROR_REVISION_MISMATCH);
+  pinned = false;
+  for (const auto &build : mat_compat::dolby_builds)
+    pinned = pinned || (fileHash(enc, build.encoder_sha256.data()) && fileHash(engine, build.engine_sha256.data()));
+  if (!pinned) return HRESULT_FROM_WIN32(ERROR_REVISION_MISMATCH);
   HRESULT hr = RoInitialize(RO_INIT_MULTITHREADED);
   if (FAILED(hr)) return hr;
   s.ro = true;

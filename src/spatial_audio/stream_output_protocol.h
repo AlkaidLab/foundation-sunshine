@@ -1,9 +1,10 @@
 #pragma once
 #include "object_input_protocol.h"
+#include <cwchar>
 
 namespace spatial_stream {
   using namespace receiver;
-  constexpr uint32_t streamMagic = 0x32534f4d, streamVersion = 2, slots = 8, payloadCapacity = 12 + 64 * 1940;
+  constexpr uint32_t streamMagic = 0x32534f4d, streamVersion = 3, slots = 8, payloadCapacity = 12 + 64 * 1940;
   constexpr uint32_t nativeFormat = 1, fakeFormat = 0x80000001u;
   struct Stats {
     uint32_t magic, version, bytes, kind;
@@ -48,6 +49,9 @@ namespace spatial_stream {
     uint64_t domain, epoch, nonce[2], ownerCreationTime;
     // Zero leaves duration/round count unbounded; liveness and native pacing stay on.
     uint32_t ownerPid, maxSourceRounds, maxSeconds, reserved;
+    // Native only: the publisher resolves the installed Dolby Access package;
+    // the worker re-checks its shape and pinned DLL hashes before loading.
+    wchar_t vendorDirectory[260];
   };
   struct FakeConfig {
     uint32_t bytes, version;
@@ -57,7 +61,7 @@ namespace spatial_stream {
   using Start = DWORD(WINAPI *)(const Args *);
   using FakeStart = DWORD(WINAPI *)(const Args *, const FakeConfig *);
   inline bool
-  argsValid(const Args &a) { return a.bytes == sizeof(a) && a.version == streamVersion && a.input && a.data && a.cancel && a.owner && a.output && a.domain && a.epoch && a.ownerPid && a.ownerCreationTime && !a.reserved; }
+  argsValid(const Args &a) { return a.bytes == sizeof(a) && a.version == streamVersion && a.input && a.data && a.cancel && a.owner && a.output && a.domain && a.epoch && a.ownerPid && a.ownerCreationTime && !a.reserved && wmemchr(a.vendorDirectory, L'\0', 260) != nullptr; }
   inline bool
   contract(const Shared &s, const Args &a) {
     const auto &c = s.contract;

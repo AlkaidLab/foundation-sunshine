@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include "mat_compat.h"
 #pragma comment(lib, "bcrypt.lib")
 namespace native_mat_guard {
   inline std::wstring
@@ -65,7 +66,7 @@ namespace native_mat_guard {
   inline bool
   system_engine(HANDLE process) {
     return _wcsicmp(image(process).c_str(), system(L"audiodg.exe").c_str()) == 0 &&
-           sha256(system(L"audioeng.dll")) == "3936bffdc4aa365e74c9995359f2821aaf759a14155a180cfa95764962b9f1d3";
+           mat_compat::supported_audioeng(sha256(system(L"audioeng.dll")));
   }
   inline bool
   loaded_audioeng(HMODULE module) {
