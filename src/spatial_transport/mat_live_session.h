@@ -90,7 +90,7 @@ namespace spatial_transport {
     uint8_t control[MAT_WIRE_PACKET];
     mat_wire_make(control, MAT_WIRE_SYNC, session.profile.epoch, session.profile.domain, 0, 0, 0, nullptr);
     for (unsigned i = 0; i < 4; i++) send(control);
-    auto origin = Clock::time_point {}, last = Clock::now();
+    auto last = Clock::now();
     spatial_audio::Frame frame;
     while (!cancelled()) {
       auto status = session.source->read(frame);
@@ -107,12 +107,16 @@ namespace spatial_transport {
         "Live MAT source descriptor/sequence/clock");
       spatial_audio::validate_carrier(frame.bytes);
       require(cycles < uint64_t(INT64_MAX) / 20000000, "Live MAT cycle counter overflow");
-      if (cycles == 0) origin = Clock::now();
+      // Pace each cycle from the moment its frame is available. The source runs
+      // on the audio device clock; a fixed host-clock origin would accumulate
+      // drift until the deadline check fails, or let a faster source back up
+      // the pipe. A queued frame starts immediately, so backlog drains.
+      const auto cycle_start = Clock::now();
       frame.epoch = session.profile.epoch;
       frame.domain = session.profile.domain;
       unsigned index = 0;
       fragment(frame, [&](const uint8_t *data, size_t) {
-        auto target = origin + std::chrono::microseconds(cycles * 20000 + uint64_t(index++) * 20000 / 60);
+        auto target = cycle_start + std::chrono::microseconds(uint64_t(index++) * 20000 / MAT_WIRE_FRAGMENTS);
         while (Clock::now() < target) {
           require(!cancelled(), "Live MAT cancelled");
           wait(target - Clock::now());

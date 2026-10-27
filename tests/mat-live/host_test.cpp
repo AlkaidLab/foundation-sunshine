@@ -23,6 +23,8 @@ Carrier() {
 struct TestSource final: spatial_audio::EncodedAudioSource {
   int n = 0, limit = 8, stops = 0;
   bool fail = false, stopped = false, started = false, start_ok = true, pending = false;
+  std::chrono::milliseconds period { 0 };
+  std::chrono::steady_clock::time_point ready {};
   spatial_audio::Descriptor contract {};
   std::function<void(spatial_audio::Frame &)> change = [](auto &) {};
   spatial_audio::Descriptor
@@ -37,6 +39,8 @@ struct TestSource final: spatial_audio::EncodedAudioSource {
     if (fail) return spatial_audio::Read::failed;
     if (pending) return spatial_audio::Read::pending;
     if (n == limit) return spatial_audio::Read::ended;
+    if (std::chrono::steady_clock::now() < ready) return spatial_audio::Read::pending;
+    if (period.count()) ready = std::chrono::steady_clock::now() + period;
     f = {};
     f.bytes = Carrier();
     f.sequence = n;
@@ -193,6 +197,19 @@ HostContracts() {
     }
     Check(caught && raw->stops == 1 && client.ends == 0);
   }
+  // A source slower than the host clock must not accumulate pacing debt. At
+  // 25ms per cycle a fixed 20ms schedule falls 60ms behind by cycle 13.
+  {
+    spatial_transport::LiveSession session;
+    session.profile = { 500, 1 };
+    auto source = std::make_unique<TestSource>();
+    source->limit = 16;
+    source->period = std::chrono::milliseconds(25);
+    session.source = std::move(source);
+    MockClient client(session.profile, key);
+    spatial_transport::live_session(session, key, 16, [&](auto *p, auto n) { client.push(p, n); }, wait, [] { return false; });
+    Check(client.received == 16 && client.ends == 1);
+  }
   Check(!spatial_transport::prepare_live("", ""));
 #if defined(_WIN32)
   bool caught = false;
@@ -268,7 +285,7 @@ main() {
     identity.kind = 3;
     mat_capture::encode_descriptor(descriptor, identity);
     Check(!mat_capture::decode_descriptor(descriptor, decoded));
-    std::cout << "PASS host sender with mock client: isolated reconnect, cancellation, source/start/clock/sequence/format failures, watchdog and cleanup; object-worker-only descriptor\n";
+    std::cout << "PASS host sender with mock client: isolated reconnect, cancellation, source/start/clock/sequence/format failures, slow-source drift, watchdog and cleanup; object-worker-only descriptor\n";
     return 0;
   }
   catch (const std::exception &e) {
