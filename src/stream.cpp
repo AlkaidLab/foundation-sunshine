@@ -4256,10 +4256,13 @@ namespace stream {
 
     streaming::capture_target_result_t
     current_capture_for_client(const std::string &client_cert_uuid) {
-      if (client_cert_uuid.empty() || !broadcast_shared.has_ref()) {
+      if (client_cert_uuid.empty()) {
         return {};
       }
-      auto broadcast_ref = broadcast_shared.ref();
+      // Do not call ref() after a separate has_ref() check: the last stream
+      // can tear down between those calls, which would recreate the broadcast
+      // context while an options request is only probing active sessions.
+      auto broadcast_ref = broadcast_shared.try_ref();
       if (!broadcast_ref) {
         return {};
       }

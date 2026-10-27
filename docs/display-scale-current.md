@@ -21,7 +21,7 @@ Success includes the existing scale fields, `target: "current"`, actual `display
 }
 ```
 
-`device_id` is required. `display_name` is optional but must match when sent. Success returns the target identity, previous/current scale, supported steps, `effective_immediately`, and `restart_required`; acceptance may precede effect.
+`device_id` is required. `display_name` is optional; when it is non-empty, it must match the target identity returned by GET. Success returns the target identity, previous/current scale, supported steps, `effective_immediately`, and `restart_required`; acceptance may precede effect.
 
 ## Errors and target rules
 
