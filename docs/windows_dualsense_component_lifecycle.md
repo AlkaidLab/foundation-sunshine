@@ -119,9 +119,9 @@ common-c 使用回调存在性生成底层能力位，这是应用层模式的�
 
 新客户端同时声明已有 `ML_FF_DS5_HAPTICS_IR_V2 (0x08)` 和可选 `ML_FF_DS5_HAPTICS_IR_EXTENDED (0x80)`。只有两者均具备时，主机才通过既有加密控制流的 `0x550B` 发送“原 v2 基础帧 + 增强区”；否则保持 `0x550B` 原 v2 或普通 rumble。原始 PCM 继续优先。基础与增强在同一消息中提交，客户端不需要跨两条不可靠消息拼接，也不会重复播放基础瞬态与增强事件。
 
-增强包前 72 字节由原 v2 编码器直接生成，保留 version=2、length=72、保留位=0 及原 RMS／peak／attack／ratio／ZCR／correlation 语义。common-c 复用原 v2 解析器验证这一前缀，再解析 40-byte 增强头和最多 8 个 32-byte 事件。完整 payload 为 `112 + 32N`，最多 368 byte。控制器编号、标志、源序号、样本数和原特征均复用基础帧，不在增强区重复定义。完整契约由 [common-c 协议文档](../third-party/moonlight-common-c/docs/DS5-HAPTICS-IR.md) 维护。
+增强包前 72 字节由原 v2 编码器直接生成，保留 version=2、length=72、保留位=0 及原 RMS／peak／attack／ratio／ZCR／correlation 语义。common-c 复用原 v2 解析器验证这一前缀，再解析 32-byte 增强头和最多 8 个 20-byte 事件。完整 payload 为 `104 + 20N`，最多 264 byte。控制器编号、标志、源序号、样本数和原特征均复用基础帧，不在增强区重复定义。完整契约由 [common-c 协议文档](../third-party/moonlight-common-c/docs/DS5-HAPTICS-IR.md) 维护。
 
-增强区只增加 epoch、分析 profile、持续状态结束时间、左右连续低／高频状态以及事件 ID／起音时间／强度／证据分数／sharpness。基础 RMS/peak 仍是原 50–400 Hz 触觉频带特征，不改成原始 PCM 统计值；SDK 的 raw RMS/peak 诊断不额外上网。增强持续包络有释放历史，基础帧 SILENT 不得清空它。v2 的固定 5 ms 分析 hop 在不规则输入分块下可能早于增强状态结束时间，两者沿用同一 48 kHz 相对源时钟，增强区显式记录自己的结束时间。
+增强区只增加 epoch、持续状态结束时间、左右连续低／高频状态以及事件 ID／起音时间／左右强度。基础 RMS/peak 仍是原 50–400 Hz 触觉频带特征，不改成原始 PCM 统计值；SDK 的 raw RMS/peak、profile、confidence 和 sharpness 保留在本地分析结果中，不进入线协议；字段语义由扩展版本定义，wire 不添加内存对齐填充。增强持续包络有释放历史，基础帧 SILENT 不得清空它。v2 的固定 5 ms 分析 hop 在不规则输入分块下可能早于增强状态结束时间，两者沿用同一 48 kHz 相对源时钟，增强区显式记录自己的结束时间。
 
 SDK 仍接受最多 240 帧的单次输入；这是分析接口约束，不是协议源采样帧数的上限。common-c 回调及头文件须随应用同步重编译，兼容范围为旧线协议及源码重编译，不承诺旧应用仅替换共享库仍具有二进制兼容性。分析 SDK 的已有 ABI 保持兼容，新 native result 也不直接作为 wire 内存发送。
 

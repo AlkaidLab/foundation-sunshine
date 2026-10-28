@@ -1551,7 +1551,7 @@ namespace stream {
         std::ranges::copy(*wire, plaintext.data() + sizeof(control_header_v2));
         std::array<std::uint8_t,
           sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
-            sizeof(control_header_v2) + 112 + 8 * 32) + crypto::cipher::tag_size> encrypted_payload;
+            sizeof(control_header_v2) + 104 + 8 * 20) + crypto::cipher::tag_size> encrypted_payload;
         payload = encode_control(session,
           std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()), encrypted_payload);
       }

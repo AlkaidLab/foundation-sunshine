@@ -31,7 +31,7 @@ main(int argc, char **argv) {
     std::uint32_t previous_sequence = 0;
     bool first = true, ended = false;
     while (at < bytes.size()) {
-      if (bytes.size() - at < 112) return 3;
+      if (bytes.size() - at < 104) return 3;
       const auto length = 72 + unsigned(bytes[at + 74]) + (unsigned(bytes[at + 75]) << 8);
       if (length > bytes.size() - at) return 4;
       LI_DS5_HAPTICS_IR_EXTENDED_FRAME frame {};
@@ -50,8 +50,7 @@ main(int argc, char **argv) {
         else {
           const auto &original = found->second;
           if (original.sourceTimeUs != event.sourceTimeUs || original.leftStrength != event.leftStrength ||
-              original.rightStrength != event.rightStrength || original.confidence != event.confidence ||
-              original.sharpness != event.sharpness) {
+              original.rightStrength != event.rightStrength) {
             std::cerr << entry.path() << ": event " << event.eventId << " changed after publication\n";
             return 8;
           }

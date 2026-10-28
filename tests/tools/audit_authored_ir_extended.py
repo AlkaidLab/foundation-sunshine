@@ -18,21 +18,21 @@ def main(fixtures, analyzer, out):
         at = 0
         while at < len(data):
             size = 72 + struct.unpack_from('<H', data, at + 74)[0]
-            time = struct.unpack_from('<Q', data, at + 84)[0] / 1e6
+            time = struct.unpack_from('<Q', data, at + 80)[0] / 1e6
             event_count = data[at + 73]
-            assert size == 112 + event_count * 32
-            l = struct.unpack_from('<2f', data, at + 92)
-            r = struct.unpack_from('<2f', data, at + 100)
+            assert size == 104 + event_count * 20
+            l = struct.unpack_from('<2f', data, at + 88)
+            r = struct.unpack_from('<2f', data, at + 96)
             if spec['steady_start_s'] <= time <= spec['steady_end_s']:
                 frames += 1
                 low += max(l[0], r[0]); high += max(l[1], r[1])
                 body += max(l[0], r[0], l[1], r[1]) > 0.005
             for i in range(event_count):
-                off = at + 112 + i * 32
+                off = at + 104 + i * 20
                 eid = struct.unpack_from('<I', data, off)[0]
                 if eid not in seen:
                     seen.add(eid)
-                    events.append(struct.unpack_from('<Q', data, off + 8)[0] / 1e6)
+                    events.append(struct.unpack_from('<Q', data, off + 4)[0] / 1e6)
             at += size
         unmatched = list(events)
         matched = 0

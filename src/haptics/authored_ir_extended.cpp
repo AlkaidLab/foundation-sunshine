@@ -69,28 +69,25 @@ namespace haptics {
     // Small input chunks may not complete its 5 ms hop yet.
     const auto base = _base.process(controller, source_flags, count, sequence, timestamp, pcm);
     if (!base) return std::nullopt;
-    std::vector<std::uint8_t> wire(112 + frame.event_count * 32, 0);
+    std::vector<std::uint8_t> wire(104 + frame.event_count * 20, 0);
     std::ranges::copy(*base, wire.begin());
     auto *extension = wire.data() + authored_ir_v2_wire_size;
     extension[0] = 1;
     extension[1] = static_cast<std::uint8_t>(frame.event_count);
     u16(extension + 2, static_cast<std::uint16_t>(wire.size() - authored_ir_v2_wire_size));
-    u16(extension + 4, static_cast<std::uint16_t>(frame.profile));
-    u32(extension + 8, frame.epoch);
-    u64(extension + 12, frame.timestamp_us);
+    u32(extension + 4, frame.epoch);
+    u64(extension + 8, frame.timestamp_us);
     for (unsigned i = 0; i < 2; ++i) {
-      f32(extension + 20 + i * 8, frame.lanes[i].continuous_low);
-      f32(extension + 24 + i * 8, frame.lanes[i].continuous_high);
+      f32(extension + 16 + i * 8, frame.lanes[i].continuous_low);
+      f32(extension + 20 + i * 8, frame.lanes[i].continuous_high);
     }
     for (unsigned i = 0; i < frame.event_count; ++i) {
       const auto &event = frame.events[i];
-      auto *out = wire.data() + 112 + i * 32;
+      auto *out = wire.data() + 104 + i * 20;
       u32(out, event.event_id);
-      u64(out + 8, event.source_time_us);
-      f32(out + 16, event.left_strength);
-      f32(out + 20, event.right_strength);
-      f32(out + 24, event.confidence);
-      f32(out + 28, event.sharpness);
+      u64(out + 4, event.source_time_us);
+      f32(out + 12, event.left_strength);
+      f32(out + 16, event.right_strength);
     }
     return wire;
   }
