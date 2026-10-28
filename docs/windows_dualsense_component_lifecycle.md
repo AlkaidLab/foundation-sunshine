@@ -97,37 +97,35 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
      -> 客户端抖动缓冲
      -> 物理 DualSense 音频触觉端点（不经过 audio-haptics SDK）
 
-客户端选择“模拟 DualSense”并将“DualSense 模拟路径”设为“IR v3”
-  -> 新客户端声明 ML_FF_DS5_HAPTICS_IR_V3 及 IR_V2 回退能力
+客户端选择“模拟 DualSense”并将“DualSense 模拟路径”设为“IR 增强（v2 + 扩展）”
+  -> 新客户端声明 ML_FF_DS5_HAPTICS_IR_EXTENDED 及 IR_V2 回退能力
      -> Sunshine Core 的 authored-analysis 通道
-     -> 新主机选择双 lane 持续状态和瞬态事件 IR v3
+     -> 新主机选择双 lane 持续状态和瞬态事件 IR 增强（v2 + 扩展）
         旧主机继续发送原有 IR v2
      -> 客户端按本机执行器能力渲染
 ```
 
-Android 的“DualSense 模拟路径”提供“传统模拟 / IR v3”选择，默认保持传统模拟。传统模拟不声明 IR 能力，继续使用主机已有的 rumble 分析与客户端普通振动链路；IR v3 选择才声明 v3/v2。设置在下次连接生效，原生波形手柄的 PCM 协商仍优先。
+Android 的“DualSense 模拟路径”提供“传统模拟 / IR 增强（v2 + 扩展）”选择，默认保持传统模拟。传统模拟不声明 IR 能力，继续使用主机已有的 rumble 分析与客户端普通振动链路；IR 增强（v2 + 扩展） 选择才声明 v2 及可选增强能力。设置在下次连接生效，原生波形手柄的 PCM 协商仍优先。
 
-common-c 使用回调存在性生成底层能力位，这是应用层模式的协议投影。原始 PCM 回调与任一 IR 回调同时注册属于配置错误，连接启动会失败；两个 IR 版本可以同时注册以向旧主机回退，新主机只发送 v3。非官方客户端同时声明原始 PCM 和 IR 时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
+common-c 使用回调存在性生成底层能力位，这是应用层模式的协议投影。原始 PCM 回调与任一 IR 回调同时注册属于配置错误，连接启动会失败；增强回调须与 v2 基础回调配套注册，新主机按能力在原 0x550B 路由发送增强包或原 v2。非官方客户端同时声明原始 PCM 和 IR 时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
 
 分析算法和有界状态由独立 `moonlight-audio-haptics` 库维护，由 Sunshine Core 调用，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 为每个模拟会话中的各控制器持有独立 SDK engine，复用现有有界反馈队列；真实会话不执行分析。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
 
 `moonlight-audio-haptics` 通过独立 SDK PR 提供明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。Sunshine 以固定提交的子模块静态链接 SDK，并在传输适配层保证即使空流没有分析输出，也会发送静音 `STREAM_END` 清理客户端执行器。实现借鉴 MPEG Haptics 的独立 channel/curve/wavelet 数据模型和 AOSP HapticGenerator 的执行器标定边界，但不直接嵌入其文件型 Encoder，也不在 Sunshine 端执行设备专用渲染。
 
-### 3.6 模拟触觉 IR v3：持续状态与瞬态事件
+### 3.6 复用 v2 的持续层／独立事件增强
 
-库的 `moonlight_haptics/authored_events.h` 提供持续状态／离散瞬态结构化 C API，并复用现有 config/input 类型；已有 SDK ABI v1/v2 的类型、符号和行为保持兼容。传输 IR v3 与 SDK ABI 编号相互独立。分析器、源时钟、epoch、事件 ID 和识别回归测试归库维护。Sunshine 的 `authored_ir_v3_session_t` 仅适配 S16LE、源标志及 wire 编码；控制器编号、能力协商和加密传输也属于 Sunshine/common-c。客户端保留播放时间轴、去重、设备能力检测和协同分配。库的 native result 内存布局不是本节的线格式。
+原 v2 基础帧、字段含义和客户端回退链路保持原样。`authored_ir_extended_session_t` 组合已有的 `authored_ir_session_t` 与 SDK 的 `authored_events.h` API：基础帧直接复用原分析器和 72-byte 编码器；增强检测在 SDK 中补充持续层及独立事件。旧客户端仍走原 v2 会话，不启用增强分析器。主机不维护第二份 v2 特征估算或编码实现，传统 ERM 的增益、门限、保持和节流单独留在 `legacy_rumble.cpp`。
 
-v3 是设备无关分析结果，不携带 Android TICK 指令、手机型号或目标播放频率。主机在为传统转子马达施加增益、最短保持和发送节流之前分析原始触觉 PCM；每个控制器维护独立状态。旧 IR v2 的 72-byte 格式、原始 PCM 和传统 rumble 均保持原语义。新客户端同时声明 `ML_FF_DS5_HAPTICS_IR_V3 (0x80)` 和 v2，主机按原始 PCM、v3、v2、传统 rumble 的顺序选择一种。此能力位与主机 `LI_FF_*` 位域独立。
+新客户端同时声明已有 `ML_FF_DS5_HAPTICS_IR_V2 (0x08)` 和可选 `ML_FF_DS5_HAPTICS_IR_EXTENDED (0x80)`。只有两者均具备时，主机才通过既有加密控制流的 `0x550B` 发送“原 v2 基础帧 + 增强区”；否则保持 `0x550B` 原 v2 或普通 rumble。原始 PCM 继续优先。基础与增强在同一消息中提交，客户端不需要跨两条不可靠消息拼接，也不会重复播放基础瞬态与增强事件。
 
-线格式、字段单位、profile、源时间及生命周期语义统一由 [common-c 的 IR 协议契约](../third-party/moonlight-common-c/docs/DS5-HAPTICS-IR.md) 维护，Sunshine 不再维护第二份偏移表。主机使用现有加密 ENet 控制流的 `0x5511` 消息，小端编码持续状态和最多 8 个瞬态事件；SDK native result 不能直接作为 wire 内存发送。
+增强包前 72 字节由原 v2 编码器直接生成，保留 version=2、length=72、保留位=0 及原 RMS／peak／attack／ratio／ZCR／correlation 语义。common-c 复用原 v2 解析器验证这一前缀，再解析 40-byte 增强头和最多 8 个 32-byte 事件。完整 payload 为 `112 + 32N`，最多 368 byte。控制器编号、标志、源序号、样本数和原特征均复用基础帧，不在增强区重复定义。完整契约由 [common-c 协议文档](../third-party/moonlight-common-c/docs/DS5-HAPTICS-IR.md) 维护。
 
-与 v2 一样，common-c 的 `sourceFrameCount` 是源采样帧数元数据，不是 PCM payload 长度，也不是 SDK 的单次处理块上限。当前 SDK profile 1 仍以最多 240 个 48 kHz stereo 帧处理输入，Sunshine 负责满足这一分析器接口约束；协议允许其他生产者使用不同的分块方式，不把 240 写进解码限制。
+增强区只增加 epoch、分析 profile、持续状态结束时间、左右连续低／高频状态以及事件 ID／起音时间／强度／证据分数／sharpness。基础 RMS/peak 仍是原 50–400 Hz 触觉频带特征，不改成原始 PCM 统计值；SDK 的 raw RMS/peak 诊断不额外上网。增强持续包络有释放历史，基础帧 SILENT 不得清空它。v2 的固定 5 ms 分析 hop 在不规则输入分块下可能早于增强状态结束时间，两者沿用同一 48 kHz 相对源时钟，增强区显式记录自己的结束时间。
 
-common-c 接入沿用 v2 的 `CONNECTION_LISTENER_CALLBACKS` 模式，在尾部追加可选 v3 回调。主机／客户端及其 common-c 子模块须与相应头文件同步重编译。旧版兼容指 v2 线格式、旧主机回退和源码重编译兼容，不承诺旧二进制应用仅替换新版 common-c 动态库仍可运行；这与分析 SDK 保持已有 ABI 的承诺相互独立。
+SDK 仍接受最多 240 帧的单次输入；这是分析接口约束，不是协议源采样帧数的上限。common-c 回调及头文件须随应用同步重编译，兼容范围为旧线协议及源码重编译，不承诺旧应用仅替换共享库仍具有二进制兼容性。分析 SDK 的已有 ABI 保持兼容，新 native result 也不直接作为 wire 内存发送。
 
-源时间沿用同一控制器的相对采样时钟，并不等同于视频或普通音频 PTS。客户端锚定到本地单调时钟，手机和手柄共享该播放时间轴；输出端延迟补偿由客户端负责。跨音视频精确同步需要额外公共时钟关联，v3 不宣称已经提供该能力。
-
-客户端先逐 lane 消费，再做输出分配：有转子手柄和手机时，由手柄承担持续层、支持短效果的手机承担瞬态；只有手机时，保留持续层，并在执行器允许的范围内仲裁短效果。Android 固定预设不具备任意波形或连续可调的强度，协议的 strength/sharpness 不构成该硬件能力的承诺。型号不是协议准入条件，执行器能力在本机检测。
+Android 的“传统模拟 / IR 增强（v2 + 扩展）”选择在下次连接生效。原 v2 数据对象、JNI 基础字段转换、mixer、renderer 和手机马达所有权管理共用；没有增强区时沿用 v2 渲染，有增强区时由持续层和独立事件驱动协同输出。设备能力在本机判断，不通过型号白名单或主机播放命令限定。源时钟并非音视频 PTS，跨音视频精确同步仍需额外公共时钟关联。
 
 ## 4. 用户体验设计
 

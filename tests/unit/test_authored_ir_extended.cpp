@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-#include "src/haptics/authored_ir_v3.h"
+#include "src/haptics/authored_ir_extended.h"
 #include <algorithm>
 #include <cmath>
 #include <gtest/gtest.h>
@@ -10,15 +10,15 @@ extern "C" {
 }
 
 namespace {
-  using frame_t = LI_DS5_HAPTICS_IR_FRAME_V3;
-  using event_t = LI_DS5_HAPTICS_IR_EVENT_V3;
+  using frame_t = LI_DS5_HAPTICS_IR_EXTENDED_FRAME;
+  using event_t = LI_DS5_HAPTICS_IR_EVENT;
   void
-  capture_v3(const frame_t *frame, void *context) { *static_cast<frame_t *>(context) = *frame; }
+  capture_extended(const frame_t *frame, void *context) { *static_cast<frame_t *>(context) = *frame; }
   frame_t
   parsed(const std::optional<std::vector<std::uint8_t>> &wire) {
     frame_t frame {};
     EXPECT_TRUE(wire.has_value());
-    if (wire) EXPECT_TRUE(processDs5HapticsIrV3StreamPacket(wire->data(), static_cast<int>(wire->size()), capture_v3, &frame));
+    if (wire) EXPECT_TRUE(processDs5HapticsIrExtendedStreamPacket(wire->data(), static_cast<int>(wire->size()), capture_extended, &frame));
     return frame;
   }
   std::vector<std::uint8_t>
@@ -58,14 +58,16 @@ namespace {
   };
   playback_t
   analyze(const std::vector<std::uint8_t> &pcm, unsigned chunk) {
-    haptics::authored_ir_v3_session_t session;
+    haptics::authored_ir_extended_session_t session;
     playback_t result;
     std::uint32_t sequence = 0;
     for (unsigned start = 0; start < pcm.size() / 4; start += chunk) {
       const auto count = std::min<unsigned>(chunk, static_cast<unsigned>(pcm.size() / 4) - start);
-      const auto frame = parsed(session.process(2, start ? 0 : 1, static_cast<std::uint16_t>(count), sequence++,
-        std::uint64_t(start) * 1000000 / 48000, std::span(pcm).subspan(start * 4, count * 4)));
-      EXPECT_EQ(frame.controllerNumber, 2);
+      const auto wire = session.process(2, start ? 0 : 1, static_cast<std::uint16_t>(count), sequence++,
+        std::uint64_t(start) * 1000000 / 48000, std::span(pcm).subspan(start * 4, count * 4));
+      if (!wire) continue;  // v2 emits only when its analysis hop completes.
+      const auto frame = parsed(wire);
+      EXPECT_EQ(frame.base.controllerNumber, 2);
       for (unsigned i = 0; i < frame.eventCount; ++i) {
         const auto &event = frame.events[i];
         const auto [it, inserted] = result.events.emplace(event.eventId, event);
@@ -81,7 +83,7 @@ namespace {
       }
     }
     const auto end = parsed(session.process(2, 2, 0, sequence, pcm.size() / 4 * 1000000ULL / 48000, {}));
-    EXPECT_NE(end.flags & LI_DS5_HAPTICS_IR_FLAG_STREAM_END, 0);
+    EXPECT_NE(end.base.flags & LI_DS5_HAPTICS_IR_FLAG_STREAM_END, 0);
     EXPECT_EQ(end.eventCount, 0);
     EXPECT_EQ(end.lanes[0].continuousLow, 0);
     EXPECT_EQ(end.lanes[1].continuousHigh, 0);
@@ -89,11 +91,11 @@ namespace {
   }
 }  // namespace
 
-TEST(AuthoredIrV3, LifecycleEpochsSequenceWrapAndGaps) {
-  haptics::authored_ir_v3_session_t session;
+TEST(AuthoredIrExtended, LifecycleEpochsSequenceWrapAndGaps) {
+  haptics::authored_ir_extended_session_t session;
   const auto silence = signal(.005);
   auto first = parsed(session.process(0, 1, 240, UINT32_MAX - 1, 1000000, silence));
-  EXPECT_NE(first.flags & LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY, 0);
+  EXPECT_NE(first.base.flags & LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY, 0);
   auto second = parsed(session.process(0, 0, 240, UINT32_MAX, 1005000, silence));
   EXPECT_EQ(first.epoch, second.epoch);
   auto wrapped = parsed(session.process(0, 0, 240, 0, 1010000, silence));
@@ -102,26 +104,26 @@ TEST(AuthoredIrV3, LifecycleEpochsSequenceWrapAndGaps) {
   EXPECT_FALSE(session.process(0, 0, 240, UINT32_MAX, 1005000, silence));
   auto gap = parsed(session.process(0, 0, 240, 3, 1025000, silence));
   EXPECT_NE(first.epoch, gap.epoch);
-  EXPECT_NE(gap.flags & LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY, 0);
+  EXPECT_NE(gap.base.flags & LI_DS5_HAPTICS_IR_FLAG_DISCONTINUITY, 0);
   auto end = parsed(session.process(0, 2, 0, 4, 1030000, {}));
   EXPECT_EQ(gap.epoch, end.epoch);
-  EXPECT_NE(end.flags & LI_DS5_HAPTICS_IR_FLAG_STREAM_END, 0);
+  EXPECT_NE(end.base.flags & LI_DS5_HAPTICS_IR_FLAG_STREAM_END, 0);
   EXPECT_FALSE(session.process(0, 0, 240, 3, 1025000, silence));
   auto restarted = parsed(session.process(0, 1, 240, 0, 0, silence));
   EXPECT_NE(gap.epoch, restarted.epoch);
 }
 
-TEST(AuthoredIrV3, InvalidInputDoesNotAdvanceTheStream) {
-  haptics::authored_ir_v3_session_t session;
+TEST(AuthoredIrExtended, InvalidInputDoesNotAdvanceTheStream) {
+  haptics::authored_ir_extended_session_t session;
   const auto silence = signal(.005);
   EXPECT_FALSE(session.process(0, 1, 241, 0, 0, silence));
   EXPECT_FALSE(session.process(0, 1, 240, 0, 0, std::span(silence).first(12)));
   EXPECT_FALSE(session.process(0, 0x80, 240, 0, 0, silence));
   EXPECT_FALSE(session.process(0, 0, 0, 0, 0, {}));
-  EXPECT_EQ(parsed(session.process(0, 1, 240, 0, 0, silence)).frameSequence, 0);
+  EXPECT_EQ(parsed(session.process(0, 1, 240, 0, 0, silence)).base.sourceSequenceNumber, 0);
 }
 
-TEST(AuthoredIrV3, SteadyCarriersRemainContinuousWithoutFalseOnsetTrains) {
+TEST(AuthoredIrExtended, SteadyCarriersRemainContinuousWithoutFalseOnsetTrains) {
   for (const auto frequency : { 85.0, 250.0, 300.0 }) {
     SCOPED_TRACE(frequency);
     const auto result = analyze(signal(1, frequency, .12), 240);
@@ -130,7 +132,7 @@ TEST(AuthoredIrV3, SteadyCarriersRemainContinuousWithoutFalseOnsetTrains) {
   }
 }
 
-TEST(AuthoredIrV3, DenseSourcePulsesRetainTheirIndividualOnsetsWithoutDuplicates) {
+TEST(AuthoredIrExtended, DenseSourcePulsesRetainTheirIndividualOnsetsWithoutDuplicates) {
   for (const unsigned density : { 25u, 50u, 60u, 80u }) {
     SCOPED_TRACE(density);
     auto pcm = signal(2.8);
@@ -146,7 +148,7 @@ TEST(AuthoredIrV3, DenseSourcePulsesRetainTheirIndividualOnsetsWithoutDuplicates
   }
 }
 
-TEST(AuthoredIrV3, EventIdentityIsIndependentOfTransportFragmentation) {
+TEST(AuthoredIrExtended, EventIdentityIsIndependentOfTransportFragmentation) {
   auto pcm = signal(.4);
   for (unsigned i = 0; i < 10; ++i) add_pulse(pcm, .05 + i * .02);
   const auto a = analyze(pcm, 240);
@@ -159,5 +161,24 @@ TEST(AuthoredIrV3, EventIdentityIsIndependentOfTransportFragmentation) {
     EXPECT_EQ(event.sourceTimeUs, found->second.sourceTimeUs);
     EXPECT_FLOAT_EQ(event.leftStrength, found->second.leftStrength);
     EXPECT_FLOAT_EQ(event.rightStrength, found->second.rightStrength);
+  }
+}
+
+TEST(AuthoredIrExtended, EmbeddedBaseIsByteIdenticalToTheLegacyV2Writer) {
+  for (const unsigned chunk : { 240u, 137u }) {
+    haptics::authored_ir_session_t legacy;
+    haptics::authored_ir_extended_session_t enhanced;
+    auto pcm = signal(.35, 85, .12);
+    add_pulse(pcm, .1);
+    std::uint32_t sequence = 0;
+    for (unsigned start = 0; start < pcm.size() / 4; start += chunk) {
+      const auto count = static_cast<std::uint16_t>(std::min<unsigned>(chunk, pcm.size() / 4 - start));
+      const auto input = std::span(pcm).subspan(start * 4, count * 4);
+      const auto time = std::uint64_t(start) * 1000000 / 48000;
+      const auto base = legacy.process(2, start ? 0 : 1, count, sequence, time, input);
+      const auto packet = enhanced.process(2, start ? 0 : 1, count, sequence++, time, input);
+      ASSERT_EQ(base.has_value(), packet.has_value());
+      if (base) ASSERT_TRUE(std::equal(base->begin(), base->end(), packet->begin()));
+    }
   }
 }

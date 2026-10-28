@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "authored_ir.h"
 
 #include <cstdint>
 #include <memory>
@@ -10,15 +11,15 @@
 struct AhAuthoredEventEngine;
 
 namespace haptics {
-  // Sunshine adapter only: source S16LE and flags -> SDK -> IR v3 wire.
+  // Sunshine adapter only: source S16LE and flags -> original v2 base + SDK enhancement.
   // Device-independent DSP/state live in moonlight-audio-haptics authored_events.h.
-  class authored_ir_v3_session_t {
+  class authored_ir_extended_session_t {
   public:
-    authored_ir_v3_session_t();
-    ~authored_ir_v3_session_t();
-    authored_ir_v3_session_t(const authored_ir_v3_session_t &) = delete;
-    authored_ir_v3_session_t &
-    operator=(const authored_ir_v3_session_t &) = delete;
+    authored_ir_extended_session_t();
+    ~authored_ir_extended_session_t();
+    authored_ir_extended_session_t(const authored_ir_extended_session_t &) = delete;
+    authored_ir_extended_session_t &
+    operator=(const authored_ir_extended_session_t &) = delete;
     bool
     ready() const noexcept;
     std::optional<std::vector<std::uint8_t>>
@@ -32,6 +33,7 @@ namespace haptics {
       void
       operator()(AhAuthoredEventEngine *engine) const noexcept;
     };
+    authored_ir_session_t _base;
     std::unique_ptr<AhAuthoredEventEngine, engine_deleter_t> _engine;
   };
 }  // namespace haptics

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "authored_ir_v3.h"
+#include "authored_ir_extended.h"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <moonlight_haptics/authored_events.h>
@@ -25,21 +26,21 @@ namespace haptics {
   }  // namespace
 
   void
-  authored_ir_v3_session_t::engine_deleter_t::operator()(AhAuthoredEventEngine *engine) const noexcept {
+  authored_ir_extended_session_t::engine_deleter_t::operator()(AhAuthoredEventEngine *engine) const noexcept {
     ah_authored_events_destroy(engine);
   }
-  authored_ir_v3_session_t::authored_ir_v3_session_t() {
+  authored_ir_extended_session_t::authored_ir_extended_session_t() {
     AhAuthoredConfig config {};
     AhAuthoredEventEngine *engine = nullptr;
     if (ah_authored_config_init(&config, 48000) == AH_STATUS_OK &&
         ah_authored_events_create(&config, &engine) == AH_STATUS_OK) _engine.reset(engine);
   }
-  authored_ir_v3_session_t::~authored_ir_v3_session_t() = default;
+  authored_ir_extended_session_t::~authored_ir_extended_session_t() = default;
   bool
-  authored_ir_v3_session_t::ready() const noexcept { return _engine != nullptr; }
+  authored_ir_extended_session_t::ready() const noexcept { return _engine != nullptr && _base.ready(); }
 
   std::optional<std::vector<std::uint8_t>>
-  authored_ir_v3_session_t::process(
+  authored_ir_extended_session_t::process(
     std::uint16_t controller, std::uint8_t source_flags, std::uint16_t count,
     std::uint32_t sequence, std::uint64_t timestamp, std::span<const std::uint8_t> pcm) {
     if (!_engine || count > 240 || pcm.size() != std::size_t(count) * 4 || (source_flags & ~7u))
@@ -64,28 +65,26 @@ namespace haptics {
           AH_STATUS_OUTPUT_AVAILABLE ||
         output_count != 1) return std::nullopt;
 
-    std::vector<std::uint8_t> wire(64 + frame.event_count * 32, 0);
-    wire[0] = 3;
-    wire[1] = static_cast<std::uint8_t>(frame.flags);
-    u16(wire.data() + 2, static_cast<std::uint16_t>(wire.size()));
-    u16(wire.data() + 4, controller);
-    u16(wire.data() + 6, static_cast<std::uint16_t>(frame.profile));
-    u32(wire.data() + 8, frame.epoch);
-    u32(wire.data() + 12, frame.frame_sequence);
-    u64(wire.data() + 16, frame.timestamp_us);
-    u32(wire.data() + 24, frame.source_frame_count);
-    wire[28] = static_cast<std::uint8_t>(frame.event_count);
-    wire[29] = 2;
+    // The legacy analyzer and writer remain the sole source of the v2 base.
+    // Small input chunks may not complete its 5 ms hop yet.
+    const auto base = _base.process(controller, source_flags, count, sequence, timestamp, pcm);
+    if (!base) return std::nullopt;
+    std::vector<std::uint8_t> wire(112 + frame.event_count * 32, 0);
+    std::ranges::copy(*base, wire.begin());
+    auto *extension = wire.data() + authored_ir_v2_wire_size;
+    extension[0] = 1;
+    extension[1] = static_cast<std::uint8_t>(frame.event_count);
+    u16(extension + 2, static_cast<std::uint16_t>(wire.size() - authored_ir_v2_wire_size));
+    u16(extension + 4, static_cast<std::uint16_t>(frame.profile));
+    u32(extension + 8, frame.epoch);
+    u64(extension + 12, frame.timestamp_us);
     for (unsigned i = 0; i < 2; ++i) {
-      auto *lane = wire.data() + 32 + i * 16;
-      f32(lane, frame.lanes[i].continuous_low);
-      f32(lane + 4, frame.lanes[i].continuous_high);
-      f32(lane + 8, frame.lanes[i].raw_rms);
-      f32(lane + 12, frame.lanes[i].raw_peak);
+      f32(extension + 20 + i * 8, frame.lanes[i].continuous_low);
+      f32(extension + 24 + i * 8, frame.lanes[i].continuous_high);
     }
     for (unsigned i = 0; i < frame.event_count; ++i) {
       const auto &event = frame.events[i];
-      auto *out = wire.data() + 64 + i * 32;
+      auto *out = wire.data() + 112 + i * 32;
       u32(out, event.event_id);
       u64(out + 8, event.source_time_us);
       f32(out + 16, event.left_strength);

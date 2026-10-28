@@ -1,4 +1,4 @@
-"""Run the production IR v3 analyzer against controlled PCM; no physical output."""
+"""Run the production v2 enhancement analyzer against controlled PCM; no physical output."""
 import argparse
 import json
 from pathlib import Path
@@ -11,24 +11,24 @@ def main(fixtures, analyzer, out):
     results = []
     for spec in specs:
         name = spec['name']
-        target = out / (name + '.irv3bin')
+        target = out / (name + '.irextbin')
         subprocess.run([str(analyzer.resolve()), str(fixtures / (name + '.pcm')), str(target)], check=True)
         data = target.read_bytes()
         events, seen, frames, body, low, high = [], set(), 0, 0, 0.0, 0.0
         at = 0
         while at < len(data):
-            size = struct.unpack_from('<H', data, at + 2)[0]
-            time = struct.unpack_from('<Q', data, at + 16)[0] / 1e6
-            event_count = data[at + 28]
-            assert size == 64 + event_count * 32
-            l = struct.unpack_from('<4f', data, at + 32)
-            r = struct.unpack_from('<4f', data, at + 48)
+            size = 72 + struct.unpack_from('<H', data, at + 74)[0]
+            time = struct.unpack_from('<Q', data, at + 84)[0] / 1e6
+            event_count = data[at + 73]
+            assert size == 112 + event_count * 32
+            l = struct.unpack_from('<2f', data, at + 92)
+            r = struct.unpack_from('<2f', data, at + 100)
             if spec['steady_start_s'] <= time <= spec['steady_end_s']:
                 frames += 1
                 low += max(l[0], r[0]); high += max(l[1], r[1])
                 body += max(l[0], r[0], l[1], r[1]) > 0.005
             for i in range(event_count):
-                off = at + 64 + i * 32
+                off = at + 112 + i * 32
                 eid = struct.unpack_from('<I', data, off)[0]
                 if eid not in seen:
                     seen.add(eid)

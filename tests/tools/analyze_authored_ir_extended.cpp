@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "src/haptics/authored_ir_v3.h"
+#include "src/haptics/authored_ir_extended.h"
 #include <array>
 #include <fstream>
 #include <iostream>
@@ -8,7 +8,7 @@ main(int argc, char **argv) {
   if (argc != 3) return 2;
   std::ifstream input(argv[1], std::ios::binary);
   std::ofstream output(argv[2], std::ios::binary);
-  haptics::authored_ir_v3_session_t session;
+  haptics::authored_ir_extended_session_t session;
   if (!input || !output || !session.ready()) return 3;
   std::array<std::uint8_t, 960> pcm {};
   std::uint32_t sequence = 0;
