@@ -119,28 +119,11 @@ common-c 使用回调存在性生成底层能力位，这是应用层模式的�
 
 v3 是设备无关分析结果，不携带 Android TICK 指令、手机型号或目标播放频率。主机在为传统转子马达施加增益、最短保持和发送节流之前分析原始触觉 PCM；每个控制器维护独立状态。旧 IR v2 的 72-byte 格式、原始 PCM 和传统 rumble 均保持原语义。新客户端同时声明 `ML_FF_DS5_HAPTICS_IR_V3 (0x80)` 和 v2，主机按原始 PCM、v3、v2、传统 rumble 的顺序选择一种。此能力位与主机 `LI_FF_*` 位域独立。
 
-v3 使用现有加密 ENet 控制流的 `0x5511` 消息，payload 为小端编码，禁止将 C 结构内存布局直接当作线格式。profile 1 使用双 lane，输入固定为 48 kHz S16LE stereo authored actuator PCM。基础长度 64 byte，每个事件增加 32 byte，最多 8 个事件，最大 320 byte。
+线格式、字段单位、profile、源时间及生命周期语义统一由 [common-c 的 IR 协议契约](../third-party/moonlight-common-c/docs/DS5-HAPTICS-IR.md) 维护，Sunshine 不再维护第二份偏移表。主机使用现有加密 ENet 控制流的 `0x5511` 消息，小端编码持续状态和最多 8 个瞬态事件；SDK native result 不能直接作为 wire 内存发送。
 
-| 偏移 | 类型 | 语义 |
-|---|---|---|
-| 0 | u8 | version = 3 |
-| 1 | u8 | discontinuity=1、partial=2、stream end=4、silent=8 |
-| 2 | u16 | 完整 payload 长度，64 + eventCount × 32 |
-| 4 | u16 | 客户端控制器编号 |
-| 6 | u16 | analysis profile = 1 |
-| 8 | u32 | stream epoch，源重启或不连续后隔离旧数据 |
-| 12 | u32 | 此 epoch 的 IR 帧序号，按无符号模运算处理回绕 |
-| 16 | u64 | 所代表源采样窗口的结束时间，微秒 |
-| 24 | u32 | 此帧表示的源样本数；空流结束允许 0 |
-| 28 | u8 | 事件数量，0..8 |
-| 29 | u8 | lane 数，固定 2 |
-| 30 | u16 | 保留，必须为 0 |
-| 32、48 | 4 × f32 | 各 lane 的 continuous low、continuous high、raw RMS、raw peak |
-| 64 起 | 32-byte 数组 | 瞬态事件 |
+与 v2 一样，common-c 的 `sourceFrameCount` 是源采样帧数元数据，不是 PCM payload 长度，也不是 SDK 的单次处理块上限。当前 SDK profile 1 仍以最多 240 个 48 kHz stereo 帧处理输入，Sunshine 负责满足这一分析器接口约束；协议允许其他生产者使用不同的分块方式，不把 240 写进解码限制。
 
-每个事件依次为 `eventId:u32`、`reserved:u32=0`、`sourceTimeUs:u64`、`leftStrength:f32`、`rightStrength:f32`、`confidence:f32`、`sharpness:f32`。各强度及评分有限且在 0..1 内；confidence 是分析器证据分数，不是经过统计校准的概率。事件时间是源起音时刻，可以早于本帧窗口结束，因为检测器需要历史确认。持续包络有释放历史，允许其大于当前窗口 raw peak。raw RMS/peak 是未滤波 PCM 的幅度参考，不表示额外应与事件相加的持续输出；这与 v2 的触觉频带 RMS/peak 语义不同。SILENT 表示当前触觉频带输入静音，不表示释放包络已经归零；生命周期清理由 END/reset 执行。
-
-持续状态与事件有不同消费语义：持续状态采用最新有效帧；事件按 `(controller, epoch, eventId)` 去重，使用有界队列按源时间播放。主机可以重复短时间内的近期事件抵抗不可靠包丢失；客户端不能因为收到旧状态帧而丢掉其中尚未消费、仍未过期的事件，也不能重播重复事件或追赶过期事件。end/discontinuity 清理对应流的状态及未播放事件，旧 epoch 的 end 不得停止新流。网络和执行器背压不得导致无限排队。
+common-c 接入沿用 v2 的 `CONNECTION_LISTENER_CALLBACKS` 模式，在尾部追加可选 v3 回调。主机／客户端及其 common-c 子模块须与相应头文件同步重编译。旧版兼容指 v2 线格式、旧主机回退和源码重编译兼容，不承诺旧二进制应用仅替换新版 common-c 动态库仍可运行；这与分析 SDK 保持已有 ABI 的承诺相互独立。
 
 源时间沿用同一控制器的相对采样时钟，并不等同于视频或普通音频 PTS。客户端锚定到本地单调时钟，手机和手柄共享该播放时间轴；输出端延迟补偿由客户端负责。跨音视频精确同步需要额外公共时钟关联，v3 不宣称已经提供该能力。
 
