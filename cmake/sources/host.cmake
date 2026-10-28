@@ -14,6 +14,7 @@ set(SUNSHINE_HOST_SOURCES
 
     # src/haptics
     src/haptics/authored_ir.cpp src/haptics/authored_ir.h
+    src/haptics/authored_input.h src/haptics/wire.h
     src/haptics/legacy_rumble.cpp
     src/haptics/authored_ir_extended.cpp src/haptics/authored_ir_extended.h
 

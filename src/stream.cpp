@@ -49,6 +49,7 @@ extern "C" {
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "haptics/authored_ir_extended.h"
+#include "haptics/wire.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
@@ -1491,19 +1492,20 @@ namespace stream {
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
-      auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
-        p[0] = static_cast<std::uint8_t>(v);
-        p[1] = static_cast<std::uint8_t>(v >> 8);
-      };
-      auto write_u32 = [](std::uint8_t *p, std::uint32_t v) {
-        p[0] = static_cast<std::uint8_t>(v);
-        p[1] = static_cast<std::uint8_t>(v >> 8);
-        p[2] = static_cast<std::uint8_t>(v >> 16);
-        p[3] = static_cast<std::uint8_t>(v >> 24);
-      };
-      auto write_u64 = [&write_u32](std::uint8_t *p, std::uint64_t v) {
-        write_u32(p, static_cast<std::uint32_t>(v));
-        write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
+      using haptics::wire::write_u16;
+      using haptics::wire::write_u32;
+      using haptics::wire::write_u64;
+      const auto encode_ir = [&](std::span<const std::uint8_t> wire) {
+        std::array<std::uint8_t, sizeof(control_header_v2) + DS5_HAPTICS_IR_EXTENDED_STREAM_MAX_SIZE> plaintext {};
+        write_u16(plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V2]);
+        write_u16(plaintext.data() + 2, static_cast<std::uint16_t>(wire.size()));
+        std::ranges::copy(wire, plaintext.data() + sizeof(control_header_v2));
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session,
+          std::string_view(reinterpret_cast<const char *>(plaintext.data()), sizeof(control_header_v2) + wire.size()),
+          encrypted_payload);
       };
       haptics::authored_ir_extended_session_t *extended_analyzer = nullptr;
       if (sends_authored_ir_extended && !sends_raw_pcm && !session->control.authored_haptics_v3_init_failed) {
@@ -1555,15 +1557,7 @@ namespace stream {
 
         // The enhanced message carries the original v2 base and its optional
         // continuous/event extension atomically; no duplicate base is sent.
-        std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire->size());
-        write_u16(plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V2]);
-        write_u16(plaintext.data() + 2, static_cast<std::uint16_t>(wire->size()));
-        std::ranges::copy(*wire, plaintext.data() + sizeof(control_header_v2));
-        std::array<std::uint8_t,
-          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
-            sizeof(control_header_v2) + 104 + 8 * 20) + crypto::cipher::tag_size> encrypted_payload;
-        payload = encode_control(session,
-          std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()), encrypted_payload);
+        encode_ir(*wire);
       }
       else if (sends_authored_ir && !sends_raw_pcm) {
         auto &analyzers = session->control.authored_haptics;
@@ -1588,16 +1582,7 @@ namespace stream {
           return 0;
         }
 
-        std::array<std::uint8_t, sizeof(control_header_v2) + haptics::authored_ir_v2_wire_size> plaintext {};
-        auto *control = plaintext.data();
-        write_u16(control, packetTypes[IDX_DS5_HAPTICS_IR_V2]);
-        write_u16(control + 2, haptics::authored_ir_v2_wire_size);
-        std::ranges::copy(*wire, control + sizeof(control_header_v2));
-
-        std::array<std::uint8_t,
-          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
-          encrypted_payload;
-        payload = encode_control(session, util::view(plaintext), encrypted_payload);
+        encode_ir(*wire);
       }
       else {
         constexpr std::size_t wire_header_size = 28;

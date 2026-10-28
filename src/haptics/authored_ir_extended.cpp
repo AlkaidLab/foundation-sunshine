@@ -1,28 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "authored_ir_extended.h"
+#include "authored_input.h"
+#include "wire.h"
 
 #include <algorithm>
-#include <array>
-#include <bit>
 #include <moonlight_haptics/authored_events.h>
 
 namespace haptics {
   namespace {
-    void
-    u16(std::uint8_t *p, std::uint16_t v) {
-      p[0] = static_cast<std::uint8_t>(v);
-      p[1] = static_cast<std::uint8_t>(v >> 8);
-    }
-    void
-    u32(std::uint8_t *p, std::uint32_t v) {
-      for (unsigned i = 0; i < 4; ++i) p[i] = static_cast<std::uint8_t>(v >> (8 * i));
-    }
-    void
-    u64(std::uint8_t *p, std::uint64_t v) {
-      for (unsigned i = 0; i < 8; ++i) p[i] = static_cast<std::uint8_t>(v >> (8 * i));
-    }
-    void
-    f32(std::uint8_t *p, float v) { u32(p, std::bit_cast<std::uint32_t>(v)); }
+    using wire::write_float;
+    using wire::write_u16;
+    using wire::write_u32;
+    using wire::write_u64;
   }  // namespace
 
   void
@@ -43,51 +32,42 @@ namespace haptics {
   authored_ir_extended_session_t::process(
     std::uint16_t controller, std::uint8_t source_flags, std::uint16_t count,
     std::uint32_t sequence, std::uint64_t timestamp, std::span<const std::uint8_t> pcm) {
-    if (!_engine || count > 240 || pcm.size() != std::size_t(count) * 4 || (source_flags & ~7u))
-      return std::nullopt;
-    std::array<std::int16_t, 480> aligned {};
-    for (std::size_t i = 0; i < std::size_t(count) * 2; ++i) {
-      aligned[i] = std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(
-        std::uint16_t(pcm[i * 2]) | (std::uint16_t(pcm[i * 2 + 1]) << 8)));
-    }
-    AhAuthoredProcessInput input {};
-    input.struct_size = AH_AUTHORED_PROCESS_INPUT_V2_SIZE;
-    input.interleaved_pcm = aligned.data();
-    input.frame_count = count;
-    input.sequence_number = sequence;
-    input.first_sample_time_us = timestamp;
-    if (source_flags & 1) input.flags |= AH_AUTHORED_INPUT_STREAM_START;
-    if (source_flags & 2) input.flags |= AH_AUTHORED_INPUT_STREAM_END;
-    if (source_flags & 4) input.flags |= AH_AUTHORED_INPUT_DISCONTINUITY;
+    if (!_engine || (source_flags & ~7u)) return std::nullopt;
+    detail::authored_pcm_t aligned {};
+    const auto input = detail::prepare_authored_input(
+      source_flags, count, sequence, timestamp, pcm, aligned);
+    if (!input) return std::nullopt;
     AhAuthoredEventFrame frame {};
     std::uint32_t output_count = 0;
-    if (ah_authored_events_process_i16(_engine.get(), &input, &frame, 1, &output_count) !=
+    if (ah_authored_events_process_i16(_engine.get(), &*input, &frame, 1, &output_count) !=
           AH_STATUS_OUTPUT_AVAILABLE ||
-        output_count != 1 || frame.event_count > 8) return std::nullopt;
+        output_count != 1 || frame.event_count > LI_DS5_HAPTICS_IR_EXTENDED_MAX_EVENTS) return std::nullopt;
 
     // The legacy analyzer and writer remain the sole source of the v2 base.
     // Small input chunks may not complete its 5 ms hop yet.
     const auto base = _base.process(controller, source_flags, count, sequence, timestamp, pcm);
     if (!base) return std::nullopt;
-    std::vector<std::uint8_t> wire(104 + frame.event_count * 20, 0);
+    std::vector<std::uint8_t> wire(DS5_HAPTICS_IR_EXTENDED_STREAM_BASE_SIZE +
+                                  frame.event_count * DS5_HAPTICS_IR_EXTENDED_STREAM_EVENT_SIZE, 0);
     std::ranges::copy(*base, wire.begin());
     auto *extension = wire.data() + authored_ir_v2_wire_size;
-    extension[0] = 1;
+    extension[0] = DS5_HAPTICS_IR_EXTENSION_VERSION;
     extension[1] = static_cast<std::uint8_t>(frame.event_count);
-    u16(extension + 2, static_cast<std::uint16_t>(wire.size() - authored_ir_v2_wire_size));
-    u32(extension + 4, frame.epoch);
-    u64(extension + 8, frame.timestamp_us);
+    write_u16(extension + 2, static_cast<std::uint16_t>(wire.size() - authored_ir_v2_wire_size));
+    write_u32(extension + 4, frame.epoch);
+    write_u64(extension + 8, frame.timestamp_us);
     for (unsigned i = 0; i < 2; ++i) {
-      f32(extension + 16 + i * 8, frame.lanes[i].continuous_low);
-      f32(extension + 20 + i * 8, frame.lanes[i].continuous_high);
+      write_float(extension + 16 + i * 8, frame.lanes[i].continuous_low);
+      write_float(extension + 20 + i * 8, frame.lanes[i].continuous_high);
     }
     for (unsigned i = 0; i < frame.event_count; ++i) {
       const auto &event = frame.events[i];
-      auto *out = wire.data() + 104 + i * 20;
-      u32(out, event.event_id);
-      u64(out + 4, event.source_time_us);
-      f32(out + 12, event.left_strength);
-      f32(out + 16, event.right_strength);
+      auto *out = wire.data() + DS5_HAPTICS_IR_EXTENDED_STREAM_BASE_SIZE +
+                  i * DS5_HAPTICS_IR_EXTENDED_STREAM_EVENT_SIZE;
+      write_u32(out, event.event_id);
+      write_u64(out + 4, event.source_time_us);
+      write_float(out + 12, event.left_strength);
+      write_float(out + 16, event.right_strength);
     }
     return wire;
   }

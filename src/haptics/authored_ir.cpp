@@ -1,39 +1,14 @@
 /** Host-side v2 SDK adapter and byte-stable serialization. */
 #include "authored_ir.h"
-#include <bit>
-#include <cstring>
-#include <moonlight_haptics/authored_haptics.h>
+#include "authored_input.h"
+#include "wire.h"
 
 namespace haptics {
   namespace {
-    constexpr std::uint8_t source_stream_start = 0x01;
-    constexpr std::uint8_t source_stream_end = 0x02;
-    constexpr std::uint8_t source_discontinuity = 0x04;
-    void
-    write_u16(std::uint8_t *p, std::uint16_t value) {
-      p[0] = static_cast<std::uint8_t>(value);
-      p[1] = static_cast<std::uint8_t>(value >> 8);
-    }
-
-    void
-    write_u32(std::uint8_t *p, std::uint32_t value) {
-      p[0] = static_cast<std::uint8_t>(value);
-      p[1] = static_cast<std::uint8_t>(value >> 8);
-      p[2] = static_cast<std::uint8_t>(value >> 16);
-      p[3] = static_cast<std::uint8_t>(value >> 24);
-    }
-
-    void
-    write_u64(std::uint8_t *p, std::uint64_t value) {
-      write_u32(p, static_cast<std::uint32_t>(value));
-      write_u32(p + 4, static_cast<std::uint32_t>(value >> 32));
-    }
-
-    void
-    write_float(std::uint8_t *p, float value) {
-      write_u32(p, std::bit_cast<std::uint32_t>(value));
-    }
-
+    using wire::write_float;
+    using wire::write_u16;
+    using wire::write_u32;
+    using wire::write_u64;
   }  // namespace
 
   void
@@ -61,35 +36,22 @@ namespace haptics {
   authored_ir_session_t::analyze(std::uint8_t source_flags, std::uint16_t frame_count,
     std::uint32_t sequence, std::uint64_t presentation_time_us,
     std::span<const std::uint8_t> pcm) {
-    const auto expected_pcm_size = static_cast<std::size_t>(frame_count) * 4;
-    if (!_engine || frame_count > 240 || pcm.size() != expected_pcm_size) {
-      return std::nullopt;
-    }
-
-    std::array<std::int16_t, 240 * 2> aligned_pcm {};
-    if (!pcm.empty()) {
-      std::memcpy(aligned_pcm.data(), pcm.data(), pcm.size());
-    }
-    AhAuthoredProcessInput input {};
-    input.struct_size = AH_AUTHORED_PROCESS_INPUT_V2_SIZE;
-    input.interleaved_pcm = aligned_pcm.data();
-    input.frame_count = frame_count;
-    input.first_sample_time_us = presentation_time_us;
-    input.sequence_number = sequence;
-    if (source_flags & source_stream_start) input.flags |= AH_AUTHORED_INPUT_STREAM_START;
-    if (source_flags & source_stream_end) input.flags |= AH_AUTHORED_INPUT_STREAM_END;
-    if (source_flags & source_discontinuity) input.flags |= AH_AUTHORED_INPUT_DISCONTINUITY;
+    if (!_engine) return std::nullopt;
+    detail::authored_pcm_t aligned_pcm {};
+    const auto input = detail::prepare_authored_input(
+      source_flags, frame_count, sequence, presentation_time_us, pcm, aligned_pcm);
+    if (!input) return std::nullopt;
 
     std::array<AhAuthoredHapticFrame, 1> output {};
     std::uint32_t output_count = 0;
     const auto status = ah_authored_process_i16(
-      _engine.get(), &input, output.data(),
+      _engine.get(), &*input, output.data(),
       static_cast<std::uint32_t>(output.size()), &output_count);
     if (status != AH_STATUS_OK && status != AH_STATUS_OUTPUT_AVAILABLE) {
       return std::nullopt;
     }
 
-    if (output_count == 0 && (source_flags & source_stream_end)) {
+    if (output_count == 0 && (input->flags & AH_AUTHORED_INPUT_STREAM_END)) {
       return authored_frame_t {
         .flags = AH_AUTHORED_FRAME_STREAM_END | AH_AUTHORED_FRAME_SILENT,
         .timestamp_us = presentation_time_us,
@@ -130,7 +92,7 @@ namespace haptics {
     if (!analyzed) return std::nullopt;
 
     authored_ir_v2_wire_t wire {};
-    wire[0] = 2;
+    wire[0] = DS5_HAPTICS_IR_STREAM_PROTOCOL_VERSION;
     write_u16(wire.data() + 2, authored_ir_v2_wire_size);
     write_u16(wire.data() + 4, controller_id);
     const auto &frame = *analyzed;
