@@ -40,8 +40,7 @@ set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
 
-# The new authored path is deterministic DSP and does not need a Windows host,
-# video stack or a physical actuator to verify its lifecycle and signal fidelity.
+# Adapter contract only: DSP fidelity belongs to the SDK, wire validation to common-c.
 add_executable(authored_ir_extended_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp
         ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
