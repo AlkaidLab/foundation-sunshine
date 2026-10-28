@@ -20,11 +20,12 @@ main(int argc, char **argv) {
     auto packet = session.process(0, position == 0 ? 1 : 0, frames, sequence++, position * 1000000 / 48000,
       std::span<const std::uint8_t>(pcm.data(), static_cast<std::size_t>(bytes)));
     position += frames;
-    if (!packet) return 5;
-    output.write(reinterpret_cast<const char *>(packet->data()), packet->size());
+    if (packet) output.write(reinterpret_cast<const char *>(packet->data()), packet->size());
   }
+  if (input.bad()) return 5;
   auto packet = session.process(0, 2, 0, sequence, position * 1000000 / 48000, {});
   if (!packet) return 6;
   output.write(reinterpret_cast<const char *>(packet->data()), packet->size());
+  output.flush();
   return output ? 0 : 7;
 }

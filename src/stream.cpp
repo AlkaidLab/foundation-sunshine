@@ -678,6 +678,7 @@ namespace stream {
       // when several pads share the same streaming connection.
       std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_session_t>> authored_haptics;
       std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_extended_session_t>> authored_haptics_v3;
+      bool authored_haptics_v3_init_failed = false;
       bool authored_haptics_init_failed = false;
       // One fallback session per controller: smoothing, throttle and watchdog
       // state must not bleed between pads, and the watchdog stop has to reach
@@ -1504,6 +1505,22 @@ namespace stream {
         write_u32(p, static_cast<std::uint32_t>(v));
         write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
       };
+      haptics::authored_ir_extended_session_t *extended_analyzer = nullptr;
+      if (sends_authored_ir_extended && !sends_raw_pcm && !session->control.authored_haptics_v3_init_failed) {
+        auto &analyzers = session->control.authored_haptics_v3;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end()) {
+          auto analyzer = std::make_unique<haptics::authored_ir_extended_session_t>();
+          if (!analyzer->ready()) {
+            session->control.authored_haptics_v3_init_failed = true;
+            BOOST_LOG(error) << "Unable to initialize authored haptics enhancement; falling back to IR v2"sv;
+          }
+          else {
+            found = analyzers.emplace(msg.id, std::move(analyzer)).first;
+          }
+        }
+        if (found != analyzers.end()) extended_analyzer = found->second.get();
+      }
       if (!sends_raw_pcm && !sends_authored_ir && !sends_authored_ir_extended) {
         if (!session->control.legacy_haptics_init_failed) {
           auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
@@ -1530,15 +1547,8 @@ namespace stream {
       }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
-      else if (sends_authored_ir_extended && !sends_raw_pcm) {
-        auto &analyzers = session->control.authored_haptics_v3;
-        auto found = analyzers.find(msg.id);
-        if (found == analyzers.end()) {
-          auto analyzer = std::make_unique<haptics::authored_ir_extended_session_t>();
-          if (!analyzer->ready()) return 0;
-          found = analyzers.emplace(msg.id, std::move(analyzer)).first;
-        }
-        const auto wire = found->second->process(
+      else if (extended_analyzer) {
+        const auto wire = extended_analyzer->process(
           msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
           std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
         if (!wire) return 0;
