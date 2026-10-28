@@ -14,6 +14,8 @@ set(SUNSHINE_HOST_SOURCES
 
     # src/haptics
     src/haptics/authored_ir.cpp src/haptics/authored_ir.h
+    src/haptics/authored_ir_v3.cpp src/haptics/authored_ir_v3.h
+    src/haptics/authored_ir_v3.cpp src/haptics/authored_ir_v3.h
 
     # src/hdr
     src/hdr/client_display_capabilities.cpp src/hdr/client_display_capabilities.h

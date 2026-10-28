@@ -48,6 +48,7 @@ extern "C" {
 #include "display_device/session.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
+#include "haptics/authored_ir_v3.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
@@ -92,6 +93,7 @@ extern "C" {
 #define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 #define IDX_TEXT_CONTEXT 24  // Remote text focus/context update (Sunshine protocol extension)
+#define IDX_DS5_HAPTICS_IR_V3 25  // Continuous authored state and timestamped transient events
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -119,6 +121,7 @@ static const short packetTypes[] = {
   0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
   0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
   0x550C,  // Remote text context update (Sunshine protocol extension)
+  0x5511,  // Device-independent authored haptics IR v3
 };
 
 namespace asio = boost::asio;
@@ -673,7 +676,10 @@ namespace stream {
       std::uint64_t cursor_failed_revision = 0;
       std::uint32_t cursor_send_failures = 0;
 
-      std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
+      // Analysis/filter/timeline history belongs to one controller, including
+      // when several pads share the same streaming connection.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_session_t>> authored_haptics;
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_v3_session_t>> authored_haptics_v3;
       bool authored_haptics_init_failed = false;
       // One fallback session per controller: smoothing, throttle and watchdog
       // state must not bleed between pads, and the watchdog stop has to reach
@@ -1478,7 +1484,10 @@ namespace stream {
     }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
+      const bool sends_authored_ir_v3 = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V3) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
+
+      if (msg.id >= platf::MAX_GAMEPADS) return 0;
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
@@ -1496,7 +1505,7 @@ namespace stream {
         write_u32(p, static_cast<std::uint32_t>(v));
         write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
       };
-      if (!sends_raw_pcm && !sends_authored_ir) {
+      if (!sends_raw_pcm && !sends_authored_ir && !sends_authored_ir_v3) {
         if (!session->control.legacy_haptics_init_failed) {
           auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
           if (inserted) {
@@ -1522,21 +1531,48 @@ namespace stream {
       }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
+      else if (sends_authored_ir_v3 && !sends_raw_pcm) {
+        auto &analyzers = session->control.authored_haptics_v3;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end()) {
+          auto analyzer = std::make_unique<haptics::authored_ir_v3_session_t>();
+          if (!analyzer->ready()) return 0;
+          found = analyzers.emplace(msg.id, std::move(analyzer)).first;
+        }
+        const auto wire = found->second->process(
+          msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+          std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+        if (!wire) return 0;
+
+        // Offer v3 and v2 for backward compatibility, but send exactly one
+        // representation of authored feedback on this connection.
+        std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire->size());
+        write_u16(plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V3]);
+        write_u16(plaintext.data() + 2, static_cast<std::uint16_t>(wire->size()));
+        std::ranges::copy(*wire, plaintext.data() + sizeof(control_header_v2));
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
+            sizeof(control_header_v2) + 64 + 8 * 32) + crypto::cipher::tag_size> encrypted_payload;
+        payload = encode_control(session,
+          std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()), encrypted_payload);
+      }
       else if (sends_authored_ir && !sends_raw_pcm) {
-        if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
+        auto &analyzers = session->control.authored_haptics;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end() && !session->control.authored_haptics_init_failed) {
           auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
           if (!authored_haptics->ready()) {
             session->control.authored_haptics_init_failed = true;
             BOOST_LOG(error) << "Unable to initialize authored DualSense haptics analysis"sv;
           }
           else {
-            session->control.authored_haptics = std::move(authored_haptics);
+            found = analyzers.emplace(msg.id, std::move(authored_haptics)).first;
           }
         }
-        if (!session->control.authored_haptics) {
+        if (found == analyzers.end()) {
           return 0;
         }
-        const auto wire = session->control.authored_haptics->process(
+        const auto wire = found->second->process(
           msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
           std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
         if (!wire) {

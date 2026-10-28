@@ -97,19 +97,54 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
      -> 客户端抖动缓冲
      -> 物理 DualSense 音频触觉端点（不经过 audio-haptics SDK）
 
-客户端选择“模拟 DualSense”
-  -> 客户端只声明 ML_FF_DS5_HAPTICS_IR_V2
+客户端选择“模拟 DualSense”并将“DualSense 模拟路径”设为“IR v3”
+  -> 新客户端声明 ML_FF_DS5_HAPTICS_IR_V3 及 IR_V2 回退能力
      -> Sunshine Core 的 authored-analysis 通道
-     -> moonlight-audio-haptics AUTHORED_HAPTIC_STEREO 输入
-     -> 双 lane、设备无关 IR v2
+     -> 新主机选择双 lane 持续状态和瞬态事件 IR v3
+        旧主机继续发送原有 IR v2
      -> 客户端按本机执行器能力渲染
 ```
 
-common-c 仍使用回调存在性生成底层能力位，但这是应用层模式的协议投影，不是第三种“自动选择”状态。两个回调同时注册属于配置错误，连接启动会失败；非官方客户端同时声明两个位时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
+Android 的“DualSense 模拟路径”提供“传统模拟 / IR v3”选择，默认保持传统模拟。传统模拟不声明 IR 能力，继续使用主机已有的 rumble 分析与客户端普通振动链路；IR v3 选择才声明 v3/v2。设置在下次连接生效，原生波形手柄的 PCM 协商仍优先。
 
-分析器属于 Sunshine Core，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 的每个模拟会话维护独立、无分配的分析状态，复用现有有界反馈队列；真实会话不执行分析。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
+common-c 使用回调存在性生成底层能力位，这是应用层模式的协议投影。原始 PCM 回调与任一 IR 回调同时注册属于配置错误，连接启动会失败；两个 IR 版本可以同时注册以向旧主机回退，新主机只发送 v3。非官方客户端同时声明原始 PCM 和 IR 时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
+
+分析算法和有界状态由独立 `moonlight-audio-haptics` 库维护，由 Sunshine Core 调用，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 为每个模拟会话中的各控制器持有独立 SDK engine，复用现有有界反馈队列；真实会话不执行分析。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
 
 `moonlight-audio-haptics` 通过独立 SDK PR 提供明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。Sunshine 以固定提交的子模块静态链接 SDK，并在传输适配层保证即使空流没有分析输出，也会发送静音 `STREAM_END` 清理客户端执行器。实现借鉴 MPEG Haptics 的独立 channel/curve/wavelet 数据模型和 AOSP HapticGenerator 的执行器标定边界，但不直接嵌入其文件型 Encoder，也不在 Sunshine 端执行设备专用渲染。
+
+### 3.6 模拟触觉 IR v3：持续状态与瞬态事件
+
+库的 `moonlight_haptics/authored_events.h` 提供持续状态／离散瞬态结构化 C API，并复用现有 config/input 类型；已有 SDK ABI v1/v2 的类型、符号和行为保持兼容。传输 IR v3 与 SDK ABI 编号相互独立。分析器、源时钟、epoch、事件 ID 和识别回归测试归库维护。Sunshine 的 `authored_ir_v3_session_t` 仅适配 S16LE、源标志及 wire 编码；控制器编号、能力协商和加密传输也属于 Sunshine/common-c。客户端保留播放时间轴、去重、设备能力检测和协同分配。库的 native result 内存布局不是本节的线格式。
+
+v3 是设备无关分析结果，不携带 Android TICK 指令、手机型号或目标播放频率。主机在为传统转子马达施加增益、最短保持和发送节流之前分析原始触觉 PCM；每个控制器维护独立状态。旧 IR v2 的 72-byte 格式、原始 PCM 和传统 rumble 均保持原语义。新客户端同时声明 `ML_FF_DS5_HAPTICS_IR_V3 (0x80)` 和 v2，主机按原始 PCM、v3、v2、传统 rumble 的顺序选择一种。此能力位与主机 `LI_FF_*` 位域独立。
+
+v3 使用现有加密 ENet 控制流的 `0x5511` 消息，payload 为小端编码，禁止将 C 结构内存布局直接当作线格式。profile 1 使用双 lane，输入固定为 48 kHz S16LE stereo authored actuator PCM。基础长度 64 byte，每个事件增加 32 byte，最多 8 个事件，最大 320 byte。
+
+| 偏移 | 类型 | 语义 |
+|---|---|---|
+| 0 | u8 | version = 3 |
+| 1 | u8 | discontinuity=1、partial=2、stream end=4、silent=8 |
+| 2 | u16 | 完整 payload 长度，64 + eventCount × 32 |
+| 4 | u16 | 客户端控制器编号 |
+| 6 | u16 | analysis profile = 1 |
+| 8 | u32 | stream epoch，源重启或不连续后隔离旧数据 |
+| 12 | u32 | 此 epoch 的 IR 帧序号，按无符号模运算处理回绕 |
+| 16 | u64 | 所代表源采样窗口的结束时间，微秒 |
+| 24 | u32 | 此帧表示的源样本数；空流结束允许 0 |
+| 28 | u8 | 事件数量，0..8 |
+| 29 | u8 | lane 数，固定 2 |
+| 30 | u16 | 保留，必须为 0 |
+| 32、48 | 4 × f32 | 各 lane 的 continuous low、continuous high、raw RMS、raw peak |
+| 64 起 | 32-byte 数组 | 瞬态事件 |
+
+每个事件依次为 `eventId:u32`、`reserved:u32=0`、`sourceTimeUs:u64`、`leftStrength:f32`、`rightStrength:f32`、`confidence:f32`、`sharpness:f32`。各强度及评分有限且在 0..1 内；confidence 是分析器证据分数，不是经过统计校准的概率。事件时间是源起音时刻，可以早于本帧窗口结束，因为检测器需要历史确认。持续包络有释放历史，允许其大于当前窗口 raw peak。raw RMS/peak 是未滤波 PCM 的幅度参考，不表示额外应与事件相加的持续输出；这与 v2 的触觉频带 RMS/peak 语义不同。SILENT 表示当前触觉频带输入静音，不表示释放包络已经归零；生命周期清理由 END/reset 执行。
+
+持续状态与事件有不同消费语义：持续状态采用最新有效帧；事件按 `(controller, epoch, eventId)` 去重，使用有界队列按源时间播放。主机可以重复短时间内的近期事件抵抗不可靠包丢失；客户端不能因为收到旧状态帧而丢掉其中尚未消费、仍未过期的事件，也不能重播重复事件或追赶过期事件。end/discontinuity 清理对应流的状态及未播放事件，旧 epoch 的 end 不得停止新流。网络和执行器背压不得导致无限排队。
+
+源时间沿用同一控制器的相对采样时钟，并不等同于视频或普通音频 PTS。客户端锚定到本地单调时钟，手机和手柄共享该播放时间轴；输出端延迟补偿由客户端负责。跨音视频精确同步需要额外公共时钟关联，v3 不宣称已经提供该能力。
+
+客户端先逐 lane 消费，再做输出分配：有转子手柄和手机时，由手柄承担持续层、支持短效果的手机承担瞬态；只有手机时，保留持续层，并在执行器允许的范围内仲裁短效果。Android 固定预设不具备任意波形或连续可调的强度，协议的 strength/sharpness 不构成该硬件能力的承诺。型号不是协议准入条件，执行器能力在本机检测。
 
 ## 4. 用户体验设计
 
