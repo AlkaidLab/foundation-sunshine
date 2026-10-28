@@ -63,7 +63,7 @@ namespace haptics {
     std::uint32_t output_count = 0;
     if (ah_authored_events_process_i16(_engine.get(), &input, &frame, 1, &output_count) !=
           AH_STATUS_OUTPUT_AVAILABLE ||
-        output_count != 1) return std::nullopt;
+        output_count != 1 || frame.event_count > 8) return std::nullopt;
 
     // The legacy analyzer and writer remain the sole source of the v2 base.
     // Small input chunks may not complete its 5 ms hop yet.
