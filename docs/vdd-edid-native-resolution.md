@@ -47,6 +47,10 @@ preference must still be supported. Otherwise the request is rejected before
 either configuration file is changed; explicitly select Default or another
 supported native size before removing its size or encodable refresh rate.
 
+If no VDD settings XML exists, saving Default remains available without creating
+that file; an explicit native size requires it. If writing an existing VDD XML
+fails, the API reports an error and does not commit the Sunshine configuration.
+
 Requires a ZakoVDD release implementing `EdidNativeResolution`, bundled with
 Sunshine. No driver binary/version is replaced in this proposal. The driver
 independently checks its actual mode list and chooses an encodable supported

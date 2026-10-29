@@ -18,6 +18,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+  #include <windows.h>
+#endif
+
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/routes.h"
@@ -308,29 +312,48 @@ TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesO
 }
 
 #ifdef _WIN32
-TEST_F(ConfigHttpRoutes, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
-  const auto previous_config = config::sunshine.config_file;
-  const auto vdd_path = platf::appdata() / "vdd_settings.xml";
-  const bool had_directory = std::filesystem::exists(vdd_path.parent_path());
-  const bool had_xml = std::filesystem::exists(vdd_path);
-  const auto previous_xml = had_xml ? file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()) : std::string {};
-  auto restore = util::fail_guard([&] {
-    config::sunshine.config_file = previous_config;
-    if (had_xml) {
-      std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << previous_xml;
-    } else {
-      std::error_code ignored;
-      std::filesystem::remove(vdd_path, ignored);
-      if (!had_directory) std::filesystem::remove(vdd_path.parent_path(), ignored);
+namespace {
+  class ConfigHttpEdid: public ConfigHttpRoutes {
+  protected:
+    std::filesystem::path vdd_path;
+    const std::string original_config = "vdd_edid_native_resolution = 3840x2160\nresolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
+    const std::string original_xml = "<vdd_settings><edid><EdidNativeResolution>3840x2160</EdidNativeResolution></edid></vdd_settings>";
+
+    void SetUp() override {
+      ConfigHttpRoutes::SetUp();
+      previous_config_ = config::sunshine.config_file;
+      vdd_path = platf::appdata() / "vdd_settings.xml";
+      had_directory_ = std::filesystem::exists(vdd_path.parent_path());
+      had_xml_ = std::filesystem::exists(vdd_path);
+      if (had_xml_) previous_xml_ = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+      prepared_ = true;
+      const auto config_path = directory / "sunshine.conf";
+      config::sunshine.config_file = file_handler::path_to_utf8(config_path);
+      std::ofstream(config_path, std::ios::binary) << original_config;
+      std::filesystem::create_directories(vdd_path.parent_path());
+      std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
     }
-  });
-  const std::string original_config = "vdd_edid_native_resolution = 3840x2160\nresolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
-  const std::string original_xml = "<vdd_settings><edid><EdidNativeResolution>3840x2160</EdidNativeResolution></edid></vdd_settings>";
-  const auto config_path = directory / "sunshine.conf";
-  config::sunshine.config_file = file_handler::path_to_utf8(config_path);
-  std::ofstream(config_path, std::ios::binary) << original_config;
-  std::filesystem::create_directories(vdd_path.parent_path());
-  std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
+
+    void TearDown() override {
+      ConfigHttpRoutes::TearDown();
+      if (!prepared_) return;
+      config::sunshine.config_file = previous_config_;
+      if (had_xml_) {
+        std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << previous_xml_;
+      } else {
+        std::error_code ignored;
+        std::filesystem::remove(vdd_path, ignored);
+        if (!had_directory_) std::filesystem::remove(vdd_path.parent_path(), ignored);
+      }
+    }
+
+  private:
+    std::string previous_config_, previous_xml_;
+    bool had_directory_ = false, had_xml_ = false, prepared_ = false;
+  };
+}
+
+TEST_F(ConfigHttpEdid, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
   auto client = connect();
   for (const auto &payload : {
          nlohmann::json {{"resolutions", "[1920x1080]"}, {"fps", "[60,120]"}},
@@ -342,6 +365,70 @@ TEST_F(ConfigHttpRoutes, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) 
     EXPECT_NE(body.at("error").get<std::string>().find("EDID native resolution"), std::string::npos);
     EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
     EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+TEST_F(ConfigHttpEdid, DefaultWithoutVddXmlSavesSunshineWithoutCreatingXml) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json {{"vdd_edid_native_resolution", "default"}, {"sunshine_name", "without-vdd"}};
+  const auto response = client->request("POST", "/api/config", payload.dump(), {{"Content-Type", "application/json"}});
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "default");
+  EXPECT_EQ(saved->at("sunshine_name"), "without-vdd");
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+TEST_F(ConfigHttpEdid, NondefaultWithoutVddXmlRejectsWithoutChangingSunshine) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json {{"vdd_edid_native_resolution", "1920x1080"},
+    {"resolutions", "[1920x1080,3840x2160]"}, {"fps", "[60,120]"}};
+  const auto response = client->request("POST", "/api/config", payload.dump(), {{"Content-Type", "application/json"}});
+  ASSERT_EQ(response->status_code, "200 OK");
+  const auto body = nlohmann::json::parse(response->content.string());
+  EXPECT_EQ(body.at("status"), "false");
+  EXPECT_NE(body.at("error").get<std::string>().find("VDD settings file is missing"), std::string::npos);
+  EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+TEST_F(ConfigHttpEdid, XmlWriteFailureRejectsDefaultExplicitAndLegacySaves) {
+  // Permit readers but deny writes to the existing test XML without changing ACLs.
+  const auto blocker = CreateFileW(vdd_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                   nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(blocker, INVALID_HANDLE_VALUE);
+  auto release = util::fail_guard([&] { CloseHandle(blocker); });
+  auto client = connect();
+  for (const std::string selection : {"default", "1920x1080", ""}) {
+    auto payload = nlohmann::json {{"resolutions", "[1920x1080,3840x2160]"}, {"fps", "[60,120]"}};
+    if (!selection.empty()) payload["vdd_edid_native_resolution"] = selection;
+    const auto response = client->request("POST", "/api/config", payload.dump(), {{"Content-Type", "application/json"}});
+    ASSERT_EQ(response->status_code, "200 OK");
+    const auto body = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(body.at("status"), "false");
+    EXPECT_NE(body.at("error").get<std::string>().find("Failed to save virtual display settings"), std::string::npos);
+    EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+    EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+TEST_F(ConfigHttpEdid, SuccessfulSelectionAndResetUpdateBothFiles) {
+  auto client = connect();
+  for (const std::string selection : {"1920x1080", "default"}) {
+    const auto payload = nlohmann::json {{"vdd_edid_native_resolution", selection},
+      {"resolutions", "[1920x1080,3840x2160]"}, {"fps", "[60,120]"}};
+    const auto response = client->request("POST", "/api/config", payload.dump(), {{"Content-Type", "application/json"}});
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("vdd_edid_native_resolution"), selection);
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_NE(xml.find("<EdidNativeResolution>" + selection + "</EdidNativeResolution>"), std::string::npos);
   }
 }
 #endif

@@ -331,7 +331,15 @@ namespace confighttp::configuration {
         if (!display_device::vdd_edid::retained_selection_supported(fullConfig, *snapshot)) {
           throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
         }
-        display_device::vdd_settings::save(resArray, fpsArray, gpu_name, edid_resolution ? *edid_resolution : "");
+        const auto vdd_saved = display_device::vdd_settings::save(resArray, fpsArray, gpu_name, edid_resolution ? *edid_resolution : "");
+        if (vdd_saved == display_device::vdd_settings::save_result::failed) {
+          throw std::runtime_error("Failed to save virtual display settings; Sunshine configuration was not saved");
+        }
+        // Default (or an omitted preference) is a no-op without a VDD XML.
+        if (vdd_saved == display_device::vdd_settings::save_result::missing_file &&
+            edid_resolution && *edid_resolution != "default") {
+          throw std::runtime_error("VDD settings file is missing; install/configure a compatible ZakoVDD driver before selecting an EDID native resolution");
+        }
 
         // 更新配置
         if (!config::update_full_config(fullConfig)) {
