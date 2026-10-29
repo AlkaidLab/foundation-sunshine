@@ -8,7 +8,10 @@
 #include <string_view>
 
 namespace display_device::vdd_edid {
-  struct resolution_t { unsigned int width; unsigned int height; };
+  struct resolution_t {
+    unsigned int width;
+    unsigned int height;
+  };
 
   inline std::optional<resolution_t>
   parse_size(std::string_view value) {
@@ -34,8 +37,9 @@ namespace display_device::vdd_edid {
     return value == "default" || (value.find('X') == value.npos && parse_size(value).has_value());
   }
 
-  template<class Visitor>
-  void visit_list(std::string_view list, Visitor visitor) {
+  template <class Visitor>
+  void
+  visit_list(std::string_view list, Visitor visitor) {
     while (!list.empty()) {
       const auto comma = list.find(',');
       auto item = list.substr(0, comma);
@@ -52,8 +56,8 @@ namespace display_device::vdd_edid {
     // Match ZakoVDD: preserve the verified 1080p60/4K60 timings; other
     // virtual modes use dispinfo's four-pixel blanking and a 10 kHz clock.
     const std::uint64_t clock = refresh == 60 && size.width == 1920 && size.height == 1080 ? 14850 :
-      refresh == 60 && size.width == 3840 && size.height == 2160 ? 59400 :
-      (static_cast<std::uint64_t>(size.width + 4) * (size.height + 4) * refresh + 5000) / 10000;
+                                refresh == 60 && size.width == 3840 && size.height == 2160 ? 59400 :
+                                                                                             (static_cast<std::uint64_t>(size.width + 4) * (size.height + 4) * refresh + 5000) / 10000;
     return refresh > 0 && clock > 0 && clock <= 65535;
   }
 
@@ -73,23 +77,25 @@ namespace display_device::vdd_edid {
         const auto rate = std::stod(std::string(item), &consumed);
         if (consumed == item.size() && std::isfinite(rate) && rate >= 1 && rate <= 480 &&
             timing_encodable(selected, static_cast<unsigned int>(std::lround(rate)))) encodable = true;
-      } catch (...) { /* Invalid FPS entries do not make a mode available. */ }
+      }
+      catch (...) { /* Invalid FPS entries do not make a mode available. */
+      }
     });
     return encodable;
   }
   /** Check a retained preference before a legacy client changes either mode list. */
   inline bool
   retained_selection_supported(const std::map<std::string, std::string> &incoming,
-                               const std::map<std::string, std::string> &existing) {
+    const std::map<std::string, std::string> &existing) {
     if (incoming.count("vdd_edid_native_resolution")) return true;
     const auto preference = existing.find("vdd_edid_native_resolution");
     if (preference == existing.end() || preference->second == "default") return true;
     auto value = [](const auto &values, const char *key) -> std::string_view {
       const auto found = values.find(key);
-      return found == values.end() ? "[]" : std::string_view {found->second};
+      return found == values.end() ? "[]" : std::string_view { found->second };
     };
     bool changed = false;
-    for (const auto key : {"resolutions", "fps"}) {
+    for (const auto key : { "resolutions", "fps" }) {
       if (incoming.count(key) && value(incoming, key) != value(existing, key)) changed = true;
     }
     if (!changed) return true;

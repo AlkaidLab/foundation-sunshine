@@ -16,6 +16,10 @@
 #include <sstream>
 #include <vector>
 
+#ifdef SUNSHINE_TESTS
+  #include <mutex>
+#endif
+
 using namespace std::literals;
 
 namespace display_device::vdd_settings {
@@ -23,6 +27,11 @@ namespace display_device::vdd_settings {
   namespace pt = boost::property_tree;
 
   namespace {
+#ifdef SUNSHINE_TESTS
+    std::mutex settings_path_mutex;
+    std::optional<fs::path> test_settings_path;
+#endif
+
     std::vector<std::string>
     split(const std::string &str, char delimiter) {
       std::vector<std::string> tokens;
@@ -37,12 +46,34 @@ namespace display_device::vdd_settings {
 
   }  // namespace
 
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    void
+    set_settings_path(const std::optional<std::filesystem::path> &path) {
+      std::lock_guard lock { settings_path_mutex };
+      test_settings_path = path;
+    }
+  }  // namespace test_support
+#endif
+
   save_result
   save(std::string resArray, std::string fpsArray, std::string gpu_name, const std::string &edid_native_resolution) {
     if (!edid_native_resolution.empty() && !vdd_edid::supported_selection(edid_native_resolution, resArray, fpsArray)) {
       return save_result::failed;
     }
+#ifdef SUNSHINE_TESTS
+    fs::path idd_option_path;
+    {
+      std::lock_guard lock { settings_path_mutex };
+      if (!test_settings_path) {
+        BOOST_LOG(warning) << "VDD tests require an isolated settings path";
+        return save_result::failed;
+      }
+      idd_option_path = *test_settings_path;
+    }
+#else
     const auto idd_option_path = platf::appdata() / "vdd_settings.xml";
+#endif
     std::error_code error;
     const bool exists = fs::exists(idd_option_path, error);
     if (error) {

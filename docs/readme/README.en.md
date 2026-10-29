@@ -26,7 +26,7 @@ From dynamic HDR and display calibration to low-latency capture and hardware enc
 ## Highlights
 
 - **Video and displays:** Scene-adaptive HDR, HDR10+ / HDR Vivid and Dolby Vision extensions, with brightness calibration. [ZakoDisplay](https://github.com/qiin2333/zako-vdd) provides HDR virtual displays and multiple display layouts without a physical monitor.
-- **EDID native resolution:** With a compatible ZakoVDD driver, select the [EDID native resolution](../vdd-edid-native-resolution.md) from advertised resolutions to improve fullscreen choices in some games; the default remains 1080p.
+- **EDID native resolution:** With a compatible ZakoVDD driver, select the [EDID native resolution](../en/vdd-edid-native-resolution.md) from advertised resolutions to improve fullscreen choices in some games; the default remains 1080p.
 - **Capture and encoding:** NVIDIA NVENC, AMD AMF, and Intel Quick Sync, with capture and encoding optimizations for lower latency and smoother sessions. Zako Direct takes virtual display frames directly to reduce capture-stage copies.
 - **Audio and microphone forwarding:** Up to 7.1.4 surround, PCM / AC3 / E-AC3, microphone forwarding, continuous audio during silence, and audio packet-loss recovery.
 - **Independent desktop control panel:** Manage game libraries, displays, device components, runtime status, and updates, with log diagnostics and optional AI assistance.
