@@ -793,6 +793,8 @@ namespace image_enhancement {
     std::string pending_operation;
     {
       boost::lock_guard gate(impl_->ownership);
+      if (impl_->maintenance_unknown && impl_->maintenance_component.empty())
+        return { 409, "hdr_maintenance_mismatch" };
       // A different provider cannot settle this component's runtime backup.
       if (!impl_->maintenance_component.empty() && impl_->maintenance_component != id)
         return { 409, "hdr_maintenance_mismatch" };

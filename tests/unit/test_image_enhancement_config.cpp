@@ -181,6 +181,38 @@ TEST_F(ImageEnhancementConfigTest, MaintenanceCannotBeInspectedOrReleasedByAnoth
   }
 }
 
+TEST_F(ImageEnhancementConfigTest, RecoveryPreservesJournalAndBackupWhenOwnerIsUnknown) {
+  create_nr_fixture();
+  const auto backup = root / "tools/hdr_enhanced/nvidia_dlssnr/pending-runtime";
+  std::filesystem::create_directory(backup);
+  const auto saved_runtime = backup / "nvngx_dlssnr.dll";
+  std::ofstream(saved_runtime) << "previous runtime";
+  for (const auto &journal : {
+         std::string { "{broken" },
+         nlohmann::json { { "operation_id", "interrupted" } }.dump(),
+         nlohmann::json { { "operation_id", "interrupted" }, { "component_id", "unknown" } }.dump(),
+       }) {
+    std::ofstream(store->maintenance_path(), std::ios::trunc) << journal;
+    store.reset();
+    store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
+    ASSERT_TRUE(store->initialize());
+    EXPECT_TRUE(store->status()["maintenance"]);
+    EXPECT_EQ(store->status()["maintenance_component"], "");
+    for (const auto component : { image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, image_enhancement::NVIDIA_DLSSNR_BACKEND }) {
+      const auto result = store->recover_maintenance(component);
+      EXPECT_EQ(result.status, 409);
+      EXPECT_EQ(result.error, "hdr_maintenance_mismatch");
+      EXPECT_TRUE(store->status()["maintenance"]);
+      std::ifstream input(store->maintenance_path());
+      std::string persisted;
+      std::getline(input, persisted, '\0');
+      EXPECT_EQ(persisted, journal);
+      EXPECT_TRUE(std::filesystem::exists(saved_runtime));
+      EXPECT_TRUE(std::filesystem::exists(root / "tools/hdr_enhanced/nvidia_dlssnr/nvngx_dlssnr.dll"));
+    }
+  }
+}
+
 TEST_F(ImageEnhancementConfigTest, DeferredRemovalCompletesOnStartupAndPreservesOtherBackend) {
   auto selected = trusted_fixture();
   create_nr_fixture();
