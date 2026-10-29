@@ -137,6 +137,29 @@ TEST_F(InputActivityTest, ClassifiesPointerMouseAndKeyboardPackets) {
   }
 }
 
+TEST_F(InputActivityTest, PointerMotionCountsWhileEveryCursorV2SessionDraws) {
+  auto relative_move = make_packet<NV_REL_MOUSE_MOVE_PACKET>(MOUSE_MOVE_REL_MAGIC_GEN5);
+  relative_move.deltaX = util::endian::big<std::int16_t>(4);
+  const auto absolute_move = make_packet<NV_ABS_MOUSE_MOVE_PACKET>(MOUSE_MOVE_ABS_MAGIC);
+  config::input.mouse = true;
+
+  input::activity::tracker_t tracker;
+  const auto relative = packet_bytes(relative_move);
+  const auto absolute = packet_bytes(absolute_move);
+  const auto evaluate = [&](const std::vector<std::uint8_t> &bytes) {
+    return tracker.evaluate(reinterpret_cast<const NV_INPUT_HEADER *>(bytes.data()), bytes.size());
+  };
+
+  EXPECT_EQ(evaluate(relative), false);
+  EXPECT_EQ(evaluate(absolute), false);
+
+  cursor_channel::set_all_sessions_draw(true);
+  EXPECT_EQ(evaluate(relative), true);
+  EXPECT_EQ(evaluate(absolute), true);
+  cursor_channel::set_all_sessions_draw(false);
+  EXPECT_EQ(evaluate(absolute), false);
+}
+
 TEST_F(InputActivityTest, RejectsTruncatedPacketsBeforeReadingEventFields) {
   const std::vector<std::pair<std::uint32_t, std::size_t>> cases {
     {MOUSE_MOVE_REL_MAGIC_GEN5, sizeof(NV_REL_MOUSE_MOVE_PACKET)},

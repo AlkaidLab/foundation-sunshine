@@ -38,7 +38,16 @@ namespace platf::dxgi {
   bool
   local_cursor_mode_active();
 
-  bool
+  struct local_cursor_sync_t {
+    bool local_mode;  // a cursor protocol v1 session draws the cursor: leave it out of frames
+    bool publish;  // publish shapes to cursor_channel (v1 local sessions or cursor protocol v2)
+  };
+
+  /**
+   * Republish the stored Desktop Duplication shape when a cursor_channel
+   * consumer arrived since the last one, and report what this frame must do.
+   */
+  local_cursor_sync_t
   sync_local_cursor_mode(duplication_t &duplication);
 
   /**

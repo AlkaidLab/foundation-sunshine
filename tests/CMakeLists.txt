@@ -597,6 +597,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_host_cursor.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_http_util.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp
@@ -706,6 +707,19 @@ target_compile_definitions(input_activity_unit_tests PRIVATE INPUT_ACTIVITY_STAN
 target_compile_options(input_activity_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(input_activity_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME input_activity_unit_tests COMMAND input_activity_unit_tests)
+
+add_executable(host_cursor_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_host_cursor.cpp
+        ${CMAKE_SOURCE_DIR}/src/host_cursor.cpp
+        ${CMAKE_SOURCE_DIR}/src/host_cursor_bitmap.cpp
+        ${CMAKE_SOURCE_DIR}/src/cursor_channel.cpp)
+target_include_directories(host_cursor_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(host_cursor_unit_tests
+        PRIVATE gtest_main
+        sunshine_project_options sunshine_coverage)
+target_compile_options(host_cursor_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(host_cursor_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME host_cursor_unit_tests COMMAND host_cursor_unit_tests)
 
 add_executable(launch_session_manager_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp

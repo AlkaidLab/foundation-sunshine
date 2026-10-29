@@ -66,6 +66,7 @@ extern "C" {
 
 #include "clipboard_bridge.h"
 #include "cursor_channel.h"
+#include "host_cursor.h"
 #include "platform/common.h"
 #include "touch_keyboard_session.h"
 #include "text_context/bridge.h"
@@ -502,6 +503,25 @@ namespace stream {
       return 0;
     }
 
+    /**
+     * @brief Send cursor protocol v2 traffic: reliable, on its own channel so a
+     *        large shape never delays the reliable traffic on channel 0.
+     */
+    int
+    send_cursor(const std::string_view &payload, net::peer_t peer) {
+      // Clients connect with 0x30 channels; fall back to channel 0 for one that did not.
+      const auto channel = peer->channelCount > host_cursor_protocol::channel ? host_cursor_protocol::channel : 0;
+      auto packet = enet_packet_create(payload.data(), payload.size(), ENET_PACKET_FLAG_RELIABLE);
+      if (!packet) {
+        return -1;
+      }
+      if (enet_peer_send(peer, channel, packet)) {
+        enet_packet_destroy(packet);
+        return -1;
+      }
+      return 0;
+    }
+
     void
     flush() {
       enet_host_flush(_host.get());
@@ -674,6 +694,13 @@ namespace stream {
       bool cursor_visible = false;
       std::uint64_t cursor_failed_revision = 0;
       std::uint32_t cursor_send_failures = 0;
+
+      // Cursor protocol v2 (control thread only). The geometry is the touch port
+      // the input path maps absolute input with, published again for this thread.
+      host_cursor::session_state_t cursor_v2;
+      safe::mail_raw_t::event_t<input::touch_port_t> cursor_geometry_event;
+      host_cursor::geometry_t cursor_geometry;
+      bool cursor_v2_rejected_logged = false;
 
       // Analysis/filter/timeline history belongs to one controller, including
       // when several pads share the same streaming connection.
@@ -1926,6 +1953,135 @@ namespace stream {
     return 0;
   }
 
+  host_cursor::geometry_t
+  cursor_geometry_from_port(const input::touch_port_t &port) {
+    return {
+      bool(port),
+      port.offset_x,
+      port.offset_y,
+      port.width,
+      port.height,
+      port.client_offsetX,
+      port.client_offsetY,
+      port.scalar_inv,
+    };
+  }
+
+  /**
+   * @brief End a session's cursor protocol v2 subscription, if any.
+   * @param session The session, on the control thread.
+   */
+  void
+  stop_cursor_v2(session_t *session) {
+    auto &cursor = session->control.cursor_v2;
+    if (cursor.subscribed) {
+      host_cursor::apply_request(cursor, {});
+      BOOST_LOG(info) << "Cursor protocol v2: session "sv << session->launch_session_id << " unsubscribed"sv;
+    }
+    cursor.tracker_handle.reset();
+  }
+
+  /**
+   * @brief Apply a cursor protocol v2 request (0x5509 version 2).
+   * @param session The session, on the control thread.
+   * @param payload The request after the control header.
+   */
+  void
+  handle_cursor_v2_request(session_t *session, const std::string_view &payload) {
+    const auto request = host_cursor_protocol::parse_request({ reinterpret_cast<const std::uint8_t *>(payload.data()), payload.size() });
+    if (!request || !host_cursor::tracker::supported() || session->config.controlProtocolType != 13) {
+      if (!session->control.cursor_v2_rejected_logged) {
+        BOOST_LOG(warning) << "Ignoring cursor protocol v2 request ("sv << payload.size() << " bytes)"sv;
+        session->control.cursor_v2_rejected_logged = true;
+      }
+      return;
+    }
+
+    auto &cursor = session->control.cursor_v2;
+    const bool was_subscribed = cursor.subscribed;
+    const bool drew = cursor.client_draws;
+    host_cursor::apply_request(cursor, *request);
+    if (cursor.subscribed) {
+      // A session uses one cursor protocol version at a time.
+      if (session->control.local_cursor_mode) {
+        session->control.local_cursor_mode = false;
+        cursor_channel::set_session_enabled(session->launch_session_id, false);
+      }
+      if (!cursor.tracker_handle) {
+        cursor.tracker_handle = host_cursor::tracker::acquire();
+      }
+    }
+    else {
+      cursor.tracker_handle.reset();
+    }
+
+    if (was_subscribed != cursor.subscribed || drew != cursor.client_draws) {
+      BOOST_LOG(info) << "Cursor protocol v2: session "sv << session->launch_session_id
+                      << (cursor.subscribed ? " subscribed"sv : " unsubscribed"sv)
+                      << ", the "sv << (cursor.client_draws ? "client"sv : "host"sv) << " draws the cursor"sv;
+    }
+  }
+
+  /**
+   * @brief Send a subscribed session the cursor shapes and state it has not had yet.
+   * @param session The session, on the control thread.
+   * @param composited Whether captured frames currently contain the cursor.
+   */
+  void
+  send_cursor_v2_updates(session_t *session, bool composited) {
+    auto &geometry_event = session->control.cursor_geometry_event;
+    if (geometry_event && geometry_event->peek()) {
+      if (auto port = geometry_event->pop()) {
+        session->control.cursor_geometry = cursor_geometry_from_port(*port);
+      }
+    }
+
+    auto &cursor = session->control.cursor_v2;
+    if (!cursor.subscribed || !session->control.peer) {
+      return;
+    }
+
+    const auto update = host_cursor::plan_update(
+      cursor,
+      host_cursor::tracker::latest(),
+      session->control.cursor_geometry,
+      composited,
+      std::chrono::steady_clock::now());
+
+    auto &server = session->broadcast_ref->control_server;
+    const auto send = [&](const std::vector<std::uint8_t> &plaintext) {
+      std::vector<std::uint8_t> encrypted(
+        sizeof(control_encrypted_t)
+        + crypto::cipher::round_to_pkcs7_padded(plaintext.size())
+        + crypto::cipher::tag_size);
+      auto view = encode_control_buf(
+        session,
+        std::string_view { reinterpret_cast<const char *>(plaintext.data()), plaintext.size() },
+        encrypted.data(),
+        encrypted.size());
+      if (view.empty() || server.send_cursor(view, session->control.peer)) {
+        BOOST_LOG(warning) << "Cursor protocol v2: couldn't send to the client"sv;
+        return false;
+      }
+      return true;
+    };
+
+    for (std::size_t i = 0; i < update.shapes.size(); ++i) {
+      const auto &shape = *update.shapes[i];
+      for (const auto &chunk : host_cursor_protocol::encode_shape(update.shape_ids[i], shape.width, shape.height, shape.hotspot_x, shape.hotspot_y, shape.bgra)) {
+        if (!send(chunk)) {
+          return;
+        }
+      }
+      BOOST_LOG(debug) << "Cursor protocol v2: sent shape "sv << update.shape_ids[i] << " ("sv << shape.width << 'x' << shape.height << ')';
+    }
+
+    if (update.state && send(host_cursor_protocol::encode_state(*update.state))) {
+      BOOST_LOG(verbose) << "Cursor protocol v2: state seq="sv << update.state->seq << " flags=0x"sv
+                         << util::hex(update.state->flags).to_string_view() << " shape="sv << update.state->shape_id;
+    }
+  }
+
   void
   controlBroadcastThread(control_server_t *server) {
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
@@ -2278,6 +2434,13 @@ namespace stream {
     });
 
     server->map(packetTypes[IDX_CURSOR], [](session_t *session, const std::string_view &payload) {
+      // Byte 0 is the cursor protocol version.
+      if (!payload.empty() &&
+          static_cast<std::uint8_t>(payload[0]) == host_cursor_protocol::version) {
+        handle_cursor_v2_request(session, payload);
+        return;
+      }
+
       if (payload.size() != 4 ||
           static_cast<std::uint8_t>(payload[0]) != cursor_protocol_version) {
         BOOST_LOG(warning) << "Ignoring malformed local cursor mode request"sv;
@@ -2290,6 +2453,9 @@ namespace stream {
                            << static_cast<unsigned int>(requested_mode);
         return;
       }
+
+      // A session uses one cursor protocol version at a time.
+      stop_cursor_v2(session);
 
       const bool enable = requested_mode == 1;
       if (enable && session->config.controlProtocolType != 13) {
@@ -2420,6 +2586,13 @@ namespace stream {
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
       bool has_ds5_haptics_session = false;
+      bool has_cursor_v2_session = false;
+      std::size_t cursor_sessions = 0;
+      std::size_t cursor_v2_drawing = 0;
+      // Whether frames contain the cursor, as cursor protocol v2 states report it.
+      const bool cursor_composited = display_cursor &&
+                                     !cursor_channel::frames_exclude_cursor() &&
+                                     cursor_channel::capture_composites_cursor();
 
       {
         auto lg = server->_sessions.lock();
@@ -2444,6 +2617,7 @@ namespace stream {
             clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
             text_context::bridge_t::instance().session_stopped(session->launch_session_id);
             cursor_channel::remove_session(session->launch_session_id);
+            stop_cursor_v2(session);
             pos = server->_sessions->erase(pos);
 
             if (session->control.peer) {
@@ -2458,6 +2632,10 @@ namespace stream {
             session->controlEnd.raise(true);
             continue;
           }
+
+          // Frames keep the cursor unless every session, including any still
+          // waiting for its peer, draws it itself.
+          ++cursor_sessions;
 
           // Remember if we have a session that's waiting for a peer to connect to the
           // control stream. This ensures the clients are properly notified even when
@@ -2567,10 +2745,19 @@ namespace stream {
                 }
               }
             }
+
+            send_cursor_v2_updates(session, cursor_composited);
+            has_cursor_v2_session |= session->control.cursor_v2.subscribed;
+            cursor_v2_drawing += session->control.cursor_v2.client_draws;
           }
 
           ++pos;
         })
+
+        cursor_channel::set_all_sessions_draw(host_cursor::all_sessions_draw(
+          cursor_sessions,
+          cursor_v2_drawing,
+          cursor_v2_drawing == 0 || host_cursor::tracker::latest().available));
 
         // Drain any clipboard messages enqueued by the GUI HTTP layer and
         // dispatch them to matching sessions. We're already holding the
@@ -2625,9 +2812,13 @@ namespace stream {
       // permanently: every observation is preceded by that client's touch/mouse
       // packets, and enet_host_service returns per incoming event, so the drain
       // runs on traffic; the idle timeout bounds delivery on a quiet socket.
-      server->iterate(has_ds5_haptics_session ? 5ms :
+      // Cursor protocol v2 drives mouse-mode switching on the client, so its
+      // state cannot wait for a frame.
+      server->iterate(has_ds5_haptics_session || has_cursor_v2_session ? 5ms :
                       cursor_channel::local_mode_active() ? 16ms : 150ms);
     }
+
+    cursor_channel::set_all_sessions_draw(false);
 
     // Let all remaining connections know the server is shutting down
     // reason: graceful termination
@@ -2653,6 +2844,7 @@ namespace stream {
       clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
       text_context::bridge_t::instance().session_stopped(session->launch_session_id);
       cursor_channel::remove_session(session->launch_session_id);
+      stop_cursor_v2(session);
 
       // We may not have gotten far enough to have an ENet connection yet
       if (session->control.peer) {
@@ -4676,6 +4868,7 @@ namespace stream {
         session->control.ds5_haptics_states[controller] = platf::ds5_haptics_state_event(mail, controller);
       }
       session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
+      session->control.cursor_geometry_event = mail->event<input::touch_port_t>(mail::cursor_geometry);
       session->control.resolution_change_queue = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
       session->control.legacy_input_enc_iv = launch_session.iv;
       session->control.cipher = crypto::cipher::gcm_t {

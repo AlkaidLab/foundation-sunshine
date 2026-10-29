@@ -33,12 +33,12 @@ namespace input::activity {
         }
         const auto *mouse = reinterpret_cast<const NV_REL_MOUSE_MOVE_PACKET *>(payload);
         return config::input.mouse &&
-               cursor_channel::local_mode_active() &&
+               cursor_channel::frames_exclude_cursor() &&
                (util::endian::big(mouse->deltaX) != 0 ||
                 util::endian::big(mouse->deltaY) != 0);
       }
       case MOUSE_MOVE_ABS_MAGIC:
-        return config::input.mouse && cursor_channel::local_mode_active();
+        return config::input.mouse && cursor_channel::frames_exclude_cursor();
       case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
       case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5:
         return config::input.mouse;

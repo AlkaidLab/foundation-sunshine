@@ -166,7 +166,9 @@ TEST(WindowsCursorImage, RepublishesDesktopDuplicationShapeOnLocalModeActivation
     0xEE, 0xEE, 0xEE, 0xEE,
   };
 
-  ASSERT_TRUE(platf::dxgi::sync_local_cursor_mode(duplication));
+  const auto sync = platf::dxgi::sync_local_cursor_mode(duplication);
+  ASSERT_TRUE(sync.local_mode);
+  ASSERT_TRUE(sync.publish);
 
   cursor_channel::snapshot_t published;
   ASSERT_TRUE(cursor_channel::copy_latest(0, published));
@@ -182,9 +184,43 @@ TEST(WindowsCursorImage, RepublishesDesktopDuplicationShapeOnLocalModeActivation
     0x66, 0x55, 0x44, 0xFF,
   }));
 
-  EXPECT_TRUE(platf::dxgi::sync_local_cursor_mode(duplication));
+  EXPECT_TRUE(platf::dxgi::sync_local_cursor_mode(duplication).local_mode);
   cursor_channel::snapshot_t duplicate;
   EXPECT_FALSE(cursor_channel::copy_latest(published.revision, duplicate));
+}
+
+TEST(WindowsCursorImage, RepublishesDesktopDuplicationShapeForCursorV2WithoutLocalMode) {
+  struct consumer_guard_t {
+    ~consumer_guard_t() {
+      cursor_channel::remove_shape_consumer();
+    }
+  } consumer_guard;
+  cursor_channel::add_shape_consumer();
+
+  platf::dxgi::duplication_t duplication;
+  auto &cursor = duplication.cursor;
+  cursor.visible = true;
+  cursor.shape_id = 9;
+  cursor.shape_info.Type = DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR;
+  cursor.shape_info.Width = 1;
+  cursor.shape_info.Height = 1;
+  cursor.shape_info.Pitch = 4;
+  cursor.img_data = { 0x01, 0x02, 0x03, 0xFF };
+
+  // Frames keep the cursor (no v1 session), but the shape still reaches cursor protocol v2.
+  const auto sync = platf::dxgi::sync_local_cursor_mode(duplication);
+  EXPECT_FALSE(sync.local_mode);
+  EXPECT_TRUE(sync.publish);
+
+  std::uint64_t shape_revision = 0;
+  cursor_channel::snapshot_t published;
+  ASSERT_TRUE(cursor_channel::copy_shape_if_newer(shape_revision, published));
+  EXPECT_EQ(published.shape_id, 9u);
+  EXPECT_EQ(published.bgra, (std::vector<std::uint8_t> { 0x01, 0x02, 0x03, 0xFF }));
+
+  // Published once per consumer arrival, not on every frame.
+  (void) platf::dxgi::sync_local_cursor_mode(duplication);
+  EXPECT_FALSE(cursor_channel::copy_shape_if_newer(shape_revision, published));
 }
 
 #endif

@@ -262,6 +262,11 @@ namespace platf::dxgi {
 
   capture_e
   display_base_t::capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) {
+    // Cursor protocol v2: frames leave the cursor out while every session draws
+    // it locally. Cursor protocol v1 sessions are handled inside each backend.
+    const auto frames_show_cursor = [cursor]() {
+      return *cursor && !cursor_channel::all_sessions_draw();
+    };
     auto adjust_client_frame_rate = [&]() -> DXGI_RATIONAL {
       double requested_fps = static_cast<double>(client_frame_rate_rational.Numerator) / client_frame_rate_rational.Denominator;
 
@@ -392,7 +397,7 @@ namespace platf::dxgi {
           sleep_overshoot_logger.second_point_now_and_log();
 
           // Try with 0ms timeout first (non-blocking check)
-          status = snapshot(pull_free_image_cb, img_out, 0ms, *cursor);
+          status = snapshot(pull_free_image_cb, img_out, 0ms, frames_show_cursor());
 
           // If 0ms timeout failed but we're very close to the target time, try once more with a small timeout
           // This helps catch frames that arrive slightly early or late due to timing variations
@@ -400,7 +405,7 @@ namespace platf::dxgi {
             const auto time_since_target = std::chrono::steady_clock::now() - sleep_target;
             // If we're within 2ms of the target time, try one more time with a small timeout
             if (time_since_target < 2ms && time_since_target > -2ms) {
-              status = snapshot(pull_free_image_cb, img_out, 2ms, *cursor);
+              status = snapshot(pull_free_image_cb, img_out, 2ms, frames_show_cursor());
             }
           }
 
@@ -436,7 +441,7 @@ namespace platf::dxgi {
 
         status = capture_e::timeout;
         for (int attempt = 0; attempt < max_attempts && status == capture_e::timeout; ++attempt) {
-          status = snapshot(pull_free_image_cb, img_out, short_timeout, *cursor);
+          status = snapshot(pull_free_image_cb, img_out, short_timeout, frames_show_cursor());
 
           // If we got a frame or error, break immediately
           if (status != capture_e::timeout) {
@@ -1346,6 +1351,8 @@ namespace platf {
 
       if (ret) {
         cursor_channel::set_producer_available(type == "ddx" || type == "vdd");
+        // AMD Direct Capture only draws the cursor when configured to.
+        cursor_channel::set_capture_composites_cursor(type != "amd" || config::input.amf_draw_mouse_cursor);
         return ret;
       }
 

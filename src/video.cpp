@@ -1132,6 +1132,7 @@ namespace video {
     safe::mail_raw_t::event_t<bool> idr_events;
     safe::mail_raw_t::event_t<hdr_info_t> hdr_events;
     safe::mail_raw_t::event_t<input::touch_port_t> touch_port_events;
+    safe::mail_raw_t::event_t<input::touch_port_t> cursor_geometry_events;
 
     config_t config;
     int frame_nr;
@@ -3962,7 +3963,9 @@ namespace video {
     encode_session.ctx = &ctx;
 
     // absolute mouse coordinates require that the dimensions of the screen are known
-    ctx.touch_port_events->raise(make_port(disp, ctx.config));
+    const auto port = make_port(disp, ctx.config);
+    ctx.touch_port_events->raise(port);
+    ctx.cursor_geometry_events->raise(port);
 
     // Create encode device with NTSC framerate fallback support
     strip_unusable_pre_encode_filter(*disp, ctx.config);
@@ -4295,6 +4298,7 @@ namespace video {
     int frame_nr = 1;
 
     auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
+    auto cursor_geometry_event = mail->event<input::touch_port_t>(mail::cursor_geometry);
     auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
     auto idr_events = mail->event<bool>(mail::idr);
     auto resolution_change_event = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
@@ -4619,7 +4623,9 @@ namespace video {
       }
 
       // Absolute mouse coordinates require that the dimensions of the screen are known
-      touch_port_event->raise(make_port(display.get(), config));
+      const auto port = make_port(display.get(), config);
+      touch_port_event->raise(port);
+      cursor_geometry_event->raise(port);
 
       // Update client with our current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
@@ -4688,6 +4694,7 @@ namespace video {
         std::move(idr_events),
         mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
+        mail->event<input::touch_port_t>(mail::cursor_geometry),
         config,
         1,
         channel_data,
