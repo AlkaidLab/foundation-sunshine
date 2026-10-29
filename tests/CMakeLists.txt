@@ -40,6 +40,27 @@ set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
 
+# Adapter contract only: DSP fidelity belongs to the SDK, wire validation to common-c.
+add_executable(authored_ir_extended_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+target_include_directories(authored_ir_extended_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(authored_ir_extended_unit_tests PRIVATE moonlight::haptics gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(authored_ir_extended_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME authored_ir_extended_unit_tests COMMAND authored_ir_extended_unit_tests)
+
+add_executable(analyze_authored_ir_extended
+        ${CMAKE_SOURCE_DIR}/tests/tools/analyze_authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir_extended.cpp)
+target_include_directories(analyze_authored_ir_extended PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(analyze_authored_ir_extended PRIVATE moonlight::haptics sunshine_project_options)
+set_target_properties(analyze_authored_ir_extended PROPERTIES CXX_STANDARD 23)
+
+
+
 add_executable(perf_frame_rate_unit_tests
         ${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp)
@@ -564,6 +585,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of
