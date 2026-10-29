@@ -1,0 +1,31 @@
+name: mirrorchyan_release_note
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to update (empty for the latest release)'
+        type: string
+        default: ''
+        required: false
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  mirrorchyan:
+    if: ${{ github.repository_owner == 'AlkaidLab' }}
+    runs-on: macos-latest
+    steps:
+      - uses: MirrorChyan/release-note-action@v1
+        with:
+          mirrorchyan_rid: foundation-sunshine
+          version_name: ${{ inputs.tag || github.event.release.tag_name }}
+
+          owner: AlkaidLab
+          repo: foundation-sunshine
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
