@@ -18,6 +18,43 @@ test('resolution config round-trips Sunshine bracket syntax', () => {
   assert.equal(serializeResolutions(parsed), '[1280x720,1920x1080]')
 })
 
+test('Windows sends custom EDID sizes and the default explicitly so the driver XML resets', async (t) => {
+  const originalWindow = globalThis.window
+  globalThis.window = { dispatchEvent() {} }
+  t.after(() => { globalThis.window = originalWindow })
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === '/api/config') requests.push(JSON.parse(options.body))
+    return new Response(JSON.stringify({ status: true }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })
+  })
+  const state = useConfig()
+  state.initTabs()
+  state.platform.value = 'windows'
+  state.resolutions.value = ['1920x1080', '3440x1440', '3840x2160']
+  state.fps.value = ['60']
+  for (const value of ['3840x2160', '3440x1440', 'default']) {
+    state.config.value = { vdd_edid_native_resolution: value }
+    assert.equal(await state.save(), true)
+    assert.equal(requests.at(-1).vdd_edid_native_resolution, value)
+  }
+})
+
+test('removed or unencodable EDID selections prevent saving without making an API request', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Invalid EDID selection must not reach the API') })
+  const state = useConfig()
+  state.platform.value = 'windows'
+  state.resolutions.value = ['1920x1080', '3840x2160', '5120x1440']
+  state.fps.value = ['120']
+  for (const value of ['3440x1440', '5120x1440', '3840x2160']) {
+    state.config.value = { vdd_edid_native_resolution: value }
+    assert.equal(await state.save(), false)
+    assert.equal(state.validationError.value, 'config.vdd_edid_native_resolution_invalid')
+  }
+  assert.equal(fetch.mock.callCount(), 0)
+})
+
 test('HEVC GOP preserves driver default and explicit on-demand zero', () => {
   for (const value of [-1, '-1', 0, '0', 60, '60', 1000, '1000']) {
     assert.equal(parseHevcGopSize(value), Number(value))

@@ -16,6 +16,10 @@
 #include <sstream>
 #include <vector>
 
+#ifdef SUNSHINE_TESTS
+  #include <mutex>
+#endif
+
 using namespace std::literals;
 
 namespace display_device::vdd_settings {
@@ -23,6 +27,11 @@ namespace display_device::vdd_settings {
   namespace pt = boost::property_tree;
 
   namespace {
+#ifdef SUNSHINE_TESTS
+    std::mutex settings_path_mutex;
+    std::optional<fs::path> test_settings_path;
+#endif
+
     std::vector<std::string>
     split(const std::string &str, char delimiter) {
       std::vector<std::string> tokens;
@@ -37,8 +46,41 @@ namespace display_device::vdd_settings {
 
   }  // namespace
 
-  bool
-  save(std::string resArray, std::string fpsArray, std::string gpu_name) {
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    void
+    set_settings_path(const std::optional<std::filesystem::path> &path) {
+      std::lock_guard lock { settings_path_mutex };
+      test_settings_path = path;
+    }
+  }  // namespace test_support
+#endif
+
+  save_result
+  save(std::string resArray, std::string fpsArray, std::string gpu_name, const std::string &edid_native_resolution) {
+    if (!edid_native_resolution.empty() && !vdd_edid::supported_selection(edid_native_resolution, resArray, fpsArray)) {
+      return save_result::failed;
+    }
+#ifdef SUNSHINE_TESTS
+    fs::path idd_option_path;
+    {
+      std::lock_guard lock { settings_path_mutex };
+      if (!test_settings_path) {
+        BOOST_LOG(warning) << "VDD tests require an isolated settings path";
+        return save_result::failed;
+      }
+      idd_option_path = *test_settings_path;
+    }
+#else
+    const auto idd_option_path = platf::appdata() / "vdd_settings.xml";
+#endif
+    std::error_code error;
+    const bool exists = fs::exists(idd_option_path, error);
+    if (error) {
+      BOOST_LOG(warning) << "Unable to inspect VDD configuration: " << error.message();
+      return save_result::failed;
+    }
+    if (!exists) return save_result::missing_file;
     pt::ptree iddOptionTree;
     pt::ptree global_node;
     pt::ptree resolutions_nodes;
@@ -57,7 +99,7 @@ namespace display_device::vdd_settings {
     for (const auto &resolution : split(str, delimiter)) {
       auto index = resolution.find('x');
       if (index == std::string::npos) {
-        return false;
+        return save_result::failed;
       }
       pt::ptree res_node;
       res_node.put("width", resolution.substr(0, index));
@@ -65,14 +107,7 @@ namespace display_device::vdd_settings {
       resolutions_nodes.push_back(std::make_pair("resolution"s, res_node));
     }
 
-    // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
-    std::filesystem::path idd_option_path = platf::appdata() / "vdd_settings.xml";
-
     BOOST_LOG(info) << "VDD配置文件路径: " << file_handler::path_to_utf8(idd_option_path);
-
-    if (!fs::exists(idd_option_path)) {
-      return false;
-    }
 
     // 先读取现有配置文件
     pt::ptree existing_root;
@@ -134,6 +169,11 @@ namespace display_device::vdd_settings {
       iddOptionTree.add_child("resolutions", resolutions_nodes);
     }
 
+    // Leave custom EDID and colour profiles intact. Older clients that omit
+    // the new setting must not reset an existing driver preference.
+    if (!edid_native_resolution.empty()) {
+      iddOptionTree.put("edid.EdidNativeResolution", edid_native_resolution);
+    }
     root.add_child("vdd_settings", iddOptionTree);
     try {
       // 使用更紧凑的XML格式设置，减少不必要的空白
@@ -156,11 +196,11 @@ namespace display_device::vdd_settings {
         throw std::runtime_error("Unable to write VDD configuration file");
       }
 
-      return true;
+      return save_result::saved;
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "写入VDD配置失败: " << e.what();
-      return false;
+      return save_result::failed;
     }
   }
 

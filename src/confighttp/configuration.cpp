@@ -298,6 +298,11 @@ namespace confighttp::configuration {
         std::string resArray = inputTree.get<std::string>("resolutions", "[]");
         std::string fpsArray = inputTree.get<std::string>("fps", "[]");
         std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
+        const auto edid_resolution = inputTree.get_optional<std::string>("vdd_edid_native_resolution");
+        if (edid_resolution &&
+            !display_device::vdd_edid::supported_selection(*edid_resolution, resArray, fpsArray)) {
+          throw std::invalid_argument("EDID native resolution must be default or a configured size (1..4095 per dimension) with an encodable refresh rate");
+        }
 
         // Validate config field lengths to prevent abuse
         auto sunshine_name = inputTree.get<std::string>("sunshine_name", "");
@@ -312,14 +317,28 @@ namespace confighttp::configuration {
           return;
         }
 
-        display_device::vdd_settings::save(resArray, fpsArray, gpu_name);
-
         // 将 inputTree 转换为 std::map（保证有序）
         std::map<std::string, std::string> fullConfig;
         for (const auto &kv : inputTree) {
           if (kv.first == "usb_forwarding_config_version" || kv.first == "mat_live_pipe" || kv.first == "mat_live_producer") continue;
           std::string value = inputTree.get<std::string>(kv.first);
           fullConfig[kv.first] = value;
+        }
+
+        // Validate retained values before either configuration file is changed.
+        const auto snapshot = config::get_config_snapshot();
+        if (!snapshot) throw std::runtime_error("failed to read configuration");
+        if (!display_device::vdd_edid::retained_selection_supported(fullConfig, *snapshot)) {
+          throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
+        }
+        const auto vdd_saved = display_device::vdd_settings::save(resArray, fpsArray, gpu_name, edid_resolution ? *edid_resolution : "");
+        if (vdd_saved == display_device::vdd_settings::save_result::failed) {
+          throw std::runtime_error("Failed to save virtual display settings; Sunshine configuration was not saved");
+        }
+        // Default (or an omitted preference) is a no-op without a VDD XML.
+        if (vdd_saved == display_device::vdd_settings::save_result::missing_file &&
+            edid_resolution && *edid_resolution != "default") {
+          throw std::runtime_error("VDD settings file is missing; install/configure a compatible ZakoVDD driver before selecting an EDID native resolution");
         }
 
         // 更新配置

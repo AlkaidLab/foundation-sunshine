@@ -4,6 +4,7 @@ import { getBootstrapConfig } from '../config/bootstrapData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
 import { validateListenerSettings } from '../utils/listenerSettings.js'
+import { validEdidResolutionSelection } from '../utils/vddEdidResolution.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -78,6 +79,7 @@ const DEFAULT_TABS = [
       output_name: '',
       hdr_luminance_analysis: 'auto',
       vdd_borrowed_texture: 'enabled',
+      vdd_edid_native_resolution: 'default',
       vdd_vulkan_hdr_bridge: 'enabled',
       nvenc_vdd_force_vsync: 'disabled',
       display_device_prep: 'no_operation',
@@ -624,6 +626,11 @@ export function useConfig() {
     saveError.value = ''
     validationError.value = validateListenerSettings(config.value)
     if (validationError.value) return false
+    if (platform.value === 'windows' && config.value.vdd_edid_native_resolution !== undefined &&
+        !validEdidResolutionSelection(config.value.vdd_edid_native_resolution, resolutions.value, fps.value)) {
+      validationError.value = 'config.vdd_edid_native_resolution_invalid'
+      return false
+    }
     if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
       validationError.value = 'config.amd_hevc_gop_size_desc'
       return false
@@ -632,6 +639,11 @@ export function useConfig() {
 
     const configData = deepClone(config.value)
     removeDefaultValues(configData)
+    // The driver XML is persisted separately. Send an explicit default too,
+    // otherwise selecting 1080p after 4K would leave the old XML value intact.
+    if (platform.value === 'windows' && config.value.vdd_edid_native_resolution !== undefined) {
+      configData.vdd_edid_native_resolution = config.value.vdd_edid_native_resolution
+    }
 
     try {
       const configResult = await apiJson('/api/config', {

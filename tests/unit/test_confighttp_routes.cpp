@@ -18,10 +18,15 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+  #include <windows.h>
+#endif
+
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/routes.h"
 #include "src/crypto.h"
+#include "src/display_device/vdd_settings.h"
 #include "src/file_handler.h"
 #include "src/httpcommon.h"
 #include "src/platform/common.h"
@@ -306,6 +311,134 @@ TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesO
     EXPECT_EQ(body["capture"], entry.capture);
   }
 }
+
+#ifdef _WIN32
+namespace {
+  class ConfigHttpEdid: public ConfigHttpRoutes {
+  protected:
+    std::filesystem::path vdd_path;
+    const std::string original_config = "vdd_edid_native_resolution = 3840x2160\nresolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
+    const std::string original_xml = "<vdd_settings><edid><EdidNativeResolution>3840x2160</EdidNativeResolution></edid></vdd_settings>";
+
+    void
+    SetUp() override {
+      ConfigHttpRoutes::SetUp();
+      previous_config_ = config::sunshine.config_file;
+      prepared_ = true;
+      vdd_path = directory / "vdd_settings.xml";
+      display_device::vdd_settings::test_support::set_settings_path(vdd_path);
+      const auto config_path = directory / "sunshine.conf";
+      config::sunshine.config_file = file_handler::path_to_utf8(config_path);
+      std::ofstream(config_path, std::ios::binary) << original_config;
+      std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
+    }
+
+    void
+    TearDown() override {
+      ConfigHttpRoutes::TearDown();
+      if (!prepared_) return;
+      display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
+      config::sunshine.config_file = previous_config_;
+    }
+
+  private:
+    std::string previous_config_;
+    bool prepared_ = false;
+  };
+}  // namespace
+
+TEST_F(ConfigHttpEdid, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
+  auto client = connect();
+  for (const auto &payload : {
+         nlohmann::json { { "resolutions", "[1920x1080]" }, { "fps", "[60,120]" } },
+         nlohmann::json { { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[120,144]" } } }) {
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    const auto body = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(body.at("status"), "false");
+    EXPECT_NE(body.at("error").get<std::string>().find("EDID native resolution"), std::string::npos);
+    EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+    EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+TEST_F(ConfigHttpEdid, DefaultWithoutVddXmlSavesSunshineWithoutCreatingXml) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "default" }, { "sunshine_name", "without-vdd" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "default");
+  EXPECT_EQ(saved->at("sunshine_name"), "without-vdd");
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+TEST_F(ConfigHttpEdid, UnsetTestPathRejectsWritesWithoutFallingBackToAppdata) {
+  display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
+  auto client = connect();
+  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "default" },
+    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  const auto body = nlohmann::json::parse(response->content.string());
+  EXPECT_EQ(body.at("status"), "false");
+  EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+  EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+}
+
+TEST_F(ConfigHttpEdid, NondefaultWithoutVddXmlRejectsWithoutChangingSunshine) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "1920x1080" },
+    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  const auto body = nlohmann::json::parse(response->content.string());
+  EXPECT_EQ(body.at("status"), "false");
+  EXPECT_NE(body.at("error").get<std::string>().find("VDD settings file is missing"), std::string::npos);
+  EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+TEST_F(ConfigHttpEdid, XmlWriteFailureRejectsDefaultExplicitAndLegacySaves) {
+  // Permit readers but deny writes to the existing test XML without changing ACLs.
+  const auto blocker = CreateFileW(vdd_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(blocker, INVALID_HANDLE_VALUE);
+  auto release = util::fail_guard([&] { CloseHandle(blocker); });
+  auto client = connect();
+  for (const std::string selection : { "default", "1920x1080", "" }) {
+    auto payload = nlohmann::json { { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+    if (!selection.empty()) payload["vdd_edid_native_resolution"] = selection;
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    const auto body = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(body.at("status"), "false");
+    EXPECT_NE(body.at("error").get<std::string>().find("Failed to save virtual display settings"), std::string::npos);
+    EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+    EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+TEST_F(ConfigHttpEdid, SuccessfulSelectionAndResetUpdateBothFiles) {
+  auto client = connect();
+  for (const std::string selection : { "1920x1080", "default" }) {
+    const auto payload = nlohmann::json { { "vdd_edid_native_resolution", selection },
+      { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("vdd_edid_native_resolution"), selection);
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_NE(xml.find("<EdidNativeResolution>" + selection + "</EdidNativeResolution>"), std::string::npos);
+  }
+}
+#endif
 
 TEST_F(ConfigHttpRoutes, BasicCredentialsStillAuthenticateRemoteRequestsAndRejectMalformedBase64) {
   const auto old_salt = config::sunshine.salt;

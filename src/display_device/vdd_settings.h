@@ -1,12 +1,34 @@
 /**
  * @file src/display_device/vdd_settings.h
- * @brief Persist the virtual display resolution and refresh-rate settings.
+ * @brief Persist virtual display modes and the native EDID preference.
  */
 #pragma once
 
+#include "vdd_edid_resolution.h"
+
 #include <string>
 
+#ifdef SUNSHINE_TESTS
+  #include <filesystem>
+  #include <optional>
+#endif
+
 namespace display_device::vdd_settings {
-  bool
-  save(std::string resArray, std::string fpsArray, std::string gpu_name);
+  enum class save_result {
+    saved,
+    missing_file,
+    failed,
+  };
+
+  /** Distinguish an absent VDD configuration from an unsuccessful write. */
+  save_result
+  save(std::string resArray, std::string fpsArray, std::string gpu_name, const std::string &edid_native_resolution = "");
+
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    /** Require an explicit fixture path; nullopt disables writes in test builds. */
+    void
+    set_settings_path(const std::optional<std::filesystem::path> &path);
+  }  // namespace test_support
+#endif
 }  // namespace display_device::vdd_settings

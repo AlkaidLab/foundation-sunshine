@@ -30,6 +30,7 @@
 #include "globals.h"
 
 #include "display_device/parsed_config.h"
+#include "display_device/vdd_edid_resolution.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -448,6 +449,7 @@ namespace config {
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
     true,  // vdd_borrowed_texture
+    "default"s,  // vdd_edid_native_resolution (preserve the original 1080p EDID)
     true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
@@ -1405,6 +1407,11 @@ namespace config {
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
+    string_f(vars, "vdd_edid_native_resolution", video.vdd_edid_native_resolution);
+    if (!display_device::vdd_edid::valid_value(video.vdd_edid_native_resolution)) {
+      BOOST_LOG(warning) << "Invalid vdd_edid_native_resolution; using the original EDID";
+      video.vdd_edid_native_resolution = "default";
+    }
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
 
     // Whether to composite the host mouse cursor into the captured frames.
@@ -1984,6 +1991,11 @@ namespace config {
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
 
+      if (!display_device::vdd_edid::retained_selection_supported(fullConfig, originalMap)) {
+        BOOST_LOG(warning) << "Mode-list changes require an explicit supported EDID native resolution or default";
+        return false;
+      }
+
       // 收集传入的配置（跳过只读字段和受保护字段）
       for (const auto &[key, value] : fullConfig) {
         // 跳过只读字段
@@ -1999,6 +2011,15 @@ namespace config {
           continue;
         }
         resultMap[key] = value;
+      }
+
+      // Older API clients cannot send this preference. Preserve the on-disk
+      // value under the same lock as the write; explicit Default still resets it.
+      if (!fullConfig.count("vdd_edid_native_resolution")) {
+        const auto existing = originalMap.find("vdd_edid_native_resolution");
+        if (existing != originalMap.end()) {
+          resultMap.emplace(*existing);
+        }
       }
 
       // 添加受保护字段（使用本地配置文件中的原有值）

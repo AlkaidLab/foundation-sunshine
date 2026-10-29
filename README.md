@@ -26,6 +26,7 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 ## 项目亮点
 
 - **画面与显示：** 场景自适应 HDR、HDR10+ / HDR Vivid 与 Dolby Vision 扩展，按屏幕亮度校准；[ZakoDisplay](https://github.com/qiin2333/zako-vdd) 无需物理显示器即可提供 HDR 虚拟屏与多种屏幕组合。
+- **EDID 原生分辨率：** 使用兼容的 ZakoVDD 驱动，可从公布的分辨率中选择 [EDID 原生分辨率](docs/zh-CN/vdd-edid-native-resolution.md)，改善部分游戏的全屏分辨率选项；默认仍为 1080p。
 - **捕获与编码：** 支持 NVIDIA NVENC、AMD AMF、Intel Quick Sync 等编码器，并针对捕获和编码链路优化延迟与流畅度；Zako Direct 直接取得虚拟屏画面，减少捕获环节的拷贝。
 - **音频与麦克风透传：** 最高 7.1.4 环绕声、PCM / AC3 / E-AC3，支持麦克风回传、静音保活与音频丢包恢复。
 - **独立桌面控制面板：** 集中管理游戏库、显示器、设备组件、运行状态和更新，提供日志诊断与可选 AI 辅助。

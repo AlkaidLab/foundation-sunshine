@@ -90,6 +90,12 @@
       modern  -> EDID 1.4 + 10bpc + BT.2020 + Colorimetry CDB (full HDR)
     Ignored when CustomEdid is enabled.
     -->
+    <EdidNativeResolution>default</EdidNativeResolution>
+    <!-- Built-in EDID native timing: default preserves the original 1080p EDID.
+         Or specify WIDTHxHEIGHT from the configured driver mode list.
+         Dimensions must fit EDID 1.x (1..4095); the driver chooses an encodable
+         supported refresh nearest 60 Hz. Recreate monitors after changing.
+         A valid custom EDID takes precedence. No modes are added. -->
     <Vrr>false</Vrr>
     <!--
     VRR / FreeSync / G-Sync compatible support. When enabled the
