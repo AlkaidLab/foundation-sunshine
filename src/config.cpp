@@ -2008,6 +2008,15 @@ namespace config {
         resultMap[key] = value;
       }
 
+      // Older API clients cannot send this preference. Preserve the on-disk
+      // value under the same lock as the write; explicit Default still resets it.
+      if (!fullConfig.count("vdd_edid_native_resolution")) {
+        const auto existing = originalMap.find("vdd_edid_native_resolution");
+        if (existing != originalMap.end()) {
+          resultMap.emplace(*existing);
+        }
+      }
+
       // 添加受保护字段（使用本地配置文件中的原有值）
       for (const auto &field : protectedFields) {
         auto it = originalMap.find(field);

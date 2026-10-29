@@ -590,6 +590,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_edid_resolution.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
 
