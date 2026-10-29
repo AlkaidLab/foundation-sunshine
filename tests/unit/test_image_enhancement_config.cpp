@@ -147,8 +147,38 @@ TEST_F(ImageEnhancementConfigTest, MaintenanceSurvivesRestartAndRequiresItsOwner
   store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
   ASSERT_TRUE(store->initialize());
   EXPECT_TRUE(store->status()["maintenance"]);
+  EXPECT_EQ(store->status()["maintenance_component"], image_enhancement::NVIDIA_RTX_VIDEO_BACKEND);
+  EXPECT_EQ(store->recover_maintenance(image_enhancement::NVIDIA_DLSSNR_BACKEND).status, 409);
   EXPECT_EQ(store->finish_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
   EXPECT_FALSE(store->status()["maintenance"]);
+  EXPECT_EQ(store->status()["maintenance_component"], "");
+}
+
+TEST_F(ImageEnhancementConfigTest, MaintenanceCannotBeInspectedOrReleasedByAnotherComponent) {
+  for (const auto owner : { image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, image_enhancement::NVIDIA_DLSSNR_BACKEND }) {
+    const auto other = owner == image_enhancement::NVIDIA_RTX_VIDEO_BACKEND ?
+                         image_enhancement::NVIDIA_DLSSNR_BACKEND : image_enhancement::NVIDIA_RTX_VIDEO_BACKEND;
+    std::string operation;
+    ASSERT_EQ(store->begin_maintenance(owner, operation).status, 200);
+    const auto journal = image_enhancement::read_json_document(store->maintenance_path());
+    EXPECT_EQ(store->status()["maintenance_component"], owner);
+    EXPECT_EQ(store->verify_maintenance(other, operation).status, 409);
+    std::string inspected = "unchanged";
+    EXPECT_EQ(store->inspect_maintenance(other, inspected).status, 409);
+    EXPECT_EQ(inspected, "unchanged");
+    EXPECT_EQ(store->finish_maintenance(other, operation).status, 409);
+    EXPECT_EQ(store->recover_maintenance(other).status, 409);
+    EXPECT_EQ(image_enhancement::read_json_document(store->maintenance_path()), journal);
+    EXPECT_TRUE(store->status()["maintenance"]);
+    EXPECT_EQ(store->status()["maintenance_component"], owner);
+    EXPECT_EQ(store->verify_maintenance(owner, operation).status, 200);
+    ASSERT_EQ(store->inspect_maintenance(owner, inspected).status, 200);
+    EXPECT_EQ(inspected, operation);
+    ASSERT_EQ(store->recover_maintenance(owner).status, 200);
+    EXPECT_FALSE(store->status()["maintenance"]);
+    EXPECT_EQ(store->status()["maintenance_component"], "");
+    EXPECT_FALSE(std::filesystem::exists(store->maintenance_path()));
+  }
 }
 
 TEST_F(ImageEnhancementConfigTest, DeferredRemovalCompletesOnStartupAndPreservesOtherBackend) {
