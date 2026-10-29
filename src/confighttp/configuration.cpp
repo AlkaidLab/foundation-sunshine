@@ -298,6 +298,11 @@ namespace confighttp::configuration {
         std::string resArray = inputTree.get<std::string>("resolutions", "[]");
         std::string fpsArray = inputTree.get<std::string>("fps", "[]");
         std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
+        const auto edid_resolution = inputTree.get_optional<std::string>("vdd_edid_native_resolution");
+        if (edid_resolution &&
+            !display_device::vdd_edid::supported_selection(*edid_resolution, resArray, fpsArray)) {
+          throw std::invalid_argument("EDID native resolution must be default or a configured size (1..4095 per dimension) with an encodable refresh rate");
+        }
 
         // Validate config field lengths to prevent abuse
         auto sunshine_name = inputTree.get<std::string>("sunshine_name", "");
@@ -312,7 +317,7 @@ namespace confighttp::configuration {
           return;
         }
 
-        display_device::vdd_settings::save(resArray, fpsArray, gpu_name);
+        display_device::vdd_settings::save(resArray, fpsArray, gpu_name, edid_resolution ? *edid_resolution : "");
 
         // 将 inputTree 转换为 std::map（保证有序）
         std::map<std::string, std::string> fullConfig;

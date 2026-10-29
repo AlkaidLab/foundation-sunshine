@@ -38,7 +38,10 @@ namespace display_device::vdd_settings {
   }  // namespace
 
   bool
-  save(std::string resArray, std::string fpsArray, std::string gpu_name) {
+  save(std::string resArray, std::string fpsArray, std::string gpu_name, const std::string &edid_native_resolution) {
+    if (!edid_native_resolution.empty() && !vdd_edid::supported_selection(edid_native_resolution, resArray, fpsArray)) {
+      return false;
+    }
     pt::ptree iddOptionTree;
     pt::ptree global_node;
     pt::ptree resolutions_nodes;
@@ -134,6 +137,11 @@ namespace display_device::vdd_settings {
       iddOptionTree.add_child("resolutions", resolutions_nodes);
     }
 
+    // Leave custom EDID and colour profiles intact. Older clients that omit
+    // the new setting must not reset an existing driver preference.
+    if (!edid_native_resolution.empty()) {
+      iddOptionTree.put("edid.EdidNativeResolution", edid_native_resolution);
+    }
     root.add_child("vdd_settings", iddOptionTree);
     try {
       // 使用更紧凑的XML格式设置，减少不必要的空白

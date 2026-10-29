@@ -30,6 +30,7 @@
 #include "globals.h"
 
 #include "display_device/parsed_config.h"
+#include "display_device/vdd_edid_resolution.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -448,6 +449,7 @@ namespace config {
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
     true,  // vdd_borrowed_texture
+    "default"s,  // vdd_edid_native_resolution (preserve the original 1080p EDID)
     true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
@@ -1405,6 +1407,11 @@ namespace config {
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
+    string_f(vars, "vdd_edid_native_resolution", video.vdd_edid_native_resolution);
+    if (!display_device::vdd_edid::valid_value(video.vdd_edid_native_resolution)) {
+      BOOST_LOG(warning) << "Invalid vdd_edid_native_resolution; using the original EDID";
+      video.vdd_edid_native_resolution = "default";
+    }
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
 
     // Whether to composite the host mouse cursor into the captured frames.

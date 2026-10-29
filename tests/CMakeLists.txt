@@ -7,6 +7,11 @@ include_directories("${CMAKE_SOURCE_DIR}")
 
 enable_testing()
 
+add_executable(vdd_edid_resolution_unit_tests unit/test_vdd_edid_resolution.cpp)
+target_include_directories(vdd_edid_resolution_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+set_target_properties(vdd_edid_resolution_unit_tests PROPERTIES CXX_STANDARD 17)
+add_test(NAME vdd_edid_resolution_unit_tests COMMAND vdd_edid_resolution_unit_tests)
+
 if (WIN32)
     # Standalone MAT sender tests use a mock consumer, never an audio device.
     set(MAT_RECEIVER_TEST_SOURCES
