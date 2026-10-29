@@ -926,7 +926,7 @@
     "vdd_edid_native_resolution": "EDID native resolution",
     "vdd_edid_native_resolution_default": "Default (1920×1080)",
     "vdd_edid_native_resolution_desc": "Some games limit fullscreen choices to the display’s EDID native resolution. Choose a configured resolution if the size you want is missing in a game.",
-    "vdd_edid_native_resolution_hint": "Requires a compatible ZakoVDD driver. Restart the streaming session after saving. If you also changed advertised resolutions or FPS, use Apply first. A custom EDID takes precedence.",
+    "vdd_edid_native_resolution_hint": "Requires a compatible ZakoVDD driver. Restart the streaming session after saving. First turn off VDD keep-enabled mode in the tray and VDD reuse. If VDD is the only display, reconnecting does not recreate it, so EDID changes remain pending. If you also changed advertised resolutions or FPS, use Apply first. A custom EDID takes precedence.",
     "vdd_edid_native_resolution_invalid": "Choose Default or a configured resolution that can be encoded in EDID at an available frame rate. Each dimension must be between 1 and 4095 pixels.",
     "vdd_edid_native_resolution_not_advertised": "no longer configured",
     "vdd_edid_native_resolution_not_encodable": "cannot be encoded in the native EDID timing",

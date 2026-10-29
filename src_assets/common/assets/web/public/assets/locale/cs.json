@@ -924,7 +924,7 @@
     "vdd_edid_native_resolution": "Nativní rozlišení v EDID",
     "vdd_edid_native_resolution_default": "Výchozí (1920×1080)",
     "vdd_edid_native_resolution_desc": "Některé hry omezují nabídku celé obrazovky podle nativního rozlišení v EDID displeje. Pokud požadovaná velikost ve hře chybí, vyberte některé z nakonfigurovaných rozlišení.",
-    "vdd_edid_native_resolution_hint": "Vyžaduje kompatibilní ZakoVDD. Po uložení restartujte streamovací relaci. Pokud jste změnili i seznam rozlišení nebo FPS, nejdřív klikněte na Použít. Vlastní EDID má přednost.",
+    "vdd_edid_native_resolution_hint": "Vyžaduje kompatibilní ZakoVDD. Po uložení restartujte streamovací relaci. Nejdřív v systémové liště vypněte trvalé ponechání VDD (VDD keep-enabled mode) a vypněte opakované použití VDD (VDD reuse). Pokud je VDD jediný displej, opětovné připojení ho nevytvoří znovu a změna EDID zůstane neaktivní. Pokud jste změnili i seznam rozlišení nebo FPS, nejdřív klikněte na Použít. Vlastní EDID má přednost.",
     "vdd_edid_native_resolution_invalid": "Vyberte výchozí volbu nebo nakonfigurované rozlišení, které lze při dostupné snímkové frekvenci zapsat do EDID. Každý rozměr musí být mezi 1 a 4095 pixely.",
     "vdd_edid_native_resolution_not_advertised": "již není nakonfigurováno",
     "vdd_edid_native_resolution_not_encodable": "nelze zapsat do nativního časování EDID",

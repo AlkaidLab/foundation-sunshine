@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -75,5 +76,25 @@ namespace display_device::vdd_edid {
       } catch (...) { /* Invalid FPS entries do not make a mode available. */ }
     });
     return encodable;
+  }
+  /** Check a retained preference before a legacy client changes either mode list. */
+  inline bool
+  retained_selection_supported(const std::map<std::string, std::string> &incoming,
+                               const std::map<std::string, std::string> &existing) {
+    if (incoming.count("vdd_edid_native_resolution")) return true;
+    const auto preference = existing.find("vdd_edid_native_resolution");
+    if (preference == existing.end() || preference->second == "default") return true;
+    auto value = [](const auto &values, const char *key) -> std::string_view {
+      const auto found = values.find(key);
+      return found == values.end() ? "[]" : std::string_view {found->second};
+    };
+    bool changed = false;
+    for (const auto key : {"resolutions", "fps"}) {
+      if (incoming.count(key) && value(incoming, key) != value(existing, key)) changed = true;
+    }
+    if (!changed) return true;
+    return supported_selection(preference->second,
+      value(incoming.count("resolutions") ? incoming : existing, "resolutions"),
+      value(incoming.count("fps") ? incoming : existing, "fps"));
   }
 }  // namespace display_device::vdd_edid

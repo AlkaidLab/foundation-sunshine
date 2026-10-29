@@ -35,7 +35,30 @@ int main() {
         throw std::runtime_error(std::string("Incorrect EDID validation for ") + test.value);
       }
     }
-    std::cout << "PASS: 19 EDID API selection cases (configured/custom sizes, default, removal, dimensions, refresh, clocks, malformed input)\n";
+    const std::map<std::string, std::string> existing {
+      {"vdd_edid_native_resolution", "3840x2160"},
+      {"resolutions", "[1920x1080,3840x2160]"}, {"fps", "[60,120]"}
+    };
+    unsigned retained_cases = 0;
+    auto check_retained = [&](const std::map<std::string, std::string> &incoming,
+                              const std::map<std::string, std::string> &saved, bool expected) {
+      ++retained_cases;
+      if (retained_selection_supported(incoming, saved) != expected)
+        throw std::runtime_error("Incorrect retained EDID validation, case " + std::to_string(retained_cases));
+    };
+    check_retained({}, existing, true);
+    check_retained({{"sunshine_name", "legacy"}}, existing, true);
+    check_retained({{"resolutions", "[1920x1080,3840x2160]"}}, existing, true);
+    check_retained({{"resolutions", "[2560x1440,3840x2160]"}}, existing, true);
+    check_retained({{"resolutions", "[1920x1080]"}}, existing, false);
+    check_retained({{"resolutions", "[]"}}, existing, false);
+    check_retained({{"fps", "[120,144]"}}, existing, false);
+    check_retained({{"fps", "[]"}}, existing, false);
+    check_retained({{"fps", "[120,60]"}}, existing, true);
+    check_retained({{"resolutions", "[1920x1080]"}, {"vdd_edid_native_resolution", "default"}}, existing, true);
+    check_retained({{"resolutions", "[]"}}, {{"vdd_edid_native_resolution", "default"}}, true);
+    check_retained({{"resolutions", "[]"}}, {}, true);
+    std::cout << "PASS: 19 EDID selection cases and " << retained_cases << " legacy mode-list update cases\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

@@ -19,7 +19,8 @@ namespace {
       path_ = std::filesystem::temp_directory_path() /
         ("sunshine_edid_config_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + ".conf");
       config::sunshine.config_file = path_.string();
-      std::ofstream(path_) << "vdd_edid_native_resolution = 3840x2160\nsunshine_name = old-name\n";
+      std::ofstream(path_) << "vdd_edid_native_resolution = 3840x2160\nsunshine_name = old-name\n"
+                             "resolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
     }
 
     void TearDown() override {
@@ -58,4 +59,34 @@ TEST_F(EdidConfigSave, LegacySaveDoesNotAddAnUnconfiguredPreference) {
   const auto saved = config::get_config_snapshot();
   ASSERT_TRUE(saved);
   EXPECT_EQ(saved->count("vdd_edid_native_resolution"), 0u);
+}
+
+TEST_F(EdidConfigSave, LegacyRemovalOfSelectedSizeRejectsWithoutWriting) {
+  const auto before = config::get_config_snapshot();
+  ASSERT_TRUE(before);
+  EXPECT_FALSE(config::update_full_config({{"resolutions", "[1920x1080]"}, {"fps", "[60,120]"}}));
+  EXPECT_EQ(config::get_config_snapshot(), before);
+}
+
+TEST_F(EdidConfigSave, LegacyRemovalOfEncodableRefreshRejectsWithoutWriting) {
+  const auto before = config::get_config_snapshot();
+  ASSERT_TRUE(before);
+  EXPECT_FALSE(config::update_full_config({{"fps", "[120,144]"}}));
+  EXPECT_EQ(config::get_config_snapshot(), before);
+}
+
+TEST_F(EdidConfigSave, LegacySupportedModeChangeRetainsSelection) {
+  ASSERT_TRUE(config::update_full_config({{"resolutions", "[2560x1440,3840x2160]"}, {"fps", "[60]"}}));
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "3840x2160");
+}
+
+TEST_F(EdidConfigSave, ExplicitDefaultAllowsRemovalOfSelectedSize) {
+  ASSERT_TRUE(config::update_full_config({{"resolutions", "[1920x1080]"}, {"fps", "[120]"},
+                                        {"vdd_edid_native_resolution", "default"}}));
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "default");
+  EXPECT_EQ(saved->at("resolutions"), "[1920x1080]");
 }

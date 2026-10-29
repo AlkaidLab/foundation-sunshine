@@ -27,6 +27,7 @@ Foundation Sunshine は、Sunshine をベースにした Windows 向けの無料
 ## 特長
 
 - **映像とディスプレイ：** シーン適応 HDR、HDR10+ / HDR Vivid、Dolby Vision 拡張、輝度キャリブレーション。[ZakoDisplay](https://github.com/qiin2333/zako-vdd) は物理モニターなしで HDR 仮想ディスプレイと複数の画面レイアウトを提供します。
+- **EDID のネイティブ解像度：** 対応する ZakoVDD ドライバーでは、公開する解像度の一覧から [EDID のネイティブ解像度](../vdd-edid-native-resolution.md)を選び、一部のゲームのフルスクリーン解像度の選択肢を改善できます。既定値は 1080p のままです。
 - **キャプチャとエンコード：** NVIDIA NVENC、AMD AMF、Intel Quick Sync に対応し、低遅延で滑らかなセッション向けに最適化。Zako Direct は仮想ディスプレイのフレームを直接取得します。
 - **オーディオとマイク転送：** 最大 7.1.4、PCM / AC3 / E-AC3、クライアントのマイク転送、無音時の連続オーディオ、パケット損失の補償。
 - **専用デスクトップ GUI：** ゲーム ライブラリ、ディスプレイ、デバイス コンポーネント、実行状態、更新を管理。ログ診断と任意の AI 支援つき。

@@ -1991,6 +1991,11 @@ namespace config {
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
 
+      if (!display_device::vdd_edid::retained_selection_supported(fullConfig, originalMap)) {
+        BOOST_LOG(warning) << "Mode-list changes require an explicit supported EDID native resolution or default";
+        return false;
+      }
+
       // 收集传入的配置（跳过只读字段和受保护字段）
       for (const auto &[key, value] : fullConfig) {
         // 跳过只读字段

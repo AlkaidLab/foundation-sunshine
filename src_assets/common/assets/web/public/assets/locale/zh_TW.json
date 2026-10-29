@@ -926,7 +926,7 @@
     "vdd_edid_native_resolution": "EDID 原生解析度",
     "vdd_edid_native_resolution_default": "預設（1920×1080）",
     "vdd_edid_native_resolution_desc": "部分遊戲根據顯示器 EDID 中的原生解析度限制全螢幕選項。如果遊戲缺少所需尺寸，請選擇已設定的解析度。",
-    "vdd_edid_native_resolution_hint": "需要支援此功能的 ZakoVDD 驅動程式。儲存後請重新啟動串流工作階段。如果同時修改了公布的解析度或影格率，請先按套用。自訂 EDID 優先。",
+    "vdd_edid_native_resolution_hint": "需要支援此功能的 ZakoVDD 驅動程式。儲存後請重新啟動串流工作階段。請先在系統匣關閉 VDD 常駐模式，並停用 VDD 重複使用。如果 VDD 是唯一顯示器，重新連線不會重建它，EDID 變更將暫不生效。如果同時修改了公布的解析度或影格率，請先按套用。自訂 EDID 優先。",
     "vdd_edid_native_resolution_invalid": "請選擇預設選項，或可在可用影格率下編碼至 EDID 的已設定解析度。每個維度必須介於 1 與 4095 像素之間。",
     "vdd_edid_native_resolution_not_advertised": "已不在設定中",
     "vdd_edid_native_resolution_not_encodable": "無法編碼至 EDID 原生時序",

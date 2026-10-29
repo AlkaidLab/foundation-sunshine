@@ -317,8 +317,6 @@ namespace confighttp::configuration {
           return;
         }
 
-        display_device::vdd_settings::save(resArray, fpsArray, gpu_name, edid_resolution ? *edid_resolution : "");
-
         // 将 inputTree 转换为 std::map（保证有序）
         std::map<std::string, std::string> fullConfig;
         for (const auto &kv : inputTree) {
@@ -326,6 +324,14 @@ namespace confighttp::configuration {
           std::string value = inputTree.get<std::string>(kv.first);
           fullConfig[kv.first] = value;
         }
+
+        // Validate retained values before either configuration file is changed.
+        const auto snapshot = config::get_config_snapshot();
+        if (!snapshot) throw std::runtime_error("failed to read configuration");
+        if (!display_device::vdd_edid::retained_selection_supported(fullConfig, *snapshot)) {
+          throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
+        }
+        display_device::vdd_settings::save(resArray, fpsArray, gpu_name, edid_resolution ? *edid_resolution : "");
 
         // 更新配置
         if (!config::update_full_config(fullConfig)) {

@@ -6,9 +6,15 @@ resolution**. The dropdown contains **Default (1920×1080)** plus the configured
 not automatically select it as native. After changing the advertised resolution
 or FPS lists, use Apply to reload Sunshine's configured mode list, then choose
 Quit Session in Moonlight and reconnect to load the new EDID. For an EDID-only
-change, Save before quitting and reconnecting. Disable VDD reuse for this
-reconnect if Sunshine would otherwise keep the existing virtual display.
-Restart the affected game.
+change, Save before quitting and reconnecting. Before reconnecting, turn off
+**VDD keep-enabled mode** in the system tray and disable **VDD reuse** so that
+Sunshine can remove and recreate the virtual monitor. Restart the affected game.
+
+If VDD is the only display, Sunshine's normal session cleanup protects it from
+removal. In that configuration, reconnecting alone cannot apply an EDID change:
+the saved preference remains pending until the monitor is safely recreated.
+Session-only EDID refresh is not supported in this case. These instructions do
+not require or recommend forcibly destroying the only display.
 
 Save alone does not reload the running host's advertised mode list. If a newly
 added size has not been applied, Sunshine can still send its old list through
@@ -35,7 +41,11 @@ The host persists `vdd_edid_native_resolution=default|WIDTHxHEIGHT` in Sunshine
 and `vdd_settings.edid.EdidNativeResolution` in the driver XML on Web UI save.
 Default is sent explicitly to reset a prior selection; older API clients that
 omit the field leave the XML preference intact. The API validates list membership,
-dimensions and clock feasibility before persisting explicit values.
+dimensions and clock feasibility before persisting explicit values. If an older
+client omits the preference but changes either advertised mode list, the saved
+preference must still be supported. Otherwise the request is rejected before
+either configuration file is changed; explicitly select Default or another
+supported native size before removing its size or encodable refresh rate.
 
 Requires a ZakoVDD release implementing `EdidNativeResolution`, bundled with
 Sunshine. No driver binary/version is replaced in this proposal. The driver
