@@ -1621,6 +1621,39 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [follow_client_endpoint](https://localhost:47990/config/#follow_client_endpoint)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            <p>Keep following the client's video/audio UDP source port changes on the same IP for the whole
+            streaming session, instead of locking the send target to the endpoint seen during connection
+            setup.</p>
+            <p>Enable this only when the stream permanently freezes after tens of seconds to a few minutes
+            behind a NAT that rebinds UDP mappings or a VPN whose user-space network stack rotates the
+            client's source ports mid-session (for example Tailscale-based outbounds embedded in proxy
+            clients). Official Tailscale clients and plain LAN streaming do not need this.</p>
+            <p>Security note: the ping payload is a cleartext credential, so while this is enabled anyone
+            on the client's network who captures a single ping packet can redirect the stream to another
+            port on the same IP for the rest of the session. Keep stream encryption enabled and leave this
+            option disabled when it is not needed.</p>
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            follow_client_endpoint = enabled
+            @endcode</td>
+    </tr>
+</table>
+
 ## [Config Files](https://localhost:47990/config/#files)
 
 ### [file_apps](https://localhost:47990/config/#file_apps)
