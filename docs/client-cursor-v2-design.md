@@ -39,7 +39,7 @@ session.
    not depend on the capture backend: v2 state comes from `GetCursorInfo`, so it also works with
    WGC. It is not set while WGC captures a single window (`capture_target = window`): absolute
    input and the cursor geometry still describe the whole display there, so a client-drawn cursor
-   would not line up with the window's video.
+   would not line up with the window's video. The host also refuses v2 requests then.
 2. **Client opts in** by sending `0x5509` with version 2 and `SUBSCRIBE`, only if the host
    advertised `0x400` and automatic mouse mode is on. Until then the host sends no v2 message and
    the tracker does not run.

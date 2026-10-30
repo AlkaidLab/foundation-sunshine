@@ -1989,7 +1989,10 @@ namespace stream {
   void
   handle_cursor_v2_request(session_t *session, const std::string_view &payload) {
     const auto request = host_cursor_protocol::parse_request({ reinterpret_cast<const std::uint8_t *>(payload.data()), payload.size() });
-    if (!request || !host_cursor::tracker::supported() || session->config.controlProtocolType != 13) {
+    // Window capture matches the feature flag in rtsp.cpp: a client can't subscribe to v2
+    // where it isn't offered.
+    if (!request || !host_cursor::tracker::supported() || config::video.capture_target == "window" ||
+        session->config.controlProtocolType != 13) {
       if (!session->control.cursor_v2_rejected_logged) {
         BOOST_LOG(warning) << "Ignoring cursor protocol v2 request ("sv << payload.size() << " bytes)"sv;
         session->control.cursor_v2_rejected_logged = true;
