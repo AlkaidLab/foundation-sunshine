@@ -1224,7 +1224,9 @@ namespace rtsp_stream {
         caps |= platf::platform_caps::cursor_shape;
       }
       // Cursor protocol v2 reads the cursor itself, so it works with every capture backend.
-      if (host_cursor::tracker::supported()) {
+      // Window capture is left out: absolute input and the cursor geometry describe the whole
+      // display rather than the captured window, so a client-drawn cursor wouldn't match the video.
+      if (host_cursor::tracker::supported() && config::video.capture_target != "window") {
         caps |= platf::platform_caps::cursor_state;
       }
       if (text_context::bridge_t::instance().gui_alive()) {

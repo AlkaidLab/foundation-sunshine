@@ -94,7 +94,7 @@ With a client that supports it, the client draws the host's cursor as its own po
 
 **Enable and check:**
 
-1. Use a Windows host and a client with automatic mouse mode, such as Moonlight V+ with **Automatic mouse mode** on (the default). The host needs no setting; Zako Direct, Desktop Duplication, and WGC capture all work.
+1. Use a Windows host and a client with automatic mouse mode, such as Moonlight V+ with **Automatic mouse mode** on (the default). The host needs no setting; Zako Direct, Desktop Duplication, and WGC capture all work. WGC window capture is the exception: it keeps the cursor in the video.
 2. On the desktop, the pointer moves without stream delay, has the host's shape, and there is no second cursor in the video. In a game that captures the mouse, input switches to relative mode on the first mouse movement.
 3. On the client, Ctrl+Alt+Shift+M switches to the other mode and keeps it; Ctrl+Alt+Shift+A keeps the current mode or returns to automatic.
 4. While another connected client needs the cursor in the video, or Sunshine cannot read the cursor (a UAC prompt when not running as the service), the video keeps the cursor and the client falls back to its regular mouse settings where needed.

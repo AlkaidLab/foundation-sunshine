@@ -94,7 +94,7 @@ RTX HDR 可把 SDR 游戏转换成 HDR 输出；DLSS NR(DLSS5) 提供可选的�
 
 **启用与确认：**
 
-1. 使用 Windows 主机，以及支持自动鼠标模式的控制端，例如开启 **自动鼠标模式**（默认开启）的 Moonlight V+。主机无需设置，Zako Direct、Desktop Duplication 和 WGC 捕获均可使用。
+1. 使用 Windows 主机，以及支持自动鼠标模式的控制端，例如开启 **自动鼠标模式**（默认开启）的 Moonlight V+。主机无需设置，Zako Direct、Desktop Duplication 和 WGC 捕获均可使用。WGC 单窗口捕获除外，此时光标仍在视频中。
 2. 在桌面上，指针移动没有串流延迟，形状与主机一致，视频里没有第二个光标。在会捕获鼠标的游戏中，第一次移动鼠标时输入即切换为相对模式。
 3. 在控制端按 Ctrl+Alt+Shift+M 切换到另一种模式并保持；按 Ctrl+Alt+Shift+A 保持当前模式，或恢复自动。
 4. 有其他已连接的控制端需要视频里的光标，或 Sunshine 无法读取光标（未以服务方式运行时出现 UAC 提示）时，视频保留光标，控制端按需回到常规鼠标设置。

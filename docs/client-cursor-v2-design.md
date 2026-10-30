@@ -37,7 +37,9 @@ session.
 1. **Host advertises** a new caps bit, `platform_caps::cursor_state` / `LI_FF_CURSOR_STATE` =
    `0x400` (the next free bit), in `a=x-ss-general.featureFlags`. Only Windows sets it, and it does
    not depend on the capture backend: v2 state comes from `GetCursorInfo`, so it also works with
-   WGC.
+   WGC. It is not set while WGC captures a single window (`capture_target = window`): absolute
+   input and the cursor geometry still describe the whole display there, so a client-drawn cursor
+   would not line up with the window's video.
 2. **Client opts in** by sending `0x5509` with version 2 and `SUBSCRIBE`, only if the host
    advertised `0x400` and automatic mouse mode is on. Until then the host sends no v2 message and
    the tracker does not run.
@@ -325,6 +327,8 @@ again; v1's republish on activation keeps working the same way.
 ## Known limitations
 
 - Animated cursors show their current frame.
+- Window capture doesn't offer v2 and keeps the cursor in the video, because absolute input is
+  mapped to the whole display rather than the captured window.
 - With several clients moving one host cursor, one client's absolute moves are reported to the
   others as host moves.
 - macOS and Wayland clients draw the cursor at point resolution; Wayland cannot warp.
