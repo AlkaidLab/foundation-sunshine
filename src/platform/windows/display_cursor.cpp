@@ -537,13 +537,18 @@ namespace platf::dxgi {
     );
   }
 
-  bool
+  local_cursor_sync_t
   sync_local_cursor_mode(duplication_t &duplication) {
-    const bool active = local_cursor_mode_active();
-    if (active && !duplication.local_cursor_mode_was_active) {
-      publish_local_cursor(duplication.cursor, true);
+    const bool publish = cursor_channel::shapes_wanted();
+    if (publish) {
+      // Desktop Duplication reports a shape only when it changes, so a consumer
+      // that arrives later gets the stored one.
+      const auto epoch = cursor_channel::publish_epoch();
+      if (epoch != duplication.cursor_publish_epoch) {
+        duplication.cursor_publish_epoch = epoch;
+        publish_local_cursor(duplication.cursor, true);
+      }
     }
-    duplication.local_cursor_mode_was_active = active;
-    return active;
+    return { local_cursor_mode_active(), publish };
   }
 }  // namespace platf::dxgi

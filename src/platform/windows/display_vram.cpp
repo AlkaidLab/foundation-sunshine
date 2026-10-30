@@ -3491,7 +3491,8 @@ namespace platf::dxgi {
     HRESULT status;
     DXGI_OUTDUPL_FRAME_INFO frame_info;
 
-    const bool use_local_cursor = sync_local_cursor_mode(dup);
+    const auto local_cursor = sync_local_cursor_mode(dup);
+    const bool use_local_cursor = local_cursor.local_mode;
 
     resource_t::pointer res_p {};
     auto capture_status = dup.next_frame(frame_info, timeout, &res_p);
@@ -3520,7 +3521,7 @@ namespace platf::dxgi {
       return capture_e::error;
     }
     auto &cursor = dup.cursor;
-    if (use_local_cursor) {
+    if (local_cursor.publish) {
       publish_local_cursor(cursor, shape_updated);
     }
 

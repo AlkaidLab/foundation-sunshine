@@ -467,7 +467,7 @@ namespace platf::dxgi {
     std::shared_ptr<perf::capture_source_counter_t> frame_counter;
     dup_t dup;
     bool has_frame {};
-    bool local_cursor_mode_was_active {};
+    std::uint64_t cursor_publish_epoch {};  // cursor_channel::publish_epoch() last published for
     cursor_t cursor;
     std::chrono::steady_clock::time_point last_protected_content_warning_time {};
 
@@ -887,6 +887,9 @@ namespace platf::dxgi {
     UINT64 vdd_last_dropped_acquire_failures = 0;
     std::vector<std::shared_ptr<platf::img_t>> vdd_borrow_deferred_images;
     bool vdd_local_cursor_mode_active = false;
+    bool vdd_cursor_overlay_wanted = true;  // the cursor_visible snapshot() last saw
+    std::uint64_t vdd_cursor_publish_epoch = 0;  // cursor_channel::publish_epoch() last refreshed for
+    bool vdd_frame_has_cursor = false;  // the last frame produced has the overlay blended in
 
     void
     log_vdd_borrow_debug_telemetry();

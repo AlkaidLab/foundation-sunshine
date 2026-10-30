@@ -88,6 +88,20 @@ Open it through the Foundation Sunshine shortcut on Windows. A browser WebUI sup
 Precision touchpads, client-side cursors, and text-input context require client support. Pen barrel roll is a protocol extension; owning a pen does not establish client compatibility.
 
 
+### Client cursor and automatic mouse mode
+
+With a client that supports it, the client draws the host's cursor as its own pointer, so pointer movement does not wait for the video. When a game hides, locks, or recentres the cursor, the client switches between desktop (absolute) and game (relative) mouse input by itself. The host leaves the cursor out of the video only while every connected client draws it.
+
+**Enable and check:**
+
+1. Use a Windows host and a client with automatic mouse mode, such as Moonlight V+ with **Automatic mouse mode** on (the default). The host needs no setting; Zako Direct, Desktop Duplication, and WGC capture all work. WGC window capture is the exception: it keeps the cursor in the video.
+2. On the desktop, the pointer moves without stream delay, has the host's shape, and there is no second cursor in the video. In a game that captures the mouse, input switches to relative mode on the first mouse movement.
+3. On the client, Ctrl+Alt+Shift+M switches to the other mode and keeps it; Ctrl+Alt+Shift+A keeps the current mode or returns to automatic.
+4. While another connected client needs the cursor in the video, or Sunshine cannot read the cursor (a UAC prompt when not running as the service), the video keeps the cursor and the client falls back to its regular mouse settings where needed.
+
+Clients that only support the earlier client-side cursor keep their behaviour: with the local cursor shown in remote-desktop mouse mode, they draw the cursor themselves and the video leaves it out for every client.
+
+
 ### DualSense and virtual controllers
 
 Foundation Sunshine provides a DualSense device component. Install it in **Device center → Controllers** to expose a native DualSense on the host PC, allowing supported games to use adaptive triggers, audio haptics, lighting, and touchpad features as they would with a USB-connected controller. Feedback also requires a compatible client and connection method.

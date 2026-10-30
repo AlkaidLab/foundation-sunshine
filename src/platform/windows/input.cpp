@@ -23,6 +23,7 @@
 #include "virtual_mouse.h"
 #include "src/config.h"
 #include "src/globals.h"
+#include "src/host_cursor.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 
@@ -703,6 +704,8 @@ namespace platf {
     mi.dx = scaled_x;
     mi.dy = scaled_y;
 
+    // Cursor protocol v2 reports moves the client did not make as host moves.
+    host_cursor::tracker::note_absolute_injection(std::lround(x + touch_port.offset_x), std::lround(y + touch_port.offset_y));
     send_input(i);
   }
 

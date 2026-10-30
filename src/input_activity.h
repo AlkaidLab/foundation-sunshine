@@ -14,7 +14,8 @@ namespace input::activity {
   /**
    * @brief Decides whether an incoming input packet represents meaningful user activity.
    * @details Tracks keyboard input, mouse buttons and scrolling. Pointer motion
-   *          only counts while local cursor rendering is active, because video
+   *          only counts while clients draw the cursor locally (cursor protocol
+   *          v1 local mode, or every v2 session drawing it), because video
    *          cursor motion already produces capture updates. Zero-delta motion
    *          and zero-delta scrolling packets are ignored; non-zero vertical or
    *          horizontal scrolling counts as activity.

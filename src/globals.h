@@ -72,6 +72,7 @@ namespace mail {
   MAIL(dynamic_param_change);
   MAIL(input_activity);
   MAIL(resolution_change);
+  MAIL(cursor_geometry);  // the touch port again, for the control thread's cursor protocol v2 mapping
 #undef MAIL
 
 }  // namespace mail

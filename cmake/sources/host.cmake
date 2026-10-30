@@ -57,6 +57,9 @@ set(SUNSHINE_HOST_SOURCES
     src/stream.cpp src/stream.h
     src/clipboard_bridge.cpp src/clipboard_bridge.h
     src/cursor_channel.cpp src/cursor_channel.h
+    src/host_cursor.cpp src/host_cursor.h
+    src/host_cursor_bitmap.cpp src/host_cursor_bitmap.h
+    src/host_cursor_protocol.h
     src/clipboard_blob_store.cpp src/clipboard_blob_store.h
     src/clipboard_http.cpp src/clipboard_http.h
     src/video.cpp src/video.h

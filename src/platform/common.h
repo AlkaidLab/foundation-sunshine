@@ -358,6 +358,7 @@ namespace platf {
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
     constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
     constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
+    constexpr caps_t cursor_state = 0x400;  // Cursor protocol v2: cursor state and shapes on 0x5509 version 2
   };  // namespace platform_caps
 
   struct gamepad_state_t {

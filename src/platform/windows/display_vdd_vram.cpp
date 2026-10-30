@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "src/config.h"
+#include "src/cursor_channel.h"
 #include "src/logging.h"
 
 namespace platf::dxgi {
@@ -73,14 +74,23 @@ namespace platf::dxgi {
     }
 
     const bool use_local_cursor = local_cursor_mode_active();
-    if (use_local_cursor != vdd_local_cursor_mode_active) {
+    const bool publish_cursor = cursor_channel::shapes_wanted();
+    const auto publish_epoch = cursor_channel::publish_epoch();
+    if (use_local_cursor != vdd_local_cursor_mode_active ||
+        cursor_visible != vdd_cursor_overlay_wanted ||
+        (publish_cursor && publish_epoch != vdd_cursor_publish_epoch)) {
       // poll_cursor() normally omits an acknowledged shape. Force a refresh
-      // whenever ownership moves between the video overlay and the client.
+      // whenever ownership moves between the video overlay and the client, and
+      // when a cursor_channel consumer arrived after the shape was reported.
       dup.invalidate_cursor_shape();
       vdd_local_cursor_mode_active = use_local_cursor;
+      vdd_cursor_overlay_wanted = cursor_visible;
+      if (publish_cursor) {
+        vdd_cursor_publish_epoch = publish_epoch;
+      }
     }
 
-    const bool should_poll_cursor = cursor_visible || use_local_cursor;
+    const bool should_poll_cursor = cursor_visible || use_local_cursor || publish_cursor;
     std::uint64_t frame_qpc = 0;
     bool cursor_only = false;
     auto status = dup.next_frame(
@@ -107,7 +117,7 @@ namespace platf::dxgi {
 
     vdd_capture_t::cursor_snapshot cursor_state;
     const bool has_cursor_state = should_poll_cursor &&
-                                  (cursor_pipeline_ready || use_local_cursor) &&
+                                  (cursor_pipeline_ready || use_local_cursor || publish_cursor) &&
                                   dup.poll_cursor(cursor_state) &&
                                   cursor_state.valid;
     const bool cursor_overlay_required = has_cursor_state &&
@@ -115,7 +125,7 @@ namespace platf::dxgi {
                                          cursor_visible &&
                                          !use_local_cursor;
 
-    if (has_cursor_state && use_local_cursor &&
+    if (has_cursor_state && publish_cursor &&
         publish_local_cursor(cursor_state)) {
       dup.acknowledge_cursor_shape(cursor_state.shape_id);
     }
@@ -126,6 +136,12 @@ namespace platf::dxgi {
       return capture_e::timeout;
     }
     if (cursor_only && !has_cursor_state) {
+      return capture_e::timeout;
+    }
+    if (cursor_only && !cursor_visible && !vdd_frame_has_cursor) {
+      // Frames leave the cursor out (every cursor protocol v2 client draws it),
+      // so cursor motion alone changes nothing. One frame still goes out after
+      // compositing stops, to remove the cursor the previous frame showed.
       return capture_e::timeout;
     }
 
@@ -219,6 +235,7 @@ namespace platf::dxgi {
       if (cursor_visible && cursor_state.visible &&
           (cursor_alpha.texture || cursor_xor.texture)) {
         blend_cursor(capture_rt);
+        vdd_frame_has_cursor = true;
       }
     };
 
@@ -240,6 +257,7 @@ namespace platf::dxgi {
         return capture_e::error;
       }
       device_ctx->CopyResource(candidate_d3d->capture_texture.get(), source);
+      vdd_frame_has_cursor = false;
       composite_cursor(candidate_d3d->capture_rt.get());
 
       img_out = std::move(candidate_img);
@@ -471,6 +489,8 @@ namespace platf::dxgi {
 
     if (try_borrow_current_frame()) {
       log_vdd_borrow_debug_telemetry();
+      // A borrowed producer texture never carries the overlay.
+      vdd_frame_has_cursor = false;
       img_out = img;
       img_out->frame_timestamp = frame_timestamp;
       armed = false;
