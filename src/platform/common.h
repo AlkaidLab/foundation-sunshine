@@ -162,7 +162,7 @@ namespace platf {
 
     static gamepad_feedback_msg_t
     make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
-                         std::uint32_t sequence, std::uint64_t presentation_time_us,
+      std::uint32_t sequence, std::uint64_t presentation_time_us,
                          const std::uint8_t *pcm, std::size_t pcm_size) {
       gamepad_feedback_msg_t msg {};
       msg.type = gamepad_feedback_e::ds5_haptics_pcm;
@@ -547,9 +547,9 @@ namespace platf {
     /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
     static constexpr size_t HDR10PLUS_PERCENTILES = 9;
 
-    float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
-    float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
-    float avg_maxrgb = 0.0f;    ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
+    float min_maxrgb = 0.0f;  ///< Minimum of max(R,G,B) across all pixels (nits)
+    float max_maxrgb = 0.0f;  ///< Maximum of max(R,G,B) across all pixels (nits)
+    float avg_maxrgb = 0.0f;  ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
     /// Arithmetic mean of the PQ-coded max(R,G,B), in normalized PQ signal space, for
     /// HDR Vivid. Accumulated per pixel by the analyzer, like avg_maxrgb, and
     /// deliberately derived from neither its result nor the histogram: PQ is concave,
@@ -570,9 +570,9 @@ namespace platf {
     float percentile_99 = 0.0f;
     /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
     float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
-    float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
-    uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
-    bool valid = false;         ///< Whether stats are available (false on first frame)
+    float analysis_max_nits = 0.0f;  ///< Upper luminance bound used by the analyzer
+    uint64_t sample_sequence = 0;  ///< Increments only when a new GPU readback completes
+    bool valid = false;  ///< Whether stats are available (false on first frame)
   };
 
   struct encode_device_t {
@@ -582,7 +582,8 @@ namespace platf {
     convert(platf::img_t &img) = 0;
 
     // Packet-level confirmation, independent of the PQ/HLG transfer function.
-    virtual void report_dolby_vision_output(bool injected, bool enabled) {}
+    virtual void
+    report_dolby_vision_output(bool injected, bool enabled) {}
 
     video::sunshine_colorspace_t colorspace;
 
@@ -1278,7 +1279,7 @@ namespace platf {
    */
   int
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
-                feedback_queue_t feedback_queue, std::string_view client_gamepad);
+    feedback_queue_t feedback_queue, std::string_view client_gamepad);
   void
   free_gamepad(input_t &input, int nr);
   /**

@@ -98,8 +98,8 @@ namespace config {
       std::optional<bool> amd_high_motion_qb;
       std::optional<bool> amd_lowlatency_mode;
       // Standalone: AMF INPUT_QUEUE_SIZE. AVCodec compatibility: async_depth cap.
-      std::optional<int> amd_input_queue_size;   // 1-16
-      std::optional<int> amd_av1_latency_mode;   // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_*
+      std::optional<int> amd_input_queue_size;  // 1-16
+      std::optional<int> amd_av1_latency_mode;  // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_*
     } amd;
 
     struct {
@@ -119,8 +119,8 @@ namespace config {
 
     std::string output_name;
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
-    std::string window_title;     // Window title to capture when capture_target="window"
-    bool capture_cursor;          // Whether to composite the host mouse cursor into the stream (toggle: Ctrl+Alt+Shift+N)
+    std::string window_title;  // Window title to capture when capture_target="window"
+    bool capture_cursor;  // Whether to composite the host mouse cursor into the stream (toggle: Ctrl+Alt+Shift+N)
     int display_device_prep;
     int resolution_change;
     std::string manual_resolution;
@@ -170,9 +170,9 @@ namespace config {
   };
 
   // Sleep mode options for PC sleep command
-  constexpr int SLEEP_MODE_SUSPEND = 0;   // S3 Sleep (traditional suspend via SetSuspendState)
+  constexpr int SLEEP_MODE_SUSPEND = 0;  // S3 Sleep (traditional suspend via SetSuspendState)
   constexpr int SLEEP_MODE_HIBERNATE = 1;  // S4 Hibernate (deeper sleep, saves to disk)
-  constexpr int SLEEP_MODE_AWAY = 2;       // Away Mode (display off, system stays on, instant wake)
+  constexpr int SLEEP_MODE_AWAY = 2;  // Away Mode (display off, system stays on, instant wake)
 
   struct nvhttp_t {
     // Could be any of the following values:

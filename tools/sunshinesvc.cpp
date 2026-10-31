@@ -223,12 +223,12 @@ OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path) {
           if (QueryFullProcessImageNameW(candidate, 0, candidate_path.data(), &candidate_path_length)) {
             candidate_path.resize(candidate_path_length);
             if (_wcsicmp(candidate_path.c_str(), gui_path.c_str()) == 0) {
-              result.handle = candidate;
-              result.process_id = entry.th32ProcessID;
-              break;
+                result.handle = candidate;
+                result.process_id = entry.th32ProcessID;
+                break;
+              }
             }
-          }
-          CloseHandle(candidate);
+            CloseHandle(candidate);
         }
       }
     }
@@ -558,10 +558,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       gui_agent_retry_at_ms = exit_at_ms + sunshinesvc::GUI_REATTACH_POLL_MS;
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_backoff.reset();
-      WriteServiceLog(log_file_handle,
+        WriteServiceLog(log_file_handle,
         "GUI agent exited cleanly in session " + std::to_string(gui_agent_session_id) +
-          " (PID " + std::to_string(exited_process_id) +
-          "); automatic launch suppressed while existing-process reattach remains active");
+            " (PID " + std::to_string(exited_process_id) +
+            "); automatic launch suppressed while existing-process reattach remains active");
       return;
     }
 
@@ -600,38 +600,38 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
-    // Job objects cannot span sessions, so we must create one for each process
+      // Job objects cannot span sessions, so we must create one for each process
     auto job_handle = CreateJobObjectForChildProcess();
-    if (job_handle == NULL) {
-      CloseHandle(console_token);
-      continue;
-    }
+      if (job_handle == NULL) {
+        CloseHandle(console_token);
+        continue;
+      }
 
-    // Start Sunshine.exe inside our job object
-    UpdateProcThreadAttribute(startup_info.lpAttributeList,
-      0,
-      PROC_THREAD_ATTRIBUTE_JOB_LIST,
-      &job_handle,
-      sizeof(job_handle),
-      NULL,
-      NULL);
+      // Start Sunshine.exe inside our job object
+      UpdateProcThreadAttribute(startup_info.lpAttributeList,
+        0,
+        PROC_THREAD_ATTRIBUTE_JOB_LIST,
+        &job_handle,
+        sizeof(job_handle),
+        NULL,
+        NULL);
 
     PROCESS_INFORMATION process_info;
-    if (!CreateProcessAsUserW(console_token,
-          L"Sunshine.exe",
-          NULL,
-          NULL,
-          NULL,
-          TRUE,
-          CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
-          NULL,
-          NULL,
-          (LPSTARTUPINFOW) &startup_info,
-          &process_info)) {
-      CloseHandle(console_token);
-      CloseHandle(job_handle);
-      continue;
-    }
+      if (!CreateProcessAsUserW(console_token,
+            L"Sunshine.exe",
+            NULL,
+            NULL,
+            NULL,
+            TRUE,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+            NULL,
+            NULL,
+            (LPSTARTUPINFOW) &startup_info,
+            &process_info)) {
+        CloseHandle(console_token);
+        CloseHandle(job_handle);
+        continue;
+      }
 
     // The GUI may have exited after the previous Core stopped, while no inner
     // wait loop was active. Reap that lifecycle's process before a new Core
@@ -737,10 +737,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       }
     } while (still_running);
 
-    CloseHandle(process_info.hThread);
+      CloseHandle(process_info.hThread);
     CloseHandle(process_info.hProcess);
     CloseHandle(console_token);
-    CloseHandle(job_handle);
+      CloseHandle(job_handle);
   }
 
   CloseGuiAgentHandle(gui_agent);

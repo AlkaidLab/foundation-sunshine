@@ -29,7 +29,7 @@
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
 // modern MinGW-w64 SDK (UCRT64). The declarations below are only needed for
 // very old MinGW versions that predate Windows 10 SDK support.
-// 
+//
 // If you encounter "undefined" errors on old MinGW, uncomment the following:
 // #define SUNSHINE_NEED_SYNTHETIC_POINTER_DECL
 #ifdef SUNSHINE_NEED_SYNTHETIC_POINTER_DECL
@@ -52,7 +52,7 @@ namespace platf {
     65535, 65535
   };
 
-  enum synthetic_device_creation_options_e: ULONG {
+  enum synthetic_device_creation_options_e : ULONG {
     synthetic_device_creation_none = 0x0,
     synthetic_device_creation_physical_size = 0x1,
     synthetic_device_creation_touchpad_gesture_only = 0x2,
@@ -266,7 +266,7 @@ namespace platf {
      */
     int
     alloc_gamepad_internal(const gamepad_id_t &id, feedback_queue_t &feedback_queue, VIGEM_TARGET_TYPE gp_type,
-                           bool back_as_touchpad_click) {
+      bool back_as_touchpad_click) {
       auto &gamepad = gamepads[id.globalIndex];
       assert(!gamepad.gp);
 
@@ -499,7 +499,8 @@ namespace platf {
   void
   set_mouse_mode(int mode) {
     current_mouse_mode.store(mode, std::memory_order_relaxed);
-    BOOST_LOG(info) << "Mouse mode set to: "sv << (mode == 0 ? "auto" : mode == 1 ? "virtual mouse" : "SendInput");
+    BOOST_LOG(info) << "Mouse mode set to: "sv << (mode == 0 ? "auto" : mode == 1 ? "virtual mouse" :
+                                                                                    "SendInput");
   }
 
   void
@@ -746,11 +747,21 @@ namespace platf {
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       uint8_t mask = 0;
       switch (button) {
-        case 1: mask = vmouse::BTN_LEFT; break;
-        case 2: mask = vmouse::BTN_MIDDLE; break;
-        case 3: mask = vmouse::BTN_RIGHT; break;
-        case 4: mask = vmouse::BTN_SIDE; break;
-        default: mask = vmouse::BTN_EXTRA; break;
+        case 1:
+          mask = vmouse::BTN_LEFT;
+          break;
+        case 2:
+          mask = vmouse::BTN_MIDDLE;
+          break;
+        case 3:
+          mask = vmouse::BTN_RIGHT;
+          break;
+        case 4:
+          mask = vmouse::BTN_SIDE;
+          break;
+        default:
+          mask = vmouse::BTN_EXTRA;
+          break;
       }
       raw.vmouse_dev->button(mask, release);
       return;
@@ -794,8 +805,7 @@ namespace platf {
         const auto notches = std::clamp(
           raw.vmouse_vscroll_accum / WHEEL_DELTA,
           -127,
-          127
-        );
+          127);
         if (!raw.vmouse_dev->scroll(static_cast<int8_t>(notches))) {
           raw.vmouse_vscroll_accum = 0;
           break;
@@ -829,8 +839,7 @@ namespace platf {
         const auto notches = std::clamp(
           raw.vmouse_hscroll_accum / WHEEL_DELTA,
           -127,
-          127
-        );
+          127);
         if (!raw.vmouse_dev->hscroll(static_cast<int8_t>(notches))) {
           raw.vmouse_hscroll_accum = 0;
           break;
@@ -1975,7 +1984,7 @@ namespace platf {
 
   int
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
-                feedback_queue_t feedback_queue, std::string_view client_gamepad) {
+    feedback_queue_t feedback_queue, std::string_view client_gamepad) {
     auto raw = (input_raw_t *) input.get();
 
     // Component files may have been installed while Sunshine stayed running.
@@ -2075,8 +2084,8 @@ namespace platf {
     }
 
     const bool back_as_touchpad_click = selectedGamepadType == DualShock4Wired &&
-                                         gamepad_mode == 3 &&
-                                         config::input.ds4_back_as_touchpad_click;
+                                        gamepad_mode == 3 &&
+                                        config::input.ds4_back_as_touchpad_click;
     return raw->vigem->alloc_gamepad_internal(id, feedback_queue, selectedGamepadType, back_as_touchpad_click);
   }
 

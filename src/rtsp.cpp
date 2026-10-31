@@ -248,10 +248,10 @@ namespace rtsp_stream {
     using release_claim_fn_t = std::function<void(std::uint32_t)>;
 
     socket_t(boost::asio::io_context &io_context,
-             std::function<void(tcp::socket &sock, launch_session_t &, msg_t &&)> &&handle_data_fn,
-             claim_plaintext_fn_t &&claim_plaintext_fn,
-             claim_encrypted_fn_t &&claim_encrypted_fn,
-             release_claim_fn_t &&release_claim_fn):
+      std::function<void(tcp::socket &sock, launch_session_t &, msg_t &&)> &&handle_data_fn,
+      claim_plaintext_fn_t &&claim_plaintext_fn,
+      claim_encrypted_fn_t &&claim_encrypted_fn,
+      release_claim_fn_t &&release_claim_fn):
         handle_data_fn { std::move(handle_data_fn) },
         claim_plaintext_fn { std::move(claim_plaintext_fn) },
         claim_encrypted_fn { std::move(claim_encrypted_fn) },
@@ -282,9 +282,9 @@ namespace rtsp_stream {
         sock,
         boost::asio::buffer(&initial_type_and_length, sizeof(initial_type_and_length)),
         boost::bind(&socket_t::handle_initial_read,
-                    shared_from_this(),
-                    boost::asio::placeholders::error,
-                    boost::asio::placeholders::bytes_transferred));
+          shared_from_this(),
+          boost::asio::placeholders::error,
+          boost::asio::placeholders::bytes_transferred));
     }
 
     static void
@@ -302,11 +302,11 @@ namespace rtsp_stream {
         boost::asio::async_read(
           socket->sock,
           boost::asio::buffer(socket->begin + sizeof(socket->initial_type_and_length),
-                              sizeof(encrypted_rtsp_header_t) - sizeof(socket->initial_type_and_length)),
+            sizeof(encrypted_rtsp_header_t) - sizeof(socket->initial_type_and_length)),
           boost::bind(&socket_t::handle_initial_encrypted_header_rest,
-                      socket->shared_from_this(),
-                      boost::asio::placeholders::error,
-                      boost::asio::placeholders::bytes_transferred));
+            socket->shared_from_this(),
+            boost::asio::placeholders::error,
+            boost::asio::placeholders::bytes_transferred));
         return;
       }
 
@@ -322,15 +322,15 @@ namespace rtsp_stream {
       socket->sock.async_read_some(
         boost::asio::buffer(socket->begin, static_cast<std::size_t>(std::end(socket->msg_buf) - socket->begin)),
         boost::bind(&socket_t::handle_read_plaintext,
-                    socket->shared_from_this(),
-                    boost::asio::placeholders::error,
-                    boost::asio::placeholders::bytes_transferred));
+          socket->shared_from_this(),
+          boost::asio::placeholders::error,
+          boost::asio::placeholders::bytes_transferred));
     }
 
     static void
     handle_initial_encrypted_header_rest(std::shared_ptr<socket_t> &socket,
-                                         const boost::system::error_code &ec,
-                                         std::size_t bytes) {
+      const boost::system::error_code &ec,
+      std::size_t bytes) {
       if (ec || bytes < sizeof(encrypted_rtsp_header_t) - sizeof(socket->initial_type_and_length)) {
         BOOST_LOG(debug) << "RTSP: unable to read initial encrypted header: "sv << ec.message();
         boost::system::error_code close_ec;
@@ -1258,7 +1258,8 @@ namespace rtsp_stream {
       // didn't explicitly opt in, but it otherwise has support.
       if (encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
         encryption_flags_requested |= SS_ENC_VIDEO | SS_ENC_AUDIO | SS_ENC_MIC;
-      } else {
+      }
+      else {
         // Even if not mandatory, request audio and mic encryption if encryption is enabled
         // This ensures clients that check encryptionRequested will enable audio and MIC encryption
         encryption_flags_requested |= SS_ENC_AUDIO | SS_ENC_MIC;
@@ -1290,7 +1291,7 @@ namespace rtsp_stream {
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
     ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
-    
+
     // 记录加密请求状态用于调试
     BOOST_LOG(info) << "RTSP DESCRIBE encryption flags: supported=0x" << std::hex << encryption_flags_supported << std::dec
                     << ", requested=0x" << std::hex << encryption_flags_requested << std::dec
@@ -1326,15 +1327,15 @@ namespace rtsp_stream {
       ss << "a=x-ss-pyrowave.payloadVersion:" << LI_PYROWAVE_PAYLOAD_VERSION << std::endl;
       ss << "a=x-ss-pyrowave.capabilityFlags:"
          << (LI_PYROWAVE_CAPABILITY_REASSEMBLY |
-             LI_PYROWAVE_CAPABILITY_FRAME_DEADLINE |
+              LI_PYROWAVE_CAPABILITY_FRAME_DEADLINE |
               LI_PYROWAVE_CAPABILITY_BLOCK_AWARE_FEC |
               LI_PYROWAVE_CAPABILITY_FRAME_METADATA |
-             LI_PYROWAVE_CAPABILITY_SDR_BT709_YUV420 |
-             LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE |
-             LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE |
-             LI_PYROWAVE_CAPABILITY_HDR10_PQ_BT2020 |
-             LI_PYROWAVE_CAPABILITY_HLG_BT2020 |
-             LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING)
+              LI_PYROWAVE_CAPABILITY_SDR_BT709_YUV420 |
+              LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE |
+              LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE |
+              LI_PYROWAVE_CAPABILITY_HDR10_PQ_BT2020 |
+              LI_PYROWAVE_CAPABILITY_HLG_BT2020 |
+              LI_PYROWAVE_CAPABILITY_DYNAMIC_HDR_MAPPING)
          << std::endl;
       ss << "a=x-ss-pyrowave.maxPacketSize:" << LI_PYROWAVE_MAX_PACKET_SIZE << std::endl;
     }
@@ -1769,8 +1770,7 @@ namespace rtsp_stream {
           // the client would still expect AC3 bitstream and play garbage,
           // so reject the ANNOUNCE explicitly to force the client to retry
           // with a valid configuration.
-          AVCodecID needed = (config.audio.codec == audio::CODEC_EAC3)
-                                 ? AV_CODEC_ID_EAC3 : AV_CODEC_ID_AC3;
+          AVCodecID needed = (config.audio.codec == audio::CODEC_EAC3) ? AV_CODEC_ID_EAC3 : AV_CODEC_ID_AC3;
           const char *codecName = (config.audio.codec == audio::CODEC_EAC3) ? "E-AC3" : "AC3";
           if (config.audio.channels > 6) {
             BOOST_LOG(warning) << codecName << " passthrough rejected: "sv
@@ -1812,8 +1812,8 @@ namespace rtsp_stream {
         config.endpoint_auto_refresh = true;
       }
       BOOST_LOG(debug) << "Moonlight feature flags: 0x" << std::hex << config.mlFeatureFlags
-                      << std::dec << ", remote_text_context="
-                      << ((config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0);
+                       << std::dec << ", remote_text_context="
+                       << ((config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0);
       config.audioQosType = getArg("x-nv-aqos.qosTrafficType"sv);
       config.videoQosType = getArg("x-nv-vqos[0].qosTrafficType"sv);
       config.encryptionFlagsEnabled = getArg("x-ss-general.encryptionEnabled"sv);
@@ -1849,15 +1849,16 @@ namespace rtsp_stream {
         const auto requested_color_space = monitor.encoderCscMode >> 1;
         const auto requested_range = (monitor.encoderCscMode & 0x1) != 0 ? "full"sv : "limited"sv;
         const auto requested_color_space_name = requested_color_space == 1 ? "BT.709"sv :
-          requested_color_space == 2 ? "BT.2020"sv : "unknown"sv;
-        const auto requested_range_name = requested_color_space == 1 || requested_color_space == 2
-          ? requested_range
-          : "invalid"sv;
+                                                requested_color_space == 2 ? "BT.2020"sv :
+                                                                             "unknown"sv;
+        const auto requested_range_name = requested_color_space == 1 || requested_color_space == 2 ? requested_range : "invalid"sv;
         const auto requested_dynamic_range_name = monitor.dynamicRange == 0 ? "SDR"sv :
-          monitor.dynamicRange == 1 ? "HDR10/PQ"sv :
-          monitor.dynamicRange == 2 ? "HLG"sv : "unknown"sv;
-        const auto requested_bit_depth = monitor.dynamicRange == 0 ? 8 :
-          monitor.dynamicRange == 1 || monitor.dynamicRange == 2 ? 10 : 0;
+                                                  monitor.dynamicRange == 1 ? "HDR10/PQ"sv :
+                                                  monitor.dynamicRange == 2 ? "HLG"sv :
+                                                                              "unknown"sv;
+        const auto requested_bit_depth = monitor.dynamicRange == 0                              ? 8 :
+                                         monitor.dynamicRange == 1 || monitor.dynamicRange == 2 ? 10 :
+                                                                                                  0;
         BOOST_LOG(info) << "PyroWave client color request: dynamicRange="
                         << requested_dynamic_range_name
                         << ", colorspace=" << requested_color_space_name
@@ -1868,7 +1869,7 @@ namespace rtsp_stream {
       }
       if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(monitor.videoFormat)) &&
           (!pyrowave::is_server_video_format_available(static_cast<std::uint32_t>(monitor.videoFormat)) ||
-           !pyrowave::is_server_runtime_available())) {
+            !pyrowave::is_server_runtime_available())) {
         BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: server encoder is not available"sv;
         respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
         return;
@@ -1915,13 +1916,11 @@ namespace rtsp_stream {
         const auto payload_version = parse_pyrowave_u16("x-ml-pyrowave.payloadVersion"sv);
         const auto capability_flags = parse_pyrowave_u32("x-ml-pyrowave.capabilityFlags"sv);
         const auto max_packet_size = parse_pyrowave_u32("x-ml-pyrowave.maxPacketSize"sv);
-        const auto range_capability = is_full_range
-          ? LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE
-          : LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE;
+        const auto range_capability = is_full_range ? LI_PYROWAVE_CAPABILITY_YUV_FULL_RANGE : LI_PYROWAVE_CAPABILITY_YUV_LIMITED_RANGE;
         const auto required_capabilities =
-          (monitor.dynamicRange == 1 ? LI_PYROWAVE_REQUIRED_HDR10_BASE_CAPABILITIES :
-           monitor.dynamicRange == 2 ? LI_PYROWAVE_REQUIRED_HLG_BASE_CAPABILITIES :
-           LI_PYROWAVE_REQUIRED_SDR_BASE_CAPABILITIES) |
+          (monitor.dynamicRange == 1  ? LI_PYROWAVE_REQUIRED_HDR10_BASE_CAPABILITIES :
+            monitor.dynamicRange == 2 ? LI_PYROWAVE_REQUIRED_HLG_BASE_CAPABILITIES :
+                                        LI_PYROWAVE_REQUIRED_SDR_BASE_CAPABILITIES) |
           range_capability;
         LI_PYROWAVE_CAPABILITIES server_capabilities {
           .protocolVersion = LI_PYROWAVE_PROTOCOL_VERSION,
@@ -1941,11 +1940,7 @@ namespace rtsp_stream {
         };
         LI_PYROWAVE_CAPABILITIES negotiated_capabilities {};
         if (!protocol_version || !bitstream_version || !payload_version || !capability_flags ||
-            !max_packet_size || LiPyrowaveNegotiate(
-              &server_capabilities,
-              &client_capabilities,
-              required_capabilities,
-              &negotiated_capabilities) != LI_PYROWAVE_NEGOTIATION_OK) {
+            !max_packet_size || LiPyrowaveNegotiate(&server_capabilities, &client_capabilities, required_capabilities, &negotiated_capabilities) != LI_PYROWAVE_NEGOTIATION_OK) {
           BOOST_LOG(warning) << "Rejecting experimental PyroWave video format: client capability contract is incompatible"sv;
           respond(sock, session, &option, 415, "UNSUPPORTED MEDIA TYPE", req->sequenceNumber, {});
           return;
@@ -2162,9 +2157,7 @@ namespace rtsp_stream {
     config.monitor.dynamic_hdr_format = hdr::to_wire(dynamic_hdr_selection.format);
     session.negotiated_dynamic_hdr_format = config.monitor.dynamic_hdr_format;
     session.negotiated_dynamic_hdr_fallback =
-      dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none
-        ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason))
-        : std::string {};
+      dynamic_hdr_selection.fallback_reason != hdr::dynamic_hdr_fallback_e::none ? std::string(hdr::to_string(dynamic_hdr_selection.fallback_reason)) : std::string {};
     if (pyrowave::is_experimental_video_format(static_cast<std::uint32_t>(config.monitor.videoFormat)) &&
         dynamic_hdr_request.caps_mask != 0 &&
         dynamic_hdr_request.preference != hdr::dynamic_hdr_preference_e::hdr10_only &&

@@ -53,7 +53,7 @@ namespace {
   // Captures the value main() ends up returning so the atexit terminator can use it.
   // Defaults to 0 (success) for the common case where main returns lifetime::desired_exit_code.
   std::atomic<int> g_final_exit_code { 0 };
-}
+    }
 #endif
 
 using namespace std::literals;
@@ -207,7 +207,7 @@ main(int argc, char *argv[]) {
   // code and can restart Sunshine as usual.
   std::atexit([]() {
     TerminateProcess(GetCurrentProcess(),
-                     static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
+      static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
   });
 
   // WCS uses HKCU internally. Disable its per-process cache before any Windows
@@ -448,9 +448,9 @@ main(int argc, char *argv[]) {
   reed_solomon_init();
   auto input_deinit_guard = input::init();
 
-  if (input::probe_gamepads()) {
-    BOOST_LOG(warning) << "No gamepad input is available"sv;
-  }
+    if (input::probe_gamepads()) {
+      BOOST_LOG(warning) << "No gamepad input is available"sv;
+    }
 
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
@@ -497,8 +497,7 @@ main(int argc, char *argv[]) {
   };
   try {
     webhook_auth_result = webhook::auth::load(
-      webhook::auth::path_for(config::sunshine.config_file)
-    );
+      webhook::auth::path_for(config::sunshine.config_file));
   }
   catch (...) {
     // Treat path construction failures exactly like an invalid Webhook file.

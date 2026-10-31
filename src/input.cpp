@@ -220,12 +220,13 @@ namespace input {
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
-        session_id {session_id},
-        client_gamepad {std::move(client_gamepad)},
+        session_id { session_id },
+        client_gamepad { std::move(client_gamepad) },
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
-        accumulated_hscroll_delta {} {}
+        accumulated_hscroll_delta {} {
+    }
 
     // Keep track of alt+ctrl+shift key combo
     int shortcutFlags;
@@ -795,8 +796,8 @@ namespace input {
       }
       const auto point = platf::get_mouse_loc(platf_input);
       BOOST_LOG(debug) << "Remote text context mouse input: release=" << release
-                      << ", x=" << point.x << ", y=" << point.y
-                      << ", has_viewport=" << static_cast<bool>(input->touch_port);
+                       << ", x=" << point.x << ", y=" << point.y
+                       << ", has_viewport=" << static_cast<bool>(input->touch_port);
       if (input->touch_port) {
         text_context::bridge_t::instance().record_mouse_button(
           input->session_id, release, point.x, point.y,
@@ -1257,8 +1258,8 @@ namespace input {
     if (touch.eventType != LI_TOUCH_EVENT_MOVE && touch.eventType != LI_TOUCH_EVENT_HOVER &&
         touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
       BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
-                      << ", x=" << screen_x << ", y=" << screen_y
-                      << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
+                       << ", x=" << screen_x << ", y=" << screen_y
+                       << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
     }
     // Capture geometry is the selected display's size, not the whole virtual
     // desktop: UIA/caret rectangles are reported desktop-global and the bridge
@@ -1334,7 +1335,7 @@ namespace input {
     // least as many contacts as the wire protocol can carry, otherwise the copy loop
     // below would write out of bounds.
     static_assert(platf::MAX_TOUCHPAD_FRAME_CONTACTS >= SS_TOUCHPAD_FRAME_MAX_CONTACTS,
-                  "platform touchpad frame capacity must cover the protocol maximum");
+      "platform touchpad frame capacity must cover the protocol maximum");
 
     auto rotation = util::endian::little(packet->rotation);
     if (rotation != LI_ROT_UNKNOWN) {
@@ -2361,7 +2362,7 @@ namespace input {
 
     void
     send_keyboard_packet(std::shared_ptr<input_t> &input, std::uint16_t key_code,
-                         std::uint8_t modifiers, std::uint8_t flags, bool release) {
+      std::uint8_t modifiers, std::uint8_t flags, bool release) {
       const auto magic = release ? KEY_UP_EVENT_MAGIC : KEY_DOWN_EVENT_MAGIC;
 
       NV_KEYBOARD_PACKET packet {};

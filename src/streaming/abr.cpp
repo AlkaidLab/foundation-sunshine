@@ -570,21 +570,21 @@ namespace abr {
     if (state.config.min_bitrate_kbps <= 0 || state.config.max_bitrate_kbps <= 0) {
       int preset_min_bitrate_kbps = 0;
       int preset_max_bitrate_kbps = 0;
-      switch (cfg.mode) {
-        case mode_e::QUALITY:
+    switch (cfg.mode) {
+      case mode_e::QUALITY:
           preset_min_bitrate_kbps = std::max(5000, initial_bitrate_kbps / 2);
           preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 3 / 2);
-          break;
-        case mode_e::LOW_LATENCY:
+        break;
+      case mode_e::LOW_LATENCY:
           preset_min_bitrate_kbps = 2000;
           preset_max_bitrate_kbps = initial_bitrate_kbps * 6 / 5;
-          break;
-        case mode_e::BALANCED:
-        default:
+        break;
+      case mode_e::BALANCED:
+      default:
           preset_min_bitrate_kbps = std::max(3000, initial_bitrate_kbps * 3 / 10);
           preset_max_bitrate_kbps = std::min(150000, initial_bitrate_kbps * 2);
-          break;
-      }
+        break;
+    }
       if (state.config.min_bitrate_kbps <= 0) {
         state.config.min_bitrate_kbps = preset_min_bitrate_kbps;
       }

@@ -94,7 +94,7 @@ namespace nvhttp {
     "/favicon.ico", "/favicon.png", "/favicon.svg"
   };
 
-  boost::atomic<uint32_t> session_id_counter {0};
+  boost::atomic<uint32_t> session_id_counter { 0 };
   using https_server_t = web::Server<SunshineHTTPS>;
   using http_server_t = web::Server<web::HTTP>;
 
@@ -294,8 +294,8 @@ namespace nvhttp {
 
   bool
   register_launch_ticket(pt::ptree &tree,
-                         const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
-                         std::string_view result_node) {
+    const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
+    std::string_view result_node) {
     const auto result = rtsp_stream::launch_session_raise(launch_session);
     if (result == rtsp_stream::launch_ticket_register_e::denied) {
       tree.put("root.<xmlattr>.status_code", 403);
@@ -311,8 +311,8 @@ namespace nvhttp {
     const auto busy = result == rtsp_stream::launch_ticket_register_e::client_busy;
     tree.put("root.<xmlattr>.status_code", busy ? 409 : 503);
     tree.put("root.<xmlattr>.status_message",
-             busy ? "A streaming handshake is already in progress for this client" :
-                    "The host has no capacity for another pending streaming handshake");
+      busy ? "A streaming handshake is already in progress for this client" :
+             "The host has no capacity for another pending streaming handshake");
     tree.put(std::string { "root." } + std::string { result_node }, 0);
     BOOST_LOG(warning) << "Unable to register RTSP launch ticket for client "sv
                        << launch_session->client_name << ": result="sv << static_cast<int>(result);
@@ -389,8 +389,7 @@ namespace nvhttp {
         ", PARAMS: "sv,
         query_params,
         safe_query_parameters,
-        "&"sv
-      );
+        "&"sv);
     }
     BOOST_LOG(debug) << log_stream.str();
   }
@@ -690,8 +689,7 @@ namespace nvhttp {
       if (launch_session->highly_suspected_unknown_client) {
         extra_data.emplace(
           "client_integrity_warning",
-          client_fingerprint::suspicious_client_code
-        );
+          client_fingerprint::suspicious_client_code);
       }
       webhook::send_event_async(webhook::event_t {
         .type = webhook::event_type_t::NV_APP_LAUNCH,
@@ -858,8 +856,7 @@ namespace nvhttp {
       if (launch_session->highly_suspected_unknown_client) {
         extra_data.emplace(
           "client_integrity_warning",
-          client_fingerprint::suspicious_client_code
-        );
+          client_fingerprint::suspicious_client_code);
       }
       webhook::send_event_async(webhook::event_t {
         .type = webhook::event_type_t::NV_APP_RESUME,
@@ -1014,8 +1011,7 @@ namespace nvhttp {
         tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
         // Resolve after the main port has been parsed. Its validated range
         // reserves +21 for RTSP, so +7 cannot overflow a uint16_t.
-        tunnel_config.port = config::nvhttp.usb_forwarding_port != 0
-          ? config::nvhttp.usb_forwarding_port : net::map_port(7);
+        tunnel_config.port = config::nvhttp.usb_forwarding_port != 0 ? config::nvhttp.usb_forwarding_port : net::map_port(7);
         tunnel_config.session_token = usb_forwarding_token;
         tunnel_config.certificate_file = config::nvhttp.cert;
         tunnel_config.private_key_file = config::nvhttp.pkey;
@@ -1025,8 +1021,8 @@ namespace nvhttp {
         // Optional USB forwarding must never claim a core TCP listener first.
         const auto tunnel_port = tunnel_config.port;
         const bool reserved_port = tunnel_port == port_http || tunnel_port == port_https ||
-          tunnel_port == net::map_port(confighttp::PORT_HTTPS) ||
-          tunnel_port == net::map_port(rtsp_stream::RTSP_SETUP_PORT);
+                                   tunnel_port == net::map_port(confighttp::PORT_HTTPS) ||
+                                   tunnel_port == net::map_port(rtsp_stream::RTSP_SETUP_PORT);
         if (!reserved_port) {
           usb_forwarding_available = reverse_tunnel_service.start(std::move(tunnel_config));
         }
@@ -1119,7 +1115,8 @@ namespace nvhttp {
           { "enabled", config::nvhttp.usb_forwarding_enabled },
           { "available", usb_forwarding_available },
           { "reason", !config::nvhttp.usb_forwarding_enabled ? "disabled" :
-                        usb_forwarding_available ? "ready" : "unavailable" },
+                      usb_forwarding_available               ? "ready" :
+                                                               "unavailable" },
         };
         if (usb_forwarding_available) {
           body["port"] = reverse_tunnel_service.bound_port();

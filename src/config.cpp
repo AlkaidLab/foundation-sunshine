@@ -593,8 +593,8 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
-    false, // enable_dsu_server - disabled by default
-    26760, // dsu_server_port - default DSU server port
+    false,  // enable_dsu_server - disabled by default
+    26760,  // dsu_server_port - default DSU server port
 
     true,  // keyboard enabled
     true,  // mouse enabled
@@ -604,7 +604,7 @@ namespace config {
     true,  // native pen/touch support
     true,  // native touchpad optimization
     true,  // virtual mouse (use driver if available)
-    false, // amf_draw_mouse_cursor
+    false,  // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
     true,  // client_gamepad_override (client-declared type wins; no official client sends it today)
   };
@@ -1184,7 +1184,8 @@ namespace config {
     return opts;
   }
 
-  void apply_config(std::unordered_map<std::string, std::string> &&vars) {
+  void
+  apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
       const auto log_value = (name == "file_mappings" || name == "widget_token") && !val.empty() ? "<redacted>"s : val;
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
@@ -1311,7 +1312,7 @@ namespace config {
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 
     string_f(vars, "capture", video.capture);
-    
+
 #ifdef _WIN32
     // Check if WGC is selected and we're running in service mode
     // If so, automatically switch to DDX since WGC doesn't work in system mode
@@ -1322,7 +1323,7 @@ namespace config {
       }
     }
 #endif
-    
+
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
     {
@@ -1331,8 +1332,7 @@ namespace config {
       std::string trimmed = (first == std::string::npos) ? std::string {} : video.adapter_name.substr(first, last - first + 1);
       std::string lower = trimmed;
       std::transform(lower.begin(), lower.end(), lower.begin(),
-        [](unsigned char c) { return std::tolower(c); }
-      );
+        [](unsigned char c) { return std::tolower(c); });
       if (trimmed.empty() || lower == "default" || lower == "auto") {
         video.adapter_name.clear();
       }
@@ -1341,23 +1341,23 @@ namespace config {
       }
     }
     string_f(vars, "output_name", video.output_name);
-    
+
 #ifdef _WIN32
     // Capture target: "display" (default) or "window"
     string_f(vars, "capture_target", video.capture_target);
     if (video.capture_target.empty()) {
       video.capture_target = "display";  // Default to display capture
     }
-    
+
     // Window title for window capture
     string_f(vars, "window_title", video.window_title);
-    
+
     // Validate capture_target
     if (video.capture_target != "display" && video.capture_target != "window") {
       BOOST_LOG(warning) << "Invalid capture_target: ["sv << video.capture_target << "], defaulting to 'display'"sv;
       video.capture_target = "display";
     }
-    
+
     // If window capture is selected, ensure window_title is provided
     if (video.capture_target == "window" && video.window_title.empty()) {
       BOOST_LOG(warning) << "capture_target=window but window_title is empty. Window capture may fail."sv;
@@ -1418,10 +1418,10 @@ namespace config {
       video.downscaling_quality = "balanced";  // Default to bicubic
     }
     // Validate downscaling_quality
-    if (video.downscaling_quality != "fast" && 
-        video.downscaling_quality != "balanced" && 
+    if (video.downscaling_quality != "fast" &&
+        video.downscaling_quality != "balanced" &&
         video.downscaling_quality != "high_quality") {
-      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality 
+      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality
                          << "], valid options are: fast, balanced, high_quality. Defaulting to 'balanced'"sv;
       video.downscaling_quality = "balanced";
     }
@@ -1454,7 +1454,8 @@ namespace config {
     int_f(vars, "usb_forwarding_port", usb_forwarding_port);
     if (usb_forwarding_port == 0 || (usb_forwarding_port >= 1024 && usb_forwarding_port <= 65535)) {
       nvhttp.usb_forwarding_port = static_cast<std::uint16_t>(usb_forwarding_port);
-    } else {
+    }
+    else {
       BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
     }
 
@@ -1481,8 +1482,7 @@ namespace config {
       vars,
       "client_fingerprint_rules_refresh_hours",
       nvhttp.client_fingerprint_rules_refresh_hours,
-      {1, 168}
-    );
+      { 1, 168 });
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);
@@ -1492,8 +1492,7 @@ namespace config {
       vars,
       "microphone_redirect_backend",
       audio.microphone_redirect_backend,
-      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv }
-    );
+      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv });
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
@@ -1521,14 +1520,13 @@ namespace config {
       fs::permissions(
         file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,
-        fs::perm_options::add
-      );
+        fs::perm_options::add);
     }
 #endif
 
-    int_between_f(vars, "fec_percentage", stream.fec_percentage, {0, 255});
+    int_between_f(vars, "fec_percentage", stream.fec_percentage, { 0, 255 });
     bool_f(vars, "fec_auto", stream.fec_auto);
-    int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, {0, 100});
+    int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, { 0, 100 });
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 
@@ -1567,7 +1565,7 @@ namespace config {
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
     bool_f(vars, "client_gamepad_override", input.client_gamepad_override);
-    
+
     int temp_port = static_cast<int>(input.dsu_server_port);
     int_between_f(vars, "dsu_server_port", temp_port, { 1024, 65535 });
     input.dsu_server_port = static_cast<uint16_t>(temp_port);
@@ -1593,7 +1591,7 @@ namespace config {
     int_between_f(vars, "port"s, port, { 1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT });
     sunshine.port = (std::uint16_t) port;
 
-    string_restricted_f(vars, "address_family", sunshine.address_family, {"ipv4"sv, "both"sv});
+    string_restricted_f(vars, "address_family", sunshine.address_family, { "ipv4"sv, "both"sv });
     string_f(vars, "bind_address", sunshine.bind_address);
 
     bool upnp = false;
@@ -1644,10 +1642,10 @@ namespace config {
 
     // 托盘菜单语言设置
     string_restricted_f(vars, "tray_locale", config::sunshine.tray_locale, {
-                                                                   "en"sv,  // English
-                                                                   "zh"sv,  // Chinese (Simplified)
-                                                                   "ja"sv,  // Japanese
-                                                                 });
+                                                                             "en"sv,  // English
+                                                                             "zh"sv,  // Chinese (Simplified)
+                                                                             "ja"sv,  // Japanese
+                                                                           });
 
     // Game Bar 小部件本地端点的访问令牌(X-Sunshine-Token);为空表示功能关闭
     string_f(vars, "widget_token"s, sunshine.widget_token);
@@ -1693,7 +1691,7 @@ namespace config {
       vars.erase(it);
     }
 
-    if (sunshine.min_log_level <= 3) {
+      if (sunshine.min_log_level <= 3) {
       for (auto &[var, _] : vars) {
         std::cout << "Warning: Unrecognized configurable option ["sv << var << ']' << std::endl;
       }
@@ -1868,7 +1866,7 @@ namespace config {
     // that carries "clients" updates the runtime value, one that omits it keeps
     // whatever is already active, and one that explicitly deletes it resets to [].
     if (const auto override_clients = command_line_config_overrides.find("clients");
-        override_clients != command_line_config_overrides.end()) {
+      override_clients != command_line_config_overrides.end()) {
       nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
       return;
     }
@@ -1893,7 +1891,7 @@ namespace config {
         return false;
       }
       const auto existing_config = parse_config(*file_content);
-      std::map<std::string, std::string> configMap {existing_config.begin(), existing_config.end()};
+      std::map<std::string, std::string> configMap { existing_config.begin(), existing_config.end() };
 
       // 更新配置项，同时检查是否有变化
       bool hasChanged = false;
@@ -1937,7 +1935,7 @@ namespace config {
       if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
       if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
         const auto gamepad = configMap.find("gamepad");
-        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});
+        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view { gamepad->second });
       }
       BOOST_LOG(info) << "Config updated successfully";
       return true;
@@ -1957,7 +1955,7 @@ namespace config {
         return std::nullopt;
       }
       const auto config = parse_config(*file_content);
-      return std::map<std::string, std::string> {config.begin(), config.end()};
+      return std::map<std::string, std::string> { config.begin(), config.end() };
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to read config snapshot: " << e.what();
@@ -1981,23 +1979,23 @@ namespace config {
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
-        "status",           // API响应状态，不是配置项
-        "platform",         // 平台信息，编译时确定，只读
-        "version",          // 版本号，只读
-        "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "status",  // API响应状态，不是配置项
+        "platform",  // 平台信息，编译时确定，只读
+        "version",  // 版本号，只读
+        "active_encoder",  // 运行时探测后实际使用的编码器，只读
         "nvidia_vsync",  // NVIDIA compatibility capability and runtime state, read-only
         "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
-        "adapters",         // 适配器列表，运行时枚举，只读
-        "pair_name",        // 配对名称，由系统生成，只读
+        "adapters",  // 适配器列表，运行时枚举，只读
+        "pair_name",  // 配对名称，由系统生成，只读
       };
 
       // 受保护的字段：由系统托盘控制，需要保留本地配置文件中的原有值
       const std::set<std::string> protectedFields = {
-        "vdd_keep_enabled",       // 由系统托盘控制，不通过Web UI修改
-        "vdd_headless_create",    // 由系统托盘控制，不通过Web UI修改
-        "tray_locale",            // 由系统托盘控制，不通过Web UI修改
-        "widget_token",           // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
+        "vdd_keep_enabled",  // 由系统托盘控制，不通过Web UI修改
+        "vdd_headless_create",  // 由系统托盘控制，不通过Web UI修改
+        "tray_locale",  // 由系统托盘控制，不通过Web UI修改
+        "widget_token",  // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
       };
 
       const auto original_file_content = read_config_file_contents();
@@ -2005,7 +2003,7 @@ namespace config {
         return false;
       }
       const auto existing_config = parse_config(*original_file_content);
-      std::map<std::string, std::string> originalMap {existing_config.begin(), existing_config.end()};
+      std::map<std::string, std::string> originalMap { existing_config.begin(), existing_config.end() };
 
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
@@ -2068,7 +2066,7 @@ namespace config {
 
       if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
       const auto gamepad = resultMap.find("gamepad");
-      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
+      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
 
       return true;
     }
@@ -2194,7 +2192,7 @@ namespace config {
       }
       // Keep the override shape at runtime: its fields win, bindings carry over.
       if (const auto override_clients = command_line_config_overrides.find("clients");
-          override_clients != command_line_config_overrides.end()) {
+        override_clients != command_line_config_overrides.end()) {
         nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
       }
       return true;

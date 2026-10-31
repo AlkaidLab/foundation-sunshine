@@ -62,7 +62,8 @@ namespace nvhttp {
    * @param pkey
    * @param cert
    */
-  void setup(const std::string &pkey, const std::string &cert);
+  void
+  setup(const std::string &pkey, const std::string &cert);
 
   using SunshineHTTPS = web::PairedHTTPS;
 
@@ -70,7 +71,8 @@ namespace nvhttp {
 
   /// Return the UUID authenticated by the paired client certificate on this
   /// request's TLS connection. An empty value means no paired identity exists.
-  std::string get_client_cert_uuid_from_request(req_https_t request);
+  std::string
+  get_client_cert_uuid_from_request(req_https_t request);
 
   enum class PAIR_PHASE {
     NONE,  ///< Sunshine is not in a pairing phase
@@ -111,7 +113,8 @@ namespace nvhttp {
    * @brief removes the temporary pairing session
    * @param sess
    */
-  void remove_session(const pair_session_t &sess);
+  void
+  remove_session(const pair_session_t &sess);
 
   /**
    * @brief Pair, phase 1
@@ -123,7 +126,8 @@ namespace nvhttp {
    *
    * At this stage we only have to send back our public certificate.
    */
-  void getservercert(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &pin, const std::string &client_name);
+  void
+  getservercert(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &pin, const std::string &client_name);
 
   /**
    * @brief Pair, phase 2
@@ -137,7 +141,8 @@ namespace nvhttp {
    *
    * The hash + server_challenge will then be AES encrypted and sent as the `challengeresponse` in the returned XML
    */
-  void clientchallenge(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &challenge);
+  void
+  clientchallenge(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &challenge);
 
   /**
    * @brief Pair, phase 3
@@ -146,7 +151,8 @@ namespace nvhttp {
    * we have to send back the `pairingsecret`:
    * using our private key we have to sign the certificate_signature + server_secret (generated in phase 2)
    */
-  void serverchallengeresp(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &encrypted_response);
+  void
+  serverchallengeresp(pair_session_t &sess, boost::property_tree::ptree &tree, const std::string &encrypted_response);
 
   /**
    * @brief Pair, phase 4 (final)
@@ -162,7 +168,8 @@ namespace nvhttp {
    * Then using the client certificate public key we should be able to verify that
    * the client secret has been signed by Moonlight
    */
-  void clientpairingsecret(pair_session_t &sess, std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, boost::property_tree::ptree &tree, const std::string &client_pairing_secret);
+  void
+  clientpairingsecret(pair_session_t &sess, std::shared_ptr<safe::queue_t<crypto::x509_t>> &add_cert, boost::property_tree::ptree &tree, const std::string &client_pairing_secret);
 
   /**
    * @brief Compare the user supplied pin to the Moonlight pin.
