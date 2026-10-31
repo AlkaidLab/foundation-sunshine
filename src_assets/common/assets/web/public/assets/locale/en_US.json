@@ -326,7 +326,7 @@
     "address_family_desc": "Set the address family used by Sunshine",
     "address_family_ipv4": "IPv4 only",
     "allow_client_resolution_change": "Allow Client-Requested Resolution Changes",
-    "allow_client_resolution_change_desc": "When enabled, a supporting client (e.g. a resizable Moonlight window or a rotated or docked Android device) can request a different stream resolution mid-stream; the host switches the display mode (arbitrary sizes work best with the virtual display) and the stream follows. Requires \"Follow Host Display Resolution Mid-Stream\" and automatic resolution change. Disabled by default.",
+    "allow_client_resolution_change_desc": "When enabled, a supporting client (e.g. a resizable Moonlight window or a rotated or docked Android device) can request a different stream resolution mid-stream; the host switches the display mode (arbitrary sizes work best with the virtual display) and the stream follows. Requires \"Follow Host Display Resolution Mid-Stream\" and automatic resolution change. Enabled by default.",
     "always_send_scancodes": "Always Send Scancodes",
     "always_send_scancodes_desc": "Sending scancodes enhances compatibility with games and apps but may result in incorrect keyboard input from certain clients that aren't using a US English keyboard layout. Enable if keyboard input is not working at all in certain applications. Disable if keys on the client are generating the wrong input on the host.",
     "amd_advanced_group": "AMF Advanced Tuning",

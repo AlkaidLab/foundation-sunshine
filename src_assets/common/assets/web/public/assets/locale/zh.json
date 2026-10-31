@@ -328,7 +328,7 @@
     "address_family_desc": "设置 Sunshine 使用的 IP 地址族",
     "address_family_ipv4": "仅 IPv4",
     "allow_client_resolution_change": "允许客户端请求更改串流分辨率",
-    "allow_client_resolution_change_desc": "启用后，支持该功能的客户端（例如可调整大小的 Moonlight 窗口，或旋转/接入扩展坞的 Android 设备）可在串流过程中请求更改分辨率；主机会切换显示模式（任意尺寸在虚拟显示器上效果最佳），串流随之跟随。需要同时开启“串流中跟随主机分辨率变化”并将分辨率更改设为自动。默认关闭。",
+    "allow_client_resolution_change_desc": "启用后，支持该功能的客户端（例如可调整大小的 Moonlight 窗口，或旋转/接入扩展坞的 Android 设备）可在串流过程中请求更改分辨率；主机会切换显示模式（任意尺寸在虚拟显示器上效果最佳），串流随之跟随。需要同时开启“串流中跟随主机分辨率变化”并将分辨率更改设为自动。默认开启。",
     "always_send_scancodes": "总是发送扫描码",
     "always_send_scancodes_desc": "发送扫描码可提高与游戏和应用的兼容性，但使用非美式英语键盘布局的客户端可能会产生错误的键盘输入。如果某些应用完全无法接收键盘输入，请启用；如果客户端按键在主机上产生错误输入，请禁用。",
     "amd_advanced_group": "AMF 高级调优",

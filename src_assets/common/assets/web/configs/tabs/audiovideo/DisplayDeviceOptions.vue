@@ -248,7 +248,7 @@ onUnmounted(() => {
                 id="allow_client_resolution_change"
                 locale-prefix="config"
                 v-model="config.allow_client_resolution_change"
-                default="false"
+                default="true"
               ></Checkbox>
 
               <div
