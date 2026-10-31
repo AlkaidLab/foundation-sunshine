@@ -11,7 +11,7 @@ const { labelOf } = await import('foundation-ui/settings/provider.js')
 // and by its key name), unless it has no control in the Web UI at all. The list below is those keys: none of them had a
 // control in the original Web UI either (checked against the commit before the redesign), they are set in the config file.
 const NO_CONTROL = Object.freeze({
-  allow_client_resolution_change: 'new with client-requested resolution changes (0x5506 RESOLUTION, off by default): no control in the redesigned UI yet, set in the config file',
+  allow_client_resolution_change: 'new with client-requested resolution changes (0x5506 RESOLUTION, on by default): no control in the redesigned UI yet, set in the config file',
   amd_ltr_frames: 'no control in the original UI',
   clients: 'the paired clients are managed on the clients page, not a setting',
   external_ip: 'replaced by external_endpoints, which the remote access card edits; the old key is still read',

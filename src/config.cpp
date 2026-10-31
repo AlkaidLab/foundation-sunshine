@@ -528,7 +528,7 @@ namespace config {
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
     64 * 1024,  // video_pacing_threshold (protect small-queue paths from large frame bursts)
-    false,  // allow_client_resolution_change (default: off; opt-in for clients that request mid-stream resolution changes)
+    true,  // allow_client_resolution_change (default: on, so clients that already send 0x5506 RESOLUTION keep working; set false to ignore them)
   };
 
   audio_t audio {
