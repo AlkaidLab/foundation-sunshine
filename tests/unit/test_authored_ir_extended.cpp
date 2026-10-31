@@ -93,3 +93,27 @@ TEST(AuthoredIrExtended, EncodesEnhancementAndPreservesTheLegacyV2Base) {
     EXPECT_TRUE(saw_event);
   }
 }
+
+TEST(AuthoredIrExtended, SmoothAttacksKeepTheirBodyWithoutBecomingPointEvents) {
+  for (const auto carrier : { 80., 250., 300. }) {
+    haptics::authored_ir_extended_session_t session;
+    const auto pcm = signal(.35, carrier, .12);
+    bool saw_body[2] {};
+    bool saw_base_attack = false;
+    // Source ramp, candidate decision budget, and one output hop.
+    constexpr auto onset_deadline_us = 50'000u + 18'000u + 5'000u;
+    for (unsigned start = 0; start < pcm.size() / 4; start += 240) {
+      const auto frame = parsed(session.process(0, start ? 0 : 1, 240, start / 240,
+        std::uint64_t(start) * 1000000 / 48000, std::span(pcm).subspan(start * 4, 960)));
+      EXPECT_EQ(frame.eventCount, 0);
+      if (frame.windowEndUs <= onset_deadline_us) {
+        for (unsigned lane = 0; lane < 2; ++lane)
+          saw_body[lane] |= std::max(frame.lanes[lane].continuousLow, frame.lanes[lane].continuousHigh) > .01f;
+      }
+      saw_base_attack |= frame.base.lanes[0].transientStrength > 0;
+    }
+    EXPECT_TRUE(saw_body[0]);
+    EXPECT_TRUE(saw_body[1]);
+    EXPECT_TRUE(saw_base_attack);
+  }
+}
