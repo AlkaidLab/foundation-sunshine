@@ -228,6 +228,7 @@ target_include_directories(config_runtime_unit_tests PRIVATE
         "${CMAKE_BINARY_DIR}")  # generated version.h
 target_link_libraries(config_runtime_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
         sunshine_project_options sunshine_coverage
+        alkaidlab_stun_codec
         sunshine::host_headers sunshine::tls
         Boost::boost Boost::log Boost::filesystem Boost::property_tree Boost::asio Boost::beast Boost::regex
         Boost::format Boost::process)
@@ -721,6 +722,8 @@ target_sources(${PROJECT_NAME} PRIVATE
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE Pyrowave::Runtime sunshine_windows_resources)
 endif ()
+# The network overview in the host sources uses the STUN codec on every platform.
+target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec)
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(${PROJECT_NAME} sunshine_rtx_video_adapter)
     target_include_directories(${PROJECT_NAME} PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
