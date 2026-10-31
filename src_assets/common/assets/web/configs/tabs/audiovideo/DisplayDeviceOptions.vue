@@ -243,6 +243,14 @@ onUnmounted(() => {
                 default="true"
               ></Checkbox>
 
+              <Checkbox
+                class="mb-3"
+                id="allow_client_resolution_change"
+                locale-prefix="config"
+                v-model="config.allow_client_resolution_change"
+                default="true"
+              ></Checkbox>
+
               <div
                 class="hdr-feature-card mb-3"
                 :class="{ 'is-disabled': hdrCardDisabled }"

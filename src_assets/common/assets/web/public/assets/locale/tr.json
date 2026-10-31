@@ -325,6 +325,8 @@
     "address_family_both": "IPv4+IPv6",
     "address_family_desc": "Sunshine tarafından kullanılan adres ailesini ayarlama",
     "address_family_ipv4": "Yalnızca IPv4",
+    "allow_client_resolution_change": "İstemcinin istediği çözünürlük değişikliklerine izin ver",
+    "allow_client_resolution_change_desc": "Etkinleştirildiğinde, uyumlu bir istemci (ör. yeniden boyutlandırılabilir bir Moonlight penceresi ya da döndürülen veya bir yuvaya bağlanan bir Android cihaz) akış sırasında farklı bir çözünürlük isteyebilir; ana makine ekran modunu değiştirir (rastgele boyutlar en iyi sanal ekranla çalışır) ve akış buna uyar. Akışın ana makine ekran çözünürlüğünü izlemesini ve otomatik çözünürlük değişikliğini gerektirir. Varsayılan olarak etkindir.",
     "always_send_scancodes": "Her Zaman Scancode Gönder",
     "always_send_scancodes_desc": "Scancode göndermek oyun ve uygulamalarla uyumluluğu artırır, ancak ABD İngilizcesi klavye düzeni kullanmayan bazı istemcilerden yanlış klavye girişine neden olabilir. Belirli uygulamalarda klavye girişi hiç çalışmıyorsa etkinleştirin. İstemcideki tuşlar ana bilgisayarda yanlış girdi oluşturuyorsa devre dışı bırakın.",
     "amd_advanced_group": "Gelişmiş AMF ayarları",
