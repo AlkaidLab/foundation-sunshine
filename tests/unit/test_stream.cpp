@@ -107,9 +107,16 @@ TEST(ClientResolutionChangeTests, EnabledOnlyWithOptInFollowDisplayAutomaticReso
   EXPECT_FALSE(stream::client_resolution_change_enabled(video, true));
 }
 
-TEST(ClientResolutionChangeTests, DisabledByDefault) {
-  EXPECT_FALSE(config::video.allow_client_resolution_change);
+TEST(ClientResolutionChangeTests, EnabledByDefault) {
+  // Clients such as Moonlight V+ already send 0x5506 RESOLUTION without checking the flag
+  EXPECT_TRUE(config::video.allow_client_resolution_change);
+#ifdef _WIN32
+  // The other defaults (follow display, automatic resolution change) allow it too
+  EXPECT_TRUE(stream::client_resolution_change_enabled(config::video, true));
+#else
   EXPECT_FALSE(stream::client_resolution_change_enabled(config::video, true));
+#endif
+  EXPECT_FALSE(stream::client_resolution_change_enabled(config::video, false));
 }
 
 TEST(ClientResolutionChangeTests, NormalizeKeepsValidEvenSizes) {

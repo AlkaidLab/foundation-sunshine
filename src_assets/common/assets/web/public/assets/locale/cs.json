@@ -326,7 +326,7 @@
     "address_family_desc": "Nastavení rodiny adres, kterou používá Sunshine",
     "address_family_ipv4": "Pouze IPv4",
     "allow_client_resolution_change": "Povolit změny rozlišení vyžádané klientem",
-    "allow_client_resolution_change_desc": "Je-li zapnuto, kompatibilní klient (např. okno Moonlight s měnitelnou velikostí nebo otočené či do doku připojené zařízení Android) může během streamu požádat o jiné rozlišení; hostitel přepne režim displeje (libovolné velikosti fungují nejlépe s virtuálním displejem) a stream jej následuje. Vyžaduje, aby stream sledoval rozlišení hostitelského displeje, a automatickou změnu rozlišení. Ve výchozím nastavení vypnuto.",
+    "allow_client_resolution_change_desc": "Je-li zapnuto, kompatibilní klient (např. okno Moonlight s měnitelnou velikostí nebo otočené či do doku připojené zařízení Android) může během streamu požádat o jiné rozlišení; hostitel přepne režim displeje (libovolné velikosti fungují nejlépe s virtuálním displejem) a stream jej následuje. Vyžaduje, aby stream sledoval rozlišení hostitelského displeje, a automatickou změnu rozlišení. Ve výchozím nastavení zapnuto.",
     "always_send_scancodes": "Vždy odesílat Scancody",
     "always_send_scancodes_desc": "Odesílání scancodes zvyšuje kompatibilitu s hrami a aplikacemi, ale může mít za následek nesprávný vstup na klávesnici od určitých klientů, kteří nepoužívají americké anglické rozložení klávesnice. Povolit, pokud vstup klávesnice v některých aplikacích vůbec nefunguje. Zakázat, pokud klíče klienta generují nesprávný vstup na hostitele.",
     "amd_advanced_group": "Pokročilé ladění AMF",

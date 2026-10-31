@@ -326,7 +326,7 @@
     "address_family_desc": "Definir a família de endereços usada pelo Sunshine",
     "address_family_ipv4": "Apenas IPv4",
     "allow_client_resolution_change": "Permitir alterações de resolução pedidas pelo cliente",
-    "allow_client_resolution_change_desc": "Quando ativado, um cliente compatível (por ex., uma janela do Moonlight redimensionável ou um dispositivo Android rodado ou ligado a uma base) pode pedir outra resolução durante a transmissão; o anfitrião muda o modo de ecrã (tamanhos arbitrários funcionam melhor com o ecrã virtual) e a transmissão acompanha. Requer que a transmissão siga a resolução do ecrã do anfitrião e a alteração automática de resolução. Desativado por predefinição.",
+    "allow_client_resolution_change_desc": "Quando ativado, um cliente compatível (por ex., uma janela do Moonlight redimensionável ou um dispositivo Android rodado ou ligado a uma base) pode pedir outra resolução durante a transmissão; o anfitrião muda o modo de ecrã (tamanhos arbitrários funcionam melhor com o ecrã virtual) e a transmissão acompanha. Requer que a transmissão siga a resolução do ecrã do anfitrião e a alteração automática de resolução. Ativado por predefinição.",
     "always_send_scancodes": "Sempre enviar Scancodes",
     "always_send_scancodes_desc": "O envio de códigos de verificação melhora a compatibilidade com jogos e aplicativos, mas pode resultar em uma entrada incorreta de teclado de certos clientes que não estão usando um layout de teclado inglês dos EUA. Habilitar se a entrada de teclado não estiver funcionando em certas aplicações. Desative se as chaves no cliente estão gerando a entrada errada no host.",
     "amd_advanced_group": "Ajuste avançado do AMF",
