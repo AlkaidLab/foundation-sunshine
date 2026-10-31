@@ -193,5 +193,6 @@ set(SUNSHINE_HOST_SOURCES
     src/tray/system_tray_i18n.cpp src/tray/system_tray_i18n.h
     src/tray/tray_http.cpp src/tray/tray_http.h
     src/tray/tray_state.cpp src/tray/tray_state.h
+    third-party/puff/puff.c third-party/puff/puff.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")
