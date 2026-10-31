@@ -212,9 +212,16 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          $url = "https://jrsoftware.org/download.php/is.exe"
+          # The unversioned jrsoftware.org/download.php/is.exe link now serves an
+          # HTML page. Pin the signed release asset (6.x keeps the "Inno Setup 6"
+          # install path used below) and check its publisher before running it.
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
           $installer = "$env:TEMP\innosetup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Pyrsys B.V.') {
+            throw "Unexpected Inno Setup installer signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+          }
           Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
