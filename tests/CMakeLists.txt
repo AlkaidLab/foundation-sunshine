@@ -311,6 +311,15 @@ if (WIN32)
     set_target_properties(frame_contract_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
+# Build identity: the compiled record (generated build_info_defs.h and version.h in the build tree) and its JSON contract.
+add_executable(build_info_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/build_info.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp)
+# The binary FILEVERSION encoding: HHMMSS above 65535 is split, every field fits 16 bits.
+add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_rc_version.cmake)
+# A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).
+add_test(NAME build_info_archive COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_build_info_archive.cmake WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 
 add_executable(pyrowave_unit_tests
         ${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp
@@ -617,12 +626,21 @@ if(Python3_Interpreter_FOUND)
 endif()
 find_program(REVERSE_TUNNEL_OPENSSL_EXECUTABLE openssl)
 if (Python3_Interpreter_FOUND AND REVERSE_TUNNEL_OPENSSL_EXECUTABLE)
+    # The gate builds the ctest targets only; the probe is built here so the
+    # transport test can run from a plain ctest invocation.
+    add_test(NAME reverse_tunnel_probe_build
+            COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}"
+                    --target reverse_tunnel_probe --parallel 4)
+    set_tests_properties(reverse_tunnel_probe_build PROPERTIES
+            FIXTURES_SETUP REVERSE_TUNNEL_PROBE)
     add_test(NAME reverse_tunnel_transport_tests
             COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/tools/test_reverse_tunnel.py"
             "$<TARGET_FILE:reverse_tunnel_probe>"
             --openssl "${REVERSE_TUNNEL_OPENSSL_EXECUTABLE}")
-    set_tests_properties(reverse_tunnel_transport_tests PROPERTIES TIMEOUT 60)
+    set_tests_properties(reverse_tunnel_transport_tests PROPERTIES
+            TIMEOUT 60
+            FIXTURES_REQUIRED REVERSE_TUNNEL_PROBE)
 endif ()
 
 # modify SUNSHINE_DEFINITIONS
@@ -653,6 +671,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # their assertions and isolate their fixtures from the aggregate host state.
 list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp

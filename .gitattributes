@@ -14,3 +14,6 @@ src_assets/common/assets/web/public/assets/locale/*.json text eol=lf
 
 # Core patch context must match the LF source archive on Windows too.
 tools/hidmaestro-core-patch/*.patch text eol=lf whitespace=-blank-at-eol
+
+# git archive writes the commit and its refs into this file (cmake/prep/build_info.cmake reads it when there is no .git)
+cmake/prep/build_identity_archive.txt export-subst

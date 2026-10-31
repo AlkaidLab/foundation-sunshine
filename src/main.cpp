@@ -17,6 +17,7 @@
 #include <rs.h>
 
 // local includes
+#include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
 #include "display_device/session.h"
@@ -238,6 +239,13 @@ main(int argc, char *argv[]) {
   mail::man = std::make_shared<safe::mail_raw_t>();
   for (int i = 1; i < argc; ++i) {
     if (std::string_view(argv[i]) == "--version"sv) {
+      // `--version --json`: the build identity (build_info.h), one JSON object on stdout
+      for (int j = 1; j < argc; ++j) {
+        if (std::string_view(argv[j]) == "--json"sv) {
+          std::cout << build_info::to_json(build_info::current()).dump() << std::endl;
+          return 0;
+        }
+      }
       std::cout << PROJECT_NAME << " version: " << PROJECT_VER << std::endl;
       return 0;
     }

@@ -49,6 +49,7 @@ elseif(UNIX)
 endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
+configure_file("${CMAKE_SOURCE_DIR}/src/build_info_defs.h.in" build_info_defs.h @ONLY)
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
     set(SUNSHINE_ASSETS_DIR_DEF "${SUNSHINE_ASSETS_DIR}")
