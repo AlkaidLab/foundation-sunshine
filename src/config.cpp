@@ -748,7 +748,7 @@ namespace config {
     auto end_name = std::find_if_not(std::make_reverse_iterator(eq), std::make_reverse_iterator(begin), space_tab).base();
     auto begin_val = std::find_if_not(eq + 1, endc, space_tab);
 
-    if (begin_val == endl) {
+    if (begin_val == endc) {
       return std::make_pair(endl, std::nullopt);
     }
 
@@ -1305,8 +1305,15 @@ namespace config {
     int_between_f(vars, "amd_av1_latency_mode", video.amd.amd_av1_latency_mode, { 0, 3 });
 
     int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
-    int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
-    int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
+    // One value feeds both fields: the first read erases the key, so a second
+    // int_f(vars, "vt_software", ...) would find nothing and leave the
+    // required-software flag at its previous value.
+    std::string vt_software;
+    string_f(vars, "vt_software", vt_software);
+    if (!vt_software.empty()) {
+      video.vt.vt_allow_sw = vt::allow_software_from_view(vt_software);
+      video.vt.vt_require_sw = vt::force_software_from_view(vt_software);
+    }
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
