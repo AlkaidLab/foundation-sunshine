@@ -103,7 +103,8 @@ TEST(AuthoredIrExtended, SmoothAttacksKeepTheirBodyWithoutBecomingPointEvents) {
       const auto frame = parsed(session.process(0, start ? 0 : 1, 240, start / 240,
         std::uint64_t(start) * 1000000 / 48000, std::span(pcm).subspan(start * 4, 960)));
       EXPECT_EQ(frame.eventCount, 0);
-      saw_body |= std::max(frame.lanes[0].continuousLow, frame.lanes[0].continuousHigh) > .01f;
+      saw_body |= std::max(frame.lanes[0].continuousLow, frame.lanes[0].continuousHigh) > .01f &&
+                  std::max(frame.lanes[1].continuousLow, frame.lanes[1].continuousHigh) > .01f;
       saw_base_attack |= frame.base.lanes[0].transientStrength > 0;
     }
     EXPECT_TRUE(saw_body);
