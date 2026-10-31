@@ -93,3 +93,20 @@ TEST(AuthoredIrExtended, EncodesEnhancementAndPreservesTheLegacyV2Base) {
     EXPECT_TRUE(saw_event);
   }
 }
+
+TEST(AuthoredIrExtended, SmoothAttacksKeepTheirBodyWithoutBecomingPointEvents) {
+  for (const auto carrier : { 80., 250., 300. }) {
+    haptics::authored_ir_extended_session_t session;
+    const auto pcm = signal(.35, carrier, .12);
+    bool saw_body = false, saw_base_attack = false;
+    for (unsigned start = 0; start < pcm.size() / 4; start += 240) {
+      const auto frame = parsed(session.process(0, start ? 0 : 1, 240, start / 240,
+        std::uint64_t(start) * 1000000 / 48000, std::span(pcm).subspan(start * 4, 960)));
+      EXPECT_EQ(frame.eventCount, 0);
+      saw_body |= std::max(frame.lanes[0].continuousLow, frame.lanes[0].continuousHigh) > .01f;
+      saw_base_attack |= frame.base.lanes[0].transientStrength > 0;
+    }
+    EXPECT_TRUE(saw_body);
+    EXPECT_TRUE(saw_base_attack);
+  }
+}
