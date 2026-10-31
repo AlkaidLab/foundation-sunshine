@@ -25,6 +25,7 @@ body:
       label: "🏷️ Feature Category"
       description: "What type of feature is this?"
       options:
+        - "✨ UI Experience"
         - "🎨 HDR Support"
         - "🖥️ Virtual Display"
         - "🎤 Remote Microphone"
