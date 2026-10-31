@@ -27,12 +27,49 @@ jobs:
             arch: x64
             filename: 'Sunshine*Installer*.exe'
     steps:
+      - name: Resolve release and wait for installer
+        id: release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        with:
+          script: |
+            const target = { owner: 'AlkaidLab', repo: 'foundation-sunshine' };
+            let release;
+            if (process.env.RELEASE_TAG) {
+              release = (await github.rest.repos.getReleaseByTag({ ...target, tag: process.env.RELEASE_TAG })).data;
+            } else {
+              const { data } = await github.rest.repos.listReleases({ ...target, per_page: 100 });
+              release = data.find(item => !item.draft);
+            }
+            if (!release || release.draft) {
+              throw new Error('No published release found');
+            }
+
+            // published can arrive before the release action finishes uploading assets.
+            for (let attempt = 0; attempt < 40; attempt++) {
+              const ready = release.assets.some(asset =>
+                /^Sunshine.*Installer.*\.exe$/.test(asset.name) && asset.state === 'uploaded');
+              if (ready) {
+                core.setOutput('tag', release.tag_name);
+                core.setOutput('channel', release.prerelease ? 'beta' : 'stable');
+                return;
+              }
+              if (attempt === 39) {
+                throw new Error('Installer was not ready within 10 minutes');
+              }
+              core.info(`Waiting for installer assets (${attempt + 1}/40)`);
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              release = (await github.rest.repos.getRelease({ ...target, release_id: release.id })).data;
+            }
+
       - uses: MirrorChyan/uploading-action@v1
         with:
           filetype: latest-release
           filename: ${{ matrix.filename }}
           mirrorchyan_rid: foundation-sunshine
-          tag: ${{ inputs.tag || github.event.release.tag_name }}
+          tag: ${{ steps.release.outputs.tag }}
+          channel: ${{ steps.release.outputs.channel }}
 
           os: ${{ matrix.os }}
           arch: ${{ matrix.arch }}
