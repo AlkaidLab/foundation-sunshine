@@ -459,7 +459,17 @@ namespace platf {
           return {};
       }
     }
-  }
+  }  // namespace
+
+  namespace {
+    // Registers the failure logging of the text encoding helpers (text_encoding.cpp).
+    [[maybe_unused]] const bool text_encoding_logging_installed = [] {
+      text_encoding_failure_hook = [](const char *what, DWORD winerr) {
+        BOOST_LOG(error) << what << ": "sv << winerr;
+      };
+      return true;
+    }();
+  }  // namespace
 
   std::string
   windows_version() {

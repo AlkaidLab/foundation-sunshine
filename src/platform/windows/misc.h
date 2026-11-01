@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <functional>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <windows.h>
@@ -42,6 +43,13 @@ namespace platf {
   qpc_time_difference(int64_t performance_counter1, int64_t performance_counter2);
 
   /**
+   * @brief Called by the text encoding helpers when a conversion fails.
+   * The helpers live in text_encoding.cpp, which small host tools link without the
+   * logging sources; the host binaries install a logging callback in misc.cpp.
+   */
+  extern void (*text_encoding_failure_hook)(const char *what, DWORD error);
+
+  /**
    * @brief Convert a UTF-8 string into a UTF-16 wide string.
    * @param string The UTF-8 string.
    * @return The converted UTF-16 wide string.
@@ -56,6 +64,37 @@ namespace platf {
    */
   std::string
   to_utf8(const std::wstring &string);
+
+  /**
+   * @brief Convert a byte string in a named code page into UTF-8.
+   * @param text The source bytes.
+   * @param code_page A Windows code page (CP_ACP, CP_OEMCP, CP_UTF8 or a number such as 936).
+   * @return The UTF-8 text, or an empty string when the input cannot be converted.
+   */
+  std::string
+  to_utf8(std::string_view text, UINT code_page);
+
+  /**
+   * @brief Keep valid UTF-8 as it is; convert anything else from a legacy code page.
+   * @param text The source bytes, for example a third-party tool's output.
+   * @param fallback_code_page The code page to use when the bytes are not valid UTF-8.
+   * @return UTF-8 text. Invalid input is replaced with U+FFFD rather than dropped.
+   */
+  std::string
+  to_utf8_best_effort(std::string_view text, UINT fallback_code_page = CP_ACP);
+
+  /** True when the bytes are a valid UTF-8 sequence. */
+  bool
+  is_valid_utf8(std::string_view text);
+
+  /**
+   * @brief Format a Win32 error or HRESULT with the system message table, as UTF-8.
+   * @param message_id The error code (for example GetLastError() or an HRESULT).
+   * @param language_id The message language.
+   * @return The message without trailing line breaks; a code-only fallback when the table has none.
+   */
+  std::string
+  format_message_utf8(DWORD message_id, DWORD language_id = MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT));
 
   /**
    * @brief Check if the current process is running as SYSTEM.
