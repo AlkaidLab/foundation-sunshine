@@ -198,6 +198,13 @@ namespace video {
     std::optional<target_t> target_;
   };
 
+  /**
+   * @brief Encoder stop condition while the capture loop skips a display change to this size.
+   * @return A predicate that turns true once the skipped size should be followed.
+   */
+  std::function<bool()>
+  make_deferred_display_stop(std::shared_ptr<pending_display_size_t> target, int width, int height);
+
   /* Encoding configuration requested by remote client */
   struct config_t {
     int width;  // Video width in pixels
