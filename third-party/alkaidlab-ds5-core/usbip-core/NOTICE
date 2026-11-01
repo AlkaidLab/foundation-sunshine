@@ -1,0 +1,4 @@
+AlkaidLab usbip-core is a standalone plain-C USB/IP 1.1.1 framing core. It
+contains no third-party implementation code. Primary protocol and operating
+system sources are recorded in docs/authority/source-index.tsv; this notice
+does not grant rights to those sources.

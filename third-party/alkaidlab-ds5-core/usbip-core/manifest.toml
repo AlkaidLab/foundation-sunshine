@@ -1,0 +1,6 @@
+id = "network/usbip-core"
+version = "0.1.0"
+kind = "core-primitive"
+license = "Apache-2.0"
+entry = "alk_usbip_core"
+sources = ["ds5-linux-usbip-protocol-20261031"]

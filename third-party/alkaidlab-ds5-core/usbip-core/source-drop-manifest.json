@@ -1,0 +1,31 @@
+{
+  "name": "usbip-core",
+  "abi": 1,
+  "license": "Apache-2.0",
+  "notice": "NOTICE",
+  "include": [
+    "include/alkaidlab/usbip_core/usbip_core.h"
+  ],
+  "source": [
+    "src/usbip_core.c"
+  ],
+  "tests": [
+    "tests/usbip_core_contract_test.c",
+    "tests/usbip_core_negative_test.c",
+    "tests/usbip_core_fuzz.c"
+  ],
+  "requires": [],
+  "source_keys": [
+    "ds5-linux-usbip-protocol-20261031"
+  ],
+  "source_commit": "04f3c8fc72ce96c15106fea7a961f7269093c011",
+  "files": {
+    "include/alkaidlab/usbip_core/usbip_core.h": "285840566242638c2128cc97d3a5cab62b9c2e755df8ce9b0133c1c8e3396f3d",
+    "src/usbip_core.c": "dd261eec037c562865bd78f54e9a17e499400f8c9d5cada7ca191e3b0248c92c",
+    "LICENSE": "16d5fe03e25b6022876abc17c32aa6072107f9e8f1bbc1f8510ff0f142af3fef",
+    "NOTICE": "899be9f12f576eb9c4d504c903ab05647cf42c682ac3e3889e204a15d49ebdba",
+    "tests/usbip_core_contract_test.c": "9c7712b467888bd406c22db2dd8816a5452f76cdcd623cc2d18292d7f9a63dde",
+    "tests/usbip_core_negative_test.c": "018b6d007c2d9444a854a1aacc2b44461ee990e2a2722f4f9c578e6c4e45c648",
+    "tests/usbip_core_fuzz.c": "ae72c29e935f056aa86104d43ec856cc7b43bb40bd9b40f81bcc4dd697ad0200"
+  }
+}
