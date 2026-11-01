@@ -88,6 +88,16 @@ target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_D
 target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
+# Keeping the previous run's log across a restart: std::filesystem only.
+add_executable(log_retention_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp)
+target_include_directories(log_retention_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(log_retention_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(log_retention_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(log_retention_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME log_retention_unit_tests COMMAND log_retention_unit_tests)
+
 
 add_executable(display_scale_steps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp)
 target_include_directories(display_scale_steps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -677,6 +687,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_endpoint_refresh.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
