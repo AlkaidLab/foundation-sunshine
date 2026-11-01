@@ -2011,6 +2011,13 @@ namespace config {
         resultMap[key] = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
       }
 
+      if (!fullConfig.contains("clients")) {
+        const auto clients = originalMap.find("clients");
+        if (clients != originalMap.end() && !clients->second.empty() && clients->second != "null") {
+          resultMap.insert(*clients);
+        }
+      }
+
       // 添加受保护字段（使用本地配置文件中的原有值）
       for (const auto &field : protectedFields) {
         auto it = originalMap.find(field);
@@ -2036,7 +2043,7 @@ namespace config {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
 
-      sync_clients_config_locked(resultMap);
+      if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
 

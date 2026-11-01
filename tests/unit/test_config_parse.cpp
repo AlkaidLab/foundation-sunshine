@@ -98,9 +98,17 @@ TEST(ConfigParse, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates) 
     EXPECT_TRUE(persisted[1].is_null());
   }
   // Unrelated partial updates must preserve a runtime command-line override.
+  const auto saved_clients = config::get_clients_config();
   config::nvhttp.clients = "[]";
   for (int attempt = 0; attempt < 2; ++attempt) {
     ASSERT_TRUE(config::update_config({ { "sunshine_name", "retained" } }));
     EXPECT_EQ(config::get_clients_config(), "[]");
   }
+  ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "retained" }, { "gamepad", config::input.gamepad } }));
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), saved_clients);
+  config::nvhttp.clients = saved_clients;
+  ASSERT_TRUE(config::update_full_config({ { "clients", "[]" }, { "gamepad", config::input.gamepad } }));
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), "[]");
 }
