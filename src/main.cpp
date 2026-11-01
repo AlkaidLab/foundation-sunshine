@@ -10,6 +10,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -25,6 +26,7 @@
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
+#include "image_enhancement/config.h"
 #include "logging.h"
 #include "main.h"
 #include "nvhttp.h"
@@ -49,6 +51,7 @@
     #define WIN32_LEAN_AND_MEAN
   #endif
   #include <windows.h>
+  #include "../tools/sunshinesvc_state.h"
 
 namespace {
   // Captures the value main() ends up returning so the atexit terminator can use it.
