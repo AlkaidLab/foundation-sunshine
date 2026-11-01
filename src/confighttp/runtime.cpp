@@ -10,8 +10,8 @@
 #include "src/confighttp/common.h"
 #include "src/display_device/color_profile.h"
 #include "src/display_device/display_device.h"
-#include "src/hdr/calibration.h"
 #include "src/globals.h"
+#include "src/hdr/calibration.h"
 #include "src/image_enhancement/config.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
@@ -64,6 +64,7 @@ namespace confighttp::runtime {
           json session_obj;
           session_obj["client_name"] = session_info.client_name;
           session_obj["client_uuid"] = session_info.client_uuid;
+          stream::add_session_client_json(session_obj, session_info);
           session_obj["client_address"] = session_info.client_address;
           session_obj["state"] = session_info.state;
           session_obj["session_id"] = session_info.session_id;
@@ -82,6 +83,8 @@ namespace confighttp::runtime {
           session_obj["hdr_max_full_frame_nits"] = session_info.hdr_max_full_frame_nits;
           session_obj["app_name"] = session_info.app_name;
           session_obj["app_id"] = session_info.app_id;
+          stream::add_session_quality_json(session_obj, session_info);
+          stream::add_session_gamepad_json(session_obj, session_info);
 
           sessions_array.push_back(session_obj);
         }
@@ -542,6 +545,7 @@ namespace confighttp::runtime {
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/hdr-calibration$"]["POST"] = saveRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
+    server.resource["^/api/runtime/audio$"]["POST"] = changeRuntimeHostAudio;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/api/perf/frame-rates$"]["POST"] = setPerfFrameRates;
   }

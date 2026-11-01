@@ -332,6 +332,19 @@ if (WIN32)
     set_target_properties(frame_contract_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
+add_executable(session_info_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/session_info.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_info.cpp)
+target_include_directories(session_info_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_info_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(session_info_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(session_info_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(session_info_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME session_info_unit_tests COMMAND session_info_unit_tests)
+
 # Build identity: the compiled record (generated build_info_defs.h and version.h in the build tree) and its JSON contract.
 add_executable(build_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/build_info.cpp

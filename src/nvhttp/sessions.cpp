@@ -33,6 +33,7 @@ namespace nvhttp::sessions {
     json session_obj;
     session_obj["client_name"] = session_info.client_name;
     session_obj["client_uuid"] = session_info.client_uuid;
+    stream::add_session_client_json(session_obj, session_info);
     session_obj["client_address"] = session_info.client_address;
     session_obj["state"] = session_info.state;
     session_obj["stop_reason"] = session_info.stop_reason;
@@ -50,6 +51,7 @@ namespace nvhttp::sessions {
     session_obj["enable_mic"] = session_info.enable_mic;
     session_obj["app_name"] = session_info.app_name;
     session_obj["app_id"] = session_info.app_id;
+    stream::add_session_quality_json(session_obj, session_info);
     return session_obj;
   }
 

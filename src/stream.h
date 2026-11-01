@@ -17,6 +17,7 @@
 
 #include "audio.h"
 #include "crypto.h"
+#include "session_info.h"
 #include "video.h"
 
 namespace rtsp_stream {
@@ -199,8 +200,6 @@ namespace stream {
      */
     void
     request_global_cancel(std::string_view source, bool require_no_video_session = false);
-    
-
 
     /**
      * @brief Send dynamic parameter change event to a specific client session.
