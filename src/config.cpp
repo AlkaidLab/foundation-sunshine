@@ -28,6 +28,7 @@
 #include "rtsp.h"
 #include "utility.h"
 #include "globals.h"
+#include "hdr/calibration.h"
 
 #include "display_device/parsed_config.h"
 #include "platform/common.h"
@@ -1885,8 +1886,9 @@ namespace config {
         }
         else {
           // 只有值不同时才更新
-          if (it == configMap.end() || it->second != value) {
-            configMap[key] = value;
+          const auto saved = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
+          if (it == configMap.end() || it->second != saved) {
+            configMap[key] = saved;
             hasChanged = true;
           }
         }
@@ -1998,7 +2000,7 @@ namespace config {
         if (value.empty() || value == "null") {
           continue;
         }
-        resultMap[key] = value;
+        resultMap[key] = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
       }
 
       // 添加受保护字段（使用本地配置文件中的原有值）
@@ -2071,9 +2073,8 @@ namespace config {
     return false;
   }
 
-  bool
-  save_clients_config(const std::string &clients) {
-    std::lock_guard lock { config_file_mutex };
+  static bool
+  save_clients_config_locked(const std::string &clients) {
     try {
       const auto normalized_clients = nlohmann::json::parse(clients).dump();
       std::map<std::string, std::string> config_map;
@@ -2103,6 +2104,44 @@ namespace config {
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  save_clients_config(const std::string &clients) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      return save_clients_config_locked(hdr::preserve_client_calibrations(clients, nvhttp.clients));
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  save_client_hdr_calibration(const std::string &uuid, const nlohmann::json &calibration) {
+    if (uuid.empty()) return false;
+    std::lock_guard lock { config_file_mutex };
+    try {
+      auto clients = nlohmann::json::parse(nvhttp.clients);
+      if (!clients.is_array()) return false;
+      nlohmann::json *match = nullptr;
+      for (auto &client : clients) {
+        if (client.value("uuid", std::string {}) != uuid) continue;
+        if (match) return false;
+        match = &client;
+      }
+      if (!match) {
+        clients.push_back({ { "uuid", uuid } });
+        match = &clients.back();
+      }
+      (*match)["hdrCalibration"] = calibration;
+      return save_clients_config_locked(clients.dump());
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client HDR calibration: " << e.what();
       return false;
     }
   }

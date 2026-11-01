@@ -209,6 +209,13 @@ main(int argc, char *argv[]) {
                      static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
   });
 
+  // WCS uses HKCU internally. Disable its per-process cache before any Windows
+  // component can pin it to SYSTEM, so later impersonation sees the user's ICCs.
+  if (!platf::initialize_user_registry()) {
+    std::cerr << "Failed to initialize per-user registry access" << std::endl;
+    return 1;
+  }
+
   // Avoid searching the PATH in case a user has configured their system insecurely
   // by placing a user-writable directory in the system-wide PATH variable.
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
