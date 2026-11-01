@@ -69,6 +69,7 @@ extern "C" {
 #include "logging.h"
 #include "mic_mixer.h"
 #include "network.h"
+#include "streaming/measured_bitrate.h"
 #include "streaming/perf_recorder.h"
 #include "stream.h"
 #include "sync.h"
@@ -734,6 +735,11 @@ namespace stream {
 
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
+    // Video and audio UDP payloads handed to the socket. The window is
+    // updated from the send threads with atomics; the handle publishes it
+    // for /api/perf/current and unpublishes itself when the session dies.
+    streaming::measured_bitrate_window_t measured_bitrate;
+    streaming::measured_bitrate_handle_t measured_bitrate_handle;
   };
 
   static void
@@ -3546,6 +3552,18 @@ namespace stream {
     }
   }
 
+  // Count UDP payload bytes (RTP/video or audio headers, FEC parity and the
+  // encryption prefix included; IP and UDP headers are not). Called from the
+  // video and audio send threads. add_bytes is one atomic compare-exchange.
+  void
+  note_measured_send(session_t *session, std::uint64_t bytes) {
+    if (session == nullptr || bytes == 0) {
+      return;
+    }
+    const auto now = steady_now_ms();
+    session->measured_bitrate.add_bytes(bytes, now > 0 ? static_cast<std::uint64_t>(now) : 0);
+  }
+
   void
   videoBroadcastThread(udp::socket &sock) {
     auto shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
@@ -4772,6 +4790,12 @@ namespace stream {
       }
       clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
 
+      // Publish before capture threads run so a perf snapshot can see the
+      // first frames. The handle drops the publication when the session
+      // object is destroyed; API reads hold the registry lock across the
+      // window, and the send threads only touch the window itself.
+      session.measured_bitrate_handle.publish(session.launch_session_id, &session.measured_bitrate);
+
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {
         session.audioThread = std::thread { audioThread, &session };
@@ -5088,6 +5112,8 @@ namespace stream {
           info.fps = session_p->config.monitor.framerate;
 
           info.bitrate = session_p->config.monitor.bitrate_budget->total();
+          info.measured_bitrate_kbps = session_p->measured_bitrate.kbps(
+            now_ms > 0 ? static_cast<std::uint64_t>(now_ms) : 0);
 
           // Get audio and other settings
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];

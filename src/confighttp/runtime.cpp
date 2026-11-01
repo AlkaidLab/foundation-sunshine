@@ -73,6 +73,7 @@ namespace confighttp::runtime {
           session_obj["height"] = session_info.height;
           session_obj["fps"] = session_info.fps;
           session_obj["bitrate"] = session_info.bitrate;
+          session_obj["measured_bitrate_kbps"] = session_info.measured_bitrate_kbps;
           session_obj["host_audio"] = session_info.host_audio;
           session_obj["enable_hdr"] = session_info.enable_hdr;
           session_obj["enable_mic"] = session_info.enable_mic;

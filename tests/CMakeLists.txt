@@ -82,6 +82,12 @@ if (WIN32)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
+add_executable(measured_bitrate_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_measured_bitrate.cpp)
+target_include_directories(measured_bitrate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(measured_bitrate_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(measured_bitrate_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME measured_bitrate_unit_tests COMMAND measured_bitrate_unit_tests)
+
 
 add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
 target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
