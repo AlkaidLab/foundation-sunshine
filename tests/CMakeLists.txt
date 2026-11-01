@@ -354,6 +354,19 @@ add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR
 # A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).
 add_test(NAME build_info_archive COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_build_info_archive.cmake WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_executable(system_load_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/system_load.cpp
+        ${CMAKE_SOURCE_DIR}/src/system_load_stub.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_system_load.cpp)
+target_include_directories(system_load_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(system_load_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(system_load_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(system_load_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(system_load_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME system_load_unit_tests COMMAND system_load_unit_tests)
 
 add_executable(pyrowave_unit_tests
         ${CMAKE_SOURCE_DIR}/src/pyrowave/types.cpp

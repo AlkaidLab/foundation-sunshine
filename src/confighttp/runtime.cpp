@@ -17,10 +17,11 @@
 #include "src/rtsp.h"
 #include "src/stream.h"
 #include "src/streaming/perf_recorder.h"
+#include "src/system_load.h"
 #include "src/video.h"
 #include <boost/algorithm/string.hpp>
-#include <cmath>
 #include <chrono>
+#include <cmath>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
@@ -102,6 +103,30 @@ namespace confighttp::runtime {
       }
       catch (...) {
         BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
+      }
+    }
+
+    void
+    getRuntimeSystem(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+
+      print_req(request);
+
+      if (!require_localhost(response, request, "getting runtime system load")) {
+        return;
+      }
+
+      try {
+        response->write(system_load::to_json(system_load::sample()).dump());
+        response->close_connection_after_response = true;
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "getRuntimeSystem: " << e.what();
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
+      }
+      catch (...) {
+        BOOST_LOG(error) << "getRuntimeSystem: Unknown exception";
         write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
@@ -541,6 +566,7 @@ namespace confighttp::runtime {
   register_routes(https_server_t &server) {
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/sessions/stop$"]["POST"] = stopRuntimeSessions;
+    server.resource["^/api/runtime/system$"]["GET"] = getRuntimeSystem;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/hdr-calibration$"]["POST"] = saveRuntimeHdrCalibration;

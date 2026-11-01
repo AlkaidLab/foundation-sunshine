@@ -59,6 +59,7 @@ set(SUNSHINE_HOST_SOURCES
     src/widget_http.cpp src/widget_http.h
     src/rtsp.cpp src/rtsp.h
     src/session_info.cpp src/session_info.h
+    src/system_load.cpp src/system_load.h src/system_load_stub.cpp
     src/stream.cpp src/stream.h
     src/clipboard_bridge.cpp src/clipboard_bridge.h
     src/cursor_channel.cpp src/cursor_channel.h

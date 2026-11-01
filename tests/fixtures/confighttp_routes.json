@@ -237,6 +237,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/runtime/system$",
+    "method": "GET"
+  },
+  {
     "pattern": "^/api/runtime/hdr$",
     "method": "GET"
   },
