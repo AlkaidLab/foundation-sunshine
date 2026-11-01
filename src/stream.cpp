@@ -37,6 +37,11 @@ extern "C" {
 // clang-format on
 }
 
+#ifndef ML_FF_HOST_SESSION_STATE
+  // Mirrors moonlight-common-c's client feature flag until the submodule carries it.
+  #define ML_FF_HOST_SESSION_STATE 0x100
+#endif
+
 #ifndef DATA_SHARDS_MAX
   #define DATA_SHARDS_MAX 255
 #endif
@@ -94,6 +99,7 @@ extern "C" {
 #define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 #define IDX_TEXT_CONTEXT 24  // Remote text focus/context update (Sunshine protocol extension)
+#define IDX_HOST_SESSION_STATE 25  // Host session lock state (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -121,6 +127,7 @@ static const short packetTypes[] = {
   0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
   0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
   0x550C,  // Remote text context update (Sunshine protocol extension)
+  0x550E,  // Host session lock state (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -674,6 +681,9 @@ namespace stream {
       bool cursor_visible = false;
       std::uint64_t cursor_failed_revision = 0;
       std::uint32_t cursor_send_failures = 0;
+
+      // Last lock state delivered to a client that negotiated ML_FF_HOST_SESSION_STATE.
+      std::optional<bool> host_session_locked_sent;
 
       // Analysis/filter/timeline history belongs to one controller, including
       // when several pads share the same streaming connection.
@@ -1830,6 +1840,35 @@ namespace stream {
   }
 
   int
+  send_host_session_state(session_t *session, bool locked) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
+      return -1;
+    }
+
+    // 0x550E v1: version:u8, state:u8 (0 unlocked, 1 locked), reserved:u16.
+    constexpr std::size_t payload_size = 4;
+    constexpr std::size_t plaintext_size = sizeof(control_header_v2) + payload_size;
+    std::array<std::uint8_t, plaintext_size> plaintext {};
+    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
+    hdr->type = packetTypes[IDX_HOST_SESSION_STATE];
+    hdr->payloadLength = static_cast<std::uint16_t>(payload_size);
+    plaintext[sizeof(control_header_v2)] = 1;
+    plaintext[sizeof(control_header_v2) + 1] = locked ? 1 : 0;
+
+    std::array<std::uint8_t,
+      sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext_size) + crypto::cipher::tag_size>
+      encrypted;
+    const auto view = encode_control_buf(session,
+      std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
+      encrypted.data(), encrypted.size());
+    if (view.empty() || session->broadcast_ref->control_server.send(view, session->control.peer)) {
+      BOOST_LOG(warning) << "Couldn't send host session state packet"sv;
+      return -1;
+    }
+    return 0;
+  }
+
+  int
   send_cursor_update(session_t *session,
                      const cursor_channel::snapshot_t &cursor,
                      bool include_shape) {
@@ -2417,6 +2456,8 @@ namespace stream {
     // termination when we shut down.
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
+    std::optional<bool> host_session_locked;
+    auto next_host_session_poll = std::chrono::steady_clock::time_point {};
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
       bool has_ds5_haptics_session = false;
@@ -2466,6 +2507,20 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            if (session->config.mlFeatureFlags & ML_FF_HOST_SESSION_STATE) {
+              // Polled lazily so hosts without opted-in clients never query WTS.
+              if (now >= next_host_session_poll) {
+                host_session_locked = platf::query_session_locked();
+                next_host_session_poll = now + 500ms;
+              }
+              if (host_session_locked && session->control.host_session_locked_sent != host_session_locked &&
+                  send_host_session_state(session, *host_session_locked) == 0) {
+                session->control.host_session_locked_sent = host_session_locked;
+                BOOST_LOG(info) << "Host session state sent: locked="sv << *host_session_locked
+                                << ", session="sv << session->launch_session_id;
+              }
+            }
+
             // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
               input::has_ds5_audio_haptics(session->input);
