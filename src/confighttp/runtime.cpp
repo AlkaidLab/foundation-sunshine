@@ -561,6 +561,32 @@ namespace confighttp::runtime {
       }
     }
 
+    void
+    changeRuntimeHostAudio(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      if (!require_localhost(response, request, "changing runtime host audio")) return;
+
+      json body;
+      if (!read_json_body(response, request, body)) return;
+      const auto client = body.value("clientname", std::string {});
+      if (client.empty() || !body.contains("enabled") || !body["enabled"].is_boolean()) {
+        write_runtime_error(response, web::StatusCode::bad_request, 400,
+          "clientname and boolean enabled are required");
+        return;
+      }
+      const bool enabled = body["enabled"].get<bool>();
+      const bool success = stream::session::set_host_audio_for_client(client, enabled);
+      json result {
+        { "success", success },
+        { "status_code", success ? 200 : 404 },
+        { "client_name", client },
+        { "host_audio", enabled },
+      };
+      if (!success) result["status_message"] = "No active streaming session found for client: " + client;
+      response->write(success ? web::StatusCode::ok : web::StatusCode::not_found, result.dump());
+      response->close_connection_after_response = true;
+    }
+
   }  // namespace
 
   void

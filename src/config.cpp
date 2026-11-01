@@ -528,7 +528,8 @@ namespace config {
     {},  // audio_sink
     {},  // virtual_sink
     false,  // keep_sink_default
-    "vb_cable"s,  // microphone_redirect_backend
+    false,  // host_audio
+    "auto"s,  // microphone_redirect_backend
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
@@ -1505,6 +1506,7 @@ namespace config {
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
     bool_f(vars, "keep_sink_default", audio.keep_sink_default);
+    bool_f(vars, "host_audio", audio.host_audio);
     string_restricted_f(
       vars,
       "microphone_redirect_backend",

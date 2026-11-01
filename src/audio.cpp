@@ -511,20 +511,20 @@ namespace audio {
       return;
     }
 
-    // Order of priority:
-    // 1. Virtual sink
-    // 2. Audio sink
-    // 3. Host
+    const auto host_audio_enabled = config.host_audio_enabled;
+    auto host_audio = [&]() {
+      return host_audio_enabled ? host_audio_enabled->load(std::memory_order_acquire) : config.flags[config_t::HOST_AUDIO];
+    };
+
+    // Select and open the capture endpoint each time the host-playback switch changes.
+    // The platform audio control owns the sink names; rebuilding the microphone is the
+    // supported live operation and avoids changing a different session's default sink.
+    auto open_microphone = [&](bool play_on_host, int &capture_channels, const std::uint8_t *&capture_mapping) {
       std::string *sink = &ref->sink.host;
-    if (!config::audio.sink.empty()) {
-      sink = &config::audio.sink;
-    }
-
-    int capture_channels = stream.channelCount;
-    const std::uint8_t *capture_mapping = stream.mapping;
-
-    // Prefer the virtual sink if host playback is disabled or there's no other sink
-    if (ref->sink.null && (!config.flags[config_t::HOST_AUDIO] || sink->empty())) {
+      if (!config::audio.sink.empty()) sink = &config::audio.sink;
+      capture_channels = stream.channelCount;
+      capture_mapping = stream.mapping;
+      if (ref->sink.null && (!play_on_host || sink->empty())) {
         auto &null = *ref->sink.null;
         switch (stream.channelCount) {
           case 2:
@@ -549,29 +549,42 @@ namespace audio {
             break;
         }
       }
+      const auto frame_size = config.packetDuration * stream.sampleRate / 1000;
+      const bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
+      const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
+      return control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+    };
 
-    // Only the first to start a session may change the default sink
     if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
-      // If the selected sink is different than the current one, change sinks.
+      const bool play_on_host = host_audio();
+      std::string *sink = &ref->sink.host;
+      if (!play_on_host && ref->sink.null) {
+        switch (stream.channelCount) {
+          case 2:
+            sink = &ref->sink.null->stereo;
+            break;
+          case 6:
+            sink = &ref->sink.null->surround51;
+            break;
+          case 8:
+            sink = &ref->sink.null->surround71;
+            break;
+          case 12:
+            if (!ref->sink.null->surround714.empty()) sink = &ref->sink.null->surround714;
+            break;
+        }
+      }
       ref->restore_sink = ref->sink.host != *sink;
-      // Record the selected sink even when it already is the default so forced
-      // retention can restore it after another application changes the default.
       if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {
         const auto sink_status = control->set_sink(*sink);
-        // If this was already the active default, a policy failure must not
-        // prevent an otherwise valid audio capture from starting.
-        if (sink_status && ref->restore_sink) {
-          return;
-        }
+        if (sink_status && ref->restore_sink) return;
       }
     }
 
-    auto frame_size = config.packetDuration * stream.sampleRate / 1000;
-    bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
-    // An explicitly configured sink remains the capture endpoint across default-device
-    // changes. An empty sink keeps the existing behavior of following the current default.
-    const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
-    auto mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+    int capture_channels = stream.channelCount;
+    const std::uint8_t *capture_mapping = stream.mapping;
+    bool applied_host_audio = host_audio();
+    auto mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -594,9 +607,20 @@ namespace audio {
       shutdown_event->view();
     });
 
+    const int frame_size = config.packetDuration * stream.sampleRate / 1000;
     int samples_per_frame = frame_size * capture_channels;
 
     while (!shutdown_event->peek()) {
+      const bool desired_host_audio = host_audio();
+      if (desired_host_audio != applied_host_audio) {
+        mic.reset();
+        applied_host_audio = desired_host_audio;
+        mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
+        if (!mic) {
+          BOOST_LOG(warning) << "Audio capture: failed to apply host playback change"sv;
+          continue;
+        }
+      }
       std::vector<float> sample_buffer;
       sample_buffer.resize(samples_per_frame);
 
@@ -610,7 +634,7 @@ namespace audio {
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
           do {
-            mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+            mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
             if (!mic) {
               BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
             }

@@ -9,11 +9,10 @@
 #include <stdatomic.h>
 
 extern "C" {
+#include <libavcodec/avcodec.h>
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include <moonlight-common-c/src/Rtsp.h>
-#include <libavcodec/avcodec.h>
 }
-
 
 // standard includes
 #include <algorithm>
@@ -30,10 +29,10 @@ extern "C" {
 #include <vector>
 
 // lib includes
-#include <boost/atomic.hpp>
-#include <boost/asio.hpp>
-#include <boost/bind.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/asio.hpp>
+#include <boost/atomic.hpp>
+#include <boost/bind.hpp>
 
 // local includes
 #include "clipboard_bridge.h"
@@ -45,14 +44,15 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "network.h"
-#include "pyrowave/runtime.h"
-#include "pyrowave/packet.h"
 #include "nvhttp.h"
+#include "pyrowave/packet.h"
+#include "pyrowave/runtime.h"
 #include "rtsp.h"
+#include "spatial_transport/mat_live_session.h"
 #include "stream.h"
 #include "streaming/fec.h"
 #include "sync.h"
-#include "spatial_transport/mat_live_session.h"
+#include "text_context/bridge.h"
 #include "video.h"
 
 namespace asio = boost::asio;
@@ -744,12 +744,27 @@ namespace rtsp_stream {
 
     void
     handle_msg(tcp::socket &sock, launch_session_t &session, msg_t &&req) {
+      // Every step is timed against the launch request and the step before it: a slow connect shows here whether the
+      // host spent the time in a handler or the client spent it between two requests.
+      const auto step_begin = std::chrono::steady_clock::now();
+      const std::string step_name = std::string { req->message.request.command ? std::string_view { req->message.request.command } : std::string_view {} } +
+                                    ' ' + std::string { req->message.request.target ? std::string_view { req->message.request.target } : std::string_view {} };
       auto func = _map_cmd_cb.find(req->message.request.command);
       if (func != std::end(_map_cmd_cb)) {
         func->second(this, sock, session, std::move(req));
       }
       else {
         cmd_not_found(sock, session, std::move(req));
+      }
+      {
+        const auto step_end = std::chrono::steady_clock::now();
+        const auto millis = [](std::chrono::steady_clock::duration d) {
+          return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+        };
+        BOOST_LOG(info) << "RTSP "sv << step_name << ": handled in "sv << millis(step_end - step_begin) << " ms, "sv
+                        << millis(step_begin - session.last_rtsp_step) << " ms after the previous step, "sv
+                        << millis(step_begin - session.created) << " ms after the launch request"sv;
+        session.last_rtsp_step = step_end;
       }
 
       boost::system::error_code ec;
@@ -1236,6 +1251,7 @@ namespace rtsp_stream {
       if (platf::query_session_locked().has_value()) {
         caps |= platf::platform_caps::host_session_state;
       }
+      caps |= platf::platform_caps::bitrate_callback;
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
 #ifdef _WIN32
       if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {
@@ -1679,7 +1695,7 @@ namespace rtsp_stream {
 
     std::int64_t configuredBitrateKbps;
     int client_fec = video_fec::host_preference;
-    config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio;
+    config.audio.flags[audio::config_t::HOST_AUDIO] = session.host_audio || config::audio.host_audio;
     // Set inside the SDP parse below; consumed by the dynamic HDR selection.
     bool post_process_hdr_active = false;
     // Signal-preserving neural filter; declared unconditionally so the policy resolve

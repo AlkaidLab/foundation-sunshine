@@ -88,6 +88,12 @@ target_link_libraries(measured_bitrate_unit_tests PRIVATE gtest_main sunshine_pr
 set_target_properties(measured_bitrate_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME measured_bitrate_unit_tests COMMAND measured_bitrate_unit_tests)
 
+add_executable(dynamic_param_protocol_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_dynamic_param_protocol.cpp)
+target_include_directories(dynamic_param_protocol_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(dynamic_param_protocol_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(dynamic_param_protocol_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME dynamic_param_protocol_unit_tests COMMAND dynamic_param_protocol_unit_tests)
+
 
 add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
 target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

@@ -210,6 +210,9 @@ namespace stream {
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param);
 
+    bool
+    set_host_audio_for_client(const std::string &client_name, bool enabled);
+
     /**
      * @brief Get information about all active sessions.
      * @return Vector of session information.

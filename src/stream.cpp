@@ -69,6 +69,7 @@ extern "C" {
 #include "logging.h"
 #include "mic_mixer.h"
 #include "network.h"
+#include "streaming/dynamic_param_protocol.h"
 #include "streaming/measured_bitrate.h"
 #include "streaming/perf_recorder.h"
 #include "stream.h"
@@ -625,6 +626,7 @@ namespace stream {
     bool highly_suspected_unknown_client { false };
     std::string app_name;
     int app_id = 0;
+    std::shared_ptr<std::atomic_bool> host_audio_enabled;
 
     std::int64_t created_at_ms { 0 };
     std::atomic<std::int64_t> last_control_activity_ms { 0 };
@@ -1885,6 +1887,23 @@ namespace stream {
     const std::array<char, 4> payload { 1, static_cast<char>(locked ? 1 : 0), 0, 0 };
     return send_control_payload(session, packetTypes[IDX_HOST_SESSION_STATE],
       std::string_view { payload.data(), payload.size() }, "host session state"sv);
+  }
+
+  // The host advertises and the client opts in with the same registry bit.
+  static_assert(platf::platform_caps::bitrate_callback == streaming::dynamic_param_protocol::bitrate_callback_feature);
+
+  static bool
+  send_host_bitrate_update(session_t *session, std::int32_t bitrate_kbps) {
+    if ((static_cast<std::uint32_t>(session->config.mlFeatureFlags) &
+          streaming::dynamic_param_protocol::bitrate_callback_feature) == 0) {
+      return false;
+    }
+    const auto payload = streaming::dynamic_param_protocol::encode_bitrate_update(bitrate_kbps);
+    return send_control_payload(
+             session,
+             streaming::dynamic_param_protocol::control_type,
+             std::string_view { reinterpret_cast<const char *>(payload.data()), payload.size() },
+             "host bitrate update"sv) == 0;
   }
 
   int
@@ -4912,6 +4931,9 @@ namespace stream {
       session->reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
       session->hdr_target_source = launch_session.hdr_target_source;
 
+      session->host_audio_enabled = std::make_shared<std::atomic_bool>(
+        config.audio.flags[audio::config_t::HOST_AUDIO]);
+      config.audio.host_audio_enabled = session->host_audio_enabled;
       session->config = config;
       session->config.monitor.capture_target = std::make_shared<streaming::capture_target_t>();
 
@@ -5029,6 +5051,24 @@ namespace stream {
       }
 
       BOOST_LOG(warning) << "No active session found for client: " << client_name;
+      auto lg = broadcast_ref->control_server._sessions.lock();
+      for (auto session_p : *broadcast_ref->control_server._sessions) {
+        if (session_p->client_name != client_name ||
+            session_p->lifecycle.state() != state_e::RUNNING) {
+          continue;
+        }
+        if (!session_p->host_audio_enabled) {
+          session_p->host_audio_enabled = std::make_shared<std::atomic_bool>(
+            session_p->config.audio.flags[audio::config_t::HOST_AUDIO]);
+          session_p->config.audio.host_audio_enabled = session_p->host_audio_enabled;
+        }
+        session_p->host_audio_enabled->store(enabled, std::memory_order_release);
+        session_p->config.audio.flags[audio::config_t::HOST_AUDIO] = enabled;
+        BOOST_LOG(info) << "Updated host audio playback for client '" << client_name
+                        << "': " << (enabled ? "enabled" : "disabled");
+        return true;
+      }
+      BOOST_LOG(warning) << "No active session found for host audio update: " << client_name;
       return false;
     }
 
@@ -5117,6 +5157,7 @@ namespace stream {
 
           // Get audio and other settings
           info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
+          info.host_audio = session_p->host_audio_enabled ? session_p->host_audio_enabled->load(std::memory_order_acquire) : session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;
           info.use_vdd = session_p->use_vdd;
