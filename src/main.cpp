@@ -31,6 +31,8 @@
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
+#include "pyrowave/runtime.h"
+#include "startup_gate.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
@@ -446,22 +448,45 @@ main(int argc, char *argv[]) {
   // If any of the following fail, we log an error and continue event though sunshine will not function correctly.
   // This allows access to the UI to fix configuration problems or view the logs.
 
-  auto platf_deinit_guard = platf::init();
+  // Every phase of the start writes its duration (`[startup] <phase> <ms> ms (at +<ms> ms)`): the first second and a half after nvprefs used to log nothing.
+  const auto log_phase = [](const std::string &line) { BOOST_LOG(info) << line; };
+
+  std::unique_ptr<platf::deinit_t> platf_deinit_guard;
+  {
+    startup::phase_t phase("platf::init", log_phase);
+    platf_deinit_guard = platf::init();
+  }
   if (!platf_deinit_guard) {
     BOOST_LOG(error) << "Platform failed to initialize"sv;
   }
 
-  auto proc_deinit_guard = proc::init();
+  std::unique_ptr<platf::deinit_t> proc_deinit_guard;
+  {
+    startup::phase_t phase("proc::init", log_phase);
+    proc_deinit_guard = proc::init();
+  }
   if (!proc_deinit_guard) {
     BOOST_LOG(error) << "Proc failed to initialize"sv;
   }
 
   reed_solomon_init();
-  auto input_deinit_guard = input::init();
 
+  // The PyroWave runtime probe creates a Vulkan device; run it now beside the other start-up work instead of inside the
+  // first RTSP DESCRIBE (which also serves every other RTSP request on the same thread).
+  pyrowave::prewarm_server_runtime();
+
+  // The input devices (the HID enumeration of the virtual mouse, the gamepad back ends) are opened beside the encoder probe, not before it: neither needs the other,
+  // and a stream waits for both (startup::await_stream_ready). The guard keeps the place it had, so the order of the tear-down is the one it was.
+  std::unique_ptr<platf::deinit_t> input_deinit_guard;
+  auto input_init = std::async(std::launch::async, [&log_phase]() {
+    startup::phase_t phase("input::init", log_phase);
+    auto guard = input::init();
     if (input::probe_gamepads()) {
       BOOST_LOG(warning) << "No gamepad input is available"sv;
     }
+    startup::input_gate().open();
+    return guard;
+  });
 
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
@@ -543,10 +568,17 @@ main(int argc, char *argv[]) {
 #endif
   std::thread configThread { confighttp::start };
 
-  probe_encoders_with_watchdog();
-
+  // The servers of the clients open before the probe: a client that asks while the probe runs waits for it (startup::probe_gate) and is told that the host is
+  // starting when a stuck driver call outlasts the bound. rtsp only answers a session that /launch made, and /launch waits for the probe and the input devices.
   std::thread httpThread { nvhttp::start };
   std::thread rtspThread { rtsp_stream::start };
+
+  {
+    startup::phase_t phase("encoder probe", log_phase);
+    probe_encoders_with_watchdog();
+  }
+  startup::probe_gate().open();
+  input_deinit_guard = input_init.get();
 
 #if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
   // The service wrapper owns user-session agent startup in service mode.

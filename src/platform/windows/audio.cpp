@@ -5,6 +5,7 @@
 #define INITGUID
 
 // platform includes
+#include "src/startup_gate.h"
 #include <audioclient.h>
 #include <avrt.h>
 #include <chrono>

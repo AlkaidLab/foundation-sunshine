@@ -5,6 +5,7 @@
 #include "runtime.h"
 
 #include "src/logging.h"
+#include "src/utility.h"
 
 extern "C" {
 #include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
@@ -15,8 +16,10 @@ extern "C" {
   #include <pyrowave.h>
 #endif
 
+#include <chrono>
 #include <mutex>
 #include <string_view>
+#include <thread>
 
 using namespace std::string_view_literals;
 
@@ -55,6 +58,16 @@ namespace pyrowave {
     static std::once_flag probe_once;
     static bool available = false;
     std::call_once(probe_once, [] {
+      // The first call creates a Vulkan device. It used to happen inside the first RTSP DESCRIBE, on the one thread that
+      // serves every RTSP request; say how long it took so a slow connect can be told from a slow client.
+      const auto probe_begin = std::chrono::steady_clock::now();
+      const auto log_duration = util::fail_guard([probe_begin] {
+        safe_probe_log([&] {
+          BOOST_LOG(info) << "PyroWave runtime probe took "sv
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - probe_begin).count()
+                          << " ms"sv;
+        });
+      });
       std::uint32_t major = 0;
       std::uint32_t minor = 0;
       std::uint32_t patch = 0;
@@ -99,6 +112,22 @@ namespace pyrowave {
     return available;
 #else
     return false;
+#endif
+  }
+
+  void
+  prewarm_server_runtime() noexcept {
+#ifdef _WIN32
+    try {
+      // Detached on purpose: the probe is cached for the process lifetime, and a DESCRIBE that arrives while it runs
+      // waits on the same std::call_once, so nothing is ever probed twice.
+      std::thread([] {
+        (void) is_server_runtime_available();
+      }).detach();
+    }
+    catch (...) {
+      // No thread: the probe simply runs on the first DESCRIBE as before.
+    }
 #endif
   }
 }  // namespace pyrowave

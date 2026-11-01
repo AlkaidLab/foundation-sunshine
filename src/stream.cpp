@@ -607,6 +607,10 @@ namespace stream {
 
     std::chrono::steady_clock::time_point pingTimeout;
 
+    // Start-up timing, logged once: when the session was created, and when its first video packet went out.
+    std::chrono::steady_clock::time_point created_at { std::chrono::steady_clock::now() };
+    std::atomic<bool> first_video_packet_logged { false };
+
     safe::shared_t<broadcast_ctx_t>::ptr_t broadcast_ref;
 
     boost::asio::ip::address localAddress;

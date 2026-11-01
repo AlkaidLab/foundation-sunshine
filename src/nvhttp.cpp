@@ -8,13 +8,13 @@
 // standard includes
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <shared_mutex>
 #include <sstream>
@@ -26,11 +26,11 @@
 
 // lib includes
 #include "src/http/server.h"
-#include <boost/atomic.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
+#include <boost/atomic.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -73,6 +73,7 @@
 #include "process.h"
 #include "remote_usb/reverse_tunnel_service.h"
 #include "rtsp.h"
+#include "startup_gate.h"
 #include "stream.h"
 #include "tray/system_tray.h"
 #include "utility.h"
@@ -513,7 +514,6 @@ namespace nvhttp {
       }
     }
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
-
     auto current_appid = proc::proc.running();
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
@@ -541,6 +541,7 @@ namespace nvhttp {
 
     print_request_ip<SunshineHTTPS>(request, "Launch request");
 
+    const auto launch_begin = std::chrono::steady_clock::now();
     pt::ptree tree;
     bool need_to_restore_display_state { false };
     auto g = util::fail_guard([&]() {
@@ -558,6 +559,13 @@ namespace nvhttp {
         display_device::session_t::get().restore_state();
       }
     });
+
+    // a stream needs the encoder probe and the input devices; both finish within seconds of the start
+    if (!startup::await_stream_ready()) {
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", startup::starting_message());
+      return;
+    }
 
     auto args = request->parse_query_string();
     if (
@@ -680,6 +688,10 @@ namespace nvhttp {
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.gamesession", 1);
 
+    reachability::observe_client(
+      net::addr_to_normalized_string(request->remote_endpoint().address()),
+      reachability::now_epoch_seconds());
+
     try {
       std::map<std::string, std::string> extra_data {
         { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
@@ -740,6 +752,12 @@ namespace nvhttp {
       }
     });
 
+    if (!startup::await_stream_ready()) {
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", startup::starting_message());
+      return;
+    }
+
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
       tree.put("root.resume", 0);
@@ -771,7 +789,14 @@ namespace nvhttp {
     // Newer Moonlight clients send localAudioPlayMode on /resume too,
     // so we should use it if it's present in the args and there are
     // no active sessions we could be interfering with.
-    const bool no_active_sessions { rtsp_stream::session_count() == 0 };
+    // A session whose ticket is published but whose RTSP handshake is not done yet (or whose launch is still being
+    // prepared) is not in session_count() yet, but it owns the display: preparing it again here destroys the virtual display
+    // that client is about to capture (a second client's resume did exactly that on 2026-11-12 15:10).
+    const bool session_starting { rtsp_stream::session_starting_or_active() && rtsp_stream::session_count() == 0 };
+    const bool no_active_sessions { rtsp_stream::session_count() == 0 && !session_starting };
+    if (session_starting) {
+      BOOST_LOG(info) << "Resume while another session is starting: keeping its display and encoder setup"sv;
+    }
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
@@ -940,7 +965,6 @@ namespace nvhttp {
     response->write(data.str());
     response->close_connection_after_response = true;
   }
-
 
   void
   setup(const std::string &pkey, const std::string &cert) {

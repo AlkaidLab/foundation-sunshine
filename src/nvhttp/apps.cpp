@@ -1,5 +1,6 @@
 #include "apps.h"
 
+#include "../startup_gate.h"
 #include <sstream>
 #include <stdexcept>
 #include <string>
