@@ -4,7 +4,7 @@
  */
 #pragma once
 
-#include "calibration.h"
+#include <string>
 
 namespace rtsp_stream {
   struct launch_session_t;
@@ -13,10 +13,6 @@ namespace rtsp_stream {
 namespace hdr {
   void
   resolve_session_target(rtsp_stream::launch_session_t &session);
-
-  /** Verified, user-owned calibration for this client's dedicated VDD only. */
-  std::optional<calibration_binding_t>
-  bound_vdd_calibration(const std::string &uuid);
 
   /** Restore the prepared VDD's verified ICC without changing display topology. */
   bool

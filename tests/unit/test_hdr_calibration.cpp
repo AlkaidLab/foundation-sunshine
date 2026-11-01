@@ -89,7 +89,11 @@ TEST(HdrCalibration, RejectsMalformedHeadersAndOffsets) {
 
 TEST(HdrCalibration, RequiresAnExactClientUuid) {
   const auto clients = nlohmann::json::array({ { { "uuid", "A" }, { "name", "B" }, { "hdrCalibration", binding() } } }).dump();
-  EXPECT_TRUE(hdr::client_calibration(clients, "A"));
+  const auto restored = hdr::client_calibration(clients, "A");
+  ASSERT_TRUE(restored);
+  const auto saved = binding();
+  EXPECT_TRUE(hdr::calibration_matches(*restored, saved.user_sid, saved.vdd_id, saved.profile));
+  EXPECT_FALSE(nlohmann::json(saved).contains("maxNits"));  // Brightness comes from the verified file.
   EXPECT_FALSE(hdr::client_calibration(clients, "B"));
   EXPECT_FALSE(hdr::client_calibration(clients, ""));
   EXPECT_FALSE(hdr::client_calibration("{", "A"));
@@ -121,13 +125,6 @@ TEST(HdrCalibration, RejectsAnotherUserDisplayOrReplacedFile) {
   replaced = saved.profile;
   replaced.profile_name = "B.icc";
   EXPECT_FALSE(hdr::calibration_matches(saved, saved.user_sid, "vdd-A", replaced));
-}
-
-TEST(HdrCalibration, RoundTripsAValidatedBinding) {
-  const auto saved = binding();
-  const auto restored = nlohmann::json(saved).get<hdr::calibration_binding_t>();
-  EXPECT_TRUE(hdr::calibration_matches(restored, saved.user_sid, saved.vdd_id, saved.profile));
-  EXPECT_FALSE(nlohmann::json(saved).contains("maxNits"));  // Luminance is read from the verified ICC, not cached.
 }
 
 TEST(HdrCalibration, StaleSettingsPreserveBindingsButKeepTheUsersOtherEdits) {

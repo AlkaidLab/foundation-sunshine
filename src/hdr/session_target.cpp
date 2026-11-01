@@ -5,7 +5,7 @@
 
 #include "session_target.h"
 
-#include "client_display_capabilities.h"
+#include "calibration.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
@@ -16,7 +16,7 @@
 #endif
 
 namespace hdr {
-  std::optional<calibration_binding_t>
+  static std::optional<calibration_binding_t>
   bound_vdd_calibration(const std::string &uuid) {
 #ifdef _WIN32
     if (config::video.vdd_reuse) return std::nullopt;
