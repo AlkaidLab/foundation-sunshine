@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -381,4 +382,47 @@ TEST(PendingDisplaySizeTests, ANewerRequestReplacesTheTarget) {
 
   EXPECT_TRUE(pending.defers(1600, 900, pending_t0));
   EXPECT_FALSE(pending.defers(1462, 910, pending_t0));
+}
+TEST(PendingDisplaySizeTests, DeferredStopFollowsWhenSettleRetargetsToTheSkippedMode) {
+  auto target = std::make_shared<video::pending_display_size_t>();
+  target->set(1462, 910);
+
+  // The capture loop sees the driver's rounded mode before configure_display() returns, so it skips it.
+  ASSERT_TRUE(target->defers(1464, 910));
+  const auto stop = video::make_deferred_display_stop(target, 1464, 910);
+  EXPECT_FALSE(stop());
+
+  // The control thread then learns the applied mode. The display will not change again, so the encoder
+  // must stop on its own to follow the size it skipped instead of waiting for the deadline.
+  target->settle(1464, 910);
+  EXPECT_TRUE(stop());
+  EXPECT_FALSE(target->pending());
+  EXPECT_FALSE(target->defers(1464, 910));
+}
+
+TEST(PendingDisplaySizeTests, DeferredStopWaitsWhileTheDisplayShowsAnIntermediateMode) {
+  auto target = std::make_shared<video::pending_display_size_t>();
+  target->set(1600, 900);
+
+  ASSERT_TRUE(target->defers(3840, 2160));
+  const auto stop = video::make_deferred_display_stop(target, 3840, 2160);
+  EXPECT_FALSE(stop());
+
+  // The requested mode applied, but the capture display still shows the intermediate one: keep waiting
+  // for the display change (which reinitializes capture) rather than following 3840x2160.
+  target->settle(1600, 900);
+  EXPECT_FALSE(stop());
+  EXPECT_TRUE(target->pending());
+}
+
+TEST(PendingDisplaySizeTests, DeferredStopFollowsWhenTheTargetIsClearedOrExpires) {
+  auto cleared = std::make_shared<video::pending_display_size_t>();
+  cleared->set(1600, 900);
+  const auto stop_cleared = video::make_deferred_display_stop(cleared, 3840, 2160);
+  cleared->clear();
+  EXPECT_TRUE(stop_cleared());
+
+  auto expired = std::make_shared<video::pending_display_size_t>();
+  expired->set(1600, 900, video::pending_display_size_t::clock::now() - video::pending_display_size_t::timeout);
+  EXPECT_TRUE(video::make_deferred_display_stop(expired, 3840, 2160)());
 }
