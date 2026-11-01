@@ -961,15 +961,8 @@ namespace platf {
       // HKCU follows the impersonated user because its cache is disabled. HKCR
       // keeps the explicit merged user/system view established above.
       DWORD out_len = shell_command_string.size();
-      const auto query_command = [&]() {
-        res = AssocQueryStringW(ASSOCF_NOTRUNCATE, ASSOCSTR_COMMAND, lookup_string.c_str(), L"open", shell_command_string.data(), &out_len);
-      };
-      if (token) {
-        if (impersonate_current_user(token, query_command)) return from_utf8(raw_cmd);
-      }
-      else {
-        query_command();
-      }
+      // run_command already impersonates token; nesting would revert its caller.
+      res = AssocQueryStringW(ASSOCF_NOTRUNCATE, ASSOCSTR_COMMAND, lookup_string.c_str(), L"open", shell_command_string.data(), &out_len);
 
       // In some cases (UWP apps), we might not have a command for this target. If that happens,
       // we'll have to launch via cmd.exe. This prevents proper job tracking, but that was already

@@ -1862,6 +1862,12 @@ namespace config {
     return 0;
   }
 
+  static void
+  sync_clients_config_locked(const std::map<std::string, std::string> &values) {
+    const auto clients = values.find("clients");
+    nvhttp.clients = clients == values.end() ? "[]" : clients->second;
+  }
+
   bool
   update_config(const std::map<std::string, std::string> &updates) {
     std::lock_guard lock { config_file_mutex };
@@ -1895,6 +1901,7 @@ namespace config {
       }
 
       if (!hasChanged) {
+        sync_clients_config_locked(configMap);
         BOOST_LOG(info) << "Config unchanged, skip writing";
         return true;
       }
@@ -1911,6 +1918,7 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
+      sync_clients_config_locked(configMap);
       if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
         const auto gamepad = configMap.find("gamepad");
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});
@@ -2028,6 +2036,7 @@ namespace config {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
 
+      sync_clients_config_locked(resultMap);
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
 
@@ -2129,6 +2138,7 @@ namespace config {
       if (!clients.is_array()) return false;
       nlohmann::json *match = nullptr;
       for (auto &client : clients) {
+        if (!client.is_object()) continue;
         if (client.value("uuid", std::string {}) != uuid) continue;
         if (match) return false;
         match = &client;

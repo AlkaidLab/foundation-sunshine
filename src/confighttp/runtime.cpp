@@ -191,6 +191,10 @@ namespace confighttp::runtime {
         output["state"] = "shared_vdd";
         return std::nullopt;
       }
+      if (active_sessions > 1) {
+        output["state"] = "multiple_streams";
+        return std::nullopt;
+      }
       const auto target = display_device::session_t::get().vdd_context();
       if (active_sessions != 1 || clients.begin()->empty() || target.client_id != *clients.begin()) {
         return std::nullopt;

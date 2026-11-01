@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include "src/config.h"
 
@@ -73,4 +74,27 @@ TEST(ConfigParse, ClientSettingsAreNormalizedBeforePersistence) {
   EXPECT_EQ(persisted.at("clients"), expected);
   EXPECT_EQ(persisted.at("sunshine_name"), "retained");
   EXPECT_EQ(config::get_clients_config(), expected);
+}
+
+TEST(ConfigParse, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates) {
+  temporary_clients_config_t temporary_config;
+  ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-1","name":"old"}])"));
+  const nlohmann::json calibration {
+    { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-1" },
+    { "profileName", "client.icc" }, { "sha256", std::string(64, 'a') }
+  };
+  for (const bool full : { true, false }) {
+    SCOPED_TRACE(full ? "full settings" : "partial settings");
+    const auto name = full ? "full" : "partial";
+    const auto requested = nlohmann::json::array({ { { "uuid", "client-1" }, { "name", name }, { "touch", { { "enabled", full } } } }, nullptr }).dump();
+    const std::map<std::string, std::string> updates { { "clients", requested }, { "gamepad", config::input.gamepad } };
+    ASSERT_TRUE(full ? config::update_full_config(updates) : config::update_config(updates));
+    EXPECT_EQ(nlohmann::json::parse(config::get_clients_config())[0]["name"], name);
+    ASSERT_TRUE(config::save_client_hdr_calibration("client-1", calibration));
+    const auto persisted = nlohmann::json::parse(config::parse_config(temporary_config.read()).at("clients"));
+    EXPECT_EQ(persisted[0]["name"], name);
+    EXPECT_EQ(persisted[0]["touch"]["enabled"], full);
+    EXPECT_EQ(persisted[0]["hdrCalibration"], calibration);
+    EXPECT_TRUE(persisted[1].is_null());
+  }
 }

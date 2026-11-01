@@ -129,11 +129,14 @@ TEST(HdrCalibration, RejectsAnotherUserDisplayOrReplacedFile) {
 
 TEST(HdrCalibration, StaleSettingsPreserveBindingsButKeepTheUsersOtherEdits) {
   const auto stored = nlohmann::json::array({ { { "uuid", "A" }, { "name", "old" }, { "hdrCalibration", binding() } } });
-  const auto incoming = nlohmann::json::array({ { { "uuid", "A" }, { "name", "renamed" }, { "hdrBrightnessMode", "manual" } } });
+  const auto incoming = nlohmann::json::array({ { { "uuid", "A" }, { "name", "renamed" }, { "hdrBrightnessMode", "manual" } }, nullptr, 7, "legacy" });
   const auto merged = nlohmann::json::parse(hdr::preserve_client_calibrations(incoming.dump(), stored.dump()));
   EXPECT_EQ(merged[0]["name"], "renamed");
   EXPECT_EQ(merged[0]["hdrBrightnessMode"], "manual");
   EXPECT_EQ(merged[0]["hdrCalibration"], stored[0]["hdrCalibration"]);
+  for (std::size_t i = 1; i < incoming.size(); ++i) {
+    EXPECT_EQ(merged[i], incoming[i]);
+  }
 }
 
 TEST(HdrCalibration, SettingsCannotImportAnotherClientsCalibration) {

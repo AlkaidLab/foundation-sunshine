@@ -138,6 +138,7 @@ namespace hdr {
     auto clients = nlohmann::json::parse(incoming);
     if (!clients.is_array()) throw std::invalid_argument("Client settings must be an array");
     for (auto &client : clients) {
+      if (!client.is_object()) continue;
       client.erase("hdrCalibration");
       if (const auto binding = client_calibration(existing, client.value("uuid", std::string {}))) {
         client["hdrCalibration"] = *binding;
