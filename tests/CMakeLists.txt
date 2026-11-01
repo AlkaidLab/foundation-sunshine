@@ -345,6 +345,21 @@ if (WIN32)
 endif ()
 add_test(NAME session_info_unit_tests COMMAND session_info_unit_tests)
 
+# 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
+add_executable(version_compare_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
+target_include_directories(version_compare_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_definitions(version_compare_unit_tests PRIVATE
+        SUNSHINE_VERSION_VECTORS="${CMAKE_SOURCE_DIR}/tests/fixtures/version_vectors.json")
+target_link_libraries(version_compare_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(version_compare_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(version_compare_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(version_compare_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME version_compare_unit_tests COMMAND version_compare_unit_tests)
+
 # Build identity: the compiled record (generated build_info_defs.h and version.h in the build tree) and its JSON contract.
 add_executable(build_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/build_info.cpp
@@ -719,6 +734,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
