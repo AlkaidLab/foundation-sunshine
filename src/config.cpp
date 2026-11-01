@@ -1901,7 +1901,7 @@ namespace config {
       }
 
       if (!hasChanged) {
-        sync_clients_config_locked(configMap);
+        if (updates.contains("clients")) sync_clients_config_locked(configMap);
         BOOST_LOG(info) << "Config unchanged, skip writing";
         return true;
       }
@@ -1918,7 +1918,7 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
-      sync_clients_config_locked(configMap);
+      if (updates.contains("clients")) sync_clients_config_locked(configMap);
       if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
         const auto gamepad = configMap.find("gamepad");
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});

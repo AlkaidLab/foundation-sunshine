@@ -97,4 +97,10 @@ TEST(ConfigParse, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates) 
     EXPECT_EQ(persisted[0]["hdrCalibration"], calibration);
     EXPECT_TRUE(persisted[1].is_null());
   }
+  // Unrelated partial updates must preserve a runtime command-line override.
+  config::nvhttp.clients = "[]";
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    ASSERT_TRUE(config::update_config({ { "sunshine_name", "retained" } }));
+    EXPECT_EQ(config::get_clients_config(), "[]");
+  }
 }
