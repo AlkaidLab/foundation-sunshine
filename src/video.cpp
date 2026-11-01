@@ -306,6 +306,15 @@ namespace video {
     return target_.has_value();
   }
 
+  std::function<bool()>
+  make_deferred_display_stop(std::shared_ptr<pending_display_size_t> target, int width, int height) {
+    // Re-evaluate the skipped size rather than only the target's presence: settle() may retarget to exactly the
+    // size that was skipped, and the display will then not change again to trigger a capture reinit.
+    return [target = std::move(target), width, height]() {
+      return !target->defers(width, height);
+    };
+  }
+
   input_activity_boost_policy_t
   make_input_activity_boost_policy(const input_activity_boost_config_t &config) {
     input_activity_boost_policy_t policy {};
@@ -4705,9 +4714,7 @@ namespace video {
       // A skipped display change is followed once the client-requested change completes or is abandoned.
       std::function<bool()> stop_requested;
       if (display_change_deferred) {
-        stop_requested = [target = config.client_resolution_target]() {
-          return !target->pending();
-        };
+        stop_requested = make_deferred_display_stop(config.client_resolution_target, current_width, current_height);
       }
 
       encode_run(
