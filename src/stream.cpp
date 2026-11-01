@@ -1813,16 +1813,18 @@ namespace stream {
     return 0;
   }
 
-  int
-  send_text_context(session_t *session, const text_context::payload_t &payload) {
-    if (!session->control.peer || session->config.controlProtocolType != 13 ||
-        payload.size() != text_context::kWireSize) {
+  /**
+   * Frame, encrypt and send a small Sunshine extension payload on the v2 control stream.
+   * Returns 0 on success, -1 on failure.
+   */
+  static int
+  send_control_payload(session_t *session, std::uint16_t type, std::string_view payload, std::string_view name) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
       return -1;
     }
-    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
-    std::vector<std::uint8_t> plaintext(plaintext_size);
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + payload.size());
     auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
-    hdr->type = packetTypes[IDX_TEXT_CONTEXT];
+    hdr->type = type;
     hdr->payloadLength = static_cast<std::uint16_t>(payload.size());
     std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
 
@@ -1833,39 +1835,28 @@ namespace stream {
       std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
       encrypted.data(), encrypted.size());
     if (view.empty() || session->broadcast_ref->control_server.send(view, session->control.peer)) {
-      BOOST_LOG(warning) << "Couldn't send remote text context packet"sv;
+      BOOST_LOG(warning) << "Couldn't send "sv << name << " packet"sv;
       return -1;
     }
     return 0;
   }
 
   int
+  send_text_context(session_t *session, const text_context::payload_t &payload) {
+    if (payload.size() != text_context::kWireSize) {
+      return -1;
+    }
+    return send_control_payload(session, packetTypes[IDX_TEXT_CONTEXT],
+      std::string_view {reinterpret_cast<const char *>(payload.data()), payload.size()},
+      "remote text context"sv);
+  }
+
+  int
   send_host_session_state(session_t *session, bool locked) {
-    if (!session->control.peer || session->config.controlProtocolType != 13) {
-      return -1;
-    }
-
     // 0x550E v1: version:u8, state:u8 (0 unlocked, 1 locked), reserved:u16.
-    constexpr std::size_t payload_size = 4;
-    constexpr std::size_t plaintext_size = sizeof(control_header_v2) + payload_size;
-    std::array<std::uint8_t, plaintext_size> plaintext {};
-    auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
-    hdr->type = packetTypes[IDX_HOST_SESSION_STATE];
-    hdr->payloadLength = static_cast<std::uint16_t>(payload_size);
-    plaintext[sizeof(control_header_v2)] = 1;
-    plaintext[sizeof(control_header_v2) + 1] = locked ? 1 : 0;
-
-    std::array<std::uint8_t,
-      sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext_size) + crypto::cipher::tag_size>
-      encrypted;
-    const auto view = encode_control_buf(session,
-      std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
-      encrypted.data(), encrypted.size());
-    if (view.empty() || session->broadcast_ref->control_server.send(view, session->control.peer)) {
-      BOOST_LOG(warning) << "Couldn't send host session state packet"sv;
-      return -1;
-    }
-    return 0;
+    const std::array<char, 4> payload {1, static_cast<char>(locked ? 1 : 0), 0, 0};
+    return send_control_payload(session, packetTypes[IDX_HOST_SESSION_STATE],
+      std::string_view {payload.data(), payload.size()}, "host session state"sv);
   }
 
   int
