@@ -313,11 +313,16 @@ function fitHostName() {
   const width = el.scrollWidth
   const available = el.parentElement.clientWidth
   if (!base || !width || !available) return
-  const fitted = Math.max(40, Math.min(base, (base * available) / width))
-  el.style.fontSize = `${Math.round(fitted)}px`
-  // Decide wrap fallback from the actually rendered width at the applied
-  // size: rounding can land a hair above the predicted fit.
-  if (el.scrollWidth > available) el.style.whiteSpace = 'normal'
+  let fitted = Math.floor(Math.max(40, Math.min(base, (base * available) / width)))
+  el.style.fontSize = `${fitted}px`
+  // One measured correction pass: rounding and glyph metrics can push the
+  // prediction a hair off. Re-derive from the real rendered width once;
+  // if even the corrected size overflows, fall back to wrapping.
+  if (el.scrollWidth > available) {
+    fitted = Math.max(40, Math.floor((fitted * available) / el.scrollWidth))
+    el.style.fontSize = `${fitted}px`
+    if (el.scrollWidth > available) el.style.whiteSpace = 'normal'
+  }
 }
 watch(
   () => hostConfig.value?.sunshine_name,
@@ -484,7 +489,6 @@ onMounted(async () => {
     // tracks its content width and would never re-fire on viewport resizes.
     const fitScope = hostNameEl.value?.closest('.host-overview') ?? hostNameEl.value?.parentElement
     if (fitScope) hostNameObserver.observe(fitScope)
-    if (checkSetupWizard(config)) return
     reportTimer = setTimeout(() => {
       const gpuAdapters = config.adapters || []
       trackEvents.gpuReported({
