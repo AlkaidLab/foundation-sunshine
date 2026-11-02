@@ -42,7 +42,7 @@
         style="--enter-delay: 60ms"
       >
         <div class="host-summary">
-          <h2 id="host-name" class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
+          <h2 id="host-name" class="host-name" ref="hostNameEl">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
           <p class="host-platform">
             <span>{{ hostConfig?.platform || '—' }}</span>
             <span
@@ -261,7 +261,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Navbar from '../components/layout/Navbar.vue'
 import SetupWizard from '../components/SetupWizard.vue'
@@ -298,6 +298,29 @@ import {
 const { locale } = useI18n()
 const copy = computed(() => getHomeCopy(locale.value))
 const hostConfig = ref(null)
+const hostNameEl = ref(null)
+let hostNameObserver = null
+
+// Poster-scale type must stay on one line: measure the rendered name and
+// shrink it to fit before letting a long name wrap at the size floor. Short
+// names keep the full 10vw display size.
+function fitHostName() {
+  const el = hostNameEl.value
+  if (!el) return
+  el.style.fontSize = ''
+  el.style.whiteSpace = 'nowrap'
+  const base = parseFloat(getComputedStyle(el).fontSize)
+  const width = el.scrollWidth
+  const available = el.parentElement.clientWidth
+  if (!base || !width || !available) return
+  const fitted = Math.max(40, Math.min(base, (base * available) / width))
+  el.style.fontSize = `${Math.round(fitted)}px`
+  if (width * (fitted / base) > available) el.style.whiteSpace = 'normal'
+}
+watch(
+  () => hostConfig.value?.sunshine_name,
+  () => nextTick(fitHostName),
+)
 const hostStatus = ref('loading')
 const appsCount = ref(null)
 const clientsCount = ref(null)
@@ -442,6 +465,7 @@ onBeforeUnmount(() => {
   clearInterval(refreshTimer)
   clearTimeout(reportTimer)
   document.removeEventListener('visibilitychange', refreshVisibleClients)
+  hostNameObserver?.disconnect()
 })
 onMounted(async () => {
   trackEvents.pageView('home')
@@ -450,6 +474,11 @@ onMounted(async () => {
     if (disposed) return
     hostConfig.value = config
     hostStatus.value = 'ready'
+    if (checkSetupWizard(config)) return
+    await nextTick()
+    fitHostName()
+    hostNameObserver = new ResizeObserver(fitHostName)
+    if (hostNameEl.value?.parentElement) hostNameObserver.observe(hostNameEl.value.parentElement)
     if (checkSetupWizard(config)) return
     reportTimer = setTimeout(() => {
       const gpuAdapters = config.adapters || []
