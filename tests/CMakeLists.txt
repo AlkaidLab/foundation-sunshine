@@ -202,6 +202,34 @@ if (WIN32)
 endif ()
 add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
 
+# Compiles the real config.cpp update paths. These tests mutate global config
+# state and run config::parse, so they cannot join the aggregate suite.
+add_executable(config_runtime_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/src/config.cpp
+        ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
+        ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
+        ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
+target_include_directories(config_runtime_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated version.h
+target_link_libraries(config_runtime_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+set_target_properties(config_runtime_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(config_runtime_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    # windows.cmake stages AMF headers here for the host build; config.cpp's
+    # encoder-enums branch includes them on Windows.
+    target_include_directories(config_runtime_unit_tests SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/amf_include")
+    target_link_libraries(config_runtime_unit_tests PRIVATE sunshine::host_headers sunshine::tls
+          Boost::boost Boost::log Boost::filesystem Boost::regex Boost::format Boost::process ws2_32)
+    target_compile_definitions(config_runtime_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+endif ()
+add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
+
 add_executable(tray_state_unit_tests
         ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_http_util.cpp
@@ -615,6 +643,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
