@@ -47,6 +47,7 @@ extern "C" {
 #include "display_device/session.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
+#include "nvhttp.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
@@ -4339,6 +4340,18 @@ namespace stream {
       }
       catch (...) {
         BOOST_LOG(error) << "Webhook session end event construction failed"sv;
+      }
+
+      // Persist the host-side fact that this client streamed, so the WebUI
+      // recent list survives browsers and page closures.
+      if (!session.client_cert_uuid.empty()) {
+        const auto ended_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+        if (!nvhttp::touch_client_last_session(session.client_cert_uuid, ended_at_ms)) {
+          BOOST_LOG(debug) << "Couldn't record session end for client_uuid="sv
+                           << session.client_cert_uuid;
+        }
       }
 
       BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id

@@ -194,6 +194,15 @@ namespace nvhttp {
   bool
   rename_client(const std::string &uuid, const std::string &new_name);
 
+  /**
+   * @brief Record the wall-clock end (Unix ms) of a streaming session for a paired client.
+   * @param uuid The unique ID of the client whose session ended.
+   * @param timestamp_ms Unix epoch milliseconds; moves backwards are ignored.
+   * @return True if the client was found and the mark was persisted.
+   */
+  bool
+  touch_client_last_session(const std::string &uuid, std::int64_t timestamp_ms);
+
   /// Change connection permission without removing pairing or display settings.
   bool set_client_enabled(const std::string &uuid, bool enabled);
   bool is_client_enabled(const std::string &uuid);
