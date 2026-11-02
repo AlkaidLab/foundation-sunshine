@@ -74,6 +74,7 @@ namespace nvhttp {
       std::string uuid;
       std::string cert;
       bool enabled { true };
+      std::int64_t last_session_ended { 0 };
     };
 
     struct client_t {
@@ -215,6 +216,7 @@ namespace nvhttp {
           named_cert_node.put("cert"s, named_cert.cert);
           named_cert_node.put("uuid"s, named_cert.uuid);
           named_cert_node.put("enabled", named_cert.enabled);
+          named_cert_node.put("last_session_ended"s, named_cert.last_session_ended);
           named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
         }
       };
@@ -505,6 +507,7 @@ namespace nvhttp {
           named_cert.cert = el.get_child("cert").get_value<std::string>();
           named_cert.uuid = el.get_child("uuid").get_value<std::string>();
           named_cert.enabled = el.get<bool>("enabled", true);
+          named_cert.last_session_ended = el.get<std::int64_t>("last_session_ended", 0);
           client.named_devices.emplace_back(named_cert);
         }
       }
@@ -809,6 +812,7 @@ namespace nvhttp {
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
       named_cert_node["enabled"] = named_cert.enabled;
+      named_cert_node["lastSessionEnded"] = named_cert.last_session_ended;
       named_cert_nodes.push_back(named_cert_node);
     }
 
@@ -957,6 +961,45 @@ namespace nvhttp {
       save_state();
     }
     return renamed;
+  }
+
+  bool
+  touch_client_last_session(const std::string &uuid, std::int64_t timestamp_ms) {
+    if (uuid.empty() || timestamp_ms <= 0) {
+      return false;
+    }
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+    // A mark left by a run with a fast clock sits far beyond the corrected
+    // host clock; accept a fresh end instead of rejecting every session
+    // until real time catches up. One hour absorbs ordinary skew.
+    if (timestamp_ms > now_ms) {
+      timestamp_ms = now_ms;
+    }
+    std::lock_guard mutation_lock { client_mutation_mutex };
+    bool touched = false;
+    {
+      std::unique_lock<std::shared_mutex> ul(client_state_mutex);
+      for (auto &named_cert : client_root.named_devices) {
+        if (named_cert.uuid == uuid) {
+          if (named_cert.last_session_ended > now_ms + 3600000 ||
+              timestamp_ms > named_cert.last_session_ended) {
+            named_cert.last_session_ended = timestamp_ms;
+            touched = true;
+          }
+          break;
+        }
+      }
+    }
+    if (!touched) {
+      return false;
+    }
+    if (config::sunshine.flags[config::flag::FRESH_STATE]) {
+      // Fresh state never persists; like add_authorized_client, the in-memory
+      // mark is all this run keeps.
+      return true;
+    }
+    return save_state();
   }
 
 }  // namespace nvhttp

@@ -1,19 +1,6 @@
 <template>
-  <div id="version-details" class="card version-card shadow-sm mb-4" v-if="version">
-    <div class="card-header version-card-header">
-      <div class="version-card-heading">
-        <span class="version-card-icon" aria-hidden="true">
-          <i class="fas fa-download"></i>
-        </span>
-        <h5 class="card-title mb-0">{{ $t('index.check_updates') }}</h5>
-      </div>
-      <div class="current-version" :title="version.version">
-        <span class="current-version-label">{{ $t('index.current_version') }}</span>
-        <span class="current-version-value">{{ version.version }}</span>
-        <span class="current-version-dot" aria-hidden="true"></span>
-      </div>
-    </div>
-    <div class="card-body">
+  <div id="version-details" class="version-card" v-if="version">
+    <div class="version-card-body">
       <!-- 加载状态 -->
       <div v-if="loading" class="version-loading">
         <i class="fas fa-spinner fa-spin me-2"></i>
@@ -60,7 +47,7 @@
           <div class="version-update-actions">
             <button
               type="button"
-              class="btn btn-primary btn-download"
+              class="btn-download"
               :disabled="pendingNativeChannel !== '' || (!nativeUpdaterAvailable && !update.release.html_url)"
               :aria-busy="pendingNativeChannel === update.channel"
               @click="handleDownloadClick(update.release.html_url, update.channel)"
@@ -314,79 +301,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .version-card {
-  overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  backdrop-filter: blur(24px) saturate(115%);
-  box-shadow: var(--ui-shadow-md);
+  /* Normalize the base size: the details wrapper on the home page renders at
+     0.8rem, and the content inside should read like the rest of the page. */
+  font-size: 14px;
 }
 
-.version-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.1rem 1.5rem;
-  border-bottom: 1px solid var(--ui-border);
-  background: transparent;
-}
-
-.version-card-heading,
-.current-version {
-  display: flex;
-  align-items: center;
-}
-
-.version-card-heading {
-  gap: 0.75rem;
-}
-
-.version-card-icon {
-  display: inline-grid;
-  width: 2rem;
-  height: 2rem;
-  place-items: center;
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent);
-}
-
-.version-card-header .card-title {
-  color: var(--ui-text-primary);
-  font-size: 1.1rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.current-version {
-  min-width: 0;
-  gap: 0.55rem;
-  color: var(--ui-text-secondary);
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.current-version-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.current-version-label {
-  color: var(--ui-text-primary);
-}
-
-.current-version-dot {
-  width: 0.55rem;
-  height: 0.55rem;
-  flex: 0 0 0.55rem;
-  border-radius: 50%;
-  background: var(--ui-success);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ui-success) 14%, transparent);
-}
-
-.version-card > .card-body {
-  padding: 0 1.75rem 1.25rem;
+.version-card-body {
+  padding: 0;
 }
 
 /* Loading State */
@@ -394,43 +315,36 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 1.25rem 0 0;
-  color: var(--ui-text-secondary);
-  font-size: 0.95rem;
+  color: var(--home-muted, var(--ui-text-secondary));
+  font-size: 14px;
 }
 
 /* Version Alerts */
 .version-alert {
-  border-radius: var(--ui-radius-sm);
-  font-size: 0.9rem;
-  padding: 0.75rem 1rem;
-  margin: 1.25rem 0 0;
+  margin: 1.4rem 0 0;
   display: flex;
   align-items: center;
-  border: 1px solid transparent;
+  gap: 0.5rem;
+  font-size: 13px;
+  color: var(--home-body, var(--ui-text-secondary));
 }
 
 .version-alert-success {
-  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
   color: var(--ui-success-text);
-  border-color: color-mix(in srgb, var(--ui-success) 30%, transparent);
-  border-left: 4px solid var(--ui-success);
 }
 
 .version-alert-info {
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent);
-  border-color: var(--ui-border);
-  border-left: 4px solid var(--ui-accent);
+  color: var(--ui-accent-text);
 }
 
 /* Version Update Section */
 .version-update {
-  padding: 1.55rem 0.25rem 0;
+  padding: 1.6rem 0 0;
 }
 
 .version-update + .version-update {
-  margin-top: 1.5rem;
-  border-top: 1px solid var(--ui-border);
+  margin-top: 1.6rem;
+  border-top: 0;
 }
 
 .version-update-summary {
@@ -441,30 +355,27 @@ onBeforeUnmount(() => {
 }
 
 .version-update-title {
-  margin: 0.8rem 0 0;
-  color: var(--ui-text-primary);
-  font-size: 1.25rem;
-  font-weight: 700;
-  line-height: 1.45;
+  margin: 0.7rem 0 0;
+  color: var(--home-heading, var(--ui-text-primary));
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.4;
 }
 
 .release-channel {
   display: inline-flex;
   align-items: center;
-  min-height: 1.75rem;
-  padding: 0.22rem 0.78rem;
-  border-radius: 999px;
-  background: var(--ui-accent);
-  color: #fff;
-  font-size: 0.76rem;
+  padding: 0;
+  color: var(--ui-accent-text);
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
 }
 
 .version-update-description {
-  margin: 0.85rem 0 0;
-  color: var(--ui-text-secondary);
-  font-size: 0.95rem;
+  margin: 0.7rem 0 0;
+  color: var(--home-muted, var(--ui-text-secondary));
+  font-size: 14px;
   line-height: 1.55;
 }
 
@@ -477,12 +388,94 @@ onBeforeUnmount(() => {
 }
 
 .btn-download {
-  min-height: 2.75rem;
-  border-radius: var(--ui-radius-sm);
-  padding: 0.65rem 1.25rem;
-  font-weight: 600;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  min-height: 2.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 2rem;
+  padding: 0.6rem 1.35rem;
+  background: var(--ui-accent);
+  color: var(--ui-accent-contrast);
+  font-weight: 700;
   white-space: nowrap;
+  transition:
+    transform 150ms ease,
+    filter 150ms ease;
+}
+
+.native-updater-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.55rem;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.btn-download:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  color: var(--ui-accent-contrast);
+}
+
+.btn-download:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.version-release-name {
+  margin: 0.45rem 0 0;
+  color: var(--home-heading, var(--ui-text-primary));
+  font-family: 'Segoe UI Variable Display', 'Microsoft YaHei Light', 'Segoe UI', 'Microsoft YaHei',
+    sans-serif;
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.release-page-link {
+  align-self: center;
+  padding: 0.1rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--home-body, var(--ui-text-secondary));
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.release-page-link i {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.release-page-link:hover {
+  color: var(--ui-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Release notes */
+.version-notes {
+  margin-top: 1.75rem;
+}
+
+.version-notes-title {
+  margin: 0;
+  color: var(--home-muted, var(--ui-text-secondary));
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.markdown-content {
+  margin-top: 0.9rem;
+  line-height: 1.6;
 }
 
 .native-updater-badge {
@@ -537,7 +530,7 @@ onBeforeUnmount(() => {
 
 .version-notes-title {
   margin: 0;
-  color: var(--ui-text-primary);
+  color: var(--home-heading, var(--ui-text-primary));
   font-size: 1.16rem;
   font-weight: 700;
 }
@@ -557,7 +550,7 @@ onBeforeUnmount(() => {
   margin-bottom: 0.75rem;
   font-weight: 600;
   line-height: 1.25;
-  color: var(--ui-text-primary);
+  color: var(--home-heading, var(--ui-text-primary));
 }
 
 .markdown-content :deep(h1) {
@@ -575,7 +568,7 @@ onBeforeUnmount(() => {
 .markdown-content :deep(p) {
   margin-bottom: 0.75rem;
   white-space: pre-line;
-  color: var(--ui-text-secondary);
+  color: var(--home-body, var(--ui-text-secondary));
 }
 
 .markdown-content :deep(ul),
@@ -586,7 +579,7 @@ onBeforeUnmount(() => {
 
 .markdown-content :deep(li) {
   margin-bottom: 0.42rem;
-  color: var(--ui-text-secondary);
+  color: var(--home-body, var(--ui-text-secondary));
 }
 
 .markdown-content :deep(li::marker) {
@@ -603,12 +596,10 @@ onBeforeUnmount(() => {
 }
 
 .markdown-content :deep(pre) {
-  background: var(--ui-surface-strong);
-  padding: 1rem;
-  border-radius: 8px;
-  overflow-x: auto;
   margin: 1rem 0;
-  border: 1px solid var(--ui-border);
+  padding: 0.2rem 0 0.2rem 1rem;
+  border-left: 2px solid color-mix(in srgb, var(--ui-accent) 40%, transparent);
+  overflow-x: auto;
 }
 
 .markdown-content :deep(pre code) {
@@ -621,7 +612,7 @@ onBeforeUnmount(() => {
   border-left: 4px solid var(--ui-accent);
   margin: 1rem 0;
   padding-left: 1rem;
-  color: var(--ui-text-secondary);
+  color: var(--home-body, var(--ui-text-secondary));
   font-style: italic;
 }
 
@@ -657,7 +648,6 @@ onBeforeUnmount(() => {
 }
 
 .markdown-content :deep(th) {
-  background: var(--ui-surface-strong);
   font-weight: 600;
 }
 
@@ -667,8 +657,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 1rem 2rem;
   margin-top: 1.35rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--ui-border);
+  padding-top: 0;
 }
 
 .full-changelog {
@@ -696,7 +685,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.8rem;
   margin-left: auto;
-  color: var(--ui-text-secondary);
+  color: var(--home-body, var(--ui-text-secondary));
 }
 
 .release-footer-label {
@@ -742,23 +731,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 720px) {
-  .version-card-header {
-    align-items: flex-start;
-    padding: 1rem;
-  }
-
-  .version-card > .card-body {
-    padding: 0 1rem 1rem;
-  }
-
-  .current-version {
-    max-width: 62%;
-    padding-top: 0.38rem;
-    font-size: 0.8rem;
-  }
-
-  .current-version-label {
-    display: none;
+  .version-card-body {
+    padding: 0;
   }
 
   .version-update-summary {
