@@ -12,7 +12,6 @@
     var(--mt-text-secondary, var(--ui-text-secondary))
   );
   --home-muted: var(--mt-text-secondary, var(--ui-text-secondary));
-  --home-section-gap: clamp(2.4rem, 4.2vh, 3.25rem);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -23,7 +22,6 @@
   margin: 0;
   padding: 1.5rem 2rem 1rem;
   color: var(--home-body);
-  font-variant-numeric: tabular-nums;
   // Keep the approved mockup's typeface instead of inheriting the global UI
   // stack. Segoe UI Variable is required for the mid weights (650) to render;
   // the static Segoe UI only ships Light/Regular/Semibold/Bold and collapses
@@ -48,83 +46,42 @@
 .home-intro {
   margin: 0 0 var(--home-section-gap);
 }
-.home-intro {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: stretch;
-  gap: 1.7rem;
-  min-height: 9.6rem;
-  margin: 0 0 1.1rem;
-}
 .home-greeting {
-  // The h1 dissolves into the intro grid so the whisper column, the live
-  // metrics and the gradient word each occupy their own cell.
-  display: contents;
-}
-.home-greeting-lead {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.8rem;
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  padding-top: 0.4rem;
-  writing-mode: vertical-rl;
-  color: var(--home-muted);
-  font-size: 20px;
-  font-weight: 300;
-  letter-spacing: 0.42em;
-}
-.home-greeting-lead::after {
-  content: '';
-  width: 1px;
-  flex: 1;
-  background: color-mix(in srgb, var(--mt-text-secondary, var(--ui-text-secondary)) 22%, transparent);
-}
-.home-greeting-word {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: end;
-  justify-self: start;
-  padding-bottom: 0.3rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.25em;
+  margin: 0;
+  color: var(--home-heading);
   font-family: 'Segoe UI Variable Display', 'Microsoft YaHei Light', 'Segoe UI', 'Microsoft YaHei',
     sans-serif;
-  font-size: clamp(44px, 5vw, 64px);
+  font-size: clamp(34px, 4.2vw, 58px);
   font-weight: 300;
-  letter-spacing: -0.015em;
-  line-height: 1.05;
-  background: linear-gradient(
-    95deg,
-    var(--mt-text-primary, var(--ui-text-primary)) 40%,
-    color-mix(in srgb, var(--ui-accent) 62%, var(--mt-text-primary, var(--ui-text-primary))) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  line-height: 1.22;
+}
+.home-greeting strong {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.home-greeting-cjk strong {
+  // Microsoft YaHei extends below the Latin baseline. Align the visible glyph
+  // bottoms as well as the flex items' shared typographic baseline.
+  position: relative;
+  top: 0.13em;
+}
+.home-greeting-hang > span:first-child {
+  // Hang trailing full-width punctuation: its ink sits in the left half of
+  // its em box, so pull the next word back into that empty half instead of
+  // stacking its whitespace on top of the flex gap.
+  margin-right: -0.5em;
 }
 .home-tagline {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.8rem;
-  margin: 0;
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  padding-top: 0.4rem;
-  writing-mode: vertical-rl;
+  max-width: 52rem;
+  margin: 0.6rem 0 0;
   color: var(--home-muted);
-  font-size: 14px;
-  font-weight: 300;
-  letter-spacing: 0.5em;
-  text-shadow:
-    0 1px 10px color-mix(in srgb, var(--mt-page-bg, var(--ui-page-bg)) 85%, transparent),
-    0 0 3px color-mix(in srgb, var(--mt-page-bg, var(--ui-page-bg)) 90%, transparent);
-}
-.home-tagline::after {
-  content: '';
-  width: 1px;
-  flex: 1;
-  background: color-mix(in srgb, var(--mt-text-secondary, var(--ui-text-secondary)) 22%, transparent);
+  font-size: clamp(15px, 1.4vw, 18px);
+  font-weight: 400;
+  letter-spacing: 0.05px;
 }
 .home-stream-arrival {
   animation: home-stream-arrive 480ms ease-out both;
@@ -142,12 +99,20 @@
     opacity: 1;
   }
 }
-.host-band {
-  display: flex;
+.host-overview {
+  display: grid;
+  grid-template-columns: fit-content(55%) max-content;
+  grid-template-rows: auto auto;
   align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.6rem 1.6rem;
-  margin-top: 0.9rem;
+  column-gap: clamp(2.5rem, 7vw, 7rem);
+  row-gap: 0.3rem;
+}
+.host-summary {
+  display: grid;
+  grid-row: 1 / span 2;
+  grid-template-rows: subgrid;
+  align-items: baseline;
+  min-width: 0;
 }
 .host-name {
   margin: 0;
@@ -177,17 +142,17 @@
   font-weight: 600;
 }
 .host-metrics {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-row: 1 / span 2;
+  grid-template-columns: repeat(2, max-content);
+  grid-template-rows: subgrid;
   align-items: baseline;
-  gap: 0.5rem 2.4rem;
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  justify-self: start;
-  margin: 0.35rem 0 0 0.35rem;
+  column-gap: 2rem;
+  margin: 0;
 }
 .host-metrics dd {
+  grid-row: 1;
+  grid-column: 1;
   margin: 0;
   color: var(--home-heading);
   font-size: clamp(28px, 3vw, 46px);
@@ -195,15 +160,17 @@
   line-height: 1.2;
 }
 .host-metrics dt {
+  grid-row: 2;
+  grid-column: 1;
   color: var(--home-muted);
   font-size: 13px;
   font-weight: 400;
 }
 .host-metrics > div {
-  display: flex;
-  flex-direction: row-reverse;
+  display: grid;
+  grid-row: 1 / span 2;
+  grid-template-rows: subgrid;
   align-items: baseline;
-  gap: 0.45rem;
 }
 .home-primary-actions {
   display: flex;
@@ -239,6 +206,7 @@
   border: 0;
   background: none;
   color: var(--home-body);
+  font-variant-numeric: tabular-nums;
   font-family: inherit;
   font-size: 14px;
   font-weight: 500;
@@ -561,39 +529,13 @@
     padding: 1rem 1.25rem;
   }
   .home-intro {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.9rem;
-    min-height: 0;
     margin-bottom: 1.5rem;
   }
-  .home-greeting {
-    gap: 0.6rem;
-  }
-  .home-greeting-lead,
-  .home-tagline {
-    writing-mode: horizontal-tb;
-    flex-direction: row;
-    align-items: center;
-    letter-spacing: 0.3em;
-  }
-  .home-greeting-lead {
-    font-size: 16px;
-  }
-  .home-tagline {
-    margin-left: 0;
-    font-size: 13px;
-    text-shadow: none;
-  }
-  .home-greeting-lead::after,
-  .home-tagline::after {
-    display: none;
+  .host-overview {
+    grid-template-columns: fit-content(50%) max-content;
   }
   .host-metrics {
-    gap: 0.4rem 1.4rem;
-  }
-  .host-metrics dd {
-    font-size: 24px;
+    column-gap: 1rem;
   }
   .host-metrics dt {
     font-size: 11px;

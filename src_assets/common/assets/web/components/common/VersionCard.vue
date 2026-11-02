@@ -325,7 +325,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--home-body, var(--ui-text-secondary));
 }
 
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
   color: var(--home-heading, var(--ui-text-primary));
   font-family: 'Segoe UI Variable Display', 'Microsoft YaHei Light', 'Segoe UI', 'Microsoft YaHei',
     sans-serif;
-  font-size: clamp(1.35rem, 2vw, 1.625rem);
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
   font-weight: 700;
   line-height: 1.3;
   letter-spacing: -0.01em;

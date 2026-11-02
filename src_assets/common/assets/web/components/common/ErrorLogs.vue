@@ -67,7 +67,7 @@ defineProps({
   gap: 0.55rem;
   align-items: baseline;
   color: var(--home-body, var(--ui-text-secondary));
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -107,7 +107,7 @@ defineProps({
   gap: 0.42rem;
   padding: 0.35rem 0;
   color: var(--ui-danger-text);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   text-decoration: none;
   text-shadow: 0 0 10px color-mix(in srgb, var(--ui-danger-text) 35%, transparent);
@@ -122,7 +122,7 @@ defineProps({
 
 .startup-alert-action:focus-visible {
   outline: 2px solid var(--ui-accent);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
 .startup-alert-arrow {

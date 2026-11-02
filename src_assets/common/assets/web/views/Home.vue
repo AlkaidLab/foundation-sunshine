@@ -10,20 +10,13 @@
     />
     <main v-else id="content" class="container home-content" :aria-busy="hostStatus === 'loading'">
       <header class="home-intro home-enter" style="--enter-delay: 0ms">
-        <h1 class="home-greeting">
-          <span class="home-greeting-lead">{{ greetingText }}</span>
-          <span class="home-greeting-word">Sunshine!</span>
+        <h1
+          class="home-greeting"
+          :class="{ 'home-greeting-cjk': greetingHasCjk, 'home-greeting-hang': greetingHangsPunct }"
+        >
+          <span>{{ greetingText }}</span>
+          <strong>Sunshine!</strong>
         </h1>
-        <dl class="host-metrics">
-          <div>
-            <dt>{{ copy.clients }}</dt>
-            <dd>{{ clientsCount ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt>{{ copy.apps }}</dt>
-            <dd>{{ appsCount ?? '—' }}</dd>
-          </div>
-        </dl>
         <p class="home-tagline">
           <span
             v-if="streamState === 'streaming' && streamArrival"
@@ -37,22 +30,34 @@
         </p>
       </header>
       <section
-        class="host-band home-enter"
+        class="host-overview home-enter"
         aria-labelledby="host-name"
         style="--enter-delay: 60ms"
       >
-        <h2 id="host-name" class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
-        <p class="host-platform">
-          <span>{{ hostConfig?.platform || '—' }}</span>
-          <span
-            class="host-stream-status"
-            :class="{ 'is-streaming': streamState === 'streaming' }"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-            >{{ copy.streamStatus[streamState] }}</span
-          >
-        </p>
+        <div class="host-summary">
+          <h2 id="host-name" class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
+          <p class="host-platform">
+            <span>{{ hostConfig?.platform || '—' }}</span>
+            <span
+              class="host-stream-status"
+              :class="{ 'is-streaming': streamState === 'streaming' }"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              >{{ copy.streamStatus[streamState] }}</span
+            >
+          </p>
+        </div>
+        <dl class="host-metrics">
+          <div>
+            <dt>{{ copy.clients }}</dt>
+            <dd>{{ clientsCount ?? '—' }}</dd>
+          </div>
+          <div>
+            <dt>{{ copy.apps }}</dt>
+            <dd>{{ appsCount ?? '—' }}</dd>
+          </div>
+        </dl>
       </section>
       <nav
         class="home-primary-actions home-enter"
@@ -292,6 +297,10 @@ const clientsCount = ref(null)
 const greetingText = computed(() =>
   clientsCount.value === 0 ? copy.value.firstGreeting : copy.value.greeting,
 )
+const greetingHasCjk = computed(() => /[\u3400-\u9fff]/u.test(greetingText.value))
+// Full-width punctuation ends with half an empty em box; the greeting hangs it
+// so that whitespace doesn't stack onto the flex gap before "Sunshine!".
+const greetingHangsPunct = computed(() => /[\uff0c\u3002\uff0e\uff01\uff1f\u2026\u2014]$/u.test(greetingText.value))
 const clientsLoading = ref(true)
 const clientsError = ref(false)
 const clients = ref([])
