@@ -29,7 +29,6 @@ export function materialThemeTokens(seed, dark = false) {
   const background = theme.palettes.neutral.tone(dark ? 6 : 98)
 
   return {
-    '--wallpaper-seed': hexFromArgb(seed),
     '--mt-page-bg': hexFromArgb(background),
     '--mt-text-primary': hexFromArgb(scheme.onSurface),
     '--mt-text-secondary': hexFromArgb(scheme.onSurfaceVariant),

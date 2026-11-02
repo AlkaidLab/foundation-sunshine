@@ -46,19 +46,18 @@ test('tokens stay scoped to home content and never claim brand variables', () =>
     const tokens = materialThemeTokens(argbFromHex('#e5507a'), dark)
     for (const name of Object.keys(tokens)) {
       assert.ok(
-        name === '--wallpaper-seed' || name.startsWith('--mt-'),
+        name.startsWith('--mt-'),
         `${name} must not be a brand variable`,
       )
     }
-    assert.equal(Object.keys(tokens).length, 4)
+    assert.equal(Object.keys(tokens).length, 3)
   }
 })
 
-test('appearance changes preserve the wallpaper seed and select different tonal roles', () => {
+test('appearance changes select different tonal roles', () => {
   const seed = argbFromHex('#159557')
   const light = materialThemeTokens(seed, false)
-  const dark = materialThemeTokens(seed, true)
-  assert.equal(light['--wallpaper-seed'], dark['--wallpaper-seed'])
-  assert.notEqual(light['--mt-page-bg'], dark['--mt-page-bg'])
-  assert.ok(luminance(light['--mt-page-bg']) > luminance(dark['--mt-page-bg']))
+  const last = materialThemeTokens(seed, true)
+  assert.notEqual(light['--mt-page-bg'], last['--mt-page-bg'])
+  assert.ok(luminance(light['--mt-page-bg']) > luminance(last['--mt-page-bg']))
 })
