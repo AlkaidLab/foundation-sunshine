@@ -1864,8 +1864,17 @@ namespace config {
 
   static void
   sync_clients_config_locked(const std::map<std::string, std::string> &values) {
-    const auto clients = values.find("clients");
-    nvhttp.clients = clients == values.end() ? "[]" : clients->second;
+    // A command-line override wins for the whole process lifetime; otherwise a
+    // save that carries "clients" updates the runtime value and one that omits
+    // it keeps whatever is already active.
+    if (const auto override_clients = command_line_config_overrides.find("clients");
+        override_clients != command_line_config_overrides.end()) {
+      nvhttp.clients = override_clients->second;
+      return;
+    }
+    if (const auto clients = values.find("clients"); clients != values.end()) {
+      nvhttp.clients = clients->second;
+    }
   }
 
   bool

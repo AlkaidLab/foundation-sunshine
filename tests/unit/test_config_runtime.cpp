@@ -170,13 +170,30 @@ TEST(ConfigRuntime, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates
     { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-1" },
     { "profileName", "client.icc" }, { "sha256", std::string(64, 'a') }
   };
+  // Settings saves must never honor a binding submitted by the client side.
+  const nlohmann::json fake_binding {
+    { "version", 1 }, { "userSid", "attacker" }, { "vddId", "vdd-client-1" },
+    { "profileName", "evil.icc" }, { "sha256", std::string(64, 'f') }
+  };
   for (const bool full : { true, false }) {
     SCOPED_TRACE(full ? "full settings" : "partial settings");
     const auto name = full ? "full" : "partial";
-    const auto requested = nlohmann::json::array({ { { "uuid", "client-1" }, { "name", name }, { "touch", { { "enabled", full } } } }, nullptr }).dump();
+    const auto requested = nlohmann::json::array({ {
+      { "uuid", "client-1" }, { "name", name }, { "hdrCalibration", fake_binding },
+      { "touch", { { "enabled", full } } },
+    }, nullptr }).dump();
     const std::map<std::string, std::string> updates { { "clients", requested }, { "gamepad", config::input.gamepad } };
     ASSERT_TRUE(full ? config::update_full_config(updates) : config::update_config(updates));
     EXPECT_EQ(nlohmann::json::parse(config::get_clients_config())[0]["name"], name);
+    const auto runtime_clients = nlohmann::json::parse(config::get_clients_config());
+    if (full) {
+      // The fixture starts with no saved binding: the submitted one must be dropped.
+      EXPECT_FALSE(runtime_clients[0].contains("hdrCalibration"));
+    }
+    else {
+      // The saved binding survives while the resubmitted fake stays out.
+      EXPECT_EQ(runtime_clients[0]["hdrCalibration"], calibration);
+    }
     ASSERT_TRUE(config::save_client_hdr_calibration("client-1", calibration));
     const auto persisted = nlohmann::json::parse(config::parse_config(temporary_config.read()).at("clients"));
     EXPECT_EQ(persisted[0]["name"], name);
