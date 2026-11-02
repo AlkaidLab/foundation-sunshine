@@ -2028,7 +2028,14 @@ namespace config {
         resultMap[key] = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
       }
 
-      if (!fullConfig.contains("clients")) {
+      // For clients, an omitted key and an empty/null value both mean "keep the
+      // saved list": treating "" as a deletion here would drop the key from the
+      // file while the runtime list survives, and a restart would lose clients
+      // together with their calibration bindings. An explicit "[]" is non-empty
+      // and still clears.
+      const auto submitted_clients = fullConfig.find("clients");
+      if (submitted_clients == fullConfig.end() || submitted_clients->second.empty() ||
+          submitted_clients->second == "null") {
         const auto clients = originalMap.find("clients");
         if (clients != originalMap.end() && !clients->second.empty() && clients->second != "null") {
           resultMap.insert(*clients);

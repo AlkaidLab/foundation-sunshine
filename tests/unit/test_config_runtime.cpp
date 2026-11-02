@@ -296,3 +296,21 @@ TEST(ConfigRuntime, CommandLineOverrideKeepsSavedClientBindings) {
   EXPECT_EQ(reloaded[0]["name"], "saved");
   EXPECT_EQ(reloaded[0]["hdrCalibration"], calibration);
 }
+
+TEST(ConfigRuntime, EmptyClientsInFullSettingsAreTreatedAsOmitted) {
+  temporary_clients_config_t temporary_config;
+  ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-6","name":"kept"}])"));
+  const auto saved = config::get_clients_config();
+  // An empty or "null" clients value in a full save keeps the saved list on
+  // disk and at runtime; it must not tear the two apart across a restart.
+  ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "retained" }, { "clients", "" }, { "gamepad", config::input.gamepad } }));
+  EXPECT_EQ(config::get_clients_config(), saved);
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), saved);
+  ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "retained" }, { "clients", "null" }, { "gamepad", config::input.gamepad } }));
+  EXPECT_EQ(config::get_clients_config(), saved);
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), saved);
+  // An explicit empty array still clears file and runtime.
+  ASSERT_TRUE(config::update_full_config({ { "clients", "[]" }, { "gamepad", config::input.gamepad } }));
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), "[]");
+}
