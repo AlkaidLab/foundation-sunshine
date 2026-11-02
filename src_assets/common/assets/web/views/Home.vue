@@ -315,7 +315,9 @@ function fitHostName() {
   if (!base || !width || !available) return
   const fitted = Math.max(40, Math.min(base, (base * available) / width))
   el.style.fontSize = `${Math.round(fitted)}px`
-  if (width * (fitted / base) > available) el.style.whiteSpace = 'normal'
+  // Decide wrap fallback from the actually rendered width at the applied
+  // size: rounding can land a hair above the predicted fit.
+  if (el.scrollWidth > available) el.style.whiteSpace = 'normal'
 }
 watch(
   () => hostConfig.value?.sunshine_name,
