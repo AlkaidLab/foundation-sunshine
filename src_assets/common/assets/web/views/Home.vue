@@ -191,20 +191,6 @@
           </div>
         </div>
       </section>
-      <nav
-        class="home-help-links home-enter"
-        :aria-label="copy.quickStart"
-        style="--enter-delay: 300ms"
-      >
-        <a :href="tutorialHref" target="_blank" rel="noopener noreferrer">{{ copy.quickStart }}</a
-        ><a
-          :href="communityHref"
-          target="_blank"
-          rel="noopener noreferrer"
-          @click.prevent="openCommunity"
-          >{{ copy.community }}</a
-        >
-      </nav>
       <details v-if="showVersionDetails" id="version-details" class="home-version">
         <summary>
           <span class="home-version-label">{{ copy.versionDetails }}</span>
@@ -228,7 +214,17 @@
           :parsed-pre-release-body="parsedPreReleaseBody"
         />
       </details>
-      <footer class="home-footer home-enter" style="--enter-delay: 340ms">
+      <footer class="home-footer home-enter" style="--enter-delay: 300ms">
+        <nav class="home-footer-help" :aria-label="copy.quickStart">
+          <a :href="tutorialHref" target="_blank" rel="noopener noreferrer">{{ copy.quickStart }}</a
+          ><a
+            :href="communityHref"
+            target="_blank"
+            rel="noopener noreferrer"
+            @click.prevent="openCommunity"
+            >{{ copy.community }}</a
+          >
+        </nav>
         <nav class="home-footer-links" :aria-label="$t('resource_card.legal')">
           <a :href="websiteHref" target="_blank" rel="noopener noreferrer">{{ copy.website }}</a
           ><a :href="OFFICIAL_RESOURCES[1].href" target="_blank" rel="noopener noreferrer">GitHub</a
