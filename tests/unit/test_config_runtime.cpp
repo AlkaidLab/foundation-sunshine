@@ -314,3 +314,47 @@ TEST(ConfigRuntime, EmptyClientsInFullSettingsAreTreatedAsOmitted) {
   EXPECT_EQ(config::get_clients_config(), "[]");
   EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), "[]");
 }
+
+TEST(ConfigRuntime, CalibrationSaveUnderOverrideKeepsThePersistedList) {
+  temporary_clients_config_t temporary_config;
+  ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-7","name":"a"},{"uuid":"client-8","name":"b"}])"));
+  const nlohmann::json calibration7 {
+    { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-7" },
+    { "profileName", "seven.icc" }, { "sha256", std::string(64, 'a') }
+  };
+  const nlohmann::json calibration8 {
+    { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-8" },
+    { "profileName", "eight.icc" }, { "sha256", std::string(64, 'b') }
+  };
+  ASSERT_TRUE(config::save_client_hdr_calibration("client-8", calibration8));
+  std::vector<std::string> arguments {
+    "sunshine-test",
+    R"(clients=[{"uuid":"client-7","name":"override"}])"
+  };
+  for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
+    arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
+  }
+  const auto run_parse = [&arguments] {
+    std::vector<char *> argv;
+    for (auto &argument : arguments) argv.push_back(argument.data());
+    argv.push_back(nullptr);
+    return config::parse(static_cast<int>(argv.size()) - 1, argv.data());
+  };
+  ASSERT_EQ(run_parse(), 0);
+  ASSERT_TRUE(config::save_client_hdr_calibration("client-7", calibration7));
+  // The persisted list keeps both clients and both bindings.
+  const auto persisted = nlohmann::json::parse(config::parse_config(temporary_config.read()).at("clients"));
+  ASSERT_EQ(persisted.size(), 2);
+  EXPECT_EQ(persisted[0]["name"], "a");
+  EXPECT_EQ(persisted[0]["hdrCalibration"], calibration7);
+  EXPECT_EQ(persisted[1]["name"], "b");
+  EXPECT_EQ(persisted[1]["hdrCalibration"], calibration8);
+  // The runtime keeps the override's shape with the fresh binding carried over.
+  const auto runtime = nlohmann::json::parse(config::get_clients_config());
+  ASSERT_EQ(runtime.size(), 1);
+  EXPECT_EQ(runtime[0]["name"], "override");
+  EXPECT_EQ(runtime[0]["hdrCalibration"], calibration7);
+  arguments.erase(arguments.begin() + 1);  // Reload without the override.
+  ASSERT_EQ(run_parse(), 0);
+  EXPECT_EQ(nlohmann::json::parse(config::get_clients_config()), persisted);
+}

@@ -2165,7 +2165,18 @@ namespace config {
     if (uuid.empty()) return false;
     std::lock_guard lock { config_file_mutex };
     try {
-      auto clients = nlohmann::json::parse(nvhttp.clients);
+      // Merge into the persisted list, not the runtime one: a command-line
+      // override shrinks nvhttp.clients to the override entries, and writing
+      // that back would drop file-only clients and their bindings.
+      std::string persisted_clients;
+      if (const auto file_content = read_config_file_contents(); file_content) {
+        const auto existing_config = parse_config(*file_content);
+        const auto clients = existing_config.find("clients");
+        if (clients != existing_config.end() && !clients->second.empty() && clients->second != "null") {
+          persisted_clients = clients->second;
+        }
+      }
+      auto clients = nlohmann::json::parse(persisted_clients.empty() ? nvhttp.clients : persisted_clients);
       if (!clients.is_array()) return false;
       nlohmann::json *match = nullptr;
       for (auto &client : clients) {
@@ -2179,7 +2190,15 @@ namespace config {
         match = &clients.back();
       }
       (*match)["hdrCalibration"] = calibration;
-      return save_clients_config_locked(clients.dump());
+      if (!save_clients_config_locked(clients.dump())) {
+        return false;
+      }
+      // Keep the override shape at runtime: its fields win, bindings carry over.
+      if (const auto override_clients = command_line_config_overrides.find("clients");
+          override_clients != command_line_config_overrides.end()) {
+        nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
+      }
+      return true;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save client HDR calibration: " << e.what();
