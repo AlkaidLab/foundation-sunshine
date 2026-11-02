@@ -12,6 +12,7 @@
     var(--mt-text-secondary, var(--ui-text-secondary))
   );
   --home-muted: var(--mt-text-secondary, var(--ui-text-secondary));
+  --home-section-gap: clamp(2.4rem, 4.2vh, 3.25rem);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -22,6 +23,7 @@
   margin: 0;
   padding: 1.5rem 2rem 1rem;
   color: var(--home-body);
+  font-variant-numeric: tabular-nums;
   // Keep the approved mockup's typeface instead of inheriting the global UI
   // stack. Segoe UI Variable is required for the mid weights (650) to render;
   // the static Segoe UI only ships Light/Regular/Semibold/Bold and collapses
@@ -44,44 +46,77 @@
   );
 }
 .home-intro {
-  margin: 0 0 clamp(1.75rem, 3.2vh, 2.75rem);
+  margin: 0 0 var(--home-section-gap);
+}
+.home-intro {
+  display: flex;
+  align-items: stretch;
+  gap: 1.7rem;
+  min-height: 9.6rem;
+  margin: 0 0 var(--home-section-gap);
 }
 .home-greeting {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 0.25em;
+  align-items: stretch;
+  gap: 0.35rem;
   margin: 0;
-  color: var(--home-heading);
+}
+.home-greeting-lead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+  writing-mode: vertical-rl;
+  color: var(--home-muted);
+  font-size: 20px;
+  font-weight: 300;
+  letter-spacing: 0.42em;
+}
+.home-greeting-lead::after {
+  content: '';
+  width: 1px;
+  flex: 1;
+  background: color-mix(in srgb, var(--mt-text-secondary, var(--ui-text-secondary)) 22%, transparent);
+}
+.home-greeting-word {
+  align-self: flex-end;
+  padding-bottom: 0.3rem;
   font-family: 'Segoe UI Variable Display', 'Microsoft YaHei Light', 'Segoe UI', 'Microsoft YaHei',
     sans-serif;
-  font-size: clamp(30px, 3.6vw, 44px);
+  font-size: clamp(44px, 5vw, 64px);
   font-weight: 300;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-}
-.home-greeting strong {
-  font-weight: 700;
-}
-.home-greeting-cjk strong {
-  // Microsoft YaHei extends below the Latin baseline. Align the visible glyph
-  // bottoms as well as the flex items' shared typographic baseline.
-  position: relative;
-  top: 0.13em;
-}
-.home-greeting-hang > span:first-child {
-  // Hang trailing full-width punctuation: its ink sits in the left half of
-  // its em box, so pull the next word back into that empty half instead of
-  // stacking its whitespace on top of the flex gap.
-  margin-right: -0.5em;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+  background: linear-gradient(
+    95deg,
+    var(--mt-text-primary, var(--ui-text-primary)) 40%,
+    color-mix(in srgb, var(--ui-accent) 62%, var(--mt-text-primary, var(--ui-text-primary))) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 .home-tagline {
-  max-width: 52rem;
-  margin: 0.6rem 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0 0 0 auto;
+  padding-top: 0.4rem;
+  writing-mode: vertical-rl;
   color: var(--home-muted);
-  font-size: clamp(15px, 1.4vw, 18px);
-  font-weight: 400;
-  letter-spacing: 0.05px;
+  font-size: 14px;
+  font-weight: 300;
+  letter-spacing: 0.5em;
+  text-shadow:
+    0 1px 10px color-mix(in srgb, var(--mt-page-bg, var(--ui-page-bg)) 85%, transparent),
+    0 0 3px color-mix(in srgb, var(--mt-page-bg, var(--ui-page-bg)) 90%, transparent);
+}
+.home-tagline::after {
+  content: '';
+  width: 1px;
+  flex: 1;
+  background: color-mix(in srgb, var(--mt-text-secondary, var(--ui-text-secondary)) 22%, transparent);
 }
 .home-stream-arrival {
   animation: home-stream-arrive 480ms ease-out both;
@@ -117,10 +152,10 @@
 .host-name {
   margin: 0;
   overflow-wrap: anywhere;
-  font-family: 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  font-size: clamp(52px, 6vw, 84px);
-  font-weight: 700;
-  line-height: 1.05;
+  font-family: 'Segoe UI Black', 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: clamp(56px, 10vw, 150px);
+  font-weight: 900;
+  line-height: 1;
   letter-spacing: -0.02em;
   color: color-mix(in srgb, var(--mt-text-primary, var(--ui-text-primary)) 94%, var(--ui-accent));
 }
@@ -155,7 +190,7 @@
   grid-column: 1;
   margin: 0;
   color: var(--home-heading);
-  font-size: clamp(26px, 2.3vw, 32px);
+  font-size: clamp(28px, 3vw, 46px);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -226,7 +261,11 @@
 .home-content button:focus-visible,
 .home-version summary:focus-visible {
   outline: 2px solid var(--ui-accent);
-  outline-offset: 5px;
+  outline-offset: 3px;
+}
+.home-content ::selection {
+  background: color-mix(in srgb, var(--ui-accent) 30%, transparent);
+  color: var(--home-heading, var(--ui-text-primary));
 }
 .home-shortcuts {
   display: grid;
@@ -235,7 +274,7 @@
   column-gap: 1.8rem;
   row-gap: 0.4rem;
   max-width: 52rem;
-  margin-top: clamp(2.3rem, 4.2vh, 3.25rem);
+  margin-top: var(--home-section-gap);
 }
 .home-shortcuts a {
   display: grid;
@@ -252,7 +291,7 @@
   gap: 0.55rem;
   margin: 0;
   color: var(--home-heading);
-  font-size: clamp(20px, 2.4vw, 28px);
+  font-size: clamp(22px, 2.5vw, 30px);
   font-weight: 600;
   letter-spacing: -0.015em;
   line-height: 1.3;
@@ -266,7 +305,7 @@
   flex-shrink: 0;
   color: var(--home-muted);
   opacity: 0.8;
-  transition: transform 160ms ease;
+  transition: transform 150ms ease;
 }
 .home-shortcuts a:is(:hover, :focus-visible) .home-shortcut-arrow {
   transform: translateX(2px);
@@ -283,7 +322,7 @@
 }
 .home-recent {
   width: min(100%, 31rem);
-  margin-top: clamp(2.3rem, 4.2vh, 3.25rem);
+  margin-top: var(--home-section-gap);
 }
 .home-recent > h2 {
   margin: 0 0 0.35rem;
@@ -306,7 +345,7 @@
 }
 .recent-empty p {
   margin: 0.4rem 0 0.6rem;
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--home-muted);
 }
@@ -316,7 +355,7 @@
 }
 .home-secondary {
   color: var(--home-muted);
-  font-size: 0.85rem;
+  font-size: 13px;
 }
 .recent-connections {
   list-style: none;
@@ -398,8 +437,8 @@
   opacity: 0;
   transform: translateX(-4px);
   transition:
-    opacity 160ms ease,
-    transform 160ms ease;
+    opacity 150ms ease,
+    transform 150ms ease;
 }
 .recent-connections a:is(:hover, :focus-visible) .recent-row-arrow {
   opacity: 0.9;
@@ -469,7 +508,7 @@
 .home-alert {
   margin-top: 1.5rem;
   color: var(--ui-danger-text);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 .home-alert p {
   margin: 0.4rem 0 0;
@@ -524,7 +563,33 @@
     padding: 1rem 1.25rem;
   }
   .home-intro {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.9rem;
+    min-height: 0;
     margin-bottom: 1.5rem;
+  }
+  .home-greeting {
+    gap: 0.6rem;
+  }
+  .home-greeting-lead,
+  .home-tagline {
+    writing-mode: horizontal-tb;
+    flex-direction: row;
+    align-items: center;
+    letter-spacing: 0.3em;
+  }
+  .home-greeting-lead {
+    font-size: 16px;
+  }
+  .home-tagline {
+    margin-left: 0;
+    font-size: 13px;
+    text-shadow: none;
+  }
+  .home-greeting-lead::after,
+  .home-tagline::after {
+    display: none;
   }
   .host-overview {
     grid-template-columns: fit-content(50%) max-content;
