@@ -49,23 +49,26 @@
   margin: 0 0 var(--home-section-gap);
 }
 .home-intro {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: stretch;
   gap: 1.7rem;
   min-height: 9.6rem;
-  margin: 0 0 var(--home-section-gap);
+  margin: 0 0 1.1rem;
 }
 .home-greeting {
-  display: flex;
-  align-items: stretch;
-  gap: 0.35rem;
-  margin: 0;
+  // The h1 dissolves into the intro grid so the whisper column, the live
+  // metrics and the gradient word each occupy their own cell.
+  display: contents;
 }
 .home-greeting-lead {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.8rem;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  padding-top: 0.4rem;
   writing-mode: vertical-rl;
   color: var(--home-muted);
   font-size: 20px;
@@ -79,7 +82,10 @@
   background: color-mix(in srgb, var(--mt-text-secondary, var(--ui-text-secondary)) 22%, transparent);
 }
 .home-greeting-word {
-  align-self: flex-end;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  justify-self: start;
   padding-bottom: 0.3rem;
   font-family: 'Segoe UI Variable Display', 'Microsoft YaHei Light', 'Segoe UI', 'Microsoft YaHei',
     sans-serif;
@@ -101,7 +107,9 @@
   flex-direction: column;
   align-items: center;
   gap: 0.8rem;
-  margin: 0 0 0 auto;
+  margin: 0;
+  grid-column: 3;
+  grid-row: 1 / span 2;
   padding-top: 0.4rem;
   writing-mode: vertical-rl;
   color: var(--home-muted);
@@ -134,20 +142,12 @@
     opacity: 1;
   }
 }
-.host-overview {
-  display: grid;
-  grid-template-columns: fit-content(55%) max-content;
-  grid-template-rows: auto auto;
+.host-band {
+  display: flex;
   align-items: baseline;
-  column-gap: clamp(2.5rem, 7vw, 7rem);
-  row-gap: 0.3rem;
-}
-.host-summary {
-  display: grid;
-  grid-row: 1 / span 2;
-  grid-template-rows: subgrid;
-  align-items: baseline;
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.6rem;
+  margin-top: 0.9rem;
 }
 .host-name {
   margin: 0;
@@ -177,17 +177,17 @@
   font-weight: 600;
 }
 .host-metrics {
-  display: grid;
-  grid-row: 1 / span 2;
-  grid-template-columns: repeat(2, max-content);
-  grid-template-rows: subgrid;
+  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  column-gap: 2rem;
-  margin: 0;
+  gap: 0.5rem 2.4rem;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: start;
+  margin: 0.35rem 0 0 0.35rem;
 }
 .host-metrics dd {
-  grid-row: 1;
-  grid-column: 1;
   margin: 0;
   color: var(--home-heading);
   font-size: clamp(28px, 3vw, 46px);
@@ -195,17 +195,15 @@
   line-height: 1.2;
 }
 .host-metrics dt {
-  grid-row: 2;
-  grid-column: 1;
   color: var(--home-muted);
   font-size: 13px;
   font-weight: 400;
 }
 .host-metrics > div {
-  display: grid;
-  grid-row: 1 / span 2;
-  grid-template-rows: subgrid;
+  display: flex;
+  flex-direction: row-reverse;
   align-items: baseline;
+  gap: 0.45rem;
 }
 .home-primary-actions {
   display: flex;
@@ -591,11 +589,11 @@
   .home-tagline::after {
     display: none;
   }
-  .host-overview {
-    grid-template-columns: fit-content(50%) max-content;
-  }
   .host-metrics {
-    column-gap: 1rem;
+    gap: 0.4rem 1.4rem;
+  }
+  .host-metrics dd {
+    font-size: 24px;
   }
   .host-metrics dt {
     font-size: 11px;

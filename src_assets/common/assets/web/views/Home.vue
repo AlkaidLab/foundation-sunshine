@@ -14,6 +14,16 @@
           <span class="home-greeting-lead">{{ greetingText }}</span>
           <span class="home-greeting-word">Sunshine!</span>
         </h1>
+        <dl class="host-metrics">
+          <div>
+            <dt>{{ copy.clients }}</dt>
+            <dd>{{ clientsCount ?? '—' }}</dd>
+          </div>
+          <div>
+            <dt>{{ copy.apps }}</dt>
+            <dd>{{ appsCount ?? '—' }}</dd>
+          </div>
+        </dl>
         <p class="home-tagline">
           <span
             v-if="streamState === 'streaming' && streamArrival"
@@ -27,34 +37,22 @@
         </p>
       </header>
       <section
-        class="host-overview home-enter"
+        class="host-band home-enter"
         aria-labelledby="host-name"
         style="--enter-delay: 60ms"
       >
-        <div class="host-summary">
-          <h2 id="host-name" class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
-          <p class="host-platform">
-            <span>{{ hostConfig?.platform || '—' }}</span>
-            <span
-              class="host-stream-status"
-              :class="{ 'is-streaming': streamState === 'streaming' }"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              >{{ copy.streamStatus[streamState] }}</span
-            >
-          </p>
-        </div>
-        <dl class="host-metrics">
-          <div>
-            <dt>{{ copy.clients }}</dt>
-            <dd>{{ clientsCount ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt>{{ copy.apps }}</dt>
-            <dd>{{ appsCount ?? '—' }}</dd>
-          </div>
-        </dl>
+        <h2 id="host-name" class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
+        <p class="host-platform">
+          <span>{{ hostConfig?.platform || '—' }}</span>
+          <span
+            class="host-stream-status"
+            :class="{ 'is-streaming': streamState === 'streaming' }"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            >{{ copy.streamStatus[streamState] }}</span
+          >
+        </p>
       </section>
       <nav
         class="home-primary-actions home-enter"
