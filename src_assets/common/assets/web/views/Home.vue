@@ -206,7 +206,14 @@
         >
       </nav>
       <details v-if="showVersionDetails" id="version-details" class="home-version">
-        <summary>{{ copy.versionDetails }}</summary>
+        <summary>
+          <span class="home-version-label">{{ copy.versionDetails }}</span>
+          <span class="home-version-current">
+            <span>{{ $t('index.current_version') }}</span>
+            <span class="home-version-value">{{ version?.version }}</span>
+            <span class="home-version-dot" aria-hidden="true"></span>
+          </span>
+        </summary>
         <VersionCard
           :version="version"
           :github-version="githubVersion"

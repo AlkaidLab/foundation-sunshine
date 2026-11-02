@@ -1,15 +1,5 @@
 <template>
   <div id="version-details" class="version-card" v-if="version">
-    <div class="version-card-header">
-      <div class="version-card-heading">
-        <h5 class="version-card-title">{{ $t('index.check_updates') }}</h5>
-      </div>
-      <div class="current-version" :title="version.version">
-        <span class="current-version-label">{{ $t('index.current_version') }}</span>
-        <span class="current-version-value">{{ version.version }}</span>
-        <span class="current-version-dot" aria-hidden="true"></span>
-      </div>
-    </div>
     <div class="version-card-body">
       <!-- 加载状态 -->
       <div v-if="loading" class="version-loading">
@@ -316,62 +306,6 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
-.version-card-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0;
-}
-
-.version-card-heading,
-.current-version {
-  display: flex;
-  align-items: baseline;
-}
-
-.version-card-heading {
-  gap: 0.75rem;
-}
-
-.version-card-header .version-card-title {
-  margin: 0;
-  color: var(--home-muted, var(--ui-text-secondary));
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-
-.current-version {
-  min-width: 0;
-  gap: 0.55rem;
-  color: var(--home-muted, var(--ui-text-secondary));
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.current-version-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--home-heading, var(--ui-text-primary));
-}
-
-.current-version-label {
-  color: var(--home-muted, var(--ui-text-secondary));
-}
-
-.current-version-dot {
-  align-self: center;
-  width: 0.5rem;
-  height: 0.5rem;
-  flex: 0 0 0.5rem;
-  border-radius: 50%;
-  background: var(--ui-success);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ui-success) 14%, transparent);
-}
-
 .version-card-body {
   padding: 0;
 }
@@ -387,21 +321,19 @@ onBeforeUnmount(() => {
 
 /* Version Alerts */
 .version-alert {
-  border-radius: var(--ui-radius-sm);
-  font-size: 13.5px;
-  padding: 0.7rem 0.9rem;
   margin: 1.4rem 0 0;
   display: flex;
   align-items: center;
+  gap: 0.5rem;
+  font-size: 13.5px;
+  color: var(--home-body, var(--ui-text-secondary));
 }
 
 .version-alert-success {
-  background: color-mix(in srgb, var(--ui-success) 12%, transparent);
   color: var(--ui-success-text);
 }
 
 .version-alert-info {
-  background: var(--ui-accent-soft);
   color: var(--ui-accent-text);
 }
 
@@ -498,9 +430,12 @@ onBeforeUnmount(() => {
 .version-release-name {
   margin: 0.45rem 0 0;
   color: var(--home-heading, var(--ui-text-primary));
-  font-size: clamp(1.3rem, 2vw, 1.6rem);
-  font-weight: 650;
-  line-height: 1.25;
+  font-family: 'Segoe UI Variable Display', 'Microsoft YaHei Light', 'Segoe UI', 'Microsoft YaHei',
+    sans-serif;
+  font-size: clamp(1.35rem, 2vw, 1.625rem);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 
@@ -661,12 +596,10 @@ onBeforeUnmount(() => {
 }
 
 .markdown-content :deep(pre) {
-  background: var(--ui-surface-strong);
-  padding: 1rem;
-  border-radius: 8px;
-  overflow-x: auto;
   margin: 1rem 0;
-  border: 1px solid var(--ui-border);
+  padding: 0.2rem 0 0.2rem 1rem;
+  border-left: 2px solid color-mix(in srgb, var(--ui-accent) 40%, transparent);
+  overflow-x: auto;
 }
 
 .markdown-content :deep(pre code) {
@@ -715,7 +648,6 @@ onBeforeUnmount(() => {
 }
 
 .markdown-content :deep(th) {
-  background: var(--ui-surface-strong);
   font-weight: 600;
 }
 
@@ -799,23 +731,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 720px) {
-  .version-card-header {
-    align-items: flex-start;
-    padding: 0;
-  }
-
   .version-card-body {
     padding: 0;
-  }
-
-  .current-version {
-    max-width: 62%;
-    padding-top: 0.38rem;
-    font-size: 0.8rem;
-  }
-
-  .current-version-label {
-    display: none;
   }
 
   .version-update-summary {
