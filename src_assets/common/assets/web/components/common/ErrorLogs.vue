@@ -27,6 +27,7 @@ defineProps({
 
 <style scoped lang="less">
 .startup-alert {
+  margin-top: 2.4rem;
   margin-bottom: 0.9rem;
   padding-left: 1.15rem;
   border-left: 3px solid color-mix(in srgb, var(--ui-danger) 70%, transparent);
