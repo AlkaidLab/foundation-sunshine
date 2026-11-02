@@ -38,31 +38,17 @@ defineProps({
   gap: 0.72rem;
   align-items: start;
   margin-bottom: 0.9rem;
-  padding: 0.78rem 0.85rem;
-  border: 1px solid color-mix(in srgb, var(--ui-danger-border) 72%, var(--ui-border));
-  border-radius: var(--ui-radius-lg);
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--ui-danger-soft) 66%, var(--ui-surface-strong)),
-    color-mix(in srgb, var(--ui-surface) 92%, transparent)
-  );
-  box-shadow: var(--ui-shadow-sm);
+  padding: 0.85rem 1rem;
+  border-radius: var(--ui-radius-md);
+  background: color-mix(in srgb, var(--ui-danger-soft) 62%, transparent);
   color: var(--ui-text-primary);
-  backdrop-filter: blur(14px) saturate(1.05);
-  -webkit-backdrop-filter: blur(14px) saturate(1.05);
 }
 
 .startup-alert-icon {
   display: inline-flex;
-  width: 2.15rem;
-  height: 2.15rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--ui-danger-border);
-  border-radius: 0.75rem;
-  background: var(--ui-danger-soft);
+  padding-top: 0.12rem;
   color: var(--ui-danger-text);
-  font-size: 0.88rem;
+  font-size: 0.95rem;
 }
 
 .startup-alert-content {
@@ -84,7 +70,7 @@ defineProps({
 
 .startup-alert-list {
   display: grid;
-  gap: 0.28rem;
+  gap: 0.3rem;
   margin: 0.5rem 0 0;
   padding: 0;
   list-style: none;
@@ -96,9 +82,7 @@ defineProps({
   grid-template-columns: 0.42rem minmax(0, 1fr);
   gap: 0.5rem;
   align-items: baseline;
-  padding: 0.38rem 0.5rem;
-  border-radius: var(--ui-radius-sm);
-  background: color-mix(in srgb, var(--ui-surface-strong) 76%, transparent);
+  padding: 0;
   color: var(--ui-text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.4;
@@ -110,38 +94,29 @@ defineProps({
   height: 0.34rem;
   border-radius: 50%;
   background: var(--ui-danger-text);
-  box-shadow: 0 0 0 0.18rem var(--ui-danger-soft);
 }
 
 .startup-alert-action {
   display: inline-flex;
   min-height: 2.15rem;
   align-items: center;
-  justify-content: center;
   gap: 0.42rem;
-  padding: 0.42rem 0.62rem;
-  border: 1px solid var(--ui-danger-border);
-  border-radius: var(--ui-radius-md);
-  background: color-mix(in srgb, var(--ui-surface-strong) 82%, transparent);
+  padding: 0.35rem 0;
+  border: 0;
+  background: none;
   color: var(--ui-danger-text);
   font-size: var(--font-size-xs);
   font-weight: 650;
   text-decoration: none;
   white-space: nowrap;
-  transition:
-    transform 0.2s ease,
-    background-color 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+  transition: color 150ms ease;
 }
 
 .startup-alert-action:hover,
 .startup-alert-action:focus-visible {
-  border-color: var(--ui-danger-text);
-  background: var(--ui-danger-soft);
   color: var(--ui-danger-text);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--ui-danger-soft) 72%, transparent);
-  transform: translateY(-1px);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .startup-alert-action:focus-visible {
@@ -163,7 +138,7 @@ defineProps({
 @media (max-width: 767.98px) {
   .startup-alert {
     grid-template-columns: auto minmax(0, 1fr);
-    padding: 0.72rem;
+    padding: 0.8rem;
   }
 
   .startup-alert-action {
