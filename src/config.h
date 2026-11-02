@@ -146,6 +146,7 @@ namespace config {
     bool stream;
     bool stream_mic;
     bool install_steam_drivers;
+    bool mat_live;  // Use the trusted local capture tool's automatic endpoint.
   };
 
   constexpr int ENCRYPTION_MODE_NEVER = 0;  // Never use video encryption, even if the client supports it

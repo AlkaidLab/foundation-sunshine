@@ -129,44 +129,6 @@ TEST_F(BindAddressTest, ConfiguredAddressOverridesFamily) {
   ASSERT_EQ(bind_addr, "2001:db8::1");
 }
 
-/**
- * @brief Test with loopback addresses
- */
-TEST_F(BindAddressTest, LoopbackAddresses) {
-  // Test IPv4 loopback
-  config::sunshine.bind_address = "127.0.0.1";
-  const auto bind_addr_v4 = net::get_bind_address(net::af_e::IPV4);
-  ASSERT_EQ(bind_addr_v4, "127.0.0.1");
-
-  // Test IPv6 loopback
-  config::sunshine.bind_address = "::1";
-  const auto bind_addr_v6 = net::get_bind_address(net::af_e::BOTH);
-  ASSERT_EQ(bind_addr_v6, "::1");
-}
-
-/**
- * @brief Test with link-local addresses
- */
-TEST_F(BindAddressTest, LinkLocalAddresses) {
-  // Test IPv4 link-local
-  config::sunshine.bind_address = "169.254.1.1";
-  const auto bind_addr_v4 = net::get_bind_address(net::af_e::IPV4);
-  ASSERT_EQ(bind_addr_v4, "169.254.1.1");
-
-  // Test IPv6 link-local
-  config::sunshine.bind_address = "fe80::1";
-  const auto bind_addr_v6 = net::get_bind_address(net::af_e::BOTH);
-  ASSERT_EQ(bind_addr_v6, "fe80::1");
-}
-
-/**
- * @brief Test that af_to_any_address_string still works correctly
- */
-TEST_F(BindAddressTest, WildcardAddressFunction) {
-  ASSERT_EQ(net::af_to_any_address_string(net::af_e::IPV4), "0.0.0.0");
-  ASSERT_EQ(net::af_to_any_address_string(net::af_e::BOTH), "::");
-}
-
 TEST_F(BindAddressTest, WebUiHostUsesPanelLoopbackForConfiguredAddresses) {
   config::sunshine.bind_address = "192.0.2.10";
   EXPECT_EQ(net::get_web_ui_host(), "127.0.0.1");

@@ -2469,4 +2469,32 @@ namespace platf {
 
     return words;
   }
+
+  std::optional<bool>
+  query_session_locked() {
+    PWSTR buffer = nullptr;
+    DWORD size = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTSGetActiveConsoleSessionId(),
+          WTSSessionInfoEx, &buffer, &size)) {
+      return std::nullopt;
+    }
+    auto free_buffer = util::fail_guard([buffer]() { WTSFreeMemory(buffer); });
+
+    if (size < sizeof(WTSINFOEXW)) {
+      return std::nullopt;
+    }
+    const auto *info = reinterpret_cast<const WTSINFOEXW *>(buffer);
+    if (info->Level != 1) {
+      return std::nullopt;
+    }
+    // Windows 7 / Server 2008 R2 report these two values inverted; Sunshine requires Windows 10+.
+    switch (info->Data.WTSInfoExLevel1.SessionFlags) {
+      case WTS_SESSIONSTATE_LOCK:
+        return true;
+      case WTS_SESSIONSTATE_UNLOCK:
+        return false;
+      default:
+        return std::nullopt;
+    }
+  }
 }  // namespace platf

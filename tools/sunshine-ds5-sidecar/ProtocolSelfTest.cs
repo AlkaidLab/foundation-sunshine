@@ -11,6 +11,7 @@ internal static class ProtocolSelfTest
     {
         VerifyStandardAxisState();
         await VerifyProtocolFrameReaderAsync();
+        await VerifyAcceptanceErrorsAsync();
         var pipeName = $"sunshine-device-host-contract-{Environment.ProcessId}-{Guid.NewGuid():N}";
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var server = new VirtualDeviceHostServer(
@@ -420,9 +421,7 @@ internal static class ProtocolSelfTest
         var attachFlags = genshinCompatibility ? (byte)Protocol.AttachFlags.GenshinCompatibilityIdentity : (byte)0;
         await SendAsync(client, new Protocol.Message(
             Protocol.MessageType.Attach, 2, new byte[] { 0, 0, composite ? (byte)1 : (byte)0, attachFlags }), stopping.Token);
-        var attach = await ReceiveAsync(client, stopping.Token);
-        if (attach.Type == Protocol.MessageType.Error)
-            throw new InvalidOperationException(DecodeError(attach.Payload));
+        var attach = await ReceiveUntilAsync(client, Protocol.MessageType.AttachReply, 2, stopping.Token);
         Require(attach.Type == Protocol.MessageType.AttachReply && attach.RequestId == 2 && attach.Payload.Length == 8,
             "attach reply");
         var capabilities = (Protocol.Capability)BinaryPrimitives.ReadUInt32LittleEndian(attach.Payload.AsSpan(4));
@@ -518,6 +517,7 @@ internal static class ProtocolSelfTest
 
         client.Dispose();
         await serverTask.WaitAsync(TimeSpan.FromSeconds(10));
+        Require(!server.AudioPolicyViolated, "audio policy remained valid through owner cleanup");
         if (beforeEndpoints is not null)
         {
             // Dispose completes before Windows removes the audio endpoint.
@@ -572,6 +572,7 @@ internal static class ProtocolSelfTest
         VerifySensorTimestampEncoding();
         VerifyOutputValidityFlags();
         VerifyOutputValidityGating();
+        VerifyHapticControlState();
     }
 
     private static void VerifyStandardAxisState()
@@ -913,14 +914,18 @@ internal static class ProtocolSelfTest
         }
     }
 
+    /// <summary>Checks the shared clock's tick rate, fractional conversion and natural 32-bit rollover.</summary>
     private static void VerifySensorTimestampEncoding()
     {
-        Require(ControllerSession.EncodeSensorTimestamp(0) == 0,
+        Require(Foundation.Input.DualSenseClock.Encode(0, 10_000_000) == 0,
             "DualSense sensor timestamp origin");
-        Require(ControllerSession.EncodeSensorTimestamp(1_000_000) == 3_000_000,
+        Require(Foundation.Input.DualSenseClock.Encode(10_000_000, 10_000_000) == 3_000_000,
             "DualSense sensor timestamp tick rate");
-        Require(ControllerSession.EncodeSensorTimestamp(0x55555556) == 2,
+        Require(Foundation.Input.DualSenseClock.Encode(0x100000000, 3_000_000) == 0 &&
+                Foundation.Input.DualSenseClock.Encode(0x100000001, 3_000_000) == 1,
             "DualSense sensor timestamp rollover");
+        Require(Foundation.Input.DualSenseClock.Encode(10_000_009, 10_000_000) == 3_000_002,
+            "DualSense fractional QPC ticks");
     }
 
     private static void VerifyProfileSelection()
@@ -1123,6 +1128,14 @@ internal static class ProtocolSelfTest
         var payload = new byte[header.PayloadLength];
         if (payload.Length != 0)
             await stream.ReadExactlyAsync(payload, cancellationToken);
+        if (header.Type == Protocol.MessageType.AudioPolicyViolation)
+        {
+            var details = payload.Length >= 3
+                ? $"device={payload[0]}, controller={payload[1]}, role={payload[2]}"
+                : "malformed event payload";
+            throw new InvalidOperationException("Windows selected a virtual DualSense endpoint as the default audio device; " +
+                $"the audio policy guard closed this session ({details}).");
+        }
         return new Protocol.Message(header.Type, header.RequestId, payload);
     }
 
@@ -1159,6 +1172,32 @@ internal static class ProtocolSelfTest
         if (payload.Length < 8) return "Malformed sidecar error";
         var length = Math.Min(BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(4, 4)), (uint)(payload.Length - 8));
         return System.Text.Encoding.UTF8.GetString(payload.Slice(8, (int)length));
+    }
+
+    /// <summary>Ensures asynchronous policy failures survive acceptance reads instead of becoming EOF.</summary>
+    private static async Task VerifyAcceptanceErrorsAsync()
+    {
+        foreach (var byRequest in new[] { false, true })
+        {
+            using var stream = new MemoryStream(Protocol.Encode(new Protocol.Message(
+                Protocol.MessageType.AudioPolicyViolation, 0, new byte[] { 3, 2, 1, 0 })));
+            try
+            {
+                if (byRequest)
+                    await ReceiveUntilAsync(stream, Protocol.MessageType.DetachReply, 5, CancellationToken.None);
+                else
+                    await ReceiveUntilTypeAsync(stream, Protocol.MessageType.HapticsPcm, CancellationToken.None);
+                Require(false, "audio policy event rejection");
+            }
+            catch (InvalidOperationException error)
+            {
+                Require(error.Message.Contains("device=3, controller=2, role=1", StringComparison.Ordinal),
+                    "audio policy reason retained");
+            }
+        }
+        Require(DefaultAudioEndpointSnapshot.ShouldRestore("physical", "virtual", false, true), "new virtual default restored");
+        Require(!DefaultAudioEndpointSnapshot.ShouldRestore("physical", "other", false, false), "user default change preserved");
+        Require(!DefaultAudioEndpointSnapshot.ShouldRestore("physical", "virtual", true, true), "existing virtual default preserved");
     }
 
     private static void WriteFloat(Span<byte> destination, float value) =>
@@ -1275,6 +1314,43 @@ internal static class ProtocolSelfTest
                 release.Payload[2] == (AdaptiveTriggerState.LeftFlag | AdaptiveTriggerState.RightFlag) &&
                 release.Payload.AsSpan(3).IndexOfAnyExcept((byte)0) == -1,
             "a programmed release reaches the client");
+    }
+
+    private static void VerifyHapticControlState()
+    {
+        var state = new DualSenseHapticsState();
+        var effect = new byte[47];
+        effect[0] = 3;
+        effect[2] = 120;
+        effect[3] = 80;
+        Require(state.TryUpdate(effect, out var first) && first[0] == 3 &&
+                state.Left == 80 && state.Right == 120, "haptic v1 rumble snapshot");
+        effect[0] = 0;
+        effect[2] = effect[3] = 0;
+        Require(state.TryUpdate(effect, out var pcm) && pcm[0] == 0 &&
+                pcm[3] == 120 && pcm[4] == 80 && state.Left == 0 && state.Right == 0,
+            "unclaimed motor bytes preserved while PCM transition stops legacy output");
+        Require(!state.TryUpdate(effect, out _), "haptic state duplicate suppression");
+        effect[0] = 2;
+        effect[38] = 4;
+        Require(state.TryUpdate(effect, out var v2) && v2[1] == 4 && state.Left == 0,
+            "v2 zero stop retains compatible mode");
+        effect[1] = 0x62;
+        effect[9] = 0x10;
+        effect[36] = 0x23;
+        effect[39] = 0xff;
+        Require(state.TryUpdate(effect, out var controls) && controls[2] == 0x62 &&
+                controls[5] == 0x10 && controls[6] == 0x23 && controls[7] == 1,
+            "claimed haptic power/reduction/filter controls");
+        effect[1] = 4; // A subsequent LED-only update does not erase those controls.
+        effect[9] = effect[36] = effect[39] = 0;
+        Require(!state.TryUpdate(effect, out _), "unclaimed control bytes cannot overwrite state");
+        Require(!state.TryUpdate(new byte[46], out _), "haptic control size validation");
+        Require(state.TryReset(out var reset) && reset[0] == 0 && reset[1] == 0 &&
+                reset[2] == 0x62 && reset[3] == 0 && reset[4] == 0 && reset[5] == 0 &&
+                reset[6] == 0 && reset[7] == 0 && state.Left == 0 && state.Right == 0,
+            "controller retirement clears authoritative mode and motors");
+        Require(!state.TryReset(out _), "haptic reset duplicate suppression");
     }
 
     private static OutputValidFlags Flags(byte flag0, byte flag1) =>

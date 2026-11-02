@@ -194,6 +194,11 @@ namespace platf::dxgi {
       return capture_frame_counter;
     }
 
+    std::string
+    captured_display_name() const override;
+
+    bool captures_monitor = true;
+
     int
     init(const ::video::config_t &config, const std::string &display_name);
 

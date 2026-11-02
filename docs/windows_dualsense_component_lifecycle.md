@@ -97,19 +97,35 @@ DS5 不采用按进程名扫描或 `taskkill` 的做法。虚拟 USB 设备涉�
      -> 客户端抖动缓冲
      -> 物理 DualSense 音频触觉端点（不经过 audio-haptics SDK）
 
-客户端选择“模拟 DualSense”
-  -> 客户端只声明 ML_FF_DS5_HAPTICS_IR_V2
+客户端选择“模拟 DualSense”并将“DualSense 模拟路径”设为“IR 增强（v2 + 扩展）”
+  -> 新客户端声明 ML_FF_DS5_HAPTICS_IR_EXTENDED 及 IR_V2 回退能力
      -> Sunshine Core 的 authored-analysis 通道
-     -> moonlight-audio-haptics AUTHORED_HAPTIC_STEREO 输入
-     -> 双 lane、设备无关 IR v2
+     -> 新主机选择双 lane 持续状态和瞬态事件 IR 增强（v2 + 扩展）
+        旧主机继续发送原有 IR v2
      -> 客户端按本机执行器能力渲染
 ```
 
-common-c 仍使用回调存在性生成底层能力位，但这是应用层模式的协议投影，不是第三种“自动选择”状态。两个回调同时注册属于配置错误，连接启动会失败；非官方客户端同时声明两个位时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
+Android 的“DualSense 模拟路径”提供“传统模拟 / IR 增强（v2 + 扩展）”选择，默认保持传统模拟。传统模拟不声明 IR 能力，继续使用主机已有的 rumble 分析与客户端普通振动链路；IR 增强（v2 + 扩展） 选择才声明 v2 及可选增强能力。设置在下次连接生效，原生波形手柄的 PCM 协商仍优先。
 
-分析器属于 Sunshine Core，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 的每个模拟会话维护独立、无分配的分析状态，复用现有有界反馈队列；真实会话不执行分析。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
+common-c 使用回调存在性生成底层能力位，这是应用层模式的协议投影。原始 PCM 回调与任一 IR 回调同时注册属于配置错误，连接启动会失败；增强回调须与 v2 基础回调配套注册，新主机按能力在原 0x550B 路由发送增强包或原 v2。非官方客户端同时声明原始 PCM 和 IR 时 Sunshine 固定优先原始 PCM。物理模式预检失败时客户端显示明确警告且不声明 PCM，不能静默切换到模拟模式。
+
+分析算法和有界状态由独立 `moonlight-audio-haptics` 库维护，由 Sunshine Core 调用，不属于 UMDF/USB/IP 驱动或 elevated sidecar。Sidecar 只负责抓取和拆分 channel 3/4；Sunshine 为每个模拟会话中的各控制器持有独立 SDK engine，复用现有有界反馈队列；真实会话不执行分析。目标设备的共振频率、Q 值、振幅下限和播放 API 只在客户端 renderer 中处理，因为这些能力由客户端掌握。
 
 `moonlight-audio-haptics` 通过独立 SDK PR 提供明确的 `AUTHORED_HAPTIC_STEREO` 输入语义和双 lane IR v2；不能复用 ABI v1 的 `stereo_pan` 冒充左右两路。Sunshine 以固定提交的子模块静态链接 SDK，并在传输适配层保证即使空流没有分析输出，也会发送静音 `STREAM_END` 清理客户端执行器。实现借鉴 MPEG Haptics 的独立 channel/curve/wavelet 数据模型和 AOSP HapticGenerator 的执行器标定边界，但不直接嵌入其文件型 Encoder，也不在 Sunshine 端执行设备专用渲染。
+
+### 3.6 复用 v2 的持续层／独立事件增强
+
+原 v2 基础帧、字段含义和客户端回退链路保持原样。`authored_ir_extended_session_t` 组合已有的 `authored_ir_session_t` 与 SDK 的 `authored_events.h` API：基础帧直接复用原分析器和 72-byte 编码器；增强检测在 SDK 中补充持续层及独立事件。旧客户端仍走原 v2 会话，不启用增强分析器。主机不维护第二份 v2 特征估算或编码实现，传统 ERM 的增益、门限、保持和节流单独留在 `legacy_rumble.cpp`。
+
+新客户端同时声明已有 `ML_FF_DS5_HAPTICS_IR_V2 (0x08)` 和可选 `ML_FF_DS5_HAPTICS_IR_EXTENDED (0x80)`。只有两者均具备时，主机才通过既有加密控制流的 `0x550B` 发送“原 v2 基础帧 + 增强区”；否则保持 `0x550B` 原 v2 或普通 rumble。原始 PCM 继续优先。基础与增强在同一消息中提交，客户端不需要跨两条不可靠消息拼接，也不会重复播放基础瞬态与增强事件。
+
+增强包前 72 字节由原 v2 编码器直接生成，保留 version=2、length=72、保留位=0 及原 RMS／peak／attack／ratio／ZCR／correlation 语义。common-c 复用原 v2 解析器验证这一前缀，再解析 32-byte 增强头和最多 8 个 20-byte 事件。完整 payload 为 `104 + 20N`，最多 264 byte。控制器编号、标志、源序号、样本数和原特征均复用基础帧，不在增强区重复定义。完整契约由 [common-c 协议文档](../third-party/moonlight-common-c/docs/DS5-HAPTICS-IR.md) 维护。
+
+增强区只增加 epoch、持续状态结束时间、左右连续低／高频状态以及事件 ID／起音时间／左右强度。基础 RMS/peak 仍是原 50–400 Hz 触觉频带特征，不改成原始 PCM 统计值；SDK 的 raw RMS/peak、profile、confidence 和 sharpness 保留在本地分析结果中，不进入线协议；字段语义由扩展版本定义，wire 不添加内存对齐填充。增强持续包络有释放历史，基础帧 SILENT 不得清空它。v2 的固定 5 ms 分析 hop 在不规则输入分块下可能早于增强状态结束时间，两者沿用同一 48 kHz 相对源时钟，增强区显式记录自己的结束时间。
+
+SDK 仍接受最多 240 帧的单次输入；这是分析接口约束，不是协议源采样帧数的上限。common-c 回调及头文件须随应用同步重编译，兼容范围为旧线协议及源码重编译，不承诺旧应用仅替换共享库仍具有二进制兼容性。分析 SDK 的已有 ABI 保持兼容，新 native result 也不直接作为 wire 内存发送。
+
+Android 的“传统模拟 / IR 增强（v2 + 扩展）”选择在下次连接生效。原 v2 数据对象、JNI 基础字段转换、mixer、renderer 和手机马达所有权管理共用；没有增强区时沿用 v2 渲染，有增强区时由持续层和独立事件驱动协同输出。设备能力在本机判断，不通过型号白名单或主机播放命令限定。源时钟并非音视频 PTS，跨音视频精确同步仍需额外公共时钟关联。
 
 ## 4. 用户体验设计
 

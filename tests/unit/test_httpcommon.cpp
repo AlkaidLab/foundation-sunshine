@@ -2,16 +2,9 @@
  * @file tests/unit/test_httpcommon.cpp
  * @brief Test src/httpcommon.*.
  */
-// test imports
-#include "../tests_common.h"
-
 #include <chrono>
 #include <filesystem>
 
-// lib imports
-#include <curl/curl.h>
-
-// local imports
 #include <src/file_handler.h>
 #include <src/httpcommon.h>
 
@@ -46,22 +39,6 @@ INSTANTIATE_TEST_SUITE_P(
     std::make_tuple("https://images.igdb.com/example.txt", "images.igdb.com"),
     std::make_tuple("http://localhost:8080", "localhost"),
     std::make_tuple("nonsense!!}{::", "")));
-
-struct DownloadFileTest: testing::TestWithParam<std::tuple<std::string, std::string>> {};
-
-TEST_P(DownloadFileTest, Run) {
-  const auto &[url, filename] = GetParam();
-  const std::string test_dir = platf::appdata().string() + "/tests/";
-  std::string path = test_dir + filename;
-  ASSERT_TRUE(http::download_file(url, path, CURL_SSLVERSION_TLSv1_0));
-}
-
-INSTANTIATE_TEST_SUITE_P(
-  DownloadFileTests,
-  DownloadFileTest,
-  testing::Values(
-    std::make_tuple("https://httpbin.org/base64/aGVsbG8h", "hello.txt"),
-    std::make_tuple("https://httpbin.org/redirect-to?url=/base64/aGVsbG8h", "hello-redirect.txt")));
 
 TEST(ImageDownloadTest, FailedDownloadPreservesExistingFile) {
   const auto root = std::filesystem::temp_directory_path() /

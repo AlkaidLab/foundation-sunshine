@@ -935,6 +935,11 @@ namespace platf::dxgi {
       capture_source_generation);
   }
 
+  std::string
+  display_base_t::captured_display_name() const {
+    return captures_monitor ? to_utf8(display_device_name) : std::string {};
+  }
+
   bool
   display_base_t::is_hdr() {
     dxgi::output6_t output6 {};

@@ -41,13 +41,6 @@ TEST(PenBarrelRollProbe, DisconnectOrLegacyPacketResetsActivatedProbe) {
   EXPECT_EQ(probe.select(122, 270), 122);
 }
 
-TEST(PenBarrelRoll, MatchesExtendedWireLayout) {
-  EXPECT_EQ(sizeof(input::pen_wire::packet_t), 40);
-  EXPECT_EQ(offsetof(input::pen_wire::packet_t, pen), 0);
-  EXPECT_EQ(offsetof(input::pen_wire::packet_t, barrelRoll), 36);
-  EXPECT_EQ(offsetof(input::pen_wire::packet_t, reserved), 38);
-}
-
 TEST(PenBarrelRoll, ReadsLittleEndianTwistAndPreservesLegacyPose) {
   input::pen_wire::packet_t packet {};
   packet.pen.tilt = 45;

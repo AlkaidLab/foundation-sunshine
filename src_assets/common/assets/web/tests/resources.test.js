@@ -29,3 +29,6 @@ test('uses international links for every other locale', () => {
   }
 })
 
+test('falls back to the global link when no mainland link is configured', () => {
+  assert.equal(resolveResourceHref({ href: 'https://example.test/global' }, 'zh'), 'https://example.test/global')
+})

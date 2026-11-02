@@ -1073,4 +1073,9 @@ namespace platf {
   create_high_precision_timer() {
     return std::make_unique<linux_high_precision_timer>();
   }
+
+  std::optional<bool>
+  query_session_locked() {
+    return std::nullopt;
+  }
 }  // namespace platf

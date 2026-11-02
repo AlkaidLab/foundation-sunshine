@@ -178,6 +178,10 @@ namespace stream {
 
     bool belongs_to_client(const session_t &session, const std::string &uuid);
 
+    // Resolve only RUNNING video sessions authenticated by this certificate.
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid);
+
     bool
     has_active_video_sessions();
 

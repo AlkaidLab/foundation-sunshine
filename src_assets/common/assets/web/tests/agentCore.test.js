@@ -26,6 +26,11 @@ test('createAgentSkill normalizes reusable skill definitions', async () => {
   await assert.doesNotReject(() => skill.run({ input: [] }))
 })
 
+test('createAgentSkill rejects invalid skill definitions', () => {
+  assert.throws(() => createAgentSkill({ run() {} }), /non-empty id/)
+  assert.throws(() => createAgentSkill({ id: 'demo.invalid' }), /run\(context\)/)
+})
+
 test('createSkillRegistry registers extension capabilities and supports unregister', () => {
   const registry = createSkillRegistry({
     baseCapabilities: [

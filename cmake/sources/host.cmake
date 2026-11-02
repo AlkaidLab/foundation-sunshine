@@ -14,6 +14,9 @@ set(SUNSHINE_HOST_SOURCES
 
     # src/haptics
     src/haptics/authored_ir.cpp src/haptics/authored_ir.h
+    src/haptics/authored_input.h src/haptics/wire.h
+    src/haptics/legacy_rumble.cpp
+    src/haptics/authored_ir_extended.cpp src/haptics/authored_ir_extended.h
 
     # src/hdr
     src/hdr/client_display_capabilities.cpp src/hdr/client_display_capabilities.h
@@ -29,6 +32,7 @@ set(SUNSHINE_HOST_SOURCES
     src/display_device/vdd_capability.cpp src/display_device/vdd_capability.h
     src/display_device/vdd_utils.cpp src/display_device/vdd_utils.h
     src/display_device/vdd_ioctl.cpp src/display_device/vdd_ioctl.h
+    src/display_device/vdd_mode_list.h
     src/display_device/vdd_settings.cpp src/display_device/vdd_settings.h
     src/display_device/display_device.h
     src/display_device/vdd_control_ioctl.h

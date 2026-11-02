@@ -57,6 +57,10 @@ internal sealed class AudioPolicyConfig : IDisposable
     internal unsafe void SetFormat(string endpointId, WAVEFORMATEXTENSIBLE format) =>
         Marshal.ThrowExceptionForHR(_policy.SetDeviceFormat(endpointId, (IntPtr)(&format), (IntPtr)(&format)));
 
+    /// <summary>Restores the user's endpoint for one role after virtual device enumeration.</summary>
+    internal void SetDefaultEndpoint(string endpointId, ERole role) =>
+        Marshal.ThrowExceptionForHR(_policy.SetDefaultEndpoint(endpointId, role));
+
     /// <summary>Releases only this adapter's policy reference.</summary>
     public void Dispose() => CoreAudio.Release(_policy);
 
@@ -89,5 +93,6 @@ internal sealed class AudioPolicyConfig : IDisposable
         /// <summary>Writes a property with the explicit Windows 10+ effects-store selector.</summary>
         [PreserveSig] int SetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id,
             [MarshalAs(UnmanagedType.Bool)] bool effectsStore, ref PROPERTYKEY key, ref PROPVARIANT value);
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, ERole role);
     }
 }

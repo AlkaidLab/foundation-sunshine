@@ -237,6 +237,10 @@ Source: "{#MySourceDir}\scripts\update-path.bat"; DestDir: "{app}\scripts"; Flag
 
 ; Assets (shaders, web UI, etc.)
 Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+; Chinese installs get the Chinese default menu command names. Sunshine copies
+; assets\apps.json to the config folder on first start, and Moonlight clients
+; show these names as-is.
+Source: "{#MySourceDir}\assets\apps.zh.json"; DestDir: "{app}\assets"; DestName: "apps.json"; Languages: chinesesimplified; Flags: ignoreversion; Components: assets
 
 ; Required GUI and user-session tray agent
 Source: "{#MySourceDir}\assets\gui\{#MyAppGUIExeName}"; DestDir: "{app}\assets\gui"; Flags: ignoreversion; Components: gui

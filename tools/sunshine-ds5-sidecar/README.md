@@ -20,7 +20,8 @@ installed components when streaming is idle, using the existing administrator
 helper, verified staging and whole-component rollback. Optional USB/IP transport
 installation remains part of explicit install/repair, not automatic updates.
 The sidecar uses normal .NET loading and requires the v1.12.0 runtime and
-device-ownership and externally managed USB/IP policy markers even for `--probe`. Sunshine validates the
+device-ownership, externally managed USB/IP and `FoundationDualSenseReports=host-clock-v1`
+markers even for `--probe`. Sunshine validates the
 installed component without replacing DLLs.
 The upstream SDK API, assembly version and embedded resources are preserved; see
 [`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
@@ -57,6 +58,12 @@ on receipt under the session state lock. They do not use a thread-pool timer:
 even a 1 ms timer can run at roughly 15.6 ms intervals on Windows and reduce
 continuous input to about 64 Hz. The sidecar preserves the incoming update
 cadence; it does not synthesize repeated reports to inflate polling-rate tests.
+USB reports include rolling 8-bit and 32-bit sequence numbers, device time and
+the USB-connected status. Device and motion timestamps use the same host QPC
+epoch at 3 MHz. Button, touch and battery reports advance device time while
+retaining the latest motion sample timestamp. Network receive time still stands
+in for the client's physical sampling time; these metadata corrections have not
+been verified to resolve Genshin's camera jumps.
 The pipe reader reuses a receive buffer for headers and payloads, dispatching
 complete frames as soon as they arrive. This removes separate header/body reads
 and per-input payload allocations without adding a batching delay. Microphone

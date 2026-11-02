@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.sunshine.matmock">
+    <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="MAT JNI mock test" android:debuggable="true" android:extractNativeLibs="true" />
+    <instrumentation android:name=".MatInstrumentation" android:targetPackage="com.sunshine.matmock" />
+</manifest>

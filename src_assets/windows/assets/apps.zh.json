@@ -1,0 +1,42 @@
+{
+  "env": {},
+  "apps": [
+    {
+      "name": "Desktop",
+      "image-path": "desktop",
+      "exclude-global-prep-cmd": "false",
+      "elevated": "",
+      "auto-detach": "true",
+      "wait-all": "true",
+      "exit-timeout": "5",
+      "menu-cmd": [
+        {
+          "id": "kcENAT5r9P",
+          "name": "触摸键盘",
+          "cmd": ".\\tools\\qiin-tabtip.exe",
+          "elevated": "false"
+        },
+        {
+          "id": "rjeOKHmcdL",
+          "name": "桌宠",
+          "cmd": ".\\assets\\gui\\sunshine-gui.exe --toolbar",
+          "elevated": "false"
+        }
+      ]
+    },
+    {
+      "name": "Steam Big Picture",
+      "cmd": "steam://open/bigpicture",
+      "auto-detach": "true",
+      "wait-all": "true",
+      "image-path": "steam.png"
+    },
+    {
+      "name": "Xbox Game",
+      "cmd": "cmd \/c \"start xbox:\"",
+      "auto-detach": "true",
+      "wait-all": "true",
+      "image-path": "box.png"
+    }
+  ]
+}

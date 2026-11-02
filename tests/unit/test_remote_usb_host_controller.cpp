@@ -123,9 +123,7 @@ make_config(command_harness &commands) {
 
 }  // namespace
 
-TEST(RemoteUsbHostController, StopIsDestructorSafeBoundary) {
-  static_assert(noexcept(std::declval<remote_usb::usbip_host_controller &>().stop()));
-}
+static_assert(noexcept(std::declval<remote_usb::usbip_host_controller &>().stop()));
 
 #ifdef REMOTE_USB_PROCESS_TREE_HELPER
 TEST(RemoteUsbHostController, DefaultRunnerTerminatesDescendantPipeHolders) {

@@ -1,0 +1,38 @@
+--- a/sdk/HIDMaestro.Core/Internal/VendorBlobProgram.cs
++++ b/sdk/HIDMaestro.Core/Internal/VendorBlobProgram.cs
+@@ -58,7 +58,7 @@
+         LeftStickX, LeftStickY, RightStickX, RightStickY,
+         LeftTrigger, RightTrigger,
+         GyroPitch, GyroYaw, GyroRoll, AccelX, AccelY, AccelZ,
+-        SensorTimestamp,
++        SensorTimestamp, DeviceTimestamp,
+         Finger0, Finger1,
+         // Whole-stick sources. Unlike the per-axis entries above these name
+         // an X/Y pair, because the wire format interleaves the two axes
+@@ -225,6 +225,7 @@
+                 "accelY"          => SrcOp.AccelY,
+                 "accelZ"          => SrcOp.AccelZ,
+                 "sensorTimestamp" => SrcOp.SensorTimestamp,
++                "deviceTimestamp" => SrcOp.DeviceTimestamp,
+                 "touchpadFinger1" => SrcOp.Finger1,
+                 "touchpadFinger0" => SrcOp.Finger0,
+                 "leftStick"       => SrcOp.LeftStick,
+--- a/sdk/HIDMaestro.Core/Internal/VendorBlobCodec.cs
++++ b/sdk/HIDMaestro.Core/Internal/VendorBlobCodec.cs
+@@ -378,8 +378,14 @@
+                 case VendorBlobProgram.FieldOp.U32:
+                 {
+                     if (f.B < 0 || f.B + 3 >= buffer.Length) break;
+-                    uint v = f.Source == VendorBlobProgram.SrcOp.SensorTimestamp
+-                        ? state.SensorTimestamp : 0u;
++                    // Sensor time belongs to the last motion sample; device
++                    // time advances for every encoded report, including buttons.
++                    uint v = f.Source switch
++                    {
++                        VendorBlobProgram.SrcOp.SensorTimestamp => state.SensorTimestamp,
++                        VendorBlobProgram.SrcOp.DeviceTimestamp => Foundation.Input.DualSenseClock.Now,
++                        _ => 0u,
++                    };
+                     buffer[f.B]     = (byte)(v        & 0xFF);
+                     buffer[f.B + 1] = (byte)((v >>  8) & 0xFF);
+                     buffer[f.B + 2] = (byte)((v >> 16) & 0xFF);

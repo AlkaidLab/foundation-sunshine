@@ -34,6 +34,7 @@ internal sealed class ControllerSession : IDisposable
     private readonly Action<Protocol.Message> _emit;
     private DefaultAudioEndpointGuard? _audioEndpointGuard;
     private readonly AdaptiveTriggerState _adaptiveTriggers = new();
+    private readonly DualSenseHapticsState _hapticsState = new();
     private HMGamepadState _state;
     private readonly Dictionary<uint, int> _touchSlots = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -62,6 +63,7 @@ internal sealed class ControllerSession : IDisposable
             Axes = _axes.Values,
             BatteryLevel = 10,
             BatteryFull = true,
+            SensorTimestamp = Foundation.Input.DualSenseClock.Now,
         };
 
         _controller.OutputDecoded += OnOutputDecoded;
@@ -182,6 +184,7 @@ internal sealed class ControllerSession : IDisposable
         }
     }
 
+    /// <summary>Updates one motion sensor, stamps its host receive time and immediately submits the combined state.</summary>
     internal void SubmitMotion(ReadOnlySpan<byte> payload)
     {
         // id:u8, type:u8, reserved:u16, x/y/z:f32 = 16 bytes
@@ -221,16 +224,9 @@ internal sealed class ControllerSession : IDisposable
             {
                 throw new InvalidDataException("Unsupported motion type");
             }
-            _state.SensorTimestamp = EncodeSensorTimestamp(ElapsedMicroseconds());
+            _state.SensorTimestamp = Foundation.Input.DualSenseClock.Now;
             SubmitStateLocked();
         }
-    }
-
-    internal static uint EncodeSensorTimestamp(long elapsedMicroseconds)
-    {
-        // A standard DualSense report stores sensor time in 1/3 microsecond
-        // ticks. The 32-bit counter is expected to wrap naturally.
-        return unchecked((uint)(elapsedMicroseconds * 3L));
     }
 
     internal void SubmitBattery(ReadOnlySpan<byte> payload)
@@ -269,12 +265,21 @@ internal sealed class ControllerSession : IDisposable
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
-            // A field this report does not claim is not programming anything.
-            // The motor bytes are the exception; see OutputValidFlags.
             var valid = OutputValidFlags.From(output.Fields);
-            if (TryByte(output.Fields, "leftMotor", out var left) &&
-                TryByte(output.Fields, "rightMotor", out var right))
+            var hasEffect = output.Fields.TryGetValue("effectPayload", out var rawEffect) &&
+                rawEffect is byte[] { Length: 47 };
+            byte[] haptics = Array.Empty<byte>();
+            var hapticsChanged = hasEffect && _hapticsState.TryUpdate((byte[])rawEffect!, out haptics);
+            if (hapticsChanged)
             {
+                // Publish before generic rumble so physical clients see authoritative mode first.
+                EmitHapticsState(haptics);
+            }
+            var hasLeft = TryByte(output.Fields, "leftMotor", out var left);
+            var hasRight = TryByte(output.Fields, "rightMotor", out var right);
+            if (hasEffect ? hapticsChanged : hasLeft && hasRight)
+            {
+                if (hasEffect) { left = _hapticsState.Left; right = _hapticsState.Right; }
                 var payload = new byte[6];
                 payload[0] = DeviceId;
                 payload[1] = ClientControllerNumber;
@@ -351,6 +356,15 @@ internal sealed class ControllerSession : IDisposable
             EmitHaptics(haptics, (ushort)frames, flags);
             offsetFrames += frames;
         }
+    }
+
+    private void EmitHapticsState(byte[] state)
+    {
+        var payload = new byte[10];
+        payload[0] = DeviceId;
+        payload[1] = ClientControllerNumber;
+        state.CopyTo(payload, 2);
+        _emit(new Protocol.Message(Protocol.MessageType.HapticsState, 0, payload));
     }
 
     private void EmitHaptics(ReadOnlySpan<byte> pcm, ushort frameCount, Protocol.HapticsFlags flags)
@@ -474,6 +488,12 @@ internal sealed class ControllerSession : IDisposable
         _controller.OutputDecoded -= OnOutputDecoded;
         lock (_outputLock)
         {
+            if (_hapticsState.TryReset(out var haptics))
+            {
+                EmitHapticsState(haptics);
+                _emit(new Protocol.Message(Protocol.MessageType.Rumble, 0,
+                    new byte[] { DeviceId, ClientControllerNumber, 0, 0, 0, 0 }));
+            }
             if (_adaptiveTriggers.TryReset(DeviceId, ClientControllerNumber, out var adaptiveTriggers))
                 _emit(adaptiveTriggers);
         }

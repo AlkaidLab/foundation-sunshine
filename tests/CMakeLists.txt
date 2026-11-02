@@ -7,12 +7,59 @@ include_directories("${CMAKE_SOURCE_DIR}")
 
 enable_testing()
 
+if (WIN32)
+    # Standalone MAT sender tests use a mock consumer, never an audio device.
+    set(MAT_RECEIVER_TEST_SOURCES
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/MatLivePlayback.c
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/MatReceiver.c
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/MatDepacketizer.c)
+    add_executable(mat_live_host_tests mat-live/host_test.cpp ${MAT_RECEIVER_TEST_SOURCES})
+    target_link_libraries(mat_live_host_tests PRIVATE OpenSSL::Crypto bcrypt advapi32 shell32 ole32 uuid)
+    set_target_properties(mat_live_host_tests PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+    add_test(NAME mat_live_host_tests COMMAND mat_live_host_tests)
+    set_tests_properties(mat_live_host_tests PROPERTIES TIMEOUT 15)
+    # Reuse the dependency's authentication/tamper cases without duplicating them.
+    add_executable(mat_live_crypto_tests
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/tests/MatLiveTest.c
+            ${MAT_RECEIVER_TEST_SOURCES})
+    target_include_directories(mat_live_crypto_tests PRIVATE ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src)
+    target_link_libraries(mat_live_crypto_tests PRIVATE OpenSSL::Crypto)
+    add_test(NAME mat_live_crypto_tests COMMAND mat_live_crypto_tests)
+    set_tests_properties(mat_live_crypto_tests PROPERTIES TIMEOUT 15)
+    add_executable(mat_mock_output_tests mat-live/mock_output_test.c ${MAT_RECEIVER_TEST_SOURCES})
+    target_include_directories(mat_mock_output_tests PRIVATE ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src)
+    target_link_libraries(mat_mock_output_tests PRIVATE OpenSSL::Crypto)
+    add_test(NAME mat_mock_output_tests COMMAND mat_mock_output_tests)
+    set_tests_properties(mat_mock_output_tests PROPERTIES TIMEOUT 15)
+endif ()
+
 # Add GoogleTest directory to the project
 set(GTEST_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third-party/googletest")
 set(INSTALL_GTEST OFF)
 set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
+
+# Adapter contract only: DSP fidelity belongs to the SDK, wire validation to common-c.
+add_executable(authored_ir_extended_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+target_include_directories(authored_ir_extended_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(authored_ir_extended_unit_tests PRIVATE moonlight::haptics gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(authored_ir_extended_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME authored_ir_extended_unit_tests COMMAND authored_ir_extended_unit_tests)
+
+add_executable(analyze_authored_ir_extended
+        ${CMAKE_SOURCE_DIR}/tests/tools/analyze_authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir_extended.cpp)
+target_include_directories(analyze_authored_ir_extended PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(analyze_authored_ir_extended PRIVATE moonlight::haptics sunshine_project_options)
+set_target_properties(analyze_authored_ir_extended PROPERTIES CXX_STANDARD 23)
+
+
 
 add_executable(perf_frame_rate_unit_tests
         ${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.cpp
@@ -31,6 +78,26 @@ target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_D
 target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
+
+add_executable(display_scale_steps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp)
+target_include_directories(display_scale_steps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(display_scale_steps_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(display_scale_steps_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME display_scale_steps_unit_tests COMMAND display_scale_steps_unit_tests)
+
+add_executable(vdd_mode_list_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_mode_list.cpp)
+target_include_directories(vdd_mode_list_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        Boost::optional
+        sunshine_project_options sunshine_coverage)
+set_target_properties(vdd_mode_list_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME vdd_mode_list_unit_tests COMMAND vdd_mode_list_unit_tests)
+
+add_executable(current_capture_target_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp)
+target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
 
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
@@ -518,18 +585,43 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
-# Fake NVAPI exports must never be linked beside the real driver wrapper.
-list(FILTER TEST_SOURCES EXCLUDE REGEX "test_nvprefs\\.cpp")
-# The touchscreen device test has a dedicated target that links the device
-# implementation; do not compile a second copy into the aggregate suite.
-list(FILTER TEST_SOURCES EXCLUDE REGEX "test_virtual_touchscreen_device\.cpp")
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
+# MAT harnesses have independent entrypoints and explicit test targets.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
+# These files already run in registered standalone suites. Keep one copy of
+# their assertions and isolate their fixtures from the aggregate host state.
+list(REMOVE_ITEM TEST_SOURCES
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_http_util.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_loopback_usbip_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pyrowave.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)
-    # These tests depend on shader or generated backend paths and run in dedicated
-    # targets above; do not compile a second copy into the aggregate suite.
+    # Windows-only suites include fake APIs or backend paths of their own.
     list(REMOVE_ITEM TEST_SOURCES
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_component_manifest.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_microphone_client.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_nvprefs.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_credential_store.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_log.cpp
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp
             ${HDR_ENCODING_TEST_SOURCE}
             ${PRE_ENCODE_FILTER_TEST_SOURCE}
             ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
@@ -578,17 +670,8 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
 target_link_options(${PROJECT_NAME} PRIVATE)
 
-# The aggregate suite had an executable but no ctest registration, so every
-# assertion globbed into it was dead weight. The timeout is a guard, not a
-# target: nothing in here has ever run on a headless runner, so a test that
-# waits on a display or a socket should fail the job rather than hang it.
-#
-# DownloadFileTests fetches from httpbin.org, so as a gate it reports on a third
-# party's uptime rather than on this repository. It stays in the binary — run it
-# deliberately with --gtest_filter when changing http::download_file — but it
-# does not get a vote on whether a pull request is mergeable.
-add_test(NAME ${PROJECT_NAME}
-        COMMAND ${PROJECT_NAME} --gtest_filter=-DownloadFileTests/*)
+# Bound hardware and network waits in the aggregate suite.
+add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})
 set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
@@ -600,7 +683,7 @@ target_link_libraries(abr_unit_tests
         gtest_main
         ${PLATFORM_LIBRARIES}
         sunshine_project_options sunshine_coverage)
-target_compile_definitions(abr_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_definitions(abr_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS} SUNSHINE_ABR_TESTS)
 target_compile_options(abr_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)
 target_link_options(abr_unit_tests PRIVATE)
 set_target_properties(abr_unit_tests PROPERTIES CXX_STANDARD 23)
@@ -668,11 +751,6 @@ if (WIN32)
     set_target_properties(ds5_fake_sidecar PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
-    add_dependencies(${PROJECT_NAME} ds5_fake_sidecar)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE
-            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
-            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
-
     add_executable(ds5_sidecar_client_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_component_manifest.cpp
@@ -733,28 +811,6 @@ if (WIN32)
 endif ()
 
 if (WIN32)
-    add_executable(vmouse_unit_tests
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_virtual_mouse.cpp
-            ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_platform_support.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp)
-    target_include_directories(vmouse_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(vmouse_unit_tests
-            PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES}
-            gtest_main
-            ${PLATFORM_LIBRARIES}
-            sunshine_project_options sunshine_coverage)
-    target_compile_definitions(vmouse_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS} SUNSHINE_VIRTUAL_MOUSE_STANDALONE_TEST)
-    target_compile_options(vmouse_unit_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>
-            -fno-profile-arcs
-            -fno-test-coverage)
-    target_link_options(vmouse_unit_tests PRIVATE
-            -fno-profile-arcs
-            -fno-test-coverage)
-    set_target_properties(vmouse_unit_tests PROPERTIES
-            CXX_STANDARD 23
-            LINK_SEARCH_START_STATIC 1)
-
     add_executable(vmouse_probe
             ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_probe.cpp
             ${CMAKE_SOURCE_DIR}/tests/tools/vmouse_platform_support.cpp

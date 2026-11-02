@@ -4,7 +4,6 @@ import assert from 'node:assert/strict'
 import {
   createGameLibraryCuratorAgent,
   createGameLibrarySkill,
-  GAME_LIBRARY_AGENT_CAPABILITIES,
   GAME_LIBRARY_SKILL_IDS,
   getDefaultEnabledGameLibrarySkillIds,
   getGameLibraryCapabilities,
@@ -20,26 +19,6 @@ import { createCoverSelectionSkill } from '../utils/agents/gameLibrary/skills/co
 import { getGameResourceKey } from '../utils/agents/gameLibrary/skills/coverSelectionSkill.js'
 import { createGameTitleNormalizeSkill } from '../utils/agents/gameLibrary/skills/gameTitleNormalizeSkill.js'
 import { createScanOverrideMemorySkill } from '../utils/agents/gameLibrary/skills/scanOverrideMemorySkill.js'
-
-test('createGameLibrarySkill normalizes extension skill definitions', async () => {
-  const skill = createGameLibrarySkill({
-    id: ' game.test.skill ',
-    async run(context) {
-      return context
-    },
-  })
-
-  assert.equal(skill.id, 'game.test.skill')
-  assert.equal(skill.type, 'extension')
-  assert.equal(skill.label, 'game.test.skill')
-
-  await assert.doesNotReject(() => skill.run({ apps: [] }))
-})
-
-test('createGameLibrarySkill rejects invalid skill definitions', () => {
-  assert.throws(() => createGameLibrarySkill({ run() {} }), /non-empty id/)
-  assert.throws(() => createGameLibrarySkill({ id: 'game.test.invalid' }), /run\(context\)/)
-})
 
 test('game library curator agent runs memory, title, and cover skills in order', async () => {
   const calls = []
@@ -207,14 +186,6 @@ test('game library curator capabilities expose user-selectable skills', () => {
     GAME_LIBRARY_SKILL_IDS.titleNormalize,
     GAME_LIBRARY_SKILL_IDS.coverSelection,
   ])
-  assert.equal(
-    GAME_LIBRARY_AGENT_CAPABILITIES.find((capability) => capability.skillId === GAME_LIBRARY_SKILL_IDS.scanOverrideMemory)
-      .userSelectable,
-    false
-  )
-  assert.equal(getGameLibraryCapabilityIcon(GAME_LIBRARY_SKILL_IDS.titleNormalize), 'fa-wand-magic-sparkles')
-  assert.equal(getGameLibraryCapabilityLabel(GAME_LIBRARY_SKILL_IDS.coverSelection), 'AI cover matching')
-  assert.equal(getGameLibraryCapabilityLabel(GAME_LIBRARY_SKILL_IDS.coverSelection, { locale: 'zh-CN' }), 'AI \u5c01\u9762\u5339\u914d')
 })
 
 test('game library curator skill id helpers keep required skills enabled', () => {

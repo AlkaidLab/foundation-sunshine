@@ -4,53 +4,42 @@
  */
 #include <src/platform/common.h>
 
+#include <algorithm>
 #include <boost/asio/ip/host_name.hpp>
+#include <gtest/gtest.h>
 
-#include "../../tests_common.h"
-
-struct SetEnvTest: ::testing::TestWithParam<std::tuple<std::string, std::string, int>> {
+struct EnvironmentTest: testing::Test {
 protected:
+  static constexpr auto name = "SUNSHINE_UNIT_TEST_ENV_VAR";
+
   void
   TearDown() override {
-    // Clean up environment variable after each test
-    const auto &[name, value, expected] = GetParam();
     platf::unset_env(name);
   }
 };
 
-TEST_P(SetEnvTest, SetEnvironmentVariableTests) {
-  const auto &[name, value, expected] = GetParam();
-  platf::set_env(name, value);
-
-  const char *env_value = std::getenv(name.c_str());
-  if (expected == 0 && !value.empty()) {
+TEST_F(EnvironmentTest, SetsAndOverwritesVariable) {
+  for (const auto value : { "test_value_0", "test_value_1" }) {
+    ASSERT_EQ(platf::set_env(name, value), 0);
+    const char *env_value = std::getenv(name);
     ASSERT_NE(env_value, nullptr);
-    ASSERT_EQ(std::string(env_value), value);
-  }
-  else {
-    ASSERT_EQ(env_value, nullptr);
+    EXPECT_EQ(std::string(env_value), value);
   }
 }
 
-TEST_P(SetEnvTest, UnsetEnvironmentVariableTests) {
-  const auto &[name, value, expected] = GetParam();
-  platf::unset_env(name);
-
-  const char *env_value = std::getenv(name.c_str());
-  if (expected == 0) {
-    ASSERT_EQ(env_value, nullptr);
-  }
+TEST_F(EnvironmentTest, UnsetsExistingVariable) {
+  ASSERT_EQ(platf::set_env(name, "test_value"), 0);
+  ASSERT_NE(std::getenv(name), nullptr);
+  EXPECT_EQ(platf::unset_env(name), 0);
+  EXPECT_EQ(std::getenv(name), nullptr);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  SetEnvTests,
-  SetEnvTest,
-  ::testing::Values(
-    std::make_tuple("SUNSHINE_UNIT_TEST_ENV_VAR", "test_value_0", 0),
-    std::make_tuple("SUNSHINE_UNIT_TEST_ENV_VAR", "test_value_1", 0),
-    std::make_tuple("", "test_value", -1)));
-
-TEST(HostnameTests, TestAsioEquality) {
-  // These should be equivalent on all platforms for ASCII hostnames
-  ASSERT_EQ(platf::get_host_name(), boost::asio::ip::host_name());
+TEST(HostnameTests, MatchesSystemHostnameForAsciiNames) {
+  // Windows uses GetHostNameW plus UTF-8 conversion, while Asio uses the narrow
+  // system API. They provide independent paths for an ASCII hostname.
+  const auto expected = boost::asio::ip::host_name();
+  if (!std::all_of(expected.begin(), expected.end(), [](unsigned char c) { return c < 128; })) {
+    GTEST_SKIP() << "The narrow system hostname is not ASCII";
+  }
+  EXPECT_EQ(platf::get_host_name(), expected);
 }

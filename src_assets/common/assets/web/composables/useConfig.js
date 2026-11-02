@@ -70,6 +70,7 @@ const DEFAULT_TABS = [
     options: {
       audio_sink: '',
       virtual_sink: '',
+      mat_live: 'disabled',
       keep_sink_default: false,
       microphone_redirect_backend: 'vb_cable',
       stream_mic: true,
@@ -443,6 +444,7 @@ export function useConfig() {
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
       configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
       configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
+      configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)
       configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
       configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
       config.value = configData

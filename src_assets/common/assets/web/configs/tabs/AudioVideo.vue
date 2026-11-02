@@ -10,6 +10,7 @@ import DisplayDeviceOptions from './audiovideo/DisplayDeviceOptions.vue'
 import DisplayModesSettings from './audiovideo/DisplayModesSettings.vue'
 import VirtualDisplaySettings from './audiovideo/VirtualDisplaySettings.vue'
 import AutomaticNumberSetting from './audiovideo/AutomaticNumberSetting.vue'
+import MatLiveSettings from './audiovideo/MatLiveSettings.vue'
 import Checkbox from '../../components/Checkbox.vue'
 import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 
@@ -192,6 +193,8 @@ onBeforeUnmount(() => {
           v-model="config.keep_sink_default"
           :default="false"
         ></Checkbox>
+
+        <MatLiveSettings :config="config" />
 
         <!-- Install Steam Audio Drivers -->
         <div class="mb-3">

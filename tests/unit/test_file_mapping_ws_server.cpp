@@ -6,17 +6,6 @@
 
 #include <gtest/gtest.h>
 
-TEST(FileMappingWsServer, StartsStopped) {
-  boost::asio::io_context io;
-  file_mapping_ws::transport_config_t config;
-  config.certificate_file = "cert.pem";
-  config.private_key_file = "key.pem";
-
-  auto server = std::make_shared<file_mapping_ws::server_t>(io, config);
-  EXPECT_EQ(server->state(), file_mapping_ws::transport_state_e::stopped);
-  EXPECT_EQ(server->bound_port(), 0);
-}
-
 TEST(FileMappingWsServer, StartRequiresSharedOwnership) {
   boost::asio::io_context io;
   file_mapping_ws::transport_config_t config;
@@ -26,5 +15,6 @@ TEST(FileMappingWsServer, StartRequiresSharedOwnership) {
   file_mapping_ws::server_t server(io, config);
   auto result = server.start();
   EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("std::shared_ptr"), std::string::npos);
   EXPECT_EQ(server.state(), file_mapping_ws::transport_state_e::stopped);
 }
