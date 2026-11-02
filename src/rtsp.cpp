@@ -1225,6 +1225,9 @@ namespace rtsp_stream {
       if (text_context::bridge_t::instance().gui_alive()) {
         caps |= platf::platform_caps::remote_text_context;
       }
+      if (platf::query_session_locked().has_value()) {
+        caps |= platf::platform_caps::host_session_state;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
 #ifdef _WIN32
       if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {
