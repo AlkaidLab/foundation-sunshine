@@ -1863,17 +1863,21 @@ namespace config {
   }
 
   static void
-  sync_clients_config_locked(const std::map<std::string, std::string> &values) {
-    // A command-line override wins for the whole process lifetime; otherwise a
-    // save that carries "clients" updates the runtime value and one that omits
-    // it keeps whatever is already active.
+  sync_clients_config_locked(const std::map<std::string, std::string> &values, bool deleted = false) {
+    // A command-line override wins for the whole process lifetime, but bindings
+    // already saved for its UUIDs must survive the assignment. Otherwise a save
+    // that carries "clients" updates the runtime value, one that omits it keeps
+    // whatever is already active, and one that explicitly deletes it resets to [].
     if (const auto override_clients = command_line_config_overrides.find("clients");
         override_clients != command_line_config_overrides.end()) {
-      nvhttp.clients = override_clients->second;
+      nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
       return;
     }
     if (const auto clients = values.find("clients"); clients != values.end()) {
       nvhttp.clients = clients->second;
+    }
+    else if (deleted) {
+      nvhttp.clients = "[]";
     }
   }
 
@@ -1881,6 +1885,10 @@ namespace config {
   update_config(const std::map<std::string, std::string> &updates) {
     std::lock_guard lock { config_file_mutex };
     try {
+      // update_config treats an empty/null value as an explicit deletion, unlike
+      // the full-settings save where it means "omitted".
+      const bool deleted = updates.contains("clients") &&
+                           (updates.at("clients").empty() || updates.at("clients") == "null");
       const auto file_content = read_config_file_contents();
       if (!file_content) {
         return false;
@@ -1910,7 +1918,7 @@ namespace config {
       }
 
       if (!hasChanged) {
-        if (updates.contains("clients")) sync_clients_config_locked(configMap);
+        if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
         BOOST_LOG(info) << "Config unchanged, skip writing";
         return true;
       }
@@ -1927,7 +1935,7 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
-      if (updates.contains("clients")) sync_clients_config_locked(configMap);
+      if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
       if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
         const auto gamepad = configMap.find("gamepad");
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});

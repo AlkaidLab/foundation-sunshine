@@ -234,3 +234,65 @@ TEST(ConfigRuntime, UnrelatedUpdatesPreserveTheRuntimeCommandLineOverride) {
   EXPECT_EQ(config::get_clients_config(), "[]");
   EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), "[]");
 }
+
+TEST(ConfigRuntime, ExplicitClientDeletionClearsTheRuntimeList) {
+  temporary_clients_config_t temporary_config;
+  ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-3","name":"gone"}])"));
+  // update_config treats empty/null as an explicit deletion: file key gone, runtime reset.
+  ASSERT_TRUE(config::update_config({ { "clients", "" } }));
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  EXPECT_FALSE(config::parse_config(temporary_config.read()).contains("clients"));
+  // A full-settings save that only omits clients must NOT reset the runtime value.
+  ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "retained" }, { "clients", "" }, { "gamepad", config::input.gamepad } }));
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  // A later calibration save starts from the cleared list instead of resurrecting it.
+  ASSERT_TRUE(config::save_client_hdr_calibration("client-3", nlohmann::json {
+    { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-3" },
+    { "profileName", "client.icc" }, { "sha256", std::string(64, 'a') }
+  }));
+  const auto persisted = nlohmann::json::parse(config::parse_config(temporary_config.read()).at("clients"));
+  ASSERT_EQ(persisted.size(), 1);
+  EXPECT_EQ(persisted[0]["uuid"], "client-3");
+  EXPECT_FALSE(persisted[0].contains("name"));
+  EXPECT_TRUE(persisted[0].contains("hdrCalibration"));
+}
+
+TEST(ConfigRuntime, CommandLineOverrideKeepsSavedClientBindings) {
+  temporary_clients_config_t temporary_config;
+  ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-5","name":"old"}])"));
+  const nlohmann::json calibration {
+    { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-5" },
+    { "profileName", "client.icc" }, { "sha256", std::string(64, 'a') }
+  };
+  std::vector<std::string> arguments {
+    "sunshine-test",
+    R"(clients=[{"uuid":"client-5","name":"override"}])"
+  };
+  for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
+    arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
+  }
+  const auto run_parse = [&arguments] {
+    std::vector<char *> argv;
+    for (auto &argument : arguments) argv.push_back(argument.data());
+    argv.push_back(nullptr);
+    return config::parse(static_cast<int>(argv.size()) - 1, argv.data());
+  };
+  ASSERT_EQ(run_parse(), 0);
+  ASSERT_EQ(config::get_clients_config(), R"([{"uuid":"client-5","name":"override"}])");
+  ASSERT_TRUE(config::save_client_hdr_calibration("client-5", calibration));
+  // A sync under the override must keep the saved binding while the override's
+  // own client fields win.
+  ASSERT_TRUE(config::update_config({ { "clients", R"([{"uuid":"client-5","name":"saved"}])" } }));
+  const auto runtime_clients = nlohmann::json::parse(config::get_clients_config());
+  EXPECT_EQ(runtime_clients[0]["name"], "override");
+  EXPECT_EQ(runtime_clients[0]["hdrCalibration"], calibration);
+  const auto persisted = nlohmann::json::parse(config::parse_config(temporary_config.read()).at("clients"));
+  EXPECT_EQ(persisted[0]["name"], "saved");
+  EXPECT_EQ(persisted[0]["hdrCalibration"], calibration);
+  // Reload without the override: the saved list wins again.
+  arguments.erase(arguments.begin() + 1);
+  ASSERT_EQ(run_parse(), 0);
+  const auto reloaded = nlohmann::json::parse(config::get_clients_config());
+  EXPECT_EQ(reloaded[0]["name"], "saved");
+  EXPECT_EQ(reloaded[0]["hdrCalibration"], calibration);
+}
