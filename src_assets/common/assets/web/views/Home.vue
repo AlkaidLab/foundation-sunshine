@@ -478,7 +478,10 @@ onMounted(async () => {
     await nextTick()
     fitHostName()
     hostNameObserver = new ResizeObserver(fitHostName)
-    if (hostNameEl.value?.parentElement) hostNameObserver.observe(hostNameEl.value.parentElement)
+    // Observe the full-width grid, not the fit-content summary: the summary
+    // tracks its content width and would never re-fire on viewport resizes.
+    const fitScope = hostNameEl.value?.closest('.host-overview') ?? hostNameEl.value?.parentElement
+    if (fitScope) hostNameObserver.observe(fitScope)
     if (checkSetupWizard(config)) return
     reportTimer = setTimeout(() => {
       const gpuAdapters = config.adapters || []
