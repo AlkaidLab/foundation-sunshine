@@ -60,21 +60,86 @@
   font-weight: 300;
   line-height: 1.22;
 }
-.home-greeting strong {
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-.home-greeting-cjk strong {
-  // Microsoft YaHei extends below the Latin baseline. Align the visible glyph
-  // bottoms as well as the flex items' shared typographic baseline.
-  position: relative;
-  top: 0.13em;
-}
-.home-greeting-hang > span:first-child {
+.home-greeting-hang .home-greeting-whisper {
   // Hang trailing full-width punctuation: its ink sits in the left half of
-  // its em box, so pull the next word back into that empty half instead of
+  // its em box, so pull the word back into that empty half instead of
   // stacking its whitespace on top of the flex gap.
   margin-right: -0.5em;
+}
+.home-greeting strong {
+  display: inline-block;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  animation: home-word-in 380ms cubic-bezier(0.34, 1.56, 0.64, 1) 180ms backwards;
+  // The gradient stays painted but mostly off-window while resting: sliding
+  // background-position reveals the accent tail only on hover.
+  background: linear-gradient(
+      95deg,
+      var(--mt-text-primary, var(--ui-text-primary)) 0%,
+      var(--mt-text-primary, var(--ui-text-primary)) 42%,
+      color-mix(in srgb, var(--ui-accent) 62%, var(--mt-text-primary, var(--ui-text-primary))) 100%
+    )
+    no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 250% 100%;
+  background-position: 0% 0;
+  transition: background-position 400ms ease;
+}
+.home-greeting:hover strong,
+.home-greeting-word:focus-visible {
+  background-position: 100% 0;
+}
+@keyframes home-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.home-greeting-whisper {
+  display: inline-block;
+  animation: home-whisper-in 260ms ease-out backwards;
+}
+@keyframes home-whisper-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+.home-greeting-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.06em;
+  height: 0.52em;
+  margin-left: 0.08em;
+}
+.home-greeting-eq i {
+  width: 0.07em;
+  border-radius: 1px;
+  background: var(--ui-accent);
+  transform-origin: bottom;
+  animation: home-greeting-eq-bounce 1.15s ease-in-out infinite;
+}
+.home-greeting-eq i:nth-child(1) {
+  height: 45%;
+}
+.home-greeting-eq i:nth-child(2) {
+  height: 100%;
+  animation-delay: 0.28s;
+}
+.home-greeting-eq i:nth-child(3) {
+  height: 68%;
+  animation-delay: 0.56s;
+}
+@keyframes home-greeting-eq-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }
 .home-tagline {
   max-width: 52rem;
@@ -593,7 +658,10 @@
   .home-enter,
   .home-stream-arrival,
   .recent-live i,
-  .recent-row-arrow {
+  .recent-row-arrow,
+  .home-greeting-whisper,
+  .home-greeting-word,
+  .home-greeting-eq i {
     animation: none;
     transition: none;
     transform: none;

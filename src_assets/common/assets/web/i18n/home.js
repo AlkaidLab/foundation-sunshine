@@ -46,6 +46,12 @@ const en = {
     yesterday: 'Yesterday',
     daysAgo: '{n} days ago',
   },
+  whisper: {
+    morning: 'Good morning,',
+    afternoon: 'Good afternoon,',
+    evening: 'Good evening,',
+    lateNight: 'Up late,',
+  },
   support: {
     entry: 'A refill for Alkaidlab?',
   },
@@ -98,6 +104,12 @@ const zh = {
     hoursAgo: '{n} 小时前',
     yesterday: '昨天',
     daysAgo: '{n} 天前',
+  },
+  whisper: {
+    morning: '早上好，',
+    afternoon: '下午好，',
+    evening: '晚上好，',
+    lateNight: '夜深了，',
   },
   support: {
     entry: '给摇光续杯？',
