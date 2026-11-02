@@ -5,7 +5,12 @@
   >
     <div class="container-fluid">
       <a class="navbar-brand brand-enhanced" href="/" title="Sunshine">
-        <img src="/images/logo-sunshine-256.png" height="50" alt="Sunshine-Foundation" class="brand-logo" />
+        <img
+          src="/images/logo-sunshine-256.png"
+          height="50"
+          alt="Sunshine-Foundation"
+          class="brand-logo"
+        />
       </a>
       <button
         class="navbar-toggler"
@@ -47,6 +52,8 @@ import ThemeToggle from '../common/ThemeToggle.vue'
 import AccountMenu from '../common/AccountMenu.vue'
 import { useBackground } from '../../composables/useBackground.js'
 
+const props = defineProps({ materialColors: { type: Boolean, default: false } })
+
 // 导航项配置
 const navItems = Object.freeze([
   { path: '/', icon: 'fa-home', label: 'navbar.home' },
@@ -58,7 +65,10 @@ const navItems = Object.freeze([
 
 // 使用背景管理 composable
 const { t } = useI18n()
-const { loadBackground, addDragListeners } = useBackground({ translate: t })
+const { loadBackground, addDragListeners } = useBackground({
+  translate: t,
+  materialColors: props.materialColors,
+})
 const isEmbeddedGui = window.isTauri === true && window.parent !== window
 
 if (isEmbeddedGui) {
@@ -159,7 +169,9 @@ html[data-sunshine-gui='true'] body {
   color: var(--ui-text-secondary, #64748b) !important;
   border: 0;
   border-radius: var(--ui-radius-sm, 8px);
-  transition: color 0.2s ease, background-color 0.2s ease;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease;
 }
 
 .header {
