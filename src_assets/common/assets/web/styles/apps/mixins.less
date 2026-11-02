@@ -14,14 +14,11 @@
   transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
 
-// Common backdrop blur
-.glass-effect() {
-  backdrop-filter: blur(10px);
-}
-
-.glass-effect-light() {
-  backdrop-filter: blur(4px);
-}
+// 原来这里有两个 backdrop-filter 的玻璃 mixin（blur(10px) / blur(4px)）。
+// 面板（WebView2）里 WebUI 是 iframe 内嵌、背后是面板壁纸，下层一旦重绘
+// （hover 的位移与阴影、图标变色），backdrop-filter 的缓存就会被部分失效重采样，
+// 表面上闪出硬边色块。串流应用页的搜索框、视图切换、应用卡都用的是这两个 mixin，
+// 现改为各自用主题底色自持，不再取模糊。
 
 // Common button base
 .btn-base() {
