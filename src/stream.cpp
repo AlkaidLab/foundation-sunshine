@@ -4531,15 +4531,21 @@ namespace stream {
       }
 
       // Persist the host-side fact that this client streamed, so the WebUI
-      // recent list survives browsers and page closures.
-      if (!session.client_cert_uuid.empty()) {
+      // recent list survives browsers and page closures. Control-only
+      // sessions never carried media and leave no history. The write is
+      // deferred to the task pool: save_state synchronizes the state file,
+      // and join() runs under a 10-second watchdog that must not depend on
+      // filesystem latency.
+      if (!session.control_only && !session.client_cert_uuid.empty()) {
         const auto ended_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::system_clock::now().time_since_epoch()
         ).count();
-        if (!nvhttp::touch_client_last_session(session.client_cert_uuid, ended_at_ms)) {
-          BOOST_LOG(debug) << "Couldn't record session end for client_uuid="sv
-                           << session.client_cert_uuid;
-        }
+        const auto client_uuid = session.client_cert_uuid;
+        task_pool.push([client_uuid, ended_at_ms] {
+          if (!nvhttp::touch_client_last_session(client_uuid, ended_at_ms)) {
+            BOOST_LOG(debug) << "Couldn't record session end for client_uuid="sv << client_uuid;
+          }
+        });
       }
 
       BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id

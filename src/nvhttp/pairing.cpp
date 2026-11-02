@@ -968,15 +968,22 @@ namespace nvhttp {
     if (uuid.empty() || timestamp_ms <= 0) {
       return false;
     }
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+    // A mark left by a run with a fast clock sits far beyond the corrected
+    // host clock; accept a fresh end instead of rejecting every session
+    // until real time catches up. One hour absorbs ordinary skew.
+    if (timestamp_ms > now_ms) {
+      timestamp_ms = now_ms;
+    }
     std::lock_guard mutation_lock { client_mutation_mutex };
     bool touched = false;
     {
       std::unique_lock<std::shared_mutex> ul(client_state_mutex);
       for (auto &named_cert : client_root.named_devices) {
         if (named_cert.uuid == uuid) {
-          // Never move a client's last-session mark backwards: a skewed clock
-          // or an out-of-order teardown must not shrink the history.
-          if (timestamp_ms > named_cert.last_session_ended) {
+          if (named_cert.last_session_ended > now_ms + 3600000 ||
+              timestamp_ms > named_cert.last_session_ended) {
             named_cert.last_session_ended = timestamp_ms;
             touched = true;
           }
@@ -984,10 +991,15 @@ namespace nvhttp {
         }
       }
     }
-    if (touched) {
-      save_state();
+    if (!touched) {
+      return false;
     }
-    return touched;
+    if (config::sunshine.flags[config::flag::FRESH_STATE]) {
+      // Fresh state never persists; like add_authorized_client, the in-memory
+      // mark is all this run keeps.
+      return true;
+    }
+    return save_state();
   }
 
 }  // namespace nvhttp
