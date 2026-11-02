@@ -219,7 +219,7 @@ target_include_directories(config_runtime_unit_tests PRIVATE
 target_link_libraries(config_runtime_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
         sunshine_project_options sunshine_coverage
         sunshine::host_headers sunshine::tls
-        Boost::boost Boost::log Boost::filesystem Boost::property_tree Boost::asio Boost::regex
+        Boost::boost Boost::log Boost::filesystem Boost::property_tree Boost::asio Boost::beast Boost::regex
         Boost::format Boost::process)
 set_target_properties(config_runtime_unit_tests PROPERTIES CXX_STANDARD 23)
 target_compile_definitions(config_runtime_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
