@@ -44,12 +44,10 @@ defineProps({
   background: linear-gradient(
     135deg,
     color-mix(in srgb, var(--ui-danger-soft) 66%, var(--ui-surface-strong)),
-    color-mix(in srgb, var(--ui-surface) 92%, transparent)
+    color-mix(in srgb, var(--ui-surface-strong) 88%, var(--ui-surface))
   );
   box-shadow: var(--ui-shadow-sm);
   color: var(--ui-text-primary);
-  backdrop-filter: blur(14px) saturate(1.05);
-  -webkit-backdrop-filter: blur(14px) saturate(1.05);
 }
 
 .startup-alert-icon {

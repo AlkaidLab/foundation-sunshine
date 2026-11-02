@@ -313,11 +313,27 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 卡面自带半透明底板，不再用 backdrop-filter 取玻璃。
+   这张卡嵌在 Control Panel（WebView2）的 iframe 里，背后是面板壁纸；只要下层
+   资源卡发生重绘（hover 的 transform / box-shadow / 图标与箭头变色），卡片的
+   backdrop-filter 缓存就会被部分失效重采样，卡面上闪出硬边色块，即 #1007 拿掉
+   不透明底板之后暴露出来的闪烁。改用主题底板加一层柔光，观感接近，且不受下层
+   重绘影响。 */
 .version-card {
   overflow: hidden;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-lg);
-  backdrop-filter: blur(24px) saturate(115%);
+  background:
+    radial-gradient(
+      120% 90% at 82% 6%,
+      color-mix(in srgb, var(--ui-accent-soft) 55%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(
+      150deg,
+      var(--ui-surface-strong),
+      color-mix(in srgb, var(--ui-surface-strong) 84%, var(--ui-surface))
+    );
   box-shadow: var(--ui-shadow-md);
 }
 

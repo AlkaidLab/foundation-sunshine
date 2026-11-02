@@ -316,19 +316,27 @@ onMounted(async () => {
   padding-bottom: 0.35rem;
 }
 
+/* 顶卡自带半透明底板，不再用 backdrop-filter 取玻璃；原因同 VersionCard：
+   面板（WebView2）里下层重绘会让 backdrop-filter 缓存部分失效重采样，卡面闪出
+   硬边色块。底板做成与原来相近的通透度，外加一层右上角柔光当氛围。 */
 .home-hero {
   position: relative;
   margin: 0.45rem 0 0.7rem;
   overflow: hidden;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   border-radius: calc(var(--ui-radius-lg, 16px) + 2px);
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--ui-surface-strong) 94%, var(--ui-accent-soft)),
-    color-mix(in srgb, var(--ui-surface) 92%, transparent)
-  );
+  background:
+    radial-gradient(
+      120% 90% at 84% 4%,
+      color-mix(in srgb, var(--ui-accent-soft) 55%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--ui-surface-strong) 96%, var(--ui-accent-soft)),
+      color-mix(in srgb, var(--ui-surface-strong) 88%, var(--ui-surface))
+    );
   box-shadow: var(--ui-shadow-md, 0 12px 32px rgba(58, 126, 213, 0.14));
-  backdrop-filter: blur(18px);
 }
 
 .home-hero::before,
@@ -387,9 +395,8 @@ onMounted(async () => {
   padding: 0.45rem 0.7rem;
   border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
   border-radius: var(--ui-radius-md, 12px);
-  background: color-mix(in srgb, var(--ui-surface) 88%, transparent);
+  background: color-mix(in srgb, var(--ui-surface-strong) 92%, transparent);
   color: var(--ui-text-primary, #1e293b);
-  backdrop-filter: blur(10px);
   font-size: var(--font-size-sm);
   font-weight: 600;
   font-family: inherit;
