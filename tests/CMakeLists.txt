@@ -298,6 +298,23 @@ if (WIN32)
     set_target_properties(tray_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
+# Session and login-throttle policy are independent of a listening server and
+# of the platform display stack, so their suite stays a focused standalone
+# target on every host.
+add_executable(session_store_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_store.cpp)
+target_include_directories(session_store_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_store_unit_tests PRIVATE gtest_main
+        sunshine_project_options sunshine_coverage sunshine_crypto)
+target_compile_options(session_store_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(session_store_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(session_store_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME session_store_unit_tests COMMAND session_store_unit_tests)
+
 
 add_executable(sunshinesvc_state_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)

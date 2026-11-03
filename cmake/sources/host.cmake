@@ -171,6 +171,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/common.cpp src/confighttp/common.h
     src/confighttp/auth.cpp src/confighttp/auth.h
     src/confighttp/local_auth_token.cpp src/confighttp/local_auth_token.h
+    src/confighttp/session_store.cpp src/confighttp/session_store.h
+    src/confighttp/login_throttle.cpp src/confighttp/login_throttle.h
     src/confighttp/assets.cpp src/confighttp/assets.h
     src/confighttp/apps.cpp src/confighttp/apps.h
     src/confighttp/configuration.cpp src/confighttp/configuration.h
