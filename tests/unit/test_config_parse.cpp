@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include "src/config.h"
 

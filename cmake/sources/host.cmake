@@ -20,6 +20,7 @@ set(SUNSHINE_HOST_SOURCES
 
     # src/hdr
     src/hdr/client_display_capabilities.cpp src/hdr/client_display_capabilities.h
+    src/hdr/calibration.cpp src/hdr/calibration.h
     src/hdr/dynamic_hdr_selection.cpp src/hdr/dynamic_hdr_selection.h
     src/hdr/session_target.cpp src/hdr/session_target.h
 

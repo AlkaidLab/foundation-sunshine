@@ -12,6 +12,8 @@
 // lib includes
 #include <nlohmann/json_fwd.hpp>
 
+#include "src/hdr/calibration.h"
+
 namespace display_device::win_color_profile {
 
   /**
@@ -35,16 +37,32 @@ namespace display_device::win_color_profile {
     bool applied_profile_was_associated { false };
   };
 
-  struct calibration_luminance_t {
-    std::string profile_name;
-    float max_nits {};
-    float min_nits {};
-    float max_full_frame_nits {};
+  struct calibration_result_t {
+    enum class state_e {
+      absent,
+      unavailable,
+      invalid,
+      detected
+    };
+    state_e state { state_e::unavailable };
+    std::string stage;
+    std::uint32_t error {};
+    std::string user_sid;
+    std::optional<unsigned> scope;
+    std::optional<hdr::calibration_profile_t> profile;
   };
 
-  /** Read ST.2086 luminance from the display's active MHC2 profile. */
-  [[nodiscard]] std::optional<calibration_luminance_t>
+  /** Inspect the exact display's active HDR association as the interactive user. */
+  [[nodiscard]] calibration_result_t
   current_hdr_calibration(const std::string &device_id);
+
+  /** Validate an installed bound profile before the client's VDD exists. */
+  [[nodiscard]] calibration_result_t
+  read_hdr_calibration(const std::string &profile_name);
+
+  /** Select an already-validated binding on the exact active VDD, without touching physical screens. */
+  bool
+  apply_hdr_calibration(const std::string &device_id, const hdr::calibration_binding_t &binding);
 
   /**
    * @brief Serialize a profile restoration snapshot.

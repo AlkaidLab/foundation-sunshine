@@ -16,6 +16,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include "nvenc/nvenc_config.h"
 
 namespace config {
@@ -352,4 +354,8 @@ namespace config {
    */
   bool
   save_clients_config(const std::string &clients);
+
+  /** Update only Core-owned calibration data under the existing configuration lock. */
+  bool
+  save_client_hdr_calibration(const std::string &uuid, const nlohmann::json &calibration);
 }  // namespace config

@@ -10,6 +10,7 @@
 #include "src/confighttp/common.h"
 #include "src/display_device/color_profile.h"
 #include "src/display_device/display_device.h"
+#include "src/hdr/calibration.h"
 #include "src/globals.h"
 #include "src/image_enhancement/config.h"
 #include "src/logging.h"
@@ -19,10 +20,14 @@
 #include "src/video.h"
 #include <boost/algorithm/string.hpp>
 #include <cmath>
+#include <chrono>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
+  #include "src/display_device/session.h"
+  #include "src/display_device/vdd_utils.h"
   #include "src/platform/windows/display_device/color_profile.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
 #endif
 
 using namespace std::literals;
@@ -160,72 +165,148 @@ namespace confighttp::runtime {
       }
     }
 
+#ifdef _WIN32
+    std::optional<hdr::calibration_binding_t>
+    inspect_calibration(json &output) {
+      output = {
+        { "success", true }, { "supported", true }, { "vddActive", false },
+        { "hdrEnabled", false }, { "calibrated", false }, { "profileName", nullptr },
+        { "profileHash", nullptr }, { "maxNits", nullptr }, { "minNits", nullptr },
+        { "maxFullFrameNits", nullptr }, { "state", "waiting_stream" },
+        { "sharedVdd", config::video.vdd_reuse }, { "activeClients", json::array() },
+        { "canCalibrate", false }, { "clientUuid", "" }, { "deviceId", "" }, { "sessionId", 0 }
+      };
+      std::set<std::string> clients;
+      std::size_t active_sessions = 0;
+      for (const auto &session : stream::session::get_all_sessions_info()) {
+        if (session.state == "RUNNING" && session.enable_hdr && session.use_vdd) {
+          ++active_sessions;
+          output["sessionId"] = session.session_id;
+          if (clients.insert(session.client_uuid).second) {
+            output["activeClients"].push_back({ { "uuid", session.client_uuid }, { "name", session.client_name } });
+          }
+        }
+      }
+      if (config::video.vdd_reuse) {
+        output["state"] = "shared_vdd";
+        return std::nullopt;
+      }
+      if (active_sessions > 1) {
+        output["state"] = "multiple_streams";
+        return std::nullopt;
+      }
+      const auto target = display_device::session_t::get().vdd_context();
+      if (active_sessions != 1 || clients.begin()->empty() || target.client_id != *clients.begin()) {
+        return std::nullopt;
+      }
+      output["clientUuid"] = target.client_id;
+      output["deviceId"] = target.device_id;
+      if (target.device_id.empty()) {
+        output["state"] = "waiting_vdd";
+        return std::nullopt;
+      }
+      if (display_device::w_utils::is_user_session_locked()) {
+        output["state"] = "locked";
+        return std::nullopt;
+      }
+      const auto states = display_device::get_current_hdr_states({ target.device_id });
+      const auto state = states.find(target.device_id);
+      output["vddActive"] = state != states.end();
+      const bool enabled = state != states.end() && state->second == display_device::hdr_state_e::enabled;
+      output["hdrEnabled"] = enabled;
+      const auto inspection = display_device::win_color_profile::current_hdr_calibration(target.device_id);
+      output["diagnostic"] = {
+        { "stage", inspection.stage }, { "hresult", inspection.error }, { "userSid", inspection.user_sid },
+        { "scope", inspection.scope ? json(*inspection.scope) : json(nullptr) }
+      };
+      using state_e = display_device::win_color_profile::calibration_result_t::state_e;
+      output["canCalibrate"] = enabled && !inspection.user_sid.empty();
+      if (inspection.state == state_e::unavailable)
+        output["state"] = "unavailable";
+      else if (!enabled)
+        output["state"] = "waiting_hdr";
+      else if (inspection.state == state_e::invalid)
+        output["state"] = "invalid_profile";
+      else
+        output["state"] = "ready";
+
+      if (inspection.profile) {
+        const auto &profile = *inspection.profile;
+        output["profileName"] = profile.profile_name;
+        output["profileHash"] = profile.fingerprint;
+        output["maxNits"] = profile.luminance.max_nits;
+        output["minNits"] = profile.luminance.min_nits;
+        output["maxFullFrameNits"] = profile.luminance.max_full_frame_nits;
+        const auto binding = hdr::client_calibration(config::get_clients_config(), target.client_id);
+        const hdr::calibration_binding_t candidate {
+          inspection.user_sid, display_device::vdd_utils::generate_client_guid(target.client_id), profile
+        };
+        const bool bound = binding && hdr::calibration_matches(*binding, candidate.user_sid, candidate.vdd_id, profile);
+        output["calibrated"] = enabled && bound;
+        if (enabled) {
+          output["state"] = bound ? "calibrated" : "unbound_profile";
+          return candidate;
+        }
+      }
+      return std::nullopt;
+    }
+
+#endif
+
     void
     getRuntimeHdrCalibration(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
       print_req(request);
       if (!require_localhost(response, request, "getting HDR calibration status")) return;
-
       try {
-        json output {
-          { "success", true },
-          { "supported", false },
-          { "vddActive", false },
-          { "hdrEnabled", false },
-          { "calibrated", false },
-          { "profileName", nullptr },
-          { "maxNits", nullptr },
-          { "minNits", nullptr },
-          { "maxFullFrameNits", nullptr },
-          { "state", "unsupported" },
-          { "sharedVdd", config::video.vdd_reuse },
-          { "activeClients", json::array() },
-        };
-
-        for (const auto &session : stream::session::get_all_sessions_info()) {
-          if (session.state == "RUNNING" && session.enable_hdr && session.use_vdd) {
-            output["activeClients"].push_back({
-              { "uuid", session.client_uuid },
-              { "name", session.client_name },
-            });
-          }
-        }
-
 #ifdef _WIN32
-        output["supported"] = true;
-        const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-        if (!vdd_id.empty()) {
-          output["vddActive"] = true;
-          const auto hdr_states = display_device::get_current_hdr_states({ vdd_id });
-          const auto hdr_state = hdr_states.find(vdd_id);
-          const bool hdr_enabled = hdr_state != hdr_states.end() &&
-                                   hdr_state->second == display_device::hdr_state_e::enabled;
-          output["hdrEnabled"] = hdr_enabled;
-          output["state"] = hdr_enabled ? "ready" : "waiting_hdr";
-
-          if (const auto calibration = display_device::win_color_profile::current_hdr_calibration(vdd_id)) {
-            output["calibrated"] = true;
-            output["profileName"] = calibration->profile_name;
-            output["maxNits"] = calibration->max_nits;
-            output["minNits"] = calibration->min_nits;
-            output["maxFullFrameNits"] = calibration->max_full_frame_nits;
-            output["state"] = "calibrated";
-          }
-        }
-        else {
-          output["state"] = "waiting_vdd";
-        }
-#endif
-
+        json output;
+        inspect_calibration(output);
         send_response(response, output);
+#else
+        send_response(response, json { { "success", true }, { "supported", false }, { "calibrated", false }, { "state", "unsupported" } });
+#endif
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "getRuntimeHdrCalibration: " << e.what();
         write_runtime_error(response, web::StatusCode::internal_server_error, 500, e.what());
       }
-      catch (...) {
-        BOOST_LOG(error) << "getRuntimeHdrCalibration: Unknown exception";
-        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
+    }
+
+    void
+    saveRuntimeHdrCalibration(resp_https_t response, req_https_t request) {
+      if (!check_content_type(response, request, "application/json")) return;
+      if (!authenticate(response, request)) return;
+      if (!require_localhost(response, request, "updating HDR calibration")) return;
+      try {
+#ifdef _WIN32
+        const auto input = json::parse(request->content.string());
+        json output;
+        const auto binding = inspect_calibration(output);
+        // Match the exact snapshot the user chose, including the stream instance.
+        // A stale panel must not bind a new client's or Windows user's default ICC.
+        if (!binding || input.value("clientUuid", std::string {}) != output.at("clientUuid").get_ref<const std::string &>() ||
+            input.value("deviceId", std::string {}) != output.at("deviceId").get_ref<const std::string &>() ||
+            input.at("sessionId") != output.at("sessionId") ||
+            input.value("userSid", std::string {}) != binding->user_sid ||
+            input.value("profileName", std::string {}) != binding->profile.profile_name ||
+            input.value("profileHash", std::string {}) != binding->profile.fingerprint) {
+          throw std::invalid_argument("The HDR client, display, user or profile changed; refresh the calibration status");
+        }
+        if (!config::save_client_hdr_calibration(output.at("clientUuid").get<std::string>(), json(*binding))) {
+          write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Failed to save the client HDR calibration");
+          return;
+        }
+        output["calibrated"] = true;
+        output["state"] = "calibrated";
+        send_response(response, output);
+#else
+        throw std::invalid_argument("HDR calibration requires Windows");
+#endif
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "saveRuntimeHdrCalibration: " << e.what();
+        write_runtime_error(response, web::StatusCode::bad_request, 400, e.what());
       }
     }
 
@@ -459,6 +540,7 @@ namespace confighttp::runtime {
     server.resource["^/api/runtime/sessions/stop$"]["POST"] = stopRuntimeSessions;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
+    server.resource["^/api/runtime/hdr-calibration$"]["POST"] = saveRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/api/perf/frame-rates$"]["POST"] = setPerfFrameRates;
