@@ -55,19 +55,13 @@ namespace amf {
     };
 
     ~impl() {
-      shutdown();
-    }
-
-    void
-    shutdown() {
       context_state_guard guard(immediate1.Get(), private_state.Get());
-      ready = false;
+      // Release AMF interfaces before unloading the runtime that implements them.
       if (converter) converter->Terminate();
       converter = nullptr;
       if (context) context->Terminate();
       context = nullptr;
       if (library) FreeLibrary(library);
-      library = nullptr;
     }
 
     bool

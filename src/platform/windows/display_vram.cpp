@@ -238,7 +238,6 @@ namespace platf::dxgi {
   blob_t simple_cursor_ps_hlsl;
   blob_t hdr_luminance_analysis_cs_hlsl;
   blob_t hdr_luminance_reduce_cs_hlsl;
-  blob_t prepare_hlg_scene_cs_hlsl;
   blob_t convert_yuv420_p010_cs_perceptual_quantizer_hlsl;
   blob_t convert_yuv420_p010_cs_hybrid_log_gamma_hlsl;
   blob_t convert_yuv420_p010_cs_perceptual_quantizer_hdr_analysis_hlsl;
@@ -2332,14 +2331,20 @@ namespace platf::dxgi {
       const bool hlg = ::video::colorspace_is_hlg(colorspace);
       const bool rotated = display->display_rotation != DXGI_MODE_ROTATION_UNSPECIFIED &&
                            display->display_rotation != DXGI_MODE_ROTATION_IDENTITY;
-      if (rotated) vpe_fallback_reason = "vpe_rotation_unsupported";
-      else if (format != DXGI_FORMAT_NV12 && format != DXGI_FORMAT_P010) vpe_fallback_reason = "vpe_output_format_unsupported";
-      else if (format == DXGI_FORMAT_P010 && !::video::colorspace_is_pq(colorspace) && !hlg) vpe_fallback_reason = "vpe_hdr_transfer_unsupported";
+      if (rotated)
+        vpe_fallback_reason = "vpe_rotation_unsupported";
+      else if (format != DXGI_FORMAT_NV12 && format != DXGI_FORMAT_P010)
+        vpe_fallback_reason = "vpe_output_format_unsupported";
+      else if (format == DXGI_FORMAT_P010 && !::video::colorspace_is_pq(colorspace) && !hlg)
+        vpe_fallback_reason = "vpe_hdr_transfer_unsupported";
       else {
         cs_t hlg_prepare;
-        if (hlg && prepare_hlg_scene_cs_hlsl) {
-          device->CreateComputeShader(prepare_hlg_scene_cs_hlsl->GetBufferPointer(),
-            prepare_hlg_scene_cs_hlsl->GetBufferSize(), nullptr, &hlg_prepare);
+        if (hlg) {
+          // Compile this experimental-only shader once, when an HLG stream needs it.
+          static auto bytecode = compile_compute_shader(SUNSHINE_SHADERS_DIR "/prepare_hlg_scene_cs.hlsl");
+          if (bytecode) {
+            device->CreateComputeShader(bytecode->GetBufferPointer(), bytecode->GetBufferSize(), nullptr, &hlg_prepare);
+          }
         }
         vpe_converter = std::make_unique<::amf::amf_vpe_d3d11>(device.get(), device_ctx.get(), colorspace,
           width, height, active_width, active_height, offset_x, offset_y, hdr_nominal_peak_nits, hlg_prepare.get());
@@ -4848,7 +4853,6 @@ namespace platf::dxgi {
 
     // Compile HDR luminance analysis compute shaders (optional, non-fatal if fails)
     hdr_luminance_analysis_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/hdr_luminance_analysis_cs.hlsl");
-    prepare_hlg_scene_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/prepare_hlg_scene_cs.hlsl");
     if (!hdr_luminance_analysis_cs_hlsl) {
       BOOST_LOG(warning) << "Failed to compile HDR luminance analysis CS, per-frame HDR metadata will use defaults";
     }
