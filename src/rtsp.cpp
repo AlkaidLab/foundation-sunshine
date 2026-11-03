@@ -2128,7 +2128,7 @@ namespace rtsp_stream {
                                  0;
     config.monitor.bitrate_budget = std::make_shared<streaming::bitrate_budget_t>(
       static_cast<int>(std::min<std::int64_t>(total_request, std::numeric_limits<int>::max())),
-      config::video.max_bitrate, audio_reserve, has_total_request ? 500 : 0,
+      config::host_max_bitrate_kbps(), audio_reserve, has_total_request ? 500 : 0,
       initial_fec, automatic_fec);
     config.monitor.bitrate = config.monitor.bitrate_budget->applied().encoder_kbps;
     BOOST_LOG(debug) << "Session bitrate budget: " << config.monitor.bitrate_budget->total()

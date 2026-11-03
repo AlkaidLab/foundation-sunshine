@@ -3,6 +3,7 @@
  * @brief Definitions for the configuration of Sunshine.
  */
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -29,13 +30,14 @@
 #include "utility.h"
 #include "globals.h"
 #include "hdr/calibration.h"
+#include "streaming/bitrate.h"
 
 #include "display_device/parsed_config.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
-  #include <shellapi.h>
   #include "platform/windows/misc.h"
+  #include <shellapi.h>
 #endif
 
 #ifndef __APPLE__
@@ -85,7 +87,7 @@ namespace config {
       }
       return contents;
     }
-  }
+  }  // namespace
 
   namespace nv {
 
@@ -555,6 +557,7 @@ namespace config {
     CERTIFICATE_FILE,
 
     platf::get_host_name(),  // sunshine_name,
+    {},  // fs_host_icon
     "[]",
     "sunshine_state.json"s,  // file_state
     "[]"s,  // file_mappings
@@ -562,6 +565,8 @@ namespace config {
     false,  // usb_forwarding_enabled: explicit host opt-in
     0,  // usb_forwarding_port: automatic (main port + 7)
     {},  // external_ip
+    {},  // external_endpoints
+    {},  // stun_servers
     {
       "1280x720"s,
       "1920x1080"s,
@@ -640,6 +645,10 @@ namespace config {
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
+    30,  // session_idle_minutes
+    12,  // session_absolute_hours
+    7 * 24 * 60,  // session_remember_idle_minutes
+    30,  // session_remember_days
     {},  // prep commands
   };
 
@@ -1460,6 +1469,7 @@ namespace config {
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);
     string_f(vars, "sunshine_name", nvhttp.sunshine_name);
+    string_f(vars, "fs_host_icon", nvhttp.fs_host_icon);
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
@@ -1651,10 +1661,14 @@ namespace config {
                                                                    "fr"sv,  // French
                                                                    "it"sv,  // Italian
                                                                    "ja"sv,  // Japanese
+                                                                   "ko"sv,  // Korean
+                                                                   "pl"sv,  // Polish
                                                                    "pt"sv,  // Portuguese
+                                                                   "pt_BR"sv,  // Portuguese (Brazil)
                                                                    "ru"sv,  // Russian
                                                                    "sv"sv,  // Swedish
                                                                    "tr"sv,  // Turkish
+                                                                   "uk"sv,  // Ukrainian
                                                                    "zh"sv,  // Chinese
                                                                    "zh_TW"sv,  // Chinese (Traditional)
                                                                  });
@@ -1992,8 +2006,18 @@ namespace config {
     return snapshot;
   }
 
+  int
+  host_max_bitrate_kbps() {
+    return std::atomic_ref<int>(video.max_bitrate).load(std::memory_order_relaxed);
+  }
+
+  void
+  set_host_max_bitrate_kbps(int kbps) {
+    std::atomic_ref<int>(video.max_bitrate).store(std::max(0, kbps), std::memory_order_relaxed);
+  }
+
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig) {
+  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale) {
     std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
@@ -2002,6 +2026,8 @@ namespace config {
         "platform",  // 平台信息，编译时确定，只读
         "version",  // 版本号，只读
         "active_encoder",  // 运行时探测后实际使用的编码器，只读
+        "active_hevc_mode",  // 探测后 HEVC 实际提供的模式，只读
+        "active_av1_mode",  // 探测后 AV1 实际提供的模式，只读
         "nvidia_vsync",  // NVIDIA compatibility capability and runtime state, read-only
         "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
@@ -2023,6 +2049,11 @@ namespace config {
       }
       const auto existing_config = parse_config(*original_file_content);
       std::map<std::string, std::string> originalMap { existing_config.begin(), existing_config.end() };
+      if (previous_locale) {
+        // the language of the file before this save (the host's default when the file does not name one)
+        const auto locale = originalMap.find("locale");
+        *previous_locale = locale == originalMap.end() || locale->second.empty() ? "en" : locale->second;
+      }
 
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
@@ -2084,6 +2115,16 @@ namespace config {
       }
 
       if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
+      // The bitrate ceiling is live: the running process takes the saved value now (a key that is gone from the file means no ceiling, as at start-up). The caller then tells the running sessions
+      // (stream::session::apply_host_bitrate_cap), which is why the saved value and the one in force never differ.
+      {
+        const auto cap = resultMap.find("max_bitrate");
+        const auto next = cap == resultMap.end() ? 0 : streaming::parse_bitrate_ceiling_kbps(cap->second);
+        if (next != host_max_bitrate_kbps()) {
+          BOOST_LOG(info) << "Host bitrate ceiling: " << host_max_bitrate_kbps() << " -> " << next << " Kbps (0 = none)";
+          set_host_max_bitrate_kbps(next);
+        }
+      }
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
 

@@ -88,6 +88,14 @@ target_link_libraries(measured_bitrate_unit_tests PRIVATE gtest_main sunshine_pr
 set_target_properties(measured_bitrate_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME measured_bitrate_unit_tests COMMAND measured_bitrate_unit_tests)
 
+add_executable(host_bitrate_cap_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/streaming/bitrate.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
+target_include_directories(host_bitrate_cap_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(host_bitrate_cap_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(host_bitrate_cap_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME host_bitrate_cap_unit_tests COMMAND host_bitrate_cap_unit_tests)
+
 add_executable(dynamic_param_protocol_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_dynamic_param_protocol.cpp)
 target_include_directories(dynamic_param_protocol_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(dynamic_param_protocol_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -246,9 +254,9 @@ add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
 
 # Compiles the real config.cpp update paths. These tests mutate global config
 # state and run config::parse, so they cannot join the aggregate suite.
-add_executable(config_runtime_unit_tests
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+set(CONFIG_RUNTIME_SUPPORT_SOURCES
         ${CMAKE_SOURCE_DIR}/src/config.cpp
+        ${CMAKE_SOURCE_DIR}/src/streaming/bitrate.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
@@ -739,6 +747,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of
@@ -750,6 +759,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp
@@ -837,6 +847,7 @@ set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
         ${CMAKE_SOURCE_DIR}/src/streaming/abr.cpp
+        ${CMAKE_SOURCE_DIR}/src/streaming/bitrate.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_abr_reported_loss.cpp
         ${ABR_TEST_STUB_SOURCE})
 target_include_directories(abr_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

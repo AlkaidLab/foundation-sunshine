@@ -213,6 +213,24 @@ namespace stream {
     bool
     set_host_audio_for_client(const std::string &client_name, bool enabled);
 
+    /** One running session after the host's bitrate ceiling changed. */
+    struct bitrate_cap_result_t {
+      std::string client_name;
+      int total_kbps;  ///< the session's total bitrate now (including FEC), before and after in `was_kbps`
+      int was_kbps;
+    };
+
+    /**
+     * @brief The host's bitrate ceiling (config::host_max_bitrate_kbps) changed: every running session takes it now.
+     *
+     * Each session's bitrate budget holds the cap it was made with; this gives it the current one (streaming::bitrate_budget_t::set_maximum). A session that is above the new ceiling comes down to it, a session
+     * that was held down comes back up to what its client or its ABR last asked for (or stays there when that is still above the ceiling); 0 means no ceiling. The encoding thread applies the new total through the
+     * budget's pending() like any other change (no new channel), and the client is told through the host bitrate update (0x5506) when it negotiated it.
+     * @return The sessions whose total changed.
+     */
+    std::vector<bitrate_cap_result_t>
+    apply_host_bitrate_cap();
+
     /**
      * @brief Get information about all active sessions.
      * @return Vector of session information.

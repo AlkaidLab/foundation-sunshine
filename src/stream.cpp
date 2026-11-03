@@ -734,9 +734,9 @@ namespace stream {
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
 
-
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
+
     // Video and audio UDP payloads handed to the socket. The window is
     // updated from the send threads with atomics; the handle publishes it
     // for /api/perf/current and unpublishes itself when the session dies.
@@ -1072,15 +1072,16 @@ namespace stream {
   void
   end_broadcast(broadcast_ctx_t &ctx);
 
+  // A client's or the ABR's bitrate request goes to the session's budget as it is asked: the budget holds the total to the host ceiling (0 = none) and remembers the ask, so a ceiling that is raised or
+  // removed gives it back. Returns the total the session has now.
   static int
-  clamp_total_bitrate_to_host_cap(int bitrate_kbps, std::string_view client_name) {
-    if (config::video.max_bitrate > 0 && bitrate_kbps > config::video.max_bitrate) {
-      BOOST_LOG(info) << "Clamping dynamic bitrate for client '" << client_name
-                      << "' from " << bitrate_kbps << " Kbps to host maximum "
-                      << config::video.max_bitrate << " Kbps";
-      return config::video.max_bitrate;
+  request_total_bitrate(session_t &session, int bitrate_kbps) {
+    const auto total = session.config.monitor.bitrate_budget->request(bitrate_kbps);
+    if (total < bitrate_kbps) {
+      BOOST_LOG(info) << "Holding dynamic bitrate for client '" << session.client_name
+                      << "' from " << bitrate_kbps << " Kbps to host maximum " << total << " Kbps";
     }
-    return bitrate_kbps;
+    return total;
   }
 
   static auto broadcast_shared = safe::make_shared<broadcast_ctx_t>(start_broadcast, end_broadcast);
@@ -1559,9 +1560,8 @@ namespace stream {
             session->control.authored_haptics_v3_init_failed = true;
             BOOST_LOG(error) << "Unable to initialize authored haptics enhancement; falling back to IR v2"sv;
           }
-          else {
+          else
             found = analyzers.emplace(msg.id, std::move(analyzer)).first;
-          }
         }
         if (found != analyzers.end()) extended_analyzer = found->second.get();
       }
@@ -1582,6 +1582,7 @@ namespace stream {
             msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
             std::span<const std::uint8_t> { data.pcm.data(), pcm_size });
           if (rumble) {
+            ++route_legacy_out;
             auto legacy_msg = platf::gamepad_feedback_msg_t::make_rumble(
               rumble->controller_id, rumble->low_frequency, rumble->high_frequency);
             return send_feedback_msg(session, legacy_msg, true);
@@ -2276,8 +2277,7 @@ namespace stream {
         case video::dynamic_param_type_e::BITRATE: {
           const auto valid_bitrate = param_value > 0 && param_value <= 800000;
           if (valid_bitrate) {
-            const auto total = session->config.monitor.bitrate_budget->request(
-              clamp_total_bitrate_to_host_cap(param_value, session->client_name));
+            const auto total = request_total_bitrate(*session, param_value);
             perf::update_session_bitrate(session->launch_session_id, total);
             BOOST_LOG(info) << "Dynamic bitrate budget: " << total << " Kbps";
           }
@@ -3798,9 +3798,6 @@ namespace stream {
       }
 
       try {
-        // Use around 80% of 1Gbps          1Gbps            percent    ms     packet      byte
-        size_t ratecontrol_packets_in_1ms = std::giga::num * 80 / 100 / 1000 / blocksize / 8;
-
         // Send less than 64K in a single batch.
         // On Windows, batches above 64K seem to bypass SO_SNDBUF regardless of its size,
         // appear in "Other I/O" and begin waiting for interrupts.
@@ -3970,7 +3967,6 @@ namespace stream {
               }
               frame_send_batch_latency_logger.second_point_now_and_log();
 
-              ratecontrol_group_packets_sent += current_batch_size;
               ratecontrol_frame_packets_sent += current_batch_size;
               next_shard_to_send = x + 1;
             }
@@ -5061,12 +5057,15 @@ namespace stream {
             session_p->lifecycle.state() == state_e::RUNNING) {
           // Update session's current total bitrate if this is a bitrate change
           if (effective_param.type == video::dynamic_param_type_e::BITRATE && effective_param.valid) {
-            effective_param.value.int_value = clamp_total_bitrate_to_host_cap(effective_param.value.int_value, client_name);
             // The param.value.int_value is the total bitrate (user-configured, including FEC)
-            effective_param.value.int_value = session_p->config.monitor.bitrate_budget->request(effective_param.value.int_value);
+            effective_param.value.int_value = request_total_bitrate(*session_p, effective_param.value.int_value);
             perf::update_session_bitrate(session_p->launch_session_id, effective_param.value.int_value);
             BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
                             << "': " << effective_param.value.int_value << " Kbps (including FEC)";
+            if (!send_host_bitrate_update(session_p, effective_param.value.int_value)) {
+              BOOST_LOG(debug) << "Client '" << client_name
+                               << "' did not negotiate host bitrate callbacks; 0x5506 update omitted";
+            }
             return true;
           }
 
@@ -5078,6 +5077,43 @@ namespace stream {
       }
 
       BOOST_LOG(warning) << "No active session found for client: " << client_name;
+      return false;
+    }
+
+    std::vector<bitrate_cap_result_t>
+    apply_host_bitrate_cap() {
+      std::vector<bitrate_cap_result_t> changed;
+      if (!broadcast_shared.has_ref()) return changed;  // no stream: the next one is made with the current ceiling (rtsp.cpp)
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return changed;
+
+      const auto cap = config::host_max_bitrate_kbps();
+      // the adaptive controller works inside the same ceiling: its range, current bitrate and target follow it, so it neither probes above a lowered ceiling nor stays below a raised one
+      abr::apply_host_ceiling(cap);
+      auto lg = broadcast_ref->control_server._sessions.lock();
+      for (auto session_p : *broadcast_ref->control_server._sessions) {
+        const auto &budget = session_p->config.monitor.bitrate_budget;
+        if (!budget || session_p->lifecycle.state() != state_e::RUNNING) continue;
+        const auto was = budget->total();
+        const auto now = budget->set_maximum(cap);
+        if (now == was) continue;
+        perf::update_session_bitrate(session_p->launch_session_id, now);
+        BOOST_LOG(info) << "Host bitrate ceiling " << (cap > 0 ? std::to_string(cap) + " Kbps" : std::string { "none" })
+                        << ": session of client '" << session_p->client_name << "' " << was << " -> " << now << " Kbps (including FEC)";
+        if (!send_host_bitrate_update(session_p, now)) {
+          BOOST_LOG(debug) << "Client '" << session_p->client_name << "' did not negotiate host bitrate callbacks; 0x5506 update omitted";
+        }
+        changed.push_back({ session_p->client_name, now, was });
+      }
+      return changed;
+    }
+
+    bool
+    set_host_audio_for_client(const std::string &client_name, bool enabled) {
+      if (!broadcast_shared.has_ref()) return false;
+      auto broadcast_ref = broadcast_shared.ref();
+      if (!broadcast_ref) return false;
+
       auto lg = broadcast_ref->control_server._sessions.lock();
       for (auto session_p : *broadcast_ref->control_server._sessions) {
         if (session_p->client_name != client_name ||
@@ -5140,6 +5176,8 @@ namespace stream {
           info.video_idle_ms = idle_ms(now_ms, session_p->last_video_activity_ms.load(std::memory_order_relaxed));
           info.audio_idle_ms = idle_ms(now_ms, session_p->last_audio_activity_ms.load(std::memory_order_relaxed));
           info.control_connected = lifecycle.state == state_e::RUNNING && session_p->control.peer != nullptr;
+          // the control channel's smoothed round trip (ENet, ms); the peer is read under the same lock as its address below
+          if (info.control_connected && session_p->control.peer->roundTripTime > 0) info.rtt_ms = static_cast<int>(session_p->control.peer->roundTripTime);
 
           // Get client address
           if (session_p->control.peer) {

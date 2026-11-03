@@ -184,6 +184,7 @@ namespace config {
     std::string cert;
 
     std::string sunshine_name;
+    std::string fs_host_icon;  ///< Optional specialised-client host icon token.
     std::string clients;
 
     std::string file_state;
@@ -192,7 +193,9 @@ namespace config {
     bool usb_forwarding_enabled;
     std::uint16_t usb_forwarding_port;  // 0: main port + 7; otherwise explicit override
 
-    std::string external_ip;
+    std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
+    std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas
+    std::string stun_servers;  ///< STUN servers of the network overview; empty: built-in list, "none": off
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 
@@ -290,6 +293,11 @@ namespace config {
     int max_log_size_mb;  // 日志文件最大大小（MB），超过后自动轮转，0=不限制
     bool notify_pre_releases;
     bool system_tray;
+    // Web UI session lifetimes. Defaults follow OWASP ASVS 4.0.3 V3.3.2.
+    int session_idle_minutes;
+    int session_absolute_hours;
+    int session_remember_idle_minutes;
+    int session_remember_days;
     std::vector<prep_cmd_t> prep_cmds;
   };
 
@@ -332,7 +340,16 @@ namespace config {
   get_effective_config_snapshot();
 
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig);
+  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale = nullptr);
+
+  /**
+   * The host's bitrate ceiling in Kbps (the `max_bitrate` setting, 0 = none). It is read while streams run and written when the configuration is saved (update_full_config), so every reader asks here and
+   * none caches `video.max_bitrate`. Relaxed atomics: a reader sees the old or the new value, never a torn one.
+   */
+  int
+  host_max_bitrate_kbps();
+  void
+  set_host_max_bitrate_kbps(int kbps);
 
   /**
    * Return a synchronized snapshot of the serialized per-client settings.

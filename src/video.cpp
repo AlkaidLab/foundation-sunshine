@@ -3403,7 +3403,7 @@ namespace video {
   make_encode_session(platf::display_t *disp, const encoder_t &encoder, const config_t &config, int width, int height, std::unique_ptr<platf::encode_device_t> encode_device, bool is_probe = false, std::optional<int> bitrate_override = {}) {
     auto effective_config = config;
     effective_config.bitrate = bitrate_override.value_or(config.bitrate_budget ? config.bitrate_budget->applied().encoder_kbps :
-                                                                                 cap_initial_encoder_bitrate(config.bitrate, config::video.max_bitrate, 0));
+                                                                                 cap_initial_encoder_bitrate(config.bitrate, config::host_max_bitrate_kbps(), 0));
     std::unique_ptr<encode_session_t> session;
 
     if (dynamic_cast<platf::avcodec_encode_device_t *>(encode_device.get())) {
