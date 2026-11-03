@@ -82,7 +82,8 @@ namespace platf {
   }
 
   void
-  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags, bool extended) {
+    (void) extended;
     auto raw = (input_raw_t *) input.get();
     platf::keyboard::update(raw, modcode, release, flags);
   }

@@ -243,7 +243,8 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void
-  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags, bool extended) {
+    (void) extended;
     auto key = keysym(modcode);
 
     BOOST_LOG(debug) << "got keycode: 0x"sv << std::hex << modcode << ", translated to: 0x" << std::hex << key << ", release:" << release;

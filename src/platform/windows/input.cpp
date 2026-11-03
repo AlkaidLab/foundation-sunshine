@@ -854,20 +854,42 @@ namespace platf {
     send_input(i);
   }
 
+  bool
+  is_media_key(uint16_t modcode) {
+    switch (modcode) {
+      case VK_VOLUME_MUTE:
+      case VK_VOLUME_DOWN:
+      case VK_VOLUME_UP:
+      case VK_MEDIA_NEXT_TRACK:
+      case VK_MEDIA_PREV_TRACK:
+      case VK_MEDIA_STOP:
+      case VK_MEDIA_PLAY_PAUSE:
+        return true;
+      default:
+        return false;
+    }
+  }
+
   void
-  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags, bool extended) {
     INPUT i {};
     i.type = INPUT_KEYBOARD;
     auto &ki = i.ki;
+    const auto media_key = is_media_key(modcode);
+
+    // Microsoft documents these consumer-control values as virtual-key codes.
+    // KEYEVENTF_SCANCODE makes SendInput ignore wVk, so media keys must stay on
+    // the virtual-key path instead of being passed through MapVirtualKey().
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput
 
     // If the client did not normalize this VK code to a US English layout, we can't accurately convert it to a scancode.
     // If we're set to always send scancodes, we will use the current keyboard layout to convert to a scancode. This will
     // assume the client and host have the same keyboard layout, but it's probably better than always using US English.
-    if (!(flags & SS_KBE_FLAG_NON_NORMALIZED)) {
+    if (!media_key && !(flags & SS_KBE_FLAG_NON_NORMALIZED)) {
       // Mask off the extended key byte
       ki.wScan = VK_TO_SCANCODE_MAP[modcode & 0xFF];
     }
-    else if (config::input.always_send_scancodes && modcode != VK_LWIN && modcode != VK_RWIN && modcode != VK_PAUSE) {
+    else if (!media_key && config::input.always_send_scancodes && modcode != VK_LWIN && modcode != VK_RWIN && modcode != VK_PAUSE) {
       // For some reason, MapVirtualKey(VK_LWIN, MAPVK_VK_TO_VSC) doesn't seem to work :/
       ki.wScan = MapVirtualKey(modcode, MAPVK_VK_TO_VSC);
     }
@@ -903,6 +925,10 @@ namespace platf {
         break;
       default:
         break;
+    }
+
+    if (extended) {
+      ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
     }
 
     if (release) {

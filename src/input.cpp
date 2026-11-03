@@ -127,7 +127,12 @@ namespace input {
 #endif
 
   static task_pool_util::TaskPool::task_id_t key_press_repeat_id {};
-  static std::unordered_map<key_press_id_t, bool> key_press {};
+  struct key_press_state_t {
+    bool pressed = false;
+    bool extended = false;
+  };
+
+  static std::unordered_map<key_press_id_t, key_press_state_t> key_press {};
   static std::array<std::uint8_t, 5> mouse_press {};
 
   static platf::input_t platf_input;
@@ -965,18 +970,18 @@ namespace input {
   }
 
   void
-  emit_keyboard_update(uint16_t key_code, bool release, uint8_t flags) {
+  emit_keyboard_update(uint16_t key_code, bool release, uint8_t flags, bool extended = false) {
 #ifdef SUNSHINE_TESTS
     if (keyboard_sink()) {
-      keyboard_sink()(testing::keyboard_event_t { key_code, release, flags });
+      keyboard_sink()(testing::keyboard_event_t { key_code, release, flags, extended });
       return;
     }
 #endif
-    platf::keyboard_update(platf_input, key_code, release, flags);
+    platf::keyboard_update(platf_input, key_code, release, flags, extended);
   }
 
   void
-  send_key_and_modifiers(uint16_t key_code, bool release, uint8_t flags, uint8_t synthetic_modifiers) {
+  send_key_and_modifiers(uint16_t key_code, bool release, uint8_t flags, uint8_t synthetic_modifiers, bool extended) {
     if (!release) {
       // Press any synthetic modifiers required for this key
       if (synthetic_modifiers & MODIFIER_SHIFT) {
@@ -990,7 +995,7 @@ namespace input {
       }
     }
 
-    emit_keyboard_update(map_keycode(key_code), release, flags);
+    emit_keyboard_update(map_keycode(key_code), release, flags, extended);
 
     if (!release) {
       // Raise any synthetic modifier keys we pressed
@@ -1009,12 +1014,13 @@ namespace input {
   void
   repeat_key(uint16_t key_code, uint8_t flags, uint8_t synthetic_modifiers) {
     // If key no longer pressed, stop repeating
-    if (!key_press[make_kpid(key_code, flags)]) {
+    const auto state = key_press[make_kpid(key_code, flags)];
+    if (!state.pressed) {
       key_press_repeat_id = nullptr;
       return;
     }
 
-    send_key_and_modifiers(key_code, false, flags, synthetic_modifiers);
+    send_key_and_modifiers(key_code, false, flags, synthetic_modifiers, state.extended);
 
     key_press_repeat_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_period, key_code, flags, synthetic_modifiers).task_id;
   }
@@ -1053,14 +1059,16 @@ namespace input {
       }
     }
 
-    auto &pressed = key_press[make_kpid(keyCode, packet->flags)];
-    if (!pressed) {
+    auto &state = key_press[make_kpid(keyCode, packet->flags)];
+    if (!state.pressed) {
       if (!release) {
         // A new key has been pressed down, we need to check for key combo's
         // If a key-combo has been pressed down, don't pass it through
         if (input->shortcutFlags == input_t::SHORTCUT && apply_shortcut(keyCode) > 0) {
           return;
         }
+
+        state.extended = (modifiers & MODIFIER_EXTENDED) != 0;
 
         if (key_press_repeat_id) {
           task_pool.cancel(key_press_repeat_id);
@@ -1080,9 +1088,9 @@ namespace input {
       return;
     }
 
-    pressed = !release;
+    state.pressed = !release;
 
-    send_key_and_modifiers(keyCode, release, packet->flags, synthetic_modifiers);
+    send_key_and_modifiers(keyCode, release, packet->flags, synthetic_modifiers, state.extended);
 
     update_shortcutFlags(*input, keyCode, release);
   }
@@ -2242,13 +2250,13 @@ namespace input {
 
   void
   reset_keyboard_keys() {
-    for (auto &[key, pressed] : key_press) {
-      if (!pressed) {
+    for (auto &[key, state] : key_press) {
+      if (!state.pressed) {
         continue;
       }
 
-      emit_keyboard_update(map_keycode(vk_from_kpid(key) & 0x00FF), true, flags_from_kpid(key));
-      pressed = false;
+      emit_keyboard_update(map_keycode(vk_from_kpid(key) & 0x00FF), true, flags_from_kpid(key), state.extended);
+      state.pressed = false;
     }
   }
 

@@ -1489,7 +1489,8 @@ namespace platf {
    * @examples_end
    */
   void
-  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
+  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags, bool extended) {
+    (void) extended;
     auto keyboard = ((input_raw_t *) input.get())->keyboard_input.get();
     if (!keyboard) {
       x_keyboard(input, modcode, release, flags);

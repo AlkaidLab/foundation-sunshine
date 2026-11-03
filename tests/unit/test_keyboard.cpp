@@ -42,6 +42,9 @@ namespace {
     if (event.flags != 0) {
       token += ":" + std::to_string(event.flags);
     }
+    if (event.extended) {
+      token += ":extended";
+    }
     return token;
   }
 
@@ -272,6 +275,29 @@ TEST_F(KeyboardStateTest, PropagatesPacketFlagsToSyntheticEvents) {
 
   release(input, VKEY_A, MODIFIER_SHIFT | MODIFIER_ALT, flags);
   EXPECT_EQ(taken(), (std::vector<std::string> { "-65:1" }));
+}
+
+TEST_F(KeyboardStateTest, PreservesExtendedModifierForReleaseAndDisconnect) {
+  auto input = input::testing::make_input();
+
+  press(input, 0x0D, MODIFIER_EXTENDED);
+  release(input, 0x0D);
+  EXPECT_EQ(taken(), (std::vector<std::string> { "+13:extended", "-13:extended" }));
+
+  press(input, 0x0D, MODIFIER_EXTENDED);
+  taken();
+  input::testing::release_held_keys();
+  EXPECT_EQ(taken(), (std::vector<std::string> { "-13:extended" }));
+}
+
+TEST_F(KeyboardStateTest, PassesMediaVirtualKeysThroughUnchanged) {
+  auto input = input::testing::make_input();
+  constexpr std::uint16_t media_play_pause = 0xB3;
+
+  press(input, media_play_pause);
+  release(input, media_play_pause);
+
+  EXPECT_EQ(taken(), (std::vector<std::string> { "+179", "-179" }));
 }
 
 TEST_F(KeyboardStateTest, EmitsConfiguredKeybindingsAndLeavesUnmappedKeysUnchanged) {

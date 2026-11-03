@@ -1190,7 +1190,7 @@ namespace platf {
   void
   hscroll(input_t &input, int distance);
   void
-  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags);
+  keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags, bool extended = false);
   void
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state);
   void

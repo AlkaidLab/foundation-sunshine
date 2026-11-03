@@ -81,6 +81,7 @@ namespace input {
       std::uint16_t key_code;
       bool release;
       std::uint8_t flags;
+      bool extended = false;
     };
 
     std::shared_ptr<input_t>
