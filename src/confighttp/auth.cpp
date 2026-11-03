@@ -6,6 +6,7 @@
 
 #include "auth.h"
 #include "common.h"
+#include "local_auth_token.h"
 #include "src/config.h"
 #include "src/crypto.h"
 #include "src/http_util.h"
