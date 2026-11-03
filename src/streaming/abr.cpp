@@ -664,6 +664,19 @@ namespace abr {
     }
   }
 
+  std::optional<reported_loss_t>
+  latest_reported_loss(const std::string &client_name) {
+    std::lock_guard lock(sessions_mutex);
+
+    auto it = sessions.find(client_name);
+    if (it == sessions.end() || it->second.recent_feedback.empty()) {
+      return std::nullopt;
+    }
+
+    const auto &latest = it->second.recent_feedback.back().feedback;
+    return reported_loss_t { latest.packet_loss, latest.dropped_frames };
+  }
+
   action_t
   process_feedback(const std::string &client_name, const network_feedback_t &raw_feedback) {
     auto feedback = sanitize_feedback(raw_feedback);

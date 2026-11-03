@@ -5177,13 +5177,18 @@ namespace stream {
           info.width = session_p->config.monitor.width;
           info.height = session_p->config.monitor.height;
           info.fps = session_p->config.monitor.framerate;
+          info.video_format = session_p->config.monitor.videoFormat;
+          info.codec = codec_name(info.video_format);
+          if (const auto loss = abr::latest_reported_loss(session_p->client_name)) {
+            info.packet_loss = loss->packet_loss;
+            info.dropped_frames = loss->dropped_frames;
+          }
 
           info.bitrate = session_p->config.monitor.bitrate_budget->total();
           info.measured_bitrate_kbps = session_p->measured_bitrate.kbps(
             now_ms > 0 ? static_cast<std::uint64_t>(now_ms) : 0);
 
           // Get audio and other settings
-          info.host_audio = session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.host_audio = session_p->host_audio_enabled ? session_p->host_audio_enabled->load(std::memory_order_acquire) : session_p->config.audio.flags[audio::config_t::HOST_AUDIO];
           info.enable_hdr = session_p->config.monitor.dynamicRange > 0;
           info.enable_mic = session_p->audio.enable_mic;

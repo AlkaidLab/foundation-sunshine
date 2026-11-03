@@ -837,6 +837,7 @@ set_tests_properties(${PROJECT_NAME} PROPERTIES TIMEOUT 600)
 
 add_executable(abr_unit_tests
         ${CMAKE_SOURCE_DIR}/src/streaming/abr.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_abr_reported_loss.cpp
         ${ABR_TEST_STUB_SOURCE})
 target_include_directories(abr_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(abr_unit_tests
