@@ -2754,6 +2754,34 @@ alone does not establish that the presentation latency is acceptable.
 
 ## [AMD AMF Encoder](https://localhost:47990/config/#amd-amf-encoder)
 
+### [amd_vpe](https://localhost:47990/config/#amd_vpe)
+
+Windows-only experimental preference for AMD VPE frame conversion, shared by SDR and HDR streams.
+Defaults to `disabled`; enable with `amd_vpe = enabled` or the AMD AMF settings page, save and apply,
+then start a new stream.
+Requires AMF runtime 1.5.3 or newer and a device reporting VPE availability. Supports Rec.601/709
+BGRA/RGBA SDR to NV12, and linear scRGB to PQ/HLG P010, including scaling and aspect-ratio padding.
+HLG uses the capture display's nominal peak (1000-nit fallback) and BT.2100 system gamma in an extra
+GPU prepass producing scene-linear Rec.2020; AMF performs the HLG OETF, scaling and YUV conversion.
+HLG submits scene-linear input; the driver controls the subsequent processing/resampling order.
+AMF's resampling and chroma filtering can differ from the shader backend; this is not a promise of identical pixels.
+Rotation, non-shareable inputs and unsupported formats, layouts, HLG parameters or driver features
+retain the existing shader path under the same switch.
+
+Dynamic HDR statistics remain enabled at the existing cadence. For VPE HDR, they are decoded from a
+private P010 copy of the actual converted output, including PQ/HLG, full/limited range and the active
+picture rectangle. They reflect quantized 4:2:0 output rather than unscaled capture pixels. Padding is
+excluded; analysis remains nonblocking and skips samples while a previous readback is pending.
+If these analysis resources cannot be created, HDR sessions requiring dynamic metadata use the shader
+backend instead. The default shader backend retains its existing scRGB/snapshot statistics.
+
+The backend requests `VPE_PREFERRED`: the driver may still use compute for unsupported configurations.
+Logs and the runtime conversion label report this preference, not proof of VPE execution. The experiment
+waits for GPU completion and copies the converted GPU output into the encoder's existing texture; it
+may increase latency. Its periodic timing includes synchronization and that copy. Ordinary D3D11 shader
+timings are not reported as VPE execution time. Conversion failures disable the experiment for the stream
+and restore the shader path; the configuration switch remains enabled for the next stream.
+
 ### [amd_usage](https://localhost:47990/config/#amd_usage)
 
 <table>

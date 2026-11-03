@@ -163,6 +163,37 @@ namespace {
   };
 }  // namespace
 
+TEST(ConfigRuntime, VpeSwitchPersistsAndCanBeDisabledWithoutChangingOtherAmdSettings) {
+  temporary_clients_config_t temporary_config;
+  const auto original_amd = config::video.amd;
+  struct restore_t {
+    decltype(config::video.amd) value;
+    ~restore_t() { config::video.amd = value; }
+  } restore { original_amd };
+  const auto reload = [] {
+    std::vector<std::string> arguments { "sunshine-config-test", config::sunshine.config_file };
+    for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
+      arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
+    }
+    std::vector<char *> argv;
+    for (auto &argument : arguments) argv.push_back(argument.data());
+    argv.push_back(nullptr);
+    return config::parse(static_cast<int>(argv.size()) - 1, argv.data());
+  };
+  config::video.amd.amd_vpe = false;
+  ASSERT_TRUE(config::update_config({ { "amd_vpe", "enabled" } }));
+  ASSERT_EQ(reload(), 0);
+  EXPECT_TRUE(config::video.amd.amd_vpe);
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("amd_vpe"), "enabled");
+  EXPECT_EQ(config::video.amd.amd_avcodec_compat, original_amd.amd_avcodec_compat);
+  ASSERT_TRUE(config::update_config({ { "sunshine_name", "vpe-persist" } }));
+  EXPECT_TRUE(config::video.amd.amd_vpe);
+  ASSERT_TRUE(config::update_config({ { "amd_vpe", "disabled" } }));
+  ASSERT_EQ(reload(), 0);
+  EXPECT_FALSE(config::video.amd.amd_vpe);
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("amd_vpe"), "disabled");
+}
+
 TEST(ConfigRuntime, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates) {
   temporary_clients_config_t temporary_config;
   ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-1","name":"old"}])"));
