@@ -73,10 +73,13 @@ namespace nvhttp::stream_start {
       explicit temporary_video_config_t(config::video_t replacement):
           original_config { config::video } {
         config::video = std::move(replacement);
+        // A probe made with the replacement options must not be reused by a launch with the real ones, nor the other way round.
+        video::forget_encoder_probe_result();
       }
 
       ~temporary_video_config_t() {
         config::video = std::move(original_config);
+        video::forget_encoder_probe_result();
       }
 
       temporary_video_config_t(const temporary_video_config_t &) = delete;

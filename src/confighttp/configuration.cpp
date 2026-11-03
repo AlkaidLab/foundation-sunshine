@@ -6,6 +6,7 @@
 
 #include "configuration.h"
 #include "src/config.h"
+#include "src/confighttp/apps.h"
 #include "src/globals.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
@@ -44,6 +45,7 @@ namespace confighttp::configuration {
           { "address_family", config::sunshine.address_family },
           { "port", config::sunshine.port },
           { "upnp", static_cast<bool>(config::sunshine.flags[config::flag::UPNP]) },
+          { "origin_web_ui_allowed", config::nvhttp.origin_web_ui_allowed },
         } },
       };
       try {
@@ -59,6 +61,7 @@ namespace confighttp::configuration {
           { "address_family", value("address_family", "ipv4") },
           { "port", std::stoi(value("port", "47989")) },
           { "upnp", upnp == "enabled" || upnp == "true" || upnp == "1" },
+          { "origin_web_ui_allowed", value("origin_web_ui_allowed", "lan") },
         };
         for (const auto &address : net::local_addresses()) output["addresses"].push_back({ { "name", address.name }, { "address", address.address } });
       }
@@ -123,6 +126,9 @@ namespace confighttp::configuration {
       outputTree.put("nvidia_vsync.version", 1);
 #endif
       outputTree.put("active_encoder", video::active_encoder_name());
+      // what the encoder probe resolved the two codec settings to (0 = not probed yet, 1 = not offered, 2 = offered, 3 = offered with 10-bit)
+      outputTree.put("active_hevc_mode", video::active_hevc_mode);
+      outputTree.put("active_av1_mode", video::active_av1_mode);
       if (auto frame_budget = nvenc::get_frame_budget_report()) {
         pt::ptree budget_node;
         budget_node.put("clamped", frame_budget->clamped);
@@ -323,7 +329,10 @@ namespace confighttp::configuration {
         }
 
         // 更新配置
-        if (!config::update_full_config(fullConfig)) {
+        std::string previous_locale;
+        // the settings that are reported when they change (an allow-list of keys, values as enums or buckets) are compared with what was saved before
+        const auto saved_before = config::get_config_snapshot();
+        if (!config::update_full_config(fullConfig, &previous_locale)) {
           outputTree.put("status", "false");
           outputTree.put("error", "failed to persist configuration");
           return;

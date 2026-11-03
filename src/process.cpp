@@ -7,7 +7,10 @@
 #include "process.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -39,10 +42,8 @@
 #ifdef _WIN32
   // from_utf8() string conversion function
   #include "platform/windows/misc.h"
-
   // _SH constants for _wfsopen()
   #include <share.h>
-
   #define STB_IMAGE_IMPLEMENTATION
   #include "stb_image.h"
   #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -177,16 +178,13 @@ namespace proc {
     // Now that we have a complete path, we can just use parent_path()
     return cmd_path.parent_path();
   }
-
   int
   proc_t::execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session) {
     // Ensure starting from a clean slate
     terminate();
-
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
       return app.id == std::to_string(app_id);
     });
-
     if (iter == _apps.end()) {
       BOOST_LOG(error) << "Couldn't find app with ID ["sv << app_id << ']';
       return 404;
@@ -202,7 +200,6 @@ namespace proc {
     // Apply the app override before the input session creates virtual pads.
     // The global Sunshine setting remains unchanged.
     platf::set_gamepad_mode(_app.gamepad_mode);
-
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
     // to the launched application. They should be preserved during refresh() if an app is running.
@@ -243,7 +240,6 @@ namespace proc {
       // fopen() interprets the filename as an ANSI string on Windows, so we must convert it
       // to UTF-16 and use the wchar_t variants for proper Unicode log file path support.
       auto woutput = platf::from_utf8(_app.output);
-
       // Use _SH_DENYNO to allow us to open this log file again for writing even if it is
       // still open from a previous execution. This is required to handle the case of a
       // detached process executing again while the previous process is still running.
@@ -252,13 +248,11 @@ namespace proc {
       _pipe.reset(fopen(_app.output.c_str(), "a"));
 #endif
     }
-
     std::error_code ec;
     // Executed when returning from function
     auto fg = util::fail_guard([&]() {
       terminate();
     });
-
     for (; _app_prep_it != std::end(_app.prep_cmds); ++_app_prep_it) {
       auto &cmd = *_app_prep_it;
 
@@ -515,6 +509,14 @@ namespace proc {
       return app.id == std::to_string(app_id);
     });
     return iter == _apps.end() ? std::string() : iter->cmd;
+  }
+
+  std::optional<unsigned long>
+  proc_t::get_running_pid() const {
+    if (!_process.valid()) {
+      return std::nullopt;
+    }
+    return _process.id();
   }
 
   std::string
@@ -852,7 +854,6 @@ namespace proc {
 
       auto &apps_node = tree.get_child("apps"s);
       auto &env_vars = tree.get_child("env"s);
-
       auto this_env = boost::this_process::environment();
 
       for (auto &[name, val] : env_vars) {

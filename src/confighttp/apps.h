@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <string_view>
+
 #include "src/confighttp/types.h"
 
 namespace confighttp::apps {

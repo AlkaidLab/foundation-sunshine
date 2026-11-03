@@ -31,10 +31,10 @@ namespace confighttp {
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
     server.config.port = port_https;
-    // Use a small thread pool so that a slow request handler (proxy upstream,
-    // file upload, etc.) doesn't block other web UI requests on the same
-    // single-threaded io_service.
-    server.config.thread_pool_size = 2;
+    // A health check asks for several groups at once, and each handler blocks until
+    // that group's probe budget. Two threads let one encoder probe stall every other
+    // page. Eight keeps a slow probe from taking the whole UI without a large pool.
+    server.config.thread_pool_size = 8;
     // Enforce the limit while Beast is parsing and buffering the request, before
     // individual handlers parse it. This still leaves headroom for the 10 MiB
     // base64 cover-upload endpoint.

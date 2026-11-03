@@ -64,6 +64,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/apps/scan$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/config$",
     "method": "GET"
   },
@@ -168,6 +172,16 @@
   {
     "pattern": "^/api/vdd/status$",
     "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/usbip-root/status$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/usbip-root/repair$",
+    "method": "POST",
     "windows": true
   },
   {
