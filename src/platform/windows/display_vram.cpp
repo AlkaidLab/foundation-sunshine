@@ -411,6 +411,9 @@ namespace platf::dxgi {
 
       auto &img = (img_d3d_t &) img_base;
       if (!img.blank) {
+        // Startup dummies have no capture domain. Keep them on the shader path
+        // without configuring or disabling VPE before the first real frame.
+        const bool vpe_eligible = vpe_converter && !img.dummy;
         auto &img_ctx = img_ctx_map[img.id];
 
         // Open the shared capture texture with our ID3D11Device
@@ -469,7 +472,7 @@ namespace platf::dxgi {
         gpu_timing_sample_t gpu_timing_sample;
         gpu_timing_sample_t *gpu_timing = nullptr;
         // D3D11 timestamps cannot identify the time spent on the separate VPE engine.
-        if (vram_timing_enabled && !(vpe_converter && vpe_converter->available()) &&
+        if (vram_timing_enabled && !(vpe_eligible && vpe_converter->available()) &&
             begin_gpu_timing_sample(gpu_timing_sample)) {
           gpu_timing = &gpu_timing_sample;
           gpu_timing->borrowed_vdd = img.borrowed_vdd_texture;
@@ -655,9 +658,9 @@ namespace platf::dxgi {
         // type0, no rotation; scaling supported via *_scaled variants).
         const bool hdr_analysis_due =
           can_analyze_hdr_frame && should_dispatch_hdr_analysis();
-        const bool vpe_used = vpe_converter &&
+        const bool vpe_used = vpe_eligible &&
                               vpe_converter->convert(conversion_input_texture, output_texture.get(), input_is_linear_fp16);
-        if (vpe_converter) {
+        if (vpe_eligible) {
           const auto path = vpe_used ? std::string { "amf_vpe_preferred" } : shader_conversion_path();
           const auto reason = vpe_used ? std::string {} : vpe_converter->failure_reason();
           if (runtime_status.conversion_path != path || runtime_status.conversion_fallback_reason != reason) {
