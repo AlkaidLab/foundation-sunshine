@@ -780,6 +780,66 @@ set(TEST_DEFINITIONS)  # list will be appended as needed
 # this indicates we're building tests in case sunshine needs to adjust some code or add private tests
 list(APPEND TEST_DEFINITIONS SUNSHINE_TESTS)
 
+# Focused pending-pairing suite. It links the pairing registry, the Web UI
+# route module and their direct dependencies instead of the full host graph.
+add_executable(pairing_pending_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/tests_main.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pairing_pending.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/src/client_family.cpp
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.cpp
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/pairing_pending.cpp
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/preset_pin.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/pairing.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/auth.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/local_auth_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/common.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
+        ${CMAKE_SOURCE_DIR}/src/globals.cpp
+        ${CMAKE_SOURCE_DIR}/src/httpcommon.cpp
+        ${CMAKE_SOURCE_DIR}/src/logging.cpp
+        ${CMAKE_SOURCE_DIR}/src/network.cpp
+        ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp)
+if (WIN32)
+    target_sources(pairing_pending_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
+target_include_directories(pairing_pending_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet/include"
+        "${CMAKE_SOURCE_DIR}/third-party/nanors"
+        "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl"
+        "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/1301/include"
+        "${FFMPEG_PREPARED_BINARIES}/include")
+target_link_libraries(pairing_pending_unit_tests PRIVATE
+        sunshine_http sunshine_crypto
+        Boost::log Boost::format Boost::filesystem Boost::thread Boost::system
+        Boost::property_tree Boost::program_options Boost::process
+        Boost::locale Boost::atomic Boost::chrono Boost::date_time
+        Boost::container Boost::context Boost::random Boost::charconv
+        nlohmann_json::nlohmann_json
+        enet
+        "${FFMPEG_PREPARED_BINARIES}/lib/libavutil.a"
+        gtest_main
+        sunshine_project_options sunshine_coverage)
+if (WIN32)
+    target_link_libraries(pairing_pending_unit_tests PRIVATE
+            ${PLATFORM_LIBRARIES} bcrypt iphlpapi)
+else ()
+    target_link_libraries(pairing_pending_unit_tests PRIVATE m)
+endif ()
+target_compile_definitions(pairing_pending_unit_tests PRIVATE
+        ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(pairing_pending_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(pairing_pending_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME pairing_pending_unit_tests COMMAND pairing_pending_unit_tests)
+set_tests_properties(pairing_pending_unit_tests PROPERTIES TIMEOUT 120)
+
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_SOURCE_DIR}/tests/*.h
         ${CMAKE_SOURCE_DIR}/tests/*.cpp)

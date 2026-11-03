@@ -8,6 +8,7 @@
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
+#include "src/confighttp/pairing.h"
 #include "src/crypto.h"
 #include "src/display_device/color_profile.h"
 #include "src/hdr/client_display_capabilities.h"

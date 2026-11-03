@@ -183,6 +183,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
     src/confighttp/integrations.cpp src/confighttp/integrations.h
+    src/confighttp/pairing.cpp src/confighttp/pairing.h
     src/confighttp/proxies.cpp src/confighttp/proxies.h
     src/confighttp/routes.cpp src/confighttp/routes.h
     src/confighttp/types.h
