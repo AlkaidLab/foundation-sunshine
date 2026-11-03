@@ -190,6 +190,7 @@ const DEFAULT_TABS = [
           amd_vbaq: '',
           amd_coder: 'auto',
           amd_avcodec_compat: 'disabled',
+          amd_vpe: 'disabled',
           amd_hevc_gop_size: -1,
           // AMF advanced (driver workarounds): empty string = driver default
           // (FFmpeg-aligned). Users can override per-property if troubleshooting
@@ -442,6 +443,7 @@ export function useConfig() {
 
       const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
       configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
+      configData.amd_vpe = normalizeEnabledDisabledValue(configData.amd_vpe)
       configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
       configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
       configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)

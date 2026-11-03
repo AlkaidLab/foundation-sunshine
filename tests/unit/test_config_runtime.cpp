@@ -156,12 +156,46 @@ namespace {
       };
     }
 
+    int
+    parse(std::vector<std::string> arguments) const {
+      arguments.insert(arguments.begin(), "sunshine-config-test");
+      // Keep startup file paths inside the fixture for every parse and reload.
+      for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
+        arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
+      }
+      std::vector<char *> argv;
+      for (auto &argument : arguments) argv.push_back(argument.data());
+      argv.push_back(nullptr);
+      return config::parse(static_cast<int>(argv.size()) - 1, argv.data());
+    }
+
   private:
     std::string original_path_;
     std::string original_clients_;
     std::filesystem::path path_;
   };
 }  // namespace
+
+TEST(ConfigRuntime, VpeSwitchPersistsAndCanBeDisabledWithoutChangingOtherAmdSettings) {
+  temporary_clients_config_t temporary_config;
+  const auto original_amd = config::video.amd;
+  struct restore_t {
+    decltype(config::video.amd) value;
+    ~restore_t() { config::video.amd = value; }
+  } restore { original_amd };
+  config::video.amd.amd_vpe = false;
+  ASSERT_TRUE(config::update_config({ { "amd_vpe", "enabled" } }));
+  ASSERT_EQ(temporary_config.parse({ config::sunshine.config_file }), 0);
+  EXPECT_TRUE(config::video.amd.amd_vpe);
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("amd_vpe"), "enabled");
+  EXPECT_EQ(config::video.amd.amd_avcodec_compat, original_amd.amd_avcodec_compat);
+  ASSERT_TRUE(config::update_config({ { "sunshine_name", "vpe-persist" } }));
+  EXPECT_TRUE(config::video.amd.amd_vpe);
+  ASSERT_TRUE(config::update_config({ { "amd_vpe", "disabled" } }));
+  ASSERT_EQ(temporary_config.parse({ config::sunshine.config_file }), 0);
+  EXPECT_FALSE(config::video.amd.amd_vpe);
+  EXPECT_EQ(config::parse_config(temporary_config.read()).at("amd_vpe"), "disabled");
+}
 
 TEST(ConfigRuntime, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates) {
   temporary_clients_config_t temporary_config;
@@ -207,15 +241,7 @@ TEST(ConfigRuntime, UnrelatedUpdatesPreserveTheRuntimeCommandLineOverride) {
   temporary_clients_config_t temporary_config;
   ASSERT_TRUE(config::save_clients_config(R"([{"uuid":"client-2","name":"kept"}])"));
   const auto saved_clients = config::get_clients_config();
-  std::vector<std::string> arguments { "sunshine-test", "clients=[]" };
-  // Keep startup file paths in the fixture's temporary location.
-  for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
-    arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
-  }
-  std::vector<char *> argv;
-  for (auto &argument : arguments) argv.push_back(argument.data());
-  argv.push_back(nullptr);
-  ASSERT_EQ(config::parse(static_cast<int>(argv.size()) - 1, argv.data()), 0);
+  ASSERT_EQ(temporary_config.parse({ "clients=[]" }), 0);
   ASSERT_EQ(config::get_clients_config(), "[]");
   for (int attempt = 0; attempt < 2; ++attempt) {
     ASSERT_TRUE(config::update_config({ { "sunshine_name", "retained" } }));
@@ -227,8 +253,8 @@ TEST(ConfigRuntime, UnrelatedUpdatesPreserveTheRuntimeCommandLineOverride) {
   ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "retained" }, { "gamepad", config::input.gamepad } }));
   EXPECT_EQ(config::get_clients_config(), "[]");
   EXPECT_EQ(config::parse_config(temporary_config.read()).at("clients"), saved_clients);
-  argv.erase(argv.begin() + 1);  // Reload without the clients command-line override.
-  ASSERT_EQ(config::parse(static_cast<int>(argv.size()) - 1, argv.data()), 0);
+  // Reload without the clients command-line override.
+  ASSERT_EQ(temporary_config.parse({}), 0);
   ASSERT_EQ(config::get_clients_config(), saved_clients);
   ASSERT_TRUE(config::update_full_config({ { "clients", "[]" }, { "gamepad", config::input.gamepad } }));
   EXPECT_EQ(config::get_clients_config(), "[]");
@@ -264,20 +290,7 @@ TEST(ConfigRuntime, CommandLineOverrideKeepsSavedClientBindings) {
     { "version", 1 }, { "userSid", "user" }, { "vddId", "vdd-client-5" },
     { "profileName", "client.icc" }, { "sha256", std::string(64, 'a') }
   };
-  std::vector<std::string> arguments {
-    "sunshine-test",
-    R"(clients=[{"uuid":"client-5","name":"override"}])"
-  };
-  for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
-    arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
-  }
-  const auto run_parse = [&arguments] {
-    std::vector<char *> argv;
-    for (auto &argument : arguments) argv.push_back(argument.data());
-    argv.push_back(nullptr);
-    return config::parse(static_cast<int>(argv.size()) - 1, argv.data());
-  };
-  ASSERT_EQ(run_parse(), 0);
+  ASSERT_EQ(temporary_config.parse({ R"(clients=[{"uuid":"client-5","name":"override"}])" }), 0);
   ASSERT_EQ(config::get_clients_config(), R"([{"uuid":"client-5","name":"override"}])");
   ASSERT_TRUE(config::save_client_hdr_calibration("client-5", calibration));
   // A sync under the override must keep the saved binding while the override's
@@ -290,8 +303,7 @@ TEST(ConfigRuntime, CommandLineOverrideKeepsSavedClientBindings) {
   EXPECT_EQ(persisted[0]["name"], "saved");
   EXPECT_EQ(persisted[0]["hdrCalibration"], calibration);
   // Reload without the override: the saved list wins again.
-  arguments.erase(arguments.begin() + 1);
-  ASSERT_EQ(run_parse(), 0);
+  ASSERT_EQ(temporary_config.parse({}), 0);
   const auto reloaded = nlohmann::json::parse(config::get_clients_config());
   EXPECT_EQ(reloaded[0]["name"], "saved");
   EXPECT_EQ(reloaded[0]["hdrCalibration"], calibration);
@@ -327,20 +339,7 @@ TEST(ConfigRuntime, CalibrationSaveUnderOverrideKeepsThePersistedList) {
     { "profileName", "eight.icc" }, { "sha256", std::string(64, 'b') }
   };
   ASSERT_TRUE(config::save_client_hdr_calibration("client-8", calibration8));
-  std::vector<std::string> arguments {
-    "sunshine-test",
-    R"(clients=[{"uuid":"client-7","name":"override"}])"
-  };
-  for (const auto name : { "pkey", "cert", "log_path", "file_state", "credentials_file", "file_apps" }) {
-    arguments.emplace_back(std::string { name } + "=" + config::sunshine.config_file);
-  }
-  const auto run_parse = [&arguments] {
-    std::vector<char *> argv;
-    for (auto &argument : arguments) argv.push_back(argument.data());
-    argv.push_back(nullptr);
-    return config::parse(static_cast<int>(argv.size()) - 1, argv.data());
-  };
-  ASSERT_EQ(run_parse(), 0);
+  ASSERT_EQ(temporary_config.parse({ R"(clients=[{"uuid":"client-7","name":"override"}])" }), 0);
   ASSERT_TRUE(config::save_client_hdr_calibration("client-7", calibration7));
   // The persisted list keeps both clients and both bindings.
   const auto persisted = nlohmann::json::parse(config::parse_config(temporary_config.read()).at("clients"));
@@ -354,7 +353,7 @@ TEST(ConfigRuntime, CalibrationSaveUnderOverrideKeepsThePersistedList) {
   ASSERT_EQ(runtime.size(), 1);
   EXPECT_EQ(runtime[0]["name"], "override");
   EXPECT_EQ(runtime[0]["hdrCalibration"], calibration7);
-  arguments.erase(arguments.begin() + 1);  // Reload without the override.
-  ASSERT_EQ(run_parse(), 0);
+  // Reload without the override.
+  ASSERT_EQ(temporary_config.parse({}), 0);
   EXPECT_EQ(nlohmann::json::parse(config::get_clients_config()), persisted);
 }
