@@ -315,6 +315,31 @@ if (WIN32)
 endif ()
 add_test(NAME session_store_unit_tests COMMAND session_store_unit_tests)
 
+# Exercise the auth handlers over a real TLS listener without linking the
+# platform display and streaming stacks. The test file supplies the small set
+# of globals those handlers read.
+add_executable(session_auth_routes_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/auth.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/local_auth_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/common.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/server.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/client.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/types.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/tls_trust.cpp)
+target_include_directories(session_auth_routes_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
+        sunshine_project_options sunshine_coverage sunshine_crypto ${PLATFORM_LIBRARIES})
+target_compile_definitions(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+target_compile_options(session_auth_routes_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(session_auth_routes_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(session_auth_routes_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME session_auth_routes_unit_tests COMMAND session_auth_routes_unit_tests)
+set_tests_properties(session_auth_routes_unit_tests PROPERTIES TIMEOUT 60)
 
 add_executable(sunshinesvc_state_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
