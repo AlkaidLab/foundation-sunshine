@@ -4,26 +4,55 @@ using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Win32;
+using PayloadPolicy;
 
-if (args.Length < 2) throw new ArgumentException("extract <assembly> <directory> | verify <original> <patched> | test <patched> <profile>");
+var argumentList = args.ToList();
+var policyIndex = argumentList.IndexOf("--policy");
+string? policyPath = null;
+if (policyIndex >= 0)
+{
+    if (policyIndex + 1 >= argumentList.Count) throw new ArgumentException("--policy needs a policy path");
+    policyPath = argumentList[policyIndex + 1];
+    argumentList.RemoveRange(policyIndex, 2);
+}
+args = argumentList.ToArray();
+if (args.Length < 2) throw new ArgumentException("extract <assembly> <directory> --policy <policy.json> | verify <original> <patched> <contract> --policy <policy.json> | audit <assembly> --policy <policy.json> | test <patched> <profile> <contract>");
 var context = new AssemblyLoadContext("payload", isCollectible: true);
 var assembly = context.LoadFromAssemblyPath(Path.GetFullPath(args[1]));
 if (args[0] == "extract")
 {
+    if (policyPath is null) throw new ArgumentException("extract requires --policy");
+    var policy = Policy.Load(policyPath);
     Directory.CreateDirectory(args[2]);
     var resources = new System.Text.StringBuilder("<Project><ItemGroup>");
-    int index = 0;
-    foreach (var name in assembly.GetManifestResourceNames())
+    int index = 0, denied = 0;
+    var unknown = new List<string>();
+    foreach (var name in assembly.GetManifestResourceNames().OrderBy(static resource => resource, StringComparer.Ordinal))
     {
+        var verdict = policy.Classify(name, out _, out _);
+        if (verdict == Verdict.Deny)
+        {
+            denied++;
+            continue;
+        }
+        if (verdict == Verdict.Unknown)
+        {
+            unknown.Add(name);
+            continue;
+        }
         var file = Path.GetFullPath(Path.Combine(args[2], $"{index++:D4}.bin"));
         using var input = assembly.GetManifestResourceStream(name)!;
         using var output = File.Create(file);
         input.CopyTo(output);
         resources.Append($"<EmbeddedResource Include=\"{System.Security.SecurityElement.Escape(file)}\"><LogicalName>{System.Security.SecurityElement.Escape(name)}</LogicalName></EmbeddedResource>");
     }
+    if (unknown.Count > 0)
+        throw new InvalidOperationException("payload policy has no rule for: " + string.Join(", ", unknown));
+    if (index == 0)
+        throw new InvalidOperationException("payload policy selected no resources");
     resources.Append("</ItemGroup></Project>");
     File.WriteAllText(Path.Combine(args[2], "resources.props"), resources.ToString());
-    Console.WriteLine($"Extracted {assembly.GetManifestResourceNames().Length} upstream resources");
+    Console.WriteLine($"Extracted {index} of {assembly.GetManifestResourceNames().Length} upstream resources for {policy.Document.PayloadPolicy} (denied {denied})");
 }
 else if (args[0] == "verify")
 {
@@ -41,14 +70,47 @@ else if (args[0] == "verify")
     Require(pinnedDriverHash == usbip.GetProperty("driver_sha256").GetString(), "contract and upstream driver hash disagree");
     Require((string)originalInstaller.GetProperty("InstallerSha256", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)! ==
         usbip.GetProperty("installer_sha256").GetString(), "contract and upstream installer hash disagree");
-    var names = assembly.GetManifestResourceNames().Order().ToArray();
-    Require(names.Append("Foundation.ComponentCompatibility.json").Order().SequenceEqual(patched.GetManifestResourceNames().Order()), "resource catalog changed");
+    if (policyPath is null) throw new ArgumentException("verify requires --policy");
+    var policy = Policy.Load(policyPath);
+    var upstream = assembly.GetManifestResourceNames().Order(StringComparer.Ordinal).ToArray();
+    // Only deletions are allowed. Every surviving resource must be the upstream
+    // byte-for-byte; the sole exception is a policy-pinned injection (the signed
+    // driver package), which cannot exist in the upstream release at all.
+    var allowed = upstream.Where(name => policy.Classify(name, out _, out _) != Verdict.Deny).ToArray();
+    // The pinned driver package is authored by the release pipeline, so it never
+    // matches upstream bytes even when it reuses an upstream resource name. The
+    // expected set is therefore the allowed upstream subset plus the contract
+    // plus every pin.
+    var pins = (policy.Document.DriverPackage?.Files ?? []).ToDictionary(file => file.Name, StringComparer.Ordinal);
+    var expected = allowed.Append("Foundation.ComponentCompatibility.json").Concat(pins.Keys)
+        .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+    var actual = patched.GetManifestResourceNames().Order(StringComparer.Ordinal).ToArray();
+    Require(expected.SequenceEqual(actual),
+        "payload does not match the policy: missing [" + string.Join(", ", expected.Except(actual, StringComparer.Ordinal)) +
+        "] unexpected [" + string.Join(", ", actual.Except(expected, StringComparer.Ordinal)) + "]");
     using (var contract = patched.GetManifestResourceStream("Foundation.ComponentCompatibility.json")!)
         Require(SHA256.HashData(contract).SequenceEqual(SHA256.HashData(File.ReadAllBytes(args[3]))), "compatibility contract changed");
-    foreach (var name in names)
+    foreach (var name in expected)
     {
-        using var originalStream = assembly.GetManifestResourceStream(name)!;
+        // The contract is the one resource that never exists upstream; it was
+        // compared against the contract file above, not against a payload pin.
+        if (name == "Foundation.ComponentCompatibility.json")
+            continue;
         using var patchedStream = patched.GetManifestResourceStream(name)!;
+        if (pins.TryGetValue(name, out var pin))
+        {
+            // The pinned driver package is the only permitted substitution: it
+            // may replace the upstream file of the same name, because the signed
+            // catalog covers the bytes we ship, not the ones upstream shipped.
+            var pinVerdict = policy.Classify(name, out _, out _);
+            Require(pinVerdict is Verdict.Allow or Verdict.Warn,
+                $"pinned resource is not allowed by any policy group: {name}");
+            Require(string.Equals(Convert.ToHexString(SHA256.HashData(patchedStream)).ToLowerInvariant(),
+                pin.Sha256.ToLowerInvariant(), StringComparison.Ordinal), $"injected resource hash mismatch: {name}");
+            continue;
+        }
+        using var originalStream = assembly.GetManifestResourceStream(name);
+        Require(originalStream is not null, $"resource was injected without a policy pin: {name}");
         Require(SHA256.HashData(originalStream).SequenceEqual(SHA256.HashData(patchedStream)), $"resource changed: {name}");
     }
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
@@ -57,7 +119,50 @@ else if (args[0] == "verify")
         a.Key == "FoundationUsbipPolicy" && a.Value == "externally-managed-v1"), "external transport policy missing");
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
         a.Key == "FoundationDualSenseReports" && a.Value == "host-clock-v1"), "DualSense report clock patch missing");
-    Console.WriteLine($"SDK identity/API unchanged; {names.Length} resources byte-identical");
+    Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
+        a.Key == "FoundationPayloadPolicy" && a.Value == policy.Document.PayloadPolicy),
+        $"payload policy marker does not match the policy stage '{policy.Document.PayloadPolicy}'");
+    Console.WriteLine($"SDK identity/API unchanged; {expected.Length} resources match the {policy.Document.PayloadPolicy} policy");
+}
+else if (args[0] == "catalog")
+{
+    // Reports whether the payload can deploy HID-only at all. Composite-only
+    // builds must answer false; a pinned signed package must answer true.
+    var builder = assembly.GetType("HIDMaestro.Internal.DriverBuilder", true)!;
+    var probe = builder.GetMethod("HasSignedCatalog", BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException("DriverBuilder.HasSignedCatalog is missing; the payload policy patch did not apply");
+    var present = (bool)probe.Invoke(null, null)!;
+    Console.WriteLine($"signed catalog present: {present}");
+}
+else if (args[0] == "audit")
+{
+    if (policyPath is null) throw new ArgumentException("audit requires --policy");
+    var policy = Policy.Load(policyPath);
+    var names = assembly.GetManifestResourceNames().ToHashSet(StringComparer.Ordinal);
+    int denied = 0, unknown = 0, missing = 0;
+    foreach (var name in names.Order(StringComparer.Ordinal))
+    {
+        var verdict = policy.Classify(name, out var rule, out _);
+        if (verdict == Verdict.Deny)
+        {
+            denied++;
+            Console.Error.WriteLine($"denied: {name} [{rule!.Id}]");
+        }
+        else if (verdict == Verdict.Unknown)
+        {
+            unknown++;
+            Console.Error.WriteLine($"unknown: {name}");
+        }
+    }
+    foreach (var name in policy.Document.Required)
+        if (!names.Contains(name))
+        {
+            missing++;
+            Console.Error.WriteLine($"missing: {name}");
+        }
+    Console.WriteLine($"payload audit: stage={policy.Document.PayloadPolicy} resources={names.Count} denied={denied} unknown={unknown} missing={missing}");
+    if (denied > 0) Environment.Exit(3);
+    if (unknown + missing > 0) Environment.Exit(2);
 }
 else if (args[0] == "test")
 {

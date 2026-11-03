@@ -1,0 +1,94 @@
+--- a/sdk/HIDMaestro.Core/Internal/DriverBuilder.cs
++++ b/sdk/HIDMaestro.Core/Internal/DriverBuilder.cs
+@@ -94,45 +94,17 @@ public static class DriverBuilder
+     /// tree. The machine that installs these is the one that runs them.</summary>
+     static readonly string[] EmbeddedFiles = new[]
+     {
+-        // Drivers + INFs
++        // Drivers + INFs. The signing tool tree is no longer redistributed:
++        // the driver package is signed and catalogued at release time.
+         "HIDMaestro.dll",
+         "HMXInput.dll",
+         "hidmaestro.inf",
+         "hidmaestro_xusb.inf",
+-
+-        // signtool.exe + its SXS dep tree, built for this architecture
+-        "signtool.exe",
+-        "signtool.exe.manifest",
+-        "mssign32.dll",
+-        "Microsoft.Windows.Build.Signing.mssign32.dll.manifest",
+-        "wintrust.dll",
+-        "wintrust.dll.ini",
+-        "Microsoft.Windows.Build.Signing.wintrust.dll.manifest",
+-        "appxsip.dll",
+-        "Microsoft.Windows.Build.Appx.AppxSip.dll.manifest",
+-        "appxpackaging.dll",
+-        "Microsoft.Windows.Build.Appx.AppxPackaging.dll.manifest",
+-        "opcservices.dll",
+-        "Microsoft.Windows.Build.Appx.OpcServices.dll.manifest",
+-
+     };
+ 
+-    /// <summary>Architecture-neutral payload. Inf2Cat.exe and its
+-    /// UniversalStore libraries are AMD64 .NET assemblies, so on ARM64 they
+-    /// run under Windows 11's x64 emulation, which Windows 10 on ARM does
+-    /// not have. One copy serves both targets.</summary>
+-    static readonly string[] NeutralFiles = new[]
+-    {
+-        // Inf2Cat.exe + minimum deps
+-        "Inf2Cat.exe",
+-        "inf2cat.exe.manifest",
+-        "WindowsProtectedFiles.xml",
+-        "Microsoft.UniversalStore.HardwareWorkflow.Cabinets.dll",
+-        "Microsoft.UniversalStore.HardwareWorkflow.Catalogs.dll",
+-        "Microsoft.UniversalStore.HardwareWorkflow.InfReader.dll",
+-        "Microsoft.UniversalStore.HardwareWorkflow.SubmissionBuilder.dll",
+-        "Microsoft.Kits.Logger.dll",
+-    };
++    // No architecture-neutral tooling is staged: catalogs are produced in the
++    // release build, never on a user machine.
++    static readonly string[] NeutralFiles = Array.Empty<string>();
+ 
+     /// <summary>Every file the staging directory must hold, paired with
+     /// the manifest resource name it comes from.</summary>
+@@ -421,6 +393,20 @@ public static class DriverBuilder
+     private const string ManifestRegPath = @"SOFTWARE\HIDMaestro";
+     private const string ManifestRegValue = "InstalledManifestSha256";
+ 
++    /// <summary>Foundation: true when this payload carries a signed driver
++    /// catalog. Composite-only payloads carry none, and must refuse to deploy
++    /// instead of signing or cataloguing anything on the user machine.</summary>
++    internal static bool HasSignedCatalog()
++    {
++        foreach (var name in typeof(DriverBuilder).Assembly.GetManifestResourceNames())
++        {
++            if (name.StartsWith(NativePrefix, StringComparison.Ordinal) &&
++                name.EndsWith(".cat", StringComparison.OrdinalIgnoreCase))
++                return true;
++        }
++        return false;
++    }
++
+     /// <summary>Full extract + sign + catalog + install pipeline. Returns
+     /// true on success; throws <see cref="InvalidOperationException"/> with
+     /// the failing tool's output on any pipeline-step failure. The
+@@ -461,10 +447,17 @@ public static class DriverBuilder
+             return true;
+         }
+ 
++        // Foundation: the driver package is signed at release time. A payload
++        // without a catalog fails closed before the DriverStore or the PnP tree
++        // is touched, so a composite-only component cannot remove a driver that
++        // an earlier component installed and is still working.
++        if (!HasSignedCatalog())
++            throw new InvalidOperationException(
++                "This DualSense component does not include a signed driver package. " +
++                "The HID-only profile requires a component built with a prebuilt catalog.");
++
+         EnsureExtracted();
+         RemoveOldDriverPackages();
+-        SignDrivers();
+-        GenerateCatalogs();
+         InstallDrivers();
+ 
+         WriteInstalledManifestHash(embeddedHash);

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Rebuild managed code only. Every embedded driver, tool and profile is
-       copied verbatim from the verified upstream release by PayloadTool. -->
+  <!-- Rebuild managed code only. Embedded resources are the intersection of the
+       verified upstream release and tools/ds5-payload/policy.json: PayloadTool
+       drops every denied resource and keeps the rest byte-identical. -->
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <AssemblyName>HIDMaestro.Core</AssemblyName>
@@ -25,13 +26,14 @@
     <Compile Include="SharedUsbipTransport.cs" />
     <Compile Include="DualSenseClock.cs" />
     <AssemblyMetadata Include="FoundationDualSenseReports" Value="host-clock-v1" />
+    <AssemblyMetadata Include="FoundationPayloadPolicy" Value="$(PayloadPolicy)" />
     <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
     <Compile Include="$(UpstreamSource)/sdk/HIDMaestro.Core/**/*.cs"
              Exclude="$(UpstreamSource)/sdk/HIDMaestro.Core/bin/**;$(UpstreamSource)/sdk/HIDMaestro.Core/obj/**" />
   </ItemGroup>
   <Import Project="$(PayloadDirectory)/resources.props" Condition="Exists('$(PayloadDirectory)/resources.props')" />
   <Target Name="RequireVerifiedInputs" BeforeTargets="BeforeBuild">
-    <Error Condition="'$(UpstreamSource)' == '' or '$(PayloadDirectory)' == '' or !Exists('$(CompatibilityManifestPath)') or '$(FoundationUsbipPolicy)' == ''"
+    <Error Condition="'$(UpstreamSource)' == '' or '$(PayloadDirectory)' == '' or !Exists('$(CompatibilityManifestPath)') or '$(FoundationUsbipPolicy)' == '' or '$(PayloadPolicy)' == ''"
            Text="Use scripts/build-hidmaestro-core-patch.ps1 to prepare verified source and payload." />
   </Target>
 </Project>

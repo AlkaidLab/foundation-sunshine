@@ -141,6 +141,36 @@ namespace {
     EXPECT_FALSE(validate());
   }
 
+  TEST_F(Ds5ComponentManifest, AcceptsMatchingPayloadPolicy) {
+    write(active / "component-compatibility.json",
+      R"({"schema":1,"component_version":"1.4.2","usbip":{"policy":"externally-managed-v1","version":"0.9.8.1"},"payload_policy":"composite-only-v1","capabilities":{"hid_only":false}})");
+    manifest.put("payload_policy", "composite-only-v1");
+    manifest.put("capabilities.hid_only", false);
+    save();
+    EXPECT_TRUE(validate()) << error;
+  }
+
+  TEST_F(Ds5ComponentManifest, RejectsMismatchedOrUnknownPayloadPolicy) {
+    write(active / "component-compatibility.json",
+      R"({"schema":1,"component_version":"1.4.2","usbip":{"policy":"externally-managed-v1","version":"0.9.8.1"},"payload_policy":"composite-only-v1"})");
+    manifest.put("payload_policy", "legacy-v1");
+    save();
+    EXPECT_FALSE(validate());
+    manifest.erase("payload_policy");
+    write(active / "component-compatibility.json",
+      R"({"schema":1,"component_version":"1.4.2","usbip":{"policy":"externally-managed-v1","version":"0.9.8.1"},"payload_policy":"experimental-v1"})");
+    save();
+    EXPECT_FALSE(validate());
+  }
+
+  TEST_F(Ds5ComponentManifest, RejectsHidOnlyClaimedWhenThePayloadCannotProvideIt) {
+    write(active / "component-compatibility.json",
+      R"({"schema":1,"component_version":"1.4.2","usbip":{"policy":"externally-managed-v1","version":"0.9.8.1"},"payload_policy":"composite-only-v1","capabilities":{"hid_only":false}})");
+    manifest.put("capabilities.hid_only", true);
+    save();
+    EXPECT_FALSE(validate());
+  }
+
   TEST_F(Ds5ComponentManifest, RejectsUnreadableMalformedAndInvalidTypedManifest) {
     EXPECT_FALSE(validate());
     write(active / "component.json", "{ broken JSON");
