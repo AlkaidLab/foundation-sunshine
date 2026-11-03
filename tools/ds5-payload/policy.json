@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "payload_policy": "composite-only-v1",
+  "target": "win-x64",
+  "_notes": [
+    "Single source of truth for what the DualSense sidecar may ship. Consumed by the",
+    "build (payload selection), packaging (ZIP audit) and review (human sign-off).",
+    "denied wins over groups, so a later rule can never re-admit a forbidden tool.",
+    "Payload policy stages: legacy-v1 (shipped 1.4.2/1.4.3, fails this policy) -> composite-only-v1",
+    " (this file: no tooling, no runtime signing, HID-only unavailable) -> audited-hid-v1 (pinned signed package).",
+    "Changing this file is the authorisation change; it must be reviewed in a PR."
+  ],
+  "denied": [
+    {
+      "id": "microsoft-signing-tools",
+      "match": [
+        "*signtool*",
+        "*.mssign32.dll",
+        "*.wintrust.dll",
+        "*.wintrust.dll.ini",
+        "*.appxsip.dll",
+        "*.appxpackaging.dll",
+        "*.opcservices.dll",
+        "*Microsoft.Windows.Build.*"
+      ],
+      "reason": "SDK signing tool chain: no redistribution basis for this driver-deployment use, and the runtime must not sign drivers"
+    },
+    {
+      "id": "microsoft-catalog-tools",
+      "match": [
+        "*Inf2Cat*",
+        "*HardwareWorkflow*",
+        "*Kits.Logger*",
+        "*WindowsProtectedFiles.xml"
+      ],
+      "reason": "WDK catalog tooling: no public redistribution grant found for this use; catalogs are produced at release time"
+    },
+    {
+      "id": "redistributed-installers",
+      "match": [
+        "HIDMaestro.Resources.USBip-*.exe"
+      ],
+      "reason": "usbip-win2 installers are unreachable after managed-usbip.patch; the Control Panel downloads them from upstream instead"
+    },
+    {
+      "id": "unsupported-architecture",
+      "match": [
+        "HIDMaestro.Native.arm64.*",
+        "HIDMaestro.Usbip.arm64.*"
+      ],
+      "reason": "the component only publishes win-x64-self-contained, so arm64 payload can never be reached"
+    },
+    {
+      "id": "unused-vr-payload",
+      "match": [
+        "HIDMaestro.VR.*"
+      ],
+      "reason": "no Sunshine code path references the SteamVR payload"
+    },
+    {
+      "id": "debug-symbols",
+      "match": [
+        "*.pdb"
+      ],
+      "reason": "symbols are not part of the reviewed payload"
+    }
+  ],
+  "groups": [
+    {
+      "id": "hidmaestro-profiles",
+      "match": [ "HIDMaestro.Profiles.*" ],
+      "verdict": "allow",
+      "provenance": "HIDMaestro",
+      "license": "MIT",
+      "reason": "bundled controller profiles; only dualsense and dualsense-composite are consumed"
+    },
+    {
+      "id": "hidmaestro-driver-x64",
+      "match": [
+        "HIDMaestro.Native.x64.HIDMaestro.dll",
+        "HIDMaestro.Native.x64.HMXInput.dll",
+        "HIDMaestro.Native.x64.hidmaestro.inf",
+        "HIDMaestro.Native.x64.hidmaestro_xusb.inf",
+        "HIDMaestro.Native.x64.hmswd.exe"
+      ],
+      "verdict": "allow",
+      "provenance": "HIDMaestro",
+      "license": "MIT",
+      "reason": "UMDF driver package consumed by the HID-only profile; to be replaced by the signed package in audited-hid-v1"
+    },
+    {
+      "id": "hidmaestro-driver-catalog",
+      "match": [
+        "HIDMaestro.Native.x64.hidmaestro*.cat"
+      ],
+      "verdict": "allow",
+      "provenance": "HIDMaestro",
+      "license": "MIT",
+      "reason": "prebuilt catalog; required once runtime signing is removed"
+    },
+    {
+      "id": "usbip-reference-x64",
+      "match": [ "HIDMaestro.Usbip.x64.*" ],
+      "verdict": "allow",
+      "provenance": "usbip-win2",
+      "license": "BSD-3-Clause",
+      "reason": "reference copy used only to validate the externally managed transport, never deployed"
+    },
+    {
+      "id": "hidmaestro-notices",
+      "match": [ "HIDMaestro.Resources.THIRD-PARTY-NOTICES.txt" ],
+      "verdict": "allow",
+      "provenance": "HIDMaestro",
+      "license": "MIT",
+      "reason": "upstream third-party notices"
+    },
+    {
+      "id": "foundation-contract",
+      "match": [ "Foundation.ComponentCompatibility.json" ],
+      "verdict": "allow",
+      "provenance": "first-party",
+      "license": "GPL-3.0-only",
+      "reason": "embedded copy of the component compatibility contract"
+    },
+    {
+      "id": "sidecar-first-party",
+      "match": [
+        "Sunshine.Ds5Sidecar.*",
+        "component-compatibility.json",
+        "runtime.json",
+        "LICENSE",
+        "LICENSE.HIDMaestro",
+        "THIRD-PARTY-NOTICES.txt"
+      ],
+      "verdict": "allow",
+      "provenance": "first-party",
+      "license": "GPL-3.0-only",
+      "reason": "sidecar binaries, contract and notices"
+    },
+    {
+      "id": "hidmaestro-core",
+      "match": [ "HIDMaestro.Core.dll" ],
+      "verdict": "allow",
+      "provenance": "HIDMaestro",
+      "license": "MIT",
+      "reason": "patched managed Core; its embedded resources are audited separately"
+    },
+    {
+      "id": "dotnet-runtime",
+      "match": [ "*.dll", "*.exe" ],
+      "verdict": "warn",
+      "provenance": "dotnet-runtime",
+      "license": "runtime pack licenses",
+      "reason": "runtime pack or NuGet dependency; replace this catch-all with an exact file manifest in M1"
+    },
+    {
+      "id": "dotnet-runtime-resources",
+      "match": [ "FxResources.*", "*.resources", "*.dtd", "*.ent", "*.nlp" ],
+      "verdict": "warn",
+      "provenance": "dotnet-runtime",
+      "license": "runtime pack licenses",
+      "reason": "localized strings and schema resources embedded in runtime assemblies; pinned by the runtime manifest in M1"
+    },
+    {
+      "id": "dotnet-runtime-metadata",
+      "match": [ "*.json", "*.xml" ],
+      "verdict": "warn",
+      "provenance": "dotnet-runtime",
+      "license": "runtime pack licenses",
+      "reason": "runtime metadata; pin an exact file manifest in M1"
+    }
+  ],
+  "required": [
+    "HIDMaestro.Native.x64.HIDMaestro.dll",
+    "HIDMaestro.Native.x64.HMXInput.dll",
+    "HIDMaestro.Native.x64.hidmaestro.inf",
+    "HIDMaestro.Native.x64.hidmaestro_xusb.inf",
+    "HIDMaestro.Native.x64.hmswd.exe",
+    "HIDMaestro.Resources.THIRD-PARTY-NOTICES.txt",
+    "Foundation.ComponentCompatibility.json"
+  ],
+  "driver_package": {
+    "version": null,
+    "driver_ver": null,
+    "arch": "x64",
+    "os_floor": "10.0.19041",
+    "signer": null,
+    "catalogs": [ "hidmaestro.cat", "hidmaestro_xusb.cat" ],
+    "files": [],
+    "_notes": "Filled in by M2 once a signed package exists; Core only trusts the pinned hashes."
+  }
+}
