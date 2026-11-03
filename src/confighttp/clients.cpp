@@ -600,6 +600,7 @@ namespace confighttp::clients {
   void
   register_routes(https_server_t &server) {
     server.resource["^/api/pin$"]["POST"] = savePin;
+    server.resource["^/api/pairing/pin$"]["POST"] = savePin;
     server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
     server.resource["^/api/qr-pair/cancel$"]["POST"] = cancelQrPair;
     server.resource["^/api/qr-pair$"]["GET"] = getQrPairStatus;

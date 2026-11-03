@@ -159,6 +159,8 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/network_probe.cpp src/nvhttp/network_probe.h
     src/nvhttp/network_probe_limiter.cpp src/nvhttp/network_probe_limiter.h
     src/nvhttp/pairing.cpp src/nvhttp/pairing.h
+    src/nvhttp/pairing_pending.cpp src/nvhttp/pairing_pending.h
+    src/nvhttp/preset_pin.cpp
     src/nvhttp/sessions.cpp src/nvhttp/sessions.h
 
     # src/streaming
