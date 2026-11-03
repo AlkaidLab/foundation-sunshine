@@ -798,6 +798,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_family.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
@@ -958,6 +959,22 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(client_fingerprint_unit_tests ${dep})
 endforeach()
 
+add_executable(client_family_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_family.cpp
+        ${CMAKE_SOURCE_DIR}/src/client_family.cpp)
+target_include_directories(client_family_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(client_family_unit_tests
+        PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_definitions(client_family_unit_tests PRIVATE
+        CLIENT_FAMILY_FIXTURE="${CMAKE_SOURCE_DIR}/tests/fixtures/client_families.json")
+target_compile_options(client_family_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(client_family_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME client_family_unit_tests COMMAND client_family_unit_tests)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(client_family_unit_tests ${dep})
+endforeach()
+
 if (WIN32)
     add_executable(ds5_fake_sidecar
             ${CMAKE_SOURCE_DIR}/tests/tools/ds5_fake_sidecar.cpp)
@@ -1022,6 +1039,7 @@ if (WIN32)
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(client_family_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(client_fingerprint_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 

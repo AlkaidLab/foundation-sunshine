@@ -43,6 +43,7 @@ set(SUNSHINE_HOST_SOURCES
     # src
     src/upnp.cpp src/upnp.h
     src/cbs.cpp
+    src/client_family.cpp src/client_family.h
     src/client_fingerprint.cpp src/client_fingerprint.h
     src/config.cpp src/config.h
     src/entry_handler.cpp src/entry_handler.h

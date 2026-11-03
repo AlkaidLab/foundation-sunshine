@@ -6,13 +6,19 @@
 #pragma once
 
 // standard includes
+#include <chrono>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 // lib includes
+#include "src/http/server.h"
 #include <boost/property_tree/ptree.hpp>
 #include <nlohmann/json.hpp>
-#include "src/http/server.h"
 // local includes
+#include "client_family.h"
 #include "crypto.h"
 #include "thread_safe.h"
 #include "version.h"
@@ -87,6 +93,7 @@ namespace nvhttp {
       std::string uniqueID = {};
       std::string cert = {};
       std::string name = {};
+      client_family::observation_t family_observation = {};
     } client;
 
     std::unique_ptr<crypto::aes_t> cipher_key = {};
@@ -184,6 +191,66 @@ namespace nvhttp {
   pin(std::string pin, std::string name);
 
   /**
+   * @brief A pairing request that is waiting for its PIN.
+   *
+   * The id is opaque and server-generated. It is deliberately independent of
+   * the client certificate and of the client-supplied uniqueid.
+   */
+  struct pending_pair_request_t {
+    std::string id;
+    std::string device_name;
+    std::int64_t started_at = 0;  ///< Unix time in seconds.
+    std::int64_t expires_at = 0;  ///< Unix time in seconds.
+  };
+
+  struct pending_pair_snapshot_t {
+    std::uint64_t generation = 0;
+    std::vector<pending_pair_request_t> requests;
+  };
+
+  /**
+   * @brief Return the live pending-PIN requests.
+   *
+   * Expired requests are removed first and their waiting clients receive the
+   * same 408 response as the existing timeout path. Callers must not infer
+   * client identity from the returned id.
+   */
+  pending_pair_snapshot_t
+  get_pending_pair_requests();
+
+  /**
+   * @brief Wait until the pending set changes or the timeout elapses.
+   *
+   * Used by the authenticated long-poll endpoint. The wait is bounded by the
+   * caller and never holds the web server's worker threads.
+   */
+  bool
+  wait_for_pending_pair_change(std::uint64_t generation, std::chrono::milliseconds timeout);
+
+  /**
+   * @brief Apply a PIN to one pending request, or to the oldest one when
+   * request_id is empty.
+   */
+  bool
+  pin_for_pending_request(const std::string &request_id, std::string pin, std::string name);
+
+  /**
+   * @brief Reject one pending request and answer its waiting client.
+   */
+  bool
+  reject_pending_pair_request(const std::string &request_id);
+
+#ifdef SUNSHINE_TESTS
+  void
+  set_pending_pair_timeout_for_test(std::chrono::milliseconds timeout);
+  void
+  reset_pairing_sessions_for_test();
+  /// Record a completed pairing without the handshake.
+  void
+  add_paired_client_for_test(const std::string &name, std::string cert, client_family::record_t family);
+#endif
+
+  /**
    * @brief Remove single client.
    * @examples
    * nvhttp::unpair_client("4D7BB2DD-5704-A405-B41C-891A022932E1");
@@ -211,8 +278,33 @@ namespace nvhttp {
   touch_client_last_session(const std::string &uuid, std::int64_t timestamp_ms);
 
   /// Change connection permission without removing pairing or display settings.
-  bool set_client_enabled(const std::string &uuid, bool enabled);
-  bool is_client_enabled(const std::string &uuid);
+  bool
+  set_client_enabled(const std::string &uuid, bool enabled);
+  bool
+  is_client_enabled(const std::string &uuid);
+
+  /**
+   * @brief Merge request evidence into the family record of one paired client.
+   *
+   * The client is identified by the UUID its paired certificate maps to. This
+   * never changes pairing or authorization and performs no network access.
+   * @return The merged record, or an empty record when the UUID is not paired.
+   */
+  client_family::record_t
+  observe_client_family(std::string_view client_uuid, const client_family::observation_t &observation);
+
+  /// The stored identity of one paired client.
+  struct paired_client_t {
+    std::string name;
+    client_family::record_t family;
+  };
+
+  /**
+   * @brief Look up a paired client by the UUID its certificate maps to.
+   * @return The stored name and client family, or nothing when the UUID is not paired.
+   */
+  std::optional<paired_client_t>
+  find_paired_client(std::string_view client_uuid);
 
   /**
    * @brief Get all paired clients.
@@ -221,7 +313,8 @@ namespace nvhttp {
    * nlohmann::json clients = nvhttp::get_all_clients();
    * @examples_end
    */
-  nlohmann::json get_all_clients();;
+  nlohmann::json
+  get_all_clients();
 
   std::string
   get_pair_name();

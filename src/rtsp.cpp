@@ -1660,6 +1660,19 @@ namespace rtsp_stream {
       }
     }
 
+    // Keep the attributes the client actually sent, before the defaults
+    // below. Family rules rely on absence (a vanilla x-nv only SDP), so a
+    // defaulted value must not look like client evidence.
+    // SDP attribute lines: RFC 8866 section 8.2.4. The method is RFC 2326
+    // section 10.3 (RTSP 1.0); RFC 7826 Appendix I.1 removes ANNOUNCE.
+    // Record keys: client-family-rfc8866-sdp-20261103,
+    // client-family-rfc2326-rtsp-20261103, client-family-rfc7826-rtsp2-20261103.
+    client_family::observation_t family_observation;
+    family_observation.now = client_family::unix_now();
+    for (const auto &[name, value] : args) {
+      client_family::add_sdp(family_observation, name, value);
+    }
+
     // Initialize any omitted parameters to defaults
     args.try_emplace("x-nv-video[0].encoderCscMode"sv, "0"sv);
     args.try_emplace("x-nv-vqos[0].bitStreamFormat"sv, "0"sv);
@@ -2239,6 +2252,11 @@ namespace rtsp_stream {
     session.mat_live_selected = config.audio.codec == audio::CODEC_MAT_LIVE;
     if (session.mat_live_selected) BOOST_LOG(info) << "Native live MAT negotiated: AEAD counter64; no finite replay";
     session.nvidia_vsync_lease.reset();
+
+    if (!session.client_cert_uuid.empty()) {
+      family_observation.now = client_family::unix_now();
+      nvhttp::observe_client_family(session.client_cert_uuid, family_observation);
+    }
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,
