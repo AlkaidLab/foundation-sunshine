@@ -180,6 +180,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/apps.cpp src/confighttp/apps.h
     src/confighttp/configuration.cpp src/confighttp/configuration.h
     src/confighttp/clients.cpp src/confighttp/clients.h
+    src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
     src/confighttp/integrations.cpp src/confighttp/integrations.h

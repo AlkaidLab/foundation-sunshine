@@ -102,6 +102,15 @@ target_link_libraries(dynamic_param_protocol_unit_tests PRIVATE gtest_main sunsh
 set_target_properties(dynamic_param_protocol_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME dynamic_param_protocol_unit_tests COMMAND dynamic_param_protocol_unit_tests)
 
+add_executable(pair_link_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/confighttp/pair_link.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pair_link.cpp)
+target_include_directories(pair_link_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(pair_link_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage Boost::asio
+        $<$<PLATFORM_ID:Windows>:ws2_32>)
+set_target_properties(pair_link_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME pair_link_unit_tests COMMAND pair_link_unit_tests)
+
 
 add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
 target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

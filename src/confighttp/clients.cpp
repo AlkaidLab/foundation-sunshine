@@ -5,6 +5,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "clients.h"
+#include "pair_link.h"
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
@@ -21,13 +22,13 @@
 #include "src/utility.h"
 #include "src/webhook/webhook.h"
 #include <boost/property_tree/json_parser.hpp>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
   #include "src/platform/windows/display_device/color_profile.h"
-  #include <iphlpapi.h>
 #endif
 
 using namespace std::literals;
@@ -169,30 +170,33 @@ namespace confighttp::clients {
 
       try {
         pt::read_json(ss, inputTree);
-        std::string pin = inputTree.get<std::string>("pin");
-        std::string name = inputTree.get<std::string>("name");
-
-        // Validate PIN: must be numeric digits only, 4-8 characters
-        if (pin.size() < 4 || pin.size() > 8 || !std::all_of(pin.begin(), pin.end(), ::isdigit)) {
-          outputTree.put("status", false);
-          outputTree.put("error", "PIN must be 4-8 digits");
-          return;
+        confighttp::pairing::pin_request_t pin_request;
+        pin_request.pin = inputTree.get<std::string>("pin");
+        pin_request.name = inputTree.get<std::string>("name");
+        if (inputTree.count("id") > 0) {
+          pin_request.id = inputTree.get<std::string>("id");
         }
-        // Validate client name
-        if (name.empty() || name.size() > 256) {
+
+        const auto validation_error = confighttp::pairing::validate_pin_request(pin_request);
+        if (!validation_error.empty()) {
           outputTree.put("status", false);
-          outputTree.put("error", "Client name must be 1-256 characters");
+          outputTree.put("error", validation_error);
           return;
         }
 
-        bool pin_result = nvhttp::pin(pin, name);
+        const bool pin_result = pin_request.id.empty() ?
+                                  nvhttp::pin(pin_request.pin, pin_request.name) :
+                                  nvhttp::pin_for_pending_request(pin_request.id, pin_request.pin, pin_request.name);
         outputTree.put("status", pin_result);
+        if (!pin_result && !pin_request.id.empty()) {
+          outputTree.put("error", "Pending pairing request not found or PIN rejected");
+        }
 
         try {
           webhook::send_event_async(webhook::event_t {
             .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
             .timestamp = webhook::get_current_timestamp(),
-            .client_name = name,
+            .client_name = pin_request.name,
             .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
             .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()) });
         }
