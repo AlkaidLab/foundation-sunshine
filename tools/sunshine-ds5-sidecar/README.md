@@ -182,8 +182,7 @@ the UMDF driver keeps the driver path, and every other stage uses
 dualsense-hid-usbip, the same HID function on the USB/IP backend, which needs no
 driver and no catalog. When the USB/IP transport is unavailable the attach is
 rejected with one clear message instead of a resource error from inside
-HIDMaestro. SUNSHINE_DS5_HID_USBIP=1 forces the USB/IP profile and exists only
-for development. The driver builder itself
+HIDMaestro. The driver builder itself
 checks for a signed catalog before it touches the DriverStore, so a
 composite-only component can never remove a driver that is still in use. The Control Panel still has
 to hide the option and read the field; that lands with the compatibility

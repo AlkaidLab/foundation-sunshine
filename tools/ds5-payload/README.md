@@ -86,8 +86,9 @@ payload_policy names the stage the artifact is built for:
   no catalog, so FullDeploy fails closed. HID-only runs on the USB/IP profile
   instead, or through an already installed driver; it needs neither a signed
   catalog nor a fresh deployment.
-- audited-hid-v1 - adds that signed package pinned by driver_package; the
-  runtime only verifies and installs it. The build requires -DriverManifest.
+- audited-hid-v1 - reserved for a prebuilt, signed driver package. This
+  repository has no provider for it, so the build refuses the stage instead of
+  producing a component that could not install anything.
 
 The stage also decides what the artifact may claim. Two different questions are
 kept apart on purpose:
@@ -107,27 +108,9 @@ uninstallable until the Control Panel is rebuilt. Keeping the stage in runtime.j
 and the probe makes the artifact additive: an older Control Panel ignores the new
 fields and still installs, and the sidecar refuses HID-only with a clear message.
 
-## Signed driver package (audited-hid-v1)
-
-The signed package is an input with a manifest, not something this repository
-builds:
-
-- driver-package.json, stored next to the package files:
-  schema, component_version, driver_version, arch, os_floor, signer, catalogs and
-  files[] of { name, resource, sha256 }.
-- scripts/import-driver-package.ps1 copies those files into the extracted payload
-  and rewrites resources.props, replacing the upstream resource with the same
-  logical name.
-
-The policy pins are the authority: a file that is not pinned, or whose hash
-disagrees with the pin, aborts the build; a pin the manifest does not provide also
-aborts. This is the single place where the "only deletions" rule bends: a pinned
-resource may replace the upstream file of the same name, because the signed
-catalog covers what we ship, not what upstream shipped. Every replacement is
-enumerated in driver_package.files, so it stays reviewable.
-
-build-hidmaestro-core-patch.ps1 takes -DriverManifest and refuses the
-audited-hid-v1 stage without it.
+Every surviving resource is byte-identical to the upstream release; there is no
+substitution path. A signed driver package would be a different stage with its own
+provenance, and this repository does not provide one.
 
 Changing policy.json **is** the authorisation change. A new group or a widened
 pattern must be reviewed; the auditor's job is to make that review unavoidable.

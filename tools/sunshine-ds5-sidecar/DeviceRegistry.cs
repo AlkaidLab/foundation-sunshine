@@ -21,7 +21,6 @@ internal sealed class DeviceRegistry : IDisposable
 
     private readonly HMContext _context = new();
     private readonly string _hidOnlyProfileId;
-    private readonly bool _hidOnlyUsesUsbip;
     private readonly Dictionary<byte, ControllerSession> _controllers = new();
     private readonly Action<Protocol.Message> _emit;
     private readonly bool _authoredHapticsAvailable;
@@ -40,12 +39,9 @@ internal sealed class DeviceRegistry : IDisposable
         // backend, which needs no driver at all. "A driver happens to be
         // installed" is not enough to use the UMDF path: the installer's fast
         // path also requires a matching manifest hash, and a mismatch would fail
-        // closed mid-attach. SUNSHINE_DS5_HID_USBIP forces the USB/IP profile and
-        // exists only to exercise it while developing.
-        _hidOnlyUsesUsbip =
-            Environment.GetEnvironmentVariable("SUNSHINE_DS5_HID_USBIP") is "1" or "true" ||
-            !ComponentCompatibility.HidOnlyAvailable;
-        _hidOnlyProfileId = _hidOnlyUsesUsbip ? HidOnlyUsbipProfileId : "dualsense";
+        // closed in the middle of an attach.
+        _hidOnlyProfileId =
+            ComponentCompatibility.HidOnlyAvailable ? "dualsense" : HidOnlyUsbipProfileId;
         _authoredHapticsAvailable = _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
                                     HMContext.IsUsbipBackendAvailable;
         _genshinCompatibilityAvailable = _authoredHapticsAvailable &&

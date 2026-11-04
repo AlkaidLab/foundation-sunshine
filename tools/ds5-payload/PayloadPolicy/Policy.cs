@@ -22,23 +22,6 @@ public sealed class Rule
     public string? License { get; set; }
 }
 
-public sealed class DriverFilePin
-{
-    public string Name { get; set; } = "";
-    public string Sha256 { get; set; } = "";
-}
-
-public sealed class DriverPackage
-{
-    public string? Version { get; set; }
-    public string? DriverVer { get; set; }
-    public string? Arch { get; set; }
-    public string? OsFloor { get; set; }
-    public string? Signer { get; set; }
-    public string[] Catalogs { get; set; } = [];
-    public List<DriverFilePin> Files { get; set; } = [];
-}
-
 public sealed class PolicyDocument
 {
     public int Schema { get; set; }
@@ -47,7 +30,6 @@ public sealed class PolicyDocument
     public List<Rule> Denied { get; set; } = [];
     public List<Rule> Groups { get; set; } = [];
     public List<string> Required { get; set; } = [];
-    public DriverPackage? DriverPackage { get; set; }
 }
 
 public sealed class Policy

@@ -6,8 +6,9 @@
     "Single source of truth for what the DualSense sidecar may ship. Consumed by the",
     "build (payload selection), packaging (ZIP audit) and review (human sign-off).",
     "denied wins over groups, so a later rule can never re-admit a forbidden tool.",
-    "Payload policy stages: legacy-v1 (shipped 1.4.2/1.4.3, fails this policy) -> composite-only-v1",
-    " (this file: no tooling, no runtime signing, HID-only unavailable) -> audited-hid-v1 (pinned signed package).",
+    "Payload policy stages: legacy-v1 (shipped 1.4.2/1.4.3, fails this policy) and composite-only-v1",
+    " (this file: no tooling, no runtime signing, HID-only runs over USB/IP). audited-hid-v1 is reserved",
+    " for a future prebuilt signed package; this repository has no provider for it, so it cannot be built.",
     "Changing this file is the authorisation change; it must be reviewed in a PR."
   ],
   "denied": [
@@ -86,7 +87,7 @@
       "verdict": "allow",
       "provenance": "HIDMaestro",
       "license": "MIT",
-      "reason": "UMDF driver package consumed by the HID-only profile; to be replaced by the signed package in audited-hid-v1"
+      "reason": "UMDF driver package kept for a future prebuilt signed stage; the shipped composite-only stage never deploys it"
     },
     {
       "id": "hidmaestro-driver-catalog",
@@ -178,15 +179,5 @@
     "HIDMaestro.Native.x64.hmswd.exe",
     "HIDMaestro.Resources.THIRD-PARTY-NOTICES.txt",
     "Foundation.ComponentCompatibility.json"
-  ],
-  "driver_package": {
-    "version": null,
-    "driver_ver": null,
-    "arch": "x64",
-    "os_floor": "10.0.19041",
-    "signer": null,
-    "catalogs": [ "hidmaestro.cat", "hidmaestro_xusb.cat" ],
-    "files": [],
-    "_notes": "Filled in by M2 once a signed package exists; Core only trusts the pinned hashes."
-  }
+  ]
 }

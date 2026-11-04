@@ -77,13 +77,8 @@ else if (args[0] == "verify")
     // byte-for-byte; the sole exception is a policy-pinned injection (the signed
     // driver package), which cannot exist in the upstream release at all.
     var allowed = upstream.Where(name => policy.Classify(name, out _, out _) != Verdict.Deny).ToArray();
-    // The pinned driver package is authored by the release pipeline, so it never
-    // matches upstream bytes even when it reuses an upstream resource name. The
-    // expected set is therefore the allowed upstream subset plus the contract
-    // plus every pin.
-    var pins = (policy.Document.DriverPackage?.Files ?? []).ToDictionary(file => file.Name, StringComparer.Ordinal);
-    var expected = allowed.Append("Foundation.ComponentCompatibility.json").Concat(pins.Keys)
-        .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+    var expected = allowed.Append("Foundation.ComponentCompatibility.json")
+        .Order(StringComparer.Ordinal).ToArray();
     var actual = patched.GetManifestResourceNames().Order(StringComparer.Ordinal).ToArray();
     Require(expected.SequenceEqual(actual),
         "payload does not match the policy: missing [" + string.Join(", ", expected.Except(actual, StringComparer.Ordinal)) +
@@ -97,20 +92,8 @@ else if (args[0] == "verify")
         if (name == "Foundation.ComponentCompatibility.json")
             continue;
         using var patchedStream = patched.GetManifestResourceStream(name)!;
-        if (pins.TryGetValue(name, out var pin))
-        {
-            // The pinned driver package is the only permitted substitution: it
-            // may replace the upstream file of the same name, because the signed
-            // catalog covers the bytes we ship, not the ones upstream shipped.
-            var pinVerdict = policy.Classify(name, out _, out _);
-            Require(pinVerdict is Verdict.Allow or Verdict.Warn,
-                $"pinned resource is not allowed by any policy group: {name}");
-            Require(string.Equals(Convert.ToHexString(SHA256.HashData(patchedStream)).ToLowerInvariant(),
-                pin.Sha256.ToLowerInvariant(), StringComparison.Ordinal), $"injected resource hash mismatch: {name}");
-            continue;
-        }
         using var originalStream = assembly.GetManifestResourceStream(name);
-        Require(originalStream is not null, $"resource was injected without a policy pin: {name}");
+        Require(originalStream is not null, $"resource does not exist upstream: {name}");
         Require(SHA256.HashData(originalStream).SequenceEqual(SHA256.HashData(patchedStream)), $"resource changed: {name}");
     }
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
@@ -123,16 +106,6 @@ else if (args[0] == "verify")
         a.Key == "FoundationPayloadPolicy" && a.Value == policy.Document.PayloadPolicy),
         $"payload policy marker does not match the policy stage '{policy.Document.PayloadPolicy}'");
     Console.WriteLine($"SDK identity/API unchanged; {expected.Length} resources match the {policy.Document.PayloadPolicy} policy");
-}
-else if (args[0] == "catalog")
-{
-    // Reports whether the payload can deploy HID-only at all. Composite-only
-    // builds must answer false; a pinned signed package must answer true.
-    var builder = assembly.GetType("HIDMaestro.Internal.DriverBuilder", true)!;
-    var probe = builder.GetMethod("HasSignedCatalog", BindingFlags.NonPublic | BindingFlags.Static)
-                ?? throw new InvalidOperationException("DriverBuilder.HasSignedCatalog is missing; the payload policy patch did not apply");
-    var present = (bool)probe.Invoke(null, null)!;
-    Console.WriteLine($"signed catalog present: {present}");
 }
 else if (args[0] == "audit")
 {

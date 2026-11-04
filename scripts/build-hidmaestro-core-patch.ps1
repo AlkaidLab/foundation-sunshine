@@ -3,8 +3,7 @@ param(
     [string]$OutputDirectory = 'build/hidmaestro-core-patch',
     [string]$DotnetPath = '',
     [string]$CompatibilityManifestPath = '',
-    [string]$PolicyPath = '',
-    [string]$DriverManifest = ''
+    [string]$PolicyPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,14 +100,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Core payload tool build failed' }
 $payloadTool = Join-Path $patchRoot 'PayloadTool/bin/Release/net10.0-windows10.0.26100.0/PayloadTool.dll'
 & $DotnetPath $payloadTool extract $originalCore $payload --policy $PolicyPath
 if ($LASTEXITCODE -ne 0) { throw 'Core resource extraction failed' }
-if ($DriverManifest) {
-    if ($payloadStage -ne 'audited-hid-v1') {
-        throw "A signed driver package can only be imported for audited-hid-v1, not $payloadStage"
-    }
-    & (Join-Path $PSScriptRoot 'import-driver-package.ps1') -Manifest $DriverManifest -PayloadDirectory $payload -PolicyPath $PolicyPath
-}
-elseif ($payloadStage -eq 'audited-hid-v1') {
-    throw 'The audited-hid-v1 stage requires -DriverManifest with the signed driver package'
+if ($payloadStage -eq 'audited-hid-v1') {
+    throw 'The audited-hid-v1 stage has no signed driver package provider in this repository; build composite-only-v1 instead'
 }
 & $DotnetPath build (Join-Path $patchRoot 'HIDMaestro.Core.csproj') -c Release --nologo `
     "-p:UpstreamSource=$source" "-p:PayloadDirectory=$payload" "-p:OutputPath=$output/" `

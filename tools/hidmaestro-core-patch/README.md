@@ -34,11 +34,9 @@ rebuild are needed.
 
 Resources are chosen by `tools/ds5-payload/policy.json`: a resource is either
 absent because the policy denies it, or present and byte-identical to the
-release. The only exception is a resource pinned in `driver_package.files`
-(the signed driver package), which may replace the upstream file of the same
-name. Validation rejects any resource the policy does not allow, any changed
-byte, and any pinned resource whose hash disagrees, so dropping a tool is a
-reviewed policy change rather than a silent deletion. Registry regressions run in a redirected,
+release. Validation rejects any resource the policy does not allow and any
+changed byte, so dropping a tool is a reviewed policy change rather than a
+silent deletion. Registry regressions run in a redirected,
 disposable HKCU hive and exercise JSON mappings, exact legacy-table removal,
 foreign edits, OEM claim/release, interface cleanup and HID ownership evidence.
 They do not deploy drivers or remove PnP devices.

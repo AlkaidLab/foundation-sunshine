@@ -131,13 +131,13 @@ Android 的“传统模拟 / IR 增强（v2 + 扩展）”选择在下次连接�
 
 组件的可携带内容由单一策略文件 `tools/ds5-payload/policy.json` 定义，构建、打包、发布与宿主校验共用它，避免出现第四份手工清单。
 
-- **三个具名档位**：`legacy-v1`（1.4.2/1.4.3，供审计历史制品）、`composite-only-v1`（不含签名工具与编目工具，运行时不再签名或编目）、`audited-hid-v1`（在上一档基础上钉住预签名驱动包）。
-- **只减不改**：上游资源要么按策略缺席，要么与上游逐字节一致；唯一例外是 `driver_package.files` 里显式列出的签名驱动包，它可以替换同名上游文件。任何未登记的新增资源都会让构建失败。
+- **两个可用档位**：`legacy-v1`（1.4.2/1.4.3，供审计历史制品）、`composite-only-v1`（不含签名工具与编目工具，运行时不再签名或编目）。`audited-hid-v1` 保留给未来的预签名驱动包，本仓库没有提供方，构建会直接拒绝该档位。
+- **只减不改**：上游资源要么按策略缺席，要么与上游逐字节一致；任何未登记的新增资源、任何字节变化都会让构建失败。
 - **构建期**：`PayloadTool extract --policy` 只导出允许项，`verify --policy` 校验资源集合与哈希，`audit --policy` 再对成品做一次判定；三者同一套 glob 与"拒绝优先"规则（共享库 `tools/ds5-payload/PayloadPolicy`）。
 - **发布闸门**：打包后、上传前运行 `scripts/audit-ds5-payload.ps1`，递归检查 ZIP 条目、嵌套归档与程序集嵌入资源；出现禁止项、未知项或缺失项即阻断发布。审计器以元数据方式只读解析，不加载被审计程序集。
 - **运行时**：`DriverBuilder` 在快路径之后、触碰 DriverStore 之前检查载荷是否带签名 catalog；不带就以明确原因失败。因此精简组件不会删除仍被旧组件安装且正在使用的驱动。
 - **能力上报**：`--probe` 输出 `payload_policy` 与 `hid_only_available`，`runtime.json` 与包清单携带同一对字段。`hid_only_available` 表示"此刻能否运行 HID-only"（组件可部署或机器已装驱动），`payload_policy` 表示"该组件是否具备部署能力"。能力字段不放进 `component-compatibility.json`，因为 Control Panel 会对该契约做 JSON 全等比较，新增字段会让未重建的 Control Panel 拒绝安装新组件。
-- **签名产物是输入**：发布流水线在满足 SDK/WDK 许可的构建环境中生成并签名驱动包，产出 `driver-package.json`（版本、每文件 SHA-256、签名者、支持的系统与架构）；`scripts/import-driver-package.ps1` 按 pin 把它写入载荷。仓库本身不生成证书、不编目、不签名。
+- **不携带驱动包**：当前档位不部署 UMDF 驱动，HID-only 走 USB/IP，因此仓库既不生成证书、不编目、不签名，也不提供签名驱动包的导入路径。要恢复驱动形态需要重新引入该档位与其工具链。
 
 ## 4. 用户体验设计
 
