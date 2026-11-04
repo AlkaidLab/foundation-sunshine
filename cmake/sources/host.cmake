@@ -77,6 +77,7 @@ set(SUNSHINE_HOST_SOURCES
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
     src/network.cpp src/network.h
+    src/public_address.cpp src/public_address.h
     src/build_info.cpp src/build_info.h
     src/stat_trackers.cpp src/stat_trackers.h
     src/utility.h

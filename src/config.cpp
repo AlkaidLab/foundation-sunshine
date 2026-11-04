@@ -30,6 +30,7 @@
 #include "utility.h"
 #include "globals.h"
 #include "hdr/calibration.h"
+#include "public_address.h"
 #include "streaming/bitrate.h"
 
 #include "display_device/parsed_config.h"
