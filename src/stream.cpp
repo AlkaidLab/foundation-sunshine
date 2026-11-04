@@ -31,6 +31,10 @@
 
 #include "streaming/abr.h"
 
+// Limelight-internal.h includes C11 atomics. Pre-include the header outside
+// the C-linkage block so libstdc++ does not parse its C++ templates as C.
+#include <stdatomic.h>
+
 extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>

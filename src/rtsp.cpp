@@ -4,6 +4,10 @@
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
+// Limelight-internal.h includes C11 atomics. Pre-include the header outside
+// the C-linkage block so libstdc++ does not parse its C++ templates as C.
+#include <stdatomic.h>
+
 extern "C" {
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include <moonlight-common-c/src/Rtsp.h>
