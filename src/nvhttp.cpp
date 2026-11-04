@@ -56,6 +56,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
+#include "network_reachability.h"
 #include "nvhttp.h"
 #include "nvhttp/abr_api.h"
 #include "nvhttp/ai_api.h"

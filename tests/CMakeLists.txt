@@ -440,6 +440,46 @@ add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR
 # A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).
 add_test(NAME build_info_archive COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_build_info_archive.cmake WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_executable(network_reachability_sample
+        ${CMAKE_SOURCE_DIR}/tests/tools/network_reachability_sample.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+target_include_directories(network_reachability_sample PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(network_reachability_sample PRIVATE nlohmann_json::nlohmann_json
+        sunshine_project_options Boost::boost ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES}
+        ${PLATFORM_LIBRARIES} ${MINIUPNP_LIBRARIES})
+target_compile_options(network_reachability_sample PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_reachability_sample PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_compile_definitions(network_reachability_sample PRIVATE MINIUPNPC_STATICLIB MINIUPNP_STATICLIB)
+    target_link_libraries(network_reachability_sample PRIVATE oleaut32 iphlpapi)
+    set_target_properties(network_reachability_sample PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+
+add_executable(network_overview_sample
+        ${CMAKE_SOURCE_DIR}/tests/tools/network_overview_sample.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+target_include_directories(network_overview_sample PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(network_overview_sample PRIVATE nlohmann_json::nlohmann_json alkaidlab_stun_codec
+        sunshine_project_options Boost::boost ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES}
+        ${PLATFORM_LIBRARIES} ${MINIUPNP_LIBRARIES})
+target_compile_options(network_overview_sample PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_overview_sample PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_compile_definitions(network_overview_sample PRIVATE MINIUPNPC_STATICLIB MINIUPNP_STATICLIB)
+    target_link_libraries(network_overview_sample PRIVATE oleaut32 iphlpapi)
+    set_target_properties(network_overview_sample PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+
 add_executable(system_load_unit_tests
         ${CMAKE_SOURCE_DIR}/src/system_load.cpp
         ${CMAKE_SOURCE_DIR}/src/system_load_stub.cpp

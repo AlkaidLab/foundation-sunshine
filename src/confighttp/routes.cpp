@@ -14,6 +14,7 @@
 #include "src/confighttp/configuration.h"
 #include "src/confighttp/diagnostics.h"
 #include "src/confighttp/integrations.h"
+#include "src/confighttp/network.h"
 #include "src/confighttp/pairing.h"
 #include "src/confighttp/proxies.h"
 #include "src/confighttp/runtime.h"

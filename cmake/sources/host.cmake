@@ -78,6 +78,7 @@ set(SUNSHINE_HOST_SOURCES
     src/process.cpp src/process.h
     src/network.cpp src/network.h
     src/network_reachability.cpp src/network_reachability.h
+    src/network_reachability_probe.cpp
     src/nat_discovery.cpp src/nat_discovery.h
     src/nat_discovery_probe.cpp
     src/public_address.cpp src/public_address.h
@@ -186,6 +187,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/clients.cpp src/confighttp/clients.h
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
+    src/confighttp/network.cpp src/confighttp/network.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
     src/confighttp/integrations.cpp src/confighttp/integrations.h
     src/confighttp/pairing.cpp src/confighttp/pairing.h
