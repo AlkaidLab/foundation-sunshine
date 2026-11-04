@@ -445,6 +445,25 @@ if (WIN32)
 endif ()
 add_test(NAME version_compare_unit_tests COMMAND version_compare_unit_tests)
 
+add_executable(system_info_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/system_info.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_system_info.cpp)
+target_include_directories(system_info_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(system_info_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(system_info_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(system_info_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(system_info_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+else ()
+    target_sources(system_info_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/system_info_probe.cpp
+            ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+            ${CMAKE_SOURCE_DIR}/src/public_address.cpp)
+    target_link_libraries(system_info_unit_tests PRIVATE ${Boost_LIBRARIES})
+endif ()
+add_test(NAME system_info_unit_tests COMMAND system_info_unit_tests)
+
 # Build identity: the compiled record (generated build_info_defs.h and version.h in the build tree) and its JSON contract.
 add_executable(build_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/build_info.cpp

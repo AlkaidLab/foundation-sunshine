@@ -191,6 +191,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
     src/confighttp/network.cpp src/confighttp/network.h
+    src/confighttp/systeminfo.cpp src/confighttp/systeminfo.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
     src/confighttp/integrations.cpp src/confighttp/integrations.h
     src/confighttp/pairing.cpp src/confighttp/pairing.h
