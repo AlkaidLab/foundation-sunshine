@@ -113,6 +113,7 @@ const DEFAULT_TABS = [
       fec_percentage: 20,
       fec_auto: 'disabled',
       fec_auto_max_percentage: 50,
+      follow_client_endpoint: 'disabled',
     },
   },
   {

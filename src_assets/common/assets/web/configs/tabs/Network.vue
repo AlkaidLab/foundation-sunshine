@@ -291,6 +291,19 @@ onBeforeUnmount(() => {
           />
           <div class="form-text">{{ $t('config.fec_auto_max_percentage_desc') }}</div>
         </div>
+
+        <div class="network-field network-field-wide">
+          <label for="follow_client_endpoint" class="form-label">{{ $t('config.follow_client_endpoint') }}</label>
+          <select id="follow_client_endpoint" class="form-select" v-model="config.follow_client_endpoint">
+            <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+            <option value="enabled">{{ $t('_common.enabled') }}</option>
+          </select>
+          <div class="form-text">{{ $t('config.follow_client_endpoint_desc') }}</div>
+          <div class="alert alert-warning" role="alert" v-if="config.follow_client_endpoint === 'enabled'">
+            <i class="fa-solid fa-triangle-exclamation me-1" aria-hidden="true"></i>
+            {{ $t('config.follow_client_endpoint_warning') }}
+          </div>
+        </div>
       </div>
       <p class="network-section-note">{{ $t('config.fec_apply_note') }}</p>
     </details>
