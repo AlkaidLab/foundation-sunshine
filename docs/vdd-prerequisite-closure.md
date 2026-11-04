@@ -276,15 +276,17 @@ Two behaviours keep that honest:
   `VDD_CERT_TRUSTED`). The install/repair confirmation names the certificate
   from those facts, so the wording follows the payload instead of a hardcoded
   subject when the upstream package is re-signed.
-- Every installation records the thumbprint it added under
+- Every installation records the store entries it introduced (`Root` and
+  `TrustedPublisher`, with a schema marker) under
   `HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter`, so an upgrade that switches
-  signers cannot orphan the previous anchor in the stores. Uninstall attempts to
-  remove all of them from both stores, but only after every VDD driver package
-  has been removed. A package that is still installed keeps its trust anchor, and
-  removal is best effort: a failure keeps the record (and skips the registry
-  cleanup that would delete it) so a later uninstall can retry, and is a warning
-  rather than an uninstall failure. Only certificates the installation actually
-  added are recorded, so an anchor that predates it is left alone.
+  signers cannot orphan the previous anchor and an anchor that predates the
+  installation is never removed. Uninstall attempts to remove the recorded
+  entries, but only after every VDD driver package has been removed. Without the
+  marker (an installation from before this change) it assumes both stores for the
+  installed certificate. A package that is still installed keeps its trust
+  anchor, and removal is best effort: a failure keeps the record (and skips the
+  registry cleanup that would delete it) so a later uninstall can retry, and is a
+  warning rather than an uninstall failure.
 
 ## Release-candidate clean-host checklist
 
