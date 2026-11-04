@@ -256,6 +256,29 @@ immediate refusal, and timeout cleanup; the production renderer build passes.
   automatically.
 - The script-backed uninstall path targets the current `Root\\ZakoVDD` package
   and reports its real result.
+- Installing the driver is preceded by a confirmation that names the signing
+  certificate, and uninstalling removes it again.
+
+## Driver trust anchor
+
+The driver package is signed with a certificate that ships next to it as
+`ZakoVDD.cer`. Installing the package adds that certificate to the machine-wide
+Root store (Windows also records the publisher in the TrustedPublisher store),
+which makes the machine trust any kernel-mode code signed by it. Unless the
+upstream project signs release drivers with an attested certificate, this is a
+test certificate, so the trust change is part of what the user is agreeing to.
+
+Two behaviours keep that honest:
+
+- The installer probe reports the certificate subject, thumbprint and whether it
+  is already trusted (`VDD_CERT_SUBJECT`, `VDD_CERT_THUMBPRINT`,
+  `VDD_CERT_TRUSTED`). The install/repair confirmation names the certificate
+  from those facts, so the wording follows the payload instead of a hardcoded
+  subject when the upstream package is re-signed.
+- Uninstall removes the certificate from both stores, but only after every VDD
+  driver package has been removed. A package that is still installed keeps its
+  trust anchor. Removal is best effort: a failure is a warning, not an uninstall
+  failure.
 
 ## Release-candidate clean-host checklist
 

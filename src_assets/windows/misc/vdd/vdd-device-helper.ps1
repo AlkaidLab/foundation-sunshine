@@ -667,6 +667,60 @@ function Set-VddConfiguration([object] $Payload) {
     }
 }
 
+function Get-VddCertificate([object] $Payload) {
+    foreach ($candidate in @(
+        (Join-Path $Payload.Paths.Dist 'ZakoVDD.cer'),
+        (Join-Path $Payload.DriverDir 'ZakoVDD.cer'))) {
+        if (Test-Path -LiteralPath $candidate) {
+            $resolved = (Resolve-Path -LiteralPath $candidate).Path
+            return New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolved)
+        }
+    }
+    return $null
+}
+
+function Get-VddCertificateInfo([object] $Payload) {
+    $certificate = Get-VddCertificate $Payload
+    if (-not $certificate) {
+        return [pscustomobject]@{ Subject = ''; Thumbprint = ''; Trusted = $false }
+    }
+    $trusted = $false
+    foreach ($store in @('Root', 'TrustedPublisher')) {
+        if (Test-Path -LiteralPath (Join-Path ('Cert:\LocalMachine\' + $store) $certificate.Thumbprint)) {
+            $trusted = $true
+        }
+    }
+    return [pscustomobject]@{
+        Subject = $certificate.Subject
+        Thumbprint = $certificate.Thumbprint
+        Trusted = $trusted
+    }
+}
+
+function Remove-VddCertificate([object] $Payload) {
+    $certificate = Get-VddCertificate $Payload
+    if (-not $certificate) {
+        return
+    }
+    $removed = $false
+    foreach ($store in @('Root', 'TrustedPublisher')) {
+        $storePath = Join-Path ('Cert:\LocalMachine\' + $store) $certificate.Thumbprint
+        if (-not (Test-Path -LiteralPath $storePath)) {
+            continue
+        }
+        & (Join-Path $env:SystemRoot 'System32certutil.exe') -delstore $store $certificate.Thumbprint | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Failed to remove the VDD signing certificate from $store (exit code $LASTEXITCODE)."
+        }
+        else {
+            $removed = $true
+        }
+    }
+    if ($removed) {
+        Write-Output 'Removed the VDD signing certificate from the machine trust stores.'
+    }
+}
+
 function Add-VddDriverPackage([object] $Payload) {
     $certificate = Join-Path $Payload.Paths.Dist 'ZakoVDD.cer'
     $inf = Join-Path $Payload.Paths.Dist 'ZakoVDD.inf'
@@ -914,6 +968,12 @@ function Invoke-VddInstall(
         Write-Output ('CURRENT_VDD_STATUS=' + $decision.CurrentStatus)
         Write-Output ('CURRENT_VDD_PROBLEM=' + $(if ($device) { [int]$device.Problem } else { '' }))
         Write-Output ('BUNDLED_VDD_VERSION=' + $state.BundledVersion)
+        # The installer adds this certificate to the machine trust stores, so it
+        # must be visible before the user confirms an install.
+        $certificateInfo = Get-VddCertificateInfo $payload
+        Write-Output ('VDD_CERT_SUBJECT=' + $certificateInfo.Subject)
+        Write-Output ('VDD_CERT_THUMBPRINT=' + $certificateInfo.Thumbprint)
+        Write-Output ('VDD_CERT_TRUSTED=' + [int]$certificateInfo.Trusted)
         return
     }
 
@@ -1013,6 +1073,20 @@ function Invoke-VddUninstall([string] $Directory) {
         catch {
             $failure = $_.Exception.Message
             Write-Warning 'Failed to remove every VDD driver package.'
+        }
+    }
+
+    # The certificate is only a trust anchor for the packages just removed. Keep
+    # it while any VDD package remains, and read it before Dist is deleted.
+    if (-not $failure -and @(Get-PublishedVddPackages).Count -eq 0) {
+        try {
+            Remove-VddCertificate ([pscustomobject]@{
+                Paths = $paths
+                DriverDir = $paths.DriverRoot
+            })
+        }
+        catch {
+            Write-Warning "Failed to remove the VDD signing certificate: $($_.Exception.Message)"
         }
     }
 
