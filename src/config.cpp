@@ -30,6 +30,7 @@
 #include "utility.h"
 #include "globals.h"
 #include "hdr/calibration.h"
+#include "nat_discovery.h"
 #include "public_address.h"
 #include "streaming/bitrate.h"
 
@@ -1492,7 +1493,46 @@ namespace config {
     config::sunshine.credentials_file = config::nvhttp.file_state;
     path_f(vars, "credentials_file", config::sunshine.credentials_file);
 
+    int_between_f(vars, "session_idle_minutes", sunshine.session_idle_minutes, { 1, 1440 });
+    int_between_f(vars, "session_absolute_hours", sunshine.session_absolute_hours, { 1, 720 });
+    int_between_f(vars, "session_remember_idle_minutes", sunshine.session_remember_idle_minutes, { 1, 525600 });
+    int_between_f(vars, "session_remember_days", sunshine.session_remember_days, { 1, 365 });
+
     string_f(vars, "external_ip", nvhttp.external_ip);
+    {
+      const auto trimmed = public_address::trim(nvhttp.external_ip);
+      if (trimmed.empty()) {
+        nvhttp.external_ip.clear();
+      }
+      else if (public_address::is_valid(trimmed)) {
+        nvhttp.external_ip = public_address::normalize(trimmed);
+      }
+      else {
+        BOOST_LOG(warning) << "Ignoring invalid external_ip: expected an IP address or a DNS host name"sv;
+        nvhttp.external_ip.clear();
+      }
+    }
+    string_f(vars, "external_endpoints", nvhttp.external_endpoints);
+    {
+      const auto list = public_address::parse_endpoint_list(nvhttp.external_endpoints);
+      if (!list.rejected.empty()) {
+        BOOST_LOG(warning) << "Ignoring invalid external_endpoints entries: expected host, host:port, IPv4:port or [IPv6]:port"sv;
+      }
+      if (list.truncated) {
+        BOOST_LOG(warning) << "external_endpoints keeps the first "sv << public_address::MAX_ENDPOINTS << " entries"sv;
+      }
+      nvhttp.external_endpoints = public_address::join_endpoints(list.endpoints);
+    }
+    string_f(vars, "stun_servers", nvhttp.stun_servers);
+    {
+      const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
+      if (!list.rejected.empty()) {
+        BOOST_LOG(warning) << "Ignoring invalid stun_servers entries: expected host or host:port"sv;
+      }
+      if (list.truncated) {
+        BOOST_LOG(warning) << "stun_servers keeps the first "sv << nat_discovery::MAX_SERVERS << " entries"sv;
+      }
+    }
     list_string_f(vars, "resolutions"s, nvhttp.resolutions);
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
