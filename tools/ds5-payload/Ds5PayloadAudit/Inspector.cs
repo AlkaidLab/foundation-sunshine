@@ -81,12 +81,12 @@ internal sealed class Inspector(Policy policy)
         var isContainer = isRoot && isZip;
         if (!isContainer)
             AddEntry(input, "", displayName, "file", bytes, findings,
-                LooksExecutable(bytes) && !IsAssemblyName(displayName)
+                LooksExecutable(bytes) && !IsExecutableName(displayName)
                     ? "executable content stored under a non-executable name"
                     : null);
         if (isZip)
             TryExpandZip(bytes, displayName, input, findings, depth: 1);
-        else if (IsAssemblyName(displayName) || LooksManaged(bytes))
+        else if (IsExecutableName(displayName) || LooksManaged(bytes))
             TryAddResources(input, displayName, bytes, findings, depth: 0);
     }
 
@@ -141,7 +141,7 @@ internal sealed class Inspector(Policy policy)
             if (isArchive && depth >= MaxNesting)
                 AddEntry(input, zipName, name, "zip-entry", content, findings,
                     $"archive nesting limit {MaxNesting} reached; contents were not inspected");
-            else if (isExecutable && !IsAssemblyName(name))
+            else if (isExecutable && !IsExecutableName(name))
                 AddEntry(input, zipName, name, "zip-entry", content, findings,
                     "executable content stored under a non-executable name");
             else
@@ -152,7 +152,7 @@ internal sealed class Inspector(Policy policy)
                 if (depth < MaxNesting)
                     TryExpandZip(content, $"{zipName}!{name}", input, findings, depth + 1);
             }
-            else if (isAssembly || IsAssemblyName(name))
+            else if (isAssembly || IsExecutableName(name))
                 TryAddResources(input, $"{zipName}!{name}", content, findings, depth);
         }
     }
@@ -198,7 +198,7 @@ internal sealed class Inspector(Policy policy)
             var verdict = policy.Classify(resource.Name, out var rule, out var reason);
             // A resource that is executable but named like data is not allowed:
             // the name would let it pass review untouched.
-            var notInspected = resource.Executable && !IsAssemblyName(resource.Name)
+            var notInspected = resource.Executable && !IsExecutableName(resource.Name)
                 ? "executable content stored under a non-executable name"
                 : null;
             findings.Add(new Finding
@@ -254,9 +254,18 @@ internal sealed class Inspector(Policy policy)
                bytes[offset + 2] == 0 && bytes[offset + 3] == 0;
     }
 
-    private static bool IsAssemblyName(string name) =>
-        name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
-        name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Names Windows treats as executable images. A PE with one of
+    /// these names is expected; anything else is reported as suspicious.</summary>
+    private static readonly string[] ExecutableExtensions =
+        [".dll", ".exe", ".sys", ".drv", ".ocx", ".cpl", ".scr", ".efi", ".ax", ".acm", ".tsp"];
+
+    private static bool IsExecutableName(string name)
+    {
+        foreach (var extension in ExecutableExtensions)
+            if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
 
     /// <summary>True for a PE image with a CLI header, whatever the file is
     /// called. A managed assembly must not hide behind a name the policy allows
@@ -345,3 +354,4 @@ internal static class ManagedResources
         return results;
     }
 }
+
