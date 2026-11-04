@@ -23,6 +23,16 @@ walks the ManifestResource table with System.Reflection.Metadata, locates each
 embedded resource through the PE resources directory and hashes it. Nested ZIPs
 are unpacked in memory; nothing is executed, extracted to disk or trusted.
 
+## Content decides, names only classify
+
+Archives and executables are recognised by their bytes, not their names: a ZIP
+starts with a local or empty-archive header, an executable with MZ/PE. A ZIP is
+expanded wherever it appears (the root artifact, a nested entry, an embedded
+resource), an executable is scanned for embedded resources wherever it appears,
+and an executable or archive stored under a name the policy allows as data is
+reported as unknown instead of being accepted. Names only select the policy group
+and, for .dll/.exe, force inspection of an object whose content cannot be parsed.
+
 ## Verdicts and exit codes
 
 | Verdict | Meaning |

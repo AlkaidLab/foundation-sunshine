@@ -80,7 +80,10 @@ internal sealed class Inspector(Policy policy)
         var isZip = displayName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || LooksLikeZip(bytes);
         var isContainer = isRoot && isZip;
         if (!isContainer)
-            AddEntry(input, "", displayName, "file", bytes, findings);
+            AddEntry(input, "", displayName, "file", bytes, findings,
+                LooksExecutable(bytes) && !IsAssemblyName(displayName)
+                    ? "executable content stored under a non-executable name"
+                    : null);
         if (isZip)
             TryExpandZip(bytes, displayName, input, findings, depth: 1);
         else if (IsAssemblyName(displayName) || LooksManaged(bytes))
@@ -132,14 +135,15 @@ internal sealed class Inspector(Policy policy)
 
             var isArchive = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || LooksLikeZip(content);
             var isAssembly = LooksManaged(content);
+            var isExecutable = LooksExecutable(content);
             // A ZIP that cannot be expanded, or an assembly stored under a name
             // the policy allows as data, is not "allowed": it was not inspected.
             if (isArchive && depth >= MaxNesting)
                 AddEntry(input, zipName, name, "zip-entry", content, findings,
                     $"archive nesting limit {MaxNesting} reached; contents were not inspected");
-            else if (isAssembly && !IsAssemblyName(name))
+            else if (isExecutable && !IsAssemblyName(name))
                 AddEntry(input, zipName, name, "zip-entry", content, findings,
-                    "managed assembly stored under a non-executable name");
+                    "executable content stored under a non-executable name");
             else
                 AddEntry(input, zipName, name, "zip-entry", content, findings);
 
@@ -175,7 +179,7 @@ internal sealed class Inspector(Policy policy)
 
     private void TryAddResources(string input, string container, byte[] bytes, List<Finding> findings, int depth)
     {
-        List<(string Name, int Size, string Sha, byte[]? Archive)>? resources;
+        List<(string Name, int Size, string Sha, byte[]? Archive, bool Executable)>? resources;
         try
         {
             resources = ManagedResources.Read(bytes);
@@ -192,6 +196,11 @@ internal sealed class Inspector(Policy policy)
         {
             _seenResources.Add(resource.Name);
             var verdict = policy.Classify(resource.Name, out var rule, out var reason);
+            // A resource that is executable but named like data is not allowed:
+            // the name would let it pass review untouched.
+            var notInspected = resource.Executable && !IsAssemblyName(resource.Name)
+                ? "executable content stored under a non-executable name"
+                : null;
             findings.Add(new Finding
             {
                 Input = input,
@@ -200,9 +209,9 @@ internal sealed class Inspector(Policy policy)
                 Kind = "assembly-resource",
                 Size = resource.Size,
                 Sha256 = resource.Sha,
-                Verdict = Label(verdict),
-                Group = rule?.Id,
-                Reason = reason,
+                Verdict = notInspected is null ? Label(verdict) : "unknown",
+                Group = notInspected is null ? rule?.Id : null,
+                Reason = notInspected ?? reason,
             });
 
             // A resource can itself be an archive; it must not hide payload the
@@ -230,7 +239,20 @@ internal sealed class Inspector(Policy policy)
     };
 
     private static bool LooksLikeZip(byte[] bytes) =>
-        bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04;
+        bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B &&
+        ((bytes[2] == 0x03 && bytes[3] == 0x04) || (bytes[2] == 0x05 && bytes[3] == 0x06));
+
+    /// <summary>True for any PE image, managed or native. Content decides whether
+    /// a name may be trusted: an executable renamed to look like data is unknown.</summary>
+    internal static bool LooksExecutable(byte[] bytes)
+    {
+        if (bytes.Length < 0x40 || bytes[0] != (byte)'M' || bytes[1] != (byte)'Z')
+            return false;
+        var offset = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(0x3C, 4));
+        return offset > 0 && (long)offset + 4 <= bytes.Length &&
+               bytes[offset] == (byte)'P' && bytes[offset + 1] == (byte)'E' &&
+               bytes[offset + 2] == 0 && bytes[offset + 3] == 0;
+    }
 
     private static bool IsAssemblyName(string name) =>
         name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
@@ -273,7 +295,7 @@ internal sealed class Inspector(Policy policy)
 /// reviewable at all.</summary>
 internal static class ManagedResources
 {
-    public static List<(string Name, int Size, string Sha, byte[]? Archive)>? Read(byte[] image)
+    public static List<(string Name, int Size, string Sha, byte[]? Archive, bool Executable)>? Read(byte[] image)
     {
         using var stream = new MemoryStream(image, writable: false);
         using var pe = new PEReader(stream);
@@ -291,7 +313,7 @@ internal static class ManagedResources
         var block = pe.GetSectionData(directory.RelativeVirtualAddress).GetContent();
         var span = block.AsSpan();
         var reader = pe.GetMetadataReader();
-        var results = new List<(string Name, int Size, string Sha, byte[]? Archive)>();
+        var results = new List<(string Name, int Size, string Sha, byte[]? Archive, bool Executable)>();
 
         foreach (var handle in reader.ManifestResources)
         {
@@ -315,7 +337,8 @@ internal static class ManagedResources
                 ? data.ToArray()
                 : null;
             results.Add((reader.GetString(resource.Name), length,
-                Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant(), archive));
+                Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant(), archive,
+                Inspector.LooksExecutable(data.ToArray())));
         }
 
         results.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
