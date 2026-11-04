@@ -257,7 +257,8 @@ immediate refusal, and timeout cleanup; the production renderer build passes.
 - The script-backed uninstall path targets the current `Root\\ZakoVDD` package
   and reports its real result.
 - Installing the driver is preceded by a confirmation that names the signing
-  certificate, and uninstalling removes it again.
+  certificate, and uninstalling attempts to remove every certificate the
+  installation added.
 
 ## Driver trust anchor
 
@@ -275,10 +276,13 @@ Two behaviours keep that honest:
   `VDD_CERT_TRUSTED`). The install/repair confirmation names the certificate
   from those facts, so the wording follows the payload instead of a hardcoded
   subject when the upstream package is re-signed.
-- Uninstall removes the certificate from both stores, but only after every VDD
-  driver package has been removed. A package that is still installed keeps its
-  trust anchor. Removal is best effort: a failure is a warning, not an uninstall
-  failure.
+- Every installation records the thumbprint it added under
+  `HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter`, so an upgrade that switches
+  signers cannot orphan the previous anchor in the stores. Uninstall attempts to
+  remove all of them from both stores, but only after every VDD driver package
+  has been removed. A package that is still installed keeps its trust anchor, and
+  removal is best effort: a failure keeps the record for a later attempt and is a
+  warning, not an uninstall failure.
 
 ## Release-candidate clean-host checklist
 
