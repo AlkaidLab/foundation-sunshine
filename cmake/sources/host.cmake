@@ -3,6 +3,8 @@
 set(SUNSHINE_HOST_SOURCES
     # third-party
     third-party/moonlight-common-c/src/RtspParser.c
+    third-party/moonlight-common-c/src/EndpointRefreshProtocol.c
+    third-party/moonlight-common-c/src/EndpointRefreshProtocol.h
     third-party/nanors/deps/obl/oblas_common.c
     third-party/nanors/deps/obl/oblas_lite.c
     third-party/nanors/rs.c
@@ -39,6 +41,7 @@ set(SUNSHINE_HOST_SOURCES
     src/client_fingerprint.cpp src/client_fingerprint.h
     src/config.cpp src/config.h
     src/entry_handler.cpp src/entry_handler.h
+    src/endpoint_refresh.h
     src/file_handler.cpp src/file_handler.h
     src/globals.cpp src/globals.h
     src/logging.cpp src/logging.h

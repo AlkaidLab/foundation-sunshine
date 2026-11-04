@@ -1221,6 +1221,10 @@ namespace rtsp_stream {
       if (text_context::bridge_t::instance().gui_alive()) {
         caps |= platf::platform_caps::remote_text_context;
       }
+      if (session.rtsp_cipher) {
+        caps |= platf::platform_caps::endpoint_auto_refresh;
+        ss << "a=x-ss-general.endpointAutoRefreshVersion:1" << std::endl;
+      }
       ss << "a=x-ss-general.featureFlags:" << caps << std::endl;
 #ifdef _WIN32
       if (config::input.mouse && (caps & platf::platform_caps::pen_touch)) {
@@ -1455,10 +1459,13 @@ namespace rtsp_stream {
     std::string fallback_value;
     OPTION_ITEM format_item {};
     OPTION_ITEM fallback_item {};
+    OPTION_ITEM endpoint_refresh_item {};
+    bool endpoint_refresh;
 
-    dynamic_hdr_response_headers_t(int format, std::string_view fallback_reason):
+    dynamic_hdr_response_headers_t(int format, std::string_view fallback_reason, bool endpoint_refresh = false):
         format_value(std::to_string(format)),
-        fallback_value(fallback_reason) {
+        fallback_value(fallback_reason),
+        endpoint_refresh(endpoint_refresh) {
       format_item.option = const_cast<char *>("X-SS-Dynamic-HDR");
       format_item.content = format_value.data();
       if (!fallback_value.empty()) {
@@ -1471,6 +1478,11 @@ namespace rtsp_stream {
     void
     attach(OPTION_ITEM &head) {
       head.next = &format_item;
+      if (endpoint_refresh) {
+        endpoint_refresh_item.option = const_cast<char *>("X-SS-Endpoint-Auto-Refresh");
+        endpoint_refresh_item.content = const_cast<char *>("1");
+        (fallback_value.empty() ? format_item : fallback_item).next = &endpoint_refresh_item;
+      }
     }
   };
 
@@ -1494,7 +1506,7 @@ namespace rtsp_stream {
         BOOST_LOG(debug) << "Ignoring duplicate ANNOUNCE for launch session "sv << session.id;
         dynamic_hdr_response_headers_t dynamic_hdr_headers(
           session.negotiated_dynamic_hdr_format,
-          session.negotiated_dynamic_hdr_fallback);
+          session.negotiated_dynamic_hdr_fallback, session.endpoint_auto_refresh);
         dynamic_hdr_headers.attach(option);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
@@ -1542,6 +1554,10 @@ namespace rtsp_stream {
 
         if (val[val.size() - 1] == ' ') {
           val = val.substr(0, val.size() - 1);
+        }
+        if (name == "x-ml-general.endpointAutoRefreshVersion"sv && args.contains(name)) {
+          respond(sock, session, &option, 400, "Duplicate endpoint refresh version", req->sequenceNumber, {});
+          return;
         }
         args.emplace(name, val);
       }
@@ -1664,6 +1680,15 @@ namespace rtsp_stream {
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
+      if (auto refresh = args.find("x-ml-general.endpointAutoRefreshVersion"sv); refresh != args.end()) {
+        if (refresh->second != "1" || !session.rtsp_cipher || config.controlProtocolType != 13 ||
+            (config.mlFeatureFlags & (ML_FF_SESSION_ID_V1 | ML_FF_ENDPOINT_AUTO_REFRESH)) !=
+              (ML_FF_SESSION_ID_V1 | ML_FF_ENDPOINT_AUTO_REFRESH)) {
+          respond(sock, session, &option, 400, "Invalid endpoint refresh negotiation", req->sequenceNumber, {});
+          return;
+        }
+        config.endpoint_auto_refresh = true;
+      }
       BOOST_LOG(debug) << "Moonlight feature flags: 0x" << std::hex << config.mlFeatureFlags
                       << std::dec << ", remote_text_context="
                       << ((config.mlFeatureFlags & ML_FF_REMOTE_TEXT_CONTEXT) != 0);
@@ -2077,12 +2102,13 @@ namespace rtsp_stream {
     }
 
     session.stream_announce_payload = std::move(announce_payload);
+    session.endpoint_auto_refresh = config.endpoint_auto_refresh;
     session.stream_session_started = true;
     session.nvidia_vsync_lease.reset();
 
     dynamic_hdr_response_headers_t dynamic_hdr_headers(
       session.negotiated_dynamic_hdr_format,
-      session.negotiated_dynamic_hdr_fallback);
+      session.negotiated_dynamic_hdr_fallback, session.endpoint_auto_refresh);
     dynamic_hdr_headers.attach(option);
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});

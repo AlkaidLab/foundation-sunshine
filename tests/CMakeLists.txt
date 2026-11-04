@@ -14,6 +14,18 @@ set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
 
+add_executable(endpoint_refresh_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_endpoint_refresh.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/EndpointRefreshProtocol.c)
+target_include_directories(endpoint_refresh_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(endpoint_refresh_unit_tests PRIVATE gtest_main Boost::asio sunshine::tls sunshine_project_options sunshine_coverage)
+target_compile_definitions(endpoint_refresh_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+set_target_properties(endpoint_refresh_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(endpoint_refresh_unit_tests PRIVATE ws2_32)
+endif ()
+add_test(NAME endpoint_refresh_unit_tests COMMAND endpoint_refresh_unit_tests)
+
 add_executable(perf_frame_rate_unit_tests
         ${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp)
@@ -531,6 +543,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_endpoint_refresh.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_http_util.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
